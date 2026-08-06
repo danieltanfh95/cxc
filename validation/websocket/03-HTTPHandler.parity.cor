@@ -1,0 +1,278 @@
+# Starscream parity translation — HTTPHandler.swift → HTTPHandler.cor
+# Original: Copyright © 2019 Vluxe / Dalton Cherry, Apache 2.0 license.
+# Parity: line-by-line translation with FRICTION: notes.
+#
+# Depends on symbols from 01-Framer.parity.cor for none; standalone.
+# Consumed by FoundationHTTPHandler (inferred / see 03a).
+
+module com.starscream.framer
+
+import objc "Foundation"
+
+
+# FRICTION #W-24 (ERROR-CARRYING ENUM WITH DICTIONARY PAYLOAD):
+# Swift: `case notAnUpgrade(Int, [String: String])`. Positional associated
+# values (see #W-6) plus a dictionary type. Corvid maps [String: String] to...
+# what? The spec (§3.1, §6) commits to Bytes, Int variants, String, but the
+# reference card gives no dictionary literal or type syntax. This is a real
+# gap: no Corvid syntax for map/dict types is committed.
+#
+# For parity: use `Map<String, String>` as a placeholder shape. Grammar
+# would need `[K: V]` or `Map<K, V>` — either works, neither is spec'd.
+expose enumeration HTTPUpgradeError:
+    case not_an_upgrade(status: Int, headers: Map<String, String>)
+    case invalid_data
+
+
+# FRICTION #W-25 (STRUCT WITH STATIC CONSTANTS ONLY, NO INSTANCE STATE):
+# Swift: `struct HTTPWSHeader { static let upgradeName = ... ; static let ... }`.
+# Used purely as a namespace for constants + static factory methods. Struct
+# is never instantiated. Corvid's `struct` (§6.1) requires immutable identity
+# — instances are values. A struct that is never instantiated is a spec-legal
+# but semantically odd shape. Options for what to translate this to:
+#   (a) `struct HTTPWSHeader:` with `computed:` for constants + `class function`s
+#       (see #W-26 on class-level fns for structs)
+#   (b) A module-level bag of constants — the constants become top-level `let`s
+#       in the module, factory becomes a free function.
+#   (c) A dedicated namespacing construct — spec §7 does not commit to one.
+# For parity: use (a). Idiomatic pass may switch to (b).
+expose struct HTTPWSHeader:
+    # FRICTION #W-26 (CLASS-LEVEL / "STATIC" MEMBERS ON STRUCT):
+    # Swift `static let X = ...`. Corvid grammar §10 (per Ink log #16a)
+    # shows `class function` on classes; not explicit for structs. Reference
+    # card notes `class function` "works uniformly" but this is inference
+    # from the Ink log, not a spec commitment. `class let` (a class-level
+    # constant) is even less specified. Guess: `class:` section header
+    # groups class-level members; then `let name: String = "..."` works
+    # inside it. This is speculative.
+    class:
+        let upgrade_name: String         = "Upgrade"
+        let upgrade_value: String        = "websocket"
+        let host_name: String            = "Host"
+        let connection_name: String      = "Connection"
+        let connection_value: String     = "Upgrade"
+        let protocol_name: String        = "Sec-WebSocket-Protocol"
+        let version_name: String         = "Sec-WebSocket-Version"
+        let version_value: String        = "13"
+        let extension_name: String       = "Sec-WebSocket-Extensions"
+        let key_name: String             = "Sec-WebSocket-Key"
+        let origin_name: String          = "Origin"
+        let accept_name: String          = "Sec-WebSocket-Accept"
+        let switch_protocol_code: Int    = 101
+        # FRICTION #W-27 (ARRAY LITERAL):
+        # Swift: `["wss", "https"]`. Array-of-string literal. Spec §3.1
+        # mentions `[T]` as a type; grammar does not commit to a literal
+        # syntax for array construction. `[Byte].filled(size: 4096)` shown
+        # in §4.16.3 uses a class function; a bracket literal is not
+        # explicitly shown. For parity: assume `["a", "b"]` literal works.
+        let default_ssl_schemes: [String] = ["wss", "https"]
+
+    class:
+        # FRICTION #W-28 (STATIC FACTORY METHOD ON STRUCT — SEE ALSO #W-26):
+        # Swift: `static func createUpgrade(request:...) -> URLRequest`.
+        # Placed in a class: section for parity per #W-26 assumption.
+        function create_upgrade(request: URLRequest, supports_compression: Bool, sec_key_value: String) -> URLRequest:
+            # FRICTION #W-29 (GUARD LET, MULTI-BINDING):
+            # Swift: `guard let url = request.url, let parts = url.getParts() else { return request }`.
+            # `guard let` is Swift's "unwrap or early-exit" pattern. Reference
+            # card: `guard let` — not shown anywhere in the spec. Likely
+            # exists by design symmetry with `if let` but not committed.
+            # Also: multi-binding — several `let`s comma-separated within a
+            # single guard. Even less specified.
+            # For parity: expand into nested if-let with early return. Loses
+            # the flat, guard-like structure.
+            if let url = request.url:
+                if let parts = url.get_parts():
+                    # Continue main body. Note the ugly nesting below.
+                    var req = request
+                    if req.value(for_http_header_field: HTTPWSHeader.origin_name) == nil:
+                        # FRICTION #W-30 (URL COMPONENT ACCESS AND STRING MUTATION):
+                        # Swift: url.absoluteString, then `origin.remove(at: origin.index(before: origin.endIndex))`.
+                        # This mutates a String by removing the last character.
+                        # Corvid String position API is a known gap (Ink log
+                        # priority #5). For parity: assume String has
+                        # `absolute_string`, `index_before(end_index())`,
+                        # `remove(at:)` methods with equivalent shape.
+                        var origin = url.absolute_string
+                        # FRICTION #W-31 (URL CONSTRUCTOR WITH RELATIVE):
+                        # Swift: `URL(string: "/", relativeTo: url)` — returns
+                        # optional URL. Foundation constructor with labeled
+                        # parameters. No labels in Corvid; use positional or
+                        # a class function.
+                        if let host_url = URL.from(string: "/", relative_to: url):
+                            origin = host_url.absolute_string
+                            # FRICTION #W-30 continued: index_before, end_index, remove(at:)
+                            # all assumed on String; not spec-committed.
+                            origin.remove(at: origin.index_before(origin.end_index()))
+                        req.set_value(origin, for_http_header_field: HTTPWSHeader.origin_name)
+
+                    req.set_value(HTTPWSHeader.upgrade_value,    for_http_header_field: HTTPWSHeader.upgrade_name)
+                    req.set_value(HTTPWSHeader.connection_value, for_http_header_field: HTTPWSHeader.connection_name)
+                    req.set_value(HTTPWSHeader.version_value,    for_http_header_field: HTTPWSHeader.version_name)
+                    req.set_value(sec_key_value,                 for_http_header_field: HTTPWSHeader.key_name)
+
+                    # FRICTION #W-32 (SUBSCRIPT ACCESS ON OPTIONAL DICT):
+                    # Swift: `req.allHTTPHeaderFields?["Cookie"] == nil`.
+                    # Optional dictionary, then subscript, then nil compare.
+                    # `?[]` (optional subscript) is another Swift affordance
+                    # not shown in the Corvid spec. Also see #W-24 (dict type
+                    # gap).
+                    if req.all_http_header_fields?.get("Cookie") == nil:
+                        # FRICTION #W-33 (STATIC METHOD ON FOUNDATION SINGLETON):
+                        # Swift: `HTTPCookieStorage.shared.cookies(for: url)`.
+                        # Access to a shared singleton via `.shared`, then a
+                        # method. Corvid's ObjC bindings would surface this as
+                        # `HTTPCookieStorage.shared_http_cookie_storage` per
+                        # the reference card. Direct translation with renamed
+                        # accessor.
+                        if let cookies = HTTPCookieStorage.shared_http_cookie_storage.cookies(for: url):
+                            if not cookies.is_empty():
+                                # FRICTION #W-34 (STATIC METHOD RETURNING DICT):
+                                # Swift: `HTTPCookie.requestHeaderFields(with: cookies)` returns [String: String].
+                                let headers = HTTPCookie.request_header_fields(with: cookies)
+                                # FRICTION #W-35 (DICT ITERATION WITH TUPLE DESTRUCTURING):
+                                # Swift: `for (key, val) in headers { ... }`.
+                                # Iterates dictionary key-value pairs, destructures
+                                # tuple. Corvid: no tuple type shown (§3), no
+                                # destructuring pattern in `for` shown (§3.7).
+                                # For parity: iterate keys, index into headers.
+                                for key in headers.keys():
+                                    let val = headers.get(key)
+                                    req.set_value(val, for_http_header_field: key)
+
+                    if supports_compression:
+                        let val = "permessage-deflate; client_max_window_bits; server_max_window_bits=15"
+                        req.set_value(val, for_http_header_field: HTTPWSHeader.extension_name)
+
+                    # FRICTION #W-36 (NIL-COALESCING WITH INTERPOLATION):
+                    # Swift: `req.allHTTPHeaderFields?[HTTPWSHeader.hostName] ?? "\(parts.host):\(parts.port)"`.
+                    # Optional dict subscript + `??` fallback + string
+                    # interpolation of two fields. String interpolation
+                    # syntax is spec-gap (see Ink log). Reference card:
+                    # simple `$identifier` interpolation visible; expression
+                    # form `${expr}` seen in quote: blocks only.
+                    # `parts.host` is an identifier: `$parts.host` — but
+                    # does the dot terminate the identifier? Ambiguous.
+                    # Using `${...}` form to disambiguate.
+                    var host_value: String
+                    if let existing = req.all_http_header_fields?.get(HTTPWSHeader.host_name):
+                        host_value = existing
+                    else:
+                        host_value = "${parts.host}:${parts.port}"
+                    req.set_value(host_value, for_http_header_field: HTTPWSHeader.host_name)
+                    return req
+                else:
+                    return request
+            else:
+                return request
+
+        # generateWebSocketKey 16 random characters between a-z and return them as a base64 string
+        function generate_websocket_key() -> String:
+            # FRICTION #W-37 (RANGE-BASED COMPREHENSION + CLOSURE + BASE64):
+            # Swift: `Data((0..<16).map{ _ in UInt8.random(in: 97...122) }).base64EncodedString()`.
+            # Compact expression, several pieces:
+            #   (a) `(0..<16)` — half-open range literal. Spec §3.1 does not
+            #       commit to range literal syntax.
+            #   (b) `.map { _ in expr }` — closure with ignored parameter.
+            #       Closure syntax not specified in the reference card.
+            #   (c) `UInt8.random(in: 97...122)` — static random with a
+            #       range parameter. Random-number API not specified.
+            #   (d) `Data(array)` — Data constructor from [UInt8].
+            #   (e) `.base64EncodedString()` — Foundation method on Data.
+            # For parity: expand into an imperative loop with explicit types.
+            # Verbose but avoids leaning on unspecified constructs.
+            var bytes = [Byte].filled(size: 16, value: 0)
+            var i = 0
+            while i < 16:
+                # 97..122 = lowercase a..z. Random API unspecified — assume
+                # UInt8.random_in(min:max:) exists.
+                bytes[i] = UInt8.random_in(min: 97, max: 122)
+                i = i + 1
+            let raw = Bytes.from(bytes: bytes)
+            return raw.base64_encoded_string()
+
+
+expose enumeration HTTPEvent:
+    # Same friction as #W-24: dictionary type not specified.
+    case success(headers: Map<String, String>)
+    # Same friction as #W-5: what type carries the error?
+    case failure(error: WSError)
+
+
+# See #W-1 re: class-only protocols.
+expose protocol HTTPHandlerDelegate:
+    accepts did_receive_http(event: HTTPEvent)
+
+expose protocol HTTPHandler:
+    accepts register(delegate: HTTPHandlerDelegate)
+    accepts convert(request: URLRequest) -> Bytes
+    # FRICTION #W-38 (PROTOCOL METHOD RETURNING INT AS INDEX / COUNT):
+    # Swift: `func parse(data: Data) -> Int`. The Int here is the number of
+    # bytes consumed. Corvid's contract system (§3.4) could tighten with
+    # `ensures result >= 0` and `ensures result <= data.count`. Idiomatic
+    # pass should. Parity: bare Int return.
+    accepts parse(data: Bytes) -> Int
+
+expose protocol HTTPServerDelegate:
+    accepts did_receive(event: HTTPEvent)
+
+expose protocol HTTPServerHandler:
+    accepts register(delegate: HTTPServerDelegate)
+    accepts parse(data: Bytes)
+    accepts create_response(headers: Map<String, String>) -> Bytes
+
+
+expose struct URLParts:
+    data:
+        port: Int
+        host: String
+        is_tls: Bool
+
+
+# FRICTION #W-39 (EXTENSIONS ON FOREIGN TYPES):
+# Swift: `public extension URL { ... }`. Adds methods to a Foundation type.
+# Reference card gives the Corvid form: `category(target_class: URL): ...`
+# with a `function` inside. This is the ObjC-category equivalent, direct
+# and cleaner than Swift's extension in some ways because the mechanism is
+# named after what it actually is.
+#
+# Sub-friction: Swift declares `var isTLSScheme: Bool` (computed property).
+# Corvid categories per §9 examples show `function` only; whether
+# `computed:` inside a category is supported is unspecified.
+# For parity: represent both as `function`s. Loses the "looks like a field"
+# syntax at call sites.
+category(target_class: URL):
+    # isTLSScheme returns true if the scheme is https or wss
+    function is_tls_scheme(self) -> Bool:
+        # FRICTION #W-40 (OPTIONAL BINDING IN GUARD ON COMPUTED):
+        # Swift: `guard let scheme = self.scheme else { return false }`.
+        # See #W-29 for guard-let. Also `self.scheme` on URL returns String?
+        # in Foundation.
+        if let scheme = self.scheme:
+            # FRICTION #W-41 (STATIC CONSTANT REFERENCE FROM WITHIN CATEGORY):
+            # `HTTPWSHeader.default_ssl_schemes` — cross-type reference within
+            # this same module. Should work if class-level constants (#W-26)
+            # do. See friction there.
+            return HTTPWSHeader.default_ssl_schemes.contains(scheme)
+        else:
+            return false
+
+    # getParts pulls host and port from the url.
+    function get_parts(self) -> URLParts?:
+        if let host = self.host:
+            let is_tls = self.is_tls_scheme()
+            # FRICTION #W-42 (NIL-COALESCE ON OPTIONAL INT):
+            # Swift: `var port = self.port ?? 0`. See #W-21 on ??.
+            var port: Int
+            if let p = self.port:
+                port = p
+            else:
+                port = 0
+            if self.port == nil:
+                if is_tls:
+                    port = 443
+                else:
+                    port = 80
+            return URLParts(port: port, host: host, is_tls: is_tls)
+        else:
+            return nil  # no host, this isn't a valid url

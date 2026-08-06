@@ -10,20 +10,47 @@
 
 | File | Purpose | LOC |
 |---|---|---|
+| `00-friction-log.md` | Consolidated friction log from the parity pass (73 items across 3 files, plus 8 categories deferred). |
 | `01-Framer.source.swift` | Original Swift — frame construction and parsing (masking, opcodes, byte-level framing) | 365 |
+| `01-Framer.parity.cor` | Parity translation with inline `FRICTION:` notes. |
 | `02-FrameCollector.source.swift` | Original Swift — fragment accumulation state machine (opcode dispatch, close handling, UTF-8 validation) | 107 |
+| `02-FrameCollector.parity.cor` | Parity translation with inline `FRICTION:` notes. |
 | `03-HTTPHandler.source.swift` | Original Swift — WebSocket upgrade handshake (protocol definitions, header struct, URL helpers) | 150 |
+| `03-HTTPHandler.parity.cor` | Parity translation with inline `FRICTION:` notes. |
 | `03a-FoundationHTTPHandler.source.swift` | Original Swift — Foundation-based concrete `HTTPHandler` implementation | 124 |
+| `03a-FoundationHTTPHandler.deferred.md` | Reasoning for not translating this file + catalog of the additional friction categories a full translation would surface. |
 
 **Total source:** 746 lines of Swift across 4 files.
+**Total translated:** ~950 lines of Corvid parity (3 files; the CF-bridging file is deferred).
 
-## Planned passes
+## Passes
 
 Mirrors the Ink exercise structure.
 
-1. **Parity pass.** Line-by-line translation into `.parity.cor` counterparts with inline `FRICTION:` notes. Produces `00-friction-log.md`.
-2. **Idiomatic pass.** Rewrite the same files using Corvid idioms — sections, contracts, state-machine-as-synchronization, universal enumerations. Compare to parity output. Produces `04-idiomatic-pass.md`.
-3. **Extended coverage** (if useful). Additional context the first two passes leave open — extending to `Compression/` for section-composition, or to `Engine/` for concurrency wiring.
+1. **Parity pass** — DONE. Line-by-line translation into `.parity.cor` counterparts with inline `FRICTION:` notes. Log at `00-friction-log.md`.
+2. **Idiomatic pass** — NOT STARTED. Rewrite the same files using Corvid idioms — sections, contracts, state-machine-as-synchronization, universal enumerations. Compare to parity output. Will produce `04-idiomatic-pass.md`.
+3. **Extended coverage** (optional). Additional context the first two passes leave open — extending to `Compression/` for section-composition, or to `Engine/` for concurrency wiring.
+
+## Parity-pass results (summary)
+
+**73 friction points** across three translated files, clustered into **15 families**. See `00-friction-log.md` for the full log and cross-exercise priority comparison with Ink.
+
+Category mix (vs. Ink's cluster around pattern-matching / optionals / strings):
+- Bit-level operations (bitwise ops, shifts, compound-bit-assigns)
+- Enum raw values (integer-backed enums)
+- Range literals + range-based iteration
+- Generics on categories/extensions
+- Foundation concurrency primitives (DispatchQueue-shaped serialization)
+- CF↔Foundation bridging (catalogued in `03a-...deferred.md`, not translated)
+
+**Six friction points recur from the Ink log** (string interpolation, `guard let`/`if let`, argument labels, class-level members on structs, optional chaining, `try` semantics). These are the highest-priority spec fixes because they've been validated on two independent codebases.
+
+**Design decisions surfaced (require choices, not just spec additions):**
+1. DispatchQueue equivalent at the language level, or leave as `unsafe:`.
+2. Closure syntax + capture list annotations.
+3. `inout` or reference-shaped arrays.
+
+Recommended next step per the log: **Path B (idiomatic pass)** — the parity pass was verbose exactly where the idiomatic pass will collapse into `invariants:` and `requires`/`ensures` clauses, so measuring the payoff over the same code surface is the highest-signal follow-up.
 
 ## What this exercise is designed to surface
 

@@ -1,0 +1,643 @@
+# Starscream parity translation — Framer.swift → Framer.cor
+# Original: Copyright © 2019 Vluxe / Dalton Cherry, Apache 2.0 license.
+# Parity: line-by-line translation with FRICTION: notes.
+#
+# This is the core of the frame parser + serializer. Byte-level, stateful,
+# and the load-bearing exercise for whether Corvid can express low-level
+# work cleanly.
+
+module com.starscream.framer
+
+import objc "Foundation"
+
+
+# FRICTION #W-43 (MODULE-LEVEL CONSTANTS):
+# Swift: `let FinMask: UInt8 = 0x80` — top-level `let`, module-scoped.
+# Corvid spec §7 shows `import`, `module`, and type declarations at
+# module level; it does not explicitly show `let` at module level.
+# Grammar §10 likely permits it but there's no worked example. For
+# parity, assume module-level `let` is legal.
+#
+# FRICTION #W-44 (HEX LITERAL SYNTAX):
+# Swift: `0x80`, `0x0F`, etc. — standard hex literals. Reference card:
+# "Hex literals (0xFF) — implied by C interop and examples, but not
+# specified in §2." Assume they work.
+let FinMask: UInt8         = 0x80
+let OpCodeMask: UInt8      = 0x0F
+let RSVMask: UInt8         = 0x70
+let RSV1Mask: UInt8        = 0x40
+let MaskMask: UInt8        = 0x80
+let PayloadLenMask: UInt8  = 0x7F
+let MaxFrameSize: Int      = 32
+
+
+# Standard WebSocket close codes
+# FRICTION #W-45 (INTEGER-BACKED ENUMERATIONS WITH RAW VALUES):
+# Swift: `public enum CloseCode: UInt16 { case normal = 1000; ... }`.
+# Explicit backing type and explicit raw value per case. Reference card
+# names this as a genuine gap in v0.5: "Integer-backed enumerations with
+# raw values — spec does not specify. Treat as gap."
+#
+# This is a substantial gap for interop work — HTTP status codes, error
+# codes, opcodes, and any other wire-protocol constants all fit this
+# shape. WebSocket alone has three (CloseCode, FrameOpCode, upstream
+# HTTP status).
+#
+# For parity: declare the enum without raw values, and use a paired
+# `class function code(self) -> UInt16` on each. Verbose. Idiomatic
+# pass may hide with a section.
+expose enumeration CloseCode:
+    case normal                  # = 1000
+    case going_away              # = 1001
+    case protocol_error          # = 1002
+    case protocol_unhandled_type # = 1003
+    # 1004 reserved.
+    case no_status_received      # = 1005
+    # 1006 reserved.
+    case encoding                # = 1007
+    case policy_violated         # = 1008
+    case message_too_big         # = 1009
+
+    methods:
+        # Companion accessor to compensate for #W-45. Ugly, but honest
+        # about the gap.
+        function raw_value(self) -> UInt16:
+            switch self:
+                case .normal:                  return 1000
+                case .going_away:              return 1001
+                case .protocol_error:          return 1002
+                case .protocol_unhandled_type: return 1003
+                case .no_status_received:      return 1005
+                case .encoding:                return 1007
+                case .policy_violated:         return 1008
+                case .message_too_big:         return 1009
+
+    # And the inverse for parsing raw close codes back to enum values:
+    class:
+        function from_raw(value: UInt16) -> CloseCode?:
+            switch value:
+                case 1000: return .normal
+                case 1001: return .going_away
+                case 1002: return .protocol_error
+                case 1003: return .protocol_unhandled_type
+                case 1005: return .no_status_received
+                case 1007: return .encoding
+                case 1008: return .policy_violated
+                case 1009: return .message_too_big
+                case _:    return nil
+
+
+# Same #W-45 gap.
+expose enumeration FrameOpCode:
+    case continue_frame     # = 0x0
+    case text_frame         # = 0x1
+    case binary_frame       # = 0x2
+    # 0x3-0x7 reserved.
+    case connection_close   # = 0x8
+    case ping               # = 0x9
+    case pong               # = 0xA
+    # 0xB-0xF reserved.
+    case unknown            # = 100
+
+    methods:
+        function raw_value(self) -> UInt8:
+            switch self:
+                case .continue_frame:    return 0x0
+                case .text_frame:        return 0x1
+                case .binary_frame:      return 0x2
+                case .connection_close:  return 0x8
+                case .ping:              return 0x9
+                case .pong:              return 0xA
+                case .unknown:           return 100
+
+    class:
+        function from_raw(value: UInt8) -> FrameOpCode:
+            # NOTE: Swift's `FrameOpCode(rawValue:) ?? .unknown` is fold to
+            # `.unknown` on out-of-range values. Encoding that here.
+            switch value:
+                case 0x0: return .continue_frame
+                case 0x1: return .text_frame
+                case 0x2: return .binary_frame
+                case 0x8: return .connection_close
+                case 0x9: return .ping
+                case 0xA: return .pong
+                case _:   return .unknown
+
+
+# Immutable-by-construction: all fields are `let` in Swift (immutable),
+# aggregated into a single value. Perfect fit for Corvid's `data:` section.
+expose struct Frame:
+    data:
+        is_fin: Bool
+        needs_decompression: Bool
+        is_masked: Bool
+        opcode: FrameOpCode
+        payload_length: UInt64
+        payload: Bytes
+        close_code: UInt16  # only used by connection_close opcode
+
+
+expose enumeration FrameEvent:
+    case frame(frame: Frame)
+    case error(error: WSError)  # see #W-5, #W-18 on error typing
+
+
+# See #W-1 on class-only protocols.
+expose protocol FramerEventClient:
+    accepts frame_processed(event: FrameEvent)
+
+
+expose protocol Framer:
+    accepts add(data: Bytes)
+    accepts register(delegate: FramerEventClient)
+    accepts create_write_frame(opcode: FrameOpCode, payload: Bytes, is_compressed: Bool) -> Bytes
+    accepts update_compression(supports: Bool)
+    accepts supports_compression() -> Bool
+
+
+expose class WSFramer: Framer:
+    data:
+        is_server: Bool = false
+
+    state:
+        # FRICTION #W-46 (DISPATCHQUEUE — FOUNDATION CONCURRENCY PRIMITIVE):
+        # Swift: `private let queue = DispatchQueue(label: ..., attributes: [])`.
+        # DispatchQueue is Foundation's GCD-backed serial queue. Corvid's
+        # concurrency model (§8) provides `channel:` and `signal:` sections
+        # for its own idioms; there is no spec-committed mapping to a
+        # DispatchQueue-shaped serialize-events primitive. §8 says
+        # "explicit OS threads restricted to `unsafe:` in Stage 1."
+        #
+        # For parity, we bind the Foundation type directly via ObjC
+        # interop. This is honest — the code depends on a Foundation
+        # primitive — but it means the queue.async closure below (see
+        # #W-49) has no clean Corvid form.
+        queue: DispatchQueue = DispatchQueue.new(label: "com.vluxe.starscream.wsframer")
+        weak delegate: FramerEventClient?
+        buffer: Bytes = Bytes()
+        compression_enabled: Bool = false
+
+    methods:
+        function constructor(self, is_server: Bool):
+            self.is_server = is_server
+            # FRICTION #W-47 (CONSTRUCTOR PARAMETER DEFAULTS):
+            # Swift: `public init(isServer: Bool = false)`. Parameter default
+            # value. Corvid spec (§3.4.2, §6.3 example) shows constructors
+            # taking arguments but doesn't show default-value parameter
+            # syntax. Assume `is_server: Bool = false` works in the signature.
+
+        expose function update_compression(self, supports: Bool):
+            self.compression_enabled = supports
+
+        expose function supports_compression(self) -> Bool:
+            return self.compression_enabled
+
+        # FRICTION #W-48 (NESTED ENUM INSIDE CLASS — SEE ALSO #W-2):
+        # Swift declares `enum ProcessEvent` inside WSFramer. Same friction
+        # as #W-2: nested types not spec-committed. Lifted to module scope
+        # here.
+
+        expose function add(self, data: Bytes):
+            # FRICTION #W-49 (DISPATCHQUEUE.ASYNC WITH WEAK-SELF CLOSURE):
+            # Swift:
+            #   queue.async { [weak self] in
+            #       self?.buffer.append(data)
+            #       while(true) { ... }
+            #   }
+            #
+            # Two orthogonal frictions bundled:
+            #
+            # (a) Closure syntax: `{ [weak self] in ... }`. Corvid closure
+            #     syntax is not shown in the reference card. Trailing-closure
+            #     call, capture list, `in` separator — none are spec-committed.
+            #
+            # (b) `[weak self]` capture list: prevents closure from retaining
+            #     self, then re-binds via `self?.` inside. Corvid has weak
+            #     references (§6.3) but no spec mechanism for a per-closure
+            #     capture-mode annotation.
+            #
+            # This entire method depends on the DispatchQueue binding
+            # working (#W-46). If Corvid had a first-class equivalent (a
+            # `serial_queue:` section, or a channel with a single consumer),
+            # the entire structure would restructure.
+            #
+            # For parity: express the intent inline, with a `# UNSAFE:`
+            # marker per §8's Stage-1 note that OS thread control lives
+            # in unsafe blocks.
+            unsafe:
+                self.queue.async_closure(function ():
+                    self.buffer.append(data)
+                    while true:
+                        # FRICTION #W-50 (NIL-COALESCE ON OPTIONAL SELF):
+                        # Swift: `let event = self?.process() ?? .needsMoreData`.
+                        # Optional method call, then nil-coalesce to a default.
+                        # See #W-21 on ?? and #W-16 on optional chaining.
+                        # In our unsafe: block we assume self is valid
+                        # (no weak-self capture in the parity form).
+                        let event = self.process()
+                        switch event:
+                            case .needs_more_data:
+                                return
+                            case .processed_frame(frame, split):
+                                # FRICTION #W-51 (WEAK-SELF GUARD IN CLOSURE):
+                                # Swift: `guard let s = self else { return }`.
+                                # Rebinds weak self to a strong local inside
+                                # the closure. See #W-29 on guard-let.
+                                # Skipped here per parity note above.
+                                self.delegate?.frame_processed(event: .frame(frame: frame))
+                                if split >= self.buffer.count():
+                                    self.buffer = Bytes()
+                                    return
+                                # FRICTION #W-52 (DATA.ADVANCED(BY:) — FOUNDATION-SPECIFIC):
+                                # Swift: `s.buffer.advanced(by: split)`. Returns a
+                                # new Data sliced from the offset. Corvid's Bytes
+                                # primitive (§3.1) has no shown slice API.
+                                self.buffer = self.buffer.advanced(by: split)
+                            case .failed(error):
+                                self.delegate?.frame_processed(event: .error(error: error))
+                                self.buffer = Bytes()
+                                return
+                )
+
+        expose function register(self, delegate: FramerEventClient):
+            self.delegate = delegate
+
+        function process(self) -> ProcessEvent:
+            if self.buffer.count() < 2:
+                return .needs_more_data
+
+            # FRICTION #W-53 (WITHUNSAFEBYTES CLOSURE):
+            # Swift:
+            #   var pointer = [UInt8]()
+            #   buffer.withUnsafeBytes { pointer.append(contentsOf: $0) }
+            #
+            # Data.withUnsafeBytes exposes the raw byte buffer via a closure
+            # that receives an UnsafeRawBufferPointer. This is Swift's
+            # controlled unsafety escape hatch.
+            #
+            # Corvid's answer for this specific pattern is unclear. If Bytes
+            # exposes an index accessor (see #W-54), the copy-to-array
+            # convenience is unneeded. For parity, translate to a
+            # to_bytes_array() method that returns [Byte].
+            var pointer: [Byte] = self.buffer.to_bytes_array()
+
+            # FRICTION #W-54 (BYTE-LEVEL BITMASKING):
+            # Swift: `let isFin = (FinMask & pointer[0])` — bitwise AND on
+            # two UInt8 values. Reference card: "Bitwise operators (&, |,
+            # ^, ~, >>, <<) — not specified anywhere." This is a large
+            # gap: any wire-protocol code uses these operations.
+            # For parity: assume `and_bits`, `or_bits`, `xor_bits`,
+            # `shift_left`, `shift_right` as method-form operators.
+            # Verbose, but avoids leaning on unspecified operators.
+            let is_fin           = FinMask.and_bits(pointer[0])
+            let opcode_raw_value = OpCodeMask.and_bits(pointer[0])
+            # Combines the reader-side of #W-45 (raw enum construction).
+            let opcode           = FrameOpCode.from_raw(value: opcode_raw_value)
+            let is_masked        = MaskMask.and_bits(pointer[1])
+            let payload_len      = PayloadLenMask.and_bits(pointer[1])
+            let RSV1             = RSVMask.and_bits(pointer[0])
+            var needs_decompression = false
+
+            if self.compression_enabled and opcode != .continue_frame:
+                needs_decompression = (RSV1Mask.and_bits(pointer[0])) > 0
+
+            if not self.is_server and (is_masked > 0 or RSV1 > 0) and opcode != .pong and not needs_decompression:
+                let err_code = CloseCode.protocol_error.raw_value()
+                return .failed(error: WSError(
+                    type: .protocol_error,
+                    message: "masked and rsv data is not currently supported",
+                    code: err_code
+                ))
+
+            let is_control_frame = (opcode == .connection_close or opcode == .ping or opcode == .pong)
+            if not is_control_frame and (opcode != .binary_frame and opcode != .continue_frame and opcode != .text_frame and opcode != .pong):
+                let err_code = CloseCode.protocol_error.raw_value()
+                # FRICTION #W-55 (STRING INTERPOLATION WITH EXPRESSION):
+                # Swift: `"unknown opcode: \(opcodeRawValue)"`. Simple
+                # identifier interpolation. Reference card: "simple
+                # $identifier interpolation visible in the spec's own
+                # examples (§4.12)." Using `$identifier` form.
+                return .failed(error: WSError(
+                    type: .protocol_error,
+                    message: "unknown opcode: $opcode_raw_value",
+                    code: err_code
+                ))
+
+            if is_control_frame and is_fin == 0:
+                let err_code = CloseCode.protocol_error.raw_value()
+                return .failed(error: WSError(
+                    type: .protocol_error,
+                    message: "control frames can't be fragmented",
+                    code: err_code
+                ))
+
+            var offset: Int = 2
+
+            if is_control_frame and payload_len > 125:
+                return .failed(error: WSError(
+                    type: .protocol_error,
+                    message: "payload length is longer than allowed for a control frame",
+                    code: CloseCode.protocol_error.raw_value()
+                ))
+
+            # FRICTION #W-56 (NUMERIC TYPE CONVERSION):
+            # Swift: `var dataLength = UInt64(payloadLen)` — construct UInt64
+            # from UInt8. Corvid grammar does not show numeric conversion
+            # syntax; the reference card lists integer types but not
+            # conversion. Options:
+            #   (a) `UInt64.from(payload_len)`
+            #   (b) `payload_len.to_uint64()`
+            #   (c) implicit widening (unlikely — most languages require
+            #       explicit widening)
+            # Using (a) for parity.
+            var data_length: UInt64 = UInt64.from(payload_len)
+            var close_code: UInt16  = CloseCode.normal.raw_value()
+
+            if opcode == .connection_close:
+                if payload_len == 1:
+                    close_code  = CloseCode.protocol_error.raw_value()
+                    data_length = 0
+                else if payload_len > 1:
+                    if pointer.count() < 4:
+                        return .needs_more_data
+                    # FRICTION #W-57 (MEMORYLAYOUT<T>.SIZE — TYPE INTROSPECTION):
+                    # Swift: `let size = MemoryLayout<UInt16>.size`. Reflects
+                    # on the type's size in bytes. Corvid spec: no such
+                    # facility shown; §4 sections cover metadata but not
+                    # runtime type-size introspection. For parity, hard-code:
+                    let size: Int = 2  # MemoryLayout<UInt16>.size = 2
+                    close_code   = pointer.read_uint16(offset: offset)
+                    offset       = offset + size
+                    data_length  = data_length - UInt64.from(size)
+                    # FRICTION #W-58 (COMPOUND BOOLEAN WITH RANGE PREDICATES):
+                    # Swift: `if closeCode < 1000 || (closeCode > 1003 && closeCode < 1007) || (closeCode > 1013 && closeCode < 3000)`.
+                    # Nested boolean grouping. Direct translation with `and`/`or`.
+                    if close_code < 1000 or (close_code > 1003 and close_code < 1007) or (close_code > 1013 and close_code < 3000):
+                        close_code = CloseCode.protocol_error.raw_value()
+
+            if payload_len == 127:
+                let size: Int = 8  # MemoryLayout<UInt64>.size = 8; see #W-57
+                if size + offset > pointer.count():
+                    return .needs_more_data
+                data_length = pointer.read_uint64(offset: offset)
+                offset      = offset + size
+            else if payload_len == 126:
+                let size: Int = 2  # MemoryLayout<UInt16>.size = 2; see #W-57
+                if size + offset > pointer.count():
+                    return .needs_more_data
+                data_length = UInt64.from(pointer.read_uint16(offset: offset))
+                offset      = offset + size
+
+            let mask_start = offset
+            if self.is_server:
+                offset = offset + 4  # MemoryLayout<UInt32>.size = 4; see #W-57
+
+            # FRICTION #W-59 (COMPARING UINT64 WITH INT):
+            # Swift: `if dataLength > (pointer.count - offset)`. UInt64 vs Int
+            # in comparison — Swift has implicit numeric conversion in some
+            # contexts. Corvid spec unclear. For parity, explicit conversion.
+            if data_length > UInt64.from(pointer.count() - offset):
+                return .needs_more_data
+
+            # I don't like this cast, but Data's count returns an Int.
+            # Might be a problem with huge payloads. Need to revisit.
+            let read_data_length: Int = Int.from(data_length)
+
+            # FRICTION #W-60 (LET WITHOUT INITIALIZER, ASSIGNED IN IF):
+            # Swift: `let payload: Data` followed by conditional assignment.
+            # Same as #W-20 — definite-assignment not spec-committed. Using
+            # `var`.
+            var payload: Bytes
+            if read_data_length == 0:
+                payload = Bytes()
+            else:
+                if self.is_server:
+                    payload = pointer.unmask_data(mask_start: mask_start, offset: offset, length: read_data_length)
+                else:
+                    # FRICTION #W-61 (ARRAY SLICE WITH RANGE):
+                    # Swift: `Data(pointer[offset..<end])`. Half-open range
+                    # slice of an array, then Data constructor from the
+                    # slice. Range literal (see #W-37 (a)) and slice-to-Bytes
+                    # conversion both unspecified. For parity:
+                    let end = offset + read_data_length
+                    payload = Bytes.from_bytes(pointer.slice(from: offset, to: end))
+            offset = offset + read_data_length
+
+            let frame = Frame(
+                is_fin: is_fin > 0,
+                needs_decompression: needs_decompression,
+                is_masked: is_masked > 0,
+                opcode: opcode,
+                payload_length: data_length,
+                payload: payload,
+                close_code: close_code
+            )
+            return .processed_frame(frame: frame, offset: offset)
+
+        expose function create_write_frame(self, opcode: FrameOpCode, payload: Bytes, is_compressed: Bool) -> Bytes:
+            let payload_length: Int = payload.count()
+            let capacity: Int       = payload_length + MaxFrameSize
+
+            # FRICTION #W-62 (ARRAY FILLED CONSTRUCTOR):
+            # Swift: `[UInt8](repeating: 0, count: capacity)`. Constructor
+            # with repeat-and-count. Reference card shows `[Byte].filled(size: 4096)`
+            # from §4.16.3 which fills with zero implicitly; the value
+            # variant is not shown. Using positional or named-value form.
+            var pointer: [Byte] = [Byte].filled(size: capacity, value: 0)
+
+            # set the framing info
+            # FRICTION #W-63 (BITWISE OR ON ENUM RAW VALUE):
+            # Swift: `pointer[0] = FinMask | opcode.rawValue`. See #W-45
+            # (raw values) and #W-54 (bitwise ops). Composite friction.
+            pointer[0] = FinMask.or_bits(opcode.raw_value())
+            if is_compressed:
+                # FRICTION #W-64 (COMPOUND-ASSIGNMENT OPERATORS):
+                # Swift: `pointer[0] |= RSV1Mask`. `|=`, `&=`, `^=`, `<<=`,
+                # `>>=`, `+=`, `-=` — none specified. For parity, expand.
+                pointer[0] = pointer[0].or_bits(RSV1Mask)
+
+            var offset: Int = 2  # skip pass the framing info
+            if payload_length < 126:
+                # FRICTION #W-65 (NUMERIC DOWNCAST):
+                # Swift: `pointer[1] = UInt8(payloadLength)`. Int → UInt8
+                # narrowing conversion (may lose data). Corvid conversion
+                # syntax not spec'd (see #W-56).
+                pointer[1] = UInt8.from(payload_length)
+            # FRICTION #W-66 (COMPARISON WITH .max):
+            # Swift: `else if payloadLength <= Int(UInt16.max)`. Refers to
+            # `UInt16.max` — the type's maximum representable value. Corvid
+            # spec: no shown syntax for type-level extrema. Assume it exists
+            # by convention.
+            else if payload_length <= Int.from(UInt16.max()):
+                pointer[1] = 126
+                write_uint16(buffer: pointer, offset: offset, value: UInt16.from(payload_length))
+                offset = offset + 2  # MemoryLayout<UInt16>.size
+            else:
+                pointer[1] = 127
+                write_uint64(buffer: pointer, offset: offset, value: UInt64.from(payload_length))
+                offset = offset + 8  # MemoryLayout<UInt64>.size
+
+            # clients are required to mask the payload data, but server
+            # don't according to the RFC
+            if not self.is_server:
+                pointer[1] = pointer[1].or_bits(MaskMask)
+
+                # write the random mask key in
+                # See #W-37 (c) on random API — same friction.
+                let mask_key: UInt32 = UInt32.random_in(min: 0, max: UInt32.max())
+
+                write_uint32(buffer: pointer, offset: offset, value: mask_key)
+                let mask_start = offset
+                offset = offset + 4  # MemoryLayout<UInt32>.size
+
+                # now write the payload data in
+                # FRICTION #W-67 (RANGE-BASED FOR LOOP):
+                # Swift: `for i in 0..<payloadLength { ... }`. Range-literal
+                # driven for loop. Corvid spec: no shown for-in-range
+                # construct. Using while-with-counter as fallback.
+                var i = 0
+                while i < payload_length:
+                    # FRICTION #W-68 (XOR OF BYTES FROM DIFFERENT ARRAYS):
+                    # Swift: `payload[i] ^ pointer[maskStart + (i % 4)]`.
+                    # Composite: subscript, modulo, xor. Modulo (`%`) not
+                    # explicitly spec'd but implied by numeric ops.
+                    pointer[offset] = payload[i].xor_bits(pointer[mask_start + (i.remainder(4))])
+                    offset = offset + 1
+                    i = i + 1
+            else:
+                var i = 0
+                while i < payload_length:
+                    pointer[offset] = payload[i]
+                    offset = offset + 1
+                    i = i + 1
+
+            # FRICTION #W-61 continued: slice-to-Bytes conversion.
+            return Bytes.from_bytes(pointer.slice(from: 0, to: offset))
+
+
+# Lifted from nested position inside WSFramer — see #W-2 and #W-48.
+expose enumeration ProcessEvent:
+    case needs_more_data
+    case processed_frame(frame: Frame, offset: Int)
+    case failed(error: WSError)
+
+
+# MARK: - functions for simpler array buffer reading and writing
+
+# FRICTION #W-69 (MARKER PROTOCOL FOR GENERIC CONSTRAINT):
+# Swift:
+#   public protocol MyWSArrayType {}
+#   extension UInt8: MyWSArrayType {}
+#   public extension Array where Element: MyWSArrayType & UnsignedInteger { ... }
+#
+# The `MyWSArrayType` protocol is empty — it exists purely to constrain the
+# array extension to element types the author has whitelisted. Combined
+# with the built-in `UnsignedInteger` protocol, the extension applies only
+# to `[UInt8]`.
+#
+# Corvid spec: no shown syntax for:
+#   (a) Empty marker protocols (protocols with no `accepts` clauses).
+#   (b) Generic type-parameter constraints on extensions.
+#   (c) `where` clauses on extensions/categories.
+#   (d) Protocol conjunction (`A & B`).
+#
+# This is a significant gap for generic library work.
+#
+# For parity: express the extension methods as free functions taking
+# `[Byte]` explicitly. Loses the `pointer.read_uint16(...)` fluent form
+# that the parser above uses — so those callsites become
+# `read_uint16(pointer, offset)` and we amend the parser above's
+# `pointer.read_uint16(...)` back to Corvid's actual form on the idiomatic pass.
+#
+# We leave the parser's usage as-is (with method syntax) to preserve
+# parity structure and mark this as friction; the idiomatic pass reconciles.
+
+
+# Read a UInt16 from a buffer.
+# - parameter offset: is the offset index to start the read from (e.g. buffer[0], buffer[1], etc).
+# - returns: a UInt16 of the value from the buffer
+category(target_class: [Byte]):
+    # FRICTION #W-70 (CATEGORY ON GENERIC / PRIMITIVE ARRAY TYPE):
+    # Whether Corvid's `category(target_class: T)` accepts primitive/array
+    # types like `[Byte]` is not spec-committed. Reference card only shows
+    # categories on ObjC-imported class types. For parity: assume it works.
+    function read_uint16(self, offset: Int) -> UInt16:
+        # FRICTION #W-71 (BIT SHIFT AND OR ON EXPANDED WIDTH):
+        # Swift: `(UInt16(self[offset + 0]) << 8) | UInt16(self[offset + 1])`.
+        # Composite: cast to wider type, shift, OR. See #W-54.
+        return UInt16.from(self[offset + 0]).shift_left(8).or_bits(UInt16.from(self[offset + 1]))
+
+    function read_uint64(self, offset: Int) -> UInt64:
+        var value: UInt64 = 0
+        # FRICTION #W-67 continued: range-based for loop, closed range.
+        # Swift: `for i in 0...7`. Closed range (0..7 inclusive).
+        var i = 0
+        while i <= 7:
+            value = value.shift_left(8).or_bits(UInt64.from(self[offset + i]))
+            i = i + 1
+        return value
+
+    function unmask_data(self, mask_start: Int, offset: Int, length: Int) -> Bytes:
+        var unmasked_bytes: [Byte] = [Byte].filled(size: length, value: 0)
+        let mask_size: Int = 4  # MemoryLayout<UInt32>.size; see #W-57
+        var i = 0
+        while i < length:
+            unmasked_bytes[i] = UInt8.from(self[offset + i].xor_bits(self[mask_start + (i.remainder(mask_size))]))
+            i = i + 1
+        return Bytes.from_bytes(unmasked_bytes)
+
+
+# FRICTION #W-72 (FREE FUNCTIONS WITH INOUT ARRAY PARAMETER):
+# Swift:
+#   public func writeUint16(_ buffer: inout [UInt8], offset: Int, value: UInt16) { ... }
+#
+# `inout [UInt8]` — value-type array passed by reference so the function
+# can mutate it. Corvid: no `inout` shown in spec, and no shown syntax
+# for passing an array such that the caller sees mutations.
+#
+# Design tension: If arrays are reference-shaped in Corvid, `inout` is
+# unneeded (mutations visible via reference identity). If they're value-
+# shaped, we need an `inout`-equivalent or a return-new-array form.
+#
+# For parity: define as functions taking `[Byte]` and returning the
+# mutated array. Callers must re-bind. Loses in-place ergonomics.
+#
+# The unspecified argument label `_` in Swift (no external label) also
+# has no Corvid analog — Corvid never had labels (per Ink log).
+
+
+# Write a UInt16 to the buffer. It fills the 2 array "slots" of the UInt8 array.
+# - parameter buffer: is the UInt8 array (pointer) to write the value too.
+# - parameter offset: is the offset index to start the write from (e.g. buffer[0], buffer[1], etc).
+function write_uint16(buffer: [Byte], offset: Int, value: UInt16) -> [Byte]:
+    # See #W-72 — returning new array.
+    var out = buffer
+    out[offset + 0] = UInt8.from(value.shift_right(8))
+    out[offset + 1] = UInt8.from(value.and_bits(0xff))
+    return out
+
+
+# Write a UInt32 to the buffer. It fills the 4 array "slots" of the UInt8 array.
+# - parameter buffer: is the UInt8 array (pointer) to write the value too.
+# - parameter offset: is the offset index to start the write from (e.g. buffer[0], buffer[1], etc).
+function write_uint32(buffer: [Byte], offset: Int, value: UInt32) -> [Byte]:
+    var out = buffer
+    var i = 0
+    while i <= 3:
+        # FRICTION #W-73 (SHIFT AMOUNT COMPUTED AT RUNTIME):
+        # Swift: `(value >> (8*UInt32(3 - i))) & 0xff`. Shift amount is
+        # a runtime expression. Bit shifts by runtime values — legal in
+        # both languages, but the Swift-side implicit conversions from
+        # Int to UInt32 for the shift amount need explicit form in Corvid.
+        out[offset + i] = UInt8.from(value.shift_right(UInt32.from(8 * (3 - i))).and_bits(0xff))
+        i = i + 1
+    return out
+
+
+function write_uint64(buffer: [Byte], offset: Int, value: UInt64) -> [Byte]:
+    var out = buffer
+    var i = 0
+    while i <= 7:
+        out[offset + i] = UInt8.from(value.shift_right(UInt64.from(8 * (7 - i))).and_bits(0xff))
+        i = i + 1
+    return out
