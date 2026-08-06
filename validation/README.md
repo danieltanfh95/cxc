@@ -1,4 +1,19 @@
-# Corvid v0.5 Empirical Validation: Ink Markdown Parser
+# Corvid v0.5 Empirical Validation
+
+Real Swift codebases translated to Corvid to test whether the design supports actual working code.
+
+## Exercises
+
+| Exercise | Location | Scope | Status |
+|---|---|---|---|
+| **Ink** (Markdown parser) | this directory (files 00–05) | 9 files, ~245 Swift lines, parity + idiomatic passes | Complete |
+| **Starscream** (WebSocket frame parser + handshake) | [websocket/](websocket/) | 4 files, ~746 Swift lines, parity pass planned | Not started |
+
+The Ink exercise validated the syntactic surface (structural types, protocols, sealed enums, two-type pattern). The Starscream exercise is scoped to cover ground Ink couldn't: real state machines, contracts on protocol invariants, error propagation across layers, and Foundation interop at depth.
+
+---
+
+## Ink Markdown Parser
 
 **Exercise:** Translate a real Swift codebase (JohnSundell/Ink) to Corvid v0.5 to test whether the design supports actual working code.
 
