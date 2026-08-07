@@ -68,17 +68,17 @@ These are places where the parity translation needed syntactic decisions we have
 
 ### 2.1 Auto-generated constructors (FRICTION #4)
 
-Struct/class constructors are generated from fields, but nowhere in §6 does the spec make this explicit. Users writing `Markdown(html: ..., ...)` need to know this exists and what it accepts.
+**Status: partially resolved (v0.6+); doc-audit pending.**
 
-**Spec fix:** §6.2 (struct runtime model) and §6.3 (class runtime model) should specify the auto-generated constructor: takes all `data:` fields (structs) or all `data:` + `state:` fields with defaults (classes).
+Constructors are auto-generated from a class's data fields — the spec uses this in examples (`Vec2(x: 1.0, y: 2.0)` at §6.2 line 3744) without an explicit `constructor` declaration on records. The auto-generation shape (named parameters mirroring data fields; with-method for updates) is implicit rather than stated. Minor doc fix: §6.2 should explicitly state "records get an auto-generated positional-named constructor from their data fields."
 
 ### 2.2 String interpolation syntax (FRICTION #22)
 
-Every parser needs it. Neither §2 (lexical) nor §10 (grammar) specifies interpolation syntax. Real gap.
-
-**Spec fix:** Specify. Options: `"\(expr)"` (Swift), `"${expr}"` (JS/shell), `"{expr}"` (Python f-string). No obvious winner; pick one for consistency.
+**Status: resolved (v0.8.0, §4.20.1 prelude alias `${expr}`; simple identifier form `$name` shorthand for `${name}`).**
 
 ### 2.3 Explicit `try` keyword (FRICTION #17)
+
+**Status: pending.**
 
 §3.5.1 specifies `throws` as a semantic effect. Doesn't specify whether calls to throwing functions need `try` prefix. Grammar §10 doesn't include it.
 
@@ -86,11 +86,15 @@ Every parser needs it. Neither §2 (lexical) nor §10 (grammar) specifies interp
 
 ### 2.4 `old()` in ensures clauses (FRICTION #28)
 
+**Status: pending.**
+
 State-transition ensures need to reference pre-state. Without it, invariants like "index moved forward" can't be expressed.
 
 **Spec fix:** §3.4 should specify `old(expr)` or equivalent syntax for pre-state references.
 
 ### 2.5 Throws in ensures clauses (FRICTION #29)
+
+**Status: pending.**
 
 `ensures A or throws B` — conditional postconditions. Common pattern in state-transition code.
 
@@ -98,28 +102,27 @@ State-transition ensures need to reference pre-state. Without it, invariants lik
 
 ### 2.6 String.Index / position API (FRICTION #25, #26)
 
+**Status: pending (stdlib scope).**
+
 Reader depends on string positions. §6 mentions String but doesn't specify the position API. Real gap for any string-processing code.
 
 **Spec fix:** Standard library scope decision. `core.string` module needs: `start_index`, `end_index`, `index_after(i)`, `character_at(i)`, comparison of indices.
 
 ### 2.7 Protocol conformance syntax (FRICTION #13)
 
-Swift's `struct X: Protocol` — colon-separated protocol list. Corvid's `class X: Protocol` conflicts with section header syntax (colon-terminated).
+**Status: resolved (v0.6+, §3.4 / worked example §11).**
 
-**Spec fix:** §3.4 needs to clarify. Options:
-- `class X conforms: Protocol` — explicit
-- `class X : Protocol` — Swift-like, requires disambiguation from sections
-- `class X <: Protocol` — subtype operator
-
-Currently ambiguous. Real syntactic decision needed.
+The `class X: Protocol:` form is unambiguous — the first `:` starts the conformance clause; the second `:` opens the class body. Grammar §10 `class_decl := 'expose'? 'class' identifier generic_params? conformance_clause? ':' INDENT ...`. Structural conformance is default (§3.4 line 655), so the conformance clause is optional. Worked example (§11) uses `class DefaultOrderProcessor: OrderProcessor:` and `expose class Order:`.
 
 ### 2.8 Static/factory methods on struct types (FRICTION #16a)
 
-`static func read(...)` in Swift. Corvid's grammar §10 shows `class function` on classes. Not clear how to declare a class-level (type-level) function on a struct.
+**Status: resolved (v0.6+, §4.10.7).**
 
-**Spec fix:** §6.2 needs to specify. Probably `class function` works uniformly (name is misleading if applied to struct).
+`class:` section is permitted on `kind: record`, `kind: enum`, `kind: protocol` (§4.10.7 lines 2200/2208/2217). Naming is misleading for records ("class function" on a value type) but the mechanism is uniform.
 
 ### 2.9 Leading-dot enum shorthand (FRICTION #14a)
+
+**Status: pending.**
 
 `.blockquotes` in Swift relies on type context. Ergonomic but requires type inference.
 
@@ -127,21 +130,15 @@ Currently ambiguous. Real syntactic decision needed.
 
 ### 2.10 `if let` optional binding (FRICTION #9)
 
-Standard optional-unwrap-and-scope pattern. §3 doesn't specify.
-
-**Spec fix:** §3 should specify. Options: Swift's `if let x = opt { ... }`, Rust's `if let Some(x) = opt { ... }`.
+**Status: resolved (v0.7 single-binding §3.6.1; v0.8.1 multi-binding §3.6.1).**
 
 ### 2.11 Optional chaining `?.` (FRICTION #11)
 
-`titleHeading?.plain_text()`. §3 mentions optionals but chaining syntax unspecified.
-
-**Spec fix:** §3.5 or §3.7 should specify.
+**Status: retired (v0.7 §3.6.1, §5.7).** `?.` removed; `.` operates uniformly on nil receivers (auto-lift return, `on_nil` dispatch). No chaining operator needed under the nil-messaging-inversion model.
 
 ### 2.12 Argument labels (FRICTION #21)
 
-Swift's `func html(usingURLs urls:)` — labels distinct from parameter names. Corvid grammar §10 shows only single names.
-
-**Spec fix:** Decide. ObjC has selector components; Swift has labels. If we're an ObjC successor, this is worth considering. Currently omitted, which is a design choice, not a gap — but should be stated.
+**Status: resolved by design decision (v0.5).** Corvid uses parameter names as call-site labels (single-name model). Swift-style dual `externalName internalName` was rejected. See Category 3 note below.
 
 ## Category 3: Idiomatic Differences (Design Choices)
 
@@ -178,17 +175,17 @@ Two files (~130 lines Swift) → **30 friction points**. Most are spec gaps, not
 ## Priorities Emerging From First Pass
 
 **Must-fix spec gaps before further translation:**
-1. String interpolation syntax
-2. `try` keyword
-3. Protocol conformance syntax  
-4. `old()` in ensures clauses
-5. String position API in stdlib
+1. ~~String interpolation syntax~~ — **resolved v0.8.0** (`${expr}` prelude alias)
+2. `try` keyword — **still pending**
+3. ~~Protocol conformance syntax~~ — **resolved v0.6+** (`class X: Protocol:` unambiguous)
+4. `old()` in ensures clauses — **still pending**
+5. String position API in stdlib — **still pending (stdlib scope)**
 
 **Design decisions worth revisiting:**
-1. Argument labels — do we want them or not?
-2. Predicate-based pattern matching — extend §3.7?
-3. Extensions or extension-like mechanism for organization?
-4. Whether structs should be usable-in-Swift-style (with state) — currently forbidden; Ink's usage suggests this is limiting
+1. ~~Argument labels~~ — **resolved v0.5** (single-name model committed)
+2. Predicate-based pattern matching — extend §3.7? **still pending**
+3. ~~Extensions or extension-like mechanism~~ — **resolved via sections + categories** (§4)
+4. ~~Whether structs should be usable-in-Swift-style~~ — **rejected by design** (records forbid `state:` per §4.10.7)
 
 **Non-issues (design working as intended):**
 - Legibility premise driving explicit returns and typed throws

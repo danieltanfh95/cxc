@@ -171,9 +171,9 @@ Grouped by family. Individual `#W-N` references are the specific translation sit
 
 ### 2.10 Static / class-level members
 
-**`class:` section on struct** — `#W-26`, `#W-28`. Whether Corvid supports class-level members on structs is inferred from Ink log FRICTION #16a, not spec-committed. Every wire-protocol namespace uses this.
+**`class:` section on struct** — `#W-26`, `#W-28`. **Resolved v0.6+ (§4.10.7).** `class:` section is permitted on `kind: record` (line 2200), `kind: enum` (line 2208), and `kind: protocol` (line 2217). Naming is misleading for records but the mechanism is uniform.
 
-**Priority:** medium.
+**Priority (remaining):** none — resolved.
 
 ### 2.11 Iteration and control flow
 
@@ -193,7 +193,7 @@ Grouped by family. Individual `#W-N` references are the specific translation sit
 
 **Byte slice methods** — `#W-52`, `#W-61`, `F8`. `Data.advanced(by:)`, `Data.subdata(in:)`, and generic slice → Bytes conversion. Foundation adjacency; every parser needs at least one form.
 
-**MemoryLayout<T>.size** — `#W-57`. Type-size introspection. Compiled to a constant in Swift; every wire-protocol parser uses it to move offsets.
+**MemoryLayout<T>.size** — `#W-57`. **Resolved v0.7.1 (§9.2).** `sizeof(T)` returns `Int` (bytes under natural layout); `alignof(T)` and `offsetof(S, field)` complete the trio. C-interop only, not idiomatic in pure Corvid code.
 
 **Raw C-function import** — `F5` (deferred). `import c "..."` shown in reference card; full workflow for CoreFoundation not detailed.
 
@@ -211,11 +211,11 @@ Grouped by family. Individual `#W-N` references are the specific translation sit
 
 ### 2.14 Module-level declarations
 
-**Module-level constants** — `#W-43`. `let X: UInt8 = 0x80` at file scope. Not explicitly shown; assumed legal.
+**Module-level constants** — `#W-43`. **Resolved v0.7.1 (§7.1).** `let PI: Double = 3.14159` at module scope; immutable, type annotation required, evaluated at module-load time. `expose` legal.
 
-**Hex literal syntax** — `#W-44`. `0xFF`. Implied by C-interop mentions; not specified in §2 (Lexical Structure).
+**Hex literal syntax** — `#W-44`. **Resolved v0.7.1 (§2.7).** `0xFF`, `0xDEAD_BEEF`, `0x00`; prefix `0x` or `0X`; underscore separators legal. Full base coverage: dec, hex, bin (`0b`), oct (`0o`).
 
-**Priority:** low — presumed working, but should be spec-committed.
+**Priority (remaining):** none — family closed.
 
 ### 2.15 Random / stdlib API surface
 
@@ -285,11 +285,20 @@ Compared to Ink:
 
 **Design decisions worth revisiting:**
 
-1. **DispatchQueue equivalent** (§1.2). What's the language-level story for serial event processing? Recommend addressing before Stage 0, because it changes what `unsafe:` needs to cover.
-2. **Closure syntax + capture lists** (§1.3). Ties into 1.
-3. **`inout` or reference-shaped arrays** (`#W-72`). Are arrays value-shaped (needs inout) or reference-shaped (needs nothing)? Design decision.
-4. **struct-as-namespace vs. dedicated namespace construct** (§1.1). Small but recurring.
-5. **Generic constraints on categories** (`#W-69`). Enable this or not? If not, generic library code has an unclear story.
+1. **DispatchQueue equivalent** (§1.2). What's the language-level story for serial event processing? Recommend addressing before Stage 0, because it changes what `unsafe:` needs to cover. **Still open.**
+2. **Closure syntax + capture lists** (§1.3). Ties into 1. **Partially specified in §5.6 (closures as anonymous classes with `call` method; `[weak self, ...]` capture lists); DispatchQueue tie-in still open.**
+3. **`inout` or reference-shaped arrays** (`#W-72`). Are arrays value-shaped (needs inout) or reference-shaped (needs nothing)? Design decision. **Still open.**
+4. **struct-as-namespace vs. dedicated namespace construct** (§1.1). Small but recurring. **Partially resolved by `class:` section on records (§4.10.7 line 2200) — records can now hold class-level members; whether module-level namespacing needs a separate construct is still open.**
+5. **Generic constraints on categories** (`#W-69`). Enable this or not? If not, generic library code has an unclear story. **Still open.**
+
+**Additional pending items surfaced across sessions:**
+
+- **Tuples + destructuring** (`#W-35`, `#W-6`). Multiple-return, `for (k, v) in dict`, positional associated values. Not spec-committed.
+- **Nested type declarations** (`#W-2`, `#W-48`). Dotted access like `FrameCollector.Event`. Not spec-committed.
+- **Definite assignment for `let`** (`#W-20`, `#W-60`). Conditional assignment to declared-but-uninitialized `let`. Not spec-committed.
+- **`try` semantics** (Ink #17, recurred here). Explicit `try` vs postfix `?` vs implicit. Not spec-committed.
+- **`old()` in ensures clauses** (Ink #28). Pre-state references in postconditions. Not spec-committed.
+- **Throws in ensures clauses** (Ink #29). Conditional postconditions on success vs throw. Not spec-committed.
 
 **Non-issues (design working as intended, confirmed):**
 
