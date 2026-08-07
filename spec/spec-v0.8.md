@@ -1,8 +1,25 @@
-# Corvid Language Specification — v0.8.1 (Working Draft)
+# Corvid Language Specification — v0.8.2 (Working Draft)
 
-**Status:** Working draft. v0.8.1 is a minor addition over v0.8.0 — filling in numeric conversion, parameter defaults, and multi-binding scoped-unwrap. No design-mechanism changes. v0.8.0's library-first sugar model (bootstrap grammar + prelude of alias declarations for standard surface syntax), v0.7.2 sugar unification, v0.7.1 Tier 1 sweep, v0.7.0 nil-messaging inversion, and v0.6.0 structural unification all preserved.
+**Status:** Working draft. v0.8.2 adds a namespace discipline for user-defined aliases (`@`-prefix at declaration and use sites) and explicitly rejects `|>` (pipe) from the prelude on paradigm-mismatch grounds. No changes to the underlying sugar mechanism or the prelude's committed set. v0.8.1 numeric conversion / parameter defaults / multi-binding unwrap preserved; v0.8.0 library-first sugar model preserved; v0.7.2 sugar unification, v0.7.1 Tier 1 sweep, v0.7.0 nil-messaging inversion, and v0.6.0 structural unification all preserved.
 
 **Name:** `Corvid`. (Historical: named `objc5` throughout the design conversation. Renamed to Corvid when the positioning clarified as "peer of Swift for Apple-ecosystem native development" rather than "next-generation Objective-C.")
+
+**Change log from v0.8.1 → v0.8.2 (Alias namespace discipline + prelude scope commit):**
+
+Small but load-bearing refinement to the alias mechanism. Two decisions:
+
+- **`@` marker for user-defined aliases (§4.16.16 new).** Every user-defined alias — in every position (delimited, prefix, suffix, infix, class-kind, section-composition, type, value, module) — requires `@` at both the declaration signature's trigger and every use site. Prelude aliases (§4.20) remain unmarked; they are committed surface syntax and the unmarked form is what users expect to read. This gives a clean binary at the reader's eye: unmarked = bootstrap or prelude (language-level); `@`-marked = project-local surface addition (look for a declaration).
+- **Parser simplification.** The alias table becomes a distinct namespace resolved via a dedicated lookup path. Pass 1 gathers alias declarations; Pass 2's alias-trigger recognition is deterministic — only `@`-prefixed forms consult the user alias table. The two-pass compilation strategy (§4.16.15) is preserved in structure; the fan-out at Pass 2 shrinks to a single self-flagged escape.
+- **No collision with imports.** A user's `@Vec` alias cannot collide with an imported `Vec`; they are separate namespaces. `Vec` remains the import; `@Vec` is the alias. Resolution order questions disappear.
+- **Uniform across substitution and surface aliases.** Substitution aliases (`alias @Vec = std.math.Vector3`) follow the same rule as surface aliases (`alias @entity Name: ...`). The uniformity trades a one-character cost at every use site for a globally consistent legibility signal. Corvid's class-based extension model already covers the "brevity via method chaining" ground; alias brevity is not the load-bearing win.
+- **`|>` (pipe) rejected from prelude.** In an FP setting where data and behavior are separate, `|>` earns its keep by threading values through module-of-functions. In Corvid — universal method dispatch, cheap extensions/sections, open runtime — method chaining `x.f().g().h()` is the native pipeline shape and covers every case pipe would. Shipping `|>` would create two idioms for the same operation and encourage the wrong extension pattern (free functions instead of extension methods). Projects that genuinely want pipe can declare `alias <lhs> @|> <rhs> ...` locally.
+- **§4.16 subsection edits.** Class-kind, expression-position literal, infix, prefix/suffix, and string-interpolation examples updated to show user aliases with `@`. Prelude aliases stay unmarked. Common Rules (§4.16.12) restated with the namespace-separation invariant.
+- **§4.20.4 User Extensions.** All examples updated to `@`-marked form.
+- **§10 Grammar.** `alias_trigger` production added. `alias_signature` extended with an `@`-prefixed variant for user aliases. Bootstrap operator table unchanged (no `|>`). Prelude alias declarations remain unmarked in signature and use.
+
+Rationale: Corvid's philosophy — user-led extension inside a stable language surface — needs the reader to be able to tell "committed surface" from "project-local surface" at a glance. Without `@`, every unknown identifier could be a prelude construct, an import, a type, or a user alias, and the reader has to grep to know which. With `@`, the reader knows immediately: unmarked names resolve through normal name resolution (imports, locals, prelude); `@`-marked names resolve through the alias table. The `@` cost is one character per use — smaller than the legibility win and smaller than the parser-simplification win combined.
+
+Downstream cleanups: §4.16.4, §4.16.6, §4.16.7, §4.16.8, §4.16.12 (invariant note), new §4.16.16, §4.20.3 (prelude discipline restated), §4.20.4 (user examples updated), §10 grammar productions.
 
 **Change log from v0.8.0 → v0.8.1 (Session 3 — numeric conversion + parameter defaults + multi-binding unwrap):**
 
@@ -2534,10 +2551,10 @@ record Point:                       # expands to: class Point: metadata: kind: r
     y: Int
 ```
 
-Users may define their own class-kind aliases for domain-specific declaration sugar:
+Users may define their own class-kind aliases for domain-specific declaration sugar. User-defined aliases require the `@` marker at both declaration and use (§4.16.16):
 
 ```
-alias entity Name:
+alias @entity Name:
     class Name:
         metadata:
             kind: regular
@@ -2545,12 +2562,12 @@ alias entity Name:
         ...
 
 # Usage:
-entity Player:
-    position: Vec3
-    velocity: Vec3
+@entity Player:
+    position: @Vec3
+    velocity: @Vec3
 ```
 
-The four language-shipped class-kind aliases (`record`, `enum`, `protocol`, `section`) live in the prelude. Users cannot redefine them (name conflict per §4.16.7).
+The four language-shipped class-kind aliases (`record`, `enum`, `protocol`, `section`) live in the prelude and are unmarked (§4.20). Users cannot redefine them (name conflict per §4.16.12).
 
 **On user-defined declaration sugar.** Earlier drafts (v0.6 §4.19) rejected user-defined class-kind sugar with a legibility argument: project-local declaration keywords fragment reading conventions. v0.7.2 accepts them, because the same argument would forbid user-defined section-composition, type, value, and module aliases — which the language already permits. The legibility burden shifts to tooling: IDEs and code-review tools MUST surface the alias expansion on hover, in inline decorations, and via goto-definition. When reading unfamiliar code, users query the alias to see what it expands to. Stdlib-shipped aliases are the authoritative "standard" sugar; project aliases are domain conventions users opt into by importing the module that declares them.
 
@@ -2605,14 +2622,14 @@ alias {<items>} in expression_position where items is [Expression]:
 
 Guards disambiguate `{...}` between Map and Set — Map when content is key-value pairs, Set otherwise. Empty `{}` is ambiguous by content; the prelude commits to `{}` → empty Map (matching Swift/Python conventions).
 
-Users may define their own literal-producing aliases for domain-specific types:
+Users may define their own literal-producing aliases for domain-specific types. User-defined aliases require the `@` marker (§4.16.16):
 
 ```
-alias v[<x>, <y>, <z>] in expression_position:
+alias @v[<x>, <y>, <z>] in expression_position:
     Vec3(x: x, y: y, z: z)
 
 # Usage:
-position = v[1.0, 2.0, 3.0]
+position = @v[1.0, 2.0, 3.0]
 ```
 
 #### 4.16.7 Infix Operator Aliases
@@ -2653,6 +2670,28 @@ alias not <expr> precedence: 2 in expression_position:
 
 Prefix and suffix aliases carry precedence for parser disambiguation but their associativity is fixed (prefix = right, suffix = left).
 
+**User-defined infix, prefix, and suffix operators require `@` prefixed to the operator token** (§4.16.16). The `@` is part of the operator glyph itself, both in the declaration signature and at every use site:
+
+```
+# User-defined pipe in a project that wants it despite the prelude declining to ship it:
+alias <lhs> @|> <rhs> precedence: 100, associativity: left in expression_position:
+    Callable.apply(rhs, lhs)
+
+# Usage:
+result = data @|> filter_valid @|> normalize
+
+# User-defined prefix:
+alias @! <expr> precedence: 2 in expression_position:
+    MyLogic.strong_negate(expr)
+
+# Usage:
+if @!condition: ...
+```
+
+Bootstrap operators (`+`, `-`, `*`, `/`, `%`, `<`, `<=`, `>`, `>=`, `==`, `!=`, `and`, `or`, `not`) and prelude-declared operators (`&`, `|`, `^`, `~`, `<<`, `>>`, `??`, `..<`, `...`) are unmarked. Only user-defined operators carry `@`.
+
+**`|>` is deliberately not in the prelude.** Method chaining (`x.f().g().h()`) covers every case pipe would in Corvid's class-based, universally-dispatched, openly-extensible model; shipping `|>` would create two idioms for the same operation and pull users toward free functions instead of extension methods (§4.20.3). Projects that want pipe can declare it locally as shown above; the `@` cost per use makes the project-local nature visible.
+
 #### 4.16.8 String Interpolation Aliases
 
 Patterns embedded inside string literals. The base string literal syntax is bootstrap (§2.7); interpolation is a prelude alias that the string scanner consults when parsing string contents:
@@ -2664,17 +2703,23 @@ alias ${<expr>} in string_interpolation_position:
 
 When the base string scanner encounters `$`, it checks in-scope aliases at `string_interpolation_position`. If a match applies (in the prelude case, `${...}` wrapping an expression), the scanner captures the expression, applies the alias expansion, and continues scanning the string.
 
-Users may define domain-specific interpolation forms:
+Users may define domain-specific interpolation forms. User interpolation aliases require the `@` marker at declaration and inside the string at every use site (§4.16.16):
 
 ```
-alias %<name>% in string_interpolation_position:
-    Config.lookup(name)          # `%foo%` looks up config values
+alias @%<name>% in string_interpolation_position:
+    Config.lookup(name)          # `@%database.url%` looks up config values
 
-alias @<user_id>@ in string_interpolation_position:
-    User.mention(user_id)        # `@42@` renders as a mention
+alias @mention<user_id> in string_interpolation_position:
+    User.mention(user_id)        # `@mention42` renders as a mention
 ```
 
-Users adding new interpolation patterns face heightened legibility responsibility — string literals are read densely and unexpected interpolation forms confuse readers. Tooling MUST highlight custom interpolation patterns distinctly.
+Inside a string literal:
+
+```
+let msg = "Connecting to @%database.url% for @mention42"
+```
+
+Users adding new interpolation patterns face heightened legibility responsibility — string literals are read densely and unexpected interpolation forms confuse readers. The `@` marker inside strings is a hard visual cue that a project-local interpolation form is at work; tooling SHOULD highlight custom interpolation patterns distinctly on top of that.
 
 #### 4.16.9 Type Aliases
 
@@ -2746,9 +2791,9 @@ All alias shapes share these properties:
 - **No runtime effect.** Aliases exist only during compilation. There is no runtime cost.
 - **Parameterizable.** All shapes support type, effect, and value parameters.
 - **Exportable.** Aliases marked `expose` are visible to importers of the containing module.
-- **No name conflicts.** An alias name that conflicts with a section class name, an imported name, a top-level declaration, or a stdlib alias is a compile error.
+- **User aliases live in a distinct namespace.** User-defined aliases require the `@` marker at both declaration signature and every use site (§4.16.16). `@Name` is not the same name as `Name` — the alias table and the ordinary name-resolution table are disjoint. This means user aliases never collide with imports, locals, top-level declarations, or prelude names; there is nothing to shadow and nothing to be shadowed by. Two `@`-marked user aliases with the same signature shape in the same scope conflict with each other (compile error).
 - **Post-expansion validation.** Section legality, class-body legality, and other structural rules are checked on the expanded form. Error messages point to the user's original source location with a note showing the alias expansion.
-- **Prelude aliases are protected.** Aliases shipped in the prelude (§4.20) cannot be overridden or shadowed by user definitions. This preserves the standard surface syntax of the language across projects.
+- **Prelude aliases are protected and unmarked.** Aliases shipped in the prelude (§4.20) are unmarked in signature and use — they are committed surface syntax that users read as language. They cannot be overridden or shadowed by user definitions. Users cannot declare an unmarked alias (a bare `alias record Name: ...` without `@` is a compile error unless it matches a prelude entry, which is itself reserved).
 - **User-defined aliases are lexically scoped.** Visible in the module they're declared in and modules that import them. Not global.
 
 The complete list of prelude aliases — the ones the language ships as its standard surface syntax — is in §4.20.
@@ -2820,6 +2865,54 @@ Alias tables cache across incremental compilations — Pass 1 runs only for sour
 **Pattern shape conflicts.** When two aliases declare the same pattern shape at the same position (e.g., two aliases claiming `[<items>]` in expression_position), the compiler emits a name conflict error at the second declaration. This applies whether both aliases come from user code, or one from user code and one from an import.
 
 **Base grammar can always disambiguate.** The bootstrap grammar (§10) is always parseable without aliases. When alias resolution fails (missing alias, ambiguity, expansion error), the compiler falls back to the bootstrap grammar interpretation with a diagnostic.
+
+#### 4.16.16 The `@` Marker for User-Defined Aliases
+
+**Rule.** Every user-defined alias — in every position — requires the `@` marker prefixed to its trigger at both the declaration signature and every use site. Prelude aliases (§4.20) are unmarked in both declaration and use; they are committed surface syntax.
+
+**Positions and forms.** The `@` prefix attaches to whatever the trigger token is:
+
+| Position | Prelude form (unmarked) | User form (`@`-marked) |
+|---|---|---|
+| Section-composition | `alias data:` → use `data:` | `alias @audit_log:` → use `@audit_log:` |
+| Class-kind | `alias record Name:` → use `record Foo:` | `alias @entity Name:` → use `@entity Player:` |
+| Type-expression delimited | `alias [<T>] in type_position:` → use `[Int]` | `alias @Bag<<T>> in type_position:` → use `@Bag<Int>` |
+| Type-expression suffix | `alias <T> ?` → use `T?` | `alias <T> @!!` → use `T @!!` |
+| Expression-position delimited | `alias [<items>] in expression_position:` → use `[1,2,3]` | `alias @v[<x>,<y>,<z>] in expression_position:` → use `@v[1,2,3]` |
+| Infix operator | `alias <l> ..< <r> ...` → use `0 ..< n` | `alias <l> @\|> <r> ...` → use `data @\|> f` |
+| Prefix operator | `alias ~ <e> ...` → use `~x` | `alias @! <e> ...` → use `@!x` |
+| String interpolation | `alias ${<expr>} in string_interpolation_position:` → use `"${x}"` | `alias @%<name>% in string_interpolation_position:` → use `"@%config.host%"` |
+| Type alias (identifier) | *(prelude does not ship type aliases)* | `alias @Vec = std.math.Vector3` → use `@Vec` |
+| Value alias (identifier) | *(prelude does not ship value aliases)* | `alias @MAX_CONN = 1024` → use `@MAX_CONN` |
+| Module alias (identifier) | *(prelude does not ship module aliases)* | `alias @orders = com.example.orders` → use `@orders.Order` |
+
+The `@` is part of the trigger's syntactic form. For operators, `@` fuses with the operator glyph (e.g., `@|>`, `@!`). For identifiers and delimiters, `@` prefixes the identifier or the opening delimiter. Inside string literals, `@` marks the start of an interpolation trigger.
+
+**Why the marker.**
+
+- **Reader legibility.** A reader sees `@Vec` or `@[…]` and knows immediately that the meaning is defined by a project-local `alias` declaration — grep for `alias @Vec` finds it. A reader sees `Vec` or `[…]` and knows the meaning comes from imports, locals, or prelude — normal name resolution applies. This is a stable, binary signal at every use site with no lookup required to know which world you are in.
+- **Namespace separation.** User aliases and ordinary names live in disjoint namespaces (§4.16.12). `@Vec` never collides with an imported `Vec`, a local `Vec`, or a class `Vec`. There is no shadowing, no resolution-order rule to memorize, no accidental capture.
+- **Parser simplification.** The bootstrap parser recognizes `@` as an alias-trigger sigil. Every alias use is self-flagged; the alias table is a single dedicated lookup path consulted only when `@` appears. The two-pass compilation strategy (§4.16.15) is preserved in structure, but Pass 2's alias-recognition fan-out shrinks to one deterministic escape rather than probing every identifier / delimiter / operator position against the alias table.
+
+**Why prelude is unmarked.**
+
+The prelude is Corvid's committed surface syntax (§4.20). Users read `record Foo:`, `[1, 2, 3]`, `"hello ${name}"`, `0 ..< n` as language, not as sugar-that-happens-to-be-implemented-as-alias. The `@` marker would contradict that framing at every use site and would impose per-character noise on constructs that are already Corvid's basic vocabulary. The prelude carve-out is intentional; it reinforces the boundary from the other direction — unmarked = language, marked = project.
+
+**Why substitution aliases also require `@`.**
+
+Substitution aliases (`alias @Vec = std.math.Vector3`) could ergonomically get away without `@` — they are purely identifier-for-identifier renames and the parser doesn't strictly need a disambiguator for them. But the reasoning that argues against the marker (brevity) is not the reasoning the marker earns its keep on. The wins that justify `@` are provenance visibility and namespace separation, and those wins apply just as strongly to `@Vec` as to `@[…]`. A rule that carves substitution aliases out of the marker discipline would ship two rules where one suffices, and would let the substitution alias name secretly collide with an import — exactly the failure mode the discipline prevents. Uniform `@` costs one character per use and buys a globally consistent legibility signal; the trade favors uniformity.
+
+**Why bare bootstrap operators stay unmarked.**
+
+Bootstrap operators (§3.9, §10) — `+`, `-`, `*`, `/`, `%`, `<`, `<=`, `>`, `>=`, `==`, `!=`, `and`, `or`, `not` — are compiler-committed, not aliases. They carry no `@`. Prelude-declared operators (`&`, `|`, `^`, `~`, `<<`, `>>`, `??`, `..<`, `...`) are aliases in principle but unmarked in practice because they live in the prelude. Only user-defined operators use `@` — and the `@` fuses with the glyph (e.g., `@|>`), which conveniently keeps the alias namespace disjoint from the bootstrap/prelude operator table.
+
+**Interaction with `expose`.**
+
+Whether an alias is `expose`d controls cross-module visibility, orthogonal to `@`. The declaration form is `expose alias @Name ...`; the use form is `@Name`. Marking never varies with visibility.
+
+**Legibility policy.**
+
+The `@` marker is the language-level answer to "is this project-specific surface syntax?" Style guides for individual projects SHOULD still exercise restraint on how many user aliases they introduce — one hundred `@` markers per file is legible in the "look up the declaration" sense but exhausting in the "read the code" sense. Prefer methods and extensions where they suffice; reach for `@`-marked aliases when a genuine syntactic gain is available.
 
 ### 4.17 Metaprogramming Boundaries
 
@@ -3244,51 +3337,99 @@ Precedence values 1-14 are reserved for bootstrap and prelude operators. User-de
 
 Constraints on the prelude:
 
-1. **No overrides.** Users cannot redefine prelude aliases. Attempting to declare an alias with a signature matching a prelude alias is a compile error.
-2. **No shadowing.** Prelude aliases are always in scope; no import can hide them.
-3. **Spec-committed.** Changes to prelude alias signatures or expansions are language-version-affecting changes subject to the same versioning discipline as bootstrap grammar changes.
-4. **Minimal by design.** Aliases are added to the prelude only when their utility is universal across Corvid codebases. Domain-specific sugar belongs in libraries, not the prelude.
+1. **Unmarked at declaration and use.** Prelude aliases carry no `@` marker (§4.16.16). They are Corvid's committed surface syntax and read as language, not as project-local sugar. The unmarked form is reserved for the prelude — users cannot declare an unmarked alias.
+2. **No overrides.** Users cannot redefine prelude aliases. Attempting to declare an alias whose expansion would replace a prelude signature is a compile error.
+3. **No shadowing.** Prelude aliases are always in scope; no import can hide them. User aliases live in a disjoint `@`-marked namespace and never collide with prelude names.
+4. **Spec-committed.** Changes to prelude alias signatures or expansions are language-version-affecting changes subject to the same versioning discipline as bootstrap grammar changes.
+5. **Minimal by design.** Aliases are added to the prelude only when their utility is universal across Corvid codebases AND when there is no cleaner way to express the same construct in Corvid's paradigm. Domain-specific sugar belongs in libraries (as `@`-marked user aliases), not the prelude.
+6. **Paradigm-mismatch exclusions.** Some constructs common in adjacent languages are deliberately kept out of the prelude because they do not fit Corvid's class-based, universally-dispatched, openly-extensible model:
+   - **`|>` (pipe operator).** Pipe threads values through free functions — a shape native to FP languages where data and behavior are separate. Corvid has universal method dispatch and cheap extensions/sections; the native pipeline shape is method chaining (`x.f().g().h()`), which is left-to-right, top-down, and integrated with tooling (autocomplete on `.`, jump-to-definition). Shipping `|>` would create two idioms for the same operation and pull users toward free functions instead of extension methods. Projects that genuinely want pipe can declare `alias <lhs> @|> <rhs> ...` locally; the `@` marker makes the project-local nature visible at every use site.
 
 #### 4.20.4 User Extensions
 
-Users define their own aliases at module level following the mechanism in §4.16. Common patterns:
+Users define their own aliases at module level following the mechanism in §4.16. All user aliases carry the `@` marker at declaration signature and every use site (§4.16.16). Common patterns:
 
 **Domain-specific literals:**
 
 ```
 # In a graphics module
-alias v[<x>, <y>, <z>] in expression_position:
+alias @v[<x>, <y>, <z>] in expression_position:
     Vec3(x: x, y: y, z: z)
 
 # In a config module
-alias %<name>% in string_interpolation_position:
+alias @%<name>% in string_interpolation_position:
     Config.lookup(name)
+```
+
+Use sites:
+
+```
+position = @v[1.0, 2.0, 3.0]
+message  = "Connecting to @%database.url%"
 ```
 
 **Project-specific declaration keywords:**
 
 ```
 # In an ECS framework
-alias entity Name:
+alias @entity Name:
     class Name:
         metadata: kind: regular, ecs_role: entity
         ...
 
-alias system Name:
+alias @system Name:
     class Name:
         metadata: kind: regular, ecs_role: system
         ...
+```
+
+Use sites:
+
+```
+@entity Player:
+    position: Vec3
+    velocity: Vec3
+
+@system Physics:
+    function step(dt: Duration): ...
 ```
 
 **Domain-specific operators:**
 
 ```
 # In a quaternion library
-alias <lhs> ** <rhs> precedence: 105, associativity: left in expression_position:
+alias <lhs> @** <rhs> precedence: 105, associativity: left in expression_position:
     Quaternion.multiply(lhs, rhs)
+
+# In a project that wants pipe despite the prelude declining to ship it
+alias <lhs> @|> <rhs> precedence: 100, associativity: left in expression_position:
+    Callable.apply(rhs, lhs)
 ```
 
-Legibility responsibility for user-defined syntax rests with the author. Style guides SHOULD recommend restraint — domain-specific literals for genuinely domain-specific projects; general-purpose libraries should not introduce novel surface syntax.
+Use sites:
+
+```
+composed = a @** b @** c
+result   = data @|> filter_valid @|> normalize
+```
+
+**Substitution aliases (type / value / module):**
+
+```
+alias @Vec = std.math.Vector3
+alias @MAX_CONN = 1024
+alias @orders = com.example.orders
+```
+
+Use sites:
+
+```
+position: @Vec = @Vec.zero
+if active < @MAX_CONN: ...
+current: @orders.Order = @orders.Order.new(...)
+```
+
+Legibility responsibility for user-defined syntax rests with the author. The `@` marker gives the reader an unambiguous signal that project-local surface is in play; style guides SHOULD still recommend restraint on how many aliases a project introduces. Prefer methods and extensions where they suffice; reach for `@`-marked aliases when a genuine syntactic gain is available.
 
 ---
 
@@ -5236,21 +5377,48 @@ layout_primitive := 'sizeof'   '(' type ')'
                   | 'offsetof' '(' type ',' identifier ')'
 ```
 
-**Alias-signature pattern grammar** (§4.16.1). The alias mechanism extends the base grammar with new productions at the position and precedence declared:
+**Alias-signature pattern grammar** (§4.16.1, §4.16.16). The alias mechanism extends the base grammar with new productions at the position and precedence declared. User aliases require the `@` marker on the trigger; prelude aliases are unmarked (§4.16.16, §4.20).
 
 ```
 alias_decl := 'expose'? 'alias' alias_signature alias_modifiers ':' alias_expansion
 
-alias_signature := identifier_pattern
-                 | infix_pattern
-                 | prefix_pattern
-                 | suffix_pattern
-                 | delimited_pattern
-                 | keyword_pattern
-                 | interpolation_pattern
+alias_signature := prelude_signature | user_signature
+                # `prelude_signature` may appear only in prelude source (`stdlib/prelude/`);
+                # user code MUST use `user_signature` (compile error otherwise).
 
+# Prelude signatures — unmarked. Reserved for prelude sources.
+prelude_signature := identifier_pattern
+                   | infix_pattern
+                   | prefix_pattern
+                   | suffix_pattern
+                   | delimited_pattern
+                   | keyword_pattern
+                   | interpolation_pattern
+
+# User signatures — every trigger carries `@`.
+user_signature    := user_identifier_pattern
+                   | user_infix_pattern
+                   | user_prefix_pattern
+                   | user_suffix_pattern
+                   | user_delimited_pattern
+                   | user_keyword_pattern
+                   | user_interpolation_pattern
+
+user_identifier_pattern    := '@' identifier (generic_params)?
+user_keyword_pattern       := '@' identifier identifier (generic_params)?     # e.g. `@entity Name`
+user_infix_pattern         := '<' identifier '>' '@' operator_token '<' identifier '>'
+user_prefix_pattern        := '@' operator_token '<' identifier '>'
+user_suffix_pattern        := '<' identifier '>' '@' operator_token
+user_delimited_pattern     := '@' identifier? '[' '<' identifier '>' ']'
+                            | '@' identifier? '{' '<' identifier '>' '}'
+                            | '@' identifier? '{' '<' identifier '>' ':' '<' identifier '>' '}'
+                            | '@' identifier? '(' '<' identifier '>' ')'
+user_interpolation_pattern := '@' identifier '<' identifier '>'                              # e.g. `@mention<id>`
+                            | '@' operator_token '<' identifier '>' operator_token           # e.g. `@%<name>%`
+
+# Prelude versions (unmarked) — same shapes without the '@'.
 identifier_pattern    := identifier (generic_params)?
-keyword_pattern       := identifier identifier (generic_params)?   # e.g. `record Name`
+keyword_pattern       := identifier identifier (generic_params)?
 infix_pattern         := '<' identifier '>' operator_token '<' identifier '>'
 prefix_pattern        := operator_token '<' identifier '>'
 suffix_pattern        := '<' identifier '>' operator_token
@@ -5259,7 +5427,6 @@ delimited_pattern     := '[' '<' identifier '>' ']'
                        | '{' '<' identifier '>' ':' '<' identifier '>' '}'
                        | '(' '<' identifier '>' ')'
 interpolation_pattern := '$' '{' '<' identifier '>' '}'
-                       | operator_token '<' identifier '>' operator_token   # e.g. `%<name>%`
 
 alias_modifiers := ('precedence' ':' integer)?
                    ('associativity' ':' ('left' | 'right' | 'none'))?
@@ -5281,6 +5448,33 @@ alias_expansion := line_expr                                  # single-line, no 
 expansion_body := ( statement | placeholder | section_usage | class_decl_form )*
 placeholder := '...'                                          # body-content hole (§4.16.2)
 ```
+
+**Alias-trigger productions at use sites** (§4.16.16). The parser recognizes `@` as an alias-trigger sigil in the bootstrap grammar. Every use of a user alias is self-flagged; the alias table is consulted only when `@` appears.
+
+```
+# `@` is a reserved bootstrap sigil; it does not appear as a bare operator or identifier
+# outside of alias declarations and alias use sites.
+
+alias_use := user_alias_expr | user_alias_type | user_alias_section | user_alias_decl
+
+user_alias_expr     := '@' identifier ( '(' arg_list ')' )?                       # substitution / call form
+                     | '@' identifier? delimited_content                          # delimited literal
+                     | expr '@' operator_token expr                               # user infix
+                     | '@' operator_token expr                                    # user prefix
+                     | expr '@' operator_token                                    # user suffix
+
+user_alias_type     := '@' identifier ( generic_args )?                           # type substitution
+                     | type '@' operator_token                                    # user type suffix
+
+user_alias_section  := '@' identifier ':' INDENT section_contents DEDENT          # user section-composition
+
+user_alias_decl     := '@' identifier identifier ':' INDENT class_member* DEDENT  # user class-kind
+
+# String-interpolation alias use — recognized by the string scanner when it encounters '@'
+# inside a string_literal_raw. Prelude interpolation uses '$'; user interpolation uses '@'.
+```
+
+**Added in v0.8.2** (v0.8.1 → v0.8.2): `@` reserved as alias-trigger sigil in bootstrap. `user_signature` and `alias_use` productions added; user-defined aliases require `@` in declaration and use (§4.16.16). Prelude aliases remain unmarked and reserve the unmarked forms. `|>` explicitly rejected from the prelude on paradigm-mismatch grounds (§4.20.3); projects wanting pipe declare it as `alias <lhs> @|> <rhs> ...` locally.
 
 **Retired in v0.8.0** (v0.7.2 → v0.8.0): grammar productions for type-expression sugar (`T?`, `T!`, `[T]`, `{K:V}`, `{T}`, `(A,B) -> C`) removed from bootstrap. Bitwise operators (`&`, `|`, `^`, `~`, `<<`, `>>`) and their compound-assignments removed from bootstrap. Nil-coalescing `??` removed from bootstrap. All now defined as prelude alias declarations (§4.20). Bootstrap grammar is intentionally minimal — sufficient to parse the alias mechanism itself, plus prelude aliases add the standard surface syntax.
 

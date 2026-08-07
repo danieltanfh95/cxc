@@ -2,7 +2,38 @@
 
 **Purpose:** consolidate the reasoning behind the current spec (v0.4) and enumerate what's still open. This document captures *why* decisions were made, not just what they are. The spec is the specification; this is the thinking behind it.
 
-**Companion document:** `spec/spec-v0.7.md` (was `spec-v0.6.md` through v0.6.0; before that `corvid-spec-v0.5.md`).
+**Companion document:** `spec/spec-v0.8.md` (was `spec-v0.7.md` through v0.7.x; before that `spec-v0.6.md`; before that `corvid-spec-v0.5.md`).
+
+## Session note — v0.8.2 alias namespace discipline + `|>` rejection (2026-08-08)
+
+Short refinement session sharpening the alias mechanism from v0.8.0. Two decisions.
+
+**Decision 1 — user aliases require `@` marker at declaration and use, in every position.**
+
+Path to it: user asked whether alias triggers should use `@` at use sites to make it clear a construct is coming from an alias (with the parser simplification as bonus). I drafted a position-selective proposal — `@` for delimited/prefix/suffix/class-kind but not for substitution aliases (types, values, modules) or infix. User pushed back: "why not `@Vector`? it's a smaller price to pay" and then "just stick with one uniform consistent way to do things."
+
+I was defending "brevity" as if it were the load-bearing win for substitution aliases; it isn't. The load-bearing wins are provenance visibility (reader sees `@X` and knows to grep for `alias @X` in this project) and namespace separation (user's `@Vec` never collides with an imported `Vec`; disjoint tables, no shadowing puzzles). Both apply equally to substitution and surface aliases. Uniformity costs one character per use and buys a globally consistent legibility signal.
+
+Prelude aliases stay unmarked. They are Corvid's committed surface syntax and read as language. The `@` split reinforces the "prelude = language, `@` = project-local" binary from the other direction.
+
+Infix carve-out considered and rejected once `|>` was dropped from prelude (see below); with `|>` gone, the strongest awkward example (`x @|> f`) becomes rare (only projects that actively want pipe), and uniformity is worth more than protecting one aesthetic case.
+
+Grammar: `@` reserved as bootstrap sigil. `alias_trigger` production added at every use position. `user_signature` variant in `alias_signature` requires `@` on the trigger. Prelude sources use `prelude_signature` (unmarked); user code MUST use `user_signature` (compile error otherwise). Two-pass compilation preserved but Pass 2 alias-recognition collapses to "if `@` present, consult alias table; else bootstrap+prelude only."
+
+**Decision 2 — `|>` (pipe) explicitly kept out of the prelude.**
+
+User asked "do we really need `|>` ? what does it actually do for class-based programming."
+
+Working through it: `|>` earns its keep in FP languages where data and behavior are separate (Elixir, F#, OCaml) — it threads values through modules of free functions. Corvid has universal method dispatch, cheap extensions/sections, and open runtime; method chaining (`x.f().g().h()`) is the native pipeline shape and covers every case pipe would. Shipping `|>` would create two idioms for the same operation and pull users toward free functions instead of extension methods (fighting Corvid's core extension model).
+
+Documented in §4.20.3 as a "paradigm-mismatch exclusion." Projects that genuinely want pipe can declare `alias <lhs> @|> <rhs> ...` locally; the `@` marker makes the project-local nature visible at every use site. Swift has resisted `|>` for the same reason.
+
+**Prelude-discipline principle worth remembering.** Constructs common in adjacent languages are excluded from the prelude when they don't fit Corvid's specific paradigm. The prelude should ship what Corvid's model *specifically* wants, not what's popular elsewhere. Worth applying to any future prelude candidate imported from a different paradigm.
+
+**Two philosophical points that landed in this session:**
+
+1. **Uniformity beats special cases when the underlying rule is coherent.** I initially proposed a position-selective `@` rule because I was optimizing local cost (identifier substitutions look ugly with `@`). User's push toward uniformity was right — the rule "all user aliases are `@`-marked" is easier to teach, easier to parse, easier to read, and the per-use cost is smaller than the ecosystem-level cost of a special-case rule.
+2. **The prelude is the language's paradigm expressed as syntax.** Excluding `|>` isn't a syntactic decision, it's a paradigm decision. The prelude is a committed statement about how Corvid wants users to compose behavior. Method chaining is the answer; pipe would be a competing answer.
 
 ## Session note — v0.8.1 Session 3 fills (2026-08-08)
 
