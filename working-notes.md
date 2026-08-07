@@ -4,6 +4,28 @@
 
 **Companion document:** `spec/spec-v0.7.md` (was `spec-v0.6.md` through v0.6.0; before that `corvid-spec-v0.5.md`).
 
+## Session note — v0.7.2 sugar unification (2026-08-07)
+
+Before starting Session 2 (collection literals + type aliases + random), a drill-down on the alias system surfaced that Corvid had two parallel sugar mechanisms: `alias` (for section-composition/type/value/module names) and §4.19's class-kind sugar layer (for `record`/`enum`/`protocol`/`section` declaration keywords). User asked: "can we go one level higher and say `alias` is the sugar system?"
+
+Working through it revealed that class-kind sugars have a specific shape — header substitution + body prefix injection + body passthrough — that fits naturally under aliases if we add a body-content placeholder. Introduced `...` as the placeholder marker. `alias record Name: class Name: metadata: kind: record; ...` reads as "when `record Name:` appears with a body, expand to `class Name:` with the metadata prepended, then the original body."
+
+Design decisions in this session:
+
+- **Add `...` as body-content placeholder.** Single hole per alias. Multi-hole named placeholders deferred until real need surfaces.
+- **Reverse v0.6 §4.19's "no user-defined sugar" stance.** Rationale for reversal: user-defined section/type/value/module aliases were already permitted; refusing user-defined class-kind aliases just for legibility was inconsistent. Legibility responsibility shifts to tooling (mandate: IDEs surface alias expansion on hover and goto-definition).
+- **Retire §4.19 as a separate section.** All sugar lives under §4.16. §4.19 becomes a short redirect for readers following old cross-references.
+- **Two-pass compilation with alias resolution.** Documented in §4.16.11. Aliases cache across incremental compilations.
+- **Keep type-expression sugar language-committed.** `T?`, `T!`, `[T]`, `{K:V}`, `(A,B) -> C` remain compiler-committed grammar rules — pattern-matching over syntax rather than identifier substitution. Lifting them to aliases (via hypothetical `alias suffix '?': ...` forms) would couple parser to name resolution and open the door for user-defined type sugar hurting legibility. Not worth the payoff.
+- **Keep closure sugar language-committed.** Closures rewrite the body structurally (into `call` methods) and generate fresh anonymous names — doesn't fit the "body passthrough" model that aliases handle.
+
+Resulting coherent story:
+- **`alias`** — pattern-based substitutions at declaration-keyword, section-header, type-name, value-name, module-name positions. `...` for body-content holes.
+- **Section classes** — body-level behaviors (§4). What happens inside a section body.
+- **Language-committed sugar** — type-expression forms (§3.2) and closures (§5.6). Fixed grammar rules, not user-extensible.
+
+No user-visible behavior change for existing code. All four class-kind sugars work identically; they're just declared in stdlib now rather than hardcoded in the compiler.
+
 ## Session note — v0.7.1 Tier 1 sweep (2026-08-07)
 
 Session 1 of the post-nil Category 2 backlog. Direct C inheritance — zero design decisions, filling spec gaps surfaced by the Starscream parity translations. Added §2.7 (Literals — dec/hex/bin/oct integers, floats, char/string literals with C escapes), §3.9 (Operators — arithmetic, bitwise, comparison, logical, precedence table with C99 discipline), §7.1 module-level `let` note, §9.2 `sizeof`/`alignof`/`offsetof` for C interop. Also updated §2.5 keyword list, §3.1 primitive types (added unsigned variants explicit list, primitive-as-value-type note), and §10 grammar productions to match.

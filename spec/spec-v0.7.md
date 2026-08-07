@@ -1,8 +1,24 @@
-# Corvid Language Specification — v0.7.1 (Working Draft)
+# Corvid Language Specification — v0.7.2 (Working Draft)
 
-**Status:** Working draft. v0.7.1 is a minor addition over v0.7.0 — codifying C-inherited lexical and operator constructs the parity translations depended on but the spec had not stated. No design changes. v0.7.0's nil-messaging inversion (reference types nil-allowed by default, `T!` non-nil contract sugar, `?.` and force-unwrap retired, `on_nil` section for userspace nil-punning) and v0.6.0's structural unification (class-as-universal, kind-via-metadata, closures-as-anonymous-classes, everything-is-expression, channel modes) are preserved.
+**Status:** Working draft. v0.7.2 unifies the language's sugar systems: class-kind keywords (`record`, `enum`, `protocol`, `section`) move out of a separate sugar layer and become stdlib alias declarations, sitting alongside section-composition, type, value, and module aliases under a single `alias` mechanism. A `...` placeholder in alias expansions carries body content through from the use site. v0.7.1 additions (numeric/char literals, bitwise + modulo operators, module-level `let`, `sizeof`/`alignof`/`offsetof`), v0.7.0 nil-messaging inversion, and v0.6.0 structural unification all preserved.
 
 **Name:** `Corvid`. (Historical: named `objc5` throughout the design conversation. Renamed to Corvid when the positioning clarified as "peer of Swift for Apple-ecosystem native development" rather than "next-generation Objective-C.")
+
+**Change log from v0.7.1 → v0.7.2 (sugar unification under aliases):**
+
+Aliases become the single sugar mechanism in Corvid. Previously the language had two sugar systems: `alias` (for section-composition, type, value, module names) and a separate class-kind sugar layer (§4.19 in prior drafts) for `record`, `enum`, `protocol`, `section` keywords. v0.7.2 collapses them — class-kind sugar is now expressed as stdlib alias declarations under the same `alias` mechanism, using a new `...` placeholder to carry body content from the use site through to the expansion.
+
+- **Unified alias shape (§4.16).** One construct: `alias <input>: <expansion>` where the expansion may contain `...` to bind the use-site's body content. Category (section-composition, class-kind, type, value, module) emerges from the shape of the input pattern and expansion, not from a keyword-level taxonomy.
+- **`...` body placeholder (§4.16.1).** New syntactic element. Marks the hole in the expansion template where the alias use-site's block content is substituted verbatim. Single hole per alias in v1.
+- **Class-kind aliases (§4.16.3).** Named identifier + body form. `alias record Name: class Name: metadata: kind: record; ...` — expands `record Point: ...` to `class Point: metadata: kind: record; ...`. Stdlib ships `record`, `enum`, `protocol`, `section` in the prelude (§4.16.8).
+- **User-defined declaration sugar allowed.** Reversing v0.6 §4.19's "no user-defined sugar" stance. Users can define their own class-kind aliases (`alias entity Name: class Name: metadata: kind: regular, ecs_role: entity; ...`) for domain-specific declaration keywords. Tooling MUST surface alias expansion on hover / goto-definition to preserve legibility.
+- **§4.19 retired.** Content moved into §4.16.3 (class-kind aliases) and §4.16.8 (prelude declarations). §4.19 becomes a short redirect.
+- **Parser: two-pass with alias resolution (§4.16.11).** Name-resolution pre-pass gathers alias declarations from prelude + imports + current source into a resolution table; final parse re-runs with aliases in scope. Aliases cache across incremental compilations.
+- **Grammar (§10).** `sugar_class_decl` and `sugar_kind` productions retired. `alias_decl` generalized with `alias_signature` (identifier / parameterized / class-kind forms) and `alias_expansion` (line or indented-body-with-`...`).
+
+Rationale: v0.6 introduced class-kind sugar as a language-committed layer separate from aliases, explicitly rejecting user extension. The v0.7 nil-messaging drill-down surfaced a broader question — "is `alias` the sugar system?" — and working through multi-line sugar showed that class-kind sugars naturally fit under aliases with one syntactic addition (`...` for body content). Consolidating the two systems reduces the mechanism count from two to one, makes the four class-kind sugars stdlib-inspectable rather than compiler-hardcoded, and opens the door for domain-specific declaration keywords consistently with the existing user-defined section/type/value/module alias capability.
+
+Downstream cleanups: §4.16 rewritten (unified shape, `...` placeholder, five subsections replaced with role-based grouping), §4.19 retired (redirect stub), §4.10.7 cross-reference to §4.16.3 for surface syntax, §10 grammar rewrite for alias productions.
 
 **Change log from v0.7.0 → v0.7.1 (Tier 1 lexical + operator sweep):**
 
@@ -1954,7 +1970,9 @@ Class kinds are implemented as built-in section classes. The `metadata: kind: X`
 
 - **Permits:** whatever the specific section class's role requires — typically `data:` (for configuration/parameters), `state:` (for section instance state), `generator:`, `processor:`, `validator:`, `describer:`.
 - **Runtime shape:** compile-time only. Section classes have no runtime instances at the user-code level; their state exists inside the compiled class metadata (§4.18).
-- **Detail:** section-class internals are documented throughout §4 and are the same forms already used for built-in and user-defined sections. `metadata: kind: section` is the surface-level marker; `section class Foo:` is the sugar for it.
+- **Detail:** section-class internals are documented throughout §4 and are the same forms already used for built-in and user-defined sections. `metadata: kind: section` is the surface-level marker; `section Foo:` (prelude alias) or `section class Foo:` (equivalent legacy form) are the sugar for it.
+
+**Surface syntax for kinds.** The five kinds above are addressed at declaration position via stdlib alias declarations (§4.16.3, §4.16.8) — `record`, `enum`, `protocol`, `section`. `Regular` is the default and has no keyword sugar; write `class Foo:` for it. Users may define their own class-kind aliases (§4.16.3) that expand to `class + metadata: kind: ...` with additional metadata entries — this is the extension point for domain-specific declaration sugar.
 
 **Reserved metadata keys.** The following keys under `metadata:` are reserved by the language:
 
@@ -2126,25 +2144,50 @@ Section classes declare semantic version compatibility explicitly. Breaking chan
 
 ### 4.16 Aliases
 
-Aliases bind a name to a compile-time substitution. They are the language's general text-substitution mechanism at declaration sites. The `alias` keyword desugars to a section class with only the `expands_to:` capability; different alias categories are section classes with different content types.
+Aliases bind a name to a compile-time substitution. They are Corvid's single sugar mechanism — one construct that expresses substitutions and transformations at declaration-keyword, section-header, type-name, value-name, and module-name positions.
 
-Aliases serve four distinct purposes, all expressed through the same construct:
-
-- **Section-composition aliases** — name a composition of section primitives.
-- **Type aliases** — shorten a qualified type reference or name a parameterized type.
-- **Value aliases** — name a compile-time constant expression.
-- **Module aliases** — shorten a qualified module path.
-
-Users write `alias name: substitution`; the compiler determines the category from the substitution's shape.
-
-#### 4.16.1 Section-Composition Aliases
-
-Name a composition of section primitives:
+**One shape, one placeholder.** All aliases follow the same form: `alias <input pattern>: <expansion>`. When the expansion needs to carry through the body content from the alias use site, the placeholder `...` marks the hole. When there is no body (type / value / module aliases), no placeholder is used.
 
 ```
-alias data: runtime immutable identity
-alias state: runtime mutable coordination
-alias exposed_data: runtime immutable identity expose
+alias <name> [<parameters>] [<body-signature>]:
+    <expansion>
+    [...]                    # optional — body content from use site
+```
+
+The category of an alias — section-composition, class-kind, type, value, module — is not a taxonomy the language enforces via keywords. It emerges from the shape of the alias's input pattern and expansion. The compiler resolves an alias use by matching the syntactic position (declaration-keyword, section-header, type-position, expression-position, module-position) against the alias definition's shape.
+
+#### 4.16.1 The `...` Body Placeholder
+
+When an alias's use site carries an indented body — that is, when the alias appears with `:` and following block — the `...` placeholder in the expansion template is bound to that block's content. The compiler substitutes the block verbatim.
+
+For aliases whose expansion is a single line with no body (type / value / module aliases), `...` does not appear and the use site has no body:
+
+```
+alias UserID: UInt64                          # no body form
+```
+
+For aliases whose expansion wraps a body (section-composition aliases, class-kind aliases), `...` marks where the body goes:
+
+```
+alias data:                                   # body form
+    runtime immutable identity:
+        ...                                   # body from use site
+```
+
+`...` is a single hole. Aliases requiring multiple named body captures (a hypothetical future need not present in v1) would use named placeholders; v1 commits to `...` alone.
+
+#### 4.16.2 Section-Composition Aliases
+
+Name a composition of section primitives. The alias's expansion is another section header (possibly composed); the body passes through:
+
+```
+alias data:
+    runtime immutable identity:
+        ...
+
+alias state:
+    runtime mutable coordination:
+        ...
 ```
 
 Used in section headers:
@@ -2155,25 +2198,74 @@ class Order:
         id: OrderID
 ```
 
-Under the hood:
+The expanded form is what the compiler processes; `data` is the surface name.
+
+#### 4.16.3 Class-Kind Aliases
+
+Name a declaration keyword that expands to `class` plus prepended body content. The alias captures an identifier parameter (the class name written after the keyword) and the body:
 
 ```
-section class Data:
-    data:
-        contains: fields
-        composition_mode: inline
-    
-    expands_to: runtime immutable identity
+alias record Name:
+    class Name:
+        metadata:
+            kind: record
+        ...
+
+alias enum Name:
+    class Name:
+        metadata:
+            kind: enum
+        ...
+
+alias protocol Name:
+    class Name:
+        metadata:
+            kind: protocol
+        ...
+
+alias section Name:                # `section Foo:` sugar; equivalent to `section class Foo:`
+    class Name:
+        metadata:
+            kind: section
+        ...
 ```
 
-#### 4.16.2 Type Aliases
+Used at declaration position:
 
-Shorten a qualified type reference or name a parameterized type:
+```
+record Point:                       # expands to: class Point: metadata: kind: record; ...body
+    x: Int
+    y: Int
+```
+
+Users may define their own class-kind aliases for domain-specific declaration sugar:
+
+```
+alias entity Name:
+    class Name:
+        metadata:
+            kind: regular
+            ecs_role: entity
+        ...
+
+# Usage:
+entity Player:
+    position: Vec3
+    velocity: Vec3
+```
+
+The four language-shipped class-kind aliases (`record`, `enum`, `protocol`, `section`) live in the prelude. Users cannot redefine them (name conflict per §4.16.7).
+
+**On user-defined declaration sugar.** Earlier drafts (v0.6 §4.19) rejected user-defined class-kind sugar with a legibility argument: project-local declaration keywords fragment reading conventions. v0.7.2 accepts them, because the same argument would forbid user-defined section-composition, type, value, and module aliases — which the language already permits. The legibility burden shifts to tooling: IDEs and code-review tools MUST surface the alias expansion on hover, in inline decorations, and via goto-definition. When reading unfamiliar code, users query the alias to see what it expands to. Stdlib-shipped aliases are the authoritative "standard" sugar; project aliases are domain conventions users opt into by importing the module that declares them.
+
+#### 4.16.4 Type Aliases
+
+Shorten a qualified type reference or name a parameterized type. No body:
 
 ```
 alias Order: com.example.orders.Order
 alias StringDict<V>: Dict<String, V>
-alias Callback<T>: (T, Error?) -> Void
+alias Callback<T>: (T, Error) -> Void
 ```
 
 Used in type positions:
@@ -2183,25 +2275,12 @@ class MyController:
     state:
         current_order: Order              # expands to com.example.orders.Order
         cache: StringDict<CachedValue>    # expands to Dict<String, CachedValue>
-        handler: Callback<Receipt>        # expands to (Receipt, Error?) -> Void
+        handler: Callback<Receipt>        # expands to (Receipt, Error) -> Void
 ```
 
-Under the hood:
+#### 4.16.5 Value Aliases
 
-```
-section class Order:
-    data:
-        contains: qualified_reference
-        composition_mode: inline
-    
-    expands_to: com.example.orders.Order
-```
-
-Type aliases can be parameterized. Parameters are bound at the use site and substituted in the expansion.
-
-#### 4.16.3 Value Aliases
-
-Name a compile-time constant expression:
+Name a compile-time constant expression. No body:
 
 ```
 alias BUFFER_SIZE: 4096
@@ -2219,22 +2298,11 @@ function timeout() -> Duration:
     return Duration.milliseconds(DEFAULT_TIMEOUT_MS)
 ```
 
-Under the hood:
-
-```
-section class BUFFER_SIZE:
-    data:
-        contains: expression
-        composition_mode: inline
-    
-    expands_to: 4096
-```
-
 Value aliases must be compile-time constants. Runtime-computed values are not permissible in aliases.
 
-#### 4.16.4 Module Aliases
+#### 4.16.6 Module Aliases
 
-Shorten a qualified module path:
+Shorten a qualified module path. No body:
 
 ```
 alias orders: com.example.orders
@@ -2250,47 +2318,64 @@ class MyController:
         current: orders.Order
 ```
 
-Under the hood:
+#### 4.16.7 Common Rules
 
-```
-section class orders:
-    data:
-        contains: qualified_module_path
-        composition_mode: inline
-    
-    expands_to: com.example.orders
-```
+All alias shapes share these properties:
 
-#### 4.16.5 Common Rules
-
-All alias categories share these properties:
-
-- **Compile-time substitution.** The compiler replaces the alias name with its expansion during processing.
+- **Compile-time substitution.** The compiler replaces the alias use with its expansion during processing, then re-parses under normal Corvid rules.
 - **Recursive expansion.** Aliases may reference other aliases; the compiler expands until no aliases remain.
 - **Circular aliases are errors.** Cycles are detected at compile time.
 - **No runtime effect.** Aliases exist only during compilation. There is no runtime cost.
-- **Parameterizable.** All categories support type, effect, and value parameters.
+- **Parameterizable.** All shapes support type, effect, and value parameters.
 - **Exportable.** Aliases marked `expose` are visible to importers of the containing module.
-- **No name conflicts.** An alias name that conflicts with a section class name, an imported name, or a top-level declaration is a compile error.
+- **No name conflicts.** An alias name that conflicts with a section class name, an imported name, a top-level declaration, or a stdlib alias is a compile error.
+- **Post-expansion validation.** Section legality, class-body legality, and other structural rules are checked on the expanded form. Error messages point to the user's original source location with a note showing the alias expansion.
 
-#### 4.16.6 Built-in Aliases
+#### 4.16.8 Built-in (Prelude) Aliases
 
-Language-provided aliases (in the prelude, always available):
+Language-provided aliases live in the prelude and are always available:
 
 ```
-alias data: runtime immutable identity
-alias state: runtime mutable coordination
-alias static: compile_time immutable
-alias methods: runtime
+# Section-composition
+alias data:
+    runtime immutable identity:
+        ...
+alias state:
+    runtime mutable coordination:
+        ...
+alias static:
+    compile_time immutable:
+        ...
+alias methods:
+    runtime:
+        ...
+
+# Class-kind
+alias record Name:
+    class Name:
+        metadata: kind: record
+        ...
+alias enum Name:
+    class Name:
+        metadata: kind: enum
+        ...
+alias protocol Name:
+    class Name:
+        metadata: kind: protocol
+        ...
+alias section Name:
+    class Name:
+        metadata: kind: section
+        ...
 ```
 
-None include `expose`. Visibility is a separate axis added at the section header when needed.
+None include `expose`. Visibility is a separate axis added at the section header or declaration when needed.
 
-Users may define aliases at module level (all categories) or inside class bodies (section-composition aliases only, for local naming).
+Users may define aliases at module level (all shapes) or inside class bodies (section-composition aliases only, for local naming).
 
-#### 4.16.7 Semantics of Alias Composition
+#### 4.16.9 Semantics of Alias Composition
 
-Aliases behave exactly as their expansion. Composing an alias with additional primitives or references is equivalent to composing the expansion with those elements — no override precedence, no warnings.
+Aliases behave exactly as their expansion. Composing an alias with additional primitives, modifiers, or references is equivalent to composing the expansion with those elements — no override precedence, no warnings.
 
 ```
 data expose:    # expands to: runtime immutable identity expose
@@ -2299,7 +2384,7 @@ data expose:    # expands to: runtime immutable identity expose
 
 Users who need a variant of a common alias define their own alias rather than override at usage sites. This keeps aliases transparent shortcuts, not magical substitutions with hidden rules.
 
-#### 4.16.8 Diagnostic Quality
+#### 4.16.10 Diagnostic Quality
 
 When alias expansion produces an error, the compiler shows both the alias's expansion and the additional context, so users see exactly what went wrong:
 
@@ -2313,8 +2398,29 @@ error: contradictory composition — `immutable` and `mutable` cannot both apply
 note: `data` expands to `runtime immutable identity`
 note: composing with `mutable` produces `runtime immutable identity mutable`
 help: define a specialized alias for this pattern:
-      alias data_only: runtime immutable identity
+      alias data_only:
+          runtime immutable identity:
+              ...
 ```
+
+For class-kind aliases, expansion errors reference both the user's declaration and the alias definition:
+
+```
+error: section `state:` not permitted on `kind: record`
+  --> Point.cor:8:5
+   |
+ 8 |     state:
+   |     ^^^^^
+   |
+note: `record` expands to `class ... metadata: kind: record` (see prelude)
+note: kind: record forbids state:; use `class Point:` explicitly if per-instance mutable state is required
+```
+
+#### 4.16.11 Parser and Name Resolution
+
+Aliases participate in a name-resolution pre-pass before the final parse. The compiler gathers all alias declarations (from the prelude, imported modules, and the current source) into a resolution table, then re-parses each source with aliases in scope. This is a two-pass compilation strategy; the added cost is negligible for the incremental compiler (§4.18) since alias tables cache across compilations.
+
+Alias resolution is lexical: aliases visible at the use site are the ones considered. An alias imported from module `M` is visible in sources that import `M`. Prelude aliases are visible everywhere without import.
 
 ### 4.17 Metaprogramming Boundaries
 
@@ -2534,114 +2640,13 @@ This is consistent with the intent-not-authority premise (§1.3): visibility ann
 
 Consumers of metadata are expected to respect intent even though the compiler doesn't enforce. An LSP might hide private members from completion by default; a debugger shows them. Both read the same metadata; each uses it appropriately for its context.
 
-### 4.19 Sugar Layer for Class Kinds
+### 4.19 Class Kinds (Retired as Separate Section)
 
-Corvid provides surface-syntax sugar for the four non-default class kinds. Sugar is compile-time-only; it desugars losslessly to `class + metadata: kind:` before the rest of the compiler pipeline runs. Every construct expressible in sugar is equivalently expressible in the desugared form; users typically write the sugar.
+*As of v0.7.2, class-kind sugar is unified under the alias mechanism (§4.16.3). The four class-kind keywords (`record`, `enum`, `protocol`, `section`) are stdlib alias declarations shipped in the prelude (§4.16.8). Body-level semantics of each kind — permitted sections, generated members, raw-value handling for enum, protocol conformance — are documented in §4.10.7 (kind section classes). This subsection is retained as a redirect for readers following older cross-references.*
 
-**Sugar keywords:**
+**Retired keywords** (v0.5 → v0.6): `struct` and `enumeration`. Their v0.5 semantics are recovered by `record` and `enum` respectively. Grammar §10 does not parse them.
 
-| Keyword | Desugars to | Kind |
-|---|---|---|
-| `record Foo:` | `class Foo:` + `metadata: kind: record` | Value type |
-| `enum Foo:` | `class Foo:` + `metadata: kind: enum` | Sum type |
-| `protocol Foo:` | `class Foo:` + `metadata: kind: protocol` | Contract |
-| `section class Foo:` | `class Foo:` + `metadata: kind: section` | §4 section class (existing syntax; equivalent) |
-
-**Retired keywords.** `struct` and `enumeration` (v0.5) are retired. Their v0.5 semantics are recovered by `record` and `enum` respectively. Grammar §10 no longer parses them.
-
-**Sugar for `enum` cases and raw values:**
-
-```
-# Sugar — inline case declarations:
-enum FrameOpCode:
-    case continue_frame
-    case text_frame
-    case connection_close
-
-# Sugar — enum with raw values (compiler infers raw_type: UInt16):
-enum CloseCode:
-    case normal = 1000
-    case protocol_error = 1002
-    case encoding = 1007
-
-# Sugar — enum with associated data:
-enum WSFrame:
-    case text(String)
-    case binary(Bytes)
-    case close(code: UInt16, reason: String)
-```
-
-Desugars to:
-
-```
-class FrameOpCode:
-    metadata:
-        kind: enum
-    cases:
-        case continue_frame
-        case text_frame
-        case connection_close
-
-class CloseCode:
-    metadata:
-        kind: enum
-        raw_type: UInt16                 # inferred (smallest fit)
-    cases:
-        case normal = 1000
-        case protocol_error = 1002
-        case encoding = 1007
-    # + auto-generated raw_value(self) and class function from_raw(value:)
-
-class WSFrame:
-    metadata:
-        kind: enum
-    cases:
-        case text(String)
-        case binary(Bytes)
-        case close(code: UInt16, reason: String)
-```
-
-**Sugar for `protocol` requirements and defaults:**
-
-```
-# Sugar — per-method accepts and default implementations mixed:
-protocol OrderProcessor:
-    accepts process(Order) -> Result<Receipt, OrderError>
-        throws, async
-        requires order.is_valid
-
-    accepts cancel(OrderID) -> Bool
-        throws
-
-    function process_batch(self, orders: [Order]) -> [Result<Receipt, OrderError>]:
-        return [self.process(o) for o in orders]
-```
-
-Desugars to (`accepts` entries collected into a section, methods with bodies collected into `methods:`):
-
-```
-class OrderProcessor:
-    metadata:
-        kind: protocol
-    accepts:
-        process(Order) -> Result<Receipt, OrderError>
-            throws, async
-            requires order.is_valid
-        cancel(OrderID) -> Bool
-            throws
-    methods:
-        function process_batch(self, orders: [Order]) -> [Result<Receipt, OrderError>]:
-            return [self.process(o) for o in orders]
-```
-
-**Sugar is lossless.** Every sugared form and its desugared form produce identical class metadata, generated members, and runtime behavior. Tooling always operates on the desugared form; error messages and generated code reference the desugared form; the sugar keyword is preserved only in source-location provenance.
-
-**Explicit form always legal.** Users may write the desugared form directly for any of these kinds. This is useful when:
-- Additional `metadata:` entries beyond `kind:` are needed (e.g., `since:`, `platforms:`).
-- Explicit `metadata: raw_type:` overrides the inferred type on an enum.
-- The class body composes with a `metadata:` section for tool integration.
-
-**No user-defined sugar.** Users cannot introduce new sugar keywords. Extensions to the sugar layer require spec commitment. Rationale: sugar changes the shape of what readers see; introducing project-local sugar would fragment reading conventions across codebases. Users needing declarative shorthand for common patterns use `alias` (§4.16) instead.
+**User-defined class-kind sugar** — as of v0.7.2, users may define their own declaration aliases (§4.16.3). Earlier drafts rejected this on legibility grounds; v0.7.2's revised position treats it consistently with user-defined section/type/value/module aliases. Tooling MUST surface the alias expansion.
 
 ---
 
@@ -4398,23 +4403,31 @@ program := (module_decl)? import* top_level_item*
 
 module_decl := 'module' qualified_name
 
-top_level_item := section_usage | declaration | alias_decl
+top_level_item := section_usage | declaration | alias_decl | alias_use
 
-alias_decl := 'expose'? 'alias' identifier ':' section_name (WS section_name)*
+# Alias declarations (§4.16). One unified shape; category emerges from expansion.
+alias_decl := 'expose'? 'alias' alias_signature ':' alias_expansion
 
-declaration := class_decl | sugar_class_decl
+alias_signature := identifier                                        # section/type/value/module alias name
+                 | identifier generic_params                         # parameterized type alias
+                 | identifier identifier                              # class-kind alias: `<keyword> <Name>`
+                 | identifier identifier generic_params               # class-kind with generics
+
+# The expansion is either a single line (type/value/module) or an indented body
+# containing the target header and a `...` placeholder for the use-site body.
+alias_expansion := line_expr                                         # single-line expansion (no body)
+                 | INDENT expansion_body DEDENT                       # multi-line with body form
+
+expansion_body := ( statement | placeholder | section_usage | 'class' identifier ':' INDENT expansion_body DEDENT )*
+
+placeholder := '...'                                                 # body-content hole (§4.16.1)
+
+# Aliases are used wherever their bound position permits identifiers of the appropriate kind.
+# The compiler resolves alias use during a name-resolution pre-pass (§4.16.11).
+
+# `sugar_class_decl` retired in v0.7.2 — class-kind sugar is now alias-driven.
+declaration := class_decl
              | function_decl | constant_decl | type_decl
-
-# Sugar keywords all desugar to `class + metadata: kind:`.
-sugar_class_decl := 'expose'? sugar_kind identifier
-                    generic_params? conformance_clause? ':' INDENT
-                        class_member*
-                    DEDENT
-
-sugar_kind := 'record'          # → metadata: kind: record
-            | 'enum'            # → metadata: kind: enum
-            | 'protocol'        # → metadata: kind: protocol
-            | 'section' 'class' # → metadata: kind: section
 
 section_usage := section_header ':' INDENT section_contents DEDENT
 
@@ -4575,9 +4588,11 @@ layout_primitive := 'sizeof'   '(' type ')'
                   | 'offsetof' '(' type ',' identifier ')'
 ```
 
+**Retired in v0.7.2** (v0.7.1 → v0.7.2): `sugar_class_decl` and `sugar_kind` productions removed. Class-kind sugar (`record`, `enum`, `protocol`, `section`) is now expressed via the unified `alias_decl` mechanism (§4.16.3), with the four language-shipped sugars living in the prelude (§4.16.8). The `alias_decl` production is generalized with `alias_signature` and `alias_expansion` (with `...` placeholder) to cover section-composition, class-kind, type, value, and module aliases uniformly.
+
 **Retired in v0.7** (v0.6 → v0.7): value-position `!` (force-unwrap) and `?.` (optional chaining) productions removed. `.` is the only member-access operator. Explicit panic on nil uses `x ?? panic("...")`.
 
-**Retired from prior drafts** (v0.5 → v0.6): `struct`, `enumeration`. Sugar keywords `record`, `enum` (plus preserved `protocol`, `section class`) desugar to `class + metadata: kind:` (§4.19).
+**Retired from prior drafts** (v0.5 → v0.6): `struct`, `enumeration`. Class-kind sugar was introduced as language-committed keywords in v0.6 and re-expressed as stdlib aliases in v0.7.2 (see above).
 
 **Retired earlier** (v0.5.0 → v0.5.1): `sealed`, `dynamic`, `open`, `public`, `private`, `package` visibility. Modules no longer carry dispatch policy annotations (§5.4).
 

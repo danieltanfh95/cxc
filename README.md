@@ -1,6 +1,6 @@
 # Corvid Language Design — Handoff Bundle
 
-**Status:** Pre-implementation. Design work through v0.7.1 (Tier 1 sweep: numeric literal bases, character literals, bitwise + modulo operators, module-level `let`, `sizeof`/`alignof`/`offsetof` — all direct C inheritance, no design decisions). Prior v0.7.0 nil-messaging inversion (reference types nil-allowed by default, `T!` non-nil contract sugar, `?.` and force-unwrap retired, new `on_nil` section for userspace nil-punning) and v0.6.0 structural unification (class-as-universal, kind-via-metadata, closures-as-anonymous-classes, everything-is-expression, channel modes) preserved. No compiler exists yet.
+**Status:** Pre-implementation. Design work through v0.7.2 (sugar unification: `alias` becomes the single sugar mechanism, `...` placeholder carries body content, `record`/`enum`/`protocol`/`section` become stdlib alias declarations, user-defined declaration sugar allowed). Prior v0.7.1 Tier 1 sweep (numeric literal bases, character literals, bitwise + modulo operators, module-level `let`, `sizeof`/`alignof`/`offsetof`), v0.7.0 nil-messaging inversion (reference types nil-allowed by default, `T!` non-nil contract sugar, `?.` and force-unwrap retired, new `on_nil` section), and v0.6.0 structural unification (class-as-universal, kind-via-metadata, closures-as-anonymous-classes, everything-is-expression, channel modes) preserved. No compiler exists yet.
 
 **Working name:** Corvid.
 **Original name:** objc5 (used throughout the design conversation; renamed when positioning solidified).
