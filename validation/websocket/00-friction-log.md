@@ -139,15 +139,15 @@ Grouped by family. Individual `#W-N` references are the specific translation sit
 
 ### 2.7 Type system — nested types, tuples, aliases
 
-**Nested type declarations and dotted access** — `#W-2`, `#W-48`. `FrameCollector.Event`. Parity lifts nested enums to module scope, losing namespacing.
+**Nested type declarations and dotted access** — `#W-2`, `#W-48`. `FrameCollector.Event`. Parity lifts nested enums to module scope, losing namespacing. **Still pending.**
 
-**Positional (unnamed) associated values** — `#W-6`. `case closed(String, UInt16)`. Spec shows named form only.
+**Positional (unnamed) associated values** — `#W-6`. `case closed(String, UInt16)`. **Resolved v0.8.1 (named-only)** for the enum-associated-values portion. The tuple-shape portion — "positional aggregates as first-class values" — **dissolved by design in v0.8.3 (§3.7.1, §3.10.2)**: Corvid has no tuples and no positional destructuring. Multi-value carriers use classes with named fields (`Pair<A, B>`, `Entry<K, V>`, or domain-specific records).
 
-**Tuple types** — implied by `#W-35`. `for (key, val) in dict` — dictionary iteration returns tuples in Swift. Corvid tuples not shown.
+**Tuple types** — implied by `#W-35`. `for (key, val) in dict` — dictionary iteration returns tuples in Swift. **Dissolved by design in v0.8.3.** Under the class-based iteration model (§3.10.1) `Dictionary` conforms to `Iterable<Entry<K, V>>`; iteration yields `Entry<K, V>` objects with named `.key` / `.value` accessors. The `for (k, v) in dict` shape becomes `for entry in dict: process(key: entry.key, value: entry.value)` — named accessors on the yielded class. No language-level tuple type is needed or added.
 
-**Type aliases** — `F2` (deferred file). `public typealias Foo = Bar`.
+**Type aliases** — `F2` (deferred file). `public typealias Foo = Bar`. **Resolved v0.6+ (§4.16.9 type aliases via unified `alias` mechanism)**, with `@`-marker discipline added v0.8.2 (§4.16.16). User writes `alias @Foo = Bar`; use site `@Foo`.
 
-**Priority:** medium. Each blocks a specific idiom.
+**Priority (remaining):** medium — nested type declarations only. The tuples-and-aliases sub-family is closed.
 
 ### 2.8 Constructors and initialization
 
@@ -177,9 +177,9 @@ Grouped by family. Individual `#W-N` references are the specific translation sit
 
 ### 2.11 Iteration and control flow
 
-**Range-based for loops** — `#W-67`. `for i in 0..<n`. Every counting loop in the Framer.
+**Range-based for loops** — `#W-67`. `for i in 0..<n`. Every counting loop in the Framer. **Resolved v0.8.0** (Range as prelude alias) + **v0.8.3** (`for` as prelude alias over `.iter().for_each` on `Iterable<T>`; `Range<T>` conforms to `Iterable<T>`).
 
-**Tuple destructuring in `for`** — `#W-35`. `for (k, v) in dict`.
+**Tuple destructuring in `for`** — `#W-35`. `for (k, v) in dict`. **Dissolved by design in v0.8.3 (§3.7.1, §3.10.2)**. Corvid does not add destructuring bindings; multi-value extraction uses named accessors. `Map.iter()` yields `Iterator<Entry<K, V>>`; user writes `for entry in dict: process(key: entry.key, value: entry.value)`. Same discipline as v0.8.1 named-only enum associated values.
 
 **`else if` chains** — `#W-17`. **Resolved v0.7.1 (§2.5, §3.8.1)** — grammar already permits `else if`; keyword note reaffirms it is written as two tokens (no `elif`).
 

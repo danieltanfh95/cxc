@@ -4,6 +4,37 @@
 
 **Companion document:** `spec/spec-v0.8.md` (was `spec-v0.7.md` through v0.7.x; before that `spec-v0.6.md`; before that `corvid-spec-v0.5.md`).
 
+## Session note — v0.8.3 class-based iteration + no destructuring (2026-08-08)
+
+Session followed from friction-log audit. Ten items marked resolved across the two logs, surfacing the true pending set. Tuples were named as the next natural session target — but user framing pushed deeper: "consider that the `for` loop is also sugar? how does one actually iterate in oop? won't it be recursion? a object sending message to itself?"
+
+That question re-scoped the work entirely. Path taken:
+
+**Iteration in pure OOP is message dispatch on the collection.** Smalltalk / ObjC-lineage: `collection do: [block]` — collection controls how it walks itself, caller supplies per-element behavior. Fundamentally reducible to recursion via self-send. C-style `for` is imported convention, doesn't belong in bootstrap under Corvid's class-as-universal + universal-method-dispatch commitments.
+
+**Decisions in this session:**
+
+- **`for` retires from bootstrap; becomes prelude alias.** Expansion: `for x in y: body` → `y.iter().for_each { x -> body }`. Parses as an ordinary alias (§4.20.1). `Iterable<T>` conformance is what makes any class iterable.
+- **`Iterable<T>` and `Iterator<T>` stdlib protocols.** `iter() -> Iterator<T>` on the collection; `next() -> T` (nil-on-exhaustion, integrates with v0.7 nil-messaging) plus `for_each(f)` default impl on the iterator.
+- **`Pair<A, B>` (general) and `Entry<K, V>` (map-shaped) stdlib carriers.** Both `kind: record` with named fields. `Map.iter()` yields `Iterator<Entry<K, V>>`; user reads `entry.key` / `entry.value`. Domain-specific records (`Slice { position, length }`) preferred over generic `Pair` when a domain word applies.
+- **No destructuring bindings.** `let (a, b) = pair` explicitly not spec'd. `for (k, v) in dict` not spec'd. Multi-value extraction is always named-accessor method dispatch on the returning class. Rule extends v0.8.1's named-only enum associated values discipline uniformly across the language.
+- **Case-pattern extraction inside `switch` is the sole exception.** `case .some(value: let x):` and `case Order(id: let some_id, items: []):` are legal — pattern matching in `case` is discrimination-with-name-binding, which requires looking inside the value. Positional single-value form `case .some(let x)` also legal (no ambiguity with one associated value). Everything else uses accessors.
+- **`while` and `loop` stay bootstrap.** They're the primitives stdlib uses to implement iteration methods without infinite regress or a TCO commitment. Discipline note in §4.20.3: user-facing code should prefer `.for_each` / `.map` / `.filter`; `while` / `loop` are for stdlib and for algorithms that genuinely don't fit iterator abstractions.
+- **Tuple-family friction items dissolved.** `#W-35` (tuple destructuring in `for`), the tuple portion of `#W-6`, tuple types generally — all marked "dissolved by design" rather than "resolved by feature." No language-level tuples added.
+
+**What this closed off:**
+
+1. The tuples question. Corvid does not have tuples. This is intentional and consistent with the class-based model.
+2. Positional destructuring anywhere. Names beat positions, always.
+3. Any future proposal to add `for (k, v) in dict`-style shorthand. It contradicts the class-based iteration model.
+
+**Two philosophical points worth remembering:**
+
+1. **Structural commitments have surface-syntax consequences.** Committing to "class as universal" (§1.5) + "universal method dispatch" (§5.1) means `for` doesn't belong in bootstrap. Making that consequence explicit strengthens the design's internal coherence.
+2. **The right answer to "how do I do X?" is sometimes "you don't — you do Y instead."** Tuples felt like an obvious language feature. The class-based frame reveals: they're an obvious *feature*, not an obvious *need*. Multi-value returns with named accessors are cleaner, more consistent, and more legible. The friction was in the framing, not in Corvid's expressiveness.
+
+**User's own words on the accessor style:** "yes `for entry in dict: process(key: entry.key, value: entry.value)` is much cleaner and expected." Confirmed that the named-accessor form is the *expected* idiom, not a compromise.
+
 ## Session note — v0.8.2 alias namespace discipline + `|>` rejection (2026-08-08)
 
 Short refinement session sharpening the alias mechanism from v0.8.0. Two decisions.

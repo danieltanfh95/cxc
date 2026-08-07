@@ -1,6 +1,6 @@
 # Corvid Language Design — Handoff Bundle
 
-**Status:** Pre-implementation. Design work through v0.8.2 (alias namespace discipline: user-defined aliases require `@` prefix at declaration and use sites; prelude aliases remain unmarked; `|>` explicitly kept out of prelude on paradigm-mismatch grounds — method chaining is Corvid's native pipeline). Prior work preserved: v0.8.1 Session 3 fills (`Convertible`, `Bounded`, parameter defaults, multi-binding `if let`/`guard let`), v0.8.0 library-first sugar (bootstrap grammar + prelude aliases), v0.7.2 sugar unification, v0.7.1 Tier 1 sweep, v0.7.0 nil-messaging inversion, v0.6.0 structural unification. No compiler exists yet.
+**Status:** Pre-implementation. Design work through v0.8.3 (class-based iteration: `for` retired from bootstrap, becomes a prelude alias over `.iter().for_each` on `Iterable<T>`; `Iterable`/`Iterator`/`Pair`/`Entry` stdlib protocols; no destructuring bindings — multi-value extraction uses named accessors on the returning class; tuple family friction items dissolved by design). Prior work preserved: v0.8.2 alias namespace discipline (`@` on user aliases), v0.8.1 Session 3 fills (`Convertible`, `Bounded`, parameter defaults, multi-binding `if let`/`guard let`), v0.8.0 library-first sugar (bootstrap grammar + prelude aliases), v0.7.2 sugar unification, v0.7.1 Tier 1 sweep, v0.7.0 nil-messaging inversion, v0.6.0 structural unification. No compiler exists yet.
 
 **Working name:** Corvid.
 **Original name:** objc5 (used throughout the design conversation; renamed when positioning solidified).

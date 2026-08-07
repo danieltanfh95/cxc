@@ -1,8 +1,29 @@
-# Corvid Language Specification — v0.8.2 (Working Draft)
+# Corvid Language Specification — v0.8.3 (Working Draft)
 
-**Status:** Working draft. v0.8.2 adds a namespace discipline for user-defined aliases (`@`-prefix at declaration and use sites) and explicitly rejects `|>` (pipe) from the prelude on paradigm-mismatch grounds. No changes to the underlying sugar mechanism or the prelude's committed set. v0.8.1 numeric conversion / parameter defaults / multi-binding unwrap preserved; v0.8.0 library-first sugar model preserved; v0.7.2 sugar unification, v0.7.1 Tier 1 sweep, v0.7.0 nil-messaging inversion, and v0.6.0 structural unification all preserved.
+**Status:** Working draft. v0.8.3 commits to a class-based iteration model: `for` is retired from bootstrap and becomes a prelude alias over `.for_each` on `Iterable`; `Iterable<T>` / `Iterator<T>` / `Pair<A, B>` / `Entry<K, V>` join the stdlib protocols; no destructuring bindings — multi-value extraction always uses named accessors on the returning class. Follows from taking Corvid's class-as-universal + universal-method-dispatch commitments seriously: iteration is message dispatch, not a language primitive. Dissolves the tuple-family friction items (`#W-35` and adjacent) by design rather than by adding features. v0.8.2 alias namespace discipline preserved. v0.8.1 numeric conversion / parameter defaults / multi-binding unwrap preserved. v0.8.0 library-first sugar model preserved. v0.7.x and v0.6.0 all preserved.
 
 **Name:** `Corvid`. (Historical: named `objc5` throughout the design conversation. Renamed to Corvid when the positioning clarified as "peer of Swift for Apple-ecosystem native development" rather than "next-generation Objective-C.")
+
+**Change log from v0.8.2 → v0.8.3 (Class-based iteration + no destructuring):**
+
+Follows directly from Corvid's structural commitments: class-as-universal (§1.5), universal method dispatch (§5.1), library-first sugar (§4.20). In a class-based OOP model, iteration is a message send to the collection, not a language primitive. C-style `for` is imported convention that should sit in the prelude, not the bootstrap grammar.
+
+- **`for` becomes a prelude alias (§4.20.1).** `for <var> in <collection>: <body>` expands to `collection.iter().for_each { var -> body }`. Grammar production `for_expr` retires from §10 bootstrap. `while` and `loop` stay bootstrap — they are the primitives stdlib uses to implement iteration methods without infinite regress or a TCO commitment. Style guide: user-facing code should reach for `.for_each` / `.map` / `.filter` / `.reduce` on collections; `while` and `loop` are for stdlib and for algorithms that genuinely don't fit iterator abstractions.
+- **`Iterable<T>` / `Iterator<T>` stdlib protocols (§3.10 extension).** `Iterable<T>` requires `iter() -> Iterator<T>`. `Iterator<T>` requires `for_each(f: (T) -> Void)` and `next() -> T?` (return-nil-when-exhausted; interacts cleanly with the nil-messaging model from v0.7). Prelude ships conformances for `Array<T>`, `Set<T>`, `Map<K, V>`, `Range<T>`, and any string type via `Iterable<Char>`.
+- **`Pair<A, B>` and `Entry<K, V>` stdlib classes (§3.10 extension).** `Pair<A, B>` is the general two-value carrier with `.first` / `.second` accessors. `Entry<K, V>` is the map-iteration carrier with `.key` / `.value` accessors — semantic naming for the map-specific case. Both are `kind: record` (value types). `Map.iter()` yields `Iterator<Entry<K, V>>`.
+- **No destructuring bindings (§3.7 extension).** Corvid does not add destructuring in `let` / `if let` / `guard let` / `for` / function parameters. Multi-value extraction always uses named accessors on the returning class. The rule matches v0.8.1's named-only enum associated values — names beat positions, uniformly. `let (a, b) = pair` is not spec'd and will not be. Users write `let a = pair.first, let b = pair.second` or (more commonly) skip the intermediate binding and use `pair.first` / `pair.second` at the reference site.
+- **Tuple family friction items dissolved.** `#W-35` (tuple destructuring in `for`), the tuple-type sub-question in `#W-6`, and any request for `(A, B, C)` type syntax are marked "dissolved by design" in the friction logs — not "resolved by feature." Multi-value returns use classes (`Pair<A, B>`, `Result<T, E>`, or domain-specific types like `Position`, `Range`). Dictionary iteration yields `Entry<K, V>`.
+- **Grammar (§10).** `for_expr` production removed from bootstrap. New `for` alias production noted at §10 with a cross-reference to §4.20.1. `while_expr` and `loop_expr` remain bootstrap with a note explaining why (stdlib primitive).
+- **`Callable<(Args,), R>` remains as-is.** The tuple-shaped syntax in `(Args,) -> R` was already a synthetic parameter-list carrier, not a first-class tuple. Nothing to change; §5.6.1 note reaffirmed.
+
+**Consistency with prior decisions:**
+
+- **v0.8.1** rejected positional associated values on enum cases (named-only). v0.8.3 extends the same discipline: no positional destructuring anywhere in the language.
+- **v0.8.0** made collection literals prelude aliases over conformance protocols. v0.8.3 makes `for` a prelude alias over an iteration protocol — same shape.
+- **v0.7.0** nil-messaging inversion. `Iterator.next() -> T?` returning nil-on-exhaustion is a natural fit; the auto-lift and nil-flow-through behavior handles termination without exceptions.
+- **§1.5** runtime-as-substrate. Iteration via message dispatch matches the ObjC runtime substrate directly; C-style `for` was fighting that grain.
+
+**Downstream cleanups:** §3.7 (no-destructuring discipline note), §3.10 (Iterable/Iterator/Pair/Entry protocols added alongside ExpressibleAs*), §4.20.1 (`for` alias added to prelude contents), §4.20.3 (bootstrap-vs-prelude rationale extended to explain why `while`/`loop` stay bootstrap), §10 grammar (`for_expr` retired). Friction log entries `#W-35`, `#W-6` (positional tuple portion) marked dissolved.
 
 **Change log from v0.8.1 → v0.8.2 (Alias namespace discipline + prelude scope commit):**
 
@@ -917,6 +938,44 @@ switch color:
         return "neutral"
 ```
 
+#### 3.7.1 No Destructuring Bindings
+
+Corvid deliberately does **not** provide destructuring in binding positions. The following forms are not part of the language:
+
+```
+let (a, b) = pair                       # NOT SUPPORTED
+let {x, y} = point                      # NOT SUPPORTED
+if let (k, v) = maybe_pair: ...         # NOT SUPPORTED
+guard let (a, b, c) = triple else: ...  # NOT SUPPORTED
+for (k, v) in dict: ...                 # NOT SUPPORTED
+function summarize((x, y): Pair): ...   # NOT SUPPORTED (parameter destructuring)
+```
+
+Multi-value extraction always uses **named accessors on the returning class**:
+
+```
+let pair = compute_pair()
+process(first: pair.first, second: pair.second)
+
+for entry in dict:
+    process(key: entry.key, value: entry.value)
+```
+
+**Rationale.**
+
+1. **Names beat positions, uniformly.** v0.8.1 committed to named-only associated values on enum cases (`case closed(code: UInt16)`, not `case closed(UInt16)`). The same discipline applies here. A `Pair<A, B>` has fields `first` and `second`; those names are what the reader sees, and they're the same names at every use site.
+2. **Class shape stays authoritative.** Destructuring reifies a shape (parenthesized-two-thing) that isn't the class's shape. Under Corvid's class-as-universal model (§1.5), the shape is the class's field structure — access should go through it.
+3. **Iteration is method dispatch, not language pattern.** `for entry in dict` iterating over `Entry<K, V>` via `Iterable`-based dispatch (§3.10) is the native pattern in a class-based OOP model. Positional destructuring in the `for` binding would be C-family sugar bolted onto a message-send model that doesn't need it.
+4. **Legibility over brevity (§1.6).** The two-character save from `(k, v)` vs. `entry` and then `.key`/`.value` at use sites is not worth the readability cost of encoding class shape in punctuation.
+
+**Case patterns inside `switch` are the one exception, and by design.** Pattern matching in `case` is discrimination between shapes — it *has* to look inside the value to decide which case applies. The syntax `case .ok(value: let x):` is not general destructuring; it is case-discrimination-with-name-binding, and only inside a `switch` block. Reading:
+
+- `case .some(value: let x):` binds `x` to the wrapped value only in the branch where `.some` matched.
+- `case Order(id: let some_id, items: []):` binds `some_id` and asserts `items == []`.
+- Positional form `case .some(let x):` is legal as a **single-associated-value shorthand** — the one legal use of positional form in the language, because there's no ambiguity (single value) and it's inside case discrimination.
+
+Rule: name-based extraction inside `case` patterns is allowed (discrimination requires it). Everything else uses named-accessor method dispatch on the class.
+
 ### 3.8 Expressions and Statements
 
 Corvid commits to **everything is an expression** for control-flow constructs. `if`, `switch`, blocks, and (in a specific form) loops all produce values. This unifies control flow and expression composition — one construct, usable in statement position or expression position depending on context.
@@ -1138,6 +1197,73 @@ let buf: RingBuffer<Int> = [1, 2, 3]
 **Interop with Foundation types.** `NSArray`, `NSDictionary`, `NSSet` conform to the respective literal protocols via stdlib bindings — literal syntax works uniformly across native and imported types with no `.into(...)` conversion required at construction.
 
 **Empty literal disambiguation.** Empty `{}` is `Map.from_literal([])` by convention (§4.20.1); empty `[]` is `Array.from_literal([])`; empty set requires explicit `Set()` construction (no literal form for it — `{}` is taken by Map).
+
+#### 3.10.1 Iteration Protocols — `Iterable`, `Iterator`
+
+Iteration in Corvid is method dispatch on the collection, not a language primitive. The `for` control-flow form is a prelude alias (§4.20.1) that expands to `.iter().for_each { … }` on any type conforming to `Iterable<T>`. Corvid ships two protocols:
+
+```
+protocol Iterable<T>:
+    accepts iter() -> Iterator<T>
+
+protocol Iterator<T>:
+    accepts next() -> T                            # returns nil when exhausted (nil-messaging §3.6.1)
+    accepts for_each(f: (T) -> Void) -> Void       # convenience; default impl uses next()
+```
+
+**Nil-on-exhaustion.** `next() -> T` returns nil when the iterator is exhausted. Under Corvid's nil-messaging model (v0.7.0, §3.6.1), the return type auto-lifts for reference types; for value types, `next() -> T?` is the sugar-desugared form. Callers writing manual loops use `if let x = iter.next(): …` (v0.8.1 multi-binding form works too).
+
+**Default `for_each`.** The `Iterator<T>` protocol ships a default implementation of `for_each` that loops on `next()`. Conformers may override for performance (SIMD, contiguous storage, etc.).
+
+**Prelude conformances.** The prelude ships `Iterable` conformance for:
+
+- `Array<T>` yielding `Iterator<T>`
+- `Set<T>` yielding `Iterator<T>` (order unspecified)
+- `Map<K, V>` yielding `Iterator<Entry<K, V>>` — see below
+- `Range<T>` yielding `Iterator<T>`
+- `String` yielding `Iterator<Char>`
+
+Any user class conforming to `Iterable<T>` accepts the `for` alias uniformly.
+
+#### 3.10.2 Multi-Value Carriers — `Pair`, `Entry`
+
+Corvid has no tuples and no destructuring (§3.7.1). Multi-value carriers are ordinary classes with named fields. The prelude ships two:
+
+```
+record Pair<A, B>:
+    data:
+        first: A
+        second: B
+
+record Entry<K, V>:
+    data:
+        key: K
+        value: V
+```
+
+Both are `kind: record` — value types, copy-on-assign, structural equality (§4.10.7).
+
+**When to use which.**
+
+- `Pair<A, B>` — general-purpose "two things belonging together" where the semantics is symmetric (coordinates, zip results, before/after snapshots). Fields are `first` / `second` because there is no other meaningful name.
+- `Entry<K, V>` — map-shaped "keyed value" where the semantics is asymmetric. Fields are `key` / `value` because those names carry information at the read site. `Map.iter()` yields `Iterator<Entry<K, V>>`.
+
+**Domain-specific carriers are preferred over generic ones.** If a function returns "a position and a length," it should return a `record Slice { data: position: Int, length: Int }`, not a `Pair<Int, Int>`. `Pair` is for cases where no better name exists; when a domain word applies, use the domain word. Same rule applies to `Entry` — a purpose-built record with domain field names beats a generic `Entry`.
+
+**Interaction with `for`.**
+
+```
+for entry in dict:
+    process(key: entry.key, value: entry.value)
+
+for pair in coordinate_pairs:
+    plot(x: pair.first, y: pair.second)
+
+for slice in slices:
+    handle(position: slice.position, length: slice.length)
+```
+
+All three forms use the same shape: iterate, receive an object per step, access fields by name. No positional destructuring; no `(k, v)` binding syntax; no language-level tuple type.
 
 ### 3.11 Numeric Conversion and Bounded Types
 
@@ -3310,6 +3436,32 @@ alias ${<expr>} in string_interpolation_position:
     String.interpolate_expr(expr)
 ```
 
+**Control-flow alias (`for`):**
+
+```
+alias for <var> in <collection>: in expression_position:
+    collection.iter().for_each { var -> ... }
+```
+
+`for` is not bootstrap grammar — it is a prelude alias that expands to iteration-method dispatch on any type conforming to `Iterable<T>` (§3.10.1). The `...` body-placeholder rule (§4.16.2) captures the loop body; the closure passed to `for_each` receives one element per iteration and executes the body with `var` bound to that element. Users write:
+
+```
+for entry in dict:
+    process(key: entry.key, value: entry.value)
+```
+
+Which expands to:
+
+```
+dict.iter().for_each { entry ->
+    process(key: entry.key, value: entry.value)
+}
+```
+
+No language-level `for` production exists. `Iterable<T>` conformance is what makes a class iterable — collections, ranges, strings, and any user class can conform.
+
+**Why `while` and `loop` remain bootstrap.** `while` and `loop` are language primitives, not prelude aliases. They stay in bootstrap because stdlib needs a primitive control-flow loop to *implement* iteration methods (`.for_each`, `.map`, `.filter`) without either infinite regress or a Tail Call Optimization commitment. `while cond: body` and `loop: body` are the low-level tools; user-facing code should prefer method dispatch on collections. See §4.20.3 for the discipline note.
+
 #### 4.20.2 Precedence Value Scheme
 
 Precedence integers used across the prelude follow the C99 precedence order, mapped to values 1-13:
@@ -3344,6 +3496,11 @@ Constraints on the prelude:
 5. **Minimal by design.** Aliases are added to the prelude only when their utility is universal across Corvid codebases AND when there is no cleaner way to express the same construct in Corvid's paradigm. Domain-specific sugar belongs in libraries (as `@`-marked user aliases), not the prelude.
 6. **Paradigm-mismatch exclusions.** Some constructs common in adjacent languages are deliberately kept out of the prelude because they do not fit Corvid's class-based, universally-dispatched, openly-extensible model:
    - **`|>` (pipe operator).** Pipe threads values through free functions — a shape native to FP languages where data and behavior are separate. Corvid has universal method dispatch and cheap extensions/sections; the native pipeline shape is method chaining (`x.f().g().h()`), which is left-to-right, top-down, and integrated with tooling (autocomplete on `.`, jump-to-definition). Shipping `|>` would create two idioms for the same operation and pull users toward free functions instead of extension methods. Projects that genuinely want pipe can declare `alias <lhs> @|> <rhs> ...` locally; the `@` marker makes the project-local nature visible at every use site.
+
+7. **Iteration boundary — `for` is prelude, `while` and `loop` are bootstrap.** `for x in y: body` is a prelude alias (§4.20.1) that expands to `y.iter().for_each { x -> body }` on any `Iterable<T>` conformer (§3.10.1). This is the class-based OOP model applied to iteration: iteration is a message send to the collection, not a language primitive. `while` and `loop` stay bootstrap because stdlib needs a primitive control-flow loop to *implement* iteration methods without infinite regress or requiring a Tail Call Optimization commitment. The discipline:
+   - **User-facing code prefers method dispatch.** `.for_each`, `.map`, `.filter`, `.reduce`, `.find`, `.any`, `.all`. `for` sugar is legal and recommended for the common "run body per element" case because it reads cleanly; the underlying dispatch is the same.
+   - **`while` and `loop` are the tools stdlib uses.** They are legal in user code too, but reaching for them signals either "I'm writing an iterator primitive" or "this algorithm genuinely doesn't fit `.for_each` shape." Both are legitimate; both are rare.
+   - **No `.for_each` for `while`.** There is no `alias while` — condition-based looping doesn't naturally correspond to a method on a collection (there's no collection). If needed, a project can define `alias @while_true <cond>: <body>` locally expanding to a closure-based helper.
 
 #### 4.20.4 User Extensions
 
@@ -5289,9 +5446,11 @@ expr := ... | if_expr | switch_expr | block_expr | while_expr | for_expr | loop_
 if_expr := 'if' expr ':' expr_body ('else if' expr ':' expr_body)* ('else' ':' expr_body)?
 switch_expr := 'switch' expr ':' INDENT case_arm+ DEDENT
 block_expr := 'do' ':' INDENT statement* DEDENT
-while_expr := 'while' expr ':' expr_body                # returns Bool
-for_expr := 'for' identifier 'in' expr ':' expr_body     # returns Bool
-loop_expr := 'loop' ':' INDENT statement* DEDENT         # returns type of `break value`
+while_expr := 'while' expr ':' expr_body                # returns Bool; bootstrap primitive (§4.20.3)
+loop_expr := 'loop' ':' INDENT statement* DEDENT         # returns type of `break value`; bootstrap primitive (§4.20.3)
+
+# `for_expr` retired from bootstrap in v0.8.3. `for x in y: body` is a prelude alias
+# expanding to `y.iter().for_each { x -> body }` on any Iterable<T> conformer (§3.10.1, §4.20.1).
 
 # Scoped nil-unwrap (§3.6.1). Multi-binding form: all bindings must succeed.
 let_binding    := 'let' identifier '=' expr
@@ -5473,6 +5632,8 @@ user_alias_decl     := '@' identifier identifier ':' INDENT class_member* DEDENT
 # String-interpolation alias use — recognized by the string scanner when it encounters '@'
 # inside a string_literal_raw. Prelude interpolation uses '$'; user interpolation uses '@'.
 ```
+
+**Retired in v0.8.3** (v0.8.2 → v0.8.3): `for_expr` production removed from bootstrap grammar. `for x in y: body` is now a prelude alias (§4.20.1) expanding to `y.iter().for_each { x -> body }` on any `Iterable<T>` conformer (§3.10.1). `while_expr` and `loop_expr` remain bootstrap — they are the primitives stdlib uses to implement iteration methods (§4.20.3). No destructuring bindings added (§3.7.1); multi-value carriers use named-accessor classes `Pair<A, B>` / `Entry<K, V>` from the prelude (§3.10.2).
 
 **Added in v0.8.2** (v0.8.1 → v0.8.2): `@` reserved as alias-trigger sigil in bootstrap. `user_signature` and `alias_use` productions added; user-defined aliases require `@` in declaration and use (§4.16.16). Prelude aliases remain unmarked and reserve the unmarked forms. `|>` explicitly rejected from the prelude on paradigm-mismatch grounds (§4.20.3); projects wanting pipe declare it as `alias <lhs> @|> <rhs> ...` locally.
 
