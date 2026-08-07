@@ -111,13 +111,13 @@ Grouped by family. Individual `#W-N` references are the specific translation sit
 
 ### 2.4 Collection literal and generic syntax
 
-**Dictionary/Map type syntax** — `#W-24`. `[String: String]` in Swift; Corvid spec commits to `Bytes` and array types but shows no map primitive.
+**Dictionary/Map type syntax** — `#W-24`. **Resolved v0.8.0 (§4.20.1 prelude type-expression aliases)** — `{K: V}` type sugar is a prelude alias expanding to `Map<K, V>`.
 
-**Array literal** — `#W-27`. `["wss", "https"]` — spec shows `[Byte].filled(size: n)` class-function form; a bracket literal syntax is not explicitly spec'd.
+**Array literal** — `#W-27`. **Resolved v0.8.0 (§4.20.1 prelude literal alias + §3.10 conformance protocol)** — `[1, 2, 3]` expands via prelude alias to `Array.from_literal(items)`; any type conforming to `ExpressibleAsArrayLiteral` accepts the syntax.
 
-**Range literals and ranges as values** — `#W-37(a)`, `#W-67`. `0..<16` (half-open), `0...7` (closed). Not shown anywhere in the spec. Range-based `for` loops (`for i in 0..<n`) similarly unspecified.
+**Range literals and ranges as values** — `#W-37(a)`, `#W-67`. **Resolved v0.8.0 (§4.20.1 prelude infix aliases)** — `..<` (half-open) and `...` (closed) shipped as prelude aliases with precedence 5. Range-based `for` works uniformly because ranges are first-class values.
 
-**Priority:** high. Impossible to write iteration or collection construction cleanly without these.
+**Priority (remaining):** none — Session 2 fully resolved this family.
 
 ### 2.5 Numeric type conversion
 
@@ -159,15 +159,15 @@ Grouped by family. Individual `#W-N` references are the specific translation sit
 
 ### 2.9 Strings
 
-**Interpolation syntax** — `#W-55`, `#W-36`, `#W-30`. Simple `$identifier` visible in spec examples; expression form (`${expr}`, `\(expr)`, `{expr}`) not committed. Parity uses `${...}` per Ink convention but this is a working guess.
+**Interpolation syntax** — `#W-55`, `#W-36`, `#W-30` (interpolation part). **Resolved v0.8.0 (§4.20.1 prelude string interpolation alias)** — `${expr}` committed as prelude alias at string_interpolation_position. Simple `$identifier` is language-committed shorthand for `${identifier}`.
 
-**String position API** — `#W-30`. `index_before`, `end_index`, `remove(at:)` — already flagged as Ink priority #5. Recurred here.
+**String position API** — `#W-30` (position API part). `index_before`, `end_index`, `remove(at:)` — stdlib scope; still pending.
 
 **String from bytes** — `#W-14`. `String(data: bytes, encoding: .utf8)` — Foundation constructor with labels, returns optional. Parity assumes `String.try_from(bytes:encoding:)`.
 
 **Character-literal-to-byte** — `F6` (deferred). `UInt8(ascii: "\r")` — byte-array constants for delimiter recognition.
 
-**Priority:** medium — mostly one-per-family fixes, but the interpolation gap is load-bearing (see Ink log).
+**Priority (remaining):** low — interpolation resolved. String position API still stdlib work.
 
 ### 2.10 Static / class-level members
 
@@ -274,13 +274,13 @@ Compared to Ink:
 
 1. **Bitwise operators + compound-assignment** (`#W-54`, `#W-64`). **Resolved v0.7.1** (§3.9).
 2. **Enum raw values** (`#W-45`). **Resolved v0.6.0** (§3.3 enum sugar).
-3. **Range literals + range-based `for`** (`#W-37(a)`, `#W-67`). Blocks all counting code.
-4. **`??` nil-coalescing** (`#W-21`). **Resolved v0.7.0** (§3.6.1).
+3. **Range literals + range-based `for`** (`#W-37(a)`, `#W-67`). **Resolved v0.8.0** (§4.20.1 prelude infix aliases).
+4. **`??` nil-coalescing** (`#W-21`). **Resolved v0.7.0** (§3.6.1); alias declaration formalized in v0.8.0 (§4.20).
 5. **`guard let` (single + multi)** (`#W-29`). **Partially resolved v0.7.0** (§3.6.1) — single-binding spec'd; multi-binding still gap.
-6. **Dictionary/map type** (`#W-24`). Blocks header/config code.
+6. **Dictionary/map type** (`#W-24`). **Resolved v0.8.0** (§4.20.1 prelude type-expression alias `{K: V}`).
 7. **Numeric type conversion** (`#W-56`). Blocks any code with mixed-width integers.
-8. **String interpolation with expressions** (recurring across Ink and here). Already Ink priority #1.
-9. **Array literal syntax** (`#W-27`). Universal.
+8. **String interpolation with expressions** (recurring across Ink and here). **Resolved v0.8.0** (§4.20.1 prelude alias `${expr}`).
+9. **Array literal syntax** (`#W-27`). **Resolved v0.8.0** (§4.20.1 prelude literal alias + §3.10 conformance protocol).
 10. **Numeric literal bases + `%` + `else if`** (`#W-54`, `#W-64`, `#W-68`, `#W-17`). **Resolved v0.7.1** (§2.7, §3.9).
 
 **Design decisions worth revisiting:**
@@ -304,7 +304,7 @@ Comparing top gaps from Ink log to this pass — items appearing in both are the
 
 | Gap | Ink item | Websocket item | Status |
 |---|---|---|---|
-| String interpolation | #22 | #W-55, #W-36, #W-30 | pending |
+| String interpolation | #22 | #W-55, #W-36, #W-30 | **resolved v0.8.0** — `${expr}` prelude alias |
 | `try` semantics | #17 | (recurred but not counted) | pending |
 | `guard let` / `if let` | #9 (if let) | #W-29, #W-40, #W-51 | resolved v0.7 (single-binding) |
 | Argument labels | #21 | recurring | resolved v0.5 |

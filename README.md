@@ -1,6 +1,6 @@
 # Corvid Language Design — Handoff Bundle
 
-**Status:** Pre-implementation. Design work through v0.7.2 (sugar unification: `alias` becomes the single sugar mechanism, `...` placeholder carries body content, `record`/`enum`/`protocol`/`section` become stdlib alias declarations, user-defined declaration sugar allowed). Prior v0.7.1 Tier 1 sweep (numeric literal bases, character literals, bitwise + modulo operators, module-level `let`, `sizeof`/`alignof`/`offsetof`), v0.7.0 nil-messaging inversion (reference types nil-allowed by default, `T!` non-nil contract sugar, `?.` and force-unwrap retired, new `on_nil` section), and v0.6.0 structural unification (class-as-universal, kind-via-metadata, closures-as-anonymous-classes, everything-is-expression, channel modes) preserved. No compiler exists yet.
+**Status:** Pre-implementation. Design work through v0.8.0 (library-first sugar: compiler ships a minimal bootstrap grammar; the prelude declares standard surface syntax as alias declarations — type-expression sugars, collection literals, range operators, string interpolation, bitwise operators, class-kind keywords all become inspectable stdlib aliases; user-defined syntax at all supported positions via pattern-matching alias signatures with precedence/associativity/guards). Prior work preserved: v0.7.2 sugar unification, v0.7.1 Tier 1 sweep (literals, operators, module-level `let`, sizeof/alignof/offsetof), v0.7.0 nil-messaging inversion, v0.6.0 structural unification. No compiler exists yet.
 
 **Working name:** Corvid.
 **Original name:** objc5 (used throughout the design conversation; renamed when positioning solidified).
@@ -21,7 +21,7 @@ corvid/
 │
 ├── spec/
 │   ├── charter.md                   (§1.1-§1.9 as standalone — read first)
-│   └── spec-v0.7.md                 (full specification, ~4600 lines)
+│   └── spec-v0.8.md                 (full specification, ~5100 lines)
 │
 ├── positioning/
 │   ├── overview.md                  (positioning statement — read second)
@@ -63,7 +63,7 @@ You now know the design premises and know what's been empirically tested.
 **Half day:**
 5. `positioning/game-of-life.md` (30 min).
 6. `positioning/ecosystem.md` (30 min).
-7. `spec/spec-v0.7.md`, sections you care about most. Different sections for different concerns:
+7. `spec/spec-v0.8.md`, sections you care about most. Different sections for different concerns:
    - §1: design premises (already read via charter).
    - §2: lexical structure.
    - §3: type system, contracts, effects.

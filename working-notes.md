@@ -4,6 +4,31 @@
 
 **Companion document:** `spec/spec-v0.7.md` (was `spec-v0.6.md` through v0.6.0; before that `corvid-spec-v0.5.md`).
 
+## Session note — v0.8.0 library-first sugar (Level 2 aliases, 2026-08-08)
+
+Following v0.7.2's unification of class-kind sugar under aliases, user asked: "if `alias` is the sugar system, what if we extend aliases to handle expression-position patterns like `[...]`?" Working through it — this session ("Session 2" originally scoped as collection literals + ranges + interpolation + random) revealed that the aliases-as-sugar-system move had a natural extension into Level 2: pattern-matching alias signatures covering delimited patterns, infix operators, string interpolation.
+
+User pushed for the full commitment. Committed to Level 2 with the framing "sugar is a library" — the compiler ships a minimal bootstrap grammar; the prelude declares standard surface syntax as alias declarations. Version bumped to v0.8.0 (mechanism change, not additive).
+
+**Design decisions in this session:**
+
+- **Bootstrap/prelude split.** Compiler-committed: identifiers, base literals, arithmetic/comparison/logical operators, base expression grammar, control flow keywords, section syntax, class/function/module declarations, the alias mechanism itself. Prelude: type-expression sugars (`T?`, `T!`, `[T]`, etc.), collection literals, range operators (`..<`, `...`), string interpolation (`${expr}`), bitwise operators, nil-coalescing (`??`), class-kind aliases (moved from v0.7.2 hardcoded), section-composition aliases (moved from v0.6.0 hardcoded).
+- **Prelude is spec-committed and part of language distribution.** Any change to a prelude alias is a language-level breaking change. Users cannot override or shadow prelude aliases; standard surface syntax is stable across projects.
+- **Alias signature pattern language.** Delimited patterns (`[<items>]`, `{<pairs>}`, `{<items>}`), infix/prefix/suffix patterns with precedence and associativity, string-embedded patterns (`${<expr>}`), position markers (five categories), guards (`where <var> is <TypePattern>`).
+- **Two-pass compilation with alias resolution.** Pass 1 gathers aliases with bootstrap grammar; Pass 2 re-parses with extended grammar. Aliases cache across incremental compilations.
+- **Precedence value scheme.** Unified 1-14 range for prelude+bootstrap operators (following C99 order). User-defined operators MUST use precedence 100+.
+- **Grammar-extensibility discipline documented in §4.17.** Bootstrap is fixed; prelude is spec-committed; user aliases are lexically scoped; tooling MUST expose expansions; style discipline is cultural. This is the Clojure/Racket tradeoff applied consistently with §1.2 (intent-not-authority) and §1.5 (runtime-as-substrate).
+- **Collection literal conformance protocol.** New §3.10 — `ExpressibleAsArrayLiteral`, `ExpressibleAsMapLiteral`, `ExpressibleAsSetLiteral`. Prelude literal aliases lower to protocol-dispatched constructors; any conforming type (native or Foundation-imported) accepts the same literal syntax.
+- **Session 2 items land as prelude declarations from the start.** No language-committed grammar for collection literals, ranges, or interpolation — they're prelude aliases immediately.
+- **Random deferred.** Was in original Session 2 scope but it's a stdlib method (`UInt8.random(in: ...)`), not sugar. Not affected by this refactor; can be added as part of a later stdlib session.
+
+**Two things worth remembering:**
+
+- **Corvid the compiler vs Corvid the language.** The compiler is smaller than "the language" — the language distribution is compiler + prelude. Without the prelude, source that looks like ordinary Corvid wouldn't parse. This distinction is real and load-bearing.
+- **The style-discipline burden.** The language enables user-defined syntax at all supported positions. Culture and code review are the guardrails against DSL abuse. Style guides SHOULD recommend restraint (domain-specific literals for domain projects; general libraries should not introduce novel syntax).
+
+Resolved friction points: `#W-24` (Map type), `#W-27` (Array literal), `#W-30`/`#W-36`/`#W-55` (string interpolation), `#W-37(a)` (range half-open), `#W-67` (range-based for). Ink cross-exercise gap #22 (string interpolation) resolved as prelude alias.
+
 ## Session note — v0.7.2 sugar unification (2026-08-07)
 
 Before starting Session 2 (collection literals + type aliases + random), a drill-down on the alias system surfaced that Corvid had two parallel sugar mechanisms: `alias` (for section-composition/type/value/module names) and §4.19's class-kind sugar layer (for `record`/`enum`/`protocol`/`section` declaration keywords). User asked: "can we go one level higher and say `alias` is the sugar system?"

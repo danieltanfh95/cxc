@@ -1,8 +1,68 @@
-# Corvid Language Specification — v0.7.2 (Working Draft)
+# Corvid Language Specification — v0.8.0 (Working Draft)
 
-**Status:** Working draft. v0.7.2 unifies the language's sugar systems: class-kind keywords (`record`, `enum`, `protocol`, `section`) move out of a separate sugar layer and become stdlib alias declarations, sitting alongside section-composition, type, value, and module aliases under a single `alias` mechanism. A `...` placeholder in alias expansions carries body content through from the use site. v0.7.1 additions (numeric/char literals, bitwise + modulo operators, module-level `let`, `sizeof`/`alignof`/`offsetof`), v0.7.0 nil-messaging inversion, and v0.6.0 structural unification all preserved.
+**Status:** Working draft. v0.8.0 commits Corvid to a **library-first sugar model**: the compiler ships a minimal bootstrap grammar sufficient to parse the alias mechanism, and every user-facing sugar (type-expression forms, collection literals, range operators, string interpolation, bitwise operators, class-kind keywords, section-composition names) is a stdlib alias declaration in the **prelude**. The prelude is spec-committed and ships with the language distribution. Users can inspect all standard sugar as alias declarations and can define their own via the same mechanism.
 
 **Name:** `Corvid`. (Historical: named `objc5` throughout the design conversation. Renamed to Corvid when the positioning clarified as "peer of Swift for Apple-ecosystem native development" rather than "next-generation Objective-C.")
+
+**Change log from v0.7.2 → v0.8.0 (Level 2 aliases: pattern-matching + prelude + Session 2 items):**
+
+Aliases become Corvid's syntactic metaprogramming primitive — the mechanism by which surface syntax is defined. Class-kind sugars (v0.7.2) were the first step; v0.8.0 completes the move by extending aliases to expression-position patterns (literals, infix operators, string interpolation) and retiring the language-committed grammar rules for the standard sugars.
+
+**Mechanism (§4.16 rewrite, §4.17 boundaries update, new §4.20 The Prelude):**
+
+- **Pattern-matching alias signatures.** An alias signature can be an identifier, an identifier + body-capturing form, a delimited pattern (`[<items>]`, `{<pairs>}`, `{<items>}`), an infix operator pattern (`<lhs> op <rhs>`), a suffix or prefix operator pattern, or a string-embedded pattern (`${<expr>}`). Match variables in `<>` bind to matched content.
+- **Position markers.** `in expression_position`, `in type_position`, `in section_header_position`, `in declaration_position`, `in string_interpolation_position` — declare where the alias applies. Inferred where unambiguous; explicit when the pattern could match multiple positions.
+- **Precedence and associativity declarations.** Infix, prefix, and suffix aliases carry `precedence: N` and `associativity: left|right|none`. Precedence integers; higher binds tighter.
+- **Content guards.** `where <var> is <TypePattern>` narrows a match — e.g., disambiguating `{<items>}` (Set) from `{<pairs>}` (Map).
+- **Bootstrap set formalized.** The compiler ships a minimal grammar sufficient to parse the prelude. Everything user-facing that CAN be a stdlib alias, IS.
+
+**The prelude (new §4.20):**
+
+Spec-committed stdlib aliases shipped with the language distribution. Users get these without imports.
+
+- **Section-composition** (from v0.6.0, unchanged shape): `data:`, `state:`, `methods:`, `static:`
+- **Class-kind** (from v0.7.2, unchanged shape): `record`, `enum`, `protocol`, `section`
+- **Type-expression aliases** (v0.8.0 — retired from language grammar, now prelude): `T?` (value-type Optional sum), `T!` (reference-type non-nil contract), `[T]` (Array), `{K:V}` (Map), `{T}` (Set), `(A,B) -> C` (Callable)
+- **Expression-position literal aliases** (v0.8.0 new, from Session 2): `[e1, e2, ...]` (Array literal), `{k1:v1, ...}` (Map literal), `{e1, e2, ...}` (Set literal)
+- **Range operator aliases** (v0.8.0 new, from Session 2): `<lhs> ..< <rhs>` (half-open Range), `<lhs> ... <rhs>` (closed Range)
+- **String interpolation alias** (v0.8.0 new, from Session 2): `${<expr>}`
+- **Bitwise operator aliases** (v0.8.0 — retired from bootstrap, now prelude): `&`, `|`, `^`, `~`, `<<`, `>>` with C99 precedence
+- **Nil-coalescing alias** (v0.8.0 — retired from bootstrap): `??`
+
+**What remains bootstrap (compiler-committed, cannot be user-overridden):**
+
+- Lexical: identifiers, base integer/float/bool/nil literals, base string literals (no interpolation), comments, indentation-based layout
+- Base expression grammar: identifier reference, call `f(...)`, member access `x.y`, subscript `x[i]`, arithmetic (`+`, `-`, `*`, `/`, `%`), comparison (`==`, `!=`, `<`, `<=`, `>`, `>=`), logical (`and`, `or`, `not`), assignment (`=` and compound forms per bootstrap operators)
+- Base type grammar: identifier + generic args
+- Control flow keywords + structure: `if`, `switch`, `for`, `while`, `loop`, `break`, `continue`, `return`
+- Section syntax: `label:` followed by indented block; `metadata:` section
+- Class/function/module declaration syntax
+- The `alias` mechanism itself: signature pattern language, expansion body, `...` placeholder, precedence/associativity/position markers, guards
+
+**Session 2 items land as prelude aliases from the start:**
+
+Collection literals, range operators, and string interpolation are declared in the prelude as alias declarations, not as language-committed grammar. Users can inspect them, and the design decisions from Session 2 (conformance protocol, Swift-shape ranges, `${expr}` delimiter) are encoded in the prelude alias definitions.
+
+- **Collection literal conformance protocol.** Prelude ships `ExpressibleAsArrayLiteral`, `ExpressibleAsMapLiteral`, `ExpressibleAsSetLiteral` protocols. The literal aliases lower to `T.from_literal(items)` where `T` is inferred from context; user types conforming to the protocols accept the literal syntax.
+- **Ranges: Swift shape.** `..<` half-open, `...` closed. `Range<T>` type provided by prelude.
+- **String interpolation: `${expr}`.** Chosen for consistency with `quote:` block splice points (§4) and for unambiguous escape semantics.
+
+**Retired from prior drafts:**
+
+- Language-committed type-expression grammar (§3.2 in v0.7): `T?`, `T!`, `[T]`, `{K:V}`, `{T}`, `(A,B) -> C` as parser rules. Now prelude aliases.
+- Bitwise operators as bootstrap grammar (§3.9 in v0.7.1): `&`, `|`, `^`, `~`, `<<`, `>>` as compiler-hardcoded operator productions. Now prelude aliases with precedence declarations.
+- Nil-coalescing `??` as bootstrap: now prelude alias.
+- Any remaining "spec-committed sugar" mentions outside the prelude/bootstrap split.
+
+**Rationale.**
+
+Corvid's design philosophy — libraries not language features (Clojure-influenced), runtime as substrate not ceiling (§1.5), one mechanism where possible (§4.17) — pushes toward user-extensible syntax. v0.7.2 unified declaration sugar under aliases; v0.8.0 completes the move for expression-position sugar. The costs (parser coupling to alias resolution, legibility fragmentation risk from user-defined literals, bootstrap discipline) are tractable: parser coupling handled by two-pass compilation with alias caching (§4.16.11), legibility addressed by mandatory tooling support for expansion visualization, bootstrap discipline documented in §4.17.
+
+The philosophical alignment justifies the cost. Users writing domain-specific projects can add domain-specific literal syntax (regex, SQL, quaternions, vector notation) via aliases without waiting for a language-committee decision. Stdlib sugar becomes inspectable rather than compiler-hardcoded. The compiler is smaller; the language distribution (compiler + prelude) provides the standard surface syntax users expect.
+
+**Downstream cleanups.**
+
+§2.7 (Literals) — base literals bootstrap, interpolation prelude. §3.2 (Composite Types) — type-expression forms redirected to prelude. §3.6.1 (Nullability) — semantics unchanged; syntactic `T?`/`T!` become prelude aliases. §3.9 (Operators) — arithmetic/comparison/logical bootstrap, bitwise/ranges/nil-coalesce prelude. §4.16 (Aliases) — rewritten with pattern language, position markers, precedence, guards. §4.17 (Metaprogramming Boundaries) — grammar-extension discipline. §4.20 new (The Prelude). §10 (Grammar) — bootstrap grammar only; note that surface syntax is extended by prelude and user aliases.
 
 **Change log from v0.7.1 → v0.7.2 (sugar unification under aliases):**
 
@@ -352,6 +412,10 @@ The syntactic form `label:` followed by an indented block is reserved language-w
 
 ### 2.7 Literals
 
+Literals split into **bootstrap literals** (recognized by the base lexer) and **prelude literals** (defined by prelude alias declarations, §4.20).
+
+#### 2.7.1 Bootstrap Literals
+
 **Numeric literals.** Corvid inherits C's numeric literal shapes:
 
 - **Decimal:** `42`, `-17`, `1_000_000` (underscore separators legal within a literal for readability).
@@ -368,11 +432,24 @@ Numeric literals have a target-directed type: the literal's type is inferred fro
 - `'\\'` backslash, `'\''` apostrophe, `'\"'` quote
 - `'\0'` NUL, `'\x1F'` hex byte, `'\u{1F600}'` Unicode scalar
 
-**String literals.** `"..."` produces `String` (UTF-8, immutable). Escape sequences match character literals. Interpolation syntax is a spec gap tracked separately.
+**String literals.** `"..."` produces `String` (UTF-8, immutable). Base escape sequences match character literals. String interpolation is a prelude alias (§2.7.2, §4.20.1) — the base lexer produces a raw string; the extended parse resolves interpolation via prelude.
 
 **Boolean literals.** `true`, `false`.
 
 **Nil literal.** `nil`. Legal wherever nil-allowed context is expected (reference types §3.6.1, value-type Optionals §3.2, or the value-type-Optional `.none` explicit form).
+
+#### 2.7.2 Prelude Literals
+
+The following literal forms are defined by prelude alias declarations (§4.20.1):
+
+- **Array literal:** `[1, 2, 3]` — expands via `alias [<items>] in expression_position` to `Array.from_literal(items)`.
+- **Map literal:** `{"key": value, ...}` — expands via `alias {<pairs>}` guarded on key-value pair content.
+- **Set literal:** `{1, 2, 3}` — expands via `alias {<items>}` guarded on plain expression content.
+- **Empty `{}`:** disambiguated to empty Map (§4.20.1 convention).
+- **Range literals:** `0..<n` (half-open), `0...n` (closed) — expand to `Range.half_open` / `Range.closed`.
+- **String interpolation:** `"hello ${name}"` — the `${expr}` form inside string literals is a prelude alias at `string_interpolation_position`. Simple identifier form `$name` is language-committed as a shorthand for `${name}`.
+
+Because these are prelude aliases, they are inspectable — users can look up what any literal shape expands to. Users may also define their own literal-producing aliases for domain-specific types (§4.20.4).
 
 ---
 
@@ -424,14 +501,30 @@ match x:
 **Idiomatic use is rare.** In pure Corvid code, contracts and specific types are preferred. `Any` should appear primarily at interop boundaries or in genuinely dynamic code paths. The compiler warns when `Any` is used as a field or return type in public APIs, since callers get no static guidance.
 
 ### 3.2 Composite Types
-- Tuples: `(Int, String)`, `(x: Int, y: Int)`
-- Arrays: `[T]`
-- Dictionaries: `{K: V}`
-- Sets: `{T}`
-- Optionals (value-type only): `T?` sugar for `Optional<T>` sum type. Legal when `T` is a value type (`kind: record`, `kind: enum`, primitive). Rejected for reference-typed `T` (reference types are nil-allowed by default — see §3.6.1).
-- Non-nil contract (reference-type only): `T!` sugar for `T` with `invariant: value != nil`. Legal when `T` is a reference type. Rejected for value-typed `T` (trivially true — warning).
-- Result: `Result<T, E>` (built-in sum type)
-- Function types: `(A, B) -> C`, `(A, B) async throws E -> C`
+
+Corvid's composite types are stdlib types. The **surface syntax** for them is prelude alias declarations (§4.20) — the language grammar itself only knows `identifier<generic_args>` for types; every richer type-expression shape is an alias expansion.
+
+| Surface syntax | Expands to (prelude alias) | Position |
+|---|---|---|
+| `(A, B)`, `(x: Int, y: Int)` | `Tuple<(A, B)>` / named tuple | type |
+| `[T]` | `Array<T>` | type |
+| `{K: V}` | `Map<K, V>` | type |
+| `{T}` | `Set<T>` | type |
+| `(A, B) -> C` | `Callable<(A, B), C>` | type |
+| `T?` (value-type T only) | `Optional<T>` sum type | type (suffix) |
+| `T!` (reference-type T only) | `T with invariant: value != nil` | type (suffix) |
+| `Result<T, E>` | Built-in sum type — no sugar alias, plain identifier | type |
+
+The prelude declarations for these are in §4.20.1 ("Type-expression aliases"). See §3.6.1 for the nullability semantics (`T?`, `T!`) and §3.10 for collection literal semantics.
+
+**Effect on the type expression grammar.** The bootstrap type grammar (§10) recognizes only:
+
+```
+type := identifier
+      | identifier '<' type (',' type)* '>'
+```
+
+All richer type expressions — brackets, braces, arrows, suffix operators — come from prelude aliases. Users cannot introduce new type-expression sugars without opt-in (though they may declare additional type-alias identifiers via §4.16.9).
 
 ### 3.3 User-Defined Types
 
@@ -684,15 +777,17 @@ Verification: runtime by default. Static verification via SMT is an optional bac
 
 Corvid's nullability model inverts Swift's: **reference types allow nil at runtime by default; non-nil is the exception marked by contract.** This matches the ObjC runtime substrate (§1.5) — messaging nil is native, not a special case the type system fights to prevent.
 
-**Type-annotation rules:**
+**Semantics** (unchanged from v0.7.0):
 
-| Annotation | Reference type (`kind: regular`) | Value type (`record`, `enum`, primitive) |
+| Type shape | Reference type (`kind: regular`) | Value type (`record`, `enum`, primitive) |
 |---|---|---|
 | `T` | nil-allowed at runtime | never nil |
-| `T!` | contract sugar for `invariant: value != nil` | rejected (trivially true; warning) |
-| `T?` | rejected (redundant with `T`) | sugar for `Optional<T>` sum type |
+| `T!` (via prelude alias) | contract-checked: invariant `value != nil` | rejected — see prelude guard (trivially true) |
+| `T?` (via prelude alias) | rejected — redundant with `T` (prelude guard) | `Optional<T>` sum type |
 
-`T!` desugars to `T` plus an invariant. The compiler emits a runtime check at each observation point (field write, parameter bind, return); a violation logs a warning in development, configurable action in release. Nil continues to flow through message sends — `T!` documents author expectation, it does not enforce safety.
+The surface syntax `T!` and `T?` are prelude aliases (§4.20.1) — suffix-position aliases with `where T is reference_type` / `where T is value_type` guards. The guards enforce the reference/value distinction: applying `?` to a reference type is a compile error (redundant), applying `!` to a value type is a compile error (trivially true).
+
+`T!` desugars via the prelude alias to `T with invariant: value != nil`. The compiler emits a runtime check at each observation point (field write, parameter bind, return); a violation logs a warning in development, configurable action in release. Nil continues to flow through message sends — `T!` documents author expectation, it does not enforce safety.
 
 **Value-site semantics:**
 
@@ -870,84 +965,93 @@ Any expression can be used as a statement — its value is discarded. Loops, `if
 
 ### 3.9 Operators
 
-Corvid inherits C's arithmetic, bitwise, comparison, and logical operators. Precedence and associativity match C99 to avoid surprises for C-family readers. This section is normative; §10 restates it as grammar.
+Corvid's operators split into two tiers: **bootstrap operators** (§10 grammar-committed, cannot be overridden) and **prelude operators** (declared as alias declarations in §4.20, unified precedence scheme in §4.20.2). Precedence and associativity match C99 to avoid surprises for C-family readers.
 
-**Arithmetic:**
+**Bootstrap operators (compiler-committed):**
 
-| Operator | Meaning | Legal on |
-|---|---|---|
-| `+` | addition | numeric types |
-| `-` | subtraction (binary), negation (unary) | numeric types |
-| `*` | multiplication | numeric types |
-| `/` | division | numeric types (integer division truncates toward zero for signed; use `Double`/`Float` for float division) |
-| `%` | modulo (integer remainder) | integer types only. C99 truncated semantics — result sign matches dividend. For float remainder use `Double.remainder(_:)`. |
+| Operator | Category | Meaning | Legal on |
+|---|---|---|---|
+| `+`, `-`, `*`, `/`, `%` | Arithmetic | Standard arithmetic + integer remainder (C99 truncated) | Numeric types |
+| `+=`, `-=`, `*=`, `/=`, `%=` | Compound arithmetic assign | RHS applied, assigned to LHS | Numeric types |
+| `==`, `!=` | Equality | Structural for records, identity for references; nil-safe per §3.6.1 | Any type |
+| `<`, `<=`, `>`, `>=` | Ordering | Lexicographic for strings; rejected on nil operands per §3.6.1 | Numeric, `Char`, `String` |
+| `and`, `or`, `not` | Logical | Short-circuit; word-form for legibility (§1.6) | `Bool` |
+| `=` | Assignment | Right-associative | Any lvalue |
+| `.` | Member access | Nil-flows through per §3.6.1, §5.7 | Any receiver |
+| `()` | Call | Function/method invocation | Callable |
+| `[]` | Subscript | Container access | Types with `subscript` |
 
-Compound-assignment forms: `+=`, `-=`, `*=`, `/=`, `%=`.
+**Prelude operators (alias declarations, see §4.20):**
 
-**Bitwise (integer types only):**
+| Operator | Category | Meaning | Prelude alias expansion |
+|---|---|---|---|
+| `<<`, `>>` | Bitwise shift | Left/right shift; arithmetic for signed, logical for unsigned | `Numeric.shl(lhs, rhs)` / `Numeric.shr(lhs, rhs)` |
+| `&`, `\|`, `^` | Bitwise binary | AND, OR, XOR | `Numeric.bitand` / `Numeric.bitor` / `Numeric.bitxor` |
+| `~` | Bitwise unary | NOT | `Numeric.bitnot(expr)` |
+| `<<=`, `>>=`, `&=`, `\|=`, `^=` | Compound bitwise assign | RHS applied, assigned to LHS | Compound form of prelude aliases |
+| `..<`, `...` | Range | Half-open, closed range | `Range.half_open` / `Range.closed` |
+| `??` | Nil-coalescing | LHS if non-nil, else RHS | `Optional.coalesce(lhs, rhs)` |
 
-| Operator | Meaning |
-|---|---|
-| `&` | bitwise AND |
-| `\|` | bitwise OR |
-| `^` | bitwise XOR |
-| `~` | bitwise NOT (unary) |
-| `<<` | left shift |
-| `>>` | right shift (arithmetic for signed types, logical for unsigned — matches C99) |
+**Prelude alias declarations for the operators above are in §4.20.1.** Precedence values follow the unified scheme in §4.20.2.
 
-Compound-assignment forms: `&=`, `|=`, `^=`, `<<=`, `>>=`.
-
-**Comparison:**
-
-| Operator | Meaning | Legal on |
-|---|---|---|
-| `==`, `!=` | equality, inequality | any type (structural for records, identity for references; nil-safe per §3.6.1) |
-| `<`, `<=`, `>`, `>=` | ordering | numeric types, `Char`, `String` (lexicographic). Rejected on nil operands per §3.6.1. |
-
-**Logical (short-circuit):**
-
-| Operator | Meaning | Legal on |
-|---|---|---|
-| `and` | logical AND | `Bool` |
-| `or` | logical OR | `Bool` |
-| `not` | logical NOT (unary) | `Bool` |
-
-C's `&&`, `||`, `!` are **not** used — Corvid spells logicals as words for legibility (§1.6). Reserves `&`, `|` unambiguously for bitwise.
-
-**Assignment:** `=`. Compound forms per operator table above.
-
-**Nil-coalescing:** `??` (§3.6.1).
-
-**Member access and calls:**
-
-| Operator | Meaning |
-|---|---|
-| `.` | member access (§3.6.1 nil-flows through) |
-| `()` | function/method invocation |
-| `[]` | subscript |
-
-**Precedence (highest to lowest, C99-derived):**
-
-1. `.`, `()`, `[]` (member access, call, subscript)
-2. `-` (unary), `~` (unary), `not` (unary)
-3. `*`, `/`, `%`
-4. `+`, `-` (binary)
-5. `<<`, `>>`
-6. `<`, `<=`, `>`, `>=`
-7. `==`, `!=`
-8. `&`
-9. `^`
-10. `|`
-11. `and`
-12. `or`
-13. `??`
-14. `=` and compound assignments (right-associative)
-
-Associativity is left-to-right except unary and assignment (right-to-left).
+**C's `&&`, `||`, `!` are not used** — Corvid spells logicals as words (`and`/`or`/`not`) for legibility. This reserves `&` and `|` unambiguously for bitwise (prelude), and `!` for the type-position non-nil contract (also prelude, `T!` alias).
 
 **Integer overflow semantics.** Signed overflow is undefined behavior in C99; Corvid tightens this: signed overflow **wraps** by default (two's-complement modular arithmetic). Users wanting trap-on-overflow use `checked_add`/`checked_sub`/etc. methods that return `Result<T, OverflowError>`. Users wanting saturation use `saturating_*` variants. This departs from C99 UB in favor of predictable behavior consistent with the "runtime as substrate, not as ceiling" premise (§1.5).
 
 **Bit-shift semantics.** Shift amount must be in `0..bit_width(T)`. Shift by a value outside this range is undefined behavior in C99; Corvid rejects it as a contract violation (runtime warning; deterministic wrap in release). Matches the overflow discipline above.
+
+**Note on the bootstrap/prelude split.** Arithmetic, comparison, and logical operators are bootstrap because the compiler itself needs them to parse alias definitions with precedence values, evaluate guards, and compute basic control flow. Bitwise operators, ranges, and nil-coalescing are not needed by the compiler internals — they can be (and are) prelude aliases. This preserves the discipline: everything user-facing that CAN be a stdlib alias, IS.
+
+### 3.10 Collection Literal Conformance
+
+Collection literal syntax (`[...]`, `{K: V, ...}`, `{...}`) is defined by prelude aliases (§4.20) that lower to protocol-dispatched constructors. This allows any conforming type — stdlib collections, user types, Foundation-imported types — to accept the same literal syntax.
+
+**Protocols shipped in the prelude:**
+
+```
+protocol ExpressibleAsArrayLiteral:
+    accepts from_literal(items: [Element]) -> Self
+    associatedtype Element
+
+protocol ExpressibleAsMapLiteral:
+    accepts from_literal(pairs: [(Key, Value)]) -> Self
+    associatedtype Key
+    associatedtype Value
+
+protocol ExpressibleAsSetLiteral:
+    accepts from_literal(items: [Element]) -> Self
+    associatedtype Element
+```
+
+**Dispatch model.** The prelude aliases expand to `T.from_literal(items)` where `T` is inferred from the target type at the literal's use site:
+
+```
+let numbers: [Int] = [1, 2, 3]            # T = Array<Int>; Array.from_literal([1, 2, 3])
+let headers: NSDictionary = {"Host": h}   # T = NSDictionary; NSDictionary.from_literal([("Host", h)])
+let cache: MyCache<Int> = [1, 2, 3]       # T = MyCache<Int> — must conform to ExpressibleAsArrayLiteral
+```
+
+If the target type is not specified and cannot be inferred, the compiler defaults to `Array<T>` / `Map<K, V>` / `Set<T>` for the three literal shapes.
+
+**User conformance:**
+
+```
+class RingBuffer<T>:
+    conforms: ExpressibleAsArrayLiteral where Element = T
+    
+    accepts:
+        storage: [T]
+    
+    class function from_literal(items: [T]) -> RingBuffer<T>:
+        return RingBuffer(storage: items)
+
+# Usage:
+let buf: RingBuffer<Int> = [1, 2, 3]
+```
+
+**Interop with Foundation types.** `NSArray`, `NSDictionary`, `NSSet` conform to the respective literal protocols via stdlib bindings — literal syntax works uniformly across native and imported types with no `.into(...)` conversion required at construction.
+
+**Empty literal disambiguation.** Empty `{}` is `Map.from_literal([])` by convention (§4.20.1); empty `[]` is `Array.from_literal([])`; empty set requires explicit `Set()` construction (no literal form for it — `{}` is taken by Map).
 
 ---
 
@@ -2144,19 +2248,79 @@ Section classes declare semantic version compatibility explicitly. Breaking chan
 
 ### 4.16 Aliases
 
-Aliases bind a name to a compile-time substitution. They are Corvid's single sugar mechanism — one construct that expresses substitutions and transformations at declaration-keyword, section-header, type-name, value-name, and module-name positions.
+Aliases bind a syntactic pattern to a compile-time expansion. They are Corvid's syntactic metaprogramming primitive — the mechanism by which surface syntax is defined. Every user-facing sugar in the language (class-kind keywords, section-composition names, type-expression forms, collection literals, range operators, string interpolation, bitwise operators) is a stdlib alias declaration shipped in the prelude (§4.20). Users write their own aliases for domain-specific syntax.
 
-**One shape, one placeholder.** All aliases follow the same form: `alias <input pattern>: <expansion>`. When the expansion needs to carry through the body content from the alias use site, the placeholder `...` marks the hole. When there is no body (type / value / module aliases), no placeholder is used.
+**One shape.** All aliases follow: `alias <signature>: <expansion>`. The signature is a pattern the compiler matches against source syntax; the expansion is the template to substitute. Match variables in `<name>` form bind to matched content; the `...` placeholder captures an indented body when the alias appears with `:` and following block.
 
 ```
-alias <name> [<parameters>] [<body-signature>]:
+alias <signature> [precedence: N] [associativity: left|right|none] [in <position>] [where <guards>]:
     <expansion>
-    [...]                    # optional — body content from use site
 ```
 
-The category of an alias — section-composition, class-kind, type, value, module — is not a taxonomy the language enforces via keywords. It emerges from the shape of the alias's input pattern and expansion. The compiler resolves an alias use by matching the syntactic position (declaration-keyword, section-header, type-position, expression-position, module-position) against the alias definition's shape.
+**Categories emerge from shape.** The compiler classifies an alias by its signature form:
 
-#### 4.16.1 The `...` Body Placeholder
+- **Identifier signature** — a bare name (e.g., `alias data:`). Matches at section-header, type-name, value-name, or module-name position depending on expansion shape.
+- **Identifier + body-capturing form** — a keyword with a following identifier and body (e.g., `alias record Name:`). Matches at declaration position.
+- **Parameterized signature** — an identifier with generic parameters (e.g., `alias StringDict<V>:`). Matches at type position.
+- **Delimited pattern** — brackets or braces around a match variable (e.g., `alias [<items>]:`). Matches at expression or type position depending on `in` marker.
+- **Infix pattern** — two operand slots around a fixed token (e.g., `alias <lhs> ..< <rhs>`). Matches at expression position.
+- **Prefix / suffix pattern** — operator token before / after an operand slot (e.g., `alias <T> ?`). Matches at expression or type position.
+- **String-embedded pattern** — a pattern inside string literal context (e.g., `alias ${<expr>}`). Matches within string literals when interpolation is active.
+
+Position markers (`in <position>`) disambiguate when the pattern shape could match multiple positions. Precedence and associativity apply to infix, prefix, and suffix patterns. Guards (`where <var> is <TypePattern>`) narrow the match — critical for distinguishing patterns like `{<items>}` (Set) from `{<pairs>}` (Map).
+
+#### 4.16.1 The Signature Pattern Language
+
+Alias signatures use a small pattern language. Names in `<>` are **match variables** — bound to matched syntax and referenceable in the expansion.
+
+**Pattern forms:**
+
+| Pattern | Matches |
+|---|---|
+| `name` | The literal identifier `name` at its syntactic position |
+| `<var>` | A single expression, type, identifier, or other syntactic unit |
+| `<var>` in a sequence context | A comma-separated list, bound as a sequence |
+| `<key>: <value>` in a sequence context | A key-value pair; sequence of these = list of pairs |
+| `[<items>]` | Bracketed comma-separated content |
+| `{<items>}` | Brace-wrapped comma-separated content (Set-shaped) |
+| `{<pairs>}` | Brace-wrapped comma-separated key-value pairs (Map-shaped) |
+| `(<items>)` | Paren-wrapped comma-separated content (tuple-shaped) |
+| `<lhs> op <rhs>` | Infix binary operator pattern (`op` is a fixed token) |
+| `<expr> op` | Suffix unary operator pattern |
+| `op <expr>` | Prefix unary operator pattern |
+| `keyword <name>` | Keyword followed by identifier (declaration form) |
+| `${<expr>}` | String-embedded pattern; matches inside string literals |
+
+**Position markers** (`in <position>`):
+
+- `expression_position` — the alias applies where an expression is expected
+- `type_position` — where a type is expected
+- `section_header_position` — where a section header appears
+- `declaration_position` — at top-level declaration keyword position
+- `string_interpolation_position` — inside string literals during interpolation scanning
+
+Position is inferred where the signature shape unambiguously implies it. `alias record Name:` implies declaration position; `alias <lhs> ..< <rhs>` implies expression position (infix operators don't appear at type position). Explicit markers are used when the pattern shape appears in multiple positions — e.g., `[<items>]` is ambiguous between expression-position (Array literal) and type-position (`Array<T>` sugar), so the two aliases carry explicit `in expression_position` and `in type_position` respectively.
+
+**Precedence and associativity** apply to infix, prefix, and suffix patterns:
+
+- `precedence: N` — integer; higher binds tighter. Prelude operators use spec-committed precedence values (see §4.20 and §3.9).
+- `associativity: left | right | none` — for infix operators. Prefix and suffix are always right-associative and left-associative respectively; the declaration is a documentation hint.
+
+Precedence integers are compared across all in-scope aliases; the compiler resolves conflicting precedence declarations at name-resolution time (§4.16.13).
+
+**Guards** narrow a match:
+
+```
+alias {<items>} in expression_position where items is [Expression]:
+    Set.from_literal(items)
+
+alias {<pairs>} in expression_position where pairs is [KeyValuePair]:
+    Map.from_literal(pairs)
+```
+
+Guard predicates test the shape of matched content: `is [Expression]`, `is [KeyValuePair]`, `is value_type`, `is reference_type`, `is Numeric`, etc. Predicates are drawn from the type system and metadata queries (§4.18) — users cannot define new predicates in v1.
+
+#### 4.16.2 The `...` Body Placeholder
 
 When an alias's use site carries an indented body — that is, when the alias appears with `:` and following block — the `...` placeholder in the expansion template is bound to that block's content. The compiler substitutes the block verbatim.
 
@@ -2176,7 +2340,7 @@ alias data:                                   # body form
 
 `...` is a single hole. Aliases requiring multiple named body captures (a hypothetical future need not present in v1) would use named placeholders; v1 commits to `...` alone.
 
-#### 4.16.2 Section-Composition Aliases
+#### 4.16.3 Section-Composition Aliases
 
 Name a composition of section primitives. The alias's expansion is another section header (possibly composed); the body passes through:
 
@@ -2200,7 +2364,7 @@ class Order:
 
 The expanded form is what the compiler processes; `data` is the surface name.
 
-#### 4.16.3 Class-Kind Aliases
+#### 4.16.4 Class-Kind Aliases
 
 Name a declaration keyword that expands to `class` plus prepended body content. The alias captures an identifier parameter (the class name written after the keyword) and the body:
 
@@ -2258,9 +2422,131 @@ The four language-shipped class-kind aliases (`record`, `enum`, `protocol`, `sec
 
 **On user-defined declaration sugar.** Earlier drafts (v0.6 §4.19) rejected user-defined class-kind sugar with a legibility argument: project-local declaration keywords fragment reading conventions. v0.7.2 accepts them, because the same argument would forbid user-defined section-composition, type, value, and module aliases — which the language already permits. The legibility burden shifts to tooling: IDEs and code-review tools MUST surface the alias expansion on hover, in inline decorations, and via goto-definition. When reading unfamiliar code, users query the alias to see what it expands to. Stdlib-shipped aliases are the authoritative "standard" sugar; project aliases are domain conventions users opt into by importing the module that declares them.
 
-#### 4.16.4 Type Aliases
+#### 4.16.5 Type-Expression Aliases
 
-Shorten a qualified type reference or name a parameterized type. No body:
+Delimited or suffix patterns at type position, matching structural shapes of composite types. These aliases (shipped in the prelude, §4.20) are what makes `T?`, `[T]`, `{K:V}`, `(A,B) -> C` legal Corvid type expressions — the language grammar itself only knows `identifier<generic_args>` for types; every richer shape is an alias.
+
+**Delimited type-expression aliases:**
+
+```
+alias [<T>] in type_position:
+    Array<T>
+
+alias {<K>: <V>} in type_position:
+    Map<K, V>
+
+alias {<T>} in type_position:
+    Set<T>
+
+alias (<Args>) -> <R> in type_position:
+    Callable<(Args,), R>
+```
+
+Match variables in `<>` at type position bind to type expressions. The `Args` in `(<Args>) -> <R>` binds to a comma-separated list of types.
+
+**Suffix type-expression aliases** — for nullability markers:
+
+```
+alias <T> ? in type_position where T is value_type:
+    Optional<T>
+
+alias <T> ! in type_position where T is reference_type:
+    T with invariant: != nil
+```
+
+Guards restrict `T?` to value types (matching §3.6.1's rule that reference types are nil-allowed by default, so `?` on a reference type is redundant) and `T!` to reference types (value types can't be nil, so the invariant is trivially true).
+
+#### 4.16.6 Expression-Position Literal Aliases
+
+Delimited patterns at expression position, producing collection values. The prelude ships literal aliases that lower to conformance-protocol dispatch — see §3.10 for the `ExpressibleAsArrayLiteral` / `ExpressibleAsMapLiteral` / `ExpressibleAsSetLiteral` protocols.
+
+```
+alias [<items>] in expression_position:
+    Array.from_literal(items)
+
+alias {<pairs>} in expression_position where pairs is [KeyValuePair]:
+    Map.from_literal(pairs)
+
+alias {<items>} in expression_position where items is [Expression]:
+    Set.from_literal(items)
+```
+
+Guards disambiguate `{...}` between Map and Set — Map when content is key-value pairs, Set otherwise. Empty `{}` is ambiguous by content; the prelude commits to `{}` → empty Map (matching Swift/Python conventions).
+
+Users may define their own literal-producing aliases for domain-specific types:
+
+```
+alias v[<x>, <y>, <z>] in expression_position:
+    Vec3(x: x, y: y, z: z)
+
+# Usage:
+position = v[1.0, 2.0, 3.0]
+```
+
+#### 4.16.7 Infix Operator Aliases
+
+Two-operand patterns around a fixed operator token, with precedence and associativity. The prelude ships range operators, bitwise operators, and nil-coalescing as infix aliases:
+
+```
+# Ranges
+alias <lhs> ..< <rhs> precedence: 5, associativity: none in expression_position:
+    Range.half_open(from: lhs, to: rhs)
+
+alias <lhs> ... <rhs> precedence: 5, associativity: none in expression_position:
+    Range.closed(from: lhs, to: rhs)
+
+# Bitwise (precedence values match C99 — §3.9, §4.20)
+alias <lhs> & <rhs> precedence: 8, associativity: left in expression_position:
+    Numeric.bitand(lhs, rhs)
+
+alias <lhs> | <rhs> precedence: 10, associativity: left in expression_position:
+    Numeric.bitor(lhs, rhs)
+
+# Nil-coalescing
+alias <lhs> ?? <rhs> precedence: 13, associativity: right in expression_position:
+    Optional.coalesce(lhs, rhs)
+```
+
+Precedence integers are drawn from the prelude's precedence-value scheme (documented in §4.20). Users defining their own infix operators MUST declare precedence explicitly; there is no inferred default.
+
+**Prefix and suffix operator aliases** follow the same shape:
+
+```
+alias ~ <expr> precedence: 2 in expression_position:
+    Numeric.bitnot(expr)
+
+alias not <expr> precedence: 2 in expression_position:
+    Bool.not(expr)         # `not` also declared in bootstrap; prelude alias documents behavior
+```
+
+Prefix and suffix aliases carry precedence for parser disambiguation but their associativity is fixed (prefix = right, suffix = left).
+
+#### 4.16.8 String Interpolation Aliases
+
+Patterns embedded inside string literals. The base string literal syntax is bootstrap (§2.7); interpolation is a prelude alias that the string scanner consults when parsing string contents:
+
+```
+alias ${<expr>} in string_interpolation_position:
+    String.interpolate_expr(expr)
+```
+
+When the base string scanner encounters `$`, it checks in-scope aliases at `string_interpolation_position`. If a match applies (in the prelude case, `${...}` wrapping an expression), the scanner captures the expression, applies the alias expansion, and continues scanning the string.
+
+Users may define domain-specific interpolation forms:
+
+```
+alias %<name>% in string_interpolation_position:
+    Config.lookup(name)          # `%foo%` looks up config values
+
+alias @<user_id>@ in string_interpolation_position:
+    User.mention(user_id)        # `@42@` renders as a mention
+```
+
+Users adding new interpolation patterns face heightened legibility responsibility — string literals are read densely and unexpected interpolation forms confuse readers. Tooling MUST highlight custom interpolation patterns distinctly.
+
+#### 4.16.9 Type Aliases
+
+Identifier signatures with type-expression expansions, optionally parameterized. No body:
 
 ```
 alias Order: com.example.orders.Order
@@ -2278,7 +2564,7 @@ class MyController:
         handler: Callback<Receipt>        # expands to (Receipt, Error) -> Void
 ```
 
-#### 4.16.5 Value Aliases
+#### 4.16.10 Value Aliases
 
 Name a compile-time constant expression. No body:
 
@@ -2300,7 +2586,7 @@ function timeout() -> Duration:
 
 Value aliases must be compile-time constants. Runtime-computed values are not permissible in aliases.
 
-#### 4.16.6 Module Aliases
+#### 4.16.11 Module Aliases
 
 Shorten a qualified module path. No body:
 
@@ -2318,7 +2604,7 @@ class MyController:
         current: orders.Order
 ```
 
-#### 4.16.7 Common Rules
+#### 4.16.12 Common Rules
 
 All alias shapes share these properties:
 
@@ -2330,50 +2616,14 @@ All alias shapes share these properties:
 - **Exportable.** Aliases marked `expose` are visible to importers of the containing module.
 - **No name conflicts.** An alias name that conflicts with a section class name, an imported name, a top-level declaration, or a stdlib alias is a compile error.
 - **Post-expansion validation.** Section legality, class-body legality, and other structural rules are checked on the expanded form. Error messages point to the user's original source location with a note showing the alias expansion.
+- **Prelude aliases are protected.** Aliases shipped in the prelude (§4.20) cannot be overridden or shadowed by user definitions. This preserves the standard surface syntax of the language across projects.
+- **User-defined aliases are lexically scoped.** Visible in the module they're declared in and modules that import them. Not global.
 
-#### 4.16.8 Built-in (Prelude) Aliases
-
-Language-provided aliases live in the prelude and are always available:
-
-```
-# Section-composition
-alias data:
-    runtime immutable identity:
-        ...
-alias state:
-    runtime mutable coordination:
-        ...
-alias static:
-    compile_time immutable:
-        ...
-alias methods:
-    runtime:
-        ...
-
-# Class-kind
-alias record Name:
-    class Name:
-        metadata: kind: record
-        ...
-alias enum Name:
-    class Name:
-        metadata: kind: enum
-        ...
-alias protocol Name:
-    class Name:
-        metadata: kind: protocol
-        ...
-alias section Name:
-    class Name:
-        metadata: kind: section
-        ...
-```
-
-None include `expose`. Visibility is a separate axis added at the section header or declaration when needed.
+The complete list of prelude aliases — the ones the language ships as its standard surface syntax — is in §4.20.
 
 Users may define aliases at module level (all shapes) or inside class bodies (section-composition aliases only, for local naming).
 
-#### 4.16.9 Semantics of Alias Composition
+#### 4.16.13 Semantics of Alias Composition
 
 Aliases behave exactly as their expansion. Composing an alias with additional primitives, modifiers, or references is equivalent to composing the expansion with those elements — no override precedence, no warnings.
 
@@ -2384,7 +2634,7 @@ data expose:    # expands to: runtime immutable identity expose
 
 Users who need a variant of a common alias define their own alias rather than override at usage sites. This keeps aliases transparent shortcuts, not magical substitutions with hidden rules.
 
-#### 4.16.10 Diagnostic Quality
+#### 4.16.14 Diagnostic Quality
 
 When alias expansion produces an error, the compiler shows both the alias's expansion and the additional context, so users see exactly what went wrong:
 
@@ -2416,15 +2666,37 @@ note: `record` expands to `class ... metadata: kind: record` (see prelude)
 note: kind: record forbids state:; use `class Point:` explicitly if per-instance mutable state is required
 ```
 
-#### 4.16.11 Parser and Name Resolution
+#### 4.16.15 Parser and Name Resolution
 
-Aliases participate in a name-resolution pre-pass before the final parse. The compiler gathers all alias declarations (from the prelude, imported modules, and the current source) into a resolution table, then re-parses each source with aliases in scope. This is a two-pass compilation strategy; the added cost is negligible for the incremental compiler (§4.18) since alias tables cache across compilations.
+Aliases extend the base grammar. The compiler runs a **two-pass compilation** strategy:
 
-Alias resolution is lexical: aliases visible at the use site are the ones considered. An alias imported from module `M` is visible in sources that import `M`. Prelude aliases are visible everywhere without import.
+**Pass 1 — bootstrap parse + alias collection.** The compiler parses each source using only the bootstrap grammar (§10) — enough to recognize declarations, section headers, and alias definitions but NOT enough to parse type-expression sugars, collection literals, or user-defined operators. It gathers all alias declarations from the prelude, imported modules, and the current source into a resolution table indexed by position and pattern shape.
+
+**Pass 2 — extended parse.** The compiler re-parses each source with the extended grammar (bootstrap + all in-scope aliases). Signature patterns become grammar productions at their declared position and precedence. The parser tries alias productions before base productions at ambiguous points.
+
+Alias tables cache across incremental compilations — Pass 1 runs only for sources whose alias declarations changed. The added cost is negligible for the incremental compiler (§4.18).
+
+**Alias resolution is lexical.** Aliases visible at the use site are the ones considered. An alias imported from module `M` is visible in sources that import `M`. Prelude aliases are visible everywhere without import.
+
+**Precedence conflicts.** When multiple aliases in scope declare infix/prefix/suffix patterns at overlapping precedence, the compiler uses the following rules:
+
+1. Prelude precedence values are the reference. User-defined aliases MUST NOT use the exact precedence of a prelude operator without explicit `override` markers (reserved for future spec revision).
+2. User-defined operator aliases use precedence values in a designated user range (documented in §4.20).
+3. If two in-scope user aliases declare identical precedence with different associativity, the compiler emits a warning and picks left-associativity as the tie-breaker.
+4. If precedence values conflict such that an expression parses ambiguously, the compiler emits an error at the use site with both alias definitions cited.
+
+**Pattern shape conflicts.** When two aliases declare the same pattern shape at the same position (e.g., two aliases claiming `[<items>]` in expression_position), the compiler emits a name conflict error at the second declaration. This applies whether both aliases come from user code, or one from user code and one from an import.
+
+**Base grammar can always disambiguate.** The bootstrap grammar (§10) is always parseable without aliases. When alias resolution fails (missing alias, ambiguity, expansion error), the compiler falls back to the bootstrap grammar interpretation with a diagnostic.
 
 ### 4.17 Metaprogramming Boundaries
 
-The section mechanism is the language's ONE user-facing metaprogramming mechanism. All compile-time user-definable constructs are section classes. This unification is a deliberate design commitment (§1.6, legibility over brevity) — a single mechanism is easier to reason about than several overlapping ones.
+Corvid has **two orthogonal metaprogramming mechanisms**:
+
+- **Sections (§4.1-§4.15)** — body-level metaprogramming. A section class processes the content of its indented block: generates methods and fields on the host class, validates the block against constraints, wraps or transforms declarations.
+- **Aliases (§4.16)** — syntactic metaprogramming. An alias declaration extends the language grammar with new signature patterns at specified syntactic positions. Every user-facing sugar in the language is a stdlib alias in the prelude (§4.20).
+
+The two mechanisms cover different domains — sections handle "what happens inside a block," aliases handle "what surface syntax means" — and compose cleanly. A user-defined class-kind alias (`entity Name:`) expands to `class Name: metadata: kind: regular, ecs_role: entity; ...body`, and the body is then processed by whichever sections apply to the resulting class.
 
 **Explicit boundaries — what sections CAN do:**
 
@@ -2443,13 +2715,39 @@ The section mechanism is the language's ONE user-facing metaprogramming mechanis
 - **No section-generates-section.** Section generators produce methods and fields on the host class; they cannot produce new section classes.
 - **No cross-section inspection.** A section can see its own contents and the host class's public interface; not other sections' internals.
 - **No arbitrary compile-time computation.** Sections compute over their declared inputs (fields, block contents, parameters). There is no general-purpose compile-time execution environment.
-- **No section-defines-language-primitive.** Sections cannot introduce new class kinds, protocol kinds, or fundamental language forms.
+- **No section-defines-language-primitive.** Sections cannot introduce new class kinds, protocol kinds, or fundamental language forms. New surface syntax is the aliases' domain.
+
+**Explicit boundaries — what aliases CAN do:**
+
+- Define new syntactic patterns at declared positions (declaration, section-header, type, expression, string-interpolation).
+- Bind match variables to matched syntax and reference them in the expansion.
+- Declare precedence and associativity for infix/prefix/suffix operators.
+- Constrain matches with guards (`where <var> is <TypePattern>`).
+- Ship as stdlib prelude (spec-committed) or module-scoped user extension.
+
+**Explicit boundaries — what aliases CANNOT do:**
+
+- **No arbitrary compile-time computation.** Aliases substitute syntax; they don't execute code. The expansion is a template, not a program.
+- **No prelude override.** Users cannot redefine or shadow prelude aliases. The standard surface syntax is stable.
+- **No cross-alias inspection.** An alias's expansion cannot query other alias definitions to reason about them.
+- **No new position categories.** The five position markers (declaration, section-header, type, expression, string-interpolation) are the fixed set. New categories require spec-level extension.
+- **No user-defined guard predicates.** Guards use spec-provided predicates (`is value_type`, `is [Expression]`, etc.); users cannot define new predicates in v1.
 
 **Why these boundaries.**
 
 Metaprogramming systems that fail — C++ templates evolving into template metaprogramming, Java reflection + annotations + AspectJ, Python descriptors + decorators + metaclasses — fail by accretion. Each new mechanism tries to fix limitations of the previous. Overlapping features multiply. The result is a system that's hard to reason about, hard to debug, and hard to remove features from.
 
-Corvid's answer: **design the boundary once**, ship the mechanism that fits within it, and refuse to expand it incrementally. Future needs that don't fit within sections require an explicit language-level decision, not a library workaround that stretches the mechanism.
+Corvid's answer: **design the boundaries once**, ship the two mechanisms that fit within them, and refuse to expand incrementally. Future needs that don't fit within sections (body-level behavior) or aliases (surface syntax) require an explicit language-level decision, not a library workaround that stretches either mechanism.
+
+**Grammar extensibility discipline.** Aliases extend the language grammar; the compiler parses `bootstrap + prelude + in-scope user aliases`. This makes the effective grammar user-configurable per module. The safeguards:
+
+1. **Bootstrap grammar (§10) is fixed.** Users cannot change how identifiers, base literals, or control flow parse.
+2. **Prelude is spec-committed.** Standard surface syntax is stable across projects.
+3. **User aliases are lexically scoped.** Only visible in modules that declare or import them.
+4. **Tooling MUST expose expansions.** IDEs surface alias expansion on hover, goto-definition, and inline decoration. Readers can always see what any syntactic form means by querying tools.
+5. **Style discipline is cultural.** The language enables user-defined syntax; community style guides recommend restraint (domain-specific literals for domain projects; general libraries should not introduce novel syntax).
+
+This is the Clojure/Racket tradeoff — power with discipline vs. restriction with safety — applied consistently with Corvid's other design choices (§1.2 intent-not-authority, §1.5 runtime-as-substrate).
 
 **The bootstrap set** (what the compiler ships with hardcoded knowledge of):
 
@@ -2642,11 +2940,223 @@ Consumers of metadata are expected to respect intent even though the compiler do
 
 ### 4.19 Class Kinds (Retired as Separate Section)
 
-*As of v0.7.2, class-kind sugar is unified under the alias mechanism (§4.16.3). The four class-kind keywords (`record`, `enum`, `protocol`, `section`) are stdlib alias declarations shipped in the prelude (§4.16.8). Body-level semantics of each kind — permitted sections, generated members, raw-value handling for enum, protocol conformance — are documented in §4.10.7 (kind section classes). This subsection is retained as a redirect for readers following older cross-references.*
+*As of v0.7.2, class-kind sugar is unified under the alias mechanism (§4.16.4). The four class-kind keywords (`record`, `enum`, `protocol`, `section`) are stdlib alias declarations shipped in the prelude (§4.20). Body-level semantics of each kind — permitted sections, generated members, raw-value handling for enum, protocol conformance — are documented in §4.10.7 (kind section classes). This subsection is retained as a redirect for readers following older cross-references.*
 
 **Retired keywords** (v0.5 → v0.6): `struct` and `enumeration`. Their v0.5 semantics are recovered by `record` and `enum` respectively. Grammar §10 does not parse them.
 
-**User-defined class-kind sugar** — as of v0.7.2, users may define their own declaration aliases (§4.16.3). Earlier drafts rejected this on legibility grounds; v0.7.2's revised position treats it consistently with user-defined section/type/value/module aliases. Tooling MUST surface the alias expansion.
+**User-defined class-kind sugar** — as of v0.7.2, users may define their own declaration aliases (§4.16.4). Earlier drafts rejected this on legibility grounds; v0.7.2's revised position treats it consistently with user-defined section/type/value/module aliases. Tooling MUST surface the alias expansion.
+
+### 4.20 The Prelude
+
+The **prelude** is a set of alias declarations shipped with the language distribution. Users get these without imports; they are the standard surface syntax of Corvid. The prelude is spec-committed — any change to a prelude alias is a language-level breaking change subject to the same versioning discipline as changes to bootstrap grammar (§4.15, §7.11).
+
+**Why the prelude is a language artifact, not a library.**
+
+The bootstrap grammar (§10) is small — sufficient to parse alias declarations, class/function/module declarations, base literals, base operators, control flow, and sections. What users think of as "Corvid syntax" — `record Foo:`, `[1, 2, 3]`, `T?`, `x + y ?? default`, `"hello ${name}"` — is the bootstrap grammar plus the prelude. Without the prelude, source code that looks like ordinary Corvid would not parse. The prelude is therefore part of the language distribution and part of what the spec commits to.
+
+Users can inspect every prelude alias to understand what standard syntax means. Users cannot override or shadow prelude aliases; the standard surface syntax is stable across projects.
+
+#### 4.20.1 Prelude Contents
+
+**Section-composition aliases:**
+
+```
+alias data:
+    runtime immutable identity:
+        ...
+
+alias state:
+    runtime mutable coordination:
+        ...
+
+alias static:
+    compile_time immutable:
+        ...
+
+alias methods:
+    runtime:
+        ...
+```
+
+**Class-kind aliases:**
+
+```
+alias record Name:
+    class Name:
+        metadata: kind: record
+        ...
+
+alias enum Name:
+    class Name:
+        metadata: kind: enum
+        ...
+
+alias protocol Name:
+    class Name:
+        metadata: kind: protocol
+        ...
+
+alias section Name:
+    class Name:
+        metadata: kind: section
+        ...
+```
+
+**Type-expression aliases:**
+
+```
+alias [<T>] in type_position:
+    Array<T>
+
+alias {<K>: <V>} in type_position:
+    Map<K, V>
+
+alias {<T>} in type_position:
+    Set<T>
+
+alias (<Args>) -> <R> in type_position:
+    Callable<(Args,), R>
+
+alias <T> ? in type_position where T is value_type:
+    Optional<T>
+
+alias <T> ! in type_position where T is reference_type:
+    T with invariant: != nil
+```
+
+**Expression-position literal aliases:**
+
+```
+alias [<items>] in expression_position:
+    Array.from_literal(items)
+
+alias {<pairs>} in expression_position where pairs is [KeyValuePair]:
+    Map.from_literal(pairs)
+
+alias {<items>} in expression_position where items is [Expression]:
+    Set.from_literal(items)
+```
+
+The empty `{}` literal is disambiguated to `Map.from_literal([])` by convention (matching Swift/Python).
+
+**Range operator aliases:**
+
+```
+alias <lhs> ..< <rhs> precedence: 5, associativity: none in expression_position:
+    Range.half_open(from: lhs, to: rhs)
+
+alias <lhs> ... <rhs> precedence: 5, associativity: none in expression_position:
+    Range.closed(from: lhs, to: rhs)
+```
+
+**Bitwise operator aliases** (precedence values from C99, §3.9):
+
+```
+alias <lhs> << <rhs> precedence: 5, associativity: left in expression_position:
+    Numeric.shl(lhs, rhs)
+
+alias <lhs> >> <rhs> precedence: 5, associativity: left in expression_position:
+    Numeric.shr(lhs, rhs)
+
+alias <lhs> & <rhs> precedence: 8, associativity: left in expression_position:
+    Numeric.bitand(lhs, rhs)
+
+alias <lhs> ^ <rhs> precedence: 9, associativity: left in expression_position:
+    Numeric.bitxor(lhs, rhs)
+
+alias <lhs> | <rhs> precedence: 10, associativity: left in expression_position:
+    Numeric.bitor(lhs, rhs)
+
+alias ~ <expr> precedence: 2 in expression_position:
+    Numeric.bitnot(expr)
+```
+
+**Nil-coalescing alias:**
+
+```
+alias <lhs> ?? <rhs> precedence: 13, associativity: right in expression_position:
+    Optional.coalesce(lhs, rhs)
+```
+
+**String interpolation alias:**
+
+```
+alias ${<expr>} in string_interpolation_position:
+    String.interpolate_expr(expr)
+```
+
+#### 4.20.2 Precedence Value Scheme
+
+Precedence integers used across the prelude follow the C99 precedence order, mapped to values 1-13:
+
+| Precedence | Operators (prelude) |
+|---|---|
+| 1 | Member access `.`, call `()`, subscript `[]` (bootstrap) |
+| 2 | Unary `-`, unary `not` (bootstrap), unary `~` (prelude) |
+| 3 | `*`, `/`, `%` (bootstrap) |
+| 4 | `+`, `-` binary (bootstrap) |
+| 5 | `<<`, `>>` (prelude); `..<`, `...` (prelude) |
+| 6 | `<`, `<=`, `>`, `>=` (bootstrap) |
+| 7 | `==`, `!=` (bootstrap) |
+| 8 | `&` (prelude) |
+| 9 | `^` (prelude) |
+| 10 | `\|` (prelude) |
+| 11 | `and` (bootstrap) |
+| 12 | `or` (bootstrap) |
+| 13 | `??` (prelude) |
+| 14 | Assignment `=` and compound forms (bootstrap; right-associative) |
+
+Precedence values 1-14 are reserved for bootstrap and prelude operators. User-defined operator aliases MUST use precedence values 100+ (documented reserved range for user extensions).
+
+#### 4.20.3 Prelude Discipline
+
+Constraints on the prelude:
+
+1. **No overrides.** Users cannot redefine prelude aliases. Attempting to declare an alias with a signature matching a prelude alias is a compile error.
+2. **No shadowing.** Prelude aliases are always in scope; no import can hide them.
+3. **Spec-committed.** Changes to prelude alias signatures or expansions are language-version-affecting changes subject to the same versioning discipline as bootstrap grammar changes.
+4. **Minimal by design.** Aliases are added to the prelude only when their utility is universal across Corvid codebases. Domain-specific sugar belongs in libraries, not the prelude.
+
+#### 4.20.4 User Extensions
+
+Users define their own aliases at module level following the mechanism in §4.16. Common patterns:
+
+**Domain-specific literals:**
+
+```
+# In a graphics module
+alias v[<x>, <y>, <z>] in expression_position:
+    Vec3(x: x, y: y, z: z)
+
+# In a config module
+alias %<name>% in string_interpolation_position:
+    Config.lookup(name)
+```
+
+**Project-specific declaration keywords:**
+
+```
+# In an ECS framework
+alias entity Name:
+    class Name:
+        metadata: kind: regular, ecs_role: entity
+        ...
+
+alias system Name:
+    class Name:
+        metadata: kind: regular, ecs_role: system
+        ...
+```
+
+**Domain-specific operators:**
+
+```
+# In a quaternion library
+alias <lhs> ** <rhs> precedence: 105, associativity: left in expression_position:
+    Quaternion.multiply(lhs, rhs)
+```
+
+Legibility responsibility for user-defined syntax rests with the author. Style guides SHOULD recommend restraint — domain-specific literals for genuinely domain-specific projects; general-purpose libraries should not introduce novel surface syntax.
 
 ---
 
@@ -4396,7 +4906,11 @@ None of these paths require rewriting existing code. Corvid adoption is additive
 
 ---
 
-## 10. Grammar Sketch (Subset)
+## 10. Grammar Sketch (Bootstrap Subset)
+
+**Scope.** This section documents the **bootstrap grammar** — the grammar the compiler always knows, sufficient to parse alias declarations, class/function/module declarations, base literals, base operators, control flow, and sections. The **effective grammar** at any point in a source is `bootstrap + in-scope aliases`. Prelude aliases (§4.20) extend the bootstrap grammar with the standard surface syntax users expect (type-expression sugars, collection literals, range operators, string interpolation, bitwise operators, nil-coalescing). User aliases (§4.16) extend further at module scope.
+
+Everything not documented here as bootstrap grammar comes from aliases. See §4.20 for the prelude declarations that define standard surface syntax.
 
 ```
 program := (module_decl)? import* top_level_item*
@@ -4519,31 +5033,21 @@ quote_expr := 'quote' ':' INDENT ast_content DEDENT
 
 ast_content := <arbitrary AST with ${expr} splice points>
 
-# Type expressions (§3.2, §3.6.1). Nullability suffixes are kind-restricted.
-type := base_type
-      | base_type '!'                # reference-type non-nil contract (§3.6.1)
-      | base_type '?'                # value-type Optional<T> sum (§3.6.1)
-      | '[' type ']'                 # Array<T>
-      | '{' type ':' type '}'        # Map<K, V>
-      | '{' type '}'                 # Set<T>
-      | '(' type_list ')' '->' type  # Callable<Args, Return>
+# Bootstrap type expressions (§3.2 for full type-expression sugar via prelude).
+# Only identifier types with optional generic args are bootstrap; brackets, braces,
+# arrows, and suffix nullability are prelude aliases (§4.20.1).
+type := qualified_name generic_args?
 
-base_type := qualified_name generic_args?
-           | '(' type_list ')'       # tuple type
-
-# `!` on value-typed base is a semantic error (warning: trivially true).
-# `?` on reference-typed base is a semantic error (redundant with base).
-
-# Value-expression operators. Nil handling is via `.` (uniform) and `??`.
+# Bootstrap expression grammar. Member access, call, subscript, base literals,
+# bootstrap operators only. Richer literals (collections, ranges, interpolated
+# strings) and prelude operators (bitwise, ??, ..<, ...) are prelude aliases.
 member_access := expr '.' identifier
               # `.` operates on both non-nil and nil receivers (§3.6.1, §5.7).
               # Nil receivers auto-lift return type or dispatch via on_nil section.
 
-nil_coalesce := expr '??' expr
-              # returns LHS if non-nil, else RHS.
-
-# Literals (§2.7).
-literal := int_literal | float_literal | char_literal | string_literal
+# Base literals (§2.7.1). Prelude literals (arrays, maps, sets, ranges, interpolation)
+# are prelude aliases, not bootstrap.
+literal := int_literal | float_literal | char_literal | string_literal_raw
         | bool_literal | nil_literal
 
 int_literal   := dec_int | hex_int | bin_int | oct_int
@@ -4554,30 +5058,27 @@ oct_int       := ('0o' | '0O') oct_digit ('_' | oct_digit)*
 float_literal := dec_int '.' dec_int (('e' | 'E') ('+' | '-')? dec_int)?
               | ('0x' | '0X') hex_digit+ ('.' hex_digit+)? ('p' | 'P') ('+' | '-')? dec_int
 char_literal  := "'" (char_atom | escape_seq) "'"
-string_literal := '"' (char_atom | escape_seq)* '"'
+string_literal_raw := '"' (char_atom | escape_seq)* '"'
+              # Prelude string interpolation alias operates on this raw form.
 bool_literal  := 'true' | 'false'
 nil_literal   := 'nil'
 escape_seq    := '\\' ('n' | 't' | 'r' | '\\' | "'" | '"' | '0'
                        | 'x' hex_digit hex_digit
                        | 'u' '{' hex_digit+ '}')
 
-# Operators (§3.9). Precedence table normative there; grammar here.
+# Bootstrap operators (§3.9). Prelude operators (bitwise, ??, ranges) come from prelude aliases.
 expr := ... | unary_expr | binary_expr | literal
 
-unary_expr  := ('-' | '~' | 'not') expr
+unary_expr  := ('-' | 'not') expr
 binary_expr := expr binop expr
 binop := '*' | '/' | '%'
        | '+' | '-'
-       | '<<' | '>>'
        | '<' | '<=' | '>' | '>='
        | '==' | '!='
-       | '&' | '^' | '|'
        | 'and' | 'or'
-       | '??'
 
 assignment_expr := lvalue assignop expr
 assignop := '=' | '+=' | '-=' | '*=' | '/=' | '%='
-          | '&=' | '|=' | '^=' | '<<=' | '>>='
 
 # Module-level immutable bindings (§7.1).
 module_let := 'expose'? 'let' identifier ':' type '=' expr
@@ -4588,11 +5089,59 @@ layout_primitive := 'sizeof'   '(' type ')'
                   | 'offsetof' '(' type ',' identifier ')'
 ```
 
-**Retired in v0.7.2** (v0.7.1 → v0.7.2): `sugar_class_decl` and `sugar_kind` productions removed. Class-kind sugar (`record`, `enum`, `protocol`, `section`) is now expressed via the unified `alias_decl` mechanism (§4.16.3), with the four language-shipped sugars living in the prelude (§4.16.8). The `alias_decl` production is generalized with `alias_signature` and `alias_expansion` (with `...` placeholder) to cover section-composition, class-kind, type, value, and module aliases uniformly.
+**Alias-signature pattern grammar** (§4.16.1). The alias mechanism extends the base grammar with new productions at the position and precedence declared:
+
+```
+alias_decl := 'expose'? 'alias' alias_signature alias_modifiers ':' alias_expansion
+
+alias_signature := identifier_pattern
+                 | infix_pattern
+                 | prefix_pattern
+                 | suffix_pattern
+                 | delimited_pattern
+                 | keyword_pattern
+                 | interpolation_pattern
+
+identifier_pattern    := identifier (generic_params)?
+keyword_pattern       := identifier identifier (generic_params)?   # e.g. `record Name`
+infix_pattern         := '<' identifier '>' operator_token '<' identifier '>'
+prefix_pattern        := operator_token '<' identifier '>'
+suffix_pattern        := '<' identifier '>' operator_token
+delimited_pattern     := '[' '<' identifier '>' ']'
+                       | '{' '<' identifier '>' '}'
+                       | '{' '<' identifier '>' ':' '<' identifier '>' '}'
+                       | '(' '<' identifier '>' ')'
+interpolation_pattern := '$' '{' '<' identifier '>' '}'
+                       | operator_token '<' identifier '>' operator_token   # e.g. `%<name>%`
+
+alias_modifiers := ('precedence' ':' integer)?
+                   ('associativity' ':' ('left' | 'right' | 'none'))?
+                   ('in' position_marker)?
+                   ('where' guard_expr)?
+
+position_marker := 'expression_position' | 'type_position'
+                 | 'section_header_position' | 'declaration_position'
+                 | 'string_interpolation_position'
+
+guard_expr := '<' identifier '>' 'is' type_pattern
+type_pattern := 'value_type' | 'reference_type' | 'Numeric' | 'Bool'
+              | '[' type_pattern ']' | '[' 'KeyValuePair' ']' | '[' 'Expression' ']'
+              | identifier
+
+alias_expansion := line_expr                                  # single-line, no body
+                 | INDENT expansion_body DEDENT                # multi-line with body form
+
+expansion_body := ( statement | placeholder | section_usage | class_decl_form )*
+placeholder := '...'                                          # body-content hole (§4.16.2)
+```
+
+**Retired in v0.8.0** (v0.7.2 → v0.8.0): grammar productions for type-expression sugar (`T?`, `T!`, `[T]`, `{K:V}`, `{T}`, `(A,B) -> C`) removed from bootstrap. Bitwise operators (`&`, `|`, `^`, `~`, `<<`, `>>`) and their compound-assignments removed from bootstrap. Nil-coalescing `??` removed from bootstrap. All now defined as prelude alias declarations (§4.20). Bootstrap grammar is intentionally minimal — sufficient to parse the alias mechanism itself, plus prelude aliases add the standard surface syntax.
+
+**Retired in v0.7.2** (v0.7.1 → v0.7.2): `sugar_class_decl` and `sugar_kind` productions removed. Class-kind sugar (`record`, `enum`, `protocol`, `section`) expressed via `alias_decl` mechanism (§4.16.4), sugars live in prelude (§4.20).
 
 **Retired in v0.7** (v0.6 → v0.7): value-position `!` (force-unwrap) and `?.` (optional chaining) productions removed. `.` is the only member-access operator. Explicit panic on nil uses `x ?? panic("...")`.
 
-**Retired from prior drafts** (v0.5 → v0.6): `struct`, `enumeration`. Class-kind sugar was introduced as language-committed keywords in v0.6 and re-expressed as stdlib aliases in v0.7.2 (see above).
+**Retired from prior drafts** (v0.5 → v0.6): `struct`, `enumeration`. Class-kind sugar was introduced as language-committed keywords in v0.6 and re-expressed as stdlib aliases in v0.7.2.
 
 **Retired earlier** (v0.5.0 → v0.5.1): `sealed`, `dynamic`, `open`, `public`, `private`, `package` visibility. Modules no longer carry dispatch policy annotations (§5.4).
 
