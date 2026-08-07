@@ -1,8 +1,26 @@
-# Corvid Language Specification — v0.8.3 (Working Draft)
+# Corvid Language Specification — v0.8.4 (Working Draft)
 
-**Status:** Working draft. v0.8.3 commits to a class-based iteration model: `for` is retired from bootstrap and becomes a prelude alias over `.for_each` on `Iterable`; `Iterable<T>` / `Iterator<T>` / `Pair<A, B>` / `Entry<K, V>` join the stdlib protocols; no destructuring bindings — multi-value extraction always uses named accessors on the returning class. Follows from taking Corvid's class-as-universal + universal-method-dispatch commitments seriously: iteration is message dispatch, not a language primitive. Dissolves the tuple-family friction items (`#W-35` and adjacent) by design rather than by adding features. v0.8.2 alias namespace discipline preserved. v0.8.1 numeric conversion / parameter defaults / multi-binding unwrap preserved. v0.8.0 library-first sugar model preserved. v0.7.x and v0.6.0 all preserved.
+**Status:** Working draft. v0.8.4 closes two friction items: nested type declarations dissolved by convention (types associated with a class named `<ClassName><Role>` at module scope; no in-body type nesting added), and leading-dot enum shorthand adopted as a feature (`.name(...)` resolves to `<InferredType>.name(...)` when target type is unambiguous). The two decisions pair — flat naming stays readable because leading-dot handles the "type-context is obvious" case at every switch arm and function-arg site. v0.8.3 class-based iteration preserved. v0.8.2 alias namespace discipline preserved. v0.8.1 Session 3 fills preserved. v0.8.0 library-first sugar preserved. v0.7.x and v0.6.0 all preserved.
 
 **Name:** `Corvid`. (Historical: named `objc5` throughout the design conversation. Renamed to Corvid when the positioning clarified as "peer of Swift for Apple-ecosystem native development" rather than "next-generation Objective-C.")
+
+**Change log from v0.8.3 → v0.8.4 (Nested types dissolved by convention + leading-dot shorthand):**
+
+Two paired decisions that close `#W-2`, `#W-48`, and Ink #14a.
+
+- **Nested type declarations dissolved by convention (§3.3 note).** Corvid does not add in-body type nesting (`class Foo: enum Bar: ...`). Types conventionally associated with a class are named `<ClassName><Role>` at module scope — `FrameCollectorEvent`, `FrameCollectorState`, `WSFrameOpCode`. Consumers who want brevity in a specific file use module or type aliases: `alias @Event = com.example.ws.FrameCollectorEvent`, then `@Event` per v0.8.2. Cost analysis: nested types force every consumer to pay per-file aliasing overhead (the C# `using Event = FrameCollector.Event;` problem) in exchange for a small ownership-visibility win at declaration; flat naming pushes cost to declaration site (one longer name) and leaves consumers free. Corvid takes the flat side.
+- **Leading-dot enum shorthand adopted (§3.7.2 new).** `.name(...)` and `.name` at expression position resolve to `<InferredType>.name(...)` when the compiler can unambiguously infer the target type from context. Contexts: switch scrutinee type, function parameter declared type, function return type, field declared type, variable declared type, comparison with a typed expression. Ambiguous contexts (untyped `let x = .some(3)`, generic-parameter-uninferable positions) produce a compile error asking for explicit type qualification. This is the ergonomic partner of the flat-naming decision — without leading-dot, `FrameCollectorEvent.text(...)` at every switch arm reads noisy; with it, `case .text(let s): ...` reads clean regardless of whether `Event` is nested or flat.
+- **`self.` and `Self.` shorthand affirmed in the same spirit.** Inside a class body, `.name` in a context where `Self` is the inferred type is `Self.name`. This is not a new rule — it falls out of leading-dot's existing "target type inferred from context" mechanism — but worth documenting for completeness.
+
+**Consistency with prior decisions:**
+
+- **v0.8.3 no-destructuring, no tuples.** Same discipline family: convention over language mechanism when convention suffices. Nested types could be added as a feature; convention plus module aliases handles the same job at lower ecosystem cost.
+- **v0.8.2 `@` marker discipline.** Module aliases (`alias @Event = ...`) already provide the per-file brevity escape hatch; nested types would duplicate that mechanism.
+- **v0.8.1 named-only enum associated values.** Leading-dot shorthand for named associated values reads clean because names are already the discipline: `case .closed(reason: let r, code: let c):` — no positional-vs-named ambiguity.
+- **§1.2 intent-not-authority.** Convention-based ownership signal is intent; nested-type-syntax would be authority. Corvid consistently picks intent.
+- **§4.20 library-first sugar.** Leading-dot is a language-committed sugar; it lives in bootstrap because it's a target-directed name-resolution rule, not a prelude alias — resolution happens during type checking, not before parsing.
+
+**Downstream cleanups:** §3.3 (naming-convention note for class-associated types), §3.7.2 new (leading-dot shorthand), §10 grammar (leading-dot expression production). Friction log `#W-2` and `#W-48` marked dissolved; Ink #14a marked resolved.
 
 **Change log from v0.8.2 → v0.8.3 (Class-based iteration + no destructuring):**
 
@@ -633,6 +651,60 @@ class CloseCode:
 
 Users rarely write the desugared form; tooling operates on it.
 
+#### 3.3.1 Types Are Flat — Naming Convention for Class-Associated Types
+
+Corvid does not support nested type declarations. All user-defined types (classes, records, enums, protocols, sections) live at module scope. Types conventionally associated with a specific class are named `<ClassName><Role>` at module scope:
+
+```
+expose class FrameCollector:
+    state:
+        delegate: FrameCollectorDelegate
+        current_event: FrameCollectorEvent?
+        state: FrameCollectorState = .idle
+    ...
+
+expose enum FrameCollectorEvent:
+    case text(String)
+    case binary(Bytes)
+    case closed(reason: String, code: UInt16)
+
+expose enum FrameCollectorState:
+    case idle
+    case receiving
+    case draining
+
+expose protocol FrameCollectorDelegate:
+    accepts did_form(event: FrameCollectorEvent)
+```
+
+**Rationale.** Nested types (`class Foo: enum Bar: ...` with `Foo.Bar` access from outside) were considered and rejected. The ownership signal they provide is small (IDE goto-definition and grep already handle this), and the cost is real: every consumer file that references the nested type either pays per-use path noise (`FrameCollector.Event.text(...)`) or pays per-file aliasing overhead (the C# `using Event = FrameCollector.Event;` problem). Flat naming pushes the cost to one longer name at declaration and leaves consumers free — one longer symbol per import site vs. one alias per consumer file.
+
+**Brevity when consumers want it.** A consumer file that references a class-associated type heavily can add a module or type alias locally (§4.16.9, v0.8.2 `@`-marker discipline):
+
+```
+alias @Event = com.example.ws.FrameCollectorEvent
+alias @State = com.example.ws.FrameCollectorState
+
+# Local use sites read short:
+if @State.idle == handler.state: ...
+event = @Event.text("hello")
+```
+
+Aliases are opt-in per consumer, not forced by the declaration.
+
+**Leading-dot shorthand covers the common case (§3.7.2).** In target-typed contexts — switch scrutinees, function arguments, field assignments — `.name(...)` resolves to the inferred type. This is where flat naming would otherwise read verbose, and where nested-type dotted access would win most. Leading-dot neutralizes both concerns:
+
+```
+switch event:
+    case .text(let s): ...              # inferred FrameCollectorEvent
+    case .closed(reason: let r, code: let c): ...
+
+set_state(.receiving)                    # inferred FrameCollectorState
+handler.state = .idle                    # inferred field type
+```
+
+The naming convention and leading-dot together make module-scope types read like nested ones at the use sites where nesting would have helped most.
+
 ### 3.4 Contracts (Protocols)
 
 A protocol is a class with `metadata: kind: protocol` — a named set of accepted messages with contracts, plus optional default implementations. The `protocol` keyword is sugar for the unified `class + kind:` form (§4.11).
@@ -975,6 +1047,80 @@ for entry in dict:
 - Positional form `case .some(let x):` is legal as a **single-associated-value shorthand** — the one legal use of positional form in the language, because there's no ambiguity (single value) and it's inside case discrimination.
 
 Rule: name-based extraction inside `case` patterns is allowed (discrimination requires it). Everything else uses named-accessor method dispatch on the class.
+
+#### 3.7.2 Leading-Dot Shorthand
+
+When the target type of an expression is unambiguous from context, `.name(...)` and `.name` resolve to `<InferredType>.name(...)` and `<InferredType>.name` respectively. The dot is a placeholder for the inferred type name.
+
+**Target-typed contexts** (the compiler infers the type from the surrounding expression):
+
+| Context | Example |
+|---|---|
+| Switch scrutinee | `switch event: case .text(let s): ...` — inferred: type of `event` |
+| Function parameter (typed) | `handler.set_state(.receiving)` — inferred: parameter type of `set_state` |
+| Function return value | `return .ok(result)` — inferred: function's declared return type |
+| Field declared type | `state: FrameCollectorState = .idle` — inferred: field type |
+| Variable declared type | `let s: FrameCollectorState = .receiving` — inferred: declared type |
+| Comparison with typed expr | `if event == .none: ...` — inferred: type of `event` |
+| Enum-case pattern (already legal) | `case .text(let s):` — same mechanism, formalized in §3.7 |
+
+**Enum case shorthand:**
+
+```
+enum Result<T, E>:
+    case ok(value: T)
+    case err(error: E)
+
+function parse(input: String) -> Result<Int, ParseError>:
+    if input.is_empty:
+        return .err(error: .empty_input)     # inferred: Result, then ParseError for inner
+    ...
+    return .ok(value: 42)                    # inferred: Result
+
+switch parse("42"):
+    case .ok(value: let x): ...              # inferred from scrutinee
+    case .err(error: .empty_input): ...      # nested; inner .empty_input inferred from case shape
+    case .err(error: .bad_digit(let c)): ...
+```
+
+**Class function shorthand.** The same rule applies to class functions (`class function name(...)`) and enum case constructors — anywhere `Type.name(...)` is a legal expression at the resolved type, `.name(...)` works if the type is inferable.
+
+```
+class Duration:
+    class function seconds(n: Int) -> Duration: ...
+    class function milliseconds(n: Int) -> Duration: ...
+
+sleep(.seconds(3))                            # inferred: Duration parameter of sleep
+timeout: Duration = .milliseconds(500)        # inferred: field type
+```
+
+**`Self.` shorthand inside a class body.** Inside a class's methods, `.name` at any position where `Self` is the inferred type resolves to `Self.name`. This falls out of the general rule; documented here for completeness:
+
+```
+class Order:
+    state:
+        status: OrderStatus = .pending      # inferred: OrderStatus, the field type
+
+    function submit(self):
+        self.status = .submitted            # inferred: OrderStatus, the field type
+```
+
+**Ambiguous contexts are errors.** When the compiler cannot infer a single unambiguous target type, leading-dot is a compile error. Common cases:
+
+```
+let x = .some(3)             # ERROR: target type undetermined
+                             # fix: let x: Optional<Int> = .some(3)
+
+func f<T>(x: T) -> T: ...
+f(.some(3))                  # ERROR: T is generic; leading-dot cannot infer through it
+                             # fix: f(Optional<Int>.some(3)) or f(Optional.some(3))
+```
+
+Error message points at the leading-dot expression and suggests the qualified form.
+
+**Interaction with nested lookups.** Leading-dot resolves only the top-level type qualifier. Chains like `.a.b.c` are not shortened — the compiler resolves the leading `.a` against the inferred type and then processes `.b.c` as ordinary member access. Deeper nested resolution would require target-typing every intermediate step, which is not supported.
+
+**Interaction with target-directed literals.** Leading-dot composes with numeric literal target-typing (§2.7), collection literal conformance (§3.10), and other target-typed constructs — all use the same "target type inferred from context" mechanism, applied at their respective grammar positions.
 
 ### 3.8 Expressions and Statements
 
@@ -5492,6 +5638,13 @@ member_access := expr '.' identifier
               # `.` operates on both non-nil and nil receivers (§3.6.1, §5.7).
               # Nil receivers auto-lift return type or dispatch via on_nil section.
 
+# Leading-dot shorthand (§3.7.2). Resolved during type checking: `.name` and
+# `.name(args)` resolve to `<InferredType>.name` when the compiler can
+# unambiguously infer the target type from context (switch scrutinee, function
+# parameter type, return type, field/variable declared type, comparison target).
+# Ambiguous contexts produce a compile error.
+leading_dot_expr := '.' identifier ( '(' arg_list ')' )?
+
 # Base literals (§2.7.1). Prelude literals (arrays, maps, sets, ranges, interpolation)
 # are prelude aliases, not bootstrap.
 literal := int_literal | float_literal | char_literal | string_literal_raw
@@ -5632,6 +5785,8 @@ user_alias_decl     := '@' identifier identifier ':' INDENT class_member* DEDENT
 # String-interpolation alias use — recognized by the string scanner when it encounters '@'
 # inside a string_literal_raw. Prelude interpolation uses '$'; user interpolation uses '@'.
 ```
+
+**Added in v0.8.4** (v0.8.3 → v0.8.4): `leading_dot_expr` production. `.name` and `.name(args)` resolve to `<InferredType>.name` in target-typed contexts (§3.7.2). Nested type declarations remain unsupported (§3.3.1); types associated with a class use `<ClassName><Role>` naming convention at module scope.
 
 **Retired in v0.8.3** (v0.8.2 → v0.8.3): `for_expr` production removed from bootstrap grammar. `for x in y: body` is now a prelude alias (§4.20.1) expanding to `y.iter().for_each { x -> body }` on any `Iterable<T>` conformer (§3.10.1). `while_expr` and `loop_expr` remain bootstrap — they are the primitives stdlib uses to implement iteration methods (§4.20.3). No destructuring bindings added (§3.7.1); multi-value carriers use named-accessor classes `Pair<A, B>` / `Entry<K, V>` from the prelude (§3.10.2).
 

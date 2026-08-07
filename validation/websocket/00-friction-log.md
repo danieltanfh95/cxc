@@ -139,7 +139,7 @@ Grouped by family. Individual `#W-N` references are the specific translation sit
 
 ### 2.7 Type system — nested types, tuples, aliases
 
-**Nested type declarations and dotted access** — `#W-2`, `#W-48`. `FrameCollector.Event`. Parity lifts nested enums to module scope, losing namespacing. **Still pending.**
+**Nested type declarations and dotted access** — `#W-2`, `#W-48`. `FrameCollector.Event`. **Dissolved by convention in v0.8.4 (§3.3.1)**. Corvid does not add in-body type nesting. Types conventionally associated with a class use `<ClassName><Role>` naming at module scope (`FrameCollectorEvent`, `FrameCollectorState`). Consumers who want brevity per file add module/type aliases (`alias @Event = com.example.ws.FrameCollectorEvent`, per v0.8.2 `@` discipline). Leading-dot shorthand (v0.8.4 §3.7.2) covers the use-site ergonomics — `case .text(let s):` reads clean regardless of whether Event is nested or flat. Rationale: nested types force per-file aliasing overhead on every consumer (the C# `using` problem) for a small ownership-visibility win at declaration; flat + convention pushes cost to declaration site and leaves consumers free.
 
 **Positional (unnamed) associated values** — `#W-6`. `case closed(String, UInt16)`. **Resolved v0.8.1 (named-only)** for the enum-associated-values portion. The tuple-shape portion — "positional aggregates as first-class values" — **dissolved by design in v0.8.3 (§3.7.1, §3.10.2)**: Corvid has no tuples and no positional destructuring. Multi-value carriers use classes with named fields (`Pair<A, B>`, `Entry<K, V>`, or domain-specific records).
 
@@ -294,7 +294,7 @@ Compared to Ink:
 **Additional pending items surfaced across sessions:**
 
 - **Tuples + destructuring** (`#W-35`, `#W-6`). Multiple-return, `for (k, v) in dict`, positional associated values. Not spec-committed.
-- **Nested type declarations** (`#W-2`, `#W-48`). Dotted access like `FrameCollector.Event`. Not spec-committed.
+- ~~**Nested type declarations** (`#W-2`, `#W-48`).~~ **Dissolved by convention v0.8.4 (§3.3.1)**. Flat naming (`FrameCollectorEvent`) + leading-dot shorthand (§3.7.2) at use sites.
 - **Definite assignment for `let`** (`#W-20`, `#W-60`). Conditional assignment to declared-but-uninitialized `let`. Not spec-committed.
 - **`try` semantics** (Ink #17, recurred here). Explicit `try` vs postfix `?` vs implicit. Not spec-committed.
 - **`old()` in ensures clauses** (Ink #28). Pre-state references in postconditions. Not spec-committed.

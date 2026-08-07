@@ -4,6 +4,37 @@
 
 **Companion document:** `spec/spec-v0.8.md` (was `spec-v0.7.md` through v0.7.x; before that `spec-v0.6.md`; before that `corvid-spec-v0.5.md`).
 
+## Session note — v0.8.4 nested types dissolved + leading-dot shorthand (2026-08-08)
+
+Short paired-decision session. Started as engagement with `#W-2` / `#W-48` (nested type declarations); user pushed back on Reading 1 (nested types as feature) with a C# comparison: "won't it mean if someone imports this in the future they have to alias it (had this issue in c#)". That reframed the trade-off.
+
+**Decisions in this session:**
+
+- **Nested type declarations dissolved by convention (§3.3.1 new).** No in-body type nesting added. Types associated with a class use `<ClassName><Role>` naming at module scope. Convention over language mechanism, matching v0.8.3's tuple/destructuring dissolution and Corvid's broader "intent-not-authority" (§1.2) discipline.
+- **Leading-dot enum shorthand adopted (§3.7.2 new).** `.name(...)` and `.name` resolve to `<InferredType>.name(...)` when target type is inferable from context. Contexts documented: switch scrutinee, function parameter, return, field/variable declared type, comparison target. Ambiguous contexts produce compile error with suggestion.
+- **The two decisions are ergonomically paired.** Flat naming would read verbose at switch arms and function args if written as `FrameCollectorEvent.text(...)` everywhere; leading-dot makes it read `.text(...)` at the sites that matter most. Nesting was proposed to give the same use-site brevity; leading-dot gives it without the consumer-side aliasing cost of nesting.
+
+**Cost analysis that drove the call:**
+
+- **Nested types:** every consumer pays either per-use path noise (`FrameCollector.Event.text(...)`) or per-file aliasing (`using Event = FrameCollector.Event;` in C#). Small ownership-visibility win at declaration.
+- **Flat + convention:** one longer symbol per import site; no consumer-side overhead. Ownership signal from naming pattern is convention-enforced, not language-enforced.
+- **Verdict:** consumers outnumber declarations. Push cost to declaration. Confirmed by user's C# experience.
+
+**Precedent for the pattern:**
+
+This is the third session in a row where design pressure resolved to "convention + existing tools" rather than "add language feature":
+
+1. **v0.8.3 no tuples, no destructuring.** Multi-value carriers = classes with named fields. No `(a, b)` type, no `let (a, b) = pair`.
+2. **v0.8.3 `for` is prelude sugar.** Iteration = method dispatch on `Iterable<T>`. `for` retires from bootstrap.
+3. **v0.8.4 no nested types.** Class-associated types = flat naming + optional module aliases. Leading-dot handles use-site ergonomics.
+
+Each closes a common friction item by re-examining whether Corvid's structural commitments (§1.5 class-as-universal, §5.1 universal dispatch, §1.2 intent-not-authority) already handle the case with existing tools. Each time, they do.
+
+**Related resolutions:**
+
+- Ink #14a (leading-dot shorthand) resolved by feature — same v0.8.4 §3.7.2.
+- `#W-2` / `#W-48` (nested types) resolved by convention — v0.8.4 §3.3.1.
+
 ## Session note — v0.8.3 class-based iteration + no destructuring (2026-08-08)
 
 Session followed from friction-log audit. Ten items marked resolved across the two logs, surfacing the true pending set. Tuples were named as the next natural session target — but user framing pushed deeper: "consider that the `for` loop is also sugar? how does one actually iterate in oop? won't it be recursion? a object sending message to itself?"

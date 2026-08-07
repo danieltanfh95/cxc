@@ -122,11 +122,9 @@ The `class X: Protocol:` form is unambiguous — the first `:` starts the confor
 
 ### 2.9 Leading-dot enum shorthand (FRICTION #14a)
 
-**Status: pending.**
+**Status: resolved (v0.8.4 §3.7.2).**
 
-`.blockquotes` in Swift relies on type context. Ergonomic but requires type inference.
-
-**Spec fix:** Decide. Consistent with §3.7 pattern matching but not documented.
+`.name(...)` and `.name` resolve to `<InferredType>.name(...)` in target-typed contexts (switch scrutinee, function parameter, return, field/variable declared type, comparison target). Ambiguous contexts produce a compile error with a suggestion to qualify explicitly.
 
 ### 2.10 `if let` optional binding (FRICTION #9)
 
