@@ -81,13 +81,13 @@ Grouped by family. Individual `#W-N` references are the specific translation sit
 
 ### 2.1 Bit-level operations
 
-**Bitwise operators** (`&`, `|`, `^`, `~`, `<<`, `>>`) — `#W-54`. Referenced ~30 times across the Framer alone. Every wire-protocol codebase needs these. Spec: not specified anywhere. Reference card confirms as gap.
+**Bitwise operators** (`&`, `|`, `^`, `~`, `<<`, `>>`) — `#W-54`. **Resolved v0.7.1 (§3.9)** — bitwise operators inherited from C99 with precedence table.
 
-**Compound bit-assignment** (`|=`, `&=`, `^=`, `<<=`, `>>=`) — `#W-64`. Same family. Every `pointer[0] |= RSV1Mask`-shaped line in the Framer.
+**Compound bit-assignment** (`|=`, `&=`, `^=`, `<<=`, `>>=`) — `#W-64`. **Resolved v0.7.1 (§3.9)**.
 
-**Bit shifts by runtime values** — `#W-73`. Shift amount is an expression, not a literal. Common in encoders/decoders.
+**Bit shifts by runtime values** — `#W-73`. **Resolved v0.7.1 (§3.9)** — shift amount is any integer expression; shift-out-of-range is a contract violation (runtime warning, deterministic wrap in release).
 
-**Priority:** high. Cannot express any wire-protocol code without these.
+**Priority (remaining):** none — the family is closed.
 
 ### 2.2 Enum raw values (integer-backed enumerations)
 
@@ -181,11 +181,11 @@ Grouped by family. Individual `#W-N` references are the specific translation sit
 
 **Tuple destructuring in `for`** — `#W-35`. `for (k, v) in dict`.
 
-**`else if` chains** — `#W-17`. Chained conditionals: not spec-committed even though `if` and `else` are shown. Parity assumes it works.
+**`else if` chains** — `#W-17`. **Resolved v0.7.1 (§2.5, §3.8.1)** — grammar already permits `else if`; keyword note reaffirms it is written as two tokens (no `elif`).
 
-**Modulo operator** — `#W-68`. `i % 4`. Standard-library gap.
+**Modulo operator** — `#W-68`. **Resolved v0.7.1 (§3.9)** — `%` inherited from C99 (truncated remainder for signed integers).
 
-**Priority:** medium.
+**Priority (remaining):** medium — ranges and tuple destructuring still pending.
 
 ### 2.12 Interop primitives
 
@@ -272,7 +272,7 @@ Compared to Ink:
 
 **Must-fix spec gaps before further translation:**
 
-1. **Bitwise operators + compound-assignment** (`#W-54`, `#W-64`). Blocks all protocol/wire code.
+1. **Bitwise operators + compound-assignment** (`#W-54`, `#W-64`). **Resolved v0.7.1** (§3.9).
 2. **Enum raw values** (`#W-45`). **Resolved v0.6.0** (§3.3 enum sugar).
 3. **Range literals + range-based `for`** (`#W-37(a)`, `#W-67`). Blocks all counting code.
 4. **`??` nil-coalescing** (`#W-21`). **Resolved v0.7.0** (§3.6.1).
@@ -281,6 +281,7 @@ Compared to Ink:
 7. **Numeric type conversion** (`#W-56`). Blocks any code with mixed-width integers.
 8. **String interpolation with expressions** (recurring across Ink and here). Already Ink priority #1.
 9. **Array literal syntax** (`#W-27`). Universal.
+10. **Numeric literal bases + `%` + `else if`** (`#W-54`, `#W-64`, `#W-68`, `#W-17`). **Resolved v0.7.1** (§2.7, §3.9).
 
 **Design decisions worth revisiting:**
 

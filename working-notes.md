@@ -4,6 +4,19 @@
 
 **Companion document:** `spec/spec-v0.7.md` (was `spec-v0.6.md` through v0.6.0; before that `corvid-spec-v0.5.md`).
 
+## Session note — v0.7.1 Tier 1 sweep (2026-08-07)
+
+Session 1 of the post-nil Category 2 backlog. Direct C inheritance — zero design decisions, filling spec gaps surfaced by the Starscream parity translations. Added §2.7 (Literals — dec/hex/bin/oct integers, floats, char/string literals with C escapes), §3.9 (Operators — arithmetic, bitwise, comparison, logical, precedence table with C99 discipline), §7.1 module-level `let` note, §9.2 `sizeof`/`alignof`/`offsetof` for C interop. Also updated §2.5 keyword list, §3.1 primitive types (added unsigned variants explicit list, primitive-as-value-type note), and §10 grammar productions to match.
+
+Design notes worth remembering:
+- **Integer overflow is defined behavior** in Corvid — signed overflow wraps (two's-complement modular), against C99's UB. Users wanting trap or saturation use `checked_*` / `saturating_*` methods returning `Result` / clamped values. Consistent with §1.5 (runtime as substrate, not as ceiling) — Corvid tightens C's slack in favor of predictable behavior.
+- **Bit-shift out-of-range is a contract violation** — runtime warning + deterministic wrap in release. Same discipline as overflow.
+- **Logical operators are word-form** (`and`/`or`/`not`), not C's `&&`/`||`/`!`. Reserves `&`/`|` unambiguously for bitwise; matches §1.6 legibility premise.
+- **Module-level `let` requires type annotation** — no cross-module inference. Determinism at the interface boundary.
+- **`var` is not a keyword** — mutable-by-default with `immutable` opt-in per §6.15. Parity translations use `var` inconsistently (Swift habit); noted as drift to sweep in a later idiomatic pass.
+
+Resolved friction points: `#W-17` (`else if`), `#W-54` (bitwise), `#W-64` (compound bit-assign), `#W-68` (`%`), `#W-73` (runtime shift amount).
+
 ## Session note — v0.7.0 nil-messaging inversion (2026-08-07)
 
 Following the Starscream parity exercise (Category 2 spec gaps), a drill-down on nil handling surfaced that Corvid v0.6.0 had inherited Swift's optional-explicit model wholesale — `T?` everywhere, `?.` chaining required, `!` force-unwrap available. The parity translations showed this creating substantial ceremony (`?.` at every delegate call, nested `if let` for cookie iteration) that the underlying ObjC runtime doesn't require.

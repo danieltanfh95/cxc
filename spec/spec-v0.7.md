@@ -1,8 +1,25 @@
-# Corvid Language Specification — v0.7 (Working Draft)
+# Corvid Language Specification — v0.7.1 (Working Draft)
 
-**Status:** Working draft. This revision inverts Swift's nil-safety model: reference types are nil-allowed by default (runtime-honest), `T!` marks non-nil as contract, and force-unwrap plus optional chaining retire. Message sends on nil receivers auto-lift the return type and consult a per-class `on_nil` section (stdlib-provided) for punned returns. Prior structural unification from v0.6.0 (class-as-universal, kind-via-metadata, closures-as-anonymous-classes, everything-is-expression, channel modes) is preserved.
+**Status:** Working draft. v0.7.1 is a minor addition over v0.7.0 — codifying C-inherited lexical and operator constructs the parity translations depended on but the spec had not stated. No design changes. v0.7.0's nil-messaging inversion (reference types nil-allowed by default, `T!` non-nil contract sugar, `?.` and force-unwrap retired, `on_nil` section for userspace nil-punning) and v0.6.0's structural unification (class-as-universal, kind-via-metadata, closures-as-anonymous-classes, everything-is-expression, channel modes) are preserved.
 
 **Name:** `Corvid`. (Historical: named `objc5` throughout the design conversation. Renamed to Corvid when the positioning clarified as "peer of Swift for Apple-ecosystem native development" rather than "next-generation Objective-C.")
+
+**Change log from v0.7.0 → v0.7.1 (Tier 1 lexical + operator sweep):**
+
+Session 1 of the post-nil Category 2 backlog. Direct inheritance from C — zero design decisions, filling spec gaps surfaced by the Starscream parity translations. Unblocks bit-level protocol code, arithmetic, and module-level constant declarations.
+
+- **Numeric literal bases (§2.7).** Decimal (`42`), hexadecimal (`0xFF`), binary (`0b1010`), octal (`0o17`). Underscore separators legal within a literal (`1_000_000`, `0xFF_FF`).
+- **Character literals (§2.7, §3.1).** `'a'` produces a `Char` (Unicode scalar). Standard C escape sequences (`'\n'`, `'\t'`, `'\\'`, `'\''`, `'\0'`) plus Unicode escape `'\u{1F600}'`.
+- **Bitwise operators (§3.9).** `&`, `|`, `^`, `~`, `<<`, `>>` with C precedence. Compound-assignment forms `&=`, `|=`, `^=`, `<<=`, `>>=`. Legal on integer types (including unsigned); rejected on floats.
+- **Modulo operator (§3.9).** `%` for integer remainder (C99 truncated semantics — result sign matches dividend). `%=` compound form. Not defined on floats (use `Double.remainder(_:)` for float modulo).
+- **`let` at module scope (§7.1).** Top-level immutable binding: `let PI: Double = 3.14159`. Same shape as function-scope `let`. Evaluated at module-load time; type annotation required.
+- **`sizeof` (§9.2).** `sizeof(T)` returns `Int` — the size in bytes of type `T` under its natural layout. For C interop only; not idiomatic in pure Corvid code. `alignof(T)` and `offsetof(Struct, field)` complete the trio.
+- **`else if`** — already in v0.7 grammar (§3.8.1); §2.5 keyword note reaffirms it is written as two tokens.
+- **Grammar (§10).** Literal productions extended; operator table added.
+
+Rationale: these constructs are unremarkable inheritance from C. The parity translations assumed them because they're universal, but the spec text hadn't stated them. Codifying them here removes ~10 friction points at zero design cost, and unblocks any protocol/wire code path.
+
+Downstream cleanups: new §2.7 (Literals), §2.5 keyword list adds `let` and `sizeof`, §3.1 Char literal note, new §3.9 (Operators), §7.1 module-level `let` note, §9.2 sizeof/alignof/offsetof, §10 grammar productions.
 
 **Change log from v0.6.0 → v0.7.0 (nil-messaging inversion):**
 
@@ -293,7 +310,7 @@ Indentation-delimited blocks (Python-style). Indent must be consistent within a 
 ```
 class protocol accepts requires ensures
 throws async allocates blocks
-mutable immutable
+mutable immutable let
 function constructor destructor generator processor validator
 expander invariants
 self Self return
@@ -304,28 +321,59 @@ import from as expose module
 true false nil
 Any Effect
 with
+sizeof alignof offsetof
 ```
 
 Removed from prior drafts: `sealed`, `dynamic`, `open`, `final`, `public`, `private`. See §1.2, §5, §7.7 for rationale.
 
 Note: `else if` is written as two tokens, not one; there is no `elif`.
 
+Note: `let` binds an immutable local or module-level constant (§7.1). `var` is not a keyword — mutable bindings use bare identifier assignment (see §6.15).
+
 ### 2.6 Reserved Syntactic Space
 
 The syntactic form `label:` followed by an indented block is reserved language-wide for section usage. This applies at every scope — class bodies, function bodies, method bodies, module bodies, expression contexts — even where the section mechanism is not yet implemented in a given language version. Future versions may enable this syntax in additional contexts without breaking existing code.
+
+### 2.7 Literals
+
+**Numeric literals.** Corvid inherits C's numeric literal shapes:
+
+- **Decimal:** `42`, `-17`, `1_000_000` (underscore separators legal within a literal for readability).
+- **Hexadecimal:** `0xFF`, `0xDEAD_BEEF`, `0x00`. Prefix `0x` or `0X`. Digits `0-9`, `a-f`, `A-F`.
+- **Binary:** `0b1010`, `0b1111_0000`. Prefix `0b` or `0B`. Digits `0`, `1`.
+- **Octal:** `0o17`, `0o755`. Prefix `0o` or `0O`. Digits `0-7`. (Not C's leading-zero form — Corvid rejects `017` as ambiguous.)
+- **Floating-point:** `3.14`, `1e10`, `2.5e-3`, `0x1.8p+1` (hex float, C99-compatible). Underscores legal.
+
+Numeric literals have a target-directed type: the literal's type is inferred from context (declared field type, function parameter type, arithmetic operand type). Unqualified `42` in isolation is `Int`; `3.14` is `Double`. Suffix syntax is not part of v1 — write the target type explicitly if inference is insufficient: `let byte: UInt8 = 0xFF`.
+
+**Character literals.** `'a'` produces a `Char` (Unicode scalar). Legal escape sequences:
+
+- `'\n'` newline, `'\t'` tab, `'\r'` carriage return
+- `'\\'` backslash, `'\''` apostrophe, `'\"'` quote
+- `'\0'` NUL, `'\x1F'` hex byte, `'\u{1F600}'` Unicode scalar
+
+**String literals.** `"..."` produces `String` (UTF-8, immutable). Escape sequences match character literals. Interpolation syntax is a spec gap tracked separately.
+
+**Boolean literals.** `true`, `false`.
+
+**Nil literal.** `nil`. Legal wherever nil-allowed context is expected (reference types §3.6.1, value-type Optionals §3.2, or the value-type-Optional `.none` explicit form).
 
 ---
 
 ## 3. Type System (Contract System) *[TENTATIVE]*
 
 ### 3.1 Primitive Types
-- `Int`, `Int8`, `Int16`, `Int32`, `Int64` (and unsigned variants)
+- `Int`, `Int8`, `Int16`, `Int32`, `Int64` (and unsigned variants: `UInt`, `UInt8`, `UInt16`, `UInt32`, `UInt64`)
 - `Float`, `Double`
 - `Bool`
 - `Char` (Unicode scalar), `String` (UTF-8, immutable), `Bytes`
 - `Unit` (the type with one value, written `()`)
 - `Never` (the type with no values, for divergent functions)
 - `Any` — dynamically-typed value; the type system knows nothing about it. See §3.1.1.
+
+**Primitive types are value types** — they follow record semantics (§6.1, §6.2): copy on assign, no identity, no extent, cannot be nil. Bit-pattern-carrying types like `Int` and `Bool` have no nil representation. Reference-shaped types (`String`, `Bytes`) — despite their conceptual value semantics — still get nil-allowed status when annotated as receivers (see §3.6.1) because the runtime carries them via handles.
+
+**Numeric literals infer their type from context** (§2.7). `Char` literals use `'x'` form; `String` literals use `"..."` form; both support C-style and Unicode escape sequences.
 
 #### 3.1.1 The Any Type
 
@@ -803,6 +851,87 @@ first_match = loop:
 Any expression can be used as a statement — its value is discarded. Loops, `if`, `switch`, and blocks all work this way; using them in statement position simply discards the Bool/T result.
 
 **Consequence for legibility.** Users can write code the way they think about it: `if condition: run_side_effect()` reads as a statement even though `if` is technically an expression; the discarded `Unit` value doesn't affect meaning.
+
+### 3.9 Operators
+
+Corvid inherits C's arithmetic, bitwise, comparison, and logical operators. Precedence and associativity match C99 to avoid surprises for C-family readers. This section is normative; §10 restates it as grammar.
+
+**Arithmetic:**
+
+| Operator | Meaning | Legal on |
+|---|---|---|
+| `+` | addition | numeric types |
+| `-` | subtraction (binary), negation (unary) | numeric types |
+| `*` | multiplication | numeric types |
+| `/` | division | numeric types (integer division truncates toward zero for signed; use `Double`/`Float` for float division) |
+| `%` | modulo (integer remainder) | integer types only. C99 truncated semantics — result sign matches dividend. For float remainder use `Double.remainder(_:)`. |
+
+Compound-assignment forms: `+=`, `-=`, `*=`, `/=`, `%=`.
+
+**Bitwise (integer types only):**
+
+| Operator | Meaning |
+|---|---|
+| `&` | bitwise AND |
+| `\|` | bitwise OR |
+| `^` | bitwise XOR |
+| `~` | bitwise NOT (unary) |
+| `<<` | left shift |
+| `>>` | right shift (arithmetic for signed types, logical for unsigned — matches C99) |
+
+Compound-assignment forms: `&=`, `|=`, `^=`, `<<=`, `>>=`.
+
+**Comparison:**
+
+| Operator | Meaning | Legal on |
+|---|---|---|
+| `==`, `!=` | equality, inequality | any type (structural for records, identity for references; nil-safe per §3.6.1) |
+| `<`, `<=`, `>`, `>=` | ordering | numeric types, `Char`, `String` (lexicographic). Rejected on nil operands per §3.6.1. |
+
+**Logical (short-circuit):**
+
+| Operator | Meaning | Legal on |
+|---|---|---|
+| `and` | logical AND | `Bool` |
+| `or` | logical OR | `Bool` |
+| `not` | logical NOT (unary) | `Bool` |
+
+C's `&&`, `||`, `!` are **not** used — Corvid spells logicals as words for legibility (§1.6). Reserves `&`, `|` unambiguously for bitwise.
+
+**Assignment:** `=`. Compound forms per operator table above.
+
+**Nil-coalescing:** `??` (§3.6.1).
+
+**Member access and calls:**
+
+| Operator | Meaning |
+|---|---|
+| `.` | member access (§3.6.1 nil-flows through) |
+| `()` | function/method invocation |
+| `[]` | subscript |
+
+**Precedence (highest to lowest, C99-derived):**
+
+1. `.`, `()`, `[]` (member access, call, subscript)
+2. `-` (unary), `~` (unary), `not` (unary)
+3. `*`, `/`, `%`
+4. `+`, `-` (binary)
+5. `<<`, `>>`
+6. `<`, `<=`, `>`, `>=`
+7. `==`, `!=`
+8. `&`
+9. `^`
+10. `|`
+11. `and`
+12. `or`
+13. `??`
+14. `=` and compound assignments (right-associative)
+
+Associativity is left-to-right except unary and assignment (right-to-left).
+
+**Integer overflow semantics.** Signed overflow is undefined behavior in C99; Corvid tightens this: signed overflow **wraps** by default (two's-complement modular arithmetic). Users wanting trap-on-overflow use `checked_add`/`checked_sub`/etc. methods that return `Result<T, OverflowError>`. Users wanting saturation use `saturating_*` variants. This departs from C99 UB in favor of predictable behavior consistent with the "runtime as substrate, not as ceiling" premise (§1.5).
+
+**Bit-shift semantics.** Shift amount must be in `0..bit_width(T)`. Shift by a value outside this range is undefined behavior in C99; Corvid rejects it as a contract violation (runtime warning; deterministic wrap in release). Matches the overflow discipline above.
 
 ---
 
@@ -3268,6 +3397,25 @@ function main():
 
 Invoked as `oc5 hello.cor`. No manifest required; no module declaration required (the source is treated as its own implicit module). Standard library available implicitly.
 
+**Module-level declarations.** In addition to class, function, and section declarations (§4), sources may contain top-level immutable bindings:
+
+```
+let PROTOCOL_VERSION: UInt16 = 13
+let DEFAULT_TIMEOUT: Double = 30.0
+let WHITELIST: [String] = ["ws", "wss", "http", "https"]
+
+function handshake(url: URL) -> Result<Response, Error>:
+    ...
+```
+
+**Rules for module-level `let`:**
+
+1. **Immutable.** No reassignment. `let` at module scope is the only form; `var`-equivalent module-level mutable state is not supported. Mutable module-level state uses a class with `state:` and a singleton pattern, so that access is scoped and metadata-queryable.
+2. **Type annotation required.** Module-level `let` must specify the type — no type inference across module boundaries. Ensures the exposed interface is deterministic without full-program analysis.
+3. **Evaluated at module load.** Initializer expressions run at module load time, in declaration order within the source. Cross-source ordering follows dependency order (§7.2).
+4. **Constant-expression preferred.** If the initializer is a compile-time constant, the compiler evaluates it at build time and inlines the value. Otherwise it becomes a module-load-time expression.
+5. **`expose` legal.** A module-level `let` is internal by convention; `expose let PI: Double = 3.14159` includes it in the module's exposed interface.
+
 ### 7.2 Modules
 
 A **module** is a named compilation unit. Modules:
@@ -4076,6 +4224,20 @@ function main():
 
 C types map to Corvid types via standard equivalences (`int` → `Int32`, `char *` → `String` or `RawPointer` depending on context, etc.). Full mapping table in the standard library documentation.
 
+**Layout primitives.** For C-interop layout queries — `struct` field offsets, natural type sizes, alignment requirements — Corvid provides three compile-time primitives:
+
+```
+sizeof(T)              # Int — size in bytes under natural layout
+alignof(T)             # Int — alignment requirement in bytes
+offsetof(S, field)     # Int — byte offset of `field` within class/record `S`
+```
+
+**Rules:**
+
+1. **Compile-time constants when possible.** For types whose layout is fully known at compile time (primitives, records, C-imported structs), these evaluate at build time. For types whose layout depends on runtime (e.g., generics not yet monomorphized), they evaluate at first use.
+2. **C-interop use only.** These primitives are not idiomatic in pure Corvid code — the memory model (§6) handles layout automatically. Use them at C boundaries: reading raw buffers, computing serialization sizes, pointer arithmetic in `unsafe:` blocks.
+3. **`offsetof` only on record-like layouts.** Legal on `kind: record` classes and C-imported structs. Rejected on `kind: regular` (handle-based, no stable layout guarantee) and value types without fields.
+
 ### 9.3 Objective-C Interop
 
 **Native — same runtime, direct calls, no bridge layer.**
@@ -4366,6 +4528,51 @@ member_access := expr '.' identifier
 
 nil_coalesce := expr '??' expr
               # returns LHS if non-nil, else RHS.
+
+# Literals (§2.7).
+literal := int_literal | float_literal | char_literal | string_literal
+        | bool_literal | nil_literal
+
+int_literal   := dec_int | hex_int | bin_int | oct_int
+dec_int       := digit ('_' | digit)*
+hex_int       := ('0x' | '0X') hex_digit ('_' | hex_digit)*
+bin_int       := ('0b' | '0B') bin_digit ('_' | bin_digit)*
+oct_int       := ('0o' | '0O') oct_digit ('_' | oct_digit)*
+float_literal := dec_int '.' dec_int (('e' | 'E') ('+' | '-')? dec_int)?
+              | ('0x' | '0X') hex_digit+ ('.' hex_digit+)? ('p' | 'P') ('+' | '-')? dec_int
+char_literal  := "'" (char_atom | escape_seq) "'"
+string_literal := '"' (char_atom | escape_seq)* '"'
+bool_literal  := 'true' | 'false'
+nil_literal   := 'nil'
+escape_seq    := '\\' ('n' | 't' | 'r' | '\\' | "'" | '"' | '0'
+                       | 'x' hex_digit hex_digit
+                       | 'u' '{' hex_digit+ '}')
+
+# Operators (§3.9). Precedence table normative there; grammar here.
+expr := ... | unary_expr | binary_expr | literal
+
+unary_expr  := ('-' | '~' | 'not') expr
+binary_expr := expr binop expr
+binop := '*' | '/' | '%'
+       | '+' | '-'
+       | '<<' | '>>'
+       | '<' | '<=' | '>' | '>='
+       | '==' | '!='
+       | '&' | '^' | '|'
+       | 'and' | 'or'
+       | '??'
+
+assignment_expr := lvalue assignop expr
+assignop := '=' | '+=' | '-=' | '*=' | '/=' | '%='
+          | '&=' | '|=' | '^=' | '<<=' | '>>='
+
+# Module-level immutable bindings (§7.1).
+module_let := 'expose'? 'let' identifier ':' type '=' expr
+
+# Layout primitives (§9.2) — C-interop only.
+layout_primitive := 'sizeof'   '(' type ')'
+                  | 'alignof'  '(' type ')'
+                  | 'offsetof' '(' type ',' identifier ')'
 ```
 
 **Retired in v0.7** (v0.6 → v0.7): value-position `!` (force-unwrap) and `?.` (optional chaining) productions removed. `.` is the only member-access operator. Explicit panic on nil uses `x ?? panic("...")`.
