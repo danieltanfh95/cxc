@@ -99,13 +99,15 @@ Grouped by family. Individual `#W-N` references are the specific translation sit
 
 ### 2.3 Optional handling
 
-**`??` nil-coalescing operator** — `#W-21`, `#W-42`, `#W-50`, `#W-36`. Recurring pattern; parity workaround is verbose (`if let x = ... else: ...`).
+**`??` nil-coalescing operator** — `#W-21`, `#W-42`, `#W-50`, `#W-36`. **Resolved v0.7 (§3.6.1)** — `??` is spec-committed.
 
-**`?[]` optional subscript** — `#W-32`. Foundation dictionary access is optional; chaining subscript through the optional is standard Swift.
+**`?[]` optional subscript** — `#W-32`. **Resolved v0.7 (§3.6.1)** — `.` and subscript both nil-flow through under reference-types-allow-nil model. No optional-subscript operator needed.
 
-**`guard let`** — `#W-29`, `#W-40`, `#W-51`. Not shown in spec despite being paired with `if let` (which is shown). Multi-binding form (`guard let a = ..., let b = ..., else`) even less specified.
+**Optional chaining `?.`** — `#W-16`, `#W-50`. **Resolved v0.7 (§3.6.1, §5.7)** — `?.` retired; `.` operates on nil receivers uniformly (auto-lift return, `on_nil` dispatch).
 
-**Priority:** high. Every Foundation-adjacent method returns an optional.
+**`guard let`** — `#W-29`, `#W-40`, `#W-51`. **Resolved v0.7 (§3.6.1)** — `if let` and `guard let` spec-committed for scoped unwrap. Multi-binding form still needs spec text.
+
+**Priority (remaining):** low. Nil-messaging inversion (v0.7) resolved the family.
 
 ### 2.4 Collection literal and generic syntax
 
@@ -271,10 +273,10 @@ Compared to Ink:
 **Must-fix spec gaps before further translation:**
 
 1. **Bitwise operators + compound-assignment** (`#W-54`, `#W-64`). Blocks all protocol/wire code.
-2. **Enum raw values** (`#W-45`). Blocks all interop enums.
+2. **Enum raw values** (`#W-45`). **Resolved v0.6.0** (§3.3 enum sugar).
 3. **Range literals + range-based `for`** (`#W-37(a)`, `#W-67`). Blocks all counting code.
-4. **`??` nil-coalescing** (`#W-21`). Blocks Foundation adjacency.
-5. **`guard let` (single + multi)** (`#W-29`). Same.
+4. **`??` nil-coalescing** (`#W-21`). **Resolved v0.7.0** (§3.6.1).
+5. **`guard let` (single + multi)** (`#W-29`). **Partially resolved v0.7.0** (§3.6.1) — single-binding spec'd; multi-binding still gap.
 6. **Dictionary/map type** (`#W-24`). Blocks header/config code.
 7. **Numeric type conversion** (`#W-56`). Blocks any code with mixed-width integers.
 8. **String interpolation with expressions** (recurring across Ink and here). Already Ink priority #1.
@@ -299,17 +301,17 @@ Compared to Ink:
 
 Comparing top gaps from Ink log to this pass — items appearing in both are the highest-priority fixes because they've been surfaced independently:
 
-| Gap | Ink item | Websocket item |
-|---|---|---|
-| String interpolation | #22 | #W-55, #W-36, #W-30 |
-| `try` semantics | #17 | (recurred but not counted) |
-| `guard let` / `if let` | #9 (if let) | #W-29, #W-40, #W-51 |
-| Argument labels | #21 | recurring |
-| Static/class methods on struct | #16a | #W-26, #W-28 |
-| Protocol conformance syntax | #13 | (resolved by reference card) |
-| Optional chaining | #11 | #W-16, #W-32, #W-50 |
+| Gap | Ink item | Websocket item | Status |
+|---|---|---|---|
+| String interpolation | #22 | #W-55, #W-36, #W-30 | pending |
+| `try` semantics | #17 | (recurred but not counted) | pending |
+| `guard let` / `if let` | #9 (if let) | #W-29, #W-40, #W-51 | resolved v0.7 (single-binding) |
+| Argument labels | #21 | recurring | resolved v0.5 |
+| Static/class methods on struct | #16a | #W-26, #W-28 | resolved v0.6 |
+| Protocol conformance syntax | #13 | (resolved by reference card) | resolved |
+| Optional chaining | #11 | #W-16, #W-32, #W-50 | **retired v0.7** — `?.` removed, `.` nil-flows |
 
-**Six items appear in both exercises.** Prioritize these first — they're validated across independent codebases.
+**Six items appear in both exercises.** Prioritize the remaining pending ones first — they're validated across independent codebases.
 
 ## Next Steps
 

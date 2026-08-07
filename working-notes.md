@@ -2,7 +2,21 @@
 
 **Purpose:** consolidate the reasoning behind the current spec (v0.4) and enumerate what's still open. This document captures *why* decisions were made, not just what they are. The spec is the specification; this is the thinking behind it.
 
-**Companion document:** `spec/spec-v0.6.md` (was `corvid-spec-v0.5.md` through the v0.5.2 handoff).
+**Companion document:** `spec/spec-v0.7.md` (was `spec-v0.6.md` through v0.6.0; before that `corvid-spec-v0.5.md`).
+
+## Session note — v0.7.0 nil-messaging inversion (2026-08-07)
+
+Following the Starscream parity exercise (Category 2 spec gaps), a drill-down on nil handling surfaced that Corvid v0.6.0 had inherited Swift's optional-explicit model wholesale — `T?` everywhere, `?.` chaining required, `!` force-unwrap available. The parity translations showed this creating substantial ceremony (`?.` at every delegate call, nested `if let` for cookie iteration) that the underlying ObjC runtime doesn't require.
+
+The design shift: **reference types allow nil by default (runtime-honest); the type system marks non-nil expectations via contract sugar `T!`.** `?.` retires; `.` operates on nil receivers uniformly (auto-lift return, or dispatch via new `on_nil` section for punned returns). Force-unwrap `x!` retires at value site — explicit panic via `x ?? panic("...")` is the sanctioned form, verbosity intentional to remove the Rust-style attractor for hidden panics.
+
+Value-type Optional (`Int?` = `Optional<Int>` sum) is preserved — value types can't be nil at runtime, so `T?` retains its sum-type role for them. `T!` on value types is rejected (trivially true).
+
+The `on_nil` section is a stdlib-provided section (built on §4 metaprogramming primitives). Users declare a method-name → nil-time-value table; the compiler generates nil-receiver dispatch. Stdlib `Collection` and `String` protocols ship default `on_nil` entries (`count: 0`, `is_empty: true`, `iter: EmptyIterator()`), so any conforming user type gets Clojure-style nil-punning by conformance rather than per-class ceremony.
+
+Rationale in one line: Swift's nil-safety model paid ceremony taxes (`?.` at call sites, `!` as panic attractor) to fight the ObjC runtime substrate that Corvid targets — inverting the annotation direction removes the taxes and makes the type system honest about runtime truth.
+
+Impact: retired `T?` for reference types (~15 sites in parity translations), retired `?.` (~22 sites), reduced nested `if let` chains, added §3.6.1 (nullability), §4.10.9 (on_nil section), §5.7 (nil-receiver dispatch). Charter unchanged — the shift descends from §1.5 (runtime as substrate) and §1.9 (contracts as coordination primitives) already committed.
 
 ---
 

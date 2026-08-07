@@ -77,10 +77,11 @@ expose enum FrameCollectorEvent:
 expose class FrameCollector:
     state:
         # FRICTION #W-7 (WEAK ON PROTOCOL-TYPED FIELD):
-        # Swift: `weak var delegate: FrameCollectorDelegate?`. Direct
-        # translation to Corvid's `weak <name>: T?` in state:. Requires the
-        # protocol type to be class-only (see #W-1).
-        weak delegate: FrameCollectorDelegate?
+        # Swift: `weak var delegate: FrameCollectorDelegate?`. Corvid v0.7
+        # reference types are nil-allowed by default (§3.6.1) — the `?`
+        # suffix is retired for reference-typed fields. `weak` implies
+        # nil-observability regardless.
+        weak delegate: FrameCollectorDelegate
 
         # FRICTION #W-8 (DEFAULT VALUES FOR STATE FIELDS):
         # Swift: `var buffer = Data()`. Field with initializer expression.
@@ -160,23 +161,24 @@ expose class FrameCollector:
                     # `close_code_to_uint16(.protocol_error)`.
                     code = CloseCode.protocol_error.raw_value
 
-                # FRICTION #W-16 (OPTIONAL-CHAINED METHOD CALL WITH ARG):
+                # FRICTION #W-16 (OPTIONAL-CHAINED METHOD CALL WITH ARG) — RESOLVED v0.7:
                 # Swift: `delegate?.didForm(event: .closed(reason, code))`.
-                # `?.` short-circuits if delegate is nil. Reference card
-                # confirms `?.` chaining (§11 worked example).
+                # Corvid v0.7 retires `?.` — `.` operates uniformly on nil
+                # and non-nil receivers (§3.6.1, §5.7). Nil-receiver message
+                # sends are runtime no-ops for Unit returns.
                 #
                 # ALSO FRICTION #W-6-related: constructing `.closed(reason, code)`
                 # relies on positional args. Since we named the fields
                 # (#W-6), use named-arg form.
-                self.delegate?.did_form(event: .closed(reason: reason, code: code))
+                self.delegate.did_form(event: .closed(reason: reason, code: code))
                 return
 
             else if frame.opcode == .pong:
-                self.delegate?.did_form(event: .pong(frame.payload))
+                self.delegate.did_form(event: .pong(frame.payload))
                 return
 
             else if frame.opcode == .ping:
-                self.delegate?.did_form(event: .ping(frame.payload))
+                self.delegate.did_form(event: .ping(frame.payload))
                 return
 
             # FRICTION #W-17 (ELSE-IF SEQUENCING vs SWITCH):
@@ -200,7 +202,7 @@ expose class FrameCollector:
                 #       message: String
                 #       code: UInt16
                 # Documenting as inferred, mirroring how Ink treated Reader.
-                self.delegate?.did_form(event: .error(WSError(
+                self.delegate.did_form(event: .error(WSError(
                     type: .protocol_error,
                     message: "first frame can't be a continue frame",
                     code: err_code
@@ -210,7 +212,7 @@ expose class FrameCollector:
 
             else if self.frame_count > 0 and frame.opcode != .continue_frame:
                 let err_code = CloseCode.protocol_error.raw_value
-                self.delegate?.did_form(event: .error(WSError(
+                self.delegate.did_form(event: .error(WSError(
                     type: .protocol_error,
                     message: "second and beyond of fragment message must be a continue frame",
                     code: err_code
@@ -236,17 +238,12 @@ expose class FrameCollector:
             # Loses the "assigned once" guarantee.
             var payload: Bytes
             if self.needs_decompression:
-                # FRICTION #W-21 (OPTIONAL-CHAINED RETURN WITH DEFAULT via ??):
-                # Swift: `delegate?.decompress(...) ?? frame.payload`. The
-                # `??` operator supplies a fallback when the optional is nil.
-                # Spec does not specify `??` (nil-coalescing). Alternatives:
-                #   (a) `if let d = delegate?.decompress(...): payload = d else: payload = frame.payload`
-                #   (b) some `.or_default(frame.payload)` method on Optional
-                # Using (a) for parity — verbose but no spec-gap dependency.
-                if let decompressed = self.delegate?.decompress(data: frame.payload, is_final: frame.is_fin):
-                    payload = decompressed
-                else:
-                    payload = frame.payload
+                # FRICTION #W-21 (NIL-COALESCE via ??) — RESOLVED v0.7:
+                # Swift: `delegate?.decompress(...) ?? frame.payload`.
+                # v0.7 commits to `??` (§3.6.1) and retires `?.` (nil-flows
+                # through `.`). The full Swift idiom collapses to a single
+                # line — auto-lifted nil coalesces to frame.payload.
+                payload = self.delegate.decompress(data: frame.payload, is_final: frame.is_fin) ?? frame.payload
             else:
                 payload = frame.payload
 
@@ -266,16 +263,16 @@ expose class FrameCollector:
                 if self.is_text:
                     # See #W-14 for String.try_from justification.
                     if let string = String.try_from(bytes: self.buffer, encoding: .utf8):
-                        self.delegate?.did_form(event: .text(string))
+                        self.delegate.did_form(event: .text(string))
                     else:
                         let err_code = CloseCode.protocol_error.raw_value
-                        self.delegate?.did_form(event: .error(WSError(
+                        self.delegate.did_form(event: .error(WSError(
                             type: .protocol_error,
                             message: "not valid UTF-8 data",
                             code: err_code
                         )))
                 else:
-                    self.delegate?.did_form(event: .binary(self.buffer))
+                    self.delegate.did_form(event: .binary(self.buffer))
                 self.reset()
 
         # FRICTION #W-23 (INTERNAL-VISIBILITY BOUNDARY):

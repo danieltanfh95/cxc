@@ -117,7 +117,7 @@ expose record HTTPWSHeader:
                     # `?[]` (optional subscript) is another Swift affordance
                     # not shown in the Corvid spec. Also see #W-24 (dict type
                     # gap).
-                    if req.all_http_header_fields?.get("Cookie") == nil:
+                    if req.all_http_header_fields.get("Cookie") == nil:    # v0.7: nil-flows through `.`
                         # FRICTION #W-33 (STATIC METHOD ON FOUNDATION SINGLETON):
                         # Swift: `HTTPCookieStorage.shared.cookies(for: url)`.
                         # Access to a shared singleton via `.shared`, then a
@@ -144,21 +144,12 @@ expose record HTTPWSHeader:
                         let val = "permessage-deflate; client_max_window_bits; server_max_window_bits=15"
                         req.set_value(val, for_http_header_field: HTTPWSHeader.extension_name)
 
-                    # FRICTION #W-36 (NIL-COALESCING WITH INTERPOLATION):
+                    # FRICTION #W-36 (NIL-COALESCING WITH INTERPOLATION) — RESOLVED v0.7 (nil-coalesce part):
                     # Swift: `req.allHTTPHeaderFields?[HTTPWSHeader.hostName] ?? "\(parts.host):\(parts.port)"`.
-                    # Optional dict subscript + `??` fallback + string
-                    # interpolation of two fields. String interpolation
-                    # syntax is spec-gap (see Ink log). Reference card:
-                    # simple `$identifier` interpolation visible; expression
-                    # form `${expr}` seen in quote: blocks only.
-                    # `parts.host` is an identifier: `$parts.host` — but
-                    # does the dot terminate the identifier? Ambiguous.
-                    # Using `${...}` form to disambiguate.
-                    var host_value: String
-                    if let existing = req.all_http_header_fields?.get(HTTPWSHeader.host_name):
-                        host_value = existing
-                    else:
-                        host_value = "${parts.host}:${parts.port}"
+                    # v0.7 commits to `??` and nil-flowing `.` (§3.6.1). The
+                    # if-let/else collapses. String interpolation still a
+                    # spec-gap — `${...}` form as before.
+                    let host_value = req.all_http_header_fields.get(HTTPWSHeader.host_name) ?? "${parts.host}:${parts.port}"
                     req.set_value(host_value, for_http_header_field: HTTPWSHeader.host_name)
                     return req
                 else:

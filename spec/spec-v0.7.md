@@ -1,8 +1,25 @@
-# Corvid Language Specification — v0.6 (Working Draft)
+# Corvid Language Specification — v0.7 (Working Draft)
 
-**Status:** Working draft. This revision unifies the type-declaration surface (all user types are classes; kinds via `metadata:`), adds the `metadata:` section as a first-class user-writable declaration, resolves the closure/anonymous-object question (closures are anonymous classes), commits to everything-is-expression, and extends the concurrency model with channel modes for CSP-style coordination.
+**Status:** Working draft. This revision inverts Swift's nil-safety model: reference types are nil-allowed by default (runtime-honest), `T!` marks non-nil as contract, and force-unwrap plus optional chaining retire. Message sends on nil receivers auto-lift the return type and consult a per-class `on_nil` section (stdlib-provided) for punned returns. Prior structural unification from v0.6.0 (class-as-universal, kind-via-metadata, closures-as-anonymous-classes, everything-is-expression, channel modes) is preserved.
 
 **Name:** `Corvid`. (Historical: named `objc5` throughout the design conversation. Renamed to Corvid when the positioning clarified as "peer of Swift for Apple-ecosystem native development" rather than "next-generation Objective-C.")
+
+**Change log from v0.6.0 → v0.7.0 (nil-messaging inversion):**
+
+Corvid inverts Swift's nil-safety model. Reference types allow nil at runtime (matches the ObjC substrate), the type system marks non-nil expectations as contracts (`T!`), and message sends on nil receivers propagate through instead of trapping. Force-unwrap and optional chaining — the Swift attractors for hidden panics and per-call syntactic tax — retire entirely. A new stdlib section (`on_nil`) lets classes declare per-method nil-response values, and Collection-protocol conformance provides sensible defaults (`count: 0`, `is_empty: true`, `iter: EmptyIterator()`) for free.
+
+- **Reference types nil-allowed by default.** For classes of `kind: regular` (reference-typed), `T` permits nil at runtime. `T!` is contract sugar for `invariant: value != nil`. `T?` on reference types is retired (redundant). Value types (`kind: record`, `kind: enum`, primitives like `Int`, `Bool`) unchanged: `T` never nil, `T?` remains sugar for `Optional<T>` sum type.
+- **Force-unwrap `x!` retired at value site.** No sugar for panic-on-nil. Users write `x ?? panic("reason")` when they genuinely need to fail. Verbosity is intentional — panic should look exceptional in source so it stays exceptional in behavior.
+- **Optional chaining `?.` retired.** `.` operates uniformly on non-nil and nil receivers. Nil receivers return nil for reference-returning methods; the call-site expression type auto-lifts to `Return?`. For methods returning `Unit`, nil receivers are a silent no-op.
+- **`on_nil` stdlib section (new §4.10.9).** Class or protocol body may declare `section on_nil:` as a method-name → nil-time-value table. Compiler generates nil-receiver dispatch to consult the table before falling back to auto-lift. Precedence: class `on_nil` overrides protocol `on_nil`; unlisted methods auto-lift.
+- **Collection + String protocols ship default `on_nil`.** `Collection` conformers inherit `count: 0`, `is_empty: true`, `iter: EmptyIterator()` on nil receiver. `String` similarly for `length` / `is_empty` / `chars`. Users writing their own collection types get nil-punning by protocol conformance, not per-class ceremony.
+- **`T!` contract violations warn, don't panic.** Runtime observes nil in a `T!`-annotated field or parameter → logs a warning (dev) or configurable action (prod). Nil continues to flow through message sends. `T!` is a debugging aid asserting author expectations; safety comes from nil-punning being safe.
+- **Arithmetic and ordering on nil are type errors.** `nil + 3`, `nil < 3` don't propagate — must unwrap or use `??`. Equality (`==`, `!=`) punning is safe: `nil == nil` is true, `nil == x` is false. Ordering with nil has no coherent semantics.
+- **ObjC nullability mapping updated (§9.3.2).** ObjC `nullable` maps to Corvid `T`. ObjC `nonnull` maps to `T!`. Un-annotated ObjC types map to `T` (nil-allowed default; matches ObjC runtime truth without warning noise).
+- **Grammar (§10).** Type production adds `!` suffix (reference-type contract). `?` suffix narrows to value-type Optional-sum only. Value expressions: `?.` and value-position `!` productions removed.
+- **Rationale.** Swift's nil-safety model paid two visible taxes: `?.` at every optional call site (readers stop seeing it) and `!` at value site (attractor for hidden panics as codebases evolve). Corvid inherits the ObjC runtime, which already allows nil for every reference — Swift's type system was fighting this truth and paying the tax. v0.7.0 reverses the direction: nil is the baseline for references, non-nil is the exception marked by contract. The Clojure-style pun-on-nil semantics (via ObjC runtime + `on_nil` for user code) removes the safety motivation for the taxes, so the taxes go too.
+
+Downstream cleanups: §3.1.1 (`Any?` note removed — `Any` allows nil directly), §3.2 (Optionals split into reference vs value cases), §3.4.2 (Connection example — retire `Socket?` and `socket!.send`), new §3.6.1 (Nullability and Nil-Punning), new §4.10.9 (`on_nil` section), new §5.7 (Nil-Receiver Dispatch), §6.14 (Reference Modifiers — retire redundant `?` on `weak`), §8.6 (channel section field types), §9.3.2 (ObjC nullability round-trip), §10 (grammar). Roughly 15-20 substantive edits across the spec.
 
 **Change log from v0.5.2 → v0.6.0 (structural unification):**
 
@@ -338,7 +355,7 @@ match x:
 
 **`Any` is not a universal supertype.** There is no "everything conforms to Any" claim. Values are typed `Any` when the compiler doesn't know their type, not because they satisfy some contract.
 
-**`Any?` is distinct from `Any`.** `Any?` is a value that might be nil, and might otherwise be any type. `Any` is a non-nil value of unknown type.
+**`Any` allows nil at runtime.** As a reference-shaped type (§3.6.1), an `Any` value may be nil. If a specific call site needs a non-nil-Any contract, write `Any!`.
 
 **Idiomatic use is rare.** In pure Corvid code, contracts and specific types are preferred. `Any` should appear primarily at interop boundaries or in genuinely dynamic code paths. The compiler warns when `Any` is used as a field or return type in public APIs, since callers get no static guidance.
 
@@ -347,7 +364,8 @@ match x:
 - Arrays: `[T]`
 - Dictionaries: `{K: V}`
 - Sets: `{T}`
-- Optionals: `T?` (sugar for `Optional<T>`)
+- Optionals (value-type only): `T?` sugar for `Optional<T>` sum type. Legal when `T` is a value type (`kind: record`, `kind: enum`, primitive). Rejected for reference-typed `T` (reference types are nil-allowed by default — see §3.6.1).
+- Non-nil contract (reference-type only): `T!` sugar for `T` with `invariant: value != nil`. Legal when `T` is a reference type. Rejected for value-typed `T` (trivially true — warning).
 - Result: `Result<T, E>` (built-in sum type)
 - Function types: `(A, B) -> C`, `(A, B) async throws E -> C`
 
@@ -487,7 +505,7 @@ class Connection:
         endpoint: URL
     
     state:
-        socket: Socket?
+        socket: Socket                         # reference type, nil-allowed by default
         connection_state: ConnectionState = .closed
     
     invariants:
@@ -502,7 +520,7 @@ class Connection:
     
     function send(self, data: Bytes)
         requires connection_state == .opened:
-        self.socket!.send(data)
+        self.socket.send(data)                 # invariant ensures non-nil; no force-unwrap needed
 ```
 
 **Enforcement:**
@@ -597,6 +615,55 @@ type NonEmpty<T> = [T] requires self.count > 0
 ```
 
 Verification: runtime by default. Static verification via SMT is an optional backend.
+
+### 3.6.1 Nullability and Nil-Punning
+
+Corvid's nullability model inverts Swift's: **reference types allow nil at runtime by default; non-nil is the exception marked by contract.** This matches the ObjC runtime substrate (§1.5) — messaging nil is native, not a special case the type system fights to prevent.
+
+**Type-annotation rules:**
+
+| Annotation | Reference type (`kind: regular`) | Value type (`record`, `enum`, primitive) |
+|---|---|---|
+| `T` | nil-allowed at runtime | never nil |
+| `T!` | contract sugar for `invariant: value != nil` | rejected (trivially true; warning) |
+| `T?` | rejected (redundant with `T`) | sugar for `Optional<T>` sum type |
+
+`T!` desugars to `T` plus an invariant. The compiler emits a runtime check at each observation point (field write, parameter bind, return); a violation logs a warning in development, configurable action in release. Nil continues to flow through message sends — `T!` documents author expectation, it does not enforce safety.
+
+**Value-site semantics:**
+
+- **Member access on nil.** `nil.method(args)` is legal. Method-return `T` auto-lifts to `T?` at the call site (message send on nil returns nil per the ObjC runtime); method-return `Unit` is a silent no-op. If the receiver's class or a conformed protocol declares `section on_nil:` (§4.10.9) with an entry for this method, that entry's value is returned instead of nil-lift.
+- **Nil-coalescing.** `x ?? default` returns `x` if non-nil, else `default`. Types must match; the result type is the non-optional common type.
+- **Explicit panic.** `x ?? panic("reason")` is the sanctioned "die if nil" form. There is no shorter sugar. Verbosity is intentional — panic should look exceptional in source so it stays exceptional in behavior.
+- **Scoped unwrap.** `if let x = maybe: ...` and `guard let x = maybe else: ...` bind unwrapped `x` for the following scope. Standard patterns from the Swift-family.
+- **Arithmetic and ordering on nil are type errors.** `nil + 3`, `nil < 3`, and `nil % 2` do not propagate — the semantics are ambiguous. Unwrap explicitly or coalesce with `??`.
+- **Equality.** `nil == nil` is `true`, `nil == x` (for non-nil `x`) is `false`. `!=` inverts. Ordering operators reject nil operands at compile time.
+
+**Retired from prior drafts:**
+
+- **Force-unwrap (`x!` at value site).** The v0.5–v0.6 form matched Swift; retired in v0.7. Users write `x ?? panic("reason")` when they need to fail on nil at a specific site. Removes the attractor for hidden panics as codebases evolve — every nil-panic site is verbose enough to notice in code review.
+- **Optional chaining (`x?.method()`).** The v0.5–v0.6 form required `?.` at every optional-receiver call site. Retired in v0.7 — `.` operates uniformly on nil and non-nil receivers (nil-lift return, `on_nil` dispatch), so the marker was ceremony with no semantic content.
+
+**Interaction with contracts (§1.9, §3.4.2):**
+
+`T!` at the type site is a specific case of the general invariant mechanism. The following are equivalent:
+
+```
+class Handler:
+    accepts:
+        logger: Logger!
+
+# desugars to
+class Handler:
+    accepts:
+        logger: Logger
+    invariants:
+        logger != nil
+```
+
+Users needing richer nil-related contracts (e.g., "not nil AND not empty") write the invariant form directly. `T!` is optimized for the common case.
+
+**Userspace nil-punning.** Every user method is automatically nil-safe for message sends (ObjC-inherited). For methods that should return a specific non-nil value on nil receiver — Clojure-style `(count nil)` = `0` semantics — the class or protocol declares a `section on_nil:` (§4.10.9) with a method → value table. Stdlib `Collection` and `String` protocols ship default `on_nil` entries; conformers inherit.
 
 ### 3.7 Pattern Matching (`switch`)
 
@@ -1799,6 +1866,46 @@ class Foo:
 
 **Distinction from §4.18 Class Metadata.** §4.18 describes the runtime-introspectable class-metadata *artifact* that the compiler generates for every class. The `metadata:` section is one of several sources feeding that artifact — user-written declarative entries. Other sources include field types, method signatures, generated members from behavioral sections, provenance, and conformance information. `metadata:` is where the user contributes; §4.18 is where consumers read.
 
+#### 4.10.9 The `on_nil` Section *(Stage 1)*
+
+`on_nil:` is a user-writable declaration section that specifies per-method return values when the receiver is nil. It participates in nil-receiver dispatch (§5.7).
+
+**Composition:**
+
+```
+class UserList:
+    accepts:
+        entries: [User]
+    methods:
+        function count(self) -> Int:
+            return self.entries.length
+        function is_empty(self) -> Bool:
+            return self.entries.length == 0
+        function first(self) -> User:
+            return self.entries[0]
+    section on_nil:
+        count: 0
+        is_empty: true
+        first: nil          # explicit — otherwise auto-lifts to User? = nil
+```
+
+**Rules:**
+
+1. **Entries.** Each entry is `method_name: value_expression`. The `method_name` must match a method declared on the class or one of its conformed protocols. The `value_expression` must be a compile-time constant, and its type must be assignable to the method's declared return type.
+2. **Applies to nil-receiver call sites only.** The generated dispatch consults `on_nil` only when the receiver is nil at call time. Non-nil receivers dispatch to the method body as normal.
+3. **Legal on any class kind that permits nil.** `kind: regular` classes (reference-typed) may declare `on_nil`. `kind: record`, `kind: enum` (value-typed) reject `on_nil` — value types cannot be nil, the section is meaningless.
+4. **Legal on protocols.** A protocol may declare `on_nil` entries. Conformers inherit the entries unless they override them at the class level. Precedence rules per §5.7.
+5. **Unlisted methods auto-lift.** Methods not listed in `on_nil` follow default nil-receiver semantics — return-type `T` auto-lifts to `T?`, return-type `Unit` no-ops.
+6. **Composition.** `on_nil` composes inline like other sections. A class may declare at most one `on_nil` section directly; multiple protocol-inherited `on_nil` entries for the same method are a compile error unless resolved by a class-level entry (§5.7).
+
+**Stdlib protocols shipping default `on_nil`:**
+
+- **`Collection`** — `count: 0`, `is_empty: true`, `iter: EmptyIterator()`.
+- **`String`** — `length: 0`, `is_empty: true`, `chars: EmptyIterator()`.
+- **`Numeric`** — no `on_nil` entries. Arithmetic on nil is a type error (§3.6.1); no punning.
+
+**Rationale.** ObjC's nil-messaging gives Corvid safe nil-propagation for free. `on_nil` is the mechanism for the Clojure-style extension: instead of "nil.count() returns nil-lifted-to-Int?", authors can declare "nil.count() returns 0" and get the collection-punning idiom. Because the mechanism is a section (§4), users write it once per class or protocol; it composes with everything else via the standard section rules.
+
 ### 4.11 User-Defined Section Classes
 
 Users define section classes using the same syntax as built-in ones. Example — an `Channel` section:
@@ -2589,7 +2696,8 @@ handler = event => process(event, config)   # config captured strongly
 
 ```
 # Weak self capture — closure does not keep self alive:
-subscription = channel.subscribe([weak self] event => self?.handle(event))
+subscription = channel.subscribe([weak self] event => self.handle(event))
+# When self has been deallocated (weak → nil), the message send is a no-op (§3.6.1).
 ```
 
 Multiple entries are comma-separated. Legal modes: `weak`, `unowned`, `copy` (for value types).
@@ -2612,6 +2720,57 @@ The compiler is free to specialize closure representations under the "as if" rul
 | Closure passed across ObjC boundary | Wrapped as an ObjC block; standard block calling convention |
 
 Users write the sugar; the compiler chooses the representation. The `Callable<Args, Return>` wrapper type is what appears in type signatures; the concrete anonymous class is a compiler artifact.
+
+### 5.7 Nil-Receiver Dispatch
+
+Message sends on nil receivers are legal (§3.6.1). This section specifies how the runtime resolves them.
+
+**Lookup order for a call `receiver.method(args)` when `receiver` is nil:**
+
+1. **Class `on_nil` section (§4.10.9).** If the receiver's static type declares `section on_nil:` with an entry for `method`, that entry's value is returned. No method body runs.
+2. **Conformed protocols' `on_nil` sections.** If no class-level entry matches, walk the receiver type's conformed protocols in declaration order; the first protocol declaring `method` in its `on_nil` section supplies the return.
+3. **Auto-lift default.** If no `on_nil` entry is found, the runtime returns nil, and the call-site expression type auto-lifts from `Return` to `Return?`. For methods returning `Unit`, the call is a silent no-op (expression type remains `Unit`).
+
+**Class overrides protocol.** A class-level `on_nil` entry shadows the same entry inherited via protocol conformance. This mirrors normal method dispatch precedence.
+
+**Multiple protocols supplying the same entry.** Ambiguity is a compile error at conformance-declaration time — the class must declare a class-level `on_nil` entry to disambiguate. The compiler surfaces which protocols conflicted and the offending method name.
+
+**Codegen consequences.**
+
+- If no `on_nil` entry exists anywhere in the receiver type's hierarchy for the called method, no runtime branch is generated. Message send goes through the ObjC runtime directly; runtime returns nil natively (no Corvid-generated branch).
+- If an `on_nil` entry exists, the compiler generates a nil-check-and-substitute at the call site (fast path) or a runtime consultation (slow path, when dynamic dispatch precludes static resolution).
+- Auto-lift is a type-system operation only, not runtime. The bytecode is identical to the non-nil case; the type checker adjusts the observed return type.
+
+**Interaction with `!` methods.** A method declared to return `T!` (non-nil reference) on nil receiver returns nil regardless — but this observation triggers the `T!` invariant warning at the call site. Authors declaring `T!`-return methods should also declare `on_nil` entries to preserve the invariant on nil-receiver call sites.
+
+**Example dispatch trace:**
+
+```
+protocol Collection:
+    accepts count() -> Int
+    accepts is_empty() -> Bool
+    section on_nil:
+        count: 0
+        is_empty: true
+
+class UserList: Collection:
+    accepts:
+        entries: [User]
+    methods:
+        function count(self) -> Int:
+            return self.entries.length
+        function is_empty(self) -> Bool:
+            return self.entries.length == 0
+    section on_nil:
+        count: 0        # matches protocol; explicit for clarity
+        # is_empty: not declared → inherits protocol's `true`
+
+users: UserList = maybe_get_users()   # may be nil
+
+n = users.count()        # nil → class on_nil returns 0. type: Int
+empty = users.is_empty() # nil → protocol on_nil returns true. type: Bool
+name = users.first_name  # no on_nil entry; auto-lift. type: String?
+```
 
 ---
 
@@ -3051,22 +3210,22 @@ These non-goals bound the design and prevent scope creep into database-like func
 - `weak` — weak reference (nils out when target deallocates). Does not participate in ARC.
 - `unowned` — non-owning strong reference. Assumes target outlives reference; undefined behavior if violated.
 
-Applied to fields:
+Applied to fields. `weak` implies nil-observability regardless — the type is a reference type and reference types are nil-allowed by default (§3.6.1), so no `?` suffix is needed or accepted.
+
 ```
 class Child:
     state:
-        parent: weak Parent?
+        parent: weak Parent
 ```
 
-Applied to locals (rare):
+Applied to locals (rare). Under nil-punning semantics (§3.6.1), `if let` is used only when the unwrapped value must be bound for repeated use in the following scope; single-call cases just dispatch through:
+
 ```
 function callback():
     weak self_ref = self
-    schedule_later(function() {
-        if let s = self_ref {
-            s.do_thing()
-        }
-    })
+    schedule_later(function():
+        self_ref.do_thing()    # no-op if self was deallocated (weak → nil)
+    )
 ```
 
 ### 6.15 Mutability
@@ -3618,9 +3777,9 @@ section class Channel:
         composition_mode: nested
         parameters:
             mode: DistributionMode = .work
-            capacity: Int? = nil          # nil = unbounded (default)
+            capacity: Int? = nil          # Int is value-type; T? is Optional<Int> sum. nil = unbounded (default).
             on_full: OverflowPolicy = .block   # required when capacity is set
-            topic_fn: TopicFn? = nil      # required when mode = .pub
+            topic_fn: TopicFn = nil       # TopicFn is a Callable (reference); nil-allowed by default. Required when mode = .pub.
     
     state:
         instance_subscribers: [Subscriber] = []
@@ -3958,7 +4117,7 @@ Users destructure explicitly when concrete types are needed. `Any` is the honest
 
 **`NSError **` ↔ `throws E`.** ObjC's error out-param convention bridges to Corvid's `throws`. ObjC methods declared with `NSError **` are imported as `throws NSError`. Corvid methods with `throws E` are exposed to ObjC via `NSError **` out-params (with automatic error boxing when `E` is not `NSError`).
 
-**Nullability round-trip.** ObjC nullability annotations (`nullable`, `nonnull`) map to Corvid's `T?` and `T`. Un-annotated ObjC types come into Corvid as non-optional with a compile warning noting the assumption. Users can suppress the warning with explicit `T?` annotation.
+**Nullability round-trip.** ObjC nullability annotations map to Corvid reference-type annotations (§3.6.1): ObjC `nullable` → Corvid `T` (nil-allowed by default). ObjC `nonnull` → Corvid `T!` (non-nil contract, warns on runtime violation). Un-annotated ObjC types come into Corvid as `T` (nil-allowed) — the safe default that matches ObjC runtime truth without adding warning noise. Callers who want stricter contracts add `T!` at the Corvid call site.
 
 **Type equivalences.** Standard mappings:
 - `NSInteger` = `Int`
@@ -4184,7 +4343,32 @@ method_reference := identifier ('.' identifier)+   # e.g. `self.foo`, `MyType.ba
 quote_expr := 'quote' ':' INDENT ast_content DEDENT
 
 ast_content := <arbitrary AST with ${expr} splice points>
+
+# Type expressions (§3.2, §3.6.1). Nullability suffixes are kind-restricted.
+type := base_type
+      | base_type '!'                # reference-type non-nil contract (§3.6.1)
+      | base_type '?'                # value-type Optional<T> sum (§3.6.1)
+      | '[' type ']'                 # Array<T>
+      | '{' type ':' type '}'        # Map<K, V>
+      | '{' type '}'                 # Set<T>
+      | '(' type_list ')' '->' type  # Callable<Args, Return>
+
+base_type := qualified_name generic_args?
+           | '(' type_list ')'       # tuple type
+
+# `!` on value-typed base is a semantic error (warning: trivially true).
+# `?` on reference-typed base is a semantic error (redundant with base).
+
+# Value-expression operators. Nil handling is via `.` (uniform) and `??`.
+member_access := expr '.' identifier
+              # `.` operates on both non-nil and nil receivers (§3.6.1, §5.7).
+              # Nil receivers auto-lift return type or dispatch via on_nil section.
+
+nil_coalesce := expr '??' expr
+              # returns LHS if non-nil, else RHS.
 ```
+
+**Retired in v0.7** (v0.6 → v0.7): value-position `!` (force-unwrap) and `?.` (optional chaining) productions removed. `.` is the only member-access operator. Explicit panic on nil uses `x ?? panic("...")`.
 
 **Retired from prior drafts** (v0.5 → v0.6): `struct`, `enumeration`. Sugar keywords `record`, `enum` (plus preserved `protocol`, `section class`) desugar to `class + metadata: kind:` (§4.19).
 
@@ -4271,10 +4455,10 @@ expose class DefaultOrderProcessor: OrderProcessor:
         ...
     
     function notify_will_process(self, order: Order):
-        self.delegate?.order_processor(self, will_process: order)
+        self.delegate.order_processor(self, will_process: order)
     
     function notify_did_process(self, order: Order, receipt: Receipt):
-        self.delegate?.order_processor(self, did_process: order, receipt: receipt)
+        self.delegate.order_processor(self, did_process: order, receipt: receipt)
 
 expose protocol OrderProcessorDelegate:
     accepts order_processor(Self, will_process: Order)
