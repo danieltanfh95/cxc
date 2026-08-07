@@ -1,6 +1,6 @@
 # Corvid Language Design — Handoff Bundle
 
-**Status:** Pre-implementation. Design work through v0.8.0 (library-first sugar: compiler ships a minimal bootstrap grammar; the prelude declares standard surface syntax as alias declarations — type-expression sugars, collection literals, range operators, string interpolation, bitwise operators, class-kind keywords all become inspectable stdlib aliases; user-defined syntax at all supported positions via pattern-matching alias signatures with precedence/associativity/guards). Prior work preserved: v0.7.2 sugar unification, v0.7.1 Tier 1 sweep (literals, operators, module-level `let`, sizeof/alignof/offsetof), v0.7.0 nil-messaging inversion, v0.6.0 structural unification. No compiler exists yet.
+**Status:** Pre-implementation. Design work through v0.8.1 (Session 3 fills: numeric conversion `Convertible` protocol with `.into(T)` / `.checked_into(T)` / `.saturating_into(T)`, `Bounded` protocol for type extrema, parameter defaults with compile-time-constant discipline, multi-binding `if let`/`guard let`). Prior work preserved: v0.8.0 library-first sugar (bootstrap grammar + prelude aliases), v0.7.2 sugar unification, v0.7.1 Tier 1 sweep, v0.7.0 nil-messaging inversion, v0.6.0 structural unification. No compiler exists yet.
 
 **Working name:** Corvid.
 **Original name:** objc5 (used throughout the design conversation; renamed when positioning solidified).

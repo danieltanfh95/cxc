@@ -4,6 +4,21 @@
 
 **Companion document:** `spec/spec-v0.7.md` (was `spec-v0.6.md` through v0.6.0; before that `corvid-spec-v0.5.md`).
 
+## Session note — v0.8.1 Session 3 fills (2026-08-08)
+
+Small additive session. Filled concrete parity-translation gaps that didn't warrant Level-2-scale mechanism work.
+
+**Decisions in this session:**
+
+- **Narrowing conversion wraps by default.** User pushed on the "trap in dev, wrap in release" recommendation I made initially, and it was inconsistent with §3.9 arithmetic overflow discipline (which wraps in both dev and release). Corrected to: `.into(T)` wraps, `.checked_into(T)` returns Result, `.saturating_into(T)` clamps. One consistent rule across arithmetic and conversion.
+- **Parameter defaults are compile-time constants, statically inserted.** User asked "why can't parameter defaults be statically inserted" — the answer is they can, if we restrict defaults to compile-time constants. Same discipline as value aliases (§4.16.10). Removes Python's mutable-default footgun by construction (constants can't be mutated shared state). Runtime-computed defaults use `= nil` + coalesce in body.
+- **Enum associated values stay named-only.** User pushed back ("sure?") on my initial proposal to add positional form. Retracted — named-only is more consistent with the rest of Corvid (named args, named record fields, named `accepts`). Style guide note: when translating positional Swift enums, add names.
+- **Collection literals rejected as parameter defaults.** They allocate; compile-time-constant discipline requires no allocation. Users needing `= []` default write `= nil` + coalesce in body.
+
+Resolved friction points: `#W-47` (constructor defaults), `#W-56` / `#W-59` / `#W-65` (numeric conversion), `#W-66` (type extrema), `#W-29` multi-binding extension.
+
+**Design pattern worth remembering:** the compile-time-constant discipline is now used in two places — value aliases (§4.16.10) and parameter defaults (§3.8.5). Both restrict to primitive literals + nil + value-alias references. This unifies the "what counts as static substitution" question across the language. If we add more static-substitution positions later, use the same rule.
+
 ## Session note — v0.8.0 library-first sugar (Level 2 aliases, 2026-08-08)
 
 Following v0.7.2's unification of class-kind sugar under aliases, user asked: "if `alias` is the sugar system, what if we extend aliases to handle expression-position patterns like `[...]`?" Working through it — this session ("Session 2" originally scoped as collection literals + ranges + interpolation + random) revealed that the aliases-as-sugar-system move had a natural extension into Level 2: pattern-matching alias signatures covering delimited patterns, infix operators, string interpolation.

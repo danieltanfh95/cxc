@@ -105,7 +105,7 @@ Grouped by family. Individual `#W-N` references are the specific translation sit
 
 **Optional chaining `?.`** — `#W-16`, `#W-50`. **Resolved v0.7 (§3.6.1, §5.7)** — `?.` retired; `.` operates on nil receivers uniformly (auto-lift return, `on_nil` dispatch).
 
-**`guard let`** — `#W-29`, `#W-40`, `#W-51`. **Resolved v0.7 (§3.6.1)** — `if let` and `guard let` spec-committed for scoped unwrap. Multi-binding form still needs spec text.
+**`guard let`** — `#W-29`, `#W-40`, `#W-51`. **Resolved v0.7 (§3.6.1)** — single-binding spec'd. **Multi-binding resolved v0.8.1 (§3.6.1)** — comma-separated `let` bindings in `if let` / `guard let`, left-to-right short-circuit on nil.
 
 **Priority (remaining):** low. Nil-messaging inversion (v0.7) resolved the family.
 
@@ -121,11 +121,11 @@ Grouped by family. Individual `#W-N` references are the specific translation sit
 
 ### 2.5 Numeric type conversion
 
-**Widening / narrowing conversions** — `#W-56`, `#W-59`, `#W-65`. `UInt64(payloadLen)`, `UInt8(payloadLength)`, `Int(dataLength)`. Very frequent.
+**Widening / narrowing conversions** — `#W-56`, `#W-59`, `#W-65`. **Resolved v0.8.1 (§3.11)** — `Convertible<To>` protocol with `.into(T)` (wrap), `.checked_into(T)` (Result), `.saturating_into(T)` (clamp). Prelude ships conformances for all numeric primitive pairs. Wrap semantics for `.into(T)` matches §3.9 arithmetic discipline.
 
-**Type extrema** — `#W-66`. `UInt16.max`. Standard-library convenience; not shown.
+**Type extrema** — `#W-66`. **Resolved v0.8.1 (§3.11)** — `Bounded` protocol with `T.max`, `T.min`. `FloatingPoint` extends with `.infinity`, `.nan`, `.epsilon`.
 
-**Priority:** medium-high. Every wire-protocol codebase does this constantly.
+**Priority (remaining):** none — family closed.
 
 ### 2.6 Generics on extensions / categories
 
@@ -151,7 +151,7 @@ Grouped by family. Individual `#W-N` references are the specific translation sit
 
 ### 2.8 Constructors and initialization
 
-**Constructor parameter defaults** — `#W-47`. `init(isServer: Bool = false)`.
+**Constructor parameter defaults** — `#W-47`. **Resolved v0.8.1 (§3.8.5)** — parameter defaults with compile-time-constant discipline (primitive literals / nil / value-alias references only; statically inserted at each call site).
 
 **Definite assignment for `let`** — `#W-20`, `#W-60`. `let x: T` followed by conditional assignment relies on Swift's definite-assignment analysis. Corvid's `let` semantics under definite-assignment not spec'd. Parity uses `var` and loses the guarantee.
 
@@ -276,9 +276,9 @@ Compared to Ink:
 2. **Enum raw values** (`#W-45`). **Resolved v0.6.0** (§3.3 enum sugar).
 3. **Range literals + range-based `for`** (`#W-37(a)`, `#W-67`). **Resolved v0.8.0** (§4.20.1 prelude infix aliases).
 4. **`??` nil-coalescing** (`#W-21`). **Resolved v0.7.0** (§3.6.1); alias declaration formalized in v0.8.0 (§4.20).
-5. **`guard let` (single + multi)** (`#W-29`). **Partially resolved v0.7.0** (§3.6.1) — single-binding spec'd; multi-binding still gap.
+5. **`guard let` (single + multi)** (`#W-29`). **Resolved v0.7.0** (single-binding, §3.6.1) + **v0.8.1** (multi-binding, §3.6.1).
 6. **Dictionary/map type** (`#W-24`). **Resolved v0.8.0** (§4.20.1 prelude type-expression alias `{K: V}`).
-7. **Numeric type conversion** (`#W-56`). Blocks any code with mixed-width integers.
+7. **Numeric type conversion** (`#W-56`). **Resolved v0.8.1** (§3.11 `Convertible` protocol).
 8. **String interpolation with expressions** (recurring across Ink and here). **Resolved v0.8.0** (§4.20.1 prelude alias `${expr}`).
 9. **Array literal syntax** (`#W-27`). **Resolved v0.8.0** (§4.20.1 prelude literal alias + §3.10 conformance protocol).
 10. **Numeric literal bases + `%` + `else if`** (`#W-54`, `#W-64`, `#W-68`, `#W-17`). **Resolved v0.7.1** (§2.7, §3.9).
@@ -306,7 +306,7 @@ Comparing top gaps from Ink log to this pass — items appearing in both are the
 |---|---|---|---|
 | String interpolation | #22 | #W-55, #W-36, #W-30 | **resolved v0.8.0** — `${expr}` prelude alias |
 | `try` semantics | #17 | (recurred but not counted) | pending |
-| `guard let` / `if let` | #9 (if let) | #W-29, #W-40, #W-51 | resolved v0.7 (single-binding) |
+| `guard let` / `if let` | #9 (if let) | #W-29, #W-40, #W-51 | resolved v0.7 (single-binding) + v0.8.1 (multi-binding) |
 | Argument labels | #21 | recurring | resolved v0.5 |
 | Static/class methods on struct | #16a | #W-26, #W-28 | resolved v0.6 |
 | Protocol conformance syntax | #13 | (resolved by reference card) | resolved |

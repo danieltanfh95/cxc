@@ -1,8 +1,23 @@
-# Corvid Language Specification — v0.8.0 (Working Draft)
+# Corvid Language Specification — v0.8.1 (Working Draft)
 
-**Status:** Working draft. v0.8.0 commits Corvid to a **library-first sugar model**: the compiler ships a minimal bootstrap grammar sufficient to parse the alias mechanism, and every user-facing sugar (type-expression forms, collection literals, range operators, string interpolation, bitwise operators, class-kind keywords, section-composition names) is a stdlib alias declaration in the **prelude**. The prelude is spec-committed and ships with the language distribution. Users can inspect all standard sugar as alias declarations and can define their own via the same mechanism.
+**Status:** Working draft. v0.8.1 is a minor addition over v0.8.0 — filling in numeric conversion, parameter defaults, and multi-binding scoped-unwrap. No design-mechanism changes. v0.8.0's library-first sugar model (bootstrap grammar + prelude of alias declarations for standard surface syntax), v0.7.2 sugar unification, v0.7.1 Tier 1 sweep, v0.7.0 nil-messaging inversion, and v0.6.0 structural unification all preserved.
 
 **Name:** `Corvid`. (Historical: named `objc5` throughout the design conversation. Renamed to Corvid when the positioning clarified as "peer of Swift for Apple-ecosystem native development" rather than "next-generation Objective-C.")
+
+**Change log from v0.8.0 → v0.8.1 (Session 3 — numeric conversion + parameter defaults + multi-binding unwrap):**
+
+Additive session — small, mostly mechanical spec fills for constructs the parity translations depended on. No design-mechanism changes.
+
+- **Numeric conversion (§3.11 new).** `Convertible<From, To>` protocol. `.into(T)` for wrapping conversion (matches §3.9 arithmetic overflow discipline — signed/unsigned narrowing wraps by default, consistent with two's-complement modular arithmetic). `.checked_into(T) -> Result<T, OverflowError>` for callers who want to handle out-of-range. `.saturating_into(T)` clamps to `[T.min, T.max]`. Prelude ships conformances for all numeric primitive pairs.
+- **Bounded protocol (§3.11).** `T.max`, `T.min` for numeric types. `FloatingPoint` protocol extends with `.infinity`, `.nan`, `.epsilon`. Small stdlib formalization.
+- **Parameter defaults (§3.8.5 new).** Constructor and function parameters may carry `= <expr>` defaults where `<expr>` is a compile-time constant expression: primitive literal, `nil`, or a value-alias reference (§4.16.10). Compiler substitutes the constant at each call site that omits the argument — static insertion, no runtime cost, no shared-mutable-state footgun. Collection literals as defaults are rejected (they allocate); use `nil` + coalesce in the body for runtime-computed defaults.
+- **Multi-binding `guard let` / `if let` (§3.6.1 extension).** Comma-separated bindings: `if let x = a, let y = b:` binds both or takes the else branch on first failure. `guard let x = a, let y = b else: ...` same shape. Standard from Swift; small grammar extension.
+- **Enum associated values remain named-only.** Retracted earlier proposal to add positional form. Consistency with the rest of Corvid (named args, named record fields, named `accepts`) wins over Swift-familiarity. Style guide notes: when translating positional Swift enums, add names.
+- **Grammar (§10).** Parameter default production added. Multi-binding `if_let` / `guard_let` productions added. `Convertible` and `Bounded` are stdlib protocols, no grammar impact.
+
+Rationale: fills concrete parity-translation gaps without touching design mechanisms. `.into(T)` inherits §3.9's wrap discipline for consistency. Parameter defaults use the same compile-time-constant discipline as value aliases (§4.16.10) — one rule for "what counts as a static substitution."
+
+Downstream cleanups: §3.6.1 (multi-binding), §3.8.5 new (parameter defaults), §3.11 new (numeric conversion + Bounded), §10 grammar productions.
 
 **Change log from v0.7.2 → v0.8.0 (Level 2 aliases: pattern-matching + prelude + Session 2 items):**
 
@@ -794,7 +809,19 @@ The surface syntax `T!` and `T?` are prelude aliases (§4.20.1) — suffix-posit
 - **Member access on nil.** `nil.method(args)` is legal. Method-return `T` auto-lifts to `T?` at the call site (message send on nil returns nil per the ObjC runtime); method-return `Unit` is a silent no-op. If the receiver's class or a conformed protocol declares `section on_nil:` (§4.10.9) with an entry for this method, that entry's value is returned instead of nil-lift.
 - **Nil-coalescing.** `x ?? default` returns `x` if non-nil, else `default`. Types must match; the result type is the non-optional common type.
 - **Explicit panic.** `x ?? panic("reason")` is the sanctioned "die if nil" form. There is no shorter sugar. Verbosity is intentional — panic should look exceptional in source so it stays exceptional in behavior.
-- **Scoped unwrap.** `if let x = maybe: ...` and `guard let x = maybe else: ...` bind unwrapped `x` for the following scope. Standard patterns from the Swift-family.
+- **Scoped unwrap (single binding).** `if let x = maybe: ...` and `guard let x = maybe else: ...` bind unwrapped `x` for the following scope. Standard patterns from the Swift-family.
+- **Scoped unwrap (multi-binding).** Comma-separated `let` bindings in a single `if let` / `guard let` — all must succeed for the body/continuation to run:
+
+  ```
+  if let url = request.url, let parts = url.get_parts():
+      # both url and parts are non-nil and bound in this scope
+      ...
+
+  guard let host = self.host, let port = self.port else:
+      return .failure(reason: "missing host or port")
+  ```
+
+  Semantics: bindings are evaluated left-to-right, short-circuiting on the first nil. In `if let`, the else branch (if present) runs on any failure; in `guard let`, the else branch always runs on any failure and must exit (return / throw / break / continue). No partial binding — either all names are bound in the following scope, or none are.
 - **Arithmetic and ordering on nil are type errors.** `nil + 3`, `nil < 3`, and `nil % 2` do not propagate — the semantics are ambiguous. Unwrap explicitly or coalesce with `??`.
 - **Equality.** `nil == nil` is `true`, `nil == x` (for non-nil `x`) is `false`. `!=` inverts. Ordering operators reject nil operands at compile time.
 
@@ -963,6 +990,48 @@ Any expression can be used as a statement — its value is discarded. Loops, `if
 
 **Consequence for legibility.** Users can write code the way they think about it: `if condition: run_side_effect()` reads as a statement even though `if` is technically an expression; the discarded `Unit` value doesn't affect meaning.
 
+#### 3.8.5 Parameter Defaults
+
+Function and constructor parameters may carry a default-value expression, applied when the caller omits the argument at the call site.
+
+```
+function connect(host: String, port: UInt16 = 443, use_tls: Bool = true) -> Connection:
+    ...
+
+constructor WSFramer(self, is_server: Bool = false):
+    self.is_server = is_server
+
+# Call sites:
+connect(host: "example.com")                             # port = 443, use_tls = true
+connect(host: "example.com", port: 8080)                 # use_tls = true
+connect(host: "example.com", use_tls: false)             # port = 443
+```
+
+**Rules:**
+
+1. **Compile-time constants only.** Default expressions must be constant at compile time. Permitted forms: primitive literals (`42`, `"hi"`, `true`, `3.14`, `'a'`, `nil`, hex/bin/oct integers) and references to value aliases (§4.16.10). Collection literals (`[]`, `{}`), calls, and other runtime-computed expressions are rejected.
+2. **Static insertion.** The compiler substitutes the default value at each call site that omits the argument. No runtime cost; no shared-mutable-state footgun (Python's mutable-default pattern is impossible by construction because constants can't be mutated).
+3. **Defaults appear after non-defaulted parameters.** In a parameter list, all defaulted parameters must follow all non-defaulted parameters. `function f(x: Int, y: Int = 0)` is legal; `function f(x: Int = 0, y: Int)` is a compile error.
+4. **Named arguments at call sites.** Callers may skip defaulted parameters in the middle of the list only by using named arguments: `connect(host: "h", use_tls: false)` skips `port`.
+5. **Same discipline for constructors and functions.** Constructor parameter defaults follow the same rule set. No divergence between constructor and function forms.
+
+**For runtime-computed defaults** — use `nil` + coalesce in the body:
+
+```
+function connect(host: String, port: UInt16 = nil) -> Connection:
+    let actual_port = port ?? default_port_for(host)     # runtime computation, visible in body
+    ...
+```
+
+The runtime computation is explicit in the body, not hidden in the signature. Trade-off: verbosity for legibility (§1.6) and consistency (compile-time constants everywhere, no exceptions).
+
+**Rationale for compile-time-only discipline:**
+
+- Matches value alias discipline (§4.16.10) — one rule for "what counts as a static substitution."
+- Removes the Python mutable-default footgun (`def foo(x=[]):` where `[]` is shared across calls).
+- Removes ambiguity about default-evaluation timing (per-call vs at-declaration) — with constants, both are equivalent, so the question dissolves.
+- Enables direct inlining at every call site with no captured environment.
+
 ### 3.9 Operators
 
 Corvid's operators split into two tiers: **bootstrap operators** (§10 grammar-committed, cannot be overridden) and **prelude operators** (declared as alias declarations in §4.20, unified precedence scheme in §4.20.2). Precedence and associativity match C99 to avoid surprises for C-family readers.
@@ -1052,6 +1121,69 @@ let buf: RingBuffer<Int> = [1, 2, 3]
 **Interop with Foundation types.** `NSArray`, `NSDictionary`, `NSSet` conform to the respective literal protocols via stdlib bindings — literal syntax works uniformly across native and imported types with no `.into(...)` conversion required at construction.
 
 **Empty literal disambiguation.** Empty `{}` is `Map.from_literal([])` by convention (§4.20.1); empty `[]` is `Array.from_literal([])`; empty set requires explicit `Set()` construction (no literal form for it — `{}` is taken by Map).
+
+### 3.11 Numeric Conversion and Bounded Types
+
+Corvid numeric primitives (`Int`, `Int8`..`Int64`, `UInt`..`UInt64`, `Float`, `Double`) participate in a small set of stdlib protocols that expose conversion and bounds. The conversion protocols provide three methods per target type — matching the three semantics users need for narrowing conversions where the source value might not fit in the target.
+
+#### 3.11.1 The `Convertible` Protocol
+
+```
+protocol Convertible<To>:
+    accepts into(target_type: To.Type) -> To
+    accepts checked_into(target_type: To.Type) -> Result<To, OverflowError>
+    accepts saturating_into(target_type: To.Type) -> To
+```
+
+Prelude ships conformance for every ordered pair of numeric primitives — widening (`UInt8` → `Int32`), narrowing (`Int32` → `UInt8`), signed↔unsigned changes at the same width, integer↔float conversions.
+
+**Semantics for narrowing (source value outside `[To.min, To.max]`):**
+
+| Method | Semantics | Rationale |
+|---|---|---|
+| `.into(T)` | **Wraps.** Two's-complement modular arithmetic for the target type. `Int32(300).into(UInt8)` → `44` (since `300 mod 256 = 44`). | Matches §3.9 arithmetic overflow discipline. |
+| `.checked_into(T)` | **Returns `Result<T, OverflowError>`.** Ok if fits; Err with source-and-target info if not. | For callers who want to handle out-of-range explicitly. |
+| `.saturating_into(T)` | **Clamps to `[T.min, T.max]`.** `Int32(300).saturating_into(UInt8)` → `255`. | For signal-processing and image code where clamping is the correct semantic. |
+
+Widening conversions (source range ⊆ target range) never overflow — all three methods produce the same result. Users writing generic code call whichever matches their intent; the compiler devirtualizes to the trivial case at widening call sites.
+
+**Float-integer conversions** truncate toward zero (C99 semantics) under `.into`. `.checked_into` returns Err if the truncated value doesn't fit or if the source is NaN/infinity.
+
+**User types can conform.** A wrapper type (e.g., `Percentage` around `Float`) declares conformance to `Convertible<Float>` and provides the three methods.
+
+#### 3.11.2 The `Bounded` Protocol
+
+```
+protocol Bounded:
+    class function max() -> Self
+    class function min() -> Self
+```
+
+Prelude ships conformance for all numeric primitive types:
+
+```
+UInt8.max()     # 255
+UInt16.max()    # 65535
+Int32.min()     # -2147483648
+Int.max()       # platform-dependent — Int64.max() on 64-bit targets
+```
+
+Sugar accessors `T.max` and `T.min` (without parens) are prelude value aliases that expand to the class-function calls.
+
+**FloatingPoint protocol** extends Bounded with float-specific extrema:
+
+```
+protocol FloatingPoint: Bounded:
+    class function infinity() -> Self
+    class function nan() -> Self
+    class function epsilon() -> Self       # smallest x such that 1 + x != 1
+```
+
+Sugar accessors: `Double.infinity`, `Double.nan`, `Double.epsilon`.
+
+**Notes on use:**
+- `Bounded` is generic-code friendly — `function clamp<T: Bounded>(x: T, lo: T, hi: T) -> T` works uniformly.
+- Types without a natural bound (arbitrary-precision integers, strings) do not conform to `Bounded`.
 
 ---
 
@@ -4998,12 +5130,20 @@ method_decl := 'expose'? ('mutating')? 'function' identifier
                effect_clause? contract_clause?
                ':' INDENT statement* DEDENT
 
+# Parameter defaults (§3.8.5). Default expression must be a compile-time constant:
+# primitive literal, nil, or value-alias reference. Collection literals and calls
+# are rejected. Defaulted parameters must appear after non-defaulted ones.
+parameter_list := parameter (',' parameter)*
+parameter      := identifier ':' type ('=' const_expr)?
+const_expr     := primitive_literal | 'nil' | value_alias_reference
+
 field_decl := 'expose'? ('immutable' | 'mutable')? ('weak' | 'unowned')?
               identifier ':' type ('=' expr)?
 
 # Expression forms (§3.8).
 expr := ... | if_expr | switch_expr | block_expr | while_expr | for_expr | loop_expr
       | closure_literal | function_literal | arrow_literal
+      | if_let_expr | guard_let_stmt
 
 if_expr := 'if' expr ':' expr_body ('else if' expr ':' expr_body)* ('else' ':' expr_body)?
 switch_expr := 'switch' expr ':' INDENT case_arm+ DEDENT
@@ -5011,6 +5151,13 @@ block_expr := 'do' ':' INDENT statement* DEDENT
 while_expr := 'while' expr ':' expr_body                # returns Bool
 for_expr := 'for' identifier 'in' expr ':' expr_body     # returns Bool
 loop_expr := 'loop' ':' INDENT statement* DEDENT         # returns type of `break value`
+
+# Scoped nil-unwrap (§3.6.1). Multi-binding form: all bindings must succeed.
+let_binding    := 'let' identifier '=' expr
+let_binding_list := let_binding (',' let_binding)*
+if_let_expr    := 'if' let_binding_list ':' expr_body ('else' ':' expr_body)?
+guard_let_stmt := 'guard' let_binding_list 'else' ':' INDENT statement* DEDENT
+                # else branch must exit (return / throw / break / continue)
 
 # Closures (§5.6). All desugar to anonymous classes with a `call` method.
 closure_literal := capture_list? function_literal
