@@ -78,11 +78,9 @@ Constructors are auto-generated from a class's data fields — the spec uses thi
 
 ### 2.3 Explicit `try` keyword (FRICTION #17)
 
-**Status: pending.**
+**Status: resolved by dissolution (v0.8.5 §3.5.4).**
 
-§3.5.1 specifies `throws` as a semantic effect. Doesn't specify whether calls to throwing functions need `try` prefix. Grammar §10 doesn't include it.
-
-**Spec fix:** Decide. Swift's `try` is explicit; Rust's `?` is postfix; Go's `err != nil` is manual. Pick one. Legibility argues for explicit `try`.
+Corvid has no `try` keyword, no `catch` / `finally`, no `throws` effect, and no `Result<T, E>` in the prelude. Failure is expressed in the return type: nil-punning for uniform failure ("did we get a value?"); domain-specific enums with a case per outcome for discriminated failure ("how did we fail?"); `panic` for invariant violation. Dispatch is via `switch` on the returned enum. Nesting depth > 3 in a switch chain is a style-guide signal to decompose the function.
 
 ### 2.4 `old()` in ensures clauses (FRICTION #28)
 
@@ -94,11 +92,9 @@ State-transition ensures need to reference pre-state. Without it, invariants lik
 
 ### 2.5 Throws in ensures clauses (FRICTION #29)
 
-**Status: pending.**
+**Status: dissolved (v0.8.5 §3.5.4).**
 
-`ensures A or throws B` — conditional postconditions. Common pattern in state-transition code.
-
-**Spec fix:** §3.4 should specify how throws interacts with ensures. Options: implicit ("ensures only holds on normal return"), explicit ("ensures A on success, throws E on failure").
+`throws` retired entirely. Failable functions return domain enums with a case per outcome. Ensures apply on `switch` case discrimination as ordinary contract clauses — `ensures returns .completed(_) implies inventory.contains(order.items)`. Conditional postconditions per case fall out of the discrimination naturally.
 
 ### 2.6 String.Index / position API (FRICTION #25, #26)
 
@@ -174,7 +170,7 @@ Two files (~130 lines Swift) → **30 friction points**. Most are spec gaps, not
 
 **Must-fix spec gaps before further translation:**
 1. ~~String interpolation syntax~~ — **resolved v0.8.0** (`${expr}` prelude alias)
-2. `try` keyword — **still pending**
+2. ~~`try` keyword~~ — **resolved by dissolution v0.8.5** (no `try`; nil-punning + domain enums + switch)
 3. ~~Protocol conformance syntax~~ — **resolved v0.6+** (`class X: Protocol:` unambiguous)
 4. `old()` in ensures clauses — **still pending**
 5. String position API in stdlib — **still pending (stdlib scope)**

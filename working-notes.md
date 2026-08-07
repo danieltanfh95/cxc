@@ -4,6 +4,49 @@
 
 **Companion document:** `spec/spec-v0.8.md` (was `spec-v0.7.md` through v0.7.x; before that `spec-v0.6.md`; before that `corvid-spec-v0.5.md`).
 
+## Session note — v0.8.5 throws retired, no try/catch, no prelude Result (2026-08-08)
+
+Fifth consecutive session in the "language mechanism dissolves into existing tools" pattern. Started as engagement with Ink #17 (try semantics); user pushed the reduction all the way down: "im not even sure why we need Result at all given that we have used nil-punning?"
+
+That question forced the honest answer. Working through it:
+
+- Nil-punning (v0.7.0) covers the "did we get a value or not" case completely. No Result needed there.
+- For discriminated failure ("how did we fail"), a domain-specific enum with a case per failure mode is more expressive than a generic `Result<T, E>` — cases are domain-named, contain per-case associated data, are metadata-inspectable, and interact with v0.8.4 leading-dot cleanly.
+- File.open example demonstrated the case where discrimination matters: `.not_found` / `.permission_denied` / `.volume_unavailable` / `.corrupted` need different handling; nil throws them all into one bucket.
+- No `Result<T, E>` in prelude. User-authored generic Result acceptable for middleware if genuinely needed, but stdlib doesn't push toward it.
+- No `try` / `catch` / `finally` construct. Considered `Try` as a prelude section class (would fit the sections mechanism naturally per user framing "try is a class with a state machine"). Concluded: switch + domain enums cover the ground; adding Try invites reaching for it when decomposition is the right answer.
+- `throws` effect retired entirely from §3.5. Failure is not an effect; it's a return-type discipline.
+
+**Decisions in this session:**
+
+- **`throws` effect retired.** §3.5 rewritten — no throws in advisory or semantic effects. `effect_clause` grammar updated to exclude `throws`. `throw` removed from `guard let` exit-verb list (exits: return / break / continue / panic).
+- **No `try` / `catch` / `finally`.** Not a keyword. Not a section class. Not a prelude alias. `switch` handles dispatch; existing `with:` section (§4.10.4.5) handles the RAII/cleanup case that `finally` would cover.
+- **No `Result<T, E>` in prelude.** Domain-specific enums per failure family. Generic middleware conforms to `Failable<T>` protocol over any domain enum (rare use case; users can author).
+- **ObjC interop translates per-method.** `NSError**` out-param maps to a domain enum with `.completed(T)` / `.failed(NSError)` cases. Not a blanket `throws NSError` binding.
+- **Ink #17 (try semantics) resolved by dissolution.** Ink #29 (throws in ensures) dissolves entirely — `throws` doesn't exist; ensures apply on switch-case discrimination via `returns .completed(_) implies ...` shape.
+- **Example sweep across the spec.** ~12 example rewrites from `throws E` shape to domain-enum-return shape. §3.4 protocol example, §4.10 RAII, §5.6 callable types, §7 visibility examples, §8.2 async example, §8.6 channel backpressure, §9.3 ObjC interop mapping, §11 worked example.
+
+**What Corvid gives up:**
+
+1. **Cross-cutting effect propagation.** Rust `?` and Swift `try` propagate errors across several layers without ceremony. Corvid requires each layer to explicitly `switch` on the outcome enum. More code per layer; more visible dispatch; no hidden control-flow jumps.
+2. **Generic middleware over "any failable computation."** Without `Result<T, E>`, retry combinators need to be either domain-specific or work over a `Failable<T>` protocol. Slight setup cost; same expressive power.
+
+Both trade-offs consistent with §1.6 legibility, visible dispatch, class-based over control-flow-based — and the last five sessions' pattern.
+
+**Five-session pattern consolidated:**
+
+| Version | Dissolved | Reason |
+|---|---|---|
+| v0.8.3 | `for` keyword | prelude alias over `.iter().for_each` on `Iterable<T>` |
+| v0.8.3 | tuples + destructuring | classes with named fields, no positional forms |
+| v0.8.3 | positional enum values (retracted) | named-only, consistent with rest of Corvid |
+| v0.8.4 | nested type declarations | flat naming + leading-dot at use sites |
+| v0.8.5 | `throws` effect | failure in return type via nil-punning or domain enum |
+| v0.8.5 | `try / catch / finally` | switch on domain enum + with: for cleanup |
+| v0.8.5 | `Result<T, E>` in prelude | domain-specific enums beat generic wrapper |
+
+Each closes a common friction item by re-examining whether Corvid's structural commitments already handle the case with existing tools. Each time, they do. Pattern is stable enough to be worth naming as a design principle: **before adding a mechanism, check whether the existing structural commitments already cover the case via convention or composition.**
+
 ## Session note — v0.8.4 nested types dissolved + leading-dot shorthand (2026-08-08)
 
 Short paired-decision session. Started as engagement with `#W-2` / `#W-48` (nested type declarations); user pushed back on Reading 1 (nested types as feature) with a C# comparison: "won't it mean if someone imports this in the future they have to alias it (had this issue in c#)". That reframed the trade-off.

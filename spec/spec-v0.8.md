@@ -1,8 +1,44 @@
-# Corvid Language Specification — v0.8.4 (Working Draft)
+# Corvid Language Specification — v0.8.5 (Working Draft)
 
-**Status:** Working draft. v0.8.4 closes two friction items: nested type declarations dissolved by convention (types associated with a class named `<ClassName><Role>` at module scope; no in-body type nesting added), and leading-dot enum shorthand adopted as a feature (`.name(...)` resolves to `<InferredType>.name(...)` when target type is unambiguous). The two decisions pair — flat naming stays readable because leading-dot handles the "type-context is obvious" case at every switch arm and function-arg site. v0.8.3 class-based iteration preserved. v0.8.2 alias namespace discipline preserved. v0.8.1 Session 3 fills preserved. v0.8.0 library-first sugar preserved. v0.7.x and v0.6.0 all preserved.
+**Status:** Working draft. v0.8.5 retires the `throws` effect and commits to no `try/catch/finally`, no prelude `Result<T, E>`. Failure handling reduces to three shapes: nil-punning for uniform failure ("did we get a value or not"), domain-specific enums for discriminated failure ("how did we fail"), `panic` for invariant violations. Discrimination is via `switch` on the returned enum. No new mechanism added; multiple mechanisms retired. Follows from taking v0.7 nil-messaging inversion, v0.8.3 class-based iteration, and v0.8.4 dissolve-into-convention discipline seriously — error handling is just class-based data flow, not a separate control-flow subsystem. v0.8.4 nested types + leading-dot preserved. v0.8.3 class-based iteration preserved. v0.8.2 alias namespace discipline preserved. v0.8.1, v0.8.0, v0.7.x, v0.6.0 all preserved.
 
 **Name:** `Corvid`. (Historical: named `objc5` throughout the design conversation. Renamed to Corvid when the positioning clarified as "peer of Swift for Apple-ecosystem native development" rather than "next-generation Objective-C.")
+
+**Change log from v0.8.4 → v0.8.5 (Retire `throws`; no `try/catch`; no prelude Result):**
+
+Fifth session in the "language mechanism dissolves into class-based existing tools" pattern. Corvid's structural commitments — class-as-universal (§1.5), nil-messaging inversion (§3.6.1, §5.7), universal method dispatch (§5.1), section-based state machines (§1.9, §4) — already cover the failure-handling ground that `throws` / `try` / `catch` / `finally` were going to occupy in earlier drafts.
+
+- **`throws` effect retired (§3.5 rewrite).** Removed from advisory effects. Functions that can fail return either:
+  1. `T` (with nil signalling failure), when the caller only needs to know success-or-not — nil-punning (§3.6.1) handles the rest.
+  2. A **domain-specific enum** with a case per failure mode, when the caller needs to discriminate between failure modes for different handling.
+- **No `try` / `catch` / `finally` construct.** Not a keyword; not a section class; not a prelude alias. `switch` on the returned enum is the dispatch mechanism, and `switch` was already spec-committed (§3.7). The scoped-cleanup case is handled by `With` section (§4.10.4.5, RAII).
+- **No `Result<T, E>` in the prelude.** Generic wrapper adds a layer of abstraction between the caller and the actual failure modes; domain-specific enums with descriptive case names and per-case associated data read better and inspect better (metadata §4.18). If a user writes generic middleware that needs a common failure carrier, they can define their own `Result` enum — but stdlib doesn't push everyone toward it.
+- **`panic(msg)` remains the invariant-violation escape.** Halts the process. Not a recoverable failure — a program bug that shouldn't be caught. Existing usage preserved.
+- **Failure-handling model documented (§3.5 rewrite).** Table: uniform failure → nil + nil-punning; discriminated failure → domain enum + `switch`; invariant violation → `panic`. Style guide: nesting depth > 3 in a switch chain is a design signal to decompose the function.
+- **ObjC interop translated explicitly (§9.3).** ObjC `NSError**` out-param methods are imported as returning a domain enum with `.completed(T)` and `.failed(NSError)` cases; the mapping is per-imported-method rather than blanket. Corvid methods exposed to ObjC that return a domain enum are lowered with automatic `NSError**` when a `.failed(NSError)`-shaped case is present.
+- **Ink #17 (`try` semantics) resolved by dissolution.** No `try`. Use `switch`.
+- **Ink #29 (`throws` in ensures) dissolves entirely.** No `throws`. Ensures apply on `switch` case discrimination as ordinary contract clauses.
+- **Grammar (§10).** `throws` removed from effect_clause. `throw` removed from exit-verb lists in `guard let` / `guard` semantics (§3.6.1 note updated — exits are `return` / `break` / `continue` / `panic`).
+- **Example sweep.** All spec examples using `throws E` rewritten to return a domain enum. Same for aliases that expand to `throws`. Worked-example (§11) rewritten. Parity translations updated in a follow-up sweep (validation/*.cor).
+
+**Consistency with prior decisions:**
+
+- **v0.8.4 no nested types, dissolved by convention.** Same pattern: prefer existing tools + convention over a new mechanism.
+- **v0.8.3 no destructuring, no tuples.** Same discipline: names on classes over positional syntax.
+- **v0.8.3 `for` as prelude alias.** Same: control-flow that could be a keyword is method dispatch on a class instead.
+- **v0.7.0 nil-messaging inversion.** Foundation for the "nil is the uniform-failure signal" half of the model.
+- **§1.9 contracts as coordination.** Domain enums with `switch` discrimination are a state-machine dispatch — contracts pin down what each state means and what methods transition between them.
+
+**What Corvid gives up.**
+
+Two things worth naming.
+
+1. **Cross-cutting effect propagation.** Rust's `?` and Swift's `try` let a single glyph propagate an error through several layers of function calls without ceremony. Corvid's model requires each layer to explicitly `switch` on the outcome enum and either handle or repackage. This is more code at each layer; also more visible dispatch and no hidden control-flow jumps.
+2. **Generic middleware over "any failable computation."** Without `Result<T, E>`, a generic retry combinator can't say "give me any `Result<T, E>` and I'll retry it." The Corvid answer: define a `Failable<T>` protocol conformed to by domain enums, write middleware over that protocol. Slightly more setup; equivalent expressive power.
+
+Both trade-offs are consistent with Corvid's preferences (§1.6 legibility, visible dispatch, class-based over control-flow-based) and the last four sessions' direction.
+
+**Downstream cleanups:** §3.5 rewrite (Effects — remove throws, add failure-handling-model subsection). Multiple example rewrites throughout §3, §4, §5, §7, §8, §11. §9.3 ObjC interop rewrites. §10 grammar production removals. Ink #17 and #29 marked resolved. Working-notes + README status.
 
 **Change log from v0.8.3 → v0.8.4 (Nested types dissolved by convention + leading-dot shorthand):**
 
@@ -331,9 +367,9 @@ Library authors express intent about how their code will be used. Annotations th
 
 **What's intent:**
 - `expose` — this is part of the interface I designed for external use. Depend on it.
-- `throws E` — this method may fail in ways described by `E`. Handle it.
 - `async` — this method may suspend. Await it.
 - `requires`/`ensures`/`invariants` — these predicates document and enforce correctness at method boundaries.
+- Failure is expressed in the return type (nil or a domain enum), not as an effect (§3.5.4).
 - Section membership — this declaration participates in the sections named.
 
 **What we removed as authority:**
@@ -456,7 +492,7 @@ Indentation-delimited blocks (Python-style). Indent must be consistent within a 
 ### 2.5 Keywords
 ```
 class protocol accepts requires ensures
-throws async allocates blocks
+async allocates blocks
 mutable immutable let
 function constructor destructor generator processor validator
 expander invariants
@@ -710,18 +746,27 @@ The naming convention and leading-dot together make module-scope types read like
 A protocol is a class with `metadata: kind: protocol` — a named set of accepted messages with contracts, plus optional default implementations. The `protocol` keyword is sugar for the unified `class + kind:` form (§4.11).
 
 ```
-protocol OrderProcessor:
-    accepts process(Order) -> Result<Receipt, OrderError>
-        throws, async
-        requires order.is_valid
-        ensures result.is_ok implies inventory.contains(order.items)
+enum ProcessOutcome:
+    case completed(receipt: Receipt)
+    case rejected(reason: OrderError)
+    case inventory_short(missing: [Item])
 
-    accepts cancel(OrderID) -> Bool
-        throws
+enum CancelOutcome:
+    case cancelled
+    case not_found
+    case already_shipped
+
+protocol OrderProcessor:
+    accepts process(Order) -> ProcessOutcome
+        async
+        requires order.is_valid
+        ensures returns .completed(_) implies inventory.contains(order.items)
+
+    accepts cancel(OrderID) -> CancelOutcome
 
     # Default implementation
-    function process_batch(self, orders: [Order]) -> [Result<Receipt, OrderError>]:
-        return [self.process(o) for o in orders]
+    function process_batch(self, orders: [Order]) -> [ProcessOutcome]:
+        return orders.map { o -> self.process(o) }
 ```
 
 Desugared form:
@@ -731,16 +776,15 @@ class OrderProcessor:
     metadata:
         kind: protocol
     accepts:
-        process(Order) -> Result<Receipt, OrderError>
-            throws, async
+        process(Order) -> ProcessOutcome
+            async
             requires order.is_valid
-            ensures result.is_ok implies inventory.contains(order.items)
-        cancel(OrderID) -> Bool
-            throws
+            ensures returns .completed(_) implies inventory.contains(order.items)
+        cancel(OrderID) -> CancelOutcome
     methods:
         # methods: section on kind: protocol holds default implementations
-        function process_batch(self, orders: [Order]) -> [Result<Receipt, OrderError>]:
-            return [self.process(o) for o in orders]
+        function process_batch(self, orders: [Order]) -> [ProcessOutcome]:
+            return orders.map { o -> self.process(o) }
 ```
 
 In the sugar form, `accepts foo(...)` at the class-body level and the `accepts:` section form are both legal — the compiler treats them identically. Use the section form when there are many required methods; use the per-method form when there is one.
@@ -822,13 +866,12 @@ Sections benefit from this same mechanism. Since section classes ARE classes, th
 
 ### 3.5 Effects
 
-Effect annotations describe what a method does beyond returning a value. Effects split into three categories under the intent-not-authority principle:
+Effect annotations describe what a method does beyond returning a value. Effects split into two categories under the intent-not-authority principle. **Failure is not an effect in Corvid** — it is expressed via return type (nil-punning or domain enum, §3.5.4).
 
 #### 3.5.1 Advisory Effects
 
 Author expresses expected behavior; compiler checks at compile time as authoring aid; **runtime does not enforce**.
 
-- `throws E` — expected to raise error type `E`.
 - `allocates` — expected to allocate heap memory.
 - `blocks` — expected to block the calling thread.
 
@@ -860,10 +903,9 @@ function map<T, U, E: Effect>(items: [T], f: (T) -> U with E) -> [U] with E:
 Callers see effects inferred from their specific callback:
 
 ```
-result = map(orders, function(o) throws OrderError -> Receipt { ... })
-# E is inferred to `throws OrderError`. 
-# result: [Receipt] with throws OrderError
-# Caller must handle OrderError or propagate.
+result = map(orders, function(o) async -> Receipt { ... })
+# E is inferred to `async`.
+# result: [Receipt] with async.
 ```
 
 **Inference sugar for the common case:**
@@ -881,11 +923,102 @@ Sugar applies only within a single module (source available). Public API across 
 **Aliases can name effect combinations:**
 
 ```
-alias fallible<T>: Result<T, Error>
-alias networked: throws NetworkError, async
+alias @networked: async, allocates
 ```
 
 Parameterized aliases resolve at use site (see §4.16).
+
+#### 3.5.4 Failure Handling — Nil-Punning + Domain Enums, No `throws`
+
+Corvid has **no `throws` effect, no `try` keyword, no `catch` / `finally` construct, and no `Result<T, E>` in the prelude**. Failure is expressed in the return type of the failable operation. Three shapes cover every case:
+
+| Failure shape | Mechanism | When to use |
+|---|---|---|
+| **Uniform failure** — "did we get a value or not" | Return `T` (nullable). Caller uses nil-punning (§3.6.1, §5.7) — `??` for defaults, `if let` to gate, `on_nil` section for typed defaults. | Simple absence: dictionary lookup, integer parsing, cache miss. Only one meaningful failure mode; no discrimination needed. |
+| **Discriminated failure** — "how did we fail" | Return a **domain-specific enum** with a case per outcome (success case + one case per failure mode). Caller uses `switch` on the returned enum. | Multiple failure modes, each needing different handling: file open, network request, database write, complex parsing. |
+| **Invariant violation** — "this shouldn't be possible" | `panic("...")`. Halts the process. Not a recoverable failure — a program bug that shouldn't be caught. | Corrupted internal state, contract broken by a caller, unreachable branch. |
+
+**Uniform failure example (nil-punning):**
+
+```
+function parse_port(s: String) -> UInt16:
+    # returns nil on unparseable / out-of-range
+    ...
+
+port = parse_port(config.port) ?? 8080     # simple default on failure
+```
+
+**Discriminated failure example (domain enum + switch):**
+
+```
+enum FileOpenOutcome:
+    case handle(File)
+    case not_found(path: String)
+    case permission_denied(path: String)
+    case volume_unavailable(volume: String)
+    case corrupted(path: String, details: String)
+
+function File.open(path: String) -> FileOpenOutcome:
+    # ... implementation dispatches to appropriate case
+
+# Caller:
+switch File.open("/config.json"):
+    case .handle(let f):
+        return parse_config(f)
+    case .not_found:
+        return Config.default()
+    case .permission_denied:
+        prompt_credentials()
+        return open_config()
+    case .volume_unavailable(let volume):
+        alert("please reconnect drive: ${volume}")
+        return Config.default()
+    case .corrupted(_, let details):
+        panic("config corrupted: ${details}")
+```
+
+**Invariant violation example (panic):**
+
+```
+function dequeue_next(self) -> Order:
+    requires not self.pending.is_empty
+    
+    switch self.pending.pop_first():
+        case .some(let o): return o
+        case .none:
+            # requires said this can't happen; if it did, invariant broke
+            panic("dequeue_next called with empty pending — precondition violated")
+```
+
+**Composition (chaining without try).** Because domain enums are ordinary values, chaining fallible operations is just chaining `switch` blocks. Leading-dot shorthand (§3.7.2) keeps the case syntax terse:
+
+```
+function process(input: String) -> ProcessOutcome:
+    switch parse(input):
+        case .value(let v):
+            switch validate(v):
+                case .accepted(let sanitized):
+                    switch save(sanitized):
+                        case .stored(let id):     return .completed(id: id)
+                        case .conflict:           return .duplicate
+                        case .storage_full:       return .capacity_exceeded
+                case .rejected(let reason):
+                    return .invalid(reason: reason)
+        case .malformed(let details):
+            return .parse_failed(details: details)
+```
+
+**Style guide.** Switch-chain nesting deeper than 3 is a design signal — decompose into smaller functions each returning a domain enum. Rust's `?` and Swift's `try` optimize for pipeline-style code with 4-6 fallible steps; Corvid instead pushes those apart into smaller units. Trade-off: more function boundaries, less cross-cutting propagation, more visible dispatch at each layer. Consistent with §1.6 (legibility over brevity) and Corvid's visible-dispatch preference.
+
+**ObjC / Swift interop (§9.3).** ObjC `NSError**` out-param methods are imported as returning a domain enum with `.completed(T)` and `.failed(NSError)` cases. Swift `throws` methods appear as returning `Result<T, Error>` at the interop boundary (with `Result<T, E>` defined at the interop-shim layer, not prelude). Corvid methods exposed to ObjC are lowered with automatic `NSError**` out-param when the return type is a domain enum containing a `.failed(NSError)`-shaped case.
+
+**What this closes:**
+
+- `throws` effect (this section) — retired.
+- `try` / `catch` / `finally` — not spec'd; not added.
+- `Result<T, E>` in prelude — not shipped.
+- Ink friction #17 (try semantics) — resolved by dissolution.
+- Ink friction #29 (throws in ensures) — dissolves entirely; ensures apply on `switch`-discriminated cases.
 
 ### 3.6 Refinement / Precondition Contracts
 
@@ -931,7 +1064,7 @@ The surface syntax `T!` and `T?` are prelude aliases (§4.20.1) — suffix-posit
       return .failure(reason: "missing host or port")
   ```
 
-  Semantics: bindings are evaluated left-to-right, short-circuiting on the first nil. In `if let`, the else branch (if present) runs on any failure; in `guard let`, the else branch always runs on any failure and must exit (return / throw / break / continue). No partial binding — either all names are bound in the following scope, or none are.
+  Semantics: bindings are evaluated left-to-right, short-circuiting on the first nil. In `if let`, the else branch (if present) runs on any failure; in `guard let`, the else branch always runs on any failure and must exit (return / break / continue / panic). No partial binding — either all names are bound in the following scope, or none are.
 - **Arithmetic and ordering on nil are type errors.** `nil + 3`, `nil < 3`, and `nil % 2` do not propagate — the semantics are ambiguous. Unwrap explicitly or coalesce with `??`.
 - **Equality.** `nil == nil` is `true`, `nil == x` (for non-nil `x`) is `false`. `!=` inverts. Ordering operators reject nil operands at compile time.
 
@@ -1654,7 +1787,7 @@ section class Effect_Aware<E: Effect>:
         contains: type_signature
         composition_mode: inline
     
-    expands_to: with ${E} throws ${E}
+    expands_to: with ${E}
 
 section class Bounded<Max: Int>:
     data:
@@ -2071,7 +2204,7 @@ class Order:
         MAX_ITEMS: Int = 100
     
     expose methods:
-        function ship(self) throws ShipError: ...
+        function ship(self) -> ShipOutcome: ...
     
     methods:
         function _recompute_total(self): ...
@@ -2267,7 +2400,7 @@ expose class OrderProcessor:
         function cancelOrder(self, orderID: OrderID) -> Bool: ...
 ```
 
-Methods in `objc_exposed:` sections replace their auto-derived ObjC signature with the explicitly written form. Useful when the auto-derived signature doesn't match ObjC calling conventions (e.g., preferring `NSError **` out-params over `Result<T, E>` returns for consistency with existing ObjC APIs).
+Methods in `objc_exposed:` sections replace their auto-derived ObjC signature with the explicitly written form. Useful when the auto-derived signature doesn't match ObjC calling conventions (e.g., preferring `NSError **` out-params over domain-enum returns for consistency with existing ObjC APIs).
 
 Methods NOT in `objc_exposed:` are still auto-derived from the class's normal `methods:` section unless the user explicitly opts out via a class-level annotation (deferred to Stage 2).
 
@@ -2293,19 +2426,24 @@ section class With:
 Usage:
 
 ```
-function process_file(path: String) throws IOError -> String:
+enum FileProcessOutcome:
+    case processed(String)
+    case open_failed(FileOpenOutcome)
+    case read_failed(reason: String)
+
+function process_file(path: String) -> FileProcessOutcome:
     with:
         f = File.open(path)             # File conforms to Resource
         buffer = Buffer.allocate(1024)
         
         contents = f.read()
         buffer.append(contents)
-        return buffer.to_string()
+        return .processed(buffer.to_string())
     # buffer's destructor runs, then f's destructor runs
-    # Cleanup runs even if any operation throws
+    # Cleanup runs even if the block returns .open_failed / .read_failed
 ```
 
-Resources bound in a `with:` block are automatically cleaned up on scope exit. Unlike Python's `with` (which requires context manager objects) or Java's try-with-resources, Corvid's `with:` works with any type that has a destructor, and multiple resources bind naturally in one block.
+Resources bound in a `with:` block are automatically cleaned up on scope exit. Unlike Python's `with` (which requires context manager objects) or Java's try-with-resources, Corvid's `with:` works with any type that has a destructor, and multiple resources bind naturally in one block. Cleanup runs regardless of which branch the block exits through — the `With` section installs scope-exit handlers that fire on any exit path (§4.10.4.5).
 
 #### 4.10.5 Behavioral Sections *(Stage 3)* — Statement-Scope
 
@@ -3391,7 +3529,7 @@ Structure (illustrative):
         }
       },
       "methods": [
-        {"name": "process", "signature": "(Order) async throws -> Result<Receipt, OrderError>",
+        {"name": "process", "signature": "(Order) async -> ProcessOutcome",
          "contracts": {"requires": ["order.is_valid"]}}
       ],
       "invariants": [
@@ -3804,9 +3942,11 @@ comparator: Callable<(String, String), Int>  # expanded
 `Callable<Args, Return>` is a standard-library type; `(...) -> R` is spec-committed sugar. Effects on the callable use the same `with` clause as method types (§3.5.3):
 
 ```
-f: (Order) -> Receipt with throws OrderError
-f: Callable<(Order,), Receipt> with throws OrderError
+f: (Order) -> Receipt with async
+f: Callable<(Order,), Receipt> with async
 ```
+
+Failure is expressed via the return type — a callable that may fail returns a domain enum like `(Order) -> ProcessOutcome`, not `(Order) -> Receipt with throws`. See §3.5.4.
 
 #### 5.6.2 Sugar Hierarchy for Closure Literals
 
@@ -4340,11 +4480,11 @@ Deterministic resource cleanup via scoped destructors (§4.10.4.5). Recap for me
 
 - Resources bound in a `with:` block are automatically destroyed on scope exit.
 - Cleanup runs in reverse declaration order.
-- Cleanup runs even if the block exits via error propagation.
+- Cleanup runs regardless of which branch the block exits through (early return with a failure case, normal completion, panic).
 - Combines with ARC: if the resource is a class instance, `with:` ensures the last strong reference is dropped when the scope ends, triggering destruction deterministically.
 
 ```
-function process_file(path: String) throws IOError -> String:
+function process_file(path: String) -> FileProcessOutcome:
     with:
         f = File.open(path)
         buffer = Buffer.allocate(1024)
@@ -4733,7 +4873,7 @@ class Order:
         internal_hash: Bytes    # not exposed; external code gets a warning
     
     expose methods:
-        function ship(self) throws ShipError: ...
+        function ship(self) -> ShipOutcome: ...
     
     methods:
         function _validate(self): ...  # not exposed; convention indicates internal
@@ -4878,9 +5018,22 @@ Users compose these to build actors, pipelines, event loops, work queues, reacti
 `async` is a semantic effect (§3.5.2) that changes calling convention. Async functions can suspend and resume; sync functions cannot. Async functions can only be called from other async functions or from an async context (structured scope, task spawner).
 
 ```
-async function fetch_data(url: URL) -> Bytes throws NetworkError:
-    response = await http.get(url)
-    return response.body
+enum FetchOutcome:
+    case ok(body: Bytes)
+    case network_error(reason: String)
+    case timeout
+    case bad_status(code: Int)
+
+async function fetch_data(url: URL) -> FetchOutcome:
+    switch await http.get(url):
+        case .response(let r) where r.status.is_success:
+            return .ok(body: r.body)
+        case .response(let r):
+            return .bad_status(code: r.status)
+        case .timed_out:
+            return .timeout
+        case .connection_failed(let reason):
+            return .network_error(reason: reason)
 ```
 
 `await` is only valid inside `async` functions. `async` is not advisory — a method's async-ness is part of its calling convention and cannot be "just a hint."
@@ -5099,10 +5252,12 @@ Bounded channels use `metadata: capacity: N` with an `on_full:` policy:
 
 | `on_full:` | Behavior when buffer full |
 |---|---|
-| `block` (default when bounded) | Sender blocks (async) or fails (sync) until space available |
-| `error` | Sender throws immediately |
+| `block` (default when bounded) | Sender blocks (async) or returns `.buffer_full` (sync) until space available |
+| `fail_fast` | Sender returns `.buffer_full` immediately (no blocking) |
 | `drop_oldest` | Oldest buffered item is discarded to make room |
 | `drop_newest` | Incoming item is discarded |
+
+Sender's return type on a bounded channel is a domain enum `SendOutcome { case sent, case buffer_full }`; callers `switch` on it. No exceptions.
 
 Buffering interacts with state-machine synchronization: if a setter blocks on channel backpressure, its `ensures` postcondition is not yet established. Other threads waiting on the state remain waiting until the channel makes progress.
 
@@ -5234,27 +5389,31 @@ async function update_ui():
 
 **Completion handlers ↔ async functions:**
 
-ObjC methods with completion handlers are imported as `async` functions:
+ObjC methods with completion handlers are imported as `async` functions returning a domain enum with `.completed(T)` and `.failed(NSError)` cases:
 
 ```
 # ObjC declaration:
 # - (void)fetchDataWithCompletion:(void (^)(NSData *, NSError *))completion;
 
 # Corvid usage:
-data = await client.fetch_data()  # async, throws NSError
+switch await client.fetch_data():
+    case .completed(let data): process(data)
+    case .failed(let err):     handle(err)
 ```
 
-The compiler wraps completion-handler methods automatically. Errors passed as the second parameter map to `throws`.
+The compiler wraps completion-handler methods automatically. The second callback parameter (`NSError *`) becomes the `.failed` case of the enum; the first parameter becomes the `.completed` payload. Nil-in-both is mapped to a domain-specific case per import annotation, or defaults to `.completed(nil)` under nil-messaging (§3.6.1).
 
 **Corvid async methods exposed to ObjC:**
 
-Auto-derivation (§9.3.3) exposes Corvid async methods to ObjC via completion-handler convention:
+Auto-derivation (§9.3.3) exposes Corvid async methods to ObjC via completion-handler convention. A Corvid method returning a domain enum with a `.failed(NSError)`-shaped case is lowered to the two-parameter completion form:
 
 ```
 # Corvid:
-async function process(order: Order) throws OrderError -> Receipt: ...
+async function process(order: Order) -> ProcessOutcome:
+    # ProcessOutcome has .completed(Receipt), .failed(NSError), and other cases
 
-# ObjC sees:
+# ObjC sees (compiler flattens .completed → success param, .failed → error param;
+# other cases are lowered to a domain-specific error code):
 - (void)processOrder:(Order *)order completion:(void (^)(Receipt *, NSError *))completion;
 ```
 
@@ -5368,7 +5527,7 @@ match result:
 
 Users destructure explicitly when concrete types are needed. `Any` is the honest representation of "the type system doesn't know."
 
-**`NSError **` ↔ `throws E`.** ObjC's error out-param convention bridges to Corvid's `throws`. ObjC methods declared with `NSError **` are imported as `throws NSError`. Corvid methods with `throws E` are exposed to ObjC via `NSError **` out-params (with automatic error boxing when `E` is not `NSError`).
+**`NSError **` ↔ domain enum with `.completed(T)` / `.failed(NSError)` cases.** ObjC's error out-param convention bridges to Corvid's failure-handling model (§3.5.4). ObjC methods declared with `NSError **` are imported as returning a per-method domain enum whose success case wraps the original return type and whose failure case carries the `NSError`. Corvid methods that return a domain enum containing a `.failed(NSError)`-shaped case are lowered to ObjC as `NSError **` out-param methods; other cases in the enum are lowered to `NSError` codes under a domain-specific error code assigned by the compiler. Users who need explicit ObjC signature control use `objc_exposed:` sections (§4.10.4.4).
 
 **Nullability round-trip.** ObjC nullability annotations map to Corvid reference-type annotations (§3.6.1): ObjC `nullable` → Corvid `T` (nil-allowed by default). ObjC `nonnull` → Corvid `T!` (non-nil contract, warns on runtime violation). Un-annotated ObjC types come into Corvid as `T` (nil-allowed) — the safe default that matches ObjC runtime truth without adding warning noise. Callers who want stricter contracts add `T!` at the Corvid call site.
 
@@ -5392,7 +5551,7 @@ Auto-derivation rules:
 - Sum types degrade to `NSObject` subclasses with tagged discrimination, or to `NSInteger`-tagged enums for simple sums.
 - Generics preserve where expressible (single type parameter, no constraints); otherwise degrade to `id`.
 - Contract preconditions/postconditions become runtime checks in method bodies (not visible in the header).
-- `throws E` methods expose as `NSError **` out-param.
+- Methods returning a domain enum with a `.failed(NSError)`-shaped case expose as `NSError **` out-param (§9.3.2).
 - `async` methods expose via completion-handler convention.
 
 **Warnings on non-round-tripping features.** When a public API uses features that don't cleanly express in ObjC, the compiler warns:
@@ -5574,6 +5733,13 @@ method_decl := 'expose'? ('mutating')? 'function' identifier
                effect_clause? contract_clause?
                ':' INDENT statement* DEDENT
 
+# Effect list (§3.5). Failure is NOT an effect in v0.8.5+ — failable functions
+# express failure via return type (nil-punning or domain enum, §3.5.4).
+effect_clause := effect_atom (',' effect_atom)*
+effect_atom   := 'async' | 'allocates' | 'blocks' | 'mutating' | identifier
+              # `identifier` supports effect-polymorphism parameters (§3.5.3)
+              # and user-declared effect aliases via `alias @name: async, allocates`.
+
 # Parameter defaults (§3.8.5). Default expression must be a compile-time constant:
 # primitive literal, nil, or value-alias reference. Collection literals and calls
 # are rejected. Defaulted parameters must appear after non-defaulted ones.
@@ -5603,7 +5769,7 @@ let_binding    := 'let' identifier '=' expr
 let_binding_list := let_binding (',' let_binding)*
 if_let_expr    := 'if' let_binding_list ':' expr_body ('else' ':' expr_body)?
 guard_let_stmt := 'guard' let_binding_list 'else' ':' INDENT statement* DEDENT
-                # else branch must exit (return / throw / break / continue)
+                # else branch must exit (return / break / continue / panic)
 
 # Closures (§5.6). All desugar to anonymous classes with a `call` method.
 closure_literal := capture_list? function_literal
@@ -5786,6 +5952,8 @@ user_alias_decl     := '@' identifier identifier ':' INDENT class_member* DEDENT
 # inside a string_literal_raw. Prelude interpolation uses '$'; user interpolation uses '@'.
 ```
 
+**Retired in v0.8.5** (v0.8.4 → v0.8.5): `throws` removed from `effect_clause`. `throw` removed from `guard` / `guard let` exit-verb list (exits: `return` / `break` / `continue` / `panic`). No `try_expr` / `catch_clause` / `finally_clause` productions added. No `Result<T, E>` in prelude. Failure expressed via return type (§3.5.4).
+
 **Added in v0.8.4** (v0.8.3 → v0.8.4): `leading_dot_expr` production. `.name` and `.name(args)` resolve to `<InferredType>.name` in target-typed contexts (§3.7.2). Nested type declarations remain unsupported (§3.3.1); types associated with a class use `<ClassName><Role>` naming convention at module scope.
 
 **Retired in v0.8.3** (v0.8.2 → v0.8.3): `for_expr` production removed from bootstrap grammar. `for x in y: body` is now a prelude alias (§4.20.1) expanding to `y.iter().for_each { x -> body }` on any `Iterable<T>` conformer (§3.10.1). `while_expr` and `loop_expr` remain bootstrap — they are the primitives stdlib uses to implement iteration methods (§4.20.3). No destructuring bindings added (§3.7.1); multi-value carriers use named-accessor classes `Pair<A, B>` / `Entry<K, V>` from the prelude (§3.10.2).
@@ -5826,14 +5994,20 @@ class Order:
     function total(self) -> Money:
         return self.items.sum(by: .price)
 
-enumeration OrderError:
+enum ProcessOutcome:
+    case completed(receipt: Receipt)
     case invalid_order
     case out_of_stock(item: Item)
     case payment_failed(reason: String)
 
+enum CancelOutcome:
+    case cancelled
+    case not_found
+    case already_shipped
+
 protocol OrderProcessor:
-    accepts process(Order) -> Result<Receipt, OrderError>
-        async, throws
+    accepts process(Order) -> ProcessOutcome
+        async
         requires order.is_valid()
 
 ## OrderProcessor is behavior — mixed class with data and state.
@@ -5862,19 +6036,19 @@ expose class DefaultOrderProcessor: OrderProcessor:
     
     # Implicit methods: section for these methods.
     
-    expose async function process(self, order: Order) -> Result<Receipt, OrderError>
+    expose async function process(self, order: Order) -> ProcessOutcome
             requires order.is_valid():
         self.notify_will_process(order)
         
-        match await self.inventory.reserve(order.items):
-            case .err(e):
-                return .err(.out_of_stock(item: e.item))
-            case .ok:
+        switch await self.inventory.reserve(order.items):
+            case .unavailable(let item):
+                return .out_of_stock(item: item)
+            case .reserved:
                 receipt = await self.charge_and_ship(order)
                 self.notify_did_process(order, receipt)
-                return .ok(receipt)
+                return .completed(receipt: receipt)
     
-    expose function cancel(self, id: OrderID) -> Bool throws:
+    expose function cancel(self, id: OrderID) -> CancelOutcome:
         return self.inventory.release_reservation(id)
     
     # Not exposed — internal implementation detail. External callers get a
