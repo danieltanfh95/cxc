@@ -19,7 +19,7 @@ import objc "Foundation"
 #
 # For parity: use `Map<String, String>` as a placeholder shape. Grammar
 # would need `[K: V]` or `Map<K, V>` — either works, neither is spec'd.
-expose enumeration HTTPUpgradeError:
+expose enum HTTPUpgradeError:
     case not_an_upgrade(status: Int, headers: Map<String, String>)
     case invalid_data
 
@@ -36,7 +36,7 @@ expose enumeration HTTPUpgradeError:
 #       in the module, factory becomes a free function.
 #   (c) A dedicated namespacing construct — spec §7 does not commit to one.
 # For parity: use (a). Idiomatic pass may switch to (b).
-expose struct HTTPWSHeader:
+expose record HTTPWSHeader:
     # FRICTION #W-26 (CLASS-LEVEL / "STATIC" MEMBERS ON STRUCT):
     # Swift `static let X = ...`. Corvid grammar §10 (per Ink log #16a)
     # shows `class function` on classes; not explicit for structs. Reference
@@ -192,7 +192,7 @@ expose struct HTTPWSHeader:
             return raw.base64_encoded_string()
 
 
-expose enumeration HTTPEvent:
+expose enum HTTPEvent:
     # Same friction as #W-24: dictionary type not specified.
     case success(headers: Map<String, String>)
     # Same friction as #W-5: what type carries the error?
@@ -222,7 +222,7 @@ expose protocol HTTPServerHandler:
     accepts create_response(headers: Map<String, String>) -> Bytes
 
 
-expose struct URLParts:
+expose record URLParts:
     data:
         port: Int
         host: String

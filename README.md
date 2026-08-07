@@ -1,6 +1,6 @@
 # Corvid Language Design — Handoff Bundle
 
-**Status:** Pre-implementation. Design work through v0.5.2. No compiler exists yet.
+**Status:** Pre-implementation. Design work through v0.6.0 (structural unification: class-as-universal, kind-via-metadata, closures-as-anonymous-classes, everything-is-expression, channel modes). No compiler exists yet.
 
 **Working name:** Corvid.
 **Original name:** objc5 (used throughout the design conversation; renamed when positioning solidified).
@@ -21,7 +21,7 @@ corvid/
 │
 ├── spec/
 │   ├── charter.md                   (§1.1-§1.9 as standalone — read first)
-│   └── spec-v0.5.md                 (full specification, ~3900 lines)
+│   └── spec-v0.6.md                 (full specification, ~4300 lines)
 │
 ├── positioning/
 │   ├── overview.md                  (positioning statement — read second)
@@ -63,7 +63,7 @@ You now know the design premises and know what's been empirically tested.
 **Half day:**
 5. `positioning/game-of-life.md` (30 min).
 6. `positioning/ecosystem.md` (30 min).
-7. `spec/spec-v0.5.md`, sections you care about most. Different sections for different concerns:
+7. `spec/spec-v0.6.md`, sections you care about most. Different sections for different concerns:
    - §1: design premises (already read via charter).
    - §2: lexical structure.
    - §3: type system, contracts, effects.

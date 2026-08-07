@@ -221,7 +221,7 @@ class ParseRun:
 
 # ParsedFragment is a wrapper that holds both the parsed value
 # and the original source string (for modifier callbacks that want it).
-struct ParsedFragment:
+record ParsedFragment:
     data:
         fragment: Fragment
         raw_string: Substring
@@ -311,7 +311,7 @@ I lean **open protocol** for this reason. Ink's architecture explicitly supports
 For consistency with the Fragment protocol, every fragment value type has a `read` static factory that delegates to its corresponding Reader class. Users implementing new fragments follow the same pattern:
 
 ```Corvid
-struct MyFragment:
+record MyFragment:
     conforms:
         Fragment
     
@@ -336,7 +336,7 @@ Paragraph is the catch-all. When no other fragment type matches, or when parsing
 module com.ink.internal
 
 # The value. What a parsed paragraph IS.
-struct Paragraph:
+record Paragraph:
     conforms:
         Fragment
     
@@ -409,7 +409,7 @@ module com.ink.internal
 
 # The value. Empty struct — no data to carry.
 # Structurally: just a marker that says "this position had a horizontal rule".
-struct HorizontalLine:
+record HorizontalLine:
     conforms:
         Fragment
     
@@ -502,7 +502,7 @@ module com.ink.internal
 
 # The heading level. Sealed enum with exactly 6 cases.
 # Enables exhaustive matching in renderers.
-expose enumeration HeadingLevel:
+expose enum HeadingLevel:
     case h1
     case h2
     case h3
@@ -535,7 +535,7 @@ expose enumeration HeadingLevel:
 
 
 # The value.
-struct Heading:
+record Heading:
     conforms:
         Fragment
     
@@ -635,20 +635,20 @@ Ink supports both ordered and unordered lists. Swift represents this with a nest
 module com.ink.internal
 
 # Ordered vs unordered — enumeration for exhaustive dispatch
-expose enumeration ListStyle:
+expose enum ListStyle:
     case bullet(marker: Character)      # -, *, or +
     case ordered(start: Int)             # starting number for renumbering
 
 
 # List item content is either inline text or a nested list.
 # Sealed protocol enables exhaustive rendering.
-expose enumeration ListItemContent:
+expose enum ListItemContent:
     case text(FormattedText)
     case nested_list(List)
 
 
 # The value: an immutable parsed list.
-expose struct List:
+expose record List:
     conforms:
         Fragment
     
@@ -689,7 +689,7 @@ expose struct List:
 
 
 # A single list item. Immutable.
-expose struct ListItem:
+expose record ListItem:
     data:
         contents: [ListItemContent]
     

@@ -5,7 +5,7 @@ module com.ink.internal
 
 # FRICTION #12 (INTERNAL VISIBILITY): Swift's `internal` is default in Corvid,
 # so we could drop the modifier. Keeping for parity clarity.
-internal struct Blockquote:
+internal record Blockquote:
     # FRICTION #13 (PROTOCOL CONFORMANCE SYNTAX): Swift declares with
     # `struct Blockquote: Fragment` — colon-separated protocol list on type
     # declaration line. Corvid declares protocol conformance via `conforms:`

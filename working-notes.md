@@ -2,7 +2,7 @@
 
 **Purpose:** consolidate the reasoning behind the current spec (v0.4) and enumerate what's still open. This document captures *why* decisions were made, not just what they are. The spec is the specification; this is the thinking behind it.
 
-**Companion document:** `corvid-spec-v0.5.md`.
+**Companion document:** `spec/spec-v0.6.md` (was `corvid-spec-v0.5.md` through the v0.5.2 handoff).
 
 ---
 

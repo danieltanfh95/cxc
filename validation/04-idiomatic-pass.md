@@ -129,7 +129,7 @@ module com.ink.internal
 
 # The parse result. Immutable data. Value semantics.
 # What callers hold, pass around, and render from.
-struct Blockquote:
+record Blockquote:
     conforms:
         Fragment
     

@@ -1,8 +1,27 @@
-# Corvid Language Specification — v0.5 (Working Draft)
+# Corvid Language Specification — v0.6 (Working Draft)
 
-**Status:** Working draft. This revision unifies the metaprogramming mechanism (aliases, primitives, and behavioral sections are all section classes), adds class-level contracts via `invariants:`, enables state machines through invariants + method contracts, adds effect polymorphism via generic parameters, and formalizes several previously-deferred design decisions.
+**Status:** Working draft. This revision unifies the type-declaration surface (all user types are classes; kinds via `metadata:`), adds the `metadata:` section as a first-class user-writable declaration, resolves the closure/anonymous-object question (closures are anonymous classes), commits to everything-is-expression, and extends the concurrency model with channel modes for CSP-style coordination.
 
 **Name:** `Corvid`. (Historical: named `objc5` throughout the design conversation. Renamed to Corvid when the positioning clarified as "peer of Swift for Apple-ecosystem native development" rather than "next-generation Objective-C.")
+
+**Change log from v0.5.2 → v0.6.0 (structural unification):**
+
+Consolidates struct, enumeration, and protocol into a single declaration form: `class + metadata: kind: X`. Sugar keywords (`record`, `enum`, `protocol`) desugar losslessly to the unified core. Extends the concurrency model with channel modes and formalizes closures.
+
+- **Class-as-universal.** Retired `struct` and `enumeration` as top-level type-declaration keywords. All user types declare via `class`, with `metadata: kind:` selecting the variant (`regular` default, `record`, `enum`, `protocol`, `section`). `protocol` was already sugar in v0.5 and remains so; `struct`/`enumeration` disappear entirely as core forms.
+- **`metadata:` section (new).** First-class user-writable section on any class declaration. Must appear first if present. Contains spec-reserved keys (`kind:`, `raw_type:`, `mode:`, `capacity:`, `on_full:`) and user-defined keys. Populates the runtime-introspectable class metadata described in §4.18.
+- **`record` sugar.** `record Foo:` desugars to `class Foo: metadata: kind: record`. Records opt out of universal extents, disallow `state:`, get structural equality and copy-on-assign.
+- **`enum` sugar with raw values.** `enum Foo: case a = 1; case b = 2` desugars to `class + metadata: kind: enum, raw_type: <inferred>` with auto-generated `raw_value(self)` and `class function from_raw(value:)`. Raw type inferred from case values (smallest fit); overridable via `metadata: raw_type:`. Resolves the widest single interop gap in v0.5.
+- **`protocol` sugar clarified.** Under `kind: protocol`, `accepts:` section holds required signatures, `methods:` section holds default implementations. `accepts foo(...)` per-method form remains legal as sugar for single-requirement protocols.
+- **Type-expression sugar formalized.** `T?` = `Optional<T>`, `[T]` = `Array<T>`, `{K: V}` = `Map<K, V>`, `{T}` = `Set<T>`, `(A, B) -> C` = `Callable<(A,B), C>`. Sugar is lossless; expanded forms always legal. New sugar requires spec commitment.
+- **Everything is an expression.** `if`, `switch`, block, and expression-position `do:` produce values. Field/parameter/return initializers accept control-flow expressions directly. Blocks return the value of their final expression unless an explicit `return` is present.
+- **Loops return Bool.** `while` and `for` produce `Bool` — `true` if the loop exhausted its condition/iteration naturally, `false` if exited via `break`. Break-with-value is not supported on `while`/`for`; use `loop { ... break value }` (Rust-style infinite loop) if a T-typed return is genuinely needed.
+- **Closures are anonymous classes.** A closure literal desugars to an anonymous `class` with a single `call` method. Sugar hierarchy: `function(x: T) -> R: ...` (explicit) → `x => x + 1` (arrow, inferred types) → method reference (`self.foo`). Strong capture by default; `[weak self, ...]` prefix opts into weak capture per variable. Compiler warns on closures capturing `self` strongly and stored in a field of `self` (classic retain-cycle pattern).
+- **Channel modes (§8.6).** `channel:` section extends with `metadata: mode:` — `work` (default, CSP-style competing consumers), `broadcast` (all subscribers see all items, slowest sets pace), `pub` (topic-partitioned, requires `topic_fn:`). Direct field entries (`input: Bytes`) declare channel items; composition with nested `state:` retains the v0.5 state-change auto-publish behavior. Unbounded by default; opt into `metadata: capacity: N` + `on_full:` for bounded.
+- **Grammar (§10).** `struct_decl` and `enumeration_decl` productions retired. Sugar keywords `record`, `enum` added and specified as desugaring rules; `protocol` sugar clarified. `metadata:` section usage documented alongside `data:`/`state:`/`methods:`. Loop expressions typed `Bool`.
+- **Rationale.** The v0.5 spec carried three separate declaration keywords for what is structurally the same construct: a named collection of members with different capability sets. Under kind-as-metadata, one construct handles all four (record, enum, protocol, section) plus regular classes uniformly, and users write the sugar they already recognize. The interop payoff is immediate — enum raw values (the top-frequency interop gap in the Starscream translation pass) collapses to a single spec-committed feature.
+
+Downstream cleanups: §3.3 (defers to §6), §3.4 (protocol via kind), §3.7 (expression form extended), new §3.8 (loop expressions), §4.7 (class body includes `metadata:`), §4.10 (built-in kind section classes), new §4.11 (sugar layer), §6.1 (rewrites type categories as class kinds), §6.2 (record/enum runtime models), §8.6 (channel modes), new §5.6 (closures), §10 grammar. Roughly 40-60 substantive edits across the spec.
 
 **Change log from v0.5 → v0.5.1 (authority cleanup):**
 
@@ -334,22 +353,61 @@ match x:
 
 ### 3.3 User-Defined Types
 
-**Classes** and **structs** are described in §4 (Sections) because their bodies are sequences of sections. See §4.7 for concrete syntax examples.
+All user types are declared via `class`. The `metadata: kind:` section entry (§4.10.6, §6.1) selects the variant:
 
-**Sum types**:
+- **`kind: regular`** (default, omitted) — reference-typed with `state:`, extent participation, weak refs, dynamic dispatch. Traditional class.
+- **`kind: record`** — value-typed, no `state:`, no extent, structural equality, copy-on-assign. Replaces v0.5's `struct` keyword.
+- **`kind: enum`** — sealed sum type with `cases:` section and optional integer `raw_type:`. Replaces v0.5's `enumeration` keyword.
+- **`kind: protocol`** — no instantiation; `accepts:` section holds required signatures, `methods:` holds default implementations.
+- **`kind: section`** — §4 metaprogramming section-class.
+
+Sugar keywords (`record`, `enum`, `protocol`, `section`) desugar losslessly to the corresponding `class + metadata: kind:` form. See §4.11 for sugar rules. Class bodies are described in §4.7; runtime semantics per kind are described in §6.
+
+**Sum types** (kind: enum):
 ```
-enumeration Result<T, E>:
+# Sugar (typical user-facing form):
+enum Result<T, E>:
     case ok(T)
     case err(E)
 
-enumeration Shape:
+enum Shape:
     case circle(radius: Float)
     case rectangle(width: Float, height: Float)
+
+# Enum with raw values (interop-friendly form):
+enum CloseCode:
+    case normal = 1000
+    case protocol_error = 1002
+    case encoding = 1007
 ```
+
+For raw-valued enums, `raw_type:` is inferred from the case values (smallest unsigned type that fits) unless overridden via `metadata: raw_type:`. The compiler auto-generates `raw_value(self) -> <raw_type>` and `class function from_raw(value:) -> Self?`.
+
+The desugared form is:
+
+```
+class Result<T, E>:
+    metadata:
+        kind: enum
+    cases:
+        case ok(T)
+        case err(E)
+
+class CloseCode:
+    metadata:
+        kind: enum
+        raw_type: UInt16     # inferred
+    cases:
+        case normal = 1000
+        case protocol_error = 1002
+        case encoding = 1007
+```
+
+Users rarely write the desugared form; tooling operates on it.
 
 ### 3.4 Contracts (Protocols)
 
-A protocol is a named set of accepted messages with contracts:
+A protocol is a class with `metadata: kind: protocol` — a named set of accepted messages with contracts, plus optional default implementations. The `protocol` keyword is sugar for the unified `class + kind:` form (§4.11).
 
 ```
 protocol OrderProcessor:
@@ -365,6 +423,27 @@ protocol OrderProcessor:
     function process_batch(self, orders: [Order]) -> [Result<Receipt, OrderError>]:
         return [self.process(o) for o in orders]
 ```
+
+Desugared form:
+
+```
+class OrderProcessor:
+    metadata:
+        kind: protocol
+    accepts:
+        process(Order) -> Result<Receipt, OrderError>
+            throws, async
+            requires order.is_valid
+            ensures result.is_ok implies inventory.contains(order.items)
+        cancel(OrderID) -> Bool
+            throws
+    methods:
+        # methods: section on kind: protocol holds default implementations
+        function process_batch(self, orders: [Order]) -> [Result<Receipt, OrderError>]:
+            return [self.process(o) for o in orders]
+```
+
+In the sugar form, `accepts foo(...)` at the class-body level and the `accepts:` section form are both legal — the compiler treats them identically. Use the section form when there are many required methods; use the per-method form when there is one.
 
 **Conformance is structural.** Any type accepting these messages with matching contracts satisfies `OrderProcessor`. Explicit conformance is legal but not required.
 
@@ -534,7 +613,7 @@ result = switch value:
         default_receipt
 ```
 
-`switch` is an expression; each `case` block produces a value; all values must have compatible types.
+`switch` is an expression; each `case` block produces a value; all values must have compatible types. This is one instance of the general "everything is an expression" commitment (§3.8).
 
 **Pattern types:**
 
@@ -567,6 +646,96 @@ switch color:
     case .green:
         return "neutral"
 ```
+
+### 3.8 Expressions and Statements
+
+Corvid commits to **everything is an expression** for control-flow constructs. `if`, `switch`, blocks, and (in a specific form) loops all produce values. This unifies control flow and expression composition — one construct, usable in statement position or expression position depending on context.
+
+#### 3.8.1 If-as-expression
+
+```
+port: Int = if is_tls: 443 else: 80
+
+max_size = if payload_length > threshold:
+    2 * threshold
+else:
+    payload_length
+
+# Chained else-if works uniformly:
+category = if code < 400:
+    "success"
+else if code < 500:
+    "client_error"
+else:
+    "server_error"
+```
+
+Both branches must have compatible types. A one-armed `if` without `else` returns `Unit`; using it in expression position is legal but rarely useful.
+
+#### 3.8.2 Block-as-expression
+
+A block (`do:` in expression position, or an implicit block inside another expression) evaluates to the value of its final expression:
+
+```
+payload: Bytes = do:
+    header = read_header()
+    body = read_body(header.length)
+    Bytes.concat(header, body)     # block's value
+```
+
+If the block contains only statements with no trailing expression, its value is `Unit`. An explicit `return` inside a method-level block returns from the enclosing method as usual; inside an expression-position `do:` block, `return` is still a method-level return (not a block-level return).
+
+#### 3.8.3 Loops as expressions — `while` and `for` return `Bool`
+
+Loops in Corvid are expressions producing `Bool`:
+
+- **`true`** — the loop terminated because its condition became false (`while`) or its iteration exhausted (`for`).
+- **`false`** — the loop exited via `break`.
+
+This gives a first-class idiom for the "did we complete naturally?" pattern that most languages require a flag variable for:
+
+```
+# Search — check whether we exhausted without finding a match
+not_found = for item in items:
+    if item.matches(target):
+        break
+    # (loop body may do other work)
+
+if not_found:
+    handle_absence()
+else:
+    handle_present()
+
+# Drain a queue until a sentinel
+drained = while queue.not_empty():
+    x = queue.pop()
+    if x.is_terminator():
+        break
+    process(x)
+# drained == false means we hit the terminator; true means the queue emptied naturally
+```
+
+**Break with a value is not supported on `while` and `for`.** The return type is fixed to `Bool` for legibility — a reader seeing `let x = while ...` immediately knows `x` is `Bool`.
+
+For the rare case where a loop needs to return a T-typed value via break, use the infinite `loop { ... }` construct with `break value`:
+
+```
+# Rust-style: infinite loop, break-with-value returns T
+first_match = loop:
+    item = source.next()
+    if item.matches(target):
+        break item                # returns Match(item)
+    if source.is_exhausted():
+        break not_found_default    # returns default
+```
+
+`loop:` produces the type of its `break value` expressions (all `break value` sites must have compatible types).
+
+#### 3.8.4 Statement position
+
+Any expression can be used as a statement — its value is discarded. Loops, `if`, `switch`, and blocks all work this way; using them in statement position simply discards the Bool/T result.
+
+**Consequence for legibility.** Users can write code the way they think about it: `if condition: run_side_effect()` reads as a statement even though `if` is technically an expression; the discarded `Unit` value doesn't affect meaning.
 
 ---
 
@@ -1555,6 +1724,81 @@ section class Platform:
         return contents
 ```
 
+#### 4.10.7 Kind Section Classes *(Stage 1)* — `Regular`, `Record`, `Enum`, `Protocol`, `Section`
+
+Class kinds are implemented as built-in section classes. The `metadata: kind: X` entry on a class dispatches to the corresponding section class, which validates the class body and installs kind-specific compilation behavior.
+
+**`Regular`** — the default kind, applied when no `metadata: kind:` is present. Permits all sections. Produces reference-typed classes with universal extents, weak references, dynamic dispatch, and ARC (§6.3).
+
+**`Record`** — value-typed data records.
+
+- **Permits:** `data:`, `methods:`, `class:`, `invariants:`, `computed:`, `metadata:`.
+- **Forbids:** `state:`, `channel:`, `signal:`, and any behavioral section requiring per-instance mutable state.
+- **Generates:** structural `==` from `data:` fields; `with(...)` modification method; copy-on-assignment.
+- **Opts out of:** universal extent registration; weak refs; ARC.
+- **Runtime shape:** stack-allocated when scope-local; inline in containers; passed by value.
+
+**`Enum`** — sealed sum types.
+
+- **Permits:** `cases:` (required), `methods:`, `class:`, `metadata:`.
+- **Forbids:** `state:`, `data:` at class scope (variants carry their own associated data inside `cases:`).
+- **Reads from `metadata:`:** optional `raw_type:` for integer-backed enums.
+- **Generates:** for each `case name(field: Type, ...)`, a constructor `EnumName.name(field: value, ...)`. For raw-valued enums (all cases have `= value`), auto-generates `raw_value(self) -> raw_type` and `class function from_raw(value: raw_type) -> Self?`.
+- **Requires:** if any case has `= value`, all cases must; the raw type is inferred as the smallest unsigned or signed type that fits all values unless `metadata: raw_type:` overrides.
+- **Runtime shape:** discriminated union; tag + associated values.
+
+**`Protocol`** — named contracts, no instantiation.
+
+- **Permits:** `accepts:` (declares required signatures with their contracts), `methods:` (default implementations), `class:`, `metadata:`.
+- **Forbids:** `data:`, `state:`, `cases:` (protocols hold no data).
+- **Behavior:** structural conformance by default; explicit `class Foo: SomeProtocol:` declaration legal but optional. Runtime is `@protocol` at the ObjC boundary.
+- **`methods:` semantics under `kind: protocol`:** each method is a *default implementation* — used when a conforming class does not provide the message. Method signatures alone (without bodies) may also appear in `methods:` and are equivalent to entries in `accepts:` (the compiler folds them).
+
+**`Section`** — §4 metaprogramming section-classes.
+
+- **Permits:** whatever the specific section class's role requires — typically `data:` (for configuration/parameters), `state:` (for section instance state), `generator:`, `processor:`, `validator:`, `describer:`.
+- **Runtime shape:** compile-time only. Section classes have no runtime instances at the user-code level; their state exists inside the compiled class metadata (§4.18).
+- **Detail:** section-class internals are documented throughout §4 and are the same forms already used for built-in and user-defined sections. `metadata: kind: section` is the surface-level marker; `section class Foo:` is the sugar for it.
+
+**Reserved metadata keys.** The following keys under `metadata:` are reserved by the language:
+
+| Key | Applies to | Meaning |
+|---|---|---|
+| `kind` | Any class | Selects the kind section class; values from the spec-defined set above |
+| `raw_type` | `kind: enum` | Integer type backing enum cases; inferred if omitted |
+| `mode` | `channel:` section (§8.6) | `work` \| `broadcast` \| `pub` — coordination semantics |
+| `capacity` | `channel:` section | Positive int; if present, channel is bounded |
+| `on_full` | `channel:` section | `block` \| `error` \| `drop_newest` \| `drop_oldest`; required when `capacity` is set |
+| `topic_fn` | `channel:` section with `mode: pub` | Function from item to topic identifier |
+
+Users may add arbitrary keys under `metadata:` for tool/documentation use (e.g. `since:`, `platforms:`, `stability:`). Non-reserved keys are ignored by the compiler and surfaced via §4.18 class-metadata queries.
+
+#### 4.10.8 The `metadata:` Section *(Stage 1)*
+
+`metadata:` is a user-writable declaration section that carries compile-time metadata about the enclosing class. It is spec-committed as a first-class section and processed by the compiler before any other section on the same class.
+
+**Composition:**
+
+```
+class Foo:
+    metadata:
+        kind: record
+        since: "0.6.0"
+        platforms: [macos, ios]
+    data:
+        x: Int
+```
+
+**Rules:**
+
+1. **Position.** If present, `metadata:` must appear first in the class body. This is enforced at parse time. Rationale: subsequent sections' legality depends on `kind:` (§4.10.7), so the compiler must see it before processing the rest of the body.
+2. **Uniqueness.** At most one `metadata:` section per class.
+3. **Reserved keys.** See table in §4.10.7. The compiler validates reserved-key values; unknown values are compile errors. Non-reserved keys are accepted verbatim.
+4. **Compile-time only.** `metadata:` entries do not create runtime fields on instances. They populate the class-metadata artifact (§4.18) and are queryable via `Class.by_qualified_name(...).metadata_entry(name)`.
+5. **Not required.** A class with no `metadata:` section defaults to `kind: regular`. Explicit `metadata: kind: regular` is legal but rarely written.
+
+**Distinction from §4.18 Class Metadata.** §4.18 describes the runtime-introspectable class-metadata *artifact* that the compiler generates for every class. The `metadata:` section is one of several sources feeding that artifact — user-written declarative entries. Other sources include field types, method signatures, generated members from behavioral sections, provenance, and conformance information. `metadata:` is where the user contributes; §4.18 is where consumers read.
+
 ### 4.11 User-Defined Section Classes
 
 Users define section classes using the same syntax as built-in ones. Example — an `Channel` section:
@@ -2054,6 +2298,115 @@ This is consistent with the intent-not-authority premise (§1.3): visibility ann
 
 Consumers of metadata are expected to respect intent even though the compiler doesn't enforce. An LSP might hide private members from completion by default; a debugger shows them. Both read the same metadata; each uses it appropriately for its context.
 
+### 4.19 Sugar Layer for Class Kinds
+
+Corvid provides surface-syntax sugar for the four non-default class kinds. Sugar is compile-time-only; it desugars losslessly to `class + metadata: kind:` before the rest of the compiler pipeline runs. Every construct expressible in sugar is equivalently expressible in the desugared form; users typically write the sugar.
+
+**Sugar keywords:**
+
+| Keyword | Desugars to | Kind |
+|---|---|---|
+| `record Foo:` | `class Foo:` + `metadata: kind: record` | Value type |
+| `enum Foo:` | `class Foo:` + `metadata: kind: enum` | Sum type |
+| `protocol Foo:` | `class Foo:` + `metadata: kind: protocol` | Contract |
+| `section class Foo:` | `class Foo:` + `metadata: kind: section` | §4 section class (existing syntax; equivalent) |
+
+**Retired keywords.** `struct` and `enumeration` (v0.5) are retired. Their v0.5 semantics are recovered by `record` and `enum` respectively. Grammar §10 no longer parses them.
+
+**Sugar for `enum` cases and raw values:**
+
+```
+# Sugar — inline case declarations:
+enum FrameOpCode:
+    case continue_frame
+    case text_frame
+    case connection_close
+
+# Sugar — enum with raw values (compiler infers raw_type: UInt16):
+enum CloseCode:
+    case normal = 1000
+    case protocol_error = 1002
+    case encoding = 1007
+
+# Sugar — enum with associated data:
+enum WSFrame:
+    case text(String)
+    case binary(Bytes)
+    case close(code: UInt16, reason: String)
+```
+
+Desugars to:
+
+```
+class FrameOpCode:
+    metadata:
+        kind: enum
+    cases:
+        case continue_frame
+        case text_frame
+        case connection_close
+
+class CloseCode:
+    metadata:
+        kind: enum
+        raw_type: UInt16                 # inferred (smallest fit)
+    cases:
+        case normal = 1000
+        case protocol_error = 1002
+        case encoding = 1007
+    # + auto-generated raw_value(self) and class function from_raw(value:)
+
+class WSFrame:
+    metadata:
+        kind: enum
+    cases:
+        case text(String)
+        case binary(Bytes)
+        case close(code: UInt16, reason: String)
+```
+
+**Sugar for `protocol` requirements and defaults:**
+
+```
+# Sugar — per-method accepts and default implementations mixed:
+protocol OrderProcessor:
+    accepts process(Order) -> Result<Receipt, OrderError>
+        throws, async
+        requires order.is_valid
+
+    accepts cancel(OrderID) -> Bool
+        throws
+
+    function process_batch(self, orders: [Order]) -> [Result<Receipt, OrderError>]:
+        return [self.process(o) for o in orders]
+```
+
+Desugars to (`accepts` entries collected into a section, methods with bodies collected into `methods:`):
+
+```
+class OrderProcessor:
+    metadata:
+        kind: protocol
+    accepts:
+        process(Order) -> Result<Receipt, OrderError>
+            throws, async
+            requires order.is_valid
+        cancel(OrderID) -> Bool
+            throws
+    methods:
+        function process_batch(self, orders: [Order]) -> [Result<Receipt, OrderError>]:
+            return [self.process(o) for o in orders]
+```
+
+**Sugar is lossless.** Every sugared form and its desugared form produce identical class metadata, generated members, and runtime behavior. Tooling always operates on the desugared form; error messages and generated code reference the desugared form; the sugar keyword is preserved only in source-location provenance.
+
+**Explicit form always legal.** Users may write the desugared form directly for any of these kinds. This is useful when:
+- Additional `metadata:` entries beyond `kind:` are needed (e.g., `since:`, `platforms:`).
+- Explicit `metadata: raw_type:` overrides the inferred type on an enum.
+- The class body composes with a `metadata:` section for tool integration.
+
+**No user-defined sugar.** Users cannot introduce new sugar keywords. Extensions to the sugar layer require spec commitment. Rationale: sugar changes the shape of what readers see; introducing project-local sugar would fragment reading conventions across codebases. Users needing declarative shorthand for common patterns use `alias` (§4.16) instead.
+
 ---
 
 ## 5. Dispatch Model
@@ -2103,44 +2456,212 @@ Rationale: optimization policy is a deployment decision, not a semantic property
 | Compiled code is safe from author-declared "sealing" | N/A — no such annotation exists |
 | Members marked non-exposed are unreachable | No — external access generates warnings, not errors |
 
+### 5.6 Closures and Callable Values
 
+A **closure** in Corvid is an anonymous class with a single `call` method. Closures are first-class values; they can be passed as arguments, returned from functions, stored in fields, and dispatched dynamically like any other class instance. The runtime representation at the ObjC interop boundary is an ObjC block; the compiler generates the block wrapper automatically.
+
+Semantically, closures are not a separate construct — they inherit all the properties of the class-as-universal design (§6.1). Kind is `regular` (the default) for closures that need to escape their construction site; the compiler is free to specialize to `kind: record` or eliminate the class entirely when analysis proves the closure does not escape.
+
+#### 5.6.1 Type Expression — `Callable<Args, Return>`
+
+Function types (§3.2) desugar to the wrapper type `Callable<Args, Return>`:
+
+```
+handler: (Bytes) -> Int                 # sugar
+handler: Callable<(Bytes,), Int>        # expanded
+
+comparator: (String, String) -> Int     # sugar
+comparator: Callable<(String, String), Int>  # expanded
+```
+
+`Callable<Args, Return>` is a standard-library type; `(...) -> R` is spec-committed sugar. Effects on the callable use the same `with` clause as method types (§3.5.3):
+
+```
+f: (Order) -> Receipt with throws OrderError
+f: Callable<(Order,), Receipt> with throws OrderError
+```
+
+#### 5.6.2 Sugar Hierarchy for Closure Literals
+
+**Explicit function-literal form** — full types, unambiguous.
+
+```
+array.map(function(x: Int) -> Int:
+    return x + 1
+)
+```
+
+**Arrow form** — inferred parameter and return types, single-line body.
+
+```
+array.map(x => x + 1)
+array.sorted((a, b) => a.count > b.count)
+first_upper = names.first(where: n => n.starts_with_uppercase())
+```
+
+Multi-parameter form uses parentheses on the left of `=>`. Zero-parameter form: `() => value`. Ignored parameter: `_ => 42`.
+
+**Method reference** — pass an existing method by name.
+
+```
+class Processor:
+    methods:
+        function transform(self, x: Int) -> Int: return x * 2
+        function transform_all(self):
+            self.numbers.map(self.transform)   # method reference
+```
+
+Method references bind `self` at the reference site — `self.transform` is a `Callable<(Int,), Int>` with `self` already captured.
+
+**Trailing-block form is not supported.** Swift's `array.map { $0 + 1 }` is not part of the sugar layer. Rationale: the arrow form is as terse without the parsing complexity of "closure body outside parens." If a hard-line preference emerges, it can be added later as additive sugar.
+
+#### 5.6.3 Desugaring — Closure Literals to Anonymous Classes
+
+Every closure literal desugars, at compile time, to an anonymous class whose only method is `call`. The compiler generates one class per unique closure body at a source location; different literals at different sites are different classes.
+
+Sugar:
+```
+array.map(x => x + 1)
+```
+
+Desugared (illustrative; the anonymous class name is compiler-generated):
+
+```
+class __closure_at_L47:
+    methods:
+        function call(self, x: Int) -> Int:
+            return x + 1
+
+array.map(__closure_at_L47())
+```
+
+Closures with captured environments carry those captures as `data:` fields on the anonymous class:
+
+```
+# Source:
+threshold = 5
+filtered = array.filter(x => x > threshold)
+
+# Desugared:
+class __closure_at_L52:
+    data:
+        threshold: Int
+    methods:
+        function call(self, x: Int) -> Bool:
+            return x > self.threshold
+
+filtered = array.filter(__closure_at_L52(threshold: threshold))
+```
+
+Stateful closures (rare) use `state:` on the anonymous class:
+
+```
+# Source — counter closure:
+counter = do:
+    n: Int = 0
+    () => do:
+        n = n + 1
+        n
+
+# Desugared:
+class __closure_at_L60:
+    state:
+        n: Int = 0
+    methods:
+        function call(self) -> Int:
+            self.n = self.n + 1
+            return self.n
+
+counter = __closure_at_L60()
+```
+
+#### 5.6.4 Capture Rules
+
+**Strong capture by default.** A closure captures any free variable it references, with a strong reference. This is the common case — the closure keeps its captured environment alive.
+
+```
+config = load_config()
+handler = event => process(event, config)   # config captured strongly
+# handler holds config alive as long as handler exists
+```
+
+**Explicit capture list for non-default capture modes.** Prefix the closure literal with `[weak name, unowned name, name: mode]` when a variable should be captured differently:
+
+```
+# Weak self capture — closure does not keep self alive:
+subscription = channel.subscribe([weak self] event => self?.handle(event))
+```
+
+Multiple entries are comma-separated. Legal modes: `weak`, `unowned`, `copy` (for value types).
+
+**Rules:**
+
+1. **Non-escaping closures never need `[weak]`.** A closure passed to `map`/`filter`/`sorted`/etc. and consumed synchronously by the callee cannot outlive the current frame. The compiler recognizes non-escaping closures and elides the capture-list requirement.
+2. **Escaping closures may.** A closure stored in a field, returned from a function, or passed to a callee that stores it (e.g., channel subscribers, delegates) can outlive its construction context. `[weak self]` is required to avoid retain cycles when the closure captures `self` and is stored on `self` transitively.
+3. **The compiler warns on likely retain cycles.** If a closure captures `self` strongly AND is stored in a `state:` field of `self` (directly or through a channel subscription), the compiler emits a warning. Not an error — sometimes intentional — but flagged.
+
+#### 5.6.5 Compilation and Runtime Cost
+
+The compiler is free to specialize closure representations under the "as if" rule — semantic behavior is preserved, runtime shape is optimized:
+
+| Situation | Runtime cost |
+|---|---|
+| Closure passed to an inlinable function (map/filter/sorted/etc.), no capture | Zero — inlined at call site |
+| Closure with capture, inlinable call site | Captures unpacked into local vars; closure object elided |
+| Escaping closure (stored, returned, passed to opaque callee) | One anonymous-class allocation + virtual `call` dispatch |
+| Closure passed across ObjC boundary | Wrapped as an ObjC block; standard block calling convention |
+
+Users write the sugar; the compiler chooses the representation. The `Callable<Args, Return>` wrapper type is what appears in type signatures; the concrete anonymous class is a compiler artifact.
 
 ---
 
 ## 6. Memory Model
 
-The memory model organizes around three type categories (struct, enumeration, class), a universal handle-based reference model for classes, extent-based storage with tag-organized regions, and ARC as the reference lifetime mechanism. This chapter details each layer and how they compose.
+The memory model organizes around **class kinds** — variants of a single unified `class` construct differentiated by the `metadata: kind:` entry — plus a universal handle-based reference model for identity-typed classes, extent-based storage with tag-organized regions, and ARC as the reference lifetime mechanism. This chapter details each kind and how they compose.
 
-### 6.1 Type Categories
+### 6.1 Class Kinds
 
-The language has three type-declaration keywords: `struct`, `enumeration`, `class`. All three share the section mechanism (§4). They differ in one bit: whether `state:` sections are permitted.
+All user types are declared via `class`. The `metadata: kind:` section entry (§4.10.6) selects the variant. Five kinds are spec-defined:
 
-**Struct** — restricted to `data:` sections and `methods:`. No `state:`, no behavioral sections that require runtime state (no `channel:`, `persistent:`, etc.). Value semantics on assignment. Modification requires constructing a new instance.
+| `kind:` value | Purpose | `state:` allowed? | Extent? | Semantics |
+|---|---|---|---|---|
+| `regular` (default) | Reference-typed identity object | Yes | Yes | Reference on assignment; dynamic dispatch; ARC-managed |
+| `record` | Value-typed data record | No | No | Copy on assignment; structural equality; static dispatch |
+| `enum` | Sealed sum type | No | No | Discriminated union of `cases:`; exhaustive matching |
+| `protocol` | Named contract, no instantiation | N/A | N/A | Structural conformance; `accepts:` required, `methods:` defaults |
+| `section` | §4 metaprogramming section-class | Per kind's own rules | No | Compile-time only, no runtime artifact |
 
-**Enumeration** — struct with variants. Each variant may carry associated `data:` values. Same restrictions as struct (no `state:`). Value semantics. Discriminated storage.
+Sugar keywords (`record`, `enum`, `protocol`, `section`) desugar losslessly to the corresponding `class + metadata: kind:` form (§4.11). Users typically write the sugar; tooling and generated code operate on the desugared form.
 
-**Class** — full section machinery. `data:`, `state:`, `methods:`, behavioral sections all permitted. Reference semantics on assignment. Participates in extent-based storage. Runtime dispatch.
+**The "no `state:`" restriction on record and enum is the source of their value semantics.** Without mutable state, there's nothing to share across bindings — value semantics falls out. Without runtime-varying behavior, methods can dispatch statically. Without runtime identity, no extent tracking is meaningful. Without shared references, no ARC is needed. The kind selector is the switch that opts in or out of all four properties together.
 
-The "no `state:`" restriction on struct and enumeration is the source of every downstream difference. Without mutable state, there's nothing to share across bindings — value semantics falls out. Without runtime-varying behavior, methods can dispatch statically. Without runtime identity, no extent tracking is meaningful. Without shared references, no ARC is needed.
+**Kind determines section legality.** The compiler validates that only sections legal for a class's kind appear in its body:
+- `kind: protocol` + `state:` → error (protocols have no runtime state)
+- `kind: record` + `state:` → error (records forbid mutable state)
+- `kind: enum` + `state:` → error; `enum` uses `cases:` for its variants
+- `kind: regular` + `cases:` → error (cases belong to `kind: enum`)
+- `kind: section` — validated per the section-class rules in §4
 
-### 6.2 Struct and Enumeration Runtime Model
+Validation occurs at compile time (§4 section-class implementations enforce their kind's rules). Error messages name the kind and the offending section.
 
-Structs and enumerations are value types with these properties:
+### 6.2 Value-Typed Class Runtime Models — `kind: record` and `kind: enum`
+
+Classes with `kind: record` and `kind: enum` are value types with these properties:
 
 **Storage:**
 - Stack-allocated when scoped to a function.
 - Inline in containers (an `[Vec2]` array holds Vec2 values directly, packed).
-- Inline in class fields (a class with `struct` fields holds them contiguously in the class's storage).
-- Passed by value on function calls (may be optimized to pass-by-reference for large structs at ABI level; semantic model is copy).
+- Inline in class fields (a class with `record` fields holds them contiguously in the class's storage).
+- Passed by value on function calls (may be optimized to pass-by-reference for large records at ABI level; semantic model is copy).
 
 **Assignment:**
 - Copies the entire value.
-- Two bindings of the same struct value are independent; mutating one does not affect the other.
+- Two bindings of the same record value are independent; mutating one does not affect the other.
 
 **Mutation:**
-- Structs are immutable to their bindings by default when `immutable` is applied to the binding.
-- A `mutable` binding permits reassigning the binding to a new struct value.
-- Individual fields of a struct cannot be modified in place through a binding; users construct a new struct with the desired changes.
+- Records are immutable to their bindings by default when `immutable` is applied to the binding.
+- A `mutable` binding permits reassigning the binding to a new record value.
+- Individual fields of a record cannot be modified in place through a binding; users construct a new record with the desired changes.
 
 **"Modification" pattern:**
 ```
@@ -2148,25 +2669,26 @@ p1: Vec2 = Vec2(x: 1.0, y: 2.0)
 p2: Vec2 = p1.with(x: 5.0)     # new Vec2, p1 unchanged
 ```
 
-Structs may expose a `with(field: value, ...)` method (auto-generated by the compiler from the class's data fields) that returns a new instance with the specified fields replaced. This is the primary modification pattern.
+Records may expose a `with(field: value, ...)` method (auto-generated by the compiler from the class's data fields) that returns a new instance with the specified fields replaced. This is the primary modification pattern.
 
 **Dispatch:**
-- Struct methods dispatch statically. No method table, no `objc_msgSend`.
+- Record methods dispatch statically. No method table, no `objc_msgSend`.
 - Compiler generates direct calls, allowing inlining and optimization.
-- Struct methods cannot be swizzled (no runtime method table exists for structs).
+- Record methods cannot be swizzled (no runtime method table exists for records).
 
 **Identity:**
-- Structs have only structural identity — `==` compares field values.
-- There is no `===` (identity comparison) for structs; the concept doesn't apply.
+- Records have only structural identity — `==` compares field values.
+- There is no `===` (identity comparison) for records; the concept doesn't apply.
 
 **Memory management:**
-- No ARC. Structs live where they're stored; when their scope ends or the containing object is freed, they go with it.
-- No heap allocation implied by the type. A struct held in a class field lives in the class's heap allocation; a struct in a local variable lives on the stack.
+- No ARC. Records live where they're stored; when their scope ends or the containing object is freed, they go with it.
+- No heap allocation implied by the type. A record held in a class field lives in the class's heap allocation; a record in a local variable lives on the stack.
 
-**Enumerations** additionally provide:
-- Variants as constructors: `Result.ok(value: x)`, `Result.err(error: e)`.
+**`kind: enum`** additionally provides:
+- Variants declared in the `cases:` section: `Result.ok(value: x)`, `Result.err(error: e)`.
 - Exhaustive matching via `switch` (§3.7).
 - Discriminated storage: the runtime representation is a tag + associated values.
+- Optional integer backing via `metadata: raw_type:` — when specified (or inferred from `case name = value` syntax), the compiler auto-generates `raw_value(self) -> <raw_type>` and `class function from_raw(value:) -> Self?`. See §3.3 and §4.11 for sugar.
 
 ### 6.3 Class Runtime Model
 
@@ -3074,7 +3596,20 @@ The runtime enforces Sendable at task boundaries. Attempting to pass a non-Senda
 
 ### 8.6 The Channel Section
 
-The `channel:` section is Stage 1 built-in behavioral, providing CSP-style asynchronous event streams from state changes.
+The `channel:` section is Stage 1 built-in behavioral, providing CSP-style asynchronous coordination. A channel is a first-class coordination primitive with two composition patterns and three distribution modes.
+
+**Two composition patterns:**
+
+1. **Direct field entries** — declare typed channel items that consumers `send` and receive. Analogous to Go/Clojure channels used as work queues, broadcasters, or topic streams.
+2. **Nested `state:` composition** — wrap declared state fields so that setting them auto-publishes `StateChange` events. This is the v0.5 pattern preserved.
+
+Both patterns coexist under the same section; a class may use either or both.
+
+**Three distribution modes** (via `metadata: mode:`):
+
+- **`work` (default)** — CSP-style competing consumers. Each item is received by exactly one subscriber. FIFO delivery. Analogous to Go's `chan T`, Clojure's `chan`.
+- **`broadcast`** — every subscriber receives every item. Slowest subscriber sets the pace (synchronous fan-out). Analogous to Clojure's `mult`/`tap`.
+- **`pub`** — topic-partitioned broadcast. Requires `metadata: topic_fn:` mapping items to topic identifiers. Subscribers pick specific topics. Analogous to Clojure's `pub`/`sub`.
 
 ```
 section class Channel:
@@ -3082,65 +3617,106 @@ section class Channel:
         contains: fields
         composition_mode: nested
         parameters:
-            buffer_size: Int = 0        # 0 = unbuffered, N = bounded, -1 = unbounded
-            delivery: DeliveryMode = .async
+            mode: DistributionMode = .work
+            capacity: Int? = nil          # nil = unbounded (default)
+            on_full: OverflowPolicy = .block   # required when capacity is set
+            topic_fn: TopicFn? = nil      # required when mode = .pub
     
     state:
         instance_subscribers: [Subscriber] = []
-        buffer: RingBuffer<StateChange> = RingBuffer.new(size: buffer_size)
-    
-    class_state:
-        class_subscribers: [Subscriber] = []
+        buffer: RingBuffer<Item> = RingBuffer.new(bounded: capacity)
     
     generator field_setter(field: FieldSpec) -> Code:
-        return quote:
-            async function set_${field.name}(self, new_value):
-                old = self._${field.name}
-                self._${field.name} = new_value
-                event = StateChange(
-                    instance: self,
-                    field: "${field.name}",
-                    old: old,
-                    new: new_value
-                )
-                await self.sections.channel.publish(event)
-                await Self.sections.channel.publish_class(event)
+        # Used when the channel composes with a nested `state:` section.
+        # Publishes StateChange events on set. Semantics as in v0.5.
+        ...
     
-    function subscribe(self) -> AsyncIterator<StateChange>: ...
-    class function subscribe() -> AsyncIterator<StateChange>: ...
+    function send(self, item) -> ...
+    function subscribe(self) -> AsyncIterator<Item>: ...
+    class function subscribe() -> AsyncIterator<Item>: ...
 ```
 
-**Instance-level subscription:**
+#### 8.6.1 Direct-Entry Channels
+
+Declare typed channel items as fields inside `channel:`. The compiler generates `send`/`subscribe` machinery for each entry.
 
 ```
+class WSFramer:
+    data:
+        is_server: Bool
+    state:
+        buffer: Bytes = Bytes()
+    channel:
+        input: Bytes                              # work mode (default)
+        output: Frame
+            metadata:
+                mode: broadcast                   # every subscriber sees every frame
+        errors: WSError
+            metadata:
+                capacity: 32                      # bounded
+                on_full: drop_oldest
+        events: DomainEvent
+            metadata:
+                mode: pub
+                topic_fn: e => e.kind             # topic-partitioned
+    methods:
+        expose function add(self, data: Bytes):
+            self.sections.channel.input.send(data)
+        
+        async function process_loop(self):
+            for data in self.sections.channel.input.subscribe():
+                self.buffer.append(data)
+                ...
+```
+
+**Backpressure defaults.** Direct-entry channels default to **unbounded** capacity. This matches DispatchQueue behavior at the Apple-ecosystem substrate layer — unbounded → memory grows on lagging consumer, but memory pressure is diagnosable with standard Apple tooling (Instruments, xctrace). Users needing bounded semantics opt in via `metadata: capacity:` + `on_full:`.
+
+**Consumer lifecycle.** Consumer loops are bound to their owning entity:
+
+- **Per-instance loops** — spawn from the constructor: `spawn self.process_loop()`. When the instance is deallocated, the channel closes; the `for ... in .subscribe()` loop terminates naturally; the task ends. No `[weak self]` dance required — the channel-closure semantics handle instance lifetime.
+- **Per-program loops** — spawn from the program entry point; terminate at program exit via structured cancellation.
+
+#### 8.6.2 State-Composition Channels
+
+The v0.5 pattern — wrapping declared state fields for auto-publish — is preserved via section composition:
+
+```
+class Order:
+    state:
+        status: OrderStatus = .pending
+    channel:
+        state:
+            status                # setting order.status auto-publishes StateChange event
+
+# Consumers subscribe to the state-change stream:
 for change in specific_order.sections.channel.subscribe():
-    # receives every state change on specific_order
-    handle(change)
+    handle(change)               # StateChange { instance, field, old, new }
 ```
 
-**Class-level subscription:**
+The channel's `field_setter` generator wraps assignments to nested-`state:` fields, producing `StateChange` events on set. Distribution mode defaults to `broadcast` for state-composition channels (state changes are inherently pub/sub) but can be overridden via `metadata: mode:`.
 
-```
-for change in Order.channel.subscribe():
-    # receives every state change on any Order instance
-    handle(change)
-```
+#### 8.6.3 Buffering and Backpressure
 
-**Buffering and backpressure:**
+Bounded channels use `metadata: capacity: N` with an `on_full:` policy:
 
-- `buffer_size: 0` — unbuffered. Setter blocks until a subscriber receives.
-- `buffer_size: N` — bounded. Setter blocks when buffer full.
-- `buffer_size: -1` — unbounded. Setter never blocks; memory grows if consumer is slow.
+| `on_full:` | Behavior when buffer full |
+|---|---|
+| `block` (default when bounded) | Sender blocks (async) or fails (sync) until space available |
+| `error` | Sender throws immediately |
+| `drop_oldest` | Oldest buffered item is discarded to make room |
+| `drop_newest` | Incoming item is discarded |
 
-Buffering interacts with the state-machine synchronization: if a setter blocks on channel backpressure, its `ensures` postcondition is not yet established. Other threads waiting on the state remain waiting until the channel makes progress.
+Buffering interacts with state-machine synchronization: if a setter blocks on channel backpressure, its `ensures` postcondition is not yet established. Other threads waiting on the state remain waiting until the channel makes progress.
 
-**Cancellation:**
+#### 8.6.4 Cancellation and Multiple Subscribers
 
-Subscribers cancel by dropping the iterator. The channel deregisters them. If all subscribers drop, unbuffered channels stop blocking setters.
+**Cancellation.** Subscribers cancel by dropping the iterator. The channel deregisters them. If all subscribers drop and the mode is `work`, the channel accumulates items in the buffer (up to capacity if bounded); if the mode is `broadcast` or `pub`, items are dropped when no subscribers exist (Clojure `mult` semantics).
 
-**Multiple subscribers:**
+**Multiple subscribers by mode:**
 
-Each subscriber gets its own view of the stream. Broadcast semantics — no single-consumer contention.
+- `mode: work` — subscribers compete; each item goes to exactly one subscriber. Under contention, distribution is FIFO across arrivals but items are consumed exclusively.
+- `mode: broadcast` — every subscriber receives every item synchronously. Slowest subscriber determines throughput.
+- `mode: pub` — every subscriber sees items whose `topic_fn(item)` matches its subscribed topic. Multiple subscribers to the same topic each receive every matching item (broadcast within topic).
 
 ### 8.7 The Signal Section
 
@@ -3505,8 +4081,19 @@ top_level_item := section_usage | declaration | alias_decl
 
 alias_decl := 'expose'? 'alias' identifier ':' section_name (WS section_name)*
 
-declaration := class_decl | struct_decl | enumeration_decl | protocol_decl
-             | function_decl | constant_decl | type_decl | section_class_decl
+declaration := class_decl | sugar_class_decl
+             | function_decl | constant_decl | type_decl
+
+# Sugar keywords all desugar to `class + metadata: kind:`.
+sugar_class_decl := 'expose'? sugar_kind identifier
+                    generic_params? conformance_clause? ':' INDENT
+                        class_member*
+                    DEDENT
+
+sugar_kind := 'record'          # → metadata: kind: record
+            | 'enum'            # → metadata: kind: enum
+            | 'protocol'        # → metadata: kind: protocol
+            | 'section' 'class' # → metadata: kind: section
 
 section_usage := section_header ':' INDENT section_contents DEDENT
 
@@ -3520,20 +4107,31 @@ section_name := identifier ('(' arg_list ')')?
 
 section_contents := field_decl* | method_decl* | statement* | declaration*
                   | expression | ast_content
+                  | metadata_entry* | case_decl* | accepts_decl*
 
 class_decl := 'expose'? 'class' identifier
               generic_params? conformance_clause? ':' INDENT
                   class_member*
               DEDENT
 
-class_member := section_usage | method_decl | constructor_decl | destructor_decl
+class_member := metadata_section | section_usage
+              | method_decl | constructor_decl | destructor_decl
+              | case_decl | accepts_decl
               # methods without enclosing section are in implicit `methods:` section
+              # metadata_section must appear first if present (§4.10.8)
 
-section_class_decl := 'section' 'class' identifier ':' INDENT
-                          section_class_member*
-                      DEDENT
+metadata_section := 'metadata' ':' INDENT metadata_entry+ DEDENT
 
-section_class_member := section_usage | member_decl
+metadata_entry := identifier ':' metadata_value
+metadata_value := expr | identifier | list_expr    # e.g. `record`, `[macos, ios]`, `"0.6.0"`
+
+# `cases:` section content and `accepts:` section content.
+case_decl := 'case' identifier ( '(' associated_data ')' )? ( '=' expr )?
+             # `case name` | `case name(field: Type, ...)` | `case name = 1000`
+
+accepts_decl := 'accepts' identifier '(' parameter_list ')' ('->' type)?
+                effect_clause? contract_clause?
+              # inside `kind: protocol`. Body-less; contracts allowed.
 
 member_decl := generator_decl | processor_decl | validator_decl
              | method_decl | constructor_decl | destructor_decl
@@ -3555,12 +4153,42 @@ method_decl := 'expose'? ('mutating')? 'function' identifier
 field_decl := 'expose'? ('immutable' | 'mutable')? ('weak' | 'unowned')?
               identifier ':' type ('=' expr)?
 
+# Expression forms (§3.8).
+expr := ... | if_expr | switch_expr | block_expr | while_expr | for_expr | loop_expr
+      | closure_literal | function_literal | arrow_literal
+
+if_expr := 'if' expr ':' expr_body ('else if' expr ':' expr_body)* ('else' ':' expr_body)?
+switch_expr := 'switch' expr ':' INDENT case_arm+ DEDENT
+block_expr := 'do' ':' INDENT statement* DEDENT
+while_expr := 'while' expr ':' expr_body                # returns Bool
+for_expr := 'for' identifier 'in' expr ':' expr_body     # returns Bool
+loop_expr := 'loop' ':' INDENT statement* DEDENT         # returns type of `break value`
+
+# Closures (§5.6). All desugar to anonymous classes with a `call` method.
+closure_literal := capture_list? function_literal
+                 | capture_list? arrow_literal
+                 | method_reference
+
+capture_list := '[' capture_entry (',' capture_entry)* ']'
+capture_entry := ('weak' | 'unowned')? identifier
+               | identifier ':' capture_mode              # e.g. `x: copy`
+
+function_literal := 'function' '(' parameter_list ')' ('->' type)?
+                    effect_clause? ':' expr_body
+
+arrow_literal := ( identifier | '(' identifier (',' identifier)* ')' | '_' )
+                 '=>' expr
+
+method_reference := identifier ('.' identifier)+   # e.g. `self.foo`, `MyType.bar`
+
 quote_expr := 'quote' ':' INDENT ast_content DEDENT
 
 ast_content := <arbitrary AST with ${expr} splice points>
 ```
 
-Removed from prior drafts: `sealed`, `dynamic`, `open`, `public`, `private`, `package` visibility. Modules no longer carry dispatch policy annotations (§5.4).
+**Retired from prior drafts** (v0.5 → v0.6): `struct`, `enumeration`. Sugar keywords `record`, `enum` (plus preserved `protocol`, `section class`) desugar to `class + metadata: kind:` (§4.19).
+
+**Retired earlier** (v0.5.0 → v0.5.1): `sealed`, `dynamic`, `open`, `public`, `private`, `package` visibility. Modules no longer carry dispatch policy annotations (§5.4).
 
 ---
 

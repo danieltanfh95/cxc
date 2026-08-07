@@ -45,7 +45,7 @@ expose protocol FrameCollectorDelegate:
 
 # FRICTION #W-2 (continued): Event lifted to module level.
 # Swift Event was nested inside FrameCollector; Corvid definition here.
-expose enumeration FrameCollectorEvent:
+expose enum FrameCollectorEvent:
     case text(String)
     case binary(Bytes)
     # FRICTION #W-4 (OPTIONAL ASSOCIATED VALUES IN ENUM VARIANT):

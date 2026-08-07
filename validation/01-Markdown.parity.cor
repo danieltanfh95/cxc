@@ -36,7 +36,7 @@ module com.ink.api
 # workaround pattern doesn't survive our struct discipline. Idiomatic 
 # translation will need to make a real choice.
 
-public struct Markdown:
+public record Markdown:
     data:
         ## The HTML representation of the Markdown, ready to
         ## be rendered in a web browser.

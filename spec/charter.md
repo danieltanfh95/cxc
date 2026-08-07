@@ -32,7 +32,7 @@ Library authors express intent about how their code will be used. Annotations th
 
 **Downstream code always retains full capability** — to hook, override, extend, introspect, or modify — via the runtime. Metadata queries (§4.18) return everything the compiler knows regardless of `expose`. Categories add methods to any class. Swizzling replaces implementations. This is Objective-C's runtime philosophy carried forward honestly.
 
-**Non-consequence:** intent-not-authority does not apply to semantics that change compilation itself. `async` changes the calling convention; mutability annotations change struct storage semantics; type shapes determine memory layout. These are semantic in the sense that different values would be produced under different rules, so they cannot be "just hints." See §3.5.
+**Non-consequence:** intent-not-authority does not apply to semantics that change compilation itself. `async` changes the calling convention; mutability annotations change storage semantics; class kinds (`metadata: kind:`) determine memory layout and dispatch. These are semantic in the sense that different values would be produced under different rules, so they cannot be "just hints." See §3.5, §6.1.
 
 ### 1.3 Contracts replace nominal types
 

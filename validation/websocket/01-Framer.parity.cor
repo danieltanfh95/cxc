@@ -46,7 +46,7 @@ let MaxFrameSize: Int      = 32
 # For parity: declare the enum without raw values, and use a paired
 # `class function code(self) -> UInt16` on each. Verbose. Idiomatic
 # pass may hide with a section.
-expose enumeration CloseCode:
+expose enum CloseCode:
     case normal                  # = 1000
     case going_away              # = 1001
     case protocol_error          # = 1002
@@ -88,7 +88,7 @@ expose enumeration CloseCode:
 
 
 # Same #W-45 gap.
-expose enumeration FrameOpCode:
+expose enum FrameOpCode:
     case continue_frame     # = 0x0
     case text_frame         # = 0x1
     case binary_frame       # = 0x2
@@ -126,7 +126,7 @@ expose enumeration FrameOpCode:
 
 # Immutable-by-construction: all fields are `let` in Swift (immutable),
 # aggregated into a single value. Perfect fit for Corvid's `data:` section.
-expose struct Frame:
+expose record Frame:
     data:
         is_fin: Bool
         needs_decompression: Bool
@@ -137,7 +137,7 @@ expose struct Frame:
         close_code: UInt16  # only used by connection_close opcode
 
 
-expose enumeration FrameEvent:
+expose enum FrameEvent:
     case frame(frame: Frame)
     case error(error: WSError)  # see #W-5, #W-18 on error typing
 
@@ -516,7 +516,7 @@ expose class WSFramer: Framer:
 
 
 # Lifted from nested position inside WSFramer — see #W-2 and #W-48.
-expose enumeration ProcessEvent:
+expose enum ProcessEvent:
     case needs_more_data
     case processed_frame(frame: Frame, offset: Int)
     case failed(error: WSError)
