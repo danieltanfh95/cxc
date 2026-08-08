@@ -68,9 +68,9 @@ These are places where the parity translation needed syntactic decisions we have
 
 ### 2.1 Auto-generated constructors (FRICTION #4)
 
-**Status: partially resolved (v0.6+); doc-audit pending.**
+**Status: resolved (v0.8.5 §6.2 auto-generated constructor note).**
 
-Constructors are auto-generated from a class's data fields — the spec uses this in examples (`Vec2(x: 1.0, y: 2.0)` at §6.2 line 3744) without an explicit `constructor` declaration on records. The auto-generation shape (named parameters mirroring data fields; with-method for updates) is implicit rather than stated. Minor doc fix: §6.2 should explicitly state "records get an auto-generated positional-named constructor from their data fields."
+§6.2 now explicitly states: records receive an auto-generated constructor with one named parameter per `data:` field, in declaration order; defaults from field defaults where present. Explicit `constructor` declarations override the auto-generated one; use `Self.init_memberwise(...)` to keep memberwise access alongside custom logic. Same rule applies to `kind: regular` classes with `data:` fields.
 
 ### 2.2 String interpolation syntax (FRICTION #22)
 

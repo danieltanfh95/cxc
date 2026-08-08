@@ -1,5 +1,18 @@
 # Ink parity translation - Blockquote.swift → Blockquote.cor
 # Original: Copyright (c) John Sundell 2019, MIT license
+#
+# VERSION NOTE (v0.8.5): This translation predates several spec decisions.
+# Read the code below through the current spec:
+#   - `throws E` shapes → return a domain enum with a case per failure mode
+#     (§3.5.4). E.g. `throws ParseError` in `read()` should be modeled today
+#     as `-> ReadOutcome` where the enum has `.ok(match: String)` /
+#     `.unexpected_end` / `.mismatch(expected: String, got: String)` cases.
+#   - `try foo()` inside function bodies → `switch foo(): case .ok(...): ... case .err_case: return .propagate`
+#     (§3.7). No `try` keyword in Corvid; switch on returned enum.
+#   - `?.` (optional chaining) retired v0.7.0 — `.` operates on nil receivers
+#     under nil-messaging inversion (§3.6.1, §5.7).
+# Friction comments below are historical — many reference resolved gaps.
+# See validation/00-friction-log.md for current resolution status.
 
 module com.ink.internal
 

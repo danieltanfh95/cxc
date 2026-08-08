@@ -4182,6 +4182,22 @@ Classes with `kind: record` and `kind: enum` are value types with these properti
 - A `mutable` binding permits reassigning the binding to a new record value.
 - Individual fields of a record cannot be modified in place through a binding; users construct a new record with the desired changes.
 
+**Auto-generated constructor.** A record class receives an auto-generated constructor that takes one named parameter per `data:` field, in declaration order. Parameter names match field names; parameter defaults on the constructor come from field default values where present (§3.8.5 discipline — compile-time constants only).
+
+```
+record Vec2:
+    data:
+        x: Float
+        y: Float
+
+# Auto-generated:
+# constructor Vec2(x: Float, y: Float)
+
+v = Vec2(x: 1.0, y: 2.0)
+```
+
+Users can declare an explicit `constructor` in a `methods:` section to override the auto-generated one (validation of invariants, derived fields, etc.). Explicit constructor suppresses the auto-generated form entirely; if both are wanted, the explicit constructor calls the memberwise form via `Self.init_memberwise(...)`.
+
 **"Modification" pattern:**
 ```
 p1: Vec2 = Vec2(x: 1.0, y: 2.0)

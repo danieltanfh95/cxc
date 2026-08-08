@@ -1,14 +1,23 @@
 # Ink parity - Reader.cor (INTERFACE INFERRED)
-# 
+#
 # METHODOLOGICAL NOTE: Reader.swift's URL was not returnable via web search
 # tools available in this session. This file reconstructs Reader's interface
 # from its usage in Blockquote.swift and the architecture description in the
 # Ink README (Reader is used with "errors as control flow" for parsing).
-# 
+#
 # This is honest data about the translation exercise: real-world translation
-# projects often work from partial sources. Missing sources = friction. 
-# The friction of inferring a stable interface from usage patterns is 
+# projects often work from partial sources. Missing sources = friction.
+# The friction of inferring a stable interface from usage patterns is
 # itself a translation experience worth logging.
+#
+# VERSION NOTE (v0.8.5): "errors as control flow" is exactly what Corvid
+# rejected. Read the `throws ParseError` shapes below as `-> ReadOutcome`
+# domain enums with a case per outcome (§3.5.4). `throw ParseError.X`
+# inside bodies becomes `return .X`. `try reader.read(...)` at call sites
+# becomes `switch reader.read(...): case .ok(let m): ...; case .unexpected_end: return .propagate; ...`.
+# `ensures ... or throws` becomes `ensures returns .ok(_) implies ...`.
+# Friction comments below are historical; see validation/00-friction-log.md
+# for resolution status.
 
 module com.ink.internal
 
