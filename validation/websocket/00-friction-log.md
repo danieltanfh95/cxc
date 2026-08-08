@@ -153,7 +153,7 @@ Grouped by family. Individual `#W-N` references are the specific translation sit
 
 **Constructor parameter defaults** — `#W-47`. **Resolved v0.8.1 (§3.8.5)** — parameter defaults with compile-time-constant discipline (primitive literals / nil / value-alias references only; statically inserted at each call site).
 
-**Definite assignment for `let`** — `#W-20`, `#W-60`. `let x: T` followed by conditional assignment relies on Swift's definite-assignment analysis. Corvid's `let` semantics under definite-assignment not spec'd. Parity uses `var` and loses the guarantee.
+**Definite assignment for `let`** — `#W-20`, `#W-60`. **Dissolved by §3.8 (everything-is-an-expression, since v0.6.0; clarified in v0.8.7 §7.1).** No separate definite-assignment analysis needed — the expression form of `if` / `switch` / `do:` folds branched initialization into a single expression: `let payload: Bytes = if cond: a else: b`. `let` stays immutable; assignment is exactly once at the declaration site. The parity workaround of using mutable-binding-`var` for conditional payload construction should be rewritten in expression form. Translator confusion, not a spec gap.
 
 **Priority:** medium.
 
@@ -295,7 +295,7 @@ Compared to Ink:
 
 - **Tuples + destructuring** (`#W-35`, `#W-6`). Multiple-return, `for (k, v) in dict`, positional associated values. Not spec-committed.
 - ~~**Nested type declarations** (`#W-2`, `#W-48`).~~ **Dissolved by convention v0.8.4 (§3.3.1)**. Flat naming (`FrameCollectorEvent`) + leading-dot shorthand (§3.7.2) at use sites.
-- **Definite assignment for `let`** (`#W-20`, `#W-60`). Conditional assignment to declared-but-uninitialized `let`. Not spec-committed.
+- ~~**Definite assignment for `let`** (`#W-20`, `#W-60`).~~ **Dissolved v0.8.7 §7.1** — expression-form `if`/`switch` as initializer covers the case; no separate analysis needed.
 - **`try` semantics** (Ink #17, recurred here). Explicit `try` vs postfix `?` vs implicit. Not spec-committed.
 - **`old()` in ensures clauses** (Ink #28). Pre-state references in postconditions. Not spec-committed.
 - **Throws in ensures clauses** (Ink #29). Conditional postconditions on success vs throw. Not spec-committed.

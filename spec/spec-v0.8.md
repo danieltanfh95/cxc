@@ -4701,13 +4701,24 @@ function handshake(url: URL) -> Result<Response, Error>:
     ...
 ```
 
-**Rules for module-level `let`:**
+**Rules for `let`:**
 
-1. **Immutable.** No reassignment. `let` at module scope is the only form; `var`-equivalent module-level mutable state is not supported. Mutable module-level state uses a class with `state:` and a singleton pattern, so that access is scoped and metadata-queryable.
-2. **Type annotation required.** Module-level `let` must specify the type — no type inference across module boundaries. Ensures the exposed interface is deterministic without full-program analysis.
-3. **Evaluated at module load.** Initializer expressions run at module load time, in declaration order within the source. Cross-source ordering follows dependency order (§7.2).
-4. **Constant-expression preferred.** If the initializer is a compile-time constant, the compiler evaluates it at build time and inlines the value. Otherwise it becomes a module-load-time expression.
-5. **`expose` legal.** A module-level `let` is internal by convention; `expose let PI: Double = 3.14159` includes it in the module's exposed interface.
+1. **Initializer required at declaration.** `let x: T = <expr>`. No declare-then-assign pattern. For conditional initialization, use the expression form of `if` / `switch` / `do:` as the initializer — everything-is-an-expression (§3.8) means branched initializers fold into a single expression naturally:
+
+   ```
+   let payload: Bytes = if self.needs_decompression:
+                           self.delegate.decompress(...) ?? frame.payload
+                        else:
+                           frame.payload
+   ```
+
+   No separate "definite assignment analysis" is spec'd or needed — the expression form provides the same "assigned exactly once, then immutable" guarantee.
+
+2. **Immutable.** No reassignment. `let` at module scope is the only form; `var`-equivalent module-level mutable state is not supported. Mutable module-level state uses a class with `state:` and a singleton pattern, so that access is scoped and metadata-queryable.
+3. **Type annotation required at module scope.** Module-level `let` must specify the type — no type inference across module boundaries. Ensures the exposed interface is deterministic without full-program analysis. Function-scope `let` allows type inference from the initializer.
+4. **Evaluated at module load** (module scope) or **at binding site** (function scope). Module-level initializers run at module load time, in declaration order within the source. Cross-source ordering follows dependency order (§7.2).
+5. **Constant-expression preferred.** If the initializer is a compile-time constant, the compiler evaluates it at build time and inlines the value. Otherwise it becomes a module-load-time (or binding-time) expression.
+6. **`expose` legal at module scope.** A module-level `let` is internal by convention; `expose let PI: Double = 3.14159` includes it in the module's exposed interface.
 
 ### 7.2 Modules
 

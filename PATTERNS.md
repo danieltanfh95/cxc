@@ -98,6 +98,19 @@ See §3.6.1 (nullability + nil-punning), §5.7 (nil-receiver dispatch).
 
 Retired v0.7.0. If you genuinely need to panic on nil, write `x ?? panic("reason")`. The verbosity is intentional — panic should look exceptional in source because it's exceptional in behavior.
 
+### "I need `let x: T` with conditional initialization (definite assignment)"
+
+`let` requires an initializer at declaration. For conditional initialization, use the expression form of `if` / `switch` / `do:` — the whole branch is the initializer.
+
+```
+let payload: Bytes = if self.needs_decompression:
+                        self.delegate.decompress(...) ?? frame.payload
+                     else:
+                        frame.payload
+```
+
+Same guarantee as Swift's definite-assignment analysis (assigned exactly once, then immutable), no separate mechanism. Reader sees "let = <one expression>" which happens to be a multi-line `if`. See §3.8, §7.1.
+
 ### "I need `guard` / `guard let`"
 
 `guard let x = expr else: exit_stmt` — same as Swift, multi-binding added v0.8.1. Exit verbs: `return` / `break` / `continue` / `panic`. No `throw`.
