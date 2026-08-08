@@ -4,6 +4,48 @@
 
 **Companion document:** `spec/spec-v0.8.md` (was `spec-v0.7.md` through v0.7.x; before that `spec-v0.6.md`; before that `corvid-spec-v0.5.md`).
 
+## Session note — v0.8.6 DispatchQueue equivalent + execution metadata + PATTERNS.md (2026-08-08)
+
+Sixth "dissolves into existing mechanisms" session. Path had two phases.
+
+**Phase 1 — DispatchQueue framing.** Started as "how does Corvid express DispatchQueue." I initially sketched two constructs: `execution:` metadata on classes (for thread/QoS/pool) plus a new `coordination_scope` construct (for multi-class shared invariants). User pushed back sharply on `coordination_scope`: "why cant Pattern B just be a class? many-reads-single-write?"
+
+That collapsed the design. Every case where separate objects need shared invariants can be re-expressed as one class owning the shared state. Bank/Ledger, Producer/Consumer/Queue, Cache/Store — all become one class per shared state cluster. The class boundary IS the coordination boundary. `coordination_scope` retracted.
+
+Many-reads-single-write also fell out naturally: methods that don't modify state (readers) can run concurrently; methods that do (writers) serialize. Compiler infers classification from method body. Runtime uses RWLock-style dispatch. No user-visible annotation.
+
+**Phase 2 — PATTERNS.md.** After the retraction, user made a meta-point: "corvid already offers the right primitive here. however, we might need to start collecting these patterns so future agents and humans dont get confused."
+
+That's exactly right. Six sessions of dissolutions have built up an implicit knowledge tree — every dissolution has a "here's how Corvid does it" answer that's obvious once known and invisible until it is. Anyone coming from Swift/ObjC/Rust/Java/Python will predictably reach for constructs Corvid dissolved and hit walls.
+
+Created `PATTERNS.md` at project root. Organized by-source-language ("coming from Swift you'd reach for X; Corvid does Y") plus a Corvid-native-patterns section that names the recurring principles. Not spec-normative; onboarding guidance.
+
+**Decisions in this session:**
+
+- **`execution:` section on classes (§8.4.2).** Metadata: `thread:` (main/any), `qos:` (four levels), `pool:` (implicit/dedicated). Class-level default with per-method override via nested section. Replaces `@main_actor` annotation.
+- **Reader/writer classification (§8.4.1).** Compiler infers from method body. Multiple readers concurrent; writers exclusive. `data:` fields skip coordination entirely. No user-facing annotation.
+- **DispatchQueue mapping (§8.4.3).** Three-row table: serial-mutex → contracts + execution; scheduling → spawn/async_scope; main-thread → execution: thread: main. Cross-object coordination → one class owns the state. Cross-object pipelines → channels (§8.6, unchanged).
+- **`coordination_scope` retracted before shipping.** Every case collapses to one class.
+- **`@main_actor` retired.** Replaced by `execution: thread: main`. Documentation updated across §1 preamble and §8.9.
+- **ObjC bridge exposes `dispatch_pool`.** Per-instance property. ObjC callers use standard `dispatch_async(instance.dispatch_pool, ^{ ... })`. Routes through contract-guarded serialization transparently. `execution: thread: main` binds to the actual ObjC main queue (same identity).
+- **`PATTERNS.md` new file.** Onboarding catalog for the accumulated dissolutions.
+
+**Two philosophical points landed in this session:**
+
+1. **The class boundary is the coordination boundary.** If two "objects" share an invariant, they were one class artificially split. Deep insight: Corvid's class-as-universal commitment (§1.5) has coordination consequences beyond just "everything is a class." The class IS the unit of shared-state consistency.
+2. **Design pattern documentation is load-bearing.** Six sessions of dissolutions leave onboarding hazards. The primitives are right; the mental-model translation is missing. PATTERNS.md is the answer — not spec-normative, but explicitly the "here's how this maps from what you know" document. Future agents and humans get to walk into the design with a map instead of re-deriving each dissolution.
+
+**Six-session pattern table** (in v0.8.6 changelog):
+
+| Version | Dissolved | Replacement |
+|---|---|---|
+| v0.8.3 | `for` keyword, tuples, destructuring | prelude alias over `.for_each`; named-field records |
+| v0.8.4 | nested type declarations | flat naming + leading-dot |
+| v0.8.5 | `throws`, `try/catch/finally`, prelude `Result<T, E>` | nil-punning; domain enums; switch |
+| v0.8.6 | `DispatchQueue`, `@main_actor`, would-be `coordination_scope` | contracts (§1.9); `execution:` metadata; class boundary = coordination boundary |
+
+The pattern is stable enough to be a design principle in its own right (noted in PATTERNS.md's "Corvid-native patterns" section): **before adding a mechanism, check whether Corvid's structural commitments already cover the case via convention or composition.**
+
 ## Session note — v0.8.5 throws retired, no try/catch, no prelude Result (2026-08-08)
 
 Fifth consecutive session in the "language mechanism dissolves into existing tools" pattern. Started as engagement with Ink #17 (try semantics); user pushed the reduction all the way down: "im not even sure why we need Result at all given that we have used nil-punning?"

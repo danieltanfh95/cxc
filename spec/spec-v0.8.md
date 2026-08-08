@@ -1,8 +1,46 @@
-# Corvid Language Specification — v0.8.5 (Working Draft)
+# Corvid Language Specification — v0.8.6 (Working Draft)
 
-**Status:** Working draft. v0.8.5 retires the `throws` effect and commits to no `try/catch/finally`, no prelude `Result<T, E>`. Failure handling reduces to three shapes: nil-punning for uniform failure ("did we get a value or not"), domain-specific enums for discriminated failure ("how did we fail"), `panic` for invariant violations. Discrimination is via `switch` on the returned enum. No new mechanism added; multiple mechanisms retired. Follows from taking v0.7 nil-messaging inversion, v0.8.3 class-based iteration, and v0.8.4 dissolve-into-convention discipline seriously — error handling is just class-based data flow, not a separate control-flow subsystem. v0.8.4 nested types + leading-dot preserved. v0.8.3 class-based iteration preserved. v0.8.2 alias namespace discipline preserved. v0.8.1, v0.8.0, v0.7.x, v0.6.0 all preserved.
+**Status:** Working draft. v0.8.6 formalizes the concurrency model — DispatchQueue equivalent dissolves into contracts (§1.9) plus a small `execution:` section on classes for thread/QoS/pool metadata. Reader/writer method classification (inferred from state-modifying vs pure) enables runtime RWLock-style dispatch — many concurrent readers, exclusive writers. `@main_actor` retired; replaced by `execution: thread: main`. Considered a `coordination_scope` construct for cross-object shared invariants; **retracted** — every case collapses to "one class owns the shared state," so no new construct needed. ObjC bridge exposes per-instance dispatch pool for transparent interop. v0.8.5 no-throws / no-try / no-prelude-Result preserved. Prior sessions all preserved.
+
+**Companion:** `PATTERNS.md` (new, top-level) — onboarding guidance mapping "coming from language X, you might reach for Y" to "Corvid does Z." Not spec-normative; catalogs the six-session accumulation of dissolutions so future readers can navigate without re-deriving each answer.
 
 **Name:** `Corvid`. (Historical: named `objc5` throughout the design conversation. Renamed to Corvid when the positioning clarified as "peer of Swift for Apple-ecosystem native development" rather than "next-generation Objective-C.")
+
+**Change log from v0.8.5 → v0.8.6 (DispatchQueue equivalent + execution metadata + RWLock-style dispatch):**
+
+Sixth "language mechanism dissolves into existing tools" session. DispatchQueue's role in ObjC/Swift codebases splits into (a) serial mutex for a single owner's state and (b) cross-object synchronization. Corvid's §1.9 (contracts as coordination) already handles (a) implicitly; (b) reduces to "if two objects share an invariant, they weren't really two objects — put them in one class." Nothing new needed for the coordination question. The remaining gaps are thread affinity, QoS hints, and ObjC-side dispatch — filled by a small `execution:` metadata section on classes.
+
+- **`execution:` section on classes (§8.4.2 new).** Declarative metadata: `thread:` (main / any), `qos:` (user_interactive / user_initiated / utility / background), `pool:` (implicit / dedicated). Class-level default with per-method override via nested `execution:` on the method. Runtime uses metadata to place the dispatch pool and enforce thread affinity. Inspectable via §4.18 class metadata.
+- **`@main_actor` retired.** Replaced by `execution: thread: main` at class or method level. Same runtime behavior; consistent with metadata-first style.
+- **Reader/writer method classification (§1.9 extension + §8.4.1 new).** Compiler infers from method body: reader = does not assign to any `state:` field and does not call any writer method; writer = does. Runtime uses RWLock-style dispatch: multiple readers concurrent, writers exclusive. No user-visible annotation required. `data:` fields (immutable after construction) skip coordination entirely.
+- **DispatchQueue mapping documented (§8.4.3 new).** Three-row table: serial-mutex-for-a-class → contracts + `execution:`; off-caller-thread scheduling → `spawn` / `async_scope`; main-thread affinity → `execution: thread: main`. QoS hints via `execution: qos:`. Cross-class pipelines via channels (§8.6, unchanged). Anything that would have needed cross-object coordination reduces to "one class owns the shared state."
+- **`coordination_scope` construct considered and retracted.** Every case where separate objects need shared invariants collapses to a single class owning all the state. The class boundary IS the coordination boundary. No new user-facing coordination construct.
+- **ObjC bridge extended (§9.3).** Corvid class instances expose a `dispatch_pool` property at the ObjC bridge. ObjC callers use standard `dispatch_async(instance.dispatch_pool, ^{ [obj method]; })`; the pool routes through the class's contract-guarded serialization transparently. Instances declared `execution: thread: main` bind their pool to the ObjC main queue.
+- **`PATTERNS.md` created at project root.** Onboarding catalog: coming from Swift/ObjC, Rust, Python/Ruby, Java/C#, FP-family languages, each with a "you'd reach for X; Corvid does Y" mapping and cross-references to spec sections. Closes the accumulated-implicit-knowledge onboarding hazard from six sessions of dissolutions.
+
+**Trade-off worth naming.**
+
+Contracts-as-coordination is a compiler-and-runtime feature — the runtime must enforce the serialization implied by contracts on state. That's non-trivial (Stage 1: runtime checks; Stage 3+: compile-time analysis). Users writing performance-critical code may want to inspect generated serialization to confirm it matches expectations. Compare to DispatchQueue where the mechanism is dead-simple and readable at the call site.
+
+The trade-off is legibility-at-declaration (Corvid: contracts + `execution:`) vs legibility-at-site (DispatchQueue: `queue.async { ... }`). Corvid picks declaration for the same reasons it picks declarative sections over imperative helpers throughout — but it's a real trade-off, not a free win.
+
+**Six-session pattern consolidated:**
+
+| Version | Dissolved | Replacement |
+|---|---|---|
+| v0.8.3 | `for` keyword, tuples, destructuring | prelude alias over `.for_each`; named-field records |
+| v0.8.4 | nested type declarations | flat naming + leading-dot |
+| v0.8.5 | `throws`, `try/catch/finally`, prelude `Result<T, E>` | nil-punning; domain enums; switch |
+| v0.8.6 | `DispatchQueue`, `@main_actor`, would-be `coordination_scope` | contracts (§1.9); `execution:` metadata; class boundary IS coordination boundary |
+
+**Consistency with prior decisions:**
+
+- **§1.9 contracts as coordination.** Load-bearing. Reader/writer inference is a natural extension.
+- **§4.10.7 class kinds.** `execution:` is a class-level section; reuses the sections mechanism.
+- **§4.18 class metadata.** `execution:` metadata is inspectable at runtime; matches the metadata-first philosophy.
+- **v0.8.5 no-throws.** ObjC bridge lowers domain enums with `.failed(NSError)` cases; `dispatch_pool` interop is orthogonal to failure handling.
+
+**Downstream cleanups:** §1.9 extension (reader/writer classification note). §8.4.1 new (Reader/Writer classification). §8.4.2 new (Execution Metadata). §8.4.3 new (DispatchQueue mapping). §8.9 update (dispatch_pool at ObjC bridge; `@main_actor` retirement note). `PATTERNS.md` new file. README status + working-notes.
 
 **Change log from v0.8.4 → v0.8.5 (Retire `throws`; no `try/catch`; no prelude Result):**
 
@@ -294,7 +332,7 @@ Rationale: §1.2 committed to intent, not authority — but the language kept au
 - **Structured concurrency** — `async_scope`, `spawn`, structured cancellation, error propagation.
 - **Sendable types** — inferred from shape (value types, class handles, function values with sendable captures).
 - **Threads and parallelism** — explicit threads via `unsafe:` (Stage 1); `parallel_for` for row-level parallelism (Stage 3+).
-- **ObjC interop** — GCD queue bridging, completion handler ↔ async conversion, `@main_actor` for main-thread affinity.
+- **ObjC interop** — GCD queue bridging, completion handler ↔ async conversion, `execution: thread: main` for main-thread affinity (§8.4.2; supersedes prior `@main_actor` marker).
 
 **Module system resolved (§7, §4.16 generalized):**
 - Three distinct levels: **source** (single file), **module** (compilation unit, possibly multi-file, with unified metadata), **package** (distribution unit, versioned).
@@ -467,7 +505,15 @@ Under this design, all three are the same mechanism. `requires connection_state 
 - Not "everything is automatically thread-safe." Methods without contracts on mutable state get no synchronization guarantees. Users write contracts where thread safety matters.
 - Not a replacement for careful concurrent design. The mechanism prevents data races on contract-guarded state; it does not prevent deadlocks, livelocks, or logical errors.
 
-This premise justifies the concurrency model in §8 and shapes how sections that manage cross-thread coordination (`channel:`, `signal:`) integrate with the rest of the language.
+**Reader/writer classification (v0.8.6).** Methods on a class are classified by the compiler as **readers** (do not assign to any `state:` field and do not call any writer method) or **writers** (assign to state fields or call writer methods). Runtime uses RWLock-style dispatch:
+
+- Multiple readers execute concurrently — state is not changing.
+- A writer executes exclusively — blocks all readers and other writers.
+- Methods on `data:` fields only (records; classes with no `state:`) skip coordination entirely.
+
+The classification is inferred from method bodies, not user-annotated. `ensures` clauses that reference `old(...)` on state fields are a documentation aid but not the source of the classification. See §8.4.1 for the classification algorithm and its interaction with private methods and callback closures.
+
+This premise justifies the concurrency model in §8 and shapes how sections that manage cross-thread coordination (`channel:`, `signal:`, `execution:`) integrate with the rest of the language.
 
 ---
 
@@ -5150,6 +5196,130 @@ The precondition semantics automatically implement a bounded queue with backpres
 
 **Non-async methods with unmet preconditions fail immediately** rather than waiting. This preserves the sync/async distinction — sync code doesn't unexpectedly block.
 
+#### 8.4.1 Reader/Writer Method Classification
+
+Under §1.9's contract-based coordination, methods on a class are classified by the compiler as **readers** or **writers**:
+
+- **Reader** — does not assign to any `state:` field, and does not call any writer method (either on `self` or on other class instances whose state affects `self`'s invariants). Read-only with respect to observable state.
+- **Writer** — assigns to at least one state field or calls at least one writer method.
+
+Runtime uses **RWLock-style dispatch** per instance:
+
+- Multiple readers execute concurrently — state is not changing.
+- A writer executes exclusively — blocks all readers and other writers until it completes.
+- Methods on `data:` fields only (record classes; regular classes with no `state:` at all) skip coordination entirely — always safe to read, no writer possible.
+
+**Classification is inferred, not annotated.** No `@reader` or `@writer` markers. The compiler analyzes method bodies:
+
+```
+class Ledger:
+    state:
+        accounts: {AccountID: Money}
+    
+    invariants:
+        accounts.values.sum == self.initial_total
+    
+    methods:
+        expose function balance(self, id: AccountID) -> Money:      # READER (no assignment)
+            return self.accounts[id] ?? 0
+        
+        expose function total(self) -> Money:                        # READER
+            return self.accounts.values.sum
+        
+        expose function transfer(self, from: AccountID, to: AccountID, amount: Money):   # WRITER
+            requires accounts[from] >= amount
+            ensures accounts[from] == old(accounts[from]) - amount
+            ensures accounts[to] == old(accounts[to]) + amount
+            
+            self.accounts[from] -= amount
+            self.accounts[to] += amount
+```
+
+Multiple threads can call `.balance(id)` or `.total()` concurrently. Any `.transfer(...)` blocks until all in-flight readers complete, then executes exclusively. When it completes, waiting readers resume.
+
+**Callback closures.** A method that accepts a closure argument is classified by whether it invokes the closure with a writer's contract. If the closure could mutate state (e.g., `.for_each` on a mutable collection), the containing method is treated as a writer. If the closure is guaranteed read-only (compiler-inferred from closure body or closure-parameter effect polymorphism §3.5.3), the containing method may remain a reader.
+
+**Cross-instance calls.** A method on class `A` that calls a writer on class `B` is only classified as a writer for `A` if `A`'s invariants depend on `B`'s state. In the common case (unrelated invariants), calling `B.mutate()` from `A.read_something()` does not force `A.read_something()` to become a writer.
+
+**Diagnostics.** The compiler surfaces the reader/writer classification in generated metadata (§4.18). Tooling can display each method's classification on hover; users can query at runtime via `Class.method("name").classification`.
+
+#### 8.4.2 Execution Metadata
+
+A class may declare an `execution:` section carrying scheduling metadata: which thread its methods run on, what QoS class they get, whether they share a dispatch pool with other instances. The section is a class-level default; per-method overrides are legal via nested `execution:` on the method.
+
+**Class-level:**
+
+```
+class UIController:
+    execution:
+        thread: main
+        qos: user_interactive
+    
+    state:
+        current_view: View
+        pending_updates: Int = 0
+    
+    methods:
+        expose async function refresh(self): ...          # runs on main thread
+        expose function pending_count(self) -> Int:       # main thread; reader
+            return self.pending_updates
+```
+
+**Per-method override:**
+
+```
+class MixedController:
+    execution:
+        thread: main
+        qos: user_interactive
+    
+    methods:
+        expose async function refresh(self): ...
+        
+        function precompute(self) -> [Item]:
+            execution: thread: any, qos: utility          # off main thread
+            return heavy_computation()
+```
+
+**Fields:**
+
+| Field | Values | Meaning |
+|---|---|---|
+| `thread:` | `main` \| `any` (default) | `main`: runtime enforces main-thread execution; ObjC bridge routes to main queue. `any`: no thread constraint. |
+| `qos:` | `user_interactive` \| `user_initiated` \| `utility` (default) \| `background` | Kernel scheduler hint. Not a hard priority. |
+| `pool:` | `implicit` (default) \| `dedicated` | `implicit`: shares the runtime's default pool. `dedicated`: instance gets its own pool (rare; for latency-sensitive isolation). |
+
+The class-level `execution:` section acts as a default; the method-level override refines specific methods. Both use the same field vocabulary.
+
+**Runtime behavior:**
+
+- `thread: main` — every method invocation is routed to the main dispatch queue. Sync calls from off-main return synchronously if already on main; otherwise the runtime enqueues and blocks the caller (or fails, if the method is sync and the caller isn't willing to wait).
+- `qos:` — passed to the underlying dispatch primitive (GCD on Apple platforms). Kernel uses it to prioritize scheduling.
+- `pool: dedicated` — instance gets its own single-thread dispatch pool. Useful for tight-loop workers where sharing the default pool would introduce cache contention or latency variance.
+
+**Metadata inspectability.** `execution:` metadata is part of the class's compile-time metadata artifact (§4.18). Tooling can query "which classes require main thread" or "which methods have `qos: background`" without reading source.
+
+**`@main_actor` retired.** Prior drafts (pre-v0.8.6) referenced `@main_actor` as an annotation. `execution: thread: main` supersedes it. Same runtime behavior, consistent with Corvid's metadata-first declarative style.
+
+#### 8.4.3 DispatchQueue in Corvid: What Dissolves, What Stays
+
+DispatchQueue in ObjC/Swift bundles several structurally-different jobs as one primitive. Under Corvid's model, each job maps to an existing or v0.8.6-added mechanism.
+
+| DispatchQueue role | Corvid mechanism |
+|---|---|
+| **Serial mutex for a class's state** | Contracts on `state:` fields (§1.9). Runtime serializes writer methods; readers concurrent (§8.4.1). No queue field, no `queue.async { }` boilerplate in user code. |
+| **Off-caller-thread scheduling** | `spawn { }` for fire-and-forget, `async_scope` for structured lifetimes (§8.3). |
+| **Main-thread affinity** | `execution: thread: main` on the class or method (§8.4.2). |
+| **Priority / QoS hints** | `execution: qos: <class>` (§8.4.2). |
+| **Cross-object pipelines** | Channels (§8.6). Producer / consumer as separate classes, coordinated by channel. |
+| **Cross-object shared invariants** | Put them in one class. The class boundary IS the coordination boundary. |
+
+**On the "one class owns shared state" pattern.** Prior drafts sketched a `coordination_scope` construct for grouping instances that share invariants. That construct was retracted before v0.8.6 landed: every case where separate objects need shared invariants collapses cleanly into "one class owns all the shared state." If two objects share an invariant, they weren't really two objects — they were one class artificially split. Bank ledger, cache + store, producer + queue + consumer — all express as a single class with the joint state as its `state:` fields and the joint invariants as its `invariants:`.
+
+**When you truly need separate classes** — different lifecycles, independent reuse, distributed ownership — use channels (§8.6) to pipeline between them, and accept that the classes don't share invariants (only messages).
+
+**What Corvid gives up.** Cross-cutting queue-based coordination across pre-existing separate objects. ObjC codebases sometimes coordinate object A and object B via a shared external queue; Corvid says the coordination should be reified as a class (`AB_Coordinator`) that owns both. More design effort at the class-boundary decision; less coordination-scattering. Consistent with §1.6 legibility.
+
 ### 8.5 Sendable Types
 
 Types that can safely cross task boundaries. Determined by shape, not annotation:
@@ -5433,20 +5603,43 @@ async function process(order: Order) -> ProcessOutcome:
 - (void)processOrder:(Order *)order completion:(void (^)(Receipt *, NSError *))completion;
 ```
 
-**Main-thread affinity:**
+**Main-thread affinity (v0.8.6):**
 
-UIKit/AppKit callbacks must run on the main thread. Corvid provides a `@main_actor` marker (annotation, not a section) that ensures methods run on the main thread:
+UIKit/AppKit callbacks must run on the main thread. Corvid expresses this via the `execution:` section (§8.4.2) — class-level default with per-method override:
 
 ```
 class ViewController:
-    @main_actor
+    execution:
+        thread: main
+        qos: user_interactive
+    
     methods:
         async function refresh(self):
             data = await fetch()
             self.label.text = data.title  # guaranteed main-thread
 ```
 
-Under the hood, `@main_actor` schedules the method on the main dispatch queue.
+Under the hood, `execution: thread: main` schedules the class's methods on the main dispatch queue. The runtime enforces main-thread execution: sync calls from off-main return synchronously if already on main; otherwise the runtime enqueues to the main queue and blocks (or fails, if the method is sync and the caller isn't willing to wait).
+
+Prior drafts (pre-v0.8.6) referenced `@main_actor` as an annotation. Retired; `execution: thread: main` supersedes it — same behavior, consistent with metadata-first declarative style.
+
+**Per-instance dispatch pool for ObjC callers (v0.8.6):**
+
+Corvid class instances expose a `dispatch_pool` property at the ObjC bridge. ObjC callers submit blocks via standard GCD APIs:
+
+```
+// ObjC calling into a Corvid class:
+Order *order = /* ... */;
+dispatch_async(order.dispatch_pool, ^{
+    [order processWithCompletion:^(Receipt *r, NSError *e) {
+        // handles result
+    }];
+});
+```
+
+The pool routes through the class's contract-guarded serialization (§8.4.1, §1.9) transparently. ObjC callers get Corvid's reader/writer concurrency guarantees without knowing anything about contracts. Instances declared `execution: thread: main` bind their `dispatch_pool` to the ObjC main queue directly — same address, same identity — so ObjC code that hardcodes `dispatch_get_main_queue()` continues to work.
+
+Instances declared `execution: pool: dedicated` get their own single-thread dispatch queue exposed as `dispatch_pool`; every ObjC call to the instance routes through that queue.
 
 ### 8.10 Non-Goals
 

@@ -1,6 +1,6 @@
 # Corvid Language Design — Handoff Bundle
 
-**Status:** Pre-implementation. Design work through v0.8.5 (`throws` effect retired; no `try/catch/finally` construct; no prelude `Result<T, E>`. Failure handling reduces to three shapes: nil-punning for uniform failure, domain-specific enums for discriminated failure, `panic` for invariant violations. Discrimination via `switch` on the returned enum). Prior work preserved: v0.8.4 nested types dissolved by convention + leading-dot shorthand, v0.8.3 class-based iteration (`for` as prelude alias, `Iterable`/`Iterator`/`Pair`/`Entry` protocols, no destructuring bindings), v0.8.2 alias namespace discipline (`@` on user aliases), v0.8.1 Session 3 fills, v0.8.0 library-first sugar, v0.7.2 sugar unification, v0.7.1 Tier 1 sweep, v0.7.0 nil-messaging inversion, v0.6.0 structural unification. No compiler exists yet.
+**Status:** Pre-implementation. Design work through v0.8.6 (concurrency model formalized: DispatchQueue dissolves into contracts (§1.9) + `execution:` metadata on classes; reader/writer method classification enables RWLock-style dispatch; `@main_actor` retired for `execution: thread: main`; would-be `coordination_scope` retracted — "one class owns shared state" is the answer; ObjC bridge exposes per-instance `dispatch_pool`). Companion `PATTERNS.md` catalogs six sessions of dissolutions for onboarding. Prior work preserved: v0.8.5 no-throws/no-try/no-prelude-Result, v0.8.4 nested types dissolved + leading-dot shorthand, v0.8.3 class-based iteration, v0.8.2 alias namespace discipline, v0.8.1 Session 3 fills, v0.8.0 library-first sugar, v0.7.x nil-messaging inversion + tier-1 sweep, v0.6.0 structural unification. No compiler exists yet.
 
 **Working name:** Corvid.
 **Original name:** objc5 (used throughout the design conversation; renamed when positioning solidified).
@@ -16,6 +16,7 @@ A native-first programming language for the Apple ecosystem, targeting Mac, iOS,
 ```
 corvid/
 ├── README.md                        (this file)
+├── PATTERNS.md                      (onboarding — "coming from language X, Corvid does Y")
 ├── working-notes.md                 (decision log from the design conversation)
 ├── corvid-handoff.zip               (original handoff archive, kept for provenance)
 │
