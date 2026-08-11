@@ -4,6 +4,43 @@
 
 **Companion document:** `spec/spec-v0.10.md` (was `spec-v0.9.md` through v0.9.x; `spec-v0.8.md` through v0.8.x; before that `spec-v0.7.md` through v0.7.x; before that `spec-v0.6.md`; before that `corvid-spec-v0.5.md`).
 
+## Session note — Atom model committed as v1.0 target; controlled mutability landed as §1 premise (2026-08-11, no version bump)
+
+**Design landing after extended architectural thread.** Starting from "how does assignment work in pure OOP" and cycling through Smalltalk-style reduction (Kay's message-passing ideal — reduced-but-not-completed), Erlang OTP (actors with state), CSP + core.async (channels + transducers), Kahn process networks (deterministic dataflow), and Milner's π-calculus (everything is a process or channel), user landed on a specific reduction:
+
+- **The atom is the primitive.** Private state + transition rule + typed I/O channels + optional contained atoms + optional wires + optional entrypoints + optional observables + optional contracts.
+- **Classes ARE atoms** in Kay's original sense (Smalltalk's messaging vision applied structurally, not just by convention). A class is a compound atom — bounded container of contained atoms wired into an internal graph, with external entrypoints and observables.
+- **Every atom is Env → Env** at its transition. Pure functions at the theoretical level; `(Env, Msg) → (Env, [Emission])` at the semantic level; emit-as-statement at the ergonomic surface (compiler lifts to pure form). Same reduction as Haskell's IO monad through do-notation. Emissions are dispatched by the containing atom's runtime (Elm architecture, Erlang OTP shape).
+- **No functions as a distinct primitive.** Functions are the trivial atom shape (in | out, no state, pure transition). At v1.0, `function` keyword retires; write `atom name(x) -> y: ...` for the trivial shape.
+- **No separate type system.** Types are named contracts. Refinements are contracts with `where` clauses. Cross-field predicates are `invariants:` sections. The split at the current spec surface (§1.3 promises unification; syntax still has `count: Int` distinct from `invariants: count >= 0`) is a transitional shape to be resolved by v1.0.
+- **Controlled mutability as the governing discipline.** Mutation exists but is bounded (to one atom's state or a wire's payload), typed (transition contract declares changes), explicit (no ambient `self.x = y`), and observable (emissions are values the runtime can log/replay/mock).
+- **Wiring glyphs earned their place through the WebSocket state-machine example.** `-->` (route), `<--` (observable read), `|>` (pipe operator chain), `~>` (async/deferred wire). Four glyphs, each corresponding to the four most common atom operations.
+- **RxJS operators are first-class atoms** insertable inline in wires. `debounce(500ms)`, `batch(100)`, `throttle(10/sec)` etc. are prelude-shipped atoms (one input event, one output event, state = operator's memory). Users get RxJS as a language feature, not a library — the compiler sees the operators in the dataflow graph and can fuse/optimize/verify contracts across compositions.
+
+**Spec changes committed this session.**
+
+- `spec/spec-v0.11.md` §1.3 — tightened. Added paragraph naming the types-as-contracts unification as the v1.0 target and calling out the split at the current surface as transitional.
+- `spec/spec-v0.11.md` §1.10 (new) — Controlled mutability as design premise. Documents the four discipline principles (bounded, typed, explicit, observable), contrasts with adjacent positions (pure FP, free imperative OOP, actor systems, CSP), enumerates what the discipline makes possible (reasoning locality, concurrency simplification, testability, time-travel debugging, RxJS operators, capability-based security).
+- `spec/spec-v0.11.md` §1.11 (new) — Direction: atom model as v1.0 target. Concrete reduction table (function → leaf atom, record → compound-with-data-only, class → compound-with-state, enum → sum-state-atom, protocol → atom signature, section → compile-time atom, program → top-level compound). Documents Env → Env at every level, wiring glyphs, controlled-mutability enforcement. Names what's already committed at v0.11 as incremental moves aligned with the direction, and what's planned for v0.12+ (kind: cell, types-as-contracts unification, method-call desugaring, contract-first discipline, wiring-glyph grammar). Names v1.0 substrate commitments explicitly.
+
+**No mechanism changes in v0.11.** Existing constructs (records, regular classes, enums, methods, etc.) remain accurate under both the current framing and the v1.0 atom framing — they're approximations of atom shapes that tighten each version. Nothing to migrate; nothing breaks. Users writing v0.11 code today are writing "atoms in disguise" — the underlying model won't change out from under them, the surface just gets more honest about what they're writing.
+
+**External reference.** User authored `atom-unification.md` (external — not in the repo) documenting the theoretical derivation from Kay's Smalltalk through the class barrier (contracts, typestate, session types, linearity, capabilities, effect systems, separation logic), CSP with first-class channels + transducers, and dataflow compilation (Kahn networks, Lustre, MLIR). The document ends at the atom as the unifying primitive; the reduction is forced by the problem sequence, each step responding to a specific structural failure in the previous step. Corvid's role is to build one consistent language that lands the whole reduction at v1.0.
+
+**Dissolution-pattern update.** Fifteenth dissolution session, and the largest structural dissolution to date. Not eliminating one mechanism — re-founding the entire language on a single primitive from which all others reduce. The mechanism inventory shrinks dramatically at v1.0: one keyword (`atom`), sugar for common shapes, dataflow compilation, contract substrate. Nothing added; many things unified.
+
+**Composition thread officially concluded.** Value types over Bytes; primitives as records; `data:` usage-site rule; atoms as substrate; everything is `Env → Env`. The thread that started with "does Integer literally have bytes as a field" landed at "every construct in Corvid is a shape of atom." Full end-to-end honesty on the composition claim, and now the substrate for the composition (atoms) is documented as the language's v1.0 target.
+
+**Toy syntax explored (not committed).** WebSocket state machine sketched in two forms — marker (`-->`, `<--`, `|>`, `~>`) and marker-less (keyword-heavy). Marker version wins for state-machine-heavy code (transitions visible as graph edges); marker-less version wins for consistency. Both can coexist — markers as sugar for one-line handlers, marker-less for multi-line. Full commitment on syntax deferred to v0.12+ / v1.0 when the atom substrate lands.
+
+**What this means for user positioning of Corvid.**
+
+Before this session: "Swift competitor for the Apple ecosystem with Clojure-inspired value/reference discipline and ObjC interop."
+
+After: "Erlang-substrate reactive language with Swift-shaped surface, CSP + core.async composition, contract-based verification, and dataflow compilation. Class = bounded atom graph. Functions = the trivial atom shape. Everything is an atom." The Swift-shaped surface stays; the atom substrate is the v1.0 commitment. Distinctive position — no widely-used language currently ships this integration (Erlang has actors but no static types + dataflow compilation; Elm is UI-only; Pony has actors + capabilities but not the reactive-operator layer; Rust has ownership + async but not the reactive-atom substrate).
+
+---
+
 ## Session note — Primitives as records over Bytes; refinement-driven wire-format specialization (2026-08-11, no version bump)
 
 **Continuation of tension #2 reframe and the composition thread.** After settling that value types have canonical bytes as a base-class property (§3.4.6) and that Integer literally composes over `bytes: Bytes` (user's `class Integer: bytes: Bytes` framing), a residual layering fudge remained: §3.4.6 said "primitives have no field layout for the compiler to synthesize from," and §3.11.4 shipped per-primitive `extend class Bool: methods: function as() -> Bytes: ...` blocks in prelude — framed as "concrete implementation of the base-class property," but syntactically indistinguishable from user extensions. That was still primitive-specialness under a different name.

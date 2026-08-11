@@ -722,6 +722,8 @@ Library authors express intent about how their code will be used. Annotations th
 
 A "type" is a named contract: a set of accepted messages with signatures, preconditions, postconditions, effects, and (optionally) session constraints. Conformance is structural. Named contracts (`protocol Foo`) reserve identity when the author wants to disambiguate structurally identical concepts.
 
+**Types-as-contracts unification (v1.0 target).** The current spec surface splits type annotations (`count: Int`) from invariant clauses (`invariants: count >= 0`) as if they were two different mechanisms. They are one mechanism: both are predicates on values. `Int` is a named contract (a predicate: "value is an integer"); `count >= 0` is an anonymous contract (a predicate: "count is non-negative"); a refined type `Int where value >= 0` is composition of two contracts (`Int` and `value >= 0`). By v1.0, the surface collapses to one syntax — value declarations carry a single contract expression combining named-contract references (formerly "types") with `where` refinements (formerly "invariants attached to a value"). Cross-field / cross-atom predicates remain in `invariants:` sections (they can't be attached to any single value). See §3.6 for the refinement mechanism that makes this uniform. The split at the current surface is a transitional shape while v0.x lands; §1.3's commitment is that both are one system semantically, and v1.0 makes that structural.
+
 ### 1.4 First-class primitives for what dispatch was faking
 
 Observation, interception, extension, delegation, factories each have dedicated language constructs — many of them expressible as user-defined sections. Runtime dispatch is available but rarely load-bearing.
@@ -813,6 +815,116 @@ Under this design, all three are the same mechanism. `requires connection_state 
 The classification is inferred from method bodies, not user-annotated. `ensures` clauses that reference `result.<field>` (post-state) versus `self.<field>` (pre-state) per §3.4.3 are a documentation aid — the assignment in the body is what actually classifies the method as a writer. See §8.4.1 for the classification algorithm and its interaction with private methods and callback closures.
 
 This premise justifies the concurrency model in §8 and shapes how sections that manage cross-thread coordination (`channel:`, `signal:`, `execution:`) integrate with the rest of the language.
+
+### 1.10 Controlled mutability
+
+Mutability exists at every level of the language — primitive value storage, class state fields, program effects on the world. Corvid's discipline is that every mutation is:
+
+- **Bounded** — scoped to one atom's local state, or a wire's payload transformation. Never ambient.
+- **Typed** — the transition contract declares what changes and under what precondition.
+- **Explicit** — no ambient `self.x = y` inside method bodies (v1.0 target). State changes only through declared transitions that produce new state.
+- **Observable** — effects are emitted as values the runtime can log, replay, mock, or dispatch. Not hidden inside opaque method bodies.
+
+No smuggled imperative. Reasoning about a mutation is local to the atom that performs it; nothing outside the atom sees the state change except through the atom's declared emissions.
+
+**Contrast with adjacent positions.**
+
+- **Pure FP** (Haskell): eliminate mutability. Successful in the type system, at the cost of runtime tricks (State monad, IO monad) that carry the mutability invisibly.
+- **Free imperative OOP** (Java/Swift/Python): unrestricted mutation inside methods; controlled only by convention. Entry points scale with class age; invariants leak; concurrency is hard.
+- **Actor systems** (Erlang, Akka): inter-actor communication is disciplined; intra-actor implementation is traditional imperative.
+- **CSP** (Go, core.async): no mutation, only message-passing. Loses ergonomics of internal mutable state.
+- **Corvid** (controlled mutability via atoms): mutation lives inside atoms, disciplined by transitions; composition is via wiring. Middle position with the payoffs of both sides.
+
+**What this makes possible.**
+
+- **Reasoning locality.** Read one atom's transition contract to know what it mutates.
+- **Concurrency simplification.** Atoms don't share mutable state (contained state is private); wires carry values by copy; runtime schedules transitions freely.
+- **Testability.** Mock an atom's inbound environment; verify its outbound environment. Same at every scale from single atom to whole program.
+- **Time-travel debugging.** Emissions are values; record them, replay from any point.
+- **Compositional operators for free** (RxJS-style). `debounce`, `throttle`, `batch`, `distinct_until_changed` are just atoms inserted in wires; contracts propagate.
+- **Capability-based security.** An atom's environment is exactly what's wired to it; no ambient authority. If a network handle wasn't wired in, the atom cannot make network calls. The wiring IS the capability.
+
+### 1.11 Direction — the atom model as v1.0 target
+
+The premises §1.1–§1.10 point at a specific primitive: **the atom**. An atom is a reactive node with typed inputs, typed outputs, optional private state (immutable = data, mutable = state), event handlers, emissions to other atoms, and optionally contained atoms wired together. Every construct in the current spec — `class`, `record`, `enum`, `protocol`, `section`, `function`, method call, state field, data field — reduces to a shape of atom with different fields populated. The v1.0 target: atom as the sole primitive; all other constructs as sugar for specific atom shapes.
+
+**Shape of the reduction:**
+
+| Construct | Atom shape |
+|---|---|
+| function | Leaf atom: 1 input, 1 output, no state, pure transition |
+| record | Compound atom containing only data atoms (immutable payload) |
+| class (regular) | Compound atom with state atoms + entrypoints + observables |
+| enum | Atom whose state is a sum type; handlers dispatch on variant |
+| protocol | Atom signature (I/O shape + contracts) without transition |
+| section | Compile-time atom (runs at compile time, produces program text) |
+| program | Top-level compound atom with environment = OS |
+| method call | Route message to an atom's entrypoint |
+| state field | State atom (mutable payload) contained in a compound atom |
+| data field | Data atom (immutable payload) contained in a compound atom |
+
+**Composition.** Atoms compose by **wiring** — connecting one atom's output channel to another's input channel. Wires may carry ordinary values (common case), or be decorated by inline transformer atoms (`debounce`, `batch`, `throttle`, `filter`, `map`, `distinct_until_changed`, etc.) providing RxJS-style reactive operators as first-class syntactic elements. **The class is the graph.**
+
+**Env → Env at every level.** Every atom is `Env → Env` at its transition — a pure function from local environment to new local environment. Emissions are values in the outbound Env; the runtime one level up (the containing atom, or the operating system at the outermost level) interprets emissions as dispatch. This is Elm's Model-Update-View pattern and Erlang OTP's `(state, msg) → (state, effects)` shape, lifted to the language substrate. Testable in isolation; replayable; time-travel debugging trivial; no ambient effects.
+
+**Controlled mutability, structurally enforced.** State atoms hold mutable data; transitions produce new state, swapped atomically at the atom boundary. Data atoms hold immutable data. Neither is reachable from outside the containing atom — external code sees only entrypoints and observables. The four discipline principles from §1.10 (bounded, typed, explicit, observable) are enforced by construction under the atom substrate, not by convention.
+
+**Wiring glyphs (minimal set).**
+
+| Glyph | Meaning |
+|---|---|
+| `-->` | Route event to atom (wire from source to sink) |
+| `<--` | Observable read (dataflow out to reader) |
+| `\|>` | Pipe through operator (RxJS-style chain) |
+| `~>` | Async / deferred wire (debounce, delay, throttle — wires with time) |
+
+Everything else uses keywords: `emit`, `route to`, `broadcast to`, `guard`, `after`. Glyphs are for the four operations users perform most often in atom code.
+
+**Where the spec sits now.**
+
+v0.11 is not the atom substrate. It's an approximation:
+- Records approximate stateless compound atoms.
+- Regular classes approximate stateful compound atoms.
+- Enums approximate sum-type-state atoms.
+- Methods approximate atom entrypoints.
+- Method bodies remain imperative (`self.x = y` allowed) rather than pure transitions with emitted state.
+- Type annotations are split from invariants at the surface (see §1.3) — the unification is target, not committed.
+
+Each v0.x → v0.(x+1) step tightens the approximation. Full commitment lands at v1.0.
+
+**Incremental moves already committed at v0.11:**
+
+- Records as functional-swap (methods return new selves; no in-place mutation of records).
+- Primitives as records over Bytes (unified with user records; §3.1).
+- `data:` field usage-site advisory (writer calls emit `data-field-mutation` diagnostic; §3.3).
+- Canonical bytes as value-type base-class property (§3.4.6).
+- §1.3 tightened — types-as-contracts unification named as v1.0 target.
+
+**Incremental moves planned for v0.12+:**
+
+- `kind: cell` variant of regular class — functional-swap for stateful classes without full atomic-swap-boundary machinery.
+- Types-as-contracts unification (collapse `: Type` and `invariants:` into one contract system per §1.3).
+- Method-call desugaring reframed as atom messaging (implementation-level, surface preserved).
+- Contract-first spec discipline — contracts describe atom transitions.
+- Wiring glyphs enter the grammar as reserved forms.
+
+**v1.0 substrate:**
+
+- `atom` as sole declaration primitive.
+- `class`, `record`, `enum`, `protocol`, `section`, `program` as sugar keywords for common atom shapes.
+- `function` retired — write `atom name(x) -> y: ...` for the trivial atom shape.
+- Types-as-contracts fully unified: no separate type system; `: X` reads as "satisfies contract X"; refinements via `where`; class-scope predicates in `invariants:` (only when they cross fields/atoms).
+- Compiler is a dataflow compiler: fuses adjacent atoms, schedules independent subgraphs, computes buffer sizes, propagates contracts across the graph.
+- Wiring glyphs (`-->`, `<--`, `\|>`, `~>`) canonical in the grammar.
+- Runtime interprets top-level program-atom emissions as OS effects (syscalls, stdout, network dispatch).
+
+**Positioning.**
+
+Before v1.0: "Swift competitor for the Apple ecosystem with Clojure-inspired value/reference discipline and Objective-C interop."
+
+At v1.0: "Erlang-substrate reactive language with Swift-shaped surface, CSP + core.async composition, contract-based verification, and dataflow compilation. Class = bounded atom graph. Functions = the trivial atom shape. Every construct is a shape of atom."
+
+The Swift-shaped surface stays (ObjC interop, familiar syntax, gradual migration). The atom substrate is the v1.0 commitment.
 
 ---
 
