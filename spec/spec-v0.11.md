@@ -22,6 +22,8 @@
 
 **Reframe from v0.11 initial draft.** Earlier working drafts of v0.11 framed this as "the compiler auto-conforms value types to `As<Bytes>` and `From<Bytes>`" — a target-type carve-out inside a general protocol (design-coherence tension 2, audit 2026-08-10). Reframed at 2026-08-11 to remove the carve-out: the compiler doesn't know `Bytes` is a special target type or `As<Bytes>` is a special protocol; it synthesizes the two methods on every value type as a base-class property (§3.3 extension of what records already do for `==` / `hash`), and structural conformance to `As<Bytes>` / `From<Bytes>` falls out per §3.4 because the methods exist. Same runtime behavior, honest layering: the base-class property is the language commitment; conformance is the consequence.
 
+**Second reframe (2026-08-11) — primitives as records.** The initial tension-2 reframe left a residual: §3.4.6 claimed "primitives have no field layout for the compiler to synthesize from" and §3.11.4 shipped per-primitive `extend class Bool: methods: function as() -> Bytes: ...` blocks in prelude, framed as "concrete implementation of the base-class property." That was still primitive-specialness under a different label. Second reframe removes the residual: primitives are `kind: record` with a single `data: bytes: Bytes where length == N` field, shipped in prelude the same way user records are declared. Byte methods synthesize from the field layout via the same pathway as user records; §3.10.10's wire format gets a refinement-driven length-prefix specialization (`where length == N` → no runtime prefix, `where length <= N` → smallest prefix width fitting N) so synthesis produces the correct primitive encoding without per-primitive overrides. Arithmetic, comparison, IEEE 754 semantics remain compiler intrinsics — the compiler recognizes primitives by name for machine-instruction lowering. Storage remains inline machine words (compiler specialization). §3.11.4 per-primitive prelude blocks retired. §3.1 rewritten to reflect the composition-honest framing.
+
 **Consistency with prior decisions.**
 
 - **§3.3 records + §3.4 protocols** — records already carry synthesized `==` and `hash` as base-class properties. Canonical bytes extend the same list — one more base-class property, no new mechanism.
@@ -909,12 +911,52 @@ Because these are prelude aliases, they are inspectable — users can look up wh
 - `Int`, `Int8`, `Int16`, `Int32`, `Int64` (and unsigned variants: `UInt`, `UInt8`, `UInt16`, `UInt32`, `UInt64`)
 - `Float`, `Double`
 - `Bool`
-- `Char` (Unicode scalar), `String` (UTF-8, immutable), `Bytes`
+- `Char` (Unicode grapheme cluster), `String` (UTF-8, immutable), `Bytes`
 - `Unit` (the type with one value, written `()`)
 - `Never` (the type with no values, for divergent functions)
 - `Any` — dynamically-typed value; the type system knows nothing about it. See §3.1.1.
 
-**Primitive types are value types** — they follow record semantics (§6.1, §6.2): copy on assign, no identity, no extent, cannot be nil. Bit-pattern-carrying types like `Int` and `Bool` have no nil representation. Reference-shaped types (`String`, `Bytes`) — despite their conceptual value semantics — still get nil-allowed status when annotated as receivers (see §3.6.1) because the runtime carries them via handles.
+**Primitives are records over `Bytes`, shipped in prelude.** No separate "primitive family" with independent semantics — every primitive is a `kind: record` class with a single `data: bytes: Bytes` field constrained by a length refinement. Byte methods (`.as() -> Bytes`, `class function from(source: Bytes)`) synthesize from the field layout the same way they do for user records (§3.4.6). Arithmetic, comparison, IEEE 754 semantics, bitwise operations remain compiler intrinsics — the compiler recognizes primitives by name and lowers their methods to machine instructions; storage is specialized to inline machine words.
+
+```
+# Prelude ships (illustrative shape — arithmetic methods elided):
+record Bool:
+    data: bytes: Bytes where bytes.length == 1
+    methods:
+        # ... boolean intrinsics ...
+
+record UInt8:
+    data: bytes: Bytes where bytes.length == 1
+    methods:
+        # ... unsigned-arithmetic intrinsics ...
+
+record UInt32:
+    data: bytes: Bytes where bytes.length == 4
+    methods:
+        # ... unsigned-arithmetic intrinsics ...
+
+record Int32:
+    data: bytes: Bytes where bytes.length == 4
+    methods:
+        # ... two's-complement-arithmetic intrinsics ...
+
+record Float:
+    data: bytes: Bytes where bytes.length == 4
+    methods:
+        # ... IEEE 754 single-precision intrinsics ...
+
+record Double:
+    data: bytes: Bytes where bytes.length == 8
+    methods:
+        # ... IEEE 754 double-precision intrinsics ...
+
+record Char:
+    data: bytes: Bytes where bytes.length >= 1 and bytes.length <= 255
+    methods:
+        # ... grapheme intrinsics ...
+```
+
+**Consequences.** Value semantics falls out of `kind: record` at the record boundary (§3.3), same as any user record. Copy-on-assign, structural equality (byte-wise field comparison), structural hashing, canonical bytes — all synthesized via the record base-class properties (§3.4.6). No per-primitive prelude `extend class Foo: methods: function as(): ...` needed — the byte methods synthesize from the field. Storage (inline machine word) is a compiler specialization invisible to the surface; semantically primitives ARE records with a bytes field. Bit-pattern-carrying types like `Int` and `Bool` have no nil representation (records without nil-annotation are non-nil per §3.6.1). Reference-shaped types (`String`, `Bytes`) still get nil-allowed status when annotated as receivers because the runtime carries them via handles.
 
 **Numeric literals infer their type from context** (§2.7). `Char` literals use `'x'` form; `String` literals use `"..."` form; both support C-style and Unicode escape sequences.
 
@@ -1688,7 +1730,7 @@ note: this form was deprecated in v0.10.2 with fix-it; removed in v0.11 as sched
 
 #### 3.4.6 Canonical Bytes as a Value-Type Base-Class Property
 
-Per §3.3, `kind: record` and `kind: enum` carry a small fixed set of **base-class properties** the compiler synthesizes from field/case layout: structural equality (`==`), structural hashing (`hash(self)`), copy-on-assign, and **canonical bytes** — the methods `function as(self) -> Bytes` and `class function from(source: Bytes) -> DecodeOutcome<Self>`, produced from field layout per §3.10.10's wire format. Primitives (`Int`, `Float`, `Bool`, `Char`, etc.) are `kind: record` and inherit the same base properties; the byte methods on primitives ship explicitly in prelude (§3.11.4) since primitives have no field layout for the compiler to synthesize from.
+Per §3.3, `kind: record` and `kind: enum` carry a small fixed set of **base-class properties** the compiler synthesizes from field/case layout: structural equality (`==`), structural hashing (`hash(self)`), copy-on-assign, and **canonical bytes** — the methods `function as(self) -> Bytes` and `class function from(source: Bytes) -> DecodeOutcome<Self>`, produced from field layout per §3.10.10's wire format. Primitives (`Int`, `Float`, `Bool`, `Char`, etc.) are `kind: record` shipped in prelude with a single `data: bytes: Bytes where bytes.length == N` field (§3.1); their byte methods synthesize from that field layout via the same pathway as user records — no separate per-primitive prelude implementation.
 
 This section documents the byte property — the equality/hash properties are documented at §3.3.
 
@@ -2983,7 +3025,9 @@ Wire-format specification for the byte methods that §3.4.6 documents as value-t
 | `Double` | IEEE 754 double-precision, big-endian | 8 bytes |
 | `Char` | grapheme cluster's UTF-8 byte sequence, length-prefixed by `UInt8` | 1 + N bytes (N ≤ 255) |
 | `String` | `length: UInt32 (network-order)` `||` UTF-8 bytes | 4 + N bytes |
-| `Bytes` | `length: UInt32 (network-order)` `||` raw bytes | 4 + N bytes |
+| `Bytes` (unrefined) | `length: UInt32 (network-order)` `||` raw bytes | 4 + N bytes |
+| `Bytes where length == N` (fixed) | raw N bytes, no length prefix | N bytes |
+| `Bytes where length <= N` (bounded) | length-prefixed by smallest UInt type fitting N `||` raw bytes | 1/2/4 + N bytes |
 | `T?` (Optional) | presence byte (0x00 = nil, 0x01 = present) `||` `T` encoding if present | 1 or 1+sizeof(T) bytes |
 | `[T]` (Array) | `length: UInt32` `||` element encodings concatenated | 4 + N × sizeof(T) bytes |
 | `{K: V}` (Map) | `length: UInt32` `||` (`K` encoding `||` `V` encoding) × length | 4 + N × (sizeof(K) + sizeof(V)) bytes |
@@ -2998,6 +3042,14 @@ Wire-format specification for the byte methods that §3.4.6 documents as value-t
 **Case declaration order determines enum discriminator.** Case at index 0 in source = `0x00` discriminator, case at index 1 = `0x01`, etc. Reordering cases is wire-incompatible. Adding cases is compatible if the new case is appended (existing discriminators remain valid); inserting mid-list shifts subsequent discriminators and is wire-incompatible.
 
 **Length prefix width — `UInt32` (4 bytes) — accommodates up to 4 GiB per collection / string / bytes.** Sufficient for on-disk caching, IPC, snapshot use cases. Users needing larger require explicit chunking or a user-authored encoding.
+
+**Refinement-driven length prefix specialization.** When a `Bytes` field carries a length refinement, wire-format synthesis uses that refinement to eliminate or narrow the runtime length prefix — the refinement already carries the length information; writing it into the wire redundantly is wasted bytes.
+
+- `Bytes where length == N` — length is compile-time-known; synthesized encoding emits raw N bytes with no prefix. Enables primitives: `record UInt32: data: bytes: Bytes where length == 4` synthesizes `.as() -> Bytes` that produces 4 raw big-endian bytes with no header.
+- `Bytes where length <= N` — length is runtime-variable but bounded; synthesized encoding uses the smallest unsigned integer type that fits `N` as the prefix. `N ≤ 255` → `UInt8` prefix (1 + up-to-N bytes); `N ≤ 65535` → `UInt16` prefix (2 + up-to-N bytes); `N ≤ 2³²-1` → `UInt32` prefix. Enables `record Char: data: bytes: Bytes where length <= 255` synthesizing to `UInt8-prefix || raw bytes` (matches Char's canonical spec above).
+- Unrefined `Bytes` (no length constraint) — uses `UInt32` prefix per the default table entry.
+
+This is not primitive-special-casing; it's the refinement type carrying its usual meaning through to wire-format synthesis. User records with refined-length Bytes fields (`data: mac: Bytes where length == 6`, `data: guid: Bytes where length == 16`) get the same specialization — no length prefix at 6 or 16 bytes. Symmetrical: any type-level length constraint drops or narrows the runtime prefix.
 
 **Nested type recursion.** Records/enums with fields/cases holding other records/enums recurse per this table. Termination: primitives at the leaves. `kind: regular` classes as fields require user-written `.as() -> Bytes`; format is under user control (may or may not match this canonical spec).
 
@@ -3117,71 +3169,28 @@ switch big.checked_to::<UInt8>():
 
 **Not a `Result<T, E>`.** Per v0.8.5, Corvid does not ship a generic `Result<T, E>` in the prelude. `ConvertOutcome<T>` is a domain enum with a fixed error case, consistent with the pattern used everywhere else (`DecodeOutcome<T>` §3.10.8, `SendOutcome`, etc.).
 
-#### 3.11.4 Byte Methods on Primitives (v0.11)
+#### 3.11.4 Byte Methods on Primitives
 
-Primitives are `kind: record` (§3.1) and inherit the value-type base-class property of having canonical byte methods (§3.4.6). Records get those methods synthesized from field layout; primitives have no field layout to synthesize from, so prelude ships the methods explicitly — one per-type implementation per the canonical encoding (§3.10.10). Structural conformance to `As<Bytes>` and `From<Bytes>` (§3.4) follows the same way as for records: the methods exist on the class, the structural check succeeds.
+Primitives are `kind: record` shipped in prelude with a `data: bytes: Bytes where length == N` field (§3.1); byte methods synthesize from that field layout via the same pathway as user records (§3.4.6). Under §3.10.10's refinement-driven length-prefix specialization, a `Bytes` field with `where length == N` synthesizes to raw N bytes with no runtime prefix — so `record UInt8: data: bytes: Bytes where length == 1` synthesizes to `.as() -> Bytes` producing 1 raw byte (matches §3.10.10's UInt8 spec); `record UInt32: data: bytes: Bytes where length == 4` synthesizes to 4 raw big-endian bytes (matches UInt32 spec); and so on for every fixed-length primitive. Structural conformance to `As<Bytes>` and `From<Bytes>` (§3.4) follows because the synthesized methods exist on the class.
 
-```
-# Shipped in prelude via extend blocks:
+**No per-primitive prelude implementation.** Prior to the (A) reframe, prelude shipped a hand-written `extend class UInt8: methods: function as() -> Bytes: ...` block per primitive — under the "primitives have no field layout" claim in early v0.11 drafts. That claim was false (primitives DO have field layout, one field: `bytes: Bytes where length == N`), and the reframe removed the per-primitive prelude blocks: the same synthesis pathway that gives a user's `record Point: data: x: Float, y: Float` its `.as() -> Bytes` gives `record UInt32` its `.as() -> Bytes`. One pathway; no hand-writes; no framing-fudge about "prelude extend blocks that are actually language-provided."
 
-extend class Bool:
-    methods:
-        function as(self) -> Bytes:
-            return Bytes.from([self ? 0x01 : 0x00])
-    class function from(source: Bytes) -> DecodeOutcome<Bool>:
-        if source.length() < 1: return .invalid(offset: 0, reason: "expected 1 byte")
-        switch source[0]:
-            case 0x00: return .converted(false)
-            case 0x01: return .converted(true)
-            default:   return .invalid(offset: 0, reason: "invalid Bool byte 0x{source[0].hex()}")
-
-extend class UInt8:
-    methods:
-        function as(self) -> Bytes:
-            return Bytes.from([self])
-    class function from(source: Bytes) -> DecodeOutcome<UInt8>:
-        if source.length() < 1: return .invalid(offset: 0, reason: "expected 1 byte")
-        return .converted(source[0])
-
-extend class UInt32:
-    methods:
-        function as(self) -> Bytes:
-            # Big-endian per §3.10.10:
-            return Bytes.from([
-                UInt8((self >> 24) & 0xff),
-                UInt8((self >> 16) & 0xff),
-                UInt8((self >>  8) & 0xff),
-                UInt8( self        & 0xff),
-            ])
-    class function from(source: Bytes) -> DecodeOutcome<UInt32>:
-        if source.length() < 4: return .invalid(offset: 0, reason: "expected 4 bytes")
-        return .converted(
-            (UInt32(source[0]) << 24) |
-            (UInt32(source[1]) << 16) |
-            (UInt32(source[2]) <<  8) |
-             UInt32(source[3])
-        )
-
-# Analogous for Int8/Int16/Int32/Int64/UInt16/UInt64/Float/Double/Char/Int/UInt.
-```
-
-**Explicit-endian access.** Alongside the `As<Bytes>` conformance (which is fixed to network-order per §3.10.10), each multi-byte primitive gets an ordinary `.as_bytes(order: ByteOrder) -> Bytes` method for callers who need explicit control:
+**Explicit-endian access.** Alongside the synthesized `.as() -> Bytes` (fixed to network-order per §3.10.10), each multi-byte primitive gets an ordinary `.as_bytes(order: ByteOrder) -> Bytes` method for callers who need explicit control:
 
 ```
-extend class UInt32:
+# Shipped in prelude on record UInt32 (analogous for other multi-byte primitives):
+record UInt32:
+    data: bytes: Bytes where bytes.length == 4
     methods:
         function as_bytes(self, order: ByteOrder) -> Bytes:
             switch order:
                 case .little:
-                    return Bytes.from([
-                        UInt8( self        & 0xff),
-                        UInt8((self >>  8) & 0xff),
-                        UInt8((self >> 16) & 0xff),
-                        UInt8((self >> 24) & 0xff),
-                    ])
-                case .big:      return self.as()                    # canonical
-                case .network:  return self.as()                    # alias for .big
+                    let raw = self.bytes                # big-endian storage
+                    return Bytes.from([raw[3], raw[2], raw[1], raw[0]])
+                case .big:      return self.bytes                   # canonical
+                case .network:  return self.bytes                   # alias for .big
                 case .host:     return self.as_bytes(order: platform_native_order)
+        # ... arithmetic/comparison intrinsics ...
 ```
 
 `.as_bytes(order:)` is a specific-name method, NOT participating in `As<Bytes>` trait-qualified dispatch (only `.as() -> Bytes` does that). Users who need host-order encoding for same-host performance write their record's `.as() -> Bytes` explicitly using `.as_bytes(order: .host)` on each field, shadowing the synthesized one.

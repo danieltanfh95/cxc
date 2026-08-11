@@ -4,6 +4,32 @@
 
 **Companion document:** `spec/spec-v0.10.md` (was `spec-v0.9.md` through v0.9.x; `spec-v0.8.md` through v0.8.x; before that `spec-v0.7.md` through v0.7.x; before that `spec-v0.6.md`; before that `corvid-spec-v0.5.md`).
 
+## Session note — Primitives as records over Bytes; refinement-driven wire-format specialization (2026-08-11, no version bump)
+
+**Continuation of tension #2 reframe and the composition thread.** After settling that value types have canonical bytes as a base-class property (§3.4.6) and that Integer literally composes over `bytes: Bytes` (user's `class Integer: bytes: Bytes` framing), a residual layering fudge remained: §3.4.6 said "primitives have no field layout for the compiler to synthesize from," and §3.11.4 shipped per-primitive `extend class Bool: methods: function as() -> Bytes: ...` blocks in prelude — framed as "concrete implementation of the base-class property," but syntactically indistinguishable from user extensions. That was still primitive-specialness under a different name.
+
+**User's push.** "It sounds like common sense" — dismissing my framing of refinement-driven wire-format specialization as a design choice. Right; it's not a choice, it's what refinements are for. The residual specialness was the real issue, and (A) — primitives-as-records-with-`bytes:`-field — is the honest resolution.
+
+**Design chosen: (A).** Primitives are `kind: record` shipped in prelude with `data: bytes: Bytes where length == N`. Byte methods synthesize from the field layout the same way as user records. §3.10.10 wire format gets a refinement-driven length-prefix specialization: `where length == N` (fixed) → raw N bytes no prefix; `where length <= N` (bounded) → smallest UInt type fitting N; unrefined → UInt32. This makes synthesis produce the correct primitive encoding without per-primitive overrides. Arithmetic/comparison/IEEE 754 stay as compiler intrinsics (unchanged); storage stays inline machine words (compiler specialization).
+
+**Spec changes.**
+
+- `spec/spec-v0.11.md` §3.1 (Primitive Types) — rewritten. Was: "primitives are value types following record semantics" (opaque list). Now: "primitives are records over `Bytes`, shipped in prelude" with the record declarations shown for Bool, UInt8, UInt32, Int32, Float, Double, Char. Consequences paragraph documents that value semantics falls out of `kind: record` at the record boundary; storage-as-machine-word is a compiler specialization; nil-representation logic unchanged.
+- §3.4.6 — the "primitives have no field layout" claim reversed. New wording: primitives are `kind: record` shipped in prelude with `data: bytes: Bytes where length == N`; byte methods synthesize via the same pathway as user records.
+- §3.10.10 — Bytes wire-format table entry split into three cases: unrefined (UInt32 prefix), `where length == N` (no prefix), `where length <= N` (smallest UInt fitting N). New paragraph on refinement-driven length-prefix specialization; explicitly notes this is symmetrical (user records with refined-length Bytes fields — `data: mac: Bytes where length == 6` — get the same specialization).
+- §3.11.4 — retired the per-primitive `extend class` blocks. Kept the `.as_bytes(order:)` explicit-endian method (still shipped explicitly on each multi-byte primitive since it's not part of `As<Bytes>` dispatch). Added a paragraph explaining what the reframe eliminated ("No per-primitive prelude implementation").
+- v0.11 changelog block — added "Second reframe (2026-08-11) — primitives as records" paragraph documenting the reframe.
+
+**Mechanism-invention trap check.** Passes. Refinement types — existing (§3.6). `kind: record` — existing (§3.3). Field-layout synthesis for byte methods — existing (§3.4.6). Compiler intrinsics for primitive arithmetic — existing implementation-level (not a new language mechanism). Wire-format refinement specialization — extension of existing wire format rules, uses refinement info that's already there. Zero new mechanisms. The reframe REMOVES a mechanism (per-primitive prelude extend blocks doubled as base-class-property provision) rather than adds one.
+
+**Dissolution-pattern update.** Fourteenth session. This one is the biggest dissolution yet in structural terms — an entire "primitive" special category collapses into `kind: record` + refinement types + compiler intrinsics. Primitives stop being a taxonomically-distinct family with independent value semantics; they're records like any other. The taxonomy becomes: every user type is a class; classes vary by `kind:`; value semantics comes from `kind: record` at the class boundary; primitives are the leaf-level records over `Bytes`; composition all the way down.
+
+**No version bump.** The reframe changes the SPEC framing substantially (§3.1 rewritten, §3.11.4 shrunk) but the LANGUAGE behavior is identical: same wire format, same arithmetic, same storage, same conformances. What changes is the layering story — "primitives are records over Bytes, unified with user records" replaces "primitives are opaque, byte methods hand-shipped in prelude." v0.11 remains the version that introduced canonical bytes as a value-type base-class property; this addendum makes primitives fit the same story cleanly.
+
+**Composition thread — done.** Value types compose over Bytes. Primitives are records with `bytes: Bytes where length == N`. User records with fields transitively compose into bytes. Regular classes don't (references, cycles, identity). Base-class property (canonical bytes) IS the projection extracting the composed form; conformance to `As<Bytes>` / `From<Bytes>` is the consequence. §3.10.10 wire format synthesizes deterministically from the composition. Whole story now honest end-to-end.
+
+---
+
 ## Session note — `data:` field usage-site rule; value-typed containers over regular fields (2026-08-11, no version bump)
 
 **Continuation of tension #2 reframe.** After settling that value types compose over Bytes (Integer literally has `bytes: Bytes` as a field, per composition-is-honest reading), user surfaced a real subtlety: if Integer has a `Bytes` field where Bytes is `kind: regular` (mutable, referenced), how does Integer preserve value semantics?
