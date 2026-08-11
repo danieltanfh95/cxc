@@ -722,7 +722,18 @@ Library authors express intent about how their code will be used. Annotations th
 
 A "type" is a named contract: a set of accepted messages with signatures, preconditions, postconditions, effects, and (optionally) session constraints. Conformance is structural. Named contracts (`protocol Foo`) reserve identity when the author wants to disambiguate structurally identical concepts.
 
-**Types-as-contracts unification (v1.0 target).** The current spec surface splits type annotations (`count: Int`) from invariant clauses (`invariants: count >= 0`) as if they were two different mechanisms. They are one mechanism: both are predicates on values. `Int` is a named contract (a predicate: "value is an integer"); `count >= 0` is an anonymous contract (a predicate: "count is non-negative"); a refined type `Int where value >= 0` is composition of two contracts (`Int` and `value >= 0`). By v1.0, the surface collapses to one syntax — value declarations carry a single contract expression combining named-contract references (formerly "types") with `where` refinements (formerly "invariants attached to a value"). Cross-field / cross-atom predicates remain in `invariants:` sections (they can't be attached to any single value). See §3.6 for the refinement mechanism that makes this uniform. The split at the current surface is a transitional shape while v0.x lands; §1.3's commitment is that both are one system semantically, and v1.0 makes that structural.
+**Types-as-atoms unification (v1.0 target).** The traditional distinction between "types" (nominal or structural descriptions of value shape) and "contracts" (predicates on values) resolves into a single, sharper reduction under the atom model (§1.11): **types ARE atoms**. Every construct that was called a "type" in the pre-atom framing is either:
+
+- **An atom shape** — a named declaration of data/state/handlers/emissions/contained-atoms. `Int` is an atom (a record with `data: bytes: Bytes where length == 4`); `String` is an atom; `Point` declared by the user is an atom; `List<T>` is a parameterized atom; a protocol is an atom signature (I/O + contracts, no transition body).
+- **A refinement of an atom shape** — a predicate over instances of an already-declared atom, expressed via `where`. `Nat is Int where value >= 0` declares a refined atom: same shape as Int, narrower valid-value set (choice (b) — refinement, not distinct atom identity; representation shared with the base atom, structural subatoming via refinement, substitutability free in the narrowing direction and requires runtime check in the widening direction).
+
+The syntactic split between `: Type` and `where predicate` is a transitional shape at the current surface. Under types-as-atoms, both attach contracts to a value declaration; the `:` picks the atom shape (representation-bearing), the `where` narrows the valid-instance predicate (representation-neutral). Same checking mechanism (contract satisfaction); one carries layout consequences, the other doesn't.
+
+Cross-atom predicates that span multiple values (`width * height <= 10000`) stay in `invariants:` sections at the class-atom level — they can't be attached to any single value declaration because they span two.
+
+**Refinement propagation (v1.0 target).** When operations combine refined values (`nat1 + nat2`), the compiler infers when the result satisfies the refinement (if `nat1 >= 0` and `nat2 >= 0`, then `nat1 + nat2 >= 0` — result carries the Nat refinement). When inference fails, the result widens to the base atom (Int). Liquid-Haskell-style refinement inference; runtime checks fill gaps where compile-time proof isn't tractable.
+
+See §3.6 for the refinement mechanism. §1.11 for the atom model that this unification lives inside.
 
 ### 1.4 First-class primitives for what dispatch was faking
 
@@ -862,6 +873,11 @@ The premises §1.1–§1.10 point at a specific primitive: **the atom**. An atom
 | method call | Route message to an atom's entrypoint |
 | state field | State atom (mutable payload) contained in a compound atom |
 | data field | Data atom (immutable payload) contained in a compound atom |
+| type (nominal or structural) | An atom (its named shape) |
+| refined type (`Int where >= 0`) | An atom + a refinement predicate over its instances |
+| generic type | A parameterized atom (`atom List<T>: ...`) |
+
+**Types are atoms.** The traditional distinction between "types" and "atoms" dissolves under this reduction — every type-name is an atom-name; every value is an atom-instance; type-checking is atom-shape-conformance + refinement satisfaction. See §1.3 for the syntactic implications (the transitional split between `: Type` and `where predicate` at v0.x resolves to a single contract expression at v1.0).
 
 **Composition.** Atoms compose by **wiring** — connecting one atom's output channel to another's input channel. Wires may carry ordinary values (common case), or be decorated by inline transformer atoms (`debounce`, `batch`, `throttle`, `filter`, `map`, `distinct_until_changed`, etc.) providing RxJS-style reactive operators as first-class syntactic elements. **The class is the graph.**
 
@@ -903,7 +919,8 @@ Each v0.x → v0.(x+1) step tightens the approximation. Full commitment lands at
 **Incremental moves planned for v0.12+:**
 
 - `kind: cell` variant of regular class — functional-swap for stateful classes without full atomic-swap-boundary machinery.
-- Types-as-contracts unification (collapse `: Type` and `invariants:` into one contract system per §1.3).
+- Types-as-atoms unification (collapse `: Type`, `contract`, and single-value `invariants:` clauses into the atom-declaration + `where`-refinement system per §1.3). Cross-atom `invariants:` stay.
+- Refined atom syntax — `atom Nat: is Int where value >= 0` as first-class declaration.
 - Method-call desugaring reframed as atom messaging (implementation-level, surface preserved).
 - Contract-first spec discipline — contracts describe atom transitions.
 - Wiring glyphs enter the grammar as reserved forms.
@@ -913,7 +930,10 @@ Each v0.x → v0.(x+1) step tightens the approximation. Full commitment lands at
 - `atom` as sole declaration primitive.
 - `class`, `record`, `enum`, `protocol`, `section`, `program` as sugar keywords for common atom shapes.
 - `function` retired — write `atom name(x) -> y: ...` for the trivial atom shape.
-- Types-as-contracts fully unified: no separate type system; `: X` reads as "satisfies contract X"; refinements via `where`; class-scope predicates in `invariants:` (only when they cross fields/atoms).
+- `type` and `contract` keywords retired — types ARE atoms; refinements are `where` clauses; there is one declaration form (`atom`) and one narrowing form (`where`).
+- Types-as-atoms fully unified: `: X` reads as "satisfies atom X's shape"; refinements via `where` narrow which instances of X are valid; class-scope predicates in `invariants:` only when they cross atoms.
+- Refinement propagation (Liquid-Haskell-style): compiler infers refinement preservation across operations; widens to base atom when inference fails; runtime checks fill gaps.
+- Structural subatoming via refinement: `Nat` structurally conforms to `Int` (any Nat is-an Int); `Int` requires runtime refinement check to be treated as `Nat`.
 - Compiler is a dataflow compiler: fuses adjacent atoms, schedules independent subgraphs, computes buffer sizes, propagates contracts across the graph.
 - Wiring glyphs (`-->`, `<--`, `\|>`, `~>`) canonical in the grammar.
 - Runtime interprets top-level program-atom emissions as OS effects (syscalls, stdout, network dispatch).

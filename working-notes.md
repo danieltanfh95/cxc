@@ -4,6 +4,49 @@
 
 **Companion document:** `spec/spec-v0.10.md` (was `spec-v0.9.md` through v0.9.x; `spec-v0.8.md` through v0.8.x; before that `spec-v0.7.md` through v0.7.x; before that `spec-v0.6.md`; before that `corvid-spec-v0.5.md`).
 
+## Session note — Types-as-atoms unification (extends atom model landing, 2026-08-11, no version bump)
+
+**Follow-on to the atom model landing.** User pushed on the types-as-contracts framing I'd sketched: "consider if types are contracts." I laid out three views (A: full unification, B: distinct, C: partial — types as representation-bearing contracts). User then jumped a level: "perhaps then we can unify types and atoms? consider that integers are records."
+
+**The chain that lands the unification.**
+
+1. Integers are records (§3.1 — already committed this session).
+2. Records are compound atoms containing only data atoms (§1.11 direction).
+3. Therefore integers ARE atoms.
+4. Generalizing: every "type" is an atom (or a shape of atom).
+
+Under this, the types-vs-contracts question dissolves. Types are atoms; refinements are predicates over atom instances; the syntactic split (`: Type` vs `where predicate`) becomes "does this contract determine representation or just narrow validity."
+
+**Design decisions this session.**
+
+- **Types are atoms.** Every type-name is an atom-name; every value is an atom-instance; type-checking is atom-shape-conformance + refinement satisfaction.
+- **Refinements as (b), not (a).** `atom Nat: is Int where value >= 0` declares a refinement of Int: same shape, narrower validity, shared representation. Structural subatoming via refinement: Nat is-a Int (substitutable freely), Int is-not-a Nat (requires runtime refinement check). Whiley / Liquid Haskell model, not Rust newtype model.
+- **Refinement propagation via inference (Liquid-Haskell-style).** When operations combine refined values (`nat1 + nat2`), compiler infers when the result satisfies the refinement (positive + positive = positive). When inference fails, result widens to base atom. Runtime checks fill undecidable gaps.
+- **Structural conformance composes naturally.** Corvid's §3.4 structural typing already handles the substitutability question — Nat has all Int's operations + refinement; passing a Nat where Int expected is free; the reverse requires runtime check.
+- **`type` and `contract` keywords retired at v1.0.** Types ARE atoms; there's one declaration form (`atom`) and one narrowing form (`where`). No separate mechanism.
+
+**Spec changes committed this session.**
+
+- `spec/spec-v0.11.md` §1.3 — rewrote the "types-as-contracts unification" paragraph as "types-as-atoms unification." Documents the reduction (types are atoms; refined types are atom + refinement predicate; the syntactic split between `: Type` and `where predicate` is transitional). Names (b) explicitly as the identity choice. Names refinement propagation as v1.0 target.
+- `spec/spec-v0.11.md` §1.11 reduction table — added three rows: "type" → an atom; "refined type" → atom + refinement predicate; "generic type" → parameterized atom. Added closing paragraph "Types are atoms" naming the dissolution.
+- `spec/spec-v0.11.md` §1.11 v0.12+ list — replaced "Types-as-contracts unification" with "Types-as-atoms unification"; added refined-atom syntax entry.
+- `spec/spec-v0.11.md` §1.11 v1.0 substrate list — added `type` and `contract` keywords to retirement list; added refinement propagation commitment; added structural subatoming commitment.
+
+**Mechanism-invention trap check.** Passes. No new mechanism — the unification REMOVES a mechanism (the artificial separation of types from atoms). All the pieces (atoms, refinements, structural conformance, `where` clauses) were already in the spec; they now compose consistently under one primitive.
+
+**Dissolution-pattern update.** Sixteenth session. This dissolution is a follow-on to the fifteenth (atom model as v1.0 target); together they represent the full reduction the composition thread has been building toward. Types dissolve into atoms; contracts dissolve into refinement predicates; the "type system" as a distinct sub-system disappears.
+
+**What's left to consider (natural follow-on threads).**
+
+- Refined atom syntax details — `atom Nat: is Int where value >= 0` vs `atom Nat is Int where value >= 0` vs `type Nat is Int where value >= 0` (as sugar). Which reads best?
+- Refinement propagation semantics — how does the compiler infer? Where does it give up and widen? Runtime check strategy at gaps?
+- Generic atoms — `atom List<T>: ...` parameterized over another atom-contract. Does T mean "an atom with this shape" or "an atom conforming structurally to this signature"? Probably the latter (structural).
+- Class-scope invariants remaining — cross-atom predicates in `invariants:`; are these first-class atoms too (compile-time predicate atoms), or a distinct mechanism? Probably distinct — they're checks, not entities.
+
+**No version bump.** Cleanup of framing; existing constructs stay accurate.
+
+---
+
 ## Session note — Atom model committed as v1.0 target; controlled mutability landed as §1 premise (2026-08-11, no version bump)
 
 **Design landing after extended architectural thread.** Starting from "how does assignment work in pure OOP" and cycling through Smalltalk-style reduction (Kay's message-passing ideal — reduced-but-not-completed), Erlang OTP (actors with state), CSP + core.async (channels + transducers), Kahn process networks (deterministic dataflow), and Milner's π-calculus (everything is a process or channel), user landed on a specific reduction:
