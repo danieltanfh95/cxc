@@ -952,6 +952,7 @@ Each v0.x → v0.(x+1) step tightens the approximation. Full commitment lands at
 
 - `kind: cell` variant of regular class — functional-swap for stateful classes without full atomic-swap-boundary machinery.
 - Types-as-atoms unification (`: Type` reads as "satisfies atom X's shape"; type-checking is atom-shape-conformance; predicates on values stay in `invariants:` / `requires` / `ensures` / predicate atoms per §1.3).
+- Structural type inference through atom bodies — compiler traces types through handler parameters, state assignments, and emit calls; explicit annotations become optional documentation. Precursor to the full retirement of `<T>` generic-parameter syntax at v1.0.
 - Method-call desugaring reframed as atom messaging (implementation-level, surface preserved).
 - Contract-first spec discipline — contracts describe atom transitions.
 - Wiring glyphs enter the grammar as reserved forms.
@@ -963,9 +964,12 @@ Each v0.x → v0.(x+1) step tightens the approximation. Full commitment lands at
 - `function` retired — write `atom name(x) -> y: ...` for the trivial atom shape.
 - `type` and `contract` keywords retired — types ARE atoms; predicates are contracts/invariants/predicate-atoms; there is one declaration form (`atom`) and one predicate mechanism (invariants/contracts/predicate-atoms).
 - Types-as-atoms fully unified: type-checking is atom-shape-conformance (structural). No refinement types at the signature level — no `atom Nat: Int where value >= 0`.
+- **Types-as-guards** at wire boundaries. Every wire endpoint is a checkpoint: upstream atom's output type must satisfy downstream atom's input type. Guard fails → compile error (when statically decidable) or runtime check (when not). Applies to entrypoint dispatch, wire composition, observable reads, and emit calls.
 - Predicates on values live in `invariants:` on atoms (bare field names in scope), in `requires`/`ensures` on transitions, or in reusable predicate atoms (Bool-returning leaf atoms).
+- **`<T>` generic-parameter syntax retired.** Types flow structurally through atom bodies; the compiler infers them from context (handler parameters, state assignments, emit calls); guards check at wire boundaries. Every atom is polymorphic-if-body-uses-types-generically, monomorphized at use site by the compiler. Optional annotations (`(T) -> U` shape notes, `where T is Comparable` constraint notes) remain available for legibility, never required.
+- Type-parameter constraint syntax (`<T: Protocol>`) retired. Constraints become guards on values, not on type parameters. Compile error at use site when the required operations aren't available; explicit predicate atoms when the author wants to document.
 - Compiler is a dataflow compiler: fuses adjacent atoms, schedules independent subgraphs, computes buffer sizes, propagates contracts across the graph.
-- Wiring glyphs (`-->`, `<--`, `\|>`, `~>`) canonical in the grammar.
+- Wiring glyphs (`->`, `:<`, `\|>`, `~>`) canonical in the grammar.
 - Runtime interprets top-level program-atom emissions as OS effects (syscalls, stdout, network dispatch).
 
 **Positioning.**

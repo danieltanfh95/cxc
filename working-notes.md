@@ -4,6 +4,54 @@
 
 **Companion document:** `spec/spec-v0.10.md` (was `spec-v0.9.md` through v0.9.x; `spec-v0.8.md` through v0.8.x; before that `spec-v0.7.md` through v0.7.x; before that `spec-v0.6.md`; before that `corvid-spec-v0.5.md`).
 
+## Session note — Types-as-guards; `<T>` generic-parameter syntax retired at v1.0; wiring glyphs pinned (2026-08-11, no version bump)
+
+**Follow-on from the refined-atom ban.** After committing the ban and drafting a toy example (DebouncedCounter, then a debounce definition sketch), several small syntactic pins landed:
+
+**Wiring glyphs pinned to four:**
+- `->` for routing (dual-purpose with return-type-marker; position disambiguates)
+- `:<` for observable declarations (colon-prefix carries definition-flavor; left-arrow carries data-flow direction)
+- `|>` for pipe (RxJS-style operator chain)
+- `~>` for async/deferred wires (debounce, delay, throttle — wires with time)
+
+Retired earlier glyphs: `-->` (collapsed to `->`), `<--` (replaced with `:<`).
+
+**Types-as-guards framing added.** Reminded by user that types were previously framed as guards. Under this framing, the atom's I/O signature IS the guard for pipe-composability — no explicit `is pipe<T, T>` marker needed. Wire boundaries are guarded checkpoints; type mismatch = compile error or runtime check. This lands as the honest reading of Corvid's structural typing at wire endpoints, alongside types-as-atoms at the substrate level.
+
+**`<T>` generic-parameter syntax retired at v1.0.** User pushed: "do we need `<T>` at all?" Under types-as-guards + structural type inference, no. The compiler traces types through atom bodies (handler parameters → state assignments → emit calls) and infers the atom's I/O shape structurally. Every atom is polymorphic-if-body-uses-types-generically; monomorphization happens at use site. Optional annotations remain available for legibility (`(T) -> U` shape notes, `where T is Comparable` constraint notes) but never required. Type-parameter constraint syntax (`<T: Protocol>`) similarly retires — constraints become guards on values at use, not on type parameters at declaration.
+
+**Debounce as ordinary atom.** Drafted debounce with no `<T>` — reads cleanly:
+```
+atom debounce(duration: Duration):
+    state:
+        pending = nil
+        current_token: Int = 0
+    on input(event):
+        state.pending = event
+        state.current_token += 1
+        let this_token = state.current_token
+        after duration -> fire_pending(this_token)
+    on fire_pending(token: Int):
+        if token == state.current_token and state.pending != nil:
+            emit(state.pending)
+            state.pending = nil
+```
+Prelude-shipped operator. Same mechanisms as user atoms. No language-level generics; no compiler intrinsic — just a stateful atom with a timer transition. Users can write their own `debounce_leading_edge`, `throttle`, `sample`, etc. the same way.
+
+**Spec changes committed this addendum.**
+
+- `spec/spec-v0.11.md` §1.11 wiring glyphs table — `-->` → `->` with disambiguation rationale; `<--` → `:<` with declaration-flavor rationale.
+- `spec/spec-v0.11.md` §1.11 v0.12+ list — added structural type inference through atom bodies as precursor to `<T>` retirement.
+- `spec/spec-v0.11.md` §1.11 v1.0 substrate list — added types-as-guards commitment; `<T>` retirement commitment (with monomorphization at use site); type-parameter constraint syntax retirement; updated wiring glyphs to `->`, `:<`, `|>`, `~>`.
+
+**Mechanism-invention trap check.** Passes. Every retirement removes a mechanism (`-->` glyph, `<--` glyph, `<T>` generic-parameter syntax, `<T: Protocol>` constraint syntax) — nothing added. The types-as-guards framing is a re-reading of existing structural conformance, not a new mechanism.
+
+**Eighteenth dissolution session.** Cumulative reduction is now: `atom` as sole primitive; sugar keywords for common shapes; types are atoms (pure shapes); predicates in invariants/contracts/predicate-atoms; wire boundaries are guarded checkpoints; types flow structurally through atom bodies without generic-parameter ceremony. Four glyphs, one keyword, structural everything.
+
+**Debounce example in the session.** Concrete artifact showing the atom model in action: stateful stream operator, timer-triggered emission, invariants, all with no generics, no explicit types. If prelude-shipped RxJS operators fit in ~15 lines of atom declaration each, the "operators are just atoms" claim is real.
+
+---
+
 ## Session note — Refined atoms banned; predicates stay in invariants/contracts/predicate-atoms (2026-08-11, no version bump; supersedes earlier session's refined-atom choice)
 
 **Reversal of the refined-atom commitment from earlier this same session.** Previous addendum committed choice (b) for refined atom identity — refinements share representation with their base, structural subatoming via refinement, Liquid-Haskell-style propagation. User pushed back: "perhaps we should ban `atom Nat: Int where atom.value >= 0` form." After considering the trade-offs, banning wins. Reversal explicitly supersedes the earlier commitment.
