@@ -4,6 +4,37 @@
 
 **Companion document:** `spec/spec-v0.10.md` (was `spec-v0.9.md` through v0.9.x; `spec-v0.8.md` through v0.8.x; before that `spec-v0.7.md` through v0.7.x; before that `spec-v0.6.md`; before that `corvid-spec-v0.5.md`).
 
+## Session note — `data:` field usage-site rule; value-typed containers over regular fields (2026-08-11, no version bump)
+
+**Continuation of tension #2 reframe.** After settling that value types compose over Bytes (Integer literally has `bytes: Bytes` as a field, per composition-is-honest reading), user surfaced a real subtlety: if Integer has a `Bytes` field where Bytes is `kind: regular` (mutable, referenced), how does Integer preserve value semantics?
+
+**Wrong first framing (mine).** I claimed "Integer contains a reference — value semantics breaks; would need FixedBytes<N> as a new type." User pushed back: "but why isn't the value semantics defined from the Integer class itself?"
+
+**Correct framing.** Value semantics is defined at the record class boundary (§3.3 `kind: record`), not by the field types. Records can hold `kind: regular` fields; the record boundary handles the semantics via COW/deep-copy. This is the standard VTCRT (Value Type Containing Reference Type) pattern — Swift's `struct String` internally holds a reference to a buffer, is nonetheless a value type. Same mechanism works for `record Integer: bytes: Bytes`. No new type needed.
+
+**Then a second subtlety surfaced.** Under COW, mutation on a Bytes obtained from an Integer field triggers a copy — the Integer is unaffected. But this is silent: `int.bytes.set(0, 99)` looks like mutation, actually happens on a copy. Developer could be surprised.
+
+**User's dissolution.** "Anything placed in `data:` should be assumed to reader only, which is what was originally intended anyway — remember, structs is class with data only."
+
+That's the fix. `data:` isn't just a declaration marker; it's an advisory at the usage-site too. Writer calls on values obtained from a `data:` field emit a warning. No new annotation invented (`@readers_only` was mechanism-invention — sibling naming, rule 5 of the trap memory). The existing `data:` marker + existing reader/writer classification (§8.4.1) compose to give the diagnostic.
+
+**Design chosen: (b) `data:` marker + writer diagnostic.** Not (a) immutable view type (adds `Bytes.View` as a new type, duplicates reader method surface); not (c) COW alone (silent, too implicit).
+
+**Spec changes.**
+
+- `spec/spec-v0.11.md` §3.3 — new paragraph after value-type base-class-property discussion: "`data:` fields carry a usage-site rule, not just a declaration-site meaning." Documents the two commitments (declaration-site data-vs-state; usage-site writer-call diagnostic). Includes example warning text (W0410 `data-field-mutation`). Flow-tracking scope: direct calls + one-hop through variable assignment; deeper chains rely on writer-effect diagnostic at the actual mutation site.
+- `spec/spec-v0.11.md` §8.4.1 — added cross-reference paragraph noting that reader/writer classification composes with `data:`/`state:` at field level to enable the diagnostic.
+
+**Mechanism-invention trap check.** Passes. Zero new mechanisms. `data:` — existing (§3.3). Reader/writer classification — existing (§8.4.1). COW under value-semantics-at-boundary — existing behavior. Diagnostic — new content, uses existing composition of mechanisms.
+
+**Dissolution pattern.** Thirteenth session. The `data:` marker was carrying less weight than it always meant to. Making it load-bearing at the field-usage layer requires no new mechanism, only spec text acknowledging the composition of existing labels.
+
+**No version bump.** Small clarifying additions to §3.3 and §8.4.1. Semantics were arguably always intended (pre-v0.6.0 `struct` = class with data only); v0.11 makes it explicit.
+
+**Composition thread continues.** The `data:` usage-site rule closes the "value-type containing regular field" layering question. The composition reading (Integer literally has `bytes: Bytes`) now holds without needing FixedBytes<N> or a distinct immutable view type. Next issue in the design-coherence audit queue: to be surfaced.
+
+---
+
 ## Session note — v0.11 auto-conformance reframed as base-class property (2026-08-11, no version bump)
 
 **Follow-up to design-coherence audit tension #2.** The audit surfaced that v0.11's initial framing — "compiler auto-conforms value types to `As<Bytes>` and `From<Bytes>`" — was a specific-instantiation carve-out inside a general protocol (§3.4.6 vs §3.10.3). The compiler was knowing about a specific target-type name (`Bytes`) and a specific protocol instantiation (`As<Bytes>` / `From<Bytes>`); the general shape of `As<T>` says protocols are user-target-agnostic, so a compiler special-case per target name was a layering leak.

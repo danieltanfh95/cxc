@@ -996,6 +996,20 @@ Primitives (`Int`, `Float`, `Bool`, `Char`, etc.) are `kind: record` and inherit
 
 `kind: regular` classes get **none of these base-class properties automatically** — mutable state, potential cycles, and identity make mechanical equality/hashing/serialization unsafe. Regular-class authors define `==` / `hash(self)` / `.as() -> Bytes` explicitly if they want those behaviors.
 
+**`data:` fields carry a usage-site rule, not just a declaration-site meaning.** Values obtained from a `data:` field are semantically read-only at the field-usage layer. Calling a **writer** method (§8.4.1 classification) on a value obtained from a `data:` field emits a `data-field-mutation` warning at the call site — under the record boundary's value semantics, the mutation happens on a copy (via COW under the hood), not on the record's held field. Reader methods on `data:` fields emit no diagnostic. The `data:` marker thus carries two commitments: (1) *declaration-site* — the field contributes to structural equality/hashing/canonical bytes as data, not state; (2) *usage-site* — the compiler advises against writer calls on values obtained from the field.
+
+```
+warning[W0410]: writer method `set` on value obtained from `Integer.bytes` (a `data:` field)
+    |
+    |     int.bytes.set(0, 99)
+    |               ^^^ writer method on value from `data:` field
+    |
+    = mutation happens on a copy under COW; the Integer is unaffected
+    = help: to produce a modified Integer, construct a new one with the intended bytes
+```
+
+Flow-tracking scope: direct calls (`int.bytes.set(...)`) and one-hop through variable assignment (`let b = int.bytes; b.set(...)` — compiler tracks `b`'s origin). Deeper chains (through function arguments, closures) rely on the writer-effect diagnostic firing at the actual mutation site inside the receiving function. No new mechanism — reuses `data:` declaration marker + §8.4.1 reader/writer classification.
+
 Sugar keywords (`record`, `enum`, `protocol`, `section`) desugar losslessly to the corresponding `class + metadata: kind:` form. See §4.11 for sugar rules. Class bodies are described in §4.7; runtime semantics per kind are described in §6.
 
 **Sum types** (kind: enum):
@@ -6847,6 +6861,8 @@ Runtime uses **RWLock-style dispatch** per instance:
 - Multiple readers execute concurrently — state is not changing.
 - A writer executes exclusively — blocks all readers and other writers until it completes.
 - Methods on `data:` fields only (record classes; regular classes with no `state:` at all) skip coordination entirely — always safe to read, no writer possible.
+
+Reader/writer classification also composes with `data:`/`state:` at the field level (§3.3): a value obtained from a `data:` field of a record, when passed to a writer method, triggers the `data-field-mutation` advisory diagnostic — the mutation happens on a COW copy under value semantics; the record is unaffected. The classification is what makes the diagnostic possible.
 
 **Classification is inferred, not annotated.** No `@reader` or `@writer` markers. The compiler analyzes method bodies:
 
