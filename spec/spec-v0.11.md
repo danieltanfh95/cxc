@@ -12,6 +12,8 @@
 
 **Double-colon header form removed.** `class Foo: A, B:` → **compile error** in v0.11 (was warning in v0.10.2). `class MyViewController: UIViewController:` → **compile error**. Migration was mechanical during v0.10.2's grace period; any lingering uses need updating. Grammar `conformance_clause` is now the sole path for header-declared conformance.
 
+**`mutating` effect retired (§3.5.2).** Dead code surfaced by post-v0.11 audit. Carried over from a pre-v0.6.0 design that had `struct` as a live construct; v0.6.0 unified struct/enum/protocol/class under `kind:` metadata. No live use site: `kind: record` forbids `state:` so records can't mutate; `kind: regular` methods that mutate are inferred as writers by §8.4.1 reader/writer classification, no author declaration needed. Removed from §3.5.2 effect list and from grammar `method_decl` / `effect_atom` productions. Same reason `throws` was retired v0.8.5 — no live semantics under current design.
+
 **§3.4.5 updated** — the retirement subsection reframed from "deprecated in v0.10.2, removed in v0.11" to "removed in v0.11." §10 grammar's deprecation note becomes a historical-record note.
 
 **Only `As<Bytes>` gets auto-conformance.** JSON, MsgPack, CBOR, and other format-specific target types do NOT get auto-conformance — they have per-record author choices (field naming, null handling, number precision) with no defensible default, and silent choice would be a footgun. Users write `function as(self) -> Json:` on their records explicitly via ordinary `extend class Foo:` (§3.3.2). Third-party format packages (`corvid_json`, `corvid_msgpack`, etc.) need zero special language support — they ship their target type and users author conformances the same way they'd author any protocol method.
@@ -540,7 +542,7 @@ Corvid inverts Swift's nil-safety model. Reference types allow nil at runtime (m
 - **Reference types nil-allowed by default.** For classes of `kind: regular` (reference-typed), `T` permits nil at runtime. `T!` is contract sugar for `invariant: value != nil`. `T?` on reference types is retired (redundant). Value types (`kind: record`, `kind: enum`, primitives like `Int`, `Bool`) unchanged: `T` never nil, `T?` remains sugar for `Optional<T>` sum type.
 - **Force-unwrap `x!` retired at value site.** No sugar for panic-on-nil. Users write `x ?? panic("reason")` when they genuinely need to fail. Verbosity is intentional — panic should look exceptional in source so it stays exceptional in behavior.
 - **Optional chaining `?.` retired.** `.` operates uniformly on non-nil and nil receivers. Nil receivers return nil for reference-returning methods; the call-site expression type auto-lifts to `Return?`. For methods returning `Unit`, nil receivers are a silent no-op.
-- **`on_nil` stdlib section (new §4.10.9).** Class or protocol body may declare `section on_nil:` as a method-name → nil-time-value table. Compiler generates nil-receiver dispatch to consult the table before falling back to auto-lift. Precedence: class `on_nil` overrides protocol `on_nil`; unlisted methods auto-lift.
+- **`on_nil` stdlib section (new §4.10.9).** Class or protocol body may declare `on_nil:` as a method-name → nil-time-value table. Compiler generates nil-receiver dispatch to consult the table before falling back to auto-lift. Precedence: class `on_nil` overrides protocol `on_nil`; unlisted methods auto-lift.
 - **Collection + String protocols ship default `on_nil`.** `Collection` conformers inherit `count: 0`, `is_empty: true`, `iter: EmptyIterator()` on nil receiver. `String` similarly for `length` / `is_empty` / `chars`. Users writing their own collection types get nil-punning by protocol conformance, not per-class ceremony.
 - **`T!` contract violations warn, don't panic.** Runtime observes nil in a `T!`-annotated field or parameter → logs a warning (dev) or configurable action (prod). Nil continues to flow through message sends. `T!` is a debugging aid asserting author expectations; safety comes from nil-punning being safe.
 - **Arithmetic and ordering on nil are type errors.** `nil + 3`, `nil < 3` don't propagate — must unwrap or use `??`. Equality (`==`, `!=`) punning is safe: `nil == nil` is true, `nil == x` is false. Ordering with nil has no coherent semantics.
@@ -1776,7 +1778,8 @@ Consumer-side strictness is available via compile flag (`--strict-effects`) or p
 These annotations change compilation and cannot be "just hints."
 
 - `async` — changes calling convention (suspendable).
-- `mutating` — struct methods only. Modifies `self`. Not applicable to class methods.
+
+**Retired v0.11 — `mutating`.** The `mutating` effect was carried over from a pre-v0.6.0 design that had `struct` as a live construct. v0.6.0 unified struct/enum/protocol/class under `kind:` metadata; there is no `struct` in Corvid. `kind: record` forbids `state:` (§4.10.7) so records cannot have mutating methods; `kind: regular` methods that mutate state are inferred as writers by §8.4.1 reader/writer classification (no author declaration needed). The `mutating` effect had no live use site — neither author-declared (compiler infers) nor applicable (records can't mutate). Retired for the same reason `throws` was retired in v0.8.5 — no live semantics under the current design.
 
 #### 3.5.3 Effect Polymorphism
 
@@ -1943,7 +1946,7 @@ The surface syntax `T!` and `T?` are prelude aliases (§4.20.1) — suffix-posit
 
 **Value-site semantics:**
 
-- **Member access on nil.** `nil.method(args)` is legal. Method-return `T` auto-lifts to `T?` at the call site (message send on nil returns nil per the ObjC runtime); method-return `Unit` is a silent no-op. If the receiver's class or a conformed protocol declares `section on_nil:` (§4.10.9) with an entry for this method, that entry's value is returned instead of nil-lift.
+- **Member access on nil.** `nil.method(args)` is legal. Method-return `T` auto-lifts to `T?` at the call site (message send on nil returns nil per the ObjC runtime); method-return `Unit` is a silent no-op. If the receiver's class or a conformed protocol declares `on_nil:` (§4.10.9) with an entry for this method, that entry's value is returned instead of nil-lift.
 - **Nil-coalescing.** `x ?? default` returns `x` if non-nil, else `default`. Types must match; the result type is the non-optional common type.
 - **Explicit panic.** `x ?? panic("reason")` is the sanctioned "die if nil" form. There is no shorter sugar. Verbosity is intentional — panic should look exceptional in source so it stays exceptional in behavior.
 - **Scoped unwrap (single binding).** `if let x = maybe: ...` and `guard let x = maybe else: ...` bind unwrapped `x` for the following scope. Standard patterns from the Swift-family.
@@ -1986,7 +1989,7 @@ class Handler:
 
 Users needing richer nil-related contracts (e.g., "not nil AND not empty") write the invariant form directly. `T!` is optimized for the common case.
 
-**Userspace nil-punning.** Every user method is automatically nil-safe for message sends (ObjC-inherited). For methods that should return a specific non-nil value on nil receiver — Clojure-style `(count nil)` = `0` semantics — the class or protocol declares a `section on_nil:` (§4.10.9) with a method → value table. Stdlib `Collection` and `String` protocols ship default `on_nil` entries; conformers inherit.
+**Userspace nil-punning.** Every user method is automatically nil-safe for message sends (ObjC-inherited). For methods that should return a specific non-nil value on nil receiver — Clojure-style `(count nil)` = `0` semantics — the class or protocol declares a `on_nil:` (§4.10.9) with a method → value table. Stdlib `Collection` and `String` protocols ship default `on_nil` entries; conformers inherit.
 
 ### 3.7 Pattern Matching (`switch`)
 
@@ -4251,7 +4254,9 @@ Users may add arbitrary keys under `metadata:` for tool/documentation use (e.g. 
 
 #### 4.10.8 The `metadata:` Section *(Stage 1)*
 
-`metadata:` is a user-writable declaration section that carries compile-time metadata about the enclosing class. It is spec-committed as a first-class section and processed by the compiler before any other section on the same class.
+`metadata:` is a **class-header declaration prelude with section-shaped syntax** — it carries compile-time metadata about the enclosing class. Written like a section for visual consistency with the rest of the class body, but governed by rules that deviate from §4.6 section composition semantics: exactly one per class, must appear first, no runtime instance, cannot repeat, compile-time only. Consider it a first-class declaration slot that happens to look like a section rather than a section-in-the-general-sense.
+
+**Why the section-shape reuse.** Readers already parse `data:` / `state:` / `channel:` / etc. as class-body labeled blocks. Reusing that shape for `metadata:` avoids introducing a second header-level block syntax. The cost is the deviation from §4.6 rules noted below; the benefit is one visual vocabulary for the class body.
 
 **Composition:**
 
@@ -4279,6 +4284,8 @@ class Foo:
 
 `on_nil:` is a user-writable declaration section that specifies per-method return values when the receiver is nil. It participates in nil-receiver dispatch (§5.7).
 
+**Syntax normalization (v0.11 cleanup).** Prior spec drafts wrote this section as `section on_nil:` with a `section` keyword prefix, which was inconsistent with every other stdlib section (`data:`, `state:`, `methods:`, `channel:`, `metadata:`, etc.) — all use bare `<name>:` at usage sites. The `section` keyword is reserved for section-class *definitions* (§4.11 `section class Channel:`), not for usage. Post-cleanup, `on_nil:` is the sole spelling.
+
 **Composition:**
 
 ```
@@ -4292,7 +4299,7 @@ class UserList:
             return self.entries.length == 0
         function first(self) -> User:
             return self.entries[0]
-    section on_nil:
+    on_nil:
         count: 0
         is_empty: true
         first: nil          # explicit — otherwise auto-lifts to User? = nil
@@ -5735,7 +5742,7 @@ Message sends on nil receivers are legal (§3.6.1). This section specifies how t
 
 **Lookup order for a call `receiver.method(args)` when `receiver` is nil:**
 
-1. **Class `on_nil` section (§4.10.9).** If the receiver's static type declares `section on_nil:` with an entry for `method`, that entry's value is returned. No method body runs.
+1. **Class `on_nil` section (§4.10.9).** If the receiver's static type declares `on_nil:` with an entry for `method`, that entry's value is returned. No method body runs.
 2. **Conformed protocols' `on_nil` sections.** If no class-level entry matches, walk the receiver type's conformed protocols in declaration order; the first protocol declaring `method` in its `on_nil` section supplies the return.
 3. **Auto-lift default.** If no `on_nil` entry is found, the runtime returns nil, and the call-site expression type auto-lifts from `Return` to `Return?`. For methods returning `Unit`, the call is a silent no-op (expression type remains `Unit`).
 
@@ -5757,7 +5764,7 @@ Message sends on nil receivers are legal (§3.6.1). This section specifies how t
 protocol Collection:
     accepts count() -> Int
     accepts is_empty() -> Bool
-    section on_nil:
+    on_nil:
         count: 0
         is_empty: true
 
@@ -5769,7 +5776,7 @@ class UserList(Collection):
             return self.entries.length
         function is_empty(self) -> Bool:
             return self.entries.length == 0
-    section on_nil:
+    on_nil:
         count: 0        # matches protocol; explicit for clarity
         # is_empty: not declared → inherits protocol's `true`
 
@@ -7593,7 +7600,7 @@ processor_decl := 'processor' identifier '(' parameter_list ')' '->' type
 validator_decl := 'validator' identifier '(' parameter_list ')'
                   ':' INDENT statement* DEDENT
 
-method_decl := 'expose'? ('mutating')? ('replace')? 'function' identifier
+method_decl := 'expose'? ('replace')? 'function' identifier
                generic_params? '(' parameter_list ')' ('->' type)?
                effect_clause? contract_clause?
                ':' INDENT statement* DEDENT
@@ -7601,6 +7608,10 @@ method_decl := 'expose'? ('mutating')? ('replace')? 'function' identifier
               # body and marks explicit intent to shadow a same-named method from
               # the target class's original definition or another extension.
               # Without `replace`, a same-name conflict is a compile error.
+              #
+              # Removed in v0.11: the `mutating` modifier — see §3.5.2 retirement.
+              # Method mutation is inferred from body assignments by §8.4.1
+              # reader/writer classification; no author declaration needed.
 
 # Binding rule for `ensures` expressions inside `contract_clause` (v0.8.7, §3.4.3):
 # Within an ensures expression, `self` and parameter identifiers refer to the
@@ -7613,9 +7624,11 @@ method_decl := 'expose'? ('mutating')? ('replace')? 'function' identifier
 # Effect list (§3.5). Failure is NOT an effect in v0.8.5+ — failable functions
 # express failure via return type (nil-punning or domain enum, §3.5.4).
 effect_clause := effect_atom (',' effect_atom)*
-effect_atom   := 'async' | 'allocates' | 'blocks' | 'mutating' | identifier
+effect_atom   := 'async' | 'allocates' | 'blocks' | identifier
               # `identifier` supports effect-polymorphism parameters (§3.5.3)
               # and user-declared effect aliases via `alias @name: async, allocates`.
+              # `mutating` removed v0.11 — see §3.5.2 retirement (reader/writer
+              # classification §8.4.1 infers mutation from body assignments).
 
 # Parameter defaults (§3.8.5). Default expression must be a compile-time constant:
 # primitive literal, nil, or value-alias reference. Collection literals and calls
