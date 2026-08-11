@@ -4,6 +4,72 @@
 
 **Companion document:** `spec/spec-v0.10.md` (was `spec-v0.9.md` through v0.9.x; `spec-v0.8.md` through v0.8.x; before that `spec-v0.7.md` through v0.7.x; before that `spec-v0.6.md`; before that `corvid-spec-v0.5.md`).
 
+## Session note — Refined atoms banned; predicates stay in invariants/contracts/predicate-atoms (2026-08-11, no version bump; supersedes earlier session's refined-atom choice)
+
+**Reversal of the refined-atom commitment from earlier this same session.** Previous addendum committed choice (b) for refined atom identity — refinements share representation with their base, structural subatoming via refinement, Liquid-Haskell-style propagation. User pushed back: "perhaps we should ban `atom Nat: Int where atom.value >= 0` form." After considering the trade-offs, banning wins. Reversal explicitly supersedes the earlier commitment.
+
+**What the user showed as the shape they wanted:**
+
+```
+atom Counter:
+    state:
+        count: Int = 0
+    invariants:
+        count between 0 and 100
+```
+
+Reading: predicates live in `invariants:`; bare field names are in scope (no `atom.` pronoun); no floating type-name (Nat, BoundedNat, etc.) that abstracts the constraint away from the atom that owns it.
+
+**Design decisions this addendum commits.**
+
+- **No refinement types at the type-signature level.** No `atom Nat: Int where value >= 0`; no floating type-name that carries a predicate. Types are pure atom shapes.
+- **Predicates live in one of three places, all first-class:**
+  - Invariants on atoms (single-atom or cross-atom constraints), using bare field names in scope
+  - `requires` / `ensures` on transitions (use-site preconditions/postconditions)
+  - Reusable predicate atoms (Bool-returning leaf atoms) invoked from invariants and contracts
+- **Bare field names in scope for invariants** — no `atom.` or `self.` pronoun required (though allowed for disambiguation).
+- **Type-checking is pure atom-shape-conformance** — structural, no refinement propagation, no dependent-typing verification cost.
+- **Types-as-atoms unification stays intact** — types ARE atoms (as shapes). What changes is that atom SHAPES don't carry predicates; predicates are a separate first-class mechanism.
+
+**Why the reversal is right.**
+
+Refined types create a proliferation of type-names (Nat, BoundedNat, Email, Percent, ...) that abstract constraints away from the atoms that maintain them. The constraint on Counter's count is Counter's constraint — putting it in Counter's `invariants:` keeps the predicate co-located with the state. Reusability via predicate atoms costs one line at the invariant (`is_percentage(rate)`) instead of one type declaration + signature-level enforcement + refinement-inference machinery. This is simpler, more localized, more familiar to Swift/Rust/Kotlin users, and avoids the verification complexity of dependent typing while keeping all the actual expressiveness (predicates on values are still first-class — they just live in invariants and contracts, not in type signatures).
+
+**What we give up:**
+- Named refined types at signature positions (`atom foo(n: Nat)` doesn't work; write `atom foo(n: Int) requires n >= 0` instead).
+- Compile-time refinement inference across operations.
+- The Liquid-Haskell / Whiley / dependent-type direction at v1.0.
+
+**What we keep:**
+- Types-as-atoms unification (§1.3, §1.11) — atoms are the primitive; types are named shapes.
+- All predicates first-class — via invariants, contracts, predicate atoms.
+- Structural conformance on atom shapes (§3.4).
+- Constraints local to where they matter (co-located with state or transition).
+
+**Spec changes committed this addendum.**
+
+- `spec/spec-v0.11.md` §1.3 — rewrote types-as-atoms paragraph. Removed the second half about refined types + refinement propagation + structural subatoming via refinement. Replaced with "predicates on values are invariants and contracts, not refined types" — documents the ban, shows the three predicate locations (invariants, transition contracts, predicate atoms), explains why the ban is right and what's traded away.
+- `spec/spec-v0.11.md` §1.11 reduction table — removed "refined type" row. Kept "type" and "generic type" rows.
+- `spec/spec-v0.11.md` §1.11 closing paragraph of reduction — rewrote from "type-checking is atom-shape-conformance + refinement satisfaction" to "type-checking is atom-shape-conformance only — pure structural. Predicates live in invariants/contracts/predicate-atoms."
+- `spec/spec-v0.11.md` §1.11 v0.12+ list — updated "Types-as-atoms unification" entry to reflect the ban. Removed "Refined atom syntax" entry entirely.
+- `spec/spec-v0.11.md` §1.11 v1.0 substrate list — removed "Refinement propagation" and "Structural subatoming via refinement" commitments. Added positive commitments: "type-checking is atom-shape-conformance (structural); no refinement types at signature level"; "predicates live in invariants / requires / ensures / predicate atoms."
+
+**Mechanism-invention trap check.** Passes and then some. This session went further than the check normally reaches — it caught mechanism-invention I had committed and reversed it. Refined types were extra mechanism (a whole system for propagating predicates through operations, structural subatoming, refinement inference) when invariants+contracts+predicate-atoms already cover the same expressiveness. Corvid's discipline held.
+
+**Seventeenth dissolution session** — this one is a reversal + simplification. Undoes the sixteenth session's commitment to refined atoms; keeps only the parts that were genuinely necessary (types-as-atoms unification, no separate type system, atom is the primitive). Net effect: strictly simpler v1.0 substrate than the sixteenth session's landing.
+
+**Positioning correction.**
+
+Previous framing: "types are atoms; refined types are atoms + predicates; Liquid-Haskell-style refinement propagation at v1.0."
+
+Corrected framing: "types are atoms (pure shapes); predicates are contracts and invariants (first-class, but separate from types); no refinement types at the signature level; type-checking is structural conformance."
+
+Cleaner. Aligns with Corvid's Clojure-inspired ethos (one mechanism where possible; avoid adding features that duplicate what's already there). Aligns with Swift/Rust/Kotlin position (predicates are assertions, not types) — familiar to Corvid's target audience.
+
+**Open item.** `between 0 and 100` — is this a special ternary operator, sugar for `0 <= count <= 100` (Python-style chained comparison), or a method-call `count.between(0, 100)`? Design question deferred; whichever surface shape reads best. The mechanism underneath is a Bool-returning atom either way.
+
+---
+
 ## Session note — Types-as-atoms unification (extends atom model landing, 2026-08-11, no version bump)
 
 **Follow-on to the atom model landing.** User pushed on the types-as-contracts framing I'd sketched: "consider if types are contracts." I laid out three views (A: full unification, B: distinct, C: partial — types as representation-bearing contracts). User then jumped a level: "perhaps then we can unify types and atoms? consider that integers are records."
