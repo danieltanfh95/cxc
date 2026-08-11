@@ -1,12 +1,14 @@
 # Corvid Language Specification — v0.11 (Working Draft)
 
-**Status:** Working draft. v0.11 lands two pieces: (1) **auto-conformance to `As<Bytes>` and `From<Bytes>` for value types** (§3.4.6 new, §3.10.10 new — canonical wire format spec) — records/enums/primitives get compiler-synthesized serialization from field layout, same shape as automatic structural equality on records (§3.2); (2) **removal of the double-colon header form** (`class Foo: A, B:` and `class Foo: BaseClass:`) — v0.10.2's grace period ends. Migration is mechanical: `class Foo(A, B):` for conformance, `metadata: extends: BaseClass` (body-form) for ObjC inheritance.
+**Status:** Working draft. v0.11 lands two pieces: (1) **canonical bytes as a value-type base-class property** (§3.3 extended, §3.4.6 new, §3.10.10 new — canonical wire format spec) — records/enums/primitives carry `.as() -> Bytes` and `class function from(source: Bytes)` synthesized from field layout, the same way records already carry synthesized `==` and `hash`. Structural conformance to `As<Bytes>` / `From<Bytes>` follows per §3.4; no separate "auto-conformance" mechanism, no compiler awareness of specific target-type names; (2) **removal of the double-colon header form** (`class Foo: A, B:` and `class Foo: BaseClass:`) — v0.10.2's grace period ends. Migration is mechanical: `class Foo(A, B):` for conformance, `metadata: extends: BaseClass` (body-form) for ObjC inheritance.
 
-**Change log from v0.10.2 → v0.11 (Value-type auto-conformance + double-colon removal):**
+**Change log from v0.10.2 → v0.11 (Value-type byte property + double-colon removal):**
 
-**§3.4.6 new — Auto-Conformance for Value Types.** Every `kind: record` and `kind: enum` automatically conforms to `As<Bytes>` and `From<Bytes>`; compiler synthesizes `.as() -> Bytes` and `class function from(source: Bytes) -> DecodeOutcome<Self>` from field layout at composition time. `kind: regular` classes do NOT auto-conform — mutable state, potential cycles, identity require explicit user-written serialization. User-written `.as() -> Bytes` on a value type shadows the auto-derived one per §3.3.2 (own definitions win over inherited defaults). Missing `As<Bytes>` on a field type → compile error at the containing record's declaration.
+**§3.3 extended — Value-type base-class properties enumerated.** `kind: record` and `kind: enum` classes have four base-class properties the compiler synthesizes from field/case layout: structural equality (`==`), structural hashing (`hash(self)`), copy-on-assign, and canonical bytes (`.as() -> Bytes`, `class function from(source: Bytes) -> DecodeOutcome<Self>`). The prior spec listed only the first three (implicit via "structural equality" wording); v0.11 makes canonical bytes explicit in the same list. `kind: regular` classes get none of these automatically — mutable state, potential cycles, identity make mechanical synthesis unsafe.
 
-**§3.10.10 new — Canonical Value-Type Encoding.** Wire-format spec for the auto-conformance's synthesized output. **Network-order (big-endian) for multi-byte primitives** — silent breakage across architectures is a footgun; performance-critical same-host use cases can opt out by writing their own `.as() -> Bytes`. Records concatenate fields in declaration order. Enums emit discriminator byte + associated data. Strings emit `length: UInt32 || utf8_bytes`. Optionals emit presence byte + payload. Collection literals emit `length: UInt32 || elements`.
+**§3.4.6 new — Canonical Bytes as a Value-Type Base-Class Property.** Detail spec for the byte methods: what the compiler synthesizes (`.as` + `.from`), when (records/enums; primitives get prelude-shipped methods per §3.11.4 since they have no field layout), how structural conformance to `As<Bytes>` and `From<Bytes>` (§3.4) falls out as a *consequence* of the methods existing, and the override rule (user-written `.as() -> Bytes` shadows the synthesized one per §3.3.2). Missing `.as() -> Bytes` on a field type → compile error at the containing record's declaration. Compiler does NOT special-case any specific protocol name or target type; the machinery is per-class field-layout synthesis plus ordinary structural conformance.
+
+**§3.10.10 new — Canonical Value-Type Encoding.** Wire-format spec for the synthesized byte methods. **Network-order (big-endian) for multi-byte primitives** — silent breakage across architectures is a footgun; performance-critical same-host use cases can opt out by writing their own `.as() -> Bytes`. Records concatenate fields in declaration order. Enums emit discriminator byte + associated data. Strings emit `length: UInt32 || utf8_bytes`. Optionals emit presence byte + payload. Collection literals emit `length: UInt32 || elements`.
 
 **Prelude ships `As<Bytes>` / `From<Bytes>` on all primitives** (§3.11.1 extended). `Int8`/`Int16`/`Int32`/`Int64`/`UInt*` in network-order; `Float`/`Double` in IEEE 754 big-endian; `Bool` as single byte (0/1); `Char` as grapheme's UTF-8 bytes. Also ships `.as_bytes(order: ByteOrder) -> Bytes` per primitive for explicit-endian access (ordinary method, does not participate in `As<Bytes>` dispatch).
 
@@ -16,19 +18,21 @@
 
 **§3.4.5 updated** — the retirement subsection reframed from "deprecated in v0.10.2, removed in v0.11" to "removed in v0.11." §10 grammar's deprecation note becomes a historical-record note.
 
-**Only `As<Bytes>` gets auto-conformance.** JSON, MsgPack, CBOR, and other format-specific target types do NOT get auto-conformance — they have per-record author choices (field naming, null handling, number precision) with no defensible default, and silent choice would be a footgun. Users write `function as(self) -> Json:` on their records explicitly via ordinary `extend class Foo:` (§3.3.2). Third-party format packages (`corvid_json`, `corvid_msgpack`, etc.) need zero special language support — they ship their target type and users author conformances the same way they'd author any protocol method.
+**Only bytes get the base-class property.** JSON, MsgPack, CBOR, and other format-specific target types do NOT have compiler-synthesized methods on value types — they have per-record author choices (field naming, null handling, number precision) with no defensible default, and silent choice would be a footgun. Users write `function as(self) -> Json:` on their records explicitly via ordinary `extend class Foo:` (§3.3.2). Third-party format packages (`corvid_json`, `corvid_msgpack`, etc.) need zero special language support — they ship their target type and users author conformances the same way they'd author any protocol method.
+
+**Reframe from v0.11 initial draft.** Earlier working drafts of v0.11 framed this as "the compiler auto-conforms value types to `As<Bytes>` and `From<Bytes>`" — a target-type carve-out inside a general protocol (design-coherence tension 2, audit 2026-08-10). Reframed at 2026-08-11 to remove the carve-out: the compiler doesn't know `Bytes` is a special target type or `As<Bytes>` is a special protocol; it synthesizes the two methods on every value type as a base-class property (§3.3 extension of what records already do for `==` / `hash`), and structural conformance to `As<Bytes>` / `From<Bytes>` falls out per §3.4 because the methods exist. Same runtime behavior, honest layering: the base-class property is the language commitment; conformance is the consequence.
 
 **Consistency with prior decisions.**
 
-- **§3.2 records + §3.4 protocols** — records already auto-derive structural equality and hashing. `As<Bytes>` auto-conformance extends the same "value-type base-class properties" pattern to serialization.
-- **§3.10.4 Bytes as universal substrate** — v0.10.0's substrate commitment was that any type with `As<Bytes>` participates in the serialization protocol. Auto-conformance makes every value type participate by default.
-- **§3.3.2 rule 6** — auto-derived methods are inherited defaults; user-written `.as() -> Bytes` shadows silently. Same shape as protocol-default inheritance.
-- **§3.10.3 As<T>/From<T>** — auto-derivation uses the same protocol/method-name convention (`.as() -> Bytes`, never `.as_bytes()`). No naming variants invented; verified against the mechanism-invention trap memory.
-- **§1.5 class-as-universal + §3.4 composition-over-inheritance** — value types get base-class properties automatic (equality, hashing, now serialization); regular classes require explicit user commitment.
+- **§3.3 records + §3.4 protocols** — records already carry synthesized `==` and `hash` as base-class properties. Canonical bytes extend the same list — one more base-class property, no new mechanism.
+- **§3.10.4 Bytes as universal substrate** — v0.10.0's substrate commitment was that any type with `As<Bytes>` participates in the serialization protocol. Value types now carry the required methods as base properties, so every value type participates by default via ordinary structural conformance.
+- **§3.3.2 rule 6** — synthesized methods are inherited defaults; user-written `.as() -> Bytes` shadows silently. Same shape as protocol-default inheritance.
+- **§3.10.3 As<T>/From<T>** — no changes; the protocol/method-name convention (`.as() -> Bytes`, never `.as_bytes()`) is unchanged and unaware of the synthesis. Verified against the mechanism-invention trap memory.
+- **§1.5 class-as-universal + §3.4 composition-over-inheritance** — value types get base-class properties automatic (equality, hashing, now bytes); regular classes require explicit user commitment.
 
-**Mechanism-invention trap check.** Passes. `As<Bytes>` protocol → §3.10.3, not new. `From<Bytes>` protocol → §3.10.3, not new. Auto-derivation as base-class property → §3.2 pattern for records, not new. Wire format spec → new content, not a new mechanism. Zero sibling protocols invented; zero per-target method names invented; zero "third-party format story" deferred to future versions. Third-party formats use existing extension mechanism.
+**Mechanism-invention trap check.** Passes. `As<Bytes>` protocol → §3.10.3, unchanged. `From<Bytes>` protocol → §3.10.3, unchanged. Compiler synthesis of base-class methods → §3.3 pattern for records extended (same shape as existing `==` / `hash` synthesis), no new mechanism. Wire format spec → new content, not a new mechanism. Zero sibling protocols invented; zero per-target method names invented; zero compiler awareness of specific target-type names; zero "third-party format story" deferred to future versions. Third-party formats use existing extension mechanism.
 
-**Downstream cleanups.** §3.4.6 new. §3.10.10 new. §3.11.1 extended with prelude conformances table. §3.4.5 retirement subsection updated (removed-in-v0.11 activates). §10 grammar deprecation note → historical record. PATTERNS.md serialization entry rewritten to reflect actual v0.11 landing. README status. Working-notes. File rename `spec-v0.10.md` → `spec-v0.11.md`.
+**Downstream cleanups.** §3.3 extended. §3.4.6 new. §3.10.10 new. §3.11.1 extended with prelude conformances table. §3.4.5 retirement subsection updated (removed-in-v0.11 activates). §10 grammar deprecation note → historical record. PATTERNS.md serialization entry rewritten to reflect actual v0.11 landing. README status. Working-notes. File rename `spec-v0.10.md` → `spec-v0.11.md`.
 
 ---
 
@@ -981,10 +985,16 @@ All richer type expressions — brackets, braces, arrows, suffix operators — c
 All user types are declared via `class`. The `metadata: kind:` section entry (§4.10.6, §6.1) selects the variant:
 
 - **`kind: regular`** (default, omitted) — reference-typed with `state:`, extent participation, weak refs, dynamic dispatch. Traditional class.
-- **`kind: record`** — value-typed, no `state:`, no extent, structural equality, copy-on-assign. Replaces v0.5's `struct` keyword.
-- **`kind: enum`** — sealed sum type with `cases:` section and optional integer `raw_type:`. Replaces v0.5's `enumeration` keyword.
-- **`kind: protocol`** — no instantiation; `accepts:` section holds required signatures, `methods:` holds default implementations.
+- **`kind: record`** — value-typed, no `state:`, no extent. Base-class properties: structural equality (`==`), structural hashing (`hash(self)`), copy-on-assign, canonical bytes (`.as() -> Bytes` / `.from(source: Bytes)` per §3.10.10). Replaces v0.5's `struct` keyword.
+- **`kind: enum`** — sealed sum type with `cases:` section and optional integer `raw_type:`. Same base-class properties as `kind: record` (equality, hashing, canonical bytes). Replaces v0.5's `enumeration` keyword.
+- **`kind: protocol`** — no instantiation; `accepts:` section holds required signatures, `methods:` holds default implementations. No value-type base properties (protocols are not instantiable).
 - **`kind: section`** — §4 metaprogramming section-class.
+
+**Value-type base-class properties are language commitments, not protocol conformances.** Records and enums have `.as() -> Bytes`, `==`, `hash`, and copy-on-assign as *fundamental properties of what value types ARE* — the compiler synthesizes these methods per class from field layout, same shape as automatic structural equality in Haskell records or Rust structs. Structural conformance to `As<Bytes>` / `From<Bytes>` / `Equatable` / `Hashable` (§3.4) falls out as a consequence — the base methods exist, so structural checks succeed with no separate "auto-conformance" mechanism. See §3.4.6 for the byte-property detail and §3.10.10 for the canonical wire format.
+
+Primitives (`Int`, `Float`, `Bool`, `Char`, etc.) are `kind: record` and inherit the same base-class properties. Prelude ships the byte methods explicitly (§3.11.4) because primitives have no field layout for the compiler to synthesize from — the encoding is per-type (IEEE 754 for floats, big-endian for integers, etc.).
+
+`kind: regular` classes get **none of these base-class properties automatically** — mutable state, potential cycles, and identity make mechanical equality/hashing/serialization unsafe. Regular-class authors define `==` / `hash(self)` / `.as() -> Bytes` explicitly if they want those behaviors.
 
 Sugar keywords (`record`, `enum`, `protocol`, `section`) desugar losslessly to the corresponding `class + metadata: kind:` form. See §4.11 for sugar rules. Class bodies are described in §4.7; runtime semantics per kind are described in §6.
 
@@ -1662,11 +1672,15 @@ note: this form was deprecated in v0.10.2 with fix-it; removed in v0.11 as sched
 
 **Runtime obligation.** Explicit conformance adds one compile-time validation pass per declared conformance; no runtime cost. The class's method table (§5.1) is unaffected by whether a conformance was declared explicitly or inferred structurally — dispatch is identical.
 
-#### 3.4.6 Auto-Conformance for Value Types
+#### 3.4.6 Canonical Bytes as a Value-Type Base-Class Property
 
-Records (`kind: record`) and enums (`kind: enum`) automatically conform to `As<Bytes>` (§3.10.3) and `From<Bytes>` — the compiler synthesizes `function as(self) -> Bytes` and `class function from(source: Bytes) -> DecodeOutcome<Self>` from the class's field layout at composition time. Primitives (`Int`, `Float`, `Bool`, `Char`, etc.) get the same conformances shipped explicitly in prelude (§3.11.1). The rule is: **every value-type base class carries `As<Bytes>` / `From<Bytes>` automatically, the same way records already carry structural equality and hashing per §3.2.**
+Per §3.3, `kind: record` and `kind: enum` carry a small fixed set of **base-class properties** the compiler synthesizes from field/case layout: structural equality (`==`), structural hashing (`hash(self)`), copy-on-assign, and **canonical bytes** — the methods `function as(self) -> Bytes` and `class function from(source: Bytes) -> DecodeOutcome<Self>`, produced from field layout per §3.10.10's wire format. Primitives (`Int`, `Float`, `Bool`, `Char`, etc.) are `kind: record` and inherit the same base properties; the byte methods on primitives ship explicitly in prelude (§3.11.4) since primitives have no field layout for the compiler to synthesize from.
 
-Regular classes (`kind: regular`) do **not** auto-conform — mutable `state:` fields, potential reference cycles, and hidden identity make mechanical serialization unsafe. Regular-class authors write `.as() -> Bytes` explicitly if they want their class to participate in the serialization substrate.
+This section documents the byte property — the equality/hash properties are documented at §3.3.
+
+**Not a protocol carve-out; not a compiler-special-cased target-type.** The compiler does not know that `Bytes` is a special target type or that `As<Bytes>` is a special protocol. It synthesizes the two methods `as(self) -> Bytes` and `class function from(source: Bytes)` because value types have canonical bytes as a fundamental property of what value types ARE — same shape as records having structural equality. Once those methods exist on the class, structural conformance to `As<Bytes>` and `From<Bytes>` (§3.4) succeeds *as a consequence*, exactly like structural conformance to `Equatable` succeeds because `==` is synthesized. No separate "auto-conformance" mechanism exists.
+
+**Regular classes (`kind: regular`) get none of these base properties.** Mutable `state:` fields, potential reference cycles, and hidden identity make mechanical equality / hashing / serialization unsafe. Regular-class authors write `==`, `hash(self)`, and `.as() -> Bytes` explicitly if they want those behaviors. Same discipline as Rust (`#[derive(...)]` for structs, hand-implement for anything with interior mutability), same discipline as Haskell (`deriving (Eq, Show)` for algebraic data types).
 
 **Example.**
 
@@ -1674,7 +1688,7 @@ Regular classes (`kind: regular`) do **not** auto-conform — mutable `state:` f
 record Point:
     data: x: Float
     data: y: Float
-    # No user-written .as() — compiler synthesizes:
+    # Compiler synthesizes these two methods on Point (base-class properties, per §3.3):
     #   function as(self) -> Bytes:
     #       let out = Bytes.with_capacity(8)
     #       out.append(self.x.as())    # Float → 4 bytes, network-order
@@ -1687,9 +1701,12 @@ record Point:
     #               switch Float.from(source.slice(4..8)):
     #                   case .invalid(let o, let r): return .invalid(o + 4, r)
     #                   case .converted(let y): return .converted(Self(x: x, y: y))
+    # Structural conformance to As<Bytes> and From<Bytes> follows per §3.4 — the
+    # methods exist on the class, so the structural check succeeds. No separate
+    # "auto-conformance" declaration required or generated.
 
 let p = Point(x: 1.0, y: 2.0)
-let b: Bytes = p.as()                                 # works — auto-derived
+let b: Bytes = p.as()                                 # calls synthesized method
 let p2 = Point.from(source: b)                        # returns DecodeOutcome<Point>
 ```
 
@@ -1701,7 +1718,7 @@ enum Direction:
     case south
     case east
     case west
-    # Auto-derived:
+    # Compiler synthesizes:
     #   function as(self) -> Bytes:
     #       switch self:
     #           case .north: return [0x00]
@@ -1713,32 +1730,32 @@ enum Direction:
 enum Shape:
     case circle(radius: Float)
     case rectangle(width: Float, height: Float)
-    # Auto-derived: discriminator byte + associated data recursively.
+    # Compiler synthesizes: discriminator byte + associated data recursively.
     #   circle(1.5): [0x00, <4-byte float 1.5>]
     #   rectangle(2.0, 3.0): [0x01, <4-byte 2.0>, <4-byte 3.0>]
 ```
 
 **Discriminator width.** Enums with ≤256 cases use `UInt8` discriminator; enums with 257–65536 cases use `UInt16`; beyond that use `UInt32`. Discriminator width is set at composition time from case count. Adding a case to an enum that pushes it across a width boundary is a wire-incompatible change — flagged by the compiler at composition, since it would break decoding of existing serialized values.
 
-**Field-type recursion.** A record with a field of type `T` requires `T` to have `As<Bytes>` and `From<Bytes>` conformance. If `T` is a record/enum/primitive → automatic. If `T` is a regular class → user must have written the conformance methods. If `T` has no `As<Bytes>` conformance, the record declaration fails at compile time with a diagnostic pointing at the field:
+**Field-type recursion.** A record with a field of type `T` requires `T` to have `.as() -> Bytes` and `class function from(source: Bytes)` methods, so synthesis of the containing record's byte methods can call them. If `T` is a record/enum/primitive → guaranteed by the base-class property. If `T` is a `kind: regular` class → the author must have written the methods. If `T` has neither, the record declaration fails at compile time with a diagnostic pointing at the field:
 
 ```
-error[E0520]: field `T`'s type `SomeRegularClass` has no `As<Bytes>` conformance
+error[E0520]: field `T`'s type `SomeRegularClass` has no `.as() -> Bytes` method
   --> src/model.cor:12:9
    |
 12 |     data: helper: SomeRegularClass
-   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ cannot auto-derive `Model.as() -> Bytes`
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ cannot synthesize `Model.as() -> Bytes`
    |
-help: either write `As<Bytes>` on `SomeRegularClass` explicitly
+help: either write `.as() -> Bytes` on `SomeRegularClass` explicitly
    |
    |     extend class SomeRegularClass:
    |         methods:
    |             function as(self) -> Bytes: ...
    |
-help: or write `Model.as() -> Bytes` explicitly to opt out of auto-derivation
+help: or write `Model.as() -> Bytes` explicitly to opt out of synthesis
 ```
 
-**User override.** A value-type author who wants a different wire format writes `.as() -> Bytes` explicitly on the record. Per §3.3.2 rule 6, own definitions shadow inherited defaults; auto-derived conformance is treated as inherited default. Zero ceremony to override; zero ceremony to accept.
+**User override.** A value-type author who wants a different wire format writes `.as() -> Bytes` explicitly on the record. Per §3.3.2 rule 6, own definitions shadow inherited defaults; the synthesized method is treated as an inherited default. Zero ceremony to override; zero ceremony to accept.
 
 ```
 record Timestamp:
@@ -1750,15 +1767,15 @@ record Timestamp:
             return (self.seconds * 1_000_000_000 + self.nanos.as::<UInt64>()).as()
 ```
 
-**Interaction with §3.4.5 explicit conformance.** A record does not need `class Point(As<Bytes>):` header sugar — the conformance is automatic. Declaring it explicitly is legal but redundant (compiler treats it as a no-op reaffirmation, no warning). Explicit declaration on a `kind: regular` class does what it always did — validates at declaration time that the class's method table satisfies `As<Bytes>`'s `accepts:` list (which for regular classes means the user's own `.as() -> Bytes` must be present).
+**Interaction with §3.4.5 explicit conformance.** A record does not need `class Point(As<Bytes>):` header sugar — the byte methods already exist as base-class properties, so structural conformance succeeds. Declaring it explicitly is legal but redundant (compiler treats it as a no-op reaffirmation, no warning). Explicit declaration on a `kind: regular` class does what it always did — validates at declaration time that the class's method table satisfies `As<Bytes>`'s `accepts:` list (which for regular classes means the user's own `.as() -> Bytes` must be present).
 
-**Only `As<Bytes>` / `From<Bytes>` get auto-conformance.** JSON, MsgPack, CBOR, and other format-specific target types (`Json`, `MsgPack`, `Csv`, etc.) do **not** get auto-conformance. They have per-record author choices (field naming — camelCase vs snake_case? null handling — omit missing or emit `null`? number precision — full float or truncated? enum spelling — case name string or integer discriminator?) with no defensible language-level default. Silent choice would be a footgun; the same principle that made narrowing `Int32(300).as() -> UInt8` a compile error rather than silent-wrap applies here. Users write `function as(self) -> Json:` explicitly; third-party format packages ship their target type but write no auto-derivation logic.
+**Why only bytes get the base-class property.** Bytes are Corvid's universal substrate (§3.10.4). One canonical encoding exists for a given field layout — concatenate field bytes in declaration order — with no author choice (endianness is fixed language-wide per §3.10.10). JSON, MsgPack, CBOR, and other format-specific representations are **not** base properties: they have per-record author choices (field naming — camelCase vs snake_case? null handling — omit missing or emit `null`? number precision — full float or truncated? enum spelling — case name string or integer discriminator?) with no defensible language-level default. Silent choice would be a footgun; the same principle that made narrowing `Int32(300).as() -> UInt8` a compile error rather than silent-wrap applies here.
 
-**Rationale for `As<Bytes>` being the exception.** Bytes are Corvid's universal substrate (§3.10.4). There is one canonical byte encoding for a given field layout — concatenate field bytes in declaration order — and no author choice about it (endianness is fixed language-wide per §3.10.10, wire format is deterministic). The absence of author choice is what makes auto-conformance safe for `As<Bytes>` and unsafe for `As<Json>`.
+Users needing JSON write `function as(self) -> Json:` explicitly per record. Third-party format packages (`corvid_json`, `corvid_msgpack`, etc.) ship their target type (`Json`, `MsgPack`) and users write conformances the same way they'd write any protocol method — no special language support, no compiler awareness of specific target-type names.
 
-**Runtime obligation.** Auto-derived methods populate the class's method table (§5.1) exactly as user-written methods do. No runtime cost difference; no metadata difference. §4.18 metadata lists the class as `conforms_to: [As<Bytes>, From<Bytes>, ...]` — auto-derived conformances appear in the list, indistinguishable from user-declared conformances.
+**Runtime obligation.** Synthesized methods populate the class's method table (§5.1) exactly as user-written methods do. No runtime cost difference; no metadata difference. §4.18 metadata lists the class as `conforms_to: [As<Bytes>, From<Bytes>, ...]` — the conformance is structural (§3.4), and the metadata records the resulting set regardless of whether the underlying method was user-written or synthesized as a base property.
 
-**Runtime cost of auto-derivation.** Compile-time only. The synthesized method bodies compile to the same instructions user-written equivalents would produce. Field iteration is unrolled at compile time (field count is known); no runtime reflection.
+**Runtime cost of synthesis.** Compile-time only. The synthesized method bodies compile to the same instructions user-written equivalents would produce. Field iteration is unrolled at compile time (field count is known); no runtime reflection.
 
 ### 3.5 Effects
 
@@ -2730,7 +2747,7 @@ switch Bytes.from([0xff, 0xfe, 0x48, 0x00]).decoded_as(.utf16_le):
 
 **Serialization substrate.** Any type conforming to `As<Bytes>` participates in Corvid's universal serialization protocol. Format-specific overlays (`As<Json>`, `As<MsgPack>`, `As<Yaml>`) become ordinary trait-qualified conformances added by user code or third-party packages via `extend class Foo:` (§3.3.2) — no special language support required; third-party format packages ship a target type and users write `function as(self) -> ThatType:` methods, exactly like user code. Method name is always `.as()` differentiated by return type per §3.10.3 trait-qualified dispatch; never `as_bytes()` / `as_json()`. No reflection-based auto-serialization (the trap Java's `Serializable` fell into); regular-class authors write `.as() -> Bytes` explicitly.
 
-**Auto-conformance for value types (v0.11 planned).** Records, enums, and primitives get automatic `As<Bytes>` and `From<Bytes>` conformances — the compiler synthesizes `.as() -> Bytes` and `class function from(source: Bytes) -> DecodeOutcome<Self>` from field layout at composition time. This is a base-class property (same shape as automatic structural equality on records per §3.2), not a stdlib layer requiring opt-in. `kind: regular` classes do NOT auto-conform — mutable state, potential cycles, identity require explicit user-written serialization. User-written `.as() -> Bytes` on a value type shadows the auto-derived one per §3.3.2 (own definitions win over inherited defaults). Only `As<Bytes>` gets auto-conformance because bytes are the universal substrate with one canonical encoding; format-specific overlays (JSON, msgpack) have per-record author choices (field naming, null handling, number precision) and must be user-written.
+**Value types have canonical bytes as a base-class property.** Per §3.3 and §3.4.6, records, enums, and primitives carry `.as() -> Bytes` and `class function from(source: Bytes) -> DecodeOutcome<Self>` as base methods — the compiler synthesizes them from field/case layout per §3.10.10's canonical wire format, the same way it synthesizes structural equality. Structural conformance to `As<Bytes>` and `From<Bytes>` (§3.4) then succeeds because the required methods exist; no separate "auto-conformance" mechanism, no compiler awareness of specific target-type names. `kind: regular` classes get no synthesis — mutable state, potential cycles, and identity require explicit user-written serialization. User-written `.as() -> Bytes` on a value type shadows the synthesized one per §3.3.2 (own definitions win over inherited defaults). Format-specific representations (JSON, MsgPack) are user-written per record because they have per-record author choices (field naming, null handling, number precision) with no defensible language-level default.
 
 #### 3.10.9 The `Pattern` Subsystem — Regex, Glob, Literal
 
@@ -2930,7 +2947,7 @@ help: or make groups non-capturing if names aren't needed
 
 #### 3.10.10 Canonical Value-Type Encoding
 
-Wire-format specification for §3.4.6's auto-conformance. Every value type's `.as() -> Bytes` and `class function from(source: Bytes)` produces / consumes bytes per this format. Deterministic across compilations, across architectures, across runtime instances.
+Wire-format specification for the byte methods that §3.4.6 documents as value-type base-class properties. Every value type's compiler-synthesized `.as() -> Bytes` and `class function from(source: Bytes)` produces / consumes bytes per this format. Deterministic across compilations, across architectures, across runtime instances. Users overriding the synthesis are free to depart from this format; the guarantees below apply only to synthesized methods.
 
 **Endianness — network-order (big-endian) for multi-byte primitives.** Silent breakage across architectures is a footgun; the encoding is one canonical form the compiler can synthesize without needing per-record author choice. Performance-critical same-host cases opt out by writing their own `.as() -> Bytes` on the record and using `.as_bytes(order: ByteOrder.host)` on individual field encodings (§3.11.1).
 
@@ -3086,9 +3103,9 @@ switch big.checked_to::<UInt8>():
 
 **Not a `Result<T, E>`.** Per v0.8.5, Corvid does not ship a generic `Result<T, E>` in the prelude. `ConvertOutcome<T>` is a domain enum with a fixed error case, consistent with the pattern used everywhere else (`DecodeOutcome<T>` §3.10.8, `SendOutcome`, etc.).
 
-#### 3.11.4 Byte Conformances on Primitives (v0.11)
+#### 3.11.4 Byte Methods on Primitives (v0.11)
 
-Prelude ships `As<Bytes>` and `From<Bytes>` conformances on every numeric primitive plus `Bool` and `Char`, per the canonical encoding (§3.10.10):
+Primitives are `kind: record` (§3.1) and inherit the value-type base-class property of having canonical byte methods (§3.4.6). Records get those methods synthesized from field layout; primitives have no field layout to synthesize from, so prelude ships the methods explicitly — one per-type implementation per the canonical encoding (§3.10.10). Structural conformance to `As<Bytes>` and `From<Bytes>` (§3.4) follows the same way as for records: the methods exist on the class, the structural check succeeds.
 
 ```
 # Shipped in prelude via extend blocks:
@@ -3153,7 +3170,7 @@ extend class UInt32:
                 case .host:     return self.as_bytes(order: platform_native_order)
 ```
 
-`.as_bytes(order:)` is a specific-name method, NOT participating in `As<Bytes>` trait-qualified dispatch (only `.as() -> Bytes` does that). Users who need host-order encoding for same-host performance write their record's `.as() -> Bytes` explicitly using `.as_bytes(order: .host)` on each field, shadowing the auto-derived one.
+`.as_bytes(order:)` is a specific-name method, NOT participating in `As<Bytes>` trait-qualified dispatch (only `.as() -> Bytes` does that). Users who need host-order encoding for same-host performance write their record's `.as() -> Bytes` explicitly using `.as_bytes(order: .host)` on each field, shadowing the synthesized one.
 
 **Roundtrip guarantee.** For every primitive `T` and every value `v: T`:
 

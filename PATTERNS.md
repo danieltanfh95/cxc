@@ -217,7 +217,7 @@ Raw-pointer access (`data.withUnsafeBytes { ... }`) is `bytes.raw_pointer()` and
 
 No reflection-based auto-serialization. `kind: regular` classes write `.as() -> Bytes` explicitly (via `As<Bytes>`, §3.10.3); mutable state, potential cycles, and identity make mechanical serialization unsafe. Format-specific overlays (`As<Json>`, `As<MsgPack>`, etc.) are trait-qualified conformances added via ordinary `extend class Foo:` (§3.3.2). Third-party format packages ship a target type and users write `function as(self) -> ThatType:` on their records — no special language support needed. Method name is always `.as()` differentiated by return type; never `as_bytes()` / `as_json()`.
 
-Value types (records, enums, primitives) get **auto-conformance** to `As<Bytes>` and `From<Bytes>` as of v0.11 (§3.4.6). Compiler synthesizes `function as(self) -> Bytes` and `class function from(source: Bytes) -> DecodeOutcome<Self>` from field layout at composition time. Same shape as automatic structural equality on records (§3.2) — a base-class property, not a stdlib layer requiring opt-in. Canonical wire format spec (§3.10.10): network-order (big-endian) for multi-byte primitives, fields concatenated in declaration order, enums as discriminator + associated data, strings/collections as `UInt32 length || payload`.
+Value types (records, enums, primitives) carry canonical bytes as a **base-class property** as of v0.11 (§3.3, §3.4.6). The compiler synthesizes `function as(self) -> Bytes` and `class function from(source: Bytes) -> DecodeOutcome<Self>` from field/case layout at composition time, the same way it synthesizes structural equality and hashing. Structural conformance to `As<Bytes>` and `From<Bytes>` (§3.4) follows because the methods exist — no separate "auto-conformance" mechanism, no compiler awareness of specific target-type names. Canonical wire format spec (§3.10.10): network-order (big-endian) for multi-byte primitives, fields concatenated in declaration order, enums as discriminator + associated data, strings/collections as `UInt32 length || payload`.
 
 ```
 record Point:
@@ -232,9 +232,9 @@ let b: Bytes = p.as()
 let p2 = Point.from(source: b)   # -> DecodeOutcome.converted(p)
 ```
 
-Override the auto-derived encoding by writing your own — per §3.3.2, own definitions win over inherited defaults. Missing `As<Bytes>` on a field's type → compile error at the record declaration with fix-it pointing at the field.
+Override the synthesized encoding by writing your own — per §3.3.2, own definitions win over inherited defaults. Missing `.as() -> Bytes` on a field's type → compile error at the record declaration with fix-it pointing at the field.
 
-**Auto-conformance is only for `As<Bytes>` / `From<Bytes>`.** JSON, MsgPack, CBOR — no auto-derivation. Those formats have per-record author choices (field naming, null handling, precision, enum spelling); silent choice would be a footgun. Users author the conformance explicitly. Same principle as compile-error-on-narrowing (v0.10.1 Convertible retirement).
+**Only bytes get the base-class property.** JSON, MsgPack, CBOR — no compiler synthesis. Those formats have per-record author choices (field naming, null handling, precision, enum spelling); silent choice would be a footgun. Users author the methods explicitly. Same principle as compile-error-on-narrowing (v0.10.1 Convertible retirement).
 
 Rationale: `Codable`/`Serializable` reflection is the direction Java took and paid for repeatedly (serialization CVEs, class-shape drift breaking on-disk formats). Explicit `.as() -> Bytes` methods make the format visible in source; the trap doesn't compound.
 
