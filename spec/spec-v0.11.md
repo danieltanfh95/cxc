@@ -917,12 +917,14 @@ The premises §1.1–§1.10 point at a specific primitive: **the atom**. An atom
 
 | Glyph | Meaning |
 |---|---|
-| `-->` | Route event to atom (wire from source to sink) |
+| `->` | Route event to atom (wire from source to sink), OR return type in a signature — position disambiguates |
 | `<--` | Observable read (dataflow out to reader) |
 | `\|>` | Pipe through operator (RxJS-style chain) |
 | `~>` | Async / deferred wire (debounce, delay, throttle — wires with time) |
 
 Everything else uses keywords: `emit`, `route to`, `broadcast to`, `guard`, `after`. Glyphs are for the four operations users perform most often in atom code.
+
+**Disambiguation for `->`.** The single-arrow `->` serves two roles: return-type marker in atom signatures (`atom sqrt(x: Float) -> Float`) and routing wire in entrypoint bodies (`click() -> debounce(200ms) |> increment`). The parser distinguishes by position: `->` between an argument-list-close and an atom-shape reference is a return type; `->` between two atom expressions inside an entrypoint body is a wire. Readers distinguish by context: the token following `->` is either a type-position atom name (return type) or a routing target (wire). Same shape as how `:` serves both "starts a body" and "declares a shape" in Corvid — one glyph, position-driven meaning, no ambiguity to the parser.
 
 **Where the spec sits now.**
 
