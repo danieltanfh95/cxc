@@ -733,8 +733,10 @@ A "type" is a named contract: a set of accepted messages with signatures, precon
         state:
             count: Int = 0
         invariants:
-            count between 0 and 100
+            0 <= count <= 100                # chained comparison — reads mathematically
     ```
+
+    Corvid supports Python-style chained comparisons: `0 <= count <= 100` is sugar for `0 <= count and count <= 100`, with `count` evaluated once. This is the reading closest to standard mathematical notation for range predicates; it composes naturally with `and` / `or` for compound conditions.
 
 - **Preconditions and postconditions on transitions** carry use-site constraints:
 
