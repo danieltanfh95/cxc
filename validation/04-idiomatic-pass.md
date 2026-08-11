@@ -6,6 +6,8 @@
 
 **Key question:** Does the design earn its keep, or are we just moving verbosity around?
 
+**VERSION NOTE (v0.8.7):** This document was written pre-v0.8.7. Ensures clauses below use the `old(expr)` form for pre-state reference; per §3.4.3 that form was dissolved. In current spec, `self` and parameter identifiers inside an ensures expression refer to entry-state, and `result` refers to post-state. Read `ensures self.current_index > old(self.current_index)` as `ensures result.current_index > self.current_index` — same claim, current binding rule. Item 4 in the "spec fixes" list at the end (`old()` in ensures) is resolved by this dissolution.
+
 ---
 
 ## What "idiomatic" means here

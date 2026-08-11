@@ -1,10 +1,301 @@
-# Corvid Language Specification — v0.8.6 (Working Draft)
+# Corvid Language Specification — v0.11 (Working Draft)
 
-**Status:** Working draft. v0.8.6 formalizes the concurrency model — DispatchQueue equivalent dissolves into contracts (§1.9) plus a small `execution:` section on classes for thread/QoS/pool metadata. Reader/writer method classification (inferred from state-modifying vs pure) enables runtime RWLock-style dispatch — many concurrent readers, exclusive writers. `@main_actor` retired; replaced by `execution: thread: main`. Considered a `coordination_scope` construct for cross-object shared invariants; **retracted** — every case collapses to "one class owns the shared state," so no new construct needed. ObjC bridge exposes per-instance dispatch pool for transparent interop. v0.8.5 no-throws / no-try / no-prelude-Result preserved. Prior sessions all preserved.
+**Status:** Working draft. v0.11 lands two pieces: (1) **auto-conformance to `As<Bytes>` and `From<Bytes>` for value types** (§3.4.6 new, §3.10.10 new — canonical wire format spec) — records/enums/primitives get compiler-synthesized serialization from field layout, same shape as automatic structural equality on records (§3.2); (2) **removal of the double-colon header form** (`class Foo: A, B:` and `class Foo: BaseClass:`) — v0.10.2's grace period ends. Migration is mechanical: `class Foo(A, B):` for conformance, `metadata: extends: BaseClass` (body-form) for ObjC inheritance.
 
-**Companion:** `PATTERNS.md` (new, top-level) — onboarding guidance mapping "coming from language X, you might reach for Y" to "Corvid does Z." Not spec-normative; catalogs the six-session accumulation of dissolutions so future readers can navigate without re-deriving each answer.
+**Change log from v0.10.2 → v0.11 (Value-type auto-conformance + double-colon removal):**
+
+**§3.4.6 new — Auto-Conformance for Value Types.** Every `kind: record` and `kind: enum` automatically conforms to `As<Bytes>` and `From<Bytes>`; compiler synthesizes `.as() -> Bytes` and `class function from(source: Bytes) -> DecodeOutcome<Self>` from field layout at composition time. `kind: regular` classes do NOT auto-conform — mutable state, potential cycles, identity require explicit user-written serialization. User-written `.as() -> Bytes` on a value type shadows the auto-derived one per §3.3.2 (own definitions win over inherited defaults). Missing `As<Bytes>` on a field type → compile error at the containing record's declaration.
+
+**§3.10.10 new — Canonical Value-Type Encoding.** Wire-format spec for the auto-conformance's synthesized output. **Network-order (big-endian) for multi-byte primitives** — silent breakage across architectures is a footgun; performance-critical same-host use cases can opt out by writing their own `.as() -> Bytes`. Records concatenate fields in declaration order. Enums emit discriminator byte + associated data. Strings emit `length: UInt32 || utf8_bytes`. Optionals emit presence byte + payload. Collection literals emit `length: UInt32 || elements`.
+
+**Prelude ships `As<Bytes>` / `From<Bytes>` on all primitives** (§3.11.1 extended). `Int8`/`Int16`/`Int32`/`Int64`/`UInt*` in network-order; `Float`/`Double` in IEEE 754 big-endian; `Bool` as single byte (0/1); `Char` as grapheme's UTF-8 bytes. Also ships `.as_bytes(order: ByteOrder) -> Bytes` per primitive for explicit-endian access (ordinary method, does not participate in `As<Bytes>` dispatch).
+
+**Double-colon header form removed.** `class Foo: A, B:` → **compile error** in v0.11 (was warning in v0.10.2). `class MyViewController: UIViewController:` → **compile error**. Migration was mechanical during v0.10.2's grace period; any lingering uses need updating. Grammar `conformance_clause` is now the sole path for header-declared conformance.
+
+**§3.4.5 updated** — the retirement subsection reframed from "deprecated in v0.10.2, removed in v0.11" to "removed in v0.11." §10 grammar's deprecation note becomes a historical-record note.
+
+**Only `As<Bytes>` gets auto-conformance.** JSON, MsgPack, CBOR, and other format-specific target types do NOT get auto-conformance — they have per-record author choices (field naming, null handling, number precision) with no defensible default, and silent choice would be a footgun. Users write `function as(self) -> Json:` on their records explicitly via ordinary `extend class Foo:` (§3.3.2). Third-party format packages (`corvid_json`, `corvid_msgpack`, etc.) need zero special language support — they ship their target type and users author conformances the same way they'd author any protocol method.
+
+**Consistency with prior decisions.**
+
+- **§3.2 records + §3.4 protocols** — records already auto-derive structural equality and hashing. `As<Bytes>` auto-conformance extends the same "value-type base-class properties" pattern to serialization.
+- **§3.10.4 Bytes as universal substrate** — v0.10.0's substrate commitment was that any type with `As<Bytes>` participates in the serialization protocol. Auto-conformance makes every value type participate by default.
+- **§3.3.2 rule 6** — auto-derived methods are inherited defaults; user-written `.as() -> Bytes` shadows silently. Same shape as protocol-default inheritance.
+- **§3.10.3 As<T>/From<T>** — auto-derivation uses the same protocol/method-name convention (`.as() -> Bytes`, never `.as_bytes()`). No naming variants invented; verified against the mechanism-invention trap memory.
+- **§1.5 class-as-universal + §3.4 composition-over-inheritance** — value types get base-class properties automatic (equality, hashing, now serialization); regular classes require explicit user commitment.
+
+**Mechanism-invention trap check.** Passes. `As<Bytes>` protocol → §3.10.3, not new. `From<Bytes>` protocol → §3.10.3, not new. Auto-derivation as base-class property → §3.2 pattern for records, not new. Wire format spec → new content, not a new mechanism. Zero sibling protocols invented; zero per-target method names invented; zero "third-party format story" deferred to future versions. Third-party formats use existing extension mechanism.
+
+**Downstream cleanups.** §3.4.6 new. §3.10.10 new. §3.11.1 extended with prelude conformances table. §3.4.5 retirement subsection updated (removed-in-v0.11 activates). §10 grammar deprecation note → historical record. PATTERNS.md serialization entry rewritten to reflect actual v0.11 landing. README status. Working-notes. File rename `spec-v0.10.md` → `spec-v0.11.md`.
+
+---
+
+**v0.10.2 (prior — explicit conformance syntax).** Header parens sugar `class Foo(A, B):` becomes canonical; body-form `metadata: extends:` for ObjC inheritance; double-colon deprecated (grace period ended in v0.11).
+
+---
+
+**v0.10.2 changelog — full detail:**
+
+Working draft. v0.10.2 formalizes explicit protocol-conformance syntax (§3.4.5 new), replacing the previously undefined `conformance_clause?` reservation with a concrete parens-list sugar `class Foo(A, B):` plus body-form `conforms:` entries. Retires the double-colon header shape `class Foo: A, B:` (grace period through v0.11). ObjC class inheritance (the only inheritance Corvid supports, driven by interop) migrates to body-form `metadata: extends:` — treating the exceptional case as body-form and the common case (protocol conformance) as header sugar. Additive plus one deprecation; no design-mechanism changes.
+
+**Change log from v0.10.1 → v0.10.2 (Explicit conformance syntax + ObjC-inheritance-to-body-form migration):**
+
+- **§3.4.5 new (Explicit Conformance Declarations).** Formalizes both syntactic forms and their semantics:
+  - **Header parens sugar** — `class Foo(A, B):` for the common case. Grammar production `conformance_clause := '(' protocol_type (',' protocol_type)* ')'`.
+  - **Body-form entry** — `conforms: A` at class-body top level, or `metadata: conforms: A` — for extensions, multi-line lists, and consistency with extension-body forms.
+  - **Semantics** — both forms produce identical conformance-set entries; explicit conformances are compile-time-validated per protocol (fail at the declaration, not at the first use-site assignment); no runtime cost difference vs structural conformance; extensions may add conformances additively.
+
+- **§10 grammar updated.** `conformance_clause` production defined. Header ordering finalized: `class NAME <generics> ( conformances ) where <constraints> :` — visual left-to-right reads as "here's what Foo is, here's the constraint, now the body."
+
+- **ObjC class inheritance moves to body-form.** `class MyViewController: UIViewController:` → `class MyViewController:` with `metadata: extends: UIViewController` in the body. Rationale: pure Corvid design commits to composition-over-inheritance (§1.5, §3.4); inheritance exists only for ObjC interop (subclassing UIViewController, NSObject, etc.). Making inheritance body-form treats the exception as the exception — ergonomic sugar goes to the common case (protocol conformance), not the rare one.
+
+- **Double-colon header form deprecated.** `class Foo: A, B:` and `class MyViewController: UIViewController:` emit a `deprecated-conformance-syntax` warning at parse time in v0.10.2 with fix-it suggestion (`Foo(A, B)` or body-form). Removed entirely in v0.11. Grace period is one minor version — the migration is mechanical and the double-colon form served two purposes with the same shape (a design mistake worth undoing before v1).
+
+- **§4.18 metadata alignment.** `superclass:` and `conforms_to:` metadata keys already existed (line 4694); §3.4.5 just formalizes how they're populated from source declarations. No metadata schema change.
+
+- **Migrations in this spec:** 4 conformance examples (`UserList`, `Projectile`, `DefaultOrderProcessor`, `WSFramer` in validation) → parens form; 1 inheritance example (`MyViewController` in §9.3.1) → body-form `metadata: extends:`; 2 prose references at §3.4.4 (line ~1451) and §9.3.1 area (line ~3769) updated.
+
+**Consistency with prior decisions.**
+
+- **§3.4.4 default method inheritance** — works identically for structural and explicit conformers.
+- **§3.3.2 extension composition** — extensions may add conformances via either header sugar or body-form; conflict resolution rules apply if two extensions declare conflicting conformances.
+- **§1.5 class-as-universal + §3.4 composition-over-inheritance** — the design commitment is now visible in the surface syntax. Inheritance requires body-form ceremony; protocols get the sugar.
+- **§9.3 ObjC interop** — subclassing continues to work; only the surface syntax changes.
+
+**Downstream cleanups:** §3.4.5 new. §10 grammar production defined. §9.3.1 example rewritten. 4 protocol-conformance code examples migrated to parens form. 2 prose references updated. Validation file `websocket/01-Framer.parity.cor` migrated. PATTERNS.md gains conformance-syntax addendum. README status. Working-notes.
+
+---
+
+**v0.10.1 (prior — Pattern subsystem).** Regex/Glob/Literal via one `Pattern` protocol + three concrete conformers (§3.10.9); raw-content prefix-literal aliases `regex"..."` / `glob"..."` / `literal"..."` per new §4.16.17; named captures only. Additive stdlib session.
+
+---
+
+**v0.10.1 also (Convertible retirement).** `Convertible<To>` retired (§3.11.1–§3.11.4) in favor of `As<T>` for lossless conversion + three ordinary methods (`wrapping_to`, `saturating_to`, `checked_to`) for numeric narrowing, plus `ConvertOutcome<T>` domain enum replacing v0.8.5-inconsistent `Result<T, OverflowError>`.
+
+---
+
+**Change log from v0.10.0 → v0.10.1 (Pattern subsystem — full detail):**
+
+- **`Pattern` protocol (§3.10.9.1 new).** Two-method contract: `first_match(source) -> Match?` and `all_matches(source) -> Iterator<Match>`. Every pattern implementation structurally conforms.
+- **`Match` / `MatchRange` / `MatchGroup` records (§3.10.9.2 new).** Match carries a backreference to its source String, a MatchRange (StringPosition pair), and a Map<String, MatchGroup> of named captures. Named-only per §3.2 discipline — no positional-capture accessors.
+- **Three concrete conformers (§3.10.9.3 new).** `Literal` (exact-string match, no interpretation), `Glob` (`*`, `?`, `[abc]` — filename-style patterns), `Regex` (regular expressions with `RegexOptions` §3.10.9.4). All three are `kind: regular` classes; compiled at construction time; cached when constructed from compile-time-constant source per §4.16.10 value-alias discipline.
+- **Prelude pattern literals (§3.10.9.5 new + §4.16.17 new).** Three prelude aliases ship: `regex"^\d+"`, `glob"*.txt"`, `literal","`. Users author their own (`peg"..."`, `fuzzy"..."`, etc.) via `alias @name"..." = Constructor(...)` per §4.16.17 — the new raw-content prefix-literal alias shape, discussed below.
+- **§4.16.17 new — raw-content prefix-literal aliases.** Prefix-literal aliases (`name"content"`) may declare `raw` in their alias body to receive the literal content unmodified — no escape processing (`\d` reaches the constructor as `\d`, not as escape-sequence failure). Required for regex source strings; useful for any pattern language that has its own escape rules.
+- **Named captures only (§3.10.9.6 new).** Regex source containing unnamed groups `(...)` is a compile error at pattern-construction time; users write `(?<name>...)` always. Consistent with §3.2 named-only discipline and §3.7.1 named-only enum associated values. Enforces "named at the source of the pattern" — the reader sees capture names in the pattern string.
+- **§3.10.5 (String) revised.** `split(self, separator: String)` widened to `split(self, pattern: Pattern)` — `Literal(",")` covers the pre-v0.10.1 use case with one more character at the call site. New methods: `first_position(matching: Pattern)`, `all_matches(matching: Pattern)`, `replace_all(pattern:, with:)`.
+
+**Consistency with prior decisions.** Pattern subsystem introduces no new mechanism. Pattern protocol → §3.4 structural conformance. Records → §3.2 named-only. Concrete classes → §1.5 class-as-universal. Literal syntax → §4.16 alias mechanism (with §4.16.17 additive shape variant). No trait-qualified-dispatch games; pattern selection is ordinary polymorphism on the value passed to a String method. Passes the mechanism-invention trap check documented in ~/.claude/memory/corvid-mechanism-invention-trap.md.
+
+**Downstream cleanups:** §3.10.5 String surface widened. §3.10.9 new. §4.16.17 new (raw-content prefix aliases). §4.20.1 prelude alias listing gains three pattern-literal entries. PATTERNS.md gains "I need regex/glob" entry. README status. Working-notes.
+
+---
+
+**v0.10.0 (prior — byte substrate + text/serialization).** Three interlocking changes:
+
+1. **Extension conflict resolution revised from error to warning** (§3.3.2 rule 4). Two same-name extensions across modules no longer produce a compile error at the composing site; instead a warning + deterministic resolution (current-module > imported > original class). `replace` becomes optional annotation for suppressing the warning. Aligns with §7.7 visibility and §3.5 effect-annotation patterns ("warn, don't block").
+
+2. **`As<T>` / `From<T>` parameterized conversion protocols** (§3.10.3). Trait-qualified dispatch permits multiple `as` methods on one class differentiated by target type; multiple `from` methods on one class differentiated by source type. Structural conformance means concrete classes need no explicit `conforms:` declaration.
+
+3. **`Bytes` / `String` / `Char` / `StringPosition` + `Encoding` / `ByteOrder` / `DecodeOutcome<T>`** (§3.10.4–§3.10.7). String is grapheme-native — no integer indexing, no peer views; text operations return graphemes or StringPositions. Bytes is a mutable regular class (matches Array/Map/Set pattern); NSData/NSMutableData bridged. `AsBytes` (via the As<T> protocol family) becomes Corvid's universal serialization substrate — every OO language faces the serialization problem eventually; Corvid ships the primitive from day one rather than bolting it on later.
+
+Prior sessions all preserved (v0.9.1 extension details, v0.9.0 unified extension mechanism, v0.8.7 pre/post bindings, v0.8.6 concurrency model, v0.8.5 no-throws, etc.).
+
+**Companion:** `PATTERNS.md` gains new entries on the conversion pattern (As/From), string handling (grapheme-native, no int indexing), and serialization (universal via AsBytes).
 
 **Name:** `Corvid`. (Historical: named `objc5` throughout the design conversation. Renamed to Corvid when the positioning clarified as "peer of Swift for Apple-ecosystem native development" rather than "next-generation Objective-C.")
+
+**Change log from v0.9.1 → v0.10.0 (Byte substrate; As<T>/From<T> protocols; grapheme-native String; extension conflict resolution revised to warn):**
+
+Major-version-adjacent session. The v0.10.0 bump reflects that the string/bytes/serialization decisions land the language's substrate for text and binary handling — foundational choices with ecosystem-wide effect. Also revises v0.9.1 rule 4 in response to internal review noting the rule was inconsistent with the rest of Corvid's "warn, don't block" pattern for author-intent violations.
+
+**Rule 4 revision (§3.3.2).**
+
+- **Before (v0.9.1):** Two extensions declaring same-name methods → compile error at composing site. `replace` modifier required to shadow.
+- **After (v0.10.0):** Same-name method collision *within one class body* → compile error (author self-conflict). Same-name collision *across extensions or between extension and original class* → **warning** + deterministic resolution rule. `replace` modifier becomes optional; when present, suppresses the warning by documenting explicit intent.
+- **Resolution priority (highest first):** (1) extension declared in the currently-compiling module; (2) extensions from transitively-imported modules, most-recently-imported first; (3) original class definition.
+- **Rationale.** The prior rule was disproportionate to the actual risk and inconsistent with every other author-intent situation in the spec (§7.7 visibility warnings, §3.5 effect advisory-not-enforced, retracted `sealed`/`private`/`final`). Every other place says "warn, don't block"; rule 4 was the only "block." The revised rule preserves the intent (no silent ambiguity) while eliminating the friction on legitimate override cases.
+- **Escalation.** Users who want stricter behavior escalate the warning to an error via build config (`-Werror`-style flag). CI can enforce strictness without the spec forcing it.
+
+**`As<T>` / `From<T>` protocols (§3.10.3 new).**
+
+- **Parameterized shape.** `As<T>` and `From<T>` are generic protocols; the type parameter names the target/source respectively. Matches modern OOP conversion protocols (Rust `From<T>`/`Into<T>`, Java `Comparable<T>`, C# `IEnumerable<T>`).
+- **Trait-qualified dispatch.** A class conforming to `As<Bytes>` and `As<Json>` may declare both `function as(self) -> Bytes` and `function as(self) -> Json` — they're distinguished by target type at the call site. Compile error only if target type is not inferrable at the call site (diagnostic asks for annotation or explicit specific-name method).
+- **Structural conformance.** No explicit `conforms: As<T>` declaration required on the concrete class; any class with `function as(self) -> T` structurally satisfies `As<T>`. Same rule for `From<T>` and `function from(source: T) -> Self`.
+- **No auto-derivation between As and From.** Implementing `From<T>` on target does not automatically synthesize `As<Target>` on T. Users write both directions explicitly. Rust's blanket `impl<T, U> Into<U> for T where U: From<T>` is deliberately not adopted — the two directions have distinct semantics (projection vs construction) and should be authored explicitly.
+- **Specific method names remain available.** `as_bytes()`, `from_string()`, etc. are legitimate patterns for multi-target classes or where the caller wants the target visible in the method name. The `.as()` / `.from()` convention is for the *canonical* projection/construction where there's one clear choice.
+
+**`Bytes` (§3.10.4 new).**
+
+- **`kind: regular`, mutable.** Matches the v0.9.0 §3.2 pattern for Array/Map/Set — collection containers are reference-shaped classes with state. Corresponds to Foundation NSMutableData at the runtime layer; toll-free bridged.
+- **Read operations:** `length()`, `subscript(i)`, `slice(range)`, `concat(other)`, `starts_with(prefix)`, iteration via `Iterable<UInt8>`.
+- **Write operations:** `append(byte)`, `append(bytes)`, `append<T: As<Bytes>>(value)`, `subscript_set(i, byte)`, `insert(at, byte)`, `remove(at)`, `clear()`.
+- **Conversion:** `as(self) -> Bytes` (identity — returns a copy), `decoded_as(encoding) -> DecodeOutcome<String>`.
+- **Construction:** standard class constructors (`Bytes()`, `Bytes(bytes: [UInt8])`, `Bytes(capacity: Int)`, `Bytes(repeating: byte, count: Int)`). Array-literal conformance: `let b: Bytes = [0x42, 0xff]`.
+- **Value hygiene.** `x.as() -> Bytes` on any type returns a fresh Bytes; caller can mutate without affecting the source. Immutability guarantees for consumers come from (a) reader/writer classification (§8.4.1), (b) contracts, (c) wrapping in a record.
+- **No separate `BytesBuilder` type.** Bytes itself is the builder — construction + mutation happen on the same type. Consistent with Array/Map/Set (no separate ArrayBuilder etc.).
+- **`unsafe:` narrows to raw pointer access only.** In-place byte mutation (via `bytes[i] = 42`) is safe because Bytes participates in normal contract discipline. Raw pointer access (`bytes.raw_pointer()` for C interop) is the only reason to enter `unsafe:` for byte work.
+
+**`String` (§3.10.5 new).**
+
+- **`kind: regular`.** Corresponds to Foundation NSString at the runtime layer; toll-free bridged.
+- **Grapheme-native.** Text semantics are grapheme-cluster-based. `Char` (§3.10.6) is a grapheme cluster (variable Unicode code points).
+- **No integer indexing.** `String[i]` does not exist. Positional access requires a `StringPosition` token obtained via String methods.
+- **No peer views on String.** `.utf16`, `.utf8`, `.bytes` are NOT properties on String. Byte-level access is via the universal `.as() -> Bytes` (encodes as UTF-8 by default) or `.as_bytes(encoding: Encoding) -> Bytes` for other encodings. This unifies byte access across all types via the same convention.
+- **Methods:** `grapheme_count()`, `is_empty()`, `first_grapheme()`, `last_grapheme()`, `contains(substring)`, `position(after: pos)`, `position(before: pos)`, `start_position()`, `end_position()`, `substring(from: pos, to: pos)`, `substring(matching: Pattern)`, `first_position(matching: Pattern)`, `all_matches(matching: Pattern)`, `split(pattern: Pattern)`, `replace_all(pattern:, with:)`, iteration via `Iterable<Char>`. Pattern subsystem: §3.10.9.
+- **Conversion:** `as(self) -> Bytes` (UTF-8 default), `as_bytes(encoding: Encoding) -> Bytes` (specific encoding).
+- **Construction:** standard constructors; from-bytes via `Bytes.decoded_as(...)` returning `DecodeOutcome<String>`.
+
+**`Char` (§3.10.6 new).**
+
+- **`kind: record`** — value type, structural equality, copy-on-assign.
+- **Represents a grapheme cluster** — one user-visible character, possibly spanning multiple Unicode code points (emoji, family sequences, combining marks all handled correctly).
+- **Methods:** `is_whitespace()`, `is_digit()`, `is_alphabetic()`, `is_newline()`, `is_ascii()`, `.as() -> Bytes` (UTF-8), various category predicates.
+- **Comparable / Equatable / Hashable.**
+
+**`StringPosition` (§3.10.7 new).**
+
+- **`kind: record`** — opaque position token.
+- **Obtained only via String methods** — `s.start_position()`, `s.end_position()`, `s.position(after: pos)`, `s.position(before: pos)`, `s.first_position(of: substring)`, etc.
+- **No integer arithmetic** — cannot do `pos + 5`; must use `s.position(after: pos)` repeatedly or `s.position(at_distance: 5, from: pos)`.
+- **Ordering:** `pos1 < pos2` if pos1 refers to an earlier position than pos2 in the source string; compile error to compare positions from different String instances.
+
+**Supporting enums (§3.10.8 new).**
+
+```
+enum Encoding:
+    case utf8
+    case utf16_le
+    case utf16_be
+    case ascii
+    case latin1
+    # Extensible via prelude aliases per §4.16 for uncommon encodings.
+
+enum ByteOrder:
+    case little
+    case big
+    case network      # alias for .big — network byte order convention
+    case host         # aliased at compile time to the platform's native order
+
+enum DecodeOutcome<T>:
+    case decoded(T)
+    case invalid(offset: Int, reason: String)
+    # Per v0.8.5 failure-handling pattern: domain enum, caller switches.
+```
+
+**Serialization story (implicit but foundational).**
+
+By convention, any type with an `.as() -> Bytes` method (via `As<Bytes>` conformance) can be serialized. Format-specific layers (JSON, msgpack, etc.) become users of the substrate — third-party packages ship a target type (e.g., `Json`) and users write `function as(self) -> Json:` on their records via ordinary `extend class Foo:` per §3.3.2. No new language support needed for third-party formats; they use the same extension mechanism + `As<T>` protocol (§3.10.3) as user code. Method names are always `.as()` differentiated by return type — never `as_bytes()` / `as_json()`; those are naming-variant slips that betray the committed trait-qualified-dispatch convention (see mechanism-invention trap memory). No reflection-based magic serialization (the trap Java's `Serializable` fell into); regular-class authors write `function as(self) -> Bytes:` explicitly. Value types (records/enums/primitives) get **auto-conformance** to `As<Bytes>` and `From<Bytes>` in v0.11 — not a stdlib layer, a base-class property, the same shape as automatic structural equality on records (§3.2). Compiler synthesizes `.as() -> Bytes` and `class function from(source: Bytes)` from field layout at composition time.
+
+**Stdlib friction items dissolved:**
+
+- **String position API** (Ink #25, `#W-30` position part). Dissolved: `StringPosition` tokens replace integer indexing; text-manipulation methods take positions.
+- **Byte-array raw access** (`#W-53`). Dissolved: Bytes has `subscript(i)`, `slice(range)`, direct mutation. Raw pointer access remains in `unsafe:` for C interop only.
+- **Byte slice methods** (`#W-52`, `#W-61`, `F8`). Dissolved: Bytes has `.slice(range)` and `.concat(other)`.
+- **String from bytes** (`#W-14`). Dissolved: `Bytes.decoded_as(encoding: Encoding) -> DecodeOutcome<String>`.
+- **Base64 encoding** (`#W-37e`). Dissolved: extend Bytes via `extend class Bytes: methods: function base64_encoded() -> String: ...` per §3.3.2.
+- **Random-number API** (`#W-37c`). Dissolved: extend numeric types (`extend class UInt8: class function random() -> UInt8: ...`).
+
+**`Convertible<To>` retired (§3.11.1–§3.11.4).**
+
+The v0.7.1-era `Convertible<To>` protocol bundled three narrowing semantics (wrap / saturate / checked) as three methods on one protocol, with a redundant `target_type: To.Type` parameter and a `Result<T, OverflowError>` return type that had been spec-inconsistent since v0.8.5 retired `Result` from the prelude.
+
+**Retired in v0.10.0.** Replaced with:
+
+- **`As<T>` (§3.10.3)** for the **lossless** case only — prelude ships conformance for every widening numeric pair. Narrowing pairs have no `As<T>` conformance; `Int32(300).as() -> UInt8` is a compile error with a diagnostic pointing at the three narrowing methods.
+- **Three ordinary methods per numeric primitive (§3.11.2)** — `wrapping_to::<T>()`, `saturating_to::<T>()`, `checked_to::<T>() -> ConvertOutcome<T>`. These are *not* a protocol family; the differentiator between them is semantics, not target type, and trait-qualified dispatch (§3.10.3) differentiates by target type. Sibling protocols like `WrappingAs<T>` / `SaturatingAs<T>` / `CheckedAs<T>` would have mimicked the shape of `As<T>` without using its dispatch mechanism — mechanism-duplication rather than consolidation.
+- **`ConvertOutcome<T>` enum (§3.11.3)** — replaces `Result<T, OverflowError>`. Domain enum per v0.8.5.
+
+**Design principle surfaced.** When multiple candidate methods share a return type but differ in semantics, the semantics is not a type-parameter question and does not need a protocol family. Per §1.2 (author intent, not authority), the choice belongs at the call site as a method name. Applied here: three narrowing methods on the source type, not three protocols. Same principle applies to any future case where "N semantics for the same signature" tempts a protocol family.
+
+**Migration:** `x.into(T)` → `x.wrapping_to::<T>()`; `x.saturating_into(T)` → `x.saturating_to::<T>()`; `x.checked_into(T) -> Result<T, OverflowError>` → `x.checked_to::<T>() -> ConvertOutcome<T>`.
+
+**Consistency with prior decisions:**
+
+- **§1.5 class-as-universal.** Bytes/String/Char are all classes. No special primitive treatment.
+- **§1.9 contracts as coordination.** Bytes' mutation participates in reader/writer classification; §8.4.1 handles concurrent access naturally.
+- **§3.4 structural conformance.** As<T>/From<T> conformance is structural; concrete classes need no boilerplate declaration.
+- **§3.4.4 default method inheritance.** As<T>/From<T> can carry default implementations; conformers inherit unless they override.
+- **§3.3.2 extension mechanism.** Users add As<T>/From<T> methods to any type post-hoc via `extend class Foo:`.
+- **v0.8.5 failure handling.** DecodeOutcome<T> is a domain enum per the no-throws discipline; callers `switch`.
+- **v0.9.0 § 3.2.** Bytes/String/Map/Set/Array all `kind: regular` (reference-shaped); consistent container discipline.
+
+**Downstream cleanups:** §3.3.2 rule 4 revised. §3.10.3 As<T>/From<T> new. §3.10.4 Bytes new. §3.10.5 String new. §3.10.6 Char new. §3.10.7 StringPosition new. §3.10.8 supporting enums new. §3.4.4 note on trait-qualified dispatch. §3.11.1–§3.11.4 rewritten — `Convertible<To>` retired, narrowing methods (`wrapping_to`/`saturating_to`/`checked_to`) shipped, `ConvertOutcome<T>` enum added, migration table. §3.11.5 `Bounded` renumbered from prior §3.11.2. Friction logs updated (Ink #25, #W-30, #W-53, #W-52, #W-61, #W-14, #W-37c, #W-37e marked dissolved). PATTERNS.md new entries. README status. Working-notes. File rename `spec-v0.9.md` → `spec-v0.10.md`.
+
+**Change log from v0.9.0 → v0.9.1 (Extension conflict-resolution behavior spec):**
+
+Not a design session — v0.9.0 shipped `extend class Foo:` as the unified extension mechanism with the rule "same-name conflict is a compile error unless `replace` is used." v0.9.1 fills in the seven detailed rules covering what a conflict is, how `replace` targets are validated, what happens with two `replace`s claiming the same original, how extension shadowing interacts with inherited protocol defaults, and what runtime visibility looks like at the load-time / compile-time boundary. Also adds an illustrative diagnostic format so implementers have a target and users have a preview.
+
+- **§3.3.2 new subsection: Conflict resolution rules.** Seven numbered rules covering: (1) same-name collision produces compile error at composing site; (2) `replace` requires a shadowing target — no-op `replace` is rejected; (3) at most one `replace` per method per composing site; (4) name matching ignores signatures (Corvid has no overloading); (5) extensions shadow inherited protocol defaults without `replace`, but second-extension-over-first still requires it; (6) runtime method table is unified after composition; (7) load-time transitive visibility (an extension in module B affects Foo globally once B is loaded, even for consumers that reach B transitively).
+- **§3.3.2 illustrative diagnostic format.** Example error message showing both conflicting sites, containing modules, and the suggested `replace` fix.
+- **§3.3.2 "what is not a conflict" list.** Different methods on same class; same-named methods on different classes; extensions adding invariants (which stack additively per §3.4.2).
+- **§3.4.4 cross-reference.** The "interaction with extensions" paragraph now explicitly points at §3.3.2 rule 5 for the shadowing-inherited-defaults case; makes clear that `replace` is not needed to shadow a protocol default, only to shadow another explicit declaration.
+- **Ink friction entry (namespace question) closed.** Websocket friction-log #295 marked resolved by existing mechanisms — `class:` section on records covers the struct-as-namespace pattern; modules cover module-level namespacing; no separate `namespace` construct needed.
+
+**Consistency with prior decisions:**
+
+- **v0.9.0 conflict rule.** v0.9.1 elaborates without changing the top-line rule: same-name conflict is a compile error unless `replace` is used.
+- **§1.2 author intent, not authority.** Rule 2 (`replace` requires a target) upholds the principle — `replace` claiming a target that doesn't exist would be intent without effect; the compiler enforces the claim's truthfulness.
+- **§3.4 structural conformance.** Rule 5 keeps the priority order (own definition > extension > inherited default) intact; extensions shadow defaults without ceremony because "extension is a form of own definition" for the purposes of resolution.
+- **§5.1 dispatch.** Rule 6 confirms the runtime picture: after compile-time conflict resolution, the method table has one entry per selector; dispatch is unchanged from any other class.
+
+**Downstream cleanups:** §3.3.2 conflict-resolution subsection + diagnostic example + "what is not a conflict" list. §3.4.4 cross-reference update. Websocket friction #4 (namespace) marked resolved. Working-notes + README status.
+
+**Change log from v0.8.7 → v0.9.0 (Unified extension mechanism; Category retracted; default-method inheritance for structural conformers):**
+
+Major-version bump. Not a "dissolves into existing mechanism" session — this is a **retraction and unification**. The `category(...)` section class was Corvid importing ObjC's specific vocabulary for what is structurally just "declaring more members on this class." Corvid's own class-body syntax already covers that job; the section-class framing paid ceremony (invocation form, `ClassSpec` parameter, section-class machinery) for a job that fits at the class declaration level.
+
+- **§3.3.2 new (Extension Declarations).** `extend class Foo:` is a declaration-position modifier that opens a class body targeting an existing class named `Foo`. Body content follows the same rules as any class body: `data:` (with restriction — see below), `methods:`, `invariants:`, `accepts:`, behavioral sections. Generic parameters and where-clauses at declaration position: `extend class Array<T> where T: UnsignedInteger:` composes with the existing generic-parameter machinery. Multiple `extend class Foo:` blocks across modules stack — the composed member set is the union of all extensions visible in the current compilation unit.
+- **§3.4.4 new (Default Method Inheritance for Structural Conformers).** A class that structurally conforms to protocol `P` **inherits P's default methods** for messages the class does not define itself. This makes structural conformance load-bearing rather than a purely static-checking device. Diamond ambiguity (class conforms to two protocols, both provide defaults for the same message, class defines neither) is a compile error at the ambiguous call site — resolvable by defining the method on the class or by upcasting to a specific protocol.
+- **§4.10.4.3 (Category) retracted.** The Category section class is removed. Cross-references now point at §3.3.2. Existing `category(target_class: X):` syntax is no longer legal; migration is mechanical (`category(target_class: NSString):` → `extend class NSString:`).
+- **Conflict rules.** Two `extend class Foo:` blocks that add methods with the same name to the same class are a compile error at the composing site. To opt into shadowing, one extension declares the method with the `replace` modifier: `replace function foo(self):`. Consistent with §1.2 (author intent, not authority) — the shadowing intent must be visible in source, not implicit in link order (ObjC's fragile "last loaded wins" is retired).
+- **State fields still cannot be added via extension.** Adding a `state:` field would change memory layout, which §4.18.3 fixes at compile time. Extensions can add invariants over *existing* state fields, but not declare new ones. Same rule as under the previous `category(...)` mechanism.
+- **§5.1 note.** Method-table population is uniform: original definition members and extension members feed the same runtime method table. At dispatch time there is no distinction between "defined here" and "extended in."
+- **§7.7 note.** Extension visibility follows module imports. Extensions declared in module B become visible when B is imported. Extensions themselves may carry `expose` on individual members exactly as a definition body can.
+- **§10 grammar.** `class_decl` production extended with an optional `extend` prefix. Generic-parameter and where-clause productions unchanged — they compose at the declaration position where they already worked for classes and functions.
+- **Ink #W-69, #W-70 resolved by unification.** See friction logs.
+
+**Cost / benefit.**
+
+- **One vocabulary.** `class Foo:` for definition, `extend class Foo:` for extension. Same class-body syntax, same section discipline (`data:` / `state:` / `methods:` / `invariants:` / `accepts:`). No `ClassSpec`, no invocation form.
+- **Structural conformance actually pays off.** Before v0.9.0, "conformance is structural" was true but toothless — it enabled static checks but conformers didn't gain the protocol's affordances. §3.4.4 makes conformance carry default-method inheritance, which is what users expect from protocols with defaults.
+- **Trade-off: default-method inheritance introduces the diamond problem.** Corvid resolves it via compile-time detection + explicit disambiguation (define the method on the class, or upcast). Users writing broadly-conforming classes need to be aware of this; the compiler surfaces the ambiguity at the call site rather than silently picking one.
+- **Trade-off: `extend class` allows extensions from anywhere.** Module discipline (§7.7) constrains visibility — extensions in module B are only visible where B is imported — but the "extension can happen anywhere" property is genuinely more open than a system where classes are closed after declaration. Corvid was already this open (§1.5 runtime as substrate; categories existed); the change is that the mechanism is now integrated with the class-body vocabulary rather than routed through section-class ceremony.
+
+**Consistency with prior decisions:**
+
+- **§1.5 class-as-universal.** Everything is a class; class-body syntax is the primary shape. `extend class` extends that principle rather than fighting it.
+- **§1.2 author intent, not authority.** Explicit `replace` for shadowing surfaces the intent; the retired "ObjC last-loaded-wins" hid it in link order.
+- **§4.11 sugar keywords.** `record`, `enum`, `protocol`, `section` are class-body keyword sugar; `extend class` fits the same shape family — a declaration-position modifier layered on the `class` primitive.
+- **§3.4 structural conformance.** Reading A (conformers inherit defaults) makes the "structural" commitment load-bearing at runtime, not just at type-checking time.
+
+**Downstream cleanups:** §3.3.2 new. §3.4.4 new. §4.10.4.3 retracted (kept as pointer to §3.3.2). §5.1 method-table note. §7.7 extension visibility. §10 grammar. Multiple example rewrites throughout §4 (any example using `category(...)` gets migrated). Friction logs #W-69, #W-70 marked dissolved. `PATTERNS.md` Swift/ObjC/Rust extension entries rewritten. Working-notes + README status.
+
+**Change log from v0.8.6 → v0.8.7 (Pre-state and post-state bindings in ensures; no `old()`):**
+
+Seventh "would-be mechanism dissolves into existing tools" session. A proposal to add `old(expr)` (Dafny/JML style) to the contract system was drafted, then dissolved when the recursion/method-as-transformation reading made it visible that the pre-state was never lost — it's the receiver-and-parameters as inputs. The runtime already snapshots the receiver on method entry to make ensures checkable at all; `old()` was routing that snapshot through a needlessly special-cased name.
+
+- **§3.4.3 new (Pre-state and Post-state Bindings in Ensures Clauses).** Formalizes: inside an `ensures` expression, `self` and parameter identifiers refer to the entry-state snapshot; `result` refers to the post-state (return value for value-returning methods; receiver-at-exit for void methods). No `old(...)` form.
+- **§8.4.1 note updated.** Removed reference to `old(...)` as a documentation aid. Reader/writer classification is unchanged; the note now references the pre/post binding rule.
+- **Ledger example (§8.4.1) rewritten.** `ensures accounts[from] == old(accounts[from]) - amount` becomes `ensures result.accounts[from] == self.accounts[from] - amount`. Same semantics; new binding form.
+- **§10 grammar.** No production added or removed. A grammar note near `method_decl` records the binding rule inside ensures scope.
+- **Ink #28 resolved by dissolution.** Not resolved by feature addition. See friction log.
+- **`PATTERNS.md` extended.** New entry under Java/C# section (Dafny/JML/Eiffel adjacent): pre-state references in postconditions.
+- **Reader.inferred.cor updated.** `advance_index` postcondition rewritten to the new form.
+
+**Consistency with prior decisions:**
+
+- **§1.9 contracts as coordination.** Load-bearing. The runtime already had to snapshot pre-state to enforce state-machine transitions atomically; exposing that snapshot as `self`/params in ensures scope is a naming decision, not a new capability.
+- **v0.8.6 reader/writer classification.** Unchanged. A method is a writer if its body assigns to state; the contract's naming of pre-state is not part of classification.
+- **Six-session dissolution pattern.** Extended to seven — same shape: check whether existing machinery covers the case before adding a mechanism. Here the machinery is snapshot-on-entry, which was already required for checkability.
+
+**Cost / benefit.**
+
+- **Cleaner.** One binding rule replaces a special form.
+- **Deep-vs-shallow capture non-issue.** `self` inside ensures IS the receiver snapshot at entry; whatever "receiver snapshot" means in Corvid's memory model (handle capture for reference fields, value capture for value fields — same as any ordinary assignment) is what ensures sees. No separate `old()` semantics to specify.
+- **Mutation syntax unchanged in method bodies.** `self.field = value` in the body still mutates in place. This decision only affects what names mean inside `ensures` expressions.
+- **Trade-off.** Users writing methods where `self` in the body clearly refers to the mutating receiver need to remember that `self` in the *ensures* clause refers to the pre-state. Ink #28 required a mechanism regardless; this is the smaller mechanism.
+
+**Downstream cleanups:** §3.4.3 new. §8.4.1 note update + Ledger example rewrite. §10 grammar note near `method_decl`. `PATTERNS.md` entry added. `validation/00-friction-log.md` (Ink) #28 marked resolved. `validation/03-Reader.inferred.cor` `advance_index` rewritten. README status + working-notes.
 
 **Change log from v0.8.5 → v0.8.6 (DispatchQueue equivalent + execution metadata + RWLock-style dispatch):**
 
@@ -511,7 +802,7 @@ Under this design, all three are the same mechanism. `requires connection_state 
 - A writer executes exclusively — blocks all readers and other writers.
 - Methods on `data:` fields only (records; classes with no `state:`) skip coordination entirely.
 
-The classification is inferred from method bodies, not user-annotated. `ensures` clauses that reference `old(...)` on state fields are a documentation aid but not the source of the classification. See §8.4.1 for the classification algorithm and its interaction with private methods and callback closures.
+The classification is inferred from method bodies, not user-annotated. `ensures` clauses that reference `result.<field>` (post-state) versus `self.<field>` (pre-state) per §3.4.3 are a documentation aid — the assignment in the body is what actually classifies the method as a writer. See §8.4.1 for the classification algorithm and its interaction with private methods and callback closures.
 
 This premise justifies the concurrency model in §8 and shapes how sections that manage cross-thread coordination (`channel:`, `signal:`, `execution:`) integrate with the rest of the language.
 
@@ -666,9 +957,13 @@ Corvid's composite types are stdlib types. The **surface syntax** for them is pr
 | `(A, B) -> C` | `Callable<(A, B), C>` | type |
 | `T?` (value-type T only) | `Optional<T>` sum type | type (suffix) |
 | `T!` (reference-type T only) | `T with invariant: value != nil` | type (suffix) |
-| `Result<T, E>` | Built-in sum type — no sugar alias, plain identifier | type |
+| ~~`Result<T, E>`~~ | **Retired v0.8.5** — not built-in, not in prelude. Users may define their own; stdlib does not push one. See §3.5.4. | — |
 
 The prelude declarations for these are in §4.20.1 ("Type-expression aliases"). See §3.6.1 for the nullability semantics (`T?`, `T!`) and §3.10 for collection literal semantics.
+
+**Collection containers are reference-shaped (`kind: regular`).** `Array<T>`, `Map<K, V>`, `Set<T>` are stdlib classes with `state:` (mutable contents) and are therefore `kind: regular` (reference-typed) — the same shape as any other stateful class. Passing an `Array<T>` to a function and calling `.append(...)` or `.remove_at(...)` inside is visible to the caller; no `inout` / by-reference-parameter marker is needed. This falls out of §1.5 (class-as-universal) plus §6.1 (kind-regular = reference-typed with state) — collections have state, so they're regular classes, so they're reference-typed. The ObjC bridge mirrors this: `NSArray<T> *` in ObjC = `[T]` in Corvid (§9.3), a pointer on both sides.
+
+Records (`kind: record`) forbid `state:` (§4.10.7); a type that mutates in place cannot be a record. If a user wants an immutable, copy-on-assign array-like value, they declare a `record` wrapping an `Array<T>` with only read-only methods exposed — copies happen at record boundaries, not on the internal Array.
 
 **Effect on the type expression grammar.** The bootstrap type grammar (§10) recognizes only:
 
@@ -786,6 +1081,186 @@ handler.state = .idle                    # inferred field type
 ```
 
 The naming convention and leading-dot together make module-scope types read like nested ones at the use sites where nesting would have helped most.
+
+#### 3.3.2 Extension Declarations
+
+`extend class Foo:` opens a class body targeting an existing class named `Foo`. Members declared inside are added to `Foo` — indistinguishable from members declared in `Foo`'s original definition at dispatch time. This is Corvid's single mechanism for extending an existing class; there is no separate "category" section class.
+
+```
+# Original definition (possibly in another module):
+expose class NSString: ...
+
+# Extension in the current module:
+extend class NSString:
+    methods:
+        function shout(self) -> NSString:
+            return self.upper_case
+        
+        function is_empty_or_whitespace(self) -> Bool:
+            return self.trimmed.length == 0
+```
+
+Callers of `NSString` in modules that import the extending module see `.shout()` and `.is_empty_or_whitespace()` as ordinary methods on any `NSString` instance.
+
+**Extending generic classes.** Generic parameters and where-clauses appear at the class declaration position, reusing the same machinery as class and function generics:
+
+```
+# Add methods to any Array<T> where T conforms to UnsignedInteger:
+extend class Array<T> where T: UnsignedInteger:
+    methods:
+        function sum_all(self) -> T:
+            return self.reduce(0, (a, b) => a + b)
+        
+        function product_all(self) -> T:
+            return self.reduce(1, (a, b) => a * b)
+```
+
+`.sum_all()` and `.product_all()` are callable at call sites where the element type satisfies `UnsignedInteger`. At other call sites (e.g., `[String].sum_all()`) the compiler rejects with a where-clause-violation diagnostic.
+
+Where-clauses compose per the same rules as elsewhere in the language:
+
+```
+extend class Array<T> where T: UnsignedInteger, T: Bounded:
+    methods:
+        function saturating_sum(self) -> T:
+            var acc: T = 0
+            self.iter().for_each(x =>
+                acc = if acc > T.max - x: T.max else: acc + x)
+            return acc
+```
+
+**Extending protocols.** `extend class SomeProtocol:` adds default methods to the protocol; every structural conformer inherits them (per §3.4.4) for methods the conformer does not define itself.
+
+```
+# Extend the Iterable<T> protocol with a count method:
+extend class Iterable<T>:
+    methods:
+        function count(self) -> Int:
+            var n = 0
+            self.iter().for_each(_ => n += 1)
+            return n
+```
+
+Any class conforming to `Iterable<T>` (Array, Set, Map's entries iterator, user types) now has `.count()` as a default. A class that defines its own `count` overrides the default — no ambiguity for that class.
+
+**Extensions can add invariants.** Just as methods stack across extensions, invariants stack:
+
+```
+class Reader:
+    data: string: String
+    state: current_index: StringIndex
+    invariants:
+        current_index >= string.start_index
+
+# Elsewhere:
+extend class Reader:
+    invariants:
+        current_index <= string.end_index
+```
+
+The composed class carries both invariants; the runtime checks them at every observable point (per §3.4.2).
+
+**What extensions cannot add.**
+
+- **`state:` fields.** Adding a new state field would change the class's memory layout, which is fixed at compile time (§4.18.3). Extensions can declare invariants over existing state fields, and can call any existing method — but the field set is closed at definition time. This restriction is the same one the retired Category section class carried.
+- **New generic parameters on the target class itself.** `extend class Array<T, U>:` is not legal if `Array` was declared with only one generic parameter. The extension inherits the class's declared parameter count and can name them per shape 2 (see below); it cannot invent new ones.
+- **A different kind.** `extend class Foo:` inherits Foo's `metadata: kind:` from the original definition. An extension cannot promote a `record` to a `regular` class or vice-versa; the kind is set at definition time.
+
+**Method-name conflict across extensions.** Two `extend class Foo:` blocks that declare the same-named method targeting the same class are a **warning** at the composing site, resolved deterministically. This aligns with §1.2 (author intent, not authority) and §7.7 (visibility as advisory, not enforcement) — Corvid warns and informs; it does not block. Users who prefer strict CI can escalate the warning to an error via build config.
+
+The only *hard* compile error for same-name is when two same-named methods appear inside **one class body** (original definition or a single `extend` block) — this is author self-conflict, not a composition ambiguity.
+
+To silence the warning explicitly (document intent), use the `replace` modifier:
+
+```
+extend class NSString:
+    replace function shout(self) -> NSString:
+        return self.upper_case + "!"     # explicit intent: shadow the prior shout
+```
+
+`replace` is *optional* — without it the composition still succeeds (with a warning), and the deterministic resolution rule picks the winner. With `replace` present, the warning is suppressed for that site (author signaled intent) and `replace` further enforces that *some* method is actually being shadowed (see rule 3 below).
+
+Compared to ObjC's "last category loaded wins" (hidden in link order), Corvid's rule is **source-order deterministic at the composing site** rather than load-order dependent — the reader of the composing module can trace resolution without needing runtime information.
+
+**Conflict resolution rules (v0.10.0).** Composition happens at the composing site — the compilation unit that has both extensions visible. The compiler gathers every visible `extend class Foo:` block and the original `class Foo:` definition, then applies these rules:
+
+1. **Same-name collision across extensions → warning + deterministic resolution.** Two extensions declaring the same-named method on the same target class produce a `shadowing-extension` warning at the composing site, and the compiler picks the winner by priority (highest first):
+
+   1. Extension declared in the currently-compiling module.
+   2. Extension from a directly-imported module; if multiple, most-recently-imported wins (import-list source order, later > earlier).
+   3. Extension from a transitively-imported module; if multiple, most-recently-imported at the nearest importing module wins.
+   4. Original class definition.
+
+   The diagnostic names all conflicting definitions with file:line:module and states which one was chosen. Suggested fix: add `replace` to the winning declaration to document intent explicitly and silence the warning.
+
+   Escalation: `-Werror=shadowing-extension` (build-config flag) turns this warning into an error for CI/strict-mode projects.
+
+2. **Same-name collision within one class body → compile error.** Two same-named methods inside a single `class Foo:` or single `extend class Foo:` body is author self-conflict and always a hard error. No `replace` opt-out — fix the source.
+
+3. **`replace` requires a shadowing target.** A method declared with `replace` must shadow *some* method — either the original class definition, another visible extension, or an inherited protocol default. If nothing is being shadowed, the compiler emits a `replace-without-target` warning and treats the `replace` modifier as a no-op (the method is added as an ordinary declaration). Warning-not-error: the code is well-formed; the modifier is just superfluous.
+
+4. **Multiple `replace` declarations on the same target → warning + same priority rule.** If two extensions both declare `replace function foo(self):` shadowing the same original, both are competing to be the shadower. Warning + rule 1's priority order picks the winner. `replace` is not a claim to *sole* precedence; it's a claim to *some* shadowing (rule 3). Sole precedence is inferrable at read time from priority order.
+
+5. **No signature-based overloading.** Corvid does not have method overloading by parameter types — two same-named methods are always considered conflicting for the purposes of rule 1, regardless of parameter/return signatures. **Exception: trait-qualified dispatch for `As<T>` and `From<T>`** (§3.4.4 note, §3.10.3). A class conforming to `As<Bytes>` and `As<Json>` may declare both `function as(self) -> Bytes` and `function as(self) -> Json`; the return type is a *type parameter of the conformed protocol*, not an overload dimension. These are not considered same-name conflicts.
+
+6. **Extensions shadow inherited protocol defaults without `replace`.** An `extend class Foo:` providing method `foo` shadows any protocol default for `foo` that Foo would have inherited via §3.4.4. No warning, no `replace` needed — per §3.4.4's priority rule, own definitions (including via extension) win over inherited defaults.
+
+   Exception: if the class already had an explicit `foo` (original definition or another extension) that itself shadowed the protocol default, adding a *second* extension providing `foo` triggers rule 1 — you're shadowing the previous explicit declaration, not the protocol default.
+
+7. **Runtime method table is unified after composition.** Once resolution has picked a winner at compile time, the class has one entry per selector. At dispatch time there is no per-source-of-declaration distinction; §5.1 applies uniformly.
+
+8. **Load-time transitive visibility.** Extensions apply to the class globally at load time — once module B is loaded (whether by direct import or transitively through a dependency), B's extensions to Foo are visible to all code that touches Foo instances. This matches ObjC category semantics. Compile-time visibility (§7.7) constrains what a module can *see* to write code against; runtime visibility is class-global.
+
+   Consequence: if module A imports B and D, both of which independently extend Foo with `foo`, the warning surfaces at A's composing site — even though A wrote no extension itself. A resolves it by (a) leaving the warning (deterministic pick applies), (b) adding its own extension with `replace` that supersedes both (rule 1 priority level 1 wins), or (c) upcasting at the call site if the two `foo`s belong to different protocols with different semantics.
+
+**Diagnostic format (illustrative):**
+
+```
+warning[W0447]: shadowing extension `sum_all` on class `Array<T>`
+  --> src/collections/sum.cor:12:9
+   |
+12 |         function sum_all(self) -> T:
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^ chosen (current module: current-module rule 1.1)
+   |
+note: also declared in extension at
+  --> deps/math_ext/src/aggregations.cor:8:9
+   |
+ 8 |         function sum_all(self) -> T:
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^ shadowed (imported module: rule 1.2)
+   |
+help: to document intent explicitly and silence this warning,
+      add `replace` to the winning declaration
+   |
+12 |         replace function sum_all(self) -> T:
+   |         +++++++
+help: to reject shadowing at build time, use
+   |
+   |         corvid build --Werror=shadowing-extension
+```
+
+**What is not a conflict.**
+
+- Two extensions adding *different* methods to the same class: composed freely.
+- Extension adding a method on class Foo and another extension adding a same-named method on class Bar: different classes, different tables, no interaction.
+- Extension adding `foo` to Foo when Foo already has `bar`: no name collision, composed freely.
+- Extension adding invariants (rather than methods): invariants stack additively per §3.4.2; no notion of "conflict" applies to predicates.
+
+**Extension visibility follows module imports.** An `extend class Foo:` declared in module B becomes visible only to modules that import B (transitively, per §7.7). This scopes extension visibility to explicit dependency edges — a module can control which extensions it sees by controlling its imports.
+
+Individual extension members may carry `expose` exactly as members in a definition body may:
+
+```
+extend class Foo:
+    methods:
+        expose function public_helper(self): ...
+        function internal_helper(self): ...       # module-visible only
+```
+
+**Extending Objective-C classes.** `extend class NSString:` and `extend class UIView:` work identically to extending Corvid classes. The methods land in the runtime's method table for the target class and are dispatchable from both Corvid and ObjC call sites (`[str shout]` on the ObjC side, `str.shout()` on the Corvid side). See §9.3 for interop specifics.
+
+**Extending primitives.** `Int`, `Float`, `Bool`, `Char` are classes with `kind: record`. Extending them is legal and works the same way. The prelude uses this mechanism internally to provide instance methods on primitives (`5.hex()`, `x.clamp(0, 100)`) — no special case for primitives.
+
+**Devirtualization interaction.** The compiler devirtualizes extension method calls under the same rules as ordinary calls (§5.2): if the target class is provably not further extended in the compilation unit, direct dispatch; otherwise dynamic. Deopt (§5.3) reverts to dynamic if a later-loaded module introduces a new extension.
 
 ### 3.4 Contracts (Protocols)
 
@@ -909,6 +1384,379 @@ class Connection:
 ...encodes a state machine. The compiler tracks state transitions via `ensures` clauses and rejects invalid method calls via `requires` clauses. No separate "state machine" language feature is needed; the machinery falls out of contracts.
 
 Sections benefit from this same mechanism. Since section classes ARE classes, they can carry invariants over their own state. See §4.10 for section classes with state machines.
+
+#### 3.4.3 Pre-state and Post-state Bindings in Ensures Clauses
+
+An `ensures` expression is evaluated at method exit, but it needs to talk about both the state that existed at method entry ("count before") and the state that exists at method exit ("count after"). The rule:
+
+- Inside an `ensures` expression, `self` and parameter identifiers refer to the **entry-state snapshot** — the receiver and parameter values as captured at method entry.
+- Inside an `ensures` expression, `result` refers to the **post-state binding**:
+  - For methods with a declared return type, `result` is the returned value.
+  - For methods with no declared return type (void methods that mutate `self`), `result` is the receiver at method exit.
+
+There is no `old()` form. The pre-state was never lost — it's what `self` and the parameter names already refer to.
+
+```
+class Ledger:
+    state:
+        accounts: {AccountID: Money}
+    
+    invariants:
+        accounts.values.sum == self.initial_total
+    
+    methods:
+        expose function transfer(self, from: AccountID, to: AccountID, amount: Money):
+            requires accounts[from] >= amount
+            ensures result.accounts[from] == self.accounts[from] - amount
+            ensures result.accounts[to]   == self.accounts[to]   + amount
+            
+            self.accounts[from] -= amount
+            self.accounts[to] += amount
+```
+
+- `self.accounts[from]` in the ensures clause is the pre-transfer balance.
+- `result.accounts[from]` is the post-transfer balance.
+- `amount` is the parameter value (unchanged from entry).
+
+The same rule applies to reader methods that return a value:
+
+```
+function next_index(self) -> Index
+    requires !self.did_reach_end()
+    ensures result > self.current_index:
+    return self.string.index_after(self.current_index)
+```
+
+Here `self.current_index` is the (unchanged) pre-state; `result` is the returned index.
+
+**Reference-type semantics.** `self` in ensures scope captures the receiver's field values at entry, using the same value/handle rules as any ordinary read. Reference fields capture the handle at entry, not a deep snapshot — to detect field-level mutations on the same referenced object, compare specific fields: `result.doc.title != self.doc.title`, not `result.doc != self.doc` (which would compare identity).
+
+**Where the bindings apply.**
+
+- `ensures` expressions: `self`/params → entry-state; `result` → post-state.
+- `requires` expressions: `self`/params → entry-state; `result` is not in scope (method hasn't returned yet).
+- `invariants:` expressions (§3.4.2): invariants hold at every observable point, so entry/exit distinction is meaningless; `self` refers to the current state and `result` is not in scope.
+- Method bodies: `self.field = value` mutates in place. `result` is not a language-level binding in the body; use `return expr` (value-returning methods) or let the mutations to `self` stand (void methods). The `result` binding materializes only in `ensures` scope.
+
+**Runtime obligation.** On method entry, the contract runtime snapshots the receiver's field values and parameter values — the same snapshot it already required to make any postcondition checkable. On method exit, the runtime evaluates each `ensures` expression with entry-snapshot bound to `self`/params and post-state bound to `result`. Cost is bounded by field count of the receiver plus parameter count, plus any values transitively read from `self` or params inside the ensures expression.
+
+**Why not `old(...)`?** Considered and dissolved. `old(expr)` in Dafny/JML/Eiffel is a named capture of pre-state; Corvid's runtime already captures the pre-state to make any ensures clause checkable. Exposing the capture as the natural identifier (`self`, params) rather than routing through a wrapper is one fewer construct with equivalent expressive power. Users coming from Dafny/JML/Eiffel should read the `PATTERNS.md` entry for the mapping.
+
+#### 3.4.4 Default Method Inheritance for Structural Conformers
+
+Structural conformance (§3.4) is load-bearing: a class that structurally conforms to protocol `P` **inherits P's default methods** for messages the class does not define itself. This makes "conformance is structural" mean more than "the compiler will allow assignment to a `P`-typed slot" — the conforming class actually gains the protocol's affordances at the class's own use sites.
+
+```
+protocol Countable:
+    accepts iter() -> Iterator<Any>
+    
+    # Default implementation:
+    function count(self) -> Int:
+        var n = 0
+        self.iter().for_each(_ => n += 1)
+        return n
+
+class MyCollection:
+    data: items: [Int]
+    methods:
+        function iter(self) -> Iterator<Int>:
+            return self.items.iter()
+        # No count method defined.
+
+# MyCollection structurally conforms to Countable.
+# It inherits Countable.count as its own method.
+let c = MyCollection(items: [1, 2, 3])
+c.count()   # legal — dispatches to Countable's default; returns 3
+```
+
+**Precedence.** Own definitions and extensions on the class win over inherited defaults. Only messages the class doesn't define at all (in its own body or via any visible extension) fall through to protocol defaults.
+
+**Diamond ambiguity.** If a class structurally conforms to two protocols `A` and `B`, both provide default implementations for the same message `m`, and the class does not define `m` itself — the call `instance.m()` is a compile error at the call site. Diagnostic names both candidate defaults.
+
+Resolution options:
+
+1. **Define the method on the class or via extension.** Removes the fall-through entirely:
+   ```
+   extend class MyClass:
+       methods:
+           function m(self): ...     # class's own m; both A.m and B.m are shadowed
+   ```
+2. **Upcast at the call site** to select a specific protocol's default:
+   ```
+   let a: A = instance
+   a.m()                             # dispatches to A's default
+   ```
+
+No implicit resolution rule (first-imported-wins, alphabetical, etc.) — resolution must be explicit. This is the same principle governing extension shadowing (§3.3.2 `replace` modifier): ambiguity that could be resolved silently is resolved visibly.
+
+**Interaction with extensions.** An `extend class Foo: methods: function m(self): ...` adds `m` to Foo. Once added, `m` is an own definition for the purposes of protocol default resolution — subsequent protocol defaults for `m` don't apply to Foo. The class-plus-extensions set is what determines whether a message falls through to a protocol default.
+
+Extensions shadow inherited protocol defaults **without requiring `replace`** — the extension is providing the class's own definition, and per the priority rule above, own definitions win over inherited defaults. `replace` (§3.3.2) is reserved for shadowing another *explicit* declaration (original definition or another extension). See §3.3.2 rule 5 for the full statement and the second-extension edge case.
+
+**Interaction with protocol extension.** An `extend class SomeProtocol: methods: function m(self): ...` adds `m` as a default to `SomeProtocol`. Every structural conformer that doesn't define `m` itself inherits the new default retroactively — when the module containing the extension becomes visible.
+
+**Trait-qualified dispatch (new in v0.10.0).** When a protocol is generic — `As<T>`, `From<T>`, `Comparable<T>`, etc. — the type parameter is part of the method's identity, not an overload dimension over ordinary parameters. A class may declare multiple same-named methods that differ only in the protocol's type parameter:
+
+```
+class Payload:
+    data: bytes: Bytes
+    methods:
+        function as(self) -> Bytes:  return self.bytes                     # As<Bytes>
+        function as(self) -> Json:   return json_encode(self.bytes)        # As<Json>
+        function as(self) -> String: return String.decoded(self.bytes)     # As<String>
+```
+
+All three methods coexist in `Payload`'s method table without conflict; each is keyed by `(name, conformed-protocol-instantiation)` rather than by `name` alone. At the call site, the compiler infers which one to dispatch by:
+
+1. **Return-type context.** `let b: Bytes = p.as()` → `As<Bytes>.as`.
+2. **Explicit turbofish.** `p.as::<Json>()` when context is insufficient.
+3. **Trait qualification.** `As<Json>.as(p)` when maximally explicit is preferred.
+
+If none of the three yields a unique target, compile error at the call site with the ambiguous candidates listed.
+
+**Restricted to generic-protocol-derived same-name.** This is not open-ended overloading. It applies only when the same-name methods each satisfy a distinct instantiation of a *generic protocol* to which the class conforms. Two same-named methods that don't share a generic-protocol parent still conflict per §3.3.2 rule 5 (no signature-based overloading).
+
+**Interaction with extensions.** Extensions may add new `As<T>` / `From<T>` conformances to a class after the fact — Corvid's post-hoc conformance model (§3.3.2) applies uniformly. An `extend class NSString: methods: function as(self) -> Yaml: ...` adds `As<Yaml>` conformance to NSString without conflicting with any of NSString's existing `.as() -> T` methods.
+
+**Interaction with §3.3.2 rule 1 shadowing.** Two extensions both providing `function as(self) -> Bytes` on the same class *is* a rule-1 shadowing situation — same-name, same-protocol-instantiation. Rule 1's warning + deterministic resolution applies. The trait-qualified exemption only expands the identity key; it does not exempt genuine same-key duplicates.
+
+**Why not require explicit conformance?** Corvid's design (§1.5, §3.4) has committed to structural conformance since v0.6+. Requiring `class Foo(SomeProtocol):` for defaults would split conformance into two categories (structural for static checks; explicit for defaults), which contradicts the uniform structural model. Reading A (implicit inheritance for structural conformers) preserves the uniformity; diamond disambiguation is the cost.
+
+**Runtime obligation.** Method-table population (§5.1) is extended: at class-composition time, for each visible protocol whose `accepts:` the class satisfies structurally, the compiler considers the protocol's default methods for messages the class doesn't define. Ambiguity is detected at compile time; if resolved (class defines, or single protocol contributes), the default is either shadowed or inherited into the effective method table. No runtime cost beyond what the composition already required.
+
+#### 3.4.5 Explicit Conformance Declarations
+
+Structural conformance (§3.4) is the default: any class whose method table satisfies protocol P's `accepts:` list is assignable to a P-typed slot and inherits P's default methods (§3.4.4) — no declaration required. **Explicit conformance** is a compile-time claim, additive on top of structural: the author states that a class is *intended* to conform to a specific protocol, and the compiler validates that claim at the declaration site.
+
+**Two equivalent forms.**
+
+Header parens sugar — canonical for the definition site with 1–3 conformances:
+
+```
+class Reader(Iterable<Char>):
+    state: source: String
+    state: position: StringPosition
+    methods:
+        function iter(self) -> Iterator<Char>: ...
+
+class Projectile(Positioned, Moving):
+    state: pos: Point
+    state: velocity: Vector
+    methods:
+        function position(self) -> Point: return self.pos
+        function step(self, dt: Float): self.pos = self.pos + self.velocity * dt
+```
+
+Body-form entries — canonical for extensions, long conformance lists, or when consistency with extension-body forms matters:
+
+```
+class Reader:
+    conforms: Iterable<Char>
+    state: source: String
+    state: position: StringPosition
+    methods:
+        function iter(self) -> Iterator<Char>: ...
+
+class Projectile:
+    conforms: Positioned
+    conforms: Moving
+    state: pos: Point
+    state: velocity: Vector
+    ...
+```
+
+Both forms desugar to the same conformance-set entry. The parens header is sugar over the body form; grammar produces one canonical AST shape after desugaring.
+
+**Semantics.**
+
+1. **Compile-time validation at the declaration site.** For every declared conformance, the compiler checks that the class's method table satisfies the protocol's `accepts:` list — either via own methods, extension methods visible at composition time, or §3.4.4 default-method inheritance. Missing or wrong-signature method → compile error at the class declaration, not at the first `let x: P = ...` assignment. **This is the primary payoff over structural conformance: fail early.**
+
+2. **Structural conformance still applies for undeclared protocols.** A class that structurally satisfies a protocol without declaring it remains assignable to that protocol's slots and inherits its defaults. Explicit conformance is *strictly additive* — it declares the author's intent for the *listed* protocols; other protocols continue to work structurally.
+
+3. **Runtime dispatch is identical.** Structural and explicit conformances produce the same method-table entries per §5.1. No runtime cost difference. No `@protocol` metadata emitted differently.
+
+4. **Extensions may add conformances.** Both forms are legal on extensions:
+
+   ```
+   extend class NSString(As<Yaml>):
+       methods:
+           function as(self) -> Yaml: ...
+
+   # Or body form:
+   extend class NSString:
+       conforms: As<Yaml>
+       methods:
+           function as(self) -> Yaml: ...
+   ```
+
+   Extension-added conformances accumulate with definition-site conformances into the class's unified conformance set. Two extensions declaring the same conformance with conflicting method definitions → §3.3.2 rule 1 shadowing warning + deterministic resolution.
+
+5. **Additive across the class-plus-extensions set.** The class's total conformance set is the union of (a) header-parens conformances at definition, (b) body-form `conforms:` entries at definition, (c) header-parens conformances on any visible extension, (d) body-form `conforms:` entries on any visible extension. Ordering doesn't matter; duplicates are collapsed silently (declaring the same conformance twice is not an error — extensions may redundantly reassert what the definition already declared).
+
+**Class inheritance — separate from conformance, ObjC-only, body-form.**
+
+Corvid commits to composition-over-inheritance for pure Corvid code (§1.5, §3.4). The one exception is ObjC interop: subclassing UIViewController, NSObject, etc. is unavoidable for framework-facing code. Inheritance is expressed via body-form `metadata: extends:` — not header parens, not header colon.
+
+```
+class MyViewController:
+    metadata:
+        extends: UIViewController
+    state:
+        table_view: UITableView?
+    dynamic function viewDidLoad(self):
+        super.viewDidLoad()
+        self.table_view = UITableView()
+```
+
+Rules:
+- **`metadata: extends:` accepts at most one class**, which must be `kind: regular` (protocol classes cannot be extended-from — use conformance instead).
+- **Only ObjC-imported classes are legal targets.** Pure Corvid classes cannot be subclassed; the compiler emits `not-subclassable` error if the extends target is a Corvid-defined regular class. Composition is the intended path.
+- **Extends is set at definition, not modifiable by extensions.** Same rule as `kind:` (§3.3.2).
+- **`super.method()` in the class body dispatches to the extended class's implementation** per §5.7 (and the ObjC runtime's `objc_msgSendSuper` at the interop boundary).
+
+**Header form combines with generics + where-clauses:**
+
+```
+class Cache<K, V>(Iterable<Entry<K, V>>) where K: Hashable:
+    state: store: Map<K, V>
+    methods:
+        function iter(self) -> Iterator<Entry<K, V>>: return self.store.iter()
+```
+
+Grammar ordering: `class NAME <generics> (conformances) where <constraints> :` — reads left-to-right as "class Cache of K, V, conforming to Iterable of Entry, constrained by K: Hashable, body follows."
+
+**Retired: double-colon header form.**
+
+The v0.9.x-and-earlier form `class Foo: A, B:` (protocol conformance) and `class Foo: BaseClass:` (ObjC inheritance) was **deprecated in v0.10.2** with a parse-time warning and fix-it suggestion, and is **removed in v0.11** — the parser now emits a hard compile error. Rationale (unchanged from v0.10.2 deprecation):
+
+- **Double-colon shape carried two meanings** (conformance vs inheritance) with the same syntax, resolved by RHS kind. A design mistake worth undoing before v1.
+- **First-colon starting a conformance clause is subtle** — parser and reader alike had to know the rule that the first `:` doesn't open the body. Parens `(A, B)` is unambiguously delimited.
+- **The design commitment (composition over inheritance) now shows in the surface syntax** — protocols get the ergonomic parens; ObjC inheritance requires body-form ceremony. The exception looks like an exception.
+
+Migration is mechanical:
+- `class Foo: A, B:` → `class Foo(A, B):`
+- `class Foo: BaseClass:` (where `BaseClass` is a `kind: regular` ObjC-imported class) → `class Foo:` with `metadata: extends: BaseClass`
+
+**Diagnostic (v0.11):**
+
+```
+error[E0448]: retired conformance-declaration syntax
+  --> src/reader.cor:12:1
+   |
+12 | class Reader: Iterable<Char>:
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ double-colon header form (retired in v0.11)
+   |
+help: use parens sugar for protocol conformance
+   |
+12 | class Reader(Iterable<Char>):
+   |             +               -
+   |
+note: this form was deprecated in v0.10.2 with fix-it; removed in v0.11 as scheduled.
+```
+
+**§4.18 metadata alignment.** Class metadata already reserves `superclass:` and `conforms_to:` keys (line 4694). §3.4.5 formalizes when they are populated:
+- `superclass: X` — from `metadata: extends: X` in class body.
+- `conforms_to: [P1, P2, ...]` — union of all explicit conformance declarations across definition and visible extensions. Structural conformances that were never declared are *not* in the metadata list (they're still runtime-effective for dispatch, but not enumerated).
+
+**Runtime obligation.** Explicit conformance adds one compile-time validation pass per declared conformance; no runtime cost. The class's method table (§5.1) is unaffected by whether a conformance was declared explicitly or inferred structurally — dispatch is identical.
+
+#### 3.4.6 Auto-Conformance for Value Types
+
+Records (`kind: record`) and enums (`kind: enum`) automatically conform to `As<Bytes>` (§3.10.3) and `From<Bytes>` — the compiler synthesizes `function as(self) -> Bytes` and `class function from(source: Bytes) -> DecodeOutcome<Self>` from the class's field layout at composition time. Primitives (`Int`, `Float`, `Bool`, `Char`, etc.) get the same conformances shipped explicitly in prelude (§3.11.1). The rule is: **every value-type base class carries `As<Bytes>` / `From<Bytes>` automatically, the same way records already carry structural equality and hashing per §3.2.**
+
+Regular classes (`kind: regular`) do **not** auto-conform — mutable `state:` fields, potential reference cycles, and hidden identity make mechanical serialization unsafe. Regular-class authors write `.as() -> Bytes` explicitly if they want their class to participate in the serialization substrate.
+
+**Example.**
+
+```
+record Point:
+    data: x: Float
+    data: y: Float
+    # No user-written .as() — compiler synthesizes:
+    #   function as(self) -> Bytes:
+    #       let out = Bytes.with_capacity(8)
+    #       out.append(self.x.as())    # Float → 4 bytes, network-order
+    #       out.append(self.y.as())    # Float → 4 bytes, network-order
+    #       return out
+    #   class function from(source: Bytes) -> DecodeOutcome<Self>:
+    #       switch Float.from(source.slice(0..4)):
+    #           case .invalid(let o, let r): return .invalid(o, r)
+    #           case .converted(let x):
+    #               switch Float.from(source.slice(4..8)):
+    #                   case .invalid(let o, let r): return .invalid(o + 4, r)
+    #                   case .converted(let y): return .converted(Self(x: x, y: y))
+
+let p = Point(x: 1.0, y: 2.0)
+let b: Bytes = p.as()                                 # works — auto-derived
+let p2 = Point.from(source: b)                        # returns DecodeOutcome<Point>
+```
+
+**Enum example.**
+
+```
+enum Direction:
+    case north
+    case south
+    case east
+    case west
+    # Auto-derived:
+    #   function as(self) -> Bytes:
+    #       switch self:
+    #           case .north: return [0x00]
+    #           case .south: return [0x01]
+    #           case .east:  return [0x02]
+    #           case .west:  return [0x03]
+    #   class function from(source: Bytes) -> DecodeOutcome<Self>: ...
+
+enum Shape:
+    case circle(radius: Float)
+    case rectangle(width: Float, height: Float)
+    # Auto-derived: discriminator byte + associated data recursively.
+    #   circle(1.5): [0x00, <4-byte float 1.5>]
+    #   rectangle(2.0, 3.0): [0x01, <4-byte 2.0>, <4-byte 3.0>]
+```
+
+**Discriminator width.** Enums with ≤256 cases use `UInt8` discriminator; enums with 257–65536 cases use `UInt16`; beyond that use `UInt32`. Discriminator width is set at composition time from case count. Adding a case to an enum that pushes it across a width boundary is a wire-incompatible change — flagged by the compiler at composition, since it would break decoding of existing serialized values.
+
+**Field-type recursion.** A record with a field of type `T` requires `T` to have `As<Bytes>` and `From<Bytes>` conformance. If `T` is a record/enum/primitive → automatic. If `T` is a regular class → user must have written the conformance methods. If `T` has no `As<Bytes>` conformance, the record declaration fails at compile time with a diagnostic pointing at the field:
+
+```
+error[E0520]: field `T`'s type `SomeRegularClass` has no `As<Bytes>` conformance
+  --> src/model.cor:12:9
+   |
+12 |     data: helper: SomeRegularClass
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ cannot auto-derive `Model.as() -> Bytes`
+   |
+help: either write `As<Bytes>` on `SomeRegularClass` explicitly
+   |
+   |     extend class SomeRegularClass:
+   |         methods:
+   |             function as(self) -> Bytes: ...
+   |
+help: or write `Model.as() -> Bytes` explicitly to opt out of auto-derivation
+```
+
+**User override.** A value-type author who wants a different wire format writes `.as() -> Bytes` explicitly on the record. Per §3.3.2 rule 6, own definitions shadow inherited defaults; auto-derived conformance is treated as inherited default. Zero ceremony to override; zero ceremony to accept.
+
+```
+record Timestamp:
+    data: seconds: UInt64
+    data: nanos: UInt32
+    methods:
+        function as(self) -> Bytes:
+            # Custom format: single UInt64 nanoseconds since epoch, not two fields.
+            return (self.seconds * 1_000_000_000 + self.nanos.as::<UInt64>()).as()
+```
+
+**Interaction with §3.4.5 explicit conformance.** A record does not need `class Point(As<Bytes>):` header sugar — the conformance is automatic. Declaring it explicitly is legal but redundant (compiler treats it as a no-op reaffirmation, no warning). Explicit declaration on a `kind: regular` class does what it always did — validates at declaration time that the class's method table satisfies `As<Bytes>`'s `accepts:` list (which for regular classes means the user's own `.as() -> Bytes` must be present).
+
+**Only `As<Bytes>` / `From<Bytes>` get auto-conformance.** JSON, MsgPack, CBOR, and other format-specific target types (`Json`, `MsgPack`, `Csv`, etc.) do **not** get auto-conformance. They have per-record author choices (field naming — camelCase vs snake_case? null handling — omit missing or emit `null`? number precision — full float or truncated? enum spelling — case name string or integer discriminator?) with no defensible language-level default. Silent choice would be a footgun; the same principle that made narrowing `Int32(300).as() -> UInt8` a compile error rather than silent-wrap applies here. Users write `function as(self) -> Json:` explicitly; third-party format packages ship their target type but write no auto-derivation logic.
+
+**Rationale for `As<Bytes>` being the exception.** Bytes are Corvid's universal substrate (§3.10.4). There is one canonical byte encoding for a given field layout — concatenate field bytes in declaration order — and no author choice about it (endianness is fixed language-wide per §3.10.10, wire format is deterministic). The absence of author choice is what makes auto-conformance safe for `As<Bytes>` and unsafe for `As<Json>`.
+
+**Runtime obligation.** Auto-derived methods populate the class's method table (§5.1) exactly as user-written methods do. No runtime cost difference; no metadata difference. §4.18 metadata lists the class as `conforms_to: [As<Bytes>, From<Bytes>, ...]` — auto-derived conformances appear in the list, indistinguishable from user-declared conformances.
+
+**Runtime cost of auto-derivation.** Compile-time only. The synthesized method bodies compile to the same instructions user-written equivalents would produce. Field iteration is unrolled at compile time (field count is known); no runtime reflection.
 
 ### 3.5 Effects
 
@@ -1466,7 +2314,7 @@ Corvid's operators split into two tiers: **bootstrap operators** (§10 grammar-c
 
 **C's `&&`, `||`, `!` are not used** — Corvid spells logicals as words (`and`/`or`/`not`) for legibility. This reserves `&` and `|` unambiguously for bitwise (prelude), and `!` for the type-position non-nil contract (also prelude, `T!` alias).
 
-**Integer overflow semantics.** Signed overflow is undefined behavior in C99; Corvid tightens this: signed overflow **wraps** by default (two's-complement modular arithmetic). Users wanting trap-on-overflow use `checked_add`/`checked_sub`/etc. methods that return `Result<T, OverflowError>`. Users wanting saturation use `saturating_*` variants. This departs from C99 UB in favor of predictable behavior consistent with the "runtime as substrate, not as ceiling" premise (§1.5).
+**Integer overflow semantics.** Signed overflow is undefined behavior in C99; Corvid tightens this: signed overflow **wraps** by default (two's-complement modular arithmetic). Users wanting checked semantics use `checked_add`/`checked_sub`/etc. methods that return `ConvertOutcome<T>` (§3.11.3) — `.converted(T)` on success, `.overflow(source, target)` on out-of-range. Users wanting saturation use `saturating_*` variants. This departs from C99 UB in favor of predictable behavior consistent with the "runtime as substrate, not as ceiling" premise (§1.5). The three-method shape (wrap / saturate / checked) matches the numeric narrowing methods (§3.11.2) — same design principle: semantics is a caller-choice-per-call operation, expressed at the call site as a method name, not as a protocol family.
 
 **Bit-shift semantics.** Shift amount must be in `0..bit_width(T)`. Shift by a value outside this range is undefined behavior in C99; Corvid rejects it as a contract violation (runtime warning; deterministic wrap in release). Matches the overflow discipline above.
 
@@ -1590,36 +2438,756 @@ for slice in slices:
 
 All three forms use the same shape: iterate, receive an object per step, access fields by name. No positional destructuring; no `(k, v)` binding syntax; no language-level tuple type.
 
+#### 3.10.3 Conversion Protocols — `As<T>` and `From<T>`
+
+Corvid's canonical conversion pattern. `As<T>` names the projection direction (self → T); `From<T>` names the construction direction (T → Self). Both are generic protocols; the type parameter is the target/source respectively.
+
+```
+protocol As<T>:
+    accepts as(self) -> T
+
+protocol From<T>:
+    class function from(source: T) -> Self
+```
+
+**Structural conformance.** A class with `function as(self) -> Bytes:` structurally conforms to `As<Bytes>` without any explicit `conforms:` declaration. Same for `class function from(source: String) -> Self:` and `From<String>`. This matches Corvid's §3.4 structural-conformance discipline.
+
+**Trait-qualified dispatch.** A class may conform to multiple `As<T>` and multiple `From<T>` instantiations simultaneously, declaring one `as`/`from` method per instantiation. Method identity is `(name, protocol-instantiation)`; see §3.4.4 for the dispatch rules.
+
+```
+class Config:
+    data: raw: Bytes
+    methods:
+        function as(self) -> Bytes:  return self.raw                # As<Bytes>
+        function as(self) -> String: return String.decoded(self.raw) # As<String>
+        function as(self) -> Json:   return json_parse(self.raw)    # As<Json>
+
+    class function from(source: String) -> Self:                     # From<String>
+        return Self(raw: source.as())
+    class function from(source: Json) -> Self:                       # From<Json>
+        return Self(raw: json_encode(source).as())
+```
+
+**Call-site dispatch resolution.** The compiler picks the `.as()` target using (in priority order):
+
+1. Return-type context: `let b: Bytes = config.as()`.
+2. Turbofish: `config.as::<Bytes>()`.
+3. Trait qualification: `As<Bytes>.as(config)`.
+
+If none resolves uniquely, compile error with candidate list.
+
+**No auto-derivation between `As` and `From`.** Implementing `From<T>` on Self does not synthesize `As<Target>` on T (and vice-versa). The two directions have different semantics — projection may lose information, construction may fail. Rust's blanket `Into` impl is deliberately not adopted; author both directions explicitly when both are meaningful.
+
+**Specific-name methods remain valid.** `.as_bytes(encoding)`, `.from_json(source)`, `.from_hex(source)` are legitimate when:
+
+- The canonical direction takes parameters (encoding, format).
+- Multiple projections would collide on target type but differ on intent (`.as() -> String` vs `.as_debug() -> String` vs `.as_display() -> String`).
+- The target name in the method aids readability at call sites where inference is weak.
+
+`.as()` / `.from()` is for the *canonical* projection/construction. Specific-name methods coexist as ordinary methods.
+
+**Default implementations via protocol extension.** `extend class As<T>:` may provide default `as` implementations for specific instantiations. Common pattern for `As<String>` returning a debug-style representation, overridable by conformers.
+
+**Relationship to `Convertible`, `AsBytes`.** `Convertible<To>` **retired in v0.10.0** (§3.11.4). `As<T>` is the sole conversion protocol; numeric narrowing lives outside `As<T>` as three ordinary methods on the source primitive (`wrapping_to`, `saturating_to`, `checked_to`; §3.11.2). The retirement dissolved the parallel-protocol shape that Convertible carried.
+
+There is no separate `AsBytes` protocol. `As<Bytes>` is the canonical spelling. Similarly no `AsString`, `FromBytes`, etc. — the generic form is the only form.
+
+#### 3.10.4 The `Bytes` Type
+
+Corvid's mutable byte-sequence type. `kind: regular` (reference-shaped), consistent with Array/Map/Set (§3.2 collection containers). Corresponds to Foundation's NSData/NSMutableData at the runtime layer; toll-free bridged (§9.3).
+
+**Class shape (illustrative — not exhaustive):**
+
+```
+expose class Bytes:
+    metadata: kind: regular
+    metadata: bridge_to: NSMutableData
+    
+    # Construction
+    class function empty() -> Self
+    class function with_capacity(n: Int) -> Self
+    class function repeating(byte: UInt8, count: Int) -> Self
+    class function from(source: [UInt8]) -> Self          # From<[UInt8]>
+    class function from(source: Bytes) -> Self            # From<Bytes> — copy
+    
+    # Reading
+    function length(self) -> Int
+    function is_empty(self) -> Bool
+        ensures: result == (self.length() == 0)
+    function subscript(self, i: Int) -> UInt8
+        requires: 0 <= i < self.length()
+    function slice(self, range: Range<Int>) -> Bytes
+        requires: 0 <= range.start <= range.end <= self.length()
+    function concat(self, other: Bytes) -> Bytes
+    function starts_with(self, prefix: Bytes) -> Bool
+    function ends_with(self, suffix: Bytes) -> Bool
+    function contains(self, needle: Bytes) -> Bool
+    function first_index(self, of: UInt8) -> Int?         # nil if absent
+    
+    # Writing
+    function append(self, byte: UInt8)
+    function append(self, bytes: Bytes)
+    function append<T: As<Bytes>>(self, value: T)         # trait-qualified
+    function subscript_set(self, i: Int, byte: UInt8)
+        requires: 0 <= i < self.length()
+    function insert(self, at: Int, byte: UInt8)
+        requires: 0 <= at <= self.length()
+    function remove(self, at: Int) -> UInt8
+        requires: 0 <= at < self.length()
+    function clear(self)
+        ensures: self.length() == 0
+    
+    # Iteration
+    conforms: Iterable<UInt8>
+    function iter(self) -> Iterator<UInt8>
+    
+    # Conversion
+    function as(self) -> Bytes                            # As<Bytes>: identity (copy)
+        ensures: result.length() == self.length()
+    function decoded_as(self, encoding: Encoding) -> DecodeOutcome<String>
+```
+
+**Array-literal conformance.** `let b: Bytes = [0x48, 0x65, 0x6c, 0x6c, 0x6f]` — Bytes conforms to `ArrayLiteral<UInt8>` (§3.10 collection literal conformance).
+
+**Value hygiene.** `.as() -> Bytes` returns a fresh copy — the caller can mutate without affecting the source. When zero-copy is needed (parser hot paths, sub-buffer views into a larger owner), use `.slice(range)` which may share storage per implementation choice (immutable slice semantics).
+
+**No separate builder type.** Bytes is the builder — construct, mutate, hand off. Consistent with Array/Map/Set: no ArrayBuilder, no MapBuilder, no BytesBuilder. If a caller needs immutability guarantees, they wrap the Bytes in a record or use §8.4.1 reader/writer classification.
+
+**Raw-pointer access is `unsafe:`.** `bytes.raw_pointer()` for C interop requires the caller to enter an `unsafe:` block per §6.7. In-place byte mutation via `bytes[i] = x` is safe — Bytes participates in normal contract discipline.
+
+**Reader/writer classification.** All read methods (length, subscript, slice, iter, etc.) are readers per §8.4.1; write methods (append, insert, clear, subscript_set) are writers. Concurrent access is governed by the RWLock-style dispatch already in place for regular classes.
+
+#### 3.10.5 The `String` Type
+
+Corvid's text type. `kind: regular`, corresponds to NSString at the runtime layer; toll-free bridged.
+
+**Grapheme-native.** All text semantics are grapheme-cluster-based. `Char` (§3.10.6) is a grapheme cluster — potentially multiple Unicode code points appearing as a single user-visible character (emoji sequences, combining marks, family emoji, flag sequences).
+
+**No integer indexing.** `s[i]` where `s: String` is a compile error with a diagnostic pointing to `StringPosition` (§3.10.7). Rationale: integer indexing over strings admits three incompatible semantics (bytes / code units / graphemes) and misleads even careful authors. Positions are opaque tokens; the invariant that "position 5 always means the character-after-4" holds only under a specific granularity choice, and Corvid refuses to pick one silently.
+
+**No peer views (`.utf16`, `.utf8`, `.bytes` are not properties on String).** Byte-level access is via the universal `.as() -> Bytes` (UTF-8 default) or `.as_bytes(encoding: Encoding) -> Bytes` for other encodings. This unifies byte access across every type via the same convention.
+
+**Class shape (illustrative):**
+
+```
+expose class String:
+    metadata: kind: regular
+    metadata: bridge_to: NSString
+    
+    # Construction
+    class function empty() -> Self
+    class function from(source: String) -> Self           # From<String>: copy
+    class function from(source: Char) -> Self             # From<Char>: singleton
+    class function decoded(source: Bytes) -> DecodeOutcome<Self>
+                                                          # UTF-8 default
+    class function decoded(source: Bytes, encoding: Encoding)
+        -> DecodeOutcome<Self>
+    
+    # Reading
+    function grapheme_count(self) -> Int
+    function is_empty(self) -> Bool
+    function first_grapheme(self) -> Char?
+    function last_grapheme(self) -> Char?
+    function contains(self, substring: String) -> Bool
+    function starts_with(self, prefix: String) -> Bool
+    function ends_with(self, suffix: String) -> Bool
+    
+    # Positional access
+    function start_position(self) -> StringPosition
+    function end_position(self) -> StringPosition
+    function position(self, after: StringPosition) -> StringPosition?
+    function position(self, before: StringPosition) -> StringPosition?
+    function position(self, at_distance: Int, from: StringPosition)
+        -> StringPosition?
+    function first_position(self, of: String) -> StringPosition?
+    function last_position(self, of: String) -> StringPosition?
+    function grapheme_at(self, position: StringPosition) -> Char
+        requires: position != self.end_position()
+    function substring(self, from: StringPosition, to: StringPosition) -> String
+        requires: from <= to
+    
+    # Pattern-based access (Pattern subsystem — §3.10.9)
+    function first_position(self, matching: Pattern) -> StringPosition?
+    function substring(self, matching: Pattern) -> String?
+    function all_matches(self, matching: Pattern) -> Iterator<Match>
+    function replace_all(self, pattern: Pattern, with: String) -> String
+    
+    # Iteration
+    conforms: Iterable<Char>
+    function iter(self) -> Iterator<Char>
+    function graphemes(self) -> Iterator<Char>            # alias for iter
+    function lines(self) -> Iterator<String>
+    function split(self, pattern: Pattern) -> Iterator<String>
+                                                          # split on a Pattern (Literal for the common case)
+    
+    # Conversion
+    function as(self) -> Bytes                            # As<Bytes>: UTF-8
+    function as(self) -> String                           # As<String>: identity
+    function as_bytes(self, encoding: Encoding) -> Bytes
+```
+
+**Comparison.** `<`, `<=`, `>`, `>=` compare lexicographically by grapheme sequence. `==` compares canonical equivalence (NFC-normalized grapheme sequences equal). Users who need code-point-exact comparison call `.as_bytes(.utf8) == other.as_bytes(.utf8)`.
+
+**String literals.** `"hello"` produces a `String`. String interpolation `"x = \(value)"` calls `value.as() -> String` — every interpolated type must satisfy `As<String>`.
+
+**Pattern support.** `Pattern` is a separate class (deferred to future spec) supporting glob, regex, and structural patterns. `substring(matching:)` returns the first match; `.split(pattern:)` and `.replace(pattern:, with:)` are pattern-based operations.
+
+#### 3.10.6 The `Char` Type
+
+Represents a single grapheme cluster — one user-visible character, potentially spanning multiple Unicode code points.
+
+**Class shape:**
+
+```
+expose class Char:
+    metadata: kind: record
+    
+    # Predicates
+    function is_whitespace(self) -> Bool
+    function is_newline(self) -> Bool
+    function is_digit(self) -> Bool
+    function is_alphabetic(self) -> Bool
+    function is_alphanumeric(self) -> Bool
+    function is_ascii(self) -> Bool
+    function is_uppercase(self) -> Bool
+    function is_lowercase(self) -> Bool
+    
+    # Transformations
+    function to_uppercase(self) -> Char
+    function to_lowercase(self) -> Char
+    
+    # Conversion
+    function as(self) -> Bytes                            # As<Bytes>: UTF-8
+    function as(self) -> String                           # As<String>: singleton
+    function ascii_value(self) -> UInt8?                  # nil if not ASCII
+    function code_points(self) -> [UInt32]                # scalar values
+    
+    # Comparable/Equatable/Hashable — record defaults per §3.2
+```
+
+**Literal syntax.** `'a'` produces a `Char`. Escape sequences per §2.7 (`'\n'`, `'\u{1F600}'`, etc.). Multi-code-point graphemes require string-of-length-1 pattern: `let flag: Char = "🇸🇬".first_grapheme() ?? nil_char`.
+
+#### 3.10.7 The `StringPosition` Type
+
+Opaque position token into a specific `String` instance.
+
+**Class shape:**
+
+```
+expose class StringPosition:
+    metadata: kind: record
+    
+    # Comparison — total order within a single source String.
+    function op_less_than(self, other: StringPosition) -> Bool
+        requires: self.source_id == other.source_id
+    function op_equal(self, other: StringPosition) -> Bool
+        requires: self.source_id == other.source_id
+    # No arithmetic — cannot do `pos + 5` directly.
+    # Advance via String.position(after:) / position(at_distance:from:).
+```
+
+**Bound to source String.** A `StringPosition` obtained from `s1: String` is not comparable to a `StringPosition` from `s2: String` — comparison across different sources is a runtime precondition failure per §3.6. This prevents "position from string A applied to string B" bugs.
+
+**Not serializable across process boundaries.** StringPositions are runtime handles into a specific String's grapheme table; they don't roundtrip through disk or IPC. For persistent references, use grapheme-count offsets and reconstitute via `s.position(at_distance: n, from: s.start_position())`.
+
+**No arithmetic.** `pos + 5` is a compile error. The path is `s.position(at_distance: 5, from: pos)`, which requires the String to be present at the call site and returns `Optional<StringPosition>` (nil if 5 graphemes beyond exceeds `s.end_position()`). This makes bounds-checking part of every navigation step.
+
+#### 3.10.8 Supporting Enums — `Encoding`, `ByteOrder`, `DecodeOutcome<T>`
+
+```
+enum Encoding:
+    case utf8
+    case utf16_le
+    case utf16_be
+    case ascii
+    case latin1
+    # Extend via prelude aliases per §4.16 for uncommon encodings.
+
+enum ByteOrder:
+    case little
+    case big
+    case network      # alias for .big — network byte order convention
+    case host         # aliased at compile time to the platform's native order
+
+enum DecodeOutcome<T>:
+    case decoded(T)
+    case invalid(offset: Int, reason: String)
+```
+
+**`DecodeOutcome<T>` usage** — per v0.8.5 failure-handling discipline, decoding-failure paths are switched, not thrown:
+
+```
+switch Bytes.from([0xff, 0xfe, 0x48, 0x00]).decoded_as(.utf16_le):
+    case .decoded(let s):
+        process(s)
+    case .invalid(let offset, let reason):
+        log("decode failed at byte {offset}: {reason}")
+        return .parse_error
+```
+
+**Serialization substrate.** Any type conforming to `As<Bytes>` participates in Corvid's universal serialization protocol. Format-specific overlays (`As<Json>`, `As<MsgPack>`, `As<Yaml>`) become ordinary trait-qualified conformances added by user code or third-party packages via `extend class Foo:` (§3.3.2) — no special language support required; third-party format packages ship a target type and users write `function as(self) -> ThatType:` methods, exactly like user code. Method name is always `.as()` differentiated by return type per §3.10.3 trait-qualified dispatch; never `as_bytes()` / `as_json()`. No reflection-based auto-serialization (the trap Java's `Serializable` fell into); regular-class authors write `.as() -> Bytes` explicitly.
+
+**Auto-conformance for value types (v0.11 planned).** Records, enums, and primitives get automatic `As<Bytes>` and `From<Bytes>` conformances — the compiler synthesizes `.as() -> Bytes` and `class function from(source: Bytes) -> DecodeOutcome<Self>` from field layout at composition time. This is a base-class property (same shape as automatic structural equality on records per §3.2), not a stdlib layer requiring opt-in. `kind: regular` classes do NOT auto-conform — mutable state, potential cycles, identity require explicit user-written serialization. User-written `.as() -> Bytes` on a value type shadows the auto-derived one per §3.3.2 (own definitions win over inherited defaults). Only `As<Bytes>` gets auto-conformance because bytes are the universal substrate with one canonical encoding; format-specific overlays (JSON, msgpack) have per-record author choices (field naming, null handling, number precision) and must be user-written.
+
+#### 3.10.9 The `Pattern` Subsystem — Regex, Glob, Literal
+
+String methods that take a `matching:` or `pattern:` parameter (§3.10.5) dispatch through the `Pattern` protocol. Concrete conformers ship in prelude for regex, glob, and literal-string matching. Users add more (PEG, fuzzy, Levenshtein, etc.) via `extend` + structural conformance — no changes to `String` or the prelude required.
+
+**Design commitment.** Pattern is one protocol, three concrete conformers. Pattern selection is ordinary polymorphism on the value passed to a String method — not trait-qualified dispatch (§3.10.3), not sibling protocols. The differentiator between conformers is genuine structural difference (compiled regex NFA vs raw glob string vs verbatim needle), not semantics-for-the-same-signature. Passes the mechanism-invention trap check.
+
+##### 3.10.9.1 The `Pattern` Protocol
+
+```
+protocol Pattern:
+    accepts first_match(self, source: String) -> Match?
+    accepts all_matches(self, source: String) -> Iterator<Match>
+```
+
+Two methods, structural conformance. Any class with these two methods is a Pattern; no `conforms: Pattern` declaration required (§3.4).
+
+**Iteration contract.** `all_matches` returns an Iterator per §3.10.1 — non-overlapping matches in source-order. Overlapping-match semantics (looking for repeated overlaps) is outside Pattern's contract; a caller who needs it constructs a custom iterator.
+
+##### 3.10.9.2 `Match`, `MatchRange`, `MatchGroup` Records
+
+```
+record Match:
+    data: source: String                       # the String this Match came from
+    data: range: MatchRange                    # extent of the match
+    data: captures: Map<String, MatchGroup>    # named captures only
+    methods:
+        function substring(self) -> String:
+            return self.source.substring(from: self.range.start, to: self.range.end)
+        function group(self, name: String) -> MatchGroup?:
+            return self.captures.get(name)
+
+record MatchRange:
+    data: start: StringPosition
+    data: end: StringPosition
+        # start <= end; both are positions in Match.source
+
+record MatchGroup:
+    data: range: MatchRange
+    data: value: String
+```
+
+**Named-only captures.** The `captures:` map is keyed by `String` — the name declared in the pattern source. Positional captures are not exposed via numeric index. Consistent with §3.2 named-only record fields, §3.7.1 named-only enum associated values, §3.10.2 named-only multi-value carriers. Corvid does not offer positional access anywhere; Pattern doesn't invent an exception.
+
+**Backreference to source.** `Match.source` is the String the match was found in. `Match.substring()` slices the source using the match's positions (§3.10.7 StringPosition semantics — positions are source-bound). This means passing a Match around does not lose the original text.
+
+##### 3.10.9.3 Concrete Conformers — `Literal`, `Glob`, `Regex`
+
+All three are prelude classes with `kind: regular`.
+
+**`Literal` — exact-string match, no interpretation.**
+
+```
+expose class Literal:
+    metadata: kind: regular
+    data: needle: String
+    methods:
+        function first_match(self, source: String) -> Match?
+        function all_matches(self, source: String) -> Iterator<Match>
+```
+
+Matches the needle character-for-character (grapheme-cluster-for-grapheme-cluster per §3.10.5). No escape processing, no interpretation. Constructor: `Literal(",")`, `Literal("http://")`. No captures.
+
+**`Glob` — filename-style patterns (`*`, `?`, `[abc]`).**
+
+```
+expose class Glob:
+    metadata: kind: regular
+    data: source: String
+    methods:
+        function first_match(self, source: String) -> Match?
+        function all_matches(self, source: String) -> Iterator<Match>
+```
+
+Compiled at construction time. Metacharacters:
+- `*` — zero-or-more of any grapheme (except `/`, if configured for path glob).
+- `?` — exactly one grapheme.
+- `[abc]` — grapheme class; `[a-z]` for range; `[!abc]` for negation.
+- `\` — escape the next metacharacter.
+
+Constructor: `Glob("*.txt")`, `Glob("[Ll]og_[0-9]?.txt")`. No captures.
+
+**`Regex` — regular expressions with configurable options.**
+
+```
+expose class Regex:
+    metadata: kind: regular
+    data: source: String
+    data: options: RegexOptions
+    methods:
+        function first_match(self, source: String) -> Match?
+        function all_matches(self, source: String) -> Iterator<Match>
+```
+
+Compiled at construction time. Corvid's regex flavor is PCRE2-adjacent — features specified per §3.10.9.4 below. Captures are always named (§3.10.9.6).
+
+**Compilation caching.** All three constructor variants (Literal, Glob, Regex) cache their compiled representation when the source string is a compile-time constant per §4.16.10 value-alias discipline. `regex"^\d+$"` compiles once at parse time and is shared across all use sites; `Regex(user_input)` compiles at runtime and is not cached. No language feature — this is a constructor optimization on classes that hold compile-time-constant state.
+
+##### 3.10.9.4 `RegexOptions`
+
+```
+record RegexOptions:
+    data: case_insensitive: Bool = false
+    data: multiline: Bool = false                  # `^` / `$` match line boundaries, not source boundaries
+    data: dot_matches_newline: Bool = false        # `.` matches newlines
+    data: extended: Bool = false                   # allow whitespace + comments in pattern source
+```
+
+Default constructor `Regex(source)` uses `RegexOptions()` (all false). Options-taking constructor: `Regex(source, options: RegexOptions(case_insensitive: true))`.
+
+**Regex feature set (Corvid-specific decisions).**
+
+- **Named captures required, unnamed rejected** (§3.10.9.6).
+- **Backreferences to named captures** — `\k<name>`.
+- **Character classes** — `\d`, `\w`, `\s`, `[abc]`, `[^abc]`, `[[:alpha:]]` POSIX classes.
+- **Anchors** — `^`, `$`, `\b`, `\A`, `\z`.
+- **Quantifiers** — `*`, `+`, `?`, `{n}`, `{n,}`, `{n,m}`, with `?` suffix for non-greedy.
+- **Lookaround** — `(?=...)`, `(?!...)`, `(?<=...)`, `(?<!...)`.
+- **No embedded flags** in-pattern (`(?i)...`) — flag setting is via `RegexOptions`, not pattern source. Enforces one location per flag.
+- **Unicode-aware by default** — grapheme-cluster boundaries, `\d` matches Unicode digits, `\w` matches Unicode word characters.
+
+##### 3.10.9.5 Prelude Pattern Literals — `regex"..."`, `glob"..."`, `literal"..."`
+
+Prelude ships three prefix-literal aliases per §4.16.17 (raw-content prefix-literal alias shape):
+
+```
+# In prelude:
+alias regex"<raw content>"   = Regex(<raw content>)
+alias glob"<raw content>"    = Glob(<raw content>)
+alias literal"<raw content>" = Literal(<raw content>)
+```
+
+Usage:
+
+```
+let digits = regex"^\d+"                                    # parses as Regex("^\d+")
+let logs = glob"*.log"                                       # parses as Glob("*.log")
+let comma = literal","                                       # parses as Literal(",")
+
+s.substring(matching: regex"^\s*//.*$")
+s.split(pattern: literal(","))                              # or `literal","` — both work
+s.replace_all(pattern: regex"\s+", with: " ")
+```
+
+**Raw content.** The `<raw content>` between the double quotes is passed unmodified to the constructor — no escape processing, so `\d` reaches the regex engine as two characters `\` + `d`, not as an escape-sequence attempt. This is what §4.16.17 (below in §4.16) formalizes.
+
+**User-defined pattern literals.** Users define their own with one prelude-alias-style declaration in their module:
+
+```
+# In some user module:
+alias @peg"<raw content>" = PegParser(<raw content>)
+alias @fuzzy"<raw content>" = FuzzyPattern(<raw content>)
+
+# Use:
+let parser = peg"expr <- term ('+' term)*"
+s.first_match(matching: fuzzy"apple")
+```
+
+`@`-marker discipline per §4.16.16 keeps user aliases distinguishable from prelude aliases.
+
+##### 3.10.9.6 Named Captures Only
+
+Regex source containing an unnamed group `(...)` is a compile error at pattern-construction time — both for compile-time-constant regex literals and runtime `Regex(source)` calls (checked when the pattern compiles). Users write `(?<name>...)` for every capture group:
+
+```
+# Compile error:
+regex"(\d+)"                                                 # error: unnamed capture group
+
+# Correct:
+regex"(?<year>\d+)"                                          # named
+```
+
+Non-capturing groups `(?:...)` remain legal and unrestricted — they group without capturing, so no name is needed.
+
+**Diagnostic:**
+
+```
+error[E0503]: unnamed capture group in Regex source
+  --> src/parse.cor:12:23
+   |
+12 |     let m = regex"^(\d+)-(\d+)$"
+   |                    ^^^^^ ^^^^^  unnamed groups
+   |
+help: use named capture groups
+   |
+12 |     let m = regex"^(?<major>\d+)-(?<minor>\d+)$"
+   |                    +++++++++     +++++++++
+help: or make groups non-capturing if names aren't needed
+   |
+12 |     let m = regex"^(?:\d+)-(?:\d+)$"
+   |                    +++     +++
+```
+
+**Rationale.** Positional captures require positional access to results (`match.group(1)`, `match.group(2)`), which contradicts §3.2 named-only discipline. Making capture names mandatory pushes the name into the pattern string — the reader sees `(?<year>\d+)` and knows what the capture represents without cross-referencing consumer code. This is the same discipline that put named-only associated values on enum cases (v0.8.1) and named-only fields on records (§3.2).
+
+**Cost.** Regex sources translated from Perl/Python/Ruby/Java need mechanical `(...)` → `(?<name>...)` conversion. Small friction; consistent with every other named-only surface in Corvid.
+
+#### 3.10.10 Canonical Value-Type Encoding
+
+Wire-format specification for §3.4.6's auto-conformance. Every value type's `.as() -> Bytes` and `class function from(source: Bytes)` produces / consumes bytes per this format. Deterministic across compilations, across architectures, across runtime instances.
+
+**Endianness — network-order (big-endian) for multi-byte primitives.** Silent breakage across architectures is a footgun; the encoding is one canonical form the compiler can synthesize without needing per-record author choice. Performance-critical same-host cases opt out by writing their own `.as() -> Bytes` on the record and using `.as_bytes(order: ByteOrder.host)` on individual field encodings (§3.11.1).
+
+**Per-type encoding:**
+
+| Type | Encoding | Size |
+|---|---|---|
+| `Bool` | `0x00` for `false`, `0x01` for `true` | 1 byte |
+| `UInt8` | raw byte | 1 byte |
+| `Int8` | raw byte (two's-complement) | 1 byte |
+| `UInt16` | big-endian 2 bytes | 2 bytes |
+| `Int16` | big-endian 2 bytes (two's-complement) | 2 bytes |
+| `UInt32` | big-endian 4 bytes | 4 bytes |
+| `Int32` | big-endian 4 bytes (two's-complement) | 4 bytes |
+| `UInt64` | big-endian 8 bytes | 8 bytes |
+| `Int64` | big-endian 8 bytes (two's-complement) | 8 bytes |
+| `Int` / `UInt` | platform-fixed width (64-bit on 64-bit targets), big-endian | 4 or 8 bytes |
+| `Float` | IEEE 754 single-precision, big-endian | 4 bytes |
+| `Double` | IEEE 754 double-precision, big-endian | 8 bytes |
+| `Char` | grapheme cluster's UTF-8 byte sequence, length-prefixed by `UInt8` | 1 + N bytes (N ≤ 255) |
+| `String` | `length: UInt32 (network-order)` `||` UTF-8 bytes | 4 + N bytes |
+| `Bytes` | `length: UInt32 (network-order)` `||` raw bytes | 4 + N bytes |
+| `T?` (Optional) | presence byte (0x00 = nil, 0x01 = present) `||` `T` encoding if present | 1 or 1+sizeof(T) bytes |
+| `[T]` (Array) | `length: UInt32` `||` element encodings concatenated | 4 + N × sizeof(T) bytes |
+| `{K: V}` (Map) | `length: UInt32` `||` (`K` encoding `||` `V` encoding) × length | 4 + N × (sizeof(K) + sizeof(V)) bytes |
+| `{T}` (Set) | `length: UInt32` `||` element encodings concatenated (source-order iteration) | 4 + N × sizeof(T) bytes |
+| Record | fields concatenated in declaration order, each per its type's encoding | Σ field sizes |
+| Enum (≤256 cases) | discriminator `UInt8` `||` associated-value encodings recursively | 1 + associated-data size |
+| Enum (257–65536 cases) | discriminator `UInt16 (network-order)` `||` associated-value encodings | 2 + associated-data size |
+| Enum (>65536 cases) | discriminator `UInt32 (network-order)` `||` associated-value encodings | 4 + associated-data size |
+
+**Field declaration order determines record encoding.** Reordering `data:` fields in a record's source is a **wire-incompatible change** — old serialized bytes cannot be decoded by the new definition. Adding a field is also wire-incompatible (decoder expects the old byte count; new field appears as extra bytes or truncated data). The compiler flags wire-incompatible changes when the record is used in a context declaring wire stability (deferred stdlib section, v0.12+).
+
+**Case declaration order determines enum discriminator.** Case at index 0 in source = `0x00` discriminator, case at index 1 = `0x01`, etc. Reordering cases is wire-incompatible. Adding cases is compatible if the new case is appended (existing discriminators remain valid); inserting mid-list shifts subsequent discriminators and is wire-incompatible.
+
+**Length prefix width — `UInt32` (4 bytes) — accommodates up to 4 GiB per collection / string / bytes.** Sufficient for on-disk caching, IPC, snapshot use cases. Users needing larger require explicit chunking or a user-authored encoding.
+
+**Nested type recursion.** Records/enums with fields/cases holding other records/enums recurse per this table. Termination: primitives at the leaves. `kind: regular` classes as fields require user-written `.as() -> Bytes`; format is under user control (may or may not match this canonical spec).
+
+**Decoding failure modes.** `class function from(source: Bytes) -> DecodeOutcome<Self>` returns `.invalid(offset: Int, reason: String)` on:
+- **Short input** — fewer bytes than the field/case demands. `reason: "expected N bytes, source has M"`.
+- **Invalid enum discriminator** — discriminator value ≥ case count. `reason: "unknown discriminator D"`.
+- **Invalid UTF-8** in a `String` or `Char` field — `reason: "invalid UTF-8 at offset X"`.
+- **Invalid `Bool` byte** — value neither `0x00` nor `0x01`. `reason: "invalid Bool byte 0xNN"`.
+- **Optional presence byte** neither `0x00` nor `0x01`. `reason: "invalid Optional presence byte 0xNN"`.
+
+Offset in `.invalid` is byte-position in the original `source`, not offset into a nested field.
+
+**Guaranteed properties.**
+
+1. **Deterministic.** Same value produces same bytes across compilations, runs, architectures.
+2. **Roundtripping.** `x.as().from() == .converted(x)` for every value `x` of a value type. (Modulo user-written overrides where the author chose a different encoding.)
+3. **Length-recoverable.** Decoder can determine total consumed bytes from the source, allowing framing without external length metadata for record/enum-typed messages of known type.
+4. **Zero-copy where practical.** `Bytes` and `String` fields' payload bytes are shared with the source `Bytes` when the source is retained and mutable positions permit (implementation detail).
+
+**Non-goals.**
+
+- **Cross-language interop.** The canonical encoding is Corvid-specific. Cross-language contexts use format-specific target types (`Json`, `MsgPack`, `CBOR`, `Protobuf`), which are user-authored per record via `function as(self) -> Json:` etc.
+- **Schema evolution.** Field addition, removal, reordering all break wire compatibility. Users needing evolvable formats use tagged formats (msgpack, protobuf) with explicit versioning.
+- **Human debuggability.** Bytes are opaque. For debug representation, use `.as() -> String` (author-defined per record) or a hex-dump helper.
+- **Compression.** No compression at the encoding level. Users compress the resulting `Bytes` externally if needed.
+
+**Rationale for the choice set.**
+
+- **Big-endian over little-endian** — network-order is the traditional interchange convention; makes the format immediately usable for any wire context without conversion overhead when it matters. Same-host little-endian users pay a byte-swap cost on multi-byte primitives, which is a single CPU instruction on modern hardware — negligible for the common case.
+- **UInt32 length prefix over VarInt** — fixed width means decoders can seek directly; VarInt saves bytes on small collections but complicates the decoder. Corvid picks decoder-simplicity over one-byte-per-small-collection.
+- **Discriminator width scales with case count** — 256 cases fits UInt8, avoids the 4-byte-per-enum tax the naive UInt32-always design would impose.
+- **Optional as presence-byte-prefix, not sentinel value** — sentinel-value encoding (e.g., all-zeros = nil) fails for types where all-zeros is a valid value (`Int32(0)`, `Float(0.0)`). Presence byte is unambiguous.
+
 ### 3.11 Numeric Conversion and Bounded Types
 
-Corvid numeric primitives (`Int`, `Int8`..`Int64`, `UInt`..`UInt64`, `Float`, `Double`) participate in a small set of stdlib protocols that expose conversion and bounds. The conversion protocols provide three methods per target type — matching the three semantics users need for narrowing conversions where the source value might not fit in the target.
+Corvid numeric primitives (`Int`, `Int8`..`Int64`, `UInt`..`UInt64`, `Float`, `Double`) participate in the universal conversion protocol `As<T>` (§3.10.3) for lossless conversions, plus a small family of narrowing methods for the three semantics that arise when a source value may not fit its target.
 
-#### 3.11.1 The `Convertible` Protocol
+#### 3.11.1 Lossless Numeric Conversion via `As<T>`
+
+Prelude ships `As<T>` conformance for every **widening** numeric pair — pairs where the source range is a subset of the target range:
 
 ```
-protocol Convertible<To>:
-    accepts into(target_type: To.Type) -> To
-    accepts checked_into(target_type: To.Type) -> Result<To, OverflowError>
-    accepts saturating_into(target_type: To.Type) -> To
+UInt8(100).as() -> Int32        # widening: safe, lossless
+Int32(100).as() -> Int64        # widening: safe, lossless
+Int16(50).as() -> Float         # widening: safe, lossless
+UInt8(100).as() -> UInt16       # widening: safe, lossless
 ```
 
-Prelude ships conformance for every ordered pair of numeric primitives — widening (`UInt8` → `Int32`), narrowing (`Int32` → `UInt8`), signed↔unsigned changes at the same width, integer↔float conversions.
+Prelude does **not** ship `As<T>` for narrowing pairs. `Int32(300).as() -> UInt8` is a compile error — no `As<UInt8>` conformance exists on `Int32`. Diagnostic:
 
-**Semantics for narrowing (source value outside `[To.min, To.max]`):**
+```
+error[E0501]: no lossless conversion from `Int32` to `UInt8`
+  --> src/foo.cor:12:9
+   |
+12 |         let byte: UInt8 = value.as()
+   |                           ^^^^^^^^^^ narrowing is not lossless
+   |
+help: pick a narrowing semantics explicitly
+   |
+12 |         let byte: UInt8 = value.wrapping_to::<UInt8>()
+12 |         let byte: UInt8 = value.saturating_to::<UInt8>()
+12 |         let outcome = value.checked_to::<UInt8>()
+```
 
-| Method | Semantics | Rationale |
-|---|---|---|
-| `.into(T)` | **Wraps.** Two's-complement modular arithmetic for the target type. `Int32(300).into(UInt8)` → `44` (since `300 mod 256 = 44`). | Matches §3.9 arithmetic overflow discipline. |
-| `.checked_into(T)` | **Returns `Result<T, OverflowError>`.** Ok if fits; Err with source-and-target info if not. | For callers who want to handle out-of-range explicitly. |
-| `.saturating_into(T)` | **Clamps to `[T.min, T.max]`.** `Int32(300).saturating_into(UInt8)` → `255`. | For signal-processing and image code where clamping is the correct semantic. |
+**Why no `As<T>` on narrowing.** `As<T>` promises canonical, lossless projection. A narrowing operation on an out-of-range value is inherently lossy — three legitimate answers exist (wrap, saturate, fail) and no one of them is "the" canonical projection. Making `.as()` silently pick one would be a footgun; refusing it entirely and requiring the author to spell the semantics out is per §1.2 (author intent, not authority).
 
-Widening conversions (source range ⊆ target range) never overflow — all three methods produce the same result. Users writing generic code call whichever matches their intent; the compiler devirtualizes to the trivial case at widening call sites.
+#### 3.11.2 Narrowing Methods
 
-**Float-integer conversions** truncate toward zero (C99 semantics) under `.into`. `.checked_into` returns Err if the truncated value doesn't fit or if the source is NaN/infinity.
+For every numeric primitive, prelude ships three methods parameterized by the narrowing target type. These are **ordinary methods, not a protocol family** — the differentiator between them is semantics, not target type, and semantics is a caller-choice-per-call operation that belongs at the call site as a method name.
 
-**User types can conform.** A wrapper type (e.g., `Percentage` around `Float`) declares conformance to `Convertible<Float>` and provides the three methods.
+```
+function wrapping_to<To>(self) -> To
+    # Two's-complement modular arithmetic. Matches §3.9 arithmetic overflow discipline.
+function saturating_to<To>(self) -> To
+    # Clamp to [To.min, To.max]. For signal-processing and image code.
+function checked_to<To>(self) -> ConvertOutcome<To>
+    # Domain enum. Caller switches on .converted / .overflow.
+```
 
-#### 3.11.2 The `Bounded` Protocol
+**Usage:**
+
+```
+Int32(300).wrapping_to::<UInt8>()      # -> UInt8(44)    — 300 mod 256
+Int32(300).saturating_to::<UInt8>()    # -> UInt8(255)   — clamp to UInt8.max
+Int32(300).checked_to::<UInt8>()       # -> ConvertOutcome.overflow(source: "Int32(300)", target: "UInt8")
+Int32(100).checked_to::<UInt8>()       # -> ConvertOutcome.converted(UInt8(100))
+```
+
+The turbofish `::<UInt8>` is required — the return type carries the target and there is no receiver-side context to infer from. Sugar aliases in call-site-annotated contexts:
+
+```
+let byte: UInt8 = big.wrapping_to()    # target inferred from binding annotation
+```
+
+**Float-integer narrowing** truncates toward zero (C99 semantics) under `wrapping_to`. `checked_to` returns `.overflow` if the truncated value doesn't fit or if the source is NaN / infinity.
+
+**User types can define narrowing methods.** A wrapper type (e.g., `Percentage` around `Float`) may ship its own `wrapping_to`, `saturating_to`, `checked_to` methods with the same signatures. These are conventional method names, not a protocol contract — the compiler does not enforce that they exist together, and does not enforce that they behave per the wrap / saturate / checked spec. Author responsibility. Rationale: making these a protocol would push us back toward `WrappingAs<T>` / `SaturatingAs<T>` / `CheckedAs<T>` sibling protocols, which the design rejects (§3.10.3 trait-qualified dispatch differentiates by target type, and the three narrowing semantics share a target type — they are not a protocol-family problem).
+
+#### 3.11.3 The `ConvertOutcome<T>` Enum
+
+```
+enum ConvertOutcome<T>:
+    case converted(T)
+    case overflow(source: String, target: String)
+```
+
+Ships in the prelude. Caller switches on the outcome per v0.8.5 no-throws discipline:
+
+```
+switch big.checked_to::<UInt8>():
+    case .converted(let byte):
+        buffer.append(byte)
+    case .overflow(let source, let target):
+        log("truncation refused: {source} does not fit in {target}")
+        return .overflow_error
+```
+
+**Not a `Result<T, E>`.** Per v0.8.5, Corvid does not ship a generic `Result<T, E>` in the prelude. `ConvertOutcome<T>` is a domain enum with a fixed error case, consistent with the pattern used everywhere else (`DecodeOutcome<T>` §3.10.8, `SendOutcome`, etc.).
+
+#### 3.11.4 Byte Conformances on Primitives (v0.11)
+
+Prelude ships `As<Bytes>` and `From<Bytes>` conformances on every numeric primitive plus `Bool` and `Char`, per the canonical encoding (§3.10.10):
+
+```
+# Shipped in prelude via extend blocks:
+
+extend class Bool:
+    methods:
+        function as(self) -> Bytes:
+            return Bytes.from([self ? 0x01 : 0x00])
+    class function from(source: Bytes) -> DecodeOutcome<Bool>:
+        if source.length() < 1: return .invalid(offset: 0, reason: "expected 1 byte")
+        switch source[0]:
+            case 0x00: return .converted(false)
+            case 0x01: return .converted(true)
+            default:   return .invalid(offset: 0, reason: "invalid Bool byte 0x{source[0].hex()}")
+
+extend class UInt8:
+    methods:
+        function as(self) -> Bytes:
+            return Bytes.from([self])
+    class function from(source: Bytes) -> DecodeOutcome<UInt8>:
+        if source.length() < 1: return .invalid(offset: 0, reason: "expected 1 byte")
+        return .converted(source[0])
+
+extend class UInt32:
+    methods:
+        function as(self) -> Bytes:
+            # Big-endian per §3.10.10:
+            return Bytes.from([
+                UInt8((self >> 24) & 0xff),
+                UInt8((self >> 16) & 0xff),
+                UInt8((self >>  8) & 0xff),
+                UInt8( self        & 0xff),
+            ])
+    class function from(source: Bytes) -> DecodeOutcome<UInt32>:
+        if source.length() < 4: return .invalid(offset: 0, reason: "expected 4 bytes")
+        return .converted(
+            (UInt32(source[0]) << 24) |
+            (UInt32(source[1]) << 16) |
+            (UInt32(source[2]) <<  8) |
+             UInt32(source[3])
+        )
+
+# Analogous for Int8/Int16/Int32/Int64/UInt16/UInt64/Float/Double/Char/Int/UInt.
+```
+
+**Explicit-endian access.** Alongside the `As<Bytes>` conformance (which is fixed to network-order per §3.10.10), each multi-byte primitive gets an ordinary `.as_bytes(order: ByteOrder) -> Bytes` method for callers who need explicit control:
+
+```
+extend class UInt32:
+    methods:
+        function as_bytes(self, order: ByteOrder) -> Bytes:
+            switch order:
+                case .little:
+                    return Bytes.from([
+                        UInt8( self        & 0xff),
+                        UInt8((self >>  8) & 0xff),
+                        UInt8((self >> 16) & 0xff),
+                        UInt8((self >> 24) & 0xff),
+                    ])
+                case .big:      return self.as()                    # canonical
+                case .network:  return self.as()                    # alias for .big
+                case .host:     return self.as_bytes(order: platform_native_order)
+```
+
+`.as_bytes(order:)` is a specific-name method, NOT participating in `As<Bytes>` trait-qualified dispatch (only `.as() -> Bytes` does that). Users who need host-order encoding for same-host performance write their record's `.as() -> Bytes` explicitly using `.as_bytes(order: .host)` on each field, shadowing the auto-derived one.
+
+**Roundtrip guarantee.** For every primitive `T` and every value `v: T`:
+
+```
+T.from(source: v.as()) == .converted(v)
+```
+
+Verified by prelude test suite; users may rely on this in contracts.
+
+**Interaction with `Convertible` migration.** The `wrapping_to::<T>()` / `saturating_to::<T>()` / `checked_to::<T>()` narrowing methods (§3.11.2) are ordinary methods — they do not participate in `As<T>` dispatch. Narrowing is orthogonal to byte encoding; a value can be narrowed (`Int32(300).saturating_to::<UInt8>() → 255`) and then encoded (`.as() → [0xff]`) or encoded and then narrowed. Callers write the sequence they need.
+
+#### 3.11.5 Retirement Note — `Convertible<To>`
+
+Prior versions of this section (v0.7.1 through v0.9.1) shipped `Convertible<To>` — a single protocol bundling the three narrowing semantics as three methods (`.into`, `.checked_into`, `.saturating_into`), plus a redundant `target_type: To.Type` parameter. **Retired in v0.10.0.** Two reasons:
+
+1. **Structural duplication with `As<T>` (§3.10.3).** Both were parameterized generic conversion protocols with trait-qualified dispatch on target type. Keeping both meant two shapes for what was structurally one thing.
+2. **`Result<T, OverflowError>` in `.checked_into` was inconsistent with v0.8.5** (retired `Result` from the prelude in favor of domain enums). The bug was never caught until this session's audit.
+
+The retirement replaces `Convertible<To>` with: `As<T>` (§3.10.3) for the lossless case, three ordinary methods for narrowing (§3.11.2), and `ConvertOutcome<T>` (§3.11.3) for the checked-narrow outcome. Structural payoff: one conversion protocol in the language, no parallel mechanisms.
+
+**Migration:**
+
+```
+# Old (v0.9.1 and earlier):
+Int32(300).into(UInt8)                # -> UInt8(44)
+Int32(300).saturating_into(UInt8)     # -> UInt8(255)
+Int32(300).checked_into(UInt8)        # -> Result<UInt8, OverflowError>
+
+# New (v0.10.0):
+Int32(300).wrapping_to::<UInt8>()     # -> UInt8(44)
+Int32(300).saturating_to::<UInt8>()   # -> UInt8(255)
+Int32(300).checked_to::<UInt8>()      # -> ConvertOutcome<UInt8>
+```
+
+Mechanical migration. Same three semantics; different method names + explicit target-type turbofish; no `Result` wrapper.
+
+#### 3.11.6 The `Bounded` Protocol
 
 ```
 protocol Bounded:
@@ -2370,43 +3938,28 @@ class OldAPI:
 
 Callers of `old_method` receive compiler warnings. Tooling surfaces the deprecation reason and migration path.
 
-##### 4.10.4.3 Category
+##### 4.10.4.3 Category *(retired v0.9.0)*
 
-Extends an existing class with additional methods. Works on both Corvid and Objective-C classes uniformly — the runtime does not distinguish.
+The Category section class was retired in v0.9.0. Extending an existing class — Corvid class, ObjC class, generic parameterization, protocol — uses the unified extension mechanism at declaration position: `extend class Foo:` (§3.3.2). Default-method inheritance for structural protocol conformers is specified in §3.4.4.
 
-```
-section class Category:
-    data:
-        contains: methods
-        scope: [module_body]
-        composition_mode: nested
-        parameters:
-            target_class: ClassSpec
-    
-    generator method_wrapper(method: MethodSpec) -> Code:
-        # Method is added to target_class's runtime method table.
-        return quote:
-            @runtime_add_method(class: ${self.parameters.target_class})
-            function ${method.name}(${method.parameters}) -> ${method.return_type}:
-                ${method.body}
-```
-
-Usage:
+**Migration (mechanical):**
 
 ```
+# Before v0.9.0:
 category(target_class: NSString):
     function shout(self) -> NSString:
         return self.upper_case
-    
-    function is_empty_or_whitespace(self) -> Bool:
-        return self.trimmed.length == 0
+
+# After v0.9.0:
+extend class NSString:
+    methods:
+        function shout(self) -> NSString:
+            return self.upper_case
 ```
 
-The methods are added to `NSString` at load time via the runtime's `class_addMethod` API. From either language, `str.shout()` (Corvid) or `[str shout]` (ObjC) works on any `NSString` instance.
+Semantics unchanged — methods land in the runtime method table for the target class; both Corvid and ObjC call sites dispatch through the same mechanism. The v0.9.0 form additionally supports generic parameters and where-clauses on the extension target (`extend class Array<T> where T: UnsignedInteger:`), which the Category mechanism could not express.
 
-**Automatic devirtualization** — if the compiler can prove the category's target class is not further extended in the compilation unit, the added methods can be direct-dispatched. Deopt machinery reverts to dynamic dispatch if runtime modification appears later. This is the same optimization pass that applies to all methods (§5.2); categories are not special.
-
-**Categories participate in reflection.** `class_getMethodList(NSString)` returns all methods, including those added by Corvid categories. Category origin is tracked in the runtime for debugging tools.
+Devirtualization (§5.2) and reflection (`class_getMethodList` returning all methods including extensions) are preserved. `class_addMethod` remains available as a runtime API for programmatic addition (mocking, tooling, dylib-loaded categories); `extend class` is the source-level mechanism.
 
 ##### 4.10.4.4 ObjC_Exposed
 
@@ -2672,7 +4225,7 @@ Class kinds are implemented as built-in section classes. The `metadata: kind: X`
 
 - **Permits:** `accepts:` (declares required signatures with their contracts), `methods:` (default implementations), `class:`, `metadata:`.
 - **Forbids:** `data:`, `state:`, `cases:` (protocols hold no data).
-- **Behavior:** structural conformance by default; explicit `class Foo: SomeProtocol:` declaration legal but optional. Runtime is `@protocol` at the ObjC boundary.
+- **Behavior:** structural conformance by default; explicit `class Foo(SomeProtocol):` header sugar or body-form `conforms:` entry legal but optional (§3.4.5). Runtime is `@protocol` at the ObjC boundary.
 - **`methods:` semantics under `kind: protocol`:** each method is a *default implementation* — used when a conforming class does not provide the message. Method signatures alone (without bodies) may also appear in `methods:` and are equivalent to entries in `accepts:` (the compiler folds them).
 
 **`Section`** — §4 metaprogramming section-classes.
@@ -3370,6 +4923,53 @@ Whether an alias is `expose`d controls cross-module visibility, orthogonal to `@
 
 The `@` marker is the language-level answer to "is this project-specific surface syntax?" Style guides for individual projects SHOULD still exercise restraint on how many user aliases they introduce — one hundred `@` markers per file is legible in the "look up the declaration" sense but exhausting in the "read the code" sense. Prefer methods and extensions where they suffice; reach for `@`-marked aliases when a genuine syntactic gain is available.
 
+#### 4.16.17 Raw-Content Prefix-Literal Aliases
+
+An alias whose signature has the shape `name"<content>"` (identifier followed immediately by a double-quoted content region, no intervening whitespace) is a **prefix-literal alias**. Its content is captured as a single string parameter and passed to the alias body's constructor call. The captured content may declare either **cooked** semantics (default — escape processing per §2.7) or **raw** semantics (backslashes and other characters pass through unmodified).
+
+**Declaration form.**
+
+```
+# Cooked (default) — escape processing per §2.7:
+alias @cooked"<content>" = SomeConstructor(<content>)
+
+# Raw — content passes through unchanged:
+alias @regex"<content>" raw = Regex(<content>)
+alias @glob"<content>"  raw = Glob(<content>)
+```
+
+The `raw` marker sits between the signature and the `=` body. Without it, escapes are processed at parse time — `\n` becomes a newline, `\\` becomes a single backslash, etc. With it, the content between the quotes is captured verbatim: `regex"^\d+"` passes the four characters `^`, `\`, `d`, `+` to `Regex`, not a parse-time-escaped variant.
+
+**Prelude prefix-literal aliases (§4.20.1 additions):**
+
+```
+alias regex"<content>"   raw = Regex(<content>)          # §3.10.9.3
+alias glob"<content>"    raw = Glob(<content>)           # §3.10.9.3
+alias literal"<content>" raw = Literal(<content>)        # §3.10.9.3
+```
+
+Prelude aliases are unmarked (no `@`) per §4.16.16.
+
+**Composition with `@` marker.** User-defined prefix-literal aliases follow the standard `@` discipline:
+
+```
+alias @peg"<content>"   raw = PegParser(<content>)
+alias @fuzzy"<content>" raw = FuzzyPattern(<content>)
+
+# Use sites:
+let parser = peg"expr <- term ('+' term)*"               # prelude alias — no @
+let m = @peg"expr <- ..."                                # user alias — @ required at use site
+                                                          # (wait — user's own alias, marked)
+```
+
+Correction on the above: user prefix-literal aliases require `@` at both declaration and use (per §4.16.16 uniformity). The `regex"..."` / `glob"..."` / `literal"..."` forms without `@` are ship-with-language surface syntax; anything else takes `@`.
+
+**Why raw is opt-in, not default.** Cooked content is the more common case — string interpolation, config values, human-readable messages. Raw content is specific to pattern languages (regex, PEG, path globs, format strings with their own escape rules) where the constructor's grammar overlaps with the host language's escape syntax. Making cooked the default preserves consistency with §2.7 string literals; the `raw` marker makes the deviation visible at the alias declaration site.
+
+**Rejected alternative.** A separate `r"..."` prefix syntax (Python-style) would require grammar-level recognition of `r` as a special identifier — a per-language keyword. The alias-flag approach keeps everything in §4.16's alias mechanism with one added flag; no new grammar. Consistent with the design invariant: prefer library-level extensibility to new grammar features.
+
+**Diagnostic on raw-mode escape attempts.** With `raw` in effect, backslash-anything is passed through unchanged. There is no "invalid escape" diagnostic — the constructor receives the raw text and is responsible for its own parsing errors. `Regex("^\q")` reports the invalid regex escape, not a Corvid-side escape error.
+
 ### 4.17 Metaprogramming Boundaries
 
 Corvid has **two orthogonal metaprogramming mechanisms**:
@@ -3926,6 +5526,8 @@ Legibility responsibility for user-defined syntax rests with the author. The `@`
 
 All methods are semantically dynamically dispatchable at runtime. The runtime maintains method tables for every class. Any method can be observed, replaced, extended, or hooked via the runtime API. This is the ObjC runtime substrate carried forward without modification.
 
+**Method table population is uniform across definition and extension.** A class's runtime method table is populated from (a) the original `class Foo:` body, (b) every visible `extend class Foo:` block per §3.3.2, and (c) inherited protocol defaults for structurally-conformed protocols per §3.4.4. At dispatch time there is no distinction between these sources — the method table entry for a selector points at a single implementation regardless of where the method was declared. Ambiguity across sources is detected at compile time (§3.3.2 `replace` for extension conflict; §3.4.4 diamond disambiguation for protocol defaults); by the time the runtime table exists, the resolution is unique.
+
 ### 5.2 Compilation Strategy
 
 The compiler may lower a method call to direct dispatch or dynamic dispatch. The choice is a performance optimization; semantics are identical provided runtime state matches compile-time assumptions.
@@ -4159,7 +5761,7 @@ protocol Collection:
         count: 0
         is_empty: true
 
-class UserList: Collection:
+class UserList(Collection):
     accepts:
         entries: [User]
     methods:
@@ -4592,7 +6194,7 @@ protocol Positioned:
 protocol Moving:
     accepts velocity(self) -> Vec3
 
-class Projectile: Positioned, Moving:
+class Projectile(Positioned, Moving):
     dense_storage:
     state:
         pos: Vec3
@@ -4925,7 +6527,9 @@ Under intent-not-authority (§1.2), the compiler doesn't enforce access restrict
 - `expose` on a declaration adds it to the module's stable public surface. Metadata artifacts (§4.18) list it as intended-for-external-use. IDE completions surface it prominently.
 - Absent `expose`, the declaration is internal to the module by convention. The compiler emits a warning when external code references it. The warning can be suppressed per-reference (for legitimate boundary-crossing) or upgraded to an error via build config (for stricter enforcement).
 
-**Runtime access is unrestricted.** Metadata queries return everything the compiler knows about a class regardless of `expose`. KVC-style access reaches non-exposed fields. Categories add methods to any class. This is the Objective-C runtime philosophy carried forward honestly: capability is preserved; intent is documented.
+**Runtime access is unrestricted.** Metadata queries return everything the compiler knows about a class regardless of `expose`. KVC-style access reaches non-exposed fields. `extend class Foo:` (§3.3.2) adds members to any visible class. This is the Objective-C runtime philosophy carried forward honestly: capability is preserved; intent is documented.
+
+**Extension visibility.** An `extend class Foo:` block declared in module B is visible to a consumer C only if C imports B (transitively per §7.2). Extensions do not leak across independent import paths. This scopes extension visibility to explicit dependency edges — a consumer chooses which extensions it sees by choosing which modules it imports. Individual members inside an extension may carry `expose` exactly as members in a definition body may; the enclosing extension itself is not marked `expose` (visibility of the extension follows from module-import visibility).
 
 **Type-scoped visibility (like Java's `private`) doesn't exist as a keyword.** Members inside a class declaration that aren't `expose`d are internal to the module — and by convention to the type. Same warning behavior for external access. If real usage shows need for type-scoped enforcement, we add it later; current position is that the convention is enough.
 
@@ -5239,8 +6843,8 @@ class Ledger:
         
         expose function transfer(self, from: AccountID, to: AccountID, amount: Money):   # WRITER
             requires accounts[from] >= amount
-            ensures accounts[from] == old(accounts[from]) - amount
-            ensures accounts[to] == old(accounts[to]) + amount
+            ensures result.accounts[from] == self.accounts[from] - amount
+            ensures result.accounts[to]   == self.accounts[to]   + amount
             
             self.accounts[from] -= amount
             self.accounts[to] += amount
@@ -5718,7 +7322,9 @@ offsetof(S, field)     # Int — byte offset of `field` within class/record `S`
 import objc "Foundation"
 import objc "UIKit"
 
-class MyViewController: UIViewController:
+class MyViewController:
+    metadata:
+        extends: UIViewController
     state:
         table_view: UITableView?
     
@@ -5728,6 +7334,8 @@ class MyViewController: UIViewController:
 ```
 
 Objective-C classes are usable as Corvid classes. Method calls compile to the same `objc_msgSend` invocations Clang would emit. Subclassing an ObjC class produces a subclass the ObjC runtime treats as any other. Categories work uniformly. KVO works. Swizzling works.
+
+**ObjC subclassing uses `metadata: extends:`** — body-form only per §3.4.5. This is the sole place Corvid supports class inheritance; pure Corvid classes use composition + protocol conformance. The body-form ceremony makes the exception look like an exception at every subclass declaration.
 
 #### 9.3.2 Type Boundary Rules
 
@@ -5824,7 +7432,7 @@ Cross-file references:
 
 **Runtime transparency:**
 - ObjC categories added to Corvid classes: work.
-- Corvid categories added to ObjC classes (via `category:` section §4.10.4.3): work.
+- Corvid extensions of ObjC classes (via `extend class NSFoo:` — §3.3.2): work.
 - ObjC KVO on Corvid fields: works.
 - Swizzling across the language boundary: works.
 - Subclassing across the boundary (either direction): works.
@@ -5912,16 +7520,53 @@ section_contents := field_decl* | method_decl* | statement* | declaration*
                   | expression | ast_content
                   | metadata_entry* | case_decl* | accepts_decl*
 
-class_decl := 'expose'? 'class' identifier
-              generic_params? conformance_clause? ':' INDENT
+class_decl := 'expose'? 'extend'? 'class' identifier
+              generic_params? conformance_clause? where_clause? ':' INDENT
                   class_member*
               DEDENT
+              # `extend` prefix (§3.3.2, v0.9.0) marks the declaration as an
+              # addition to an existing class of the same name. `extend` cannot
+              # coexist with `metadata: kind: <kind>:` (kind is fixed at definition)
+              # and cannot declare new `state:` fields (memory layout is fixed).
+              # `expose` is legal on either form; on an extension it exposes the
+              # extension's members, not the target class itself.
+              #
+              # Header ordering (v0.10.2): generic_params, then conformance_clause,
+              # then where_clause. Reads left-to-right as
+              #   "class NAME <generics> (conformances) where <constraints>:"
+
+# conformance_clause (§3.4.5, v0.10.2): parens-delimited list of protocol types
+# the class explicitly conforms to. Compile-time-validated at the declaration site.
+# Body-form equivalent: `conforms: <protocol_type>` entries at class-body top level,
+# or under `metadata:`. Both forms desugar to the same conformance-set entry.
+# See §3.4.5 for semantics, extension composition, and interaction with
+# structural conformance.
+conformance_clause := '(' protocol_type (',' protocol_type)* ')'
+protocol_type      := type_expression     # per §3.10 type-expression grammar
+                                          # must resolve to `kind: protocol` at composition time
+
+# Removed in v0.11 (deprecated in v0.10.2 with grace period): the double-colon
+# header form
+#   class Foo: A, B:           (protocol conformance — use `class Foo(A, B):`)
+#   class Foo: BaseClass:      (ObjC inheritance — use `metadata: extends: BaseClass`)
+# v0.11 parser emits `retired-conformance-syntax` error with fix-it. See §3.4.5
+# retirement subsection for migration.
+
+# where_clause (§3.3.2, §3.3, v0.9.0): generic-parameter constraints at declaration
+# position. Composes with `generic_params?` and reuses the same constraint syntax
+# that appears on `function <T: Bounded>(...)`. Extensions on generic classes
+# use this to express conformance-conditional applicability:
+#   extend class Array<T> where T: UnsignedInteger, T: Bounded: ...
+where_clause := 'where' where_atom (',' where_atom)*
+where_atom   := identifier ':' identifier             # type-parameter conformance
 
 class_member := metadata_section | section_usage
               | method_decl | constructor_decl | destructor_decl
               | case_decl | accepts_decl
               # methods without enclosing section are in implicit `methods:` section
               # metadata_section must appear first if present (§4.10.8)
+              # method_decl may carry the `replace` modifier (§3.3.2) to shadow
+              # a same-named method from the original definition or another extension.
 
 metadata_section := 'metadata' ':' INDENT metadata_entry+ DEDENT
 
@@ -5948,10 +7593,22 @@ processor_decl := 'processor' identifier '(' parameter_list ')' '->' type
 validator_decl := 'validator' identifier '(' parameter_list ')'
                   ':' INDENT statement* DEDENT
 
-method_decl := 'expose'? ('mutating')? 'function' identifier
+method_decl := 'expose'? ('mutating')? ('replace')? 'function' identifier
                generic_params? '(' parameter_list ')' ('->' type)?
                effect_clause? contract_clause?
                ':' INDENT statement* DEDENT
+              # `replace` (§3.3.2, v0.9.0) is legal only inside an `extend class`
+              # body and marks explicit intent to shadow a same-named method from
+              # the target class's original definition or another extension.
+              # Without `replace`, a same-name conflict is a compile error.
+
+# Binding rule for `ensures` expressions inside `contract_clause` (v0.8.7, §3.4.3):
+# Within an ensures expression, `self` and parameter identifiers refer to the
+# entry-state snapshot (values captured at method entry). `result` refers to the
+# post-state: the returned value for methods with a declared return type, or the
+# receiver at method exit for methods with no declared return type. `requires`
+# expressions see `self`/params as entry-state; `result` is not in scope. No
+# `old(...)` form — dissolved in v0.8.7 in favor of the natural naming above.
 
 # Effect list (§3.5). Failure is NOT an effect in v0.8.5+ — failable functions
 # express failure via return type (nil-punning or domain enum, §3.5.4).
@@ -6233,7 +7890,7 @@ protocol OrderProcessor:
 ## OrderProcessor is behavior — mixed class with data and state.
 ## `expose` on the class adds the type name to the module's public surface;
 ## members opt in individually.
-expose class DefaultOrderProcessor: OrderProcessor:
+expose class DefaultOrderProcessor(OrderProcessor):
     expose data:
         id: ProcessorID
         created_at: Timestamp
@@ -6433,7 +8090,7 @@ The intent-not-authority principle makes deep interop clean. Objective-C's runti
 - **`@property` decomposition.** ObjC properties are mutable, public, sometimes copy-on-set. Translator emits them as `state:` section fields unless the user hints otherwise.
 - **`_ivar` fields.** Direct instance variables (not property-backed) become `state:` section fields marked as `private` unless the source file marked them `@public`.
 - **Class methods (`+` prefixed).** Become methods in a `static:` section.
-- **Categories.** Become `category:` sections applied to the target class.
+- **Categories.** Become `extend class TargetClass:` declarations (§3.3.2).
 - **`@protocol` declarations.** Become `protocol` declarations. Optional methods become default implementations returning appropriate defaults, with a warning noting the semantic shift.
 - **Nullability.** Preserved where annotated; warned where implicit.
 - **Method families (`init`, `copy`, `mutableCopy`).** Translated to constructor and copy protocols where possible.

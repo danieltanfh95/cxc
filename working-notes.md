@@ -2,7 +2,487 @@
 
 **Purpose:** consolidate the reasoning behind the current spec (v0.4) and enumerate what's still open. This document captures *why* decisions were made, not just what they are. The spec is the specification; this is the thinking behind it.
 
-**Companion document:** `spec/spec-v0.8.md` (was `spec-v0.7.md` through v0.7.x; before that `spec-v0.6.md`; before that `corvid-spec-v0.5.md`).
+**Companion document:** `spec/spec-v0.10.md` (was `spec-v0.9.md` through v0.9.x; `spec-v0.8.md` through v0.8.x; before that `spec-v0.7.md` through v0.7.x; before that `spec-v0.6.md`; before that `corvid-spec-v0.5.md`).
+
+## Session note — v0.11 Value-type auto-conformance + double-colon header form removed (2026-08-10)
+
+Sixth same-day session in the post-v0.10 chain. User picked "1+2" from the remaining open list — v0.11 spec sections for auto-conformance direction that was framing-corrected in the previous addendum, bundled with the scheduled double-colon header form removal.
+
+**Two things landed together in v0.11.**
+
+**Thread 1 — §3.4.6 Auto-Conformance for Value Types (new).** Every `kind: record` and `kind: enum` automatically conforms to `As<Bytes>` and `From<Bytes>`. Compiler synthesizes `function as(self) -> Bytes` and `class function from(source: Bytes) -> DecodeOutcome<Self>` from field layout at composition time. Primitives get the same conformances shipped explicitly in prelude via `extend class Float: methods: function as(self) -> Bytes: ...` etc. (§3.11.4 new). `kind: regular` classes do NOT auto-conform — mutable state, potential cycles, identity require explicit user-written serialization. User-written `.as() -> Bytes` on a value type shadows the auto-derived one per §3.3.2 (own > inherited default).
+
+**Thread 2 — §3.10.10 Canonical Value-Type Encoding (new).** Wire-format spec for the auto-conformance output. Deterministic, roundtrippable, byte-position-recoverable.
+
+- **Endianness: network-order (big-endian).** Silent breakage across architectures is a footgun; native-endian users opt out by writing their own `.as() -> Bytes` on the record using each primitive's `.as_bytes(order: ByteOrder.host)` method (§3.11.4). Explicit-endian access is a specific-name method, not part of `As<Bytes>` dispatch.
+- **Length prefix width: UInt32 (4 bytes).** Fixed width for decoder simplicity; up to 4 GiB per collection/string is sufficient for on-disk cache, IPC, snapshot use cases.
+- **Discriminator width scales with case count.** ≤256 cases → UInt8; 257–65536 → UInt16; beyond → UInt32. Avoids the 4-byte-always-per-enum tax that a naive UInt32 discriminator would impose.
+- **Optional as presence byte + payload**, not sentinel value — sentinel encoding fails for types where the sentinel value is meaningful (`Int32(0)`, `Float(0.0)`).
+- **Field / case declaration order determines encoding.** Reordering is wire-incompatible; adding a mid-list case is wire-incompatible; adding a trailing case is compatible.
+
+**Thread 3 — double-colon header form removed.** `class Foo: A, B:` and `class MyViewController: UIViewController:` now hard compile errors. v0.10.2's parse-time warning + fix-it grace period ended. Migration was mechanical (`Foo(A, B)` for conformance; `metadata: extends:` for ObjC inheritance).
+
+**Mechanism-invention trap check.** Passes. `As<Bytes>` / `From<Bytes>` → §3.10.3, not new. Auto-derivation as base-class property → §3.2 pattern for records, not new. Wire format spec → new content but not a new mechanism. Method names uniformly `.as()` / `.from()` — never `as_bytes()` / `as_json()`; never `derive: as_bytes`. Zero sibling protocols invented; zero per-target method names invented; zero "third-party format story" deferred. Third-party formats use existing extension mechanism as previously agreed.
+
+**Only `As<Bytes>` gets auto-conformance** — because bytes are the universal substrate with one canonical encoding. JSON/MsgPack/etc. have per-record author choices (field naming — camelCase vs snake_case? null handling? number precision? enum spelling?) with no defensible language-level default; silent choice would be a footgun. Users write `function as(self) -> Json:` explicitly.
+
+**Design questions resolved in-session (called out in changelog):**
+
+- **Endianness default: network-order over native-order.** Correctness across architectures wins over per-primitive byte-swap cost on little-endian hosts (single CPU instruction, negligible for the common case). Same-host performance users write their own encoding.
+- **Length prefix width: fixed UInt32 over VarInt.** Decoder simplicity + seekability wins over saving 1 byte on small collections.
+- **Discriminator scales with case count.** Avoids per-enum overhead tax.
+- **Sentinel-Optional rejected in favor of presence byte.** Sentinel would fail for types where the sentinel value is meaningful.
+
+**Files touched this session:**
+
+- `spec/spec-v0.10.md` → renamed to `spec-v0.11.md`.
+- Preamble bump v0.10.2 → v0.11; changelog block for both threads.
+- `§3.4.6` new (~150 lines) — Auto-Conformance for Value Types.
+- `§3.10.10` new (~120 lines) — Canonical Value-Type Encoding with per-type table + failure modes + guarantees + non-goals + rationale.
+- `§3.11.4` new (~90 lines) — Byte Conformances on Primitives, with `Bool` / `UInt8` / `UInt32` illustrated in detail; `.as_bytes(order: ByteOrder)` explicit-endian method spec.
+- `§3.11.5` renumbered from prior `§3.11.4` (Convertible retirement note).
+- `§3.11.6` renumbered from prior `§3.11.5` (Bounded protocol).
+- `§3.4.5` retirement subsection updated — deprecation → removal; diagnostic upgraded from warning to hard error.
+- `§10` grammar deprecation note → historical-record note.
+- `PATTERNS.md` — Codable / serialization entry rewritten to reflect v0.11 landing (before was "deferred to v0.11+ stdlib layer"; now shows actual auto-conformance + code example + wire format summary).
+- `README.md` — status line bumped to v0.11 with three-paragraph history (v0.11, v0.10.2, v0.10.1).
+- `working-notes.md` — this note.
+
+**Remaining post-v0.11 open items:**
+
+- Interop/stdlib deferred (F1 conditional compilation, F3/F4 CF↔Foundation bridging, F5 direct C-function invocation).
+- Implementation-planning items (runtime cost model, package registry, stdlib scope).
+- **Validation exercise against v0.11 surface** — translate a new file (Ink or WebSocket) to exercise auto-conformance in real code; would surface anything the spec missed.
+
+**Dissolution-pattern update.** Twelfth session. This one shipped substantial new content (§3.4.6 + §3.10.10 + §3.11.4 = ~350 lines of new spec) but the underlying mechanism inventory is unchanged — the mechanisms `As<T>`, records, field-layout metadata, prelude extensions, method shadowing rules were all already in place. What v0.11 added was the *rule* saying "value types get this automatic" plus the *wire format* specifying what "this" produces. Pattern holds even as the language matures — new capability, no new mechanism.
+
+---
+
+## Session note — Value-type auto-conformance direction + framing corrections (2026-08-10, addendum, no version bump)
+
+Continuation of the post-v0.10.2 open-items sweep. User picked "Value-type auto-derivation of `.as() -> Bytes` — deferred v0.11+" from the remaining open list. Session surfaced two mechanism-invention slips that had been carrying forward in the spec and PATTERNS.md unnoticed.
+
+**First slip — naming variant of the trap.**
+
+Proposed a `derive:` section with entries named `as_bytes` / `as_json` — per-target-name pattern. User caught: "what do you mean by derive here? again, this is the wrong thing, i said that we wanted `as -> bytes` or `As<Bytes>` not `as_x`." The v0.10.0 commitment: one method name `.as()` differentiated by return type via trait-qualified dispatch. Derivation entries must be `As<Bytes>` (protocol-parameterized), never `as_bytes`. Same shape as the WrappingAs slip during Convertible retirement — inventing per-target names when the committed convention has one name.
+
+**Second slip — "third-party formats need future stdlib support" was reaching for structure.**
+
+Flagged that third-party format packages (JSON, msgpack) would be a v0.12+ story requiring new stdlib mechanism. User pushed: "whats difficult about defining or rewriting their own? or just returning whatever As<String> means?" Answer: nothing. Third-party format packages ship their own target type + user-writable `.as() -> ThatType:` conformances via ordinary `extend class Foo:` (§3.3.2). No new language support required. My "deferred story" flag was imagined-future-mechanism.
+
+**Both slips have the same root.** Reaching for structure the committed mechanism already provides. Sibling protocols (Convertible retirement) → sibling method names (this session, first) → imagined-future-mechanism (this session, second). Three costumes, one trap.
+
+**Framing corrections applied.**
+
+- **Value-type auto-derivation is not "a stdlib layer, deferred to v0.11+."** It's **auto-conformance at the base-class level for value types**, planned for v0.11 as a language rule (same shape as automatic structural equality on records per §3.2). Compiler synthesizes `.as() -> Bytes` and `class function from(source: Bytes) -> DecodeOutcome<Self>` from field layout at composition time. `kind: regular` classes still require explicit user-written serialization.
+- **Third-party format story does not exist as a deferred item.** Format packages use existing extension mechanism + `As<T>` protocol, exactly like user code. Not a v0.12+ blocker; not blocked at all.
+- **Only `As<Bytes>` gets auto-conformance.** Because bytes are the universal substrate with one canonical encoding. `As<Json>` / `As<Csv>` / etc. have per-record author choices (field naming, null handling, precision) — no defensible default, silent choice would be a footgun. Same principle as compile-error-on-narrowing (v0.10.1 Convertible retirement).
+
+**Files touched this addendum.**
+
+- `~/.claude/memory/corvid-mechanism-invention-trap.md` — added the naming-variant slip (§second-slip) and the third-party-support non-story (§third-slip); refined "how to apply" with two new checks (rule 5: naming-variant; rule 6: third-party non-story); meta-observation that the trap surfaced three times in one day at user's push.
+- `spec/spec-v0.10.md` line 151 (v0.10.0 changelog serialization substrate) — reframed from "future stdlib layer deferred to v0.11+" to "auto-conformance at base-class level for v0.11"; naming-variant note (`as_bytes` / `as_json` are slips) added.
+- `spec/spec-v0.10.md` §3.10.8 line 2596 — same reframing; added explicit paragraph "Auto-conformance for value types (v0.11 planned)" explaining what the direction is + why only Bytes gets it.
+- `PATTERNS.md` line 218 (Codable / JSONEncoder / auto-serialization entry) — same reframing.
+- `working-notes.md` — this addendum.
+
+**Not touched (intentional).** Historical open-items lists in prior session notes (lines 42, 91, 144, 211) that carried "deferred to v0.11+ as stdlib layer" — those are session-time-of-writing snapshots and rewriting them retroactively distorts the design conversation. Corrected framing lives in this addendum and in the current live spec/PATTERNS.md.
+
+**No version bump.** Framing corrections in live docs + memory refinement + working-notes addendum only. The v0.11 auto-conformance direction is *planned* but not shipped; when it lands (§3.4.6 new + §3.10.10 canonical wire format spec), that gets its own version bump and full changelog.
+
+**Remaining post-v0.10.2 open items (unchanged):**
+
+- **v0.11 auto-conformance implementation** — direction agreed, spec sections not yet authored (§3.4.6 Auto-Conformance for Value Types; §3.10.10 Canonical Value-Type Encoding).
+- **Double-colon header form removal** — carried to v0.11 (v0.10.2 grace period).
+- Interop/stdlib deferred items (F1, F3–F5).
+- Implementation-planning items (runtime cost model, package registry, stdlib scope).
+
+**Meta-observation for future sessions.** Every one of the trap's three surfacings this day was caught by the user, not by me running the check proactively. The memory file now carries rules 5 + 6 to catch the naming-variant and non-story flavors before proposing. Standing check for every design proposal: does the committed convention already cover this? If yes, don't restate it as a new mechanism / a new naming pattern / a new deferred story.
+
+---
+
+## Session note — v0.10.2 Explicit conformance syntax; parens sugar; ObjC inheritance to body-form; double-colon retired (2026-08-10)
+
+Fifth same-day session in the post-v0.10 audit chain (v0.10.0 landing → Convertible retirement → open-items verification → Pattern subsystem → explicit conformance). User picked "Explicit `conforms: Protocol` syntax?" from the remaining post-v0.10.1 open-items list.
+
+**Framing.** §3.4 committed "explicit conformance is legal but not required" without specifying syntax. Two shapes had appeared in the spec — header-colon `class Foo: A, B:` (5 code uses, worked example §11) and body-form `conforms: A` (used in prelude classes Bytes/String). Grammar §10 reserved `conformance_clause?` but never defined the production. Also `class MyViewController: UIViewController:` used the same header shape for ObjC subclassing (§9.3.1) — one syntax, two semantics resolved by compiler kind-check.
+
+**Complication surfaced during migration audit.** The header-colon form was overloaded — inheritance AND conformance with the same shape. Retiring it required a decision on where inheritance goes.
+
+**Design choice (user's, "parens sugar for class Foo(A,B)" over my initial recommendation of keeping the double-colon form).** The user pushed to retire the double-colon shape entirely in favor of parens. My follow-on analysis surfaced two viable placements for ObjC inheritance under parens:
+
+- **Option (b):** parens holds both — first entry is base class if `kind: regular`, rest are protocols. Compiler infers roles.
+- **Option (a):** parens for protocols only; ObjC inheritance moves to body-form `metadata: extends:`. Treats the exception as the exception.
+
+**Recommended and accepted: option (a).** Rationale: pure Corvid commits to composition-over-inheritance (§1.5, §3.4); class inheritance exists only for ObjC interop. Putting the ergonomic sugar on the common case (protocol conformance) and moving inheritance to body-form makes the design commitment visible at every subclass declaration — writing `metadata: extends: UIViewController` in the body feels like the exception it is.
+
+**Decisions in this session:**
+
+- **§3.4.5 new (Explicit Conformance Declarations).** Both header parens sugar `class Foo(A, B):` and body-form `conforms: A` are legal and equivalent (desugar to the same conformance-set entry). Compile-time validation at declaration site is the primary payoff over structural conformance — fail at the declaration, not at the first use. Additive across extensions.
+- **§10 grammar — `conformance_clause` production defined.** `conformance_clause := '(' protocol_type (',' protocol_type)* ')'`. Header ordering: `class NAME <generics> (conformances) where <constraints> :` — reads left-to-right.
+- **ObjC class inheritance moves to body-form `metadata: extends:`.** Rules: one class, must be `kind: regular` + ObjC-imported, not modifiable by extensions. Pure Corvid classes cannot be subclassed.
+- **Double-colon header form deprecated in v0.10.2, removed in v0.11.** Parse-time warning with fix-it suggestion. One-minor-version grace period; migration is mechanical.
+- **§4.18 metadata alignment.** No schema change — existing `superclass:` and `conforms_to:` keys just get formal population semantics.
+
+**Mechanism-invention trap check.** Passes. `conformance_clause` grammar production is a formal definition of a previously-reserved-but-undefined slot. `metadata: extends:` uses the existing metadata mechanism (§4.18) with a new key. No new mechanism invented. The retirement of the double-colon form eliminates a dual-purpose shape (mistake worth undoing) rather than adding one.
+
+**Files touched this session:**
+
+- `spec/spec-v0.10.md` — preamble bump to v0.10.2 + full changelog block; §3.4.5 new (~150 lines); §10 grammar `conformance_clause` production defined + header ordering reordered (`conformance_clause?` moved before `where_clause?`); §9.3.1 example rewritten for body-form; §3.4.4 line 1487 prose reference updated; §9 line 3943 prose reference updated; 4 code examples migrated to parens form; 1 code example migrated to body-form.
+- `validation/websocket/01-Framer.parity.cor` — line 164 migrated to parens.
+- `PATTERNS.md` — new "I need `class Foo extends Bar` / inheritance" entry; interfaces entry updated to note §3.4.5; Pattern extensibility entry updated to reflect explicit-conformance path.
+- `README.md` — status line bumped to v0.10.2.
+- `working-notes.md` — this note.
+
+**Open items still standing** (v0.10.1 open list minus explicit conformance):
+
+- **Value-type auto-derivation of `.as() -> Bytes`** — deferred to v0.11+ as stdlib layer.
+- **Deprecation removal for double-colon header form** — carried to v0.11.
+- Interop/stdlib deferred items (F1, F3–F5).
+- Implementation-planning items (runtime cost model, package registry, stdlib scope).
+
+**Dissolution-pattern update.** Eleventh session, but this one is different in shape — it formalized something previously left as "resolved in principle, undefined in detail" (Ink #13). The audit found an overloaded shape (double-colon = conformance OR inheritance), and the resolution split the shapes to match Corvid's design commitment. Not a dissolution — a formalization + a design-commitment surfacing. Adjacent pattern.
+
+---
+
+## Session note — v0.10.1 `Pattern` subsystem lands; raw-content prefix aliases (2026-08-10)
+
+Follow-on to v0.10.0 and the Convertible retirement. Same session — user picked "Pattern class?" as the next item from the post-v0.10.0 open-items list.
+
+**Framing.** §3.10.5 (String) forward-referenced `substring(matching: Pattern)`, `.split(pattern:)`, `.replace(pattern:, with:)` but never defined `Pattern`. Open item: what is Pattern, structurally?
+
+**Design commitments (data-first).**
+
+- **`Pattern` is a protocol, three concrete conformers ship in prelude.** `Literal` / `Glob` / `Regex`. Users add more (`Peg`, `Fuzzy`, `Levenshtein`) via `extend` + structural conformance.
+- **Match record carries source backreference + range + named-captures map.** `Match.source` is the String; `Match.range: MatchRange` is a start/end StringPosition pair; `Match.captures: Map<String, MatchGroup>` is keyed by capture name.
+- **Named captures only.** Unnamed group `(...)` in Regex source is a compile error. Users write `(?<name>...)` always. Consistent with §3.2 named-only records, §3.7.1 named-only enum associated values, §3.10.2 named-only multi-value carriers. Positional capture access would require positional Match accessors — Corvid doesn't offer positional access anywhere.
+- **Prelude literal syntax via `regex"..."` / `glob"..."` / `literal"..."`** — new §4.16.17 raw-content prefix-literal alias shape. Backslashes and other characters pass through unmodified so `regex"^\d+"` reaches the constructor as `^\d+`, not as an escape-sequence failure. Cooked semantics remain the default for prefix-literal aliases; `raw` is opt-in.
+- **Compilation caching via §4.16.10 value-alias discipline.** Compile-time-constant pattern source → compile once, share across use sites. No `Regex.compile(...)` boilerplate.
+
+**Mechanism-invention trap check applied.** Every element of the Pattern subsystem uses an existing mechanism:
+
+- Pattern protocol → §3.4 structural conformance (no `conforms: Pattern` declaration needed).
+- Match/MatchRange/MatchGroup records → §3.2 named-only.
+- Concrete Regex/Glob/Literal classes → §1.5 class-as-universal.
+- Pattern literals → §4.16 alias mechanism (with §4.16.17 additive shape variant for raw-content).
+- User-defined pattern literals → §4.16.16 `@`-marker discipline.
+
+The ONE new thing is §4.16.17's `raw` flag on prefix-literal aliases. That's genuinely additive — a new shape variant within the existing §4.16 alias mechanism, not a new mechanism. Justified by regex source needing raw content; generalizes to any pattern language with its own escape rules (PEG, path globs, format strings).
+
+**Not the same trap as WrappingAs/SaturatingAs.** Pattern's three concrete conformers (Literal/Glob/Regex) differ in structural behavior — different match algorithms, different compilation, different metacharacters. This is ordinary polymorphism where the differentiator is a real structural distinction. The trap would be if they were three sibling protocols differing only in method name; they're one protocol with three concrete implementations.
+
+**Two design commitments called out to user for signoff (both accepted):**
+
+1. Named captures only (option A over "generated `_1` `_2` names for unnamed").
+2. Raw content for pattern literals via new §4.16.17 shape variant (option A over "double-backslash every regex").
+
+**Files touched this session:**
+
+- `spec/spec-v0.10.md` — preamble bump to v0.10.1 + Pattern changelog block; §3.10.5 (String) surface widened (`split(pattern: Pattern)`, `first_position(matching:)`, `all_matches(matching:)`, `replace_all(pattern:, with:)`); §3.10.9 new (Pattern protocol + Match records + Literal/Glob/Regex + RegexOptions + prelude literals + named-captures rule); §4.16.17 new (raw-content prefix-literal aliases).
+- `PATTERNS.md` — new entry "I need NSRegularExpression / Regex / re.compile" with regex/glob/literal usage, named-captures rationale, extensibility example.
+- `README.md` — status line bumped to v0.10.1.
+- `working-notes.md` — this note.
+
+**Open items still standing** (v0.10.0 open list minus Convertible and Pattern):
+
+- **Value-type auto-derivation of `.as() -> Bytes`** — deferred to v0.11+ as stdlib layer.
+- **Explicit `conforms: Protocol` syntax** — low priority.
+- Interop/stdlib deferred items (F1, F3–F5).
+- Implementation-planning items (runtime cost model, package registry, stdlib scope).
+
+**Dissolution-pattern update.** Tenth dissolution-adjacent session. This one was mostly additive (Pattern is a real subsystem needing real spec), but the design still landed by using existing mechanisms rather than inventing new ones — §3.4 for structural conformance, §3.2 for named-only records, §4.16 for the literal syntax. The one addition (§4.16.17 raw flag) is a shape variant within an existing mechanism, not a new mechanism. Consistent with the pattern's spirit even when new stdlib genuinely has to ship.
+
+---
+
+## Session note — v0.10.0.1 `Convertible<To>` retired; narrowing methods; mechanism-invention trap surfaced (2026-08-10)
+
+Small addendum session immediately after v0.10.0 landing. Started as verification pass on the post-v0.10.0 open-items list; discovered the "`Convertible` vs `As<T>` consolidation" item was actually two problems bundled:
+
+1. **A pre-existing v0.8.5 spec inconsistency.** `Convertible<To>.checked_into` returned `Result<T, OverflowError>`, but v0.8.5 retired `Result` from the prelude in favor of domain enums. The bug had lived in §3.11.1 unnoticed since v0.8.5 shipped.
+2. **Structural duplication with `As<T>`.** Both were parameterized-generic conversion protocols with trait-qualified dispatch on target type. Keeping both meant two shapes for structurally one thing.
+
+**The mistake that surfaced the meta-lesson.**
+
+My first proposal: retire `Convertible<To>`, replace with **three sibling protocols** — `WrappingAs<T>` / `SaturatingAs<T>` / `CheckedAs<T>` — each with a distinct method name (`.wrapping_as`, `.saturating_as`, `.checked_as`). Framed as "consolidation into the As-family."
+
+User caught it: *"i thought we are going with polymorphic `as -> Bytes` etc? or just `as<Bytes>`?"* — pointing out that inventing three sibling protocol names betrayed the mechanism `As<T>` was defined by.
+
+The check that would have caught it independently: **for narrowing `Int32 → UInt8`, all three semantics produce the same T (UInt8). Trait-qualified dispatch differentiates by T. Therefore trait-qualified dispatch cannot distinguish the three semantics.** The moment I noticed this, the correct move was: the differentiator is a naming question, not a protocol question. Ship three methods on `Int32`; don't invent three protocols.
+
+**Why this slip is a distinct pattern from "add feature X" traps.**
+
+Standard dissolution pattern: "add feature X" → "existing Y covers it." This slip: "dissolve X into Y" → but the dissolution invented Y-alike sibling structure alongside Y. Worse than an addition — an addition at least admits it's an addition. Sibling-protocol invention looks like consolidation but is mechanism-duplication.
+
+**The corrected shape:**
+
+- **`As<T>` remains the sole conversion protocol.** Prelude ships conformance for widening numeric pairs only (lossless).
+- **Narrowing is a compile error on `As<T>`.** `Int32(300).as() -> UInt8` diagnostic points at three narrowing methods.
+- **Three ordinary methods on numeric primitives**, not a protocol family: `wrapping_to::<T>()`, `saturating_to::<T>()`, `checked_to::<T>() -> ConvertOutcome<T>`.
+- **`ConvertOutcome<T>` enum** replaces `Result<T, OverflowError>` per v0.8.5.
+- **§3.9 arithmetic `checked_add`/etc.** also fixed — same debt, same reuse of `ConvertOutcome<T>`.
+
+**Design principle written down for future sessions.**
+
+*"When multiple candidate methods share a return type but differ in semantics, the semantics is not a type-parameter question and does not need a protocol family. Per §1.2 (author intent, not authority), the choice belongs at the call site as a method name."*
+
+Saved as `~/.claude/memory/corvid-mechanism-invention-trap.md` (auto-memory, cross-session persistent) so future work catches this before repeating it.
+
+**Files touched this addendum:**
+
+- `spec/spec-v0.10.md` — §3.11.1 rewritten (lossless As<T>-only); §3.11.2 new (narrowing methods); §3.11.3 new (ConvertOutcome<T>); §3.11.4 new (retirement note + migration table); §3.11.5 renumbered from prior §3.11.2 (Bounded); §3.10.3 "Relationship to Convertible" updated (was "coexist for v0.10.0," now points at §3.11.4 retirement); §3.9 integer-overflow paragraph updated (`Result<T, OverflowError>` → `ConvertOutcome<T>`); §2.7 keyword-table Result row marked retired; v0.10.0 changelog gains Convertible-retirement subsection.
+- `PATTERNS.md` — As/From entry gains narrowing-story addendum with the design invariant.
+- `~/.claude/memory/corvid-mechanism-invention-trap.md` — new memory file capturing the meta-lesson.
+- `~/.claude/memory/MEMORY.md` — index entry.
+- `working-notes.md` — this addendum.
+
+**Open items still standing** (v0.10.0 open list minus this):
+
+- **`Pattern` class** — deferred future spec work.
+- **Value-type auto-derivation of `.as() -> Bytes`** — deferred to v0.11+ as stdlib layer.
+- **Explicit `conforms: Protocol` syntax** — low priority.
+- Interop/stdlib deferred items (F1, F3–F5).
+- Implementation-planning items.
+
+The `Convertible` vs `As<T>` item is now fully closed.
+
+---
+
+## Session note — v0.10.0 Byte substrate; As<T>/From<T> conversion; grapheme-native String; extension conflict warn-not-error (2026-08-10)
+
+Long session. Three interlocking landings. The path getting here was more instructive than the endpoints — the user re-framed the problem three times and each re-frame consolidated the design one level up.
+
+**Thread 1 — Extension composition: rule 4 revised warn-instead-of-error.**
+
+Started as a review question ("v0.9.1 §3.3.2 <- what was this about initially? seems backwards"). v0.9.1 rule 4 said two extensions declaring same-name methods → compile error, `replace` required to shadow. But every other author-intent situation in the spec — §7.7 visibility, §3.5 effect annotations, retracted `sealed`/`private`/`final` — says warn, don't block. Rule 4 was the only exception.
+
+User's follow-on: "wait, extend doesnt override then? why shouldnt it override? maybe we just need a dev warning?" This is the general shape of the fix — same-name across extensions becomes a warning + deterministic resolution (current-module > imported > original), `replace` becomes optional signaling intent. Escalate to error via `-Werror=shadowing-extension` for CI-strict projects. Same-name self-conflict *within one class body* stays hard-error (author self-conflict is a different category).
+
+The consistency-through-time principle: when rule N is out of line with the other rules the language already commits to, that's the signal to fix rule N, not to defend rule N.
+
+**Thread 2 — Stdlib/interop gaps → substrate-level rethink.**
+
+Started as "what can't we inherit or bridge from objc". Focused on String indexing semantics; user reframed with OOP + GoF: "what gof design pattern does this problem meet?" — Iterator/Bridge/Strategy/Facade candidates surfaced. Then user pushed one level higher: "everything is made of bytes, right? so every atom is technically a byte sequence, except that we dont generally allow folks to edit them?"
+
+That reframe changed the design. Instead of "add a StringPosition API" and "add byte-slice methods" and "add Base64" and "add random" separately, ask: what universal substrate makes all of these fall out?
+
+Answer: a mutable `Bytes` regular class + `String` as grapheme-native regular class + `.as() -> Bytes` as the universal convention. Then:
+- StringPosition dissolves into an opaque token bound to a source String, with all navigation via `s.position(...)` methods.
+- Byte access dissolves into universal `.as() -> Bytes` on any type conforming to `As<Bytes>`. No peer views on String (`.utf16`, `.utf8`, `.bytes` are not properties).
+- Base64/random/etc. dissolve into `extend class Bytes:` and `extend class UInt8:` — the extension mechanism from v0.9.0 handles them without language changes.
+
+**Thread 3 — Naming convention → protocol design.**
+
+User noticed "there's a common pattern with Bytes and AsBytes as X, asX ?" and pushed toward `As<T>` and `From<T>` as *parameterized* protocols rather than method-name conventions. My initial resistance ("Rust normally routes this through conformance declaration `impl As for Foo`, not through method-name matching") was wrong — user pushed again: "no i want to do this: class String: methods: function as(self) -> Bytes:  without needing to conform to a protocol". Corvid's design has structural conformance built in since v0.6; the class with `function as(self) -> Bytes` structurally conforms to `As<Bytes>` automatically. No boilerplate.
+
+Then: trait-qualified dispatch. User's key move: "i mean, if we specify the output type, cant this be matched to the right type? like as->bytes vs as->json". Yes — the return type is a *type parameter of the conformed protocol*, not an overload dimension. A class conforming to both `As<Bytes>` and `As<Json>` may declare both `function as(self) -> Bytes` and `function as(self) -> Json`; dispatch at the call site is by return-type context, turbofish, or trait qualification. This dodges the "no overloading" rule cleanly because same-name-different-return isn't overloading in the parameter-types sense — it's protocol-instantiation dispatch.
+
+**Decisions in this session:**
+
+- `As<T>` / `From<T>` protocols (§3.10.3). Trait-qualified dispatch (§3.4.4). No auto-derivation between the two directions.
+- `Bytes` class (§3.10.4) — mutable, regular, NSData-bridged. No separate builder type. Array-literal conformance.
+- `String` class (§3.10.5) — grapheme-native, no int indexing, no peer views, `.as() -> Bytes` for byte access.
+- `Char` class (§3.10.6) — record, grapheme cluster.
+- `StringPosition` class (§3.10.7) — opaque token, source-bound, no arithmetic.
+- `Encoding` / `ByteOrder` / `DecodeOutcome<T>` enums (§3.10.8).
+- §3.3.2 rule 1 revised to warn + deterministic resolution; rule 5 adds trait-qualified exemption for generic-protocol-derived same-name.
+
+**Serialization by convention, not by reflection.** Any type conforming to `As<Bytes>` participates in the universal serialization substrate. Format-specific overlays (`As<Json>`, `As<MsgPack>`, `As<Yaml>`) become trait-qualified conformances added by users or third-party packages via `extend class Foo:`. No `Codable`-style reflection auto-magic — the Java `Serializable` trap doesn't compound. Value types (records, enums, primitives) may auto-derive via §4.18 metadata as a future stdlib layer (deferred).
+
+**Why v0.10.0 and not v0.9.2.** Major-version-adjacent bump because the string/bytes/serialization decisions land the language's substrate for text and binary handling — foundational choices with ecosystem-wide effect on future stdlib design and third-party packages. Rule 4 revision, though smaller, ships alongside because it's part of the same "consistency pass" and touches semantics rather than fill-in.
+
+**Files touched this session:**
+
+- `spec/spec-v0.9.md` (renamed to `spec-v0.10.md`) — preamble bump; §3.3.2 rule 1 revised to warn + deterministic resolution, rule 4 adds trait-qualified exemption; §3.4.4 adds trait-qualified dispatch note; new §3.10.3 (As/From), §3.10.4 (Bytes), §3.10.5 (String), §3.10.6 (Char), §3.10.7 (StringPosition), §3.10.8 (Encoding/ByteOrder/DecodeOutcome).
+- `PATTERNS.md` — extension entry revised for warn-not-error; new entries "I need String.Index", "I need .utf8/.utf16/data.count", "I need Data/NSMutableData/[UInt8]", "I need Codable/JSONEncoder"; Rust `From<T>`/`Into<T>` entry added.
+- `validation/00-friction-log.md` — #25 String.Index / position API marked dissolved v0.10.0.
+- `validation/websocket/00-friction-log.md` — #W-30 position part, #W-14, #W-53, #W-52, #W-61, `F8`, #W-37c, #W-37e all marked dissolved; cross-exercise table adds five new rows.
+- `README.md` — status line bumped to v0.10.0; spec filename updated; String position API removed from Undecided list.
+- `working-notes.md` — this note.
+
+**Open items post-v0.10.0** (verified against friction logs and spec; entries marked "still open" here have been confirmed not already dissolved):
+
+*Language design — deferred future spec work:*
+
+- **`Pattern` class** — referenced from §3.10.5 (`substring(matching: Pattern)`, `.split(pattern:)`, `.replace(pattern:, with:)`) but the class itself is deferred. Scope: glob, regex, structural patterns. Needed before any serious text-processing stdlib.
+- **`Convertible` vs `As<T>` consolidation** — §3.11.1 predates §3.10.3; overlap in numeric conversions (both offer projection from source type to target type). Future refactor may unify or explicitly document why both stay (e.g., `Convertible` retains the three-semantics narrowing split, `As<T>` is the general form).
+- **Value-type auto-derivation of `.as() -> Bytes`** — records/enums/primitives could auto-synthesize via §4.18 metadata since their layout is closed and predictable. Deferred to v0.11+ as a stdlib layer, not a spec change.
+- **Explicit `conforms: Protocol` syntax** — structural conformance covers 95% of cases (Ink #13 body-resolved), but the explicit declaration form is under-specified. Rare in practice; low priority.
+
+*Interop / stdlib — deferred implementation choices, no language design change needed:*
+
+- **Conditional compilation** — `F1`. Swift's `#if os(watchOS)`. Multi-target build-system concern.
+- **CF↔Foundation bridging** — `F3`, `F4`. `as CFString`, `.takeRetainedValue()` and CF memory management. CoreFoundation-adjacent; not idiomatic Corvid.
+- **Direct C-function invocation** — `F5`. `import c "..."` full workflow beyond the reference-card sketch. Needs §9 expansion once C interop matters.
+
+*Implementation-planning items — meaningful only once implementation starts:*
+
+- Runtime cost model for state-machine synchronization under load.
+- Package registry protocol.
+- Stdlib scope decisions (what ships with the compiler vs. separate packages).
+
+Everything from prior "open items" lists that was actually already resolved has been re-verified and marked in the friction logs this session: `try` semantics (dissolved v0.8.5), String position API (dissolved v0.10.0), enum raw values (resolved v0.6.0), byte access / slice (dissolved v0.10.0), character-literal-to-byte (dissolved v0.10.0), string interpolation (resolved v0.8.0), `guard let` / `if let` (resolved v0.7/v0.8.1), optional chaining (retired v0.7), tuples / destructuring (dissolved v0.8.3), nested types (dissolved v0.8.4), definite assignment (dissolved v0.8.7), `old()` (dissolved v0.8.7), throws-in-ensures (dissolved v0.8.5), argument labels (resolved v0.5), extension mechanism (resolved v0.9.0), predicate patterns (dissolved v0.8.6), type aliases (resolved v0.6+/v0.8.2), bit-level ops (resolved v0.7.1), inout arrays (dissolved v0.8.7), namespace (resolved by existing mechanisms), generic constraints on categories (dissolved v0.9.0), MemoryLayout (resolved v0.7.1), range literals (resolved v0.8.0/v0.8.3).
+
+**Dissolution-pattern update.** Ninth dissolution session. The re-framing chain here (stdlib gaps → GoF patterns → universal substrate → naming convention → trait-qualified dispatch) is the fullest example so far of the "one level up" move. Each step made the previous alternative look smaller. What could have been ten stdlib additions and a language feature became four types + two protocols, all falling out of existing structural commitments (§1.5 class-as-universal, §3.4 structural conformance, §3.3.2 extensions).
+
+---
+
+## Session note — v0.9.1 Extension conflict-resolution behavior spec; namespace friction closed (2026-08-08)
+
+Housekeeping-plus session. Two threads:
+
+**Thread 1 — Namespace friction (websocket #4) closed.** User pushed back on why "struct-as-namespace vs. module-level namespace construct" was still marked open, noting that record + `class:` section should cover it. Correct. The friction entry bundled two questions: (a) struct-as-namespace pattern (Swift's `enum Foo { static let PI = ... }`), resolved via `class:` section on records (§4.10.7); (b) module-level namespace construct (C++/C# `namespace Foo { ... }` block), not needed — one module = one namespace, and within-module sub-grouping uses (a). Marked resolved by existing mechanisms.
+
+**Thread 2 — v0.9.1 fill-in for extension conflict resolution.** v0.9.0 shipped the top-line rule (same-name collision is compile error unless `replace`) but left seven behavioral questions implicit. This session fills them in without changing the design.
+
+**Decisions in this session (rules 1–7 in §3.3.2):**
+
+1. **Same-name collision without `replace` is a compile error at the composing site** — the compilation unit that has both extensions visible. This is where the conflict surfaces, even if that unit didn't write either extension.
+2. **`replace` requires a shadowing target** — if there's no method with that name in the original definition or another visible extension, `replace-without-target` diagnostic. Prevents `replace` from being a copy-paste no-op.
+3. **At most one `replace` per method per composing site** — if two extensions each `replace` the same method, both claim precedence, neither has grounds. Compile error naming both.
+4. **Name matching ignores signatures** — Corvid has no overloading; two same-name methods always conflict regardless of parameter types.
+5. **Extensions shadow inherited protocol defaults without `replace`** — extension is providing the class's own definition; per §3.4.4 priority (own > extension > inherited default), it wins over the default without ceremony. `replace` is reserved for shadowing explicit prior declarations. Edge case: second extension over first extension still needs `replace`.
+6. **Runtime method table is unified after composition** — after compile-time conflict resolution, one entry per selector; dispatch is unchanged from any other class per §5.1.
+7. **Load-time transitive visibility** — extensions apply globally at load time (ObjC category semantics); compile-time source visibility (§7.7) constrains what a module can *write against*, but any loaded module's extensions are runtime-visible on class instances. The consequence: if A imports both B and D, both of which independently extend Foo with `foo` without knowing about each other, the conflict surfaces at A. A resolves by dropping an import, writing its own `replace`, or upcasting per protocol.
+
+Also added an illustrative diagnostic format (`error[E0447]: duplicate method \`foo\` on class \`Bar\`` with source location + suggested fix) so implementers have a target and users have a preview, and a "what is not a conflict" list clarifying that different methods, methods on different classes, and additive invariants all compose freely.
+
+§3.4.4 (Default Method Inheritance) got a cross-reference update pointing at §3.3.2 rule 5 for the shadowing-inherited-default case.
+
+**Why v0.9.1 and not v0.9.0 amendment.**
+
+Behavior spec that fills in specifics for a landed rule. No design change; no retraction; no new construct. Sits at the same level as previous ".x" bumps (v0.8.1 filling in Session-3 gaps, v0.8.7 clarifying let-expression form). The top-line rule from v0.9.0 stands; v0.9.1 makes it implementable.
+
+**Files touched this session:**
+
+- `spec/spec-v0.9.md` — preamble bump to v0.9.1 + changelog block; §3.3.2 Conflict Resolution subsection (rules 1–7 + diagnostic example + not-a-conflict list); §3.4.4 cross-reference update to §3.3.2 rule 5.
+- `validation/websocket/00-friction-log.md` — #4 (namespace) marked resolved by existing mechanisms.
+- `README.md` — status line bumped to v0.9.1.
+- `working-notes.md` — this note.
+
+**Open items post-v0.9.1:**
+
+- **String position API in stdlib** — Ink #25 / websocket #W-30. Stdlib scope, not language spec. Blocks parser translation work.
+- **Interop/stdlib gaps** — byte-array raw access (`#W-53`), byte slice methods (`#W-52`, `#W-61`, `F8`), Foundation-primitive interop details (`#W-14`, `F6`), random-number API (`#W-37c`), base64 (`#W-37e`), CF↔Foundation bridging (`F3`, `F4`), conditional compilation (`F1`). All real, none touching language design.
+- **Implementation-planning items** — runtime cost model for state-machine synchronization, package registry protocol, stdlib scope. Only meaningful once implementation starts.
+- **Validation-driven exploration** — translate more Ink files, extend idiomatic pass to more Fragment types. Would surface new friction if the design isn't ready for it.
+
+---
+
+## Session note — v0.9.0 Unified class extension; Category retracted; default-method inheritance (2026-08-08)
+
+Major-version bump. Not a "dissolves into existing mechanism" session in the strict sense — this is a **retraction and unification**. Started as v0.8.8 (small fix for Ink #W-69/#W-70: add generic constraints to `category(...)`). User pushed twice, each push moving the frame up a level.
+
+**First push — "why can't guard/invariants cover this?"** — reframed the type-constraint question. Type-parameter conformance is a compile-time-checkable claim about the receiver, same as any `requires` clause; extending the requires machinery to accept `conforms_to` predicates dissolves the "add where clauses to categories" problem into the existing contract system. That was going to be the v0.8.8 draft: parameterized `target_class`, `conforms_to` predicate, section-level `requires:`.
+
+**Second push — "perhaps the larger problem here is how do we monkey patch classes?"** — reframed everything. #W-69/#W-70 is one dimension of a bigger under-specified area. Categories were Corvid importing ObjC's vocabulary for what is structurally just "declaring more members on this class." That framing paid section-class ceremony for a job that fits at the class declaration level.
+
+**Third push — "we can just extend some class by saying x modifier to `class NSString:`"** — nailed the shape. `extend class Foo:` at declaration position. One vocabulary, one class-body syntax for both definition and extension, generic-parameter machinery reused where it already lives.
+
+The v0.8.8 draft was retracted mid-planning; v0.9.0 took its place.
+
+**Decisions in this session:**
+
+- **§3.3.2 new (Extension Declarations).** `extend class Foo:` is a declaration-position modifier. Body follows normal class-body rules. Generic parameters and where-clauses at declaration position. Extensions across modules stack. State fields still cannot be added (memory layout is fixed).
+- **§3.4.4 new (Default Method Inheritance for Structural Conformers).** Reading A committed: structural conformers inherit protocol default methods for messages they don't define themselves. Diamond ambiguity resolved via compile-time detection + explicit disambiguation (define the method or upcast).
+- **§4.10.4.3 (Category) retracted.** Section class removed; cross-reference points at §3.3.2. Migration is mechanical.
+- **Conflict rules committed.** Same-named method across extensions is a compile error; opt-in `replace` modifier for explicit shadowing. Consistent with §1.2 (author intent, not authority) — no ObjC-style link-order-dependent silent resolution.
+- **§5.1 note.** Method-table population is uniform across definition, extension, and inherited defaults.
+- **§7.7 note.** Extension visibility follows module imports.
+- **§10 grammar.** `class_decl` extended with `extend?` prefix; `where_clause` production added; `method_decl` extended with `replace?` prefix.
+- **Ink #W-69, #W-70 dissolved by unification.**
+
+**What this session confirms about the design philosophy.**
+
+The "dissolves into existing mechanisms" pattern was extended one level up: not just "dissolve a would-be construct," but "**retract an existing construct** when the structural commitments (class-as-universal, structural conformance, section discipline) make it redundant." Category was inherited from ObjC's vocabulary; Corvid's class-body syntax covers its job; the retraction is the same shape as retiring `throws` in v0.8.5 or retiring `coordination_scope` before it shipped in v0.8.6. The difference: Category had actually landed in a prior spec version, so retracting it is a real breaking change for anyone who had internalized the v0.8.x shape. Migration is mechanical; the tradeoff is worth it.
+
+The default-method inheritance decision (§3.4.4) is worth naming separately. Corvid has committed to structural conformance since v0.6+, but the spec left the question of "do conformers inherit defaults" ambiguous. Reading A (yes) makes structural conformance load-bearing at runtime — you don't just get "type-check passes"; you get the protocol's affordances. Reading B (no, only via upcast) would have made structural conformance a purely static-checking device, effectively toothless. Reading A carries the diamond problem; Corvid solves it with compile-time detection + explicit disambiguation rather than any implicit-resolution rule.
+
+**Eight-session pattern table:**
+
+| Version | Dissolved / Retracted | Replacement |
+|---|---|---|
+| v0.8.3 | `for` keyword, tuples, destructuring | prelude alias over `.for_each`; named-field records |
+| v0.8.4 | nested type declarations | flat naming + leading-dot |
+| v0.8.5 | `throws`, `try/catch/finally`, prelude `Result<T, E>` | nil-punning; domain enums; switch |
+| v0.8.6 | `DispatchQueue`, `@main_actor`, would-be `coordination_scope` | contracts (§1.9); `execution:` metadata; class boundary IS coordination boundary |
+| v0.8.7 | would-be `old(expr)` in ensures | `self`/params = entry-state, `result` = post-state (§3.4.3) |
+| v0.9.0 | `category(target_class: X):` section class; ambiguous conformer-inheritance semantics | `extend class Foo:` at declaration position (§3.3.2); structural conformers inherit defaults (§3.4.4) |
+
+**Files touched this session:**
+
+- `spec/spec-v0.9.md` (renamed from `spec-v0.8.md` during this session's housekeeping pass) — preamble bump to v0.9.0 + big changelog block; §3.3.2 new; §3.4.4 new; §4.10.4.3 retracted (redirect to §3.3.2); §5.1 method-table note; §7.7 extension visibility note; §10 grammar (`class_decl` extend prefix, `where_clause`, `method_decl` replace prefix); two stale-reference fixups (§9 line 6104, §14 line 6721).
+- `validation/websocket/00-friction-log.md` — §2.6 rewritten; #W-69/#W-70/marker-protocols marked dissolved/resolved; summary list item 5 updated.
+- `PATTERNS.md` — Rust `impl<T: Trait> for Foo<T>` entry added; `traits with where clauses` entry rewritten; new Swift/ObjC extension entry (`I need extension Foo { ... }`).
+- `README.md` — status line bumped to v0.9.0.
+- `working-notes.md` — this note.
+
+**Open items post-v0.9.0:**
+
+- Predicate-based pattern matching sugar beyond `case x if pred(x):` — deferred (guard patterns cover the semantic need; Swift's `case \.foo:` syntax is a keypath projection that has no direct equivalent by design; friction #19 marked dissolved).
+- ~~**File rename** `spec-v0.8.md` → `spec-v0.9.md`.~~ **Completed** — housekeeping pass folded into this session; all cross-references (README, PATTERNS, working-notes itself) updated to the new filename.
+- **Example sweep across spec** — some downstream examples in §4/§5 that used `category(...)` were retired at the source-of-truth (§4.10.4.3); a full grep for any remaining stale `category(...)` in prose examples should confirm zero remain. Deferred to next session.
+
+---
+
+## Session note — v0.8.7 `old(expr)` dissolved; pre/post bindings in ensures (2026-08-08)
+
+Seventh "dissolves into existing mechanisms" session. Started as a straightforward "add `old(expr)` to the contract system" proposal for Ink friction #28 — state-transition postconditions like `ensures self.current_index > old(self.current_index)` need pre-state reference; Dafny/JML/Eiffel all have some flavor of this.
+
+**The pivot.** User asked "explain why isnt this just recursion." That reframed the problem. In a pure OOP/message-passing model where methods are transformations `Self → Self`, the pre-state IS the input (the receiver-as-argument); the post-state IS the output (the returned Self). Postconditions naturally reference both because both are already in scope. `old()` is a wart specific to mutation-heavy imperative programming where the pre-state isn't captured anywhere.
+
+The dissolution: expose the entry-state snapshot the contract runtime already had to capture (to make any ensures checkable) as the natural identifier — `self` and parameter names inside ensures scope. Post-state gets a new binding: `result` (return value for value-returning methods; receiver-at-exit for void methods).
+
+**Why `result` over alternatives.**
+
+- `result` — familiar from Eiffel/Dafny for return values; extends cleanly to "resulting self" for void methods; single word.
+- `self'` — prime notation from Alloy/Z; reads as "self-after"; punctuation-heavy.
+- `after` / `post` — English-y; reads well but adds a keyword.
+
+Picked `result` because it matches the method-as-transformation reading exactly — the post-state IS the result of the transformation. For value-returning methods it IS the return value already. For void methods it's the "resulting self" — the receiver considered as the output of the transformation.
+
+**Decisions in this session:**
+
+- **§3.4.3 new (Pre-state and Post-state Bindings in Ensures Clauses).** Formalizes the binding rule: inside ensures scope, `self`/params → entry-state; `result` → post-state. No `old(...)` form.
+- **Ledger example (§8.4.1) rewritten.** `ensures accounts[from] == old(accounts[from]) - amount` → `ensures result.accounts[from] == self.accounts[from] - amount`.
+- **§8.4.1 note updated.** Removed the `old(...)` reference; classification is inferred from body assignments as always.
+- **§10 grammar note added.** No new production; a note near `method_decl` documents the binding rule.
+- **Reader.inferred.cor `advance_index` rewritten.** `ensures result.current_index > self.current_index`. #28 marked resolved by dissolution.
+- **`PATTERNS.md` extended.** New entry mapping "coming from Dafny/JML/Eiffel/Ada/Spec#/Alloy — I need `old(expr)`" to the pre/post binding rule.
+
+**Reference-type semantics settled.** `self` in ensures scope captures the receiver's field values at entry using the same value/handle rules as any ordinary read — no separate "deep snapshot" semantics needed. To detect mutations on a referenced object, compare specific fields (`result.doc.title != self.doc.title`), not identity. This falls out of the ordinary read model; no new specification needed.
+
+**What this session confirms about the design philosophy.**
+
+The user's "why isn't this just recursion" was the trigger for the dissolution — same shape as previous sessions where a proposed mechanism collapsed once the user pointed at an existing primitive that already covered it. The recognition pattern is stable: **if the runtime already has to do something to make the feature checkable, expose the existing machinery via natural naming rather than a special-form wrapper.**
+
+Contract system machinery (snapshot on entry, evaluate on exit) was already load-bearing for any postcondition on a mutable receiver. `old()` was routing that snapshot through a specially-named wrapper; the pre/post binding rule exposes it under `self`/params directly. Zero new capability. One less construct.
+
+**Seven-session pattern table** (extending v0.8.6):
+
+| Version | Dissolved | Replacement |
+|---|---|---|
+| v0.8.3 | `for` keyword, tuples, destructuring | prelude alias over `.for_each`; named-field records |
+| v0.8.4 | nested type declarations | flat naming + leading-dot |
+| v0.8.5 | `throws`, `try/catch/finally`, prelude `Result<T, E>` | nil-punning; domain enums; switch |
+| v0.8.6 | `DispatchQueue`, `@main_actor`, would-be `coordination_scope` | contracts (§1.9); `execution:` metadata; class boundary IS coordination boundary |
+| v0.8.7 | would-be `old(expr)` in ensures | `self`/params = entry-state, `result` = post-state (§3.4.3) |
+
+**Files touched this session:**
+
+- `spec/spec-v0.9.md` (was `spec-v0.8.md` at edit time; renamed in v0.9.0 housekeeping) — preamble version bump + changelog block; §3.4.3 new; §1.9 line 514 note update; §8.4.1 Ledger example rewrite; §10 grammar note near `method_decl`.
+- `validation/03-Reader.inferred.cor` — VERSION NOTE (v0.8.7) added; `advance_index` postcondition rewritten; `read` postcondition rewritten; friction comment marked resolved.
+- `validation/00-friction-log.md` — #28 marked dissolved.
+- `PATTERNS.md` — new entry for Dafny/JML/Eiffel/etc.
+- `README.md` — status line bumped; `old()` removed from undecided list.
+- `working-notes.md` — this note.
+
+**Open items post-v0.8.7:**
+
+- Generic constraints on categories (`#W-69`, `#W-70`) — medium; matters for library authors.
+- `inout` or reference-shaped arrays (`#W-72`) — likely dissolves (arrays are already reference-shaped).
+- Predicate-based pattern matching (Ink) — extension to §3.7.
+
+---
 
 ## Session note — v0.8.6 DispatchQueue equivalent + execution metadata + PATTERNS.md (2026-08-08)
 

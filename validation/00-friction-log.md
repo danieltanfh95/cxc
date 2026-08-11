@@ -48,11 +48,9 @@ Swift uses `private extension Markdown { ... }` for organizing private helpers. 
 
 Swift's `case \.isNewline:` in a switch matches on a projected property. Powerful, ergonomic, uses KeyPath machinery.
 
-Our §3.7 mentions "structural patterns" but doesn't specify predicate-based matching.
+**Status: dissolved by design.** §3.7 already ships **guard patterns**: `case Order(o) if o.total > 100:` — a pattern with an attached predicate. Swift's `case \.isNewline:` becomes `case c if c.is_newline():` in Corvid. Reads more explicitly (no punctuation projection to decode) and uses the same guard-pattern mechanism as any other predicate discrimination. The Swift keypath-projection *syntax* has no direct equivalent by design; the predicate-match *capability* is spec-committed.
 
-**Impact:** For parity we translate to `case c where c.is_newline():`. Verbose but readable. Not a blocker.
-
-**Recommendation:** Consider adding predicate matching to §3.7 or documenting that we deliberately don't have it. Currently ambiguous.
+**Impact:** parity translations should use `case x if pred(x):` rather than the earlier `case x where pred(x):` shorthand the friction log initially sketched (Corvid's grammar uses `if`, not `where`, per §3.7 line 1250).
 
 ### 1.4 Reader as struct vs class (FRICTION #24)
 
@@ -84,11 +82,9 @@ Corvid has no `try` keyword, no `catch` / `finally`, no `throws` effect, and no 
 
 ### 2.4 `old()` in ensures clauses (FRICTION #28)
 
-**Status: pending.**
+**Status: dissolved (v0.8.7, §3.4.3).**
 
-State-transition ensures need to reference pre-state. Without it, invariants like "index moved forward" can't be expressed.
-
-**Spec fix:** §3.4 should specify `old(expr)` or equivalent syntax for pre-state references.
+Considered adding `old(expr)` in the Dafny/JML/Eiffel tradition. Dissolved instead. In an ensures expression, `self` and parameter identifiers refer to the entry-state snapshot the contract runtime already had to capture to make any postcondition checkable; `result` refers to the post-state (return value for value-returning methods; receiver-at-exit for void methods). No `old(...)` form needed. The `advance_index` example becomes `ensures result.current_index > self.current_index` — pre-state on the right, post-state on the left, same claim.
 
 ### 2.5 Throws in ensures clauses (FRICTION #29)
 
@@ -98,9 +94,11 @@ State-transition ensures need to reference pre-state. Without it, invariants lik
 
 ### 2.6 String.Index / position API (FRICTION #25, #26)
 
-**Status: pending (stdlib scope).**
+**Status: dissolved by v0.10.0 §3.10.5–§3.10.7.**
 
 Reader depends on string positions. §6 mentions String but doesn't specify the position API. Real gap for any string-processing code.
+
+**Resolution.** `StringPosition` (§3.10.7) is an opaque token bound to a source String, obtained via `s.start_position()` / `s.end_position()` / `s.position(after:)` / `s.position(at_distance:from:)` / `s.first_position(of:)`. `s.grapheme_at(position:)` reads. `s.substring(from:, to:)` slices. `pos1 < pos2` orders within a single source; cross-source comparison is a precondition failure. No integer indexing on strings (grapheme/code-unit/byte ambiguity refuses to be silent). All positional navigation is grapheme-cluster-based.
 
 **Spec fix:** Standard library scope decision. `core.string` module needs: `start_index`, `end_index`, `index_after(i)`, `character_at(i)`, comparison of indices.
 
@@ -172,13 +170,13 @@ Two files (~130 lines Swift) → **30 friction points**. Most are spec gaps, not
 1. ~~String interpolation syntax~~ — **resolved v0.8.0** (`${expr}` prelude alias)
 2. ~~`try` keyword~~ — **resolved by dissolution v0.8.5** (no `try`; nil-punning + domain enums + switch)
 3. ~~Protocol conformance syntax~~ — **resolved v0.6+** (`class X: Protocol:` unambiguous)
-4. `old()` in ensures clauses — **still pending**
-5. String position API in stdlib — **still pending (stdlib scope)**
+4. ~~`old()` in ensures clauses~~ — **resolved by dissolution v0.8.7 (§3.4.3)** (in ensures scope, `self`/params = entry-state, `result` = post-state)
+5. ~~String position API in stdlib~~ — **dissolved v0.10.0 (§3.10.5–§3.10.7)** — `StringPosition` opaque token; grapheme-native String; no integer indexing
 
 **Design decisions worth revisiting:**
 1. ~~Argument labels~~ — **resolved v0.5** (single-name model committed)
-2. Predicate-based pattern matching — extend §3.7? **still pending**
-3. ~~Extensions or extension-like mechanism~~ — **resolved via sections + categories** (§4)
+2. ~~Predicate-based pattern matching~~ — **dissolved by existing guard patterns (§3.7)** — `case c if c.is_newline():` is spec-committed; Swift's keypath-projection form has no equivalent by design
+3. ~~Extensions or extension-like mechanism~~ — **resolved v0.9.0** (`extend class Foo:` at declaration position, §3.3.2; retired the v0.8.x `category(target_class: X):` section class)
 4. ~~Whether structs should be usable-in-Swift-style~~ — **rejected by design** (records forbid `state:` per §4.10.7)
 
 **Non-issues (design working as intended):**

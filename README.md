@@ -1,6 +1,12 @@
 # Corvid Language Design — Handoff Bundle
 
-**Status:** Pre-implementation. Design work through v0.8.6 (concurrency model formalized: DispatchQueue dissolves into contracts (§1.9) + `execution:` metadata on classes; reader/writer method classification enables RWLock-style dispatch; `@main_actor` retired for `execution: thread: main`; would-be `coordination_scope` retracted — "one class owns shared state" is the answer; ObjC bridge exposes per-instance `dispatch_pool`). Companion `PATTERNS.md` catalogs six sessions of dissolutions for onboarding. Prior work preserved: v0.8.5 no-throws/no-try/no-prelude-Result, v0.8.4 nested types dissolved + leading-dot shorthand, v0.8.3 class-based iteration, v0.8.2 alias namespace discipline, v0.8.1 Session 3 fills, v0.8.0 library-first sugar, v0.7.x nil-messaging inversion + tier-1 sweep, v0.6.0 structural unification. No compiler exists yet.
+**Status:** Pre-implementation. Design work through v0.11 — value-type auto-conformance to `As<Bytes>` / `From<Bytes>` (§3.4.6 new, §3.10.10 new canonical wire format spec) + double-colon header form removed (v0.10.2's grace period ended). Records, enums, and primitives now auto-serialize via compiler-synthesized methods from field layout — same shape as automatic structural equality on records (§3.2), a base-class property rather than a stdlib opt-in. Canonical wire format: network-order (big-endian) multi-byte primitives, fields concatenated in declaration order, enums as discriminator + associated data, strings/collections as UInt32-length-prefixed payload. Only `As<Bytes>` gets auto-conformance because bytes are the universal substrate (§3.10.4) with one canonical encoding; format-specific overlays (JSON, MsgPack, etc.) have per-record author choices and remain user-written via ordinary `extend class Foo:` (§3.3.2).
+
+**v0.10.2 (prior — explicit conformance syntax).** Header parens sugar `class Foo(A, B):` canonical for protocol conformance; body-form `metadata: extends:` for ObjC inheritance; double-colon deprecated (removed in v0.11 as scheduled).
+
+**v0.10.1 (prior — Pattern subsystem + Convertible retirement).** Pattern subsystem: regex, glob, literal landed as follow-on to v0.10.0's String/Bytes work. Pattern is one protocol with three concrete conformers (§3.10.9), pattern literals via raw-content prefix aliases (`regex"..."` / `glob"..."` / `literal"..."`) per new §4.16.17, named captures only. Additive stdlib session — no design-mechanism changes. Also in v0.10.1: `Convertible<To>` retired (§3.11.1–§3.11.4) in favor of `As<T>` for lossless conversion + three ordinary methods (`wrapping_to`, `saturating_to`, `checked_to`) for numeric narrowing, plus `ConvertOutcome<T>` domain enum replacing the v0.8.5-inconsistent `Result<T, OverflowError>`. Prior v0.10.0 landing preserved.
+
+**Prior v0.10.0 (byte-substrate + text/serialization).** Three interlocking landings: (a) `Bytes`, `String`, `Char`, `StringPosition` types (§3.10.4–§3.10.7) — grapheme-native String with no integer indexing, mutable Bytes as regular class (no separate builder), StringPosition as opaque token; (b) `As<T>` / `From<T>` parameterized conversion protocols with trait-qualified dispatch (§3.10.3, §3.4.4) — one class may declare `function as(self) -> Bytes` and `function as(self) -> Json` differentiated by target type; (c) §3.3.2 rule 4 revised from compile-error to warning + deterministic resolution (current module > imported > original) aligning extension composition with Corvid's broader "warn, don't block" pattern; supporting enums `Encoding`, `ByteOrder`, `DecodeOutcome<T>` (§3.10.8). Dissolves Ink #25, websocket #W-30 (position part), #W-14, #W-53, #W-52, #W-61, `F8`, #W-37c, #W-37e. v0.9.1 (extension conflict-resolution seven-rule behavior spec) preserved as internal detail now revised through rule 1 (warn) and rule 5 (trait-qualified exemption). Prior work preserved: v0.9.0 unified class extension (`extend class Foo:`), v0.8.7 pre/post bindings in ensures, v0.8.6 concurrency model, v0.8.5 no-throws/no-try/no-prelude-Result, v0.8.4 nested types dissolved + leading-dot shorthand, v0.8.3 class-based iteration, v0.8.2 alias namespace discipline, v0.8.1 Session 3 fills, v0.8.0 library-first sugar, v0.7.x nil-messaging inversion + tier-1 sweep, v0.6.0 structural unification. Companion `PATTERNS.md` catalogs the accumulated dissolutions for onboarding. No compiler exists yet.
 
 **Working name:** Corvid.
 **Original name:** objc5 (used throughout the design conversation; renamed when positioning solidified).
@@ -22,7 +28,7 @@ corvid/
 │
 ├── spec/
 │   ├── charter.md                   (§1.1-§1.9 as standalone — read first)
-│   └── spec-v0.8.md                 (full specification, ~5100 lines)
+│   └── spec-v0.11.md                (full specification, ~6000 lines)
 │
 ├── positioning/
 │   ├── overview.md                  (positioning statement — read second)
@@ -64,7 +70,7 @@ You now know the design premises and know what's been empirically tested.
 **Half day:**
 5. `positioning/game-of-life.md` (30 min).
 6. `positioning/ecosystem.md` (30 min).
-7. `spec/spec-v0.8.md`, sections you care about most. Different sections for different concerns:
+7. `spec/spec-v0.11.md`, sections you care about most. Different sections for different concerns:
    - §1: design premises (already read via charter).
    - §2: lexical structure.
    - §3: type system, contracts, effects.
@@ -104,10 +110,7 @@ You now know the design premises and know what's been empirically tested.
 - **Naming**: "Corvid" is current working name. Could stick or change based on trademark research.
 - **Detailed runtime cost model** for state-machine synchronization at scale.
 - **String interpolation syntax** (spec gap #22 in validation).
-- **`try` keyword semantics** (spec gap #17).
 - **Protocol conformance syntax** (spec gap #13).
-- **`old()` in ensures clauses** (spec gap #28).
-- **String position API in stdlib** (spec gap #25).
 
 The friction log has the complete list of syntactic gaps discovered during the Ink translation exercise. All are addressable; none require architectural changes.
 

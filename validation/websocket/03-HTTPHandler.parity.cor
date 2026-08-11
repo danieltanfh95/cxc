@@ -4,6 +4,9 @@
 #
 # Depends on symbols from 01-Framer.parity.cor for none; standalone.
 # Consumed by FoundationHTTPHandler (inferred / see 03a).
+#
+# VERSION NOTE (v0.9.0): `category(target_class: X):` is retired. Read any
+# `category(...)` block below as `extend class X:` per §3.3.2.
 
 module com.starscream.framer
 

@@ -5,6 +5,12 @@
 # This is the core of the frame parser + serializer. Byte-level, stateful,
 # and the load-bearing exercise for whether Corvid can express low-level
 # work cleanly.
+#
+# VERSION NOTE (v0.9.0): `category(target_class: X):` is retired. Read any
+# `category(...)` block below as `extend class X:` per §3.3.2. For generic
+# targets, the current form supports where-clauses at the declaration
+# position: `extend class Array<T> where T: UnsignedInteger:`. Friction
+# #W-69/#W-70 (generic constraints on categories) dissolved by unification.
 
 module com.starscream.framer
 
@@ -155,7 +161,7 @@ expose protocol Framer:
     accepts supports_compression() -> Bool
 
 
-expose class WSFramer: Framer:
+expose class WSFramer(Framer):     # v0.10.2: explicit conformance in parens; retired double-colon header
     data:
         is_server: Bool = false
 

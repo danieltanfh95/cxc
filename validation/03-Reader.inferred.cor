@@ -18,6 +18,13 @@
 # `ensures ... or throws` becomes `ensures returns .ok(_) implies ...`.
 # Friction comments below are historical; see validation/00-friction-log.md
 # for resolution status.
+#
+# VERSION NOTE (v0.8.7): `old(expr)` in ensures dissolved. Inside an ensures
+# expression, `self` and parameter identifiers refer to entry-state; `result`
+# refers to post-state (return value for value-returning methods; receiver at
+# exit for void methods). See §3.4.3. `ensures self.current_index >
+# old(self.current_index)` becomes `ensures result.current_index >
+# self.current_index`. Friction #28 resolved by dissolution.
 
 module com.ink.internal
 
@@ -98,22 +105,21 @@ class Reader:
         # Mutating methods
         function advance_index(self)
             requires !self.did_reach_end()
-            ensures self.current_index > old(self.current_index):
-            # FRICTION #28 (OLD() IN ENSURES):
-            # ensures clauses need to reference the pre-state to say
-            # "index moved forward". Swift/Rust use various syntaxes for 
-            # this: `old(x)`, `\old(x)`, `x'` (Alloy). 
-            # 
-            # §3.4 doesn't specify old-value syntax for ensures clauses.
-            # This is a spec gap for meaningful state-transition contracts.
+            ensures result.current_index > self.current_index:
+            # FRICTION #28 (OLD() IN ENSURES): RESOLVED BY DISSOLUTION (v0.8.7, §3.4.3).
+            # Inside ensures scope, `self` refers to the entry-state snapshot
+            # (the runtime already had to capture this to make ensures checkable);
+            # `result` refers to post-state (receiver at exit for void methods).
+            # No `old(...)` form needed. This ensures clause reads: "the index
+            # in the post-state is greater than the index in the pre-state."
             self.current_index = self.string.index_after(self.current_index)
-        
+
         # Match-and-consume: reads expected string or throws
         function read(self, expected: String) throws ParseError
-            ensures old(self.current_index) < self.current_index or throws:
+            ensures result.current_index > self.current_index or throws:
             # FRICTION #29 (CONDITIONAL ENSURES):
             # This says "either the index advanced, or the method threw."
-            # Some contract systems support "throws" as a valid ensures 
+            # Some contract systems support "throws" as a valid ensures
             # branch; others don't. §3.5 mentions throws effect but doesn't
             # detail interaction with ensures clauses.
             for expected_char in expected.characters:
