@@ -918,13 +918,15 @@ The premises §1.1–§1.10 point at a specific primitive: **the atom**. An atom
 | Glyph | Meaning |
 |---|---|
 | `->` | Route event to atom (wire from source to sink), OR return type in a signature — position disambiguates |
-| `<--` | Observable read (dataflow out to reader) |
+| `:<` | Observable definition (this value is *drawn from* the atom / expression on the right) |
 | `\|>` | Pipe through operator (RxJS-style chain) |
 | `~>` | Async / deferred wire (debounce, delay, throttle — wires with time) |
 
 Everything else uses keywords: `emit`, `route to`, `broadcast to`, `guard`, `after`. Glyphs are for the four operations users perform most often in atom code.
 
 **Disambiguation for `->`.** The single-arrow `->` serves two roles: return-type marker in atom signatures (`atom sqrt(x: Float) -> Float`) and routing wire in entrypoint bodies (`click() -> debounce(200ms) |> increment`). The parser distinguishes by position: `->` between an argument-list-close and an atom-shape reference is a return type; `->` between two atom expressions inside an entrypoint body is a wire. Readers distinguish by context: the token following `->` is either a type-position atom name (return type) or a routing target (wire). Same shape as how `:` serves both "starts a body" and "declares a shape" in Corvid — one glyph, position-driven meaning, no ambiguity to the parser.
+
+**Rationale for `:<` on observables.** Routing (`->`) is a wire that carries dispatched messages between atoms — imperative-flavored in feel even though semantically it's an emission. Observables are declarations: `value :< state.count` says "the observable `value` IS DEFINED as drawn from `state.count`" — closer to a binding than to a message. The colon prefix carries the definition-flavor Corvid already uses (`x: Int` = "x is defined to have shape Int"); the left-pointing arrow carries the data-flow direction (source on right, exposed name on left). Together they read as "define left, sourced from right" — the honest semantics of an observable declaration.
 
 **Where the spec sits now.**
 
