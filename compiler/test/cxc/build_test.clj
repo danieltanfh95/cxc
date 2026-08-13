@@ -1,7 +1,6 @@
 (ns cxc.build-test
   "End-to-end regression: cxc source → binary → run → verify stdout."
   (:require [clojure.test :refer [deftest is testing]]
-            [clojure.java.io :as io]
             [cxc.build :as build]))
 
 (defn- tmp-dir []
@@ -36,3 +35,57 @@
       (is (zero? status))
       (when (zero? status)
         (is (= "cxc is running\n" (:stdout (build/run-binary bin-path))))))))
+
+(deftest end-to-end-arithmetic-in-print
+  (testing "int binops through print — precedence and result"
+    (let [src "def main:
+    -> running
+        do: print(3 + 4 * 2)
+"
+          out-dir (tmp-dir)
+          {:keys [status stderr bin-path]}
+          (build/compile-source-to-file src "arith" (.getPath out-dir))]
+      (is (zero? status) (str "clang failed:\n" stderr))
+      (when (zero? status)
+        (is (= "11\n" (:stdout (build/run-binary bin-path))))))))
+
+(deftest end-to-end-record-construction-and-field-access
+  (testing "record → C typedef struct; V(x:,y:).x is usable in an int expr"
+    (let [src "record V:
+    data:
+        x: Int
+        y: Int
+
+def main:
+    -> running
+        do: print(V(x: 3, y: 4).x + 100)
+"
+          out-dir (tmp-dir)
+          {:keys [status stderr bin-path]}
+          (build/compile-source-to-file src "rec" (.getPath out-dir))]
+      (is (zero? status) (str "clang failed:\n" stderr))
+      (when (zero? status)
+        (is (= "103\n" (:stdout (build/run-binary bin-path))))))))
+
+(deftest end-to-end-nested-record-field-chain
+  (testing "record-of-record; .a.b field chain works"
+    (let [src "record Point:
+    data:
+        x: Float
+        y: Float
+
+record Line:
+    data:
+        start: Point
+        stop:  Point
+
+def main:
+    -> running
+        do: print(Line(start: Point(x: 1.5, y: 2.0), stop: Point(x: 3.0, y: 4.0)).start.x)
+"
+          out-dir (tmp-dir)
+          {:keys [status stderr bin-path]}
+          (build/compile-source-to-file src "nest" (.getPath out-dir))]
+      (is (zero? status) (str "clang failed:\n" stderr))
+      (when (zero? status)
+        (is (= "1.500000\n" (:stdout (build/run-binary bin-path))))))))
