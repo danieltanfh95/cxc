@@ -5,3 +5,9 @@
 .vscode/
 build/
 dist/
+
+# Clojure tooling caches
+.clj-kondo/.cache/
+.lsp/.cache/
+.cpcache/
+.nrepl-port
