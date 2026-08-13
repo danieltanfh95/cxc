@@ -82,6 +82,13 @@
     :call   (str (emit-expr node) ";")
     :return (str "return " (emit-expr (:value node)) ";")
     :assign (str (emit-expr (:lhs node)) " = " (emit-expr (:rhs node)) ";")
+    :invariant-check
+    ;; Direct if/abort — NSAssert is compiled out by NS_BLOCK_ASSERTIONS
+    ;; in release builds; invariants must always fire.
+    (str "if (!(" (emit-expr (:cond node)) ")) {\n"
+         "    fprintf(stderr, \"" (escape-c-string (:label node)) "\\n\");\n"
+         "    abort();\n"
+         "}")
     (throw (ex-info (str "emit-stmt: unknown node " (:node node))
                     {:node node}))))
 

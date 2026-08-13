@@ -1,0 +1,10 @@
+def Counter:
+    data:
+        n: Int = 0
+
+    -> ready
+        then: n => 100
+
+def main:
+    -> running
+        do: print(Counter().n)

@@ -1,0 +1,12 @@
+def Gauge:
+    data:
+        value: Int = 50
+        max:   Int = 100
+
+    invariants:
+        value >= 0
+        value <= max
+
+def main:
+    -> running
+        do: print(Gauge().value)

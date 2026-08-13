@@ -104,3 +104,47 @@
     (let [{:keys [exit stdout]} (compile-and-run "atom-methods")]
       (is (zero? exit))
       (is (= "26\n" stdout)))))
+
+(deftest end-to-end-atom-on-enter
+  (testing "atom-on-enter.cxc — `-> ready then: n => 100` fires during init, overrides data default"
+    (let [{:keys [exit stdout]} (compile-and-run "atom-on-enter")]
+      (is (zero? exit))
+      (is (= "100\n" stdout)))))
+
+(deftest end-to-end-atom-on-enter-self-field
+  (testing "atom-on-enter-self-field.cxc — then: hp => max_hp reads sibling data field (unqualified → self ivar)"
+    (let [{:keys [exit stdout]} (compile-and-run "atom-on-enter-self-field")]
+      (is (zero? exit))
+      (is (= "30\n" stdout)))))
+
+(deftest end-to-end-observable-simple
+  (testing "observable-simple.cxc — `doubled :< raw + raw` synthesizes a zero-arg getter; .doubled reads it"
+    (let [{:keys [exit stdout]} (compile-and-run "observable-simple")]
+      (is (zero? exit))
+      (is (= "42\n" stdout)))))
+
+(deftest end-to-end-observable-chain
+  (testing "observable-chain.cxc — later observable references earlier one (declaration order enables chaining)"
+    (let [{:keys [exit stdout]} (compile-and-run "observable-chain")]
+      (is (zero? exit))
+      (is (= "7\n" stdout)))))
+
+(deftest end-to-end-invariant-pass
+  (testing "invariant-pass.cxc — init satisfies invariants; program runs to completion"
+    (let [{:keys [exit stdout]} (compile-and-run "invariant-pass")]
+      (is (zero? exit))
+      (is (= "50\n" stdout)))))
+
+(deftest end-to-end-invariant-fail
+  (testing "invariant-fail.cxc — data init violates `value <= max`; init aborts with a diagnostic on stderr"
+    (let [{:keys [exit stderr]} (compile-and-run "invariant-fail")]
+      (is (not (zero? exit))
+          "expected non-zero exit from abort()")
+      (is (re-find #"Gauge invariant #1 failed at init" (or stderr ""))
+          "expected diagnostic naming the failing invariant index"))))
+
+(deftest end-to-end-use-cap
+  (testing "use-cap.cxc — `use: clock: Clock` sugars to required ctor-param + data-field; capability accessible via `clock.offset` in observables"
+    (let [{:keys [exit stdout]} (compile-and-run "use-cap")]
+      (is (zero? exit))
+      (is (= "1042\n" stdout)))))

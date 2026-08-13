@@ -27,6 +27,13 @@ what the current compiler can lower.
 | [`enum-cases.cxc`](enum-cases.cxc) | `enum Key: ...` → C typedef enum; `Key.arrow_down` → `Key_arrow_down` (index 1) | `1` |
 | [`bool-and-is.cxc`](bool-and-is.cxc) | `and`/`or`/`is` lower to `&&`/`\|\|`/`==`; identity check on nil pointer | `1` |
 | [`atom-methods.cxc`](atom-methods.cxc) | Methods on def-atoms → ObjC instance methods; `[c bump]` and `[c plusWithother:5]` selectors | `26` |
+| [`atom-on-enter.cxc`](atom-on-enter.cxc) | Wildcard on-enter for initial phase — `then: n => 100` fires during init, overrides `data:` default | `100` |
+| [`atom-on-enter-self-field.cxc`](atom-on-enter-self-field.cxc) | Unqualified data-field reference on RHS of `then:` resolves to `self.<field>` (direct ivar) | `30` |
+| [`observable-simple.cxc`](observable-simple.cxc) | `doubled :< raw + raw` synthesizes zero-arg getter method; `.doubled` reads it via ObjC dot syntax | `42` |
+| [`observable-chain.cxc`](observable-chain.cxc) | Observables typed in declaration order; later observable may reference earlier one | `7` |
+| [`invariant-pass.cxc`](invariant-pass.cxc) | `invariants:` predicates checked at end of init; passing case runs through | `50` |
+| [`invariant-fail.cxc`](invariant-fail.cxc) | Failing invariant aborts init with a stderr diagnostic; nonzero exit | *(abort)* |
+| [`use-cap.cxc`](use-cap.cxc) | `use: clock: Clock` sugars to a required ctor-param + data-field; cap accessible in observables via `clock.offset` | `1042` |
 
 ## Running one by hand
 

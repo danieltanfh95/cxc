@@ -1,0 +1,10 @@
+def Chain:
+    data:
+        n: Int = 3
+
+    twice    :< n * 2
+    plus_one :< twice + 1
+
+def main:
+    -> running
+        do: print(Chain().plus_one)

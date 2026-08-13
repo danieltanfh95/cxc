@@ -131,6 +131,22 @@
       (contains? enum-env   cxc-name) {:enum   cxc-name}
       :else (fail-nyi! (str "unresolved type name `" cxc-name "`") node))))
 
+(defn- type-kw->c-type
+  "Reverse of cxc-type->type-kw for the C emit side. Observable return
+   types are inferred as type-kws directly; this converts them back to
+   emit-ready C type strings."
+  [tk node]
+  (cond
+    (= :int    tk) "int"
+    (= :float  tk) "double"
+    (= :string tk) "const char *"
+    (= :bool   tk) "int"
+    (and (map? tk) (:record tk)) (:record tk)
+    (and (map? tk) (:atom   tk)) (str (:atom tk) " *")
+    (and (map? tk) (:enum   tk)) (:enum tk)
+    :else (fail-nyi! (str "unrepresentable observable type " (pr-str tk))
+                     node)))
+
 (defn- fields-from-data-section
   [data-section record-env atom-env enum-env]
   (mapv (fn [f]
@@ -200,8 +216,35 @@
 (defn- def-atom-methods-section [atom-node]
   (first (filter #(= :methods-section (:node %)) (:body atom-node))))
 
-(defn- def-atom-body-non-data-non-methods [atom-node]
-  (remove #(#{:data-section :methods-section} (:node %)) (:body atom-node)))
+(defn- def-atom-transitions [atom-node]
+  (filterv #(= :transition (:node %)) (:body atom-node)))
+
+(defn- def-atom-observables [atom-node]
+  (filterv #(= :observable (:node %)) (:body atom-node)))
+
+(defn- def-atom-invariants
+  "Return the predicate list from the atom's invariants: section (empty
+   if absent). Section is unique — parser emits at most one."
+  [atom-node]
+  (or (:predicates (first (filter #(= :invariants-section (:node %))
+                                  (:body atom-node))))
+      []))
+
+(defn- def-atom-use-caps
+  "Return the capability list from the atom's use: section (empty if
+   absent). Each cap is {:name :type}."
+  [atom-node]
+  (or (:caps (first (filter #(= :use-section (:node %)) (:body atom-node))))
+      []))
+
+(defn- def-atom-body-extras
+  "Everything in the def-atom body that isn't data:/methods:/transition/
+   observable/invariants/use: — e.g. contracts: (Layer 6+). These are
+   what remains for later layers to consume."
+  [atom-node]
+  (remove #(#{:data-section :methods-section :transition
+              :observable :invariants-section :use-section} (:node %))
+          (:body atom-node)))
 
 (defn- build-atom-env
   [top-nodes enum-env]
@@ -210,24 +253,59 @@
                          top-nodes)
         skeleton (into {} (map (fn [a] [(:name a) {:fields [] :field-index {}
                                                    :ctor-params [] :methods []
-                                                   :method-index {} :extras []}])
-                               atoms))]
+                                                   :method-index {} :observables []
+                                                   :invariants [] :transitions []
+                                                   :extras []}])
+                               atoms))
+        atom-names (set (keys skeleton))]
     (reduce
      (fn [env a]
-       (let [name        (:name a)
-             dsec        (def-atom-data-section a)
-             msec        (def-atom-methods-section a)
-             extras      (def-atom-body-non-data-non-methods a)
-             fields      (if dsec
-                           (fields-from-data-section dsec {} env enum-env)
-                           [])
-             ctor-params (ctor-params-normalized (:ctor-params a) {} env enum-env)
-             methods     (extract-methods name msec)]
+       (let [name          (:name a)
+             dsec          (def-atom-data-section a)
+             msec          (def-atom-methods-section a)
+             transitions   (def-atom-transitions a)
+             observables   (def-atom-observables a)
+             invariants    (def-atom-invariants a)
+             use-caps      (def-atom-use-caps a)
+             extras        (def-atom-body-extras a)
+             ;; use: caps are sugar for a required ctor-param plus a
+             ;; same-named data-field defaulted to that ctor-param.
+             ;; Type must be an atom (capability atoms are the intended
+             ;; kind); user-declared collisions raise below.
+             _             (doseq [c use-caps]
+                             (when-not (contains? atom-names (base-type-name (:type c)))
+                               (fail-nyi!
+                                (str "use: `" (:name c) "` requires an atom type; got `"
+                                     (base-type-name (:type c)) "` (Layer 3.1 only "
+                                     "supports capability atom types in use: for now)")
+                                c)))
+             cap-idents     (mapv (fn [c] {:node :ident :name (:name c)}) use-caps)
+             cap-as-params  (mapv (fn [c] {:name (:name c) :type (:type c) :default nil})
+                                  use-caps)
+             cap-as-fields  (mapv (fn [c id] {:name (:name c) :type (:type c) :default id})
+                                  use-caps cap-idents)
+             merged-ctor    (into (vec (:ctor-params a)) cap-as-params)
+             merged-fields  (into (or (:fields dsec) []) cap-as-fields)
+             _             (let [n->count (frequencies (map :name merged-ctor))
+                                 dupes    (filter #(> (val %) 1) n->count)]
+                             (when (seq dupes)
+                               (fail-nyi!
+                                (str "duplicate ctor-param names on def-atom `" name
+                                     "` (likely collision between use: and explicit "
+                                     "ctor-params): " (mapv key dupes))
+                                {:atom name :dupes (mapv key dupes)})))
+             merged-dsec   (assoc (or dsec {:node :data-section}) :fields merged-fields)
+             fields        (fields-from-data-section merged-dsec {} env enum-env)
+             ctor-params   (ctor-params-normalized merged-ctor {} env enum-env)
+             methods       (extract-methods name msec)]
          (assoc env name {:fields       fields
                           :field-index  (into {} (map (juxt :name identity) fields))
                           :ctor-params  ctor-params
                           :methods      methods
                           :method-index (into {} (map (juxt :name identity) methods))
+                          :observables  observables
+                          :invariants   invariants
+                          :transitions  transitions
                           :extras       extras})))
      skeleton
      atoms)))
@@ -275,28 +353,35 @@
 
 (defn- infer-method-call-type
   "For `target.method(args)`: infer target-ty, look up method on the
-   record OR atom, return its cxc-return-ty translated to a type-kw."
+   record OR atom (falling back to observable-index for atoms), return
+   its cxc-return-ty translated to a type-kw. Observables carry
+   :type-kw directly."
   [call-node ctx]
   (let [dot         (:callee call-node)
         target-ty   (infer-type (:target dot) ctx)
-        method-name (:field dot)
-        [owner-kind owner-name m]
+        method-name (:field dot)]
+    (cond
+      (and (map? target-ty) (:record target-ty))
+      (let [rn (:record target-ty)
+            m  (get-in (:record-env ctx) [rn :method-index method-name])]
+        (when-not m
+          (fail-nyi! (str "method `" method-name "` on record `" rn "`") call-node))
+        (cxc-type->type-kw (:cxc-return-ty m)
+                           (:record-env ctx) (:atom-env ctx) (:enum-env ctx) call-node))
+
+      (and (map? target-ty) (:atom target-ty))
+      (let [an (:atom target-ty)
+            m  (get-in (:atom-env ctx) [an :method-index method-name])
+            o  (get-in (:atom-env ctx) [an :observable-index method-name])]
         (cond
-          (and (map? target-ty) (:record target-ty))
-          [:record (:record target-ty)
-           (get-in (:record-env ctx) [(:record target-ty) :method-index method-name])]
+          m (cxc-type->type-kw (:cxc-return-ty m)
+                               (:record-env ctx) (:atom-env ctx) (:enum-env ctx) call-node)
+          o (:type-kw o)
+          :else (fail-nyi! (str "method/observable `" method-name "` on atom `" an "`")
+                           call-node)))
 
-          (and (map? target-ty) (:atom target-ty))
-          [:atom (:atom target-ty)
-           (get-in (:atom-env ctx) [(:atom target-ty) :method-index method-name])]
-
-          :else
-          (fail-nyi! "method call on non-record/non-atom target" call-node))
-        _ (when-not m
-            (fail-nyi! (str "method `" method-name "` on " (name owner-kind)
-                            " `" owner-name "`") call-node))]
-    (cxc-type->type-kw (:cxc-return-ty m)
-                       (:record-env ctx) (:atom-env ctx) (:enum-env ctx) call-node)))
+      :else
+      (fail-nyi! "method call on non-record/non-atom target" call-node))))
 
 (defn- infer-call-type
   [{:keys [callee] :as node} ctx]
@@ -312,20 +397,30 @@
     (fail-nyi! (str "call with non-ident/non-dot callee " (:node callee)) node)))
 
 (defn- field-type-for-owner [owner-ty ctx field-name node]
-  (let [env-key (cond
-                  (and (map? owner-ty) (:record owner-ty))
-                  [:record (:record-env ctx) (:record owner-ty)]
-                  (and (map? owner-ty) (:atom owner-ty))
-                  [:atom   (:atom-env ctx)   (:atom owner-ty)])
-        _       (when-not env-key
-                  (fail-nyi! "field access on non-aggregate type" node))
-        [kind env owner] env-key
-        f       (get-in env [owner :field-index field-name])
-        _       (when-not f
-                  (fail-nyi! (str "field `" field-name "` on " kind " `" owner "`")
-                             node))]
-    (cxc-type->type-kw (:cxc-ty f)
-                       (:record-env ctx) (:atom-env ctx) (:enum-env ctx) node)))
+  (cond
+    (and (map? owner-ty) (:record owner-ty))
+    (let [owner (:record owner-ty)
+          f     (get-in (:record-env ctx) [owner :field-index field-name])]
+      (when-not f
+        (fail-nyi! (str "field `" field-name "` on record `" owner "`") node))
+      (cxc-type->type-kw (:cxc-ty f)
+                         (:record-env ctx) (:atom-env ctx) (:enum-env ctx) node))
+
+    (and (map? owner-ty) (:atom owner-ty))
+    (let [owner (:atom owner-ty)
+          f     (get-in (:atom-env ctx) [owner :field-index field-name])
+          o     (get-in (:atom-env ctx) [owner :observable-index field-name])]
+      (cond
+        f (cxc-type->type-kw (:cxc-ty f)
+                             (:record-env ctx) (:atom-env ctx) (:enum-env ctx) node)
+        ;; Observables read like fields — dot syntax on an ObjC object
+        ;; dispatches to our synthesized zero-arg method.
+        o (:type-kw o)
+        :else
+        (fail-nyi! (str "field/observable `" field-name "` on atom `" owner "`") node)))
+
+    :else
+    (fail-nyi! "field access on non-aggregate type" node)))
 
 (defn- enum-case-access?
   "A `:dot` whose target is an `:ident` naming an enum, and whose field
@@ -361,6 +456,11 @@
     :self       (or (get (:locals ctx) "self")
                     (fail-nyi! "type-of `self` outside a method body" node))
     :ident      (or (get (:locals ctx) (:name node))
+                    (when-let [f (get (:self-fields ctx) (:name node))]
+                      (or (:type-kw f)
+                          (cxc-type->type-kw (:cxc-ty f)
+                                             (:record-env ctx) (:atom-env ctx)
+                                             (:enum-env ctx) node)))
                     (fail-nyi! (str "type-of identifier `" (:name node)
                                     "` (no local-binding env yet)")
                                node))
@@ -470,7 +570,8 @@
    - record target → C free function call `Record_method(target, args...)`
      with self as first positional arg
    - atom target → ObjC message send `[target methodWithArg:...]` with
-     arg-name-derived selector parts
+     arg-name-derived selector parts, falling back to observable-index
+     for zero-arg synthesized getters
    Named args on method calls fail-nyi — parameters have declaration
    order in the source-level method decl."
   [call-node ctx]
@@ -492,10 +593,15 @@
       (and (map? target-ty) (:atom target-ty))
       (let [atom-name   (:atom target-ty)
             m           (get-in ctx [:atom-env atom-name :method-index method-name])
-            _           (when-not m
-                          (fail-nyi! (str "method `" method-name "` on atom `"
+            o           (get-in ctx [:atom-env atom-name :observable-index method-name])
+            _           (when (and (nil? m) (nil? o))
+                          (fail-nyi! (str "method/observable `" method-name "` on atom `"
                                           atom-name "`") call-node))
-            param-names (mapv :name (rest (:params m)))]     ; drop `self`
+            _           (when (and o (seq arg-exprs))
+                          (fail-nyi! (str "observable `" method-name "` called with "
+                                          "arguments — observables are zero-arg reads")
+                                     call-node))
+            param-names (if m (mapv :name (rest (:params m))) [])]
         {:node     :objc-msg
          :recv     target-lo
          :selector (objc-method-selector method-name param-names)
@@ -541,7 +647,26 @@
                                 "invoke through (Layer 5 collection methods "
                                 "`.map`/`.for_each`; will lower to ObjC blocks)")
                            node)
-    :ident      {:node :name  :sym (:name node)}
+    :ident      (let [n  (:name node)
+                      sf (get (:self-fields ctx) n)]
+                  (cond
+                    (contains? (:locals ctx) n)
+                    {:node :name :sym n}
+
+                    (:expr sf)
+                    ;; Observable — dispatch through the synthesized getter.
+                    ;; `self.name` in emitted C is an ObjC message send.
+                    {:node :field
+                     :target {:node :name :sym "self"}
+                     :field  n}
+
+                    sf
+                    ;; Real data-field — direct ivar access; matches how we
+                    ;; write self-fields (`_field = value;`).
+                    {:node :name :sym (str "_" n)}
+
+                    :else
+                    {:node :name :sym n}))
     :self       {:node :name  :sym "self"}
     :binop      {:node  :binop
                  :op    (case (:op node)
@@ -600,6 +725,41 @@
                    :do-clause (lower-do-clause c ctx)
                    (fail-nyi! (str "transition body clause " (:node c)) c)))
                clauses)))
+
+(defn- lower-then-update
+  "`then: field => expr` → `_field = <expr>;`. LHS is the atom's own
+   ivar (direct ivar access, same as data-default init statements)."
+  [update ctx]
+  {:node :assign
+   :lhs  {:node :name :sym (str "_" (:field update))}
+   :rhs  (lower-expr (:expr update) ctx)})
+
+(defn- lower-on-enter-body
+  "Body of a wildcard on-enter transition when inlined into init. Same
+   as a general transition body but with `then:` support — regular
+   `do:` stmts pass through unchanged."
+  [clauses ctx]
+  (vec (mapcat (fn [c]
+                 (case (:node c)
+                   :then-clause (mapv #(lower-then-update % ctx) (:updates c))
+                   :do-clause   (lower-do-clause c ctx)
+                   (fail-nyi! (str "on-enter body clause " (:node c)) c)))
+               clauses)))
+
+(defn- initial-phase-for
+  "First phase mentioned as a transition target — i.e. the phase the
+   atom enters when init completes. cxc has no explicit initial-phase
+   marker; declaration order fixes it."
+  [transitions]
+  (some :target transitions))
+
+(defn- wildcard-on-enter?
+  "A transition with implicit source, no message receipt, no guard —
+   the `-> phase then/do: ...` form that fires on every entry."
+  [t]
+  (and (= :implicit (get-in t [:source :kind]))
+       (nil? (:receive t))
+       (nil? (:when t))))
 
 ;; ---------------------------------------------------------------------------
 ;; Top-level lowering — records, methods, atoms, main
@@ -695,40 +855,107 @@
      :params      objc-params
      :body        stmts}))
 
+(defn- lower-observable-method
+  "An observable `name :< expr` becomes a zero-arg synthesized method
+   `- (T)name { return <expr>; }`. Reads self-fields via ivar direct
+   access (matches init-body). Only readonly — no setter is emitted."
+  [o ctx]
+  {:node        :objc-method
+   :selector    (:name o)
+   :return-type (:c-type o)
+   :params      []
+   :body        [{:node :return :value (lower-expr (:expr o) ctx)}]})
+
+(def ^:private comparison-ops #{"<" "<=" ">" ">=" "==" "!="})
+
+(defn- chained-comparison?
+  "Detects `a <= b <= c`-shaped predicates. Parser produces these as a
+   left-assoc binop with a comparison inside a comparison, which is NOT
+   what the user meant — needs desugaring at the parser layer (Layer 1.X).
+   Fail-nyi in invariants so users don't get silent miscompilation."
+  [expr]
+  (and (= :binop (:node expr))
+       (contains? comparison-ops (:op expr))
+       (or (and (= :binop (get-in expr [:left :node]))
+                (contains? comparison-ops (get-in expr [:left :op])))
+           (and (= :binop (get-in expr [:right :node]))
+                (contains? comparison-ops (get-in expr [:right :op]))))))
+
+(defn- lower-invariant-check
+  "One predicate → an :invariant-check init statement. Ctx must carry
+   self-fields + init-locals so unqualified names resolve as in init."
+  [atom-name idx pred ctx]
+  (when (chained-comparison? pred)
+    (fail-nyi! (str "chained comparison in invariant on `" atom-name
+                    "` — needs parser-side desugaring (Layer 1.X); "
+                    "for now split into `a <= b and b <= c`")
+               pred))
+  {:node  :invariant-check
+   :cond  (lower-expr pred ctx)
+   :label (str atom-name " invariant #" idx " failed at init")})
+
 (defn- lower-atom [atom-name ctx]
-  (let [rec         (get-in ctx [:atom-env atom-name])
-        extras      (:extras rec)
-        ctor-params (:ctor-params rec)
-        methods     (:methods rec)
-        locals      (into {} (map (fn [p]
-                                    [(:name p)
-                                     (cxc-type->type-kw (:cxc-ty p)
-                                                        (:record-env ctx)
-                                                        (:atom-env ctx)
-                                                        (:enum-env ctx)
-                                                        p)])
-                                  ctor-params))
-        ctx-in-init (assoc ctx :locals locals)]
+  (let [rec           (get-in ctx [:atom-env atom-name])
+        extras        (:extras rec)
+        ctor-params   (:ctor-params rec)
+        methods       (:methods rec)
+        observables   (:observables-typed rec)
+        transitions   (:transitions rec)
+        initial-phase (initial-phase-for transitions)
+        initial-on-enter (first (filter #(and (wildcard-on-enter? %)
+                                              (= initial-phase (:target %)))
+                                        transitions))
+        other-txns    (remove #(identical? % initial-on-enter) transitions)
+        locals        (into {} (map (fn [p]
+                                      [(:name p)
+                                       (cxc-type->type-kw (:cxc-ty p)
+                                                          (:record-env ctx)
+                                                          (:atom-env ctx)
+                                                          (:enum-env ctx)
+                                                          p)])
+                                    ctor-params))
+        self-fields   (into {} (map (juxt :name identity) (:fields rec)))
+        ;; Observables see other observables declared earlier — same
+        ;; lookup shape as self-fields but keyed by name → :type-kw entry.
+        self-plus-obs (into self-fields
+                            (map (juxt :name identity) observables))
+        ctx-with-self (assoc ctx :self-fields self-plus-obs)
+        ctx-in-init   (assoc ctx-with-self :locals locals)]
     (when (seq extras)
-      (fail-nyi! (str "def-atom `" atom-name "` has body items beyond `data:`/`methods:` "
-                      "(" (mapv :node extras) ") — transitions/use:/invariants next up")
+      (fail-nyi! (str "def-atom `" atom-name "` has body items beyond `data:`/`methods:`"
+                      "/observable/wildcard on-enter transition "
+                      "(" (mapv :node extras) ") — use:/invariants/receive-glyphs next up")
                  {:atom atom-name :extras extras}))
-    {:node        :objc-class
-     :name        atom-name
-     :superclass  "NSObject"
-     :properties  (mapv (fn [f]
-                          ;; ARC discipline: object pointers (atom types) → strong;
-                          ;; scalars/records → assign. `strong` gives standard
-                          ;; owning-reference semantics; `assign` is right for
-                          ;; primitives and copyable values that ARC ignores.
-                          (let [is-atom-ptr? (contains? (:atom-env ctx) (:cxc-ty f))]
-                            {:name (:name f)
-                             :c-type (:c-type f)
-                             :attrs (if is-atom-ptr? ["strong"] ["assign"])}))
-                        (:fields rec))
-     :init-params (mapv (fn [p] {:name (:name p) :c-type (:c-type p)}) ctor-params)
-     :init-body   (mapv #(default-init-stmt-for % ctx-in-init) (:fields rec))
-     :methods     (mapv #(lower-atom-method atom-name % ctx) methods)}))
+    (when (seq other-txns)
+      (fail-nyi! (str "def-atom `" atom-name "` has transitions beyond the initial-phase "
+                      "wildcard on-enter — non-initial-phase entries and message-triggered "
+                      "transitions need the actor runtime (Layer 4)")
+                 {:atom atom-name :transitions other-txns}))
+    (let [default-stmts   (mapv #(default-init-stmt-for % ctx-in-init) (:fields rec))
+          on-enter-stmts  (if initial-on-enter
+                            (lower-on-enter-body (:body initial-on-enter) ctx-in-init)
+                            [])
+          invariant-stmts (vec (map-indexed
+                                (fn [i p] (lower-invariant-check atom-name i p ctx-in-init))
+                                (:invariants rec)))
+          user-methods    (mapv #(lower-atom-method atom-name % ctx-with-self) methods)
+          obs-methods     (mapv #(lower-observable-method % ctx-with-self) observables)]
+      {:node        :objc-class
+       :name        atom-name
+       :superclass  "NSObject"
+       :properties  (mapv (fn [f]
+                            ;; ARC discipline: object pointers (atom types) → strong;
+                            ;; scalars/records → assign. `strong` gives standard
+                            ;; owning-reference semantics; `assign` is right for
+                            ;; primitives and copyable values that ARC ignores.
+                            (let [is-atom-ptr? (contains? (:atom-env ctx) (:cxc-ty f))]
+                              {:name (:name f)
+                               :c-type (:c-type f)
+                               :attrs (if is-atom-ptr? ["strong"] ["assign"])}))
+                          (:fields rec))
+       :init-params (mapv (fn [p] {:name (:name p) :c-type (:c-type p)}) ctor-params)
+       :init-body   (-> default-stmts (into on-enter-stmts) (into invariant-stmts))
+       :methods     (into user-methods obs-methods)})))
 
 (defn- main-atom-body [main-node ctx]
   (let [transitions (filter #(= :transition (:node %)) (:body main-node))
@@ -748,6 +975,34 @@
    :name  (:name enum-node)
    :cases (:cases enum-node)})
 
+(defn- infer-observables-in-atom-env
+  "Second pass: with the atom-env already built (so cross-atom types
+   resolve), infer each observable's return type in a ctx where the
+   atom's own data-fields are self-fields. Observables are typed in
+   declaration order so a later observable may reference earlier ones.
+   Populates :observables-typed and :observable-index on each entry."
+  [atom-env record-env enum-env]
+  (reduce-kv
+   (fn [env atom-name info]
+     (let [self-fields (into {} (map (juxt :name identity) (:fields info)))
+           {:keys [typed]}
+           (reduce (fn [{:keys [typed known]} o]
+                     (let [ctx    {:record-env record-env :atom-env atom-env
+                                   :enum-env enum-env :locals {}
+                                   :self-fields known}
+                           tk     (infer-type (:expr o) ctx)
+                           typed' (assoc o :type-kw tk
+                                         :c-type   (type-kw->c-type tk o))]
+                       {:typed (conj typed typed')
+                        :known (assoc known (:name o) typed')}))
+                   {:typed [] :known self-fields}
+                   (:observables info))]
+       (assoc env atom-name
+              (assoc info
+                     :observables-typed typed
+                     :observable-index  (into {} (map (juxt :name identity) typed))))))
+   atom-env atom-env))
+
 (defn lower
   "Take parsed top-level nodes and produce an ObjC/C program AST."
   [top-nodes]
@@ -758,6 +1013,7 @@
         enum-env   (build-enum-env top-nodes)
         atom-env   (build-atom-env top-nodes enum-env)
         record-env (build-record-env top-nodes atom-env enum-env)
+        atom-env   (infer-observables-in-atom-env atom-env record-env enum-env)
         ctx        {:record-env record-env :atom-env atom-env :enum-env enum-env :locals {}}
         records    (filter #(= :record (:node %)) top-nodes)
         enums      (filter #(= :enum   (:node %)) top-nodes)
@@ -766,9 +1022,11 @@
         functions  (record-method-functions ctx)
         classes    (mapv #(lower-atom % ctx) (keys atom-env))
         needs-foundation? (boolean (seq classes))
-        includes   (if needs-foundation?
-                     ["<Foundation/Foundation.h>"]
-                     ["<stdio.h>"])]
+        needs-abort?      (boolean (some #(seq (:invariants (second %))) atom-env))
+        base-includes     (if needs-foundation?
+                            ["<Foundation/Foundation.h>"]
+                            ["<stdio.h>"])
+        includes          (cond-> base-includes needs-abort? (conj "<stdlib.h>"))]
     {:node      :objc-program
      :includes  includes
      :enums     c-enums

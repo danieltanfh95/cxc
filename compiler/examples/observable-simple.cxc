@@ -1,0 +1,9 @@
+def Sensor(x: Int = 21):
+    data:
+        raw: Int = x
+
+    doubled :< raw + raw
+
+def main:
+    -> running
+        do: print(Sensor(x: 21).doubled)

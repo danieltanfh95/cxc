@@ -137,10 +137,24 @@
       (is (= ["<stdio.h>"] (:includes prog)))
       (is (not (true? (get-in prog [:main :autorelease?])))))))
 
-(deftest def-atom-with-transitions-fails-nyi
-  (testing "def-atom body beyond data: fails-nyi (transitions/use:/etc are next)"
+(deftest wildcard-on-enter-inlined-into-init
+  (testing "initial-phase wildcard on-enter → its then:/do: append to :init-body after data defaults"
+    (let [prog (lower-src "def Ticker:\n    data:\n        n: Int = 0\n\n    -> incremented\n        then: n => n + 1\n\ndef main:\n    -> running\n        do: print(Ticker().n)\n")
+          cls  (first (:classes prog))]
+      (is (= [{:node :assign
+               :lhs  {:node :name :sym "_n"}
+               :rhs  {:node :int  :value 0}}
+              {:node :assign
+               :lhs  {:node :name :sym "_n"}
+               :rhs  {:node :binop :op "+"
+                      :left  {:node :name :sym "_n"}
+                      :right {:node :int  :value 1}}}]
+             (:init-body cls))))))
+
+(deftest def-atom-with-non-initial-wildcard-fails-nyi
+  (testing "wildcards on non-initial phases need the actor runtime to fire — fail-nyi until Layer 4"
     (try
-      (lower-src "def Ticker:\n    data:\n        n: Int = 0\n\n    -> incremented\n        then: n => n + 1\n\ndef main:\n    -> running\n        do: print(Ticker().n)\n")
+      (lower-src "def Ticker:\n    data:\n        n: Int = 0\n\n    -> ready\n        then: n => 1\n\n    -> other\n        then: n => 2\n\ndef main:\n    -> running\n        do: print(Ticker().n)\n")
       (is false "expected NYI throw")
       (catch clojure.lang.ExceptionInfo e
         (is (= :not-yet-implemented (:kind (ex-data e))))))))
