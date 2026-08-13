@@ -886,13 +886,13 @@ You don't. User code accesses OS through typed capabilities (`Clock`, `Filesyste
 Under the hood: FFI is a capability atom (`Extern`) provisioned only to stdlib shim atoms. Foreign symbol declarations live in per-target prelude `foreign library` blocks. Shim atoms use `extern.get("name")` to retrieve typed native handles.
 
 ```
-# ---- prelude/unix/libc.cor (prelude-only; user code cannot declare these) ----
+# ---- prelude/unix/libc.cxc (prelude-only; user code cannot declare these) ----
 foreign library "libc":
     symbol "open":  (path: CString, flags: Int32, mode: Int32) -> Int32
     symbol "read":  (fd: Int32, buf: Ptr of Byte, len: SizeT) -> SsizeT
     symbol "close": (fd: Int32) -> Int32
 
-# ---- prelude/unix/posix_fs.cor (stdlib shim) ----
+# ---- prelude/unix/posix_fs.cxc (stdlib shim) ----
 def PosixFs:
     conforms: Filesystem
     use:

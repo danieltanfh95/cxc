@@ -677,13 +677,13 @@ Rationale: §1.2 committed to intent, not authority — but the language kept au
 
 **Module system resolved (§7, §4.16 generalized):**
 - Three distinct levels: **source** (single file), **module** (compilation unit, possibly multi-file, with unified metadata), **package** (distribution unit, versioned).
-- **Package section** (Stage 1 built-in) — manifest as a section. Three forms: full `package.cor` file, embedded in-script header, implicit for scripts without dependencies.
+- **Package section** (Stage 1 built-in) — manifest as a section. Three forms: full `package.cxc` file, embedded in-script header, implicit for scripts without dependencies.
 - **Aliases generalized** (§4.16 rewrite) — one construct for all four categories: section-composition, type, value, module. Single mechanism for compile-time text substitution.
 - **Implicit resolution with optional explicit imports.** Compiler resolves names against manifest-declared packages; `import` statements optional for disambiguation or readability.
 - **Explicit source declaration via `from` clause** in dependencies and imports (local paths, URLs, git refs, private registries).
 - **Standard library implicit.** No imports needed for stdlib.
 - **Two visibility states:** `expose` (part of the module's stable interface) or absent (internal by convention). Compiler warns on external access to non-exposed members; users configure strictness. No `public`, `private`, `internal`, `fileprivate`, or `public(package)` keywords — see §7.7.
-- **Single-file scripts** work with zero ceremony: `oc5 hello.cor` runs a script; embedded `package:` for scripts with dependencies.
+- **Single-file scripts** work with zero ceremony: `oc5 hello.cxc` runs a script; embedded `package:` for scripts with dependencies.
 - **Deferred to post-v1:** package manager tooling, registry protocol, version resolution algorithm, workspace concept.
 
 **Pre-v1 design stance (§1.8):**
@@ -1870,7 +1870,7 @@ def PosixFs:
     
     data:
         # Typed handles retrieved from the target prelude's symbol table.
-        # Type on the LHS must match the declared type in prelude/<target>/libc.cor.
+        # Type on the LHS must match the declared type in prelude/<target>/libc.cxc.
         native_open:  (CString, Int32, Int32) -> Int32           = extern.get("open")
         native_read:  (Int32, Ptr of Byte, SizeT) -> SsizeT      = extern.get("read")
         native_write: (Int32, Ptr of Byte, SizeT) -> SsizeT      = extern.get("write")
@@ -2168,26 +2168,26 @@ The prelude (see §4.20 for the general mechanism) is cxc's always-in-scope decl
 ```
 prelude/
 ├── shared/
-│   ├── types.cor              # Duration, Instant, Stream, Future, Signal
-│   ├── capabilities.cor        # Clock, Filesystem, Network, ... capability shapes (§1.13)
-│   ├── extern.cor              # Extern capability shape
+│   ├── types.cxc              # Duration, Instant, Stream, Future, Signal
+│   ├── capabilities.cxc        # Clock, Filesystem, Network, ... capability shapes (§1.13)
+│   ├── extern.cxc              # Extern capability shape
 ├── unix/
-│   ├── libc.cor                # foreign symbols for libc
-│   ├── runtime.cor             # foreign symbols for cxc_runtime
-│   ├── wall_clock.cor          # WallClock shim (Clock impl for Unix)
-│   ├── posix_fs.cor            # PosixFs shim
-│   ├── posix_console.cor       # PosixConsole shim
+│   ├── libc.cxc                # foreign symbols for libc
+│   ├── runtime.cxc             # foreign symbols for cxc_runtime
+│   ├── wall_clock.cxc          # WallClock shim (Clock impl for Unix)
+│   ├── posix_fs.cxc            # PosixFs shim
+│   ├── posix_console.cxc       # PosixConsole shim
 │   ├── ...
 ├── windows/
-│   ├── win32.cor               # foreign symbols for Win32
-│   ├── win_clock.cor           # Clock impl for Windows
+│   ├── win32.cxc               # foreign symbols for Win32
+│   ├── win_clock.cxc           # Clock impl for Windows
 │   ├── ...
 ├── wasi/
-│   ├── wasi_preview1.cor       # foreign symbols for wasi_snapshot_preview1
-│   ├── wasi_fs.cor             # Filesystem impl for WASI
+│   ├── wasi_preview1.cxc       # foreign symbols for wasi_snapshot_preview1
+│   ├── wasi_fs.cxc             # Filesystem impl for WASI
 │   ├── ...
 ├── browser/
-│   ├── js.cor                  # foreign symbols for JavaScript host
+│   ├── js.cxc                  # foreign symbols for JavaScript host
 │   ├── ...
 ```
 
@@ -2196,7 +2196,7 @@ The compiler picks `shared/ + <target>/` at build time based on the compilation 
 **`foreign library` blocks.** The prelude declares typed native symbols using `foreign library` blocks, one per native library:
 
 ```
-# prelude/unix/libc.cor
+# prelude/unix/libc.cxc
 
 foreign library "libc":
     symbol "clock_gettime":  () -> Instant
@@ -2229,7 +2229,7 @@ Rationale: the primary trust boundary lives at env provisioning (`Extern` is not
 WallClock implements the `Clock` capability shape on Unix. It uses two outbound symbols (read the clock, schedule a timer with the OS) and one inbound symbol (receive completion callback from the runtime's timer dispatcher):
 
 ```
-# prelude/unix/wall_clock.cor
+# prelude/unix/wall_clock.cxc
 
 def WallClock:
     conforms: Clock
@@ -2278,9 +2278,9 @@ No inbound-only section, no callback-handler keyword, no direction sub-labels. B
 
 **Non-Unix shim examples.** The same `Clock` shape is implemented differently per target:
 
-- `prelude/windows/win_clock.cor` — uses `QueryPerformanceCounter` (Win32) and Win32 timer callbacks.
-- `prelude/wasi/wasi_clock.cor` — uses `clock_time_get` (WASI) and WASI async polling.
-- `prelude/browser/browser_clock.cor` — uses `performance.now` (JS host) and `setTimeout` callbacks.
+- `prelude/windows/win_clock.cxc` — uses `QueryPerformanceCounter` (Win32) and Win32 timer callbacks.
+- `prelude/wasi/wasi_clock.cxc` — uses `clock_time_get` (WASI) and WASI async polling.
+- `prelude/browser/browser_clock.cxc` — uses `performance.now` (JS host) and `setTimeout` callbacks.
 
 User code writing `use: clock: Clock` sees the target's active shim through a `Clock`-shaped interface; the shim's `Extern` usage and consumed symbols are internal to the prelude.
 
@@ -2842,13 +2842,13 @@ Compared to ObjC's "last category loaded wins" (hidden in link order), cxc's rul
 
 ```
 warning[W0447]: shadowing extension `sum_all` on class `Array<T>`
-  --> src/collections/sum.cor:12:9
+  --> src/collections/sum.cxc:12:9
    |
 12 |         function sum_all(self) -> T:
    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^ chosen (current module: current-module rule 1.1)
    |
 note: also declared in extension at
-  --> deps/math_ext/src/aggregations.cor:8:9
+  --> deps/math_ext/src/aggregations.cxc:8:9
    |
  8 |         function sum_all(self) -> T:
    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^ shadowed (imported module: rule 1.2)
@@ -3266,7 +3266,7 @@ Migration is mechanical:
 
 ```
 error[E0448]: retired conformance-declaration syntax
-  --> src/reader.cor:12:1
+  --> src/reader.cxc:12:1
    |
 12 | class Reader: Iterable<Char>:
    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ double-colon header form (retired in v0.11)
@@ -3354,7 +3354,7 @@ enum Shape:
 
 ```
 error[E0520]: field `T`'s type `SomeRegularClass` has no `.as() -> Bytes` method
-  --> src/model.cor:12:9
+  --> src/model.cxc:12:9
    |
 12 |     data: helper: SomeRegularClass
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ cannot synthesize `Model.as() -> Bytes`
@@ -4545,7 +4545,7 @@ Non-capturing groups `(?:...)` remain legal and unrestricted — they group with
 
 ```
 error[E0503]: unnamed capture group in Regex source
-  --> src/parse.cor:12:23
+  --> src/parse.cxc:12:23
    |
 12 |     let m = regex"^(\d+)-(\d+)$"
    |                    ^^^^^ ^^^^^  unnamed groups
@@ -4665,7 +4665,7 @@ Prelude does **not** ship `As<T>` for narrowing pairs. `Int32(300).as() -> UInt8
 
 ```
 error[E0501]: no lossless conversion from `Int32` to `UInt8`
-  --> src/foo.cor:12:9
+  --> src/foo.cxc:12:9
    |
 12 |         let byte: UInt8 = value.as()
    |                           ^^^^^^^^^^ narrowing is not lossless
@@ -6438,7 +6438,7 @@ When alias expansion produces an error, the compiler shows both the alias's expa
 
 ```
 error: contradictory composition — `immutable` and `mutable` cannot both apply
-  --> Order.cor:14:5
+  --> Order.cxc:14:5
    |
 14 |     data mutable:
    |     ^^^^^^^^^^^^^
@@ -6455,7 +6455,7 @@ For class-kind aliases, expansion errors reference both the user's declaration a
 
 ```
 error: section `state:` not permitted on `kind: record`
-  --> Point.cor:8:5
+  --> Point.cxc:8:5
    |
  8 |     state:
    |     ^^^^^
@@ -6749,7 +6749,7 @@ These are excluded not because they're impossible on libobjc2 (some are; some ar
 
 #### 4.18.4 Consumer 3 — External Tools (AI-Manifest Export)
 
-The compiler emits a JSON representation of the metadata as a build artifact (`ModuleName.cor-manifest.json`). This is the metadata in a language-agnostic format for external tools that don't speak LSP or don't want to embed a compiler.
+The compiler emits a JSON representation of the metadata as a build artifact (`ModuleName.cxc-manifest.json`). This is the metadata in a language-agnostic format for external tools that don't speak LSP or don't want to embed a compiler.
 
 Structure (illustrative):
 
@@ -6760,7 +6760,7 @@ Structure (illustrative):
     {
       "name": "OrderProcessor",
       "qualified_name": "com.example.orders.OrderProcessor",
-      "source_file": "OrderProcessor.cor",
+      "source_file": "OrderProcessor.cxc",
       "source_line": 12,
       "superclass": null,
       "conforms_to": ["OrderProcessor"],
@@ -7879,7 +7879,7 @@ Locals are function-scoped. First assignment declares; subsequent assignments re
 
 The language distinguishes three levels of code organization:
 
-- **Source** — a single `.cor` file.
+- **Source** — a single `.cxc` file.
 - **Module** — a named compilation unit that may span multiple sources, produces a unified metadata artifact, and is the boundary for public/internal visibility.
 - **Package** — a distribution unit containing one or more modules, versioned, and the boundary for external dependencies.
 
@@ -7887,19 +7887,19 @@ Users write sources. The compiler assembles sources into modules based on module
 
 ### 7.1 Sources
 
-A source is a single `.cor` file. Sources contain declarations: classes, structs, enumerations, protocols, functions, aliases, section usages.
+A source is a single `.cxc` file. Sources contain declarations: classes, structs, enumerations, protocols, functions, aliases, section usages.
 
 Sources are the granularity of editing but not the granularity of compilation. Multiple sources can share a module; the compiler processes them together.
 
 **Single-file scripts** are sources that compile and run without any surrounding structure:
 
 ```
-# hello.cor
+# hello.cxc
 function main():
     print("Hello, world")
 ```
 
-Invoked as `oc5 hello.cor`. No manifest required; no module declaration required (the source is treated as its own implicit module). Standard library available implicitly.
+Invoked as `oc5 hello.cxc`. No manifest required; no module declaration required (the source is treated as its own implicit module). Standard library available implicitly.
 
 **Module-level declarations.** In addition to class, function, and section declarations (§4), sources may contain top-level immutable bindings:
 
@@ -7986,12 +7986,12 @@ section class Package:
         register_package(contents)
 ```
 
-**Form 1: Full manifest in package.cor.**
+**Form 1: Full manifest in package.cxc.**
 
-Real projects place a `package.cor` file at the package root:
+Real projects place a `package.cxc` file at the package root:
 
 ```
-# package.cor
+# package.cxc
 package:
     name: com.example.myapp
     version: 1.0.0
@@ -8008,14 +8008,14 @@ package:
     entry_point: com.example.myapp.main
 ```
 
-The `package.cor` file declares one package. Its `modules:` list declares which modules this package provides. Its `dependencies:` list declares external packages required.
+The `package.cxc` file declares one package. Its `modules:` list declares which modules this package provides. Its `dependencies:` list declares external packages required.
 
 **Form 2: Embedded manifest in a script.**
 
 Single-file scripts with dependencies embed the manifest at the top of the source:
 
 ```
-# analyze.cor
+# analyze.cxc
 package:
     name: com.local.analyze
     version: 0.0.1
@@ -8035,7 +8035,7 @@ The `package:` section appears at the top of the source. Everything after it is 
 Sources with no dependencies beyond the standard library need no manifest:
 
 ```
-# hello.cor
+# hello.cxc
 function main():
     print("Hello")
 ```
@@ -8106,7 +8106,7 @@ Explicit imports do not add functionality beyond what implicit resolution provid
 
 ```
 error: ambiguous reference to 'Order'
-  --> Controller.cor:14:12
+  --> Controller.cxc:14:12
    |
 14 |     orders: [Order]
    |             ^^^^^ 
@@ -8201,7 +8201,7 @@ Modules compile in dependency order. A module's dependencies (other modules with
 
 ### 7.10 Cross-Language Modules
 
-Sources may mix `.cor` and `.m` (Objective-C) files within the same module. Both compile to libobjc2-compatible object files that link together (§9.4).
+Sources may mix `.cxc` and `.m` (Objective-C) files within the same module. Both compile to libobjc2-compatible object files that link together (§9.4).
 
 **Metadata coverage:**
 - cxc sources produce rich metadata (sections, contracts, invariants).
@@ -8265,7 +8265,7 @@ libobjc2 supports dylib loading at runtime. cxc modules compile to dylibs (or st
 
 **Non-goals:**
 
-- **No header files.** All declarations are in `.cor` sources; no separate interface files.
+- **No header files.** All declarations are in `.cxc` sources; no separate interface files.
 - **No preprocessor imports.** `import` is semantic, not textual.
 - **No global namespace at the source level.** Types are qualified by module.
 - **No runtime module unloading beyond libobjc2's dylib model.**
@@ -9035,13 +9035,13 @@ The `objc_exposed:` section replaces auto-derivation for its enclosed methods, g
 
 Build system integration:
 - `.m` files compile via any Objective-C toolchain (typically Clang).
-- `.cor` files compile via the cxc compiler.
+- `.cxc` files compile via the cxc compiler.
 - Both produce libobjc2-compatible object files.
 - Standard linker combines them.
 - Runtime is shared (`libobjc2`); all interop happens through the runtime.
 
 Cross-file references:
-- `.cor` files `import objc "path/to/header.h"` to consume ObjC classes.
+- `.cxc` files `import objc "path/to/header.h"` to consume ObjC classes.
 - `.m` files `#import "path/to/-cxc.h"` to consume cxc classes (auto-generated header).
 - No bridging headers, no thunks, no ABI translation.
 
@@ -9064,19 +9064,19 @@ Swift/cxc interop is bounded by Swift's own ABI stability and the C ABI's expres
 
 **Adding cxc to a legacy ObjC project:**
 1. Install cxc compiler alongside existing ObjC toolchain.
-2. Add `.cor` files to the project. They can import and be imported by existing ObjC code.
-3. Optionally translate specific `.m` files to `.cor` using the translation tool (§12).
+2. Add `.cxc` files to the project. They can import and be imported by existing ObjC code.
+3. Optionally translate specific `.m` files to `.cxc` using the translation tool (§12).
 4. Existing `.m` files remain unchanged.
 
 **Starting a new project using ObjC frameworks:**
-1. Write all code as `.cor`.
+1. Write all code as `.cxc`.
 2. Import ObjC frameworks via `import objc "Foundation"` etc.
 3. Framework classes are usable directly. No wrappers needed.
 4. Final binary links `libobjc2` and framework binaries.
 
 **Full migration from ObjC to cxc:**
 1. Run translation tool on all `.m` files.
-2. Review generated `.cor` files. Translator handles mechanical bits (syntax, headers merging, `@property` to field declarations); users refine (which fields become `data:` vs `state:`, which methods should carry contracts, which declarations to `expose`).
+2. Review generated `.cxc` files. Translator handles mechanical bits (syntax, headers merging, `@property` to field declarations); users refine (which fields become `data:` vs `state:`, which methods should carry contracts, which declarations to `expose`).
 3. Delete original `.m` files when translations are validated.
 4. Codebase is now pure cxc.
 
@@ -10086,10 +10086,10 @@ The intent-not-authority principle makes deep interop clean. Objective-C's runti
 
 **Practical shape:**
 
-- **Same project, mixed files.** `.m` and `.cor` files coexist. Each is compiled by the appropriate toolchain; both produce libobjc2-compatible object files; the standard linker combines them.
+- **Same project, mixed files.** `.m` and `.cxc` files coexist. Each is compiled by the appropriate toolchain; both produce libobjc2-compatible object files; the standard linker combines them.
 - **No runtime translation cost.** Cross-language calls are just runtime method dispatch. There is no boxing, no unboxing, no type marshalling, no ABI bridging.
 - **Auto-generated headers.** cxc classes are exposed to ObjC via auto-generated `-cxc.h` files. Public APIs are visible to ObjC consumers automatically, with warnings when features don't round-trip.
-- **Translation tool available.** Users who want to convert `.m` to `.cor` run a translator that handles the mechanical work. Not required for adoption.
+- **Translation tool available.** Users who want to convert `.m` to `.cxc` run a translator that handles the mechanical work. Not required for adoption.
 
 **Rejected alternatives:**
 
@@ -10153,7 +10153,7 @@ The translator produces output that compiles cleanly under the cxc compiler but 
 The language ships usable at each stage. Programs written for earlier stages benefit from later stages without source changes.
 
 ### Stage 0 (Bootstrap) — cxc → Objective-C Source
-- Compiler is written in Objective-C, produces `.m` files from `.cor` input.
+- Compiler is written in Objective-C, produces `.m` files from `.cxc` input.
 - No LLVM IR generation yet.
 - Sections implemented for the class-body-only subset. Primitives, aliases, and stage-1 behavioral sections.
 - Output `.m` files are ugly but semantically correct. Users compile them with Clang for actual execution.
@@ -10181,7 +10181,7 @@ The language ships usable at each stage. Programs written for earlier stages ben
 - **Explicit threads via `unsafe:` only** — no safe explicit-thread API in Stage 1.
 - File-level ObjC compatibility working (import, auto-derived headers, category support).
 - ObjC concurrency interop: GCD dispatch queue bridging, completion-handler ↔ async conversion, `@main_actor` for main-thread affinity.
-- Translation tool (`.m` → `.cor`) shipped as separate binary.
+- Translation tool (`.m` → `.cxc`) shipped as separate binary.
 - Runtime metadata query API (§4.18.3) for cross-module lookups.
 - Estimated engineering: 18-24 months (incremental compilation and LSP are load-bearing additions to earlier 12-18 month estimate).
 

@@ -186,7 +186,7 @@ The Game of Life reference implementation (see `design/positioning/game-of-life.
 
 - **"cxc"** — current working name. Bird family (crows, ravens). Signals intelligence and adaptability. No known programming-language name conflict but not verified against trademark databases.
 - **"objc5"** — original working name used throughout the design conversation. Misleading because cxc is not the next version of Objective-C.
-- **File extension**: `.cor`.
+- **File extension**: `.cxc`.
 
 Renaming to something else is easy at this stage; renaming after adoption is hard. Consider verifying the name before public announcement.
 
