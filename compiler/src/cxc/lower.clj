@@ -1062,6 +1062,13 @@
                              "`) — end handling runs through -transitionToEnd; "
                              "put side effects on the `-> end do:` wildcard instead")
                         t))
+        ;; Post-transition invariant check (design §14). Skipped for
+        ;; target=end — the transitionToEnd path owns invariant checks
+        ;; on its own trajectory.
+        check-invariants-stmt {:node :objc-msg
+                               :recv {:node :name :sym "self"}
+                               :selector "checkInvariants"
+                               :args []}
         body         (if end-target?
                        [{:node :objc-msg
                          :recv {:node :name :sym "self"}
@@ -1072,7 +1079,8 @@
                          (seq then-stmts)   (into then-stmts)
                          phase-update       (conj phase-update)
                          (seq w-do-stmts)   (into w-do-stmts)
-                         (seq do-stmts)     (into do-stmts)))]
+                         (seq do-stmts)     (into do-stmts)
+                         :always            (conj check-invariants-stmt)))]
     {:node        :transition-branch
      :source-phase-const (phase-constant-name atom-name source-name)
      :guard       guard-lo
@@ -1261,7 +1269,8 @@
                pred))
   {:node  :invariant-check
    :cond  (lower-expr pred ctx)
-   :label (str atom-name " invariant #" idx " failed at init")})
+   ;; Fires from init AND post-transition (Step 14); label stays generic.
+   :label (str atom-name " invariant #" idx " failed")})
 
 (defn- lower-atom [atom-name ctx]
   (let [rec           (get-in ctx [:atom-env atom-name])
@@ -1393,9 +1402,17 @@
                            :params (mapv (fn [p] {:name (:name p) :c-type (:c-type p)})
                                          ctor-params)
                            :body (into default-stmts on-enter-stmts)}
+          ;; Factor invariants into -checkInvariants (design §14) so
+          ;; init AND every message-triggered transition can call it —
+          ;; duplication-free, single source of truth. cxc_runtimeBinding
+          ;; forwards to it so the check runs at end-of-construction.
+          check-invariants-method {:node :objc-method
+                                   :selector "checkInvariants"
+                                   :return-type "void" :params []
+                                   :body invariant-stmts}
           bind-method     {:node :objc-method :selector "cxc_runtimeBinding"
                            :return-type "void" :params []
-                           :body invariant-stmts}
+                           :body [(self-msg-noargs "checkInvariants")]}
           init-shell      [(self-msg-noargs "cxc_structuralSetup")
                            state-init-msg
                            (self-msg-noargs "cxc_runtimeBinding")]
@@ -1441,7 +1458,11 @@
                                             :rhs {:node :name :sym end-const}})
                                      (into end-wildcard-do)
                                      (into cascade-stmts)
-                                     (conj {:node :end-cascade-parent}))}
+                                     (conj {:node :end-cascade-parent}
+                                           {:node :objc-msg
+                                            :recv {:node :name :sym "self"}
+                                            :selector "checkInvariants"
+                                            :args []}))}
           ;; -nilSlot: parent-side setter. Compile-time switch on the
           ;; known slot names (`isEqualToString:` — slotName may be a
           ;; child-copied NSString, not pointer-equal to a canonical
@@ -1465,6 +1486,7 @@
        :init-params     (mapv (fn [p] {:name (:name p) :c-type (:c-type p)}) ctor-params)
        :init-body       init-shell
        :methods         (-> [setup-method state-method bind-method
+                             check-invariants-method
                              install-method end-method nil-slot-method]
                             (into user-methods)
                             (into obs-methods)

@@ -43,6 +43,7 @@ what the current compiler can lower.
 | [`non-initial-wildcard.cxc`](non-initial-wildcard.cxc) | Wildcard on a non-initial phase (`-> armed then: n => 100`) inlines into the transition that enters that phase; wildcards only fire on phase *change*, never on self-loops (avoids recursion by design) | `101` |
 | [`message-payload.cxc`](message-payload.cxc) | `add{by: Int}` payload binds `by` as a local in header `when: by > 0`, `then: n => n + by`; three sends `add(by: 5/10/3)` sum to 18; selector encoded as `addWithby:` | `18` |
 | [`cross-atom-send.cxc`](cross-atom-send.cxc) | Source atom uses a Sink capability and sends `absorb(amount:)` twice; compile-time shape check against Sink's `<: absorb{amount: Int}` transition; sink.total = 12 | `12` |
+| [`invariant-post-transition-fail.cxc`](invariant-post-transition-fail.cxc) | Third bump makes `value(=6) > max(=5)`; post-transition `-checkInvariants` runs at end of every message-triggered branch (Step 14) and aborts | *(abort)* |
 
 ## Running one by hand
 

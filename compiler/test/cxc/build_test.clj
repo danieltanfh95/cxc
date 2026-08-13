@@ -140,7 +140,7 @@
     (let [{:keys [exit stderr]} (compile-and-run "invariant-fail")]
       (is (not (zero? exit))
           "expected non-zero exit from abort()")
-      (is (re-find #"Gauge invariant #1 failed at init" (or stderr ""))
+      (is (re-find #"Gauge invariant #1 failed" (or stderr ""))
           "expected diagnostic naming the failing invariant index"))))
 
 (deftest end-to-end-use-cap
@@ -202,3 +202,10 @@
     (let [{:keys [exit stdout]} (compile-and-run "cross-atom-send")]
       (is (zero? exit))
       (is (= "12\n" stdout)))))
+
+(deftest end-to-end-invariant-post-transition-fail
+  (testing "invariant-post-transition-fail.cxc — third bump makes value(=6) > max(=5); post-transition invariant check aborts mid-init"
+    (let [{:keys [exit stderr]} (compile-and-run "invariant-post-transition-fail")]
+      (is (not (zero? exit)) "expected non-zero exit from abort()")
+      (is (re-find #"Gauge invariant #0 failed" (or stderr ""))
+          "expected diagnostic naming the violated invariant"))))

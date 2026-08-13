@@ -201,12 +201,14 @@ def main:
           die (first (filter #(= "die" (:selector %)) (:methods cls)))
           branch (first (:body die))]
       (is (some? branch))
-      ;; Body: [phase-update, wildcard-do-stmt (from `-> dead`)]
-      (is (= 2 (count (:body branch))))
+      ;; Body: [phase-update, wildcard-do-stmt, checkInvariants-call]
+      (is (= 3 (count (:body branch))))
       (is (= :assign (:node (first (:body branch)))))
       (is (= "_phase" (get-in (first (:body branch)) [:lhs :sym])))
       ;; Second item is the wildcard's print(0) call.
-      (is (= :call (:node (second (:body branch))))))))
+      (is (= :call (:node (second (:body branch)))))
+      ;; Trailing: post-transition invariant check.
+      (is (= "checkInvariants" (get-in (nth (:body branch) 2) [:selector]))))))
 
 (deftest atom-emits-transitionToEnd-nilSlot-and-installParent
   (testing "every atom class synthesizes the Step 11 lifecycle methods"
@@ -267,10 +269,12 @@ def main:
           cls  (first (:classes prog))
           bump (first (filter #(= "bump" (:selector %)) (:methods cls)))
           branch (first (:body bump))]
-      ;; Branch body has ONLY the specific then: (no wildcard do inlined),
-      ;; because target==source is a self-loop, not a phase change.
-      (is (= 1 (count (:body branch))))
-      (is (= :assign (:node (first (:body branch))))))))
+      ;; Branch body has the specific then: (no wildcard do inlined,
+      ;; because target==source is a self-loop, not a phase change),
+      ;; followed by the post-transition invariant check.
+      (is (= 2 (count (:body branch))))
+      (is (= :assign (:node (first (:body branch)))))
+      (is (= "checkInvariants" (get-in (second (:body branch)) [:selector]))))))
 
 (deftest record-method-lowers-to-c-function
   (testing "record with a method → :c-function under :functions with mangled name and self as first param"
@@ -441,7 +445,8 @@ def main:
       (is (= "void" (:return-type bump)))
       (is (empty? (:params bump)))
       ;; Body: [transition-branch]. One branch for the alive source phase;
-      ;; no phase reassign (source==target).
+      ;; no phase reassign (source==target). Post-transition invariant
+      ;; check is unconditional (design §14 — Step 14).
       (is (= [{:node :transition-branch
                :source-phase-const "kCounter_phase_alive"
                :guard nil
@@ -449,7 +454,11 @@ def main:
                        :lhs  {:node :name :sym "_n"}
                        :rhs  {:node :binop :op "+"
                               :left  {:node :name :sym "_n"}
-                              :right {:node :int  :value 1}}}]}]
+                              :right {:node :int  :value 1}}}
+                      {:node :objc-msg
+                       :recv {:node :name :sym "self"}
+                       :selector "checkInvariants"
+                       :args []}]}]
              (:body bump))))))
 
 (deftest message-triggered-transition-with-phase-change-emits-phase-assign
