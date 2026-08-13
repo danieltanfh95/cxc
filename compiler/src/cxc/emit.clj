@@ -83,6 +83,20 @@
     (str "typedef struct {\n" decls "\n} " (:name s) ";")))
 
 ;; ---------------------------------------------------------------------------
+;; C function emission (record methods → free functions)
+;; ---------------------------------------------------------------------------
+
+(defn- emit-param [p]
+  (str (:c-type p) " " (:name p)))
+
+(defn- emit-function [f]
+  (let [params (str/join ", " (map emit-param (:params f)))
+        body   (emit-body 4 (:body f))]
+    (str (:return-type f) " " (:name f) "(" params ") {\n"
+         body
+         "\n}")))
+
+;; ---------------------------------------------------------------------------
 ;; ObjC class emission — @interface + @implementation for a def-atom
 ;; ---------------------------------------------------------------------------
 
@@ -141,9 +155,10 @@
 (defn emit
   "Emit a full .m source string from an :objc-program AST."
   [prog]
-  (let [includes (str/join "\n" (map #(str "#import " %) (:includes prog)))
-        structs  (str/join "\n\n" (map emit-struct (:structs prog)))
-        classes  (str/join "\n\n" (map emit-class (:classes prog)))
-        main     (emit-main (:main prog))]
+  (let [includes  (str/join "\n"   (map #(str "#import " %) (:includes prog)))
+        structs   (str/join "\n\n" (map emit-struct   (:structs prog)))
+        functions (str/join "\n\n" (map emit-function (:functions prog)))
+        classes   (str/join "\n\n" (map emit-class    (:classes prog)))
+        main      (emit-main (:main prog))]
     (str/join "\n\n"
-              (remove str/blank? [includes structs classes main]))))
+              (remove str/blank? [includes structs functions classes main]))))

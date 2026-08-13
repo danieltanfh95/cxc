@@ -104,3 +104,16 @@
   (let [ast (assoc-in (hello-program-ast) [:main :autorelease?] true)
         s   (emit/emit ast)]
     (is (str/includes? s "@autoreleasepool {"))))
+
+(deftest c-function-emits
+  (let [ast (assoc (hello-program-ast) :functions
+                   [{:node :c-function :name "V_plus" :return-type "V"
+                     :params [{:name "self" :c-type "V"}
+                              {:name "other" :c-type "V"}]
+                     :body [{:node :return
+                             :value {:node :struct-lit :type "V"
+                                     :fields [{:name "x" :value {:node :int :value 1}}
+                                              {:name "y" :value {:node :int :value 2}}]}}]}])
+        s   (emit/emit ast)]
+    (is (str/includes? s "V V_plus(V self, V other) {"))
+    (is (str/includes? s "return ((V){.x = 1, .y = 2});"))))

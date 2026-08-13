@@ -68,3 +68,9 @@
     (let [{:keys [exit stdout]} (compile-and-run "atom-simple")]
       (is (zero? exit))
       (is (= "42\n" stdout)))))
+
+(deftest end-to-end-record-methods
+  (testing "record-methods.cxc — v.plus(other) → V_plus(v, other); result field access chains"
+    (let [{:keys [exit stdout]} (compile-and-run "record-methods")]
+      (is (zero? exit))
+      (is (= "4.000000\n" stdout)))))

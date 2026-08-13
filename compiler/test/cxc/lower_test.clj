@@ -144,3 +144,28 @@
       (is false "expected NYI throw")
       (catch clojure.lang.ExceptionInfo e
         (is (= :not-yet-implemented (:kind (ex-data e))))))))
+
+(deftest record-method-lowers-to-c-function
+  (testing "record with a method → :c-function under :functions with mangled name and self as first param"
+    (let [prog (lower-src "record V:\n    data:\n        x: Float\n        y: Float\n\n    methods:\n        function plus(self, other: V) -> V:\n            return V(x: self.x + other.x, y: self.y + other.y)\n\ndef main:\n    -> running\n        do: print(V(x: 1.0, y: 2.0).plus(V(x: 3.0, y: 4.0)).x)\n")
+          f    (first (:functions prog))]
+      (is (= :c-function (:node f)))
+      (is (= "V_plus" (:name f)))
+      (is (= "V" (:return-type f)))
+      (is (= [{:name "self" :c-type "V"} {:name "other" :c-type "V"}] (:params f)))
+      (is (= 1 (count (:body f))))
+      (is (= :return (get-in f [:body 0 :node]))))))
+
+(deftest method-call-lowers-to-c-function-call
+  (testing "v.plus(other) → :call {:fn V_plus :args [v other]}"
+    (let [prog (lower-src "record V:\n    data:\n        x: Float\n        y: Float\n\n    methods:\n        function plus(self, other: V) -> V:\n            return V(x: self.x + other.x, y: self.y + other.y)\n\ndef main:\n    -> running\n        do: print(V(x: 1.0, y: 2.0).plus(V(x: 3.0, y: 4.0)).x)\n")
+          print-call (first (get-in prog [:main :body]))
+          field-node (get-in print-call [:args 1])
+          plus-call  (:target field-node)]
+      (is (= :field (:node field-node)))
+      (is (= "x" (:field field-node)))
+      (is (= :call (:node plus-call)))
+      (is (= "V_plus" (:fn plus-call)))
+      (is (= 2 (count (:args plus-call))))
+      (is (= :struct-lit (get-in plus-call [:args 0 :node])))    ; first arg = self expr
+      (is (= :struct-lit (get-in plus-call [:args 1 :node]))))))
