@@ -59,7 +59,8 @@
    Ctx map threaded through infer-type / lower-expr:
      {:record-env <name -> {:fields :field-index :methods :method-index}>
       :atom-env   <name -> {:fields :field-index :extras}>
-      :locals     <name -> ty>       ; local scope for method bodies etc.")
+      :locals     <name -> ty>       ; local scope for method bodies etc."
+  (:require [clojure.string :as str]))
 
 (defn- fail-nyi! [what node]
   (throw (ex-info (str "lowering not yet implemented: " what)
@@ -183,9 +184,6 @@
 (defn- def-atom-data-section [atom-node]
   (first (filter #(= :data-section (:node %)) (:body atom-node))))
 
-(defn- def-atom-body-non-data [atom-node]
-  (remove #(= :data-section (:node %)) (:body atom-node)))
-
 (defn- ctor-params-normalized
   "Def-atom :ctor-params come from the parser as `:field` nodes
    (`{:node :field :name :type :default}`). Normalize to
@@ -199,26 +197,38 @@
            :default   (:default p)})
         ctor-params))
 
+(defn- def-atom-methods-section [atom-node]
+  (first (filter #(= :methods-section (:node %)) (:body atom-node))))
+
+(defn- def-atom-body-non-data-non-methods [atom-node]
+  (remove #(#{:data-section :methods-section} (:node %)) (:body atom-node)))
+
 (defn- build-atom-env
   [top-nodes enum-env]
   (let [atoms    (filter #(and (= :def-atom (:node %))
                                (not= "main" (:name %)))
                          top-nodes)
         skeleton (into {} (map (fn [a] [(:name a) {:fields [] :field-index {}
-                                                   :ctor-params [] :extras []}]) atoms))]
+                                                   :ctor-params [] :methods []
+                                                   :method-index {} :extras []}])
+                               atoms))]
     (reduce
      (fn [env a]
        (let [name        (:name a)
              dsec        (def-atom-data-section a)
-             extras      (def-atom-body-non-data a)
+             msec        (def-atom-methods-section a)
+             extras      (def-atom-body-non-data-non-methods a)
              fields      (if dsec
                            (fields-from-data-section dsec {} env enum-env)
                            [])
-             ctor-params (ctor-params-normalized (:ctor-params a) {} env enum-env)]
-         (assoc env name {:fields fields
-                          :field-index (into {} (map (juxt :name identity) fields))
-                          :ctor-params ctor-params
-                          :extras extras})))
+             ctor-params (ctor-params-normalized (:ctor-params a) {} env enum-env)
+             methods     (extract-methods name msec)]
+         (assoc env name {:fields       fields
+                          :field-index  (into {} (map (juxt :name identity) fields))
+                          :ctor-params  ctor-params
+                          :methods      methods
+                          :method-index (into {} (map (juxt :name identity) methods))
+                          :extras       extras})))
      skeleton
      atoms)))
 
@@ -265,18 +275,26 @@
 
 (defn- infer-method-call-type
   "For `target.method(args)`: infer target-ty, look up method on the
-   record, return its cxc-return-ty translated to a type-kw."
+   record OR atom, return its cxc-return-ty translated to a type-kw."
   [call-node ctx]
   (let [dot         (:callee call-node)
         target-ty   (infer-type (:target dot) ctx)
-        record-name (and (map? target-ty) (:record target-ty))
-        _           (when-not record-name
-                      (fail-nyi! "method call on non-record target" call-node))
         method-name (:field dot)
-        m           (get-in (:record-env ctx) [record-name :method-index method-name])
-        _           (when-not m
-                      (fail-nyi! (str "method `" method-name "` on record `"
-                                      record-name "`") call-node))]
+        [owner-kind owner-name m]
+        (cond
+          (and (map? target-ty) (:record target-ty))
+          [:record (:record target-ty)
+           (get-in (:record-env ctx) [(:record target-ty) :method-index method-name])]
+
+          (and (map? target-ty) (:atom target-ty))
+          [:atom (:atom target-ty)
+           (get-in (:atom-env ctx) [(:atom target-ty) :method-index method-name])]
+
+          :else
+          (fail-nyi! "method call on non-record/non-atom target" call-node))
+        _ (when-not m
+            (fail-nyi! (str "method `" method-name "` on " (name owner-kind)
+                            " `" owner-name "`") call-node))]
     (cxc-type->type-kw (:cxc-return-ty m)
                        (:record-env ctx) (:atom-env ctx) (:enum-env ctx) call-node)))
 
@@ -436,24 +454,55 @@
   [record-name method-name]
   (str record-name "_" method-name))
 
+(defn- objc-method-selector
+  "Build the ObjC selector for a method call. Zero-arg → bare name;
+   with args → `<name>With<first>:<rest>:...` matching the initWith
+   convention on ctors. Not to be confused with cxc's `.name` — cxc
+   source uses dot syntax; only the emit layer sees selectors."
+  [method-name arg-names]
+  (if (empty? arg-names)
+    method-name
+    (str method-name "With" (first arg-names) ":"
+         (str/join "" (map #(str % ":") (rest arg-names))))))
+
 (defn- lower-method-call
-  "`target.method(args)` → C function call `Record_method(target, args...)`.
-   Self becomes the first positional arg; user args are appended in order.
+  "`target.method(args)` dispatches on target type:
+   - record target → C free function call `Record_method(target, args...)`
+     with self as first positional arg
+   - atom target → ObjC message send `[target methodWithArg:...]` with
+     arg-name-derived selector parts
    Named args on method calls fail-nyi — parameters have declaration
-   order in the record's method decl."
+   order in the source-level method decl."
   [call-node ctx]
   (let [dot         (:callee call-node)
         target-ty   (infer-type (:target dot) ctx)
-        record-name (:record target-ty)
         method-name (:field dot)
         args        (:args call-node)
         _           (when (some #(= :named (:kind %)) args)
                       (fail-nyi! "named args on method call (positional only for now)"
                                  call-node))
-        arg-exprs   (mapv #(lower-expr (:value %) ctx) args)]
-    {:node :call
-     :fn   (c-method-name record-name method-name)
-     :args (into [(lower-expr (:target dot) ctx)] arg-exprs)}))
+        arg-exprs   (mapv #(lower-expr (:value %) ctx) args)
+        target-lo   (lower-expr (:target dot) ctx)]
+    (cond
+      (and (map? target-ty) (:record target-ty))
+      {:node :call
+       :fn   (c-method-name (:record target-ty) method-name)
+       :args (into [target-lo] arg-exprs)}
+
+      (and (map? target-ty) (:atom target-ty))
+      (let [atom-name   (:atom target-ty)
+            m           (get-in ctx [:atom-env atom-name :method-index method-name])
+            _           (when-not m
+                          (fail-nyi! (str "method `" method-name "` on atom `"
+                                          atom-name "`") call-node))
+            param-names (mapv :name (rest (:params m)))]     ; drop `self`
+        {:node     :objc-msg
+         :recv     target-lo
+         :selector (objc-method-selector method-name param-names)
+         :args     arg-exprs})
+
+      :else
+      (fail-nyi! "method call on non-record/non-atom target" call-node))))
 
 (defn- print-format-string [arg-type]
   (cond
@@ -608,10 +657,49 @@
      :lhs  {:node :name :sym (str "_" (:name field))}
      :rhs  rhs}))
 
+(defn- lower-atom-method
+  "A def-atom method becomes an ObjC instance method. `self` and each
+   typed param join the locals env before the body is lowered. `self`
+   isn't emitted as a formal param — ObjC provides it implicitly. Ivars
+   are visible via property syntax (`self.n`) which lowers to a normal
+   `.n` field access — the emitted C sees an object with a property."
+  [atom-name method ctx]
+  (let [self-ty     {:atom atom-name}
+        locals      (into {}
+                          (map (fn [p]
+                                 [(:name p)
+                                  (if (= "self" (:name p))
+                                    self-ty
+                                    (cxc-type->type-kw (:cxc-ty p)
+                                                       (:record-env ctx)
+                                                       (:atom-env ctx)
+                                                       (:enum-env ctx)
+                                                       method))]))
+                          (:params method))
+        ctx'        (assoc ctx :locals locals)
+        stmts       (mapv #(lower-stmt % ctx') (:stmts (:body method)))
+        args        (rest (:params method))            ; drop self
+        param-names (mapv :name args)
+        objc-params (mapv (fn [p]
+                            {:name   (:name p)
+                             :c-type (cxc-type->c {:node :type-ref :name (:cxc-ty p)}
+                                                  (:record-env ctx)
+                                                  (:atom-env ctx)
+                                                  (:enum-env ctx))})
+                          args)
+        ret-c       (cxc-type->c {:node :type-ref :name (:cxc-return-ty method)}
+                                 (:record-env ctx) (:atom-env ctx) (:enum-env ctx))]
+    {:node        :objc-method
+     :selector    (objc-method-selector (:name method) param-names)
+     :return-type ret-c
+     :params      objc-params
+     :body        stmts}))
+
 (defn- lower-atom [atom-name ctx]
   (let [rec         (get-in ctx [:atom-env atom-name])
         extras      (:extras rec)
         ctor-params (:ctor-params rec)
+        methods     (:methods rec)
         locals      (into {} (map (fn [p]
                                     [(:name p)
                                      (cxc-type->type-kw (:cxc-ty p)
@@ -622,9 +710,8 @@
                                   ctor-params))
         ctx-in-init (assoc ctx :locals locals)]
     (when (seq extras)
-      (fail-nyi! (str "def-atom `" atom-name "` has body items beyond `data:` "
-                      "(" (mapv :node extras) ") — atom classes with "
-                      "transitions/use:/invariants/methods are next up")
+      (fail-nyi! (str "def-atom `" atom-name "` has body items beyond `data:`/`methods:` "
+                      "(" (mapv :node extras) ") — transitions/use:/invariants next up")
                  {:atom atom-name :extras extras}))
     {:node        :objc-class
      :name        atom-name
@@ -640,7 +727,8 @@
                              :attrs (if is-atom-ptr? ["strong"] ["assign"])}))
                         (:fields rec))
      :init-params (mapv (fn [p] {:name (:name p) :c-type (:c-type p)}) ctor-params)
-     :init-body   (mapv #(default-init-stmt-for % ctx-in-init) (:fields rec))}))
+     :init-body   (mapv #(default-init-stmt-for % ctx-in-init) (:fields rec))
+     :methods     (mapv #(lower-atom-method atom-name % ctx) methods)}))
 
 (defn- main-atom-body [main-node ctx]
   (let [transitions (filter #(= :transition (:node %)) (:body main-node))

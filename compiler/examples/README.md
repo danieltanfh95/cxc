@@ -26,6 +26,7 @@ what the current compiler can lower.
 | [`nullable-nil-punning.cxc`](nullable-nil-punning.cxc) | `Counter?` type + `nil` literal; property access on nil → 0 (ObjC nil-messaging) | `0` |
 | [`enum-cases.cxc`](enum-cases.cxc) | `enum Key: ...` → C typedef enum; `Key.arrow_down` → `Key_arrow_down` (index 1) | `1` |
 | [`bool-and-is.cxc`](bool-and-is.cxc) | `and`/`or`/`is` lower to `&&`/`\|\|`/`==`; identity check on nil pointer | `1` |
+| [`atom-methods.cxc`](atom-methods.cxc) | Methods on def-atoms → ObjC instance methods; `[c bump]` and `[c plusWithother:5]` selectors | `26` |
 
 ## Running one by hand
 

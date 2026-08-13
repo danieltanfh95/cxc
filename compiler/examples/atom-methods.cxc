@@ -1,0 +1,17 @@
+def Counter:
+    data:
+        n: Int = 10
+
+    methods:
+        function bump(self) -> Int:
+            return self.n + 1
+
+        function plus(self, other: Int) -> Int:
+            return self.n + other
+
+def main:
+    -> running
+        # bump()   → [counter bump]        → 10 + 1 = 11
+        # plus(5)  → [counter plusWithother:5] → 10 + 5 = 15
+        # sum      → 11 + 15 = 26
+        do: print(Counter().bump() + Counter().plus(5))

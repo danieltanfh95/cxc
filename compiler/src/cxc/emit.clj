@@ -55,11 +55,21 @@
                           "("
                           (str/join ", " (map emit-expr (:args node)))
                           ")")
-    :objc-msg        (str "[" (emit-expr (:recv node)) " "
-                          (:selector node)
-                          (when (seq (:args node))
-                            (str ": " (str/join " " (map emit-expr (:args node)))))
-                          "]")
+    :objc-msg        (let [sel (:selector node)
+                           args (:args node)]
+                       ;; ObjC selectors either have zero colons (bare name,
+                       ;; zero args) or one colon per arg baked into the
+                       ;; selector string. Interleave selector parts with args.
+                       (if (empty? args)
+                         (str "[" (emit-expr (:recv node)) " " sel "]")
+                         ;; str/split strips trailing empties, so the parts
+                         ;; vector already lines up 1:1 with args.
+                         (let [parts (str/split sel #":")]
+                           (str "[" (emit-expr (:recv node)) " "
+                                (str/join " "
+                                          (map (fn [p a] (str p ":" (emit-expr a)))
+                                               parts args))
+                                "]"))))
     (throw (ex-info (str "emit-expr: unknown node " (:node node))
                     {:node node}))))
 
@@ -128,12 +138,32 @@
         space (if (str/blank? attrs) "" " ")]
     (str "@property " attrs space (:c-type p) " " (:name p) ";")))
 
+(defn- method-signature
+  "ObjC instance-method signature. Zero-arg → `- (T)selector`; with args
+   → `- (T)part1:(T1)name1 part2:(T2)name2`. Uses the selector-with-
+   colons convention from cxc.lower/objc-method-selector."
+  [m]
+  (let [sel (:selector m)
+        ps  (:params m)]
+    (if (empty? ps)
+      (str "- (" (:return-type m) ")" sel)
+      (let [parts (str/split sel #":")             ; strips trailing empties
+            body  (str/join " "
+                            (map (fn [part p]
+                                   (str part ":(" (:c-type p) ")" (:name p)))
+                                 parts ps))]
+        (str "- (" (:return-type m) ")" body)))))
+
 (defn- emit-interface [cls]
-  (let [props (->> (:properties cls)
-                   (map emit-property)
-                   (map #(str "  " %))
-                   (str/join "\n"))
-        body  (if (str/blank? props) "" (str "\n" props "\n"))]
+  (let [props     (->> (:properties cls)
+                       (map emit-property)
+                       (map #(str "  " %))
+                       (str/join "\n"))
+        method-decls (->> (:methods cls)
+                          (map #(str "  " (method-signature %) ";"))
+                          (str/join "\n"))
+        body-parts (remove str/blank? [props method-decls])
+        body       (if (empty? body-parts) "" (str "\n" (str/join "\n" body-parts) "\n"))]
     (str "@interface " (:name cls) " : " (:superclass cls) body "@end")))
 
 (defn- init-signature
@@ -154,21 +184,29 @@
       (str "- (instancetype)" first-part
            (when-not (str/blank? rest-parts) (str " " rest-parts))))))
 
+(defn- emit-method-impl [m]
+  (str (method-signature m) " {\n"
+       (emit-body 4 (:body m))
+       "\n}"))
+
 (defn- emit-implementation [cls]
-  (let [init-body   (:init-body cls)
-        init-params (:init-params cls)
-        init-stmts  (if (seq init-body)
-                      (str "\n" (emit-body 8 init-body))
-                      "")]
+  (let [init-body     (:init-body cls)
+        init-params   (:init-params cls)
+        init-stmts    (if (seq init-body)
+                        (str "\n" (emit-body 8 init-body))
+                        "")
+        init-block    (str (init-signature init-params) " {\n"
+                           "    self = [super init];\n"
+                           "    if (self) {"
+                           init-stmts
+                           "\n    }\n"
+                           "    return self;\n"
+                           "}")
+        method-impls  (str/join "\n\n" (map emit-method-impl (:methods cls)))
+        body-blocks   (remove str/blank? [init-block method-impls])]
     (str "@implementation " (:name cls) "\n"
-         (init-signature init-params) " {\n"
-         "    self = [super init];\n"
-         "    if (self) {"
-         init-stmts
-         "\n    }\n"
-         "    return self;\n"
-         "}\n"
-         "@end")))
+         (str/join "\n\n" body-blocks)
+         "\n@end")))
 
 (defn- emit-class [cls]
   (str (emit-interface cls) "\n\n" (emit-implementation cls)))

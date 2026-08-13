@@ -98,3 +98,9 @@
     (let [{:keys [exit stdout]} (compile-and-run "bool-and-is")]
       (is (zero? exit))
       (is (= "1\n" stdout)))))
+
+(deftest end-to-end-atom-methods
+  (testing "atom-methods.cxc — def-atom methods → ObjC instance methods; both zero-arg and multi-arg"
+    (let [{:keys [exit stdout]} (compile-and-run "atom-methods")]
+      (is (zero? exit))
+      (is (= "26\n" stdout)))))

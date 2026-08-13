@@ -183,6 +183,38 @@
               :rhs  {:node :nil}}
              (second (:init-body cls)))))))
 
+(deftest atom-method-lowers-to-objc-method
+  (testing "def-atom with methods: → :objc-method under class :methods"
+    (let [prog (lower-src "def Counter:\n    data:\n        n: Int = 10\n\n    methods:\n        function bump(self) -> Int:\n            return self.n + 1\n\ndef main:\n    -> running\n        do: print(Counter().bump())\n")
+          cls  (first (:classes prog))
+          m    (first (:methods cls))]
+      (is (= 1 (count (:methods cls))))
+      (is (= :objc-method (:node m)))
+      (is (= "bump" (:selector m)))
+      (is (= "int" (:return-type m)))
+      (is (empty? (:params m))))))
+
+(deftest atom-method-call-lowers-to-objc-msg
+  (testing "counter.bump() → :objc-msg with the receiver as :recv and bare selector"
+    (let [prog (lower-src "def Counter:\n    data:\n        n: Int = 10\n\n    methods:\n        function bump(self) -> Int:\n            return self.n + 1\n\ndef main:\n    -> running\n        do: print(Counter().bump())\n")
+          call (first (get-in prog [:main :body]))
+          msg  (get-in call [:args 1])]
+      (is (= :objc-msg (:node msg)))
+      (is (= "bump" (:selector msg)))
+      (is (= :objc-alloc-init (get-in msg [:recv :node])))
+      (is (empty? (:args msg))))))
+
+(deftest atom-method-multiarg-selector
+  (testing "plus(self, other: Int) → selector `plusWithother:` and matching call"
+    (let [prog (lower-src "def Counter:\n    data:\n        n: Int = 10\n\n    methods:\n        function plus(self, other: Int) -> Int:\n            return self.n + other\n\ndef main:\n    -> running\n        do: print(Counter().plus(5))\n")
+          m    (first (:methods (first (:classes prog))))
+          call (first (get-in prog [:main :body]))
+          msg  (get-in call [:args 1])]
+      (is (= "plusWithother:" (:selector m)))
+      (is (= [{:name "other" :c-type "int"}] (:params m)))
+      (is (= "plusWithother:" (:selector msg)))
+      (is (= 1 (count (:args msg)))))))
+
 (deftest and-or-is-lower-to-c-ops
   (testing "and → &&, or → ||, is → ==; all infer :bool"
     (let [prog (lower-src "def main:\n    -> running\n        do: print(1 == 2 and 3 == 3 or 4 == 4)\n")
