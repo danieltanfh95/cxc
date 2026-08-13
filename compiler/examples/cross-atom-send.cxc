@@ -1,0 +1,21 @@
+def Sink:
+    data:
+        total: Int = 0
+
+    -> alive
+
+    alive <: absorb{amount: Int} -> alive
+        then: total => total + amount
+
+def Source:
+    use:
+        sink: Sink
+
+    -> running
+        do:
+            sink |> absorb(amount: 7)
+            sink |> absorb(amount: 5)
+
+def main:
+    -> running
+        do: print(Source(sink: Sink()).sink.total)

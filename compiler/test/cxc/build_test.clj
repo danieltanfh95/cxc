@@ -190,3 +190,15 @@
     (let [{:keys [exit stdout]} (compile-and-run "non-initial-wildcard")]
       (is (zero? exit))
       (is (= "101\n" stdout)))))
+
+(deftest end-to-end-message-payload
+  (testing "message-payload.cxc — `add{by: Int}` payload binds `by` as local in when: and then:; three sends with 5/10/3 sum to 18"
+    (let [{:keys [exit stdout]} (compile-and-run "message-payload")]
+      (is (zero? exit))
+      (is (= "18\n" stdout)))))
+
+(deftest end-to-end-cross-atom-send
+  (testing "cross-atom-send.cxc — Source constructs then sends `absorb(amount:)` to a Sink capability; sink.total = 12 after two sends"
+    (let [{:keys [exit stdout]} (compile-and-run "cross-atom-send")]
+      (is (zero? exit))
+      (is (= "12\n" stdout)))))

@@ -1,0 +1,16 @@
+def Counter:
+    data:
+        n: Int = 0
+
+    -> alive
+        do:
+            self |> add(by: 5)
+            self |> add(by: 10)
+            self |> add(by: 3)
+
+    alive <: add{by: Int} when: by > 0 -> alive
+        then: n => n + by
+
+def main:
+    -> running
+        do: print(Counter().n)

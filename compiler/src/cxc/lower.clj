@@ -243,6 +243,45 @@
   [atom-node]
   (filterv #(= :nested-atom (:node %)) (:body atom-node)))
 
+(defn- payload-signature
+  "Compact comparable representation of a payload shape — vector of
+   `[name cxc-type]` pairs in declaration order. Used to catch
+   inconsistent payloads across transitions with the same message name."
+  [payload]
+  (mapv (fn [p] [(:name p) (base-type-name (:type p))]) payload))
+
+(defn- collect-message-shapes
+  "Walk an atom's message-triggered transitions, grouping by message
+   name. Every transition sharing a message name must declare the SAME
+   payload shape — different shapes would produce different ObjC
+   selectors from cxc source that reads identically, which is a design
+   smell. Returns `{msg-name {:payload [{:name :type}] :selector <str>}}`
+   for later selector encoding + arg marshalling."
+  [atom-name transitions]
+  (let [msg-txns (filter #(and (:receive %)
+                               (contains? #{"<:" "<|"}
+                                          (get-in % [:receive :glyph])))
+                         transitions)]
+    (reduce
+     (fn [acc t]
+       (let [src (get-in t [:receive :msg :source])
+             msg-name (:name src)          ; already gated to :ident nodes by transition-msg-name
+             payload  (or (get-in t [:receive :msg :payload]) [])]
+         (if-let [existing (get acc msg-name)]
+           (do (when (not= (payload-signature (:payload existing))
+                           (payload-signature payload))
+                 (fail-nyi!
+                  (str "def-atom `" atom-name "` has two transitions on message `"
+                       msg-name "` with different payload shapes: "
+                       (payload-signature (:payload existing)) " vs "
+                       (payload-signature payload) "; cxc source that reads "
+                       "the same must map to the same ObjC selector")
+                  {:atom atom-name :msg msg-name}))
+               acc)
+           (assoc acc msg-name {:payload payload}))))
+     {}
+     msg-txns)))
+
 (defn- def-atom-body-extras
   "Everything in the def-atom body that isn't data:/methods:/transition/
    observable/invariants/use:/nested-atom — e.g. contracts: (Layer 6+).
@@ -332,16 +371,18 @@
              merged-dsec   (assoc (or dsec {:node :data-section}) :fields merged-fields)
              fields        (fields-from-data-section merged-dsec {} env enum-env)
              ctor-params   (ctor-params-normalized merged-ctor {} env enum-env)
-             methods       (extract-methods name msec)]
-         (assoc env name {:fields       fields
-                          :field-index  (into {} (map (juxt :name identity) fields))
-                          :ctor-params  ctor-params
-                          :methods      methods
-                          :method-index (into {} (map (juxt :name identity) methods))
-                          :observables  observables
-                          :invariants   invariants
-                          :transitions  transitions
-                          :extras       extras})))
+             methods       (extract-methods name msec)
+             message-index (collect-message-shapes name transitions)]
+         (assoc env name {:fields        fields
+                          :field-index   (into {} (map (juxt :name identity) fields))
+                          :ctor-params   ctor-params
+                          :methods       methods
+                          :method-index  (into {} (map (juxt :name identity) methods))
+                          :observables   observables
+                          :invariants    invariants
+                          :transitions   transitions
+                          :message-index message-index
+                          :extras        extras})))
      skeleton
      atoms)))
 
@@ -747,18 +788,15 @@
 (defn- lower-send
   "Lower a targeted `:emit` node to a `cxc_send_async` / `cxc_send_sync`
    runtime helper call. Untargeted `:> msg` (stream emission) lands in
-   Step 13. Payload args land in Step 9 (cross-atom shape check in Step
-   10). Sync sends are direct method calls under Layer 4 single-thread
-   (design §15); Layer 4c upgrades them to real `dispatch_sync` when
-   queue targets differ."
+   Step 13. Payload args are matched by name against the receiver's
+   declared `msg{...}` payload shape (design §9/§12) — arg order in the
+   sender may differ from receiver declaration order. Sync sends are
+   direct method calls under Layer 4 single-thread (design §15); Layer
+   4c upgrades them to real `dispatch_sync` when queue targets differ."
   [node ctx]
   (when (nil? (:target node))
     (fail-nyi! (str "untargeted send `" (if (:async? node) ":>" "|>") " "
                     (:msg node) "` — stream emission is Layer 4 Step 13")
-               node))
-  (when (seq (:args node))
-    (fail-nyi! (str "send arguments (`" (:msg node) "(...)` payload "
-                    "— Layer 4 Step 9)")
                node))
   (let [target-lo (lower-expr (:target node) ctx)
         target-ty (infer-type (:target node) ctx)
@@ -770,7 +808,24 @@
         atom-info (get-in ctx [:atom-env atom-name])
         _         (when-not atom-info
                     (fail-nyi! (str "unknown atom type `" atom-name "` on send target") node))
-        selector  (:msg node)
+        msg-name  (:msg node)
+        ;; Cross-atom shape check (Step 10 formalizes diagnostic).
+        msg-shape (get-in atom-info [:message-index msg-name])
+        _         (when-not msg-shape
+                    (fail-nyi! (str "atom `" atom-name "` has no `<: " msg-name
+                                    "` message-triggered transition — cannot send")
+                               node))
+        declared-params (mapv (fn [p] {:name    (:name p)
+                                       :default nil})
+                              (:payload msg-shape))
+        ;; Match sender's args (named/positional) against declared payload.
+        resolved  (resolve-args-against-params
+                   (str "send `" msg-name "` to `" atom-name "`")
+                   declared-params
+                   (:args node))
+        arg-exprs (mapv (fn [{:keys [value]}] (lower-expr value ctx)) resolved)
+        param-names (mapv :name (:payload msg-shape))
+        selector  (objc-method-selector msg-name param-names)
         helper    (if (:async? node) "cxc_send_async" "cxc_send_sync")]
     {:node :call
      :fn   helper
@@ -779,7 +834,7 @@
              :stmts [{:node :objc-msg
                       :recv target-lo
                       :selector selector
-                      :args []}]}]}))
+                      :args arg-exprs}]}]}))
 
 (defn- lower-stmt [node ctx]
   (case (:node node)
@@ -920,7 +975,11 @@
      3. phase update (source → target)      /
      4. wildcard do:  (for target phase)    \\
      5. specific do:                          }-- side effects
-     6. post-transition invariants (Step 14)"
+     6. post-transition invariants (Step 14)
+
+   Payload names in `msg{k: T}` bind as locals visible in when:/then:/do:
+   (design §12). Their type-kws land in the ctx locals so infer-type
+   resolves references, and lower-expr emits them as `{:node :name :sym k}`."
   [atom-name t ctx wildcards-by-phase]
   (when (not= :phase (get-in t [:source :kind]))
     (fail-nyi! (str "message-triggered transition on def-atom `" atom-name
@@ -930,15 +989,21 @@
   (let [source-name  (get-in t [:source :name])
         target       (:target t)
         msg          (get-in t [:receive :msg])
-        payload      (:payload msg)
-        _            (when (seq payload)
-                       (fail-nyi! (str "message payload binding "
-                                       "(named args in `" (transition-msg-name t)
-                                       "{...}` — Layer 4 Step 9)")
-                                  msg))
-        ;; `self` in the branch body — needed by infer-type for
-        ;; `self :> foo` sends and `self.field` reads.
-        ctx'         (assoc-in ctx [:locals "self"] {:atom atom-name})
+        payload      (or (:payload msg) [])
+        payload-locals (into {} (map (fn [p]
+                                       [(:name p)
+                                        (cxc-type->type-kw (base-type-name (:type p))
+                                                           (:record-env ctx)
+                                                           (:atom-env ctx)
+                                                           (:enum-env ctx)
+                                                           p)])
+                                     payload))
+        ;; `self` + payload names in the branch body — infer-type needs
+        ;; them for guard/then/do expressions that reference payload.
+        ctx'         (assoc ctx :locals
+                            (merge (:locals ctx)
+                                   payload-locals
+                                   {"self" {:atom atom-name}}))
         header-when  (:when t)
         body-clauses (:body t)
         then-clauses (filter #(= :then-clause (:node %)) body-clauses)
@@ -1016,15 +1081,28 @@
                             msg-txns)
         ;; Preserve declaration order of selectors.
         selector-order (distinct (mapv transition-msg-name msg-txns))]
-    (mapv (fn [sel]
-            (let [ts (get by-selector sel)
+    (mapv (fn [msg-name]
+            (let [ts       (get by-selector msg-name)
+                  ;; Payload declared consistently across transitions on
+                  ;; the same msg-name (enforced by collect-message-shapes).
+                  payload  (or (get-in (first ts) [:receive :msg :payload]) [])
+                  param-names (mapv :name payload)
+                  selector    (objc-method-selector msg-name param-names)
+                  method-params (mapv (fn [p]
+                                        {:name   (:name p)
+                                         :c-type (cxc-type->c
+                                                  (:type p)
+                                                  (:record-env ctx)
+                                                  (:atom-env ctx)
+                                                  (:enum-env ctx))})
+                                      payload)
                   branches (mapv #(lower-transition-branch atom-name % ctx
                                                            wildcards-by-phase)
                                  ts)]
               {:node        :objc-method
-               :selector    sel
+               :selector    selector
                :return-type "void"
-               :params      []
+               :params      method-params
                :body        branches}))
           selector-order)))
 
