@@ -336,6 +336,10 @@
                                     "` — needs stdlib type for unit "
                                     "`" (:unit node) "` (Layer 5.4)")
                                node)
+    :lambda     (fail-nyi! (str "lambda expression — needs a consumer to "
+                                "invoke through (Layer 5 collection methods "
+                                "`.map`/`.for_each`; will lower to ObjC blocks)")
+                           node)
     :self       (or (get (:locals ctx) "self")
                     (fail-nyi! "type-of `self` outside a method body" node))
     :ident      (or (get (:locals ctx) (:name node))
@@ -484,6 +488,10 @@
                                     "` — needs stdlib type for unit "
                                     "`" (:unit node) "` (Layer 5.4)")
                                node)
+    :lambda     (fail-nyi! (str "lambda expression — needs a consumer to "
+                                "invoke through (Layer 5 collection methods "
+                                "`.map`/`.for_each`; will lower to ObjC blocks)")
+                           node)
     :ident      {:node :name  :sym (:name node)}
     :self       {:node :name  :sym "self"}
     :binop      {:node  :binop
