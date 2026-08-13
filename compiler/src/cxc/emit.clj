@@ -26,6 +26,7 @@
     :str             (str "\"" (escape-c-string (:value node)) "\"")
     :int             (str (:value node))
     :float           (str (:value node))
+    :nil             "nil"
     :name            (:sym node)
     :binop           (str "(" (emit-expr (:left node))
                           " " (:op node) " "

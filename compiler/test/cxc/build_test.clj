@@ -80,3 +80,9 @@
     (let [{:keys [exit stdout]} (compile-and-run "atom-ctor-params")]
       (is (zero? exit))
       (is (= "42\n" stdout)))))
+
+(deftest end-to-end-nullable-nil-punning
+  (testing "nullable-nil-punning.cxc — Counter?/nil in data; .n on nil pun-returns 0"
+    (let [{:keys [exit stdout]} (compile-and-run "nullable-nil-punning")]
+      (is (zero? exit))
+      (is (= "0\n" stdout)))))

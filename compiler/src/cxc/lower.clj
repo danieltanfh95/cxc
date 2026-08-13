@@ -77,14 +77,39 @@
 
 (defn- cxc-type->c
   "Primitives → C type name; records → own struct name (value); atoms →
-   `<name> *` (pointer). Unknown → fail-nyi."
+   `<name> *` (pointer, already nullable in ObjC). `T?` wraps another
+   type — legal today only for atoms (their pointer type IS nullable).
+   Nullable primitives/records need an Optional wrapper — fail-nyi."
   [ty-node record-env atom-env]
-  (let [nm (:name ty-node)]
-    (cond
-      (contains? primitive-c-type nm) (primitive-c-type nm)
-      (contains? record-env nm)       nm
-      (contains? atom-env nm)         (str nm " *")
-      :else                            (fail-nyi! (str "type " nm) ty-node))))
+  (case (:node ty-node)
+    :type-nullable
+    (let [inner (:inner ty-node)
+          nm    (:name inner)]
+      (cond
+        (contains? atom-env nm) (str nm " *")
+        :else (fail-nyi! (str "nullable non-atom type `" nm "?` "
+                              "(only atom types are nullable today; "
+                              "primitives/records would need an Optional wrapper)")
+                         ty-node)))
+    :type-ref
+    (let [nm (:name ty-node)]
+      (cond
+        (contains? primitive-c-type nm) (primitive-c-type nm)
+        (contains? record-env nm)       nm
+        (contains? atom-env nm)         (str nm " *")
+        :else                            (fail-nyi! (str "type " nm) ty-node)))
+    (fail-nyi! (str "cxc-type->c: unknown type-node " (:node ty-node)) ty-node)))
+
+(defn- base-type-name
+  "Extract the underlying type name from either a :type-ref or a
+   :type-nullable wrapper. Used to key the type env regardless of
+   nullability, since nullability is orthogonal to which env the type
+   lives in."
+  [ty-node]
+  (case (:node ty-node)
+    :type-ref      (:name ty-node)
+    :type-nullable (:name (:inner ty-node))
+    (fail-nyi! (str "base-type-name: unknown type-node " (:node ty-node)) ty-node)))
 
 (defn- cxc-type->type-kw
   "Map a cxc type-ref name to the type-keyword vocab used by infer-type.
@@ -104,10 +129,11 @@
 (defn- fields-from-data-section
   [data-section record-env atom-env]
   (mapv (fn [f]
-          {:name    (:name f)
-           :cxc-ty  (:name (:type f))
-           :c-type  (cxc-type->c (:type f) record-env atom-env)
-           :default (:default f)})
+          {:name      (:name f)
+           :cxc-ty    (base-type-name (:type f))
+           :nullable? (= :type-nullable (get-in f [:type :node]))
+           :c-type    (cxc-type->c (:type f) record-env atom-env)
+           :default   (:default f)})
         (:fields data-section)))
 
 (defn- normalize-method-param
@@ -159,13 +185,14 @@
 (defn- ctor-params-normalized
   "Def-atom :ctor-params come from the parser as `:field` nodes
    (`{:node :field :name :type :default}`). Normalize to
-   `{:name :cxc-ty :c-type :default}` for the atom-env."
+   `{:name :cxc-ty :nullable? :c-type :default}` for the atom-env."
   [ctor-params record-env atom-env]
   (mapv (fn [p]
-          {:name    (:name p)
-           :cxc-ty  (:name (:type p))
-           :c-type  (cxc-type->c (:type p) record-env atom-env)
-           :default (:default p)})
+          {:name      (:name p)
+           :cxc-ty    (base-type-name (:type p))
+           :nullable? (= :type-nullable (get-in p [:type :node]))
+           :c-type    (cxc-type->c (:type p) record-env atom-env)
+           :default   (:default p)})
         ctor-params))
 
 (defn- build-atom-env
@@ -257,6 +284,7 @@
     :lit-string :string
     :lit-int    :int
     :lit-float  :float
+    :lit-nil    :nil
     :self       (or (get (:locals ctx) "self")
                     (fail-nyi! "type-of `self` outside a method body" node))
     :ident      (or (get (:locals ctx) (:name node))
@@ -391,6 +419,7 @@
     :lit-string {:node :str   :value (:value node)}
     :lit-int    {:node :int   :value (:value node)}
     :lit-float  {:node :float :value (:value node)}
+    :lit-nil    {:node :nil}
     :ident      {:node :name  :sym (:name node)}
     :self       {:node :name  :sym "self"}
     :binop      {:node  :binop
@@ -471,11 +500,11 @@
                          {:name   (:name p)
                           :c-type (if (= "self" (:name p))
                                     record-name
-                                    (cxc-type->c {:name (:cxc-ty p)}
+                                    (cxc-type->c {:node :type-ref :name (:cxc-ty p)}
                                                  (:record-env ctx)
                                                  (:atom-env ctx)))})
                        (:params method))
-        ret-c    (cxc-type->c {:name (:cxc-return-ty method)}
+        ret-c    (cxc-type->c {:node :type-ref :name (:cxc-return-ty method)}
                               (:record-env ctx) (:atom-env ctx))]
     {:node        :c-function
      :name        (c-method-name record-name (:name method))
@@ -518,7 +547,15 @@
     {:node        :objc-class
      :name        atom-name
      :superclass  "NSObject"
-     :properties  (mapv (fn [f] {:name (:name f) :c-type (:c-type f) :attrs ["assign"]})
+     :properties  (mapv (fn [f]
+                          ;; ARC discipline: object pointers (atom types) → strong;
+                          ;; scalars/records → assign. `strong` gives standard
+                          ;; owning-reference semantics; `assign` is right for
+                          ;; primitives and copyable values that ARC ignores.
+                          (let [is-atom-ptr? (contains? (:atom-env ctx) (:cxc-ty f))]
+                            {:name (:name f)
+                             :c-type (:c-type f)
+                             :attrs (if is-atom-ptr? ["strong"] ["assign"])}))
                         (:fields rec))
      :init-params (mapv (fn [p] {:name (:name p) :c-type (:c-type p)}) ctor-params)
      :init-body   (mapv #(default-init-stmt-for % ctx-in-init) (:fields rec))}))

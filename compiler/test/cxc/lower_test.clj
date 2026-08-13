@@ -171,6 +171,26 @@
       (is (= "Counter" (:class ctor)))
       (is (= [{:name "initial" :value {:node :int :value 42}}] (:args ctor))))))
 
+(deftest nullable-atom-type-lowers-as-pointer
+  (testing "T? on an atom lowers to the same `T *` pointer; nil default fills _other = nil; property is strong (ARC)"
+    (let [prog (lower-src "def Counter:\n    data:\n        n: Int = 5\n        other: Counter? = nil\n\ndef main:\n    -> running\n        do: print(1)\n")
+          cls  (first (:classes prog))]
+      (is (= [{:name "n"     :c-type "int"       :attrs ["assign"]}
+              {:name "other" :c-type "Counter *" :attrs ["strong"]}]
+             (:properties cls)))
+      (is (= {:node :assign
+              :lhs  {:node :name :sym "_other"}
+              :rhs  {:node :nil}}
+             (second (:init-body cls)))))))
+
+(deftest nullable-non-atom-fails-nyi
+  (testing "T? on a primitive or record has no lowering path yet — fail-nyi"
+    (try
+      (lower-src "def X:\n    data:\n        n: Int? = nil\n\ndef main:\n    -> running\n        do: print(1)\n")
+      (is false "expected NYI throw")
+      (catch clojure.lang.ExceptionInfo e
+        (is (= :not-yet-implemented (:kind (ex-data e))))))))
+
 (deftest atom-ctor-params-default-fills-when-omitted
   (testing "Counter() with no args uses ctor-param defaults"
     (let [prog (lower-src "def Counter(initial: Int = 5):\n    data:\n        n: Int = initial\n\ndef main:\n    -> running\n        do: print(Counter().n)\n")
