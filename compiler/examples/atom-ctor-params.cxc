@@ -1,0 +1,7 @@
+def Counter(initial: Int = 0):
+    data:
+        n: Int = initial
+
+def main:
+    -> running
+        do: print(Counter(initial: 42).n + Counter().n)

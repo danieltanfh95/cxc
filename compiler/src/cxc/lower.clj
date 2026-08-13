@@ -156,23 +156,37 @@
 (defn- def-atom-body-non-data [atom-node]
   (remove #(= :data-section (:node %)) (:body atom-node)))
 
+(defn- ctor-params-normalized
+  "Def-atom :ctor-params come from the parser as `:field` nodes
+   (`{:node :field :name :type :default}`). Normalize to
+   `{:name :cxc-ty :c-type :default}` for the atom-env."
+  [ctor-params record-env atom-env]
+  (mapv (fn [p]
+          {:name    (:name p)
+           :cxc-ty  (:name (:type p))
+           :c-type  (cxc-type->c (:type p) record-env atom-env)
+           :default (:default p)})
+        ctor-params))
+
 (defn- build-atom-env
   [top-nodes]
   (let [atoms    (filter #(and (= :def-atom (:node %))
                                (not= "main" (:name %)))
                          top-nodes)
         skeleton (into {} (map (fn [a] [(:name a) {:fields [] :field-index {}
-                                                   :extras []}]) atoms))]
+                                                   :ctor-params [] :extras []}]) atoms))]
     (reduce
      (fn [env a]
-       (let [name   (:name a)
-             dsec   (def-atom-data-section a)
-             extras (def-atom-body-non-data a)
-             fields (if dsec
-                      (fields-from-data-section dsec {} env)
-                      [])]
+       (let [name        (:name a)
+             dsec        (def-atom-data-section a)
+             extras      (def-atom-body-non-data a)
+             fields      (if dsec
+                           (fields-from-data-section dsec {} env)
+                           [])
+             ctor-params (ctor-params-normalized (:ctor-params a) {} env)]
          (assoc env name {:fields fields
                           :field-index (into {} (map (juxt :name identity) fields))
+                          :ctor-params ctor-params
                           :extras extras})))
      skeleton
      atoms)))
@@ -283,13 +297,52 @@
                          (:fields rec))]
     {:node :struct-lit :type record-name :fields fields}))
 
+(defn- resolve-args-against-params
+  "Match named/positional call args against declared params in decl
+   order. Fall back to each param's declared default; fail-nyi if
+   neither is available. Returns a vector of {:name :value} pairs in
+   declaration order."
+  [call-site-label params args]
+  (let [by-name    (into {} (keep (fn [a] (when (= :named (:kind a))
+                                            [(:name a) (:value a)]))
+                                  args))
+        positional (filterv #(= :positional (:kind %)) args)]
+    (mapv (fn [i p]
+            (let [v (or (get by-name (:name p))
+                        (:value (get positional i))
+                        (:default p))]
+              (when-not v
+                (fail-nyi! (str "no value provided for param `" (:name p)
+                                "` on " call-site-label
+                                " (no arg and no default)")
+                           {:param (:name p) :site call-site-label}))
+              {:name (:name p) :value v}))
+          (range)
+          params)))
+
 (defn- lower-atom-ctor
-  [atom-name args _ctx]
-  (when (seq args)
-    (fail-nyi! (str "atom constructor args on `" atom-name
-                    "` (only zero-arg `X()` supported so far)")
-               {:atom atom-name :args args}))
-  {:node :objc-alloc-init :class atom-name})
+  "`X(a: 1, b: 2)` → ObjC init call. With no ctor params, emits plain
+   `[[X alloc] init]`. With ctor params, emits an :objc-init-with node
+   carrying the resolved (name, value) pairs — one selector part per
+   param in declaration order."
+  [atom-name args ctx]
+  (let [rec         (get-in ctx [:atom-env atom-name])
+        ctor-params (:ctor-params rec)]
+    (if (empty? ctor-params)
+      (do
+        (when (seq args)
+          (fail-nyi! (str "atom constructor args on `" atom-name
+                          "` — atom declares no ctor params")
+                     {:atom atom-name :args args}))
+        {:node :objc-alloc-init :class atom-name})
+      (let [resolved (resolve-args-against-params
+                      (str "`" atom-name "` constructor")
+                      ctor-params args)]
+        {:node :objc-init-with
+         :class atom-name
+         :args  (mapv (fn [{:keys [name value]}]
+                        {:name name :value (lower-expr value ctx)})
+                      resolved)}))))
 
 (defn- c-method-name
   "Free-function name for a record's method: `<Record>_<method>`. Simple
@@ -446,19 +499,29 @@
      :rhs  rhs}))
 
 (defn- lower-atom [atom-name ctx]
-  (let [rec    (get-in ctx [:atom-env atom-name])
-        extras (:extras rec)]
+  (let [rec         (get-in ctx [:atom-env atom-name])
+        extras      (:extras rec)
+        ctor-params (:ctor-params rec)
+        locals      (into {} (map (fn [p]
+                                    [(:name p)
+                                     (cxc-type->type-kw (:cxc-ty p)
+                                                        (:record-env ctx)
+                                                        (:atom-env ctx)
+                                                        p)])
+                                  ctor-params))
+        ctx-in-init (assoc ctx :locals locals)]
     (when (seq extras)
       (fail-nyi! (str "def-atom `" atom-name "` has body items beyond `data:` "
                       "(" (mapv :node extras) ") — atom classes with "
                       "transitions/use:/invariants/methods are next up")
                  {:atom atom-name :extras extras}))
-    {:node       :objc-class
-     :name       atom-name
-     :superclass "NSObject"
-     :properties (mapv (fn [f] {:name (:name f) :c-type (:c-type f) :attrs ["assign"]})
-                       (:fields rec))
-     :init-body  (mapv #(default-init-stmt-for % ctx) (:fields rec))}))
+    {:node        :objc-class
+     :name        atom-name
+     :superclass  "NSObject"
+     :properties  (mapv (fn [f] {:name (:name f) :c-type (:c-type f) :attrs ["assign"]})
+                        (:fields rec))
+     :init-params (mapv (fn [p] {:name (:name p) :c-type (:c-type p)}) ctor-params)
+     :init-body   (mapv #(default-init-stmt-for % ctx-in-init) (:fields rec))}))
 
 (defn- main-atom-body [main-node ctx]
   (let [transitions (filter #(= :transition (:node %)) (:body main-node))

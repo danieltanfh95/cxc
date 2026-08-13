@@ -156,6 +156,29 @@
       (is (= 1 (count (:body f))))
       (is (= :return (get-in f [:body 0 :node]))))))
 
+(deftest atom-ctor-params-lower-to-init-with
+  (testing "def-atom with ctor params → :init-params on class + :objc-init-with at call site"
+    (let [prog (lower-src "def Counter(initial: Int = 0):\n    data:\n        n: Int = initial\n\ndef main:\n    -> running\n        do: print(Counter(initial: 42).n)\n")
+          cls  (first (:classes prog))
+          call (first (get-in prog [:main :body]))
+          ctor (get-in call [:args 1 :target])]
+      (is (= [{:name "initial" :c-type "int"}] (:init-params cls)))
+      (is (= [{:node :assign
+               :lhs  {:node :name :sym "_n"}
+               :rhs  {:node :name :sym "initial"}}]
+             (:init-body cls)))
+      (is (= :objc-init-with (:node ctor)))
+      (is (= "Counter" (:class ctor)))
+      (is (= [{:name "initial" :value {:node :int :value 42}}] (:args ctor))))))
+
+(deftest atom-ctor-params-default-fills-when-omitted
+  (testing "Counter() with no args uses ctor-param defaults"
+    (let [prog (lower-src "def Counter(initial: Int = 5):\n    data:\n        n: Int = initial\n\ndef main:\n    -> running\n        do: print(Counter().n)\n")
+          call (first (get-in prog [:main :body]))
+          ctor (get-in call [:args 1 :target])]
+      (is (= :objc-init-with (:node ctor)))
+      (is (= [{:name "initial" :value {:node :int :value 5}}] (:args ctor))))))
+
 (deftest method-call-lowers-to-c-function-call
   (testing "v.plus(other) → :call {:fn V_plus :args [v other]}"
     (let [prog (lower-src "record V:\n    data:\n        x: Float\n        y: Float\n\n    methods:\n        function plus(self, other: V) -> V:\n            return V(x: self.x + other.x, y: self.y + other.y)\n\ndef main:\n    -> running\n        do: print(V(x: 1.0, y: 2.0).plus(V(x: 3.0, y: 4.0)).x)\n")

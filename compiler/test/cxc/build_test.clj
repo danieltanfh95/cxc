@@ -74,3 +74,9 @@
     (let [{:keys [exit stdout]} (compile-and-run "record-methods")]
       (is (zero? exit))
       (is (= "4.000000\n" stdout)))))
+
+(deftest end-to-end-atom-ctor-params
+  (testing "atom-ctor-params.cxc — Counter(initial: 42) → initWith selector; default fills for Counter()"
+    (let [{:keys [exit stdout]} (compile-and-run "atom-ctor-params")]
+      (is (zero? exit))
+      (is (= "42\n" stdout)))))

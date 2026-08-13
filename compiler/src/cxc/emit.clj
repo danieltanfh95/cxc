@@ -39,6 +39,17 @@
                                          (:fields node)))
                           "})")
     :objc-alloc-init (str "[[" (:class node) " alloc] init]")
+    :objc-init-with  (let [parts (:args node)
+                           first-part (str "initWith" (:name (first parts)) ":"
+                                           (emit-expr (:value (first parts))))
+                           rest-parts (str/join " "
+                                                (map (fn [p]
+                                                       (str (:name p) ":" (emit-expr (:value p))))
+                                                     (rest parts)))]
+                       (str "[[" (:class node) " alloc] "
+                            first-part
+                            (when-not (str/blank? rest-parts) (str " " rest-parts))
+                            "]"))
     :call            (str (:fn node)
                           "("
                           (str/join ", " (map emit-expr (:args node)))
@@ -118,13 +129,32 @@
         body  (if (str/blank? props) "" (str "\n" props "\n"))]
     (str "@interface " (:name cls) " : " (:superclass cls) body "@end")))
 
+(defn- init-signature
+  "Build the ObjC init method signature. No params → `- (instancetype)init`.
+   With params → `- (instancetype)initWith<first>:(<type>)<name> <name>:(<type>)<name> ...`.
+   The `initWith` prefix + uppercase W satisfies ARC's init-family rule."
+  [init-params]
+  (if (empty? init-params)
+    "- (instancetype)init"
+    (let [first-p     (first init-params)
+          rest-ps     (rest init-params)
+          first-part  (str "initWith" (:name first-p) ":("
+                           (:c-type first-p) ")" (:name first-p))
+          rest-parts  (str/join " "
+                                (map (fn [p]
+                                       (str (:name p) ":(" (:c-type p) ")" (:name p)))
+                                     rest-ps))]
+      (str "- (instancetype)" first-part
+           (when-not (str/blank? rest-parts) (str " " rest-parts))))))
+
 (defn- emit-implementation [cls]
-  (let [init-body (:init-body cls)
-        init-stmts (if (seq init-body)
-                     (str "\n" (emit-body 8 init-body))
-                     "")]
+  (let [init-body   (:init-body cls)
+        init-params (:init-params cls)
+        init-stmts  (if (seq init-body)
+                      (str "\n" (emit-body 8 init-body))
+                      "")]
     (str "@implementation " (:name cls) "\n"
-         "- (instancetype)init {\n"
+         (init-signature init-params) " {\n"
          "    self = [super init];\n"
          "    if (self) {"
          init-stmts
