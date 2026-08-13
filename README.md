@@ -2,7 +2,7 @@
 
 **Name.** cxc — **channels-C**, positioned in the naming lineage of **objc** (objective-C). Just as objc added object-orientation on top of C, cxc adds channels / CSP / an atom substrate on top of the C-family systems lineage. Originally codenamed **Corvid** (2026-08); the codename persists in directory paths, historical design notes, and repo infrastructure. Both names refer to the same language.
 
-**Status.** v1.0 draft. Pre-implementation. The design pivot to the atom substrate (see `spec/spec-cxc-v1.0.md` §1.11) is the committed direction; §3–§9 currently describe the v0.11 intermediate shape (`class`, `record`, `enum`, `protocol` as primary declaration forms) and will be restructured as sugar over `def` atom shapes in a subsequent spec revision.
+**Status.** v1.0 draft. Pre-implementation. The design pivot to the atom substrate (see `design/spec/spec-cxc-v1.0.md` §1.11) is the committed direction; §3–§9 currently describe the v0.11 intermediate shape (`class`, `record`, `enum`, `protocol` as primary declaration forms) and will be restructured as sugar over `def` atom shapes in a subsequent spec revision.
 
 **v0.11 landings (historical).** Value-type auto-conformance to `As<Bytes>` / `From<Bytes>` (§3.4.6, §3.10.10 canonical wire format spec) + double-colon header form removed (v0.10.2's grace period ended). Records, enums, and primitives auto-serialize via compiler-synthesized methods from field layout — same shape as automatic structural equality on records (§3.2), a base-class property rather than a stdlib opt-in. Canonical wire format: network-order (big-endian) multi-byte primitives, fields concatenated in declaration order, enums as discriminator + associated data, strings/collections as UInt32-length-prefixed payload. Only `As<Bytes>` gets auto-conformance because bytes are the universal substrate (§3.10.4) with one canonical encoding; format-specific overlays (JSON, MsgPack, etc.) have per-record author choices and remain user-written via ordinary `extend class Foo:` (§3.3.2).
 
@@ -23,39 +23,49 @@ An **atom-substrate reactive language with Swift-shaped surface, CSP + core.asyn
 ## What this bundle contains
 
 ```
-corvid/                              (directory name preserved from the Corvid codename era)
-├── README.md                        (this file)
-├── PATTERNS.md                      (onboarding — "coming from language X, cxc does Y")
-├── working-notes.md                 (decision log from the design conversation)
-├── corvid-handoff.zip               (original handoff archive, kept for provenance)
+corvid/                                    (directory name preserved from the Corvid codename era)
+├── README.md                              (this file)
 │
-├── spec/
-│   ├── charter.md                   (§1.1-§1.9 as standalone — read first)
-│   └── spec-cxc-v1.0.md             (full specification; v1.0 draft, atom substrate)
+├── design/                                (all design documentation)
+│   ├── PATTERNS.md                        (onboarding — "coming from language X, cxc does Y")
+│   ├── working-notes.md                   (decision log from the design conversation)
+│   │
+│   ├── spec/
+│   │   ├── charter.md                     (§1.1-§1.9 as standalone — read first)
+│   │   └── spec-cxc-v1.0.md               (full specification; v1.0 draft, atom substrate)
+│   │
+│   ├── examples/
+│   │   ├── README.md                      (examples overview)
+│   │   └── game-toys.cxc                  (toy game atoms — Paddle, Player, Enemy, sub-atom-as-state-machine)
+│   │
+│   ├── explorations/
+│   │   └── integers-from-bits.cxc         (worked derivation: Bit → Byte → UInt8 → Nat → Age)
+│   │
+│   ├── positioning/
+│   │   ├── overview.md                    (positioning statement — read second)
+│   │   ├── game-of-life.md                (reference implementation scope)
+│   │   └── ecosystem.md                   (relationship to Swift, ObjC, frameworks)
+│   │
+│   ├── validation/                        (pre-atom-substrate translation exercises; .cor extension retained)
+│   │   ├── README.md
+│   │   ├── 00-friction-log.md             (38 friction points from translation)
+│   │   ├── 01-Markdown.*, 02-Blockquote.*, 03-Reader.*
+│   │   ├── 04-idiomatic-pass.md, 05-fragment-coverage.md
+│   │   └── websocket/                     (WebSocket framer translation)
+│   │
+│   ├── historical/
+│   │   ├── sections-design-analysis.md    (analytical work supporting §4 sections)
+│   │   └── session-transcript.md          (full design-conversation transcript)
+│   │
+│   └── archive/
+│       └── corvid-handoff.zip             (original handoff archive, kept for provenance)
 │
-├── examples/
-│   ├── README.md                    (examples overview)
-│   └── game-toys.cxc                (toy game atoms — Paddle, Player, Enemy, sub-atom-as-state-machine pattern)
+├── compiler/                              (Clojure compiler — Phase 7)
+├── runtime/                               (ObjC + C runtime library — Phase 7)
+├── prelude/                               (FFI shims per §1.14 — Phase 7)
 │
-├── positioning/
-│   ├── overview.md                  (positioning statement — read second)
-│   ├── game-of-life.md              (reference implementation scope)
-│   └── ecosystem.md                 (relationship to Swift, ObjC, frameworks)
-│
-├── validation/                      (pre-atom-substrate translation exercises; .cor extension retained)
-│   ├── README.md                    (Ink translation exercise overview)
-│   ├── 00-friction-log.md           (38 friction points from translation)
-│   ├── 01-Markdown.parity.cor       (cxc translation, parity pass)
-│   ├── 01-Markdown.source.swift     (original Swift)
-│   ├── 02-Blockquote.parity.cor
-│   ├── 02-Blockquote.source.swift
-│   ├── 03-Reader.inferred.cor       (interface reconstructed from usage)
-│   ├── 04-idiomatic-pass.md         (idiomatic rewrite of 3 files + findings)
-│   └── 05-fragment-coverage.md      (6 more Fragment types + patterns confirmed)
-│
-└── historical/
-    ├── sections-design-analysis.md  (analytical work supporting §4 sections)
-    └── session-transcript.md        (full design-conversation transcript)
+├── .replsh/                               (REPL session config for compiler dev)
+└── .gitignore
 ```
 
 ## Recommended reading order
@@ -64,20 +74,20 @@ Depending on how much time you have.
 
 **15 minutes:**
 1. This README (5 min).
-2. `positioning/overview.md` (10 min).
+2. `design/positioning/overview.md` (10 min).
 
 You now know what cxc is, who it's for, and what the design bet is.
 
 **1 hour:**
-3. `spec/charter.md` (30 min).
-4. `validation/README.md` + skim `validation/00-friction-log.md` (15 min).
+3. `design/spec/charter.md` (30 min).
+4. `design/validation/README.md` + skim `design/validation/00-friction-log.md` (15 min).
 
 You now know the design premises and know what's been empirically tested.
 
 **Half day:**
-5. `positioning/game-of-life.md` (30 min).
-6. `positioning/ecosystem.md` (30 min).
-7. `spec/spec-v0.11.md`, sections you care about most. Different sections for different concerns:
+5. `design/positioning/game-of-life.md` (30 min).
+6. `design/positioning/ecosystem.md` (30 min).
+7. `design/spec/spec-cxc-v1.0.md`, sections you care about most. Different sections for different concerns:
    - §1: design premises (already read via charter).
    - §2: lexical structure.
    - §3: type system, contracts, effects.
@@ -91,8 +101,8 @@ You now know the design premises and know what's been empirically tested.
 
 **Full day:**
 8. Full spec end-to-end (3-4 hours).
-9. `validation/04-idiomatic-pass.md` and `validation/05-fragment-coverage.md` for the two-type pattern findings.
-10. `working-notes.md` for the reasoning behind each major decision.
+9. `design/validation/04-idiomatic-pass.md` and `design/validation/05-fragment-coverage.md` for the two-type pattern findings.
+10. `design/working-notes.md` for the reasoning behind each major decision.
 
 ## What's decided vs. what's undecided
 
@@ -146,7 +156,7 @@ The Ink Markdown parser (JohnSundell/Ink) was translated to cxc in two passes:
 - ObjC framework interop at depth (only Foundation types touched).
 - Multi-target deployment.
 
-The Game of Life reference implementation (see `positioning/game-of-life.md`) is designed to fill these gaps.
+The Game of Life reference implementation (see `design/positioning/game-of-life.md`) is designed to fill these gaps.
 
 ## Immediate next steps for whoever picks this up
 
@@ -182,7 +192,7 @@ Renaming to something else is easy at this stage; renaming after adoption is har
 
 ## The design conversation transcript
 
-The full transcript of the design conversation that produced this bundle is preserved at `historical/session-transcript.md`. That transcript contains:
+The full transcript of the design conversation that produced this bundle is preserved at `design/historical/session-transcript.md`. That transcript contains:
 
 - The reasoning behind every design decision.
 - Alternatives considered and rejected.

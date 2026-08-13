@@ -2,7 +2,7 @@
 
 **Name.** cxc — pronounced letter-by-letter — reads as **channels-C**, positioned in the naming lineage of **objc** (objective-C). Just as objc added object-orientation on top of C, cxc adds channels / CSP / the atom substrate on top of the C-family systems lineage. The name IS a positioning claim: cxc is what a modern Swift/ObjC-ecosystem developer reaches for when they want the substrate that objc→Swift didn't deliver.
 
-**Codename.** The language was designed under the codename **Corvid** and is still referenced by that name in historical design notes (`working-notes.md`), directory paths, and repository infrastructure. Corvid → cxc is a naming transition, not a design change; both names refer to the same language.
+**Codename.** The language was designed under the codename **Corvid** and is still referenced by that name in historical design notes (`../working-notes.md`), directory paths, and repository infrastructure. Corvid → cxc is a naming transition, not a design change; both names refer to the same language.
 
 **Status.** v1.0 draft. cxc is an **atom-substrate reactive language** with a Swift-shaped surface, contract-based verification, and dataflow compilation. Class = bounded atom graph. Functions = the trivial atom shape. Every construct is a shape of atom. The atom substrate (§1.11) is the design; §1.12–§1.14 elaborate the OS boundary, stdlib capabilities, and prelude structure that fall out of it.
 
@@ -38,7 +38,7 @@
 - Advanced channel modifier semantics — `<:priority`, `<:sliding` — may require stdlib mailbox atoms rather than compiler-primitive buffering.
 - Cross-atom deadlock detection for `|>` sync sends — user's responsibility for now (CSP-standard behavior).
 
-See `working-notes.md` for the design-decision journal that led to the current shape.
+See `../working-notes.md` for the design-decision journal that led to the current shape.
 
 ---
 
@@ -804,7 +804,7 @@ A "type" is a named contract: a set of accepted messages with signatures, precon
 
 **What's traded away.** Named types that carry predicates at the signature level (`def foo(n: Nat)` reading "n must be non-negative"). Compile-time refinement inference (`nat1 + nat2 : Nat` proved from `nat1, nat2 : Nat`). The Liquid-Haskell / Whiley / dependent-type direction. In its place: contracts on transitions (`requires n >= 0`), invariants on atoms, and predicate atoms for reusable predicates. Constraints are more localized (co-located with what they constrain); type-checking stays a shape-conformance question (simpler compiler, faster feedback); users familiar with Swift / Kotlin / Rust find the model familiar (predicates as assertions, not as types).
 
-See §3.4.2 for the invariant mechanism. §1.11 for the atom substrate that this unification lives inside — specifically §1.11's "Contracts on shapes — types as named contracts" subsection walks the operational form (types built bottom-up from Bit, interpretation via `value :<` observables, `bit_ops` prelude, invariant-check paths). `explorations/integers-from-bits.cxc` is the worked derivation.
+See §3.4.2 for the invariant mechanism. §1.11 for the atom substrate that this unification lives inside — specifically §1.11's "Contracts on shapes — types as named contracts" subsection walks the operational form (types built bottom-up from Bit, interpretation via `value :<` observables, `bit_ops` prelude, invariant-check paths). `../explorations/integers-from-bits.cxc` is the worked derivation.
 
 **Note on named contracts vs "refined types."** The ban above targets the terse type-alias-with-refinement form (`def Nat: Int where value >= 0` as a floating name over an inferred predicate). Full `def` atoms with `data:` + `invariants:` (`def Nat: data: raw: ...; invariants: value >= 0`) are legitimate — they're first-class atoms with proper structure, not shorthand for refinement inference. Predicates stay co-located with the data they constrain; contracts propagate through construction as documented in §1.11.
 
@@ -1174,7 +1174,7 @@ Direct construction is for "I know this holds." Try-construction is for "I don't
 
 **Manifest generation.** Each atom's derived surface (I/O, emissions, phases, observables, inferred constraints on constructor params + fields + message args) is a compiler-generated artifact — inspectable via IDE overlay or `cxc show-manifest <path>`. Manifests are the reader's model of an atom's public shape without reading the body. Manifest diffs surface API changes when body edits ripple through inferred contracts.
 
-**Worked derivation.** `explorations/integers-from-bits.cxc` walks the full bits-up derivation (Bit → Byte → UInt8/Int8/Char → UInt16/UInt32 → Nat/Age), operations as contract choices, conversion patterns, and invariant-check semantics.
+**Worked derivation.** `../explorations/integers-from-bits.cxc` walks the full bits-up derivation (Bit → Byte → UInt8/Int8/Char → UInt16/UInt32 → Nat/Age), operations as contract choices, conversion patterns, and invariant-check semantics.
 
 **Deferred to Phase 6 (compiler implementation).** How much whole-program analysis the compiler does (per-atom local, LTO across statically-wired subgraphs, JIT specialization for hot paths); wrapper-elision aggressiveness; manifest tooling ship shape. These are execution choices over stable semantics; the semantic model above holds regardless.
 
@@ -3549,7 +3549,7 @@ function process(input: String) -> ProcessOutcome:
 
 ### 3.6 Refinement / Precondition Contracts
 
-> **v1.0 note.** The v1.0 canonical form is `def <Name>: <Underlying> where <predicate>` — a named contract on an underlying shape, per §1.11 (Contracts on shapes — types as named contracts) and the worked derivation in `explorations/integers-from-bits.cxc`. The `type X = Y requires ...` syntax below is a v0.11 relic superseded by `def`; both forms parse during the grace period through v0.15. Every type in cxc — down to `Bit` — is a named contract on some underlying shape, not a distinct kind of thing from records/classes. The examples in this section use the v0.11 form for continuity with older text.
+> **v1.0 note.** The v1.0 canonical form is `def <Name>: <Underlying> where <predicate>` — a named contract on an underlying shape, per §1.11 (Contracts on shapes — types as named contracts) and the worked derivation in `../explorations/integers-from-bits.cxc`. The `type X = Y requires ...` syntax below is a v0.11 relic superseded by `def`; both forms parse during the grace period through v0.15. Every type in cxc — down to `Bit` — is a named contract on some underlying shape, not a distinct kind of thing from records/classes. The examples in this section use the v0.11 form for continuity with older text.
 
 Any type can carry a predicate clause narrowing its inhabitants (v0.11 form shown):
 
