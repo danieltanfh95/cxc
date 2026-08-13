@@ -148,3 +148,9 @@
     (let [{:keys [exit stdout]} (compile-and-run "use-cap")]
       (is (zero? exit))
       (is (= "1042\n" stdout)))))
+
+(deftest end-to-end-chained-comparison
+  (testing "chained-comparison.cxc — `lo <= val <= hi` desugars to `(lo<=val) and (val<=hi)` at parse-time; passing case runs through"
+    (let [{:keys [exit stdout]} (compile-and-run "chained-comparison")]
+      (is (zero? exit))
+      (is (= "5\n" stdout)))))

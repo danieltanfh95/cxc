@@ -11,7 +11,49 @@
    Current coverage: module header, from-import, record, method signatures
    and bodies (partial — expressions still limited)."
   (:require [clojure.string :as str]
+            [clojure.walk :as walk]
             [cxc.lex :as lex]))
+
+;; ---------------------------------------------------------------------------
+;; Chained-comparison desugaring
+;;
+;; The general binop parser left-associates comparison ops, producing
+;; `((a <= b) <= c)`. That's incorrect C semantics for chained bounds
+;; like `-max <= y <= max`. Desugar to `(a <= b) and (b <= c)`.
+;;
+;; Caveat: `b` is evaluated twice. Safe for pure value expressions
+;; (records, fields, literals, arithmetic). Method calls on atoms would
+;; double-send — for those the user should use `let:` to bind the
+;; intermediate. Not enforced yet.
+;; ---------------------------------------------------------------------------
+
+(def ^:private cmp-ops #{"<" "<=" ">" ">="})
+
+(defn- chained? [n]
+  (and (map? n)
+       (= :binop (:node n))
+       (contains? cmp-ops (:op n))
+       (map? (:left n))
+       (= :binop (get-in n [:left :node]))
+       (contains? cmp-ops (get-in n [:left :op]))))
+
+(defn- desugar-chained-node [n]
+  (if (chained? n)
+    (let [inner       (:left n)
+          inner-right (:right inner)]
+      {:node :binop
+       :op   "and"
+       :left inner
+       :right {:node :binop :op (:op n)
+               :left inner-right :right (:right n)}})
+    n))
+
+(defn- desugar-chained-comparisons
+  "Bottom-up rewrite: every `(a cmp1 b) cmp2 c` becomes `(a cmp1 b) and
+   (b cmp2 c)`. Recursively applied via postwalk so inner chains rewrite
+   before outer ones — needed for 3+ operand chains."
+  [ast]
+  (walk/postwalk desugar-chained-node ast))
 
 ;; ---------------------------------------------------------------------------
 ;; Token stream primitives
@@ -921,7 +963,7 @@
     (loop [nodes [] pos 0]
       (let [pos (skip-newlines tokens pos)]
         (if (at? tokens pos :eof)
-          nodes
+          (desugar-chained-comparisons nodes)
           (let [[node pos'] (parse-top tokens pos)]
             (recur (conj nodes node) pos')))))))
 
