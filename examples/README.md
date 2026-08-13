@@ -1,6 +1,6 @@
 # Examples
 
-Reference implementations written in Corvid. Two purposes:
+Reference implementations written in cxc. Two purposes:
 
 1. **Design pressure.** Writing real code in the language surfaces spec gaps the friction log hasn't caught yet. See the Ink translation exercise in `../validation/` for the pattern.
 2. **Demonstration.** Once a compiler exists, examples are what a newcomer runs first.

@@ -1,0 +1,349 @@
+module com.example.integers_from_bits
+
+# =============================================================================
+# integers-from-bits.cxc — deriving integer types from bit sequences
+#
+# EXPLORATION FILE — figuring out the derivation together. Uses cxc syntax
+# where we've committed, uses `# ???` markers where a design decision needs
+# to be made.
+#
+# ── Premise ─────────────────────────────────────────────────────────────────
+#
+# Types are named contracts on shapes. No primitive/refined distinction.
+# UInt8, Int8, Char, bitfield are DIFFERENT INTERPRETATIONS of the SAME 8
+# bits — spelled as different `value :<` observables and different
+# invariants on the value.
+#
+# A "type" is: (a) an underlying shape (bits, or something built from bits)
+# + (b) one or more named observables that interpret those bits + (c) any
+# invariants on those observables. Nothing else.
+#
+# The compiler collects the contract set on each value at each program point
+# and picks a representation whose bits satisfy every contract in play.
+#
+# ── Value-typed atoms ───────────────────────────────────────────────────────
+#
+# `data:` is immutable per-instance — set at construction, never changes.
+# An atom with ONLY `data:` (no transitions, no phases) is a value-typed
+# atom. That's what all the shapes below are.
+#
+# `value :< expr` at atom-body top-level declares an observable — a
+# derived, on-demand computation over the atom's data. Observables are the
+# mechanism for "interpret these bits as X."
+# =============================================================================
+
+
+# ---- Bit --------------------------------------------------------------------
+# The bottom of the derivation. Two possible values, `zero` and `one`.
+# Represented as 1 bit of storage.
+
+def Bit:
+    kind: enum
+    cases:
+        zero
+        one
+
+    # Observables — different names for the same underlying identity.
+    is_set   :< self is one
+    is_clear :< self is zero
+
+
+# ---- Byte -------------------------------------------------------------------
+# Eight bits, ordered. Value-typed — a Byte IS its bits; no state.
+#
+# Byte has NO interpretation observables. Byte is purely structural —
+# 8 bits with a count invariant, nothing else. Meaning comes from
+# derived types (UInt8, Int8, Char, ...) that wrap a Byte and provide
+# their own `value :<` observable.
+
+def Byte:
+    data:
+        bits: List of Bit
+    invariants:
+        bits.count == 8                            # every Byte has exactly 8 bits;
+                                                    # compiler picks fixed 8-bit packed representation
+
+
+# ---- UInt8 ------------------------------------------------------------------
+# Byte interpreted as an unsigned 8-bit integer. The `value :<` observable
+# uses a pure prelude bit-op function to derive the integer from the bits.
+# Compiler eliminates the wrapper layer — same 8 bits at runtime.
+
+def UInt8:
+    data:
+        raw: Byte
+
+    value :< bit_ops.decode_uint(raw.bits)         # interpretation lives HERE, not on Byte
+
+    invariants:
+        value in 0..255                             # follows from Byte having 8 bits;
+                                                    # invariant states the contract explicitly
+
+
+# ---- Int8 -------------------------------------------------------------------
+# Same 8 bits, different interpretation. Two's-complement signed.
+
+def Int8:
+    data:
+        raw: Byte
+
+    value :< bit_ops.decode_int_2c(raw.bits)
+
+    invariants:
+        value in -128..127
+
+
+# ---- Char -------------------------------------------------------------------
+# Same 8 bits, ASCII interpretation. Value set is characters, not integers.
+
+def Char:
+    data:
+        raw: Byte
+
+    value :< bit_ops.ascii_decode(raw.bits)         # a Char, not an Int
+
+    invariants:
+        bit_ops.decode_uint(raw.bits) in 0..127     # only ASCII range is valid Char
+
+
+# ---- Nat --------------------------------------------------------------------
+# Named contract that only says "value is a non-negative integer."
+# No fixed width — compiler picks representation from usage.
+
+def Nat:
+    data:
+        raw: List of Byte                           # variable-length underlying storage
+
+    value :< bit_ops.decode_uint_variable(raw)      # interpret variable-length as unsigned
+
+    invariants:
+        value >= 0
+
+
+# ---- Age --------------------------------------------------------------------
+# Domain-specific contract on Nat. Compiler picks UInt8 representation
+# because the value fits in 0..150, and no operation on Age escapes that
+# range (as long as author's operations preserve the invariant).
+
+def Age:
+    data:
+        raw: Nat
+
+    value :< raw.value
+
+    invariants:
+        value in 0..150
+
+
+# ---- UInt16, UInt32 ---------------------------------------------------------
+# Wider bytes, same pattern. 2 bytes = 65536 values; 4 bytes = 2^32 values.
+
+def UInt16:
+    data:
+        raw: List of Byte
+    invariants:
+        raw.count == 2                                            # two bytes = 16 bits
+        value in 0..65535
+
+    value :< bit_ops.decode_uint_bytes(raw, endian: little)       # ??? endian choice pinned?
+
+
+def UInt32:
+    data:
+        raw: List of Byte
+    invariants:
+        raw.count == 4
+        value in 0..(2^32 - 1)
+
+    value :< bit_ops.decode_uint_bytes(raw, endian: little)
+
+
+# ---- Operations as contracts ------------------------------------------------
+# Operations on integer types are also contracts. Different names on the
+# same shape select different overflow/wrap/saturate behavior — a contract
+# choice, not a type choice.
+
+def plus(self: UInt8, other: UInt8) -> UInt8
+    requires self.value + other.value <= 255        # precondition: no overflow
+    ensures  result.value == self.value + other.value:
+    # bit-level addition; delegated to bit_ops
+    return UInt8{raw: bit_ops.add_bytes(self.raw, other.raw, carry: Bit.zero).sum}
+
+def wrapping_plus(self: UInt8, other: UInt8) -> UInt8
+    ensures  result.value == (self.value + other.value) mod 256:
+    return UInt8{raw: bit_ops.add_bytes(self.raw, other.raw, carry: Bit.zero).sum}
+
+def saturating_plus(self: UInt8, other: UInt8) -> UInt8
+    ensures  result.value == min(self.value + other.value, 255):
+    ...
+
+
+# ---- Invariants and runtime checks ------------------------------------------
+# Invariants that reference observables (or plain data fields) are checked
+# ONCE at construction, never on every observable access.
+#
+# Reason: observables are pure computations over immutable data. Data is
+# `data:`, set at construction, never changes. Observable is deterministic.
+# Once construction verifies the invariant, the observable's result won't
+# change — re-checking on read wastes cycles for the same answer.
+
+# ── Two paths at construction ──
+#
+# The compiler picks per-case:
+#
+# Path 1 — statically proved (NO runtime check emitted).
+#   If the compiler can derive the invariant from the underlying data's own
+#   invariants + the observable's computation contract (`ensures`), no runtime
+#   code is generated. Invariant is a documentation + verification checkpoint.
+#
+#   UInt8 is this case:
+#     Byte's invariant: bits.count == 8
+#     bit_ops.decode_uint's ensures: result in 0..(2^bits.count - 1)
+#     UInt8's invariant: value in 0..255
+#   Compiler derivation: 0..(2^8 - 1) = 0..255. Proved. Zero runtime cost.
+#
+# Path 2 — runtime check at construction.
+#   If the compiler can't prove statically (invariant is narrower than the
+#   underlying data guarantees), a runtime check fires when the value is
+#   constructed.
+#
+#   Age is this case:
+#     Nat's invariant: value >= 0
+#     Age's invariant: value in 0..150
+#   Compiler can't prove `value <= 150` from Nat alone. `Age{raw: some_nat}`
+#   compiles to an implicit runtime check that fires at construction.
+
+# ── Failure mode ──
+#
+# Contract violation → abort with diagnostic. Same category as `requires` /
+# `ensures` failure. A value that doesn't satisfy its type's invariant means
+# the program is in an inconsistent state; carrying on is unsafe.
+#
+# No "disable in release" mode. Invariants stay live in production because a
+# value failing its own invariant is a bug in every environment.
+
+# ── Two construction forms per type ──
+#
+# For types with non-trivially-derivable invariants (Path 2 candidates), the
+# compiler auto-generates two forms:
+
+# Direct construction — caller asserts the invariant holds.
+# Contract violation on failure. Use when you know it should hold (proved by
+# reasoning, guaranteed by upstream code, etc.).
+age: Age = Age{raw: some_nat}                   # aborts if some_nat.value > 150
+
+# Try-construction — for cases where you don't know if it'll hold.
+# Returns Result of Age; handle explicitly.
+age_result: Result of Age = Age.try(raw: some_nat)
+
+def Age.try(raw: Nat) -> Result of Age
+    ensures result is ok(a) implies a.value in 0..150:
+    ...
+
+# Rule:
+#   `Age{raw: n}`      — direct; caller responsibility; abort on violation
+#   `Age.try(raw: n)`  — try-form; explicit failure handling
+
+# ── Shift dial: compile-time vs runtime ──
+#
+# The compiler proves as much as possible. What it can't prove becomes a
+# runtime check. The author can shift the dial:
+#
+#   - Add narrower `where` clauses / invariants upstream to help the compiler prove
+#   - Use `try_*` forms to explicitly handle possible failure
+#   - Accept runtime check + abort for cases where failure is a bug
+#
+# Same mechanism as Eiffel's Design by Contract. Static where possible;
+# runtime where necessary; always well-defined behavior.
+
+
+# ---- Conversion -------------------------------------------------------------
+# Two kinds — same-width bit-reinterpretation vs value-preserving narrow/widen.
+# Both explicit; no auto-conversion, no `into()` trait, no implicit coercion.
+
+# ── Same-width reinterpretation ──
+# Just wrap the same bits under a different type. UInt8 <-> Int8 are the same
+# 8 bits with different `value :<` interpretations; both interpretations are
+# always valid (256 bit patterns, 256 valid values under each). Native cxc
+# construction — no dedicated conversion function.
+
+# Example:
+#   u8: UInt8 = UInt8{raw: byte}            # bits interpreted as 200
+#   i8: Int8  = Int8{raw: u8.raw}           # SAME bits interpreted as -56
+
+# ── Value-preserving narrow (larger -> smaller) ──
+# Prelude function with `requires`. Compiler proves the precondition when it
+# can; runtime check or Result-form otherwise.
+
+def bit_ops.narrow_u16_to_u8(u16: UInt16) -> UInt8
+    requires u16.value in 0..255
+    ensures  result.value == u16.value:
+    ...
+
+def bit_ops.try_narrow_u16_to_u8(u16: UInt16) -> Result of UInt8
+    ensures result is ok(u8) implies u8.value == u16.value:
+    ...
+
+# ── Value-preserving widen (smaller -> larger) ──
+# Always safe (destination invariant weaker). Explicit at the call site so
+# the reader sees the semantic move.
+
+def bit_ops.widen_u8_to_u16(u8: UInt8) -> UInt16
+    ensures result.value == u8.value:
+    ...
+
+# Domain code rarely needs these. Users write Nat / Int / Age / Count with
+# meaningful contracts and the compiler picks bytes. Explicit width types
+# (UInt8, Int16, ...) show up mostly at platform / protocol / interop
+# boundaries; narrow/widen fixtures live in bit_ops for those cases.
+
+
+# =============================================================================
+# ── Open design questions ───────────────────────────────────────────────────
+#
+# 1. UInt8 wrapper vs reinterpretation. Current draft uses the wrapper form
+#    (`data: raw: Byte`). Compiler is expected to eliminate the layer at
+#    runtime. Open: is there a syntactic form for "I am a Byte with these
+#    additional observables and invariants" that reads more honestly than
+#    the wrapper? Deferred; wrapper works and compiles.
+#
+# 2. ~~`Array(of: T, len: N)` grammar.~~ RESOLVED — no separate `Array` type.
+#    `List of T` is the one container atom; length constraints (fixed or
+#    bounded) live in `invariants:`.
+#
+#      | Contract on List of T                       | Representation |
+#      | `invariants: xs.count == N`                 | Fixed N-length, packed |
+#      | `invariants: xs.count <= N`                 | Bounded capacity N |
+#      | no count invariant                          | Dynamic growable |
+#
+# 3. ~~Bit-level primitives.~~ RESOLVED — pure functions in a `bit_ops`
+#    prelude module. `bit_ops.decode_uint`, `bit_ops.decode_int_2c`,
+#    `bit_ops.add_bytes`, `bit_ops.narrow_*`, `bit_ops.widen_*`, etc.
+#    Not language substrate; compiler may special-case for perf but the
+#    surface is just functions with contracts.
+#
+# 4. Endian choice. Currently `bit_ops.decode_uint_bytes(raw, endian: little)`.
+#    Passing `endian: little` as an arg to the decoder is one option. Other
+#    options: per-target default (platform prelude decides); per-type
+#    (UInt16LE vs UInt16BE); per-module (via a use-directive). Deferred.
+#
+# 5. Contract propagation for operations. If `plus(x: UInt8, y: UInt8) -> UInt8`
+#    is called with `x: Age` and `y: Age`, the result contract needs to
+#    intersect Age's invariant (`0..150`) with plus's ensures. Compiler must
+#    handle this narrowing.
+#
+#    Partially folded into "Invariants and runtime checks" above: operations
+#    that produce a typed result carry `ensures` matching the type's invariants;
+#    compiler proves statically or emits a runtime check at the return point,
+#    same machinery as construction-time checks. Full treatment overlaps with
+#    Phase 4d (contract propagation across the wire graph).
+#
+# 6. Inference-vs-declaration boundary. Bare `hp = 100` — does the compiler
+#    infer the smallest fitting type (UInt8), or a canonical wider type
+#    (Int32), or defer to how `hp` is used? See working-notes Phase 4c
+#    session for the current stance.
+#
+# 7. When contracts conflict at composition sites — sender's derived output
+#    contract doesn't satisfy receiver's declared input contract. Error
+#    message quality matters. What's the error look like?
+# =============================================================================

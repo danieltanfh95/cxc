@@ -1,44 +1,51 @@
-# Corvid Language Design — Handoff Bundle
+# cxc Language Design — Handoff Bundle
 
-**Status:** Pre-implementation. Design work through v0.11 — value-type auto-conformance to `As<Bytes>` / `From<Bytes>` (§3.4.6 new, §3.10.10 new canonical wire format spec) + double-colon header form removed (v0.10.2's grace period ended). Records, enums, and primitives now auto-serialize via compiler-synthesized methods from field layout — same shape as automatic structural equality on records (§3.2), a base-class property rather than a stdlib opt-in. Canonical wire format: network-order (big-endian) multi-byte primitives, fields concatenated in declaration order, enums as discriminator + associated data, strings/collections as UInt32-length-prefixed payload. Only `As<Bytes>` gets auto-conformance because bytes are the universal substrate (§3.10.4) with one canonical encoding; format-specific overlays (JSON, MsgPack, etc.) have per-record author choices and remain user-written via ordinary `extend class Foo:` (§3.3.2).
+**Name.** cxc — **channels-C**, positioned in the naming lineage of **objc** (objective-C). Just as objc added object-orientation on top of C, cxc adds channels / CSP / an atom substrate on top of the C-family systems lineage. Originally codenamed **Corvid** (2026-08); the codename persists in directory paths, historical design notes, and repo infrastructure. Both names refer to the same language.
+
+**Status.** v1.0 draft. Pre-implementation. The design pivot to the atom substrate (see `spec/spec-cxc-v1.0.md` §1.11) is the committed direction; §3–§9 currently describe the v0.11 intermediate shape (`class`, `record`, `enum`, `protocol` as primary declaration forms) and will be restructured as sugar over `def` atom shapes in a subsequent spec revision.
+
+**v0.11 landings (historical).** Value-type auto-conformance to `As<Bytes>` / `From<Bytes>` (§3.4.6, §3.10.10 canonical wire format spec) + double-colon header form removed (v0.10.2's grace period ended). Records, enums, and primitives auto-serialize via compiler-synthesized methods from field layout — same shape as automatic structural equality on records (§3.2), a base-class property rather than a stdlib opt-in. Canonical wire format: network-order (big-endian) multi-byte primitives, fields concatenated in declaration order, enums as discriminator + associated data, strings/collections as UInt32-length-prefixed payload. Only `As<Bytes>` gets auto-conformance because bytes are the universal substrate (§3.10.4) with one canonical encoding; format-specific overlays (JSON, MsgPack, etc.) have per-record author choices and remain user-written via ordinary `extend class Foo:` (§3.3.2).
 
 **v0.10.2 (prior — explicit conformance syntax).** Header parens sugar `class Foo(A, B):` canonical for protocol conformance; body-form `metadata: extends:` for ObjC inheritance; double-colon deprecated (removed in v0.11 as scheduled).
 
 **v0.10.1 (prior — Pattern subsystem + Convertible retirement).** Pattern subsystem: regex, glob, literal landed as follow-on to v0.10.0's String/Bytes work. Pattern is one protocol with three concrete conformers (§3.10.9), pattern literals via raw-content prefix aliases (`regex"..."` / `glob"..."` / `literal"..."`) per new §4.16.17, named captures only. Additive stdlib session — no design-mechanism changes. Also in v0.10.1: `Convertible<To>` retired (§3.11.1–§3.11.4) in favor of `As<T>` for lossless conversion + three ordinary methods (`wrapping_to`, `saturating_to`, `checked_to`) for numeric narrowing, plus `ConvertOutcome<T>` domain enum replacing the v0.8.5-inconsistent `Result<T, OverflowError>`. Prior v0.10.0 landing preserved.
 
-**Prior v0.10.0 (byte-substrate + text/serialization).** Three interlocking landings: (a) `Bytes`, `String`, `Char`, `StringPosition` types (§3.10.4–§3.10.7) — grapheme-native String with no integer indexing, mutable Bytes as regular class (no separate builder), StringPosition as opaque token; (b) `As<T>` / `From<T>` parameterized conversion protocols with trait-qualified dispatch (§3.10.3, §3.4.4) — one class may declare `function as(self) -> Bytes` and `function as(self) -> Json` differentiated by target type; (c) §3.3.2 rule 4 revised from compile-error to warning + deterministic resolution (current module > imported > original) aligning extension composition with Corvid's broader "warn, don't block" pattern; supporting enums `Encoding`, `ByteOrder`, `DecodeOutcome<T>` (§3.10.8). Dissolves Ink #25, websocket #W-30 (position part), #W-14, #W-53, #W-52, #W-61, `F8`, #W-37c, #W-37e. v0.9.1 (extension conflict-resolution seven-rule behavior spec) preserved as internal detail now revised through rule 1 (warn) and rule 5 (trait-qualified exemption). Prior work preserved: v0.9.0 unified class extension (`extend class Foo:`), v0.8.7 pre/post bindings in ensures, v0.8.6 concurrency model, v0.8.5 no-throws/no-try/no-prelude-Result, v0.8.4 nested types dissolved + leading-dot shorthand, v0.8.3 class-based iteration, v0.8.2 alias namespace discipline, v0.8.1 Session 3 fills, v0.8.0 library-first sugar, v0.7.x nil-messaging inversion + tier-1 sweep, v0.6.0 structural unification. Companion `PATTERNS.md` catalogs the accumulated dissolutions for onboarding. No compiler exists yet.
+**Prior v0.10.0 (byte-substrate + text/serialization).** Three interlocking landings: (a) `Bytes`, `String`, `Char`, `StringPosition` types (§3.10.4–§3.10.7) — grapheme-native String with no integer indexing, mutable Bytes as regular class (no separate builder), StringPosition as opaque token; (b) `As<T>` / `From<T>` parameterized conversion protocols with trait-qualified dispatch (§3.10.3, §3.4.4) — one class may declare `function as(self) -> Bytes` and `function as(self) -> Json` differentiated by target type; (c) §3.3.2 rule 4 revised from compile-error to warning + deterministic resolution (current module > imported > original) aligning extension composition with cxc's broader "warn, don't block" pattern; supporting enums `Encoding`, `ByteOrder`, `DecodeOutcome<T>` (§3.10.8). Dissolves Ink #25, websocket #W-30 (position part), #W-14, #W-53, #W-52, #W-61, `F8`, #W-37c, #W-37e. v0.9.1 (extension conflict-resolution seven-rule behavior spec) preserved as internal detail now revised through rule 1 (warn) and rule 5 (trait-qualified exemption). Prior work preserved: v0.9.0 unified class extension (`extend class Foo:`), v0.8.7 pre/post bindings in ensures, v0.8.6 concurrency model, v0.8.5 no-throws/no-try/no-prelude-Result, v0.8.4 nested types dissolved + leading-dot shorthand, v0.8.3 class-based iteration, v0.8.2 alias namespace discipline, v0.8.1 Session 3 fills, v0.8.0 library-first sugar, v0.7.x nil-messaging inversion + tier-1 sweep, v0.6.0 structural unification. Companion `PATTERNS.md` catalogs the accumulated dissolutions for onboarding. No compiler exists yet.
 
-**Working name:** Corvid.
-**Original name:** objc5 (used throughout the design conversation; renamed when positioning solidified).
+**Naming history.** `objc5` (initial design conversation, positioning as "next-generation Objective-C") → `Corvid` (v0.10.0, positioning clarified as "peer of Swift for Apple-ecosystem native development") → `cxc` (v1.0-draft, positioning as "channels-C" — the atom-substrate answer to objective-C, mirroring the objc naming convention).
 
 ---
 
-## What Corvid is, in one paragraph
+## What cxc is, in one paragraph
 
-A native-first programming language for the Apple ecosystem, targeting Mac, iOS, and Foundation-Swift servers. Shares the libobjc2 / objc4 runtime with Objective-C and Swift; interoperates directly with Foundation, AppKit, and UIKit. Positions as a peer of Swift with contracts and invariants as first-class features, universal queryability via extents, a unified metaprogramming mechanism (sections), and preservation of Objective-C's runtime openness.
+An **atom-substrate reactive language with Swift-shaped surface, CSP + core.async composition, contract-based verification, and dataflow compilation.** Class = bounded atom graph. Functions = the trivial atom shape. Every construct is a shape of atom. Native-first for the Apple ecosystem (Mac, iOS, Foundation-Swift servers) via shared libobjc2 / objc4 runtime with Objective-C and Swift; interoperates directly with Foundation, AppKit, UIKit. Positions as the atom-substrate successor to objc — same C-family lineage, same ecosystem, new coordination primitive.
 
 ## What this bundle contains
 
 ```
-corvid/
+corvid/                              (directory name preserved from the Corvid codename era)
 ├── README.md                        (this file)
-├── PATTERNS.md                      (onboarding — "coming from language X, Corvid does Y")
+├── PATTERNS.md                      (onboarding — "coming from language X, cxc does Y")
 ├── working-notes.md                 (decision log from the design conversation)
 ├── corvid-handoff.zip               (original handoff archive, kept for provenance)
 │
 ├── spec/
 │   ├── charter.md                   (§1.1-§1.9 as standalone — read first)
-│   └── spec-v0.11.md                (full specification, ~6000 lines)
+│   └── spec-cxc-v1.0.md             (full specification; v1.0 draft, atom substrate)
+│
+├── examples/
+│   ├── README.md                    (examples overview)
+│   └── game-toys.cxc                (toy game atoms — Paddle, Player, Enemy, sub-atom-as-state-machine pattern)
 │
 ├── positioning/
 │   ├── overview.md                  (positioning statement — read second)
 │   ├── game-of-life.md              (reference implementation scope)
 │   └── ecosystem.md                 (relationship to Swift, ObjC, frameworks)
 │
-├── validation/
+├── validation/                      (pre-atom-substrate translation exercises; .cor extension retained)
 │   ├── README.md                    (Ink translation exercise overview)
 │   ├── 00-friction-log.md           (38 friction points from translation)
-│   ├── 01-Markdown.parity.cor       (Corvid translation, parity pass)
+│   ├── 01-Markdown.parity.cor       (cxc translation, parity pass)
 │   ├── 01-Markdown.source.swift     (original Swift)
 │   ├── 02-Blockquote.parity.cor
 │   ├── 02-Blockquote.source.swift
@@ -59,7 +66,7 @@ Depending on how much time you have.
 1. This README (5 min).
 2. `positioning/overview.md` (10 min).
 
-You now know what Corvid is, who it's for, and what the design bet is.
+You now know what cxc is, who it's for, and what the design bet is.
 
 **1 hour:**
 3. `spec/charter.md` (30 min).
@@ -107,7 +114,7 @@ You now know the design premises and know what's been empirically tested.
 
 - **Specific stdlib scope**. What ships with the compiler; what's separately packaged. Post-v1 decision.
 - **Package registry protocol**. No registry exists; deferred.
-- **Naming**: "Corvid" is current working name. Could stick or change based on trademark research.
+- **Naming**: "cxc" is current working name. Could stick or change based on trademark research.
 - **Detailed runtime cost model** for state-machine synchronization at scale.
 - **String interpolation syntax** (spec gap #22 in validation).
 - **Protocol conformance syntax** (spec gap #13).
@@ -116,15 +123,15 @@ The friction log has the complete list of syntactic gaps discovered during the I
 
 ## What the empirical validation tested
 
-The Ink Markdown parser (JohnSundell/Ink) was translated to Corvid in two passes:
+The Ink Markdown parser (JohnSundell/Ink) was translated to cxc in two passes:
 
 **Parity pass** — line-by-line translation of Markdown.swift, Blockquote.swift, and (interface-inferred) Reader.swift. Surfaced 30 friction points across three files.
 
-**Idiomatic pass** — rewrite of the same three files using Corvid design idioms. Confirmed the design shortens code (~170 Corvid lines vs. ~243 Swift), holds up structurally, and enables concrete correctness wins (invariants, contracts, state-machine sync).
+**Idiomatic pass** — rewrite of the same three files using cxc design idioms. Confirmed the design shortens code (~170 cxc lines vs. ~243 Swift), holds up structurally, and enables concrete correctness wins (invariants, contracts, state-machine sync).
 
 **Extended coverage** — six additional types (MarkdownParser, Fragment protocol, Paragraph, HorizontalLine, Heading, List) added. Confirmed the two-type pattern (struct-value + class-builder) across every structural shape.
 
-**Total surface tested:** 9 files, ~245 Swift lines translated, ~450 Corvid lines produced.
+**Total surface tested:** 9 files, ~245 Swift lines translated, ~450 cxc lines produced.
 
 **What's confirmed:**
 - The section mechanism handles real code.
@@ -143,7 +150,7 @@ The Game of Life reference implementation (see `positioning/game-of-life.md`) is
 
 ## Immediate next steps for whoever picks this up
 
-**If you're evaluating Corvid** (should we build this at all):
+**If you're evaluating cxc** (should we build this at all):
 
 1. Read the positioning statement.
 2. Read the design charter.
@@ -153,7 +160,7 @@ The Game of Life reference implementation (see `positioning/game-of-life.md`) is
 **If you've decided to build it**:
 
 1. **Nail down the syntactic spec gaps** listed in the friction log. Roughly 200-300 lines of spec revision across §2, §3, §3.7, §7, §10.
-2. **Design Stage 0**: the Corvid→ObjC translator, written in Objective-C. Scope this precisely — which subset of Corvid does it accept? What does it emit? Concrete example translations.
+2. **Design Stage 0**: the cxc→ObjC translator, written in Objective-C. Scope this precisely — which subset of cxc does it accept? What does it emit? Concrete example translations.
 3. **Prototype the section mechanism**: even before a full compiler, prototype how sections desugar to primitives, generators run, and metadata artifacts get produced. This is the load-bearing mechanism; if it doesn't work, nothing else matters.
 4. **Build Stage 1 milestone plan**: LLVM IR direct + LSP + incremental compilation = 18-24 months of engineering. Break into 3-month milestones.
 5. **Start writing the Game of Life protocol module** as design pressure — you'll surface real requirements the current spec doesn't address.
@@ -167,8 +174,8 @@ The Game of Life reference implementation (see `positioning/game-of-life.md`) is
 
 ## Naming, briefly
 
-- **"Corvid"** — current working name. Bird family (crows, ravens). Signals intelligence and adaptability. No known programming-language name conflict but not verified against trademark databases.
-- **"objc5"** — original working name used throughout the design conversation. Misleading because Corvid is not the next version of Objective-C.
+- **"cxc"** — current working name. Bird family (crows, ravens). Signals intelligence and adaptability. No known programming-language name conflict but not verified against trademark databases.
+- **"objc5"** — original working name used throughout the design conversation. Misleading because cxc is not the next version of Objective-C.
 - **File extension**: `.cor`.
 
 Renaming to something else is easy at this stage; renaming after adoption is hard. Consider verifying the name before public announcement.
@@ -186,9 +193,9 @@ The transcript is not necessary for using the bundle; the bundle is self-contain
 
 ## Legal / attribution
 
-Corvid is a language design created by the user of this bundle. Anthropic's Claude was the AI collaborator throughout the design process. The Ink Markdown parser (used for validation) is © John Sundell, MIT license. The runtime target (libobjc2) is © the GNUstep project, MIT license.
+cxc is a language design created by the user of this bundle. Anthropic's Claude was the AI collaborator throughout the design process. The Ink Markdown parser (used for validation) is © John Sundell, MIT license. The runtime target (libobjc2) is © the GNUstep project, MIT license.
 
-No license is currently attached to Corvid itself; the user should choose one (typically MIT or Apache 2.0 for language projects).
+No license is currently attached to cxc itself; the user should choose one (typically MIT or Apache 2.0 for language projects).
 
 ## Contact
 

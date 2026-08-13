@@ -1,8 +1,1161 @@
-# Corvid Working Notes — Design Rationale and Open Items
+# cxc Working Notes — Design Rationale and Open Items
 
-**Purpose:** consolidate the reasoning behind the current spec (v0.4) and enumerate what's still open. This document captures *why* decisions were made, not just what they are. The spec is the specification; this is the thinking behind it.
+> **Name.** The language is now **cxc** (pronounced letter-by-letter — "channels-C", positioned in the naming lineage of **objc** / Objective-C). **Corvid** was the codename used throughout the design conversation and is retained as the internal/historical codename; the directory `corvid/` and the `corvid-handoff.zip` archive preserve that history. Older notes in this document that say "Corvid" refer to the language now called cxc — they are historical and left intact.
+>
+> **Naming history:** `objc5` (initial working name) → **Corvid** (codename during the design conversation, when the positioning as "Objective-C's spiritual successor" clarified) → **cxc** (current public name, after the channels-C framing was validated in outreach as parallel to objc / objective-C).
 
-**Companion document:** `spec/spec-v0.10.md` (was `spec-v0.9.md` through v0.9.x; `spec-v0.8.md` through v0.8.x; before that `spec-v0.7.md` through v0.7.x; before that `spec-v0.6.md`; before that `corvid-spec-v0.5.md`).
+**Purpose:** consolidate the reasoning behind the current spec and enumerate what's still open. This document captures *why* decisions were made, not just what they are. The spec is the specification; this is the thinking behind it.
+
+**Companion document:** `spec/spec-cxc-v1.0.md` (was `spec-v0.11.md`; earlier lineage — `spec-v0.10.md`, `spec-v0.9.md` through v0.9.x, `spec-v0.8.md` through v0.8.x, `spec-v0.7.md` through v0.7.x, `spec-v0.6.md`, `corvid-spec-v0.5.md`).
+
+## Session note — Phase 6 compiler implementation choices: Clojure + ObjC source emission + libobjc2/libdispatch stack (2026-08-13)
+
+**Trigger.** With the substrate pinned through Phase 4a–4e and the spec swept for consistency in Phase 5-lite, Phase 6 was to decide compiler implementation. Initial framing offered eight sub-threads. Two threads (runtime target, emission target) turned out to be the load-bearing ones, and the decisions there simplified the remaining threads substantially.
+
+**Load-bearing correction during conversation.** I initially framed "target ObjC" as one option among four (compile-to-ObjC-source, link-with-libobjc, own-runtime, semantic-heritage-only) and asserted that Mac-first → Linux-later was expensive because GNUstep was thin. **This was wrong.** Verified against 2026 state: GNUstep's libobjc2 v2.2.1 (March 2026) is superset-parity with Apple's libobjc, supports blocks/properties/ARC, and has expanded platform coverage (RISC-V, Windows ARM64, MinGW). This substantially cheapens Mac-first → Linux-later — the runtime is portable, only AppKit/UIKit is Apple-locked.
+
+**Second load-bearing correction.** User asked "do we actually need LLVM? Could we just emit to C or ObjC?" This was a much better instinct than my starting framing. Analysis: cxc's design is *isomorphic* to ObjC runtime semantics — nil-punning IS ObjC nil-messaging, message dispatch IS `objc_msgSend`, ARC IS ARC, closures ARE blocks, method tables ARE method tables. Not accidental alignment — the design was informed by ObjC. Emitting ObjC source lets clang do all lowering/optimization/platform work; we save 40-80k LOC of LLVM backend and 12-18 months of engineering. Source-to-source is a proven modern strategy (Nim, Vala, Haxe, Chicken, ClojureScript, TypeScript, Elm all do this). Decided: emit ObjC source, not LLVM IR.
+
+**Decisions pinned:**
+
+| # | Decision | Rationale |
+|---|---|---|
+| 6a | Bootstrap language: **Clojure** | User's declared philosophical alignment; REPL-driven iteration matches design-experiment mode; JVM distribution is fine for a compiler tool. |
+| 6b | Emission target: **ObjC source → clang** (NOT LLVM IR) | cxc-to-ObjC-runtime alignment is isomorphic; clang handles optimization/platform/interop free; ~40-80k LOC and 12-18 months saved. |
+| 6c | Runtime stack: **libobjc2 (dispatch/ARC) + libdispatch (concurrency) + libuv (I/O) + cxc runtime lib** | libobjc2 portable to Linux/Windows/embedded; libdispatch is what Swift uses cross-platform; libuv handles async I/O. Server-capable v1.0 out of the box. |
+| 6d | Compilation strategy: **per-atom to ObjC classes/structs; clang handles LTO** | Atom is the natural unit; manifest as summary; clang cross-file optimization at link time. |
+| 6e | Inference: **local within atom; context → smallest-fitting → Int32 canonical** | No cross-atom principal-type inference (§1.11); bare-literal resolution rules pinned. |
+| 6f | Contract-check: **local static discharge; runtime check otherwise; SMT deferred to v1.5+** | v1.0 must be buildable without external solvers. Two-construction-form (`Foo{raw:n}` abort + `Foo.try(...)` Result) per §3.6 pinned. |
+| 6g | Kind-based lowering: **regular=ObjC class, record=C typedef/struct, enum=tagged union, protocol=`@protocol`, primitive=erased typedef** | Follows Swift's class/struct split. Wrapper elision (`UInt8 = typedef uint8_t`) is zero-cost. |
+| 6h | Manifest tooling: **`.h` + `.cxc-manifest`, both auto-generated + checked in** | `.h` for ObjC/Swift interop; `.cxc-manifest` for cxc-specific facts (contracts, `use:` closure, transitions, invariants, receive-glyph subs). |
+
+**Concurrency runtime specifics.** Atom = plain object + shared scheduler (BEAM-style, not one-thread-per-atom). Scheduler built on top of libdispatch's work-stealing thread pool. Mailboxes are lock-free MPSC queues. Preemption at receive-glyph/message boundaries. Millions of atoms per process supported.
+
+**Distribution shape.** ObjC-compatible frameworks. Both ObjC and Swift devs consume the same artifact via Swift's ObjC-import machinery. No separate `.swiftmodule` story required. Executables and libraries both fall out of the same compiler.
+
+**BEAM deferred to v1.5+.** Motivation: BEAM's unique wins (millions-of-processes scale, hot code reload, distributed nodes, supervisor trees) matter for a specific niche (telecom, high-availability streaming). Most server work is fine on libdispatch. Adding BEAM later is a compilation-strategy change, not a language change — provided we keep §5 (Dispatch) host-abstract, which it largely is.
+
+**Optics guard on BEAM discussion.** If cxc marketing leads with "runs on BEAM", it invites "why not Elixir?" comparisons that anchor cxc as niche. Correct framing: cxc is an atom-substrate language with contracts, primarily targeting Apple platforms via libobjc2; runtime is implementation detail. Kotlin/Clojure pattern of language-first, host-as-deployment-target. Sequencing (Apple identity first, BEAM backend later) minimizes the optics risk.
+
+**Retracted framings:**
+
+- "GNUstep is thin, Linux port is expensive" — factually wrong per verified 2026 state.
+- "LLVM IR emission is the real compiler target; ObjC source is bootstrap-only" — over-engineering for cxc specifically; ObjC source is the natural long-term target given design alignment.
+- "Rust is the obvious bootstrap choice for compiler perf" — Clojure matches the design philosophy better; compiler perf is not v1.0-critical.
+
+**Estimated v1.0 scope:** ~60-110k LOC across compiler (Clojure, 30-50k) + runtime library (ObjC+C, 10-20k) + stdlib (cxc + prelude bindings, 20-40k). 12-18 months for a small team.
+
+**Estimated LOC savings from ObjC-source vs LLVM-IR strategy:** 40-80k LOC and 12-18 months of engineering.
+
+**Deferred beyond v1.0:**
+
+- SMT backend for static contract discharge (v1.5+)
+- BEAM backend as second host (v1.5+ or beyond)
+- C-only emission target for embedded/WASM without libobjc2 (v2.0+)
+- Custom LLVM passes for hot-path optimization (v2.0+ if needed)
+- `cxc show-graph <package>` composition visualizer (v1.5+)
+- Self-hosting cxc compiler in cxc (v1.5+ target)
+
+**Open items for Phase 7 (build):**
+
+- Grammar formalization for the Clojure parser (Instaparse likely)
+- Contract-inference pass architecture
+- ObjC AST representation in Clojure (data structure design)
+- Runtime library API design (scheduler, mailboxes, contract-check helpers)
+- Test strategy — how do we prove the compiler is correct?
+- Bootstrap sequence — order-of-attack for implementation
+
+---
+
+## Session note — Phase 5-lite consistency sweep: supersession banners on §3.5, §3.6, §4, §6, §8, plus §5.6.1 generic-bracket migration (2026-08-13)
+
+**Trigger.** After Phase 4a–4e pinned the substrate (atom-substrate concurrency, wire retirement, contracts-on-shapes, `use:` as effect signature), §3–§9 of the spec still described the v0.11 intermediate shape (class/record/enum/protocol as primary declaration forms; `state:`/`channels:`/`entrypoints:`/`wires:`/`handlers:` sections; `async` semantic effect; `async_scope`/`spawn`/`await`/`Task<T>` concurrency; `type X = Y requires ...` refinement syntax; `Callable<Args, Return>` generic-bracket). Full restructure into atom sub-forms is a big documentation lift; the immediate goal was to prevent a reader who lands on §3–§9 without reading §1.11 first from being actively misled.
+
+**Chosen approach.** Phase 5-lite = supersession banners at the top of affected sections + one migration note where the syntax has changed. Full restructure deferred to a v1.1 documentation pass. Rationale: banners are cheap, load-bearing (they redirect readers to the current authoritative section), and don't lock in a specific new prose structure prematurely. The retirement lists in §10 grammar were already comprehensive; the sweep adds forward pointers from the old sections to the current substrate.
+
+**Edits applied (spec-cxc-v1.0.md):**
+
+1. **§3.5 (Effects)** — added supersession banner pointing to §1.12 use:-as-effect. States: advisory/semantic effect framing (`allocates`, `blocks`, `async`, `with E`) is superseded; real effects enter through Extern → prelude capability atoms → transitive `use:` closure; no separate effect labels; effect polymorphism = capability substitution; effect handlers deferred. §3.5.4 (failure via nil-punning / domain enums, no `throws`) carries unchanged.
+
+2. **§3.6 (Refinement)** — added v1.0 note that the canonical form is `def X: Y where <predicate>` (§1.11 contracts-on-shapes), not `type X = Y requires ...`. Kept old form parseable through v0.15 grace period. Added a paired v1.0-canonical example alongside the v0.11 example. Added the invariant-check policy (runtime at construction with `Age{raw:n}` abort + `Age.try(...)` Result path; static discharge via SMT is optional).
+
+3. **§4 (Sections)** — added v1.0 note listing which body sections are retired under the atom substrate (`state:`, `channels:`, `entrypoints:`, `wires:`, `handlers:` as grouping container) and which are primary for atoms (`data:`, `use:`, `invariants:`, `contracts:`, `constructor:`, `metadata:` + per-transition `then:` / `do:`). The sections MECHANISM itself carries unchanged; only the vocabulary of meaningful body sections changed.
+
+4. **§5.6.1 (Callable type expression)** — migrated header + example from `Callable<Args, Return>` generic-bracket to `Callable of (Args, Return)`. Added grace-period note. Retired the `with async` example in the effects paragraph; replaced with note that effects on callables = transitive `use:` closure of the target atom.
+
+5. **§6 (Memory Model)** — added v1.0 note that class-kinds framing carries but the "no `state:`" table entries are moot because there is no `state:` for any kind. `regular` = stateful atom (handle + ARC); `record` = value-typed atom (only `data:`, no transitions); `enum` = value-typed atom with `cases:`; `protocol` = named contract. Handle-based reference model + ARC unchanged for regular-kind.
+
+6. **§8 (Concurrency)** — added supersession banner. States: v1.0 model is atom-per-actor with cooperative work-stealing, sender/receiver blocking as independent axes, `|>` = processing-sync ordering, `<|` = blocking consumer, `->`/`:>` = non-blocking. Retired: `async_scope`, `spawn task`, `await task`, `Task<T>`, `async function`. What carries: the general no-single-scheduling-regime policy, reader/writer classification concept (re-expressed as which transitions read vs write-transition an atom's `data:`), the "one class owns shared state" argument (now trivially true — atoms are the sole state carriers).
+
+**Retracted framings:**
+
+- Full §3–§9 rewrite in one lift — rejected as over-scoped for this pass; deferred.
+- Editing every `state:` / `channels:` / `Callable<>` reference in place — rejected; banners plus §10 retirement lists are sufficient for a lite pass. Full sweep in the v1.1 restructure.
+
+**Deferred to v1.1 documentation pass:**
+
+- Full atom-first rewrite of §3 (Type System) — lead with `def` atom shapes; present class/record/enum/protocol as sugar-keyword equivalents.
+- Full rewrite of §3.5 (Effects) as pointer only — remove §3.5.1–§3.5.3 body entirely; §3.5.4 (failure) stays or moves.
+- Full rewrite of §8 (Concurrency) — replace body with atom-substrate concurrency reference; keep §8.4.1 reader/writer classification re-expressed for transitions.
+- Sweep in-body examples that still use `state:` / `channels:` / `entrypoints:` / `Callable<T>` / `Future<T>` / `Signal<T>` / `async function` — several dozen sites.
+- Reconcile §4.10 built-in section classes catalog with retired-section list.
+
+**Open items after Phase 5-lite:**
+
+- Phase 6 (compiler implementation choices) — bootstrap language, runtime model, whole-program vs modular vs hybrid, manifest tooling, wrapper-elision aggressiveness, bare-`hp = 100` inference strategy, contract-check discharge policy.
+- Phase 7 (build the compiler) — depends on Phase 6.
+
+---
+
+## Session note — Phase 4e effects: `use:` closure IS the effect signature; no separate effect system; pure-by-default falls out structurally (2026-08-13)
+
+**Trigger.** Phase 4e initially framed as "should we ship effect labels?" — after 4c pinned contracts-are-types, the framing changed. User pointed out: real-world effects can only come from FFI; FFI is `Extern`-provisioned prelude shims wrapped as capability atoms; user code accesses via `use:`; therefore effect tracking is already done for free by the substrate.
+
+**Decisions pinned:**
+
+1. **No separate effect system.** cxc's effect story is structural: atoms have no OS access; the only path is via `Extern`-backed capability atoms in prelude; user code uses these via `use:`. An atom's transitive `use:` closure IS its effect signature.
+
+2. **An atom with no `use:` is structurally pure over its inputs.** No unsafe backdoor exists — no path to the OS without a `use:`-declared capability. Stronger purity guarantee than most languages' `@Pure` annotations.
+
+3. **Effect polymorphism = capability substitution.** `use: clock: Clock` accepts any atom conforming to `Clock`. Structural conformance handles it. No effect algebra machinery.
+
+4. **Effect inference = `use:` closure computation.** Compiler walks the transitive `use:` set. Zero annotation cost.
+
+5. **Adding new effects = shipping new prelude capability atoms.** Extending the effect vocabulary is stdlib work (new capability atoms backed by FFI), not language work.
+
+6. **Retired earlier proposal — `can: clock, can: random, can: io` labels.** Redundant; the `use:` names ARE the labels.
+
+**Retracted framings:**
+
+- "Ship effect labels for documentation value" — retired; `use:` names already carry the same info with no parallel system.
+- Effect polymorphism as a v1.0 concern — dissolves under structural conformance.
+
+**Spec edits applied:**
+
+- Spec §1.12 (Stdlib capability shape drafts) — new subsection "Effects — `use:` closure is the effect signature" after Stdlib catalog. States the reasoning chain (no OS access → Extern only in shims → capabilities via prelude → `use:` propagation → effect closure derived) and consequences (pure-by-default, polymorphism via substitution, inference via closure, no `pure:` / `can:` markers).
+
+**Deferred beyond v1.0:**
+
+- Termination guarantees (Idris-style totality) — a transition body could loop; not required for v1.0.
+- Effect handlers with resume (Koka-style algebraic effects with continuation capture) — env substitution + `Result` types cover most needs; full handler algebra is v2.0+ if real usage demands.
+- Phase-scoped `use:` (e.g., "clock only during `running` phase") — `use:` is currently atom-scoped; refinement reservable if needed.
+
+**Note on how this compares to other languages:**
+
+| Language | Effect tracking | Cost |
+|---|---|---|
+| C / Python / JS / Ruby | None | Runtime surprises, hidden dependencies |
+| Java | Checked exceptions (narrow) | Verbose, oft-disabled with unchecked |
+| Rust | `unsafe`, `async` markers | Local; no general effect vocabulary |
+| Haskell | IO monad, mtl / freer / polysemy | Monad transformer stack tax |
+| Koka / Eff / Frank | Full algebraic effects with handlers | Learning curve; research-adjacent |
+| Idris / Agda | Totality + type-level purity | Research-tier, not mainstream |
+| Racket | Parameterize (dynamic scope) | Dynamic dispatch cost |
+| Clojure | Convention + `!` naming | No enforcement |
+| **cxc** | **Capability atoms + `use:` propagation** | **Zero annotation tax; structural guarantee** |
+
+Corvid's approach reaches most of the practical value of full effect systems (know-what-a-function-touches, mock for tests, capability-based security, refactor safety) without the ergonomic tax that keeps Haskell/Koka out of mainstream use. Traded away: effect handlers with continuation capture (advanced control flow), effect-polymorphic library authoring beyond structural conformance. Both v2.0 possibilities if real usage surfaces demand.
+
+## Session note — Phase 4c contract inference: types are named contracts on shapes; interpretation via `value :<` observables on derived types; bit_ops prelude for pure bit primitives; aggressive within-atom inference, no cross-atom principal-type inference; invariants checked at construction (statically proved or runtime); worked derivation in explorations/integers-from-bits.cxc (2026-08-13)
+
+**Trigger.** Phase 4c set out to pin the type-inference story. Initial draft carried "declare at boundaries, infer inside" (ML-flavored). User pushed back:
+- `:>` already declares emissions; no need for a second `emits:` section
+- Aggressive inference should be the goal, not annotation walls
+- cxc uses contracts, not types (§1.3) — reframe accordingly
+
+Follow-up session (same day) went one level deeper: types aren't primitives with refinements bolted on. **Types ARE contracts on shapes, all the way down to Bit.** UInt8, Int8, Char are different interpretations of the same 8 bits, spelled as different `value :<` observables and different invariants. Same mechanism at every level (Bit → Byte → UInt8 → Age); no primitive/refined distinction.
+
+Worked out the derivation in a new exploration file (`explorations/integers-from-bits.cxc`) — Bit → Byte → UInt8/Int8/Char → Nat/Age → UInt16/UInt32 — with operations as contract choices (plus vs wrapping_plus vs saturating_plus), conversion patterns (same-width reinterpretation via wrap, narrow/widen via prelude), and invariant-check semantics (statically proved when derivable, runtime check at construction otherwise).
+
+**Decisions pinned:**
+
+1. **Types are named contracts on shapes.** No primitive/refined distinction. Every type is `def <name>: <underlying>` with optional `value :<` observable (interpretation) and optional `invariants:` (predicate). One mechanism at every level.
+
+2. **Value-typed atoms are the substrate for values.** An atom with only `data:` (no phases/transitions) is value-typed. `data:` is immutable per-instance. Every integer, char, enum, record is a value-typed atom.
+
+3. **Interpretation lives on the derived type, not the underlying shape.** Byte is 8 bits with a count invariant, no interpretation. UInt8/Int8/Char each wrap Byte and provide their own `value :<`. Adding new interpretations (`Fixed48Point`, `IPv4Octet`) defines new types; Byte stays uninterpreted.
+
+4. **`bit_ops` prelude module carries pure bit primitives.** `decode_uint`, `decode_int_2c`, `ascii_decode`, `add_bytes`, `narrow_*`, `widen_*` — pure functions with contracts. Not language substrate; compiler may special-case for perf but surface is functions.
+
+5. **One container type — `List of T` with count invariants.** No separate `Array`. `invariants: xs.count == N` → fixed-length packed. `invariants: xs.count <= N` → bounded capacity. No count invariant → dynamic growable. Compiler picks representation.
+
+6. **Operations are contract choices, not type choices.** `plus` / `wrapping_plus` / `saturating_plus` are different `requires`/`ensures` on the same shape. Author picks by name.
+
+7. **Conversion is explicit at the call site.** Same-width bit-reinterpretation via wrap (`Int8{raw: u8.raw}` — native, no function). Value-preserving narrow/widen via `bit_ops.narrow_*` / `bit_ops.widen_*` with contracts. No auto-conversion, no `.into()` magic, no implicit coercion.
+
+8. **Aggressive contract inference within an atom.** Author writes names; compiler derives contracts from usage. Annotate only what you want to CONSTRAIN beyond what usage implies.
+
+9. **No cross-atom principal-type inference.** Each atom's public surface is derived from its own body only. Callers check against the derived surface at composition sites. Reason: stability; local surfaces bound blast radius of body changes.
+
+10. **`where` is the sole author-written contract on interfaces.** Everywhere else: inference + manifest.
+
+11. **Invariants checked once at construction.** Observables are pure over immutable data; re-checking on read wastes cycles. Two paths: statically proved (UInt8 case — invariant derives from upstream) → no runtime cost; runtime check at construction (Age case — invariant narrower than upstream) → check emits at `Age{raw: nat}`. Contract violation → abort. No disable-in-release.
+
+12. **Two construction forms per type — direct and try.** Compiler auto-generates: `Age{raw: n}` asserts invariant; `Age.try(raw: n) -> Result of Age` returns Result. Same underlying check, different failure modes.
+
+13. **Compiler generates a manifest per atom.** Derived surface (I/O, emissions, phases, observables, inferred constraints) as inspectable artifact — IDE overlay or `cxc show-manifest <path>`. Reader's model of an atom's public shape without reading the body. Manifest diffs surface API drift when body edits ripple through inferred contracts.
+
+14. **No `emits:` section.** `:>` IS the declaration. `data: field = value` (no type) is enough — shape derived from RHS. No `Int(0..255)` refinement sugar — `def <name>: <underlying> where <predicate>` is uniform at every level.
+
+**Retracted from earlier same-session drafts:**
+
+- "Declare at boundaries, infer inside" — retracted; replaced with aggressive inference + explicit `where` for constraints.
+- `Int(0..255)` / `Int[0..255]` refinement sugar — retracted; the general `def name: underlying where predicate` mechanism handles all levels.
+- `emits:` section proposal — retracted; `:>` already IS the declaration.
+- `Array(of: T, len: N)` distinct container type — retracted; `List of T` with count invariant handles fixed/bounded/dynamic uniformly.
+- Interpretation observables (`as_uint`, `as_int_2c`, `as_char`) on Byte — retracted; interpretations move to derived types.
+
+**Spec / example edits applied:**
+
+- Spec §1.11 — new subsection "Contracts on shapes — types as named contracts" summarizing the derivation with UInt8/Int8 example, `bit_ops` prelude, invariant-check paths, two construction forms, manifest tool, and deferred-to-Phase-6 items.
+- Spec §1.3 — cross-reference forward to §1.11 subsection + note distinguishing full `def` atoms with `data:` + `invariants:` (legitimate) from terse `def Nat: Int where value >= 0` type-alias-with-refinement (retracted design; still banned).
+- explorations/integers-from-bits.cxc — new exploration file with the full bits-up derivation, worked through in this session.
+
+**Deferred to Phase 6 (compiler implementation):**
+
+- How much whole-program analysis (per-atom local vs LTO across statically-wired subgraphs vs JIT specialization for hot paths). Semantic model above holds regardless.
+- Wrapper-elision aggressiveness. Compiler should eliminate the layer for value-typed atoms; how aggressively is impl choice.
+- Manifest tooling ship shape (`cxc show-manifest` CLI, IDE overlay format, diff-mode for CI, etc.). Required for v1.0 launch — reasoning about performance from source alone is impossible without it.
+- Bare `hp = 100` inference — smallest-fitting type vs canonical-wider type vs defer-to-usage. Semantics allow any; performance profile differs.
+- Contract-violation error message quality at composition sites.
+- Endian choice (per-target default vs per-type UInt16LE/BE vs per-arg `endian:`). Exploration file uses per-arg for now.
+
+**Phase 4d absorbed into 4c (2026-08-13).** Contract propagation across the wire graph is not a separate design layer — it IS the composition check established here. Because types ARE contracts on shapes, and every composition site (wire, method call, construction, sub-atom emission) checks sender's derived output against receiver's derived input, contract propagation falls out of the same machinery already spec'd:
+
+- **Wire sites** (`<phase> <: source.event{args} -> ...`) — sender's derived output contract must satisfy receiver's declared/derived input contract. Statically proved when possible; runtime check emitted at the wire otherwise.
+- **Operation calls** — `plus(x, y)`: x/y's contracts feed `plus`'s `requires`; `plus`'s `ensures` determines the result's contract.
+- **Construction** — `UInt8{raw: byte}`: byte's contracts must satisfy UInt8's `data:` spec + `invariants:`.
+- **Sub-atom emission (fan-in on containers)** — same rule at the fan-in stream's endpoints.
+
+**Bounded to one hop.** Receiver sees the sender's DECLARED/INFERRED surface, not chains from further upstream. In `A → B → C`, A's `ensures` feeds B's `requires`; B's OUTPUT contract is B's declared/inferred `ensures`, not derived from A's input. Otherwise contracts become uncomputable across arbitrary graphs and refactoring B silently breaks C. Same reason cross-atom principal-type inference is forbidden (see decision #9 above).
+
+**Same runtime/static discharge as construction-time checks.** Compiler proves at composition site when it can; emits runtime check at the wire when it can't. Contract violation → abort (or Result via `try_*` form at the sender's construction point). No new machinery.
+
+**Nothing new to spec.** The §1.11 "Contracts on shapes" subsection already covers this pattern for construction; wire sites are the same pattern applied to composition. No separate "propagation" section needed. Diagnostic quality at wire failure sites remains as a Phase 6 deferred item (compiler tooling).
+
+## Session note — Phase 4a fan-in extension: dotting into nested-atom emissions works to any depth; container atoms expose fan-in outputs synthesized from element type's emissions; no encapsulation gate (2026-08-13, same-day follow-up to Phase 4a grammar completion below)
+
+**Trigger.** Phase 4a left one deferred item — "dynamic per-item subscriptions" — with a parent-sink workaround (child atom takes an explicit sink parameter; child sends to sink on the relevant event; parent receives normally). Working through the pattern, the user surfaced that this is authority-based encapsulation dressed up as design — retracted in favor of the more general dotting rule below.
+
+**Decisions pinned:**
+
+1. **Container atoms have fan-in outputs.** `List of T`, `Map of (K, V)`, `Set of T`, `Tree`, etc. expose two kinds of emissions on their output surface:
+   - **Own collection-lifecycle events**: `element_added(e: T)`, `element_removed(e: T)`, `size_changed(new_size: Int)`.
+   - **Fan-in of element emissions**: for each `E{args}` the element type emits, container synthesizes `E{e: T, ...args}` — element identity plus original event payload.
+   
+   Not language magic. Part of what "container atom" means as a type shape. Compiler synthesizes fan-in signatures from element type's emission signature via the parametric-atom machinery `List of T` already needs for its element-typed API.
+
+2. **Dotting into nested atom emissions works to any depth. No encapsulation gate.** Receive-glyph source expressions can chain through nested atom fields: `spawner.active_enemies.died{e: Enemy}`, `game.spawner.active_enemies.died{e: Enemy}`, etc. The compiler checks the chain resolves to a valid emission source at the leaf. Nested atom fields are NOT implicitly private; no forced middleman re-exposure at each layer.
+
+    Retraction: an earlier draft of this rule had a "one-hop only, must re-expose via own emission at each layer" restriction. That was OOP-encapsulation reflex — private fields, getter/setter walls — retracted for violating §1.2 (author intent, not authority). cxc inherits the Clojure "if you can see it, you can use it" stance, same as `get-in` into a nested map.
+
+3. **Refactor trade-off is the author's call, not the language's.** Direct dotting into deep chains is fragile: if an intermediate type refactors (e.g., `List of Enemy` → `Map of (EnemyId, Enemy)`), subscribers break. Re-exposing at each layer via own emissions is stable across such refactors but more code. Language stays out of the trade-off; author picks per situation.
+
+4. **Ambiguity resolution — own event wins over fan-in.** If a container has its own event with the same name as an element event, container's own event wins. Explicit `.any.<event>` form disambiguates when needed:
+   ```
+   active_enemies.died         # own if declared, fan-in otherwise
+   active_enemies.any.died     # always fan-in, never ambiguous
+   ```
+   Compiler warns on the collision to force explicit disambiguation.
+
+5. **No `private` marker at v1.0.** Two workarounds available for authors who want opacity: wrap the collection in an opaque atom type that omits the underlying outputs, or discipline (don't dot into things you don't want to depend on). Clojure ships fine without `private`; §1.2 says author intent decides. If real usage surfaces demand for enforced hiding, add opt-in later.
+
+6. **Deferred item "dynamic per-item subscriptions" resolved.** Parent-sink workaround retired. Enemy no longer needs a `death_sink` parameter; parent subscribes to `active_enemies.died` directly. Coupling stays pull-based; child stays oblivious.
+
+**Spec / PATTERNS / examples edits applied:**
+
+- Spec §1.11 — new "Dotting into nested atom emissions" subsection: general rule (chain to any depth), containers-as-atoms with fan-in outputs (own emissions + synthesized element fan-in), ambiguity resolution (own wins; `.any.<event>` disambiguates), refactor trade-off called out in prose. Concrete before/after example of dropping the parent-sink workaround.
+- examples/game-toys.cxc — Enemy loses `death_sink` parameter; emits `:> died` and cascades to `end`. EnemySpawner subscribes to `active_enemies.died` fan-in directly; spawn transition uses `then:` to add the new enemy to the collection. Header comment on EnemySpawner rewritten to describe the fan-in pattern.
+
+**Retired framings:**
+
+- Parent-sink workaround (`death_sink: DeathSink` parameter on child atoms).
+- "Encapsulation gate" one-hop dotting rule (from earlier same-session draft — never landed in spec).
+- Middleman re-exposure requirement.
+
+**Open items — stdlib collection semantics (forward work):**
+
+- Concrete emission shapes for `List of T`, `Map of (K, V)`, `Set of T`, `Tree` — own-lifecycle events + fan-in surface + probably ordering guarantees for the fan-in stream (e.g., when two elements emit "simultaneously," what does the fan-in stream see?). We had earlier discussion about collection semantics that touches this — revisit when doing stdlib design work.
+- `.any` explicit fan-in form — grammar reserved; wording in §1.11 says "if you want to disambiguate." Concrete grammar productions for `.any.<event>`, `.first.<event>`, etc. deferred.
+- Cascade cleanup ordering when a child dies mid-emission through the fan-in stream — spec says child's `dead -> end` cascades and List's `element_removed` fires; exact interleaving with the `died` fan-in event needs a pinning pass.
+
+## Session note — Phase 4a grammar completion: free-standing wires retired; `~>` retired; `|>` roles collapse to (stream composition inside receive-glyph source expr) + (sync send in `do:`); nil-punning on sub-atom slots (2026-08-13)
+
+**Trigger.** Phase 4a set out to pin three grammar gaps (sub-atom slot declarations, standing-wire syntax details, modifier reach). Working through examples, the user surfaced two structural collapses that removed most of the problem.
+
+**Decisions pinned:**
+
+1. **Sub-atom slots use nil-punning; no `?` on the type.** `action: ActionMachine = nil` — atom-typed fields can hold `nil` without an explicit optional wrapper (§3.6.1). Population via `then: action => ActionMachine{...}`; auto-nil on sub-atom's `end` restores `nil`; `is nil` guard reads it back. No slot-specific declaration form beyond ordinary `data:` fields.
+
+2. **Free-standing wires at atom-body top-level are retired.** No top-level `expr |> target`. Every subscription is a receive-glyph transition (`<:` / `<|`) whose source expression may address a capability, sub-atom emission, or extern stream, and optionally compose transformers.
+
+3. **Stream composition lives inside receive-glyph source expressions.** `|>` in the source position composes anonymous transformer atoms:
+   ```
+   running <: mouse.moves |> Debounce{duration: 200ms} {pos: Position} -> running
+       do: cursor :> update(pos: pos)
+   ```
+   Each `|> Transformer{args}` is an anonymous sub-atom bound to the enclosing phase's lifecycle — instantiated on entry, cascaded to `end` on exit, fresh state on re-entry. Compiler generates the equivalent slot + forwarding behind the scenes.
+
+4. **Args block position — end of source expression, required.** `{arg: Type, ...}` attaches after all transformers, describes the message shape at the receive point. Passthrough transformers (Debounce, Throttle, Filter) preserve the source's shape; reshaping ones (Map, Reduce) determine their own output shape. No elision from source signature — explicit at the boundary.
+
+5. **Two spellings for stream transformation, one runtime mechanism:**
+   - **Anonymous inline** (`|>` in source expr) — throwaway transformers, short chains.
+   - **Named sub-atom slot** — long-lived, inspectable, or emits multiple things beyond the transformed stream.
+
+6. **`~>` glyph retired.** Time-deferred wire composition is retired. Delayed / time-shaped behavior is either a time-guarded transition (`<phase> when: clock.after(deadline) -> <target>`) or a Delay/Throttle transformer inside a receive-glyph source expression. No dedicated wire-with-delay glyph.
+
+7. **Handler-body one-liner forms retired.** `-> handler |> wire_expr` and `-> handler ~> wire_expr` retired. Handler bodies are multi-line blocks only.
+
+8. **Glyph inventory shrinks from seven to six.** Retained: `->`, `|>`, `:<`, `:>`, `<:`, `<|`. Retired: `~>`. `|>` positions are cleanly separable: source-expression composition inside `<:` / `<|` headers, and sync send inside `do:` blocks.
+
+**Rationale — why free wires died.**
+
+The pattern `source |> handler` is equivalent to a receive-glyph transition on the same source: `<phase> <: source{args} -> <phase> do: handler(args)`. Two spellings for the same graph edge; keeping both is redundant. The receive-glyph form is more explicit (phase context, args binding) and composes with the substrate's phase-scoping (subscription lifecycle is phase lifecycle). Removing free wires collapses one concept, one grammar production, and one class of ambiguity ("when does a top-level wire fire during construction?"). The `|>` glyph doesn't disappear — it moves into the source expression where it has the same "compose transformers" role, just spelled inline.
+
+**Consequences for existing patterns:**
+
+- **Multi-phase atoms with per-phase subscriptions** — declare receive-glyph transitions in each phase's source-and-trigger form. No shared "atom-lifetime" wire to duplicate.
+- **Transformer chains (debounce, throttle, batch, filter, map)** — inline `|> Transformer{args}` in receive-glyph source expressions, or slot out as named sub-atoms when inspection / long-lived state matters.
+- **Time-deferred dispatch** — `when: clock.after(deadline)` guard on a transition, or Delay transformer in source expression.
+- **Dynamic per-item subscriptions (e.g., "subscribe to each newly-spawned enemy's `died` event")** — **resolved same session (2026-08-13) by the fan-in extension below.** Container atoms (`List of T`, `Map of (K, V)`, `Set of T`, `Tree`, ...) expose fan-in outputs synthesized from element type's emissions: `active_enemies.died{e: Enemy}` reads as "any enemy in the list emitted `died`; `e` binds to which one." Fully replaces the parent-sink workaround; child atom stays oblivious to its parent.
+
+**Spec / PATTERNS / examples edits applied:**
+
+- Spec §1.11 wiring-glyph table trimmed to six rows; `|>` role rewritten (source-expression composition + sync send); `~>` retired with rationale + migration; new "Stream composition in receive-glyph source expressions" subsection with grammar sketch, semantics, and two-spellings table.
+- Spec §1.11 standing-subscription references throughout — retired or rewritten to receive-glyph form. Sub-atom "standing wire" coordination pattern rewritten as "continuous stream from sub to parent" with receive-glyph example.
+- Spec §1.12 debounce example rewritten as a proper 2-phase state machine (idle/waiting) with time-guarded transition — no more `clock.after(duration) |> handler` one-shot wire inside `do:`.
+- Spec §1.14 WallClock example rewritten: outbound `after` handler uses receive-glyph on self; inbound `timer_callbacks` consumed via receive-glyph transition — no more `timer_callbacks |> self.timer_fired` top-level wire.
+- Spec §2.6 reserved-glyphs table trimmed; disambiguation rewritten (source-expression position vs `do:` position); retired-forms list adds top-level `|>`, `~>`, one-liner handler bodies.
+- Spec §10 grammar: retired `standing_wire_decl` and `wire_expr`; extended `transition_trigger` with `receive_source` production supporting transformer chains; retired one-liner handler-body forms; retired `~>` productions.
+- PATTERNS.md: "I need blocking vs non-blocking message sends" section unchanged from 4b. "I need mixed `->` and `|>`" section replaced with "I need to compose transformers on a stream" showing inline-transformer syntax. "I need a `wires:` section" section rewritten with receive-glyph pattern; top-level wires marked retired. `~>` occurrences retired. Handler one-liner form migrated to multi-line body.
+- examples/game-toys.cxc header rewritten with the "no free wires" convention. Paddle, Player, EnemySpawner, Game all migrated: `input.key_events |> self` → per-event receive-glyph transitions with `input.pressed{key: Key} when: key == ...`; `clock.every(rate) |> ...` → `self <: clock.every(rate){_: Instant}` receive-glyph transition; `e.died |> ...` (dynamic per-enemy wire) → death-sink pattern with Enemy taking a `death_sink` parameter.
+
+**Retired framings (do not carry forward):**
+
+- Free-standing wires at atom-body top-level (`source |> target` as a bare declaration).
+- `~>` time-deferred wire glyph.
+- `-> handler |> wire_expr` and `-> handler ~> wire_expr` one-liner handler bodies.
+- "Seven wiring glyphs" — now six.
+- The framing that wires are a distinct composition primitive separate from subscription — they're not; subscription is a receive-glyph transition and stream transformation is inline `|>` inside the source expression.
+
+**Open questions deferred:**
+
+- **~~Dynamic-collection subscriptions~~** — resolved. See fan-in extension note below.
+- **Args-block elision from source signature** — currently required always. Whether inference from source's declared emission shape should elide the args block is deferred; explicit-required is the safe default.
+- **Transformer library shape** — Debounce, Throttle, Filter, Map, Reduce, Batch, DistinctUntilChanged shipped as prelude atoms with a standard `input` / `output` shape. Detailed prelude definitions deferred.
+
+## Session note — Phase 4b runtime concurrency model pinned: actor-per-atom, cooperative work-stealing, sender/receiver blocking as independent axes, `|>` as processing-sync (no reply value) (2026-08-12)
+
+**Trigger.** Phase 4 (substrate gap closure) started with the runtime concurrency model. The prior spec text framed send/receive as symmetric mirrors that "must match" (`:>` ↔ `<:`, `|>` ↔ `<|`), and described `|>` as "sender blocks until receiver accepts" — RPC-flavored language that quietly imported a reply obligation that was never designed. User pressure ("is there actually a reply?") surfaced that the reply framing was smuggled priors, not derived.
+
+**Decisions pinned:**
+
+1. **Transitions atomic per atom, concurrent across atoms.** Classic actor model. Each atom serializes its own transitions on its own mailbox; different atoms run concurrently. No shared mutable state — state is replaced per transition, not mutated — so no cross-atom synchronization primitives needed.
+
+2. **Memory model: value-based, no torn reads.** Cross-atom reads (observables, standing wires) see a coherent snapshot because there is nothing being mutated in place. Snapshot at wire-propagation time is the value; subsequent transitions produce new values.
+
+3. **Scheduling: cooperative work-stealing pool.** Worker picks up any atom with pending work, runs one transition to completion (or to a `|>` suspension point), releases. No preemption inside a transition. Worker count = runtime knob (default hardware concurrency).
+
+4. **Sender and receiver blocking are independent axes.** Old "must match" constraint retired. Any sender glyph (`:>` / `|>`) pairs with any receiver glyph (`<:` / `<|`). Four legal combinations: async-async (actor), async-sync (producer-consumer), sync-sync (rendezvous), sync-async (sender waits, receiver interleaves). The wire is always mailbox-buffered; each endpoint declares its own local behavior.
+
+5. **`|>` is processing sync — pure ordering guarantee, no reply value.** Sender's transition suspends until receiver's transition on this message has fired. Sender knows the state advance happened. If sender needs data back, wire an explicit reply channel using the two-message pattern (`:>` request, `<:` response). No implicit reply channel exists.
+
+    **Why no reply:** receive sites are phase-scoped. A reply-message R has a `<:` on the sender's side that exists only in whichever phase declares it. If `|>` baked in a reply obligation, the compiler would have to prove sender's reply channel is active at reply-arrival time — phase-dependent, hard to check statically without threading phase information through the wire graph. Keeping `|>` as ordering-only sidesteps the whole class of check. This is a case where a substrate constraint (phase-scoped receivers) killed a bad design option before it could be considered.
+
+6. **`|>` suspends the sending atom, not just the sending transition.** Correction to earlier spec text that said "blocks the sending transition; other transitions on the atom may still fire." Under actor-per-atom, an atom is single-threaded — one transition at a time. When a `|>` suspends, the worker moves to other atoms; the sending atom's mailbox accumulates; no new transitions on that atom fire until the parked one resumes and completes.
+
+7. **Circular sync sends deadlock.** Same failure mode as CSP everywhere. No language-level cycle detection; user discipline. Recommendation: default to `:>`; reach for `|>` only when ordering-with-processing is genuinely required.
+
+**Spec / PATTERNS edits applied:**
+
+- Spec §1.11 "Send/receive glyph mirrors" section rewritten as "Send/receive glyph semantics — two independent axes"; four-combination table added; "Processing sync — no reply value" subsection added.
+- Spec §1.11 new "Concurrency model" subsection added before "Sync send corner cases."
+- Spec §1.11 "Sync send corner cases" rewritten: atom-blocks-not-transition-blocks correction; no-reply-value clarification.
+- Spec §1.11 wiring-glyph table entries for `<:` / `<|` updated to remove "matches `:>` sends" / "matches `|>` sends" phrasing.
+- Spec §2.6 reserved-glyphs table updated similarly.
+- Spec §10 grammar comment on `receive_glyph` updated: legal with any sender glyph.
+- PATTERNS.md "blocking vs non-blocking" section rewritten with the four-combination matrix and no-reply rationale.
+
+**Deferred to later phases:**
+
+- **4a (grammar completion)**: sub-atom slot declarations, standing wire syntax, modifier reach across all sites.
+- **4c (type inference)**: declare-at-boundaries / infer-inside rule.
+- **4d (contract propagation)**: static one-hop propagation along declared wire graph.
+- **4e (effect polymorphism)**: skip full system at v1.0; ship informational effect labels only.
+
+**Superseded framing (do not carry forward):**
+
+- "Sender and receiver glyphs must match" — retired.
+- "`|>` blocks until receiver accepts" (RPC framing) — retired in favor of "sender's transition suspends until processing sync."
+- "`|>` blocks the sending transition, not the whole sending atom" — retired; atom is single-threaded.
+- Any implicit reply channel or return value on `|>` — never designed; retired if any doc suggested it.
+
+## Session note — Compiler-blocker semantic decisions pinned: cascade destruction, auto-nil timing, receive modifiers across phases, `before_destroy` retirement, `enter`/`setup` retirement, glyph-count corrections; grammar productions added for receive glyphs, wildcard on-enter/on-exit, universal `init` and `end` phases (2026-08-12, no version bump; follows same-day sub-atom-as-state-machine note below)
+
+**Trigger.** Doc audit after the sub-atom-as-state-machine session revealed that several load-bearing semantic questions were left underspecified (blockers for a compiler implementer) and multiple examples in §1.12 still used pre-pivot syntax (self-mutation via assignment, `-> before_destroy:` lifecycle handlers, tautology invariants). This addendum pins the semantic decisions and applies the mechanical cleanup.
+
+**Semantic decisions pinned (each was previously ambiguous or unspecified):**
+
+1. **Cascade destruction is synchronous and post-order.** When a parent atom transitions to `end`: parent's `do:` block runs first (final emissions while sub-atoms are still alive and reachable); each sub-atom in a slot recursively transitions to `end` in declaration order; all sub-atoms are destroyed; parent is destroyed. Rationale: parent gets a last chance to notify siblings before losing access to its sub-atoms; declaration order gives deterministic destruction sequence.
+
+2. **Sub-atom slot auto-nil is atomic at end of the sub-atom's `end`-transition.** Specifically, after the sub-atom's `do:` block completes and before any other transition on the parent evaluates its `when:` guard. Parent transition guards evaluated after the sub-atom's `end` fires WILL see the slot as nil. Rationale: transitions are atomic units; observers never see intermediate "sub-atom destroyed but slot not yet nil" state. Enables the canonical `action is nil` guard pattern to be correct without additional coordination.
+
+3. **Receive-glyph modifiers are per-receive-site with independent buffers across phases.** Two `<:` transitions for the same message in different source phases have independent buffers with independent capacities and disciplines. Messages arriving while in phase X land in X's buffer; on transition out of X, X's buffered messages are dropped. Rationale: simplest consistent reading; users who want a shared queue declare the receive at compound level (self-transitions). Within a single phase, multiple receive sites for the same message must use the same modifier (compile error otherwise).
+
+4. **`-> before_destroy:` lifecycle handler retired in favor of universal `end` phase.** Any `<phase> -> end` transition's `do:` block runs before the atom is destroyed and serves the same RAII purpose. Multiple states can have their own `-> end` transitions with per-state cleanup logic — which the single-handler pattern couldn't express cleanly. Migration: replace `def opened: ... -> before_destroy: cleanup()` with `opened -> end when: destruction_requested() do: cleanup()`.
+
+5. **`-> setup:` / `-> enter:` lifecycle handlers retired in favor of `init` phase + top-level standing wires.** Field initialization happens in wildcard on-enter (`-> <first phase>`) transition's `then:` block; standing wires are bare `|>` expressions at atom-body top-level (set up automatically at `init`, torn down at `end`). No separate lifecycle handler section.
+
+**Grammar productions added to spec §10:**
+
+- **`transition_decl`** extended with optional `transition_trigger` (receive-glyph header): `phase_pattern transition_trigger? '->' phase_target`. `transition_trigger := receive_glyph message_name message_args?`, `receive_glyph := '<:' | '<:' channel_modifier | '<|' | '<|' channel_modifier`, `channel_modifier := 'fifo' '(' 'cap' ':' int_literal ')' | 'priority' | 'sliding' '(' 'cap' ':' int_literal ')' | 'unbounded'`.
+- **`wildcard_enter_decl := '->' phase_target block_transition_body`** — matches every entry to phase.
+- **`wildcard_exit_decl := phase_pattern '->' block_transition_body`** — matches every exit from phase.
+- **`phase_target`** extended: adds `'end'` as a legal target (universal terminal).
+- **Universal implicit phases `init` and `end`** — reserved phase names; `init` appears only as implicit source, `end` only as target. `then:` sub-block in `-> end` is a compile error.
+- **Ordering when multiple transitions match one event**: wildcard on-exit for source phase → wildcard on-enter for target phase → specific transition (specific wins on `then:` field conflicts).
+
+**Retired glyph usages / conventions:**
+
+- `when: msg_name(args)` as message-triggered transition trigger — retired in favor of receive-glyph header. `when:` remains for state/time guards and additional narrowing composed with receive glyph.
+- Direct field assignment (`x = y`, `x += y`) anywhere in the language — was already retired at the immutable-FSM sharpening; the debounce example in §1.12 still had it, now rewritten.
+- Compound-level exhaustiveness invariants like `self is unopened or self is opened or self is closed` — tautologies given phase inference; File example rewrote without them.
+
+**"Five glyphs" → "seven" everywhere.** Three places said "five glyphs" (spec §1.11 line 1032, spec §2.6 lines 2101-2107, PATTERNS.md line 729); all updated with `<:` and `<|` rows. `->` role updated in the reserved-glyphs table to include "transition arrow" alongside "return-type marker" and "handler prefix." `|>` role updated to include both "wire composition" and "sync send" with grammar-position disambiguation notes.
+
+**Examples rewritten to current syntax:**
+
+- **spec §1.12 debounce** — was using `x = event`, `x += 1`, `pending = nil` assignments. Rewrote with `<: input{event}` / `<: fire_pending{token}` receive-glyph transitions, all field updates in `then:`, all side effects in `do:`.
+- **spec §1.12 File** — was using imperative `-> read(...) -> Stream:` handlers with no receive glyphs, plus `-> before_destroy:` cleanup. Rewrote with `unopened <: open`, `opened <| read{...}`, `opened <| write{...}` (sync `<|` for read/write to return values via emit), and `opened -> end when: destruction_requested()` for RAII cleanup. Retired the tautology invariant.
+- **game-toys.cor Main** — was using `-> enter:` lifecycle handler. Rewrote as wildcard on-enter `-> running` transition.
+- **game-toys.cor** — three "Kind 2" comments removed; replaced with plain-English "continuous accumulator" / "self-transition updates" wording.
+- **PATTERNS.md invariants example** — was using per-phase field declarations (`def alive(hp: Int, mana: Int)`) and Kind 1a/1b labels. Rewrote with compound-scope fields and phases inferred from arrows.
+
+**SUPERSEDED banners added.** Two prior session notes that introduced the Kind 1a/1b/2 taxonomy (immutable-FSM sharpening; unified-`then:`) got a `⚠️ PARTIALLY SUPERSEDED 2026-08-12` banner at the start, distinguishing which content is still current (the `then:` mechanics, transition block form) from what was retired (the Kind taxonomy, per-phase field declarations, `def phase:` with body).
+
+**Open items still deferred (see prior session note for full list):**
+
+- Advanced channel modifier semantics (`<:priority`, `<:sliding`) — reserved but may require stdlib mailbox atoms rather than compiler-primitive buffering.
+- Cross-atom deadlock detection for `|>` sync sends — user's problem for now (CSP-standard behavior); static analysis deferred.
+- Effect polymorphism through the atom graph — §3.5.3 exists but doesn't touch the substrate.
+- Runtime scheduling semantics for concurrent transitions across atoms — nothing spec'd on memory model, ordering guarantees, or interleaving.
+- Type inference through atom bodies — planned v0.12+ per §1.11 line 985; not spec'd.
+
+**What this addendum unblocks.** A compiler implementer targeting the v1.0 substrate can now parse receive-glyph transitions (grammar has the production), reconcile lifecycle names to a single mechanism (init/end), implement cascade destruction with deterministic ordering, implement sub-atom slot semantics with correct auto-nil timing, and implement per-phase receive modifiers with the specified independent-buffer semantics. The design questions that were blocking compiler work are pinned; the remaining open items are policy questions about advanced features (priority queues, static deadlock detection, effect polymorphism) that a v1.0 compiler can defer or leave as stdlib work.
+
+**What this addendum does NOT unblock.** The spec is still v0.11 — an approximation of the substrate, not the substrate. A v0.11 compiler can be built against most of the spec; a full v1.0 substrate compiler still needs (a) type inference formalization, (b) contract propagation formalization, (c) runtime scheduling and memory model, (d) grammar completion for sub-atom slots and modifier syntax beyond receive glyphs. Decision point: build v0.11 first (closer to shippable; Swift-competitor positioning) or jump straight to v1.0 substrate (higher risk, research-language positioning). Answer needed before further compiler-oriented spec work.
+
+---
+
+## Session note — Sub-atom-as-state-machine pattern; `init` and `end` as universal implicit phases; receive glyphs `<:` (async) / `<|` (sync); phases inferred from arrows; substrate coordinates mutation, not eliminates it (2026-08-12, no version bump; follows same-day unified-`then:` below)
+
+> **⚠️ PARTIALLY SUPERSEDED 2026-08-12** — The "sender's glyph MUST match receiver's glyph" claim in this note (Collapse 2) has been RETIRED by the Phase 4b concurrency-model decision at the top of the file. Sender-blocking and receiver-blocking are now independent axes: all four sender/receiver glyph combinations are legal. `|>` semantics also refined: sender's transition suspends until **processing sync** (receiver's transition on this message has fired), with no reply value transported. Receive-glyph introduction, modifier syntax, sub-atom-as-state-machine pattern, universal `init`/`end` phases, phases-inferred-from-arrows, and substrate-as-coordinator framing all remain current.
+
+**Trigger.** Toy-example iteration on Player's fireball casting exposed a deeper structural question. Earlier drafts modeled `firing_fireball` as a phase of Player with per-phase fields (`fireball_target`, `cast_started_at`) declared inside the phase. User pushed on multiple fronts:
+
+1. **Per-phase field declarations dress mutation up as staticness.** Writing `def alive: velocity: Float = 0.0` reads like a structural declaration, but the value changes when the phase changes — that's a mutation coordinated by the substrate on phase transition. The compiler-sugar framing ("`def phase: field: T = V` desugars to `field :< switch self: case phase: V ...`") was wrong. It hid the mutation behind syntactic disguise.
+
+2. **Union-typed slots for state discrimination are state-machines-in-disguise.** Modeling `action: Idle | FireballCasting | MeleeAttack` invents queue-fields, cancel-flags, and interruption-logic outside the substrate. What the pattern is REALLY reaching for is a state machine (an atom) whose channel mailbox handles queueing intrinsically. Union types remain for genuinely-polymorphic disjoint values (message payloads, result outcomes) where variants have no natural progression.
+
+3. **Coordination is the substrate's job.** User frame: "observables are lightweight atoms with their own state machines; coordinating changes is part of what makes this design work without managing mutability." Not eliminating mutability — DELEGATING the coordination to the substrate. Every declaration form (data field, observable, transition, wire, sub-atom slot) is a way of specifying WHAT should be coordinated; the substrate authors the actual writes.
+
+**Four collapses landed this addendum.**
+
+**Collapse 1 — `init` and `end` as universal implicit phases.**
+
+Every atom has two implicit phases the user never declares:
+
+- `init` — constructor. Fires on instantiation. Implicit transition `init -> [first-mentioned target phase]` runs, populating fields via its `then:` block. Wildcard on-enter (`-> phase`) for the first phase catches this transition.
+- `end` — deconstructor. When any transition targets `end`, the atom's `do:` block runs (last chance to emit signals), then the atom is destroyed. Any nullable slot holding the atom auto-nils.
+
+Symmetric with the substrate's transition-first commitment: instantiation IS a transition; deconstruction IS a transition. No separate constructor/destructor mechanism.
+
+Corollaries: `end` transitions may have `when:` and `do:` but not `then:` (state being discarded). Parent atoms detect sub-atom completion via `is nil` on the slot, or by listening for the emit-in-`do:` before destruction. Cascade behavior: parent `-> end` recursively transitions sub-atoms in slots to `end`.
+
+**Collapse 2 — Receive glyphs `<:` (async) / `<|` (sync); send glyph clarification `:>` async / `|>` sync.**
+
+Sender-side glyphs (`:>` / `|>`) get receive-side counterparts (`<:` / `<|`), mirroring direction of the colon/bar:
+
+- `:>` async send ↔ `<:` async receive
+- `|>` sync send ↔ `<|` sync receive
+
+Receive glyph goes INSIDE the transition header (between source and arrow), replacing the earlier `when: msg_name(...)` pattern for message-triggered transitions:
+
+```
+alive <: cast_fireball
+-> alive
+    when: mana >= cost
+    then: mana => mana - cost
+    do:   :> fireball_launched
+```
+
+Sender's glyph MUST match receiver's glyph on the same message name — compile-checked. Cross-glyph mismatch is a compile error. Bare `<:` = drop-if-no-matching-transition; bare `<|` = pure rendezvous. Modifier syntax attaches non-default semantics per receive site: `<:fifo(cap: 8)`, `<:priority`, `<:sliding(cap: 1)`.
+
+`|>` retains its wire-composition role at top-level (standing subscription). Grammar disambiguates: `expr |> target` is wire; `atom |> msg(args)` inside `do:` is sync send.
+
+**Collapse 3 — Sub-atom-as-state-machine pattern; retire per-phase field declarations and union-typed state slots.**
+
+For state that has its own lifecycle — phases, transitions, potential for queueing, interruption, or independent activity — encapsulate as a **sub-atom in a nullable slot**:
+
+```
+def Player:
+    data:
+        action: ActionMachine? = nil    # sub-atom slot
+    
+    alive <: cast_fireball
+    -> alive
+        when: action.is_idle and mana >= cost
+        then:
+            mana   => mana - cost
+            action => ActionMachine(clock: clock)
+        do:
+            action :> start_cast(target: cursor_pos, cast_time: 500ms)
+```
+
+The sub-atom carries its own transitions, fields, lifecycle. When it reaches `end`, it deconstructs; slot auto-nils. Parent's next `action is nil` check is true again.
+
+Retired:
+- Per-phase field declarations inside `def phase:` blocks (were hiding mutation as staticness)
+- Union-typed slots for state discrimination (were state-machines-in-disguise)
+- Empty `def phase` declarations (phases inferred from transition arrows)
+
+Sub-atom coordination happens via four patterns:
+- **Command down**: `action :> start_cast(args)` (method-call syntax; nil-safe)
+- **Event up**: `self <: action.cast_completed{...} -> ...` (receive-glyph header)
+- **State query**: `action.is_idle` via observable predicate on the sub-atom (NOT raw phase name — insulates parent from internal renames)
+- **Standing wire**: `action.cast_progress |> self.update_ui` (durable subscription)
+
+**Collapse 4 — Substrate coordinates mutation; it doesn't eliminate it.**
+
+Corvid doesn't remove mutability. It centralizes coordination in the substrate. Users declare intent (what depends on what, what phases exist, what fires when); the substrate authors the actual writes and their ordering.
+
+Every declaration form is a specification of what to coordinate:
+- Data fields declare shape; init transition sets values
+- Transitions specify state-to-state functions the substrate applies atomically
+- Observables specify derivations the substrate recomputes on input change
+- Wires specify subscriptions the substrate maintains
+- Sub-atom slots specify lifecycle-owning nested machines the substrate hosts
+
+This is what makes the language safe without locks, without invariant-management-by-convention, without race conditions across coordinated fields. Not because nothing changes, but because ONE coordinator (the substrate) orchestrates all changes.
+
+**What retires.**
+
+- Per-phase field declarations (`def alive: hp: Int = 100`) — hid mutation behind syntactic disguise
+- Empty `def phase` declarations — phases inferred from transition arrows
+- Union-typed slots for state discrimination — state-machines-in-disguise
+- Separate `channel X: fifo(...)` receiver declaration — replaced by modifier on receive glyph (`<:fifo(8)`)
+- The "when: msg(args)" pattern for message-triggered transitions (in favor of receive-glyph header) — but `when:` remains for state/time guards
+
+**What lands.**
+
+- **Universal implicit phases**: `init` (constructor) and `end` (deconstructor); every atom has both.
+- **Receive glyphs**: `<:` async / `<|` sync inside transition headers; must match sender's `:>` / `|>`.
+- **Modifier syntax** on receive glyphs for non-default channel semantics: `<:fifo(cap: N)`, `<:priority`, `<:sliding(cap: N)`.
+- **Sub-atom slots**: nullable fields typed as a specific sub-atom (`action: ActionMachine?`); lifecycle managed by sub-atom's own transitions; slot auto-nils on sub-atom `end`.
+- **Wildcard on-enter**: `-> phase` transitions match any entry to `<phase>` (including init); on-enter's `then:` runs before specific transition's `then:` (specific-wins on conflicts).
+- **Four sub-atom coordination patterns**: command-down (`:>`), event-up (`<:`), state-query (observable predicate), standing-wire (`|>`).
+- **Substrate-as-coordinator framing**: users declare intent; substrate orchestrates writes.
+
+**Open items (deferred).**
+
+- Advanced channel modifier semantics (`<:priority`, `<:sliding(cap: N)`) — syntax reserved but may require stdlib mailbox atoms rather than compiler-primitive buffering.
+- Wildcard on-exit form `<phase> ->` — noted symmetric to on-enter; corner cases (fires-vs-cascade-to-end, ordering) need pinning.
+- Explicit `init -> phase` transition declarations — currently implicit-from-first-mention; whether to allow explicit form for clarity is deferred.
+- Whether wire composition (`A |> B`) implies sync or async semantics at each emission — treated as "async subscription; sender doesn't wait" for now; sync-wire semantics may need `A <\|> B` or similar if it becomes a common pattern.
+- Compile-time enforcement of the "first-mentioned target phase is initial" rule when multiple wildcard on-enters could plausibly claim init — needs precise diagnostic wording.
+- Cross-atom deadlock detection for `|>` sync sends — CSP-in-general has this problem; whether Corvid provides static analysis is deferred.
+
+**Larger frame this session confirms.** The atom substrate does not eliminate mutation — it centralizes coordination in one system-level component (the substrate) rather than distributing it across user code. Every declaration form is a specification of what to coordinate; every glyph carries a distinct role in that coordination. Sub-atoms give us cheap state-machines-in-slots, which subsume both "per-phase fields" (retired: hid mutation) and "union-typed slots" (retired: state-machines-in-disguise). The receive glyphs (`<:` / `<|`) mirror send glyphs (`:>` / `|>`) exactly, and the sender-receiver-must-match compile check makes channel semantics a first-class invariant. Coordination is the substrate's job; user declares intent.
+
+---
+
+## Session note — Unified `then:`: constructor args on transition targets retire; all field updates use `then:` with lexical name resolution across target and compound scopes; explicit path escape for disambiguation; shadowing warning (2026-08-12, no version bump; follows same-day immutable-FSM sharpening below)
+
+> **⚠️ PARTIALLY SUPERSEDED 2026-08-12** — The Kind 1a / Kind 1b / Kind 2 taxonomy referenced here (and in the immutable-FSM sharpening note below) has been RETIRED. See the top-of-file session note (sub-atom-as-state-machine pattern) for the replacement: one question ("does this state need its own lifecycle?") with three shapes (sub-atom-in-slot / phases + wildcard on-enter / self-transition with `then:`). The `then:` lexical resolution, explicit path escape, and shadowing warning content in this note are still current; only the taxonomy references are outdated.
+
+**Trigger.** Toy-example iteration after the immutable-FSM sharpening left two field-update mechanisms in play:
+- Constructor args on transition targets: `alive -> firing_fireball(hp, mana - cost)` — set target-state-atom fields
+- `then:` block: `then: last_cast_at => clock.now` — set compound-scope fields
+
+User asked: "why do we need the constructor args?" That surfaced the inconsistency: two mechanisms for the same conceptual operation (functional field update with carry-forward), differing only in which scope they targeted. Reader had to know which scope each field lived on to pick the right syntax.
+
+**Collapse — unify field updates under `then:` with lexical scope resolution.**
+
+New rule: inside `then:`, unqualified field names resolve by lexical scope:
+1. Target state atom's data fields (innermost scope of the transition target)
+2. Compound's data fields (enclosing scope)
+3. Ambiguity (same name in both scopes) → compile error; use explicit path
+4. Unknown name → compile error
+
+Symmetric with the scoping rule for READS inside nested state atoms — state atoms already read compound-scope fields via lexical lookup ("nested state atoms read compound-scope lexically", S3 in toy-example header). Extending the same rule to writes in `then:` unifies the syntax.
+
+**Cross-scope field updates land in one `then:` block:**
+```
+alive -> firing_fireball
+    when: cast_fireball() and can_cast and mana >= cost
+    then:
+        mana         => mana - cost           # firing_fireball.mana (target scope)
+        last_cast_at => clock.now             # Player.last_cast_at (compound scope)
+    do:   :> fireball_launched
+```
+
+No `Player.` prefix needed when the name is unambiguous. Reader just names the field; compiler routes it.
+
+**Constructor args on transition targets — retired for the common case.** Header names only the phase change; all field values live in `then:`. Constructor args remain legal only when the target has required constructor params with no defaults that cannot carry forward from source (rare edge case).
+
+**Explicit path escape available for disambiguation:**
+```
+then:
+    Player.last_cast_at    => clock.now      # explicit compound-scope
+    firing_fireball.mana   => new_mana       # explicit target-scope
+```
+
+Use when a name is shadowed between scopes or when scope-visibility improves reader clarity.
+
+**Shadowing warning.** Adding a field to a state atom that shadows a compound-scope field with the same name silently changes the resolution of unqualified references in `then:`. Compiler warns on the declaration site — same lint any language runs for lexical-variable shadowing. Users add explicit path or rename.
+
+**Kind 1a state atoms — "dead" phase reframed structurally.** During this iteration also clarified that alive/dead in Player and Enemy is *not* an emergent property (a prior Kind 1c push was reverted). It's the FSM proper: `dead` is a state atom with **no declared transitions**, which structurally means "ignore all messages." Absence of transitions is the semantic; state atoms express it declaratively.
+
+Prior Kind 1c reframing had said alive/dead could be derived from `hp > 0` via observable, with every transition guarded on `and self is alive`. Rejected: guards are verbose, error-prone (forget one and dead entities accept input), and don't express "dead ignores everything" structurally. Kind 1a with an empty `dead` state atom does.
+
+Enemy under-decomposition (single leaf atom where dead was implicit in a guard) moved to Kind 1a with proper alive/dead state atoms matching Player's shape.
+
+**Kind 1c (derived phase observable) narrows to "derived label."** The Kind 1c category as originally proposed (derived enum observable used for phase-gated dispatch) collapses back into Kind 1a/1b. What remains as Kind 1c is only *derived labels* for display/grouping that don't gate transitions (e.g., `rank :< switch xp: case < 1000: novice; case < 5000: apprentice; else expert`). Not really a phase — just a computed observable.
+
+**What retires.**
+
+- Constructor args on transition targets for the common case (`<to>(field: value, ...)` in the header). Legal only for target constructors with required no-default no-carry params.
+- Kind 1c as a phase-decomposition category (only Kind 1a and Kind 1b use arrow-syntax phase transitions; Kind 1c narrows to derived labels that don't gate transitions).
+- Compound-level exhaustiveness invariants like `self is alive or self is firing_fireball or self is dead` — redundant because state-atom or enum-type declarations enumerate the full set at compile time.
+
+**What lands.**
+
+- **Single field-update mechanism**: `then:` with lexical scope resolution (target first, compound second).
+- **Explicit-path escape** for disambiguation and reader clarity.
+- **Shadowing warning** enforcing clarity when a later declaration would silently change unqualified resolution.
+- **"Absence of transitions is the semantic"** for phases like `dead` that ignore all messages.
+- **Kind 1a stays as the natural fit** for lifecycles where phases have distinct transition sets, even when the discriminator is data-derivable.
+
+**Open items (deferred).**
+
+- Sugar for time-limited phases with autonomous exit: `alive -> firing_fireball ... auto_exit: fireball_cast_time -> alive` or similar. Currently `firing_fireball -> alive when: complete()` plus a `clock.after(...) |> (_ => self.complete())` in the entry transition's `do:` block. Sugar deferred until pattern proves common.
+- Compiler diagnostics for the shadowing warning — needs precise wording and fix-it suggestions (auto-rename vs explicit-path).
+- Whether nested state atoms should be able to explicit-path-write to *sibling* state atom fields (currently: no; only target + compound). Deferred until real case appears.
+
+**Larger frame this session confirms.** The atom model is genuinely unified — everything is a value; every transition is a pure function producing a new value; the only mechanism for field updates is `then:` with a single scope-resolution rule that mirrors reads. Composition-only stays honest: state atoms handle structural phase decomposition; enum-typed fields handle same-shape phases; both use uniform arrow syntax and uniform `then:` updates. Reader thinks in FSM terms; writer picks storage based on Kind 1a/1b criteria; compiler enforces exhaustiveness and scope resolution.
+
+---
+
+## Session note — Immutable-FSM sharpening: assignment retired everywhere; transition block form (when: / let: / then: / do:) lands; Kind 1 splits into 1a (state atoms) / 1b (enum + derived); enum-valued phase transitions share arrow syntax with state atoms (2026-08-12, no version bump; follows same-day FFI dissolutions below)
+
+> **⚠️ PARTIALLY SUPERSEDED 2026-08-12** — The Kind 1 → 1a/1b/1c split introduced in this note has been RETIRED, along with `def phase:` per-phase field declarations. See the top-of-file session note (sub-atom-as-state-machine pattern) for the replacement. The transition block form (when: / let: / then: / do:) lands here IS current; the receive-glyph header (`<:` / `<|`) added later supersedes `when: msg(args)` for message-triggered transitions but composes with the same body sub-blocks.
+
+**Trigger.** Toy-example iteration produced a Paddle with three state atoms (idle/up/down) each carrying one constant velocity field. User pushed: "this seems to be an anti-pattern? i thought we did mention thatwe want to do near-iimmutable oops." Two problems compounded:
+
+1. **State atoms for value-only phase differences are overkill.** When phases have identical shape and identical behavior — differing only in a constant value they contribute — state-atom decomposition is machinery for no benefit. An enum-typed data field with a derived observable does the same job with less structure.
+
+2. **Assignment inside transition bodies was smuggled mutation.** The prior rule ("assignment legal only inside transition blocks") looked like a discipline but was actually a partial retreat: `y = clamp(...)`, `active_enemies += [e]`, `Player.last_cast_at = clock.now` all *read* as mutation regardless of transition-block-scoping semantics. Under a "near-immutable OOP language" commitment, assignment on `data:` fields has no honest place.
+
+Three collapses landed this addendum.
+
+**Collapse 1 — Assignment retired everywhere; transitions are pure state → new-state functions.**
+
+Every transition resolves to a new self via a **constructor expression** — either in the transition-line header (for the target phase) or in a `then:` sub-block (for compound-scope field updates). The transition body computes helpers (`let:`) and side effects (`do:`), never state updates.
+
+Block form:
+```
+<from> -> <to>[(constructor-args)]
+    when: <guard>
+    let:  <intermediate>: <expr>+       # optional
+    then: <field>: <expr>+              # optional; compound-scope updates
+    do:   <side-effect-statements>+     # optional; emissions, one-shot wires
+```
+
+- `<to>` may carry constructor args — these set fields *intrinsic to the target phase* (state-atom constructor params, enum-case associated values).
+- `then:` uses `field: expression` per line — same named-arg syntax as constructor calls, just spread across lines. Unlisted fields carry forward. Pure functional update; not assignment.
+- `do:` contains only side effects — emissions (`:>`), one-shot pipe subscriptions (`|>`), external calls. Never contains field updates.
+
+Compact single-line form for the common phase-only case:
+```
+idle -> up when pressed(key: Key.arrow_up)      # sugar for block with only when:
+```
+
+Assignment operators (`=`, `+=`, `-=`, `*=`, `/=`, `%=`) on `data:` fields are a syntax error at every scope — atom-body top level, handler bodies, transition bodies. There is no general mutation in the language. Cross-scope compound writes (`Compound.field = ...`) are also gone.
+
+**Collapse 2 — Kind 1 splits into Kind 1a and Kind 1b.**
+
+The prior "Kind 1 — discrete-phase field → state atoms" rule was too broad. It conflated two structurally different cases:
+
+- **Kind 1a — Distinct-shape phases** (state atoms warranted). Phases differ in fields, valid transitions, or exposed behavior. State atoms earn their machinery because each phase carries structurally distinct information. Example: Player {alive(hp, mana) | firing_fireball(hp, mana) | dead}.
+
+- **Kind 1b — Same-shape phases with different constants** (enum + derived is the right form). Phases accept the same messages and expose the same fields; only a constant value differs. State atoms are pure overhead. Declare an enum; store as a `data:` field; derive per-phase constants via a switch observable. Example: Paddle {idle | up | down} each contributing a velocity constant.
+
+Compiler may hint when a Kind-1b-shaped enum is being over-decomposed into state atoms — suggesting the enum + derived form. State atoms should pay for their machinery; when they don't, the enum form is more immutable-first.
+
+**Collapse 3 — The `<from> -> <to>` arrow syntax works uniformly for state atoms and enum cases.**
+
+Under Kind 1b the user could have been forced to write `self -> self(direction: up)` for phase changes — verbose and syntactically inconsistent with Kind 1a's `alive -> firing_fireball(...)` form. Instead the arrow syntax generalizes:
+
+| Phase mechanism | `idle -> up when …` compiles to |
+|---|---|
+| State atoms (nested `def idle:`, `def up:`) | swap active nested state atom |
+| Enum-valued field (`direction: Direction`) | `self -> self(direction: up) when …` |
+
+Compiler picks the mechanism from context. If `idle`/`up` are declared as nested state atoms of the compound → state-atom form. If they're cases of an enum whose type appears as a data field → enum-valued form.
+
+Disambiguation:
+- Exactly one enum-typed data field for the enum → arrow syntax targets that field implicitly.
+- Multiple fields of the same enum type → prefix required: `direction: idle -> up`.
+- Name is both a state atom and an enum case in scope → compile error; rename.
+- Name is neither → compile error.
+
+Consistent with Erlang/Elixir's `{next_state, NewData}` return shape being agnostic about whether the state name is atom-typed or something richer. User reads the FSM at the surface; compiler picks the mechanism from how phases were declared.
+
+**User-proposed `=>` syntax initially substituted with `:`, then reverted.** User draft used `field => value` inside `then:`. Initial substitution: replaced with `:` on the grounds that `then:` was a multi-line named-arg spread for `self(field: value, ...)` and consistency with constructor calls argued against a new glyph. On re-review, reverted to `=>`:
+
+- Single-line `then: y: clamp(...)` reads awkwardly — the eye parses `then:` as section label, then re-parses the next `:` as named-arg. Double-`:` in one line is visually noisy.
+- `:` is already heavily overloaded (type annotation, named arg, section label, dictionary key); adding "field update with carry-forward" leans entirely on context.
+- `=>` reads as "field becomes expression" — the functional-update semantics are visible in the glyph itself, reinforcing the immutable-FSM discipline. `:` doesn't carry that signal.
+- Lambda ambiguity is context-resolved: `identifier '=>' expression` at line-start inside a `then:` block is unambiguously a field update; bare lambdas aren't statements. One extra parser rule scoped to `then:`.
+- The distinct glyph honestly reflects a distinct semantic operation: constructor calls set *all* fields (using `:`); `then:` sets *some* fields with the rest carrying forward from source (using `=>`). Making these visibly different in the surface syntax is honest, not inconsistent. `let:` retains `:` because it's binding (naming a new value), not update.
+
+Final syntax:
+- `let: name: expression` — pure named binding (uses `:`, matches named-arg / declaration binding)
+- `then: field => expression` — functional field update with carry-forward (uses `=>`, distinct from `:` and `=`)
+- Inline constructor calls (`alive(hp: hp - amount)`, `self(y: value)`) still use `:` — those are constructor arg spreads; changing them would break the whole language's constructor syntax and isn't justified by the `then:` shift alone.
+
+Slight asymmetry between inline constructor form and block `then:` form; the asymmetry is *informative* (they're related but distinct operations) rather than *arbitrary*.
+
+**Cross-scope updates: two idiomatic forms, both immutable.**
+
+Prior tension: nested-state transitions (`alive -> firing_fireball(...)`) that also needed to update a compound-scope field (`Player.last_cast_at`) forced either cross-scope assignment (mutation, retired) or a mandatory emit + listen decomposition. Under `then:`, both forms become idiomatic:
+
+1. **`then:` on the phase transition itself** — compound-scope updates atomic with the phase change:
+   ```
+   alive -> firing_fireball(hp, mana - cost)
+       when: cast_fireball() and can_cast and mana >= cost
+       then: last_cast_at: clock.now
+       do:   :> fireball_launched
+   ```
+2. **Emit + listen** — phase transition emits; separate compound self-transition listens:
+   ```
+   alive -> firing_fireball(hp, mana - cost) when: ... do: :> fireball_launched
+   self -> self when: fireball_launched() then: last_cast_at: clock.now
+   ```
+
+Form 1 is compact for updates intrinsic to the phase change; form 2 is clearer when the compound update is a semantic consequence other listeners should also see. Both preserve the immutable FSM property; user picks based on decomposition intent.
+
+**What retires.**
+
+- Assignment inside transition bodies (`=`, `+=`, `-=`, `*=`, `/=`, `%=` on `data:` fields). Fully removed.
+- Cross-scope field writes (`Compound.field = ...` from inside a nested-state transition). Fully removed.
+- "Kind 2 as self-transition-with-mutation." Reframed as self-transition threading the field forward via `then:`.
+- Kind 1 as a monolithic rule. Split into Kind 1a (state atoms — structural difference) and Kind 1b (enum + derived — value-only difference).
+
+**What lands.**
+
+- **Transition block form**: `when:` / `let:` / `then:` / `do:` sub-blocks under a transition line. Reading order: guard → helpers → new self (target + then) → side effects.
+- **`then:` sub-block**: multi-line named-arg spread for compound-scope field updates. `field: expression` per line. Pure functional update.
+- **`let:` sub-block**: pure intermediate bindings visible in `then:` and `do:`. Erases duplicated computation.
+- **Enum-valued phase transitions** using arrow syntax: `idle -> up when ...` for enum cases, uniform with `alive -> firing_fireball` for state atoms. Compiler picks the mechanism.
+- **PATTERNS.md**: Kind 1a / Kind 1b / Kind 2 decision table; cross-scope-updates entry documenting the two idiomatic forms.
+
+**Open items (deferred).**
+
+- Should `then:` allow `let:` bindings inline (mixed `field: expr` and `let name = expr`)? Currently `let:` is its own sub-block. Cleaner separation vs slight verbosity for cases where a value is bound and immediately used once.
+- `with:` sugar for compound-scope updates on state-atom transitions was considered and rejected (conflicts with §6.10 RAII `with:`). `then:` covers the same ground; no sugar needed.
+- Should Kind 1b arrow syntax require an explicit `on <field>` marker for readability even in the unambiguous case? Currently no (inferred from enum type); may revisit if disambiguation errors are common.
+
+**Larger frame this session confirms.** The atom substrate isn't just close-to-immutable — it's fully immutable at the transition semantics level. Every state-changing operation is a pure function producing a new self. Assignment was a compromise that no longer earns its complexity now that `then:` handles the multi-field update case cleanly. The remaining "mutation-shaped" operations (list append via `+`, dictionary update via `+`, etc.) are functional constructor calls on immutable data structures — no in-place update, no aliasing risk. Corvid is now honestly the "close-to-immutable OOP language" originally scoped as the design goal — arguably just "immutable OOP language" without the hedge.
+
+---
+
+## Session note — FFI dissolutions: `extern:` section retires; FFI is `Extern` capability atom; symbol registry moves into prelude; direction inferred from type shape (2026-08-12, no version bump; follows same-day toy-example simplifications below)
+
+**Trigger.** Toy-example addendum below left `state:` retired but `extern:` still a section. Working through clock-tick reconciliation for a game loop surfaced that `Clock` is itself a boundary atom — OS drives it, not Corvid. Extending the same reasoning to every capability shim showed `extern:` was the last special mechanism at the OS boundary. Three collapses landed.
+
+**Collapse 1 — `extern:` section becomes `Extern` capability atom.** FFI stops being a syntactic privilege gated at parse time and becomes a capability provisioned through env. Shim atoms request access via `use: extern: Extern`; runtime linker fills the slot only for stdlib-designated shims. Trust boundary moves from parse-time policy check to env-composition-time provisioning check. Same policy, uniformly enforced with every other capability (Clock, Filesystem, ...) — one mechanism instead of two.
+
+Access shape: `extern.get("clock_gettime")` returns a typed native handle. Handle type comes from a symbol registry (not caller-asserted); handle is invoked (outbound) or subscribed (inbound) using ordinary Corvid mechanics. No new syntax at the call site — this is regular capability-atom method dispatch over regular typed values.
+
+**Collapse 2 — symbol registry moves into prelude.** Considered making the registry a separate `.cor` file per target. Realized the prelude is already target-scoped (platform-varying types, platform-varying shims) and already Corvid-native. Piggybacking the symbol registry into the prelude removes an entire concept — no separate registry file format, no separate build-config plumbing. Directory layout: `prelude/shared/` + `prelude/<target>/`; target-scoped subdirectories carry `foreign library` blocks declaring typed native symbols alongside the shim atoms that consume them.
+
+Declaration form: `foreign library "libc": symbol "open": (path: CString, ...) -> Int32`. Prelude-only syntax; parser rejects `foreign library` / `symbol` outside `prelude/` files. Second layer of defense on top of the env-provisioning trust boundary — even if a shim atom somehow received Extern, non-prelude atoms cannot declare new symbols to resolve.
+
+**Collapse 3 — direction inferred from symbol type shape.** Earlier drafts had `extern:` sub-labels `outbound:` / `inbound:` to distinguish Corvid→native calls from native→Corvid callbacks. User observation: outbound/inbound recapitulates atom IN/OUT ports — the FFI boundary crosses one port; which port is native is determined by the atom's I/O shape. Which means the sub-labels are redundant.
+
+Rule: a symbol declared with type `(Args) -> Ret` is outbound (Corvid invokes). A symbol declared with type `Stream of T` is inbound (native invokes via runtime callback; shim atom subscribes to the stream via ordinary `|>` composition). No `direction:` field, no `inbound_symbol` / `outbound_symbol` keywords. One rule, one axis.
+
+Callbacks-with-return values (qsort comparator, Win32 WndProc, pthread start_routine) are unsupported in v1.0. The general FFI type system covers only the two shapes above; rare APIs needing returning callbacks require hand-crafted per-API shims with compiler-baked native trampolines. Rationale: no general encoding fits both hot synchronous callbacks (comparators at 10^6/sec, sub-microsecond latency) and cold async callbacks (would need reply-channel mediation with cross-boundary blocking). Better to draw a hard line than design speculatively.
+
+**Historical: earlier rejection of "FFI-as-capability" reversed.** The v0.11 spec rejected FFI-as-capability on type-safety grounds — the assumed shape was `env.ffi.call("name", [args])` with runtime-typed args. Prelude-registry model preserves type safety at compile time: `extern.get("name")` requires a compile-time string literal; compiler resolves against the prelude symbol table; retrieved handle's type comes from the prelude declaration; call site is fully typed. The rejection doesn't apply to this shape. Reversed.
+
+**What retires.**
+
+- `extern:` section keyword (was in §2.5 keywords). `Extern` (PascalCase) is a regular identifier for the capability atom.
+- `extern_section` / `extern_binding` / `extern_field` grammar productions.
+- `symbol:` / `library:` / `abi:` as sub-fields of `extern:` bindings (they now appear inside prelude-only `foreign library` blocks).
+- Sub-label distinction `outbound:` / `inbound:` (never landed in spec; considered but dissolved before commitment).
+
+**What lands.**
+
+- §1.12 rewritten: extern-as-capability model; PosixFs example.
+- §1.14 new: prelude target-scoping, `foreign library` / `symbol` declaration forms, WallClock as full inbound+outbound worked example.
+- §2.5 keywords: `extern` retired; `foreign`, `library`, `symbol` added as prelude-only keywords.
+- §10 grammar: `foreign_library_block` and `foreign_symbol_decl` productions added (marked prelude-only); `extern_section` production retired with a note.
+- PATTERNS.md "I need FFI" entry rewritten: user answer is "you don't; use a typed capability, or contribute a shim to stdlib prelude"; underlying mechanism (Extern + prelude) described for completeness.
+
+**Open items (not blockers; deferred).**
+
+- Precise policy for how the runtime linker refuses `Extern` provisioning to non-stdlib atoms (stdlib whitelist vs build-config vs fully user-composed env). v1.0 lands on strict stdlib-only; opens up if pressure appears.
+- Whether user projects can extend the prelude with additional foreign symbols (project-specific libraries). v1.0: no. Might land as a build-config feature if real use cases surface.
+- ABI hints (`abi: "c"` vs `abi: "system"` on Windows) — currently deferred; default C ABI everywhere.
+
+**Larger frame this session confirms.** Every "outside world" thing enters Corvid through env. Clock, Filesystem, Network, Extern — all capability atoms; none get syntactic privileges. Trust boundaries live at env-composition, not at parse time. This is the fully Clojure-ish version of the capability model: everything is data (typed handles retrieved from a registry); no special-case machinery; testability and inspectability fall out.
+
+---
+
+## Session note — Toy-example-driven simplifications S1–S6: atom-scope `let` constants; standing wires as top-level pipe; lexical-read into compound scope; per-state observables; pipe-endpoint restriction; position-based standing-vs-one-shot subscription (2026-08-12, no version bump; follows same-day special-case audit below)
+
+**Toy-example stress test.** After the six special-case dissolutions landed, drafted three game-shape toy examples (Paddle, Player with cooldown ability, EnemySpawner) to see what the design felt like in practice. Six pain points surfaced; six simplifications named. All six committed this addendum.
+
+**S1 — Bare pipe expressions at atom-body top-level = standing wires.**
+
+Retiring `wires:` left standing subscriptions with no home. Simplest rule: a pipe expression written at atom-body top-level (not inside any handler) is a **standing subscription** — set up on atom construction, torn down on `-> before_destroy:`.
+
+```
+def EnemySpawner:
+    use: clock: Clock
+    
+    clock.every(2s) |> spawn_enemy      # standing wire — lives as long as atom does
+    
+    -> spawn_enemy(tick: Instant): ...
+```
+
+Grammar: `def_member` gets a `wire_expr` alternative for top-level pipe expressions. Position-based (see S6): top-level = standing; inside handler = one-shot.
+
+**S2 — `let` at atom-body top-level = atom-scope constant.**
+
+Class-level constants had no defined home. Overloading `data:` fields to serve as constants (via defaults) muddles per-instance vs shared semantics. Adopted rule: **`let name: Type = expr` at atom-body top-level is an atom-scope compile-time constant** — no per-instance storage, same value for every instance, evaluable at compile time.
+
+```
+def Paddle:
+    let max_speed: Float = 500.0
+    let screen_bounds: Float = 360.0
+    
+    state:
+        y: Float = 0.0
+```
+
+Same shape as module-level `let` (§7.1), just scoped to the atom. Distinguishes cleanly from `data: max_speed: Float = 500.0` (which would be per-instance immutable field with a mutable-via-constructor default).
+
+Grammar: `def_member` gets a `let_binding` alternative.
+
+**S3 — Nested state atoms have lexical read-access to compound scope; writes require explicit path.**
+
+Pain: inside `def alive`, `requires can_cast` — but `can_cast` is a compound-Player observable, not on the `alive` state atom. Lookup was undefined.
+
+Rule: **reads are lexical** — an unresolved name inside a nested state atom looks up (in order): the state atom's own `data:`/`state:`/`observables:`/`let`s; then the compound's `data:`/`use:`/`observables:`/`let`s; then module scope. **Writes to compound state require an explicit path** — `Compound.state.field = expr` or a named-reference (`parent.state.field = ...`); bare `state.x =` always writes to the *innermost* atom's state.
+
+This makes standard state-machine idioms (guarding a state transition on compound-level conditions) work without ceremony while keeping mutation locality explicit.
+
+**S4 — Observables can be per-state; compound aggregates.**
+
+Pain: `health :< self.hp` on the compound auto-delegates to active state's `hp` — but `dead` state has no `hp`, so this fails at read-time.
+
+Rule: **each nested state atom may declare its own `observables:`**. When accessing an observable on the compound:
+1. If the compound declares it explicitly, use that.
+2. Else, if the active state declares it, use that.
+3. If the observable exists in *some* states but not all, its compound-level type is lifted to `Optional of T` — missing states return nil.
+4. If it exists in *all* states with compatible shapes, the compound-level type is `T` — no Optional lift.
+
+```
+def Player:
+    def alive(hp: Int):
+        observables:
+            hp :< self.hp                    # alive-state observable
+    
+    def dead:
+        pass                                  # no hp observable here
+    
+    observables:
+        health :< self.hp                     # compound-level: Optional of Int (dead returns nil)
+```
+
+If a designer wants `health` to always exist, they explicitly declare it on every state (perhaps returning a constant for `dead`). Compiler warns on Optional-lifted observables to surface this to authors.
+
+**S5 — Pipe endpoint restricted to identifier / lambda / method-reference; call-expressions must be lambda-wrapped.**
+
+Pain: `e.died |> despawn(e)` reads as "wire died to a call that takes `e`" but semantically the pipe feeds `died`'s payload as the argument. Payload/argument mismatch is silent.
+
+Rule: **pipe endpoints must be one of**:
+- **Identifier**: `pipe |> handler_name` — pipe payload passed as sole positional arg to `handler_name`.
+- **Method-reference**: `pipe |> obj.method` — pipe payload passed as sole positional arg to `obj.method`.
+- **Lambda**: `pipe |> (payload => expr)` — pipe payload bound as `payload` (or `_` if unused), expr evaluated.
+
+Bare call-expressions (like `despawn(e)`) at pipe endpoints are rejected with a fix-it: "wrap with lambda if you meant `(_ => despawn(e))`, or use `despawn` alone to forward the payload." Catches the payload/argument mismatch class at compile time.
+
+**S6 — Standing subscription vs one-shot handler determined by lexical position.**
+
+Rule: pipe expressions live in exactly two places, with distinct semantics:
+
+- **At atom-body top-level** (outside any handler): **standing subscription**. Set up on atom construction; torn down on `-> before_destroy:`. Fires every time the source emits.
+- **Inside a `-> handler:` body**: **one-shot expression**. Set up when the handler runs; scoped to the handler's execution. If the source emits within the handler's scope, the pipe forwards it; if the handler exits (or the atom is destroyed), the subscription tears down.
+
+For dynamically-created standing subscriptions inside a handler, users call `.subscribe()` explicitly rather than using `|>`. This makes the standing/one-shot distinction visible at read-time — bare `|>` at top level always means "standing"; bare `|>` inside a handler always means "one-shot / scoped."
+
+**Cumulative effect after S1–S6.**
+
+The atom-body vocabulary gains three lexical positions:
+1. `let name: T = expr` — atom-scope constant (S2)
+2. `expr |> target` — standing subscription (S1, S6)
+3. `-> handler(...):` — externally-invocable message handler (unchanged; already committed)
+
+Nested state atoms gain lexical read-access into compound scope (S3), each may declare its own observables (S4), and the compound aggregates them (S4). Pipe endpoints are shape-restricted for compile-time payload-checking (S5). Standing vs one-shot subscriptions are position-based, no keyword needed (S6).
+
+**Mechanism-invention trap check.** Passes on all six. S1 reuses the existing pipe expression at a new position. S2 reuses `let` from module scope at a new position. S3 formalizes lexical scoping (standard rule, previously undefined). S4 gives observables the same aggregation semantics that method dispatch already has via auto-delegation. S5 tightens pipe grammar to catch a bug class — no new machinery, restriction of existing. S6 is position-based semantics of the pipe expression, no new syntax.
+
+**Spec changes committed this addendum.** §1.11 atom-body vocabulary table extended with `let` constants + top-level standing wires + lexical read rules; §10 grammar adds `let_binding` and `wire_expr` alternatives in `def_member`, plus pipe-endpoint restriction rules; PATTERNS.md extended.
+
+**Twenty-first dissolution session.** Cumulative surface at this point: five wire glyphs; seven core sections + two optional; three atom-body lexical positions (constants, standing wires, handlers); one channel primitive (`Stream of T`) with cardinality via contract; one pronoun (`self`); one declaration keyword (`def`); one FFI mechanism (`extern:`); one capability declaration (`use:`); structural typing throughout via `of` qualifier; case-convention as type-variable marker; state-machine atoms with auto-delegation and lexical-read into compound scope.
+
+---
+
+## Session note — Special-case audit dissolutions: Stream cardinality; entrypoints retired; pronoun cleanup; wires retired; conforms optional; constructor-params-as-data-fields (2026-08-12, no version bump; follows same-day atom-substrate consolidation below)
+
+**Post-consolidation audit.** After committing the atom-substrate surface (def / -> / :> / |> / of / use: / extern: / stdlib catalog), walked the design end-to-end for special cases papered over. Six dissolutions identified; user confirmed all six.
+
+**Dissolution 1 — Future / Signal → Stream with cardinality constraints.**
+
+`Future of T` (fires exactly once) and `Signal of T` (fires exactly once, must fire eventually) are indistinguishable from `Stream of T` in shape. Distinction is nominal, not structural. Dissolves to:
+- One primitive: `Stream of T` (zero or more values over time).
+- Cardinality as `where` constraint: `Stream of T where emits <= 1` (future-shape), `where emits == 1` (signal-shape), `where emits >= 1` (never-empty).
+- Prelude aliases for ergonomics: `alias Future of T = Stream of T where emits <= 1`, `alias Signal of T = Stream of T where emits == 1`.
+
+Operators propagate cardinality via contracts: `map: emits(out) == emits(in)`, `filter: emits(out) <= emits(in)`, `debounce: emits(out) <= emits(in) + 1`. Reads structurally; no per-cardinality type constructor.
+
+**Dissolution 2 — All `->` handlers exposed by default; `entrypoints:` retired.**
+
+User's insight: "entrypoints should always be exposed no." Under the atom model, every handler is a channel that receives messages; whether the sender is an external caller or an internal wire is *composition context*, not a property of the handler itself. The `entrypoints:` section was pretending these were two different mechanisms when they're one.
+
+Retired: `entrypoints:` section. Every `-> handler:` declaration is automatically part of the atom's public interface. External callers can invoke; internal wires can invoke; same dispatch. If a truly private handler is ever needed, add a `private` prefix as an escape hatch — no such need has surfaced.
+
+Consequence: compound atoms declare their public API as `-> take_damage(amount):` etc. — same form as internal handlers. One mechanism.
+
+**Dissolution 3 — `self` as sole pronoun; `active` retired; compound atoms auto-delegate to active state's method table.**
+
+Five pronoun sources (`state.x`, `data.x`, `active.x`, bare `x`, `self.x`) collapse to two: `self` (explicit) and bare names (sugar for `self`-scoped lookup in invariants/where-clauses/handler bodies).
+
+`active` retired entirely. In compound atoms with nested state atoms, message dispatch on the compound (`file.read(1024)`) auto-delegates to the currently-active nested state's method table. If the active state has a matching handler, it runs; if not, runtime error ("state `<name>` has no handler `<method>`"). This is the type-state pattern from Erlang OTP's `gen_statem`, spelled by convention rather than pronoun ceremony.
+
+Consequence: fewer pronouns to teach, cleaner state-machine call sites (`file.read(1024)` instead of `file.active.read(1024)`), and the "which state am I in" reasoning happens at read-time via the state atom's name, not via a `self.active` chain.
+
+**Dissolution 4 — `wires:` section retired; pipe expressions live inside handler bodies (or as bare handler one-liners).**
+
+Retired: `wires:` section. Wire chains are just pipe expressions; they live inside `->` handler bodies. Since (2) also retired `entrypoints:`, the one-liner form is:
+
+```
+-> take_damage(amount: Int) |> damage_processor(amount)
+```
+
+That's a handler with a pipe expression as its body. No `wires:`, no `entrypoints:` — just handlers.
+
+For a compound atom's internal-wiring graph (child-to-child pipes not triggered by an external message), those are handlers on `-> enter:` or `-> setup:` lifecycle hooks, or standing declarations that wire two child atoms' channels together at composition time. If a "standing wire" pattern needs its own syntax, revisit — for now, all wiring is expression-form inside handlers.
+
+**Dissolution 5 — `conforms:` optional under structural typing; compiler warning for likely-matches.**
+
+Under §3.4 structural conformance, an atom conforms to a shape by *having the right methods*, not by *declaring conformance*. The `conforms:` section was documentation + a shape-match assertion. Retired as required section; kept as optional declaration for documentation and explicit-conformance-check (compiler verifies).
+
+Compiler emits a warning ("this atom's shape structurally matches `Filesystem` — consider adding `conforms: Filesystem` for documentation") when structural conformance is likely-intended. Encourages the declaration without requiring it.
+
+**Dissolution 6 — Constructor params ARE data fields; unified.**
+
+`def File(path: Path):` desugars to `def File: data: path: Path` plus an auto-synthesized constructor. No difference between constructor params and immediately-initialized data fields.
+
+Consequences:
+- Constructor param default: `def File(path: Path = "/tmp/default"):` = data field with a default value.
+- Named-argument call sites: `File(path: "/tmp/foo")` invokes the auto-synthesized constructor with the named data field.
+- If an atom needs distinct constructor logic (compute derived fields, validate at construction), it declares `constructor:` explicitly; otherwise the auto-synthesized one covers the default case.
+
+Retires the "which do I use, constructor param or data field?" ceremony. One decision instead of two.
+
+**Cumulative effect of the six dissolutions.**
+
+The atom body's section vocabulary shrinks from:
+> `use:`, `extern:`, `data:`, `state:`, `constructor:`, `entrypoints:`, `wires:`, `handlers:`, `observables:`, `invariants:`, `conforms:`, `metadata:`
+
+to:
+> `use:`, `extern:`, `data:`, `state:`, `observables:`, `invariants:`, `metadata:` (+ `constructor:` optional; `conforms:` optional)
+
+Plus `-> handler:` declarations (in place of `entrypoints:` + `wires:` + `handlers:` — all three collapse). Plus nested `def` declarations (compound atom composition).
+
+Seven core sections down from twelve. Handler declarations are the sole invocation mechanism (external or internal, same shape). Pronouns are one (`self`). Cardinality is contract-expressed on one channel primitive (`Stream of T`).
+
+**Mechanism-invention trap check.** Passes on all six. Each retires machinery. Nothing added. `conforms:` and `constructor:` remain as optional documentation/customization; not required.
+
+**Spec changes committed this addendum.** §1.13 stdlib shapes rewritten with Stream+cardinality (aliases for Future/Signal); §1.11 and §1.12 updated to drop `entrypoints:` / `wires:` / `active`; grammar §10 updated to reflect the retirements; PATTERNS.md addendum extended.
+
+**Twentieth dissolution session.** Cumulative: `def` as sole declaration; five wire glyphs zero overlap; `use:` sole capability declaration; `extern:` sole FFI; `of` sole type parameter; case convention as type-variable marker; state-machine atoms as resource lifecycle; **`-> handler:` as sole invocation mechanism (external and internal both)**; **`self` as sole pronoun**; **`Stream of T` as sole channel primitive with cardinality via contract**; **seven core sections** (was twelve).
+
+---
+
+## Session note — Atom-substrate consolidation: `def`/`->`/`:>`/`|>`/`of`/`use:`/`extern:` + OS boundary as capability atoms (2026-08-12, no version bump)
+
+**Nineteenth-session consolidation.** Ten committed decisions this session, all under the atom-substrate reduction from §1.11. Each removes a mechanism, reuses an existing one, or names a naming-question at its natural resolution. No new machinery added beyond what falls out of the atom model.
+
+**1. `atom` keyword renamed to `def`.** Three letters, familiar Python/Clojure feel, reads as declaration. `atom` remains in prose for the *substrate concept* (an atom is a reactive node with typed I/O); `def` is the *syntax* that introduces one. `class`, `record`, `enum`, `protocol`, `program` remain as sugar keywords desugaring to `def` shapes. `function` retired (already committed).
+
+**2. Handler prefix `on` retired; replaced by `->`.** Every handler declaration prefixed with `->`:
+```
+-> input(event):
+    state.pending = event
+```
+Reads as "→ input(event): [do]" — arrow points from incoming event to handler body. Parser distinguishes handler `->` (line-start inside atom body) from return-type `->` (between argument-list-close and shape reference) by position. Same semantic story across positions: arrows point toward flow.
+
+**3. Emit rewritten as `:>` push channel; symmetric with `:<` pull channel.** `emit(value)` → `:> value`. Rationale: `:<` was already committed for observable pull channels; `:>` mirrors it on the emit side. Same visual convention — colon marks the atom-boundary side, arrow direction marks pull vs push. Both operate at the atom's outward-facing surface:
+- `:<` — standing declaration; subscribers read on demand (pull)
+- `:>` — imperative statement; subscribers receive as it happens (push)
+
+Named channel emit: `:> channel_name(value)`. Default channel: bare `:> value`.
+
+**4. Wire composition unified under `|>`; `->` retires from wire duty.** Mixed `source -> op |> op` in the same chain was inconsistent. Uniform: every wire composition uses `|>`. `->` retains only structural/declarative roles (return-type, handler prefix). Time-deferred pipes use `~>` (visual marker for "pipe with a time gap"). Final glyph family:
+
+| Glyph | Role |
+|---|---|
+| `->` | return-type in signatures + handler prefix (declarations only) |
+| `\|>` | wire composition (all "output of left → input of right") |
+| `~>` | time-deferred wire composition (pipe with delay) |
+| `:<` | observable pull channel |
+| `:>` | emit push channel |
+
+Five glyphs, five distinct roles, zero overlap. `->` in `after N -> handler` sugar retires — see (5).
+
+**5. Time as env-provided capability atom; `after` primitive retired.** `after duration -> handler` was a smuggled primitive that referenced an ambient scheduler nobody declared. Reduction: `Clock` is a capability atom shape (stdlib); the runtime provides a default `WallClock`; user code binds it via `use:` and calls `clock.after(duration) |> handler`. This unlocks:
+- Test clocks (`TestClock` with manual `advance_to(t)`)
+- Game clocks (`GameClock` driven by frame updates; scales/pauses with game state)
+- Simulation clocks (deterministic replay)
+- Remote clocks (RPC to time-of-authority)
+
+All are user-writable atoms conforming to `Clock`; no language changes required per variant.
+
+**6. OS boundary generalized — every OS-adjacent capability is an atom.** Time was the first hit; the same pattern applies to Filesystem, Network, Console, Random, Args, EnvVars, Exit, Signals, Log, and (later) Threads, Process, Devices, GUI events. Runtime constructs shim atoms wrapping OS syscalls; user atoms depend on capability shapes, never on OS directly. Layering:
+```
+[User atoms]     ← pure logic, zero OS knowledge, portable
+     ↑ depend on
+[env: Clock, Fs, Net, Console, ...]  ← capability atoms
+     ↑ wrap
+[Shim atoms: WallClock, PosixFs, ...]  ← translate atom calls to syscalls
+     ↓ syscall
+[OS]
+```
+Shim/proxy/sandbox/remote are all *the same mechanism* (atom composition). Wrapping `env.fs` with `SandboxedFs(inner: env.fs, allowed: [...])` is normal atom construction. Policy lives in how the runtime constructs env; user code sees uniform interfaces. This IS the effect system, spelled out via `use:` declarations (see 7) — the set of transitive `use:` closures across an atom subtree IS its effect set.
+
+**7. `use:` block for capability declaration + implicit access; `provide:` unified into it.** Every atom declares its env dependencies in a `use:` block:
+```
+def debounce(duration: Duration):
+    use:
+        clock: Clock                          # inherit from parent env, expect Clock shape
+    ...
+    clock.after(duration) |> fire_pending    # bare `clock` — implicit lookup in atom scope
+```
+
+The source expression tells the composition checker where the value comes from:
+- Shape-only (`clock: Clock`) → look up `clock` in parent env; check conformance
+- Construction (`clock: GameClock(tick_ms: 16)`) → construct locally; this compound provides it to children
+- Expression (`fs: SandboxedFs(inner: fs, ...)`) → evaluate; bare-name references resolve in *enclosing* scope (parent env), letting the entry wrap the parent's version
+
+Children of the compound see the local bindings uniformly; whether an entry was inherited or constructed is invisible to them. `provide:` was never committed but was drafted; the unification with `use:` retires it before it could become mechanism-invention.
+
+Order-dependent within the block: later entries can reference earlier ones by name. Bare names inside a construction expression resolve in enclosing scope, not the same block (avoids self-reference confusion).
+
+**8. Resource lifecycle = state-machine atom; `-> before_destroy:` for RAII.** Resources (File, Socket, Process, Thread) are state-machine atoms with nested state atoms (`unopened → opened → closed`; `created → connecting → connected → closing → closed`). Handlers only exist on states that own the resource:
+
+```
+def File:
+    data: path: Path
+    def unopened: pass
+    def opened:
+        data: handle: NativeHandle
+        -> read(n: Int) -> Stream of Bytes: ...
+        -> write(bytes: Bytes) -> Stream of Int: ...
+        -> close: native_close(handle); :> closed()
+        -> before_destroy: native_close(handle)    # RAII cleanup
+    def closed: pass
+    entrypoints:
+        open(): requires active == unopened; ...
+    invariants:
+        active in {unopened, opened, closed}
+```
+
+**Use-after-close** falls out: `.read()` is a handler on `opened` only; calling it in `closed` finds no handler → error. **Double-close** falls out: `close` transitions to `closed`; second call finds no `close` handler. **RAII** falls out: `-> before_destroy:` runs on atom destruction; if we forget to `close()`, the destructor path handles it.
+
+For v1.0: runtime dispatch with "state X has no handler Y" errors. Compile-time type-state proofs (Rust typestate crates) deferred to future work.
+
+**9. FFI via `extern:` block within stdlib shim atoms.** Shim atoms declare native bindings in a first-class section:
+```
+def PosixFs:
+    conforms: Filesystem
+    extern:
+        native_open(path: CString, flags: Int32, mode: Int32) -> Int32:
+            symbol: "open"
+            library: "libc"
+        # ...
+    entrypoints:
+        open(path: Path) -> File:
+            let fd = native_open(path.to_cstring(), O_RDWR, 0)
+            ...
+```
+Rules: `extern:` allowed only in stdlib-designated shim atoms (user code never gets FFI); signatures use C types (`CString`, `Int32`, `SizeT`, `Ptr of Byte`); marshalling from Corvid types (`Path`, `Bytes`) happens in method bodies (explicit at boundary); `symbol:` and `library:` fields resolve per-target — `libc` for native, `wasi_snapshot_preview1` for WASI, `js` for JavaScript host, `env` for WASM component-model. Same capability shape (`Filesystem`) has different shim implementations per target (`PosixFs`, `WasiFs`, `BrowserFs`); runtime picks at build/launch time.
+
+Rejected alternatives: FFI-as-capability (`env.ffi.call("open", [...])`) loses type safety at the boundary and lets user code make arbitrary syscalls; `native def` keyword splits the type system into two atom categories. `extern:` as a section keeps shim atoms as normal atoms with one extra section — no fundamental category split.
+
+**10. Type parameters as `of` qualifier; `<T>` fully retired; multi-channel output via named tuple.** Structural type parameters use the `of` qualifier (extending the retirement of `<T>` committed on 2026-08-11):
+- Concrete: `Stream of Bytes`, `List of Int`, `Map of (String, User)`, `Future of File`, `Ptr of Byte`
+- Variable (lowercase): `Stream of s`, `List of a`, `Map of (k, v)`
+
+Case convention IS the type-variable marker (TitleCase = type reference; lowercase = shape variable). Binding: first appearance of a lowercase name in an atom's signature scope (constructor params + channel signature + `where` clause + `state:` types + `use:` types) is the binding site; subsequent appearances refer to the same variable. Compiler checks: unresolvable subsequent mention = error; bound-but-never-referenced = warning ("did you mean X?"). No `[a, b]` binding block (that's `<T>` in different clothing); no `'a` sigil (adds noise for no safety gain over consistency check).
+
+Constraints go in `where` alongside preconditions/postconditions:
+```
+def dedupe:
+    Stream of s -> Stream of s where s conforms Hashable
+```
+
+Multi-channel operators use **named tuple return type** as the single mechanism:
+```
+def partition(predicate: (a) -> Bool):
+    Stream of a -> (matched: Stream of a, unmatched: Stream of a)
+    
+    -> input(item):
+        if predicate(item):
+            :> matched(item)
+        else:
+            :> unmatched(item)
+```
+
+Emission rule: bare `:> value` for default (single unnamed) channel; `:> name(value)` for named channels. Callers reference channels by name on the atom instance (`router.east`, `router.dropped`). No separate `channels:` section — return type is authoritative.
+
+**Stdlib catalog for v1.0 — dogfooded in Corvid.** Every capability listed below is a stdlib atom, built with `extern:` bindings for the syscall boundary. If we can't express `HTTP server`, `Filesystem watch`, or `Signals` cleanly in Corvid, the language has a gap that needs fixing — not a stdlib workaround.
+
+*Core (must ship v1.0):* Clock, Random, Filesystem, Network, Console, Args, EnvVars, Exit, Signals, Log.
+*Extended (v1.0 if language supports; else v1.1):* Threads/Workers, Process, IPC, TimeZone/Locale, Crypto.
+*v1.1+ (device-specific):* GUI events, Audio, GPU, Sensors/Devices.
+
+**Mechanism-invention trap check.** Passes on all ten. Each commitment removes machinery (`after`, `emit`, `on`, `->` in wire position, `<T>`, `provide:`, `channels:`) or explicitly names a naming-question at its resolution (`def` vs `atom`, `use:` unification, `of` for element types, named tuples for multi-channel). The FFI mechanism (`extern:`) is genuinely new — it names the syscall boundary that shim atoms need — but stays as a section within normal atoms rather than a distinct atom category.
+
+**Spec changes committed this addendum.** See the spec-side changelog for what moved. Sections most affected: §1.11 (direction — new commitments row), §2.5 (keywords — `def`, `use`, `extern`, `of` added; `atom`, `emit`, `on`, `after`, `function` retired), §2.6 (reserved syntactic space — glyph list), §3.2 (composite types — `of` qualifier), plus a discrepancy sweep across §3, §4, §5, §8, §10, §11 for `atom` → `def`, `on` → `->`, `emit(x)` → `:> x`, `Type<T>` → `Type of T`, wire `->` → `|>`.
+
+**Nineteenth dissolution session.** Cumulative reduction after this session: `def` as sole declaration keyword; five wire glyphs (`->`, `|>`, `~>`, `:<`, `:>`) with zero overlap; `use:` as sole capability-declaration mechanism; `extern:` as the OS/FFI boundary; `of` as sole type-parameter mechanism; case convention as the type-variable marker; state-machine atoms as the resource-lifecycle mechanism. OS is a set of capability atoms. Time is one of them. Everything else composes.
+
+**Open follow-ons after this session.**
+
+- Compile-time state-narrowing proofs for state-machine atoms (typestate optimization; deferred past v1.0).
+- Dynamic-channel operators (Map-of-Stream shape; user code, not language feature — check assumption when a real use case surfaces).
+- Ambient-authority discipline: `use:` catches direct dependencies; transitive audit via tooling. Design the audit tool.
+- Grammar sketch (§10) needs a full pass for the new syntactic forms.
+- Worked example (§11) needs rewriting in the new syntax.
+
+---
 
 ## Session note — Types-as-guards; `<T>` generic-parameter syntax retired at v1.0; wiring glyphs pinned (2026-08-11, no version bump)
 

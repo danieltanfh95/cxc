@@ -1,8 +1,8 @@
-# PATTERNS.md — What Corvid does when other languages would do X
+# PATTERNS.md — What cxc does when other languages would do X
 
-**Purpose.** Corvid's design has, session by session, dissolved many constructs that other languages ship: `try/catch`, `throws`, `Result<T, E>`, tuples, destructuring bindings, nested type declarations, `DispatchQueue`, `for` as a keyword, `|>` (pipe). Each dissolution has a specific "here's how Corvid does it instead" answer that's obvious once known and invisible until it is. This document catalogs those patterns.
+**Purpose.** cxc's design has, session by session, dissolved many constructs that other languages ship: `try/catch`, `throws`, `Result<T, E>`, tuples, destructuring bindings, nested type declarations, `DispatchQueue`, `for` as a keyword, `|>` (pipe). Each dissolution has a specific "here's how cxc does it instead" answer that's obvious once known and invisible until it is. This document catalogs those patterns.
 
-**How to read.** Find your source language below. For each pattern you'd reach for, see the Corvid form with a code sketch and a pointer to the spec section that explains why. When no source-language match applies, the "Corvid-native patterns" section at the end summarizes the structural commitments the dissolutions descend from.
+**How to read.** Find your source language below. For each pattern you'd reach for, see the cxc form with a code sketch and a pointer to the spec section that explains why. When no source-language match applies, the "cxc-native patterns" section at the end summarizes the structural commitments the dissolutions descend from.
 
 **This is not the spec.** The spec (`spec/spec-v0.11.md`) is normative. This document is onboarding guidance. When they disagree, the spec wins.
 
@@ -68,7 +68,7 @@ See §3.5.4 (failure handling model), §4.10.4.5 (`with:` for cleanup).
 
 ### "I need `Result<T, E>`"
 
-Corvid does not ship `Result<T, E>` in the prelude. Use a domain-specific enum with a case per failure mode. Names read better; associated data per case is more expressive; metadata (§4.18) makes the shape inspectable.
+cxc does not ship `Result<T, E>` in the prelude. Use a domain-specific enum with a case per failure mode. Names read better; associated data per case is more expressive; metadata (§4.18) makes the shape inspectable.
 
 ```
 enum FileOpenOutcome:
@@ -78,7 +78,7 @@ enum FileOpenOutcome:
     case volume_unavailable(volume: String)
 ```
 
-If you're writing genuinely generic middleware over "any failable operation," define a `Failable<T>` protocol conformed to by your domain enums; middleware operates over the protocol. Corvid does not push everyone toward a single `Result` wrapper.
+If you're writing genuinely generic middleware over "any failable operation," define a `Failable<T>` protocol conformed to by your domain enums; middleware operates over the protocol. cxc does not push everyone toward a single `Result` wrapper.
 
 See §3.5.4.
 
@@ -185,7 +185,7 @@ See §3.3.2 for the full seven-rule composition semantics.
 
 ### "I need `String.Index`, `s[s.startIndex..<i]`, or int indexing on strings"
 
-Corvid strings are grapheme-native (§3.10.5). No integer indexing (`s[5]` is a compile error). Positional access uses opaque `StringPosition` tokens (§3.10.7):
+cxc strings are grapheme-native (§3.10.5). No integer indexing (`s[5]` is a compile error). Positional access uses opaque `StringPosition` tokens (§3.10.7):
 
 ```
 let pos = s.start_position()
@@ -194,7 +194,7 @@ let head = s.substring(from: pos, to: after_first)
 let g = s.grapheme_at(position: pos)     # Char (grapheme cluster)
 ```
 
-Swift's `s.startIndex`, `s.endIndex`, `s.index(after: i)`, `s[i..<j]`, `s.count` map to `s.start_position()`, `s.end_position()`, `s.position(after: i)`, `s.substring(from: i, to: j)`, `s.grapheme_count()`. Rationale: integer indexing over Unicode text admits three incompatible interpretations (bytes / code units / graphemes); Corvid refuses to pick silently.
+Swift's `s.startIndex`, `s.endIndex`, `s.index(after: i)`, `s[i..<j]`, `s.count` map to `s.start_position()`, `s.end_position()`, `s.position(after: i)`, `s.substring(from: i, to: j)`, `s.grapheme_count()`. Rationale: integer indexing over Unicode text admits three incompatible interpretations (bytes / code units / graphemes); cxc refuses to pick silently.
 
 ### "I need `.utf8`, `.utf16`, `data.count`, `[UInt8](string.utf8)` for byte access"
 
@@ -266,7 +266,7 @@ s.split(pattern: literal(","))                    # split on exact string
 s.replace_all(pattern: regex"\s+", with: " ")     # collapse whitespace
 ```
 
-**Named captures are mandatory.** Swift's `Regex("(\d+)")` unnamed group is a compile error in Corvid; write `regex"(?<year>\d+)"`. Access via `match.group("year")`. Rationale: consistent with the named-only discipline used everywhere else (records, enum associated values, `accepts` signatures). The reader sees capture names inside the pattern source without cross-referencing consumer code.
+**Named captures are mandatory.** Swift's `Regex("(\d+)")` unnamed group is a compile error in cxc; write `regex"(?<year>\d+)"`. Access via `match.group("year")`. Rationale: consistent with the named-only discipline used everywhere else (records, enum associated values, `accepts` signatures). The reader sees capture names inside the pattern source without cross-referencing consumer code.
 
 **Compilation caching is automatic** when the pattern source is a compile-time constant — `regex"^\d+$"` compiles once at parse time. No `Regex.compile(...)` boilerplate. Runtime-built patterns (`Regex(user_input)`) are constructed per call.
 
@@ -345,7 +345,7 @@ See §3.7.1.
 
 ### "I need a generic `Result<T, E>` for middleware"
 
-Domain-specific enums cover the common cases better. If you truly need a generic wrapper for cross-domain middleware (retry combinators, testing scaffolds), author your own `Result<T, E>` enum or define a `Failable<T>` protocol and write middleware over the protocol. Corvid's stdlib does not ship one.
+Domain-specific enums cover the common cases better. If you truly need a generic wrapper for cross-domain middleware (retry combinators, testing scaffolds), author your own `Result<T, E>` enum or define a `Failable<T>` protocol and write middleware over the protocol. cxc's stdlib does not ship one.
 
 ### "I need traits with `where` clauses"
 
@@ -361,7 +361,7 @@ Multi-constraint uses comma-separated where atoms — no `&` conjunction operato
 
 ### "I need `impl<T: Trait> for Foo<T>` (Rust trait implementation for a generic type)"
 
-`extend class Foo<T> where T: Trait:` (§3.3.2). Same shape. If the trait provides default methods, Corvid's structural conformer inheritance (§3.4.4) means Foo<T> automatically inherits them when the where-clause is satisfied — no `impl` block needed; conformance is structural.
+`extend class Foo<T> where T: Trait:` (§3.3.2). Same shape. If the trait provides default methods, cxc's structural conformer inheritance (§3.4.4) means Foo<T> automatically inherits them when the where-clause is satisfied — no `impl` block needed; conformance is structural.
 
 If you want to add methods to Foo<T> that go beyond what the trait provides: same `extend class` block.
 
@@ -381,7 +381,7 @@ extend class MyType:
 
 ### "I need `From<T>` / `Into<T>` for conversions"
 
-`As<T>` and `From<T>` in Corvid (§3.10.3). Same shape and intent as Rust's pair:
+`As<T>` and `From<T>` in cxc (§3.10.3). Same shape and intent as Rust's pair:
 
 - `As<T>` — projection direction (self → T). Method: `function as(self) -> T`.
 - `From<T>` — construction direction (T → Self). Method: `class function from(source: T) -> Self`.
@@ -398,7 +398,7 @@ class Config:
 
 Trait-qualified dispatch: multiple `as` methods differ by return type via the conformed `As<T>` instantiation, not by parameter overloading (§3.4.4). Call-site resolution: return-type context, turbofish (`.as::<Bytes>()`), or `As<Bytes>.as(x)`.
 
-**Difference from Rust.** No blanket `impl<T, U> Into<U> for T where U: From<T>` — Corvid does not auto-derive one direction from the other. Author both explicitly when both are meaningful. Rationale: projection and construction have distinct semantics; symmetric auto-derivation hides where information is lost or where construction may fail.
+**Difference from Rust.** No blanket `impl<T, U> Into<U> for T where U: From<T>` — cxc does not auto-derive one direction from the other. Author both explicitly when both are meaningful. Rationale: projection and construction have distinct semantics; symmetric auto-derivation hides where information is lost or where construction may fail.
 
 **Numeric narrowing lives OUTSIDE `As<T>`.** Prelude ships `As<T>` conformance only for **widening** numeric pairs (source range ⊆ target range — lossless). `Int32(300).as() -> UInt8` is a compile error; the diagnostic points at three narrowing methods on the source primitive:
 
@@ -445,7 +445,7 @@ See §3.10.1.
 
 ### "I need `x = foo() if bar else baz`"
 
-`if` is an expression in Corvid — write it as `if bar: foo() else: baz`, no ternary syntax needed. `switch` is also an expression.
+`if` is an expression in cxc — write it as `if bar: foo() else: baz`, no ternary syntax needed. `switch` is also an expression.
 
 See §3.8 (everything is an expression).
 
@@ -517,7 +517,7 @@ See §3.4, §3.4.5, §4.10.7.
 
 ### "I need `class Foo extends Bar` / `class Foo : Bar` / class inheritance"
 
-Corvid commits to composition-over-inheritance for pure Corvid code — there's no `extends` for regular classes. Use protocol conformance + composition (holding a reference to a helper class) instead.
+cxc commits to composition-over-inheritance for pure cxc code — there's no `extends` for regular classes. Use protocol conformance + composition (holding a reference to a helper class) instead.
 
 The one exception is ObjC interop: subclassing UIViewController, NSObject, etc. is unavoidable when writing framework-facing code. That uses body-form `metadata: extends:` (never header syntax):
 
@@ -532,7 +532,7 @@ class MyViewController:
         self.table_view = UITableView()
 ```
 
-Rules: `extends:` accepts one class, must be `kind: regular`, must be ObjC-imported. Pure Corvid classes cannot be subclassed. `super.method()` dispatches to the extended class per §5.7.
+Rules: `extends:` accepts one class, must be `kind: regular`, must be ObjC-imported. Pure cxc classes cannot be subclassed. `super.method()` dispatches to the extended class per §5.7.
 
 **Deprecated in v0.10.2, removed v0.11**: the double-colon header form `class MyViewController: UIViewController:`. The parser emits a fix-it warning suggesting body-form migration.
 
@@ -546,7 +546,7 @@ See §3.10, §4.20.1.
 
 ### "I need `null`-safe navigation"
 
-Every reference type in Corvid allows nil. Message-send on nil is a no-op that returns nil (auto-lifted). Combine with `??` for defaults, `if let` for gating.
+Every reference type in cxc allows nil. Message-send on nil is a no-op that returns nil (auto-lifted). Combine with `??` for defaults, `if let` for gating.
 
 See §3.6.1.
 
@@ -558,7 +558,7 @@ No `old(...)` form. Inside an `ensures` expression, `self` and parameter identif
 # Dafny/JML style:
 # ensures count == old(count) + 1
 
-# Corvid:
+# cxc:
 function increment(self)
     ensures result.count == self.count + 1:
     self.count += 1
@@ -585,13 +585,13 @@ See §3.4.3.
 
 ### "I need `|>` (pipe operator)"
 
-Not in the prelude. Method chaining `x.f().g().h()` is Corvid's native pipeline; universal method dispatch and cheap extensions/sections make it work at parity. Projects that genuinely want pipe can declare `alias <lhs> @|> <rhs> ...` locally per v0.8.2 `@` marker discipline.
+Not in the prelude. Method chaining `x.f().g().h()` is cxc's native pipeline; universal method dispatch and cheap extensions/sections make it work at parity. Projects that genuinely want pipe can declare `alias <lhs> @|> <rhs> ...` locally per v0.8.2 `@` marker discipline.
 
 See §4.20.3 (paradigm-mismatch exclusions).
 
 ### "I need `do`-notation / for-comprehension for `Result`"
 
-Not spec'd. Explicit `switch` on domain enums at each layer. Trade-off is the same as with Rust's `?` — Corvid picks visible dispatch over cross-cutting propagation. If nesting exceeds 3 layers, decompose.
+Not spec'd. Explicit `switch` on domain enums at each layer. Trade-off is the same as with Rust's `?` — cxc picks visible dispatch over cross-cutting propagation. If nesting exceeds 3 layers, decompose.
 
 ### "I need algebraic data types"
 
@@ -618,9 +618,9 @@ Not spec'd as function-level clauses. Use one function per method, `switch` on t
 
 ---
 
-## Corvid-native patterns
+## cxc-native patterns
 
-These emerge from Corvid's structural commitments and are worth naming even if they don't correspond to a construct from another language.
+These emerge from cxc's structural commitments and are worth naming even if they don't correspond to a construct from another language.
 
 ### Iteration is method dispatch
 
@@ -663,11 +663,666 @@ No nested type declarations (v0.8.4). Types conventionally associated with a cla
 
 ### Before adding a mechanism, check what's already there
 
-Corvid's design has consistently dissolved would-be mechanisms into existing tools: `for` → `Iterable`, tuples → records, nested types → convention, `throws` → return type, `try/catch` → switch, `DispatchQueue` → contracts + `execution:`. The five-session pattern (v0.8.3–v0.8.6) is stable enough to be a principle:
+cxc's design has consistently dissolved would-be mechanisms into existing tools: `for` → `Iterable`, tuples → records, nested types → convention, `throws` → return type, `try/catch` → switch, `DispatchQueue` → contracts + `execution:`. The five-session pattern (v0.8.3–v0.8.6) is stable enough to be a principle:
 
-> When you're tempted to add a new mechanism, first ask whether Corvid's structural commitments (class-as-universal, nil-messaging inversion, contracts as coordination, universal method dispatch, sections, aliases) already cover the case via convention or composition.
+> When you're tempted to add a new mechanism, first ask whether cxc's structural commitments (class-as-universal, nil-messaging inversion, contracts as coordination, universal method dispatch, sections, aliases) already cover the case via convention or composition.
 
 Most of the time, they do.
+
+---
+
+## Atom-substrate dissolutions (v1.0 direction; §1.11, §1.12, §1.13)
+
+The v1.0 target is the atom model with a small set of surface commitments. Each entry below shows a mechanism from a prior spec draft (or one you might reach for from another language) that dissolves under the atom substrate.
+
+### "I need `emit(value)` to push a message from a handler"
+
+Use the `:>` push-channel glyph, symmetric with the `:<` observable pull-channel:
+
+```
+def debounce(duration: Duration):
+    use: clock: Clock
+    state: pending = nil
+    
+    -> input(event):
+        state.pending = event
+        clock.after(duration) |> fire
+    
+    -> fire:
+        :> state.pending        # emit on default channel
+        state.pending = nil
+```
+
+Bare `:> value` emits on the default channel. `:> name(value)` emits on a named channel (required when the atom has a named-tuple return type). See §1.11 for the pull/push symmetry rationale.
+
+### "I need `after N -> handler` for a delayed callback"
+
+There is no `after` primitive. Time is a capability atom (`Clock`). Declare it in `use:` and use one of two forms — a time-guarded transition or a Delay/Throttle transformer:
+
+```
+# Time-guarded transition — atom transitions when the guard's time predicate fires:
+use: clock: Clock
+
+waiting when: clock.after(deadline)
+-> ready
+    do: :> timer_elapsed
+
+# Or as a transformer inside a receive-glyph source expression:
+running <: source_stream |> Throttle{interval: 100ms} {payload: T} -> running
+    do: handler(payload: payload)
+```
+
+The `~>` time-deferred wire glyph is retired (2026-08-12). See §1.12 for time-as-capability rationale. Test-clocks, game-clocks, simulation-clocks are user-writable atoms conforming to `Clock` — the runtime provides a default `WallClock`; user code substitutes.
+
+### "I need to compose transformers on a stream — where does `|>` go?"
+
+`|>` composes anonymous transformer atoms inside a receive-glyph source expression:
+
+```
+# Single transformer:
+running <: mouse.moves |> Debounce{duration: 200ms} {pos: Position} -> running
+    do: cursor :> update(pos: pos)
+
+# Multi-stage chain (reads left-to-right as data flow):
+running <: mouse.moves
+           |> Filter{predicate: on_screen}
+           |> Debounce{duration: 200ms}
+           {pos: Position}
+-> running
+    do: cursor :> update(pos: pos)
+```
+
+Each `|> Transformer{args}` is an anonymous sub-atom scoped to the enclosing phase. Alternative: name the transformer as a slot (`data: debouncer: Debounce = Debounce{duration: 200ms}`) when you want to inspect intermediate state or reuse the transformer across several receive sites.
+
+**Retired:** free-standing wires at atom-body top-level (`source |> target` outside any transition). All subscriptions are receive-glyph transitions. See §1.11 "Stream composition in receive-glyph source expressions."
+
+See §1.11 wiring-glyph table. The six glyphs are: `->` (return-type + transition arrow), `|>` (stream composition + sync send), `:<` (observable pull), `:>` (emit async), `<:` (receive async), `<|` (receive sync). Zero overlap.
+
+### "I need `on event(...):` for a handler declaration"
+
+Handler prefix is `->`, not `on`:
+
+```
+# NO:
+on input(event):
+    ...
+
+# YES:
+-> input(event):
+    ...
+```
+
+Reads as "→ input(event): [do]." Parser distinguishes handler `->` (at line-start inside atom body) from return-type `->` (between `)` and a type ref, before `:`). See §2.6 position-based disambiguation.
+
+### "I need `atom Foo:` to declare an atom / stateful class"
+
+Use `def`. `atom` is the substrate concept (in prose); `def` is the syntax. `class`, `record`, `enum`, `protocol`, `program` remain as sugar keywords that desugar to `def` shapes.
+
+```
+def DebouncedCounter:
+    use: clock: Clock
+    state: count: Int = 0
+    invariants: 0 <= count <= 100
+    ...
+```
+
+See §2.5 keywords, §1.11 substrate.
+
+### "I need `List<T>` / `Map<K, V>` / `Stream<T>` — generic type parameter brackets"
+
+Use the `of` qualifier. `<T>` is retired at v1.0.
+
+```
+# NO:
+Stream<Bytes>
+List<Int>
+Map<String, User>
+
+# YES:
+Stream of Bytes
+List of Int
+Map of (String, User)
+```
+
+Lowercase names in `of` position are shape variables bound in the enclosing signature scope by first-mention. TitleCase are concrete type references. Case convention IS the type-variable marker.
+
+```
+def dedupe:
+    Stream of s -> Stream of s where s conforms Hashable
+```
+
+See §3.2 composite types, §1.11 v1.0 substrate.
+
+### "I need `<T>` on a generic function or class"
+
+You don't declare the type parameter. It's inferred structurally from body use (handler params, state assignments, emit calls). Constraints go in `where`.
+
+```
+# NO:
+def map<A, B>(f: (A) -> B, s: Stream<A>) -> Stream<B>: ...
+
+# YES:
+def map(f: (a) -> b):
+    Stream of a -> Stream of b
+    -> input(item): :> f(item)
+```
+
+`a` binds first-mention in `f`'s input type; `b` binds first-mention in `f`'s return type; channel signature references both. No universal-quantifier syntax needed.
+
+### "I need `channels:` section to declare multiple output channels"
+
+Use the named tuple return type. Return type is authoritative; no separate section.
+
+```
+def partition(predicate: (a) -> Bool):
+    Stream of a -> (matched: Stream of a, unmatched: Stream of a)
+    
+    -> input(item):
+        if predicate(item):
+            :> matched(item)
+        else:
+            :> unmatched(item)
+```
+
+Callers reference channels by name on the atom instance: `partitioner.matched |> handler_a`, `partitioner.unmatched |> handler_b`. See §3.2 multi-channel subsection.
+
+### "I need `provide:` to give my children a shadowed capability"
+
+Use `use:` with a construction expression. Source expression tells the composition checker where the value comes from:
+
+```
+def GameProgram:
+    use:
+        clock: GameClock(tick_ms: 16)                        # constructed locally; provided to children
+        random: Random                                        # shape-only: inherited from parent env
+        fs: SandboxedFs(inner: fs, allowed: ["/data/**"])    # wraps parent's fs (outer `fs` resolves in parent env)
+        console: Console
+```
+
+Shape-only entry inherits from parent env; construction/expression entry is local and propagates to children. `provide:` was never committed — `use:` covers both roles. See §1.12 `use:` block semantics.
+
+### "I need `read_file(path)` / `println(x)` / `random()` / `sleep(ms)` — direct OS calls"
+
+No language primitives touch the OS. Every OS-adjacent operation is a method on a capability atom in `env`. Declare the capability in `use:` and call it:
+
+```
+def MyProgram:
+    use:
+        fs: Filesystem
+        console: Console
+        random: Random
+        clock: Clock
+    
+    -> start:
+        let contents = await fs.open("/path/file", read).then(f -> f.read_all())
+        console.write_line("Random: " + random.next_u32.to_string())
+        clock.after(1s) |> tick_handler
+```
+
+Runtime provides shim atoms (`PosixFs`, `PosixConsole`, `OsRandom`, `WallClock`) at program launch. Alternatives (test, sandbox, remote) are user-writable atoms conforming to the same shape. See §1.12 OS-boundary layering and §1.13 stdlib capability catalog.
+
+### "I need `try/finally` for resource cleanup (files, sockets, threads)"
+
+Use state-machine atoms with `-> before_destroy:` for RAII. Resources have natural lifecycles; the atom's active state controls which operations are valid:
+
+```
+def File:
+    data: path: Path
+    def unopened: pass
+    def opened:
+        data: handle: NativeHandle
+        -> read(n: Int) -> Stream of Bytes: ...
+        -> close: native_close(handle); :> closed()
+        -> before_destroy: native_close(handle)    # RAII cleanup
+    def closed: pass
+```
+
+Use-after-close and double-close fall out of the state-machine model (handlers only exist on states that own the resource). Auto-close on scope exit via `-> before_destroy:`. See §1.12 resource-lifecycle example.
+
+### "I need FFI / C ABI bindings in my library"
+
+You don't. User code accesses OS through typed capabilities (`Clock`, `Filesystem`, `Network`, `Console`, ...) — never through raw FFI. If a typed capability doesn't exist for what you need, contribute a shim to the stdlib prelude.
+
+Under the hood: FFI is a capability atom (`Extern`) provisioned only to stdlib shim atoms. Foreign symbol declarations live in per-target prelude `foreign library` blocks. Shim atoms use `extern.get("name")` to retrieve typed native handles.
+
+```
+# ---- prelude/unix/libc.cor (prelude-only; user code cannot declare these) ----
+foreign library "libc":
+    symbol "open":  (path: CString, flags: Int32, mode: Int32) -> Int32
+    symbol "read":  (fd: Int32, buf: Ptr of Byte, len: SizeT) -> SsizeT
+    symbol "close": (fd: Int32) -> Int32
+
+# ---- prelude/unix/posix_fs.cor (stdlib shim) ----
+def PosixFs:
+    conforms: Filesystem
+    use:
+        extern: Extern                       # runtime provisions Extern to stdlib shims only
+    data:
+        native_open:  (CString, Int32, Int32) -> Int32       = extern.get("open")
+        native_read:  (Int32, Ptr of Byte, SizeT) -> SsizeT  = extern.get("read")
+        native_close: (Int32) -> Int32                        = extern.get("close")
+    -> open(path: Path) -> Future of (File | IOError):
+        ...
+```
+
+**Direction inferred from symbol type shape.** `(Args) -> Ret` = outbound (cxc invokes; native impl). `Stream of T` = inbound (native invokes via runtime callback; cxc subscribes). Callbacks-with-return unsupported in v1.0. See §1.12 for the trust boundary and §1.14 for the prelude structure and worked WallClock example (both directions).
+
+Rejected: `native def` keyword splits the type system into two atom categories. FFI-as-capability was rejected in an earlier draft on type-safety grounds but is now accepted under the prelude-typed form (types come from prelude declarations, resolved at compile time).
+
+### "I need `Future<T>` / `Signal<T>` / `Promise<T>` for one-shot async values"
+
+There is one channel primitive: `Stream of T`. Cardinality lives in `where` clauses. Prelude ships aliases for the common cases:
+
+```
+# Prelude:
+alias Future of T = Stream of T where emits <= 1        # zero-or-one emission
+alias Signal of T = Stream of T where emits == 1        # exactly one emission
+
+# Use in signatures — reads the same as if they were primitive types:
+-> after(duration: Duration) -> Future of Unit:
+```
+
+Cardinality propagates via operator contracts: `map: emits(out) == emits(in)`, `filter: emits(out) <= emits(in)`. Every operator works on Stream; Future and Signal shapes are just the constrained cases. No separate primitive to teach. See §1.13 stdlib capability shapes.
+
+### "I need an `entrypoints:` section to declare my public API"
+
+Every `-> handler:` declaration is exposed by default. There is no `entrypoints:` section. External callers, internal wires, and any message sender all reach handlers the same way — a handler is a channel that receives messages; who's on the other end is composition context.
+
+```
+# NO — special section:
+entrypoints:
+    take_damage(amount: Int) |> active.damage(amount)
+
+# YES — plain handler (multi-line body):
+-> take_damage(amount: Int):
+    self :> damage(amount: amount)
+```
+
+If a truly private handler is ever needed, add `private ->` as an escape hatch — no such need has surfaced in the design so far. See §1.11 atom-body vocabulary.
+
+### "I need a `wires:` section for the compound atom's internal wiring graph"
+
+There is no `wires:` section and no free-standing wires anywhere. Every subscription is a receive-glyph transition on the atom that consumes the stream:
+
+```
+def Game:
+    use:
+        clock:    Clock
+        keyboard: KeyboardInput
+    
+    data:
+        paddle:  Paddle        = Paddle{}
+        player:  Player        = Player{}
+        spawner: EnemySpawner  = EnemySpawner{}
+    
+    # No `wires:` section, no top-level `|>`. Each stream we consume is a
+    # receive-glyph transition, one per handler.
+    running <: clock.tick{dt: Duration}      -> running do: paddle :> tick(dt: dt)
+    running <: clock.tick{dt: Duration}      -> running do: spawner.active_enemies.for_each(e => e :> tick(dt: dt))
+    running <: keyboard.pressed{key: Key}    -> running do: player :> pressed(key: key)
+    running <: keyboard.released{key: Key}   -> running do: player :> released(key: key)
+    
+    running <: quit_requested -> end
+```
+
+With inline stream composition when a transformer is needed:
+
+```
+# Debounce mouse moves without a named intermediate:
+running <: mouse.moves |> Debounce{duration: 200ms} {pos: Position} -> running
+    do: cursor :> update(pos: pos)
+```
+
+**Retired (2026-08-12):** free-standing `|>` at atom-body top-level (standing wires). Replaced by receive-glyph transitions with optional inline transformer chains in the source expression. See §1.11 "Stream composition in receive-glyph source expressions."
+
+**Retired (2026-08-12):** `-> handler |> wire_expr` one-liner handler bodies. Handler bodies must be multi-line blocks; stream transformation lives in receive-glyph source expressions.
+
+**On `-> setup:` / `-> enter:` retirement (earlier).** Retired in favor of the universal `init` phase. Field initialization happens in the wildcard on-enter (`-> <first phase>`) transition.
+
+### "I need `active.hp` / `active.close()` to reference the currently-active state atom"
+
+`active` was retired. `self` is the sole atom-self reference. In compound atoms with nested state atoms, message dispatch **auto-delegates** — the compound checks its own handler table first; if no match, it dispatches to the currently-active nested state atom's handlers.
+
+```
+# NO — active pronoun:
+file.active.read(1024)
+active.hp -= amount
+
+# YES — bare dispatch on self, auto-delegates to active state:
+file.read(1024)                # if file's active state is `opened`, resolves to opened.read
+self.hp -= amount              # inside a state atom's handler, `self` is that state atom
+```
+
+Pattern-match to narrow when needed: `if file is opened: file.read(1024)`. See §1.12 auto-delegation semantics.
+
+### "I need to declare that my atom implements the `Filesystem` capability shape"
+
+Optional. Structural conformance works without any declaration — an atom conforms to a shape by having the right methods. Add `conforms: Filesystem` for documentation and explicit compiler shape-match check. If you omit it and the compiler notices a likely match, it emits a warning suggesting the declaration.
+
+```
+def PosixFs:
+    conforms: Filesystem       # optional, documentation-only
+    ...
+```
+
+Retires the "you must declare conformance or the compiler won't accept your atom as an env.fs binding" ceremony. See §1.12 conforms-optional framing.
+
+### "My atom needs a mutable field — how do I model this?"
+
+One question at the top: **does this state need its own lifecycle — phases, queueing, interruption, or independent concurrent activity?**
+
+**Yes → sub-atom in a nullable slot.** See the "state has phases with lifecycle" entry above. Sub-atom carries its own transitions, deconstructs on `end`, slot auto-nils. Example: Player's `action: ActionMachine?` for a fireball cast.
+
+**No, but the atom discriminates behavior across discrete phases → phases on the current atom, fields at compound scope, wildcard on-enter (`-> phase`) for phase-determined values.** Phases are inferred from transition arrows; no `def phase` declarations. On-enter transitions carry per-phase constants:
+
+```
+def Paddle:
+    data:
+        max_speed: Float = 500.0
+        y:         Float = 0.0
+        velocity:  Float = 0.0
+    
+    # Phases idle / up / down inferred from arrows. Wildcard on-enter
+    # sets phase-determined velocity — no enum field, no observable indirection.
+    -> idle then: velocity => 0.0
+    -> up   then: velocity => -max_speed
+    -> down then: velocity => +max_speed
+    
+    idle <: pressed{key: Key.arrow_up}    -> up
+    idle <: pressed{key: Key.arrow_down}  -> down
+    up   <: released{key: Key.arrow_up}   -> idle
+    down <: released{key: Key.arrow_down} -> idle
+```
+
+**No, the state just accumulates or updates on events → self-transition with `then:`.** Nothing special; every atom does this:
+
+```
+def Paddle:
+    data: y: Float = 0.0
+    
+    self <: tick{dt: Duration} -> self
+        then: y => clamp(y + velocity * dt.to_seconds(), -screen_bounds, +screen_bounds)
+```
+
+The `then:` block is **not** assignment — `y => clamp(...)` reads as "y becomes clamp(...)" (functional update). Unlisted fields carry forward from source self. Whole transition is pure: `state → message → new_state`. Assignment operators (`=`, `+=`, ...) on `data:` fields are a syntax error at every scope.
+
+**Retired**: the earlier Kind 1a / Kind 1b / Kind 2 taxonomy. It required a decision tree ("distinct-shape vs same-shape phases?") every time you added a state field. Under the current model:
+
+- Kind 1a "distinct-shape phases with per-phase field declarations" → per-phase declarations were hiding mutation as staticness; sub-atoms in slots replace them cleanly for real lifecycle-carrying state; simple phase discrimination uses compound-scope fields.
+- Kind 1b "enum + derived observable for same-shape phases with constants" → phases + wildcard on-enter does this directly; no enum-in-field + observable indirection.
+- Kind 2 "continuous accumulator" → was never really a distinct kind; every atom updates fields via self-transitions.
+
+The single question above replaces the taxonomy entirely.
+
+**Anti-patterns the compiler may hint on**:
+- Per-phase field declarations (`def alive: hp: Int = 100`) — lift `hp` to compound scope; the phase entry transition sets it via `then:`.
+- Union-typed slots for state discrimination (`action: Idle | FireballCasting | MeleeAttack`) — that's a state machine wearing a union costume; lift into a sub-atom (ActionMachine) in a nullable slot.
+- Enum-in-data-field + switch observable for phase-determined constants — the phase itself is the discriminator; use phases + wildcard on-enter.
+
+### "How do I update a compound-scope field from a nested-state transition?" (cross-scope updates)
+
+Two idiomatic forms, both immutable.
+
+**Form 1 — `then:` on the phase transition itself.** Both target-scope and compound-scope updates land in one `then:` block; lexical name resolution routes each field to its scope:
+```
+alive -> firing_fireball
+    when: cast_fireball() and can_cast and mana >= cost
+    then:
+        mana         => mana - cost       # firing_fireball.mana (target scope)
+        last_cast_at => clock.now         # Player.last_cast_at (compound scope)
+    do:   :> fireball_launched
+```
+
+**Form 2 — Emit + listen.** The phase transition emits an event; a separate compound self-transition listens for the event:
+```
+alive -> firing_fireball
+    when: cast_fireball() and ...
+    then: mana => mana - cost
+    do:   :> fireball_launched
+
+self -> self                              # compound self-transition
+    when: fireball_launched()
+    then: last_cast_at => clock.now
+```
+
+Form 1 is more compact when the update is intrinsic to the phase change. Form 2 is clearer when the compound-scope update is a semantic consequence that other listeners should also see (multiple subscribers to `fireball_launched`, testing the compound-transition in isolation, etc.).
+
+**Explicit path escape.** When a name is ambiguous (shadowed between scopes) or when you want to make scope visible for reader clarity, use qualified paths:
+```
+then:
+    Player.last_cast_at   => clock.now      # explicit compound-scope
+    firing_fireball.mana  => mana - cost    # explicit target-scope
+```
+
+Cross-scope writes via assignment (`Compound.field = value`) are a syntax error — there is no assignment anywhere in the language. Field updates happen exclusively through `then:` with lexical resolution and explicit-path escape.
+
+### "My atom's state has phases with lifecycle — casting a fireball, queueing actions, an interruptible activity"
+
+Sub-atom in a nullable slot. Not a union-typed slot, not per-phase field declarations.
+
+State-machine-shaped things — anything with phases, transitions, potential for queueing, interruption, or independent concurrent activity — belong in their own atom. The parent holds a nullable slot; the sub-atom carries its own transitions, its own fields, its own lifecycle. When the sub-atom reaches `end`, it deconstructs and the slot auto-nils.
+
+```
+def Player:
+    data:
+        action: ActionMachine? = nil    # nullable slot; nil = no action running
+    
+    alive <: cast_fireball
+    -> alive
+        when: action.is_idle and mana >= cost
+        then:
+            mana   => mana - cost
+            action => ActionMachine(clock: clock)   # instantiate into slot
+        do:
+            action :> start_cast(target: cursor_position, cast_time: 500ms)
+    
+    # React to sub-atom completion event
+    alive <: action.cast_completed{target: Position}
+    -> alive
+        do: :> fireball_flew(target: target)
+
+def ActionMachine(clock: Clock):
+    data:
+        fireball_target:    Position?  = nil
+        cast_started_at:    Instant?   = nil
+    
+    is_idle :< self is idle    # stable predicate for parents
+    
+    idle <: start_cast{target: Position, cast_time: Duration}
+    -> casting_fireball
+        then:
+            fireball_target => target
+            cast_started_at => clock.now
+    
+    casting_fireball
+    when: clock.after(cast_started_at + cast_time)
+    -> idle
+        then: [null the fireball fields]
+        do: :> cast_completed(target: fireball_target)
+    
+    casting_fireball <: cancel_cast
+    -> idle
+        then: [null the fireball fields]
+        do: :> cast_canceled
+```
+
+**Why not a union type (`Idle | FireballCasting | MeleeAttack`)?** Union-typed slots that discriminate "which state is the thing in" are state-machines-in-disguise. You end up reinventing queue fields, cancel flags, interruption logic — all state-machine machinery, poorly. Real state machines (atoms) get channel-based queuing, interruption via messages, independent lifecycle, and testability for free.
+
+**Heuristic**: if the "variants" of your candidate union type have transition rules between them (idle → in-progress → done), it's a state machine — promote to a sub-atom. Union types remain the right call for genuinely-polymorphic disjoint values (message payloads, result outcomes) where variants have no natural progression.
+
+See §1.11 (sub-atom slots, sub-atom coordination patterns).
+
+### "How does a parent atom coordinate with a sub-atom in a slot?"
+
+Four patterns, each with its own syntax:
+
+**1. Command down** — parent sends messages to sub:
+```
+do: action :> start_cast(target: pos, cast_time: 500ms)
+```
+Method-call syntax on the slot; sugar for message emission on the sub-atom's named channel. Nil-safe: sending to a nil slot is nil-punned (no-op), consistent with §3.6.1.
+
+**2. Event up** — parent reacts to sub's emissions:
+```
+alive <: action.cast_completed{target: Position}
+-> alive
+    do: :> fireball_flew(target: target)
+```
+Receive glyph in the transition header; matches the sub's `:> cast_completed(...)` emission.
+
+**3. State query** — parent reads sub's state via observable predicates:
+```
+# In sub-atom (ActionMachine):
+is_idle :< self is idle
+
+# In parent (Player):
+alive <: cast_fireball
+-> alive
+    when: action.is_idle and ...
+```
+Expose stable predicates from the sub-atom; parents check the predicate, NOT the raw phase name. Insulates parents from internal phase renames in the sub-atom.
+
+**4. Continuous stream from sub to parent** — sub's output feeds a parent transition on every emission. Same mechanism as event-up (receive-glyph transition on the sub's emission), optionally with a transformer chain in the source expression:
+```
+# Every progress update from action feeds a UI-update transition on parent:
+alive <: action.cast_progress{pct: Float}
+-> alive
+    do: self :> update_cast_ui(pct: pct)
+
+# With a transformer (throttle to 10 Hz):
+alive <: action.cast_progress |> Throttle{interval: 100ms} {pct: Float}
+-> alive
+    do: self :> update_cast_ui(pct: pct)
+```
+
+See §1.11 (sub-atom coordination patterns).
+
+### "I need to fire something when my atom is created / destroyed (constructor / destructor)"
+
+Use the universal implicit phases `init` and `end`.
+
+**`init`** is the constructor. Every atom has it; every atom's first transition is the implicit `init -> [first-mentioned target phase]`. Populate initial field values via wildcard on-enter for the first phase:
+
+```
+def Player:
+    data:
+        hp: Int = 0            # value set by init transition, not this default
+        mana: Int = 0
+    
+    -> alive then:            # wildcard on-enter for alive; matches init transition
+        hp   => 100
+        mana => 50
+```
+
+The `= 0` on the field declaration is placeholder; the init transition's `then:` sets the real initial value. Compiler may hint that `= 0` is dead if a wildcard on-enter for the initial phase always sets it.
+
+**`end`** is the destructor. Any transition targeting `end` deconstructs the atom — the transition's `do:` block runs (last chance for cleanup / emit), then the atom is destroyed. Nullable slots holding the atom auto-nil:
+
+```
+def Enemy:
+    data: health: Int = 100
+    
+    alive <: take_damage{amount: Int}
+    -> dead
+        when: health <= amount
+        do: :> died
+    
+    dead -> end                # transitions from dead to end after emitting `died`
+```
+
+Parent atoms detect sub-atom completion via `is nil` on the slot, or by listening for the emit-in-`do:` before destruction.
+
+`end` transitions may have `when:` and `do:` — but NOT `then:` (the atom's state is being discarded). Cascade behavior: parent `-> end` recursively transitions sub-atoms in slots to `end`.
+
+See §1.11 (universal implicit phases).
+
+### "I need blocking vs non-blocking message sends"
+
+Sender-side and receiver-side blocking are **two independent axes**. Any sender glyph pairs with any receiver glyph.
+
+**Sender axis** — does my transition wait for the send to complete?
+- `atom :> msg(args)` — async (fire-and-forget). Sender continues immediately.
+- `atom |> msg(args)` — sync (processing ordering). Sender's transition suspends until the receiver's transition on this message has fired. **No reply value** — pure ordering guarantee. If you need data back, wire an explicit reply channel (`:>` request, `<:` response).
+
+**Receiver axis** — does my transition park waiting for this message?
+- `source <: msg{args} -> target` — async receive. Non-blocking pickup during phase; other transitions in the phase can fire on their own triggers meanwhile.
+- `source <| msg{args} -> target` — sync receive. Transition parks specifically on this message; other transitions in the phase are suspended until it arrives.
+
+**Four legal combinations:**
+
+| Sender | Receiver | Semantics |
+|---|---|---|
+| `:>` | `<:` | Classic actor — fire-and-forget, mailbox pickup |
+| `:>` | `<\|` | Producer-consumer — sender queues, consumer parks between messages |
+| `\|>` | `<\|` | Rendezvous — sender waits for processing, receiver parked ready |
+| `\|>` | `<:` | Sender waits for processing, receiver dispatches async within its phase |
+
+**Default async, reach for sync only when needed.** Most game/event/notification flows are async — sender emits, receiver processes when able. `|>` is for cases where the sender needs ordering-with-processing before proceeding (e.g., "make sure this cancel was accepted before I continue"). Sync sends can deadlock in circular-send patterns (A `|>` B while B is parked on `|>` back to A) — user discipline; no language-level cycle detection.
+
+**Why `|>` carries no reply value.** In this substrate, receive sites are phase-scoped — a `<:` for reply-message R exists only in the phase where it's declared. If `|>` baked in a reply obligation, the compiler would have to prove receiver's reply channel is active at receive time, a phase-dependent property that can only be checked by inspecting receiver's current phase. Keeping `|>` as ordering-only sidesteps that class of check. Reply, if any, is just another wire, living in whichever phase declares it.
+
+**Buffered async — modifier on the receive glyph.** Bare `<:` drops unmatched messages. For queueing:
+```
+def ActionMachine:
+    idle <:fifo(cap: 8) start_cast{...}       # queue up to 8 pending casts
+    -> casting_fireball
+        ...
+```
+Other modifiers: `<:priority`, `<:sliding(cap: 1)`. See §1.11 channel-semantics table.
+
+### "Should I write `self is alive or self is dead` in `invariants:`?"
+
+No. **Exhaustiveness invariants on phases are redundant** — phases inferred from transition arrows enumerate the full phase set at compile time; enum-valued fields' types do the same. No code path can produce a phase outside the declared set, so the runtime check evaluates to `true` on every dispatch and adds no safety.
+
+```
+# NO — restates what the compiler already knows:
+def Player:
+    data:
+        hp: Int = 100
+        mana: Int = 50
+    
+    # Phases alive/dead inferred from arrows below
+    -> alive then: hp => 100; mana => 50
+    alive -> dead when: hp <= 0
+    
+    invariants:
+        self is alive or self is dead    # tautology — compiler already enforces
+
+# YES — either omit `invariants:` entirely, or use it for constraints the type
+# system doesn't know about:
+def Player:
+    data:
+        hp: Int = 100
+        mana: Int = 50
+        last_cast_at: Instant = Instant.epoch
+    
+    invariants:
+        last_cast_at <= clock.now    # temporal constraint — not knowable from types
+        hp >= 0                      # bound not knowable from Int type
+```
+
+Compound-scope invariants apply across all phases. If a constraint is only meaningful in one phase (e.g., mana ceiling only during a cast), lift the phase-specific state into a sub-atom slot and put the invariant on the sub-atom.
+
+Rule of thumb: if the invariant is a predicate the compiler could derive from types alone, delete it. Reserve `invariants:` for semantic constraints beyond the type system (bounds, temporal relations, cross-field consistency).
+
+### "I need to write a constructor to initialize my data fields from arguments"
+
+You don't — constructor params ARE data fields. `def File(path: Path):` desugars to `def File: data: path: Path` plus an auto-synthesized constructor that accepts `path` as a named argument.
+
+```
+# NO — separate data field + explicit constructor:
+def File:
+    data: path: Path
+    constructor(path: Path):
+        self.path = path
+
+# YES — constructor param IS the data field:
+def File(path: Path):
+    # `self.path` is now available
+    ...
+```
+
+Explicit `constructor:` section remains legal when custom logic is needed (validation, derived fields, side effects at construction). Auto-synthesis covers the common case. See §1.11 atom-body vocabulary.
 
 ---
 

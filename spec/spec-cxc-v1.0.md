@@ -1,6 +1,48 @@
-# Corvid Language Specification — v0.11 (Working Draft)
+# cxc Language Specification — v1.0 Draft
 
-**Status:** Working draft. v0.11 lands two pieces: (1) **canonical bytes as a value-type base-class property** (§3.3 extended, §3.4.6 new, §3.10.10 new — canonical wire format spec) — records/enums/primitives carry `.as() -> Bytes` and `class function from(source: Bytes)` synthesized from field layout, the same way records already carry synthesized `==` and `hash`. Structural conformance to `As<Bytes>` / `From<Bytes>` follows per §3.4; no separate "auto-conformance" mechanism, no compiler awareness of specific target-type names; (2) **removal of the double-colon header form** (`class Foo: A, B:` and `class Foo: BaseClass:`) — v0.10.2's grace period ends. Migration is mechanical: `class Foo(A, B):` for conformance, `metadata: extends: BaseClass` (body-form) for ObjC inheritance.
+**Name.** cxc — pronounced letter-by-letter — reads as **channels-C**, positioned in the naming lineage of **objc** (objective-C). Just as objc added object-orientation on top of C, cxc adds channels / CSP / the atom substrate on top of the C-family systems lineage. The name IS a positioning claim: cxc is what a modern Swift/ObjC-ecosystem developer reaches for when they want the substrate that objc→Swift didn't deliver.
+
+**Codename.** The language was designed under the codename **Corvid** and is still referenced by that name in historical design notes (`working-notes.md`), directory paths, and repository infrastructure. Corvid → cxc is a naming transition, not a design change; both names refer to the same language.
+
+**Status.** v1.0 draft. cxc is an **atom-substrate reactive language** with a Swift-shaped surface, contract-based verification, and dataflow compilation. Class = bounded atom graph. Functions = the trivial atom shape. Every construct is a shape of atom. The atom substrate (§1.11) is the design; §1.12–§1.14 elaborate the OS boundary, stdlib capabilities, and prelude structure that fall out of it.
+
+**Reading guide.**
+
+- **Start with §1** — design premises, then §1.11 (atom substrate), §1.12 (OS boundary as capability atoms), §1.13 (stdlib capability shapes), §1.14 (prelude structure). These define what cxc IS.
+- **§2 (lexical structure)** — keywords, glyphs, literals. The six wiring glyphs (`->`, `|>`, `:<`, `:>`, `<:`, `<|`) are the substrate's surface.
+- **§3–§9** — describe the v0.11 shape (`class`, `record`, `enum`, `protocol`, methods, contracts) which is the **intermediate approximation** cxc is being restructured away from. Under v1.0, all four are sugar keywords over specific `def` shapes; these sections will be reorganized as "atom sub-form: <name>" in a subsequent spec revision. For now, read them as documenting individual behaviors that will be preserved (nullability, pattern matching, contracts, conversion protocols, byte/string/pattern subsystems) — the syntactic packaging will change, the semantics carry over.
+- **§10 (grammar)** — bootstrap subset; §10 has been extended for the substrate's core productions (transitions with receive glyphs, wildcard on-enter/on-exit, universal `init`/`end` phases). Sub-atom slot declarations and modifier syntax reach are still being formalized.
+
+**What v1.0 lands (design commitments).**
+
+- **`def` as sole declaration keyword** — `class`, `record`, `enum`, `protocol`, `program` are sugar over specific `def` shapes.
+- **Atoms with typed I/O, phases, and transitions.** Every transition is a pure function `state → message → new_state`. State is a value; transitions produce new values via field updates in a `then:` block. **No assignment anywhere in the language.**
+- **Universal implicit phases `init` (constructor) and `end` (deconstructor).** Every atom has both; instantiation fires implicit `init -> [first target phase]`; any transition targeting `end` deconstructs the atom.
+- **Six wiring glyphs, zero overlap.** `->` (transition arrow + return-type marker), `|>` (stream composition in receive-glyph source expression + sync send inside `do:`), `:<` (observable pull), `:>` (emit async), `<:` (receive async), `<|` (receive sync). Sender-blocking and receiver-blocking are independent axes — any sender glyph pairs with any receiver glyph; the wire is always mailbox-buffered. **Free-standing wires at atom-body top-level do NOT exist**; all subscriptions are receive-glyph transitions whose source expression may compose transformer atoms via `|>`.
+- **Sub-atom-as-state-machine pattern.** State with lifecycle (queueing, interruption, independent concurrent activity) belongs in its own atom, held in a nullable slot on the parent. Union-typed slots for state discrimination are retired.
+- **`use:` block** for env capability declaration with implicit access inside atom bodies.
+- **All OS-adjacent capabilities are atoms** — no `after` primitive, no `print`, no `now()`, no `random()`. Runtime provides shim atoms wrapping syscalls via the **`Extern` capability atom** provisioned only to stdlib shims, consuming typed foreign symbols declared in per-target prelude `foreign library` blocks.
+- **Resource lifecycle** (File, Socket, Process, Thread) as state-machine atoms; RAII via `<phase> -> end` transitions with `do:` cleanup blocks.
+- **`of` qualifier for structural type parameters** (retires `<T>`); lowercase names in `of` position are shape variables bound in signature scope by first-mention.
+- **Types-as-atoms unification.** Type-checking is atom-shape-conformance (structural). No refinement types at the signature level — predicates live in `invariants:`/`requires`/`ensures`/predicate atoms.
+- **Named tuple return types** for multi-channel atom outputs.
+- **Stdlib capability catalog** — Clock, Random, Filesystem, Network, Console, Args, EnvVars, Exit, Signals, Log as v1.0 core; Threads, Process, IPC, TimeZone/Locale, Crypto extended.
+
+**What's still open** (does not block v1.0 shape; may block a v1.0 *compiler*):
+
+- Full grammar coverage for stream composition inside receive-glyph source expressions (transformer chain, args-block position, lifecycle of anonymous transformer sub-atoms).
+- Runtime concurrency model — atomic-transition semantics across atoms; memory model; scheduling policy.
+- Type inference through atom bodies (currently planned; needs formalization).
+- Contract propagation across the wire graph.
+- Effect polymorphism through the substrate (§3.5.3 exists but doesn't touch the substrate).
+- Advanced channel modifier semantics — `<:priority`, `<:sliding` — may require stdlib mailbox atoms rather than compiler-primitive buffering.
+- Cross-atom deadlock detection for `|>` sync sends — user's responsibility for now (CSP-standard behavior).
+
+See `working-notes.md` for the design-decision journal that led to the current shape.
+
+---
+
+**v0.11 legacy content follows.** The change log entries below document the v0.11 → v1.0 evolution and are retained for historical continuity. If you're a new reader, skip past the change log to §1.
 
 **Change log from v0.10.2 → v0.11 (Value-type byte property + double-colon removal):**
 
@@ -18,7 +60,7 @@
 
 **§3.4.5 updated** — the retirement subsection reframed from "deprecated in v0.10.2, removed in v0.11" to "removed in v0.11." §10 grammar's deprecation note becomes a historical-record note.
 
-**Only bytes get the base-class property.** JSON, MsgPack, CBOR, and other format-specific target types do NOT have compiler-synthesized methods on value types — they have per-record author choices (field naming, null handling, number precision) with no defensible default, and silent choice would be a footgun. Users write `function as(self) -> Json:` on their records explicitly via ordinary `extend class Foo:` (§3.3.2). Third-party format packages (`corvid_json`, `corvid_msgpack`, etc.) need zero special language support — they ship their target type and users author conformances the same way they'd author any protocol method.
+**Only bytes get the base-class property.** JSON, MsgPack, CBOR, and other format-specific target types do NOT have compiler-synthesized methods on value types — they have per-record author choices (field naming, null handling, number precision) with no defensible default, and silent choice would be a footgun. Users write `function as(self) -> Json:` on their records explicitly via ordinary `extend class Foo:` (§3.3.2). Third-party format packages (`cxc_json`, `cxc_msgpack`, etc.) need zero special language support — they ship their target type and users author conformances the same way they'd author any protocol method.
 
 **Reframe from v0.11 initial draft.** Earlier working drafts of v0.11 framed this as "the compiler auto-conforms value types to `As<Bytes>` and `From<Bytes>`" — a target-type carve-out inside a general protocol (design-coherence tension 2, audit 2026-08-10). Reframed at 2026-08-11 to remove the carve-out: the compiler doesn't know `Bytes` is a special target type or `As<Bytes>` is a special protocol; it synthesizes the two methods on every value type as a base-class property (§3.3 extension of what records already do for `==` / `hash`), and structural conformance to `As<Bytes>` / `From<Bytes>` falls out per §3.4 because the methods exist. Same runtime behavior, honest layering: the base-class property is the language commitment; conformance is the consequence.
 
@@ -44,7 +86,7 @@
 
 **v0.10.2 changelog — full detail:**
 
-Working draft. v0.10.2 formalizes explicit protocol-conformance syntax (§3.4.5 new), replacing the previously undefined `conformance_clause?` reservation with a concrete parens-list sugar `class Foo(A, B):` plus body-form `conforms:` entries. Retires the double-colon header shape `class Foo: A, B:` (grace period through v0.11). ObjC class inheritance (the only inheritance Corvid supports, driven by interop) migrates to body-form `metadata: extends:` — treating the exceptional case as body-form and the common case (protocol conformance) as header sugar. Additive plus one deprecation; no design-mechanism changes.
+Working draft. v0.10.2 formalizes explicit protocol-conformance syntax (§3.4.5 new), replacing the previously undefined `conformance_clause?` reservation with a concrete parens-list sugar `class Foo(A, B):` plus body-form `conforms:` entries. Retires the double-colon header shape `class Foo: A, B:` (grace period through v0.11). ObjC class inheritance (the only inheritance cxc supports, driven by interop) migrates to body-form `metadata: extends:` — treating the exceptional case as body-form and the common case (protocol conformance) as header sugar. Additive plus one deprecation; no design-mechanism changes.
 
 **Change log from v0.10.1 → v0.10.2 (Explicit conformance syntax + ObjC-inheritance-to-body-form migration):**
 
@@ -55,7 +97,7 @@ Working draft. v0.10.2 formalizes explicit protocol-conformance syntax (§3.4.5 
 
 - **§10 grammar updated.** `conformance_clause` production defined. Header ordering finalized: `class NAME <generics> ( conformances ) where <constraints> :` — visual left-to-right reads as "here's what Foo is, here's the constraint, now the body."
 
-- **ObjC class inheritance moves to body-form.** `class MyViewController: UIViewController:` → `class MyViewController:` with `metadata: extends: UIViewController` in the body. Rationale: pure Corvid design commits to composition-over-inheritance (§1.5, §3.4); inheritance exists only for ObjC interop (subclassing UIViewController, NSObject, etc.). Making inheritance body-form treats the exception as the exception — ergonomic sugar goes to the common case (protocol conformance), not the rare one.
+- **ObjC class inheritance moves to body-form.** `class MyViewController: UIViewController:` → `class MyViewController:` with `metadata: extends: UIViewController` in the body. Rationale: pure cxc design commits to composition-over-inheritance (§1.5, §3.4); inheritance exists only for ObjC interop (subclassing UIViewController, NSObject, etc.). Making inheritance body-form treats the exception as the exception — ergonomic sugar goes to the common case (protocol conformance), not the rare one.
 
 - **Double-colon header form deprecated.** `class Foo: A, B:` and `class MyViewController: UIViewController:` emit a `deprecated-conformance-syntax` warning at parse time in v0.10.2 with fix-it suggestion (`Foo(A, B)` or body-form). Removed entirely in v0.11. Grace period is one minor version — the migration is mechanical and the double-colon form served two purposes with the same shape (a design mistake worth undoing before v1).
 
@@ -104,17 +146,17 @@ Working draft. v0.10.2 formalizes explicit protocol-conformance syntax (§3.4.5 
 
 2. **`As<T>` / `From<T>` parameterized conversion protocols** (§3.10.3). Trait-qualified dispatch permits multiple `as` methods on one class differentiated by target type; multiple `from` methods on one class differentiated by source type. Structural conformance means concrete classes need no explicit `conforms:` declaration.
 
-3. **`Bytes` / `String` / `Char` / `StringPosition` + `Encoding` / `ByteOrder` / `DecodeOutcome<T>`** (§3.10.4–§3.10.7). String is grapheme-native — no integer indexing, no peer views; text operations return graphemes or StringPositions. Bytes is a mutable regular class (matches Array/Map/Set pattern); NSData/NSMutableData bridged. `AsBytes` (via the As<T> protocol family) becomes Corvid's universal serialization substrate — every OO language faces the serialization problem eventually; Corvid ships the primitive from day one rather than bolting it on later.
+3. **`Bytes` / `String` / `Char` / `StringPosition` + `Encoding` / `ByteOrder` / `DecodeOutcome<T>`** (§3.10.4–§3.10.7). String is grapheme-native — no integer indexing, no peer views; text operations return graphemes or StringPositions. Bytes is a mutable regular class (matches Array/Map/Set pattern); NSData/NSMutableData bridged. `AsBytes` (via the As<T> protocol family) becomes cxc's universal serialization substrate — every OO language faces the serialization problem eventually; cxc ships the primitive from day one rather than bolting it on later.
 
 Prior sessions all preserved (v0.9.1 extension details, v0.9.0 unified extension mechanism, v0.8.7 pre/post bindings, v0.8.6 concurrency model, v0.8.5 no-throws, etc.).
 
 **Companion:** `PATTERNS.md` gains new entries on the conversion pattern (As/From), string handling (grapheme-native, no int indexing), and serialization (universal via AsBytes).
 
-**Name:** `Corvid`. (Historical: named `objc5` throughout the design conversation. Renamed to Corvid when the positioning clarified as "peer of Swift for Apple-ecosystem native development" rather than "next-generation Objective-C.")
+**Name:** `cxc` (originally codenamed `Corvid`; earlier working name `objc5`). Name history: `objc5` (initial design conversation, positioning as "next-generation Objective-C") → `Corvid` (v0.10.0, positioning clarified as "peer of Swift for Apple-ecosystem native development") → `cxc` (v1.0-draft, positioning as "channels-C" — the atom-substrate answer to objective-C, mirroring the objc naming convention).
 
 **Change log from v0.9.1 → v0.10.0 (Byte substrate; As<T>/From<T> protocols; grapheme-native String; extension conflict resolution revised to warn):**
 
-Major-version-adjacent session. The v0.10.0 bump reflects that the string/bytes/serialization decisions land the language's substrate for text and binary handling — foundational choices with ecosystem-wide effect. Also revises v0.9.1 rule 4 in response to internal review noting the rule was inconsistent with the rest of Corvid's "warn, don't block" pattern for author-intent violations.
+Major-version-adjacent session. The v0.10.0 bump reflects that the string/bytes/serialization decisions land the language's substrate for text and binary handling — foundational choices with ecosystem-wide effect. Also revises v0.9.1 rule 4 in response to internal review noting the rule was inconsistent with the rest of cxc's "warn, don't block" pattern for author-intent violations.
 
 **Rule 4 revision (§3.3.2).**
 
@@ -233,7 +275,7 @@ The v0.7.1-era `Convertible<To>` protocol bundled three narrowing semantics (wra
 
 Not a design session — v0.9.0 shipped `extend class Foo:` as the unified extension mechanism with the rule "same-name conflict is a compile error unless `replace` is used." v0.9.1 fills in the seven detailed rules covering what a conflict is, how `replace` targets are validated, what happens with two `replace`s claiming the same original, how extension shadowing interacts with inherited protocol defaults, and what runtime visibility looks like at the load-time / compile-time boundary. Also adds an illustrative diagnostic format so implementers have a target and users have a preview.
 
-- **§3.3.2 new subsection: Conflict resolution rules.** Seven numbered rules covering: (1) same-name collision produces compile error at composing site; (2) `replace` requires a shadowing target — no-op `replace` is rejected; (3) at most one `replace` per method per composing site; (4) name matching ignores signatures (Corvid has no overloading); (5) extensions shadow inherited protocol defaults without `replace`, but second-extension-over-first still requires it; (6) runtime method table is unified after composition; (7) load-time transitive visibility (an extension in module B affects Foo globally once B is loaded, even for consumers that reach B transitively).
+- **§3.3.2 new subsection: Conflict resolution rules.** Seven numbered rules covering: (1) same-name collision produces compile error at composing site; (2) `replace` requires a shadowing target — no-op `replace` is rejected; (3) at most one `replace` per method per composing site; (4) name matching ignores signatures (cxc has no overloading); (5) extensions shadow inherited protocol defaults without `replace`, but second-extension-over-first still requires it; (6) runtime method table is unified after composition; (7) load-time transitive visibility (an extension in module B affects Foo globally once B is loaded, even for consumers that reach B transitively).
 - **§3.3.2 illustrative diagnostic format.** Example error message showing both conflicting sites, containing modules, and the suggested `replace` fix.
 - **§3.3.2 "what is not a conflict" list.** Different methods on same class; same-named methods on different classes; extensions adding invariants (which stack additively per §3.4.2).
 - **§3.4.4 cross-reference.** The "interaction with extensions" paragraph now explicitly points at §3.3.2 rule 5 for the shadowing-inherited-defaults case; makes clear that `replace` is not needed to shadow a protocol default, only to shadow another explicit declaration.
@@ -250,7 +292,7 @@ Not a design session — v0.9.0 shipped `extend class Foo:` as the unified exten
 
 **Change log from v0.8.7 → v0.9.0 (Unified extension mechanism; Category retracted; default-method inheritance for structural conformers):**
 
-Major-version bump. Not a "dissolves into existing mechanism" session — this is a **retraction and unification**. The `category(...)` section class was Corvid importing ObjC's specific vocabulary for what is structurally just "declaring more members on this class." Corvid's own class-body syntax already covers that job; the section-class framing paid ceremony (invocation form, `ClassSpec` parameter, section-class machinery) for a job that fits at the class declaration level.
+Major-version bump. Not a "dissolves into existing mechanism" session — this is a **retraction and unification**. The `category(...)` section class was cxc importing ObjC's specific vocabulary for what is structurally just "declaring more members on this class." cxc's own class-body syntax already covers that job; the section-class framing paid ceremony (invocation form, `ClassSpec` parameter, section-class machinery) for a job that fits at the class declaration level.
 
 - **§3.3.2 new (Extension Declarations).** `extend class Foo:` is a declaration-position modifier that opens a class body targeting an existing class named `Foo`. Body content follows the same rules as any class body: `data:` (with restriction — see below), `methods:`, `invariants:`, `accepts:`, behavioral sections. Generic parameters and where-clauses at declaration position: `extend class Array<T> where T: UnsignedInteger:` composes with the existing generic-parameter machinery. Multiple `extend class Foo:` blocks across modules stack — the composed member set is the union of all extensions visible in the current compilation unit.
 - **§3.4.4 new (Default Method Inheritance for Structural Conformers).** A class that structurally conforms to protocol `P` **inherits P's default methods** for messages the class does not define itself. This makes structural conformance load-bearing rather than a purely static-checking device. Diamond ambiguity (class conforms to two protocols, both provide defaults for the same message, class defines neither) is a compile error at the ambiguous call site — resolvable by defining the method on the class or by upcasting to a specific protocol.
@@ -266,8 +308,8 @@ Major-version bump. Not a "dissolves into existing mechanism" session — this i
 
 - **One vocabulary.** `class Foo:` for definition, `extend class Foo:` for extension. Same class-body syntax, same section discipline (`data:` / `state:` / `methods:` / `invariants:` / `accepts:`). No `ClassSpec`, no invocation form.
 - **Structural conformance actually pays off.** Before v0.9.0, "conformance is structural" was true but toothless — it enabled static checks but conformers didn't gain the protocol's affordances. §3.4.4 makes conformance carry default-method inheritance, which is what users expect from protocols with defaults.
-- **Trade-off: default-method inheritance introduces the diamond problem.** Corvid resolves it via compile-time detection + explicit disambiguation (define the method on the class, or upcast). Users writing broadly-conforming classes need to be aware of this; the compiler surfaces the ambiguity at the call site rather than silently picking one.
-- **Trade-off: `extend class` allows extensions from anywhere.** Module discipline (§7.7) constrains visibility — extensions in module B are only visible where B is imported — but the "extension can happen anywhere" property is genuinely more open than a system where classes are closed after declaration. Corvid was already this open (§1.5 runtime as substrate; categories existed); the change is that the mechanism is now integrated with the class-body vocabulary rather than routed through section-class ceremony.
+- **Trade-off: default-method inheritance introduces the diamond problem.** cxc resolves it via compile-time detection + explicit disambiguation (define the method on the class, or upcast). Users writing broadly-conforming classes need to be aware of this; the compiler surfaces the ambiguity at the call site rather than silently picking one.
+- **Trade-off: `extend class` allows extensions from anywhere.** Module discipline (§7.7) constrains visibility — extensions in module B are only visible where B is imported — but the "extension can happen anywhere" property is genuinely more open than a system where classes are closed after declaration. cxc was already this open (§1.5 runtime as substrate; categories existed); the change is that the mechanism is now integrated with the class-body vocabulary rather than routed through section-class ceremony.
 
 **Consistency with prior decisions:**
 
@@ -299,7 +341,7 @@ Seventh "would-be mechanism dissolves into existing tools" session. A proposal t
 **Cost / benefit.**
 
 - **Cleaner.** One binding rule replaces a special form.
-- **Deep-vs-shallow capture non-issue.** `self` inside ensures IS the receiver snapshot at entry; whatever "receiver snapshot" means in Corvid's memory model (handle capture for reference fields, value capture for value fields — same as any ordinary assignment) is what ensures sees. No separate `old()` semantics to specify.
+- **Deep-vs-shallow capture non-issue.** `self` inside ensures IS the receiver snapshot at entry; whatever "receiver snapshot" means in cxc's memory model (handle capture for reference fields, value capture for value fields — same as any ordinary assignment) is what ensures sees. No separate `old()` semantics to specify.
 - **Mutation syntax unchanged in method bodies.** `self.field = value` in the body still mutates in place. This decision only affects what names mean inside `ensures` expressions.
 - **Trade-off.** Users writing methods where `self` in the body clearly refers to the mutating receiver need to remember that `self` in the *ensures* clause refers to the pre-state. Ink #28 required a mechanism regardless; this is the smaller mechanism.
 
@@ -307,21 +349,21 @@ Seventh "would-be mechanism dissolves into existing tools" session. A proposal t
 
 **Change log from v0.8.5 → v0.8.6 (DispatchQueue equivalent + execution metadata + RWLock-style dispatch):**
 
-Sixth "language mechanism dissolves into existing tools" session. DispatchQueue's role in ObjC/Swift codebases splits into (a) serial mutex for a single owner's state and (b) cross-object synchronization. Corvid's §1.9 (contracts as coordination) already handles (a) implicitly; (b) reduces to "if two objects share an invariant, they weren't really two objects — put them in one class." Nothing new needed for the coordination question. The remaining gaps are thread affinity, QoS hints, and ObjC-side dispatch — filled by a small `execution:` metadata section on classes.
+Sixth "language mechanism dissolves into existing tools" session. DispatchQueue's role in ObjC/Swift codebases splits into (a) serial mutex for a single owner's state and (b) cross-object synchronization. cxc's §1.9 (contracts as coordination) already handles (a) implicitly; (b) reduces to "if two objects share an invariant, they weren't really two objects — put them in one class." Nothing new needed for the coordination question. The remaining gaps are thread affinity, QoS hints, and ObjC-side dispatch — filled by a small `execution:` metadata section on classes.
 
 - **`execution:` section on classes (§8.4.2 new).** Declarative metadata: `thread:` (main / any), `qos:` (user_interactive / user_initiated / utility / background), `pool:` (implicit / dedicated). Class-level default with per-method override via nested `execution:` on the method. Runtime uses metadata to place the dispatch pool and enforce thread affinity. Inspectable via §4.18 class metadata.
 - **`@main_actor` retired.** Replaced by `execution: thread: main` at class or method level. Same runtime behavior; consistent with metadata-first style.
 - **Reader/writer method classification (§1.9 extension + §8.4.1 new).** Compiler infers from method body: reader = does not assign to any `state:` field and does not call any writer method; writer = does. Runtime uses RWLock-style dispatch: multiple readers concurrent, writers exclusive. No user-visible annotation required. `data:` fields (immutable after construction) skip coordination entirely.
 - **DispatchQueue mapping documented (§8.4.3 new).** Three-row table: serial-mutex-for-a-class → contracts + `execution:`; off-caller-thread scheduling → `spawn` / `async_scope`; main-thread affinity → `execution: thread: main`. QoS hints via `execution: qos:`. Cross-class pipelines via channels (§8.6, unchanged). Anything that would have needed cross-object coordination reduces to "one class owns the shared state."
 - **`coordination_scope` construct considered and retracted.** Every case where separate objects need shared invariants collapses to a single class owning all the state. The class boundary IS the coordination boundary. No new user-facing coordination construct.
-- **ObjC bridge extended (§9.3).** Corvid class instances expose a `dispatch_pool` property at the ObjC bridge. ObjC callers use standard `dispatch_async(instance.dispatch_pool, ^{ [obj method]; })`; the pool routes through the class's contract-guarded serialization transparently. Instances declared `execution: thread: main` bind their pool to the ObjC main queue.
-- **`PATTERNS.md` created at project root.** Onboarding catalog: coming from Swift/ObjC, Rust, Python/Ruby, Java/C#, FP-family languages, each with a "you'd reach for X; Corvid does Y" mapping and cross-references to spec sections. Closes the accumulated-implicit-knowledge onboarding hazard from six sessions of dissolutions.
+- **ObjC bridge extended (§9.3).** cxc class instances expose a `dispatch_pool` property at the ObjC bridge. ObjC callers use standard `dispatch_async(instance.dispatch_pool, ^{ [obj method]; })`; the pool routes through the class's contract-guarded serialization transparently. Instances declared `execution: thread: main` bind their pool to the ObjC main queue.
+- **`PATTERNS.md` created at project root.** Onboarding catalog: coming from Swift/ObjC, Rust, Python/Ruby, Java/C#, FP-family languages, each with a "you'd reach for X; cxc does Y" mapping and cross-references to spec sections. Closes the accumulated-implicit-knowledge onboarding hazard from six sessions of dissolutions.
 
 **Trade-off worth naming.**
 
 Contracts-as-coordination is a compiler-and-runtime feature — the runtime must enforce the serialization implied by contracts on state. That's non-trivial (Stage 1: runtime checks; Stage 3+: compile-time analysis). Users writing performance-critical code may want to inspect generated serialization to confirm it matches expectations. Compare to DispatchQueue where the mechanism is dead-simple and readable at the call site.
 
-The trade-off is legibility-at-declaration (Corvid: contracts + `execution:`) vs legibility-at-site (DispatchQueue: `queue.async { ... }`). Corvid picks declaration for the same reasons it picks declarative sections over imperative helpers throughout — but it's a real trade-off, not a free win.
+The trade-off is legibility-at-declaration (cxc: contracts + `execution:`) vs legibility-at-site (DispatchQueue: `queue.async { ... }`). cxc picks declaration for the same reasons it picks declarative sections over imperative helpers throughout — but it's a real trade-off, not a free win.
 
 **Six-session pattern consolidated:**
 
@@ -343,7 +385,7 @@ The trade-off is legibility-at-declaration (Corvid: contracts + `execution:`) vs
 
 **Change log from v0.8.4 → v0.8.5 (Retire `throws`; no `try/catch`; no prelude Result):**
 
-Fifth session in the "language mechanism dissolves into class-based existing tools" pattern. Corvid's structural commitments — class-as-universal (§1.5), nil-messaging inversion (§3.6.1, §5.7), universal method dispatch (§5.1), section-based state machines (§1.9, §4) — already cover the failure-handling ground that `throws` / `try` / `catch` / `finally` were going to occupy in earlier drafts.
+Fifth session in the "language mechanism dissolves into class-based existing tools" pattern. cxc's structural commitments — class-as-universal (§1.5), nil-messaging inversion (§3.6.1, §5.7), universal method dispatch (§5.1), section-based state machines (§1.9, §4) — already cover the failure-handling ground that `throws` / `try` / `catch` / `finally` were going to occupy in earlier drafts.
 
 - **`throws` effect retired (§3.5 rewrite).** Removed from advisory effects. Functions that can fail return either:
   1. `T` (with nil signalling failure), when the caller only needs to know success-or-not — nil-punning (§3.6.1) handles the rest.
@@ -352,7 +394,7 @@ Fifth session in the "language mechanism dissolves into class-based existing too
 - **No `Result<T, E>` in the prelude.** Generic wrapper adds a layer of abstraction between the caller and the actual failure modes; domain-specific enums with descriptive case names and per-case associated data read better and inspect better (metadata §4.18). If a user writes generic middleware that needs a common failure carrier, they can define their own `Result` enum — but stdlib doesn't push everyone toward it.
 - **`panic(msg)` remains the invariant-violation escape.** Halts the process. Not a recoverable failure — a program bug that shouldn't be caught. Existing usage preserved.
 - **Failure-handling model documented (§3.5 rewrite).** Table: uniform failure → nil + nil-punning; discriminated failure → domain enum + `switch`; invariant violation → `panic`. Style guide: nesting depth > 3 in a switch chain is a design signal to decompose the function.
-- **ObjC interop translated explicitly (§9.3).** ObjC `NSError**` out-param methods are imported as returning a domain enum with `.completed(T)` and `.failed(NSError)` cases; the mapping is per-imported-method rather than blanket. Corvid methods exposed to ObjC that return a domain enum are lowered with automatic `NSError**` when a `.failed(NSError)`-shaped case is present.
+- **ObjC interop translated explicitly (§9.3).** ObjC `NSError**` out-param methods are imported as returning a domain enum with `.completed(T)` and `.failed(NSError)` cases; the mapping is per-imported-method rather than blanket. cxc methods exposed to ObjC that return a domain enum are lowered with automatic `NSError**` when a `.failed(NSError)`-shaped case is present.
 - **Ink #17 (`try` semantics) resolved by dissolution.** No `try`. Use `switch`.
 - **Ink #29 (`throws` in ensures) dissolves entirely.** No `throws`. Ensures apply on `switch` case discrimination as ordinary contract clauses.
 - **Grammar (§10).** `throws` removed from effect_clause. `throw` removed from exit-verb lists in `guard let` / `guard` semantics (§3.6.1 note updated — exits are `return` / `break` / `continue` / `panic`).
@@ -366,14 +408,14 @@ Fifth session in the "language mechanism dissolves into class-based existing too
 - **v0.7.0 nil-messaging inversion.** Foundation for the "nil is the uniform-failure signal" half of the model.
 - **§1.9 contracts as coordination.** Domain enums with `switch` discrimination are a state-machine dispatch — contracts pin down what each state means and what methods transition between them.
 
-**What Corvid gives up.**
+**What cxc gives up.**
 
 Two things worth naming.
 
-1. **Cross-cutting effect propagation.** Rust's `?` and Swift's `try` let a single glyph propagate an error through several layers of function calls without ceremony. Corvid's model requires each layer to explicitly `switch` on the outcome enum and either handle or repackage. This is more code at each layer; also more visible dispatch and no hidden control-flow jumps.
-2. **Generic middleware over "any failable computation."** Without `Result<T, E>`, a generic retry combinator can't say "give me any `Result<T, E>` and I'll retry it." The Corvid answer: define a `Failable<T>` protocol conformed to by domain enums, write middleware over that protocol. Slightly more setup; equivalent expressive power.
+1. **Cross-cutting effect propagation.** Rust's `?` and Swift's `try` let a single glyph propagate an error through several layers of function calls without ceremony. cxc's model requires each layer to explicitly `switch` on the outcome enum and either handle or repackage. This is more code at each layer; also more visible dispatch and no hidden control-flow jumps.
+2. **Generic middleware over "any failable computation."** Without `Result<T, E>`, a generic retry combinator can't say "give me any `Result<T, E>` and I'll retry it." The cxc answer: define a `Failable<T>` protocol conformed to by domain enums, write middleware over that protocol. Slightly more setup; equivalent expressive power.
 
-Both trade-offs are consistent with Corvid's preferences (§1.6 legibility, visible dispatch, class-based over control-flow-based) and the last four sessions' direction.
+Both trade-offs are consistent with cxc's preferences (§1.6 legibility, visible dispatch, class-based over control-flow-based) and the last four sessions' direction.
 
 **Downstream cleanups:** §3.5 rewrite (Effects — remove throws, add failure-handling-model subsection). Multiple example rewrites throughout §3, §4, §5, §7, §8, §11. §9.3 ObjC interop rewrites. §10 grammar production removals. Ink #17 and #29 marked resolved. Working-notes + README status.
 
@@ -381,7 +423,7 @@ Both trade-offs are consistent with Corvid's preferences (§1.6 legibility, visi
 
 Two paired decisions that close `#W-2`, `#W-48`, and Ink #14a.
 
-- **Nested type declarations dissolved by convention (§3.3 note).** Corvid does not add in-body type nesting (`class Foo: enum Bar: ...`). Types conventionally associated with a class are named `<ClassName><Role>` at module scope — `FrameCollectorEvent`, `FrameCollectorState`, `WSFrameOpCode`. Consumers who want brevity in a specific file use module or type aliases: `alias @Event = com.example.ws.FrameCollectorEvent`, then `@Event` per v0.8.2. Cost analysis: nested types force every consumer to pay per-file aliasing overhead (the C# `using Event = FrameCollector.Event;` problem) in exchange for a small ownership-visibility win at declaration; flat naming pushes cost to declaration site (one longer name) and leaves consumers free. Corvid takes the flat side.
+- **Nested type declarations dissolved by convention (§3.3 note).** cxc does not add in-body type nesting (`class Foo: enum Bar: ...`). Types conventionally associated with a class are named `<ClassName><Role>` at module scope — `FrameCollectorEvent`, `FrameCollectorState`, `WSFrameOpCode`. Consumers who want brevity in a specific file use module or type aliases: `alias @Event = com.example.ws.FrameCollectorEvent`, then `@Event` per v0.8.2. Cost analysis: nested types force every consumer to pay per-file aliasing overhead (the C# `using Event = FrameCollector.Event;` problem) in exchange for a small ownership-visibility win at declaration; flat naming pushes cost to declaration site (one longer name) and leaves consumers free. cxc takes the flat side.
 - **Leading-dot enum shorthand adopted (§3.7.2 new).** `.name(...)` and `.name` at expression position resolve to `<InferredType>.name(...)` when the compiler can unambiguously infer the target type from context. Contexts: switch scrutinee type, function parameter declared type, function return type, field declared type, variable declared type, comparison with a typed expression. Ambiguous contexts (untyped `let x = .some(3)`, generic-parameter-uninferable positions) produce a compile error asking for explicit type qualification. This is the ergonomic partner of the flat-naming decision — without leading-dot, `FrameCollectorEvent.text(...)` at every switch arm reads noisy; with it, `case .text(let s): ...` reads clean regardless of whether `Event` is nested or flat.
 - **`self.` and `Self.` shorthand affirmed in the same spirit.** Inside a class body, `.name` in a context where `Self` is the inferred type is `Self.name`. This is not a new rule — it falls out of leading-dot's existing "target type inferred from context" mechanism — but worth documenting for completeness.
 
@@ -390,19 +432,19 @@ Two paired decisions that close `#W-2`, `#W-48`, and Ink #14a.
 - **v0.8.3 no-destructuring, no tuples.** Same discipline family: convention over language mechanism when convention suffices. Nested types could be added as a feature; convention plus module aliases handles the same job at lower ecosystem cost.
 - **v0.8.2 `@` marker discipline.** Module aliases (`alias @Event = ...`) already provide the per-file brevity escape hatch; nested types would duplicate that mechanism.
 - **v0.8.1 named-only enum associated values.** Leading-dot shorthand for named associated values reads clean because names are already the discipline: `case .closed(reason: let r, code: let c):` — no positional-vs-named ambiguity.
-- **§1.2 intent-not-authority.** Convention-based ownership signal is intent; nested-type-syntax would be authority. Corvid consistently picks intent.
+- **§1.2 intent-not-authority.** Convention-based ownership signal is intent; nested-type-syntax would be authority. cxc consistently picks intent.
 - **§4.20 library-first sugar.** Leading-dot is a language-committed sugar; it lives in bootstrap because it's a target-directed name-resolution rule, not a prelude alias — resolution happens during type checking, not before parsing.
 
 **Downstream cleanups:** §3.3 (naming-convention note for class-associated types), §3.7.2 new (leading-dot shorthand), §10 grammar (leading-dot expression production). Friction log `#W-2` and `#W-48` marked dissolved; Ink #14a marked resolved.
 
 **Change log from v0.8.2 → v0.8.3 (Class-based iteration + no destructuring):**
 
-Follows directly from Corvid's structural commitments: class-as-universal (§1.5), universal method dispatch (§5.1), library-first sugar (§4.20). In a class-based OOP model, iteration is a message send to the collection, not a language primitive. C-style `for` is imported convention that should sit in the prelude, not the bootstrap grammar.
+Follows directly from cxc's structural commitments: class-as-universal (§1.5), universal method dispatch (§5.1), library-first sugar (§4.20). In a class-based OOP model, iteration is a message send to the collection, not a language primitive. C-style `for` is imported convention that should sit in the prelude, not the bootstrap grammar.
 
 - **`for` becomes a prelude alias (§4.20.1).** `for <var> in <collection>: <body>` expands to `collection.iter().for_each { var -> body }`. Grammar production `for_expr` retires from §10 bootstrap. `while` and `loop` stay bootstrap — they are the primitives stdlib uses to implement iteration methods without infinite regress or a TCO commitment. Style guide: user-facing code should reach for `.for_each` / `.map` / `.filter` / `.reduce` on collections; `while` and `loop` are for stdlib and for algorithms that genuinely don't fit iterator abstractions.
 - **`Iterable<T>` / `Iterator<T>` stdlib protocols (§3.10 extension).** `Iterable<T>` requires `iter() -> Iterator<T>`. `Iterator<T>` requires `for_each(f: (T) -> Void)` and `next() -> T?` (return-nil-when-exhausted; interacts cleanly with the nil-messaging model from v0.7). Prelude ships conformances for `Array<T>`, `Set<T>`, `Map<K, V>`, `Range<T>`, and any string type via `Iterable<Char>`.
 - **`Pair<A, B>` and `Entry<K, V>` stdlib classes (§3.10 extension).** `Pair<A, B>` is the general two-value carrier with `.first` / `.second` accessors. `Entry<K, V>` is the map-iteration carrier with `.key` / `.value` accessors — semantic naming for the map-specific case. Both are `kind: record` (value types). `Map.iter()` yields `Iterator<Entry<K, V>>`.
-- **No destructuring bindings (§3.7 extension).** Corvid does not add destructuring in `let` / `if let` / `guard let` / `for` / function parameters. Multi-value extraction always uses named accessors on the returning class. The rule matches v0.8.1's named-only enum associated values — names beat positions, uniformly. `let (a, b) = pair` is not spec'd and will not be. Users write `let a = pair.first, let b = pair.second` or (more commonly) skip the intermediate binding and use `pair.first` / `pair.second` at the reference site.
+- **No destructuring bindings (§3.7 extension).** cxc does not add destructuring in `let` / `if let` / `guard let` / `for` / function parameters. Multi-value extraction always uses named accessors on the returning class. The rule matches v0.8.1's named-only enum associated values — names beat positions, uniformly. `let (a, b) = pair` is not spec'd and will not be. Users write `let a = pair.first, let b = pair.second` or (more commonly) skip the intermediate binding and use `pair.first` / `pair.second` at the reference site.
 - **Tuple family friction items dissolved.** `#W-35` (tuple destructuring in `for`), the tuple-type sub-question in `#W-6`, and any request for `(A, B, C)` type syntax are marked "dissolved by design" in the friction logs — not "resolved by feature." Multi-value returns use classes (`Pair<A, B>`, `Result<T, E>`, or domain-specific types like `Position`, `Range`). Dictionary iteration yields `Entry<K, V>`.
 - **Grammar (§10).** `for_expr` production removed from bootstrap. New `for` alias production noted at §10 with a cross-reference to §4.20.1. `while_expr` and `loop_expr` remain bootstrap with a note explaining why (stdlib primitive).
 - **`Callable<(Args,), R>` remains as-is.** The tuple-shaped syntax in `(Args,) -> R` was already a synthetic parameter-list carrier, not a first-class tuple. Nothing to change; §5.6.1 note reaffirmed.
@@ -423,13 +465,13 @@ Small but load-bearing refinement to the alias mechanism. Two decisions:
 - **`@` marker for user-defined aliases (§4.16.16 new).** Every user-defined alias — in every position (delimited, prefix, suffix, infix, class-kind, section-composition, type, value, module) — requires `@` at both the declaration signature's trigger and every use site. Prelude aliases (§4.20) remain unmarked; they are committed surface syntax and the unmarked form is what users expect to read. This gives a clean binary at the reader's eye: unmarked = bootstrap or prelude (language-level); `@`-marked = project-local surface addition (look for a declaration).
 - **Parser simplification.** The alias table becomes a distinct namespace resolved via a dedicated lookup path. Pass 1 gathers alias declarations; Pass 2's alias-trigger recognition is deterministic — only `@`-prefixed forms consult the user alias table. The two-pass compilation strategy (§4.16.15) is preserved in structure; the fan-out at Pass 2 shrinks to a single self-flagged escape.
 - **No collision with imports.** A user's `@Vec` alias cannot collide with an imported `Vec`; they are separate namespaces. `Vec` remains the import; `@Vec` is the alias. Resolution order questions disappear.
-- **Uniform across substitution and surface aliases.** Substitution aliases (`alias @Vec = std.math.Vector3`) follow the same rule as surface aliases (`alias @entity Name: ...`). The uniformity trades a one-character cost at every use site for a globally consistent legibility signal. Corvid's class-based extension model already covers the "brevity via method chaining" ground; alias brevity is not the load-bearing win.
-- **`|>` (pipe) rejected from prelude.** In an FP setting where data and behavior are separate, `|>` earns its keep by threading values through module-of-functions. In Corvid — universal method dispatch, cheap extensions/sections, open runtime — method chaining `x.f().g().h()` is the native pipeline shape and covers every case pipe would. Shipping `|>` would create two idioms for the same operation and encourage the wrong extension pattern (free functions instead of extension methods). Projects that genuinely want pipe can declare `alias <lhs> @|> <rhs> ...` locally.
+- **Uniform across substitution and surface aliases.** Substitution aliases (`alias @Vec = std.math.Vector3`) follow the same rule as surface aliases (`alias @entity Name: ...`). The uniformity trades a one-character cost at every use site for a globally consistent legibility signal. cxc's class-based extension model already covers the "brevity via method chaining" ground; alias brevity is not the load-bearing win.
+- **`|>` (pipe) rejected from prelude.** In an FP setting where data and behavior are separate, `|>` earns its keep by threading values through module-of-functions. In cxc — universal method dispatch, cheap extensions/sections, open runtime — method chaining `x.f().g().h()` is the native pipeline shape and covers every case pipe would. Shipping `|>` would create two idioms for the same operation and encourage the wrong extension pattern (free functions instead of extension methods). Projects that genuinely want pipe can declare `alias <lhs> @|> <rhs> ...` locally.
 - **§4.16 subsection edits.** Class-kind, expression-position literal, infix, prefix/suffix, and string-interpolation examples updated to show user aliases with `@`. Prelude aliases stay unmarked. Common Rules (§4.16.12) restated with the namespace-separation invariant.
 - **§4.20.4 User Extensions.** All examples updated to `@`-marked form.
 - **§10 Grammar.** `alias_trigger` production added. `alias_signature` extended with an `@`-prefixed variant for user aliases. Bootstrap operator table unchanged (no `|>`). Prelude alias declarations remain unmarked in signature and use.
 
-Rationale: Corvid's philosophy — user-led extension inside a stable language surface — needs the reader to be able to tell "committed surface" from "project-local surface" at a glance. Without `@`, every unknown identifier could be a prelude construct, an import, a type, or a user alias, and the reader has to grep to know which. With `@`, the reader knows immediately: unmarked names resolve through normal name resolution (imports, locals, prelude); `@`-marked names resolve through the alias table. The `@` cost is one character per use — smaller than the legibility win and smaller than the parser-simplification win combined.
+Rationale: cxc's philosophy — user-led extension inside a stable language surface — needs the reader to be able to tell "committed surface" from "project-local surface" at a glance. Without `@`, every unknown identifier could be a prelude construct, an import, a type, or a user alias, and the reader has to grep to know which. With `@`, the reader knows immediately: unmarked names resolve through normal name resolution (imports, locals, prelude); `@`-marked names resolve through the alias table. The `@` cost is one character per use — smaller than the legibility win and smaller than the parser-simplification win combined.
 
 Downstream cleanups: §4.16.4, §4.16.6, §4.16.7, §4.16.8, §4.16.12 (invariant note), new §4.16.16, §4.20.3 (prelude discipline restated), §4.20.4 (user examples updated), §10 grammar productions.
 
@@ -441,7 +483,7 @@ Additive session — small, mostly mechanical spec fills for constructs the pari
 - **Bounded protocol (§3.11).** `T.max`, `T.min` for numeric types. `FloatingPoint` protocol extends with `.infinity`, `.nan`, `.epsilon`. Small stdlib formalization.
 - **Parameter defaults (§3.8.5 new).** Constructor and function parameters may carry `= <expr>` defaults where `<expr>` is a compile-time constant expression: primitive literal, `nil`, or a value-alias reference (§4.16.10). Compiler substitutes the constant at each call site that omits the argument — static insertion, no runtime cost, no shared-mutable-state footgun. Collection literals as defaults are rejected (they allocate); use `nil` + coalesce in the body for runtime-computed defaults.
 - **Multi-binding `guard let` / `if let` (§3.6.1 extension).** Comma-separated bindings: `if let x = a, let y = b:` binds both or takes the else branch on first failure. `guard let x = a, let y = b else: ...` same shape. Standard from Swift; small grammar extension.
-- **Enum associated values remain named-only.** Retracted earlier proposal to add positional form. Consistency with the rest of Corvid (named args, named record fields, named `accepts`) wins over Swift-familiarity. Style guide notes: when translating positional Swift enums, add names.
+- **Enum associated values remain named-only.** Retracted earlier proposal to add positional form. Consistency with the rest of cxc (named args, named record fields, named `accepts`) wins over Swift-familiarity. Style guide notes: when translating positional Swift enums, add names.
 - **Grammar (§10).** Parameter default production added. Multi-binding `if_let` / `guard_let` productions added. `Convertible` and `Bounded` are stdlib protocols, no grammar impact.
 
 Rationale: fills concrete parity-translation gaps without touching design mechanisms. `.into(T)` inherits §3.9's wrap discipline for consistency. Parameter defaults use the same compile-time-constant discipline as value aliases (§4.16.10) — one rule for "what counts as a static substitution."
@@ -450,7 +492,7 @@ Downstream cleanups: §3.6.1 (multi-binding), §3.8.5 new (parameter defaults), 
 
 **Change log from v0.7.2 → v0.8.0 (Level 2 aliases: pattern-matching + prelude + Session 2 items):**
 
-Aliases become Corvid's syntactic metaprogramming primitive — the mechanism by which surface syntax is defined. Class-kind sugars (v0.7.2) were the first step; v0.8.0 completes the move by extending aliases to expression-position patterns (literals, infix operators, string interpolation) and retiring the language-committed grammar rules for the standard sugars.
+Aliases become cxc's syntactic metaprogramming primitive — the mechanism by which surface syntax is defined. Class-kind sugars (v0.7.2) were the first step; v0.8.0 completes the move by extending aliases to expression-position patterns (literals, infix operators, string interpolation) and retiring the language-committed grammar rules for the standard sugars.
 
 **Mechanism (§4.16 rewrite, §4.17 boundaries update, new §4.20 The Prelude):**
 
@@ -500,7 +542,7 @@ Collection literals, range operators, and string interpolation are declared in t
 
 **Rationale.**
 
-Corvid's design philosophy — libraries not language features (Clojure-influenced), runtime as substrate not ceiling (§1.5), one mechanism where possible (§4.17) — pushes toward user-extensible syntax. v0.7.2 unified declaration sugar under aliases; v0.8.0 completes the move for expression-position sugar. The costs (parser coupling to alias resolution, legibility fragmentation risk from user-defined literals, bootstrap discipline) are tractable: parser coupling handled by two-pass compilation with alias caching (§4.16.11), legibility addressed by mandatory tooling support for expansion visualization, bootstrap discipline documented in §4.17.
+cxc's design philosophy — libraries not language features (Clojure-influenced), runtime as substrate not ceiling (§1.5), one mechanism where possible (§4.17) — pushes toward user-extensible syntax. v0.7.2 unified declaration sugar under aliases; v0.8.0 completes the move for expression-position sugar. The costs (parser coupling to alias resolution, legibility fragmentation risk from user-defined literals, bootstrap discipline) are tractable: parser coupling handled by two-pass compilation with alias caching (§4.16.11), legibility addressed by mandatory tooling support for expansion visualization, bootstrap discipline documented in §4.17.
 
 The philosophical alignment justifies the cost. Users writing domain-specific projects can add domain-specific literal syntax (regex, SQL, quaternions, vector notation) via aliases without waiting for a language-committee decision. Stdlib sugar becomes inspectable rather than compiler-hardcoded. The compiler is smaller; the language distribution (compiler + prelude) provides the standard surface syntax users expect.
 
@@ -510,7 +552,7 @@ The philosophical alignment justifies the cost. Users writing domain-specific pr
 
 **Change log from v0.7.1 → v0.7.2 (sugar unification under aliases):**
 
-Aliases become the single sugar mechanism in Corvid. Previously the language had two sugar systems: `alias` (for section-composition, type, value, module names) and a separate class-kind sugar layer (§4.19 in prior drafts) for `record`, `enum`, `protocol`, `section` keywords. v0.7.2 collapses them — class-kind sugar is now expressed as stdlib alias declarations under the same `alias` mechanism, using a new `...` placeholder to carry body content from the use site through to the expansion.
+Aliases become the single sugar mechanism in cxc. Previously the language had two sugar systems: `alias` (for section-composition, type, value, module names) and a separate class-kind sugar layer (§4.19 in prior drafts) for `record`, `enum`, `protocol`, `section` keywords. v0.7.2 collapses them — class-kind sugar is now expressed as stdlib alias declarations under the same `alias` mechanism, using a new `...` placeholder to carry body content from the use site through to the expansion.
 
 - **Unified alias shape (§4.16).** One construct: `alias <input>: <expansion>` where the expansion may contain `...` to bind the use-site's body content. Category (section-composition, class-kind, type, value, module) emerges from the shape of the input pattern and expansion, not from a keyword-level taxonomy.
 - **`...` body placeholder (§4.16.1).** New syntactic element. Marks the hole in the expansion template where the alias use-site's block content is substituted verbatim. Single hole per alias in v1.
@@ -533,7 +575,7 @@ Session 1 of the post-nil Category 2 backlog. Direct inheritance from C — zero
 - **Bitwise operators (§3.9).** `&`, `|`, `^`, `~`, `<<`, `>>` with C precedence. Compound-assignment forms `&=`, `|=`, `^=`, `<<=`, `>>=`. Legal on integer types (including unsigned); rejected on floats.
 - **Modulo operator (§3.9).** `%` for integer remainder (C99 truncated semantics — result sign matches dividend). `%=` compound form. Not defined on floats (use `Double.remainder(_:)` for float modulo).
 - **`let` at module scope (§7.1).** Top-level immutable binding: `let PI: Double = 3.14159`. Same shape as function-scope `let`. Evaluated at module-load time; type annotation required.
-- **`sizeof` (§9.2).** `sizeof(T)` returns `Int` — the size in bytes of type `T` under its natural layout. For C interop only; not idiomatic in pure Corvid code. `alignof(T)` and `offsetof(Struct, field)` complete the trio.
+- **`sizeof` (§9.2).** `sizeof(T)` returns `Int` — the size in bytes of type `T` under its natural layout. For C interop only; not idiomatic in pure cxc code. `alignof(T)` and `offsetof(Struct, field)` complete the trio.
 - **`else if`** — already in v0.7 grammar (§3.8.1); §2.5 keyword note reaffirms it is written as two tokens.
 - **Grammar (§10).** Literal productions extended; operator table added.
 
@@ -543,7 +585,7 @@ Downstream cleanups: new §2.7 (Literals), §2.5 keyword list adds `let` and `si
 
 **Change log from v0.6.0 → v0.7.0 (nil-messaging inversion):**
 
-Corvid inverts Swift's nil-safety model. Reference types allow nil at runtime (matches the ObjC substrate), the type system marks non-nil expectations as contracts (`T!`), and message sends on nil receivers propagate through instead of trapping. Force-unwrap and optional chaining — the Swift attractors for hidden panics and per-call syntactic tax — retire entirely. A new stdlib section (`on_nil`) lets classes declare per-method nil-response values, and Collection-protocol conformance provides sensible defaults (`count: 0`, `is_empty: true`, `iter: EmptyIterator()`) for free.
+cxc inverts Swift's nil-safety model. Reference types allow nil at runtime (matches the ObjC substrate), the type system marks non-nil expectations as contracts (`T!`), and message sends on nil receivers propagate through instead of trapping. Force-unwrap and optional chaining — the Swift attractors for hidden panics and per-call syntactic tax — retire entirely. A new stdlib section (`on_nil`) lets classes declare per-method nil-response values, and Collection-protocol conformance provides sensible defaults (`count: 0`, `is_empty: true`, `iter: EmptyIterator()`) for free.
 
 - **Reference types nil-allowed by default.** For classes of `kind: regular` (reference-typed), `T` permits nil at runtime. `T!` is contract sugar for `invariant: value != nil`. `T?` on reference types is retired (redundant). Value types (`kind: record`, `kind: enum`, primitives like `Int`, `Bool`) unchanged: `T` never nil, `T?` remains sugar for `Optional<T>` sum type.
 - **Force-unwrap `x!` retired at value site.** No sugar for panic-on-nil. Users write `x ?? panic("reason")` when they genuinely need to fail. Verbosity is intentional — panic should look exceptional in source so it stays exceptional in behavior.
@@ -552,9 +594,9 @@ Corvid inverts Swift's nil-safety model. Reference types allow nil at runtime (m
 - **Collection + String protocols ship default `on_nil`.** `Collection` conformers inherit `count: 0`, `is_empty: true`, `iter: EmptyIterator()` on nil receiver. `String` similarly for `length` / `is_empty` / `chars`. Users writing their own collection types get nil-punning by protocol conformance, not per-class ceremony.
 - **`T!` contract violations warn, don't panic.** Runtime observes nil in a `T!`-annotated field or parameter → logs a warning (dev) or configurable action (prod). Nil continues to flow through message sends. `T!` is a debugging aid asserting author expectations; safety comes from nil-punning being safe.
 - **Arithmetic and ordering on nil are type errors.** `nil + 3`, `nil < 3` don't propagate — must unwrap or use `??`. Equality (`==`, `!=`) punning is safe: `nil == nil` is true, `nil == x` is false. Ordering with nil has no coherent semantics.
-- **ObjC nullability mapping updated (§9.3.2).** ObjC `nullable` maps to Corvid `T`. ObjC `nonnull` maps to `T!`. Un-annotated ObjC types map to `T` (nil-allowed default; matches ObjC runtime truth without warning noise).
+- **ObjC nullability mapping updated (§9.3.2).** ObjC `nullable` maps to cxc `T`. ObjC `nonnull` maps to `T!`. Un-annotated ObjC types map to `T` (nil-allowed default; matches ObjC runtime truth without warning noise).
 - **Grammar (§10).** Type production adds `!` suffix (reference-type contract). `?` suffix narrows to value-type Optional-sum only. Value expressions: `?.` and value-position `!` productions removed.
-- **Rationale.** Swift's nil-safety model paid two visible taxes: `?.` at every optional call site (readers stop seeing it) and `!` at value site (attractor for hidden panics as codebases evolve). Corvid inherits the ObjC runtime, which already allows nil for every reference — Swift's type system was fighting this truth and paying the tax. v0.7.0 reverses the direction: nil is the baseline for references, non-nil is the exception marked by contract. The Clojure-style pun-on-nil semantics (via ObjC runtime + `on_nil` for user code) removes the safety motivation for the taxes, so the taxes go too.
+- **Rationale.** Swift's nil-safety model paid two visible taxes: `?.` at every optional call site (readers stop seeing it) and `!` at value site (attractor for hidden panics as codebases evolve). cxc inherits the ObjC runtime, which already allows nil for every reference — Swift's type system was fighting this truth and paying the tax. v0.7.0 reverses the direction: nil is the baseline for references, non-nil is the exception marked by contract. The Clojure-style pun-on-nil semantics (via ObjC runtime + `on_nil` for user code) removes the safety motivation for the taxes, so the taxes go too.
 
 Downstream cleanups: §3.1.1 (`Any?` note removed — `Any` allows nil directly), §3.2 (Optionals split into reference vs value cases), §3.4.2 (Connection example — retire `Socket?` and `socket!.send`), new §3.6.1 (Nullability and Nil-Punning), new §4.10.9 (`on_nil` section), new §5.7 (Nil-Receiver Dispatch), §6.14 (Reference Modifiers — retire redundant `?` on `weak`), §8.6 (channel section field types), §9.3.2 (ObjC nullability round-trip), §10 (grammar). Roughly 15-20 substantive edits across the spec.
 
@@ -722,26 +764,26 @@ Library authors express intent about how their code will be used. Annotations th
 
 A "type" is a named contract: a set of accepted messages with signatures, preconditions, postconditions, effects, and (optionally) session constraints. Conformance is structural. Named contracts (`protocol Foo`) reserve identity when the author wants to disambiguate structurally identical concepts.
 
-**Types-as-atoms unification (v1.0 target).** Under the atom model (§1.11), **types ARE atoms**. Every construct that was called a "type" in the pre-atom framing is a named atom shape: `Int` is an atom (a record with `data: bytes: Bytes where length == 4`); `String` is an atom; `Point` declared by the user is an atom; `List<T>` is a parameterized atom; a protocol is an atom signature (I/O + contracts, no transition body). Type-checking is atom-shape-conformance — structural, no refinement propagation, no dependent-type-adjacent verification.
+**Types-as-atoms unification.** Under the atom substrate (§1.11), **types ARE atoms**. Every construct that was called a "type" in the pre-atom framing is a named atom shape: `Int` is an atom (a record with `data: bytes: Bytes where length == 4`); `String` is an atom; `Point` declared by the user is an atom; `List of t` is a structurally-polymorphic atom (element type variable `t` bound in signature scope, see §1.11 and §3.2); a protocol is an atom signature (I/O + contracts, no transition body). Type-checking is atom-shape-conformance — structural, no refinement propagation, no dependent-type-adjacent verification.
 
-**Predicates on values are invariants and contracts, not refined types.** Corvid does not ship refinement types at the type-signature level. There is no `atom Nat: Int where value >= 0` — no floating type-name that abstracts a predicate away from the state or transition it constrains. Predicates on values live where they matter:
+**Predicates on values are invariants and contracts, not refined types.** cxc does not ship refinement types at the type-signature level. There is no `def Nat: Int where value >= 0` — no floating type-name that abstracts a predicate away from the state or transition it constrains. Predicates on values live where they matter:
 
-- **Invariants on atoms** carry single-atom or cross-atom constraints (§3.4.2). Bare field names are in scope inside `invariants:` (no `atom.` pronoun required):
+- **Invariants on atoms** carry single-atom or cross-atom constraints (§3.4.2). Bare field names are in scope inside `invariants:` (no `self.` pronoun required):
 
     ```
-    atom Counter:
+    def Counter:
         state:
             count: Int = 0
         invariants:
             0 <= count <= 100                # chained comparison — reads mathematically
     ```
 
-    Corvid supports Python-style chained comparisons: `0 <= count <= 100` is sugar for `0 <= count and count <= 100`, with `count` evaluated once. This is the reading closest to standard mathematical notation for range predicates; it composes naturally with `and` / `or` for compound conditions.
+    cxc supports Python-style chained comparisons: `0 <= count <= 100` is sugar for `0 <= count and count <= 100`, with `count` evaluated once. This is the reading closest to standard mathematical notation for range predicates; it composes naturally with `and` / `or` for compound conditions.
 
 - **Preconditions and postconditions on transitions** carry use-site constraints:
 
     ```
-    atom sqrt(x: Float) -> Float
+    def sqrt(x: Float) -> Float
         requires x >= 0
         ensures result * result == x
     ```
@@ -749,10 +791,10 @@ A "type" is a named contract: a set of accepted messages with signatures, precon
 - **Reusable predicates as boolean-returning atoms** carry named predicate expressions (predicate atoms — leaf atoms with Bool output; invoked from invariants and contracts):
 
     ```
-    atom is_percentage(n: Float) -> Bool:
+    def is_percentage(n: Float) -> Bool:
         return 0.0 <= n <= 1.0
     
-    atom Foo:
+    def Foo:
         state: rate: Float
         invariants:
             is_percentage(rate)
@@ -760,9 +802,11 @@ A "type" is a named contract: a set of accepted messages with signatures, precon
 
 **Why the ban.** Refined types (`Nat`, `BoundedNat`, `Email`, `Percent` as distinct type-names carrying predicates) proliferate names in the type space and abstract constraints away from where they hold. The constraint on Counter's count is *Counter's* constraint — putting it in Counter's `invariants:` keeps the predicate co-located with the state it constrains. Reusability via predicate atoms costs one line at the invariant (`is_percentage(rate)`) instead of one type declaration + one signature site + refinement-inference machinery. Types-as-atoms stays the unification; predicates stay contracts. Two systems, each first-class, composable — but one is about shape, the other about predicates. Not conflated.
 
-**What's traded away.** Named types that carry predicates at the signature level (`atom foo(n: Nat)` reading "n must be non-negative"). Compile-time refinement inference (`nat1 + nat2 : Nat` proved from `nat1, nat2 : Nat`). The Liquid-Haskell / Whiley / dependent-type direction. In its place: contracts on transitions (`requires n >= 0`), invariants on atoms, and predicate atoms for reusable predicates. Constraints are more localized (co-located with what they constrain); type-checking stays a shape-conformance question (simpler compiler, faster feedback); users familiar with Swift / Kotlin / Rust find the model familiar (predicates as assertions, not as types).
+**What's traded away.** Named types that carry predicates at the signature level (`def foo(n: Nat)` reading "n must be non-negative"). Compile-time refinement inference (`nat1 + nat2 : Nat` proved from `nat1, nat2 : Nat`). The Liquid-Haskell / Whiley / dependent-type direction. In its place: contracts on transitions (`requires n >= 0`), invariants on atoms, and predicate atoms for reusable predicates. Constraints are more localized (co-located with what they constrain); type-checking stays a shape-conformance question (simpler compiler, faster feedback); users familiar with Swift / Kotlin / Rust find the model familiar (predicates as assertions, not as types).
 
-See §3.4.2 for the invariant mechanism. §1.11 for the atom model that this unification lives inside.
+See §3.4.2 for the invariant mechanism. §1.11 for the atom substrate that this unification lives inside — specifically §1.11's "Contracts on shapes — types as named contracts" subsection walks the operational form (types built bottom-up from Bit, interpretation via `value :<` observables, `bit_ops` prelude, invariant-check paths). `explorations/integers-from-bits.cxc` is the worked derivation.
+
+**Note on named contracts vs "refined types."** The ban above targets the terse type-alias-with-refinement form (`def Nat: Int where value >= 0` as a floating name over an inferred predicate). Full `def` atoms with `data:` + `invariants:` (`def Nat: data: raw: ...; invariants: value >= 0`) are legitimate — they're first-class atoms with proper structure, not shorthand for refinement inference. Predicates stay co-located with the data they constrain; contracts propagate through construction as documented in §1.11.
 
 ### 1.4 First-class primitives for what dispatch was faking
 
@@ -776,7 +820,7 @@ The language compiles to native code targeting `libobjc2` (GNUstep's Objective-C
 
 The language optimizes for readers, not authors. Code that is easy to review, verify, and reason about locally takes priority over code that is minimally typed.
 
-This premise is especially load-bearing given that a substantial portion of Corvid code will be AI-authored. Humans are the primary readers of code they didn't write, and the language's structural signals — sections, contracts, explicit types, invariants, effect annotations — exist to make review tractable. Verbosity at the declaration site is a small cost paid once; opacity at the review site is a cost paid every time.
+This premise is especially load-bearing given that a substantial portion of cxc code will be AI-authored. Humans are the primary readers of code they didn't write, and the language's structural signals — sections, contracts, explicit types, invariants, effect annotations — exist to make review tractable. Verbosity at the declaration site is a small cost paid once; opacity at the review site is a cost paid every time.
 
 **Consequences:**
 - Public API types are explicit (no inference across module boundaries).
@@ -809,7 +853,7 @@ This premise justifies the incremental compiler architecture, the unified metada
 
 ### 1.8 Pre-v1 design stance
 
-Until v1.0 ships, the language is pre-stable. Any design decision may be revisited if a bolder or more unifying alternative emerges. Simplification wins over compatibility with earlier drafts. Sections marked *[TENTATIVE]* or *[UNRESOLVED]* are the most likely to change, but no part of the spec is off-limits for reconsideration.
+v1.0's **design shape is committed** (atom substrate; §1.11). What remains before v1.0 ships is filling formal gaps (grammar completion, runtime concurrency model, type inference formalization, contract propagation across the graph, effect polymorphism through the substrate) and restructuring §3–§9 as sugar over `def` atoms. During this pre-v1 window, individual design decisions inside the substrate may still be revisited if a bolder or more unifying alternative emerges; simplification wins over compatibility with earlier drafts.
 
 **Once v1.0 ships:**
 - Additions are welcome (new sections, new library types, new syntactic sugars).
@@ -819,6 +863,8 @@ Until v1.0 ships, the language is pre-stable. Any design decision may be revisit
 **Consequence for tool developers:** treat pre-v1 spec versions as intentionally unstable. Tools targeting v0.x may need updates between versions. This is the trade-off for getting the design right; the language will hold still once we've earned it.
 
 **Consequence for design work:** if a new insight would improve the design at the cost of breaking earlier decisions, we take the insight. Version numbers are cheap; getting the design wrong is expensive.
+
+**Not on the table:** replacing the atom substrate with a different foundation. Individual mechanisms within the substrate remain revisable; the substrate itself is the design commitment.
 
 ### 1.9 Contracts as coordination primitives
 
@@ -858,11 +904,11 @@ This premise justifies the concurrency model in §8 and shapes how sections that
 
 ### 1.10 Controlled mutability
 
-Mutability exists at every level of the language — primitive value storage, class state fields, program effects on the world. Corvid's discipline is that every mutation is:
+Mutability exists at every level of the language — primitive value storage, class state fields, program effects on the world. cxc's discipline is that every mutation is:
 
 - **Bounded** — scoped to one atom's local state, or a wire's payload transformation. Never ambient.
 - **Typed** — the transition contract declares what changes and under what precondition.
-- **Explicit** — no ambient `self.x = y` inside method bodies (v1.0 target). State changes only through declared transitions that produce new state.
+- **Explicit** — no ambient `self.x = y` inside method bodies. State changes only through declared transitions that produce new state via `then:` blocks.
 - **Observable** — effects are emitted as values the runtime can log, replay, mock, or dispatch. Not hidden inside opaque method bodies.
 
 No smuggled imperative. Reasoning about a mutation is local to the atom that performs it; nothing outside the atom sees the state change except through the atom's declared emissions.
@@ -873,7 +919,7 @@ No smuggled imperative. Reasoning about a mutation is local to the atom that per
 - **Free imperative OOP** (Java/Swift/Python): unrestricted mutation inside methods; controlled only by convention. Entry points scale with class age; invariants leak; concurrency is hard.
 - **Actor systems** (Erlang, Akka): inter-actor communication is disciplined; intra-actor implementation is traditional imperative.
 - **CSP** (Go, core.async): no mutation, only message-passing. Loses ergonomics of internal mutable state.
-- **Corvid** (controlled mutability via atoms): mutation lives inside atoms, disciplined by transitions; composition is via wiring. Middle position with the payoffs of both sides.
+- **cxc** (controlled mutability via atoms): mutation lives inside atoms, disciplined by transitions; composition is via wiring. Middle position with the payoffs of both sides.
 
 **What this makes possible.**
 
@@ -884,9 +930,9 @@ No smuggled imperative. Reasoning about a mutation is local to the atom that per
 - **Compositional operators for free** (RxJS-style). `debounce`, `throttle`, `batch`, `distinct_until_changed` are just atoms inserted in wires; contracts propagate.
 - **Capability-based security.** An atom's environment is exactly what's wired to it; no ambient authority. If a network handle wasn't wired in, the atom cannot make network calls. The wiring IS the capability.
 
-### 1.11 Direction — the atom model as v1.0 target
+### 1.11 The atom substrate
 
-The premises §1.1–§1.10 point at a specific primitive: **the atom**. An atom is a reactive node with typed inputs, typed outputs, optional private state (immutable = data, mutable = state), event handlers, emissions to other atoms, and optionally contained atoms wired together. Every construct in the current spec — `class`, `record`, `enum`, `protocol`, `section`, `function`, method call, state field, data field — reduces to a shape of atom with different fields populated. The v1.0 target: atom as the sole primitive; all other constructs as sugar for specific atom shapes.
+The premises §1.1–§1.10 point at a specific primitive: **the atom**. An atom is a reactive node with typed inputs, typed outputs, private per-instance state, phases, transitions, emissions to other atoms, and optionally contained atoms wired together. Every user-facing construct — `class`, `record`, `enum`, `protocol`, `function`, `program`, method, field — is sugar over a specific `def` shape. **Atom is the sole primitive.**
 
 **Shape of the reduction:**
 
@@ -903,9 +949,9 @@ The premises §1.1–§1.10 point at a specific primitive: **the atom**. An atom
 | state field | State atom (mutable payload) contained in a compound atom |
 | data field | Data atom (immutable payload) contained in a compound atom |
 | type (nominal or structural) | An atom (its named shape) |
-| generic type | A parameterized atom (`atom List<T>: ...`) |
+| generic type | A structurally-polymorphic atom (`def List: ...`; element type flows through body via `of`) |
 
-**Types are atoms; predicates are contracts (not refined types).** Every type-name is an atom-name; every value is an atom-instance; type-checking is atom-shape-conformance only — pure structural. Predicates on values (bounds, ranges, format requirements) live in `invariants:` on atoms, in `requires`/`ensures` on transitions, or in reusable predicate atoms (Bool-returning atoms invoked from invariants/contracts). Corvid does NOT ship refinement types at the type-signature level — no `atom Nat: Int where value >= 0`. Two systems, both first-class: atoms for shapes; contracts/invariants/predicate-atoms for predicates. See §1.3 for the rationale for banning refined types at the signature level.
+**Types are atoms; predicates are contracts (not refined types).** Every type-name is an atom-name; every value is an atom-instance; type-checking is atom-shape-conformance only — pure structural. Predicates on values (bounds, ranges, format requirements) live in `invariants:` on atoms, in `requires`/`ensures` on transitions, or in reusable predicate atoms (Bool-returning atoms invoked from invariants/contracts). cxc does NOT ship refinement types at the type-signature level — no `def Nat: Int where value >= 0`. Two systems, both first-class: atoms for shapes; contracts/invariants/predicate-atoms for predicates. See §1.3 for the rationale for banning refined types at the signature level.
 
 **Composition.** Atoms compose by **wiring** — connecting one atom's output channel to another's input channel. Wires may carry ordinary values (common case), or be decorated by inline transformer atoms (`debounce`, `batch`, `throttle`, `filter`, `map`, `distinct_until_changed`, etc.) providing RxJS-style reactive operators as first-class syntactic elements. **The class is the graph.**
 
@@ -913,72 +959,1330 @@ The premises §1.1–§1.10 point at a specific primitive: **the atom**. An atom
 
 **Controlled mutability, structurally enforced.** State atoms hold mutable data; transitions produce new state, swapped atomically at the atom boundary. Data atoms hold immutable data. Neither is reachable from outside the containing atom — external code sees only entrypoints and observables. The four discipline principles from §1.10 (bounded, typed, explicit, observable) are enforced by construction under the atom substrate, not by convention.
 
-**Wiring glyphs (minimal set).**
+**Wiring glyphs (six, zero overlap).**
 
-| Glyph | Meaning |
+| Glyph | Role | Reads as |
+|---|---|---|
+| `->` | Return-type marker in signatures + transition arrow (source-to-target phase) | "produces / becomes" |
+| `\|>` | Stream composition inside receive-glyph source expression + sync send inside `do:` | "pipe left into right" / "sync-send" |
+| `:<` | Observable pull channel (standing declaration; subscribers read on demand) | "define left, drawn from right" |
+| `:>` | Emit async — fire-and-forget push (imperative statement) | "emit / async-send" |
+| `<:` | Receive async — non-blocking pickup during phase (transition header, receiver-side) | "on async-receive of" |
+| `<\|` | Receive sync — blocking receive; transition parks on this message (transition header, receiver-side) | "on sync-receive of" |
+
+**Send/receive glyph semantics — two independent axes.** Sender-side blocking and receiver-side blocking are separate properties of each endpoint. The wire itself is always mailbox-buffered; each endpoint declares its own local behavior.
+
+- **Sender axis (`:>` vs `|>`)** — controls whether the sender's transition suspends after firing.
+  - `:>` — fires the message, transition continues immediately.
+  - `|>` — fires the message, transition suspends until **processing sync**: receiver's transition on this message has fired.
+- **Receiver axis (`<:` vs `<|`)** — controls whether the receiver's transition parks waiting.
+  - `<:` — dispatches when this message arrives during this phase; other transitions in the phase can fire on their own triggers meanwhile.
+  - `<|` — transition parks specifically on this message; other transitions in the phase are suspended until it arrives.
+
+**Processing sync — no reply value.** `|>` is a **pure ordering guarantee**. When the sender's transition resumes, the receiver has consumed this message and advanced its state (transitions are atomic; see §1.11 concurrency model). No reply value is transported. If the sender needs data back, it wires an explicit reply channel and uses the two-message pattern: `:>` request, `<:` response. This is not a limitation — reply obligations bound into `|>` would require the compiler to prove the reply channel is active at receive time, a phase-dependent property that can only be checked statically by inspecting the receiver's current phase. Keeping `|>` as ordering-only sidesteps that whole class of check.
+
+**All four combinations are legal.** No sender-must-match-receiver constraint.
+
+| Sender | Receiver | Semantics |
+|---|---|---|
+| `:>` | `<:` | Fire-and-forget, mailbox pickup — classic actor. |
+| `:>` | `<\|` | Producer-consumer — sender queues, consumer parks between messages. |
+| `\|>` | `<\|` | Rendezvous — sender waits for processing, receiver parked ready. |
+| `\|>` | `<:` | Sender waits for processing, receiver dispatches async within its phase. Most flexible: sender gets ordering, receiver interleaves. |
+
+**Bare-glyph defaults.** Unmodified `<:` = drop-if-no-transition-matches (no buffer). Unmodified `<|` = pure rendezvous. Modifier syntax (`<:fifo(cap: 8)`, `<:priority`, `<:sliding(cap: 1)`) attaches non-default semantics per receive site. See "Channel semantics" below.
+
+**`|>` two positions, disambiguated positionally.**
+
+- **Source-expression position** (inside a receive-glyph header, between the source stream and the transformer/args): **stream composition**. Constructs an anonymous transformer chain over the source; the receive glyph subscribes to the composed stream's output. Example: `running <: mouse.moves |> Debounce{duration: 200ms} {pos: Position} -> running do: ...`. The anonymous transformer(s) are sub-atoms whose lifecycle is bound to the enclosing phase — instantiated when the phase becomes active, destroyed on phase exit, fresh state on re-entry. See "Stream composition in receive-glyph source expressions" below.
+- **Send position** (inside a `do:` block or handler body, as `atom |> msg(args)`): **sync send**. Sender's transition suspends until processing sync.
+
+**No free-standing `|>` at atom-body top-level.** Wires as standing subscriptions declared at the atom-body top-level do NOT exist. Every subscription is a receive-glyph transition (`<:` / `<|`) whose source expression can compose transformers via `|>`. See retirement note below.
+
+**Position-based disambiguation for `->`.** The single-arrow `->` has exactly two roles, both structural/declarative:
+
+- **Return type in a signature:** `def sqrt(x: Float) -> Float:` — between an argument-list-close `)` and a type reference, before the body-`:`.
+- **Handler prefix in an atom body:** `-> input(event):` — at line-start within an atom body, followed by the handler name.
+
+`->` does NOT appear in stream composition — that role belongs to `|>` uniformly inside receive-glyph source expressions.
+
+**Rationale for `:<` and `:>` as atom-boundary channel glyphs.** Both glyphs mark the atom's outward-facing surface, using the colon-on-the-atom-side convention. Arrow direction distinguishes modality:
+
+- `:<` — arrow points inward (into the observable channel from a source). Standing declaration; subscribers read on demand. Declarative modality.
+- `:>` — arrow points outward (from the atom to a receiver). Imperative statement; subscribers receive as it happens. Discrete modality.
+
+Both are "external subscriber-facing channels"; the difference is pull vs push. This is the same distinction that RxJS makes between `BehaviorSubject.value` (pull) and `Subject.next(x)` (push), spelled at the glyph level.
+
+**Named channel emit.** Bare `:> value` emits on the default (single unnamed) output channel — valid when the atom has one output. `:> channel_name(value)` emits on a named channel — required when the atom has a named-tuple output (see §1.11 multi-channel).
+
+**`~>` retired.** Time-deferred wire composition is retired. Deferred / time-shaped behavior is a transformer atom in the source expression:
+```
+# Old:  duration ~> fire_pending(this_token)
+# New:  running <: clock.tick |> Throttle{interval: duration} {t: Instant} -> ...
+```
+Time is a capability (`clock`); scheduling is a transformer; no dedicated wire-with-delay glyph.
+
+**Stream composition in receive-glyph source expressions.** `|>` inside a `<:` / `<|` header composes anonymous transformer atoms between a source stream and the receive site. Grammar (informal): `source_expr := stream_source (|> transformer_expr)* args_block`.
+
+```
+# Single transformer:
+running <: mouse.moves |> Debounce{duration: 200ms} {pos: Position} -> running
+    do: cursor :> update(pos: pos)
+
+# Multi-stage chain (reads left-to-right as data flow):
+running <: mouse.moves
+           |> Filter{predicate: on_screen}
+           |> Debounce{duration: 200ms}
+           {pos: Position}
+-> running
+    do: cursor :> update(pos: pos)
+```
+
+**Semantics.** Each `|> Transformer{args}` in the source expression is an **anonymous sub-atom** whose lifecycle is bound to the enclosing phase:
+
+- Instantiated when the phase becomes active (implicitly at transition-set-up time).
+- Destroyed on phase exit — cascade destruction runs post-order like any other sub-atom.
+- Fresh state on re-entry — previous phase's pending buffer (e.g., debounce timer, throttle rate-limiter) does NOT carry over.
+
+Under the hood the anonymous transformers are compiler-generated slots + forwarding transitions; surface syntax hides the boilerplate.
+
+**Args block position.** The `{arg: Type, ...}` args block attaches at the END of the source expression — after all transformers. It describes the message shape at the receive point:
+
+- For passthrough transformers (Debounce, Throttle, Filter, DistinctUntilChanged) the shape matches the source's emission.
+- For reshaping transformers (Map, Reduce, Batch) the shape matches the transformer's output.
+
+Args block is **required** — no elision from source signature. Rationale: explicitness at the substrate's I/O boundary; consistency with all other receive-glyph headers.
+
+**Two spellings for stream transformation, one mechanism:**
+
+| Spelling | When to use |
 |---|---|
-| `->` | Route event to atom (wire from source to sink), OR return type in a signature — position disambiguates |
-| `:<` | Observable definition (this value is *drawn from* the atom / expression on the right) |
-| `\|>` | Pipe through operator (RxJS-style chain) |
-| `~>` | Async / deferred wire (debounce, delay, throttle — wires with time) |
+| Anonymous inline (`\|>` in source expr) | Throwaway transformers, short chains, no need to inspect intermediate state |
+| Named sub-atom slot | Long-lived transformer, want inspectable state, or the transformer emits multiple things beyond the transformed stream |
 
-Everything else uses keywords: `emit`, `route to`, `broadcast to`, `guard`, `after`. Glyphs are for the four operations users perform most often in atom code.
+Both compile to the same runtime shape.
 
-**Disambiguation for `->`.** The single-arrow `->` serves two roles: return-type marker in atom signatures (`atom sqrt(x: Float) -> Float`) and routing wire in entrypoint bodies (`click() -> debounce(200ms) |> increment`). The parser distinguishes by position: `->` between an argument-list-close and an atom-shape reference is a return type; `->` between two atom expressions inside an entrypoint body is a wire. Readers distinguish by context: the token following `->` is either a type-position atom name (return type) or a routing target (wire). Same shape as how `:` serves both "starts a body" and "declares a shape" in Corvid — one glyph, position-driven meaning, no ambiguity to the parser.
+**Dotting into nested atom emissions.** Receive-glyph source expressions can dot through any field-typed-as-atom to reach that atom's emissions. This works uniformly for:
 
-**Rationale for `:<` on observables.** Routing (`->`) is a wire that carries dispatched messages between atoms — imperative-flavored in feel even though semantically it's an emission. Observables are declarations: `value :< state.count` says "the observable `value` IS DEFINED as drawn from `state.count`" — closer to a binding than to a message. The colon prefix carries the definition-flavor Corvid already uses (`x: Int` = "x is defined to have shape Int"); the left-pointing arrow carries the data-flow direction (source on right, exposed name on left). Together they read as "define left, sourced from right" — the honest semantics of an observable declaration.
+| Field kind | Example receive source |
+|---|---|
+| Sub-atom slot | `action.cast_completed` |
+| Capability (from `use:`) | `input.pressed`, `clock.every(...)` |
+| Container atom (`List of T`, `Map of (K, V)`, `Set of T`, ...) | `active_enemies.died` (fan-in of element emissions) |
+| Nested compound / deeper chains | `spawner.active_enemies.died` |
 
-**Where the spec sits now.**
+**Chain to any depth — no encapsulation gate.** If you can name the chain, you can subscribe to what it resolves to. This matches §1.2 (author intent, not authority) and the "if you can see it, you can use it" stance the language inherits from Clojure. Nested atom fields are not implicitly private; the language does not force a middleman re-exposure at each layer.
 
-v0.11 is not the atom substrate. It's an approximation:
-- Records approximate stateless compound atoms.
-- Regular classes approximate stateful compound atoms.
-- Enums approximate sum-type-state atoms.
-- Methods approximate atom entrypoints.
-- Method bodies remain imperative (`self.x = y` allowed) rather than pure transitions with emitted state.
-- Type annotations are split from invariants at the surface (see §1.3) — the unification is target, not committed.
+**Refactor trade-off — the author's call.** Direct dotting (`spawner.active_enemies.died`) is fragile: if Spawner later swaps `List of Enemy` for `Map of (EnemyId, Enemy)`, the subscription breaks. Re-exposing through Spawner's own emission (`spawner.enemy_died`, backed by Spawner's own subscription to `active_enemies.died`) is stable across such refactors. Both are legitimate; the author picks per situation. Language stays out of the trade-off.
 
-Each v0.x → v0.(x+1) step tightens the approximation. Full commitment lands at v1.0.
+**Container atoms have fan-in outputs.** `List`, `Map`, `Set`, `Tree`, and similar container types are atoms whose output surface includes:
 
-**Incremental moves already committed at v0.11:**
+- **Own collection-lifecycle emissions**: `element_added(e: T)`, `element_removed(e: T)`, `size_changed(new_size: Int)`.
+- **Fan-in of element emissions**: for each emission `E{args}` on the element type, the container synthesizes an output `E{e: T, ...args}` — the element identity plus the original event's payload.
 
-- Records as functional-swap (methods return new selves; no in-place mutation of records).
+Fan-in is not language magic. It's part of what "container atom" means as a type shape, expressed in the container's declared output surface. The compiler synthesizes fan-in signatures from the element type's emission signature via the same parametric-atom machinery that gives `List of T` its element-typed API.
+
+Ambiguity resolution when a container has its own event with the same name as an element event: **own event wins**. Explicit fan-in form `.any.<event>` disambiguates:
+
+```
+active_enemies.died         # container's own `died` if declared; else fan-in
+active_enemies.any.died     # explicit fan-in — never ambiguous
+```
+
+Compiler warns on the collision to force explicit disambiguation.
+
+**Consequence — no parent-sink workaround needed for children in a collection.** Instead of passing a `death_sink` to each `Enemy`, the parent subscribes to `active_enemies.died` and the child stays oblivious. Coupling stays pull-based:
+
+```
+def Enemy:
+    alive <: take_damage{amount: Int}
+    -> dead when: health <= amount
+        do: :> died        # ← just emits; no sink parameter
+
+    dead -> end
+
+def EnemySpawner:
+    data: active_enemies: List of Enemy = []
+
+    self <: active_enemies.died{e: Enemy}
+    -> self
+        do: :> enemy_scored(e: e)
+    # Cascade cleanup: Enemy's `dead -> end` triggers List's element_removed
+    # automatically; explicit filter is redundant.
+```
+
+**Stdlib design implication.** Concrete emission shapes for `List`, `Map`, `Set`, `Tree` are stdlib design work — deferred, but reserved as follow-up. Every game/UI/pipeline atom will lean on these; principled early design pays off.
+
+**Contracts on shapes — types as named contracts.**
+
+There is no primitive / refined type distinction in cxc. Every type is a **named contract on a shape**, where a shape is (recursively) a sequence of bits or a composition of shapes. `UInt8`, `Int8`, `Char`, `Nat`, `Age`, user-defined domain types are all constructed by the same mechanism: `def <name>: <underlying>` with optional `value :<` observable (the interpretation) and optional `invariants:` (the predicate). See §1.3 for the design premise ("contracts replace nominal types"); this section is the operational form.
+
+**Value-typed atoms — the substrate for values.** An atom with only `data:` (no phases, no transitions) is value-typed. `data:` is immutable per-instance; the atom IS its data. Every integer, character, enum case, and record is a value-typed atom.
+
+**Interpretation lives on the derived type, not on the underlying shape.** Byte is 8 bits with a count invariant — purely structural, no interpretation. Meaning comes from types that wrap Byte and provide their own `value :<`:
+
+```
+def Byte:
+    data: bits: List of Bit
+    invariants: bits.count == 8       # 8 bits; compiler picks packed representation
+
+def UInt8:
+    data: raw: Byte
+    value :< bit_ops.decode_uint(raw.bits)
+    invariants: value in 0..255
+
+def Int8:
+    data: raw: Byte
+    value :< bit_ops.decode_int_2c(raw.bits)
+    invariants: value in -128..127
+```
+
+Same 8 bits, different interpretations, different invariants. Compiler eliminates the wrapper layer at runtime (same bits, different observable). Adding a new interpretation (`Fixed48Point`, `IPv4Octet`, `PackedDecimal`) defines its own type with its own `value :<`; Byte stays uninterpreted.
+
+**`bit_ops` prelude module.** Bit-level primitives (`decode_uint`, `decode_int_2c`, `ascii_decode`, `add_bytes`, `narrow_*`, `widen_*`) are pure functions with contracts in a `bit_ops` prelude module. Not language substrate; compiler may special-case for perf but the surface is functions the author can call, extend, and inspect.
+
+**Aggressive contract inference within an atom.** Author writes names; compiler derives contracts from usage. `data: hp = 100` — shape derived from RHS; usage in transition bodies tightens further. `data: pos = start` — shape derived from constructor param `start`, refined by every method call on `pos`. Author annotates only when they want to CONSTRAIN beyond what usage implies.
+
+**No cross-atom principal-type inference.** Each atom's public surface (I/O signatures, emissions, phases, observables, derived contracts on constructor params) is derived from its own body only. Callers check against the derived surface at composition sites; a mismatch is an error at the wire site, not a re-derivation. Reason: stability. Cross-atom inference would ripple body changes non-locally; local surfaces bound the blast radius.
+
+**`where` — the escape hatch for author-imposed contracts.** When usage doesn't fully constrain a value, or when the author wants a wider or narrower contract than usage implies:
+
+```
+def dedupe(x) where x conforms Hashable: ...
+def Enemy(start) where start conforms Vector2: ...        # narrow to Vector2 specifically
+```
+
+Everywhere else, no annotations; inference + manifest.
+
+**Invariants on observables — checked at construction, once.** Observables are pure computations over immutable data. Once construction verifies the invariant, the observable's result won't change (data is `data:`; computation is deterministic). Re-checking on read wastes cycles.
+
+Two paths at construction, compiler picks per-case:
+
+- **Statically proved (no runtime check emitted).** Invariant derivable from underlying data's invariants + observable's computation contract (`ensures`). UInt8 is this case: Byte's `bits.count == 8` + decoder's `ensures result in 0..(2^bits.count - 1)` derives `value in 0..255`. Zero runtime cost; invariant serves as documentation + verification checkpoint.
+- **Runtime check at construction.** Invariant narrower than upstream guarantees. Age is this case: Nat's `value >= 0` doesn't prove `value <= 150`; compiler emits a check that fires when `Age{raw: nat}` is constructed. Failure → contract violation → abort. No disable-in-release.
+
+**Two construction forms per type, one-runtime-cost model.** For types with non-trivially-derivable invariants, the compiler auto-generates:
+
+| Form | Precondition | Failure mode |
+|---|---|---|
+| `Age{raw: n}` | Caller asserts `n.value in 0..150` | Contract violation → abort |
+| `Age.try(raw: n)` | None | Returns `Result of Age` |
+
+Direct construction is for "I know this holds." Try-construction is for "I don't know; handle failure." Same underlying invariant check; different failure modes.
+
+**Compile-time vs runtime — the shift dial.** The compiler proves as much as possible. What it can't prove becomes runtime check. Author shifts the dial by adding narrower `where` clauses upstream, using `try_*` forms for explicit handling, or accepting runtime check + abort for cases where failure is a bug. Same mechanism as Eiffel's Design by Contract: static where possible, runtime where necessary, always well-defined.
+
+**Manifest generation.** Each atom's derived surface (I/O, emissions, phases, observables, inferred constraints on constructor params + fields + message args) is a compiler-generated artifact — inspectable via IDE overlay or `cxc show-manifest <path>`. Manifests are the reader's model of an atom's public shape without reading the body. Manifest diffs surface API changes when body edits ripple through inferred contracts.
+
+**Worked derivation.** `explorations/integers-from-bits.cxc` walks the full bits-up derivation (Bit → Byte → UInt8/Int8/Char → UInt16/UInt32 → Nat/Age), operations as contract choices, conversion patterns, and invariant-check semantics.
+
+**Deferred to Phase 6 (compiler implementation).** How much whole-program analysis the compiler does (per-atom local, LTO across statically-wired subgraphs, JIT specialization for hot paths); wrapper-elision aggressiveness; manifest tooling ship shape. These are execution choices over stable semantics; the semantic model above holds regardless.
+
+**Where the spec sits now — roadmap.**
+
+The atom substrate is the design commitment. §1.11–§1.14 document the substrate normatively. §3–§9 currently describe the v0.11 intermediate shape (`class`, `record`, `enum`, `protocol` as primary declaration forms, methods with imperative bodies allowed) and will be restructured as sugar over `def` atom shapes in a subsequent spec revision. During that restructure, the individual behaviors documented in §3–§9 (nullability semantics, pattern matching, contracts, conversion protocols, byte/string/pattern subsystems) are preserved; the syntactic packaging changes.
+
+**Preserved from v0.11 without change.** The following are v1.0-native as documented:
+
+- Records as functional-swap (methods return new selves; no in-place mutation).
 - Primitives as records over Bytes (unified with user records; §3.1).
-- `data:` field usage-site advisory (writer calls emit `data-field-mutation` diagnostic; §3.3).
-- Canonical bytes as value-type base-class property (§3.4.6).
-- §1.3 tightened — types-as-contracts unification named as v1.0 target.
+- Canonical bytes as value-type base-class property (§3.4.6, §3.10.10).
+- Types-as-guards at wire boundaries (§1.3).
+- Nullability + nil-punning + nil-receiver dispatch (§3.6.1, §5.7).
+- `switch` pattern matching with named-field discrimination (§3.7).
+- Contract system — `requires` / `ensures` / `invariants:` (§3.4, §3.4.3).
+- Byte / String / Char / StringPosition / Pattern subsystems (§3.10).
+- Sections mechanism (§4.10).
+- Prelude alias mechanism (§4.16, §4.20).
 
-**Incremental moves planned for v0.12+:**
+**Reorganized under the substrate.** The following change syntactic form under v1.0 (semantics preserved):
 
-- `kind: cell` variant of regular class — functional-swap for stateful classes without full atomic-swap-boundary machinery.
-- Types-as-atoms unification (`: Type` reads as "satisfies atom X's shape"; type-checking is atom-shape-conformance; predicates on values stay in `invariants:` / `requires` / `ensures` / predicate atoms per §1.3).
-- Structural type inference through atom bodies — compiler traces types through handler parameters, state assignments, and emit calls; explicit annotations become optional documentation. Precursor to the full retirement of `<T>` generic-parameter syntax at v1.0.
-- Method-call desugaring reframed as atom messaging (implementation-level, surface preserved).
-- Contract-first spec discipline — contracts describe atom transitions.
-- Wiring glyphs enter the grammar as reserved forms.
+- `class`, `record`, `enum`, `protocol` → sugar keywords over specific `def` shapes.
+- `function` → `def name(x) -> y:` (trivial atom shape).
+- Method call → route message to an atom's transition or handler.
+- `state:` section → retired; all fields are `data:`; mutability via transitions.
+- Structural type inference through atom bodies (retires `<T>` generic-parameter syntax; `of` qualifier is the sole form).
 
-**v1.0 substrate:**
+**Surface syntax.**
 
-- `atom` as sole declaration primitive.
-- `class`, `record`, `enum`, `protocol`, `section`, `program` as sugar keywords for common atom shapes.
-- `function` retired — write `atom name(x) -> y: ...` for the trivial atom shape.
-- `type` and `contract` keywords retired — types ARE atoms; predicates are contracts/invariants/predicate-atoms; there is one declaration form (`atom`) and one predicate mechanism (invariants/contracts/predicate-atoms).
-- Types-as-atoms fully unified: type-checking is atom-shape-conformance (structural). No refinement types at the signature level — no `atom Nat: Int where value >= 0`.
-- **Types-as-guards** at wire boundaries. Every wire endpoint is a checkpoint: upstream atom's output type must satisfy downstream atom's input type. Guard fails → compile error (when statically decidable) or runtime check (when not). Applies to entrypoint dispatch, wire composition, observable reads, and emit calls.
-- Predicates on values live in `invariants:` on atoms (bare field names in scope), in `requires`/`ensures` on transitions, or in reusable predicate atoms (Bool-returning leaf atoms).
-- **`<T>` generic-parameter syntax retired.** Types flow structurally through atom bodies; the compiler infers them from context (handler parameters, state assignments, emit calls); guards check at wire boundaries. Every atom is polymorphic-if-body-uses-types-generically, monomorphized at use site by the compiler. Optional annotations (`(T) -> U` shape notes, `where T is Comparable` constraint notes) remain available for legibility, never required.
-- Type-parameter constraint syntax (`<T: Protocol>`) retired. Constraints become guards on values, not on type parameters. Compile error at use site when the required operations aren't available; explicit predicate atoms when the author wants to document.
+- **`def` as sole declaration keyword.** `class`, `record`, `enum`, `protocol`, `program` remain as sugar keywords for common `def` shapes (compound `def` with only `data:` = record; compound with sum-type state = enum; compound with only signature + no body = protocol; top-level compound with env from runtime = program).
+- **`function` retired.** Write `def name(x) -> y: ...` for the trivial atom shape (leaf atom, single input, single output, no state, pure transition).
+- **`type` and `contract` keywords retired** — types ARE atoms; predicates are `invariants:` / `requires` / `ensures` / predicate atoms; one declaration form (`def`) and one predicate mechanism.
+- **`atom` in prose** refers to the substrate concept (reactive node with typed I/O); `def` is the *syntax* that introduces one.
+
+**Types and generics.**
+
+- **Types-as-atoms fully unified**: type-checking is atom-shape-conformance (structural). No refinement types at the signature level — no `def Nat: Int where value >= 0` (see §1.3).
+- **`<T>` generic-parameter syntax retired.** Structural type parameters use the **`of` qualifier**:
+  - Concrete element type: `Stream of Bytes`, `List of Int`, `Map of (String, User)`, `Future of File`, `Ptr of Byte`.
+  - Variable element type (shape variable): `Stream of s`, `List of a`, `Map of (k, v)`.
+  - Case convention IS the type-variable marker: **TitleCase = concrete type reference; lowercase = shape variable**.
+- **Shape variable binding = first-mention in signature scope.** The first appearance of a lowercase name in an atom's signature scope (constructor param types + channel signature + `where` clause + `state:` types + `use:` types) is the binding site; subsequent appearances refer to the same variable. Compiler check: unresolvable subsequent mention = error ("`z` is unbound; did you mean `s`?"); bound-but-never-referenced = warning.
+- **Constraints live in `where` clauses** alongside `requires`/`ensures`. `def dedupe: Stream of s -> Stream of s where s conforms Hashable`.
+- **Types-as-guards** at wire boundaries. Every wire endpoint is a checkpoint: upstream atom's output type must satisfy downstream atom's input type. Guard fails → compile error (when statically decidable) or runtime check (when not).
+- **Multi-channel output via named tuple return type** — the single mechanism for atoms with multiple named output channels:
+  ```
+  def partition(predicate: (a) -> Bool):
+      Stream of a -> (matched: Stream of a, unmatched: Stream of a)
+  ```
+  Bare `Stream of X` for single unnamed channel; `(name: Stream of X, ...)` for named channels. No separate `channels:` section — return type is authoritative.
+
+- **`Stream of T` is the sole channel primitive.** `Future of T` (`emits <= 1`) and `Signal of T` (`emits == 1`) are prelude aliases for `Stream of T where emits <= 1` / `where emits == 1`. Cardinality is a contract, not a type constructor. Operators propagate cardinality via signature contracts (`map: emits(out) == emits(in)`; `filter: emits(out) <= emits(in)`; `debounce(d): emits(out) <= emits(in) + 1`).
+
+**Surface glyphs (six, zero overlap; see the wiring glyphs table above).**
+
+- `->` — return-type + transition arrow (source-to-target phase)
+- `|>` — stream composition inside receive-glyph source expression + sync send inside `do:`
+- `:<` — observable pull channel
+- `:>` — emit async — fire-and-forget push
+- `<:` — receive async — non-blocking pickup during phase; transition-header receiver-side
+- `<|` — receive sync — blocking receive; transition parks on this message; transition-header receiver-side
+
+**Atom-body vocabulary (six core sections + two optional + bare declarations).**
+
+cxc is a close-to-immutable OOP language built on the atom substrate. **Every transition is a pure function `state → message → new_state`.** State is a value; transitions produce new values via named field updates in a `then:` block. There is no mutation anywhere in the language — no assignment inside transition bodies, no cross-scope field writes, no `=` / `+=` operators on `data:` fields at any scope.
+
+**`state:` is retired.** All fields are `data:` (per-instance; updated only through transitions). Every change is a transition (either between phases of the current atom, or a self-transition on the compound for continuous accumulators, or an assignment to a sub-atom slot).
+
+*Sections:*
+
+| Section | Role | Required? |
+|---|---|---|
+| `use:` | Capability declarations (env-provided or locally constructed) | when the atom depends on env caps |
+| `data:` | Immutable per-instance fields (or via constructor param sugar) | when the atom holds any fields |
+| `invariants:` | Bare-field-name predicates that always hold | when the atom carries constraints |
+| `metadata:` | Arbitrary metadata (kind, execution, etc.) | when configuring the atom |
+| `observables:` | Grouping wrapper for observable declarations (optional; bare `:<` form suffices) | when grouping many observables reads better |
+| `constructor:` (optional) | Custom construction logic | when auto-synthesis is insufficient |
+| `conforms:` (optional) | Explicit capability-shape conformance declaration | documentation; compiler warns on likely-match if omitted |
+
+**Retired:** `state:` section (all fields are `data:`; mutability is expressed via transitions). `extern:` section (FFI is a capability atom `Extern`, provisioned via `use:` to stdlib shims only; foreign symbols are declared in prelude `foreign library` blocks — see §1.12, §1.14).
+
+*Bare declarations at atom-body top level (each has a unique marker):*
+
+- **`name :< source`** — observable declaration. Pull channel; subscribers read on demand. `:<` marker unique.
+- **`<from> [receive_trigger] -> <to>[(args)] when <guard>`** — transition line. Declares a phase transition (source phase to target phase) or a self-transition on the current atom. The optional receive-glyph trigger (`<: source_expr {args}` or `<| ...`) makes the transition message-driven; without it the transition is guard-only. Compact single-line form is sugar for the block form. See "Transition-line block form" below.
+- **`-> handler(args)?:`** — externally-invocable message handler. Reserved for side-effect-only handlers (no state change; only external effects like logging). Every state-changing handler is a transition line, not a `-> handler:`. `->` prefix at line-start unique.
+
+**Retired: bare `expr |> target` at atom-body top-level.** Standing wires do NOT exist as top-level statements. Every subscription is a receive-glyph transition (`<:` / `<|`) whose source expression may compose transformers via `|>`. See §1.11 "Stream composition in receive-glyph source expressions."
+
+*Nested declarations:*
+
+- **Nested `def` declarations** — compound atoms contain state atoms (nested state-machine states) and nested capability atoms (child components). The **first-declared state atom is the initial state** on construction; its fields must have defaults (which may reference compound-scope constants and constructor params via lexical read, S3).
+
+*Universal implicit phases — `init` and `end`.*
+
+Every atom has two implicit phases the user never declares:
+
+- **`init`** — constructor. Fires on atom instantiation. The implicit transition `init -> [first-mentioned target phase]` runs, populating fields via its `then:` block. Wildcard on-enter (`-> phase`) for the first phase catches this transition.
+- **`end`** — deconstructor. Any transition targeting `end` deconstructs the atom: the transition's `do:` block runs (last chance to emit signals or clean up), then the atom is destroyed. Any nullable slot holding this atom **auto-nils** on destruction — parents observe the slot going nil, no explicit "on completion" transition needed.
+
+Corollaries:
+- `end` transitions may have `when:` and `do:` blocks; `then:` in an `end` transition is meaningless (the atom's state is being discarded) and is a compile error.
+- Parent atoms detect sub-atom completion via `is nil` on the slot, or via explicit event-up (sub emits `:> completed` in its `end`-transition's `do:` block before destruction).
+- **Cascade destruction is synchronous and post-order.** When a parent atom transitions to `end`: (1) parent's `do:` block runs first (final emissions to sibling atoms while sub-atoms are still alive and reachable); (2) each sub-atom in a slot recursively transitions to `end` in declaration order (their `do:` blocks run; their own sub-atoms cascade); (3) all sub-atoms are destroyed; (4) parent is destroyed. Any slot holding a destroyed atom auto-nils.
+- **Auto-nil visibility timing.** The slot auto-nils **atomically at the end** of the sub-atom's `end`-transition — specifically, after the sub-atom's `do:` block completes and before any other transition on the parent evaluates its `when:` guard. A parent transition guard evaluated after the sub-atom's `end` fires WILL see the slot as nil. Rationale: transitions are atomic units; observers never see the intermediate "sub-atom destroyed but slot not yet nil" state.
+
+**Phase declarations are inferred from transition arrows.** Empty `def phase` declarations are unnecessary. Phases named as source or target of any transition arrow (`X -> Y`, `<: msg -> Y`, `-> Y`, etc.) are automatically declared. Explicit `def phase:` blocks with bodies remain only when a phase has genuinely distinct shape (rare; usually a sub-atom slot expresses phase-scoped state better).
+
+*Transition-line block form.*
+
+The general shape of a transition line has a header (one or two lines) followed by an indented body:
+
+```
+<source> <:|<| <msg>[{args}]                              # header line 1 (async or sync receive)
+-> <target>                                                # header line 2 (may be joined with line 1)
+    when: <additional guard>                              # optional: further narrows the trigger
+    let:  <name>: <expr>+                                 # optional: intermediate bindings
+    then: <field> => <expr>+                              # optional: functional field updates
+    do:   <side-effect-statements>+                       # optional: emissions, sync sends, external calls
+```
+
+Alternative header for state/time-triggered transitions (no message receive):
+
+```
+<source>
+when: <trigger condition>                                 # e.g. `clock.after(timeout)` or state-only guard
+-> <target>
+    then: ...
+    do:   ...
+```
+
+- **`<source> <: <msg>{args}`** — message-triggered header. `<:` = async receive; `<|` = sync receive. The message name and args block declare what triggers the transition and what fields bind from the payload. Braces `{...}` omitted when the message has no args.
+- **`-> <target>`** — target phase. May be a phase name, `self` (self-transition, no phase change), or `end` (deconstruct).
+- **`when:`** — additional guard composed on top of the trigger. For message-triggered transitions, narrows further. For guard-only transitions (no `<:` / `<|`), the entire trigger.
+- **`let:`** — pure named bindings visible in `then:` and `do:`. Uses `name: expression` syntax. Use when a value is shared across `then:` / `do:`.
+- **`then:`** — functional field updates. Uses **`field => expression`** syntax (reads as "field becomes expression"). Fields resolve lexically: **target scope first, compound scope second**. Unlisted fields carry forward. Pure — never contains side effects. Compile error if used in an `-> end` transition.
+- **`do:`** — side effects only: emissions (`:>`), sync sends (`|>`), external calls. Never contains field updates or assignment.
+
+**Header whitespace is flexible.** Source + trigger on line 1, arrow + target on line 2, is the canonical multi-line form. Compact single-line form `<source> <: <msg>{args} -> <target>` is legal for simple transitions. Grammar accepts either; users pick per readability.
+
+*Wildcard on-enter — `-> phase` shorthand.*
+
+A transition with wildcard source (no `<source>` before the arrow) matches EVERY transition into `<phase>`, including the implicit init transition. Use for phase-entry defaults and phase-entry side effects that apply regardless of source:
+
+```
+-> alive
+    then:
+        hp   => max_hp
+        mana => starting_mana
+    do:   :> phase_entered(alive)
+```
+
+**Ordering when both a specific transition and a wildcard on-enter match**: wildcard on-enter's `then:` runs FIRST, then the specific transition's `then:` runs (specific-last-wins on field conflicts). Rationale: on-enter establishes phase-entry baseline; specific transition customizes per its context.
+
+Symmetric wildcard on-exit form `<phase> ->` fires on any transition OUT of `<phase>`, runs BEFORE the specific transition's `then:` (so exit fires on-the-way-out).
+
+*Lexical field resolution inside `then:`.*
+
+Unqualified field names in `then:` resolve by lexical scope:
+
+1. Target state atom's data fields (innermost scope of the transition target).
+2. Compound's data fields (enclosing scope).
+3. **Ambiguity** (same name in both) → compile error; use explicit path.
+4. **Unknown name** → compile error ("no field `<name>` in scope of target or compound").
+
+Symmetric with the scoping rule for **reads** inside nested state atoms — state atoms already read compound-scope fields via lexical lookup; `then:` writes follow the same rule.
+
+Explicit path escape is available for disambiguation:
+```
+then:
+    Player.last_cast_at    => clock.now     # explicit compound-scope
+    firing_fireball.mana   => new_mana      # explicit target-scope (redundant when unambiguous)
+```
+
+**Shadowing warning.** Adding a field to a state atom that shadows a compound-scope field with the same name silently changes the resolution of unqualified references in `then:`. Compiler warns on the declaration site; users add explicit path or rename.
+
+*Constructor args on transition targets — retired for the common case.*
+
+Under earlier drafts, transition targets carried constructor args (`<to>(field: value, ...)`) to set state-atom-scope fields. Retired at v1.0: field updates for both state-atom scope and compound scope live in `then:` uniformly, using lexical resolution to pick scope. Constructor args in the transition target header remain legal **only** when the target's constructor has required params with no defaults that cannot carry forward from source (rare). For the common case, the header names only the phase change; all field updates live in `then:`.
+
+**Reading order:** guard fires → compute helpers (`let:`) → produce new self (phase from header + `then:` updates, atomically) → schedule side effects (`do:`).
+
+**Compact single-line form** is sugar for the block form with only `when:` populated:
+
+```
+idle -> up when pressed(key: Key.arrow_up)         # sugar for:
+                                                    #   idle -> up when: pressed(key: Key.arrow_up)
+```
+
+**No assignment anywhere.** `x = y`, `x += y`, `Compound.field = y` are all syntax errors — at atom-body top level, inside handler bodies, inside transition bodies, everywhere. Field updates happen exclusively through the target-constructor header and the `then:` block. There is no general mutation in the language.
+
+*Cross-scope updates decompose or use explicit self-construction.*
+
+A nested-state transition (e.g., `alive -> firing_fireball(...)`) whose new state also requires an update to a compound-scope field has two idiomatic forms:
+
+1. **`then:` on the nested-state transition itself.** The `then:` block updates both scopes in one atomic swap; lexical resolution routes each name to the right scope:
+   ```
+   alive -> firing_fireball
+       when: cast_fireball() and can_cast and mana >= fireball_mana_cost
+       then:
+           mana         => mana - fireball_mana_cost      # firing_fireball.mana (target scope)
+           last_cast_at => clock.now                       # Player.last_cast_at (compound scope)
+       do:   :> fireball_launched
+   ```
+2. **Emit + listen** decomposition. The nested-state transition emits an event; a separate compound self-transition listens for the event and produces the new compound self:
+   ```
+   alive -> firing_fireball
+       when: cast_fireball() and ...
+       then: mana => mana - fireball_mana_cost
+       do:   :> fireball_launched
+   
+   self -> self
+       when: fireball_launched()
+       then: last_cast_at => clock.now
+   ```
+
+Form 1 is more compact when the update is intrinsic to the phase change; form 2 is clearer when the compound-scope update is a semantic consequence of the phase change that other listeners should also see.
+
+*Enum-valued phase transitions.*
+
+The `<from> -> <to>` arrow syntax works uniformly for two phase mechanisms:
+
+| Phase mechanism | `idle -> up when …` compiles to |
+|---|---|
+| **State atoms** (nested `def idle: …`, `def up: …`) | swap active nested state atom from `idle` to `up` |
+| **Enum-valued field** (`direction: Direction` with cases `idle`/`up`/`down`) | `self -> self(direction: up) when …` — implicit field update via the target-constructor form |
+
+Compiler picks the mechanism from context: if `idle`/`up` are declared as nested state atoms of the compound → state-atom form. If they're cases of an enum whose type appears as a data field → enum-valued form.
+
+Disambiguation:
+- Exactly one enum-typed data field for the enum in question → arrow syntax targets that field implicitly.
+- Multiple fields of the same enum type → prefix required: `direction: idle -> up when …`.
+- Name is both a state atom and an enum case in scope → compile error; rename.
+- Name is neither → compile error.
+
+*Modeling discrete-phase state — one question, three shapes.*
+
+Retired: the Kind 1a / Kind 1b / Kind 2 taxonomy. It was scaffolding for a pre-sub-atom design where per-phase field declarations and enum-in-data-field indirection were live options. Both are retired; the discrimination collapses to one primary question:
+
+**Does this state need its own lifecycle — phases, queueing, interruption, or independent concurrent activity?**
+
+- **Yes** → **sub-atom in a nullable slot**. The sub-atom carries its own transitions, its own fields, its own lifecycle; deconstructs on `end`; the slot auto-nils. Parent coordinates via the four sub-atom patterns (see below). Example: Player's `action: ActionMachine?` for the fireball cast.
+- **No, but the atom discriminates behavior across discrete phases** → **phases on the current atom, fields at compound scope, wildcard on-enter for phase-determined values**. Phases are inferred from transition arrows. Example: Paddle's idle/up/down where velocity depends on the phase — three `-> phase then: velocity => ...` on-enter transitions set the value directly.
+- **No, the state just accumulates or updates on events** → **self-transition with `then:`**. No special mechanism; every atom does this. Example: Paddle's `y` accumulating from velocity × dt; EnemySpawner's `active_enemies` growing on spawn events.
+
+Compiler may hint when a per-phase field declaration or a union-typed slot appears — both are strong signals to lift into a sub-atom in a slot (see below).
+
+*Sub-atom slots — state-machine-shaped state.*
+
+When a piece of state has its own lifecycle — phases, transitions, potential for queueing, interruption, or independent concurrent activity — encapsulate it as a **sub-atom in a nullable slot** on the parent:
+
+```
+def Player:
+    data:
+        action: ActionMachine? = nil    # sub-atom slot; nil = no action running
+    
+    alive <: cast_fireball
+    -> alive
+        when: mana >= cost and (action is nil)
+        then:
+            mana   => mana - cost
+            action => ActionMachine(clock: clock)     # instantiate sub-atom into slot
+        do:
+            action :> start_cast(target: cursor_position, cast_time: cast_time)
+```
+
+The sub-atom carries its own transitions, its own fields, and its own lifecycle. When it reaches `end`, it deconstructs and the slot auto-nils — the parent's next `action is nil` check is true again.
+
+Do NOT use union types (`Idle | FireballCasting | MeleeAttack`) as slots for state discrimination. That's a state machine wearing a union costume — reinventing state-machine machinery poorly. Union types remain for **genuinely-polymorphic disjoint values** (message payloads, result outcomes) where the variants have no natural progression or transition rules between them.
+
+**Heuristic**: if the "variants" of your candidate union have transition rules between them (idle → in-progress → done), it's a state machine — promote to a sub-atom.
+
+*Sub-atom coordination — four patterns.*
+
+Parent atoms coordinate with sub-atoms in slots via four patterns:
+
+1. **Command down** — parent sends messages to sub. Method-call syntax on the slot is sugar for message emission:
+   ```
+   do: action :> start_cast(target: pos, cast_time: 500ms)
+   ```
+   Nil-safe: sending to a nil slot is nil-punned (no-op), consistent with §3.6.1.
+
+2. **Event up** — parent reacts to sub's emissions. Receive-glyph in the transition header:
+   ```
+   alive <: action.cast_completed{target: Position}
+   -> alive
+       do: :> fireball_flew(target: target)
+   ```
+
+3. **State query** — parent reads sub's state via **observable predicates**, not raw phase names:
+   ```
+   # In ActionMachine (child): expose a stable predicate
+   is_idle :< self is idle
+   
+   # In Player (parent): check the predicate, not the phase name
+   alive <: cast_fireball
+   -> alive
+       when: action.is_idle and ...
+   ```
+   Rationale: exposing observable predicates insulates parents from internal phase renames in the sub-atom. Directly checking `action is idle` couples parent to sub's internal phase names.
+
+4. **Continuous stream from sub to parent** — sub's output feeds a parent transition on every emission. Same mechanism as event-up (receive-glyph transition on the sub's emission), optionally with transformer chain in the source expression:
+   ```
+   # Every progress update from action feeds a UI-update transition on parent:
+   alive <: action.cast_progress{pct: Float}
+   -> alive
+       do: self :> update_cast_ui(pct: pct)
+
+   # With transformer (throttle to 10 Hz):
+   alive <: action.cast_progress |> Throttle{interval: 100ms} {pct: Float}
+   -> alive
+       do: self :> update_cast_ui(pct: pct)
+   ```
+
+*Channel semantics — bare and modified receive glyphs.*
+
+Bare `<:` and `<|` provide default semantics; modifiers on the glyph attach non-default behavior per receive site:
+
+| Glyph form | Semantic |
+|---|---|
+| `<:` | Async, no buffer — drops if no matching transition (default) |
+| `<:fifo(cap: N)` | Async, bounded FIFO buffer of capacity N |
+| `<:priority` | Async, priority-ordered (higher priority messages jump the line) |
+| `<:sliding(cap: N)` | Async, sliding window — new messages replace oldest when full |
+| `<\|` | Sync — blocking receive; transition parks specifically on this message until it arrives (default) |
+
+Advanced semantics (priority discipline, sliding-window drop policy) may require stdlib mailbox atoms rather than compiler-primitive buffering; the modifier syntax is a promise, not necessarily a compiler feature.
+
+**Multi-site receive for the same message name.** When two transitions in the same atom receive the same message name from different source phases (e.g., `idle <:fifo(cap: 8) start_cast{...}` and `casting <:sliding(cap: 1) start_cast{...}`), each receive site has an **independent buffer** with its own capacity and discipline. Messages arriving while in `idle` queue in the FIFO; messages arriving while in `casting` land in the sliding-window. On a phase transition (e.g., `idle -> casting`), buffered messages in the old phase's buffer are dropped — the semantic is "this buffer is scoped to this phase's receipt window." Users who want a single shared queue across phases must declare receive at the compound level (self-transitions) rather than per-phase; the language does not merge per-phase buffers.
+
+**Modifier consistency across sites.** Multiple receive sites for the same message in the SAME phase must use the SAME modifier (compile error otherwise). Cross-phase modifiers may differ (see above), but within one phase the message has one channel discipline.
+
+**Concurrency model.**
+
+- **Transitions are atomic per atom, concurrent across atoms.** Each atom serializes its own transitions on its own mailbox. Different atoms execute transitions concurrently. Classic actor model — no shared mutable state to synchronize on, because state is replaced (not mutated) at transition boundaries.
+- **Memory model: value-based, no torn reads.** Cross-atom reads (observables via `:<`, receive-glyph subscriptions) always see a coherent snapshot — whichever atomic state was current when the message propagated. There is nothing to tear because there is nothing being mutated in place.
+- **Scheduling: cooperative work-stealing pool.** The runtime picks up any atom with a pending message or timer, runs one transition to completion (or to a suspension point), releases the worker. No preemption inside a transition. Number of workers is a runtime-configuration knob (default: hardware concurrency).
+- **`|>` is a cooperative suspension point.** When a transition executes a sync send `|>`, the worker parks that transition and moves on to other atoms. When the receiver's transition on this message completes (processing sync), the parked sender's transition is resumed on some worker. **The sending atom does NOT process other messages in its mailbox while parked** — it remains committed to the current transition until that transition completes.
+- **Phase-scoped receivers, no phase-cross-check on sender.** A `<:` or `<|` receive site exists only during the phase in which it's declared. Messages arriving for a receiver whose phase is inactive follow the modifier discipline (drop, queue, or replace) at the receiver's mailbox. The sender is not aware of the receiver's current phase and cannot statically check it — which is why `|>` is pure ordering-guarantee without reply obligation (see above).
+
+**Sync send corner cases.**
+
+- `|>` suspends the sending *atom*, not just the sending transition — while the transition is parked awaiting processing sync, the atom's mailbox accumulates but no new transitions fire. Concurrency across atoms is preserved; concurrency within one atom is not.
+- Circular sync sends (A `|>` B while B is parked on `|>` back to A) **deadlock**. Same failure mode as CSP everywhere. No language-level cycle detection; user discipline required.
+- No reply value is transported by `|>` (see "Processing sync" above). If the sender needs data back, wire an explicit reply channel: `:>` request, `<:` response.
+- Recommendation: default to `:>` throughout; reach for `|>` only when the sender needs ordering-with-processing before proceeding (e.g., "make sure this cancel was accepted before I continue"). Most game/event/notification flows are async.
+
+*`|>` positions.* Two positions, distinct semantics:
+
+- **Inside a receive-glyph source expression** (`running <: source |> Transformer{...} {args} -> ...`): **stream composition**. Anonymous transformer atoms with lifecycle bound to the enclosing phase. See "Stream composition in receive-glyph source expressions" above.
+- **Inside a `do:` block or handler body**, as `atom |> msg(args)`: **sync send**. Sender's transition suspends until processing sync. See §1.11 concurrency model.
+
+Grammar disambiguates positionally — there is no ambiguity. Top-level `|>` as a free-standing wire is retired.
+
+*Nested state atom scoping.* Nested state atoms have **lexical read-access** to their compound atom's `data:`, `use:`, and observables. Unresolved names look up: state atom's own scope → compound's scope → module scope. No scoped writes — compound-scope updates from a nested-state transition happen via `then:` (in the same transition line) or via emit + compound self-transition (see "Cross-scope updates" above).
+
+*Observables across state atoms.* Each nested state atom may declare its own `observables:`. Compound-level access follows:
+1. Compound's own declaration wins if present.
+2. Else, active state's declaration is used.
+3. If declared in some states but not all, the compound-level type is lifted to `Optional of T` (missing states return nil). Compiler warns on this lift to make the heterogeneity visible.
+
+*Pipe endpoint shape restriction.* Pipe endpoints (`expr |> ENDPOINT`) must be one of:
+- Identifier: `pipe |> handler_name` (emission passed as sole positional arg).
+- Method-reference: `pipe |> obj.method` (emission passed as sole positional arg).
+- Lambda: `pipe |> (payload => expr)` (emission bound as `payload` — use `_` if unused).
+
+Bare call-expressions (`pipe |> handler_name(arg)`) are rejected — the payload/argument mismatch is silent otherwise. Fix-it: wrap with a lambda (`pipe |> (_ => handler_name(arg))`) if intent is "trigger on emission, use captured arg."
+
+*Retired from earlier drafts:* `entrypoints:` (all handlers exposed), `wires:` (pipes live at top-level or in scoped blocks), `handlers:` (replaced by `-> handler:` prefix syntax), `channels:` (named tuple return type is authoritative), `state:` (all fields are `data:`; state changes are transitions), atom-scope `let` (never committed — `data:` handles constants), `initial <state>` keyword (never committed — first-declared state atom is initial), **assignment inside transition bodies** (`=`, `+=`, `-=`, ...; retired at the immutable-FSM sharpening — field updates happen exclusively through the target-constructor header and the `then:` sub-block).
+
+**Capabilities and OS boundary.**
+
+- **`use:` block for capability declaration**, with implicit access inside the atom body:
+  ```
+  def debounce(duration: Duration):
+      use:
+          clock: Clock                          # inherit from parent env (shape-only)
+      ...
+      waiting when: clock.after(deadline)      # bare `clock` — implicit env lookup;
+      -> idle                                  # time-guarded transition
+          do: :> fire_pending
+  ```
+- The source expression in each `use:` entry tells the composition checker where the value comes from:
+  - Shape-only (`clock: Clock`) → inherit from parent env; check conformance.
+  - Construction (`clock: GameClock(tick_ms: 16)`) → construct locally; this compound provides it to children.
+  - Expression (`fs: SandboxedFs(inner: fs, ...)`) → evaluate; bare names inside the expression resolve in *enclosing* scope (parent env), enabling wrap-parent-and-reprovide.
+- Children of a compound see the compound's local bindings; whether an entry was inherited or constructed is invisible to them (substitutability).
+- **All OS-adjacent capabilities are atoms.** No language primitives touch the OS. `Clock` (no `after` primitive; delayed dispatch is either `<phase> when: clock.after(deadline) -> <target>` as a time-guarded transition, or a Delay/Throttle transformer in a receive-glyph source expression), `Filesystem`, `Network`, `Console`, `Random`, `Args`, `EnvVars`, `Exit`, `Signals`, `Log`, and (per capability) Threads, Process, Devices, GUI events are all capability atoms in `env`.
+- **Runtime provides shim atoms** wrapping OS syscalls. Same capability shape has per-target implementations (`PosixFs`, `WasiFs`, `BrowserFs`); runtime picks at build/launch time based on target.
+- **`use:` declaration IS the effect surface.** An atom's transitive `use:` closure is its effect set. Atoms with no `use:` block are proof-by-signature that they don't touch time, files, network — pure over their inputs.
+
+**FFI and shim atoms.**
+
+- **`Extern` capability atom** — the sole FFI mechanism. Shim atoms request access via `use: extern: Extern`; the runtime provisions it only to stdlib-designated shims. `extern.get("name")` returns a typed native handle resolved at compile time against the target prelude's `foreign library` declarations. Signatures use C types (`CString`, `Int32`, `SizeT`, `Ptr of Byte`); marshalling from cxc types happens in shim bodies (explicit at boundary); library resolution is per-target (`libc` for native, `wasi_snapshot_preview1` for WASI, `js` for JavaScript host).
+- **User code never gets `Extern`** — trust boundary. Only stdlib shim atoms bridge to native code; the runtime audits them. User code accesses OS through typed capabilities (Clock, Filesystem, ...) only.
+- **Direction inferred from symbol type.** `(Args) -> Ret` = outbound (cxc invokes); `Stream of T` = inbound (native invokes; runtime pushes onto stream). No direction sub-labels. Callbacks-with-return unsupported in v1.0.
+- Rejected: `native def` keyword splits the type system into two atom categories. FFI-as-capability was rejected in an earlier draft on type-safety grounds but is now accepted under the prelude-typed form (types come from prelude declarations, not from runtime string arguments).
+
+**Resource lifecycle.**
+
+- **Resources (File, Socket, Process, Thread) are state-machine atoms** with nested state atoms modelling the resource's lifecycle. Handlers on each state control which operations are valid in that state. Use-after-close, double-close, and RAII fall out of the state-machine model without special mechanisms.
+- **`-> before_destroy:` lifecycle handler** runs on atom destruction, providing RAII cleanup (e.g., closing an OS fd if the atom is destroyed while in `opened` state).
+- **Auto-delegation to active state.** In compound atoms with nested state atoms, message dispatch on the compound auto-delegates to the currently-active nested state's method table when the compound doesn't own a matching handler itself. Callers write `file.read(1024)`; the compound routes to `opened.read` when `opened` is active. Retires the `active` pronoun — `self` is the sole atom-self reference.
+- For v1.0: runtime dispatch of state-specific handlers with clear "state X has no handler Y" errors. Compile-time type-state proofs (Rust-typestate-style) deferred past v1.0.
+
+**Stdlib catalog (dogfooded).**
+
+- Core (must ship v1.0): Clock, Random, Filesystem, Network, Console, Args, EnvVars, Exit, Signals, Log.
+- Extended (v1.0 if language supports; else v1.1): Threads/Workers, Process, IPC, TimeZone/Locale, Crypto.
+- v1.1+ (device-specific): GUI events, Audio, GPU, Sensors/Devices.
+- Every capability is a stdlib atom, built using the `Extern` capability atom for the syscall boundary (consuming symbols declared in prelude `foreign library` blocks). If a capability can't be expressed cleanly in cxc, the language has a gap that needs fixing — not a stdlib workaround.
+
+**Effects — `use:` closure is the effect signature.**
+
+cxc has **no separate effect system**. Effect tracking falls out of the substrate:
+
+1. **cxc atoms have no OS access.** The substrate provides `data:`, transitions, wires, observables, invariants — none touch the OS.
+2. **The only path to the OS is `Extern`**, provisioned only to stdlib-designated shim atoms (never user code).
+3. **Shim atoms wrap OS calls as user-facing capability atoms** (Clock, Filesystem, Network, ...) shipped in the platform prelude.
+4. **User code accesses these only via `use:` declarations.**
+5. **`use:` propagates through composition** — a compound atom's `use:` closure = union of children's `use:` minus what's locally provided (per this section, "The `use:` block").
+6. **Therefore an atom's transitive `use:` closure IS its complete effect signature.** Statically visible; zero inference; zero annotation cost beyond writing `use:`.
+
+Consequences that fall out for free:
+
+- **An atom with no `use:` is pure over its inputs.** Structurally, not by convention. Compiler-verifiable at a glance. Stronger than most languages' "pure" annotations because no unsafe backdoor exists — there is no path to the OS without a `use:`-declared capability.
+- **Effect polymorphism = capability substitution.** `use: clock: Clock` accepts any atom conforming to `Clock` (WallClock, GameClock, TestClock, MockClock). Structural conformance handles it; no effect algebra needed.
+- **Effect inference = `use:` closure computation.** Compiler walks the transitive `use:` set. No effect-annotation language needed.
+- **Testing / mocking is capability substitution.** Compose with a test env that provides mock capabilities; atom body is unchanged.
+- **Capability-based security is the same mechanism.** An atom cannot use what its env doesn't provide.
+- **Adding new effects = shipping new prelude capability atoms.** Extending the effect vocabulary is stdlib work, not language work.
+
+**No `pure:` marker, no `can:` labels, no monad transformers, no effect algebra.** The `use:` name IS the effect declaration. Reader sees `use: clock: Clock, fs: Filesystem` and knows exactly what the atom touches. Grep-friendly, refactor-safe, review-simple.
+
+**What's NOT covered (deferred beyond v1.0).**
+
+- **Termination guarantees.** A transition body could loop forever. Total-functional / Idris-style termination proofs are v2.0+ if usage demands.
+- **Effect handlers with resume** (Koka/Eff-style algebraic effects with continuation capture). Env-substitution + `Result` types cover most practical needs; full handler algebra is v2.0+ if it starts biting.
+- **Explicit contract on which capabilities are used at what phase** (e.g., "clock only during `running`"). Currently `use:` is atom-scoped, not phase-scoped. Reservable as a refinement; not required for v1.0.
+
+**Compiler.**
+
 - Compiler is a dataflow compiler: fuses adjacent atoms, schedules independent subgraphs, computes buffer sizes, propagates contracts across the graph.
-- Wiring glyphs (`->`, `:<`, `\|>`, `~>`) canonical in the grammar.
-- Runtime interprets top-level program-atom emissions as OS effects (syscalls, stdout, network dispatch).
+- Runtime interprets top-level `program` emissions as OS effects (via shim atoms).
+- Predicates on values live in `invariants:` on atoms (bare field names in scope), in `requires`/`ensures` on transitions, or in reusable predicate atoms (Bool-returning leaf atoms).
 
 **Positioning.**
 
-Before v1.0: "Swift competitor for the Apple ecosystem with Clojure-inspired value/reference discipline and Objective-C interop."
+cxc is an **atom-substrate reactive language with Swift-shaped surface, CSP + core.async composition, contract-based verification, and dataflow compilation.** Class = bounded atom graph. Functions = the trivial atom shape. Every construct is a shape of atom.
 
-At v1.0: "Erlang-substrate reactive language with Swift-shaped surface, CSP + core.async composition, contract-based verification, and dataflow compilation. Class = bounded atom graph. Functions = the trivial atom shape. Every construct is a shape of atom."
+The Swift-shaped surface stays (ObjC interop, familiar syntax patterns for developers migrating from Swift/Kotlin/TypeScript). The atom substrate is what the surface desugars into — the design commitment.
 
-The Swift-shaped surface stays (ObjC interop, familiar syntax, gradual migration). The atom substrate is the v1.0 commitment.
+### 1.12 The OS boundary — capabilities as atoms
+
+The atom substrate commits to a single mechanism (atom composition) for every operation the language supports. The OS boundary — time, filesystem, network, console, random, etc. — receives no special-case machinery. Every OS-adjacent capability is an ordinary atom, provided by the runtime, accessible via the `use:` block.
+
+**Layering.**
+
+```
+[ User atoms ]                        ← pure logic, zero OS knowledge, portable
+      ↑ use: env capabilities
+[ env: Clock, Fs, Net, Console, … ]   ← typed capability atoms
+      ↑ wrap
+[ Shim atoms: WallClock, PosixFs, …]  ← use: Extern; extern.get("symbol") returns typed handle
+      ↑ resolve against
+[ Target prelude foreign symbols ]    ← typed native symbol declarations (§1.14)
+      ↓ link
+[ OS ]                                ← outside cxc
+```
+
+**No OS-touching language primitives.** No `print`, no `read_file`, no `now()`, no `random()`, no `sleep`, no `exit`. Every operation that crosses the OS boundary is a method on a capability atom in `env`. This is enforced by construction — the parser has no productions for OS calls; the only path to a syscall is through a shim atom holding the `Extern` capability, and the runtime provisions `Extern` only to stdlib-designated shim atoms.
+
+**The `use:` block.** Every atom that depends on env capabilities declares them:
+
+```
+def debounce(duration: Duration):
+    use:
+        clock: Clock                          # shape-only: inherit from parent env, must conform Clock
+    
+    data:
+        pending: Any     = nil
+        fire_at: Instant = nil                # deadline for next fire
+    
+    # Idle input starts the wait
+    idle <: input{event: Any}
+    -> waiting
+        then:
+            pending => event
+            fire_at => clock.now + duration
+    
+    # Subsequent input while waiting resets the deadline (self-transition on waiting)
+    waiting <: input{event: Any}
+    -> waiting
+        then:
+            pending => event
+            fire_at => clock.now + duration
+    
+    # Time-guarded transition — fires when clock reaches deadline
+    waiting when: clock.after(fire_at)
+    -> idle
+        then:
+            pending => nil
+            fire_at => nil
+        do: :> pending
+```
+
+- Inside the atom body, entries declared in `use:` are accessible by bare name (no `env.` prefix).
+- Composition-time check: the containing compound's env must supply each name in `use:`, and each supplied value must conform to the declared shape.
+- Compound atoms' `use:` is the union of children's `use:` minus what the compound provides locally. `use:` propagates up naturally; local provision truncates the propagation.
+
+**Source expression determines origin.** Each `use:` entry is one of:
+
+| Entry shape | Meaning | Composition-checker action |
+|---|---|---|
+| `name: Shape` | shape-only declaration | look up `name` in parent env; check conformance |
+| `name: Constructor(...)` | construction expression | evaluate here; use as local binding; provided to children |
+| `name: expression` | any expression yielding a conforming atom | evaluate; use as local binding; provided to children |
+
+The distinction between "inherit" and "provide" is a distinction in the source expression, not in the section keyword. `provide:` was drafted and retired before commitment — `use:` covers both roles.
+
+Example — compound that inherits some, constructs some, wraps some:
+
+```
+def GameProgram:
+    use:
+        clock: GameClock(tick_ms: 16)                        # constructed locally; provided to children
+        random: Random                                        # inherited from parent env unchanged
+        fs: SandboxedFs(inner: fs, allowed: ["/data/**"])    # wrap parent's fs and reprovide
+        console: Console                                      # inherited unchanged
+    
+    def player  = Player()                                    # sees {clock: GameClock, random: parent, fs: SandboxedFs, console: parent}
+    def enemies = EnemySwarm()
+```
+
+**Scoping rule for wrap-parent-and-reprovide.** Inside a construction expression in `use:`, bare names resolve in the *enclosing* scope (the parent env of this atom), NOT in the local `use:` block being built. This lets an entry wrap the parent's version of the same name. To reference an earlier entry in the same block, name it distinctly:
+
+```
+use:
+    inner_fs: env.fs                        # explicit local alias
+    fs: SandboxedFs(inner: inner_fs, ...)   # wraps the local inner_fs
+```
+
+**Effect visibility.** An atom's transitive `use:` closure IS its effect set. `def compute_hash(data: Bytes) -> Bytes:` with no `use:` block is a proof-by-signature that the atom doesn't touch time, files, network, or any other capability — pure over its inputs. Effect tracking without new type machinery: the presence of a name in `use:` is the effect declaration.
+
+**Capability catalog (v1.0 stdlib).**
+
+*Core (must ship v1.0):*
+- **Clock** — wall, monotonic, timers, scheduled tasks. No `after` primitive. Delayed dispatch is a time-guarded transition (`<phase> when: clock.after(deadline) -> <target>`) or a Delay/Throttle transformer in a receive-glyph source expression.
+- **Random** — CSPRNG, seeded PRNG, distributions.
+- **Filesystem** — read, write, watch, path ops, directory listing, metadata, stat.
+- **Network** — TCP/UDP sockets, DNS, HTTP client, HTTP server, WebSocket.
+- **Console** — stdin/stdout/stderr with line/byte modes.
+- **Args** — parsed command-line arguments (with subcommand support).
+- **EnvVars** — environment variables (read-only view).
+- **Exit** — program termination with exit codes.
+- **Signals** — SIGINT/SIGTERM/SIGCHLD/... handler registration.
+- **Log** — structured logging with levels and sinks.
+
+*Extended (v1.0 if language supports; else v1.1):* Threads/Workers, Process (spawn subprocesses), IPC (pipes/unix sockets/shared memory), TimeZone/Locale, Crypto.
+
+*v1.1+ (device-specific):* GUI events (keyboard/mouse/touch/gestures), Audio (playback/capture), GPU (compute/render), Sensors/Devices (hardware access).
+
+**Dogfooding rule.** Every stdlib capability atom is written in cxc, using the `Extern` capability atom for the syscall boundary. If a capability can't be expressed cleanly, the language has a gap that needs fixing — not a stdlib workaround. Building `HTTP server`, `Filesystem watch`, and `Signals` in cxc tests whether the atom substrate handles high-concurrency I/O, OS notification queues, and asynchronous OS-driven events.
+
+**Runtime constructs env with policy baked in.** Sandboxing, rate-limiting, remoting, logging, and audit are all normal atom composition — the runtime constructs shim atoms wrapping OS, wraps them with policy atoms, and hands the composed capability to the top-level `program`:
+
+```
+runtime.launch(program: Main, env: {
+    clock:   WallClock(),
+    random:  OsRandom(),
+    fs:      SandboxedFs(
+                inner: PosixFs(),
+                allowed: ["/tmp/myapp/**"],
+                rate_limit: 100 ops/sec
+             ),
+    net:     BlockedNet(),                              # this program has no network
+    console: RedactedConsole(inner: RawConsole(), deny: [/secret/]),
+    ...
+})
+```
+
+User atoms see a `Filesystem` and a `Network`; they can't tell one is sandboxed and the other is blocked. Policy is a *composition decision* at env construction time, not a language feature.
+
+**Plugin / embedded runtime = normal composition.** Running another program (plugin, script, sandboxed code) with reduced capabilities is:
+
+```
+def PluginHost:
+    -> launch_plugin(id: PluginId, code: Bytes):
+        let plugin_env = {
+            clock:   env.clock,
+            fs:      SandboxedFs(inner: env.fs, allowed: [id.data_root]),
+            net:     BlockedNet(),
+            console: env.console
+        }
+        env.runtime.launch(code, env: plugin_env)
+```
+
+Same mechanism as top-level runtime bootstrap; different scope. Sandboxes, plugins, isolates, WASM guests — all the same shape.
+
+**Resource lifecycle = state-machine atom.** Resources acquired at runtime (File, Socket, Process, Thread, HttpRequest) are state-machine atoms with nested state atoms modelling the resource's lifecycle. Handlers on each state control which operations are valid. Compound atoms **auto-delegate** message dispatch to the currently-active nested state atom's method table.
+
+```
+def File(path: Path):                            # constructor param — implicitly a `data:` field
+    data:
+        handle: NativeHandle? = nil              # only meaningful while `opened`; nil otherwise
+    
+    # Compound-level: request to open (async command from consumer).
+    unopened <: open
+    -> opened
+        let: fd: Int = native_open(path, O_RDWR)
+        when: fd >= 0
+        then: handle => NativeHandle(fd)
+        do:   :> opened
+    
+    unopened <: open
+    -> unopened
+        let: fd: Int = native_open(path, O_RDWR)
+        when: fd < 0
+        do:   :> open_failed(errno: current_errno())
+    
+    # Reads while opened — sync send to the file's read channel returns the bytes.
+    opened <| read{byte_count: Int}
+    -> opened
+        when: byte_count >= 0
+        do:   :> bytes(native_read(handle, byte_count))
+    
+    opened <| write{bytes: Bytes}
+    -> opened
+        do: :> written(native_write(handle, bytes))
+    
+    opened <| seek{offset: Int, whence: Whence}
+    -> opened
+        do: :> position(native_seek(handle, offset, whence))
+    
+    # Explicit close: opened -> closed, freeing the OS fd.
+    opened <: close
+    -> closed
+        then: handle => nil
+        do:
+            native_close(handle)
+            :> closed
+    
+    # RAII cleanup path: if the atom is destroyed without an explicit close
+    # (e.g., dropped from a slot while opened), transition to end and free the
+    # fd in end's `do:` block. Wildcard on-exit for `opened` also fires cleanup
+    # when transitioning away from `opened` via any path.
+    opened -> end
+        when: destruction_requested()            # runtime-triggered on drop-while-opened
+        do:
+            native_close(handle)
+            :> closed
+    
+    # `closed` has no message-triggered transitions — structurally ignores
+    # read/write/close/seek. Transitions to `end` when destruction is requested.
+    closed -> end
+        when: destruction_requested()
+```
+
+Properties that fall out of the state-machine model:
+
+- **Use-after-close.** `read` / `write` / `seek` receive on `opened` only. Sending them to a `File` whose active phase is `closed` finds no matching transition → dropped per bare-`<:` / `<|` default. (If sync `<|`, the sender may block waiting for a phase that never returns; use `is closed` guards or observables to check state before sending.)
+- **Double-close.** `close` transitions `opened → closed`. A second `close` message received in `closed` finds no matching transition → dropped.
+- **RAII / auto-close on drop.** When the File atom is destroyed (either via explicit `close` → `closed` → `end`, or via dropped-while-opened → `opened -> end`), the `end` transition's `do:` block frees the OS fd. No separate `before_destroy:` lifecycle handler needed — the universal `end` phase and its `do:` block ARE the RAII mechanism.
+- **Type-state ergonomics.** Pattern-match on phase before use to narrow safely: `if self is opened: self <| read(byte_count: 1024)` — the `is` check narrows so the send finds the right transition.
+
+**On `-> before_destroy:` retirement.** Earlier drafts had a `-> before_destroy:` lifecycle handler on state atoms for RAII cleanup. Retired in favor of the universal `end` phase (see §1.11). Any `<phase> -> end` transition's `do:` block runs before the atom is destroyed and serves the same purpose. Multiple states can have their own `-> end` transitions with cleanup-per-state logic, which the old single-handler pattern couldn't express cleanly.
+
+**Auto-delegation semantics.** Message dispatch on a compound atom with nested state atoms:
+1. If the compound itself has a handler with the target name, use it.
+2. Otherwise, dispatch to the currently-active nested state atom's handler table.
+3. If neither has it, runtime error ("no handler `<name>` on `<atom>` (active state: `<state_name>`)").
+
+The compound's own handlers (like `-> open:` above) handle transitions between states or logic that spans states. The state atoms' handlers handle operations valid only in that state. Callers write `file.read(1024)` — auto-delegation picks up `opened.read` when appropriate.
+
+Same pattern for Socket (`created → connecting → connected → closing → closed`), Process (`spawned → running → exited`), Thread (`created → running → complete/errored`), HttpRequest (`pending → responding → complete/failed`).
+
+For v1.0: **runtime dispatch** of state-specific handlers via auto-delegation with clear "state X has no handler Y" errors. **Compile-time type-state proofs** (Rust-typestate-style) deferred past v1.0 as a compile-time optimization/verification layer.
+
+**FFI mechanism — `Extern` capability + prelude symbol registry.**
+
+The FFI is a capability atom, not a syntactic privilege. Shim atoms request access via `use: extern: Extern`; the runtime provisions `Extern` only to stdlib-designated shims. User code cannot receive `Extern` in its env — any `use:` entry is syntactically legal, but the runtime linker refuses to fill an `extern: Extern` slot for non-stdlib atoms. Trust boundary enforced at env construction, not at parse time.
+
+Native symbol declarations live in target-scoped prelude files (§1.14). Each declaration binds a typed handle to a native symbol; the compiler resolves `extern.get("name")` against the target's symbol table at compile time.
+
+```
+def PosixFs:
+    conforms: Filesystem
+    
+    use:
+        extern: Extern                                    # capability; runtime provisions to stdlib shims only
+    
+    data:
+        # Typed handles retrieved from the target prelude's symbol table.
+        # Type on the LHS must match the declared type in prelude/<target>/libc.cor.
+        native_open:  (CString, Int32, Int32) -> Int32           = extern.get("open")
+        native_read:  (Int32, Ptr of Byte, SizeT) -> SsizeT      = extern.get("read")
+        native_write: (Int32, Ptr of Byte, SizeT) -> SsizeT      = extern.get("write")
+        native_close: (Int32) -> Int32                            = extern.get("close")
+    
+    -> open(path: Path) -> Future of (File | IOError):
+        let cpath = path.to_cstring()
+        let fd = native_open(cpath, O_RDWR, 0)
+        if fd < 0:
+            return IOError(errno: current_errno())
+        return File(path: path, handle: NativeHandle(fd))
+    
+    -> read(handle: NativeHandle, len: Int) -> Future of (Bytes | IOError):
+        let buf = Bytes.allocate(len)
+        let n = native_read(handle.raw, buf.as_ptr(), len)
+        if n < 0:
+            return IOError(errno: current_errno())
+        return buf.slice(0, n)
+    
+    # write, close, seek, ...
+```
+
+Rules:
+
+1. **`Extern` is prelude-internal in v1.0.** Only stdlib-designated shim atoms receive `Extern` in their env. User code has no path to raw FFI; it accesses OS through typed capabilities (Clock, Filesystem, Network, ...). Trust boundary lives at env provisioning, not at parse time.
+2. **Compile-time symbol resolution.** `extern.get("name")` requires a compile-time string literal. The compiler resolves the argument against the target's prelude symbol table at compile time. Unknown symbol → compile error at the call site. Dynamic string arguments are rejected.
+3. **Type comes from the prelude declaration.** The retrieved handle's type is what the prelude symbol declaration says it is. The `data:` field's declared type is checked against the prelude type; mismatch → compile error. No caller-asserted signatures.
+4. **Direction inferred from type shape.** Symbols with type `(Args) -> Ret` are **outbound** — cxc invokes; native provides the impl. Symbols with type `Stream of T` are **inbound** — native invokes (via runtime callback); cxc receives on the stream via ordinary `|>` composition. Callbacks-with-return values are unsupported in v1.0 (no general encoding fits both hot synchronous callbacks and cold async ones; hand-crafted per-API shims with compiler-baked trampolines handle the rare stdlib cases that require them).
+5. **C types at the boundary.** Signatures use `CString`, `Int8`/`Int16`/`Int32`/`Int64`, `UInt8`/.../`UInt64`, `Float32`/`Float64`, `Ptr of T`, `SizeT`, `SsizeT`. Marshalling from cxc types (`Path`, `Bytes`, `String`) to C types happens in shim atom method bodies — explicit conversion at the boundary.
+6. **Portability by target.** Prelude is target-scoped (§1.14). A capability's shape (`Filesystem`) is target-agnostic; its shim implementation (`PosixFs`, `WasiFs`, `BrowserFs`) and the symbols each shim consumes come from the target's prelude subdirectory. User code sees the same `Filesystem` interface regardless of target — full portability across native, WASM, sandbox, browser, embedded, tests.
+
+**Historical note — two collapses.** An earlier draft used an `extern:` *section* inside shim atom bodies, gated at parse time to stdlib atoms only. Two collapses replaced it: (a) the FFI became a capability atom (`Extern`) provisioned through env, matching the treatment of every other OS-adjacent capability; (b) the symbol registry moved into the prelude, where target-scoping is already handled and cxc syntax already reaches. The `extern:` section retires. The old rejection of "FFI-as-capability" (loses type safety, args become dynamic) does not apply to the prelude-typed form: symbol types come from prelude declarations, not from runtime string arguments, so both the retrieval and the call are fully typed at compile time.
+
+The `native def` keyword remains rejected — the current model keeps shim atoms as normal atoms with an extra `use:` entry (`extern: Extern`), not a distinct atom category.
+
+### 1.13 Stdlib capability shape drafts
+
+The v1.0 core capability catalog (§1.12) needs concrete atom-shape signatures — the vocabulary every atom will type against via `use:`. All shapes below reflect the post-audit simplifications (Stream as sole channel primitive with cardinality via contract; all `->` handlers exposed by default; `self` as sole pronoun; no `entrypoints:` / `wires:` / `active`). Fields marked `[DECISION]` where a real fork remains open.
+
+**Stream primitive and cardinality-constrained aliases.**
+
+There is one channel primitive: `Stream of T`. Cardinality constraints live in `where` clauses. Two prelude aliases wrap the common cardinalities for readability:
+
+```
+# Prelude:
+alias Future of T = Stream of T where emits <= 1        # zero-or-one emission (may never fire)
+alias Signal of T = Stream of T where emits == 1        # exactly one emission (must fire eventually)
+```
+
+Operators propagate cardinality via contracts on their signatures: `map: emits(out) == emits(in)`, `filter: emits(out) <= emits(in)`, `debounce(d): emits(out) <= emits(in) + 1`. `Future` and `Signal` fall out as the special cases; nothing about them is a distinct type constructor.
+
+**Clock.**
+
+```
+def Clock:                                        # capability shape (signature-only atom)
+    :< now: Instant                               # current wall time as pull channel
+    :< monotonic_now: Instant                     # monotonic time (non-decreasing) as pull channel
+    
+    -> after(duration: Duration) -> Future of Unit:
+        # Emits once after `duration` elapses. May not fire if the caller unsubscribes.
+    
+    -> every(interval: Duration) -> Stream of Instant:
+        # Emits repeatedly, once per interval. Emission carries the tick's Instant.
+    
+    -> at(deadline: Instant) -> Future of Unit:
+        # Emits once when wall/monotonic time reaches `deadline`.
+```
+
+Notes:
+- `Instant` = point in time (opaque); `Duration` = span of time (opaque). Both are records.
+- Default runtime shim: `WallClock`. Alternatives: `TestClock` (manual `advance_to`), `GameClock` (frame-driven), `RemoteClock` (RPC).
+
+**Random.**
+
+```
+def Random:
+    -> next_u32 -> UInt32:                        # single 32-bit sample
+    -> next_u64 -> UInt64:
+    -> next_bytes(count: Int) -> Bytes:
+        requires count >= 0
+    -> next_f64 -> Float64:                       # uniform in [0.0, 1.0)
+    -> range_int(lo: Int, hi: Int) -> Int:        # uniform in [lo, hi)
+        requires lo < hi
+    -> shuffle(items: List of a) -> List of a:    # Fisher-Yates
+        ensures result.count == items.count
+    -> choose(items: List of a) -> a:             # uniform pick
+        requires items.count > 0
+```
+
+Notes:
+- Default runtime shim: `OsRandom` (uses `/dev/urandom` or platform CSPRNG). Alternatives: `SeededPrng(seed:)`, `TestRandom(fixture:)`.
+- No distributions in the core shape — sampling from normal/exponential/binomial lives in `cxc.random.distributions` extension package.
+
+**Filesystem.**
+
+```
+def Filesystem:
+    -> open(path: Path, mode: OpenMode) -> Future of (File | IOError):
+        # Returns a File atom (already in `opened` state) or an IOError.
+    
+    -> stat(path: Path) -> Future of (FileStat | IOError):
+    -> exists(path: Path) -> Future of Bool:
+    
+    -> list_dir(path: Path) -> Stream of (Path | IOError):
+        # Streams directory entries; each item is a Path or an error mid-stream.
+    
+    -> watch(path: Path) -> Stream of FsEvent:
+        # Emits FsEvent (Created/Modified/Deleted/Renamed) as changes happen.
+        # Terminates when the caller unsubscribes or the path is unwatched.
+    
+    -> remove(path: Path) -> Future of (Unit | IOError):
+    -> rename(from: Path, to: Path) -> Future of (Unit | IOError):
+    -> mkdir(path: Path, recursive: Bool) -> Future of (Unit | IOError):
+    
+    :< cwd: Path                                  # current working directory
+    :< separator: String                          # platform path separator
+```
+
+Notes:
+- `File` is a state-machine atom (§1.12 example); `Filesystem.open` returns a File already transitioned into `opened` state.
+- Fallible operations return `Future of (T | IOError)` — sum type at the boundary, per cxc's failure-via-return-type discipline (§3.5.4).
+- `OpenMode` = enum {`read`, `write`, `append`, `read_write`, `create`}.
+- Default runtime shim: `PosixFs`, `WasiFs`, `BrowserFs` per target.
+
+**Network.**
+
+```
+def Network:
+    -> connect_tcp(addr: SocketAddress) -> Future of (Socket | NetError):
+        # Returns a Socket atom (in `connected` state) or a NetError.
+    
+    -> listen_tcp(addr: SocketAddress) -> Future of (Listener | NetError):
+        # Returns a Listener atom that emits accepted Sockets as a stream.
+    
+    -> connect_udp(addr: SocketAddress) -> Future of (UdpSocket | NetError):
+    -> bind_udp(addr: SocketAddress) -> Future of (UdpSocket | NetError):
+    
+    -> resolve(host: String) -> Future of ([SocketAddress] | NetError):
+        # DNS resolution; may return multiple addresses.
+    
+    def http:                                     # nested capability atom: HTTP client
+        -> get(url: Url, headers: {String: String}) -> Future of (HttpResponse | NetError):
+        -> post(url: Url, headers: {String: String}, body: Bytes) -> Future of (HttpResponse | NetError):
+        -> request(req: HttpRequest) -> Future of (HttpResponse | NetError):
+    
+    def http_server:                              # nested capability atom: HTTP server
+        -> bind(addr: SocketAddress, handler: (HttpRequest) -> Future of HttpResponse) -> Future of (HttpServer | NetError):
+```
+
+Notes:
+- `Socket`, `Listener`, `UdpSocket`, `HttpServer` are state-machine atoms with lifecycles.
+- `Listener` exposes an `.accepted: Stream of Socket` observable that emits new connections.
+- [DECISION] Nested capability atoms (`http`, `http_server` as sub-atoms of `Network`) — right decomposition, or should `HttpClient` and `HttpServer` be top-level env capabilities? Nested reads well when they share the network stack; top-level reads well when a program wants HTTP but not raw sockets.
+- Default runtime shim: `TcpNet` (uses OS sockets); alternatives: `InMemoryNet` (for tests), `MockNet(scenarios:)`.
+
+**Console.**
+
+```
+def Console:
+    :< stdin: Stream of Bytes                     # push channel: bytes as they arrive from stdin
+    -> read_line -> Future of String:              # convenience: buffer stdin until newline
+    -> read_bytes(count: Int) -> Future of Bytes:  # fixed-size read
+    
+    -> write(bytes: Bytes) -> Future of Unit:      # write to stdout
+    -> write_line(s: String) -> Future of Unit:    # write to stdout with newline
+    -> write_err(bytes: Bytes) -> Future of Unit:  # write to stderr
+    -> write_err_line(s: String) -> Future of Unit:
+    
+    :< is_tty: Bool                                # true if stdout is attached to a terminal
+    :< width: Int                                  # terminal width in columns
+    :< height: Int                                 # terminal height in rows
+    
+    -> clear -> Future of Unit:                    # clear terminal (ANSI escape or equivalent)
+```
+
+Notes:
+- Default runtime shim: `PosixConsole` (uses `stdin/stdout/stderr` fds); `TestConsole(fixture_input: ..., capture_output: true)` for tests.
+- [DECISION] Terminal control (colors, cursor movement, raw mode) — v1.0 core, or `cxc.tty` extension package? Leaning extension; keep core Console flat.
+
+**Args.**
+
+```
+def Args:
+    :< raw: [String]                              # raw argv (excluding program name at [0])
+    :< program_name: String                       # argv[0]
+```
+
+Notes:
+- Runtime constructs `Args` from OS-supplied argv at program launch. Just the raw view — parsing (flags, positional, subcommands) lives in `cxc.args` extension package.
+- `ArgSchema` and `declare_schema` mechanisms retired from core shape; the raw interface is sufficient primitive, parsing is user/extension territory.
+
+**EnvVars.**
+
+```
+def EnvVars:
+    :< all: {String: String}                      # snapshot of environment at program launch
+    -> get(name: String) -> String?               # nil if unset
+    -> has(name: String) -> Bool
+```
+
+Notes:
+- Read-only view; environment mutation is a v1.1+ concern if ever (subprocesses inherit at spawn-time).
+- Default runtime shim: `PosixEnv` (reads `environ`); `FixtureEnv({...})` for tests.
+
+**Exit.**
+
+```
+def Exit:
+    -> now(code: Int) -> Never:
+        # Terminates the program immediately with the given exit code.
+        # Return type Never = does not return.
+    
+    :< requested: Signal of Int
+        # Push channel that emits when exit has been requested but not yet performed.
+        # Emitted by OS signal handlers or `Exit.now`. Programs subscribe to run cleanup.
+```
+
+Notes:
+- `register_hook` retired — the program atom's `-> before_destroy:` lifecycle handler is the cleanup path; `Exit.requested` is the pre-shutdown notification for atoms that want a chance to react before their destructor runs.
+
+**Signals.**
+
+```
+def Signals:
+    -> on(signal: PosixSignal) -> Stream of SignalEvent:
+        # Subscribe to OS signal events. Stream emits each time the signal is delivered.
+    
+    -> block(signal: PosixSignal) -> Unit:
+        # Prevent the signal from being delivered to this program.
+    
+    -> unblock(signal: PosixSignal) -> Unit:
+    
+    -> send(pid: ProcessId, signal: PosixSignal) -> Future of (Unit | IOError):
+        # Send a signal to another process.
+
+enum PosixSignal:
+    case interrupt        # SIGINT
+    case terminate        # SIGTERM
+    case hangup           # SIGHUP
+    case pipe             # SIGPIPE
+    case child            # SIGCHLD
+    case usr1             # SIGUSR1
+    case usr2             # SIGUSR2
+    # ... other POSIX signals as needed
+```
+
+Notes:
+- On non-POSIX targets (browser, WASI without signals), `Signals` shim is a no-op that never emits.
+- [DECISION] Send-signal is a privileged operation. Should `Signals.send` be split into a separate capability (`ProcessControl` or similar) that only some programs get? Reasonable — sandbox use cases want to prevent signal-sending.
+
+**Log.**
+
+```
+def Log:
+    -> trace(msg: String, fields: {String: Any}) -> Unit:
+    -> debug(msg: String, fields: {String: Any}) -> Unit:
+    -> info(msg: String, fields: {String: Any}) -> Unit:
+    -> warn(msg: String, fields: {String: Any}) -> Unit:
+    -> error(msg: String, fields: {String: Any}) -> Unit:
+    
+    -> with_context(fields: {String: Any}) -> Log:
+        # Returns a child Log capability where every log call inherits these fields.
+        # For structured logging: request IDs, user IDs, correlation IDs propagate down.
+    
+    :< min_level: LogLevel                        # current minimum enabled level (runtime-configurable)
+
+enum LogLevel:
+    case trace
+    case debug
+    case info
+    case warn
+    case error
+    case off
+```
+
+Notes:
+- Structured logging (msg + fields) is v1.0-committed shape. Plain-string logging is expressible as `info(msg, {})`.
+- `with_context` returns a projection view of the same underlying Log — light-weight (same sink, different pre-populated field set), not a new capability atom.
+- Default runtime shim: `StderrLog` (writes to stderr in text or JSON format). Alternatives: `JsonLog(sink:)`, `SyslogLog`, `NullLog` (drops everything), `CaptureLog(buffer:)` (for tests).
+
+**Cross-cutting notes:**
+
+- **Return types.** Fallible operations return `Future of (T | Error)` — sum type at the boundary. Total operations return `Future of T` (async) or bare `T` (synchronous-when-safe, e.g., `EnvVars.has(name)`).
+- **Channel primitive is `Stream of T` uniformly.** `Future of T` and `Signal of T` are prelude aliases for `Stream of T where emits <= 1` and `Stream of T where emits == 1` respectively — see the primitive-and-aliases block at the top of this section.
+- **`Ptr of T`.** Used in FFI signatures (`Ptr of Byte`); the atom-shape of Ptr itself is a stdlib primitive (opaque handle to native memory). Only manipulable in `unsafe:` contexts or by shim atoms holding `Extern`.
+- **Runtime env slot naming.** Each capability's env-slot name in `env` matches its stdlib type name (lowercase snake): `env.clock`, `env.random`, `env.fs` (short for filesystem), `env.net` (short for network), `env.console`, `env.args`, `env.env_vars`, `env.exit`, `env.signals`, `env.log`. Standard convention; users' `use:` blocks default to these names.
+- **All handlers are exposed by default.** No `entrypoints:` section on any capability shape above. External callers, internal wires, and any other message sender all reach handlers the same way.
+
+### 1.14 Prelude — target scoping, foreign symbols, and a worked shim
+
+The prelude (see §4.20 for the general mechanism) is cxc's always-in-scope declaration space. For the OS-boundary machinery (§1.12), the prelude carries two extra responsibilities: **target scoping** so per-platform types and shims can vary, and **foreign symbol declarations** that populate the FFI symbol table `Extern` consults.
+
+**Directory layout.**
+
+```
+prelude/
+├── shared/
+│   ├── types.cor              # Duration, Instant, Stream, Future, Signal
+│   ├── capabilities.cor        # Clock, Filesystem, Network, ... capability shapes (§1.13)
+│   ├── extern.cor              # Extern capability shape
+├── unix/
+│   ├── libc.cor                # foreign symbols for libc
+│   ├── runtime.cor             # foreign symbols for cxc_runtime
+│   ├── wall_clock.cor          # WallClock shim (Clock impl for Unix)
+│   ├── posix_fs.cor            # PosixFs shim
+│   ├── posix_console.cor       # PosixConsole shim
+│   ├── ...
+├── windows/
+│   ├── win32.cor               # foreign symbols for Win32
+│   ├── win_clock.cor           # Clock impl for Windows
+│   ├── ...
+├── wasi/
+│   ├── wasi_preview1.cor       # foreign symbols for wasi_snapshot_preview1
+│   ├── wasi_fs.cor             # Filesystem impl for WASI
+│   ├── ...
+├── browser/
+│   ├── js.cor                  # foreign symbols for JavaScript host
+│   ├── ...
+```
+
+The compiler picks `shared/ + <target>/` at build time based on the compilation target. `shared/` is always in scope; exactly one `<target>/` directory is included per build.
+
+**`foreign library` blocks.** The prelude declares typed native symbols using `foreign library` blocks, one per native library:
+
+```
+# prelude/unix/libc.cor
+
+foreign library "libc":
+    symbol "clock_gettime":  () -> Instant
+    symbol "open":           (path: CString, flags: Int32, mode: Int32) -> Int32
+    symbol "read":           (fd: Int32, buf: Ptr of Byte, len: SizeT) -> SsizeT
+    symbol "write":          (fd: Int32, buf: Ptr of Byte, len: SizeT) -> SsizeT
+    symbol "close":          (fd: Int32) -> Int32
+
+foreign library "cxc_runtime":
+    symbol "cxc_schedule_timer":          (Instant, Int) -> Unit
+    symbol "cxc_schedule_timer_callback": Stream of Int    # inbound: runtime pushes onto stream
+    symbol "cxc_signal_callback":         Stream of Int    # inbound: OS signal deliveries
+```
+
+**Direction is inferred from the declared type.**
+
+| Declared type shape | Direction | Meaning |
+|---|---|---|
+| `(Args) -> Ret` | outbound | cxc invokes; native provides the impl. |
+| `Stream of T` | inbound | Native invokes (via runtime callback); cxc receives on the stream. |
+
+No explicit `direction:` field; no `inbound_symbol` / `outbound_symbol` keywords. One rule, disambiguated by type. Callbacks-with-return values (qsort comparator, Win32 `WndProc`) are unsupported in v1.0 — the general FFI type system covers only the two shapes above; rare APIs needing returning callbacks require hand-crafted per-API shims with compiler-baked native trampolines.
+
+**Scope restriction — prelude-only.** The declaration forms `foreign library "..." :` and `symbol "..." : <type>` are legal *only* inside files under `prelude/`. The parser rejects them elsewhere with a targeted error. User code cannot extend the foreign symbol table; new native surface must be contributed to the target prelude.
+
+Rationale: the primary trust boundary lives at env provisioning (`Extern` is not handed to user atoms). The declaration-form restriction is a second layer of defense — even if a shim atom somehow received `Extern`, non-prelude atoms cannot declare new symbols to resolve against. Prelude is the only place native surface is described.
+
+**Worked example — WallClock (Unix).**
+
+WallClock implements the `Clock` capability shape on Unix. It uses two outbound symbols (read the clock, schedule a timer with the OS) and one inbound symbol (receive completion callback from the runtime's timer dispatcher):
+
+```
+# prelude/unix/wall_clock.cor
+
+def WallClock:
+    conforms: Clock
+    
+    use:
+        extern: Extern
+    
+    data:
+        # Typed handles from the prelude symbol table (compile-time resolved).
+        native_now:      () -> Instant           = extern.get("clock_gettime")
+        native_schedule: (Instant, Int) -> Unit  = extern.get("cxc_schedule_timer")
+        timer_callbacks: Stream of Int           = extern.get("cxc_schedule_timer_callback")
+        
+        pending:  Map of (Int, Handler) = {}
+        next_id:  Int                   = 0
+    
+    # Observable — pull channel exposing current wall time
+    now :< native_now()
+    
+    # Outbound path: caller invokes clock.after(duration); atom schedules a timer via the OS.
+    # `sink` here is the reply channel bound at the call site (Future-returning method).
+    self <: after{duration: Duration, sink: FireSink}
+    -> self
+        let: id = next_id
+        then:
+            pending => pending + {id: sink}
+            next_id => next_id + 1
+        do:
+            native_schedule(now + duration, id)
+    
+    # Inbound path: OS-timer callbacks arrive on the extern stream `timer_callbacks`.
+    # The shim atom subscribes via an ordinary receive-glyph transition — no free wires.
+    self <: timer_callbacks{id: Int}
+    -> self
+        when: pending contains id
+        then: pending => pending - id
+        do:   pending[id] :> fire(t: now)
+```
+
+Two shapes at the boundary, both routed through `Extern`:
+
+- **Outbound calls** (`native_now`, `native_schedule`) are function-typed handles retrieved from the symbol table and invoked as ordinary cxc method calls.
+- **Inbound callbacks** (`timer_callbacks`) are `Stream of T` handles retrieved from the symbol table and consumed by receive-glyph transitions on the shim atom (`<phase> <: timer_callbacks{id: Int} -> <phase> do: ...`). The runtime pushes onto this stream from its OS-callback dispatcher; the shim receives via ordinary stream mechanics.
+
+No inbound-only section, no callback-handler keyword, no direction sub-labels. Both directions collapse into two existing atom composition primitives (function invocation and stream wiring) over typed handles the prelude symbol table provides.
+
+**Non-Unix shim examples.** The same `Clock` shape is implemented differently per target:
+
+- `prelude/windows/win_clock.cor` — uses `QueryPerformanceCounter` (Win32) and Win32 timer callbacks.
+- `prelude/wasi/wasi_clock.cor` — uses `clock_time_get` (WASI) and WASI async polling.
+- `prelude/browser/browser_clock.cor` — uses `performance.now` (JS host) and `setTimeout` callbacks.
+
+User code writing `use: clock: Clock` sees the target's active shim through a `Clock`-shaped interface; the shim's `Extern` usage and consumed symbols are internal to the prelude.
 
 ---
 
@@ -1002,23 +2306,43 @@ Indentation-delimited blocks (Python-style). Indent must be consistent within a 
 
 ### 2.5 Keywords
 ```
-class protocol accepts requires ensures
+def class record enum protocol program
+use conforms provides
+foreign library symbol
+accepts requires ensures invariants
 async allocates blocks
 mutable immutable let
-function constructor destructor generator processor validator
-expander invariants
+constructor destructor generator processor validator
+expander
 self Self return
 section alias
 category objc_exposed
 if else switch case for in while break continue
-import from as expose module
+import from as expose module of
 true false nil
 Any Effect
 with
 sizeof alignof offsetof
 ```
 
+**Retired in v0.12+ (grace period until v1.0):**
+- `atom` — replaced by `def` (both accepted through v0.15; `def` canonical at v1.0). Prose still uses "atom" for the substrate concept; syntax uses `def`.
+- `function` — retired; write `def name(x) -> y: ...` for the trivial atom shape.
+- `on` (handler prefix) — replaced by `->` prefix. `on event(...):` → `-> event(...):`.
+- `emit` (call form) — replaced by `:>` push-channel glyph. `emit(value)` → `:> value`; `emit channel_name(value)` → `:> channel_name(value)`.
+- `after` (as language primitive with implicit clock) — retired. Time is accessed via a `Clock` capability atom declared in `use:`. Delayed dispatch is a time-guarded transition (`<phase> when: clock.after(deadline) -> <target>`) or a Delay/Throttle transformer inside a receive-glyph source expression. The `~>` time-deferred wire glyph is retired (2026-08-12).
+- `type`, `contract` — retired at v1.0 (see §1.11); types ARE atoms; predicates are `invariants:`/`requires`/`ensures`/predicate atoms.
+- `extern` (as section keyword) — retired at v1.0 (see §1.12). FFI is a capability atom (`Extern`) provisioned through env to stdlib shims only. `Extern` (PascalCase) is a regular identifier for the capability atom, not a keyword. Foreign symbol declarations moved to prelude-only `foreign library` / `symbol` forms (see §1.14).
+
 Removed from prior drafts: `sealed`, `dynamic`, `open`, `final`, `public`, `private`. See §1.2, §5, §7.7 for rationale.
+
+**Added keywords (v0.12+):**
+- `def` — sole declaration keyword (see §1.11).
+- `use` — capability declaration section (see §1.11); declares env dependencies that are accessible implicitly inside the atom body.
+- `of` — type qualifier for structural type parameters (see §1.11 and §3.2). `Stream of Bytes` (concrete), `Stream of s` (variable). Also legal in type-alias positions and constraint positions.
+- `conforms` — used in `conforms:` declarations on atoms that implement a capability shape (`conforms: Filesystem`) and in `where` constraints (`s conforms Hashable`).
+- `provides` — reserved for future use; do not use in new code. `use:` covers both inheritance and provision via source expression.
+- `foreign`, `library`, `symbol` — **prelude-only** keywords for declaring typed native symbols (see §1.14). The parser rejects `foreign library "..." :` and `symbol "..." : <type>` outside files under `prelude/`. Not usable in user code, application code, or non-prelude stdlib code.
 
 Note: `else if` is written as two tokens, not one; there is no `elif`.
 
@@ -1026,7 +2350,40 @@ Note: `let` binds an immutable local or module-level constant (§7.1). `var` is 
 
 ### 2.6 Reserved Syntactic Space
 
-The syntactic form `label:` followed by an indented block is reserved language-wide for section usage. This applies at every scope — class bodies, function bodies, method bodies, module bodies, expression contexts — even where the section mechanism is not yet implemented in a given language version. Future versions may enable this syntax in additional contexts without breaking existing code.
+**Section form.** The syntactic form `label:` followed by an indented block is reserved language-wide for section usage. This applies at every scope — atom (`def`) bodies, method bodies, module bodies, expression contexts — even where the section mechanism is not yet implemented in a given language version. Future versions may enable this syntax in additional contexts without breaking existing code.
+
+**Wiring glyphs (reserved as multi-character tokens; see §1.11 for semantics).**
+
+The following character sequences are reserved as glyph tokens for the atom-substrate wiring surface:
+
+| Token | Role |
+|---|---|
+| `->` | Return-type marker (in signatures) + transition arrow (source-to-target phase) + handler prefix (side-effect-only handlers) |
+| `\|>` | Stream composition inside receive-glyph source expression + sync send inside `do:` blocks |
+| `:<` | Observable pull channel declaration (`name :< source`) |
+| `:>` | Emit async — fire-and-forget push (`:> value` default, `:> channel(value)` named) |
+| `<:` | Receive async — non-blocking pickup during phase; in transition header between source phase and arrow. Legal with any sender glyph. Source expression may compose transformers via `\|>`. |
+| `<\|` | Receive sync (blocking) — transition parks specifically on this message; in transition header between source phase and arrow. Legal with any sender glyph. Source expression may compose transformers via `\|>`. |
+
+**Position-based disambiguation for `->`:**
+- Between `)` and a type reference, before `:` → return-type marker (signature position).
+- At line-start inside a `def` body, between a source phase (or wildcard) and a target phase → transition arrow.
+- At line-start inside a `def` body, followed by an identifier and `:` → side-effect-only handler prefix.
+- Anywhere else → not permitted; parser rejects.
+
+**Position-based disambiguation for `|>`:**
+- Inside a receive-glyph source expression (`<phase> <: source_expr |> Transformer{args} {msg_args} -> ...`) → **stream composition**. Anonymous transformer atoms with lifecycle bound to the enclosing phase.
+- Inside a `do:` block or handler body, as `atom |> msg(args)` → **sync send** (sender's transition suspends until processing sync — receiver's transition on this message has fired; see §1.11 concurrency model).
+- **At atom-body top-level** → **not permitted; parser rejects.** Free-standing wires are retired (2026-08-12). Migrate top-level `expr |> target` to a receive-glyph transition (`<phase> <: expr {args} -> <phase> do: target(args)`) or a receive-glyph with inline transformer chain.
+
+**Retired glyph forms:**
+- `-->` — collapsed to `->` (2026-08-11).
+- `<--` — replaced by `:<` (2026-08-11).
+- `->` in stream composition — collapsed to `|>` (2026-08-12).
+- **`~>` — retired (2026-08-12).** Time-deferred behavior expressed as a time-guarded transition (`when: clock.after(deadline)`) or a Delay/Throttle transformer inside a receive-glyph source expression.
+- **Top-level `|>` wire composition — retired (2026-08-12).** Standing wires as atom-body top-level statements do not exist; all subscriptions are receive-glyph transitions.
+- `after N -> handler` sugar — retired (2026-08-12); express delayed dispatch as a time-guarded transition or via a Delay transformer in a receive-glyph source expression.
+- `when: msg_name(args)` as message-triggered transition trigger — retired (2026-08-12) in favor of receive-glyph header (`<source> <: msg{args} -> <target>`). `when:` remains for state/time guards and for additional narrowing composed with a receive glyph.
 
 ### 2.7 Literals
 
@@ -1034,12 +2391,12 @@ Literals split into **bootstrap literals** (recognized by the base lexer) and **
 
 #### 2.7.1 Bootstrap Literals
 
-**Numeric literals.** Corvid inherits C's numeric literal shapes:
+**Numeric literals.** cxc inherits C's numeric literal shapes:
 
 - **Decimal:** `42`, `-17`, `1_000_000` (underscore separators legal within a literal for readability).
 - **Hexadecimal:** `0xFF`, `0xDEAD_BEEF`, `0x00`. Prefix `0x` or `0X`. Digits `0-9`, `a-f`, `A-F`.
 - **Binary:** `0b1010`, `0b1111_0000`. Prefix `0b` or `0B`. Digits `0`, `1`.
-- **Octal:** `0o17`, `0o755`. Prefix `0o` or `0O`. Digits `0-7`. (Not C's leading-zero form — Corvid rejects `017` as ambiguous.)
+- **Octal:** `0o17`, `0o755`. Prefix `0o` or `0O`. Digits `0-7`. (Not C's leading-zero form — cxc rejects `017` as ambiguous.)
 - **Floating-point:** `3.14`, `1e10`, `2.5e-3`, `0x1.8p+1` (hex float, C99-compatible). Underscores legal.
 
 Numeric literals have a target-directed type: the literal's type is inferred from context (declared field type, function parameter type, arithmetic operand type). Unqualified `42` in isolation is `Int`; `3.14` is `Double`. Suffix syntax is not part of v1 — write the target type explicitly if inference is insufficient: `let byte: UInt8 = 0xFF`.
@@ -1071,7 +2428,13 @@ Because these are prelude aliases, they are inspectable — users can look up wh
 
 ---
 
-## 3. Type System (Contract System) *[TENTATIVE]*
+## 3. Type System (Contract System) *[TENTATIVE — v0.11 shape; restructure pending]*
+
+> **v1.0 restructure note.** §3–§9 currently describe the v0.11 intermediate shape, where `class`, `record`, `enum`, `protocol` are primary declaration forms with their own semantics. Under v1.0 (§1.11), all four are sugar keywords over specific `def` atom shapes. These sections will be restructured to lead with the atom form and present the sugar keywords as convenient surface syntax rather than distinct kinds of declaration.
+>
+> **What carries over unchanged.** The individual behaviors documented in §3–§9 are v1.0-native: nullability semantics + nil-punning (§3.6.1, §5.7), pattern matching with named-field discrimination (§3.7), the contract system — `requires`/`ensures`/`invariants:` (§3.4, §3.4.3), conversion protocols `As<T>` / `From<T>` (§3.10.3), byte / string / char / pattern subsystems (§3.10.4–§3.10.9), numeric conversion and bounded types (§3.11), sections mechanism (§4.10), prelude alias mechanism (§4.16, §4.20). Read these sections as documenting semantics that will be preserved; the syntactic packaging changes.
+>
+> **What changes.** `class Foo:` → `def Foo:` with sugar-keyword equivalents documented per shape. `state:` section retires; all fields are `data:`, all mutations happen through transitions. `method_decl` with imperative bodies (`self.x = y`) is retired in favor of transitions with `then:` field-update blocks. Method call semantics preserve — dispatch to a transition or handler on the receiver atom is the same as a method call at the call site.
 
 ### 3.1 Primitive Types
 - `Int`, `Int8`, `Int16`, `Int32`, `Int64` (and unsigned variants: `UInt`, `UInt8`, `UInt16`, `UInt32`, `UInt64`)
@@ -1136,7 +2499,7 @@ x.method()   # dispatched via runtime; fails at runtime if no matching method
 ```
 
 **When to use `Any`:**
-- At the Objective-C interop boundary — ObjC APIs returning `id` come into Corvid as `Any` (§9.3.2).
+- At the Objective-C interop boundary — ObjC APIs returning `id` come into cxc as `Any` (§9.3.2).
 - Reflective code that operates on unknown types.
 - Explicit dynamic dispatch when the user knows the concrete type isn't statically determinable.
 
@@ -1156,37 +2519,65 @@ match x:
 
 **`Any` allows nil at runtime.** As a reference-shaped type (§3.6.1), an `Any` value may be nil. If a specific call site needs a non-nil-Any contract, write `Any!`.
 
-**Idiomatic use is rare.** In pure Corvid code, contracts and specific types are preferred. `Any` should appear primarily at interop boundaries or in genuinely dynamic code paths. The compiler warns when `Any` is used as a field or return type in public APIs, since callers get no static guidance.
+**Idiomatic use is rare.** In pure cxc code, contracts and specific types are preferred. `Any` should appear primarily at interop boundaries or in genuinely dynamic code paths. The compiler warns when `Any` is used as a field or return type in public APIs, since callers get no static guidance.
 
 ### 3.2 Composite Types
 
-Corvid's composite types are stdlib types. The **surface syntax** for them is prelude alias declarations (§4.20) — the language grammar itself only knows `identifier<generic_args>` for types; every richer type-expression shape is an alias expansion.
+cxc's composite types are stdlib types. The **surface syntax** for them is prelude alias declarations (§4.20) — the language grammar itself only knows `identifier` and `identifier of type_arg` for types; every richer type-expression shape is an alias expansion.
+
+**Type-parameter mechanism (v1.0 canonical).** Structural type parameters use the `of` qualifier. The pre-v0.12 `<T>` syntax is retired (see §1.11); grace period through v0.15 in which both forms parse.
 
 | Surface syntax | Expands to (prelude alias) | Position |
 |---|---|---|
-| `(A, B)`, `(x: Int, y: Int)` | `Tuple<(A, B)>` / named tuple | type |
-| `[T]` | `Array<T>` | type |
-| `{K: V}` | `Map<K, V>` | type |
-| `{T}` | `Set<T>` | type |
-| `(A, B) -> C` | `Callable<(A, B), C>` | type |
-| `T?` (value-type T only) | `Optional<T>` sum type | type (suffix) |
+| `(A, B)`, `(x: Int, y: Int)` | `Tuple of (A, B)` / named tuple | type |
+| `[T]` | `Array of T` | type |
+| `{K: V}` | `Map of (K, V)` | type |
+| `{T}` | `Set of T` | type |
+| `(A, B) -> C` | `Callable of ((A, B), C)` | type |
+| `T?` (value-type T only) | `Optional of T` sum type | type (suffix) |
 | `T!` (reference-type T only) | `T with invariant: value != nil` | type (suffix) |
 | ~~`Result<T, E>`~~ | **Retired v0.8.5** — not built-in, not in prelude. Users may define their own; stdlib does not push one. See §3.5.4. | — |
 
 The prelude declarations for these are in §4.20.1 ("Type-expression aliases"). See §3.6.1 for the nullability semantics (`T?`, `T!`) and §3.10 for collection literal semantics.
 
-**Collection containers are reference-shaped (`kind: regular`).** `Array<T>`, `Map<K, V>`, `Set<T>` are stdlib classes with `state:` (mutable contents) and are therefore `kind: regular` (reference-typed) — the same shape as any other stateful class. Passing an `Array<T>` to a function and calling `.append(...)` or `.remove_at(...)` inside is visible to the caller; no `inout` / by-reference-parameter marker is needed. This falls out of §1.5 (class-as-universal) plus §6.1 (kind-regular = reference-typed with state) — collections have state, so they're regular classes, so they're reference-typed. The ObjC bridge mirrors this: `NSArray<T> *` in ObjC = `[T]` in Corvid (§9.3), a pointer on both sides.
+**Case convention for type parameters.** In `Type of X` position:
+- **TitleCase `X`** = concrete type reference (`Stream of Bytes`, `Array of Int`).
+- **lowercase `x`** = shape variable, bound in the enclosing signature scope by first-mention (`Stream of s`, `Array of a`, `Map of (k, v)`). Subsequent appearances of the same name refer to the same variable; the compiler checks consistency and warns on unused-declared variables.
 
-Records (`kind: record`) forbid `state:` (§4.10.7); a type that mutates in place cannot be a record. If a user wants an immutable, copy-on-assign array-like value, they declare a `record` wrapping an `Array<T>` with only read-only methods exposed — copies happen at record boundaries, not on the internal Array.
+Shape-variable binding scope: constructor param types + channel signature + `where` clause + `state:` types + `use:` types (see §1.11). No `[T]` binding block, no `'a` sigil — case convention IS the type-variable marker.
+
+**Collection containers are reference-shaped (`kind: regular`).** `Array of T`, `Map of (K, V)`, `Set of T` are stdlib classes with `state:` (mutable contents) and are therefore `kind: regular` (reference-typed) — the same shape as any other stateful class. Passing an `Array of T` to a function and calling `.append(...)` or `.remove_at(...)` inside is visible to the caller; no `inout` / by-reference-parameter marker is needed. This falls out of §1.5 (class-as-universal) plus §6.1 (kind-regular = reference-typed with state) — collections have state, so they're regular classes, so they're reference-typed. The ObjC bridge mirrors this: `NSArray<T> *` in ObjC = `[T]` in cxc (§9.3), a pointer on both sides.
+
+Records (`kind: record`) forbid `state:` (§4.10.7); a type that mutates in place cannot be a record. If a user wants an immutable, copy-on-assign array-like value, they declare a `record` wrapping an `Array of T` with only read-only methods exposed — copies happen at record boundaries, not on the internal Array.
 
 **Effect on the type expression grammar.** The bootstrap type grammar (§10) recognizes only:
 
 ```
 type := identifier
-      | identifier '<' type (',' type)* '>'
+      | identifier 'of' type_arg
+      | '(' type (',' type)* ')'                     # tuple
+      | '(' identifier ':' type (',' ...)* ')'       # named tuple (multi-channel output)
+
+type_arg := type
+          | '(' type (',' type)* ')'                 # multi-arg form: Map of (K, V)
 ```
 
 All richer type expressions — brackets, braces, arrows, suffix operators — come from prelude aliases. Users cannot introduce new type-expression sugars without opt-in (though they may declare additional type-alias identifiers via §4.16.9).
+
+**Multi-channel output for atoms (v1.0 canonical).** Atoms with multiple named output channels declare them via a **named tuple return type** (see §1.11 for full rationale):
+
+```
+def partition(predicate: (a) -> Bool):
+    Stream of a -> (matched: Stream of a, unmatched: Stream of a)
+    
+    -> input(item):
+        if predicate(item):
+            :> matched(item)
+        else:
+            :> unmatched(item)
+```
+
+Single unnamed channel: bare `Stream of X` return type; emissions are `:> value` (default channel). Named channels: `(name1: Stream of X, name2: Stream of Y)` return type; emissions are `:> name(value)`. No separate `channels:` section — return type is authoritative.
 
 ### 3.3 User-Defined Types
 
@@ -1264,7 +2655,7 @@ Users rarely write the desugared form; tooling operates on it.
 
 #### 3.3.1 Types Are Flat — Naming Convention for Class-Associated Types
 
-Corvid does not support nested type declarations. All user-defined types (classes, records, enums, protocols, sections) live at module scope. Types conventionally associated with a specific class are named `<ClassName><Role>` at module scope:
+cxc does not support nested type declarations. All user-defined types (classes, records, enums, protocols, sections) live at module scope. Types conventionally associated with a specific class are named `<ClassName><Role>` at module scope:
 
 ```
 expose class FrameCollector:
@@ -1318,7 +2709,7 @@ The naming convention and leading-dot together make module-scope types read like
 
 #### 3.3.2 Extension Declarations
 
-`extend class Foo:` opens a class body targeting an existing class named `Foo`. Members declared inside are added to `Foo` — indistinguishable from members declared in `Foo`'s original definition at dispatch time. This is Corvid's single mechanism for extending an existing class; there is no separate "category" section class.
+`extend class Foo:` opens a class body targeting an existing class named `Foo`. Members declared inside are added to `Foo` — indistinguishable from members declared in `Foo`'s original definition at dispatch time. This is cxc's single mechanism for extending an existing class; there is no separate "category" section class.
 
 ```
 # Original definition (possibly in another module):
@@ -1400,7 +2791,7 @@ The composed class carries both invariants; the runtime checks them at every obs
 - **New generic parameters on the target class itself.** `extend class Array<T, U>:` is not legal if `Array` was declared with only one generic parameter. The extension inherits the class's declared parameter count and can name them per shape 2 (see below); it cannot invent new ones.
 - **A different kind.** `extend class Foo:` inherits Foo's `metadata: kind:` from the original definition. An extension cannot promote a `record` to a `regular` class or vice-versa; the kind is set at definition time.
 
-**Method-name conflict across extensions.** Two `extend class Foo:` blocks that declare the same-named method targeting the same class are a **warning** at the composing site, resolved deterministically. This aligns with §1.2 (author intent, not authority) and §7.7 (visibility as advisory, not enforcement) — Corvid warns and informs; it does not block. Users who prefer strict CI can escalate the warning to an error via build config.
+**Method-name conflict across extensions.** Two `extend class Foo:` blocks that declare the same-named method targeting the same class are a **warning** at the composing site, resolved deterministically. This aligns with §1.2 (author intent, not authority) and §7.7 (visibility as advisory, not enforcement) — cxc warns and informs; it does not block. Users who prefer strict CI can escalate the warning to an error via build config.
 
 The only *hard* compile error for same-name is when two same-named methods appear inside **one class body** (original definition or a single `extend` block) — this is author self-conflict, not a composition ambiguity.
 
@@ -1414,7 +2805,7 @@ extend class NSString:
 
 `replace` is *optional* — without it the composition still succeeds (with a warning), and the deterministic resolution rule picks the winner. With `replace` present, the warning is suppressed for that site (author signaled intent) and `replace` further enforces that *some* method is actually being shadowed (see rule 3 below).
 
-Compared to ObjC's "last category loaded wins" (hidden in link order), Corvid's rule is **source-order deterministic at the composing site** rather than load-order dependent — the reader of the composing module can trace resolution without needing runtime information.
+Compared to ObjC's "last category loaded wins" (hidden in link order), cxc's rule is **source-order deterministic at the composing site** rather than load-order dependent — the reader of the composing module can trace resolution without needing runtime information.
 
 **Conflict resolution rules (v0.10.0).** Composition happens at the composing site — the compilation unit that has both extensions visible. The compiler gathers every visible `extend class Foo:` block and the original `class Foo:` definition, then applies these rules:
 
@@ -1435,7 +2826,7 @@ Compared to ObjC's "last category loaded wins" (hidden in link order), Corvid's 
 
 4. **Multiple `replace` declarations on the same target → warning + same priority rule.** If two extensions both declare `replace function foo(self):` shadowing the same original, both are competing to be the shadower. Warning + rule 1's priority order picks the winner. `replace` is not a claim to *sole* precedence; it's a claim to *some* shadowing (rule 3). Sole precedence is inferrable at read time from priority order.
 
-5. **No signature-based overloading.** Corvid does not have method overloading by parameter types — two same-named methods are always considered conflicting for the purposes of rule 1, regardless of parameter/return signatures. **Exception: trait-qualified dispatch for `As<T>` and `From<T>`** (§3.4.4 note, §3.10.3). A class conforming to `As<Bytes>` and `As<Json>` may declare both `function as(self) -> Bytes` and `function as(self) -> Json`; the return type is a *type parameter of the conformed protocol*, not an overload dimension. These are not considered same-name conflicts.
+5. **No signature-based overloading.** cxc does not have method overloading by parameter types — two same-named methods are always considered conflicting for the purposes of rule 1, regardless of parameter/return signatures. **Exception: trait-qualified dispatch for `As<T>` and `From<T>`** (§3.4.4 note, §3.10.3). A class conforming to `As<Bytes>` and `As<Json>` may declare both `function as(self) -> Bytes` and `function as(self) -> Json`; the return type is a *type parameter of the conformed protocol*, not an overload dimension. These are not considered same-name conflicts.
 
 6. **Extensions shadow inherited protocol defaults without `replace`.** An `extend class Foo:` providing method `foo` shadows any protocol default for `foo` that Foo would have inherited via §3.4.4. No warning, no `replace` needed — per §3.4.4's priority rule, own definitions (including via extension) win over inherited defaults.
 
@@ -1469,7 +2860,7 @@ help: to document intent explicitly and silence this warning,
    |         +++++++
 help: to reject shadowing at build time, use
    |
-   |         corvid build --Werror=shadowing-extension
+   |         cxc build --Werror=shadowing-extension
 ```
 
 **What is not a conflict.**
@@ -1490,7 +2881,7 @@ extend class Foo:
         function internal_helper(self): ...       # module-visible only
 ```
 
-**Extending Objective-C classes.** `extend class NSString:` and `extend class UIView:` work identically to extending Corvid classes. The methods land in the runtime's method table for the target class and are dispatchable from both Corvid and ObjC call sites (`[str shout]` on the ObjC side, `str.shout()` on the Corvid side). See §9.3 for interop specifics.
+**Extending Objective-C classes.** `extend class NSString:` and `extend class UIView:` work identically to extending cxc classes. The methods land in the runtime's method table for the target class and are dispatchable from both cxc and ObjC call sites (`[str shout]` on the ObjC side, `str.shout()` on the cxc side). See §9.3 for interop specifics.
 
 **Extending primitives.** `Int`, `Float`, `Bool`, `Char` are classes with `kind: record`. Extending them is legal and works the same way. The prelude uses this mechanism internally to provide instance methods on primitives (`5.hex()`, `x.clamp(0, 100)`) — no special case for primitives.
 
@@ -1674,7 +3065,7 @@ Here `self.current_index` is the (unchanged) pre-state; `result` is the returned
 
 **Runtime obligation.** On method entry, the contract runtime snapshots the receiver's field values and parameter values — the same snapshot it already required to make any postcondition checkable. On method exit, the runtime evaluates each `ensures` expression with entry-snapshot bound to `self`/params and post-state bound to `result`. Cost is bounded by field count of the receiver plus parameter count, plus any values transitively read from `self` or params inside the ensures expression.
 
-**Why not `old(...)`?** Considered and dissolved. `old(expr)` in Dafny/JML/Eiffel is a named capture of pre-state; Corvid's runtime already captures the pre-state to make any ensures clause checkable. Exposing the capture as the natural identifier (`self`, params) rather than routing through a wrapper is one fewer construct with equivalent expressive power. Users coming from Dafny/JML/Eiffel should read the `PATTERNS.md` entry for the mapping.
+**Why not `old(...)`?** Considered and dissolved. `old(expr)` in Dafny/JML/Eiffel is a named capture of pre-state; cxc's runtime already captures the pre-state to make any ensures clause checkable. Exposing the capture as the natural identifier (`self`, params) rather than routing through a wrapper is one fewer construct with equivalent expressive power. Users coming from Dafny/JML/Eiffel should read the `PATTERNS.md` entry for the mapping.
 
 #### 3.4.4 Default Method Inheritance for Structural Conformers
 
@@ -1750,11 +3141,11 @@ If none of the three yields a unique target, compile error at the call site with
 
 **Restricted to generic-protocol-derived same-name.** This is not open-ended overloading. It applies only when the same-name methods each satisfy a distinct instantiation of a *generic protocol* to which the class conforms. Two same-named methods that don't share a generic-protocol parent still conflict per §3.3.2 rule 5 (no signature-based overloading).
 
-**Interaction with extensions.** Extensions may add new `As<T>` / `From<T>` conformances to a class after the fact — Corvid's post-hoc conformance model (§3.3.2) applies uniformly. An `extend class NSString: methods: function as(self) -> Yaml: ...` adds `As<Yaml>` conformance to NSString without conflicting with any of NSString's existing `.as() -> T` methods.
+**Interaction with extensions.** Extensions may add new `As<T>` / `From<T>` conformances to a class after the fact — cxc's post-hoc conformance model (§3.3.2) applies uniformly. An `extend class NSString: methods: function as(self) -> Yaml: ...` adds `As<Yaml>` conformance to NSString without conflicting with any of NSString's existing `.as() -> T` methods.
 
 **Interaction with §3.3.2 rule 1 shadowing.** Two extensions both providing `function as(self) -> Bytes` on the same class *is* a rule-1 shadowing situation — same-name, same-protocol-instantiation. Rule 1's warning + deterministic resolution applies. The trait-qualified exemption only expands the identity key; it does not exempt genuine same-key duplicates.
 
-**Why not require explicit conformance?** Corvid's design (§1.5, §3.4) has committed to structural conformance since v0.6+. Requiring `class Foo(SomeProtocol):` for defaults would split conformance into two categories (structural for static checks; explicit for defaults), which contradicts the uniform structural model. Reading A (implicit inheritance for structural conformers) preserves the uniformity; diamond disambiguation is the cost.
+**Why not require explicit conformance?** cxc's design (§1.5, §3.4) has committed to structural conformance since v0.6+. Requiring `class Foo(SomeProtocol):` for defaults would split conformance into two categories (structural for static checks; explicit for defaults), which contradicts the uniform structural model. Reading A (implicit inheritance for structural conformers) preserves the uniformity; diamond disambiguation is the cost.
 
 **Runtime obligation.** Method-table population (§5.1) is extended: at class-composition time, for each visible protocol whose `accepts:` the class satisfies structurally, the compiler considers the protocol's default methods for messages the class doesn't define. Ambiguity is detected at compile time; if resolved (class defines, or single protocol contributes), the default is either shadowed or inherited into the effective method table. No runtime cost beyond what the composition already required.
 
@@ -1829,7 +3220,7 @@ Both forms desugar to the same conformance-set entry. The parens header is sugar
 
 **Class inheritance — separate from conformance, ObjC-only, body-form.**
 
-Corvid commits to composition-over-inheritance for pure Corvid code (§1.5, §3.4). The one exception is ObjC interop: subclassing UIViewController, NSObject, etc. is unavoidable for framework-facing code. Inheritance is expressed via body-form `metadata: extends:` — not header parens, not header colon.
+cxc commits to composition-over-inheritance for pure cxc code (§1.5, §3.4). The one exception is ObjC interop: subclassing UIViewController, NSObject, etc. is unavoidable for framework-facing code. Inheritance is expressed via body-form `metadata: extends:` — not header parens, not header colon.
 
 ```
 class MyViewController:
@@ -1844,7 +3235,7 @@ class MyViewController:
 
 Rules:
 - **`metadata: extends:` accepts at most one class**, which must be `kind: regular` (protocol classes cannot be extended-from — use conformance instead).
-- **Only ObjC-imported classes are legal targets.** Pure Corvid classes cannot be subclassed; the compiler emits `not-subclassable` error if the extends target is a Corvid-defined regular class. Composition is the intended path.
+- **Only ObjC-imported classes are legal targets.** Pure cxc classes cannot be subclassed; the compiler emits `not-subclassable` error if the extends target is a cxc-defined regular class. Composition is the intended path.
 - **Extends is set at definition, not modifiable by extensions.** Same rule as `kind:` (§3.3.2).
 - **`super.method()` in the class body dispatches to the extended class's implementation** per §5.7 (and the ObjC runtime's `objc_msgSendSuper` at the interop boundary).
 
@@ -1991,9 +3382,9 @@ record Timestamp:
 
 **Interaction with §3.4.5 explicit conformance.** A record does not need `class Point(As<Bytes>):` header sugar — the byte methods already exist as base-class properties, so structural conformance succeeds. Declaring it explicitly is legal but redundant (compiler treats it as a no-op reaffirmation, no warning). Explicit declaration on a `kind: regular` class does what it always did — validates at declaration time that the class's method table satisfies `As<Bytes>`'s `accepts:` list (which for regular classes means the user's own `.as() -> Bytes` must be present).
 
-**Why only bytes get the base-class property.** Bytes are Corvid's universal substrate (§3.10.4). One canonical encoding exists for a given field layout — concatenate field bytes in declaration order — with no author choice (endianness is fixed language-wide per §3.10.10). JSON, MsgPack, CBOR, and other format-specific representations are **not** base properties: they have per-record author choices (field naming — camelCase vs snake_case? null handling — omit missing or emit `null`? number precision — full float or truncated? enum spelling — case name string or integer discriminator?) with no defensible language-level default. Silent choice would be a footgun; the same principle that made narrowing `Int32(300).as() -> UInt8` a compile error rather than silent-wrap applies here.
+**Why only bytes get the base-class property.** Bytes are cxc's universal substrate (§3.10.4). One canonical encoding exists for a given field layout — concatenate field bytes in declaration order — with no author choice (endianness is fixed language-wide per §3.10.10). JSON, MsgPack, CBOR, and other format-specific representations are **not** base properties: they have per-record author choices (field naming — camelCase vs snake_case? null handling — omit missing or emit `null`? number precision — full float or truncated? enum spelling — case name string or integer discriminator?) with no defensible language-level default. Silent choice would be a footgun; the same principle that made narrowing `Int32(300).as() -> UInt8` a compile error rather than silent-wrap applies here.
 
-Users needing JSON write `function as(self) -> Json:` explicitly per record. Third-party format packages (`corvid_json`, `corvid_msgpack`, etc.) ship their target type (`Json`, `MsgPack`) and users write conformances the same way they'd write any protocol method — no special language support, no compiler awareness of specific target-type names.
+Users needing JSON write `function as(self) -> Json:` explicitly per record. Third-party format packages (`cxc_json`, `cxc_msgpack`, etc.) ship their target type (`Json`, `MsgPack`) and users write conformances the same way they'd write any protocol method — no special language support, no compiler awareness of specific target-type names.
 
 **Runtime obligation.** Synthesized methods populate the class's method table (§5.1) exactly as user-written methods do. No runtime cost difference; no metadata difference. §4.18 metadata lists the class as `conforms_to: [As<Bytes>, From<Bytes>, ...]` — the conformance is structural (§3.4), and the metadata records the resulting set regardless of whether the underlying method was user-written or synthesized as a base property.
 
@@ -2001,7 +3392,7 @@ Users needing JSON write `function as(self) -> Json:` explicitly per record. Thi
 
 ### 3.5 Effects
 
-Effect annotations describe what a method does beyond returning a value. Effects split into two categories under the intent-not-authority principle. **Failure is not an effect in Corvid** — it is expressed via return type (nil-punning or domain enum, §3.5.4).
+> **v1.0 supersession.** The advisory / semantic effect framing below (`allocates`, `blocks`, `async`, `with E` effect polymorphism) is superseded by §1.12: **the `use:` closure IS the effect signature**. Real-world effects enter through Extern (§1.12) → prelude capability atoms → the transitive `use:` closure of any atom. There is no separate effect system; there are no effect labels distinct from capability atoms. Effect polymorphism becomes capability substitution (pass a different `Clock` / `Random` / `Net` atom); effect handlers-with-resume are deferred beyond v1.0. §3.5.4 (failure handling — nil-punning + domain enums, no `throws`) carries over unchanged. §3.5.1–§3.5.3 below describe a design that did not survive; read them as historical.
 
 #### 3.5.1 Advisory Effects
 
@@ -2018,7 +3409,7 @@ These annotations change compilation and cannot be "just hints."
 
 - `async` — changes calling convention (suspendable).
 
-**Retired v0.11 — `mutating`.** The `mutating` effect was carried over from a pre-v0.6.0 design that had `struct` as a live construct. v0.6.0 unified struct/enum/protocol/class under `kind:` metadata; there is no `struct` in Corvid. `kind: record` forbids `state:` (§4.10.7) so records cannot have mutating methods; `kind: regular` methods that mutate state are inferred as writers by §8.4.1 reader/writer classification (no author declaration needed). The `mutating` effect had no live use site — neither author-declared (compiler infers) nor applicable (records can't mutate). Retired for the same reason `throws` was retired in v0.8.5 — no live semantics under the current design.
+**Retired v0.11 — `mutating`.** The `mutating` effect was carried over from a pre-v0.6.0 design that had `struct` as a live construct. v0.6.0 unified struct/enum/protocol/class under `kind:` metadata; there is no `struct` in cxc. `kind: record` forbids `state:` (§4.10.7) so records cannot have mutating methods; `kind: regular` methods that mutate state are inferred as writers by §8.4.1 reader/writer classification (no author declaration needed). The `mutating` effect had no live use site — neither author-declared (compiler infers) nor applicable (records can't mutate). Retired for the same reason `throws` was retired in v0.8.5 — no live semantics under the current design.
 
 #### 3.5.3 Effect Polymorphism
 
@@ -2066,7 +3457,7 @@ Parameterized aliases resolve at use site (see §4.16).
 
 #### 3.5.4 Failure Handling — Nil-Punning + Domain Enums, No `throws`
 
-Corvid has **no `throws` effect, no `try` keyword, no `catch` / `finally` construct, and no `Result<T, E>` in the prelude**. Failure is expressed in the return type of the failable operation. Three shapes cover every case:
+cxc has **no `throws` effect, no `try` keyword, no `catch` / `finally` construct, and no `Result<T, E>` in the prelude**. Failure is expressed in the return type of the failable operation. Three shapes cover every case:
 
 | Failure shape | Mechanism | When to use |
 |---|---|---|
@@ -2144,9 +3535,9 @@ function process(input: String) -> ProcessOutcome:
             return .parse_failed(details: details)
 ```
 
-**Style guide.** Switch-chain nesting deeper than 3 is a design signal — decompose into smaller functions each returning a domain enum. Rust's `?` and Swift's `try` optimize for pipeline-style code with 4-6 fallible steps; Corvid instead pushes those apart into smaller units. Trade-off: more function boundaries, less cross-cutting propagation, more visible dispatch at each layer. Consistent with §1.6 (legibility over brevity) and Corvid's visible-dispatch preference.
+**Style guide.** Switch-chain nesting deeper than 3 is a design signal — decompose into smaller functions each returning a domain enum. Rust's `?` and Swift's `try` optimize for pipeline-style code with 4-6 fallible steps; cxc instead pushes those apart into smaller units. Trade-off: more function boundaries, less cross-cutting propagation, more visible dispatch at each layer. Consistent with §1.6 (legibility over brevity) and cxc's visible-dispatch preference.
 
-**ObjC / Swift interop (§9.3).** ObjC `NSError**` out-param methods are imported as returning a domain enum with `.completed(T)` and `.failed(NSError)` cases. Swift `throws` methods appear as returning `Result<T, Error>` at the interop boundary (with `Result<T, E>` defined at the interop-shim layer, not prelude). Corvid methods exposed to ObjC are lowered with automatic `NSError**` out-param when the return type is a domain enum containing a `.failed(NSError)`-shaped case.
+**ObjC / Swift interop (§9.3).** ObjC `NSError**` out-param methods are imported as returning a domain enum with `.completed(T)` and `.failed(NSError)` cases. Swift `throws` methods appear as returning `Result<T, Error>` at the interop boundary (with `Result<T, E>` defined at the interop-shim layer, not prelude). cxc methods exposed to ObjC are lowered with automatic `NSError**` out-param when the return type is a domain enum containing a `.failed(NSError)`-shaped case.
 
 **What this closes:**
 
@@ -2158,18 +3549,24 @@ function process(input: String) -> ProcessOutcome:
 
 ### 3.6 Refinement / Precondition Contracts
 
-Any type can carry a `requires` clause narrowing its inhabitants:
+> **v1.0 note.** The v1.0 canonical form is `def <Name>: <Underlying> where <predicate>` — a named contract on an underlying shape, per §1.11 (Contracts on shapes — types as named contracts) and the worked derivation in `explorations/integers-from-bits.cxc`. The `type X = Y requires ...` syntax below is a v0.11 relic superseded by `def`; both forms parse during the grace period through v0.15. Every type in cxc — down to `Bit` — is a named contract on some underlying shape, not a distinct kind of thing from records/classes. The examples in this section use the v0.11 form for continuity with older text.
+
+Any type can carry a predicate clause narrowing its inhabitants (v0.11 form shown):
 
 ```
 type Positive = Int requires self > 0
-type NonEmpty<T> = [T] requires self.count > 0
+type NonEmpty of T = [T] requires self.count > 0
+
+# v1.0 canonical form (see §1.11):
+def Positive: Int where value > 0
+def NonEmpty of T: List of T where value.count > 0
 ```
 
-Verification: runtime by default. Static verification via SMT is an optional backend.
+Verification: runtime by default at construction (`Age{raw: n}` aborts on violation; `Age.try(raw: n)` returns a `Result of Age`). Static discharge via SMT is an optional backend; the compiler may elide the runtime check when it can prove the predicate holds from surrounding contracts.
 
 ### 3.6.1 Nullability and Nil-Punning
 
-Corvid's nullability model inverts Swift's: **reference types allow nil at runtime by default; non-nil is the exception marked by contract.** This matches the ObjC runtime substrate (§1.5) — messaging nil is native, not a special case the type system fights to prevent.
+cxc's nullability model inverts Swift's: **reference types allow nil at runtime by default; non-nil is the exception marked by contract.** This matches the ObjC runtime substrate (§1.5) — messaging nil is native, not a special case the type system fights to prevent.
 
 **Semantics** (unchanged from v0.7.0):
 
@@ -2281,7 +3678,7 @@ switch color:
 
 #### 3.7.1 No Destructuring Bindings
 
-Corvid deliberately does **not** provide destructuring in binding positions. The following forms are not part of the language:
+cxc deliberately does **not** provide destructuring in binding positions. The following forms are not part of the language:
 
 ```
 let (a, b) = pair                       # NOT SUPPORTED
@@ -2305,7 +3702,7 @@ for entry in dict:
 **Rationale.**
 
 1. **Names beat positions, uniformly.** v0.8.1 committed to named-only associated values on enum cases (`case closed(code: UInt16)`, not `case closed(UInt16)`). The same discipline applies here. A `Pair<A, B>` has fields `first` and `second`; those names are what the reader sees, and they're the same names at every use site.
-2. **Class shape stays authoritative.** Destructuring reifies a shape (parenthesized-two-thing) that isn't the class's shape. Under Corvid's class-as-universal model (§1.5), the shape is the class's field structure — access should go through it.
+2. **Class shape stays authoritative.** Destructuring reifies a shape (parenthesized-two-thing) that isn't the class's shape. Under cxc's class-as-universal model (§1.5), the shape is the class's field structure — access should go through it.
 3. **Iteration is method dispatch, not language pattern.** `for entry in dict` iterating over `Entry<K, V>` via `Iterable`-based dispatch (§3.10) is the native pattern in a class-based OOP model. Positional destructuring in the `for` binding would be C-family sugar bolted onto a message-send model that doesn't need it.
 4. **Legibility over brevity (§1.6).** The two-character save from `(k, v)` vs. `entry` and then `.key`/`.value` at use sites is not worth the readability cost of encoding class shape in punctuation.
 
@@ -2393,7 +3790,7 @@ Error message points at the leading-dot expression and suggests the qualified fo
 
 ### 3.8 Expressions and Statements
 
-Corvid commits to **everything is an expression** for control-flow constructs. `if`, `switch`, blocks, and (in a specific form) loops all produce values. This unifies control flow and expression composition — one construct, usable in statement position or expression position depending on context.
+cxc commits to **everything is an expression** for control-flow constructs. `if`, `switch`, blocks, and (in a specific form) loops all produce values. This unifies control flow and expression composition — one construct, usable in statement position or expression position depending on context.
 
 #### 3.8.1 If-as-expression
 
@@ -2431,7 +3828,7 @@ If the block contains only statements with no trailing expression, its value is 
 
 #### 3.8.3 Loops as expressions — `while` and `for` return `Bool`
 
-Loops in Corvid are expressions producing `Bool`:
+Loops in cxc are expressions producing `Bool`:
 
 - **`true`** — the loop terminated because its condition became false (`while`) or its iteration exhausted (`for`).
 - **`false`** — the loop exited via `break`.
@@ -2525,7 +3922,7 @@ The runtime computation is explicit in the body, not hidden in the signature. Tr
 
 ### 3.9 Operators
 
-Corvid's operators split into two tiers: **bootstrap operators** (§10 grammar-committed, cannot be overridden) and **prelude operators** (declared as alias declarations in §4.20, unified precedence scheme in §4.20.2). Precedence and associativity match C99 to avoid surprises for C-family readers.
+cxc's operators split into two tiers: **bootstrap operators** (§10 grammar-committed, cannot be overridden) and **prelude operators** (declared as alias declarations in §4.20, unified precedence scheme in §4.20.2). Precedence and associativity match C99 to avoid surprises for C-family readers.
 
 **Bootstrap operators (compiler-committed):**
 
@@ -2554,11 +3951,11 @@ Corvid's operators split into two tiers: **bootstrap operators** (§10 grammar-c
 
 **Prelude alias declarations for the operators above are in §4.20.1.** Precedence values follow the unified scheme in §4.20.2.
 
-**C's `&&`, `||`, `!` are not used** — Corvid spells logicals as words (`and`/`or`/`not`) for legibility. This reserves `&` and `|` unambiguously for bitwise (prelude), and `!` for the type-position non-nil contract (also prelude, `T!` alias).
+**C's `&&`, `||`, `!` are not used** — cxc spells logicals as words (`and`/`or`/`not`) for legibility. This reserves `&` and `|` unambiguously for bitwise (prelude), and `!` for the type-position non-nil contract (also prelude, `T!` alias).
 
-**Integer overflow semantics.** Signed overflow is undefined behavior in C99; Corvid tightens this: signed overflow **wraps** by default (two's-complement modular arithmetic). Users wanting checked semantics use `checked_add`/`checked_sub`/etc. methods that return `ConvertOutcome<T>` (§3.11.3) — `.converted(T)` on success, `.overflow(source, target)` on out-of-range. Users wanting saturation use `saturating_*` variants. This departs from C99 UB in favor of predictable behavior consistent with the "runtime as substrate, not as ceiling" premise (§1.5). The three-method shape (wrap / saturate / checked) matches the numeric narrowing methods (§3.11.2) — same design principle: semantics is a caller-choice-per-call operation, expressed at the call site as a method name, not as a protocol family.
+**Integer overflow semantics.** Signed overflow is undefined behavior in C99; cxc tightens this: signed overflow **wraps** by default (two's-complement modular arithmetic). Users wanting checked semantics use `checked_add`/`checked_sub`/etc. methods that return `ConvertOutcome<T>` (§3.11.3) — `.converted(T)` on success, `.overflow(source, target)` on out-of-range. Users wanting saturation use `saturating_*` variants. This departs from C99 UB in favor of predictable behavior consistent with the "runtime as substrate, not as ceiling" premise (§1.5). The three-method shape (wrap / saturate / checked) matches the numeric narrowing methods (§3.11.2) — same design principle: semantics is a caller-choice-per-call operation, expressed at the call site as a method name, not as a protocol family.
 
-**Bit-shift semantics.** Shift amount must be in `0..bit_width(T)`. Shift by a value outside this range is undefined behavior in C99; Corvid rejects it as a contract violation (runtime warning; deterministic wrap in release). Matches the overflow discipline above.
+**Bit-shift semantics.** Shift amount must be in `0..bit_width(T)`. Shift by a value outside this range is undefined behavior in C99; cxc rejects it as a contract violation (runtime warning; deterministic wrap in release). Matches the overflow discipline above.
 
 **Note on the bootstrap/prelude split.** Arithmetic, comparison, and logical operators are bootstrap because the compiler itself needs them to parse alias definitions with precedence values, evaluate guards, and compute basic control flow. Bitwise operators, ranges, and nil-coalescing are not needed by the compiler internals — they can be (and are) prelude aliases. This preserves the discipline: everything user-facing that CAN be a stdlib alias, IS.
 
@@ -2615,7 +4012,7 @@ let buf: RingBuffer<Int> = [1, 2, 3]
 
 #### 3.10.1 Iteration Protocols — `Iterable`, `Iterator`
 
-Iteration in Corvid is method dispatch on the collection, not a language primitive. The `for` control-flow form is a prelude alias (§4.20.1) that expands to `.iter().for_each { … }` on any type conforming to `Iterable<T>`. Corvid ships two protocols:
+Iteration in cxc is method dispatch on the collection, not a language primitive. The `for` control-flow form is a prelude alias (§4.20.1) that expands to `.iter().for_each { … }` on any type conforming to `Iterable<T>`. cxc ships two protocols:
 
 ```
 protocol Iterable<T>:
@@ -2626,7 +4023,7 @@ protocol Iterator<T>:
     accepts for_each(f: (T) -> Void) -> Void       # convenience; default impl uses next()
 ```
 
-**Nil-on-exhaustion.** `next() -> T` returns nil when the iterator is exhausted. Under Corvid's nil-messaging model (v0.7.0, §3.6.1), the return type auto-lifts for reference types; for value types, `next() -> T?` is the sugar-desugared form. Callers writing manual loops use `if let x = iter.next(): …` (v0.8.1 multi-binding form works too).
+**Nil-on-exhaustion.** `next() -> T` returns nil when the iterator is exhausted. Under cxc's nil-messaging model (v0.7.0, §3.6.1), the return type auto-lifts for reference types; for value types, `next() -> T?` is the sugar-desugared form. Callers writing manual loops use `if let x = iter.next(): …` (v0.8.1 multi-binding form works too).
 
 **Default `for_each`.** The `Iterator<T>` protocol ships a default implementation of `for_each` that loops on `next()`. Conformers may override for performance (SIMD, contiguous storage, etc.).
 
@@ -2642,7 +4039,7 @@ Any user class conforming to `Iterable<T>` accepts the `for` alias uniformly.
 
 #### 3.10.2 Multi-Value Carriers — `Pair`, `Entry`
 
-Corvid has no tuples and no destructuring (§3.7.1). Multi-value carriers are ordinary classes with named fields. The prelude ships two:
+cxc has no tuples and no destructuring (§3.7.1). Multi-value carriers are ordinary classes with named fields. The prelude ships two:
 
 ```
 record Pair<A, B>:
@@ -2682,7 +4079,7 @@ All three forms use the same shape: iterate, receive an object per step, access 
 
 #### 3.10.3 Conversion Protocols — `As<T>` and `From<T>`
 
-Corvid's canonical conversion pattern. `As<T>` names the projection direction (self → T); `From<T>` names the construction direction (T → Self). Both are generic protocols; the type parameter is the target/source respectively.
+cxc's canonical conversion pattern. `As<T>` names the projection direction (self → T); `From<T>` names the construction direction (T → Self). Both are generic protocols; the type parameter is the target/source respectively.
 
 ```
 protocol As<T>:
@@ -2692,7 +4089,7 @@ protocol From<T>:
     class function from(source: T) -> Self
 ```
 
-**Structural conformance.** A class with `function as(self) -> Bytes:` structurally conforms to `As<Bytes>` without any explicit `conforms:` declaration. Same for `class function from(source: String) -> Self:` and `From<String>`. This matches Corvid's §3.4 structural-conformance discipline.
+**Structural conformance.** A class with `function as(self) -> Bytes:` structurally conforms to `As<Bytes>` without any explicit `conforms:` declaration. Same for `class function from(source: String) -> Self:` and `From<String>`. This matches cxc's §3.4 structural-conformance discipline.
 
 **Trait-qualified dispatch.** A class may conform to multiple `As<T>` and multiple `From<T>` instantiations simultaneously, declaring one `as`/`from` method per instantiation. Method identity is `(name, protocol-instantiation)`; see §3.4.4 for the dispatch rules.
 
@@ -2736,7 +4133,7 @@ There is no separate `AsBytes` protocol. `As<Bytes>` is the canonical spelling. 
 
 #### 3.10.4 The `Bytes` Type
 
-Corvid's mutable byte-sequence type. `kind: regular` (reference-shaped), consistent with Array/Map/Set (§3.2 collection containers). Corresponds to Foundation's NSData/NSMutableData at the runtime layer; toll-free bridged (§9.3).
+cxc's mutable byte-sequence type. `kind: regular` (reference-shaped), consistent with Array/Map/Set (§3.2 collection containers). Corresponds to Foundation's NSData/NSMutableData at the runtime layer; toll-free bridged (§9.3).
 
 **Class shape (illustrative — not exhaustive):**
 
@@ -2801,11 +4198,11 @@ expose class Bytes:
 
 #### 3.10.5 The `String` Type
 
-Corvid's text type. `kind: regular`, corresponds to NSString at the runtime layer; toll-free bridged.
+cxc's text type. `kind: regular`, corresponds to NSString at the runtime layer; toll-free bridged.
 
 **Grapheme-native.** All text semantics are grapheme-cluster-based. `Char` (§3.10.6) is a grapheme cluster — potentially multiple Unicode code points appearing as a single user-visible character (emoji sequences, combining marks, family emoji, flag sequences).
 
-**No integer indexing.** `s[i]` where `s: String` is a compile error with a diagnostic pointing to `StringPosition` (§3.10.7). Rationale: integer indexing over strings admits three incompatible semantics (bytes / code units / graphemes) and misleads even careful authors. Positions are opaque tokens; the invariant that "position 5 always means the character-after-4" holds only under a specific granularity choice, and Corvid refuses to pick one silently.
+**No integer indexing.** `s[i]` where `s: String` is a compile error with a diagnostic pointing to `StringPosition` (§3.10.7). Rationale: integer indexing over strings admits three incompatible semantics (bytes / code units / graphemes) and misleads even careful authors. Positions are opaque tokens; the invariant that "position 5 always means the character-after-4" holds only under a specific granularity choice, and cxc refuses to pick one silently.
 
 **No peer views (`.utf16`, `.utf8`, `.bytes` are not properties on String).** Byte-level access is via the universal `.as() -> Bytes` (UTF-8 default) or `.as_bytes(encoding: Encoding) -> Bytes` for other encodings. This unifies byte access across every type via the same convention.
 
@@ -2967,7 +4364,7 @@ switch Bytes.from([0xff, 0xfe, 0x48, 0x00]).decoded_as(.utf16_le):
         return .parse_error
 ```
 
-**Serialization substrate.** Any type conforming to `As<Bytes>` participates in Corvid's universal serialization protocol. Format-specific overlays (`As<Json>`, `As<MsgPack>`, `As<Yaml>`) become ordinary trait-qualified conformances added by user code or third-party packages via `extend class Foo:` (§3.3.2) — no special language support required; third-party format packages ship a target type and users write `function as(self) -> ThatType:` methods, exactly like user code. Method name is always `.as()` differentiated by return type per §3.10.3 trait-qualified dispatch; never `as_bytes()` / `as_json()`. No reflection-based auto-serialization (the trap Java's `Serializable` fell into); regular-class authors write `.as() -> Bytes` explicitly.
+**Serialization substrate.** Any type conforming to `As<Bytes>` participates in cxc's universal serialization protocol. Format-specific overlays (`As<Json>`, `As<MsgPack>`, `As<Yaml>`) become ordinary trait-qualified conformances added by user code or third-party packages via `extend class Foo:` (§3.3.2) — no special language support required; third-party format packages ship a target type and users write `function as(self) -> ThatType:` methods, exactly like user code. Method name is always `.as()` differentiated by return type per §3.10.3 trait-qualified dispatch; never `as_bytes()` / `as_json()`. No reflection-based auto-serialization (the trap Java's `Serializable` fell into); regular-class authors write `.as() -> Bytes` explicitly.
 
 **Value types have canonical bytes as a base-class property.** Per §3.3 and §3.4.6, records, enums, and primitives carry `.as() -> Bytes` and `class function from(source: Bytes) -> DecodeOutcome<Self>` as base methods — the compiler synthesizes them from field/case layout per §3.10.10's canonical wire format, the same way it synthesizes structural equality. Structural conformance to `As<Bytes>` and `From<Bytes>` (§3.4) then succeeds because the required methods exist; no separate "auto-conformance" mechanism, no compiler awareness of specific target-type names. `kind: regular` classes get no synthesis — mutable state, potential cycles, and identity require explicit user-written serialization. User-written `.as() -> Bytes` on a value type shadows the synthesized one per §3.3.2 (own definitions win over inherited defaults). Format-specific representations (JSON, MsgPack) are user-written per record because they have per-record author choices (field naming, null handling, number precision) with no defensible language-level default.
 
@@ -3012,7 +4409,7 @@ record MatchGroup:
     data: value: String
 ```
 
-**Named-only captures.** The `captures:` map is keyed by `String` — the name declared in the pattern source. Positional captures are not exposed via numeric index. Consistent with §3.2 named-only record fields, §3.7.1 named-only enum associated values, §3.10.2 named-only multi-value carriers. Corvid does not offer positional access anywhere; Pattern doesn't invent an exception.
+**Named-only captures.** The `captures:` map is keyed by `String` — the name declared in the pattern source. Positional captures are not exposed via numeric index. Consistent with §3.2 named-only record fields, §3.7.1 named-only enum associated values, §3.10.2 named-only multi-value carriers. cxc does not offer positional access anywhere; Pattern doesn't invent an exception.
 
 **Backreference to source.** `Match.source` is the String the match was found in. `Match.substring()` slices the source using the match's positions (§3.10.7 StringPosition semantics — positions are source-bound). This means passing a Match around does not lose the original text.
 
@@ -3064,7 +4461,7 @@ expose class Regex:
         function all_matches(self, source: String) -> Iterator<Match>
 ```
 
-Compiled at construction time. Corvid's regex flavor is PCRE2-adjacent — features specified per §3.10.9.4 below. Captures are always named (§3.10.9.6).
+Compiled at construction time. cxc's regex flavor is PCRE2-adjacent — features specified per §3.10.9.4 below. Captures are always named (§3.10.9.6).
 
 **Compilation caching.** All three constructor variants (Literal, Glob, Regex) cache their compiled representation when the source string is a compile-time constant per §4.16.10 value-alias discipline. `regex"^\d+$"` compiles once at parse time and is shared across all use sites; `Regex(user_input)` compiles at runtime and is not cached. No language feature — this is a constructor optimization on classes that hold compile-time-constant state.
 
@@ -3080,7 +4477,7 @@ record RegexOptions:
 
 Default constructor `Regex(source)` uses `RegexOptions()` (all false). Options-taking constructor: `Regex(source, options: RegexOptions(case_insensitive: true))`.
 
-**Regex feature set (Corvid-specific decisions).**
+**Regex feature set (cxc-specific decisions).**
 
 - **Named captures required, unnamed rejected** (§3.10.9.6).
 - **Backreferences to named captures** — `\k<name>`.
@@ -3165,7 +4562,7 @@ help: or make groups non-capturing if names aren't needed
 
 **Rationale.** Positional captures require positional access to results (`match.group(1)`, `match.group(2)`), which contradicts §3.2 named-only discipline. Making capture names mandatory pushes the name into the pattern string — the reader sees `(?<year>\d+)` and knows what the capture represents without cross-referencing consumer code. This is the same discipline that put named-only associated values on enum cases (v0.8.1) and named-only fields on records (§3.2).
 
-**Cost.** Regex sources translated from Perl/Python/Ruby/Java need mechanical `(...)` → `(?<name>...)` conversion. Small friction; consistent with every other named-only surface in Corvid.
+**Cost.** Regex sources translated from Perl/Python/Ruby/Java need mechanical `(...)` → `(?<name>...)` conversion. Small friction; consistent with every other named-only surface in cxc.
 
 #### 3.10.10 Canonical Value-Type Encoding
 
@@ -3237,7 +4634,7 @@ Offset in `.invalid` is byte-position in the original `source`, not offset into 
 
 **Non-goals.**
 
-- **Cross-language interop.** The canonical encoding is Corvid-specific. Cross-language contexts use format-specific target types (`Json`, `MsgPack`, `CBOR`, `Protobuf`), which are user-authored per record via `function as(self) -> Json:` etc.
+- **Cross-language interop.** The canonical encoding is cxc-specific. Cross-language contexts use format-specific target types (`Json`, `MsgPack`, `CBOR`, `Protobuf`), which are user-authored per record via `function as(self) -> Json:` etc.
 - **Schema evolution.** Field addition, removal, reordering all break wire compatibility. Users needing evolvable formats use tagged formats (msgpack, protobuf) with explicit versioning.
 - **Human debuggability.** Bytes are opaque. For debug representation, use `.as() -> String` (author-defined per record) or a hex-dump helper.
 - **Compression.** No compression at the encoding level. Users compress the resulting `Bytes` externally if needed.
@@ -3245,13 +4642,13 @@ Offset in `.invalid` is byte-position in the original `source`, not offset into 
 **Rationale for the choice set.**
 
 - **Big-endian over little-endian** — network-order is the traditional interchange convention; makes the format immediately usable for any wire context without conversion overhead when it matters. Same-host little-endian users pay a byte-swap cost on multi-byte primitives, which is a single CPU instruction on modern hardware — negligible for the common case.
-- **UInt32 length prefix over VarInt** — fixed width means decoders can seek directly; VarInt saves bytes on small collections but complicates the decoder. Corvid picks decoder-simplicity over one-byte-per-small-collection.
+- **UInt32 length prefix over VarInt** — fixed width means decoders can seek directly; VarInt saves bytes on small collections but complicates the decoder. cxc picks decoder-simplicity over one-byte-per-small-collection.
 - **Discriminator width scales with case count** — 256 cases fits UInt8, avoids the 4-byte-per-enum tax the naive UInt32-always design would impose.
 - **Optional as presence-byte-prefix, not sentinel value** — sentinel-value encoding (e.g., all-zeros = nil) fails for types where all-zeros is a valid value (`Int32(0)`, `Float(0.0)`). Presence byte is unambiguous.
 
 ### 3.11 Numeric Conversion and Bounded Types
 
-Corvid numeric primitives (`Int`, `Int8`..`Int64`, `UInt`..`UInt64`, `Float`, `Double`) participate in the universal conversion protocol `As<T>` (§3.10.3) for lossless conversions, plus a small family of narrowing methods for the three semantics that arise when a source value may not fit its target.
+cxc numeric primitives (`Int`, `Int8`..`Int64`, `UInt`..`UInt64`, `Float`, `Double`) participate in the universal conversion protocol `As<T>` (§3.10.3) for lossless conversions, plus a small family of narrowing methods for the three semantics that arise when a source value may not fit its target.
 
 #### 3.11.1 Lossless Numeric Conversion via `As<T>`
 
@@ -3333,7 +4730,7 @@ switch big.checked_to::<UInt8>():
         return .overflow_error
 ```
 
-**Not a `Result<T, E>`.** Per v0.8.5, Corvid does not ship a generic `Result<T, E>` in the prelude. `ConvertOutcome<T>` is a domain enum with a fixed error case, consistent with the pattern used everywhere else (`DecodeOutcome<T>` §3.10.8, `SendOutcome`, etc.).
+**Not a `Result<T, E>`.** Per v0.8.5, cxc does not ship a generic `Result<T, E>` in the prelude. `ConvertOutcome<T>` is a domain enum with a fixed error case, consistent with the pattern used everywhere else (`DecodeOutcome<T>` §3.10.8, `SendOutcome`, etc.).
 
 #### 3.11.4 Byte Methods on Primitives
 
@@ -3434,6 +4831,8 @@ Sugar accessors: `Double.infinity`, `Double.nan`, `Double.epsilon`.
 
 ## 4. Sections
 
+> **v1.0 note.** The section mechanism itself — labeled semantic blocks resolved to section classes — carries into v1.0 unchanged; what changes is which body sections are meaningful under the atom substrate (§1.11). Retirements at v1.0: `state:` (all fields are `data:`; mutations happen through transitions), `channels:` (return type is authoritative), `entrypoints:` (all `-> handler:` declarations are exposed by default), `wires:` (there are no free-standing wires — subscriptions live in receive-glyph transitions), `handlers:` as grouping container (`-> handler:` prefix IS the declaration). The primary body sections for atoms are `data:`, `use:`, `invariants:`, `contracts:`, `constructor:`, `metadata:`, plus per-transition `then:` / `do:` sub-blocks. See §10 grammar for the authoritative list. §4.10 built-in section classes below describe the sections mechanism vocabulary in the v0.11 shape; entries for retired sections should be read as historical.
+
 The **section mechanism** is the language's general form for labeled semantic blocks. A section is a labeled, indented block whose contents are governed by a section class. Sections appear across scopes:
 
 - **Class and struct bodies** — sections organize fields and methods, contribute cross-cutting behaviors.
@@ -3441,7 +4840,7 @@ The **section mechanism** is the language's general form for labeled semantic bl
 - **Module bodies** — sections gate or transform declarations.
 - **Expression contexts** — expression-form sections produce values (e.g., `quote:` produces `Code`).
 
-Sections unify what other languages handle piecemeal: annotations, attributes, property wrappers, decorators, aspect-oriented weaving, effect-scoping keywords, DSL builders, and compile-time metaprogramming. In Corvid, all of these are expressed via section classes.
+Sections unify what other languages handle piecemeal: annotations, attributes, property wrappers, decorators, aspect-oriented weaving, effect-scoping keywords, DSL builders, and compile-time metaprogramming. In cxc, all of these are expressed via section classes.
 
 ### 4.1 The Section Form
 
@@ -3949,7 +5348,7 @@ class RequestCounter:
         total_requests: Int = 0
 ```
 
-The primitive-and-alias model matches how programmers already read declarations: `public static final int MAX = 100` in Java is characteristic composition of orthogonal properties (visibility, storage, mutability). Corvid makes that composition uniform across the language's section vocabulary — visibility is `expose`, storage is `runtime`/`compile_time`, mutability is `mutable`/`immutable`.
+The primitive-and-alias model matches how programmers already read declarations: `public static final int MAX = 100` in Java is characteristic composition of orthogonal properties (visibility, storage, mutability). cxc makes that composition uniform across the language's section vocabulary — visibility is `expose`, storage is `runtime`/`compile_time`, mutability is `mutable`/`immutable`.
 
 #### 4.10.1 Primitive Sections *(Stage 1)*
 
@@ -4149,7 +5548,7 @@ Callers of `old_method` receive compiler warnings. Tooling surfaces the deprecat
 
 ##### 4.10.4.3 Category *(retired v0.9.0)*
 
-The Category section class was retired in v0.9.0. Extending an existing class — Corvid class, ObjC class, generic parameterization, protocol — uses the unified extension mechanism at declaration position: `extend class Foo:` (§3.3.2). Default-method inheritance for structural protocol conformers is specified in §3.4.4.
+The Category section class was retired in v0.9.0. Extending an existing class — cxc class, ObjC class, generic parameterization, protocol — uses the unified extension mechanism at declaration position: `extend class Foo:` (§3.3.2). Default-method inheritance for structural protocol conformers is specified in §3.4.4.
 
 **Migration (mechanical):**
 
@@ -4166,7 +5565,7 @@ extend class NSString:
             return self.upper_case
 ```
 
-Semantics unchanged — methods land in the runtime method table for the target class; both Corvid and ObjC call sites dispatch through the same mechanism. The v0.9.0 form additionally supports generic parameters and where-clauses on the extension target (`extend class Array<T> where T: UnsignedInteger:`), which the Category mechanism could not express.
+Semantics unchanged — methods land in the runtime method table for the target class; both cxc and ObjC call sites dispatch through the same mechanism. The v0.9.0 form additionally supports generic parameters and where-clauses on the extension target (`extend class Array<T> where T: UnsignedInteger:`), which the Category mechanism could not express.
 
 Devirtualization (§5.2) and reflection (`class_getMethodList` returning all methods including extensions) are preserved. `class_addMethod` remains available as a runtime API for programmatic addition (mocking, tooling, dylib-loaded categories); `extend class` is the source-level mechanism.
 
@@ -4183,7 +5582,7 @@ section class ObjC_Exposed:
     
     generator method_wrapper(method: MethodSpec) -> Code:
         # Method is emitted with ObjC-compatible signature in generated header.
-        # Corvid callers see the original signature.
+        # cxc callers see the original signature.
         return quote:
             @objc_visible
             @generate_header_entry(signature: ${method.objc_signature()})
@@ -4251,7 +5650,7 @@ function process_file(path: String) -> FileProcessOutcome:
     # Cleanup runs even if the block returns .open_failed / .read_failed
 ```
 
-Resources bound in a `with:` block are automatically cleaned up on scope exit. Unlike Python's `with` (which requires context manager objects) or Java's try-with-resources, Corvid's `with:` works with any type that has a destructor, and multiple resources bind naturally in one block. Cleanup runs regardless of which branch the block exits through — the `With` section installs scope-exit handlers that fire on any exit path (§4.10.4.5).
+Resources bound in a `with:` block are automatically cleaned up on scope exit. Unlike Python's `with` (which requires context manager objects) or Java's try-with-resources, cxc's `with:` works with any type that has a destructor, and multiple resources bind naturally in one block. Cleanup runs regardless of which branch the block exits through — the `With` section installs scope-exit handlers that fire on any exit path (§4.10.4.5).
 
 #### 4.10.5 Behavioral Sections *(Stage 3)* — Statement-Scope
 
@@ -4526,7 +5925,7 @@ class UserList:
 - **`String`** — `length: 0`, `is_empty: true`, `chars: EmptyIterator()`.
 - **`Numeric`** — no `on_nil` entries. Arithmetic on nil is a type error (§3.6.1); no punning.
 
-**Rationale.** ObjC's nil-messaging gives Corvid safe nil-propagation for free. `on_nil` is the mechanism for the Clojure-style extension: instead of "nil.count() returns nil-lifted-to-Int?", authors can declare "nil.count() returns 0" and get the collection-punning idiom. Because the mechanism is a section (§4), users write it once per class or protocol; it composes with everything else via the standard section rules.
+**Rationale.** ObjC's nil-messaging gives cxc safe nil-propagation for free. `on_nil` is the mechanism for the Clojure-style extension: instead of "nil.count() returns nil-lifted-to-Int?", authors can declare "nil.count() returns 0" and get the collection-punning idiom. Because the mechanism is a section (§4), users write it once per class or protocol; it composes with everything else via the standard section rules.
 
 ### 4.11 User-Defined Section Classes
 
@@ -4619,7 +6018,7 @@ Section classes declare semantic version compatibility explicitly. Breaking chan
 
 ### 4.16 Aliases
 
-Aliases bind a syntactic pattern to a compile-time expansion. They are Corvid's syntactic metaprogramming primitive — the mechanism by which surface syntax is defined. Every user-facing sugar in the language (class-kind keywords, section-composition names, type-expression forms, collection literals, range operators, string interpolation, bitwise operators) is a stdlib alias declaration shipped in the prelude (§4.20). Users write their own aliases for domain-specific syntax.
+Aliases bind a syntactic pattern to a compile-time expansion. They are cxc's syntactic metaprogramming primitive — the mechanism by which surface syntax is defined. Every user-facing sugar in the language (class-kind keywords, section-composition names, type-expression forms, collection literals, range operators, string interpolation, bitwise operators) is a stdlib alias declaration shipped in the prelude (§4.20). Users write their own aliases for domain-specific syntax.
 
 **One shape.** All aliases follow: `alias <signature>: <expansion>`. The signature is a pattern the compiler matches against source syntax; the expansion is the template to substitute. Match variables in `<name>` form bind to matched content; the `...` placeholder captures an indented body when the alias appears with `:` and following block.
 
@@ -4795,7 +6194,7 @@ The four language-shipped class-kind aliases (`record`, `enum`, `protocol`, `sec
 
 #### 4.16.5 Type-Expression Aliases
 
-Delimited or suffix patterns at type position, matching structural shapes of composite types. These aliases (shipped in the prelude, §4.20) are what makes `T?`, `[T]`, `{K:V}`, `(A,B) -> C` legal Corvid type expressions — the language grammar itself only knows `identifier<generic_args>` for types; every richer shape is an alias.
+Delimited or suffix patterns at type position, matching structural shapes of composite types. These aliases (shipped in the prelude, §4.20) are what makes `T?`, `[T]`, `{K:V}`, `(A,B) -> C` legal cxc type expressions — the language grammar itself only knows `identifier<generic_args>` for types; every richer shape is an alias.
 
 **Delimited type-expression aliases:**
 
@@ -4912,7 +6311,7 @@ if @!condition: ...
 
 Bootstrap operators (`+`, `-`, `*`, `/`, `%`, `<`, `<=`, `>`, `>=`, `==`, `!=`, `and`, `or`, `not`) and prelude-declared operators (`&`, `|`, `^`, `~`, `<<`, `>>`, `??`, `..<`, `...`) are unmarked. Only user-defined operators carry `@`.
 
-**`|>` is deliberately not in the prelude.** Method chaining (`x.f().g().h()`) covers every case pipe would in Corvid's class-based, universally-dispatched, openly-extensible model; shipping `|>` would create two idioms for the same operation and pull users toward free functions instead of extension methods (§4.20.3). Projects that want pipe can declare it locally as shown above; the `@` cost per use makes the project-local nature visible.
+**`|>` is deliberately not in the prelude.** Method chaining (`x.f().g().h()`) covers every case pipe would in cxc's class-based, universally-dispatched, openly-extensible model; shipping `|>` would create two idioms for the same operation and pull users toward free functions instead of extension methods (§4.20.3). Projects that want pipe can declare it locally as shown above; the `@` cost per use makes the project-local nature visible.
 
 #### 4.16.8 String Interpolation Aliases
 
@@ -5007,7 +6406,7 @@ class MyController:
 
 All alias shapes share these properties:
 
-- **Compile-time substitution.** The compiler replaces the alias use with its expansion during processing, then re-parses under normal Corvid rules.
+- **Compile-time substitution.** The compiler replaces the alias use with its expansion during processing, then re-parses under normal cxc rules.
 - **Recursive expansion.** Aliases may reference other aliases; the compiler expands until no aliases remain.
 - **Circular aliases are errors.** Cycles are detected at compile time.
 - **No runtime effect.** Aliases exist only during compilation. There is no runtime cost.
@@ -5118,7 +6517,7 @@ The `@` is part of the trigger's syntactic form. For operators, `@` fuses with t
 
 **Why prelude is unmarked.**
 
-The prelude is Corvid's committed surface syntax (§4.20). Users read `record Foo:`, `[1, 2, 3]`, `"hello ${name}"`, `0 ..< n` as language, not as sugar-that-happens-to-be-implemented-as-alias. The `@` marker would contradict that framing at every use site and would impose per-character noise on constructs that are already Corvid's basic vocabulary. The prelude carve-out is intentional; it reinforces the boundary from the other direction — unmarked = language, marked = project.
+The prelude is cxc's committed surface syntax (§4.20). Users read `record Foo:`, `[1, 2, 3]`, `"hello ${name}"`, `0 ..< n` as language, not as sugar-that-happens-to-be-implemented-as-alias. The `@` marker would contradict that framing at every use site and would impose per-character noise on constructs that are already cxc's basic vocabulary. The prelude carve-out is intentional; it reinforces the boundary from the other direction — unmarked = language, marked = project.
 
 **Why substitution aliases also require `@`.**
 
@@ -5181,11 +6580,11 @@ Correction on the above: user prefix-literal aliases require `@` at both declara
 
 **Rejected alternative.** A separate `r"..."` prefix syntax (Python-style) would require grammar-level recognition of `r` as a special identifier — a per-language keyword. The alias-flag approach keeps everything in §4.16's alias mechanism with one added flag; no new grammar. Consistent with the design invariant: prefer library-level extensibility to new grammar features.
 
-**Diagnostic on raw-mode escape attempts.** With `raw` in effect, backslash-anything is passed through unchanged. There is no "invalid escape" diagnostic — the constructor receives the raw text and is responsible for its own parsing errors. `Regex("^\q")` reports the invalid regex escape, not a Corvid-side escape error.
+**Diagnostic on raw-mode escape attempts.** With `raw` in effect, backslash-anything is passed through unchanged. There is no "invalid escape" diagnostic — the constructor receives the raw text and is responsible for its own parsing errors. `Regex("^\q")` reports the invalid regex escape, not a cxc-side escape error.
 
 ### 4.17 Metaprogramming Boundaries
 
-Corvid has **two orthogonal metaprogramming mechanisms**:
+cxc has **two orthogonal metaprogramming mechanisms**:
 
 - **Sections (§4.1-§4.15)** — body-level metaprogramming. A section class processes the content of its indented block: generates methods and fields on the host class, validates the block against constraints, wraps or transforms declarations.
 - **Aliases (§4.16)** — syntactic metaprogramming. An alias declaration extends the language grammar with new signature patterns at specified syntactic positions. Every user-facing sugar in the language is a stdlib alias in the prelude (§4.20).
@@ -5231,7 +6630,7 @@ The two mechanisms cover different domains — sections handle "what happens ins
 
 Metaprogramming systems that fail — C++ templates evolving into template metaprogramming, Java reflection + annotations + AspectJ, Python descriptors + decorators + metaclasses — fail by accretion. Each new mechanism tries to fix limitations of the previous. Overlapping features multiply. The result is a system that's hard to reason about, hard to debug, and hard to remove features from.
 
-Corvid's answer: **design the boundaries once**, ship the two mechanisms that fit within them, and refuse to expand incrementally. Future needs that don't fit within sections (body-level behavior) or aliases (surface syntax) require an explicit language-level decision, not a library workaround that stretches either mechanism.
+cxc's answer: **design the boundaries once**, ship the two mechanisms that fit within them, and refuse to expand incrementally. Future needs that don't fit within sections (body-level behavior) or aliases (surface syntax) require an explicit language-level decision, not a library workaround that stretches either mechanism.
 
 **Grammar extensibility discipline.** Aliases extend the language grammar; the compiler parses `bootstrap + prelude + in-scope user aliases`. This makes the effective grammar user-configurable per module. The safeguards:
 
@@ -5241,7 +6640,7 @@ Corvid's answer: **design the boundaries once**, ship the two mechanisms that fi
 4. **Tooling MUST expose expansions.** IDEs surface alias expansion on hover, goto-definition, and inline decoration. Readers can always see what any syntactic form means by querying tools.
 5. **Style discipline is cultural.** The language enables user-defined syntax; community style guides recommend restraint (domain-specific literals for domain projects; general libraries should not introduce novel syntax).
 
-This is the Clojure/Racket tradeoff — power with discipline vs. restriction with safety — applied consistently with Corvid's other design choices (§1.2 intent-not-authority, §1.5 runtime-as-substrate).
+This is the Clojure/Racket tradeoff — power with discipline vs. restriction with safety — applied consistently with cxc's other design choices (§1.2 intent-not-authority, §1.5 runtime-as-substrate).
 
 **The bootstrap set** (what the compiler ships with hardcoded knowledge of):
 
@@ -5400,10 +6799,10 @@ Structure (illustrative):
 ```
 
 **Uses:**
-- AI code assistants query the manifest to understand code structure without parsing Corvid source.
+- AI code assistants query the manifest to understand code structure without parsing cxc source.
 - Documentation generators produce API docs from the manifest.
 - Static analyzers reason about types and contracts without integrating with the compiler.
-- Cross-language tooling (e.g., generating TypeScript bindings for a web frontend calling into Corvid backend).
+- Cross-language tooling (e.g., generating TypeScript bindings for a web frontend calling into cxc backend).
 
 **Format guarantee:** the JSON schema is versioned and stable within a major version. Additive changes (new fields) are minor version bumps; removals or renames are major.
 
@@ -5422,7 +6821,7 @@ The compiler is architecturally incremental from Stage 1. It holds state between
 - On-disk cache for build systems that reuse state across invocations (analogous to Rust's incremental cache directory, Kotlin's `build/kotlin-classes/incrementalCache`).
 - Invalidation: file mtime + content hash. Cross-file dependencies tracked explicitly.
 
-**Stage 1 delivers:** incremental compilation for Corvid sources, LSP server, metadata artifact emission, AI-manifest export. All shipped together — the tooling story is not a Stage 2 concern.
+**Stage 1 delivers:** incremental compilation for cxc sources, LSP server, metadata artifact emission, AI-manifest export. All shipped together — the tooling story is not a Stage 2 concern.
 
 #### 4.18.6 Class Metadata and Author Intent
 
@@ -5442,11 +6841,11 @@ Consumers of metadata are expected to respect intent even though the compiler do
 
 ### 4.20 The Prelude
 
-The **prelude** is a set of alias declarations shipped with the language distribution. Users get these without imports; they are the standard surface syntax of Corvid. The prelude is spec-committed — any change to a prelude alias is a language-level breaking change subject to the same versioning discipline as changes to bootstrap grammar (§4.15, §7.11).
+The **prelude** is a set of alias declarations shipped with the language distribution. Users get these without imports; they are the standard surface syntax of cxc. The prelude is spec-committed — any change to a prelude alias is a language-level breaking change subject to the same versioning discipline as changes to bootstrap grammar (§4.15, §7.11).
 
 **Why the prelude is a language artifact, not a library.**
 
-The bootstrap grammar (§10) is small — sufficient to parse alias declarations, class/function/module declarations, base literals, base operators, control flow, and sections. What users think of as "Corvid syntax" — `record Foo:`, `[1, 2, 3]`, `T?`, `x + y ?? default`, `"hello ${name}"` — is the bootstrap grammar plus the prelude. Without the prelude, source code that looks like ordinary Corvid would not parse. The prelude is therefore part of the language distribution and part of what the spec commits to.
+The bootstrap grammar (§10) is small — sufficient to parse alias declarations, class/function/module declarations, base literals, base operators, control flow, and sections. What users think of as "cxc syntax" — `record Foo:`, `[1, 2, 3]`, `T?`, `x + y ?? default`, `"hello ${name}"` — is the bootstrap grammar plus the prelude. Without the prelude, source code that looks like ordinary cxc would not parse. The prelude is therefore part of the language distribution and part of what the spec commits to.
 
 Users can inspect every prelude alias to understand what standard syntax means. Users cannot override or shadow prelude aliases; the standard surface syntax is stable across projects.
 
@@ -5632,13 +7031,13 @@ Precedence values 1-14 are reserved for bootstrap and prelude operators. User-de
 
 Constraints on the prelude:
 
-1. **Unmarked at declaration and use.** Prelude aliases carry no `@` marker (§4.16.16). They are Corvid's committed surface syntax and read as language, not as project-local sugar. The unmarked form is reserved for the prelude — users cannot declare an unmarked alias.
+1. **Unmarked at declaration and use.** Prelude aliases carry no `@` marker (§4.16.16). They are cxc's committed surface syntax and read as language, not as project-local sugar. The unmarked form is reserved for the prelude — users cannot declare an unmarked alias.
 2. **No overrides.** Users cannot redefine prelude aliases. Attempting to declare an alias whose expansion would replace a prelude signature is a compile error.
 3. **No shadowing.** Prelude aliases are always in scope; no import can hide them. User aliases live in a disjoint `@`-marked namespace and never collide with prelude names.
 4. **Spec-committed.** Changes to prelude alias signatures or expansions are language-version-affecting changes subject to the same versioning discipline as bootstrap grammar changes.
-5. **Minimal by design.** Aliases are added to the prelude only when their utility is universal across Corvid codebases AND when there is no cleaner way to express the same construct in Corvid's paradigm. Domain-specific sugar belongs in libraries (as `@`-marked user aliases), not the prelude.
-6. **Paradigm-mismatch exclusions.** Some constructs common in adjacent languages are deliberately kept out of the prelude because they do not fit Corvid's class-based, universally-dispatched, openly-extensible model:
-   - **`|>` (pipe operator).** Pipe threads values through free functions — a shape native to FP languages where data and behavior are separate. Corvid has universal method dispatch and cheap extensions/sections; the native pipeline shape is method chaining (`x.f().g().h()`), which is left-to-right, top-down, and integrated with tooling (autocomplete on `.`, jump-to-definition). Shipping `|>` would create two idioms for the same operation and pull users toward free functions instead of extension methods. Projects that genuinely want pipe can declare `alias <lhs> @|> <rhs> ...` locally; the `@` marker makes the project-local nature visible at every use site.
+5. **Minimal by design.** Aliases are added to the prelude only when their utility is universal across cxc codebases AND when there is no cleaner way to express the same construct in cxc's paradigm. Domain-specific sugar belongs in libraries (as `@`-marked user aliases), not the prelude.
+6. **Paradigm-mismatch exclusions.** Some constructs common in adjacent languages are deliberately kept out of the prelude because they do not fit cxc's class-based, universally-dispatched, openly-extensible model:
+   - **`|>` (pipe operator).** Pipe threads values through free functions — a shape native to FP languages where data and behavior are separate. cxc has universal method dispatch and cheap extensions/sections; the native pipeline shape is method chaining (`x.f().g().h()`), which is left-to-right, top-down, and integrated with tooling (autocomplete on `.`, jump-to-definition). Shipping `|>` would create two idioms for the same operation and pull users toward free functions instead of extension methods. Projects that genuinely want pipe can declare `alias <lhs> @|> <rhs> ...` locally; the `@` marker makes the project-local nature visible at every use site.
 
 7. **Iteration boundary — `for` is prelude, `while` and `loop` are bootstrap.** `for x in y: body` is a prelude alias (§4.20.1) that expands to `y.iter().for_each { x -> body }` on any `Iterable<T>` conformer (§3.10.1). This is the class-based OOP model applied to iteration: iteration is a message send to the collection, not a language primitive. `while` and `loop` stay bootstrap because stdlib needs a primitive control-flow loop to *implement* iteration methods without infinite regress or requiring a Tail Call Optimization commitment. The discipline:
    - **User-facing code prefers method dispatch.** `.for_each`, `.map`, `.filter`, `.reduce`, `.find`, `.any`, `.all`. `for` sugar is legal and recommended for the common "run body per element" case because it reads cleanly; the underlying dispatch is the same.
@@ -5784,30 +7183,25 @@ Rationale: optimization policy is a deployment decision, not a semantic property
 
 ### 5.6 Closures and Callable Values
 
-A **closure** in Corvid is an anonymous class with a single `call` method. Closures are first-class values; they can be passed as arguments, returned from functions, stored in fields, and dispatched dynamically like any other class instance. The runtime representation at the ObjC interop boundary is an ObjC block; the compiler generates the block wrapper automatically.
+A **closure** in cxc is an anonymous class with a single `call` method. Closures are first-class values; they can be passed as arguments, returned from functions, stored in fields, and dispatched dynamically like any other class instance. The runtime representation at the ObjC interop boundary is an ObjC block; the compiler generates the block wrapper automatically.
 
 Semantically, closures are not a separate construct — they inherit all the properties of the class-as-universal design (§6.1). Kind is `regular` (the default) for closures that need to escape their construction site; the compiler is free to specialize to `kind: record` or eliminate the class entirely when analysis proves the closure does not escape.
 
-#### 5.6.1 Type Expression — `Callable<Args, Return>`
+#### 5.6.1 Type Expression — `Callable of (Args, Return)`
 
-Function types (§3.2) desugar to the wrapper type `Callable<Args, Return>`:
+Function types (§3.2) desugar to the wrapper type `Callable of (Args, Return)`:
 
 ```
 handler: (Bytes) -> Int                 # sugar
-handler: Callable<(Bytes,), Int>        # expanded
+handler: Callable of ((Bytes,), Int)    # expanded
 
 comparator: (String, String) -> Int     # sugar
-comparator: Callable<(String, String), Int>  # expanded
+comparator: Callable of ((String, String), Int)   # expanded
 ```
 
-`Callable<Args, Return>` is a standard-library type; `(...) -> R` is spec-committed sugar. Effects on the callable use the same `with` clause as method types (§3.5.3):
+`Callable of (Args, Return)` is a standard-library type; `(...) -> R` is spec-committed sugar. The pre-v0.12 generic-bracket form `Callable<Args, Return>` is retired at v1.0 in favor of the `of` qualifier (see §1.11 shape variables / §3.2); grace period through v0.15.
 
-```
-f: (Order) -> Receipt with async
-f: Callable<(Order,), Receipt> with async
-```
-
-Failure is expressed via the return type — a callable that may fail returns a domain enum like `(Order) -> ProcessOutcome`, not `(Order) -> Receipt with throws`. See §3.5.4.
+Failure is expressed via the return type — a callable that may fail returns a domain enum like `(Order) -> ProcessOutcome`. See §3.5.4. Effects on the callable are the transitive `use:` closure of the target atom's transitions, not a separate `with E` clause on the type (see §3.5 supersession + §1.12).
 
 #### 5.6.2 Sugar Hierarchy for Closure Literals
 
@@ -5958,7 +7352,7 @@ Message sends on nil receivers are legal (§3.6.1). This section specifies how t
 
 **Codegen consequences.**
 
-- If no `on_nil` entry exists anywhere in the receiver type's hierarchy for the called method, no runtime branch is generated. Message send goes through the ObjC runtime directly; runtime returns nil natively (no Corvid-generated branch).
+- If no `on_nil` entry exists anywhere in the receiver type's hierarchy for the called method, no runtime branch is generated. Message send goes through the ObjC runtime directly; runtime returns nil natively (no cxc-generated branch).
 - If an `on_nil` entry exists, the compiler generates a nil-check-and-substitute at the call site (fast path) or a runtime consultation (slow path, when dynamic dispatch precludes static resolution).
 - Auto-lift is a type-system operation only, not runtime. The bytecode is identical to the non-nil case; the type checker adjusts the observed return type.
 
@@ -5996,6 +7390,8 @@ name = users.first_name  # no on_nil entry; auto-lift. type: String?
 ---
 
 ## 6. Memory Model
+
+> **v1.0 note.** §6 describes the v0.11 class-kinds framing (`regular` / `record` / `enum` / `protocol` / `section`). Under v1.0 (§1.11), all four sugar keywords desugar to `def` atom shapes. The memory model itself carries: `regular` = stateful atoms (reference-typed, ARC-managed); `record` = value-typed atoms with only `data:` (no transitions); `enum` = value-typed atoms with `cases:`; `protocol` = named contract with no instantiation. The `state:` section is retired (§4 v1.0 note) — the "no `state:`" restriction on record/enum below is now moot because there is no `state:` for any kind; mutation semantics come from whether the atom has transitions. `handle-based reference model + ARC` carries unchanged for regular-kind atoms.
 
 The memory model organizes around **class kinds** — variants of a single unified `class` construct differentiated by the `metadata: kind:` entry — plus a universal handle-based reference model for identity-typed classes, extent-based storage with tag-organized regions, and ARC as the reference lifetime mechanism. This chapter details each kind and how they compose.
 
@@ -6332,15 +7728,15 @@ The collector is a library, not a built-in runtime feature. Users who don't need
 ### 6.9 Cross-Language Interop
 
 **ObjC classes:**
-- Do not participate in Corvid extents. The ObjC runtime does not provide per-class instance tracking suitable for extent-style queries.
+- Do not participate in cxc extents. The ObjC runtime does not provide per-class instance tracking suitable for extent-style queries.
 - `NSString.query()` and similar calls on ObjC-imported classes return an error at compile time.
-- ObjC classes bridged into Corvid are handle-referenced for consistency; the handle wraps the ObjC pointer with validation metadata added by the Corvid runtime layer.
-- ARC semantics interoperate: ObjC's ARC and Corvid's ARC operate on the same reference count for shared instances.
+- ObjC classes bridged into cxc are handle-referenced for consistency; the handle wraps the ObjC pointer with validation metadata added by the cxc runtime layer.
+- ARC semantics interoperate: ObjC's ARC and cxc's ARC operate on the same reference count for shared instances.
 
 **Structs to/from C:**
 - Structs with only `data:` fields use standard C layout (identical to a C `struct` with the same field types).
 - Passable to C functions directly.
-- Bidirectional interop: C structs imported into Corvid as Corvid structs; Corvid structs exported to C as C structs.
+- Bidirectional interop: C structs imported into cxc as cxc structs; cxc structs exported to C as C structs.
 
 **Structs with references to classes (in `data:` fields):**
 - Struct copy semantics apply to the struct portion; class references are shared.
@@ -6349,7 +7745,7 @@ The collector is a library, not a built-in runtime feature. Users who don't need
 
 **Enumerations to/from C:**
 - Enumerations with only simple cases (no associated values) map to C enums.
-- Enumerations with associated values do not have a direct C representation; they're Corvid-only unless the user provides an explicit bridge.
+- Enumerations with associated values do not have a direct C representation; they're cxc-only unless the user provides an explicit bridge.
 
 ### 6.10 The `with:` Section (RAII)
 
@@ -6386,9 +7782,9 @@ Opt-out from runtime safety checks (§4.10.5.2). Recap for memory-model context:
 
 The extent + tag + query mechanism supports Entity-Component-System patterns as a natural coding style, not as a distinct language feature.
 
-**Traditional ECS terminology mapped to Corvid:**
+**Traditional ECS terminology mapped to cxc:**
 
-| ECS concept | Corvid mechanism |
+| ECS concept | cxc mechanism |
 |---|---|
 | Entity | Class instance |
 | Component | Protocol or field-carrying protocol |
@@ -6431,7 +7827,7 @@ Users writing business logic get the same benefits transparently — cross-cutti
 
 Explicit non-goals for the memory model:
 
-- **No SQL parser.** Queries are method calls in Corvid syntax, not a query DSL.
+- **No SQL parser.** Queries are method calls in cxc syntax, not a query DSL.
 - **No persistence.** Extents live in memory; process termination destroys them. Persistence is library territory.
 - **No ACID transactions.** Concurrent mutation during query iteration is implementation-defined. Users needing transaction semantics use library facilities.
 - **No garbage collector as default.** ARC is the reference lifetime mechanism. Optional cycle collector as a library (Stage 2+).
@@ -6808,13 +8204,13 @@ Modules compile in dependency order. A module's dependencies (other modules with
 Sources may mix `.cor` and `.m` (Objective-C) files within the same module. Both compile to libobjc2-compatible object files that link together (§9.4).
 
 **Metadata coverage:**
-- Corvid sources produce rich metadata (sections, contracts, invariants).
+- cxc sources produce rich metadata (sections, contracts, invariants).
 - ObjC sources produce basic runtime class info (via libobjc2's format).
 - The module's metadata artifact contains both.
 
 **Cross-language references:**
-- Corvid sources reference ObjC classes via `import objc "Framework"`.
-- ObjC sources reference Corvid classes via auto-generated `-Corvid.h` headers.
+- cxc sources reference ObjC classes via `import objc "Framework"`.
+- ObjC sources reference cxc classes via auto-generated `-cxc.h` headers.
 - Runtime class lookup works uniformly (both languages register with libobjc2's class table).
 
 ### 7.11 Version Compatibility
@@ -6842,7 +8238,7 @@ Packages follow semver:
 
 ### 7.12 Dylib Loading and Runtime Extension
 
-libobjc2 supports dylib loading at runtime. Corvid modules compile to dylibs (or static libraries); loading a dylib registers its classes and metadata with the runtime.
+libobjc2 supports dylib loading at runtime. cxc modules compile to dylibs (or static libraries); loading a dylib registers its classes and metadata with the runtime.
 
 **Runtime plugin patterns work:**
 - `dlopen("plugin.dylib")` loads the plugin.
@@ -6887,11 +8283,15 @@ libobjc2 supports dylib loading at runtime. Corvid modules compile to dylibs (or
 
 ## 8. Concurrency
 
-Corvid does not commit to a single concurrency model. It provides coordination primitives (state machines via contracts, channels, signals, structured async) that support multiple threading and communication styles. Users pick per-task; the language ensures the coordination primitives compose safely.
+> **v1.0 supersession.** The v1.0 concurrency model is defined in §1.11 (atom substrate — concurrency subsection): actor-per-atom with cooperative work-stealing; sender-blocking and receiver-blocking as **independent axes** (all four combinations legal); `|>` = processing-sync ordering guarantee (sender's transition suspends until receiver's transition on this message fires, no reply value); `<|` = blocking consumer; `->` / `:>` = non-blocking. There is no separate "picks any of several concurrency models" story — atoms ARE the model, and every model this section names (actors, CSP, futures, pipelines) falls out as a composition pattern over atoms. §8 below (structured async / async_scope / spawn / await / Task<T>) describes a pre-atom-substrate design that did not survive; the `async` effect it centers on is superseded by `use:`-closure-as-effect (see §3.5 supersession + §1.12). Read §8 as historical unless you're looking for a specific behavior noted below.
+>
+> **What carries over from §8:** the general policy of not committing to a single scheduling regime (§8.1); the reader/writer classification concept (§8.4.1) — now re-expressed as which transitions read-only vs write-transition an atom's `data:` fields; the "one class owns shared state" argument (§8.4 note) — now trivially true because atoms are the sole state carriers.
+>
+> **What does not carry over:** `async_scope`, `spawn task`, `await task`, `Task<T>` handles, `async function` calling convention, the "concurrency primitives, not a model" framing (v1.0 IS an atom-substrate model, deliberately). The `async` effect is retired; async behavior lives in transitions and receive-glyph subscriptions.
 
 ### 8.1 Concurrency Primitives, Not a Model
 
-Traditional language design picks one concurrency model — actors (Erlang, Akka), CSP (Go, Clojure core.async), async futures (Rust, JavaScript), threads with locks (C++, Java) — and makes everything else awkward. Corvid rejects the premise. Different problems benefit from different models; a real system often uses several.
+Traditional language design picks one concurrency model — actors (Erlang, Akka), CSP (Go, Clojure core.async), async futures (Rust, JavaScript), threads with locks (C++, Java) — and makes everything else awkward. cxc rejects the premise. Different problems benefit from different models; a real system often uses several.
 
 The language provides:
 
@@ -7129,13 +8529,13 @@ The class-level `execution:` section acts as a default; the method-level overrid
 
 **Metadata inspectability.** `execution:` metadata is part of the class's compile-time metadata artifact (§4.18). Tooling can query "which classes require main thread" or "which methods have `qos: background`" without reading source.
 
-**`@main_actor` retired.** Prior drafts (pre-v0.8.6) referenced `@main_actor` as an annotation. `execution: thread: main` supersedes it. Same runtime behavior, consistent with Corvid's metadata-first declarative style.
+**`@main_actor` retired.** Prior drafts (pre-v0.8.6) referenced `@main_actor` as an annotation. `execution: thread: main` supersedes it. Same runtime behavior, consistent with cxc's metadata-first declarative style.
 
-#### 8.4.3 DispatchQueue in Corvid: What Dissolves, What Stays
+#### 8.4.3 DispatchQueue in cxc: What Dissolves, What Stays
 
-DispatchQueue in ObjC/Swift bundles several structurally-different jobs as one primitive. Under Corvid's model, each job maps to an existing or v0.8.6-added mechanism.
+DispatchQueue in ObjC/Swift bundles several structurally-different jobs as one primitive. Under cxc's model, each job maps to an existing or v0.8.6-added mechanism.
 
-| DispatchQueue role | Corvid mechanism |
+| DispatchQueue role | cxc mechanism |
 |---|---|
 | **Serial mutex for a class's state** | Contracts on `state:` fields (§1.9). Runtime serializes writer methods; readers concurrent (§8.4.1). No queue field, no `queue.async { }` boilerplate in user code. |
 | **Off-caller-thread scheduling** | `spawn { }` for fire-and-forget, `async_scope` for structured lifetimes (§8.3). |
@@ -7148,7 +8548,7 @@ DispatchQueue in ObjC/Swift bundles several structurally-different jobs as one p
 
 **When you truly need separate classes** — different lifecycles, independent reuse, distributed ownership — use channels (§8.6) to pipeline between them, and accept that the classes don't share invariants (only messages).
 
-**What Corvid gives up.** Cross-cutting queue-based coordination across pre-existing separate objects. ObjC codebases sometimes coordinate object A and object B via a shared external queue; Corvid says the coordination should be reified as a class (`AB_Coordinator`) that owns both. More design effort at the class-boundary decision; less coordination-scattering. Consistent with §1.6 legibility.
+**What cxc gives up.** Cross-cutting queue-based coordination across pre-existing separate objects. ObjC codebases sometimes coordinate object A and object B via a shared external queue; cxc says the coordination should be reified as a class (`AB_Coordinator`) that owns both. More design effort at the class-boundary decision; less coordination-scattering. Consistent with §1.6 legibility.
 
 ### 8.5 Sendable Types
 
@@ -7157,7 +8557,7 @@ Types that can safely cross task boundaries. Determined by shape, not annotation
 - **Value types** (struct, enumeration) — always Sendable. Copied on transfer.
 - **Class handles** — always Sendable. The extent lives globally; handles point into it. Access is coordinated by the extent's state machine.
 - **Function values** — Sendable if their captured environment is Sendable.
-- **Types with mutable global state** — not Sendable. Rarely encountered because Corvid has no true globals (module-level constants are immutable; module-level state doesn't exist).
+- **Types with mutable global state** — not Sendable. Rarely encountered because cxc has no true globals (module-level constants are immutable; module-level state doesn't exist).
 
 The runtime enforces Sendable at task boundaries. Attempting to pass a non-Sendable value into a spawned task raises a compile error (Stage 3+) or runtime error (Stage 1).
 
@@ -7391,12 +8791,12 @@ For dense-storage tags (§6.7), the runtime can vectorize simple parallel_for bo
 
 ### 8.9 ObjC Interop
 
-Objective-C's concurrency primitives (GCD, `NSOperation`, completion handlers) bridge to Corvid as follows:
+Objective-C's concurrency primitives (GCD, `NSOperation`, completion handlers) bridge to cxc as follows:
 
 **Dispatch queues → task executors:**
 
 ```
-main_queue = DispatchQueue.main  # Corvid-typed
+main_queue = DispatchQueue.main  # cxc-typed
 async function update_ui():
     await main_queue.run:
         # runs on main thread
@@ -7411,7 +8811,7 @@ ObjC methods with completion handlers are imported as `async` functions returnin
 # ObjC declaration:
 # - (void)fetchDataWithCompletion:(void (^)(NSData *, NSError *))completion;
 
-# Corvid usage:
+# cxc usage:
 switch await client.fetch_data():
     case .completed(let data): process(data)
     case .failed(let err):     handle(err)
@@ -7419,12 +8819,12 @@ switch await client.fetch_data():
 
 The compiler wraps completion-handler methods automatically. The second callback parameter (`NSError *`) becomes the `.failed` case of the enum; the first parameter becomes the `.completed` payload. Nil-in-both is mapped to a domain-specific case per import annotation, or defaults to `.completed(nil)` under nil-messaging (§3.6.1).
 
-**Corvid async methods exposed to ObjC:**
+**cxc async methods exposed to ObjC:**
 
-Auto-derivation (§9.3.3) exposes Corvid async methods to ObjC via completion-handler convention. A Corvid method returning a domain enum with a `.failed(NSError)`-shaped case is lowered to the two-parameter completion form:
+Auto-derivation (§9.3.3) exposes cxc async methods to ObjC via completion-handler convention. A cxc method returning a domain enum with a `.failed(NSError)`-shaped case is lowered to the two-parameter completion form:
 
 ```
-# Corvid:
+# cxc:
 async function process(order: Order) -> ProcessOutcome:
     # ProcessOutcome has .completed(Receipt), .failed(NSError), and other cases
 
@@ -7435,7 +8835,7 @@ async function process(order: Order) -> ProcessOutcome:
 
 **Main-thread affinity (v0.8.6):**
 
-UIKit/AppKit callbacks must run on the main thread. Corvid expresses this via the `execution:` section (§8.4.2) — class-level default with per-method override:
+UIKit/AppKit callbacks must run on the main thread. cxc expresses this via the `execution:` section (§8.4.2) — class-level default with per-method override:
 
 ```
 class ViewController:
@@ -7455,10 +8855,10 @@ Prior drafts (pre-v0.8.6) referenced `@main_actor` as an annotation. Retired; `e
 
 **Per-instance dispatch pool for ObjC callers (v0.8.6):**
 
-Corvid class instances expose a `dispatch_pool` property at the ObjC bridge. ObjC callers submit blocks via standard GCD APIs:
+cxc class instances expose a `dispatch_pool` property at the ObjC bridge. ObjC callers submit blocks via standard GCD APIs:
 
 ```
-// ObjC calling into a Corvid class:
+// ObjC calling into a cxc class:
 Order *order = /* ... */;
 dispatch_async(order.dispatch_pool, ^{
     [order processWithCompletion:^(Receipt *r, NSError *e) {
@@ -7467,7 +8867,7 @@ dispatch_async(order.dispatch_pool, ^{
 });
 ```
 
-The pool routes through the class's contract-guarded serialization (§8.4.1, §1.9) transparently. ObjC callers get Corvid's reader/writer concurrency guarantees without knowing anything about contracts. Instances declared `execution: thread: main` bind their `dispatch_pool` to the ObjC main queue directly — same address, same identity — so ObjC code that hardcodes `dispatch_get_main_queue()` continues to work.
+The pool routes through the class's contract-guarded serialization (§8.4.1, §1.9) transparently. ObjC callers get cxc's reader/writer concurrency guarantees without knowing anything about contracts. Instances declared `execution: thread: main` bind their `dispatch_pool` to the ObjC main queue directly — same address, same identity — so ObjC code that hardcodes `dispatch_get_main_queue()` continues to work.
 
 Instances declared `execution: pool: dedicated` get their own single-thread dispatch queue exposed as `dispatch_pool`; every ObjC call to the instance routes through that queue.
 
@@ -7488,21 +8888,21 @@ These non-goals bound the design and prevent scope creep into distributed-system
 ---
 ## 9. Interop
 
-Corvid's interop story is grounded in a specific compilation model: Corvid shares its runtime substrate (`libobjc2`) with Objective-C. Both languages produce the same class metadata, use the same method dispatch, and interoperate at the runtime level rather than through a bridge. This makes Objective-C interop **native** rather than mediated.
+cxc's interop story is grounded in a specific compilation model: cxc shares its runtime substrate (`libobjc2`) with Objective-C. Both languages produce the same class metadata, use the same method dispatch, and interoperate at the runtime level rather than through a bridge. This makes Objective-C interop **native** rather than mediated.
 
 ### 9.1 Compilation Model
 
-**Primary compilation target: LLVM IR.** The Corvid compiler produces LLVM IR that speaks the libobjc2 ABI directly. Object files are standard LLVM target format, compatible with any linker that handles Clang output.
+**Primary compilation target: LLVM IR.** The cxc compiler produces LLVM IR that speaks the libobjc2 ABI directly. Object files are standard LLVM target format, compatible with any linker that handles Clang output.
 
-**Alternative compilation target: Corvid → Objective-C source.** For bootstrap purposes and specific interop scenarios (debugging generated code, working with ObjC-only toolchains, platforms without LLVM), the compiler can emit `.m` files that any Objective-C compiler can process. This path is preserved as a permanent alternative output, not just a bootstrap artifact.
+**Alternative compilation target: cxc → Objective-C source.** For bootstrap purposes and specific interop scenarios (debugging generated code, working with ObjC-only toolchains, platforms without LLVM), the compiler can emit `.m` files that any Objective-C compiler can process. This path is preserved as a permanent alternative output, not just a bootstrap artifact.
 
-**No Clang fork.** Corvid's compiler is standalone. It reuses none of Clang's front-end code. It emits object files that the standard linker combines with output from Clang, GCC-ObjC, or any other libobjc2-compatible compiler.
+**No Clang fork.** cxc's compiler is standalone. It reuses none of Clang's front-end code. It emits object files that the standard linker combines with output from Clang, GCC-ObjC, or any other libobjc2-compatible compiler.
 
 **Rationale.** LLVM IR direct gives us maximum flexibility (not tied to Clang's evolution), acceptable engineering cost (libobjc2 ABI is well-documented and stable), and clean integration with the LLVM ecosystem (LTO across languages, standard debug info, shared object format). Forking Clang would couple us to Clang's release cycle and front-end assumptions permanently for no compensating benefit — we don't need Clang's ObjC codegen because we can emit libobjc2-compatible IR directly.
 
 ### 9.2 C Interop
 
-Direct via `import c "header.h"`. The compiler parses C headers, exposes declared types and functions to Corvid code.
+Direct via `import c "header.h"`. The compiler parses C headers, exposes declared types and functions to cxc code.
 
 ```
 import c "stdio.h"
@@ -7511,9 +8911,9 @@ function main():
     c.printf("hello\n")
 ```
 
-C types map to Corvid types via standard equivalences (`int` → `Int32`, `char *` → `String` or `RawPointer` depending on context, etc.). Full mapping table in the standard library documentation.
+C types map to cxc types via standard equivalences (`int` → `Int32`, `char *` → `String` or `RawPointer` depending on context, etc.). Full mapping table in the standard library documentation.
 
-**Layout primitives.** For C-interop layout queries — `struct` field offsets, natural type sizes, alignment requirements — Corvid provides three compile-time primitives:
+**Layout primitives.** For C-interop layout queries — `struct` field offsets, natural type sizes, alignment requirements — cxc provides three compile-time primitives:
 
 ```
 sizeof(T)              # Int — size in bytes under natural layout
@@ -7524,7 +8924,7 @@ offsetof(S, field)     # Int — byte offset of `field` within class/record `S`
 **Rules:**
 
 1. **Compile-time constants when possible.** For types whose layout is fully known at compile time (primitives, records, C-imported structs), these evaluate at build time. For types whose layout depends on runtime (e.g., generics not yet monomorphized), they evaluate at first use.
-2. **C-interop use only.** These primitives are not idiomatic in pure Corvid code — the memory model (§6) handles layout automatically. Use them at C boundaries: reading raw buffers, computing serialization sizes, pointer arithmetic in `unsafe:` blocks.
+2. **C-interop use only.** These primitives are not idiomatic in pure cxc code — the memory model (§6) handles layout automatically. Use them at C boundaries: reading raw buffers, computing serialization sizes, pointer arithmetic in `unsafe:` blocks.
 3. **`offsetof` only on record-like layouts.** Legal on `kind: record` classes and C-imported structs. Rejected on `kind: regular` (handle-based, no stable layout guarantee) and value types without fields.
 
 ### 9.3 Objective-C Interop
@@ -7548,15 +8948,15 @@ class MyViewController:
         self.table_view = UITableView()
 ```
 
-Objective-C classes are usable as Corvid classes. Method calls compile to the same `objc_msgSend` invocations Clang would emit. Subclassing an ObjC class produces a subclass the ObjC runtime treats as any other. Categories work uniformly. KVO works. Swizzling works.
+Objective-C classes are usable as cxc classes. Method calls compile to the same `objc_msgSend` invocations Clang would emit. Subclassing an ObjC class produces a subclass the ObjC runtime treats as any other. Categories work uniformly. KVO works. Swizzling works.
 
-**ObjC subclassing uses `metadata: extends:`** — body-form only per §3.4.5. This is the sole place Corvid supports class inheritance; pure Corvid classes use composition + protocol conformance. The body-form ceremony makes the exception look like an exception at every subclass declaration.
+**ObjC subclassing uses `metadata: extends:`** — body-form only per §3.4.5. This is the sole place cxc supports class inheritance; pure cxc classes use composition + protocol conformance. The body-form ceremony makes the exception look like an exception at every subclass declaration.
 
 #### 9.3.2 Type Boundary Rules
 
-Objective-C's type system is less precise than Corvid's. Values crossing the boundary follow these rules:
+Objective-C's type system is less precise than cxc's. Values crossing the boundary follow these rules:
 
-**`id` → `Any`.** ObjC APIs returning `id` come into Corvid as `Any`. Method calls on `Any` are runtime-dispatched:
+**`id` → `Any`.** ObjC APIs returning `id` come into cxc as `Any`. Method calls on `Any` are runtime-dispatched:
 
 ```
 result: Any = some_objc_api()
@@ -7570,9 +8970,9 @@ match result:
 
 Users destructure explicitly when concrete types are needed. `Any` is the honest representation of "the type system doesn't know."
 
-**`NSError **` ↔ domain enum with `.completed(T)` / `.failed(NSError)` cases.** ObjC's error out-param convention bridges to Corvid's failure-handling model (§3.5.4). ObjC methods declared with `NSError **` are imported as returning a per-method domain enum whose success case wraps the original return type and whose failure case carries the `NSError`. Corvid methods that return a domain enum containing a `.failed(NSError)`-shaped case are lowered to ObjC as `NSError **` out-param methods; other cases in the enum are lowered to `NSError` codes under a domain-specific error code assigned by the compiler. Users who need explicit ObjC signature control use `objc_exposed:` sections (§4.10.4.4).
+**`NSError **` ↔ domain enum with `.completed(T)` / `.failed(NSError)` cases.** ObjC's error out-param convention bridges to cxc's failure-handling model (§3.5.4). ObjC methods declared with `NSError **` are imported as returning a per-method domain enum whose success case wraps the original return type and whose failure case carries the `NSError`. cxc methods that return a domain enum containing a `.failed(NSError)`-shaped case are lowered to ObjC as `NSError **` out-param methods; other cases in the enum are lowered to `NSError` codes under a domain-specific error code assigned by the compiler. Users who need explicit ObjC signature control use `objc_exposed:` sections (§4.10.4.4).
 
-**Nullability round-trip.** ObjC nullability annotations map to Corvid reference-type annotations (§3.6.1): ObjC `nullable` → Corvid `T` (nil-allowed by default). ObjC `nonnull` → Corvid `T!` (non-nil contract, warns on runtime violation). Un-annotated ObjC types come into Corvid as `T` (nil-allowed) — the safe default that matches ObjC runtime truth without adding warning noise. Callers who want stricter contracts add `T!` at the Corvid call site.
+**Nullability round-trip.** ObjC nullability annotations map to cxc reference-type annotations (§3.6.1): ObjC `nullable` → cxc `T` (nil-allowed by default). ObjC `nonnull` → cxc `T!` (non-nil contract, warns on runtime violation). Un-annotated ObjC types come into cxc as `T` (nil-allowed) — the safe default that matches ObjC runtime truth without adding warning noise. Callers who want stricter contracts add `T!` at the cxc call site.
 
 **Type equivalences.** Standard mappings:
 - `NSInteger` = `Int`
@@ -7583,9 +8983,9 @@ Users destructure explicitly when concrete types are needed. `Any` is the honest
 - Blocks (`^returnType(paramTypes)`) = function types `(paramTypes) -> returnType`
 - `NSArray<T> *` = `[T]` (generics preserved where expressible)
 
-#### 9.3.3 Exposing Corvid to Objective-C
+#### 9.3.3 Exposing cxc to Objective-C
 
-Public Corvid APIs are **auto-derived** for Objective-C consumption. The compiler emits `-Corvid.h` files describing Corvid classes in Objective-C syntax, using the ObjC-expressible subset of the API.
+Public cxc APIs are **auto-derived** for Objective-C consumption. The compiler emits `-cxc.h` files describing cxc classes in Objective-C syntax, using the ObjC-expressible subset of the API.
 
 Auto-derivation rules:
 
@@ -7631,24 +9031,24 @@ The `objc_exposed:` section replaces auto-derivation for its enclosed methods, g
 
 ### 9.4 File-Level Mixing
 
-**Corvid and Objective-C files can coexist in the same project.**
+**cxc and Objective-C files can coexist in the same project.**
 
 Build system integration:
 - `.m` files compile via any Objective-C toolchain (typically Clang).
-- `.cor` files compile via the Corvid compiler.
+- `.cor` files compile via the cxc compiler.
 - Both produce libobjc2-compatible object files.
 - Standard linker combines them.
 - Runtime is shared (`libobjc2`); all interop happens through the runtime.
 
 Cross-file references:
 - `.cor` files `import objc "path/to/header.h"` to consume ObjC classes.
-- `.m` files `#import "path/to/-Corvid.h"` to consume Corvid classes (auto-generated header).
+- `.m` files `#import "path/to/-cxc.h"` to consume cxc classes (auto-generated header).
 - No bridging headers, no thunks, no ABI translation.
 
 **Runtime transparency:**
-- ObjC categories added to Corvid classes: work.
-- Corvid extensions of ObjC classes (via `extend class NSFoo:` — §3.3.2): work.
-- ObjC KVO on Corvid fields: works.
+- ObjC categories added to cxc classes: work.
+- cxc extensions of ObjC classes (via `extend class NSFoo:` — §3.3.2): work.
+- ObjC KVO on cxc fields: works.
 - Swizzling across the language boundary: works.
 - Subclassing across the boundary (either direction): works.
 
@@ -7658,12 +9058,12 @@ The runtime does not distinguish between the languages. Both produce the same cl
 
 Via C ABI bridge, similar to how Objective-C interops with Swift. Not first-class in v0.1.
 
-Swift/Corvid interop is bounded by Swift's own ABI stability and the C ABI's expressiveness. Where Swift and Corvid share ObjC as a substrate (both descend from `NSObject`, both use `@objc` machinery), interop is straightforward. Beyond that (pure Swift structs, Swift generics, Swift protocols with associated types), no direct interop is planned.
+Swift/cxc interop is bounded by Swift's own ABI stability and the C ABI's expressiveness. Where Swift and cxc share ObjC as a substrate (both descend from `NSObject`, both use `@objc` machinery), interop is straightforward. Beyond that (pure Swift structs, Swift generics, Swift protocols with associated types), no direct interop is planned.
 
 ### 9.6 Migration Paths
 
-**Adding Corvid to a legacy ObjC project:**
-1. Install Corvid compiler alongside existing ObjC toolchain.
+**Adding cxc to a legacy ObjC project:**
+1. Install cxc compiler alongside existing ObjC toolchain.
 2. Add `.cor` files to the project. They can import and be imported by existing ObjC code.
 3. Optionally translate specific `.m` files to `.cor` using the translation tool (§12).
 4. Existing `.m` files remain unchanged.
@@ -7674,13 +9074,13 @@ Swift/Corvid interop is bounded by Swift's own ABI stability and the C ABI's exp
 3. Framework classes are usable directly. No wrappers needed.
 4. Final binary links `libobjc2` and framework binaries.
 
-**Full migration from ObjC to Corvid:**
+**Full migration from ObjC to cxc:**
 1. Run translation tool on all `.m` files.
 2. Review generated `.cor` files. Translator handles mechanical bits (syntax, headers merging, `@property` to field declarations); users refine (which fields become `data:` vs `state:`, which methods should carry contracts, which declarations to `expose`).
 3. Delete original `.m` files when translations are validated.
-4. Codebase is now pure Corvid.
+4. Codebase is now pure cxc.
 
-None of these paths require rewriting existing code. Corvid adoption is additive.
+None of these paths require rewriting existing code. cxc adoption is additive.
 
 ---
 
@@ -8050,6 +9450,397 @@ user_alias_decl     := '@' identifier identifier ':' INDENT class_member* DEDENT
 # inside a string_literal_raw. Prelude interpolation uses '$'; user interpolation uses '@'.
 ```
 
+**v1.0 grammar additions (targeting v0.12+; grace period through v0.15).** The following productions extend the bootstrap grammar to support the atom-substrate surface syntax committed in §1.11 and §1.12. Current-v0.11 productions (`class_decl`, `method_decl` with `function`, `Type<T>`, on-handler syntax) remain valid through the grace period; the parser accepts both and canonicalizes to the v1.0 shapes at AST layer.
+
+```
+# ---- Atom declaration (v1.0 canonical; supersedes class_decl/function_decl) ----
+# `def` is the sole declaration keyword. `class`, `record`, `enum`, `protocol`,
+# `program` become prelude alias declarations desugaring to `def` shapes with
+# specific section presence (see §1.11 reduction table).
+
+def_decl := 'expose'? 'extend'? 'def' identifier
+            ( '(' constructor_param_list ')' )?         # constructor params (optional)
+            ( ':' channel_signature )?                   # inline channel signature for operator atoms
+            where_clause?
+            ( ':' INDENT def_member* DEDENT )?          # body (optional if forward-declaration)
+          # Body may be omitted for protocol-shape atoms (signature-only).
+
+constructor_param_list := parameter (',' parameter)*
+                        # Each param becomes an implicit data-field of the same
+                        # name and type, initialized from the argument at construction.
+                        # `def File(path: Path):` desugars to
+                        # `def File: data: path: Path` plus an auto-synthesized
+                        # constructor. Explicit `constructor:` section (in the body)
+                        # provides custom construction logic when auto-synthesis is insufficient.
+
+# Channel signature — appears at the position that in v0.11 would be a `->` return type.
+# Format: `input_shape -> output_shape` where each is either a bare type, a tuple type,
+# or a named tuple (for multi-channel).
+channel_signature := type_ref '->' output_shape
+output_shape      := type_ref
+                   | '(' named_channel (',' named_channel)* ')'    # named tuple for multi-channel
+named_channel     := identifier ':' type_ref
+
+# ---- Atom-body members (six core sections + two optional) ----
+def_member := use_section
+            | data_section
+            | observables_section
+            | invariants_section
+            | metadata_section
+            | constructor_section          # optional; auto-synthesized when omitted
+            | conforms_section             # optional; compiler warns on likely-match if omitted
+            | handler_decl                 # all handlers exposed by default
+            | transition_decl              # v1.0: `<from> <: <msg>{args} -> <to>` (see §1.11)
+            | wildcard_enter_decl          # v1.0: `-> <phase>` on-enter (see §1.11)
+            | wildcard_exit_decl           # v1.0: `<phase> ->` on-exit  (see §1.11)
+            | observable_decl              # v1.0: `<name> :< <source>` at atom-body top
+            # RETIRED: standing_wire_decl (2026-08-12) — no top-level `|>`.
+            # All subscriptions are receive-glyph transitions; source expression
+            # may compose transformers via `|>` (see receive_source below).
+            | nested_def_decl
+            | method_decl                  # legacy v0.11 form; grace period
+
+# ---- Retired atom-body members ----
+# `extern_section` — RETIRED at v1.0. FFI is the `Extern` capability atom (see §1.12).
+#     Shim atoms request it in `use:`; the runtime provisions it only to stdlib shims.
+#     Foreign symbol declarations moved to prelude-only `foreign_library_block` (below).
+# `state_section` — RETIRED at v1.0. All fields are `data:`; mutability is expressed via
+#     transitions. See §1.11.
+
+# ---- Sections that appear in `def` bodies ----
+use_section        := 'use' ':' INDENT use_entry+ DEDENT
+use_entry          := identifier ':' type_ref                        # shape-only: inherit from parent env
+                   | identifier ':' expr                              # construction/expression: local binding
+                                                                       # (source expression tells origin — see §1.12)
+
+data_section        := 'data' ':' INDENT field_decl+ DEDENT           # per-instance fields; mutability via transitions
+observables_section := 'observables' ':' INDENT observable_decl+ DEDENT
+invariants_section  := 'invariants' ':' INDENT expr+ DEDENT           # bare field names in scope
+conforms_section    := 'conforms' ':' INDENT type_ref+ DEDENT         # OPTIONAL: capability shapes this atom implements
+                                                                       # (structural conformance works without; compiler
+                                                                       #  emits a suggest-declaration warning on likely-match)
+constructor_section := 'constructor' ':' INDENT statement* DEDENT     # OPTIONAL: custom construction logic
+                                                                       # (auto-synthesized from `data:` fields + constructor
+                                                                       #  params when omitted)
+
+# ---- Handlers (all exposed by default — no entrypoints:/wires: sections) ----
+handler_decl := '->' identifier ('(' parameter_list ')')? ('->' type_ref)?
+                contract_clause?
+                ':' INDENT statement* DEDENT                          # multi-line body only
+                # RETIRED one-liner body forms (2026-08-12):
+                #   `-> handler |> wire_expr`  — free-standing wires are retired.
+                #   `-> handler ~> wire_expr`  — `~>` glyph is retired.
+                # Express side-effect handlers with multi-line body; express
+                # subscriptions as receive-glyph transitions.
+              # At line-start inside a def body. Parser distinguishes from
+              # return-type `->` (which appears between `)` and a type_ref, before `:`).
+              # RETIRED lifecycle names: `enter`, `leave`, `before_destroy` — replaced by
+              # the universal implicit phases `init` (constructor) and `end` (deconstructor).
+              # Instantiation fires the implicit `init -> <first-mentioned target phase>`
+              # transition; deconstruction runs when any transition targets `end`. Use
+              # wildcard on-enter (`-> <first phase>`) for construction-time setup and
+              # `<phase> -> end` transitions with `do:` blocks for pre-destruction cleanup.
+              # `-> handler:` remains reserved for side-effect-only handlers (no state change)
+              # and is distinct from transition_decl / wildcard_enter_decl.
+              # Handlers are automatically exposed as part of the atom's public interface;
+              # external callers, internal wires, and any message sender reach them the same way.
+
+# ---- Transitions (immutable FSM; pure state → new-state functions) ----
+# Every transition is `state → message → new_state`. State updates happen through
+# the target-constructor header and the optional `then:` block. No assignment,
+# no mutation. See §1.11 for full semantics.
+
+transition_decl :=
+    phase_pattern transition_trigger? '->' phase_target
+    ( inline_transition_body                                           # compact single-line form
+    | block_transition_body                                            # block form with sub-blocks
+    )
+
+transition_trigger :=                                                  # optional receive-glyph header;
+    receive_glyph receive_source message_args                          # if omitted, transition is triggered
+                                                                       # only by `when:` in the body (state/time)
+receive_glyph      := '<:'                                             # async receive — non-blocking pickup
+                    | '<:' channel_modifier                            # optional per-site channel semantic
+                    | '<|'                                             # sync receive — transition parks on msg
+                    | '<|' channel_modifier                            # (rare; usually bare)
+                                                                       # Both receive glyphs are legal with either
+                                                                       # sender glyph (`:>` or `|>`); sender-blocking
+                                                                       # and receiver-blocking are independent axes.
+                                                                       # See §1.11 send/receive semantics.
+
+# ---- Receive source expression (v1.0; supports inline transformer chains) ----
+# The source can be a bare message name (self-mailbox), a qualified path (sub-atom
+# emission, capability emission), or a stream expression composed with `|>`.
+# Each `|> Transformer{args}` in the chain is an anonymous sub-atom whose lifecycle
+# is bound to the enclosing phase — set up on phase entry, cascaded to `end` on
+# phase exit, fresh state on re-entry. See §1.11 stream-composition section.
+
+receive_source     := stream_source ('|>' transformer_expr)*           # source, optionally followed by transformers
+stream_source      := identifier                                       # self-mailbox message name
+                    | qualified_name                                   # `subatom.event_name` (sub-atom emission)
+                                                                       #   or `capability.event_name` (capability emission)
+                                                                       #   or `handle.event_name` (extern stream, etc.)
+transformer_expr   := identifier                                       # bare transformer (no args): `|> DistinctUntilChanged`
+                    | identifier '{' constructor_args '}'              # transformer with args: `|> Debounce{duration: 200ms}`
+constructor_args   := arg_binding_value (',' arg_binding_value)*
+arg_binding_value  := identifier ':' expr                              # `duration: 200ms`
+
+channel_modifier   := 'fifo' '(' 'cap' ':' int_literal ')'             # bounded FIFO buffer
+                    | 'priority'                                       # priority-ordered queue
+                    | 'sliding' '(' 'cap' ':' int_literal ')'          # sliding window drop-oldest
+                    | 'unbounded'                                      # unbounded FIFO (explicit opt-in)
+message_args       := '{' '}'                                          # zero args
+                    | '{' arg_binding (',' arg_binding)* '}'           # args block — describes shape at receive point
+                                                                       # (after all transformers, if any).
+                                                                       # REQUIRED — no elision from source signature.
+arg_binding        := identifier ':' type_ref                          # `target: Position` — declares field/type;
+                                                                       #   binds a local name usable in when:/let:/
+                                                                       #   then:/do: as the received value.
+
+phase_pattern := identifier                                            # nested state atom name OR enum case name
+               | identifier ':' identifier                             # `field: case` — disambiguate when
+                                                                       # multiple fields have the same enum type
+               | 'self'                                                # self-transition on the compound
+
+phase_target  := identifier                                            # bare name (state atom or enum case)
+               | 'self'                                                # self-transition target (no phase change)
+               | 'end'                                                 # universal terminal — deconstructor runs
+               | identifier '(' arg_list ')'                           # CONSTRUCTOR CALL — rare; legal only when
+                                                                       # target has required constructor params
+                                                                       # with no defaults that cannot carry forward
+                                                                       # from source. Common case: no args; put
+                                                                       # field values in the `then:` sub-block.
+
+# ---- Wildcard on-enter / on-exit (special sub-forms of transition_decl) ----
+# A transition with wildcard SOURCE (no `phase_pattern` before the glyph/arrow) matches
+# every transition INTO `<target>`, including the implicit init transition. A transition
+# with wildcard TARGET matches every transition OUT of `<source>`. Both use the same body
+# grammar as transition_decl.
+
+wildcard_enter_decl := '->' phase_target block_transition_body        # `-> <phase>` matches any entry
+wildcard_exit_decl  := phase_pattern '->' block_transition_body       # `<phase> ->` matches any exit
+                                                                       # (body may include `then:` for compound-
+                                                                       # scope writes on exit; NOT for state
+                                                                       # atom fields — those are being discarded)
+
+# Ordering when both a specific transition and a wildcard on-enter match the same event:
+#   1. Wildcard on-exit for source phase (if present) runs `then:` first
+#   2. Wildcard on-enter for target phase (if present) runs `then:` next
+#   3. Specific transition runs `then:` last — SPECIFIC WINS on field conflicts
+#   4. All `do:` blocks fire in the same order after `then:` blocks settle
+
+# ---- Universal implicit phases ----
+# `init` and `end` are reserved phase names, implicit on every atom.
+# `init` — appears only as the source of an implicit transition to the first-mentioned
+#   target phase. Users write wildcard on-enter for that phase to catch construction.
+#   Explicit `init -> <phase>` form is legal for clarity when the initial phase choice
+#   is ambiguous (multiple wildcard on-enters could plausibly claim init).
+# `end`  — appears only as target. Any transition into `end` deconstructs the atom.
+#   `end` transitions may have `when:` and `do:` but NOT `then:` (state is discarded).
+#   Compiler enforces: `then:` sub-block in an `-> end` transition is an error.
+
+# Compact form: `<from> <: <msg>{args} -> <to>` — sugar for block with only receive-glyph
+# header (no additional when:/then:/do: body). Whitespace-flexible: source+trigger may be
+# on one or two lines. Also: `<from> -> <to> when <guard>` — sugar for block with only
+# `when:` populated (no receive glyph; state/time-triggered).
+inline_transition_body :=
+    'when' expr                                                        # trailing single-expression guard
+    |                                                                  # empty — receive glyph in header is the trigger
+
+# Block form: sub-blocks are all optional; must appear in the order shown below.
+block_transition_body :=
+    when_subblock
+    let_subblock?
+    then_subblock?
+    do_subblock?
+
+when_subblock := 'when' ':' ( expr                                     # single-line: `when: msg(x) and cond`
+                            | INDENT expr+ DEDENT )                    # multi-line block
+
+let_subblock  := 'let'  ':' ( named_binding                            # single-line: `let: new_health: max(...)`
+                            | INDENT named_binding+ DEDENT )
+named_binding := identifier ':' expr                                   # name-to-expr binding (pure)
+
+then_subblock := 'then' ':' ( field_update                             # single-line: `then: y => clamp(...)`
+                            | INDENT field_update+ DEDENT )
+field_update  := field_path '=>' expr                                  # `field => expression` — reads as
+                                                                       # "field becomes expression"; functional
+                                                                       # update with carry-forward for unlisted
+                                                                       # fields. `=>` retains its lambda meaning
+                                                                       # in expression position; inside `then:` at
+                                                                       # line-start, `field_path '=>' expr` is
+                                                                       # unambiguously a field update.
+
+field_path    := identifier                                            # unqualified: resolves lexically —
+                                                                       #   target state atom's data fields first,
+                                                                       #   compound's data fields second.
+                                                                       #   Ambiguity (same name in both scopes) →
+                                                                       #   compile error; use explicit path.
+                                                                       #   Unknown name → compile error.
+              | qualified_name                                         # explicit: `Player.last_cast_at`,
+                                                                       #   `firing_fireball.mana` — use to
+                                                                       #   disambiguate or for reader clarity.
+
+# Shadowing: adding a field to a state atom that shadows a compound-scope field
+# with the same name silently changes resolution of unqualified refs in `then:`.
+# Compiler warns on the declaration site; users add explicit path or rename.
+
+do_subblock   := 'do'   ':' ( statement                                # single-line: `do: :> event`
+                            | INDENT statement+ DEDENT )
+                                                                       # side effects only: emit_stmt, one-shot
+                                                                       # `|>` subscriptions, external method calls.
+                                                                       # No field updates, no assignment.
+
+# Enum-valued phase transitions.
+# When `<from>` and `<to>` are enum cases (not state atoms), the compiler compiles
+# `idle -> up` as `self -> self(<field>: up)` where `<field>` is the sole data field
+# of the enum's type. If multiple fields share the enum type, prefix required:
+# `direction: idle -> up`. See §1.11 for disambiguation rules.
+
+# ---- Observables ----
+observable_decl := identifier ':<' expr                                # `name :< source_expression`
+
+# ---- Emit statements (inside transition `do:` blocks or side-effect handler bodies) ----
+emit_stmt := ':>' expr                                                 # `:> value` — default channel
+           | ':>' identifier '(' expr ')'                              # `:> channel_name(value)` — named channel
+           | ':>' identifier '(' named_arg (',' named_arg)* ')'        # named-args form: `:> event(x: 1, y: 2)`
+named_arg := identifier ':' expr
+
+# ---- `|>` grammar productions (v1.0; retired forms noted) ----
+# `|>` has two positions in v1.0:
+#   1. Inside a receive-glyph source expression → stream composition (see receive_source).
+#   2. Inside a `do:` block or handler body → sync send: `atom |> msg(args)`.
+sync_send_stmt := atom_ref '|>' identifier '(' arg_list? ')'          # `player |> notify(msg: text)`
+                                                                       # Sender's transition suspends until processing
+                                                                       # sync — receiver's transition on this message
+                                                                       # has fired. Legal in `do:` blocks and handler
+                                                                       # bodies. See §1.11 concurrency model.
+# RETIRED productions (2026-08-12):
+#   wire_expr (free-standing wire) — no more `expr |> target` at atom-body top-level.
+#     Migrate to a receive-glyph transition (`<phase> <: expr {args} -> <phase> do: target(args)`)
+#     or a receive-glyph with inline transformer chain (see receive_source).
+#   Time-deferred `~>` chain — glyph retired entirely. Time-shaped behavior is either
+#     `when: clock.after(deadline)` on the transition, or a `Delay`/`Throttle` transformer
+#     inside a receive-glyph source expression.
+
+# ---- Nested def (compound atoms contain nested atoms) ----
+nested_def_decl := def_decl                                            # def can nest inside def:
+                                                                       # - state atoms (nested state-machine states)
+                                                                       # - nested capability atoms (child components)
+                | identifier '=' expr                                  # named nested instance: `def player = Player()`
+
+# Auto-delegation semantics for compound atoms with nested state atoms:
+# - Message dispatch on the compound checks the compound's own handlers first;
+# - if no match, dispatches to the currently-active nested state atom's handlers;
+# - if neither has it, runtime error ("no handler `<name>` on `<atom>` (active state: `<name>`)").
+
+# ---- Type expressions (v1.0 canonical: `of` qualifier) ----
+type := qualified_name
+      | qualified_name 'of' type_arg
+      | '(' type (',' type)* ')'                                       # anonymous tuple
+      | '(' named_type_field (',' named_type_field)* ')'               # named tuple (multi-channel output)
+
+type_arg := type
+          | '(' type (',' type)* ')'                                   # multi-arg: `Map of (K, V)`
+
+named_type_field := identifier ':' type
+
+# Case convention for `of` argument:
+#   TitleCase identifier → concrete type reference (`Stream of Bytes`)
+#   lowercase identifier → shape variable, bound in enclosing signature scope
+#                          by first-mention (see §1.11 shape-variable rule)
+
+# ---- where clause (v1.0 extended for shape-variable constraints) ----
+where_clause := 'where' where_atom (',' where_atom)*
+where_atom   := identifier 'conforms' identifier                       # `s conforms Hashable`
+              | identifier '==' type                                    # `r == s` (shape equality)
+              | expr                                                    # arbitrary predicate expression
+                                                                        # (e.g., `s.element_size <= 64`)
+
+# ---- Prelude-only productions (parser rejects outside prelude/ files) ----
+foreign_library_block := 'foreign' 'library' string_literal ':' INDENT
+                             foreign_symbol_decl+
+                         DEDENT
+foreign_symbol_decl   := 'symbol' string_literal ':' type_expression
+
+# `type_expression` in a `foreign_symbol_decl` is either a function type or a
+# `Stream of T`; direction is inferred from that shape (see §1.14):
+#   (Args) -> Ret  → outbound (cxc invokes; native provides impl)
+#   Stream of T    → inbound (native invokes via runtime; cxc subscribes)
+# Callback-with-return shapes are unsupported in v1.0.
+#
+# `foreign`, `library`, `symbol` are keywords only inside this production; parser
+# rejects `foreign library` and `symbol` outside files under `prelude/`.
+
+# ---- FFI type set (referenced by foreign_symbol_decl type_expression) ----
+ffi_type := 'CString' | 'Int8' | 'Int16' | 'Int32' | 'Int64'
+          | 'UInt8' | 'UInt16' | 'UInt32' | 'UInt64'
+          | 'Float32' | 'Float64'
+          | 'SizeT' | 'SsizeT'
+          | 'Ptr' 'of' ffi_type
+          | 'Unit'
+          | 'Instant' | 'Duration'                                     # opaque prelude types marshallable at boundary
+          | identifier                                                  # user-declared FFI-safe type alias
+
+# ---- Retirements at v1.0 (grace period through v0.15) ----
+# `function` keyword → replaced by `def` for the trivial atom shape.
+# `on <event>:` handler prefix → replaced by `-> <event>:`.
+# `emit(value)` call form → replaced by `:> value` (with `:> name(value)` for named).
+# `Type<T>` generic-arg brackets → replaced by `Type of T` qualifier.
+# `after N -> handler` time sugar → retired; express delayed dispatch as a
+#     time-guarded transition (`<phase> when: clock.after(deadline) -> <target>`)
+#     or a Delay/Throttle transformer in a receive-glyph source expression.
+# `->` in wire composition → retired; `|>` composes streams inside receive-glyph
+#     source expressions (see receive_source).
+# `~>` glyph → retired (2026-08-12); time-shaped behavior is a time-guarded
+#     transition or a Delay/Throttle transformer.
+# Top-level `expr |> target` (standing wire) → retired (2026-08-12); express as
+#     a receive-glyph transition. See "Wire composition" retirements above.
+# `provide:` section → never committed; `use:` unified handles both roles.
+# `channels:` section → never committed; named tuple return type is authoritative.
+# `extern_section` production → retired; FFI moved to `Extern` capability atom (see
+#     §1.12) + prelude-only `foreign_library_block` (above). `extern` retired as a
+#     keyword; `Extern` (PascalCase) is a regular identifier for the capability atom.
+# `state_section` production → retired; all fields are `data:` (see §1.11).
+# Assignment inside transition bodies (`=`, `+=`, `-=`, `*=`, `/=`, `%=`) → retired
+#     at the immutable-FSM sharpening (see §1.11). Field updates happen exclusively
+#     through the `then_subblock` of a `transition_decl`. `do_subblock` contains only
+#     side effects (emit_stmt, sync_send_stmt, external calls). Assignment
+#     operators on `data:` fields are a syntax error at every scope — atom-body top
+#     level, handler bodies, transition bodies, everywhere. There is no general
+#     mutation in the language.
+# Constructor args on transition targets — retired for the common case at the
+#     unified-then sharpening (see §1.11). Field values for both target-scope and
+#     compound-scope live in the `then_subblock` with lexical name resolution
+#     (target scope first, compound scope second). Explicit path (`Compound.field`,
+#     `state_atom.field`) available for disambiguation. Constructor args on the
+#     target header remain legal only when the target has required constructor
+#     params with no defaults that cannot carry forward from source (rare).
+
+# ---- Additional retirements from post-consolidation audit (2026-08-12) ----
+# `entrypoints:` section → retired; all `-> handler:` declarations are exposed by default.
+#     No conceptual distinction between "external entrypoint" and "internal handler" —
+#     handlers are channels that receive messages; who sends is composition context.
+# `wires:` section → retired; there are no free-standing wires. Subscriptions
+#     live in receive-glyph transitions; stream composition is `|>` inside the
+#     receive-glyph source expression.
+# `handlers:` section (as a grouping container) → retired; `-> handler:` prefix
+#     syntax IS the handler declaration.
+# `active` pronoun → retired; `self` is the sole atom-self reference.
+#     Compound atoms auto-delegate to the currently-active nested state atom's
+#     method table (see auto-delegation semantics above).
+# `Future<T>` / `Signal<T>` as distinct type constructors → retired.
+#     `Stream of T` is the sole channel primitive; `Future of T` and `Signal of T`
+#     are prelude aliases for `Stream of T where emits <= 1` / `where emits == 1`.
+# `conforms:` as required section → made optional. Structural conformance works
+#     without the declaration; compiler warns on likely-match to suggest the
+#     declaration for documentation. Explicit declaration remains legal.
+# Constructor params as distinct from data fields → unified.
+#     `def File(path: Path):` is sugar for `def File: data: path: Path` plus an
+#     auto-synthesized constructor. Explicit `constructor:` section remains legal
+#     when custom construction logic is needed.
+```
+
 **Retired in v0.8.5** (v0.8.4 → v0.8.5): `throws` removed from `effect_clause`. `throw` removed from `guard` / `guard let` exit-verb list (exits: `return` / `break` / `continue` / `panic`). No `try_expr` / `catch_clause` / `finally_clause` productions added. No `Result<T, E>` in prelude. Failure expressed via return type (§3.5.4).
 
 **Added in v0.8.4** (v0.8.3 → v0.8.4): `leading_dot_expr` production. `.name` and `.name(args)` resolve to `<InferredType>.name` in target-typed contexts (§3.7.2). Nested type declarations remain unsupported (§3.3.1); types associated with a class use `<ClassName><Role>` naming convention at module scope.
@@ -8291,20 +10082,20 @@ section class Channel:
 
 **Answer:** New language with **file-level compatibility**, backed by shared runtime substrate and a translation tool.
 
-The intent-not-authority principle makes deep interop clean. Objective-C's runtime semantics are already fully dynamic; Corvid's are also fully dynamic. Both languages target the same runtime (`libobjc2`), produce the same class metadata, and share the same dispatch mechanism. There is no bridge layer.
+The intent-not-authority principle makes deep interop clean. Objective-C's runtime semantics are already fully dynamic; cxc's are also fully dynamic. Both languages target the same runtime (`libobjc2`), produce the same class metadata, and share the same dispatch mechanism. There is no bridge layer.
 
 **Practical shape:**
 
 - **Same project, mixed files.** `.m` and `.cor` files coexist. Each is compiled by the appropriate toolchain; both produce libobjc2-compatible object files; the standard linker combines them.
 - **No runtime translation cost.** Cross-language calls are just runtime method dispatch. There is no boxing, no unboxing, no type marshalling, no ABI bridging.
-- **Auto-generated headers.** Corvid classes are exposed to ObjC via auto-generated `-Corvid.h` files. Public APIs are visible to ObjC consumers automatically, with warnings when features don't round-trip.
+- **Auto-generated headers.** cxc classes are exposed to ObjC via auto-generated `-cxc.h` files. Public APIs are visible to ObjC consumers automatically, with warnings when features don't round-trip.
 - **Translation tool available.** Users who want to convert `.m` to `.cor` run a translator that handles the mechanical work. Not required for adoption.
 
 **Rejected alternatives:**
 
 - **Full source-level superset of Objective-C.** Would preserve `[[NSMutableArray alloc] init]`, `@interface`/`@implementation` split, header files, and `@property` storage-attribute soup. Constrains syntax irreversibly.
-- **Corvid → ObjC source as the primary compilation strategy.** Used as bootstrap and alternative output path but not primary; LLVM IR direct is the production target.
-- **Corvid → ObjC downgrade for library consumers without Corvid compiler.** Would let ObjC consumers use libraries written in Corvid without adopting the compiler, but creates ecosystem fragmentation and disincentivizes adoption. Libraries requiring Corvid features require the Corvid compiler.
+- **cxc → ObjC source as the primary compilation strategy.** Used as bootstrap and alternative output path but not primary; LLVM IR direct is the production target.
+- **cxc → ObjC downgrade for library consumers without cxc compiler.** Would let ObjC consumers use libraries written in cxc without adopting the compiler, but creates ecosystem fragmentation and disincentivizes adoption. Libraries requiring cxc features require the cxc compiler.
 
 **Section-mediated translation.** The translation tool has non-trivial semantic decisions to make when converting `.m` files:
 
@@ -8316,7 +10107,7 @@ The intent-not-authority principle makes deep interop clean. Objective-C's runti
 - **Nullability.** Preserved where annotated; warned where implicit.
 - **Method families (`init`, `copy`, `mutableCopy`).** Translated to constructor and copy protocols where possible.
 
-The translator produces output that compiles cleanly under the Corvid compiler but is not necessarily idiomatic. Users review and refine — typically moving stable-identity fields from `state:` to `data:`, adding contracts to methods, marking the module's stable interface with `expose`.
+The translator produces output that compiles cleanly under the cxc compiler but is not necessarily idiomatic. Users review and refine — typically moving stable-identity fields from `state:` to `data:`, adding contracts to methods, marking the module's stable interface with `expose`.
 
 ---
 
@@ -8361,23 +10152,23 @@ The translator produces output that compiles cleanly under the Corvid compiler b
 
 The language ships usable at each stage. Programs written for earlier stages benefit from later stages without source changes.
 
-### Stage 0 (Bootstrap) — Corvid → Objective-C Source
+### Stage 0 (Bootstrap) — cxc → Objective-C Source
 - Compiler is written in Objective-C, produces `.m` files from `.cor` input.
 - No LLVM IR generation yet.
 - Sections implemented for the class-body-only subset. Primitives, aliases, and stage-1 behavioral sections.
 - Output `.m` files are ugly but semantically correct. Users compile them with Clang for actual execution.
-- Purpose: bootstrap a working compiler quickly so we can write the production compiler in Corvid itself.
+- Purpose: bootstrap a working compiler quickly so we can write the production compiler in cxc itself.
 - Not shipped as a production tool. Alternative output path preserved permanently (for debugging, ObjC-only-toolchain environments).
 - Estimated engineering: 3-6 months for a small team.
 
 ### Stage 1 (v0.1) — All Dynamic, LLVM IR Direct, Incremental with LSP
-- Compiler is rewritten in Corvid using the Stage 0 bootstrap.
+- Compiler is rewritten in cxc using the Stage 0 bootstrap.
 - **Architecturally incremental** — holds state between invocations, supports language-server mode as first-class operation (not a Stage 2+ afterthought).
 - Compiler produces LLVM IR that speaks libobjc2 ABI directly.
 - Compiler emits **class metadata artifacts** alongside object files (§4.18). Both the runtime metadata format and AI-manifest JSON export.
 - **LSP server** shipped as part of the compiler. VS Code, Zed, Neovim, Xcode, JetBrains all get support via LSP client.
 - All methods compile to message sends by default. The compiler devirtualizes automatically where safe (§5.2).
-- Runtime uses `libobjc2` unmodified plus a small Corvid-metadata wrapper layer.
+- Runtime uses `libobjc2` unmodified plus a small cxc-metadata wrapper layer.
 - Built-in **primitive sections**: `Runtime`, `Compile_time`, `Immutable`, `Mutable`, `Expose`, `Weak`, `Unowned`, `Identity`, `Coordination`. All inline-composable. (Removed from earlier drafts: `Public`, `Private`, `Package`, `Sealed`, `Dynamic` — see §1.2, §5, §7.7.)
 - Built-in **aliases**: `data`, `state`, `static`, `methods`. Language-provided; user aliases also supported at module level.
 - Built-in **behavioral sections**: `Computed`, `Deprecated`, `Category`, `ObjC_Exposed`, `With`, `Channel`, `Signal`, `Package`. Class-body scope for most; `Package` at source-file-top and module-body scope.

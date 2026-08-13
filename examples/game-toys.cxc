@@ -1,0 +1,461 @@
+module com.example.game_toys
+
+# =============================================================================
+# game-toys.cxc — toy game atoms under the sub-atom-state-machine model
+# =============================================================================
+#
+# cxc is a close-to-immutable OOP language built on the atom substrate.
+# Every transition is a pure function `state → message → new_state`. Every
+# field write happens inside a transition's `then:` block. There is no
+# mutation anywhere else in the language.
+#
+# ── Universal implicit phases ───────────────────────────────────────────────
+#
+# Every atom has two implicit phases the user never declares:
+#
+#   init — constructor. Fires on instantiation; the implicit transition
+#          `init -> [first-mentioned target phase]` runs, populating fields
+#          via its `then:` block.
+#   end  — deconstructor. When any transition targets `end`, the atom's
+#          `do:` block runs (if any), the atom is destroyed, and any slot
+#          holding it auto-nils.
+#
+# Phases are collected from transition arrows — no empty `def phase`
+# declarations. Only write `def phase:` if the phase carries genuinely
+# distinct shape (rare; usually a sub-atom slot handles this).
+#
+# ── Send / receive glyphs ───────────────────────────────────────────────────
+#
+# Sender-side (inside `do:` blocks):
+#
+#   :>   emit async — fire and forget; sender's transition continues
+#   |>   emit sync  — sender's transition suspends until processing sync
+#                     (receiver's transition on this message has fired).
+#                     Pure ordering guarantee — no reply value transported.
+#                     ALSO: `|>` composes anonymous transformer atoms inside
+#                     a receive-glyph source expression (see below).
+#
+# Receiver-side (inside a transition header, between source and arrow):
+#
+#   <:   receive async — non-blocking pickup during phase; other transitions
+#                        in the phase can fire on their own triggers meanwhile
+#   <|   receive sync  — blocking receive; transition parks specifically on
+#                        this message; other transitions in the phase suspended
+#
+# Sender-blocking and receiver-blocking are independent axes — any sender
+# glyph pairs with any receiver glyph. The wire is always mailbox-buffered.
+# Default when unmodified: bare `<:` drops unmatched messages; bare `<|` is
+# pure rendezvous. Modifier syntax attaches semantic (`<:fifo(8)`, `<:priority`,
+# `<:sliding(1)`) when non-default behavior is needed.
+#
+# ── No free-standing wires ─────────────────────────────────────────────────
+#
+# There is no top-level `|>`. Every subscription is a receive-glyph transition
+# whose source expression may compose transformers via `|>`:
+#
+#   running <: mouse.moves |> Debounce{duration: 200ms} {pos: Position}
+#   -> running
+#       do: cursor :> update(pos: pos)
+#
+# Each anonymous transformer is a sub-atom whose lifecycle is bound to the
+# enclosing phase — instantiated on phase entry, cascaded to `end` on exit.
+#
+# ── Transition-line shape ───────────────────────────────────────────────────
+#
+#   <source> <:|<| <msg>[{args}]                    # or `<source> when: <cond>` for guard-only triggers
+#   -> <target>
+#       when: <additional guard>                    # optional
+#       let:  <name>: <expr>+                       # optional
+#       then: <field> => <expr>+                    # optional
+#       do:   <side-effect statement>+              # optional
+#
+#   Header may be written on one or two lines (user's choice). Body always
+#   indented. `when:` composes with `<:` / `<|` (receive is the trigger;
+#   `when:` narrows further).
+#
+# ── Wildcard-source (on-enter) form ─────────────────────────────────────────
+#
+#   -> <phase>                                      # matches any transition into <phase>
+#       then: <field defaults for this phase>
+#       do:   <side effects on entry>
+#
+#   Runs on init transition and on every subsequent transition into <phase>.
+#   Specific transition's `then:` runs AFTER on-enter's `then:` (specific
+#   wins on field conflicts). Use for phase-entry defaults and phase-entry
+#   side effects that are the same regardless of source.
+#
+# ── Sub-atom slots ──────────────────────────────────────────────────────────
+#
+# For state-machine-shaped activities (things with lifecycle, phases,
+# interruption, or queueing needs), use a sub-atom in a nullable slot:
+#
+#   action: ActionMachine?      # nullable; nil = no action running
+#
+# Assign a sub-atom instance to start the activity; the sub-atom reaches
+# `end` when done, which auto-nils the slot. Parent sends commands
+# (`action :> start_cast(...)`) and listens for events
+# (`self <: action.cast_completed{...} -> ...`).
+#
+# Do NOT use union types (`Idle | FireballCasting | MeleeAttack`) for
+# state discrimination — that's a state machine wearing a union costume.
+# Reserve union types for genuinely-polymorphic disjoint values (message
+# payloads, result types) where the variants have no transition rules.
+#
+# ── External inputs ─────────────────────────────────────────────────────────
+#
+# The substrate has no OS primitives (§1.12). Every external stimulus enters
+# through a capability atom in `env`. `clock.every(...)`, `input.pressed`,
+# etc. are ordinary streams / capability emissions — subscribe via a
+# receive-glyph transition whose source expression addresses them directly.
+#
+# Status. Non-compilable (no compiler exists). Written to expose friction and
+# document intent.
+# =============================================================================
+
+from com.cxc.stdlib import Clock, Random, KeyboardInput, Console, Duration, Instant, Position, Key
+
+
+# ---- Shared value types (records) -------------------------------------------
+
+record Vector2:
+    data:
+        x: Float
+        y: Float
+
+    methods:
+        function plus(self, other: Vector2) -> Vector2:
+            return Vector2(x: self.x + other.x, y: self.y + other.y)
+
+        function scaled(self, k: Float) -> Vector2:
+            return Vector2(x: self.x * k, y: self.y * k)
+
+
+# =============================================================================
+# Paddle — key events drive discrete phase; tick accumulates y
+#
+# `velocity` is fully phase-determined but there's no queueing/interruption
+# need. Use phases-on-Paddle with wildcard on-enter (`-> phase`) setting the
+# per-phase velocity. No sub-atom needed for something this small.
+# =============================================================================
+
+def Paddle:
+    use:
+        input: KeyboardInput
+
+    data:
+        max_speed:     Float = 500.0
+        screen_bounds: Float = 360.0
+        y:             Float = 0.0
+        velocity:      Float = 0.0
+
+    invariants:
+        -screen_bounds <= y <= screen_bounds
+
+    position :< y
+    moving   :< velocity != 0.0
+
+    # ---- Init transition: idle is the first-mentioned target, so implicit
+    #      init -> idle fires on construction. Wildcard on-enter for idle
+    #      handles the initial velocity setup.
+    -> idle then: velocity => 0.0
+    -> up   then: velocity => -max_speed
+    -> down then: velocity => +max_speed
+
+    # ---- Phase transitions triggered by key events from the input capability.
+    #      The receive-glyph source references `input.pressed` / `input.released`
+    #      directly — no free-standing wire needed to route the stream. ----
+    idle <: input.pressed{key: Key}  when: key == Key.arrow_up    -> up
+    idle <: input.pressed{key: Key}  when: key == Key.arrow_down  -> down
+    up   <: input.released{key: Key} when: key == Key.arrow_up    -> idle
+    down <: input.released{key: Key} when: key == Key.arrow_down  -> idle
+
+    # ---- Continuous accumulator: tick from parent's clock ----
+    self <: tick{dt: Duration} -> self
+        then: y => clamp(y + velocity * dt.to_seconds(), -screen_bounds, +screen_bounds)
+
+
+# =============================================================================
+# ActionMachine — sub-atom holding the player's currently-active action.
+#
+# Encapsulates the fireball cast as its own state machine. Owns its own
+# lifecycle: constructed when Player starts a cast, reaches `end` when the
+# cast completes or is canceled, at which point the Player's `action` slot
+# auto-nils.
+#
+# This is the sub-atom-as-state-machine pattern: state that has phases /
+# lifecycle / interruption belongs in its own atom, not as a union-typed
+# slot or per-phase field on the parent.
+# =============================================================================
+
+def ActionMachine(clock: Clock):
+    data:
+        fireball_target:    Position?  = nil
+        fireball_cast_time: Duration?  = nil
+        cast_started_at:    Instant?   = nil
+
+    # ---- Public observable for parents (stable predicate; insulates
+    #      parents from internal phase renames) ----
+    is_idle :< self is idle
+
+    # ---- Init: implicit init -> idle; no per-phase writes needed since
+    #      compound-scope defaults cover it. ----
+
+    # ---- Start a cast (async command from parent) ----
+    idle <: start_cast{target: Position, cast_time: Duration}
+    -> casting_fireball
+        then:
+            fireball_target    => target
+            fireball_cast_time => cast_time
+            cast_started_at    => clock.now
+
+    # ---- Cast completes naturally (time-triggered) ----
+    casting_fireball
+    when: clock.after(cast_started_at + fireball_cast_time)
+    -> idle
+        then:
+            fireball_target    => nil
+            fireball_cast_time => nil
+            cast_started_at    => nil
+        do: :> cast_completed(target: fireball_target)
+
+    # ---- Cast canceled (async command from parent; e.g. on damage) ----
+    casting_fireball <: cancel_cast
+    -> idle
+        then:
+            fireball_target    => nil
+            fireball_cast_time => nil
+            cast_started_at    => nil
+        do: :> cast_canceled
+
+
+# =============================================================================
+# Player — state machine with alive / dead phases and a nullable action slot.
+#
+# The action slot holds an ActionMachine sub-atom while a cast is in flight.
+# When the sub-atom reaches `end` (via completion or cancellation), the slot
+# auto-nils.
+#
+# Player coordinates with ActionMachine via four patterns:
+#   - Command down:  `action :> start_cast(...)`
+#   - Event up:      `self <: action.cast_completed{...} -> ...`
+#   - State query:   `action.is_idle` (observable predicate, not raw phase)
+#   - (No continuous stream from sub in this toy; would appear as a
+#      receive-glyph transition on `action.<event>` with a source expression.)
+# =============================================================================
+
+def Player(max_hp: Int = 100, starting_mana: Int = 50):
+    use:
+        clock: Clock
+        input: KeyboardInput
+
+    data:
+        max_hp_val:         Int      = max_hp
+        starting_mana_val:  Int      = starting_mana
+        cast_cooldown:      Duration = 1000ms
+        fireball_cast_time: Duration =  500ms
+        fireball_mana_cost: Int      =   20
+        cast_key:           Key      = Key.f
+        last_cast_at:       Instant  = Instant.epoch
+        hp:                 Int      = 0                    # set by init on-enter
+        mana:               Int      = 0                    # set by init on-enter
+        action:             ActionMachine?  = nil           # sub-atom slot
+
+    can_cast :< clock.now - last_cast_at >= cast_cooldown
+
+    # ---- Init: on-enter for alive sets initial hp/mana ----
+    -> alive then:
+        hp   => max_hp_val
+        mana => starting_mana_val
+
+    # ---- Cast fireball: create the ActionMachine sub-atom in the slot ----
+    alive <: cast_fireball
+    -> alive
+        when: can_cast and mana >= fireball_mana_cost and (action is nil)
+        then:
+            mana         => mana - fireball_mana_cost
+            last_cast_at => clock.now
+            action       => ActionMachine(clock: clock)
+        do:
+            action :> start_cast(target: cursor_position(), cast_time: fireball_cast_time)
+            :> fireball_launched
+
+    # ---- Take damage: cancel any in-flight cast, then apply damage ----
+    alive <: take_damage{amount: Int}
+    -> alive
+        when: hp > amount and amount >= 0
+        then: hp => hp - amount
+        do:
+            action :> cancel_cast()   # no-op if action is nil (send-to-nil is nil-punned)
+
+    # ---- Lethal damage: transition to dead ----
+    alive <: take_damage{amount: Int}
+    -> dead
+        when: hp <= amount and amount >= 0
+        do:
+            action :> cancel_cast()
+            :> died
+
+    # ---- React to cast completion event from sub-atom ----
+    alive <: action.cast_completed{target: Position}
+    -> alive
+        do: :> fireball_flew(target: target)
+
+    # ---- OS-driven input: receive-glyph transitions with source-expression
+    #      filtering. When cast_key is pressed, self-send cast_fireball to
+    #      trigger the cast_fireball transition above. ----
+    alive <: input.pressed{key: Key} when: key == cast_key
+    -> alive
+        do: self :> cast_fireball
+
+    # Note: `dead` phase has no declared transitions, so all messages
+    # arriving in dead are structurally ignored. The `action` slot is nil
+    # by the time Player enters dead (canceled in the entering transition's
+    # `do:` block).
+
+    # ---- Helper — in a real game this reads from input capability ----
+    # Placeholder for cursor position lookup at cast time.
+    function cursor_position() -> Position:
+        return input.cursor_position
+
+
+# =============================================================================
+# Enemy — state machine with alive / dead phases
+#
+# Simpler than Player: no actions, no sub-atom slot. `alive` accumulates
+# position from velocity × dt; `dead` has no transitions and ignores
+# everything. Enemy emits `died` on entering dead so the EnemySpawner can
+# despawn it.
+# =============================================================================
+
+def Enemy(start: Vector2, hp: Int = 20, velocity: Vector2 = Vector2(x: -100.0, y: 0.0)):
+    data:
+        death_threshold: Int    = 0
+        pos:             Vector2 = start
+        health:          Int    = hp
+
+    invariants:
+        health >= death_threshold
+
+    position :< pos
+
+    # ---- Init transition implicit: init -> alive on construction. ----
+
+    # ---- Take non-lethal damage ----
+    alive <: take_damage{amount: Int}
+    -> alive
+        when: health > amount + death_threshold and amount >= 0
+        then: health => health - amount
+
+    # ---- Take lethal damage — emit `died`; parent subscribes via fan-in
+    #      on its `active_enemies` List. Enemy stays oblivious to its parent.
+    alive <: take_damage{amount: Int}
+    -> dead
+        when: health <= amount + death_threshold and amount >= 0
+        do: :> died
+
+    # ---- Continuous accumulator: tick updates position ----
+    alive <: tick{dt: Duration}
+    -> alive
+        then: pos => pos.plus(velocity.scaled(dt.to_seconds()))
+
+    # ---- Cleanup: transition to `end` after `died` is emitted so the atom
+    #      is deconstructed. List of Enemy auto-removes on child `end`. ----
+    dead -> end
+
+
+# =============================================================================
+# EnemySpawner — compound with a growing list of Enemy sub-atoms
+#
+# `active_enemies: List of Enemy` — the container atom exposes fan-in on
+# element emissions (see §1.11 "Dotting into nested atom emissions"). Parent
+# subscribes to `active_enemies.died` to react to any enemy dying, carrying
+# the element identity. When an Enemy transitions to `end`, the List's
+# element_removed fires and the collection auto-shrinks. No parent-sink
+# parameter on Enemy; child stays oblivious to its parent.
+# =============================================================================
+
+def EnemySpawner:
+    use:
+        clock:  Clock
+        random: Random
+
+    data:
+        spawn_rate:     Duration      = 2000ms
+        spawn_x:        Float         =  800.0
+        spawn_y_min:    Int           = -300
+        spawn_y_max:    Int           =  300
+        base_hp:        Int           =   20
+        active_enemies: List of Enemy = []
+
+    enemy_count :< active_enemies.count
+    positions   :< active_enemies.map(e => e.position)
+
+    # ---- React to enemy deaths via fan-in on the collection ----
+    # `active_enemies.died` is the List's fan-in of each element's `died`
+    # emission; carries the element identity + original event args (none here).
+    # After emitting, Enemy transitions to `end`; List's element_removed fires;
+    # `active_enemies` auto-shrinks without an explicit filter here.
+    self <: active_enemies.died{e: Enemy}
+    -> self
+        do: :> enemy_scored(e: e)          # e.g., score update, sfx trigger
+
+    # ---- Periodic spawn — receive-glyph on the clock's periodic stream ----
+    self <: clock.every(spawn_rate){_: Instant}
+    -> self
+        let:
+            random_y:  Float = random.range_int(spawn_y_min, spawn_y_max).to_float()
+            new_enemy: Enemy = Enemy(start: Vector2(x: spawn_x, y: random_y),
+                                     hp:    base_hp)
+        then:
+            active_enemies => active_enemies + new_enemy
+
+
+# =============================================================================
+# Game — top-level compound composing Paddle + Player + EnemySpawner
+# =============================================================================
+
+def Game:
+    use:
+        clock: Clock
+
+    data:
+        tick_rate: Duration = 16ms
+
+    # Nested capability atoms — children inherit this compound's env.
+    def paddle:  Paddle
+    def player:  Player(max_hp: 100)
+    def spawner: EnemySpawner
+
+    # ---- Compound observables aggregate child observables ----
+    paddle_position :< paddle.position
+    player_hp       :< player.hp
+    enemy_count     :< spawner.enemy_count
+
+    # ---- OS-driven tick fan-out — receive-glyph on the clock's periodic
+    #      stream; each tick fans out to paddle and to each active enemy. ----
+    self <: clock.every(tick_rate){_: Instant}
+    -> self
+        do:
+            paddle :> tick(dt: tick_rate)
+            spawner.active_enemies.for_each(e => e :> tick(dt: tick_rate))
+
+
+# =============================================================================
+# Program — runtime entry point
+# =============================================================================
+
+program Main:
+    use:
+        clock:   Clock
+        input:   KeyboardInput
+        random:  Random
+        console: Console
+
+    def game: Game
+
+    # Wildcard on-enter for `running` catches the implicit `init -> running`
+    # transition; runs the one side effect on program start. Receive-glyph
+    # transitions in Game and its children start dispatching as their phases
+    # become active.
+    -> running
+        do: console.write_line("Game started.")
