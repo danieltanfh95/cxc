@@ -110,10 +110,12 @@
       (or (and (= k :glyph) (glyph-precedence v))
           (and (= k :kw) (glyph-precedence v))))))
 
-(declare parse-primary parse-args-parens parse-msg-args-braces parse-list-literal)
+(declare parse-primary parse-args-parens parse-msg-args-braces parse-list-literal parse-emit-message)
 
 (defn- parse-postfix
-  "Chain of .field, (args), {msg-args} suffixes on a primary expression."
+  "Chain of .field, (args), {msg-args}, :> send, |> send suffixes on a
+   primary expression. `:>` / `|>` produce :emit expression nodes so that
+   sends can appear in lambda bodies and other expression positions."
   [tokens pos base]
   (loop [p pos node base]
     (cond
@@ -129,6 +131,14 @@
       (let [[margs p2] (parse-msg-args-braces tokens p)]
         (recur p2 {:node :msg-shape :target node :fields margs}))
 
+      (at? tokens p :glyph ":>")
+      (let [[m p2] (parse-emit-message tokens (inc p))]
+        [{:node :emit :async? true :target node :msg (:msg m) :args (:args m)} p2])
+
+      (at? tokens p :glyph "|>")
+      (let [[m p2] (parse-emit-message tokens (inc p))]
+        [{:node :emit :async? false :target node :msg (:msg m) :args (:args m)} p2])
+
       :else [node p])))
 
 (defn- parse-unary [tokens pos]
@@ -136,6 +146,10 @@
     (at? tokens pos :glyph "-")
     (let [[inner p] (parse-unary tokens (inc pos))]
       [{:node :neg :expr inner} p])
+
+    (at? tokens pos :glyph "+")
+    ;; unary `+` is a no-op — return the inner expr unchanged
+    (parse-unary tokens (inc pos))
 
     (at? tokens pos :kw "not")
     (let [[inner p] (parse-unary tokens (inc pos))]
@@ -165,6 +179,10 @@
       :float  [{:node :lit-float  :value (t-value t)} (inc pos)]
       :string [{:node :lit-string :value (t-value t)} (inc pos)]
       :char   [{:node :lit-char   :value (t-value t)} (inc pos)]
+      :int-unit   (let [{:keys [value unit]} (t-value t)]
+                    [{:node :lit-int-unit :value value :unit unit} (inc pos)])
+      :float-unit (let [{:keys [value unit]} (t-value t)]
+                    [{:node :lit-float-unit :value value :unit unit} (inc pos)])
       :kw     (case (t-value t)
                 "self"  [{:node :self}    (inc pos)]
                 "nil"   [{:node :lit-nil} (inc pos)]
@@ -310,15 +328,42 @@
 ;;   statements terminated by :newline.
 ;; ---------------------------------------------------------------------------
 
-(defn- parse-statement [tokens pos]
+(defn- parse-emit-message
+  "Parse `<msg>[(args)]` following a send glyph."
+  [tokens pos]
+  (let [[name p] (expect tokens pos :ident)
+        [args p] (if (at? tokens p :punct "(")
+                   (parse-args-parens tokens p)
+                   [[] p])]
+    [{:msg name :args args} p]))
+
+(defn- parse-statement
+  "One statement:
+     return <expr>
+     :> <msg>[(args)]                        — untargeted async emit
+     |> <msg>[(args)]                        — untargeted sync emit
+     <expr> :> <msg>[(args)]                 — targeted async send
+     <expr> |> <msg>[(args)]                 — targeted sync send
+     <expr>                                  — bare expression"
+  [tokens pos]
   (cond
     (at? tokens pos :kw "return")
     (let [[e p] (parse-expr tokens (inc pos))]
       [{:node :return :expr e} p])
 
+    (at? tokens pos :glyph ":>")
+    (let [[m p] (parse-emit-message tokens (inc pos))]
+      [{:node :emit :async? true :target nil :msg (:msg m) :args (:args m)} p])
+
+    (at? tokens pos :glyph "|>")
+    (let [[m p] (parse-emit-message tokens (inc pos))]
+      [{:node :emit :async? false :target nil :msg (:msg m) :args (:args m)} p])
+
     :else
     (let [[e p] (parse-expr tokens pos)]
-      [{:node :expr-stmt :expr e} p])))
+      (if (= :emit (:node e))
+        [e p]                              ; targeted send parsed as postfix — already a statement
+        [{:node :expr-stmt :expr e} p]))))
 
 (defn- parse-block
   "Parse an indented block: :indent (stmt :newline)+ :dedent."
@@ -378,6 +423,384 @@
               p3 (skip-newlines tokens p2)]
           (recur (conj methods fdecl) p3))
         :else (fail! tokens p "expected `function` in methods section")))))
+
+(defn- parse-use-section
+  "use:
+       cap: SomeCapability
+       other_cap: OtherCapability"
+  [tokens pos]
+  (let [[_ p] (expect tokens pos :kw "use")
+        [_ p] (expect tokens p :punct ":")
+        [_ p] (expect tokens p :newline)
+        [_ p] (expect tokens p :indent)]
+    (loop [caps [] p p]
+      (cond
+        (at? tokens p :dedent) [{:node :use-section :caps caps} (inc p)]
+        (at? tokens p :newline) (recur caps (inc p))
+        :else (let [[name p2] (expect tokens p :ident)
+                    [_ p3]    (expect tokens p2 :punct ":")
+                    [ty p4]   (parse-type tokens p3)
+                    p5        (skip-newlines tokens p4)]
+                (recur (conj caps {:name name :type ty}) p5))))))
+
+(defn- parse-invariants-section
+  "invariants:
+       <expr>
+       <expr>
+   Each line is a predicate expression (chained comparisons ok — parsed
+   by the general binop path since <, <=, >, >= all have equal precedence
+   and left-associate). Downstream contract-check will interpret chained
+   forms specially."
+  [tokens pos]
+  (let [[_ p] (expect tokens pos :kw "invariants")
+        [_ p] (expect tokens p :punct ":")
+        [_ p] (expect tokens p :newline)
+        [_ p] (expect tokens p :indent)]
+    (loop [preds [] p p]
+      (cond
+        (at? tokens p :dedent) [{:node :invariants-section :predicates preds} (inc p)]
+        (at? tokens p :newline) (recur preds (inc p))
+        :else (let [[e p2] (parse-expr tokens p)
+                    p3     (skip-newlines tokens p2)]
+                (recur (conj preds e) p3))))))
+
+;; ---------------------------------------------------------------------------
+;; Observables:  <name> :< <expr>
+;;   Declaration-flavored assignment (§1.11). The colon-less-than glyph.
+;; ---------------------------------------------------------------------------
+
+(defn- parse-observable [tokens pos]
+  (let [[name p]  (expect tokens pos :ident)
+        [_ p]     (expect tokens p :glyph ":<")
+        [expr p]  (parse-expr tokens p)]
+    [{:node :observable :name name :expr expr} p]))
+
+;; ---------------------------------------------------------------------------
+;; Transitions
+;;
+;;   Full shape:
+;;     [<source-phase>] [<receive-glyph> <msg>[{args}]] [when: <expr>]
+;;         -> <target-phase>
+;;         [inline-body | indented-body]
+;;
+;;   Inline body:  same line as `->`; one of `then: X => Y` / `do: STMT` / `let: NAME: T = E`
+;;   Indented body: NEWLINE INDENT (then:|do:|let: block)+ DEDENT
+;;
+;;   For simplicity of this first pass, body clauses accept either an inline
+;;   single item or an indented multi-item block.
+;; ---------------------------------------------------------------------------
+
+(declare parse-transition-body)
+
+(defn- parse-msg-pattern
+  "Parse a receive-glyph source pattern — a general expression optionally
+   suffixed by `{payload-shape}`. Handles the full range:
+     tick{dt: Duration}
+     input.pressed{key: Key}
+     clock.every(rate){_: Instant}
+     active_enemies.died{e: Enemy}
+   The expression parser already turns `X{...}` into a :msg-shape postfix,
+   so we just call parse-expr and unpack whichever shape came back."
+  [tokens pos]
+  (let [[e p] (parse-expr tokens pos)]
+    (if (= :msg-shape (:node e))
+      [{:source (:target e) :payload (:fields e)} p]
+      [{:source e :payload []} p])))
+
+(defn- parse-source-and-receive
+  "Look at the head of a transition. Returns [source receive p] where:
+     source  = {:kind :phase :name X} | {:kind :self} | {:kind :implicit}
+     receive = {:glyph <: :msg {...}} | nil
+
+   Allows newline between source and receive-glyph — the two- and three-line
+   transition header shapes both parse to the same AST."
+  [tokens pos]
+  (cond
+    (at? tokens pos :glyph "->")
+    [{:kind :implicit} nil pos]
+
+    :else
+    (let [source (cond
+                   (at? tokens pos :kw "self")   {:kind :self}
+                   (at? tokens pos :ident)       {:kind :phase :name (t-value (peek-tok tokens pos))}
+                   :else (fail! tokens pos "expected source-phase, self, or `->` at start of transition"))
+          p (skip-newlines tokens (inc pos))]    ; allow newline after source
+      (cond
+        (at? tokens p :glyph "<:")
+        (let [[msg p2] (parse-msg-pattern tokens (inc p))]
+          [source {:glyph "<:" :msg msg} p2])
+
+        (at? tokens p :glyph "<|")
+        (let [[msg p2] (parse-msg-pattern tokens (inc p))]
+          [source {:glyph "<|" :msg msg} p2])
+
+        :else [source nil p]))))
+
+(defn- parse-then-clause-inline
+  "then: <field> => <expr>   — single field update on one line"
+  [tokens pos]
+  (let [[_ p]   (expect tokens pos :kw "then")
+        [_ p]   (expect tokens p :punct ":")
+        [name p] (expect tokens p :ident)
+        [_ p]    (expect tokens p :glyph "=>")
+        [rhs p]  (parse-expr tokens p)]
+    [{:node :then-clause :updates [{:field name :expr rhs}]} p]))
+
+(defn- parse-then-clause-block
+  "then:  (indented block of `<field> => <expr>` lines)"
+  [tokens pos]
+  (let [[_ p] (expect tokens pos :kw "then")
+        [_ p] (expect tokens p :punct ":")
+        [_ p] (expect tokens p :newline)
+        [_ p] (expect tokens p :indent)]
+    (loop [ups [] p p]
+      (cond
+        (at? tokens p :dedent) [{:node :then-clause :updates ups} (inc p)]
+        (at? tokens p :newline) (recur ups (inc p))
+        :else (let [[name p2] (expect tokens p :ident)
+                    [_ p3]    (expect tokens p2 :glyph "=>")
+                    [rhs p4]  (parse-expr tokens p3)
+                    p5        (skip-newlines tokens p4)]
+                (recur (conj ups {:field name :expr rhs}) p5))))))
+
+(defn- parse-then-clause [tokens pos]
+  ;; peek past `then:` — if next is :newline, it's a block form; else inline.
+  (if (at? tokens (+ pos 2) :newline)
+    (parse-then-clause-block tokens pos)
+    (parse-then-clause-inline tokens pos)))
+
+(defn- parse-do-clause-inline
+  "do: <statement>"
+  [tokens pos]
+  (let [[_ p] (expect tokens pos :kw "do")
+        [_ p] (expect tokens p :punct ":")
+        [stmt p] (parse-statement tokens p)]
+    [{:node :do-clause :stmts [stmt]} p]))
+
+(defn- parse-do-clause-block
+  "do:  (indented block of statements)"
+  [tokens pos]
+  (let [[_ p] (expect tokens pos :kw "do")
+        [_ p] (expect tokens p :punct ":")
+        [_ p] (expect tokens p :newline)
+        [_ p] (expect tokens p :indent)]
+    (loop [stmts [] p p]
+      (cond
+        (at? tokens p :dedent) [{:node :do-clause :stmts stmts} (inc p)]
+        (at? tokens p :newline) (recur stmts (inc p))
+        :else (let [[stmt p2] (parse-statement tokens p)
+                    p3 (skip-newlines tokens p2)]
+                (recur (conj stmts stmt) p3))))))
+
+(defn- parse-do-clause [tokens pos]
+  (if (at? tokens (+ pos 2) :newline)
+    (parse-do-clause-block tokens pos)
+    (parse-do-clause-inline tokens pos)))
+
+(defn- parse-let-clause-inline
+  "let: <name>: <type> = <expr>"
+  [tokens pos]
+  (let [[_ p]     (expect tokens pos :kw "let")
+        [_ p]     (expect tokens p :punct ":")
+        [name p]  (expect tokens p :ident)
+        [_ p]     (expect tokens p :punct ":")
+        [ty p]    (parse-type tokens p)
+        [_ p]     (expect tokens p :glyph "=")
+        [rhs p]   (parse-expr tokens p)]
+    [{:node :let-clause :bindings [{:name name :type ty :expr rhs}]} p]))
+
+(defn- parse-let-clause-block
+  "let:  (indented block of `<name>: <type> = <expr>` lines)"
+  [tokens pos]
+  (let [[_ p] (expect tokens pos :kw "let")
+        [_ p] (expect tokens p :punct ":")
+        [_ p] (expect tokens p :newline)
+        [_ p] (expect tokens p :indent)]
+    (loop [bindings [] p p]
+      (cond
+        (at? tokens p :dedent) [{:node :let-clause :bindings bindings} (inc p)]
+        (at? tokens p :newline) (recur bindings (inc p))
+        :else (let [[name p2] (expect tokens p :ident)
+                    [_ p3]    (expect tokens p2 :punct ":")
+                    [ty p4]   (parse-type tokens p3)
+                    [_ p5]    (expect tokens p4 :glyph "=")
+                    [rhs p6]  (parse-expr tokens p5)
+                    p7        (skip-newlines tokens p6)]
+                (recur (conj bindings {:name name :type ty :expr rhs}) p7))))))
+
+(defn- parse-let-clause [tokens pos]
+  (if (at? tokens (+ pos 2) :newline)
+    (parse-let-clause-block tokens pos)
+    (parse-let-clause-inline tokens pos)))
+
+(defn- parse-when-clause
+  "when: <expr>   — additional guard when appearing in transition body."
+  [tokens pos]
+  (let [[_ p] (expect tokens pos :kw "when")
+        [_ p] (expect tokens p :punct ":")
+        [e p] (parse-expr tokens p)]
+    [{:node :when-clause :expr e} p]))
+
+(defn- body-clause-head?
+  "True if pos is at `then:` | `do:` | `let:` | `when:`."
+  [tokens pos]
+  (and (at? tokens pos :kw)
+       (#{"then" "do" "let" "when"} (t-value (peek-tok tokens pos)))
+       (at? tokens (inc pos) :punct ":")))
+
+(defn- parse-transition-body
+  "After the `-> target` head, an optional body:
+     - if next token is a body-clause keyword on same line → inline body
+     - if next is :newline :indent → indented body with multiple clauses
+     - else → no body (transition ends)"
+  [tokens pos]
+  (cond
+    (body-clause-head? tokens pos)
+    ;; Inline single clause (rest of transition is on the same line).
+    (let [[clause p]
+          (case (t-value (peek-tok tokens pos))
+            "then" (parse-then-clause tokens pos)
+            "do"   (parse-do-clause tokens pos)
+            "let"  (parse-let-clause tokens pos)
+            "when" (parse-when-clause tokens pos)
+            (fail! tokens pos "unexpected clause"))]
+      [[clause] p])
+
+    (and (at? tokens pos :newline) (at? tokens (inc pos) :indent))
+    (let [p (+ pos 2)]
+      (loop [clauses [] p p]
+        (cond
+          (at? tokens p :dedent) [clauses (inc p)]
+          (at? tokens p :newline) (recur clauses (inc p))
+          (body-clause-head? tokens p)
+          (let [[clause p2]
+                (case (t-value (peek-tok tokens p))
+                  "then" (parse-then-clause tokens p)
+                  "do"   (parse-do-clause tokens p)
+                  "let"  (parse-let-clause tokens p)
+                  "when" (parse-when-clause tokens p)
+                  (fail! tokens p "unexpected clause"))]
+            (recur (conj clauses clause) (skip-newlines tokens p2)))
+          :else [clauses p])))
+
+    :else [[] pos]))
+
+(defn- parse-transition
+  "Full transition. See grammar in section header.
+
+   The header may be split across two lines: source+receive on line 1,
+   `-> target` on line 2 (per game-toys.cxc convention). We skip a
+   :newline between components if the next non-newline token is what
+   we're expecting, so both single-line and two-line shapes parse the
+   same AST."
+  [tokens pos]
+  (let [[source receive p] (parse-source-and-receive tokens pos)
+        p (skip-newlines tokens p)              ; allow newline before when:/->
+        [guard p]  (if (and (at? tokens p :kw "when")
+                            (at? tokens (inc p) :punct ":"))
+                     (let [[e p2] (parse-expr tokens (+ p 2))]
+                       [e p2])
+                     [nil p])
+        p (skip-newlines tokens p)              ; allow newline before ->
+        [_ p]      (expect tokens p :glyph "->")
+        [target p] (cond
+                     (at? tokens p :kw "self") ["self" (inc p)]
+                     (at? tokens p :ident)     [(t-value (peek-tok tokens p)) (inc p)]
+                     :else (fail! tokens p "expected target phase after `->`"))
+        [body p]   (parse-transition-body tokens p)]
+    [{:node :transition
+      :source source
+      :receive receive
+      :when guard
+      :target target
+      :body body} p]))
+
+;; ---------------------------------------------------------------------------
+;; def-atom top-level form
+;;
+;;   def <Name>[(ctor-params)]:
+;;       (use: | data: | invariants: | methods: | observable | transition)+
+;;
+;;   Determines what to parse by look-ahead:
+;;     - `use:`, `data:`, `invariants:`, `methods:` → section
+;;     - `<ident> :<`                                → observable
+;;     - `<ident|self> <:|<|` OR `<ident> ->` OR `->` → transition
+;; ---------------------------------------------------------------------------
+
+(defn- looks-like-observable? [tokens pos]
+  (and (at? tokens pos :ident)
+       (at? tokens (inc pos) :glyph ":<")))
+
+(defn- looks-like-transition? [tokens pos]
+  ;; Called after observable / section checks have failed. At atom-body top
+  ;; level, the remaining possibilities are transitions and errors. A
+  ;; transition starts with `->` (implicit source), `self`, or a source-phase
+  ;; identifier. Since the observable case is already excluded, any bare
+  ;; ident is treated as a transition-source.
+  (or (at? tokens pos :glyph "->")
+      (at? tokens pos :kw "self")
+      (at? tokens pos :ident)))
+
+(defn- parse-def-atom [tokens pos]
+  (let [[_ p]      (expect tokens pos :kw "def")
+        [name p]   (expect tokens p :ident)
+        [ctor p]   (if (at? tokens p :punct "(")
+                     (parse-param-list-parens tokens p)
+                     [[] p])
+        [_ p]      (expect tokens p :punct ":")
+        [_ p]      (expect tokens p :newline)
+        [_ p]      (expect tokens p :indent)]
+    (loop [body [] p p]
+      (cond
+        (at? tokens p :dedent)
+        [{:node :def-atom :name name :ctor-params ctor :body body} (inc p)]
+
+        (at? tokens p :newline)
+        (recur body (inc p))
+
+        (at? tokens p :kw "use")
+        (let [[s p2] (parse-use-section tokens p)]
+          (recur (conj body s) (skip-newlines tokens p2)))
+
+        (at? tokens p :kw "data")
+        (let [[s p2] (parse-data-section tokens p)]
+          (recur (conj body s) (skip-newlines tokens p2)))
+
+        (at? tokens p :kw "invariants")
+        (let [[s p2] (parse-invariants-section tokens p)]
+          (recur (conj body s) (skip-newlines tokens p2)))
+
+        (at? tokens p :kw "methods")
+        (let [[s p2] (parse-methods-section tokens p)]
+          (recur (conj body s) (skip-newlines tokens p2)))
+
+        (at? tokens p :kw "function")
+        (let [[f p2] (parse-function-decl tokens p)]
+          (recur (conj body f) (skip-newlines tokens p2)))
+
+        ;; Nested atom slot: `def <name>: <TypeName>[(ctor-args)]`
+        ;; Distinct from top-level `def <Name>:` (which opens a block).
+        (at? tokens p :kw "def")
+        (let [[_ p2]   (expect tokens p :kw "def")
+              [nm p3]  (expect tokens p2 :ident)
+              [_ p4]   (expect tokens p3 :punct ":")
+              [ty p5]  (parse-type tokens p4)
+              [args p6] (if (at? tokens p5 :punct "(")
+                          (parse-args-parens tokens p5)
+                          [nil p5])]
+          (recur (conj body {:node :nested-atom :name nm :type ty :ctor-args args})
+                 (skip-newlines tokens p6)))
+
+        (looks-like-observable? tokens p)
+        (let [[o p2] (parse-observable tokens p)]
+          (recur (conj body o) (skip-newlines tokens p2)))
+
+        (looks-like-transition? tokens p)
+        (let [[t p2] (parse-transition tokens p)]
+          (recur (conj body t) (skip-newlines tokens p2)))
+
+        :else
+        (fail! tokens p "expected use:, data:, invariants:, methods:, observable, or transition inside def-atom body")))))
 
 ;; ---------------------------------------------------------------------------
 ;; Record  — the smallest top-level form
@@ -450,13 +873,79 @@
 ;; Top-level dispatch
 ;; ---------------------------------------------------------------------------
 
+(defn- parse-program
+  "`program Main:` — runtime entry point atom. Body is parsed identically
+   to a def-atom body (same section vocabulary + observables + transitions);
+   the distinction is that the compiler treats it as the program entry
+   point (§7 modules)."
+  [tokens pos]
+  (let [[_ p]     (expect tokens pos :kw "program")
+        [name p]  (expect tokens p :ident)
+        ;; parse body reusing parse-def-atom by swapping the head token —
+        ;; simplest is to write a parallel parser reading through the body loop.
+        ;; Reuse via macro would be over-engineering; small duplication is fine.
+        [_ p]     (expect tokens p :punct ":")
+        [_ p]     (expect tokens p :newline)
+        [_ p]     (expect tokens p :indent)]
+    (loop [body [] p p]
+      (cond
+        (at? tokens p :dedent)
+        [{:node :program :name name :body body} (inc p)]
+
+        (at? tokens p :newline)
+        (recur body (inc p))
+
+        (at? tokens p :kw "use")
+        (let [[s p2] (parse-use-section tokens p)]
+          (recur (conj body s) (skip-newlines tokens p2)))
+
+        (at? tokens p :kw "data")
+        (let [[s p2] (parse-data-section tokens p)]
+          (recur (conj body s) (skip-newlines tokens p2)))
+
+        (at? tokens p :kw "invariants")
+        (let [[s p2] (parse-invariants-section tokens p)]
+          (recur (conj body s) (skip-newlines tokens p2)))
+
+        (at? tokens p :kw "methods")
+        (let [[s p2] (parse-methods-section tokens p)]
+          (recur (conj body s) (skip-newlines tokens p2)))
+
+        (at? tokens p :kw "function")
+        (let [[f p2] (parse-function-decl tokens p)]
+          (recur (conj body f) (skip-newlines tokens p2)))
+
+        (at? tokens p :kw "def")
+        (let [[_ p2]   (expect tokens p :kw "def")
+              [nm p3]  (expect tokens p2 :ident)
+              [_ p4]   (expect tokens p3 :punct ":")
+              [ty p5]  (parse-type tokens p4)
+              [args p6] (if (at? tokens p5 :punct "(")
+                          (parse-args-parens tokens p5)
+                          [nil p5])]
+          (recur (conj body {:node :nested-atom :name nm :type ty :ctor-args args})
+                 (skip-newlines tokens p6)))
+
+        (looks-like-observable? tokens p)
+        (let [[o p2] (parse-observable tokens p)]
+          (recur (conj body o) (skip-newlines tokens p2)))
+
+        (looks-like-transition? tokens p)
+        (let [[t p2] (parse-transition tokens p)]
+          (recur (conj body t) (skip-newlines tokens p2)))
+
+        :else
+        (fail! tokens p "expected use:, data:, invariants:, methods:, def, observable, or transition inside program body")))))
+
 (defn- parse-top [tokens pos]
   (let [p (skip-newlines tokens pos)]
     (cond
-      (at? tokens p :eof)      [nil p]
-      (at? tokens p :kw "module") (parse-module-decl tokens p)
-      (at? tokens p :kw "from")   (parse-from-import tokens p)
-      (at? tokens p :kw "record") (parse-record tokens p)
+      (at? tokens p :eof)          [nil p]
+      (at? tokens p :kw "module")  (parse-module-decl tokens p)
+      (at? tokens p :kw "from")    (parse-from-import tokens p)
+      (at? tokens p :kw "record")  (parse-record tokens p)
+      (at? tokens p :kw "def")     (parse-def-atom tokens p)
+      (at? tokens p :kw "program") (parse-program tokens p)
       :else (fail! tokens p "expected top-level form"))))
 
 (defn parse

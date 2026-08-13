@@ -71,13 +71,16 @@
         (do (.append buf (.charAt s j))
             (recur (inc j) buf))))))
 
-(defn- scan-number [s i]
-  ;; scan digits, optional single dot for float, no exponent (v1.0-lite)
+(defn- scan-number
+  "Scan digits, optional single dot for float (no exponent for v1.0-lite),
+   and optional trailing unit-suffix identifier (`1000ms`, `500ms`, `16ms`,
+   `2.5s`). Returns [numeric-substring unit-or-nil end-index kind]."
+  [s i]
   (let [n (count s)]
     (loop [j i seen-dot? false]
       (cond
         (>= j n)
-        [(subs s i j) j (if seen-dot? :float :int)]
+        [(subs s i j) nil j (if seen-dot? :float :int)]
 
         (Character/isDigit (.charAt s j))
         (recur (inc j) seen-dot?)
@@ -88,8 +91,21 @@
              (Character/isDigit (.charAt s (inc j))))
         (recur (inc j) true)
 
+        (Character/isLetter (.charAt s j))
+        ;; unit suffix: consume identifier chars up to non-word
+        (let [unit-start j]
+          (loop [k j]
+            (if (and (< k n)
+                     (let [c (.charAt s k)]
+                       (or (Character/isLetterOrDigit c) (= c \_))))
+              (recur (inc k))
+              [(subs s i unit-start)
+               (subs s unit-start k)
+               k
+               (if seen-dot? :float :int)])))
+
         :else
-        [(subs s i j) j (if seen-dot? :float :int)]))))
+        [(subs s i j) nil j (if seen-dot? :float :int)]))))
 
 (defn- scan-word [s i]
   (let [n (count s)]
@@ -126,11 +142,16 @@
           (recur j (conj! out [:string s line-no (inc i)])))
 
         (Character/isDigit (.charAt line i))
-        (let [[num j kind] (scan-number line i)]
-          (recur j (conj! out [kind (if (= kind :int)
-                                      (Long/parseLong num)
-                                      (Double/parseDouble num))
-                               line-no (inc i)])))
+        (let [[num unit j kind] (scan-number line i)
+              value (if (= kind :int)
+                      (Long/parseLong num)
+                      (Double/parseDouble num))
+              tok-kind (cond
+                         (and unit (= kind :int))   :int-unit
+                         (and unit (= kind :float)) :float-unit
+                         :else                       kind)
+              tok-val  (if unit {:value value :unit unit} value)]
+          (recur j (conj! out [tok-kind tok-val line-no (inc i)])))
 
         (or (Character/isLetter (.charAt line i)) (= \_ (.charAt line i)))
         (let [[w j] (scan-word line i)]
@@ -164,8 +185,25 @@
         (= \# (.charAt line i)) [nil nil]
         :else [indent (subs line i)]))))
 
+(defn- bracket-delta
+  "Net (opens - closes) for parens/brackets/braces in the token vector."
+  [toks]
+  (reduce (fn [d t]
+            (cond
+              (and (= :punct (nth t 0)) (#{"(" "[" "{"} (nth t 1))) (inc d)
+              (and (= :punct (nth t 0)) (#{")" "]" "}"} (nth t 1))) (dec d)
+              :else d))
+          0
+          toks))
+
 (defn tokenize
-  "Tokenize cxc source into a flat vector of tokens with layout markers."
+  "Tokenize cxc source into a flat vector of tokens with layout markers.
+
+   Layout preprocessor tracks bracket-depth across lines: while any
+   parens/brackets/braces are open, subsequent lines are treated as
+   physical-line continuations of the logical line — no INDENT/DEDENT/
+   NEWLINE emitted, tokens simply concatenated. This lets multi-line
+   argument lists, list literals, and message payloads work naturally."
   [source]
   (if (str/blank? source)
     [[:eof nil 1 1]]
@@ -173,6 +211,7 @@
           n     (count lines)]
     (loop [i 0
            indent-stack [0]
+           bracket-depth 0                     ; unmatched open brackets from prior lines
            out (transient [])]
       (if (>= i n)
         (let [out (reduce (fn [acc _] (conj! acc [:dedent nil (inc n) 1]))
@@ -181,23 +220,39 @@
           (persistent! (conj! out [:eof nil (inc n) 1])))
         (let [line (nth lines i)
               [indent content] (leading-indent line)]
-          (if (nil? indent)
-            (recur (inc i) indent-stack out)
-            (let [top (peek indent-stack)]
+          (cond
+            ;; blank / comment-only line — skip entirely
+            (nil? indent)
+            (recur (inc i) indent-stack bracket-depth out)
+
+            ;; still inside brackets from prior line(s) — continuation:
+            ;; append this line's tokens without layout markers or newline
+            (pos? bracket-depth)
+            (let [line-toks (tokenize-line content (inc i))
+                  new-depth (+ bracket-depth (bracket-delta line-toks))
+                  out'      (reduce conj! out line-toks)]
+              (recur (inc i) indent-stack new-depth out'))
+
+            :else
+            (let [top (peek indent-stack)
+                  line-toks (tokenize-line content (inc i))
+                  new-depth (+ bracket-depth (bracket-delta line-toks))]
               (cond
                 (> indent top)
-                (let [line-toks (tokenize-line content (inc i))
-                      out' (-> out
+                (let [out' (-> out
                                (conj! [:indent nil (inc i) 1])
                                (as-> o (reduce conj! o line-toks))
-                               (conj! [:newline nil (inc i) 1]))]
-                  (recur (inc i) (conj indent-stack indent) out'))
+                               (as-> o (if (zero? new-depth)
+                                         (conj! o [:newline nil (inc i) 1])
+                                         o)))]
+                  (recur (inc i) (conj indent-stack indent) new-depth out'))
 
                 (= indent top)
-                (let [line-toks (tokenize-line content (inc i))
-                      out' (reduce conj! out line-toks)
-                      out' (conj! out' [:newline nil (inc i) 1])]
-                  (recur (inc i) indent-stack out'))
+                (let [out' (reduce conj! out line-toks)
+                      out' (if (zero? new-depth)
+                             (conj! out' [:newline nil (inc i) 1])
+                             out')]
+                  (recur (inc i) indent-stack new-depth out'))
 
                 :else                                       ; indent < top → dedent(s)
                 (let [[stack' out']
@@ -216,7 +271,8 @@
                                             {:line (inc i)
                                              :indent indent
                                              :stack indent-stack})))))
-                      line-toks (tokenize-line content (inc i))
                       out' (reduce conj! out' line-toks)
-                      out' (conj! out' [:newline nil (inc i) 1])]
-                  (recur (inc i) stack' out')))))))))))
+                      out' (if (zero? new-depth)
+                             (conj! out' [:newline nil (inc i) 1])
+                             out')]
+                  (recur (inc i) stack' new-depth out')))))))))))
