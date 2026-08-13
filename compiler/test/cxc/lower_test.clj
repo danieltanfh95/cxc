@@ -328,3 +328,56 @@
       (is (= 2 (count (:args plus-call))))
       (is (= :struct-lit (get-in plus-call [:args 0 :node])))    ; first arg = self expr
       (is (= :struct-lit (get-in plus-call [:args 1 :node]))))))
+
+(deftest message-triggered-transition-lowers-to-objc-method
+  (testing "`alive <: bump -> alive then: n => n + 1` → :objc-method with phase-guard + then update"
+    (let [prog (lower-src "def Counter:
+    data:
+        n: Int = 0
+
+    -> alive
+
+    alive <: bump -> alive
+        then: n => n + 1
+
+def main:
+    -> running
+        do: print(1)
+")
+          cls  (first (:classes prog))
+          bump (first (filter #(= "bump" (:selector %)) (:methods cls)))]
+      (is (some? bump) "expected a `bump` transition method on the class")
+      (is (= "void" (:return-type bump)))
+      (is (empty? (:params bump)))
+      ;; Body: [phase-guard, then-update]. No phase reassign (source==target).
+      (is (= [{:node :phase-guard :phase-const "kCounter_phase_alive"}
+              {:node :assign
+               :lhs  {:node :name :sym "_n"}
+               :rhs  {:node :binop :op "+"
+                      :left  {:node :name :sym "_n"}
+                      :right {:node :int  :value 1}}}]
+             (:body bump))))))
+
+(deftest message-triggered-transition-with-phase-change-emits-phase-assign
+  (testing "`alive <: die -> dead` sets _phase to kA_phase_dead after user updates"
+    (let [prog (lower-src "def Enemy:
+    data:
+        hp: Int = 3
+
+    -> alive
+
+    alive <: die -> dead
+        do: print(0)
+
+def main:
+    -> running
+        do: print(1)
+")
+          cls  (first (:classes prog))
+          die  (first (filter #(= "die" (:selector %)) (:methods cls)))]
+      (is (some? die))
+      (is (= {:node :assign
+              :lhs  {:node :name :sym "_phase"}
+              :rhs  {:node :name :sym "kEnemy_phase_dead"}}
+             ;; Body: [phase-guard, phase-update, do-stmt]
+             (nth (:body die) 1))))))

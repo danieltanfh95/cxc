@@ -744,10 +744,47 @@
 ;; Statement lowering
 ;; ---------------------------------------------------------------------------
 
+(defn- lower-send
+  "Lower a targeted `:emit` node to a `cxc_send_async` / `cxc_send_sync`
+   runtime helper call. Untargeted `:> msg` (stream emission) lands in
+   Step 13. Payload args land in Step 9 (cross-atom shape check in Step
+   10). Sync sends are direct method calls under Layer 4 single-thread
+   (design §15); Layer 4c upgrades them to real `dispatch_sync` when
+   queue targets differ."
+  [node ctx]
+  (when (nil? (:target node))
+    (fail-nyi! (str "untargeted send `" (if (:async? node) ":>" "|>") " "
+                    (:msg node) "` — stream emission is Layer 4 Step 13")
+               node))
+  (when (seq (:args node))
+    (fail-nyi! (str "send arguments (`" (:msg node) "(...)` payload "
+                    "— Layer 4 Step 9)")
+               node))
+  (let [target-lo (lower-expr (:target node) ctx)
+        target-ty (infer-type (:target node) ctx)
+        _         (when-not (and (map? target-ty) (:atom target-ty))
+                    (fail-nyi! (str "send target must resolve to an atom-typed "
+                                    "expression (got " (pr-str target-ty) ")")
+                               node))
+        atom-name (:atom target-ty)
+        atom-info (get-in ctx [:atom-env atom-name])
+        _         (when-not atom-info
+                    (fail-nyi! (str "unknown atom type `" atom-name "` on send target") node))
+        selector  (:msg node)
+        helper    (if (:async? node) "cxc_send_async" "cxc_send_sync")]
+    {:node :call
+     :fn   helper
+     :args [target-lo
+            {:node :objc-block-literal
+             :stmts [{:node :objc-msg
+                      :recv target-lo
+                      :selector selector
+                      :args []}]}]}))
+
 (defn- lower-stmt [node ctx]
   (case (:node node)
     :expr-stmt (lower-expr (:expr node) ctx)
-    :emit      (fail-nyi! ":emit statement (needs mailbox runtime)" node)
+    :emit      (lower-send node ctx)
     :return    {:node :return :value (lower-expr (:expr node) ctx)}
     (fail-nyi! (str "statement " (:node node)) node)))
 
@@ -817,6 +854,89 @@
   (and (= :implicit (get-in t [:source :kind]))
        (nil? (:receive t))
        (nil? (:when t))))
+
+(defn- message-triggered?
+  "A transition with a receive glyph (`<:` async, `<|` sync). Contrasts
+   with implicit-source wildcards (`-> phase ...`) which fire on every
+   entry to their target phase."
+  [t]
+  (contains? #{"<:" "<|"} (get-in t [:receive :glyph])))
+
+(defn- lower-message-triggered-transition
+  "Lower one `<phase> <: msg[{args}] [when: g] -> target [then:/do:]`
+   into an ObjC instance method. Emit order matches spec §1.12:
+     - phase filter (early exit if _phase ≠ source phase)
+     - header + body `when:` guards (Step 7 wires both)
+     - `let:` bindings (Step 9+ wires them alongside payload binding)
+     - `then:` field updates
+     - phase update to target (skipped if target == source)
+     - target on-enter (inlined by Step 8)
+     - `do:` statements
+     - post-transition invariants (Step 14)
+   Body wrapped in @try/@catch by Step 15. Step 4 provides the outer
+   scaffolding; other steps compose in additional clauses."
+  [atom-name t ctx]
+  (when (= "<|" (get-in t [:receive :glyph]))
+    (fail-nyi! (str "sync-receive glyph `<|` on transition "
+                    "(rendezvous semantics — deferred to Layer 4b)")
+               t))
+  (when (not= :phase (get-in t [:source :kind]))
+    (fail-nyi! (str "message-triggered transition on def-atom `" atom-name
+                    "` must have an explicit source phase (got "
+                    (get-in t [:source :kind]) ")")
+               t))
+  (let [source-name (get-in t [:source :name])
+        target      (:target t)
+        msg         (get-in t [:receive :msg])
+        msg-source  (:source msg)
+        msg-name    (case (:node msg-source)
+                      :ident (:name msg-source)
+                      (fail-nyi! (str "message pattern source on transition must be "
+                                      "a bare ident for Layer 4 Step 4 (got "
+                                      (:node msg-source) "); dotted sources like "
+                                      "`input.pressed` land in Step 13)")
+                                 msg-source))
+        payload     (:payload msg)
+        _           (when (seq payload)
+                      (fail-nyi! (str "message payload binding "
+                                      "(named args in `" msg-name "{...}` — Layer 4 Step 9)")
+                                 msg))
+        _           (when (:when t)
+                      (fail-nyi! (str "header `when:` guard on message-triggered "
+                                      "transition (Layer 4 Step 7)")
+                                 t))
+        selector    msg-name        ;; Step 9 encodes payload names into the selector
+        ;; `self` in the transition body — needed by infer-type when
+        ;; the body has `self :> foo` sends or `self.field` reads.
+        ctx'        (assoc-in ctx [:locals "self"] {:atom atom-name})
+        phase-check {:node :phase-guard
+                     :phase-const (phase-constant-name atom-name source-name)}
+        then-clauses (filter #(= :then-clause (:node %)) (:body t))
+        do-clauses   (filter #(= :do-clause   (:node %)) (:body t))
+        let-clauses  (filter #(= :let-clause  (:node %)) (:body t))
+        when-clauses (filter #(= :when-clause (:node %)) (:body t))
+        _            (when (seq when-clauses)
+                       (fail-nyi! "body `when:` guard on message-triggered transition (Layer 4 Step 7)" t))
+        _            (when (seq let-clauses)
+                       (fail-nyi! "`let:` bindings on message-triggered transition (Layer 4 Step 9+)" t))
+        then-stmts   (vec (mapcat (fn [c] (mapv #(lower-then-update % ctx')
+                                                (:updates c)))
+                                  then-clauses))
+        do-stmts     (vec (mapcat (fn [c] (lower-do-clause c ctx')) do-clauses))
+        phase-update (when (not= target source-name)
+                       {:node :assign
+                        :lhs {:node :name :sym "_phase"}
+                        :rhs {:node :name
+                              :sym (phase-constant-name atom-name target)}})
+        body         (cond-> [phase-check]
+                       (seq then-stmts) (into then-stmts)
+                       phase-update     (conj phase-update)
+                       (seq do-stmts)   (into do-stmts))]
+    {:node        :objc-method
+     :selector    selector
+     :return-type "void"
+     :params      []
+     :body        body}))
 
 ;; ---------------------------------------------------------------------------
 ;; Top-level lowering — records, methods, atoms, main
@@ -962,7 +1082,6 @@
         initial-on-enter (first (filter #(and (wildcard-on-enter? %)
                                               (= initial-phase (:target %)))
                                         transitions))
-        other-txns    (remove #(identical? % initial-on-enter) transitions)
         locals        (into {} (map (fn [p]
                                       [(:name p)
                                        (cxc-type->type-kw (:cxc-ty p)
@@ -977,17 +1096,26 @@
         self-plus-obs (into self-fields
                             (map (juxt :name identity) observables))
         ctx-with-self (assoc ctx :self-fields self-plus-obs)
-        ctx-in-init   (assoc ctx-with-self :locals locals)]
+        ;; `self` visible in on-enter bodies for `self :> foo` / `self.x`.
+        ctx-in-init   (assoc ctx-with-self
+                             :locals (assoc locals "self" {:atom atom-name}))]
     (when (seq extras)
       (fail-nyi! (str "def-atom `" atom-name "` has body items beyond `data:`/`methods:`"
                       "/observable/wildcard on-enter transition "
                       "(" (mapv :node extras) ") — use:/invariants/receive-glyphs next up")
                  {:atom atom-name :extras extras}))
-    (when (seq other-txns)
-      (fail-nyi! (str "def-atom `" atom-name "` has transitions beyond the initial-phase "
-                      "wildcard on-enter — non-initial-phase entries and message-triggered "
-                      "transitions need the actor runtime (Layer 4)")
-                 {:atom atom-name :transitions other-txns}))
+    ;; Layer 4 Step 4: message-triggered transitions become instance methods.
+    ;; Layer 4 Step 8 covers non-initial-phase wildcard on-enter (inlined at
+    ;; each transition site targeting that phase); for now, disallow them.
+    (let [unhandled (remove #(or (message-triggered? %)
+                                 (identical? % initial-on-enter))
+                            transitions)]
+      (when (seq unhandled)
+        (fail-nyi! (str "def-atom `" atom-name "` has transitions that Layer 4 "
+                        "Step 4 doesn't handle yet (non-initial-phase wildcard "
+                        "on-enter → Step 8; sync-receive `<|` → Layer 4b): "
+                        (mapv #(select-keys % [:source :receive :target]) unhandled))
+                   {:atom atom-name :unhandled unhandled})))
     (let [phase-names     (collect-phase-names transitions)
           queue-init-stmt {:node :queue-init :ivar "_own_queue"}
           phase-init-stmt {:node :assign
@@ -1050,7 +1178,9 @@
                            :body invariant-stmts}
           init-shell      [(self-msg-noargs "cxc_structuralSetup")
                            state-init-msg
-                           (self-msg-noargs "cxc_runtimeBinding")]]
+                           (self-msg-noargs "cxc_runtimeBinding")]
+          txn-methods     (mapv #(lower-message-triggered-transition atom-name % ctx-with-self)
+                                (filter message-triggered? transitions))]
       {:node            :objc-class
        :name            atom-name
        :superclass      "NSObject"
@@ -1061,7 +1191,8 @@
        :init-body       init-shell
        :methods         (-> [setup-method state-method bind-method]
                             (into user-methods)
-                            (into obs-methods))})))
+                            (into obs-methods)
+                            (into txn-methods))})))
 
 (defn- main-atom-body [main-node ctx]
   (let [transitions (filter #(= :transition (:node %)) (:body main-node))
@@ -1129,16 +1260,30 @@
         classes    (mapv #(lower-atom % ctx) (keys atom-env))
         needs-foundation? (boolean (seq classes))
         needs-abort?      (boolean (some #(seq (:invariants (second %))) atom-env))
+        ;; Runtime helpers (cxc_send_async / cxc_send_sync / cxc_shutdown)
+        ;; are needed whenever any atom has a message-triggered transition
+        ;; (potential receiver) — sends land in do: blocks that reference
+        ;; the helpers by name. Detection is one-sided: if any atom can
+        ;; receive, we include the helpers even if no sends happen to
+        ;; land in the current program (harmless static-inline definitions).
+        needs-runtime?    (boolean (some #(seq (filter message-triggered?
+                                                       (:transitions (second %))))
+                                         atom-env))
         base-includes     (if needs-foundation?
                             ["<Foundation/Foundation.h>"]
                             ["<stdio.h>"])
-        includes          (cond-> base-includes needs-abort? (conj "<stdlib.h>"))]
-    {:node      :objc-program
-     :includes  includes
-     :enums     c-enums
-     :structs   structs
-     :functions functions
-     :classes   classes
-     :main      {:body         (conj (main-atom-body main-atom ctx)
-                                     {:node :return :value {:node :int :value 0}})
-                 :autorelease? needs-foundation?}}))
+        includes          (cond-> base-includes
+                            needs-abort?   (conj "<stdlib.h>")
+                            needs-runtime? (conj "<stdlib.h>"))
+        ;; Dedup includes while preserving order.
+        includes          (vec (distinct includes))]
+    {:node           :objc-program
+     :includes       includes
+     :needs-runtime? needs-runtime?
+     :enums          c-enums
+     :structs        structs
+     :functions      functions
+     :classes        classes
+     :main           {:body         (conj (main-atom-body main-atom ctx)
+                                          {:node :return :value {:node :int :value 0}})
+                      :autorelease? needs-foundation?}}))

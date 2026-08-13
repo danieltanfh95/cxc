@@ -5,7 +5,7 @@
    feature alongside the lower pass."
   (:require [clojure.string :as str]))
 
-(declare emit-expr emit-stmt emit-class emit-struct)
+(declare emit-expr emit-stmt emit-class emit-struct indent-lines)
 
 ;; ---------------------------------------------------------------------------
 ;; Expression emission
@@ -55,6 +55,16 @@
                           "("
                           (str/join ", " (map emit-expr (:args node)))
                           ")")
+    :objc-block-literal
+    ;; `^{ stmt; stmt; }` — a void^(void) ObjC block literal. Used to
+    ;; wrap message-send bodies for cxc_send_async / cxc_send_sync so
+    ;; the target's queue can defer execution (design §10). Blocks
+    ;; capture surrounding variables by copy — atom pointers via
+    ;; ARC-strong retain, primitives by value; safe by construction
+    ;; because the block's target lifetime is the outer expression.
+    (let [stmts (str/join "\n" (map emit-stmt (:stmts node)))
+          indented (indent-lines 4 stmts)]
+      (str "^{\n" indented "\n}"))
     :objc-msg        (let [sel (:selector node)
                            args (:args node)]
                        ;; ObjC selectors either have zero colons (bare name,
@@ -90,6 +100,11 @@
          "    fprintf(stderr, \"" (escape-c-string (:label node)) "\\n\");\n"
          "    abort();\n"
          "}")
+    :phase-guard
+    ;; Early-exit if the atom isn't in the transition's source phase.
+    ;; Pointer-equality against a canonicalized `k<Atom>_phase_<name>`
+    ;; constant — O(1), no string compare.
+    (str "if (_phase != " (:phase-const node) ") return;")
     :queue-init
     ;; Layer 4: per-atom serial queue targeting the main queue. All work
     ;; stays single-threaded; the primitive matches what Layer 4c will
@@ -264,14 +279,40 @@
            body
            "\n}"))))
 
+(def ^:private cxc-runtime-helpers
+  ;; Header-only runtime (design §22). The CXCAtom protocol lets the
+  ;; nil-guarded helpers reach `own_queue` on any atom target via a
+  ;; static cast — cheaper than KVC / objc_msgSend / dynamic lookup,
+  ;; and every atom class satisfies the protocol implicitly (they all
+  ;; declare the matching @property). `cxc_send_sync` under Layer 4
+  ;; single-thread is a nil-guarded direct call; Layer 4c retargets
+  ;; to dispatch_sync when queue targets differ. `cxc_shutdown` is
+  ;; used by the compiler-emitted end of main atom's transitionToEnd
+  ;; (Step 16).
+  (str "@protocol CXCAtom\n"
+       "@property (nonatomic, strong) dispatch_queue_t own_queue;\n"
+       "@end\n\n"
+       "static inline void cxc_send_async(id target, void (^block)(void)) {\n"
+       "    if (target == nil) return;\n"
+       "    dispatch_async([(id<CXCAtom>)target own_queue], block);\n"
+       "}\n\n"
+       "static inline void cxc_send_sync(id target, void (^block)(void)) {\n"
+       "    if (target == nil) return;\n"
+       "    block();\n"
+       "}\n\n"
+       "static inline void cxc_shutdown(void) {\n"
+       "    exit(0);\n"
+       "}"))
+
 (defn emit
   "Emit a full .m source string from an :objc-program AST."
   [prog]
   (let [includes  (str/join "\n"   (map #(str "#import " %) (:includes prog)))
+        helpers   (when (:needs-runtime? prog) cxc-runtime-helpers)
         enums     (str/join "\n\n" (map emit-c-enum   (:enums prog)))
         structs   (str/join "\n\n" (map emit-struct   (:structs prog)))
         functions (str/join "\n\n" (map emit-function (:functions prog)))
         classes   (str/join "\n\n" (map emit-class    (:classes prog)))
         main      (emit-main (:main prog))]
     (str/join "\n\n"
-              (remove str/blank? [includes enums structs functions classes main]))))
+              (remove str/blank? [includes helpers enums structs functions classes main]))))

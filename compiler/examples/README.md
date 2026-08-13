@@ -37,6 +37,7 @@ what the current compiler can lower.
 | [`chained-comparison.cxc`](chained-comparison.cxc) | `lo <= val <= hi` desugars to `(lo<=val) and (val<=hi)` at parse-time; passing case runs through | `5` |
 | [`nested-slot.cxc`](nested-slot.cxc) | `def paddle: Paddle` self-constructs a sub-atom in parent init; observable reads through the slot | `7` |
 | [`nested-slot-ctor-args.cxc`](nested-slot-ctor-args.cxc) | `def cell: Cell(v: 99)` passes named args to the sub-atom's initWith selector | `99` |
+| [`self-sync-send-in-on-enter.cxc`](self-sync-send-in-on-enter.cxc) | `self \|> bump` in initial-phase on-enter fires the transition twice under Layer 4 single-thread (direct call via `cxc_send_sync`); `alive <: bump -> alive then: n => n + 1` runs | `2` |
 
 ## Running one by hand
 

@@ -166,3 +166,9 @@
     (let [{:keys [exit stdout]} (compile-and-run "nested-slot-ctor-args")]
       (is (zero? exit))
       (is (= "99\n" stdout)))))
+
+(deftest end-to-end-self-sync-send-in-on-enter
+  (testing "self-sync-send-in-on-enter.cxc — `self |> bump` in on-enter fires the transition twice; n = 2"
+    (let [{:keys [exit stdout]} (compile-and-run "self-sync-send-in-on-enter")]
+      (is (zero? exit))
+      (is (= "2\n" stdout)))))

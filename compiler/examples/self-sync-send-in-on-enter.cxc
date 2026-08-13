@@ -1,0 +1,15 @@
+def Counter:
+    data:
+        n: Int = 0
+
+    -> alive
+        do:
+            self |> bump
+            self |> bump
+
+    alive <: bump -> alive
+        then: n => n + 1
+
+def main:
+    -> running
+        do: print(Counter().n)
