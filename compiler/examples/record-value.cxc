@@ -1,0 +1,8 @@
+record V:
+    data:
+        x: Int
+        y: Int
+
+def main:
+    -> running
+        do: print(V(x: 3, y: 4).x + 100)

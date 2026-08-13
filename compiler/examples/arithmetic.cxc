@@ -1,0 +1,3 @@
+def main:
+    -> running
+        do: print(3 + 4 * 2)

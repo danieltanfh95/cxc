@@ -1,5 +1,10 @@
 (ns cxc.build-test
-  "End-to-end regression: cxc source → binary → run → verify stdout."
+  "End-to-end regression: cxc source → binary → run → verify stdout.
+
+   Each source program lives as a standalone `.cxc` file under
+   `compiler/examples/` so it can be read, hand-run, and iterated on
+   outside the test harness. See `examples/README.md` for the current
+   coverage table and how to add a new one."
   (:require [clojure.test :refer [deftest is testing]]
             [cxc.build :as build]))
 
@@ -8,84 +13,46 @@
            "cxc-test-" (into-array java.nio.file.attribute.FileAttribute []))]
     (.toFile d)))
 
+(defn- example [name] (slurp (str "examples/" name ".cxc")))
+
+(defn- compile-and-run
+  "Compile the named example, run the binary, return {:status :stdout}.
+   Fails the surrounding test with clang stderr if compilation fails."
+  [example-name]
+  (let [src     (example example-name)
+        out-dir (tmp-dir)
+        {:keys [status stderr bin-path]}
+        (build/compile-source-to-file src example-name (.getPath out-dir))]
+    (is (zero? status) (str "clang failed for " example-name ":\n" stderr))
+    (when (zero? status)
+      (build/run-binary bin-path))))
+
 (deftest end-to-end-hello-world
-  (testing "compile + run a hello-world cxc program"
-    (let [src "def main:
-    -> running
-        do: print(\"hello, world\")
-"
-          out-dir (tmp-dir)
-          {:keys [status stderr bin-path]}
-          (build/compile-source-to-file src "hello" (.getPath out-dir))]
-      (is (zero? status) (str "clang failed:\n" stderr))
-      (when (zero? status)
-        (let [{:keys [exit stdout]} (build/run-binary bin-path)]
-          (is (zero? exit))
-          (is (= "hello, world\n" stdout)))))))
+  (testing "hello.cxc — print of a string literal"
+    (let [{:keys [exit stdout]} (compile-and-run "hello")]
+      (is (zero? exit))
+      (is (= "hello, world\n" stdout)))))
 
 (deftest end-to-end-different-message
-  (testing "different string literal round-trips through the whole pipeline"
-    (let [src "def main:
-    -> running
-        do: print(\"cxc is running\")
-"
-          out-dir (tmp-dir)
-          {:keys [status bin-path]}
-          (build/compile-source-to-file src "greet" (.getPath out-dir))]
-      (is (zero? status))
-      (when (zero? status)
-        (is (= "cxc is running\n" (:stdout (build/run-binary bin-path))))))))
+  (testing "greet.cxc — different string round-trips through the pipeline"
+    (let [{:keys [exit stdout]} (compile-and-run "greet")]
+      (is (zero? exit))
+      (is (= "cxc is running\n" stdout)))))
 
 (deftest end-to-end-arithmetic-in-print
-  (testing "int binops through print — precedence and result"
-    (let [src "def main:
-    -> running
-        do: print(3 + 4 * 2)
-"
-          out-dir (tmp-dir)
-          {:keys [status stderr bin-path]}
-          (build/compile-source-to-file src "arith" (.getPath out-dir))]
-      (is (zero? status) (str "clang failed:\n" stderr))
-      (when (zero? status)
-        (is (= "11\n" (:stdout (build/run-binary bin-path))))))))
+  (testing "arithmetic.cxc — int binops through print; precedence preserved"
+    (let [{:keys [exit stdout]} (compile-and-run "arithmetic")]
+      (is (zero? exit))
+      (is (= "11\n" stdout)))))
 
 (deftest end-to-end-record-construction-and-field-access
-  (testing "record → C typedef struct; V(x:,y:).x is usable in an int expr"
-    (let [src "record V:
-    data:
-        x: Int
-        y: Int
-
-def main:
-    -> running
-        do: print(V(x: 3, y: 4).x + 100)
-"
-          out-dir (tmp-dir)
-          {:keys [status stderr bin-path]}
-          (build/compile-source-to-file src "rec" (.getPath out-dir))]
-      (is (zero? status) (str "clang failed:\n" stderr))
-      (when (zero? status)
-        (is (= "103\n" (:stdout (build/run-binary bin-path))))))))
+  (testing "record-value.cxc — record → C struct; V(x:,y:).x + 100 = 103"
+    (let [{:keys [exit stdout]} (compile-and-run "record-value")]
+      (is (zero? exit))
+      (is (= "103\n" stdout)))))
 
 (deftest end-to-end-nested-record-field-chain
-  (testing "record-of-record; .a.b field chain works"
-    (let [src "record Point:
-    data:
-        x: Float
-        y: Float
-
-record Line:
-    data:
-        start: Point
-        stop:  Point
-
-def main:
-    -> running
-        do: print(Line(start: Point(x: 1.5, y: 2.0), stop: Point(x: 3.0, y: 4.0)).start.x)
-"
-          out-dir (tmp-dir)
-          {:keys [status stderr bin-path]}
-          (build/compile-source-to-file src "nest" (.getPath out-dir))]
-      (is (zero? status) (str "clang failed:\n" stderr))
-      (when (zero? status)
-        (is (= "1.500000\n" (:stdout (build/run-binary bin-path))))))))
+  (testing "nested-record.cxc — record-of-record; .a.b field chain works"
+    (let [{:keys [exit stdout]} (compile-and-run "nested-record")]
+      (is (zero? exit))
+      (is (= "1.500000\n" stdout)))))
