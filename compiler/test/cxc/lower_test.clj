@@ -103,3 +103,44 @@
       (is (= [{:name "x" :value {:node :int :value 10}}    ; overridden
               {:name "y" :value {:node :int :value 2}}]    ; default kicked in
              (:fields ctor))))))
+
+(deftest def-atom-lowers-to-objc-class
+  (testing "def-atom with data:-only → :objc-class with @property ivars + -init defaults"
+    (let [prog (lower-src "def Counter:\n    data:\n        n: Int = 42\n\ndef main:\n    -> running\n        do: print(Counter().n)\n")
+          cls  (first (:classes prog))]
+      (is (= :objc-class (:node cls)))
+      (is (= "Counter" (:name cls)))
+      (is (= "NSObject" (:superclass cls)))
+      (is (= [{:name "n" :c-type "int" :attrs ["assign"]}] (:properties cls)))
+      (is (= [{:node :assign
+               :lhs  {:node :name :sym "_n"}
+               :rhs  {:node :int :value 42}}]
+             (:init-body cls))))))
+
+(deftest def-atom-ctor-lowers-to-alloc-init
+  (testing "Counter() in expression position → :objc-alloc-init"
+    (let [prog (lower-src "def Counter:\n    data:\n        n: Int = 42\n\ndef main:\n    -> running\n        do: print(Counter().n)\n")
+          call (first (get-in prog [:main :body]))
+          ctor (get-in call [:args 1 :target])]
+      (is (= :objc-alloc-init (:node ctor)))
+      (is (= "Counter" (:class ctor))))))
+
+(deftest def-atom-triggers-foundation-and-autoreleasepool
+  (testing "presence of an ObjC class flips includes to Foundation and wraps main in @autoreleasepool"
+    (let [prog (lower-src "def Counter:\n    data:\n        n: Int = 42\n\ndef main:\n    -> running\n        do: print(Counter().n)\n")]
+      (is (= ["<Foundation/Foundation.h>"] (:includes prog)))
+      (is (true? (get-in prog [:main :autorelease?]))))))
+
+(deftest hello-world-stays-pure-c
+  (testing "no ObjC classes → stdio.h include, no autoreleasepool"
+    (let [prog (lower-src "def main:\n    -> running\n        do: print(\"hi\")\n")]
+      (is (= ["<stdio.h>"] (:includes prog)))
+      (is (not (true? (get-in prog [:main :autorelease?])))))))
+
+(deftest def-atom-with-transitions-fails-nyi
+  (testing "def-atom body beyond data: fails-nyi (transitions/use:/etc are next)"
+    (try
+      (lower-src "def Ticker:\n    data:\n        n: Int = 0\n\n    -> incremented\n        then: n => n + 1\n\ndef main:\n    -> running\n        do: print(Ticker().n)\n")
+      (is false "expected NYI throw")
+      (catch clojure.lang.ExceptionInfo e
+        (is (= :not-yet-implemented (:kind (ex-data e))))))))

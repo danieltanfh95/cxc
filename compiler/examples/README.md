@@ -20,6 +20,7 @@ what the current compiler can lower.
 | [`record-value.cxc`](record-value.cxc) | Record → C typedef struct; ctor + field access + arithmetic | `103` |
 | [`nested-record.cxc`](nested-record.cxc) | Record-of-record; chained `.a.b` field access; float promotion | `1.500000` |
 | [`record-defaults.cxc`](record-defaults.cxc) | Omitted fields fall back to declared defaults (`V().x` uses default) | `3` |
+| [`atom-simple.cxc`](atom-simple.cxc) | Def-atom → ObjC class; `Counter()` → `[[Counter alloc] init]`; `.n` → property | `42` |
 
 ## Running one by hand
 

@@ -62,3 +62,9 @@
     (let [{:keys [exit stdout]} (compile-and-run "record-defaults")]
       (is (zero? exit))
       (is (= "3\n" stdout)))))
+
+(deftest end-to-end-def-atom-alloc-init
+  (testing "atom-simple.cxc — def-atom → ObjC class; Counter() → alloc/init; .n → property"
+    (let [{:keys [exit stdout]} (compile-and-run "atom-simple")]
+      (is (zero? exit))
+      (is (= "42\n" stdout)))))

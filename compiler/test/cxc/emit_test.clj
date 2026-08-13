@@ -15,7 +15,7 @@
 
 (deftest hello-emit-shape
   (let [s (emit/emit (hello-program-ast))]
-    (is (str/includes? s "#include <stdio.h>"))
+    (is (str/includes? s "#import <stdio.h>"))
     (is (str/includes? s "int main(int argc, char *argv[]) {"))
     (is (str/includes? s "printf(\"%s\\n\", \"hello, world\");"))
     (is (str/includes? s "return 0;"))
@@ -72,3 +72,35 @@
                               {:name "y" :c-type "int"}]}])
         s   (emit/emit ast)]
     (is (str/includes? s "typedef struct {\n    int x;\n    int y;\n} V;"))))
+
+(deftest objc-alloc-init-emits
+  (let [ast (assoc-in (hello-program-ast) [:main :body 0]
+                      {:node :call :fn "printf"
+                       :args [{:node :str :value "%d\n"}
+                              {:node :field
+                               :target {:node :objc-alloc-init :class "Counter"}
+                               :field  "n"}]})
+        s   (emit/emit ast)]
+    (is (str/includes? s "[[Counter alloc] init].n"))))
+
+(deftest objc-class-emits
+  (let [ast (-> (hello-program-ast)
+                (assoc :classes
+                       [{:node :objc-class :name "Counter" :superclass "NSObject"
+                         :properties [{:name "n" :c-type "int" :attrs ["assign"]}]
+                         :init-body [{:node :assign
+                                      :lhs  {:node :name :sym "_n"}
+                                      :rhs  {:node :int :value 42}}]}]))
+        s   (emit/emit ast)]
+    (is (str/includes? s "@interface Counter : NSObject"))
+    (is (str/includes? s "@property (assign) int n;"))
+    (is (str/includes? s "@implementation Counter"))
+    (is (str/includes? s "self = [super init];"))
+    (is (str/includes? s "_n = 42;"))
+    (is (str/includes? s "return self;"))
+    (is (str/includes? s "@end"))))
+
+(deftest autoreleasepool-wraps-main-when-flagged
+  (let [ast (assoc-in (hello-program-ast) [:main :autorelease?] true)
+        s   (emit/emit ast)]
+    (is (str/includes? s "@autoreleasepool {"))))

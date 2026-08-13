@@ -19,7 +19,9 @@
         bin-file (io/file out-dir name)]
     (spit m-file m-src)
     (let [{:keys [exit out err]}
-          (shell/sh "clang" "-fobjc-arc" "-o" (.getPath bin-file) (.getPath m-file))]
+          (shell/sh "clang" "-fobjc-arc"
+                    "-framework" "Foundation"
+                    "-o" (.getPath bin-file) (.getPath m-file))]
       {:m-path   (.getPath m-file)
        :bin-path (.getPath bin-file)
        :status   exit
