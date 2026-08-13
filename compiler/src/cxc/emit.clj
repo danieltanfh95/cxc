@@ -105,6 +105,19 @@
     ;; Pointer-equality against a canonicalized `k<Atom>_phase_<name>`
     ;; constant — O(1), no string compare.
     (str "if (_phase != " (:phase-const node) ") return;")
+    :transition-branch
+    ;; One arm of a first-match dispatch for a message-selector method.
+    ;; Guard = `_phase == kA_phase_source` && header/body when: expressions
+    ;; (already AND-folded by lower). Body runs then:/phase-update/do:,
+    ;; then early-returns so subsequent branches don't fire.
+    (let [phase-eq (str "_phase == " (:source-phase-const node))
+          guard    (if-let [g (:guard node)]
+                     (str "(" phase-eq ") && (" (emit-expr g) ")")
+                     phase-eq)
+          body     (str/join "\n" (map emit-stmt (:body node)))
+          block    (indent-lines 4 (if (str/blank? body) "return;"
+                                     (str body "\nreturn;")))]
+      (str "if (" guard ") {\n" block "\n}"))
     :queue-init
     ;; Layer 4: per-atom serial queue targeting the main queue. All work
     ;; stays single-threaded; the primitive matches what Layer 4c will

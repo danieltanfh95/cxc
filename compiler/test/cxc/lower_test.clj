@@ -330,7 +330,7 @@
       (is (= :struct-lit (get-in plus-call [:args 1 :node]))))))
 
 (deftest message-triggered-transition-lowers-to-objc-method
-  (testing "`alive <: bump -> alive then: n => n + 1` → :objc-method with phase-guard + then update"
+  (testing "`alive <: bump -> alive then: n => n + 1` → :objc-method with one transition-branch"
     (let [prog (lower-src "def Counter:
     data:
         n: Int = 0
@@ -349,17 +349,20 @@ def main:
       (is (some? bump) "expected a `bump` transition method on the class")
       (is (= "void" (:return-type bump)))
       (is (empty? (:params bump)))
-      ;; Body: [phase-guard, then-update]. No phase reassign (source==target).
-      (is (= [{:node :phase-guard :phase-const "kCounter_phase_alive"}
-              {:node :assign
-               :lhs  {:node :name :sym "_n"}
-               :rhs  {:node :binop :op "+"
-                      :left  {:node :name :sym "_n"}
-                      :right {:node :int  :value 1}}}]
+      ;; Body: [transition-branch]. One branch for the alive source phase;
+      ;; no phase reassign (source==target).
+      (is (= [{:node :transition-branch
+               :source-phase-const "kCounter_phase_alive"
+               :guard nil
+               :body [{:node :assign
+                       :lhs  {:node :name :sym "_n"}
+                       :rhs  {:node :binop :op "+"
+                              :left  {:node :name :sym "_n"}
+                              :right {:node :int  :value 1}}}]}]
              (:body bump))))))
 
 (deftest message-triggered-transition-with-phase-change-emits-phase-assign
-  (testing "`alive <: die -> dead` sets _phase to kA_phase_dead after user updates"
+  (testing "`alive <: die -> dead` sets _phase to kA_phase_dead inside the branch body"
     (let [prog (lower-src "def Enemy:
     data:
         hp: Int = 3
@@ -374,10 +377,58 @@ def main:
         do: print(1)
 ")
           cls  (first (:classes prog))
-          die  (first (filter #(= "die" (:selector %)) (:methods cls)))]
+          die  (first (filter #(= "die" (:selector %)) (:methods cls)))
+          branch (first (:body die))]
       (is (some? die))
+      (is (= "kEnemy_phase_alive" (:source-phase-const branch)))
       (is (= {:node :assign
               :lhs  {:node :name :sym "_phase"}
               :rhs  {:node :name :sym "kEnemy_phase_dead"}}
-             ;; Body: [phase-guard, phase-update, do-stmt]
-             (nth (:body die) 1))))))
+             ;; Branch body: [phase-update, do-stmt]
+             (first (:body branch)))))))
+
+(deftest multiple-transitions-same-selector-different-phases-group-into-one-method
+  (testing "`alive <: die` and `dying <: die` share selector `die` → one method, two branches in source order"
+    (let [prog (lower-src "def Enemy:
+    data:
+        hp: Int = 3
+
+    -> alive
+
+    alive <: die -> dying
+        then: hp => 0
+    dying <: die -> dead
+
+def main:
+    -> running
+        do: print(1)
+")
+          cls  (first (:classes prog))
+          die  (first (filter #(= "die" (:selector %)) (:methods cls)))]
+      (is (some? die))
+      (is (= 2 (count (:body die))))
+      (is (= "kEnemy_phase_alive" (get-in (:body die) [0 :source-phase-const])))
+      (is (= "kEnemy_phase_dying" (get-in (:body die) [1 :source-phase-const]))))))
+
+(deftest header-and-body-when-guards-and-fold-into-single-branch-guard
+  (testing "`when: by > 0` and body `when: hp > 0` AND together on the branch"
+    (let [prog (lower-src "def Enemy:
+    data:
+        hp: Int = 10
+
+    -> alive
+
+    alive <: take_damage when: hp > 0 -> alive
+        when: hp > 0
+        then: hp => hp - 1
+
+def main:
+    -> running
+        do: print(1)
+")
+          cls  (first (:classes prog))
+          td   (first (filter #(= "take_damage" (:selector %)) (:methods cls)))
+          branch (first (:body td))]
+      (is (some? branch))
+      ;; guard is `(hp > 0) && (hp > 0)` — header AND body
+      (is (= "&&" (get-in branch [:guard :op]))))))

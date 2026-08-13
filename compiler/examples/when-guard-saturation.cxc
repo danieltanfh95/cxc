@@ -1,0 +1,18 @@
+def Counter:
+    data:
+        n:   Int = 0
+        max: Int = 3
+
+    -> alive
+        do:
+            self |> bump
+            self |> bump
+            self |> bump
+            self |> bump
+
+    alive <: bump when: n < max -> alive
+        then: n => n + 1
+
+def main:
+    -> running
+        do: print(Counter().n)

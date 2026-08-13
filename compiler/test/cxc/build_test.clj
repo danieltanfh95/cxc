@@ -172,3 +172,15 @@
     (let [{:keys [exit stdout]} (compile-and-run "self-sync-send-in-on-enter")]
       (is (zero? exit))
       (is (= "2\n" stdout)))))
+
+(deftest end-to-end-when-guard-saturation
+  (testing "when-guard-saturation.cxc — 4 bumps, `when: n < max` blocks the 4th; n saturates at max=3"
+    (let [{:keys [exit stdout]} (compile-and-run "when-guard-saturation")]
+      (is (zero? exit))
+      (is (= "3\n" stdout)))))
+
+(deftest end-to-end-multi-phase-toggle
+  (testing "multi-phase-toggle.cxc — same selector `flip` on two phases, first-match dispatch groups into one method; 3 flips = off→on→off→on, state=1"
+    (let [{:keys [exit stdout]} (compile-and-run "multi-phase-toggle")]
+      (is (zero? exit))
+      (is (= "1\n" stdout)))))

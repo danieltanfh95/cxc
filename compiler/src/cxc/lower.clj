@@ -862,63 +862,62 @@
   [t]
   (contains? #{"<:" "<|"} (get-in t [:receive :glyph])))
 
-(defn- lower-message-triggered-transition
-  "Lower one `<phase> <: msg[{args}] [when: g] -> target [then:/do:]`
-   into an ObjC instance method. Emit order matches spec §1.12:
-     - phase filter (early exit if _phase ≠ source phase)
-     - header + body `when:` guards (Step 7 wires both)
-     - `let:` bindings (Step 9+ wires them alongside payload binding)
-     - `then:` field updates
-     - phase update to target (skipped if target == source)
-     - target on-enter (inlined by Step 8)
-     - `do:` statements
-     - post-transition invariants (Step 14)
-   Body wrapped in @try/@catch by Step 15. Step 4 provides the outer
-   scaffolding; other steps compose in additional clauses."
+(defn- transition-msg-name
+  "Extract the message-name from a receive-glyph transition's pattern.
+   Only bare-ident patterns (`bump`, `take_damage`) are handled at
+   Layer 4 Step 4-7; dotted sources like `input.pressed` land in Step 13."
+  [t]
+  (let [src (get-in t [:receive :msg :source])]
+    (case (:node src)
+      :ident (:name src)
+      (fail-nyi! (str "message pattern source on transition must be a bare ident "
+                      "(got " (:node src) "); dotted sources like `input.pressed` "
+                      "are Layer 4 Step 13")
+                 src))))
+
+(defn- lower-transition-branch
+  "Lower one transition into a `:transition-branch` — an `if` block on
+   the source phase (+ combined header/body `when:` guards) that runs
+   the transition's body and returns. Multiple transitions on the same
+   selector are stacked in first-match order inside one method (design
+   §12: first-match dispatch)."
   [atom-name t ctx]
-  (when (= "<|" (get-in t [:receive :glyph]))
-    (fail-nyi! (str "sync-receive glyph `<|` on transition "
-                    "(rendezvous semantics — deferred to Layer 4b)")
-               t))
   (when (not= :phase (get-in t [:source :kind]))
     (fail-nyi! (str "message-triggered transition on def-atom `" atom-name
                     "` must have an explicit source phase (got "
                     (get-in t [:source :kind]) ")")
                t))
-  (let [source-name (get-in t [:source :name])
-        target      (:target t)
-        msg         (get-in t [:receive :msg])
-        msg-source  (:source msg)
-        msg-name    (case (:node msg-source)
-                      :ident (:name msg-source)
-                      (fail-nyi! (str "message pattern source on transition must be "
-                                      "a bare ident for Layer 4 Step 4 (got "
-                                      (:node msg-source) "); dotted sources like "
-                                      "`input.pressed` land in Step 13)")
-                                 msg-source))
-        payload     (:payload msg)
-        _           (when (seq payload)
-                      (fail-nyi! (str "message payload binding "
-                                      "(named args in `" msg-name "{...}` — Layer 4 Step 9)")
-                                 msg))
-        _           (when (:when t)
-                      (fail-nyi! (str "header `when:` guard on message-triggered "
-                                      "transition (Layer 4 Step 7)")
-                                 t))
-        selector    msg-name        ;; Step 9 encodes payload names into the selector
-        ;; `self` in the transition body — needed by infer-type when
-        ;; the body has `self :> foo` sends or `self.field` reads.
-        ctx'        (assoc-in ctx [:locals "self"] {:atom atom-name})
-        phase-check {:node :phase-guard
-                     :phase-const (phase-constant-name atom-name source-name)}
-        then-clauses (filter #(= :then-clause (:node %)) (:body t))
-        do-clauses   (filter #(= :do-clause   (:node %)) (:body t))
-        let-clauses  (filter #(= :let-clause  (:node %)) (:body t))
-        when-clauses (filter #(= :when-clause (:node %)) (:body t))
-        _            (when (seq when-clauses)
-                       (fail-nyi! "body `when:` guard on message-triggered transition (Layer 4 Step 7)" t))
+  (let [source-name  (get-in t [:source :name])
+        target       (:target t)
+        msg          (get-in t [:receive :msg])
+        payload      (:payload msg)
+        _            (when (seq payload)
+                       (fail-nyi! (str "message payload binding "
+                                       "(named args in `" (transition-msg-name t)
+                                       "{...}` — Layer 4 Step 9)")
+                                  msg))
+        ;; `self` in the branch body — needed by infer-type for
+        ;; `self :> foo` sends and `self.field` reads.
+        ctx'         (assoc-in ctx [:locals "self"] {:atom atom-name})
+        header-when  (:when t)
+        body-clauses (:body t)
+        then-clauses (filter #(= :then-clause (:node %)) body-clauses)
+        do-clauses   (filter #(= :do-clause   (:node %)) body-clauses)
+        let-clauses  (filter #(= :let-clause  (:node %)) body-clauses)
+        when-clauses (filter #(= :when-clause (:node %)) body-clauses)
         _            (when (seq let-clauses)
                        (fail-nyi! "`let:` bindings on message-triggered transition (Layer 4 Step 9+)" t))
+        body-whens   (mapv :expr when-clauses)
+        guard-exprs  (cond-> []
+                       header-when      (conj header-when)
+                       (seq body-whens) (into body-whens))
+        guard-lo     (when (seq guard-exprs)
+                       ;; AND-fold all guards into one expression.
+                       (reduce (fn [acc e]
+                                 {:node :binop :op "&&"
+                                  :left acc :right (lower-expr e ctx')})
+                               (lower-expr (first guard-exprs) ctx')
+                               (rest guard-exprs)))
         then-stmts   (vec (mapcat (fn [c] (mapv #(lower-then-update % ctx')
                                                 (:updates c)))
                                   then-clauses))
@@ -928,15 +927,46 @@
                         :lhs {:node :name :sym "_phase"}
                         :rhs {:node :name
                               :sym (phase-constant-name atom-name target)}})
-        body         (cond-> [phase-check]
+        body         (cond-> []
                        (seq then-stmts) (into then-stmts)
                        phase-update     (conj phase-update)
                        (seq do-stmts)   (into do-stmts))]
-    {:node        :objc-method
-     :selector    selector
-     :return-type "void"
-     :params      []
+    {:node        :transition-branch
+     :source-phase-const (phase-constant-name atom-name source-name)
+     :guard       guard-lo
      :body        body}))
+
+(defn- lower-message-triggered-transitions
+  "Group transitions by message-selector. Each group becomes a single
+   ObjC instance method whose body is a sequence of :transition-branch
+   nodes in source-order. Same-selector transitions on different source
+   phases are the common case (`alive <: bump ...` and `dying <: bump ...`);
+   emitting them as branches in one method is what makes ObjC selector
+   dispatch work — you can't have two methods with identical selectors."
+  [atom-name transitions ctx]
+  (let [msg-txns    (filter message-triggered? transitions)
+        _           (doseq [t msg-txns]
+                      (when (= "<|" (get-in t [:receive :glyph]))
+                        (fail-nyi! (str "sync-receive glyph `<|` on transition "
+                                        "(rendezvous semantics — deferred to Layer 4b)")
+                                   t)))
+        ;; group-by preserves group order per key; sort by first appearance
+        ;; to keep emit order deterministic and match declaration order.
+        by-selector (reduce (fn [acc t] (update acc (transition-msg-name t)
+                                                (fnil conj []) t))
+                            {}
+                            msg-txns)
+        ;; Preserve declaration order of selectors.
+        selector-order (distinct (mapv transition-msg-name msg-txns))]
+    (mapv (fn [sel]
+            (let [ts (get by-selector sel)
+                  branches (mapv #(lower-transition-branch atom-name % ctx) ts)]
+              {:node        :objc-method
+               :selector    sel
+               :return-type "void"
+               :params      []
+               :body        branches}))
+          selector-order)))
 
 ;; ---------------------------------------------------------------------------
 ;; Top-level lowering — records, methods, atoms, main
@@ -1179,8 +1209,8 @@
           init-shell      [(self-msg-noargs "cxc_structuralSetup")
                            state-init-msg
                            (self-msg-noargs "cxc_runtimeBinding")]
-          txn-methods     (mapv #(lower-message-triggered-transition atom-name % ctx-with-self)
-                                (filter message-triggered? transitions))]
+          txn-methods     (lower-message-triggered-transitions
+                           atom-name transitions ctx-with-self)]
       {:node            :objc-class
        :name            atom-name
        :superclass      "NSObject"

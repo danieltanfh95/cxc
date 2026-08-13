@@ -1,0 +1,19 @@
+def Toggle:
+    data:
+        state: Int = 0
+
+    -> off
+        do:
+            self |> flip
+            self |> flip
+            self |> flip
+
+    off <: flip -> on
+        then: state => 1
+
+    on <: flip -> off
+        then: state => 0
+
+def main:
+    -> running
+        do: print(Toggle().state)
