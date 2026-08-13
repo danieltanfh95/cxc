@@ -175,13 +175,57 @@
                         :right {:node :int  :value 1}}}]
                (:body state)))))))
 
-(deftest def-atom-with-non-initial-wildcard-fails-nyi
-  (testing "wildcards on non-initial phases need the actor runtime to fire — fail-nyi until Layer 4"
-    (try
-      (lower-src "def Ticker:\n    data:\n        n: Int = 0\n\n    -> ready\n        then: n => 1\n\n    -> other\n        then: n => 2\n\ndef main:\n    -> running\n        do: print(Ticker().n)\n")
-      (is false "expected NYI throw")
-      (catch clojure.lang.ExceptionInfo e
-        (is (= :not-yet-implemented (:kind (ex-data e))))))))
+(deftest non-initial-wildcard-inlines-into-transitions-that-enter-that-phase
+  (testing "`-> dead do: print(0)` inlines into `alive <: die -> dead` branch body (phase change, not self-loop)"
+    (let [prog (lower-src "def Enemy:
+    data:
+        hp: Int = 3
+
+    -> alive
+
+    -> dead
+        do: print(0)
+
+    alive <: die -> dead
+
+def main:
+    -> running
+        do: print(1)
+")
+          cls (first (:classes prog))
+          die (first (filter #(= "die" (:selector %)) (:methods cls)))
+          branch (first (:body die))]
+      (is (some? branch))
+      ;; Body: [phase-update, wildcard-do-stmt (from `-> dead`)]
+      (is (= 2 (count (:body branch))))
+      (is (= :assign (:node (first (:body branch)))))
+      (is (= "_phase" (get-in (first (:body branch)) [:lhs :sym])))
+      ;; Second item is the wildcard's print(0) call.
+      (is (= :call (:node (second (:body branch))))))))
+
+(deftest self-loop-transition-does-not-fire-wildcard
+  (testing "`alive <: bump -> alive` targets same phase → wildcard on alive does NOT re-fire (would recurse)"
+    (let [prog (lower-src "def Counter:
+    data:
+        n: Int = 0
+
+    -> alive
+        do: print(999)
+
+    alive <: bump -> alive
+        then: n => n + 1
+
+def main:
+    -> running
+        do: print(1)
+")
+          cls  (first (:classes prog))
+          bump (first (filter #(= "bump" (:selector %)) (:methods cls)))
+          branch (first (:body bump))]
+      ;; Branch body has ONLY the specific then: (no wildcard do inlined),
+      ;; because target==source is a self-loop, not a phase change.
+      (is (= 1 (count (:body branch))))
+      (is (= :assign (:node (first (:body branch))))))))
 
 (deftest record-method-lowers-to-c-function
   (testing "record with a method → :c-function under :functions with mangled name and self as first param"

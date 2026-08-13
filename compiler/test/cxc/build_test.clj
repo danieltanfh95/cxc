@@ -180,7 +180,13 @@
       (is (= "3\n" stdout)))))
 
 (deftest end-to-end-multi-phase-toggle
-  (testing "multi-phase-toggle.cxc — same selector `flip` on two phases, first-match dispatch groups into one method; 3 flips = off→on→off→on, state=1"
+  (testing "multi-phase-toggle.cxc — same selector `flip` on two phases, first-match dispatch groups into one method; 3 flips = boot→on→off→on, state=1"
     (let [{:keys [exit stdout]} (compile-and-run "multi-phase-toggle")]
       (is (zero? exit))
       (is (= "1\n" stdout)))))
+
+(deftest end-to-end-non-initial-wildcard
+  (testing "non-initial-wildcard.cxc — `-> armed then: n => 100` fires when the `arm` transition enters `armed` (not at init); final n = 101 after `fire` adds 1"
+    (let [{:keys [exit stdout]} (compile-and-run "non-initial-wildcard")]
+      (is (zero? exit))
+      (is (= "101\n" stdout)))))

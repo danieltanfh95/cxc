@@ -2,17 +2,25 @@ def Toggle:
     data:
         state: Int = 0
 
-    -> off
+    # `boot` is a scratch phase with only an on-enter — the three
+    # flips exit it into `on`/`off` and never re-enter. Phases with
+    # sending on-enters must not appear as any transition's target
+    # (per spec §6 wildcards fire on every phase-change entry;
+    # re-entering `boot` would re-fire the sends → recursion).
+    -> boot
         do:
             self |> flip
             self |> flip
             self |> flip
 
-    off <: flip -> on
+    boot <: flip -> on
         then: state => 1
 
     on <: flip -> off
         then: state => 0
+
+    off <: flip -> on
+        then: state => 1
 
 def main:
     -> running

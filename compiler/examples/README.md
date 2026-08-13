@@ -39,7 +39,8 @@ what the current compiler can lower.
 | [`nested-slot-ctor-args.cxc`](nested-slot-ctor-args.cxc) | `def cell: Cell(v: 99)` passes named args to the sub-atom's initWith selector | `99` |
 | [`self-sync-send-in-on-enter.cxc`](self-sync-send-in-on-enter.cxc) | `self \|> bump` in initial-phase on-enter fires the transition twice under Layer 4 single-thread (direct call via `cxc_send_sync`); `alive <: bump -> alive then: n => n + 1` runs | `2` |
 | [`when-guard-saturation.cxc`](when-guard-saturation.cxc) | Header `when: n < max` on a message-triggered transition blocks the send when the guard fails; 4 bumps saturate at `max=3` | `3` |
-| [`multi-phase-toggle.cxc`](multi-phase-toggle.cxc) | Same selector (`flip`) on two source phases (`off`, `on`) groups into ONE ObjC method with two first-match branches; 3 flips cycle off→on→off→on, state=1 | `1` |
+| [`multi-phase-toggle.cxc`](multi-phase-toggle.cxc) | Same selector (`flip`) on two source phases groups into ONE ObjC method with two first-match branches; 3 flips cycle boot→on→off→on, state=1 | `1` |
+| [`non-initial-wildcard.cxc`](non-initial-wildcard.cxc) | Wildcard on a non-initial phase (`-> armed then: n => 100`) inlines into the transition that enters that phase; wildcards only fire on phase *change*, never on self-loops (avoids recursion by design) | `101` |
 
 ## Running one by hand
 

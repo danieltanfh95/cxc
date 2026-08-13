@@ -1,0 +1,21 @@
+def Machine:
+    data:
+        n: Int = 0
+
+    -> ready
+        do:
+            self |> arm
+            self |> fire
+
+    # Wildcard on `armed`: sets n to 100 on entry.
+    # Fires when `arm` transitions us in — not on init (init lands us in `ready`).
+    -> armed
+        then: n => 100
+
+    ready <: arm  -> armed
+    armed <: fire -> done
+        then: n => n + 1
+
+def main:
+    -> running
+        do: print(Machine().n)

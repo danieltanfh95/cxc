@@ -875,13 +875,53 @@
                       "are Layer 4 Step 13")
                  src))))
 
+(defn- wildcards-by-target-phase
+  "Index wildcards (`-> phase then:/do:`) by their target phase. A
+   phase may have zero, one, or (rare) multiple wildcards; multiples
+   are concat'd in declaration order (design §6 leaves the count
+   unspecified but doesn't forbid — declaration order is the natural
+   choice)."
+  [transitions]
+  (reduce (fn [acc t] (update acc (:target t) (fnil conj []) t))
+          {}
+          (filter wildcard-on-enter? transitions)))
+
+(defn- inline-wildcard-then-stmts
+  "Then-clauses from all wildcards targeting phase X, in order. Fires
+   BEFORE the specific transition's then: so the specific can override
+   (design §6 emit ordering: wildcard defaults, then specific overrides)."
+  [wildcards ctx]
+  (vec (mapcat (fn [w]
+                 (mapcat (fn [c] (mapv #(lower-then-update % ctx) (:updates c)))
+                         (filter #(= :then-clause (:node %)) (:body w))))
+               wildcards)))
+
+(defn- inline-wildcard-do-stmts
+  "Do-clauses from all wildcards targeting phase X, in order. Fires
+   BEFORE the specific transition's do: — wildcard's side effects
+   establish invariants of the phase, then the specific transition
+   layers its own on top."
+  [wildcards ctx]
+  (vec (mapcat (fn [w]
+                 (mapcat (fn [c] (lower-do-clause c ctx))
+                         (filter #(= :do-clause (:node %)) (:body w))))
+               wildcards)))
+
 (defn- lower-transition-branch
   "Lower one transition into a `:transition-branch` — an `if` block on
    the source phase (+ combined header/body `when:` guards) that runs
    the transition's body and returns. Multiple transitions on the same
    selector are stacked in first-match order inside one method (design
-   §12: first-match dispatch)."
-  [atom-name t ctx]
+   §12: first-match dispatch).
+
+   Emit order per §6:
+     1. wildcard then: (for target phase)   \\
+     2. specific then:                        }-- state changes
+     3. phase update (source → target)      /
+     4. wildcard do:  (for target phase)    \\
+     5. specific do:                          }-- side effects
+     6. post-transition invariants (Step 14)"
+  [atom-name t ctx wildcards-by-phase]
   (when (not= :phase (get-in t [:source :kind]))
     (fail-nyi! (str "message-triggered transition on def-atom `" atom-name
                     "` must have an explicit source phase (got "
@@ -927,10 +967,23 @@
                         :lhs {:node :name :sym "_phase"}
                         :rhs {:node :name
                               :sym (phase-constant-name atom-name target)}})
+        ;; Wildcards inline only when the transition actually CHANGES
+        ;; phase (target != source). Self-loops don't count as "entering"
+        ;; the phase — the atom was already there — so a wildcard's `do:`
+        ;; doesn't rerun on every message that keeps the phase the same.
+        ;; Without this, `-> alive do: self |> bump` combined with
+        ;; `alive <: bump -> alive` would recurse infinitely.
+        target-wildcards (if (= target source-name)
+                           []
+                           (get wildcards-by-phase target []))
+        w-then-stmts (inline-wildcard-then-stmts target-wildcards ctx')
+        w-do-stmts   (inline-wildcard-do-stmts   target-wildcards ctx')
         body         (cond-> []
-                       (seq then-stmts) (into then-stmts)
-                       phase-update     (conj phase-update)
-                       (seq do-stmts)   (into do-stmts))]
+                       (seq w-then-stmts) (into w-then-stmts)
+                       (seq then-stmts)   (into then-stmts)
+                       phase-update       (conj phase-update)
+                       (seq w-do-stmts)   (into w-do-stmts)
+                       (seq do-stmts)     (into do-stmts))]
     {:node        :transition-branch
      :source-phase-const (phase-constant-name atom-name source-name)
      :guard       guard-lo
@@ -942,7 +995,11 @@
    nodes in source-order. Same-selector transitions on different source
    phases are the common case (`alive <: bump ...` and `dying <: bump ...`);
    emitting them as branches in one method is what makes ObjC selector
-   dispatch work — you can't have two methods with identical selectors."
+   dispatch work — you can't have two methods with identical selectors.
+
+   Wildcards (implicit-source `-> phase ...`) indexed by target phase
+   thread through so each transition-branch inlines its target's
+   wildcard body at the right emit position (§6)."
   [atom-name transitions ctx]
   (let [msg-txns    (filter message-triggered? transitions)
         _           (doseq [t msg-txns]
@@ -950,6 +1007,7 @@
                         (fail-nyi! (str "sync-receive glyph `<|` on transition "
                                         "(rendezvous semantics — deferred to Layer 4b)")
                                    t)))
+        wildcards-by-phase (wildcards-by-target-phase transitions)
         ;; group-by preserves group order per key; sort by first appearance
         ;; to keep emit order deterministic and match declaration order.
         by-selector (reduce (fn [acc t] (update acc (transition-msg-name t)
@@ -960,7 +1018,9 @@
         selector-order (distinct (mapv transition-msg-name msg-txns))]
     (mapv (fn [sel]
             (let [ts (get by-selector sel)
-                  branches (mapv #(lower-transition-branch atom-name % ctx) ts)]
+                  branches (mapv #(lower-transition-branch atom-name % ctx
+                                                           wildcards-by-phase)
+                                 ts)]
               {:node        :objc-method
                :selector    sel
                :return-type "void"
@@ -1134,16 +1194,18 @@
                       "/observable/wildcard on-enter transition "
                       "(" (mapv :node extras) ") — use:/invariants/receive-glyphs next up")
                  {:atom atom-name :extras extras}))
-    ;; Layer 4 Step 4: message-triggered transitions become instance methods.
-    ;; Layer 4 Step 8 covers non-initial-phase wildcard on-enter (inlined at
-    ;; each transition site targeting that phase); for now, disallow them.
+    ;; Message-triggered transitions become instance methods (Step 4/7).
+    ;; Wildcard on-enter (implicit source): initial-phase wildcards inline
+    ;; into cxc_stateInit; non-initial-phase wildcards inline at each
+    ;; message-triggered branch that targets that phase (Step 8). A
+    ;; wildcard whose target phase is never entered is dead code — a
+    ;; lint concern (Layer 5+), not a hard error here.
     (let [unhandled (remove #(or (message-triggered? %)
-                                 (identical? % initial-on-enter))
+                                 (wildcard-on-enter? %))
                             transitions)]
       (when (seq unhandled)
-        (fail-nyi! (str "def-atom `" atom-name "` has transitions that Layer 4 "
-                        "Step 4 doesn't handle yet (non-initial-phase wildcard "
-                        "on-enter → Step 8; sync-receive `<|` → Layer 4b): "
+        (fail-nyi! (str "def-atom `" atom-name "` has transitions Layer 4 "
+                        "doesn't handle yet (sync-receive `<|` → Layer 4b): "
                         (mapv #(select-keys % [:source :receive :target]) unhandled))
                    {:atom atom-name :unhandled unhandled})))
     (let [phase-names     (collect-phase-names transitions)
