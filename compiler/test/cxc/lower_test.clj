@@ -87,9 +87,19 @@
       (is (= "%f\n" (get-in call [:args 0 :value]))))))
 
 (deftest missing-field-in-ctor-fails-nyi
-  (testing "V(x: 1) when V requires x + y — fail-nyi, not silent"
+  (testing "V(x: 1) when V requires x + y (no default on y) — fail-nyi"
     (try
       (lower-src "record V:\n    data:\n        x: Int\n        y: Int\n\ndef main:\n    -> running\n        do: print(V(x: 1).x)\n")
       (is false "expected NYI throw")
       (catch clojure.lang.ExceptionInfo e
         (is (= :not-yet-implemented (:kind (ex-data e))))))))
+
+(deftest record-defaults-fill-omitted-fields
+  (testing "omitted field with a declared default is filled from the default"
+    (let [prog (lower-src "record V:\n    data:\n        x: Int = 1\n        y: Int = 2\n\ndef main:\n    -> running\n        do: print(V(x: 10).y)\n")
+          call (first (get-in prog [:main :body]))
+          ctor (get-in call [:args 1 :target])]
+      (is (= :struct-lit (:node ctor)))
+      (is (= [{:name "x" :value {:node :int :value 10}}    ; overridden
+              {:name "y" :value {:node :int :value 2}}]    ; default kicked in
+             (:fields ctor))))))

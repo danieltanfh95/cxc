@@ -56,3 +56,9 @@
     (let [{:keys [exit stdout]} (compile-and-run "nested-record")]
       (is (zero? exit))
       (is (= "1.500000\n" stdout)))))
+
+(deftest end-to-end-record-defaults
+  (testing "record-defaults.cxc — omitted fields fall back to declared defaults"
+    (let [{:keys [exit stdout]} (compile-and-run "record-defaults")]
+      (is (zero? exit))
+      (is (= "3\n" stdout)))))

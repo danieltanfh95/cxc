@@ -1,0 +1,8 @@
+record V:
+    data:
+        x: Int = 1
+        y: Int = 2
+
+def main:
+    -> running
+        do: print(V().x + V(x: 10).y)

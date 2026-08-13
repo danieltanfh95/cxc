@@ -91,9 +91,10 @@
 
 (defn- build-record-env
   "Two-pass: first collect record names (so record→record refs resolve),
-   then resolve each field type. Cyclic-refs are legal in C via pointers,
-   but we don't emit pointers yet — a cycle in field types would fail-nyi
-   naturally when a downstream test tries to lay out an infinite struct."
+   then resolve each field's type and default. Cyclic-refs are legal in
+   C via pointers, but we don't emit pointers yet — a cycle in field
+   types would fail-nyi naturally when a downstream test tries to lay
+   out an infinite struct."
   [top-nodes]
   (let [records    (filter #(= :record (:node %)) top-nodes)
         skeleton   (into {} (map (fn [r] [(:name r) {:fields [] :field-index {}}]) records))
@@ -103,9 +104,10 @@
            (let [name    (:name r)
                  dsec    (first (filter #(= :data-section (:node %)) (:sections r)))
                  fields  (mapv (fn [f]
-                                 {:name   (:name f)
-                                  :cxc-ty (:name (:type f))
-                                  :c-type (cxc-type->c (:type f) env)})
+                                 {:name    (:name f)
+                                  :cxc-ty  (:name (:type f))
+                                  :c-type  (cxc-type->c (:type f) env)
+                                  :default (:default f)})   ; cxc-AST expr or nil
                                (:fields dsec))
                  idx     (into {} (map (juxt :name identity) fields))]
              (assoc env name {:fields fields :field-index idx})))
@@ -179,26 +181,30 @@
 (declare lower-expr lower-stmt)
 
 (defn- lower-record-ctor
-  "`V(x: 3, y: 4)` → C designated initializer. Named-args are matched by
-   name; positional-args are matched by declaration order. Missing fields
-   fail-nyi (we haven't wired defaults through the ctor yet)."
+  "`V(x: 3, y: 4)` → C designated initializer. Named args match by name;
+   positional args match by declaration order. Fields with no arg fall
+   back to their declared default expression (evaluated in the caller's
+   scope, which for now is empty — defaults must be literals or ctors
+   over literals). Fields with no arg AND no default fail-nyi."
   [record-name args record-env]
-  (let [rec       (get record-env record-name)
-        by-name   (into {} (keep (fn [a] (when (= :named (:kind a))
-                                           [(:name a) (:value a)]))
-                                 args))
+  (let [rec        (get record-env record-name)
+        by-name    (into {} (keep (fn [a] (when (= :named (:kind a))
+                                            [(:name a) (:value a)]))
+                                  args))
         positional (filterv #(= :positional (:kind %)) args)
-        fields    (mapv (fn [i f]
-                          (let [v (or (get by-name (:name f))
-                                      (:value (get positional i)))]
-                            (when-not v
-                              (fail-nyi! (str "no value provided for field `"
-                                              (:name f) "` on `" record-name "`")
-                                         {:record record-name :field (:name f)}))
-                            {:name  (:name f)
-                             :value (lower-expr v record-env)}))
-                        (range)
-                        (:fields rec))]
+        fields     (mapv (fn [i f]
+                           (let [v (or (get by-name (:name f))
+                                       (:value (get positional i))
+                                       (:default f))]
+                             (when-not v
+                               (fail-nyi! (str "no value provided for field `"
+                                               (:name f) "` on `" record-name
+                                               "` (no arg and no default)")
+                                          {:record record-name :field (:name f)}))
+                             {:name  (:name f)
+                              :value (lower-expr v record-env)}))
+                         (range)
+                         (:fields rec))]
     {:node :struct-lit :type record-name :fields fields}))
 
 (defn- print-format-string

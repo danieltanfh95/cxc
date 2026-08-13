@@ -19,6 +19,7 @@ what the current compiler can lower.
 | [`arithmetic.cxc`](arithmetic.cxc) | Int binop precedence + `%d` format selection | `11` |
 | [`record-value.cxc`](record-value.cxc) | Record → C typedef struct; ctor + field access + arithmetic | `103` |
 | [`nested-record.cxc`](nested-record.cxc) | Record-of-record; chained `.a.b` field access; float promotion | `1.500000` |
+| [`record-defaults.cxc`](record-defaults.cxc) | Omitted fields fall back to declared defaults (`V().x` uses default) | `3` |
 
 ## Running one by hand
 
