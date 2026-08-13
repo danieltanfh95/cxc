@@ -784,9 +784,31 @@
 (defn- initial-phase-for
   "First phase mentioned as a transition target — i.e. the phase the
    atom enters when init completes. cxc has no explicit initial-phase
-   marker; declaration order fixes it."
+   marker; declaration order fixes it. Atoms without any transitions
+   default to `init` — every atom has a phase (spec §1.12), and `init`
+   is a semantically-neutral choice for `data:`/`methods:`-only atoms."
   [transitions]
-  (some :target transitions))
+  (or (some :target transitions) "init"))
+
+(defn- collect-phase-names
+  "All phase names appearing in transition sources or targets, plus the
+   implicit `init` and `end` sentinels. Order-preserving dedup — the
+   first mention fixes ordering, which matters for readability of the
+   emitted `static NSString * const` block. `init` is always first,
+   `end` always last."
+  [transitions]
+  (let [mentioned (concat (keep #(when (= :phase (get-in % [:source :kind]))
+                                   (get-in % [:source :name])) transitions)
+                          (map :target transitions))
+        middle    (remove #{"init" "end"} (distinct mentioned))]
+    (vec (concat ["init"] middle ["end"]))))
+
+(defn- phase-constant-name
+  "Canonicalized ObjC constant name for a phase: `k<Atom>_phase_<name>`.
+   Every read/write in emitted code references one of these — never a
+   raw literal — so pointer-equality comparisons are safe (spec §5)."
+  [atom-name phase-name]
+  (str "k" atom-name "_phase_" phase-name))
 
 (defn- wildcard-on-enter?
   "A transition with implicit source, no message receipt, no guard —
@@ -966,7 +988,13 @@
                       "wildcard on-enter — non-initial-phase entries and message-triggered "
                       "transitions need the actor runtime (Layer 4)")
                  {:atom atom-name :transitions other-txns}))
-    (let [default-stmts   (mapv #(default-init-stmt-for % ctx-in-init) (:fields rec))
+    (let [phase-names     (collect-phase-names transitions)
+          queue-init-stmt {:node :queue-init :ivar "_own_queue"}
+          phase-init-stmt {:node :assign
+                           :lhs  {:node :name :sym "_phase"}
+                           :rhs  {:node :name
+                                  :sym  (phase-constant-name atom-name initial-phase)}}
+          default-stmts   (mapv #(default-init-stmt-for % ctx-in-init) (:fields rec))
           on-enter-stmts  (if initial-on-enter
                             (lower-on-enter-body (:body initial-on-enter) ctx-in-init)
                             [])
@@ -974,23 +1002,66 @@
                                 (fn [i p] (lower-invariant-check atom-name i p ctx-in-init))
                                 (:invariants rec)))
           user-methods    (mapv #(lower-atom-method atom-name % ctx-with-self) methods)
-          obs-methods     (mapv #(lower-observable-method % ctx-with-self) observables)]
-      {:node        :objc-class
-       :name        atom-name
-       :superclass  "NSObject"
-       :properties  (mapv (fn [f]
-                            ;; ARC discipline: object pointers (atom types) → strong;
-                            ;; scalars/records → assign. `strong` gives standard
-                            ;; owning-reference semantics; `assign` is right for
-                            ;; primitives and copyable values that ARC ignores.
-                            (let [is-atom-ptr? (contains? (:atom-env ctx) (:cxc-ty f))]
-                              {:name (:name f)
-                               :c-type (:c-type f)
-                               :attrs (if is-atom-ptr? ["strong"] ["assign"])}))
-                          (:fields rec))
-       :init-params (mapv (fn [p] {:name (:name p) :c-type (:c-type p)}) ctor-params)
-       :init-body   (-> default-stmts (into on-enter-stmts) (into invariant-stmts))
-       :methods     (into user-methods obs-methods)})))
+          obs-methods     (mapv #(lower-observable-method % ctx-with-self) observables)
+          data-props      (mapv (fn [f]
+                                  ;; ARC discipline: object pointers (atom types) → strong;
+                                  ;; scalars/records → assign. `strong` gives standard
+                                  ;; owning-reference semantics; `assign` is right for
+                                  ;; primitives and copyable values that ARC ignores.
+                                  (let [is-atom-ptr? (contains? (:atom-env ctx) (:cxc-ty f))]
+                                    {:name (:name f)
+                                     :c-type (:c-type f)
+                                     :attrs (if is-atom-ptr? ["strong"] ["assign"])}))
+                                (:fields rec))
+          phase-prop      {:name "phase" :c-type "NSString *"
+                           :attrs ["nonatomic" "copy"]}
+          own-queue-prop  ;; dispatch_queue_t is a toll-free-bridged ObjC object
+                          ;; under modern ARC (OS_OBJECT_USE_OBJC=1); `strong`
+                          ;; keeps it alive for the atom's lifetime.
+                          {:name "own_queue" :c-type "dispatch_queue_t"
+                           :attrs ["nonatomic" "strong"]}
+          ;; Three-part init factoring (design §7.4). Splits responsibility
+          ;; so alternate ctors (e.g. -initFromSnapshot: in Layer 6+) can
+          ;; substitute :state-init with restore logic while keeping
+          ;; structural setup and runtime binding intact. Data defaults
+          ;; may reference ctor-param names (`data: stored: Int = v`),
+          ;; so cxc_stateInit takes the ctor-params through and threads
+          ;; them from -init.
+          self-msg-noargs (fn [sel] {:node :objc-msg
+                                     :recv {:node :name :sym "self"}
+                                     :selector sel :args []})
+          param-names     (mapv :name ctor-params)
+          state-selector  (objc-method-selector "cxc_stateInit" param-names)
+          state-init-msg  {:node :objc-msg
+                           :recv {:node :name :sym "self"}
+                           :selector state-selector
+                           :args (mapv (fn [p] {:node :name :sym (:name p)})
+                                       ctor-params)}
+          setup-method    {:node :objc-method :selector "cxc_structuralSetup"
+                           :return-type "void" :params []
+                           :body [queue-init-stmt phase-init-stmt]}
+          state-method    {:node :objc-method :selector state-selector
+                           :return-type "void"
+                           :params (mapv (fn [p] {:name (:name p) :c-type (:c-type p)})
+                                         ctor-params)
+                           :body (into default-stmts on-enter-stmts)}
+          bind-method     {:node :objc-method :selector "cxc_runtimeBinding"
+                           :return-type "void" :params []
+                           :body invariant-stmts}
+          init-shell      [(self-msg-noargs "cxc_structuralSetup")
+                           state-init-msg
+                           (self-msg-noargs "cxc_runtimeBinding")]]
+      {:node            :objc-class
+       :name            atom-name
+       :superclass      "NSObject"
+       :phase-constants (mapv (fn [p] {:name (phase-constant-name atom-name p)
+                                       :value p}) phase-names)
+       :properties      (into [phase-prop own-queue-prop] data-props)
+       :init-params     (mapv (fn [p] {:name (:name p) :c-type (:c-type p)}) ctor-params)
+       :init-body       init-shell
+       :methods         (-> [setup-method state-method bind-method]
+                            (into user-methods)
+                            (into obs-methods))})))
 
 (defn- main-atom-body [main-node ctx]
   (let [transitions (filter #(= :transition (:node %)) (:body main-node))

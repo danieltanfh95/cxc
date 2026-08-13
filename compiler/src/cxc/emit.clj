@@ -79,15 +79,28 @@
 
 (defn- emit-stmt [node]
   (case (:node node)
-    :call   (str (emit-expr node) ";")
-    :return (str "return " (emit-expr (:value node)) ";")
-    :assign (str (emit-expr (:lhs node)) " = " (emit-expr (:rhs node)) ";")
+    :call     (str (emit-expr node) ";")
+    :objc-msg (str (emit-expr node) ";")
+    :return   (str "return " (emit-expr (:value node)) ";")
+    :assign   (str (emit-expr (:lhs node)) " = " (emit-expr (:rhs node)) ";")
     :invariant-check
     ;; Direct if/abort — NSAssert is compiled out by NS_BLOCK_ASSERTIONS
     ;; in release builds; invariants must always fire.
     (str "if (!(" (emit-expr (:cond node)) ")) {\n"
          "    fprintf(stderr, \"" (escape-c-string (:label node)) "\\n\");\n"
          "    abort();\n"
+         "}")
+    :queue-init
+    ;; Layer 4: per-atom serial queue targeting the main queue. All work
+    ;; stays single-threaded; the primitive matches what Layer 4c will
+    ;; need — retargeting queues off-main is a one-line change per atom.
+    (str "{\n"
+         "    NSString *cxc_qlabel = [NSString stringWithFormat:@\"cxc.%@.%p\","
+         " NSStringFromClass([self class]), self];\n"
+         "    " (:ivar node)
+         " = dispatch_queue_create([cxc_qlabel UTF8String], DISPATCH_QUEUE_SERIAL);\n"
+         "    dispatch_set_target_queue(" (:ivar node)
+         ", dispatch_get_main_queue());\n"
          "}")
     (throw (ex-info (str "emit-stmt: unknown node " (:node node))
                     {:node node}))))
@@ -215,8 +228,25 @@
          (str/join "\n\n" body-blocks)
          "\n@end")))
 
+(defn- emit-phase-constants
+  "File-scope `static NSString * const k<Atom>_phase_<name> = @\"<name>\";`
+   lines, one per phase. Canonicalized: two reads of the same constant
+   compare pointer-equal, so `_phase == kFoo_phase_alive` is O(1) with
+   no `isEqualToString:` dispatch."
+  [cls]
+  (when (seq (:phase-constants cls))
+    (->> (:phase-constants cls)
+         (map (fn [pc]
+                (str "static NSString * const " (:name pc)
+                     " = @\"" (escape-c-string (:value pc)) "\";")))
+         (str/join "\n"))))
+
 (defn- emit-class [cls]
-  (str (emit-interface cls) "\n\n" (emit-implementation cls)))
+  (let [phase-consts (emit-phase-constants cls)
+        parts        (remove str/blank? [phase-consts
+                                         (emit-interface cls)
+                                         (emit-implementation cls)])]
+    (str/join "\n\n" parts)))
 
 ;; ---------------------------------------------------------------------------
 ;; Program emission

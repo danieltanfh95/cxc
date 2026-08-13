@@ -111,11 +111,32 @@
       (is (= :objc-class (:node cls)))
       (is (= "Counter" (:name cls)))
       (is (= "NSObject" (:superclass cls)))
-      (is (= [{:name "n" :c-type "int" :attrs ["assign"]}] (:properties cls)))
-      (is (= [{:node :assign
-               :lhs  {:node :name :sym "_n"}
-               :rhs  {:node :int :value 42}}]
-             (:init-body cls))))))
+      (is (= [{:name "phase"     :c-type "NSString *"       :attrs ["nonatomic" "copy"]}
+              {:name "own_queue" :c-type "dispatch_queue_t" :attrs ["nonatomic" "strong"]}
+              {:name "n"         :c-type "int"              :attrs ["assign"]}]
+             (:properties cls)))
+      (is (= [{:name "kCounter_phase_init" :value "init"}
+              {:name "kCounter_phase_end"  :value "end"}]
+             (:phase-constants cls)))
+      ;; -init is a thin shell calling the three private factored methods.
+      (is (= [{:node :objc-msg :recv {:node :name :sym "self"}
+               :selector "cxc_structuralSetup" :args []}
+              {:node :objc-msg :recv {:node :name :sym "self"}
+               :selector "cxc_stateInit" :args []}
+              {:node :objc-msg :recv {:node :name :sym "self"}
+               :selector "cxc_runtimeBinding" :args []}]
+             (:init-body cls)))
+      (let [setup (first (filter #(= "cxc_structuralSetup" (:selector %)) (:methods cls)))
+            state (first (filter #(= "cxc_stateInit" (:selector %)) (:methods cls)))]
+        (is (= [{:node :queue-init :ivar "_own_queue"}
+                {:node :assign
+                 :lhs  {:node :name :sym "_phase"}
+                 :rhs  {:node :name :sym "kCounter_phase_init"}}]
+               (:body setup)))
+        (is (= [{:node :assign
+                 :lhs  {:node :name :sym "_n"}
+                 :rhs  {:node :int :value 42}}]
+               (:body state)))))))
 
 (deftest def-atom-ctor-lowers-to-alloc-init
   (testing "Counter() in expression position → :objc-alloc-init"
@@ -141,15 +162,18 @@
   (testing "initial-phase wildcard on-enter → its then:/do: append to :init-body after data defaults"
     (let [prog (lower-src "def Ticker:\n    data:\n        n: Int = 0\n\n    -> incremented\n        then: n => n + 1\n\ndef main:\n    -> running\n        do: print(Ticker().n)\n")
           cls  (first (:classes prog))]
-      (is (= [{:node :assign
-               :lhs  {:node :name :sym "_n"}
-               :rhs  {:node :int  :value 0}}
-              {:node :assign
-               :lhs  {:node :name :sym "_n"}
-               :rhs  {:node :binop :op "+"
-                      :left  {:node :name :sym "_n"}
-                      :right {:node :int  :value 1}}}]
-             (:init-body cls))))))
+      ;; State-init runs data defaults then the initial-phase on-enter body.
+      ;; Structural setup owns queue + phase = initial constant.
+      (let [state (first (filter #(= "cxc_stateInit" (:selector %)) (:methods cls)))]
+        (is (= [{:node :assign
+                 :lhs  {:node :name :sym "_n"}
+                 :rhs  {:node :int  :value 0}}
+                {:node :assign
+                 :lhs  {:node :name :sym "_n"}
+                 :rhs  {:node :binop :op "+"
+                        :left  {:node :name :sym "_n"}
+                        :right {:node :int  :value 1}}}]
+               (:body state)))))))
 
 (deftest def-atom-with-non-initial-wildcard-fails-nyi
   (testing "wildcards on non-initial phases need the actor runtime to fire — fail-nyi until Layer 4"
@@ -177,10 +201,23 @@
           call (first (get-in prog [:main :body]))
           ctor (get-in call [:args 1 :target])]
       (is (= [{:name "initial" :c-type "int"}] (:init-params cls)))
-      (is (= [{:node :assign
-               :lhs  {:node :name :sym "_n"}
-               :rhs  {:node :name :sym "initial"}}]
+      ;; -init shell calls cxc_structuralSetup, cxc_stateInitWithinitial:initial,
+      ;; cxc_runtimeBinding — ctor-params thread through the state-init selector.
+      (is (= [{:node :objc-msg :recv {:node :name :sym "self"}
+               :selector "cxc_structuralSetup" :args []}
+              {:node :objc-msg :recv {:node :name :sym "self"}
+               :selector "cxc_stateInitWithinitial:"
+               :args [{:node :name :sym "initial"}]}
+              {:node :objc-msg :recv {:node :name :sym "self"}
+               :selector "cxc_runtimeBinding" :args []}]
              (:init-body cls)))
+      (let [state (first (filter #(= "cxc_stateInitWithinitial:" (:selector %))
+                                 (:methods cls)))]
+        (is (= [{:name "initial" :c-type "int"}] (:params state)))
+        (is (= [{:node :assign
+                 :lhs  {:node :name :sym "_n"}
+                 :rhs  {:node :name :sym "initial"}}]
+               (:body state))))
       (is (= :objc-init-with (:node ctor)))
       (is (= "Counter" (:class ctor)))
       (is (= [{:name "initial" :value {:node :int :value 42}}] (:args ctor))))))
@@ -189,20 +226,23 @@
   (testing "T? on an atom lowers to the same `T *` pointer; nil default fills _other = nil; property is strong (ARC)"
     (let [prog (lower-src "def Counter:\n    data:\n        n: Int = 5\n        other: Counter? = nil\n\ndef main:\n    -> running\n        do: print(1)\n")
           cls  (first (:classes prog))]
-      (is (= [{:name "n"     :c-type "int"       :attrs ["assign"]}
-              {:name "other" :c-type "Counter *" :attrs ["strong"]}]
+      (is (= [{:name "phase"     :c-type "NSString *"       :attrs ["nonatomic" "copy"]}
+              {:name "own_queue" :c-type "dispatch_queue_t" :attrs ["nonatomic" "strong"]}
+              {:name "n"         :c-type "int"              :attrs ["assign"]}
+              {:name "other"     :c-type "Counter *"        :attrs ["strong"]}]
              (:properties cls)))
-      (is (= {:node :assign
-              :lhs  {:node :name :sym "_other"}
-              :rhs  {:node :nil}}
-             (second (:init-body cls)))))))
+      (let [state-init (first (filter #(= "cxc_stateInit" (:selector %)) (:methods cls)))]
+        (is (= {:node :assign
+                :lhs  {:node :name :sym "_other"}
+                :rhs  {:node :nil}}
+               ;; cxc_stateInit body: [_n=5, _other=nil]
+               (second (:body state-init))))))))
 
 (deftest atom-method-lowers-to-objc-method
   (testing "def-atom with methods: → :objc-method under class :methods"
     (let [prog (lower-src "def Counter:\n    data:\n        n: Int = 10\n\n    methods:\n        function bump(self) -> Int:\n            return self.n + 1\n\ndef main:\n    -> running\n        do: print(Counter().bump())\n")
           cls  (first (:classes prog))
-          m    (first (:methods cls))]
-      (is (= 1 (count (:methods cls))))
+          m    (first (filter #(= "bump" (:selector %)) (:methods cls)))]
       (is (= :objc-method (:node m)))
       (is (= "bump" (:selector m)))
       (is (= "int" (:return-type m)))
@@ -221,7 +261,8 @@
 (deftest atom-method-multiarg-selector
   (testing "plus(self, other: Int) → selector `plusWithother:` and matching call"
     (let [prog (lower-src "def Counter:\n    data:\n        n: Int = 10\n\n    methods:\n        function plus(self, other: Int) -> Int:\n            return self.n + other\n\ndef main:\n    -> running\n        do: print(Counter().plus(5))\n")
-          m    (first (:methods (first (:classes prog))))
+          m    (first (filter #(= "plusWithother:" (:selector %))
+                              (:methods (first (:classes prog)))))
           call (first (get-in prog [:main :body]))
           msg  (get-in call [:args 1])]
       (is (= "plusWithother:" (:selector m)))
