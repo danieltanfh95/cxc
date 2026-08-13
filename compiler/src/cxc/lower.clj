@@ -245,9 +245,21 @@
   (let [lt (infer-type left  ctx)
         rt (infer-type right ctx)]
     (cond
+      ;; Comparison ops always return bool regardless of operand types
+      ;; (parser accepts nonsense combos; we let clang catch those).
       (#{"==" "!=" "<" "<=" ">" ">="} op) :bool
-      (or (= lt :float) (= rt :float))    :float
-      (and (= lt :int) (= rt :int))       :int
+
+      ;; Boolean connectives: both sides must be bool (or int since we
+      ;; don't have a distinct bool type at the C level yet).
+      (#{"and" "or"} op) :bool
+
+      ;; `is` is identity/equality: pointer-equal for atoms, value-equal
+      ;; for enums/ints/nil. Returns bool.
+      (= "is" op) :bool
+
+      (or (= lt :float) (= rt :float)) :float
+      (and (= lt :int) (= rt :int))    :int
+
       :else (fail-nyi! (str "binop " op " between " lt " and " rt)
                        {:left lt :right rt}))))
 
@@ -314,6 +326,16 @@
     :lit-int    :int
     :lit-float  :float
     :lit-nil    :nil
+    :lit-int-unit   (fail-nyi! (str "unit-suffixed integer literal `"
+                                    (:value node) (:unit node)
+                                    "` — needs stdlib type for unit "
+                                    "`" (:unit node) "` (Layer 5.4)")
+                               node)
+    :lit-float-unit (fail-nyi! (str "unit-suffixed float literal `"
+                                    (:value node) (:unit node)
+                                    "` — needs stdlib type for unit "
+                                    "`" (:unit node) "` (Layer 5.4)")
+                               node)
     :self       (or (get (:locals ctx) "self")
                     (fail-nyi! "type-of `self` outside a method body" node))
     :ident      (or (get (:locals ctx) (:name node))
@@ -452,10 +474,24 @@
     :lit-int    {:node :int   :value (:value node)}
     :lit-float  {:node :float :value (:value node)}
     :lit-nil    {:node :nil}
+    :lit-int-unit   (fail-nyi! (str "unit-suffixed integer literal `"
+                                    (:value node) (:unit node)
+                                    "` — needs stdlib type for unit "
+                                    "`" (:unit node) "` (Layer 5.4)")
+                               node)
+    :lit-float-unit (fail-nyi! (str "unit-suffixed float literal `"
+                                    (:value node) (:unit node)
+                                    "` — needs stdlib type for unit "
+                                    "`" (:unit node) "` (Layer 5.4)")
+                               node)
     :ident      {:node :name  :sym (:name node)}
     :self       {:node :name  :sym "self"}
     :binop      {:node  :binop
-                 :op    (:op node)
+                 :op    (case (:op node)
+                          "and" "&&"
+                          "or"  "||"
+                          "is"  "=="            ; pointer-eq for atoms, value-eq for enums/ints
+                          (:op node))
                  :left  (lower-expr (:left node)  ctx)
                  :right (lower-expr (:right node) ctx)}
     :dot        (if (enum-case-access? node ctx)

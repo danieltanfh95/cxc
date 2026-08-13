@@ -92,3 +92,9 @@
     (let [{:keys [exit stdout]} (compile-and-run "enum-cases")]
       (is (zero? exit))
       (is (= "1\n" stdout)))))
+
+(deftest end-to-end-bool-and-is
+  (testing "bool-and-is.cxc — and/or/is lower to C boolean ops; identity check on nil"
+    (let [{:keys [exit stdout]} (compile-and-run "bool-and-is")]
+      (is (zero? exit))
+      (is (= "1\n" stdout)))))

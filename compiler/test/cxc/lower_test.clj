@@ -183,6 +183,24 @@
               :rhs  {:node :nil}}
              (second (:init-body cls)))))))
 
+(deftest and-or-is-lower-to-c-ops
+  (testing "and → &&, or → ||, is → ==; all infer :bool"
+    (let [prog (lower-src "def main:\n    -> running\n        do: print(1 == 2 and 3 == 3 or 4 == 4)\n")
+          call (first (get-in prog [:main :body]))
+          expr (get-in call [:args 1])]
+      ;; Left-assoc: (((1==2) && (3==3)) || (4==4))
+      (is (= "||" (:op expr)))
+      (is (= "&&" (get-in expr [:left :op]))))))
+
+(deftest is-nil-emits-pointer-eq
+  (testing "`x is nil` → `x == nil` at emit layer (pointer identity in ObjC)"
+    (let [prog (lower-src "def Counter:\n    data:\n        other: Counter? = nil\n\ndef main:\n    -> running\n        do: print(Counter().other is nil)\n")
+          call (first (get-in prog [:main :body]))
+          expr (get-in call [:args 1])]
+      (is (= :binop (:node expr)))
+      (is (= "==" (:op expr)))
+      (is (= :nil (get-in expr [:right :node]))))))
+
 (deftest enum-lowers-to-c-enum-with-mangled-cases
   (testing "enum decl → :c-enum under :enums; Key.arrow_down → C constant `Key_arrow_down`"
     (let [prog (lower-src "enum Key:\n    arrow_up\n    arrow_down\n\ndef main:\n    -> running\n        do: print(Key.arrow_down)\n")
