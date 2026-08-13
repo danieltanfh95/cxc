@@ -24,6 +24,7 @@
 (defn- emit-expr [node]
   (case (:node node)
     :str             (str "\"" (escape-c-string (:value node)) "\"")
+    :objc-str        (str "@\"" (escape-c-string (:value node)) "\"")
     :int             (str (:value node))
     :float           (str (:value node))
     :nil             "nil"
@@ -105,6 +106,37 @@
     ;; Pointer-equality against a canonicalized `k<Atom>_phase_<name>`
     ;; constant — O(1), no string compare.
     (str "if (_phase != " (:phase-const node) ") return;")
+    :phase-guard-eq
+    ;; Idempotency guard — early return if already at the target phase.
+    ;; Used by -transitionToEnd to make the cascade one-shot.
+    (str "if (_phase == " (:phase-const node) ") " (:ret node))
+    :end-cascade-child
+    ;; Cascade end to a nested-slot child: async send onto child's
+    ;; own_queue with a block that runs the child's own -transitionToEnd.
+    ;; Uses the CXCAtom protocol cast so `id`-typed calls compile
+    ;; without needing the concrete child type at this call site.
+    (let [slot (str "_" (:slot-name node))]
+      (str "cxc_send_async(" slot ", ^{ [(id<CXCAtom>)" slot " transitionToEnd]; });"))
+    :end-cascade-parent
+    ;; Notify parent (weak back-ref) to nil the slot holding self.
+    ;; Snapshot _parent + _parent_slot_name to strong locals so the
+    ;; block captures stable references (weak _parent could nil at any
+    ;; time; the runtime nil-guard in cxc_send_async covers that too).
+    (str "{\n"
+         "    __strong id p = _parent;\n"
+         "    NSString *sn = _parent_slot_name;\n"
+         "    if (p != nil && sn != nil) {\n"
+         "        cxc_send_async(p, ^{ [(id<CXCAtom>)p nilSlot:sn]; });\n"
+         "    }\n"
+         "}")
+    :nil-slot-branch
+    ;; One arm of parent's -nilSlot: switch — sets the named slot ivar
+    ;; to nil when the incoming slotName matches. isEqualToString: is
+    ;; used because the caller (child) copied the slot name; not
+    ;; necessarily pointer-equal to any literal here.
+    (str "if ([slotName isEqualToString:@\""
+         (escape-c-string (:slot-name node)) "\"]) { _"
+         (:slot-name node) " = nil; return; }")
     :transition-branch
     ;; One arm of a first-match dispatch for a message-selector method.
     ;; Guard = `_phase == kA_phase_source` && header/body when: expressions
@@ -293,17 +325,19 @@
            "\n}"))))
 
 (def ^:private cxc-runtime-helpers
-  ;; Header-only runtime (design §22). The CXCAtom protocol lets the
-  ;; nil-guarded helpers reach `own_queue` on any atom target via a
-  ;; static cast — cheaper than KVC / objc_msgSend / dynamic lookup,
-  ;; and every atom class satisfies the protocol implicitly (they all
-  ;; declare the matching @property). `cxc_send_sync` under Layer 4
-  ;; single-thread is a nil-guarded direct call; Layer 4c retargets
-  ;; to dispatch_sync when queue targets differ. `cxc_shutdown` is
-  ;; used by the compiler-emitted end of main atom's transitionToEnd
-  ;; (Step 16).
+  ;; Header-only runtime (design §22). The CXCAtom protocol declares
+  ;; the wire operations every atom class satisfies implicitly:
+  ;;   - own_queue: the atom's serial dispatch queue
+  ;;   - nilSlot: parent-side nested-slot auto-nil (§7.2)
+  ;;   - transitionToEnd: cascade entry-point (§7.3)
+  ;; Helpers cast id → id<CXCAtom> for calls that need those messages,
+  ;; cheaper than KVC / objc_msgSend / dynamic lookup. `cxc_send_sync`
+  ;; under Layer 4 single-thread is a nil-guarded direct call; Layer
+  ;; 4c retargets to dispatch_sync when queue targets differ.
   (str "@protocol CXCAtom\n"
        "@property (nonatomic, strong) dispatch_queue_t own_queue;\n"
+       "- (void)nilSlot:(NSString *)slotName;\n"
+       "- (void)transitionToEnd;\n"
        "@end\n\n"
        "static inline void cxc_send_async(id target, void (^block)(void)) {\n"
        "    if (target == nil) return;\n"

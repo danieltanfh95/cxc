@@ -372,7 +372,11 @@
              fields        (fields-from-data-section merged-dsec {} env enum-env)
              ctor-params   (ctor-params-normalized merged-ctor {} env enum-env)
              methods       (extract-methods name msec)
-             message-index (collect-message-shapes name transitions)]
+             message-index (collect-message-shapes name transitions)
+             ;; Names of fields that are nested-slot children — Step 11
+             ;; installs a parent back-ref on each after construction, and
+             ;; -transitionToEnd cascades end into each on this atom's end.
+             slot-names    (mapv :name nested-slots)]
          (assoc env name {:fields        fields
                           :field-index   (into {} (map (juxt :name identity) fields))
                           :ctor-params   ctor-params
@@ -382,6 +386,7 @@
                           :invariants    invariants
                           :transitions   transitions
                           :message-index message-index
+                          :slot-names    slot-names
                           :extras        extras})))
      skeleton
      atoms)))
@@ -1043,12 +1048,31 @@
                            (get wildcards-by-phase target []))
         w-then-stmts (inline-wildcard-then-stmts target-wildcards ctx')
         w-do-stmts   (inline-wildcard-do-stmts   target-wildcards ctx')
-        body         (cond-> []
-                       (seq w-then-stmts) (into w-then-stmts)
-                       (seq then-stmts)   (into then-stmts)
-                       phase-update       (conj phase-update)
-                       (seq w-do-stmts)   (into w-do-stmts)
-                       (seq do-stmts)     (into do-stmts))]
+        ;; target=end routes through -transitionToEnd (design §7.3);
+        ;; that method owns phase-set, `-> end` wildcard, cascade,
+        ;; parent notify. Specific then:/do: on the target=end
+        ;; transition would run OUTSIDE that flow — order-sensitive
+        ;; and confusing — so reject for now (users fold side effects
+        ;; into the `-> end do:` wildcard).
+        end-target?  (= "end" target)
+        _            (when (and end-target? (or (seq then-stmts) (seq do-stmts)))
+                       (fail-nyi!
+                        (str "specific `then:`/`do:` on a target=`end` transition "
+                             "(atom `" atom-name "`, msg `" (transition-msg-name t)
+                             "`) — end handling runs through -transitionToEnd; "
+                             "put side effects on the `-> end do:` wildcard instead")
+                        t))
+        body         (if end-target?
+                       [{:node :objc-msg
+                         :recv {:node :name :sym "self"}
+                         :selector "transitionToEnd"
+                         :args []}]
+                       (cond-> []
+                         (seq w-then-stmts) (into w-then-stmts)
+                         (seq then-stmts)   (into then-stmts)
+                         phase-update       (conj phase-update)
+                         (seq w-do-stmts)   (into w-do-stmts)
+                         (seq do-stmts)     (into do-stmts)))]
     {:node        :transition-branch
      :source-phase-const (phase-constant-name atom-name source-name)
      :guard       guard-lo
@@ -1287,12 +1311,30 @@
                         (mapv #(select-keys % [:source :receive :target]) unhandled))
                    {:atom atom-name :unhandled unhandled})))
     (let [phase-names     (collect-phase-names transitions)
+          slot-names      (set (:slot-names rec))
           queue-init-stmt {:node :queue-init :ivar "_own_queue"}
           phase-init-stmt {:node :assign
                            :lhs  {:node :name :sym "_phase"}
                            :rhs  {:node :name
                                   :sym  (phase-constant-name atom-name initial-phase)}}
-          default-stmts   (mapv #(default-init-stmt-for % ctx-in-init) (:fields rec))
+          ;; For nested-slot fields, install this atom as the child's
+          ;; parent right after the child is constructed. The install
+          ;; setter stashes weak parent + slot name on the child so
+          ;; the child's -transitionToEnd can cascade back (design §7.2).
+          install-parent-for-slot
+          (fn [field]
+            (when (contains? slot-names (:name field))
+              [{:node :objc-msg
+                :recv {:node :name :sym (str "_" (:name field))}
+                :selector "cxc_installParent:inSlot:"
+                :args [{:node :name :sym "self"}
+                       ;; NSString literal, not C string — slotName is
+                       ;; typed NSString * in cxc_installParent:inSlot:.
+                       {:node :objc-str :value (:name field)}]}]))
+          default-stmts   (vec (mapcat (fn [f]
+                                         (cons (default-init-stmt-for f ctx-in-init)
+                                               (install-parent-for-slot f)))
+                                       (:fields rec)))
           on-enter-stmts  (if initial-on-enter
                             (lower-on-enter-body (:body initial-on-enter) ctx-in-init)
                             [])
@@ -1318,6 +1360,14 @@
                           ;; keeps it alive for the atom's lifetime.
                           {:name "own_queue" :c-type "dispatch_queue_t"
                            :attrs ["nonatomic" "strong"]}
+          ;; Parent back-ref (weak → parent isn't kept alive by children;
+          ;; child is removed from parent's slot via nilSlot: on end).
+          ;; Slot name is copied — defensive against callers passing
+          ;; mutable NSStrings; canonical `@"..."` literals no-op it.
+          parent-prop     {:name "parent"           :c-type "id"
+                           :attrs ["nonatomic" "weak"]}
+          parent-slot-prop {:name "parent_slot_name" :c-type "NSString *"
+                            :attrs ["nonatomic" "copy"]}
           ;; Three-part init factoring (design §7.4). Splits responsibility
           ;; so alternate ctors (e.g. -initFromSnapshot: in Layer 6+) can
           ;; substitute :state-init with restore logic while keeping
@@ -1350,16 +1400,72 @@
                            state-init-msg
                            (self-msg-noargs "cxc_runtimeBinding")]
           txn-methods     (lower-message-triggered-transitions
-                           atom-name transitions ctx-with-self)]
+                           atom-name transitions ctx-with-self)
+          ;; -cxc_installParent:inSlot: setter. Called by the PARENT
+          ;; right after constructing this atom in its cxc_stateInit,
+          ;; so this atom can cascade nil back on -> end.
+          install-method  {:node :objc-method
+                           :selector "cxc_installParent:inSlot:"
+                           :return-type "void"
+                           :params [{:name "parent"    :c-type "id"}
+                                    {:name "slotName"  :c-type "NSString *"}]
+                           :body [{:node :assign
+                                   :lhs {:node :name :sym "_parent"}
+                                   :rhs {:node :name :sym "parent"}}
+                                  {:node :assign
+                                   :lhs {:node :name :sym "_parent_slot_name"}
+                                   :rhs {:node :objc-msg
+                                         :recv {:node :name :sym "slotName"}
+                                         :selector "copy"
+                                         :args []}}]}
+          ;; -transitionToEnd (design §7.3). Idempotent; sets phase to
+          ;; end constant; runs the `-> end` wildcard (if declared);
+          ;; cascades end into every nested-slot child; notifies parent
+          ;; (weak back-ref) to nil the slot holding self. Step 16
+          ;; layers main-atom cxc_shutdown() on top.
+          end-const       (phase-constant-name atom-name "end")
+          end-wildcards   (get (wildcards-by-target-phase transitions) "end" [])
+          end-wildcard-then (inline-wildcard-then-stmts end-wildcards ctx-in-init)
+          end-wildcard-do   (inline-wildcard-do-stmts   end-wildcards ctx-in-init)
+          cascade-stmts   (mapv (fn [slot-name]
+                                  {:node :end-cascade-child :slot-name slot-name})
+                                (:slot-names rec))
+          end-method      {:node :objc-method
+                           :selector "transitionToEnd"
+                           :return-type "void" :params []
+                           :body (-> [{:node :phase-guard-eq
+                                       :phase-const end-const :ret "return;"}]
+                                     (into end-wildcard-then)
+                                     (conj {:node :assign
+                                            :lhs {:node :name :sym "_phase"}
+                                            :rhs {:node :name :sym end-const}})
+                                     (into end-wildcard-do)
+                                     (into cascade-stmts)
+                                     (conj {:node :end-cascade-parent}))}
+          ;; -nilSlot: parent-side setter. Compile-time switch on the
+          ;; known slot names (`isEqualToString:` — slotName may be a
+          ;; child-copied NSString, not pointer-equal to a canonical
+          ;; literal).
+          slot-clear-stmts
+          (mapv (fn [slot-name]
+                  {:node :nil-slot-branch :slot-name slot-name})
+                (:slot-names rec))
+          nil-slot-method {:node :objc-method
+                           :selector "nilSlot:"
+                           :return-type "void"
+                           :params [{:name "slotName" :c-type "NSString *"}]
+                           :body slot-clear-stmts}]
       {:node            :objc-class
        :name            atom-name
        :superclass      "NSObject"
        :phase-constants (mapv (fn [p] {:name (phase-constant-name atom-name p)
                                        :value p}) phase-names)
-       :properties      (into [phase-prop own-queue-prop] data-props)
+       :properties      (into [phase-prop own-queue-prop parent-prop parent-slot-prop]
+                              data-props)
        :init-params     (mapv (fn [p] {:name (:name p) :c-type (:c-type p)}) ctor-params)
        :init-body       init-shell
-       :methods         (-> [setup-method state-method bind-method]
+       :methods         (-> [setup-method state-method bind-method
+                             install-method end-method nil-slot-method]
                             (into user-methods)
                             (into obs-methods)
                             (into txn-methods))})))
@@ -1430,15 +1536,12 @@
         classes    (mapv #(lower-atom % ctx) (keys atom-env))
         needs-foundation? (boolean (seq classes))
         needs-abort?      (boolean (some #(seq (:invariants (second %))) atom-env))
-        ;; Runtime helpers (cxc_send_async / cxc_send_sync / cxc_shutdown)
-        ;; are needed whenever any atom has a message-triggered transition
-        ;; (potential receiver) — sends land in do: blocks that reference
-        ;; the helpers by name. Detection is one-sided: if any atom can
-        ;; receive, we include the helpers even if no sends happen to
-        ;; land in the current program (harmless static-inline definitions).
-        needs-runtime?    (boolean (some #(seq (filter message-triggered?
-                                                       (:transitions (second %))))
-                                         atom-env))
+        ;; Runtime helpers (cxc_send_async / cxc_send_sync / cxc_shutdown
+        ;; + CXCAtom protocol) are needed by every atom's compiler-inserted
+        ;; -transitionToEnd (parent nil-slot cascade uses cxc_send_async
+        ;; and casts to id<CXCAtom>). So the presence of any atom class
+        ;; means we emit the runtime block.
+        needs-runtime?    (boolean (seq classes))
         base-includes     (if needs-foundation?
                             ["<Foundation/Foundation.h>"]
                             ["<stdio.h>"])

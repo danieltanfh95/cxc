@@ -111,9 +111,11 @@
       (is (= :objc-class (:node cls)))
       (is (= "Counter" (:name cls)))
       (is (= "NSObject" (:superclass cls)))
-      (is (= [{:name "phase"     :c-type "NSString *"       :attrs ["nonatomic" "copy"]}
-              {:name "own_queue" :c-type "dispatch_queue_t" :attrs ["nonatomic" "strong"]}
-              {:name "n"         :c-type "int"              :attrs ["assign"]}]
+      (is (= [{:name "phase"            :c-type "NSString *"       :attrs ["nonatomic" "copy"]}
+              {:name "own_queue"        :c-type "dispatch_queue_t" :attrs ["nonatomic" "strong"]}
+              {:name "parent"           :c-type "id"               :attrs ["nonatomic" "weak"]}
+              {:name "parent_slot_name" :c-type "NSString *"       :attrs ["nonatomic" "copy"]}
+              {:name "n"                :c-type "int"              :attrs ["assign"]}]
              (:properties cls)))
       (is (= [{:name "kCounter_phase_init" :value "init"}
               {:name "kCounter_phase_end"  :value "end"}]
@@ -149,7 +151,10 @@
 (deftest def-atom-triggers-foundation-and-autoreleasepool
   (testing "presence of an ObjC class flips includes to Foundation and wraps main in @autoreleasepool"
     (let [prog (lower-src "def Counter:\n    data:\n        n: Int = 42\n\ndef main:\n    -> running\n        do: print(Counter().n)\n")]
-      (is (= ["<Foundation/Foundation.h>"] (:includes prog)))
+      ;; Foundation for ObjC; stdlib for cxc_shutdown() (needed by every
+      ;; atom class's transitionToEnd cascade infrastructure).
+      (is (some #{"<Foundation/Foundation.h>"} (:includes prog)))
+      (is (some #{"<stdlib.h>"} (:includes prog)))
       (is (true? (get-in prog [:main :autorelease?]))))))
 
 (deftest hello-world-stays-pure-c
@@ -202,6 +207,46 @@ def main:
       (is (= "_phase" (get-in (first (:body branch)) [:lhs :sym])))
       ;; Second item is the wildcard's print(0) call.
       (is (= :call (:node (second (:body branch))))))))
+
+(deftest atom-emits-transitionToEnd-nilSlot-and-installParent
+  (testing "every atom class synthesizes the Step 11 lifecycle methods"
+    (let [prog (lower-src "def Counter:\n    data:\n        n: Int = 0\n\ndef main:\n    -> running\n        do: print(1)\n")
+          cls  (first (:classes prog))
+          sels (set (map :selector (:methods cls)))]
+      (is (contains? sels "cxc_installParent:inSlot:"))
+      (is (contains? sels "transitionToEnd"))
+      (is (contains? sels "nilSlot:")))))
+
+(deftest transition-with-target-end-calls-transitionToEnd
+  (testing "`alive <: die -> end` branch body is `[self transitionToEnd]`"
+    (let [prog (lower-src "def Counter:
+    data:
+        n: Int = 0
+
+    -> alive
+
+    alive <: die -> end
+
+def main:
+    -> running
+        do: print(1)
+")
+          cls  (first (:classes prog))
+          die  (first (filter #(= "die" (:selector %)) (:methods cls)))
+          branch (first (:body die))]
+      (is (some? branch))
+      (is (= 1 (count (:body branch))))
+      (is (= "transitionToEnd" (get-in (first (:body branch)) [:selector]))))))
+
+(deftest parent-installs-back-ref-on-nested-slot-child
+  (testing "parent's cxc_stateInit calls -cxc_installParent:inSlot: on each nested slot after construction"
+    (let [prog (lower-src "def Cell:\n    data:\n        n: Int = 0\n\ndef Container:\n    def cell: Cell\n\ndef main:\n    -> running\n        do: print(1)\n")
+          container (first (filter #(= "Container" (:name %)) (:classes prog)))
+          state (first (filter #(= "cxc_stateInit" (:selector %)) (:methods container)))
+          install-msg (second (:body state))]     ; [_cell = Cell(), install-parent-msg]
+      (is (= :objc-msg (:node install-msg)))
+      (is (= "cxc_installParent:inSlot:" (:selector install-msg)))
+      (is (= "cell" (get-in install-msg [:args 1 :value]))))))
 
 (deftest self-loop-transition-does-not-fire-wildcard
   (testing "`alive <: bump -> alive` targets same phase → wildcard on alive does NOT re-fire (would recurse)"
@@ -270,10 +315,12 @@ def main:
   (testing "T? on an atom lowers to the same `T *` pointer; nil default fills _other = nil; property is strong (ARC)"
     (let [prog (lower-src "def Counter:\n    data:\n        n: Int = 5\n        other: Counter? = nil\n\ndef main:\n    -> running\n        do: print(1)\n")
           cls  (first (:classes prog))]
-      (is (= [{:name "phase"     :c-type "NSString *"       :attrs ["nonatomic" "copy"]}
-              {:name "own_queue" :c-type "dispatch_queue_t" :attrs ["nonatomic" "strong"]}
-              {:name "n"         :c-type "int"              :attrs ["assign"]}
-              {:name "other"     :c-type "Counter *"        :attrs ["strong"]}]
+      (is (= [{:name "phase"            :c-type "NSString *"       :attrs ["nonatomic" "copy"]}
+              {:name "own_queue"        :c-type "dispatch_queue_t" :attrs ["nonatomic" "strong"]}
+              {:name "parent"           :c-type "id"               :attrs ["nonatomic" "weak"]}
+              {:name "parent_slot_name" :c-type "NSString *"       :attrs ["nonatomic" "copy"]}
+              {:name "n"                :c-type "int"              :attrs ["assign"]}
+              {:name "other"            :c-type "Counter *"        :attrs ["strong"]}]
              (:properties cls)))
       (let [state-init (first (filter #(= "cxc_stateInit" (:selector %)) (:methods cls)))]
         (is (= {:node :assign
