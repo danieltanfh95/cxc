@@ -183,6 +183,17 @@
               :rhs  {:node :nil}}
              (second (:init-body cls)))))))
 
+(deftest enum-lowers-to-c-enum-with-mangled-cases
+  (testing "enum decl → :c-enum under :enums; Key.arrow_down → C constant `Key_arrow_down`"
+    (let [prog (lower-src "enum Key:\n    arrow_up\n    arrow_down\n\ndef main:\n    -> running\n        do: print(Key.arrow_down)\n")
+          e    (first (:enums prog))
+          call (first (get-in prog [:main :body]))]
+      (is (= :c-enum (:node e)))
+      (is (= "Key" (:name e)))
+      (is (= ["arrow_up" "arrow_down"] (:cases e)))
+      (is (= "%d\n" (get-in call [:args 0 :value])))
+      (is (= {:node :name :sym "Key_arrow_down"} (get-in call [:args 1]))))))
+
 (deftest nullable-non-atom-fails-nyi
   (testing "T? on a primitive or record has no lowering path yet — fail-nyi"
     (try

@@ -86,3 +86,9 @@
     (let [{:keys [exit stdout]} (compile-and-run "nullable-nil-punning")]
       (is (zero? exit))
       (is (= "0\n" stdout)))))
+
+(deftest end-to-end-enum-cases
+  (testing "enum-cases.cxc — enum decl + Key.arrow_down accesses index-1 case"
+    (let [{:keys [exit stdout]} (compile-and-run "enum-cases")]
+      (is (zero? exit))
+      (is (= "1\n" stdout)))))

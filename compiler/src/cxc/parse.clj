@@ -838,6 +838,36 @@
         :else
         (fail! tokens p "expected data:, methods:, or dedent in record body")))))
 
+(defn- parse-enum
+  "Parse `enum Foo:` followed by an indented list of ident cases,
+   one per line. Cases carry no payloads in this subset (v1.0 spec
+   allows tagged variants but game-toys uses bare cases only).
+
+     enum Key:
+         arrow_up
+         arrow_down
+         f"
+  [tokens pos]
+  (let [[_ p]    (expect tokens pos :kw "enum")
+        [name p] (expect tokens p :ident)
+        [_ p]    (expect tokens p :punct ":")
+        [_ p]    (expect tokens p :newline)
+        [_ p]    (expect tokens p :indent)]
+    (loop [cases [] p p]
+      (cond
+        (at? tokens p :dedent)
+        [{:node :enum :name name :cases cases} (inc p)]
+
+        (at? tokens p :newline)
+        (recur cases (inc p))
+
+        (at? tokens p :ident)
+        (let [[c p2] (expect tokens p :ident)]
+          (recur (conj cases c) (skip-newlines tokens p2)))
+
+        :else
+        (fail! tokens p "expected an enum case identifier or dedent in enum body")))))
+
 ;; ---------------------------------------------------------------------------
 ;; Module header  — module a.b.c
 ;; from-import   — from a.b.c import X, Y, Z
@@ -880,6 +910,7 @@
       (at? tokens p :kw "module")  (parse-module-decl tokens p)
       (at? tokens p :kw "from")    (parse-from-import tokens p)
       (at? tokens p :kw "record")  (parse-record tokens p)
+      (at? tokens p :kw "enum")    (parse-enum tokens p)
       (at? tokens p :kw "def")     (parse-def-atom tokens p)
       :else (fail! tokens p "expected top-level form"))))
 

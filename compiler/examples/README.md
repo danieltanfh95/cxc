@@ -24,6 +24,7 @@ what the current compiler can lower.
 | [`record-methods.cxc`](record-methods.cxc) | Record method → C free function; `v.plus(o)` → `V_plus(v, o)` | `4.000000` |
 | [`atom-ctor-params.cxc`](atom-ctor-params.cxc) | Def-atom ctor params → `initWithFoo:` selector; `data:` defaults resolve against ctor scope | `42` |
 | [`nullable-nil-punning.cxc`](nullable-nil-punning.cxc) | `Counter?` type + `nil` literal; property access on nil → 0 (ObjC nil-messaging) | `0` |
+| [`enum-cases.cxc`](enum-cases.cxc) | `enum Key: ...` → C typedef enum; `Key.arrow_down` → `Key_arrow_down` (index 1) | `1` |
 
 ## Running one by hand
 

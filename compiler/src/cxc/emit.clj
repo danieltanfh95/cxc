@@ -94,6 +94,12 @@
                    (str/join "\n"))]
     (str "typedef struct {\n" decls "\n} " (:name s) ";")))
 
+(defn- emit-c-enum [e]
+  (let [members (->> (:cases e)
+                     (map (fn [c] (str "    " (:name e) "_" c)))
+                     (str/join ",\n"))]
+    (str "typedef enum {\n" members "\n} " (:name e) ";")))
+
 ;; ---------------------------------------------------------------------------
 ;; C function emission (record methods → free functions)
 ;; ---------------------------------------------------------------------------
@@ -187,9 +193,10 @@
   "Emit a full .m source string from an :objc-program AST."
   [prog]
   (let [includes  (str/join "\n"   (map #(str "#import " %) (:includes prog)))
+        enums     (str/join "\n\n" (map emit-c-enum   (:enums prog)))
         structs   (str/join "\n\n" (map emit-struct   (:structs prog)))
         functions (str/join "\n\n" (map emit-function (:functions prog)))
         classes   (str/join "\n\n" (map emit-class    (:classes prog)))
         main      (emit-main (:main prog))]
     (str/join "\n\n"
-              (remove str/blank? [includes structs functions classes main]))))
+              (remove str/blank? [includes enums structs functions classes main]))))

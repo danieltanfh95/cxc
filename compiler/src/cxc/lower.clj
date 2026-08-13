@@ -77,10 +77,11 @@
 
 (defn- cxc-type->c
   "Primitives → C type name; records → own struct name (value); atoms →
-   `<name> *` (pointer, already nullable in ObjC). `T?` wraps another
-   type — legal today only for atoms (their pointer type IS nullable).
-   Nullable primitives/records need an Optional wrapper — fail-nyi."
-  [ty-node record-env atom-env]
+   `<name> *` (pointer, already nullable in ObjC); enums → own typedef
+   name (int-backed). `T?` wraps another type — legal today only for
+   atoms (their pointer type IS nullable). Nullable primitives/records/
+   enums would need Optional wrappers — fail-nyi."
+  [ty-node record-env atom-env enum-env]
   (case (:node ty-node)
     :type-nullable
     (let [inner (:inner ty-node)
@@ -89,7 +90,7 @@
         (contains? atom-env nm) (str nm " *")
         :else (fail-nyi! (str "nullable non-atom type `" nm "?` "
                               "(only atom types are nullable today; "
-                              "primitives/records would need an Optional wrapper)")
+                              "primitives/records/enums would need an Optional wrapper)")
                          ty-node)))
     :type-ref
     (let [nm (:name ty-node)]
@@ -97,6 +98,7 @@
         (contains? primitive-c-type nm) (primitive-c-type nm)
         (contains? record-env nm)       nm
         (contains? atom-env nm)         (str nm " *")
+        (contains? enum-env nm)         nm
         :else                            (fail-nyi! (str "type " nm) ty-node)))
     (fail-nyi! (str "cxc-type->c: unknown type-node " (:node ty-node)) ty-node)))
 
@@ -114,8 +116,9 @@
 (defn- cxc-type->type-kw
   "Map a cxc type-ref name to the type-keyword vocab used by infer-type.
    Primitive names → :int/:float/:string/:bool. Aggregate names →
-   {:record N} or {:atom N} depending on which env they resolve in."
-  [cxc-name record-env atom-env node]
+   {:record N}, {:atom N}, or {:enum N} depending on which env they
+   resolve in."
+  [cxc-name record-env atom-env enum-env node]
   (case cxc-name
     "Int"    :int
     "Float"  :float
@@ -124,15 +127,16 @@
     (cond
       (contains? record-env cxc-name) {:record cxc-name}
       (contains? atom-env   cxc-name) {:atom   cxc-name}
+      (contains? enum-env   cxc-name) {:enum   cxc-name}
       :else (fail-nyi! (str "unresolved type name `" cxc-name "`") node))))
 
 (defn- fields-from-data-section
-  [data-section record-env atom-env]
+  [data-section record-env atom-env enum-env]
   (mapv (fn [f]
           {:name      (:name f)
            :cxc-ty    (base-type-name (:type f))
            :nullable? (= :type-nullable (get-in f [:type :node]))
-           :c-type    (cxc-type->c (:type f) record-env atom-env)
+           :c-type    (cxc-type->c (:type f) record-env atom-env enum-env)
            :default   (:default f)})
         (:fields data-section)))
 
@@ -156,7 +160,7 @@
         (:methods methods-section)))
 
 (defn- build-record-env
-  [top-nodes atom-env]
+  [top-nodes atom-env enum-env]
   (let [records  (filter #(= :record (:node %)) top-nodes)
         skeleton (into {} (map (fn [r]
                                  [(:name r) {:fields [] :field-index {}
@@ -167,7 +171,7 @@
        (let [name    (:name r)
              dsec    (first (filter #(= :data-section    (:node %)) (:sections r)))
              msec    (first (filter #(= :methods-section (:node %)) (:sections r)))
-             fields  (fields-from-data-section dsec env atom-env)
+             fields  (fields-from-data-section dsec env atom-env enum-env)
              methods (extract-methods name msec)]
          (assoc env name {:fields       fields
                           :field-index  (into {} (map (juxt :name identity) fields))
@@ -186,17 +190,17 @@
   "Def-atom :ctor-params come from the parser as `:field` nodes
    (`{:node :field :name :type :default}`). Normalize to
    `{:name :cxc-ty :nullable? :c-type :default}` for the atom-env."
-  [ctor-params record-env atom-env]
+  [ctor-params record-env atom-env enum-env]
   (mapv (fn [p]
           {:name      (:name p)
            :cxc-ty    (base-type-name (:type p))
            :nullable? (= :type-nullable (get-in p [:type :node]))
-           :c-type    (cxc-type->c (:type p) record-env atom-env)
+           :c-type    (cxc-type->c (:type p) record-env atom-env enum-env)
            :default   (:default p)})
         ctor-params))
 
 (defn- build-atom-env
-  [top-nodes]
+  [top-nodes enum-env]
   (let [atoms    (filter #(and (= :def-atom (:node %))
                                (not= "main" (:name %)))
                          top-nodes)
@@ -208,15 +212,27 @@
              dsec        (def-atom-data-section a)
              extras      (def-atom-body-non-data a)
              fields      (if dsec
-                           (fields-from-data-section dsec {} env)
+                           (fields-from-data-section dsec {} env enum-env)
                            [])
-             ctor-params (ctor-params-normalized (:ctor-params a) {} env)]
+             ctor-params (ctor-params-normalized (:ctor-params a) {} env enum-env)]
          (assoc env name {:fields fields
                           :field-index (into {} (map (juxt :name identity) fields))
                           :ctor-params ctor-params
                           :extras extras})))
      skeleton
      atoms)))
+
+(defn- build-enum-env
+  "Top-level `enum Foo: a, b, c` decls. Env is keyed by enum name;
+   value has :cases (vector of case names in decl order) and
+   :case-index (name → declaration-order index; used for the C
+   integer value in the emitted `Foo_<case>` constants)."
+  [top-nodes]
+  (into {}
+        (for [e (filter #(= :enum (:node %)) top-nodes)]
+          [(:name e) {:cases      (:cases e)
+                      :case-index (into {} (map-indexed (fn [i c] [c i])
+                                                        (:cases e)))}])))
 
 ;; ---------------------------------------------------------------------------
 ;; Type inference (ctx-threaded)
@@ -249,7 +265,8 @@
         _           (when-not m
                       (fail-nyi! (str "method `" method-name "` on record `"
                                       record-name "`") call-node))]
-    (cxc-type->type-kw (:cxc-return-ty m) (:record-env ctx) (:atom-env ctx) call-node)))
+    (cxc-type->type-kw (:cxc-return-ty m)
+                       (:record-env ctx) (:atom-env ctx) (:enum-env ctx) call-node)))
 
 (defn- infer-call-type
   [{:keys [callee] :as node} ctx]
@@ -277,7 +294,19 @@
         _       (when-not f
                   (fail-nyi! (str "field `" field-name "` on " kind " `" owner "`")
                              node))]
-    (cxc-type->type-kw (:cxc-ty f) (:record-env ctx) (:atom-env ctx) node)))
+    (cxc-type->type-kw (:cxc-ty f)
+                       (:record-env ctx) (:atom-env ctx) (:enum-env ctx) node)))
+
+(defn- enum-case-access?
+  "A `:dot` whose target is an `:ident` naming an enum, and whose field
+   is one of that enum's cases. Not to be confused with instance field
+   access on an aggregate."
+  [dot-node ctx]
+  (let [tgt (:target dot-node)]
+    (and (= :ident (:node tgt))
+         (contains? (:enum-env ctx) (:name tgt))
+         (contains? (get-in ctx [:enum-env (:name tgt) :case-index])
+                    (:field dot-node)))))
 
 (defn- infer-type [node ctx]
   (case (:node node)
@@ -293,8 +322,10 @@
                                node))
     :binop      (infer-binop-type node ctx)
     :call       (infer-call-type node ctx)
-    :dot        (field-type-for-owner (infer-type (:target node) ctx)
-                                      ctx (:field node) node)
+    :dot        (if (enum-case-access? node ctx)
+                  {:enum (get-in node [:target :name])}
+                  (field-type-for-owner (infer-type (:target node) ctx)
+                                        ctx (:field node) node))
     (fail-nyi! (str "infer-type " (:node node)) node)))
 
 ;; ---------------------------------------------------------------------------
@@ -399,12 +430,13 @@
      :args (into [(lower-expr (:target dot) ctx)] arg-exprs)}))
 
 (defn- print-format-string [arg-type]
-  (case arg-type
-    :string "%s\n"
-    :int    "%d\n"
-    :bool   "%d\n"
-    :float  "%f\n"
-    (fail-nyi! (str "print of type " (pr-str arg-type)) {:type arg-type})))
+  (cond
+    (= :string arg-type)                    "%s\n"
+    (= :int arg-type)                       "%d\n"
+    (= :bool arg-type)                      "%d\n"
+    (= :float arg-type)                     "%f\n"
+    (and (map? arg-type) (:enum arg-type))  "%d\n"    ; enums are int-backed
+    :else (fail-nyi! (str "print of type " (pr-str arg-type)) {:type arg-type})))
 
 (defn- lower-print [call ctx]
   (let [arg-expr (:value (first (:args call)))
@@ -426,9 +458,12 @@
                  :op    (:op node)
                  :left  (lower-expr (:left node)  ctx)
                  :right (lower-expr (:right node) ctx)}
-    :dot        {:node   :field
-                 :target (lower-expr (:target node) ctx)
-                 :field  (:field node)}
+    :dot        (if (enum-case-access? node ctx)
+                  {:node :name
+                   :sym  (str (get-in node [:target :name]) "_" (:field node))}
+                  {:node   :field
+                   :target (lower-expr (:target node) ctx)
+                   :field  (:field node)})
     :call
     (let [callee (:callee node)]
       (case (:node callee)
@@ -492,6 +527,7 @@
                                   (cxc-type->type-kw (:cxc-ty p)
                                                      (:record-env ctx)
                                                      (:atom-env ctx)
+                                                     (:enum-env ctx)
                                                      method)])
                                (:params method)))
         ctx'     (assoc ctx :locals locals)
@@ -502,10 +538,11 @@
                                     record-name
                                     (cxc-type->c {:node :type-ref :name (:cxc-ty p)}
                                                  (:record-env ctx)
-                                                 (:atom-env ctx)))})
+                                                 (:atom-env ctx)
+                                                 (:enum-env ctx)))})
                        (:params method))
         ret-c    (cxc-type->c {:node :type-ref :name (:cxc-return-ty method)}
-                              (:record-env ctx) (:atom-env ctx))]
+                              (:record-env ctx) (:atom-env ctx) (:enum-env ctx))]
     {:node        :c-function
      :name        (c-method-name record-name (:name method))
      :return-type ret-c
@@ -536,6 +573,7 @@
                                      (cxc-type->type-kw (:cxc-ty p)
                                                         (:record-env ctx)
                                                         (:atom-env ctx)
+                                                        (:enum-env ctx)
                                                         p)])
                                   ctor-params))
         ctx-in-init (assoc ctx :locals locals)]
@@ -570,6 +608,14 @@
 (defn- main-def-atom? [node]
   (and (= :def-atom (:node node)) (= "main" (:name node))))
 
+(defn- lower-enum
+  "Top-level `enum Foo: a, b, c` → C typedef enum with `Foo_a`, `Foo_b`,
+   ... as members. Case ordering fixes each case's integer value."
+  [enum-node]
+  {:node  :c-enum
+   :name  (:name enum-node)
+   :cases (:cases enum-node)})
+
 (defn lower
   "Take parsed top-level nodes and produce an ObjC/C program AST."
   [top-nodes]
@@ -577,10 +623,13 @@
         _          (when-not main-atom
                      (throw (ex-info "no `def main` entry point found at top level"
                                      {:top top-nodes})))
-        atom-env   (build-atom-env top-nodes)
-        record-env (build-record-env top-nodes atom-env)
-        ctx        {:record-env record-env :atom-env atom-env :locals {}}
+        enum-env   (build-enum-env top-nodes)
+        atom-env   (build-atom-env top-nodes enum-env)
+        record-env (build-record-env top-nodes atom-env enum-env)
+        ctx        {:record-env record-env :atom-env atom-env :enum-env enum-env :locals {}}
         records    (filter #(= :record (:node %)) top-nodes)
+        enums      (filter #(= :enum   (:node %)) top-nodes)
+        c-enums    (mapv lower-enum enums)
         structs    (mapv #(lower-record-struct % ctx) records)
         functions  (record-method-functions ctx)
         classes    (mapv #(lower-atom % ctx) (keys atom-env))
@@ -590,6 +639,7 @@
                      ["<stdio.h>"])]
     {:node      :objc-program
      :includes  includes
+     :enums     c-enums
      :structs   structs
      :functions functions
      :classes   classes
