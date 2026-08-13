@@ -6,8 +6,8 @@
 (defn- lower-src [src] (lower/lower (p/parse src)))
 
 (deftest hello-world-program-lowers
-  (testing "program Main: -> running do: print(\"hello, world\") lowers cleanly"
-    (let [prog (lower-src "program Main:
+  (testing "def main: -> running do: print(\"hello, world\") lowers cleanly"
+    (let [prog (lower-src "def main:
     -> running
         do: print(\"hello, world\")
 ")]
@@ -32,7 +32,7 @@
 (deftest unsupported-call-fails-nyi
   (testing "any call other than print raises :not-yet-implemented"
     (try
-      (lower-src "program Main:\n    -> running\n        do: unknown_fn(1)\n")
+      (lower-src "def main:\n    -> running\n        do: unknown_fn(1)\n")
       (is false "expected NYI throw")
       (catch clojure.lang.ExceptionInfo e
         (is (= :not-yet-implemented (:kind (ex-data e))))))))

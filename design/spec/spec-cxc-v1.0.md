@@ -15,7 +15,7 @@
 
 **What v1.0 lands (design commitments).**
 
-- **`def` as sole declaration keyword** — `class`, `record`, `enum`, `protocol`, `program` are sugar over specific `def` shapes.
+- **`def` as sole declaration keyword** — `class`, `record`, `enum`, `protocol` are sugar over specific `def` shapes. The runtime entry point is `def main` by convention (no dedicated keyword).
 - **Atoms with typed I/O, phases, and transitions.** Every transition is a pure function `state → message → new_state`. State is a value; transitions produce new values via field updates in a `then:` block. **No assignment anywhere in the language.**
 - **Universal implicit phases `init` (constructor) and `end` (deconstructor).** Every atom has both; instantiation fires implicit `init -> [first target phase]`; any transition targeting `end` deconstructs the atom.
 - **Six wiring glyphs, zero overlap.** `->` (transition arrow + return-type marker), `|>` (stream composition in receive-glyph source expression + sync send inside `do:`), `:<` (observable pull), `:>` (emit async), `<:` (receive async), `<|` (receive sync). Sender-blocking and receiver-blocking are independent axes — any sender glyph pairs with any receiver glyph; the wire is always mailbox-buffered. **Free-standing wires at atom-body top-level do NOT exist**; all subscriptions are receive-glyph transitions whose source expression may compose transformer atoms via `|>`.
@@ -932,7 +932,7 @@ No smuggled imperative. Reasoning about a mutation is local to the atom that per
 
 ### 1.11 The atom substrate
 
-The premises §1.1–§1.10 point at a specific primitive: **the atom**. An atom is a reactive node with typed inputs, typed outputs, private per-instance state, phases, transitions, emissions to other atoms, and optionally contained atoms wired together. Every user-facing construct — `class`, `record`, `enum`, `protocol`, `function`, `program`, method, field — is sugar over a specific `def` shape. **Atom is the sole primitive.**
+The premises §1.1–§1.10 point at a specific primitive: **the atom**. An atom is a reactive node with typed inputs, typed outputs, private per-instance state, phases, transitions, emissions to other atoms, and optionally contained atoms wired together. Every user-facing construct — `class`, `record`, `enum`, `protocol`, `function`, method, field — is sugar over a specific `def` shape. The runtime entry point is `def main` by naming convention (no dedicated keyword). **Atom is the sole primitive.**
 
 **Shape of the reduction:**
 
@@ -944,7 +944,7 @@ The premises §1.1–§1.10 point at a specific primitive: **the atom**. An atom
 | enum | Atom whose state is a sum type; handlers dispatch on variant |
 | protocol | Atom signature (I/O shape + contracts) without transition |
 | section | Compile-time atom (runs at compile time, produces program text) |
-| program | Top-level compound atom with environment = OS |
+| `def main` | Top-level compound atom with environment = OS — entry point by naming convention, no dedicated keyword |
 | method call | Route message to an atom's entrypoint |
 | state field | State atom (mutable payload) contained in a compound atom |
 | data field | Data atom (immutable payload) contained in a compound atom |
@@ -1205,7 +1205,7 @@ The atom substrate is the design commitment. §1.11–§1.14 document the substr
 
 **Surface syntax.**
 
-- **`def` as sole declaration keyword.** `class`, `record`, `enum`, `protocol`, `program` remain as sugar keywords for common `def` shapes (compound `def` with only `data:` = record; compound with sum-type state = enum; compound with only signature + no body = protocol; top-level compound with env from runtime = program).
+- **`def` as sole declaration keyword.** `class`, `record`, `enum`, `protocol` remain as sugar keywords for common `def` shapes (compound `def` with only `data:` = record; compound with sum-type state = enum; compound with only signature + no body = protocol). The runtime entry point is `def main` by naming convention — no dedicated `program` keyword; the top-level compound whose env is provided by the OS runtime is simply the atom named `main`.
 - **`function` retired.** Write `def name(x) -> y: ...` for the trivial atom shape (leaf atom, single input, single output, no state, pure transition).
 - **`type` and `contract` keywords retired** — types ARE atoms; predicates are `invariants:` / `requires` / `ensures` / predicate atoms; one declaration form (`def`) and one predicate mechanism.
 - **`atom` in prose** refers to the substrate concept (reactive node with typed I/O); `def` is the *syntax* that introduces one.
@@ -1620,7 +1620,7 @@ Consequences that fall out for free:
 **Compiler.**
 
 - Compiler is a dataflow compiler: fuses adjacent atoms, schedules independent subgraphs, computes buffer sizes, propagates contracts across the graph.
-- Runtime interprets top-level `program` emissions as OS effects (via shim atoms).
+- Runtime interprets top-level `def main` emissions as OS effects (via shim atoms).
 - Predicates on values live in `invariants:` on atoms (bare field names in scope), in `requires`/`ensures` on transitions, or in reusable predicate atoms (Bool-returning leaf atoms).
 
 **Positioning.**
@@ -1741,10 +1741,10 @@ use:
 
 **Dogfooding rule.** Every stdlib capability atom is written in cxc, using the `Extern` capability atom for the syscall boundary. If a capability can't be expressed cleanly, the language has a gap that needs fixing — not a stdlib workaround. Building `HTTP server`, `Filesystem watch`, and `Signals` in cxc tests whether the atom substrate handles high-concurrency I/O, OS notification queues, and asynchronous OS-driven events.
 
-**Runtime constructs env with policy baked in.** Sandboxing, rate-limiting, remoting, logging, and audit are all normal atom composition — the runtime constructs shim atoms wrapping OS, wraps them with policy atoms, and hands the composed capability to the top-level `program`:
+**Runtime constructs env with policy baked in.** Sandboxing, rate-limiting, remoting, logging, and audit are all normal atom composition — the runtime constructs shim atoms wrapping OS, wraps them with policy atoms, and hands the composed capability to the top-level `def main` atom:
 
 ```
-runtime.launch(program: Main, env: {
+runtime.launch(entry: main, env: {
     clock:   WallClock(),
     random:  OsRandom(),
     fs:      SandboxedFs(
@@ -2089,7 +2089,7 @@ def Exit:
 ```
 
 Notes:
-- `register_hook` retired — the program atom's `-> before_destroy:` lifecycle handler is the cleanup path; `Exit.requested` is the pre-shutdown notification for atoms that want a chance to react before their destructor runs.
+- `register_hook` retired — the `def main` atom's `-> before_destroy:` lifecycle handler is the cleanup path; `Exit.requested` is the pre-shutdown notification for atoms that want a chance to react before their destructor runs.
 
 **Signals.**
 
@@ -2333,6 +2333,7 @@ sizeof alignof offsetof
 - `after` (as language primitive with implicit clock) — retired. Time is accessed via a `Clock` capability atom declared in `use:`. Delayed dispatch is a time-guarded transition (`<phase> when: clock.after(deadline) -> <target>`) or a Delay/Throttle transformer inside a receive-glyph source expression. The `~>` time-deferred wire glyph is retired (2026-08-12).
 - `type`, `contract` — retired at v1.0 (see §1.11); types ARE atoms; predicates are `invariants:`/`requires`/`ensures`/predicate atoms.
 - `extern` (as section keyword) — retired at v1.0 (see §1.12). FFI is a capability atom (`Extern`) provisioned through env to stdlib shims only. `Extern` (PascalCase) is a regular identifier for the capability atom, not a keyword. Foreign symbol declarations moved to prelude-only `foreign library` / `symbol` forms (see §1.14).
+- `program` (as top-level declaration keyword) — retired at v1.0 (2026-08-13). The runtime entry point is `def main` by naming convention; the atom named `main` at module top level is the one the OS runtime instantiates and provides env to. `program` violated the atoms-are-the-sole-primitive premise (§1.11) as a distinct declaration form; case convention already carries the role signal (`def Foo` = atom class, `def main` = entry-point trivial atom).
 
 Removed from prior drafts: `sealed`, `dynamic`, `open`, `final`, `public`, `private`. See §1.2, §5, §7.7 for rationale.
 
@@ -9454,9 +9455,12 @@ user_alias_decl     := '@' identifier identifier ':' INDENT class_member* DEDENT
 
 ```
 # ---- Atom declaration (v1.0 canonical; supersedes class_decl/function_decl) ----
-# `def` is the sole declaration keyword. `class`, `record`, `enum`, `protocol`,
-# `program` become prelude alias declarations desugaring to `def` shapes with
-# specific section presence (see §1.11 reduction table).
+# `def` is the sole declaration keyword. `class`, `record`, `enum`, `protocol`
+# become prelude alias declarations desugaring to `def` shapes with specific
+# section presence (see §1.11 reduction table). The runtime entry point is
+# `def main` by naming convention — no dedicated `program` keyword; the
+# top-level compound whose env is provided by the OS runtime is simply the
+# atom named `main`.
 
 def_decl := 'expose'? 'extend'? 'def' identifier
             ( '(' constructor_param_list ')' )?         # constructor params (optional)

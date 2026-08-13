@@ -441,10 +441,16 @@ def Game:
 
 
 # =============================================================================
-# Program — runtime entry point
+# Entry point — `def main` by naming convention (no `program` keyword)
 # =============================================================================
+#
+# The atom named `main` at module top level is the runtime entry point.
+# The OS runtime instantiates it, provides `env` (capability atoms in `use:`),
+# and drives the implicit `init -> running` transition on process start.
+# Same shape as any other def-atom — case convention (`main` lowercase vs
+# other atoms PascalCase) carries the role signal.
 
-program Main:
+def main:
     use:
         clock:   Clock
         input:   KeyboardInput

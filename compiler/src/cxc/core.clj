@@ -14,8 +14,10 @@
    Runtime deps at link time: libobjc2 · libdispatch · libuv · cxc runtime lib
    (per Phase 6 decisions in design/working-notes.md).
 
-   Coverage: hello-world subset. `program Main: -> running do: print(\"...\")`
-   compiles and runs. Larger cxc programs parse but fail-nyi at lowering."
+   Coverage: hello-world subset. `def main: -> running do: print(\"...\")`
+   compiles and runs. Larger cxc programs parse but fail-nyi at lowering.
+   Entry point is `def main` (lowercase) by naming convention — no
+   `program` keyword (retired at v1.0, see spec §1.11)."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [cxc.build :as build])

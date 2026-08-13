@@ -873,70 +873,6 @@
 ;; Top-level dispatch
 ;; ---------------------------------------------------------------------------
 
-(defn- parse-program
-  "`program Main:` — runtime entry point atom. Body is parsed identically
-   to a def-atom body (same section vocabulary + observables + transitions);
-   the distinction is that the compiler treats it as the program entry
-   point (§7 modules)."
-  [tokens pos]
-  (let [[_ p]     (expect tokens pos :kw "program")
-        [name p]  (expect tokens p :ident)
-        ;; parse body reusing parse-def-atom by swapping the head token —
-        ;; simplest is to write a parallel parser reading through the body loop.
-        ;; Reuse via macro would be over-engineering; small duplication is fine.
-        [_ p]     (expect tokens p :punct ":")
-        [_ p]     (expect tokens p :newline)
-        [_ p]     (expect tokens p :indent)]
-    (loop [body [] p p]
-      (cond
-        (at? tokens p :dedent)
-        [{:node :program :name name :body body} (inc p)]
-
-        (at? tokens p :newline)
-        (recur body (inc p))
-
-        (at? tokens p :kw "use")
-        (let [[s p2] (parse-use-section tokens p)]
-          (recur (conj body s) (skip-newlines tokens p2)))
-
-        (at? tokens p :kw "data")
-        (let [[s p2] (parse-data-section tokens p)]
-          (recur (conj body s) (skip-newlines tokens p2)))
-
-        (at? tokens p :kw "invariants")
-        (let [[s p2] (parse-invariants-section tokens p)]
-          (recur (conj body s) (skip-newlines tokens p2)))
-
-        (at? tokens p :kw "methods")
-        (let [[s p2] (parse-methods-section tokens p)]
-          (recur (conj body s) (skip-newlines tokens p2)))
-
-        (at? tokens p :kw "function")
-        (let [[f p2] (parse-function-decl tokens p)]
-          (recur (conj body f) (skip-newlines tokens p2)))
-
-        (at? tokens p :kw "def")
-        (let [[_ p2]   (expect tokens p :kw "def")
-              [nm p3]  (expect tokens p2 :ident)
-              [_ p4]   (expect tokens p3 :punct ":")
-              [ty p5]  (parse-type tokens p4)
-              [args p6] (if (at? tokens p5 :punct "(")
-                          (parse-args-parens tokens p5)
-                          [nil p5])]
-          (recur (conj body {:node :nested-atom :name nm :type ty :ctor-args args})
-                 (skip-newlines tokens p6)))
-
-        (looks-like-observable? tokens p)
-        (let [[o p2] (parse-observable tokens p)]
-          (recur (conj body o) (skip-newlines tokens p2)))
-
-        (looks-like-transition? tokens p)
-        (let [[t p2] (parse-transition tokens p)]
-          (recur (conj body t) (skip-newlines tokens p2)))
-
-        :else
-        (fail! tokens p "expected use:, data:, invariants:, methods:, def, observable, or transition inside program body")))))
-
 (defn- parse-top [tokens pos]
   (let [p (skip-newlines tokens pos)]
     (cond
@@ -945,7 +881,6 @@
       (at? tokens p :kw "from")    (parse-from-import tokens p)
       (at? tokens p :kw "record")  (parse-record tokens p)
       (at? tokens p :kw "def")     (parse-def-atom tokens p)
-      (at? tokens p :kw "program") (parse-program tokens p)
       :else (fail! tokens p "expected top-level form"))))
 
 (defn parse

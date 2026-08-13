@@ -164,14 +164,13 @@
     (is (= 1 (count (:ctor-args p2))))))
 
 (deftest game-toys-parses
-  (testing "the full game-toys.cxc example parses end-to-end"
+  (testing "the full game-toys.cxc example parses end-to-end — entry point is `def main`"
     (let [src (slurp "../design/examples/game-toys.cxc")
           nodes (p/parse src)]
       (is (= 10 (count nodes)))
       (is (= [:module :from-import :record
-              :def-atom :def-atom :def-atom :def-atom :def-atom :def-atom
-              :program]
+              :def-atom :def-atom :def-atom :def-atom :def-atom :def-atom :def-atom]
              (mapv :node nodes)))
       (is (= ["Vector2"] (mapv :name (filter #(= :record (:node %)) nodes))))
-      (is (= ["Paddle" "ActionMachine" "Player" "Enemy" "EnemySpawner" "Game"]
+      (is (= ["Paddle" "ActionMachine" "Player" "Enemy" "EnemySpawner" "Game" "main"]
              (mapv :name (filter #(= :def-atom (:node %)) nodes)))))))

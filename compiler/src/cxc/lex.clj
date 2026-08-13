@@ -22,7 +22,7 @@
 
 (def reserved-words
   #{"module" "from" "import" "as" "expose"
-    "def" "record" "class" "enum" "protocol" "program"
+    "def" "record" "class" "enum" "protocol"
     "data" "use" "methods" "invariants" "contracts" "constructor" "metadata"
     "then" "do" "when" "let" "cases"
     "self" "nil" "true" "false"

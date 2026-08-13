@@ -33,9 +33,14 @@
      {:node :name     :sym \"self\"}
      {:node :objc-msg :recv <expr> :selector \"length\" :args []}
 
-   Coverage this file: enough to lower the `program Main: -> running do:
+   Coverage this file: enough to lower the `def main: -> running do:
    print(\"...\")` shape to a hello-world main. Everything else throws
-   :not-yet-implemented so subsequent work surfaces the gaps.")
+   :not-yet-implemented so subsequent work surfaces the gaps.
+
+   Entry point convention: the top-level `def main` atom (lowercase `main`)
+   is the runtime entry point (see spec §1.11 retirement note for `program`).
+   Its `-> running do: ...` transition becomes the body of the emitted
+   `int main(int argc, char *argv[])`.")
 
 (defn- fail-nyi! [what node]
   (throw (ex-info (str "lowering not yet implemented: " what)
@@ -98,29 +103,33 @@
 ;; Program top-level
 ;; ---------------------------------------------------------------------------
 
-(defn- program-main-body
-  "Extract the `-> running do: ...` transition's statements. Assumes exactly
-   one transition targeting `running` with a `do:` body — the shape of the
-   hello-world program. All other program shapes fail-nyi for now."
-  [program-node]
-  (let [transitions (filter #(= :transition (:node %)) (:body program-node))
+(defn- main-atom-body
+  "Extract the `-> running do: ...` transition's statements from the
+   entry-point atom. Assumes exactly one transition targeting `running`
+   with a `do:` body — the hello-world shape. All other shapes fail-nyi."
+  [main-node]
+  (let [transitions (filter #(= :transition (:node %)) (:body main-node))
         running-txn (first (filter #(= "running" (:target %)) transitions))]
     (when-not running-txn
-      (fail-nyi! "program must have a `-> running` transition" program-node))
+      (fail-nyi! "`def main` must have a `-> running` transition" main-node))
     (lower-transition-body (:body running-txn))))
+
+(defn- main-def-atom? [node]
+  (and (= :def-atom (:node node)) (= "main" (:name node))))
 
 (defn lower
   "Take parsed top-level nodes and produce an ObjC program AST.
 
-   Restriction: exactly one :program node at the top level is required.
-   Everything else (records, def-atoms, module decl, imports) is ignored
-   for the hello-world subset — they'll be lowered as we grow coverage."
+   Restriction: exactly one top-level `def main` atom is required.
+   Everything else (records, other def-atoms, module decl, imports) is
+   ignored for the hello-world subset — they'll be lowered as we grow
+   coverage."
   [top-nodes]
-  (let [program (first (filter #(= :program (:node %)) top-nodes))]
-    (when-not program
-      (throw (ex-info "no `program` declaration found" {:top top-nodes})))
+  (let [main-atom (first (filter main-def-atom? top-nodes))]
+    (when-not main-atom
+      (throw (ex-info "no `def main` entry point found at top level" {:top top-nodes})))
     {:node     :objc-program
      :includes ["<stdio.h>"]
      :classes  []
-     :main     {:body (conj (program-main-body program)
+     :main     {:body (conj (main-atom-body main-atom)
                             {:node :return :value {:node :int :value 0}})}}))

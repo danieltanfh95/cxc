@@ -11,7 +11,7 @@
 
 (deftest end-to-end-hello-world
   (testing "compile + run a hello-world cxc program"
-    (let [src "program Main:
+    (let [src "def main:
     -> running
         do: print(\"hello, world\")
 "
@@ -26,7 +26,7 @@
 
 (deftest end-to-end-different-message
   (testing "different string literal round-trips through the whole pipeline"
-    (let [src "program Main:
+    (let [src "def main:
     -> running
         do: print(\"cxc is running\")
 "
