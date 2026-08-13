@@ -137,6 +137,37 @@
     (str "if ([slotName isEqualToString:@\""
          (escape-c-string (:slot-name node)) "\"]) { _"
          (:slot-name node) " = nil; return; }")
+    :end-catch-wrap
+    ;; BEAM-style error containment (design §20). Wraps a transition-
+    ;; branch body: any exception thrown by then:/do:/invariants
+    ;; routes the atom to -transitionToEnd (parent sees slot nil, can
+    ;; react). Selector `_cmd` is auto-provided by ObjC — names the
+    ;; failing message in the log. Atom-local failure; the process
+    ;; stays alive.
+    (let [body (str/join "\n" (map emit-stmt (:body node)))
+          block (indent-lines 4 body)]
+      (str "@try {\n"
+           block
+           "\n} @catch (NSException *e) {\n"
+           "    NSLog(@\"[cxc atom fail] %@[%p] caught %@ during -%@ (phase=%@)\", "
+           "NSStringFromClass([self class]), self, e.name, "
+           "NSStringFromSelector(_cmd), _phase);\n"
+           "    [self transitionToEnd];\n"
+           "}"))
+    :end-catch-log-only
+    ;; Same shape but for -transitionToEnd's own body: an exception
+    ;; here MUST NOT re-invoke transitionToEnd (design §20 loop guard).
+    ;; The idempotency check would swallow re-entry anyway, but keeping
+    ;; the catch a pure log avoids ambiguity.
+    (let [body (str/join "\n" (map emit-stmt (:body node)))
+          block (indent-lines 4 body)]
+      (str "@try {\n"
+           block
+           "\n} @catch (NSException *e) {\n"
+           "    NSLog(@\"[cxc atom fail during -> end] %@[%p] caught %@ during -%@\", "
+           "NSStringFromClass([self class]), self, e.name, "
+           "NSStringFromSelector(_cmd));\n"
+           "}"))
     :transition-branch
     ;; One arm of a first-match dispatch for a message-selector method.
     ;; Guard = `_phase == kA_phase_source` && header/body when: expressions

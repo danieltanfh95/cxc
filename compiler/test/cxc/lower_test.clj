@@ -201,14 +201,18 @@ def main:
           die (first (filter #(= "die" (:selector %)) (:methods cls)))
           branch (first (:body die))]
       (is (some? branch))
-      ;; Body: [phase-update, wildcard-do-stmt, checkInvariants-call]
-      (is (= 3 (count (:body branch))))
-      (is (= :assign (:node (first (:body branch)))))
-      (is (= "_phase" (get-in (first (:body branch)) [:lhs :sym])))
-      ;; Second item is the wildcard's print(0) call.
-      (is (= :call (:node (second (:body branch)))))
-      ;; Trailing: post-transition invariant check.
-      (is (= "checkInvariants" (get-in (nth (:body branch) 2) [:selector]))))))
+      ;; Branch body wrapped in :end-catch-wrap (Step 15).
+      (let [wrap (first (:body branch))
+            b    (:body wrap)]
+        (is (= :end-catch-wrap (:node wrap)))
+        ;; Inside try: [phase-update, wildcard-do-stmt, checkInvariants-call]
+        (is (= 3 (count b)))
+        (is (= :assign (:node (first b))))
+        (is (= "_phase" (get-in (first b) [:lhs :sym])))
+        ;; Wildcard's print(0)
+        (is (= :call (:node (second b))))
+        ;; Trailing invariant check
+        (is (= "checkInvariants" (get-in (nth b 2) [:selector])))))))
 
 (deftest atom-emits-transitionToEnd-nilSlot-and-installParent
   (testing "every atom class synthesizes the Step 11 lifecycle methods"
@@ -269,12 +273,15 @@ def main:
           cls  (first (:classes prog))
           bump (first (filter #(= "bump" (:selector %)) (:methods cls)))
           branch (first (:body bump))]
-      ;; Branch body has the specific then: (no wildcard do inlined,
-      ;; because target==source is a self-loop, not a phase change),
+      ;; Branch body wrapped in :end-catch-wrap. Inside: the specific
+      ;; then: (no wildcard do inlined — self-loop isn't phase change),
       ;; followed by the post-transition invariant check.
-      (is (= 2 (count (:body branch))))
-      (is (= :assign (:node (first (:body branch)))))
-      (is (= "checkInvariants" (get-in (second (:body branch)) [:selector]))))))
+      (let [wrap (first (:body branch))
+            b    (:body wrap)]
+        (is (= :end-catch-wrap (:node wrap)))
+        (is (= 2 (count b)))
+        (is (= :assign (:node (first b))))
+        (is (= "checkInvariants" (get-in (second b) [:selector])))))))
 
 (deftest record-method-lowers-to-c-function
   (testing "record with a method → :c-function under :functions with mangled name and self as first param"
@@ -445,21 +452,24 @@ def main:
       (is (= "void" (:return-type bump)))
       (is (empty? (:params bump)))
       ;; Body: [transition-branch]. One branch for the alive source phase;
-      ;; no phase reassign (source==target). Post-transition invariant
-      ;; check is unconditional (design §14 — Step 14).
-      (is (= [{:node :transition-branch
-               :source-phase-const "kCounter_phase_alive"
-               :guard nil
-               :body [{:node :assign
-                       :lhs  {:node :name :sym "_n"}
-                       :rhs  {:node :binop :op "+"
-                              :left  {:node :name :sym "_n"}
-                              :right {:node :int  :value 1}}}
-                      {:node :objc-msg
-                       :recv {:node :name :sym "self"}
-                       :selector "checkInvariants"
-                       :args []}]}]
-             (:body bump))))))
+      ;; no phase reassign (source==target). Branch body is wrapped in
+      ;; :end-catch-wrap (Step 15 BEAM containment).
+      (let [branch (first (:body bump))
+            wrap   (first (:body branch))]
+        (is (= :transition-branch (:node branch)))
+        (is (= "kCounter_phase_alive" (:source-phase-const branch)))
+        (is (= :end-catch-wrap (:node wrap)))
+        ;; Inside the try body: then-update, checkInvariants
+        (is (= [{:node :assign
+                 :lhs  {:node :name :sym "_n"}
+                 :rhs  {:node :binop :op "+"
+                        :left  {:node :name :sym "_n"}
+                        :right {:node :int  :value 1}}}
+                {:node :objc-msg
+                 :recv {:node :name :sym "self"}
+                 :selector "checkInvariants"
+                 :args []}]
+               (:body wrap)))))))
 
 (deftest message-triggered-transition-with-phase-change-emits-phase-assign
   (testing "`alive <: die -> dead` sets _phase to kA_phase_dead inside the branch body"
@@ -481,11 +491,13 @@ def main:
           branch (first (:body die))]
       (is (some? die))
       (is (= "kEnemy_phase_alive" (:source-phase-const branch)))
-      (is (= {:node :assign
-              :lhs  {:node :name :sym "_phase"}
-              :rhs  {:node :name :sym "kEnemy_phase_dead"}}
-             ;; Branch body: [phase-update, do-stmt]
-             (first (:body branch)))))))
+      ;; Branch body is wrapped in :end-catch-wrap (Step 15).
+      (let [wrap (first (:body branch))]
+        (is (= :end-catch-wrap (:node wrap)))
+        (is (= {:node :assign
+                :lhs  {:node :name :sym "_phase"}
+                :rhs  {:node :name :sym "kEnemy_phase_dead"}}
+               (first (:body wrap))))))))
 
 (deftest multiple-transitions-same-selector-different-phases-group-into-one-method
   (testing "`alive <: die` and `dying <: die` share selector `die` → one method, two branches in source order"

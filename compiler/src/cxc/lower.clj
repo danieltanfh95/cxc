@@ -1069,18 +1069,25 @@
                                :recv {:node :name :sym "self"}
                                :selector "checkInvariants"
                                :args []}
+        raw-body     (cond-> []
+                       (seq w-then-stmts) (into w-then-stmts)
+                       (seq then-stmts)   (into then-stmts)
+                       phase-update       (conj phase-update)
+                       (seq w-do-stmts)   (into w-do-stmts)
+                       (seq do-stmts)     (into do-stmts)
+                       :always            (conj check-invariants-stmt))
+        ;; BEAM-style @try/@catch (design §20 / Step 15). Wraps the
+        ;; body so any runtime exception routes the atom into
+        ;; -transitionToEnd, leaving the parent slot to nil and the
+        ;; process running. End-target branches don't need wrapping —
+        ;; they're just `[self transitionToEnd]`, and transitionToEnd
+        ;; owns its own catch (loop-guard variant).
         body         (if end-target?
                        [{:node :objc-msg
                          :recv {:node :name :sym "self"}
                          :selector "transitionToEnd"
                          :args []}]
-                       (cond-> []
-                         (seq w-then-stmts) (into w-then-stmts)
-                         (seq then-stmts)   (into then-stmts)
-                         phase-update       (conj phase-update)
-                         (seq w-do-stmts)   (into w-do-stmts)
-                         (seq do-stmts)     (into do-stmts)
-                         :always            (conj check-invariants-stmt)))]
+                       [{:node :end-catch-wrap :body raw-body}])]
     {:node        :transition-branch
      :source-phase-const (phase-constant-name atom-name source-name)
      :guard       guard-lo
@@ -1447,22 +1454,27 @@
           cascade-stmts   (mapv (fn [slot-name]
                                   {:node :end-cascade-child :slot-name slot-name})
                                 (:slot-names rec))
+          end-body        (-> []
+                              (into end-wildcard-then)
+                              (conj {:node :assign
+                                     :lhs {:node :name :sym "_phase"}
+                                     :rhs {:node :name :sym end-const}})
+                              (into end-wildcard-do)
+                              (into cascade-stmts)
+                              (conj {:node :end-cascade-parent}
+                                    {:node :objc-msg
+                                     :recv {:node :name :sym "self"}
+                                     :selector "checkInvariants"
+                                     :args []}))
+          ;; Idempotency guard OUTSIDE the try/catch — a re-entry from
+          ;; within a raised catch (e.g. our own cascade or invariant
+          ;; check throws) would loop otherwise. Design §20 loop-guard.
           end-method      {:node :objc-method
                            :selector "transitionToEnd"
                            :return-type "void" :params []
-                           :body (-> [{:node :phase-guard-eq
-                                       :phase-const end-const :ret "return;"}]
-                                     (into end-wildcard-then)
-                                     (conj {:node :assign
-                                            :lhs {:node :name :sym "_phase"}
-                                            :rhs {:node :name :sym end-const}})
-                                     (into end-wildcard-do)
-                                     (into cascade-stmts)
-                                     (conj {:node :end-cascade-parent}
-                                           {:node :objc-msg
-                                            :recv {:node :name :sym "self"}
-                                            :selector "checkInvariants"
-                                            :args []}))}
+                           :body [{:node :phase-guard-eq
+                                   :phase-const end-const :ret "return;"}
+                                  {:node :end-catch-log-only :body end-body}]}
           ;; -nilSlot: parent-side setter. Compile-time switch on the
           ;; known slot names (`isEqualToString:` — slotName may be a
           ;; child-copied NSString, not pointer-equal to a canonical
