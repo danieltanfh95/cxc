@@ -154,3 +154,15 @@
     (let [{:keys [exit stdout]} (compile-and-run "chained-comparison")]
       (is (zero? exit))
       (is (= "5\n" stdout)))))
+
+(deftest end-to-end-nested-slot
+  (testing "nested-slot.cxc — `def paddle: Paddle` self-constructs a sub-atom in parent init; observable reads through the slot"
+    (let [{:keys [exit stdout]} (compile-and-run "nested-slot")]
+      (is (zero? exit))
+      (is (= "7\n" stdout)))))
+
+(deftest end-to-end-nested-slot-ctor-args
+  (testing "nested-slot-ctor-args.cxc — `def cell: Cell(v: 99)` passes named args to the sub-atom's initWith selector"
+    (let [{:keys [exit stdout]} (compile-and-run "nested-slot-ctor-args")]
+      (is (zero? exit))
+      (is (= "99\n" stdout)))))

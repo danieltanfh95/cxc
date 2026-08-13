@@ -1,0 +1,12 @@
+def Cell(v: Int = 0):
+    data:
+        stored: Int = v
+
+def Container:
+    def cell: Cell(v: 99)
+
+    stored :< cell.stored
+
+def main:
+    -> running
+        do: print(Container().stored)

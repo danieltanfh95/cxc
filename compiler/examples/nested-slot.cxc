@@ -1,0 +1,12 @@
+def Paddle:
+    data:
+        y: Int = 7
+
+def Game:
+    def paddle: Paddle
+
+    y_of_paddle :< paddle.y
+
+def main:
+    -> running
+        do: print(Game().y_of_paddle)

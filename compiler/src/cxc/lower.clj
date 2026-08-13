@@ -237,13 +237,19 @@
   (or (:caps (first (filter #(= :use-section (:node %)) (:body atom-node))))
       []))
 
+(defn- def-atom-nested-slots
+  "Return the `def <lowercase>: <TypeRef>[(args)]` slots from the atom
+   body. Parser tags these as `:nested-atom`."
+  [atom-node]
+  (filterv #(= :nested-atom (:node %)) (:body atom-node)))
+
 (defn- def-atom-body-extras
   "Everything in the def-atom body that isn't data:/methods:/transition/
-   observable/invariants/use: — e.g. contracts: (Layer 6+). These are
-   what remains for later layers to consume."
+   observable/invariants/use:/nested-atom — e.g. contracts: (Layer 6+).
+   These are what remains for later layers to consume."
   [atom-node]
-  (remove #(#{:data-section :methods-section :transition
-              :observable :invariants-section :use-section} (:node %))
+  (remove #(#{:data-section :methods-section :transition :observable
+              :invariants-section :use-section :nested-atom} (:node %))
           (:body atom-node)))
 
 (defn- build-atom-env
@@ -267,6 +273,7 @@
              observables   (def-atom-observables a)
              invariants    (def-atom-invariants a)
              use-caps      (def-atom-use-caps a)
+             nested-slots  (def-atom-nested-slots a)
              extras        (def-atom-body-extras a)
              ;; use: caps are sugar for a required ctor-param plus a
              ;; same-named data-field defaulted to that ctor-param.
@@ -279,13 +286,33 @@
                                      (base-type-name (:type c)) "` (Layer 3.1 only "
                                      "supports capability atom types in use: for now)")
                                 c)))
+             ;; def <lowercase>: <AtomType>[(args)] synthesizes a data
+             ;; field whose default is the ctor call. Type must be an
+             ;; atom (nested slots hold sub-atoms, not values).
+             _             (doseq [s nested-slots]
+                             (when-not (contains? atom-names (base-type-name (:type s)))
+                               (fail-nyi!
+                                (str "nested slot `def " (:name s) "` requires an atom "
+                                     "type; got `" (base-type-name (:type s)) "`")
+                                s)))
              cap-idents     (mapv (fn [c] {:node :ident :name (:name c)}) use-caps)
              cap-as-params  (mapv (fn [c] {:name (:name c) :type (:type c) :default nil})
                                   use-caps)
              cap-as-fields  (mapv (fn [c id] {:name (:name c) :type (:type c) :default id})
                                   use-caps cap-idents)
+             nested-as-fields (mapv
+                               (fn [s]
+                                 {:name (:name s)
+                                  :type (:type s)
+                                  :default
+                                  {:node :call
+                                   :callee {:node :ident :name (base-type-name (:type s))}
+                                   :args   (or (:ctor-args s) [])}})
+                               nested-slots)
              merged-ctor    (into (vec (:ctor-params a)) cap-as-params)
-             merged-fields  (into (or (:fields dsec) []) cap-as-fields)
+             merged-fields  (-> (or (:fields dsec) [])
+                                (into cap-as-fields)
+                                (into nested-as-fields))
              _             (let [n->count (frequencies (map :name merged-ctor))
                                  dupes    (filter #(> (val %) 1) n->count)]
                              (when (seq dupes)
@@ -293,6 +320,14 @@
                                 (str "duplicate ctor-param names on def-atom `" name
                                      "` (likely collision between use: and explicit "
                                      "ctor-params): " (mapv key dupes))
+                                {:atom name :dupes (mapv key dupes)})))
+             _             (let [n->count (frequencies (map :name merged-fields))
+                                 dupes    (filter #(> (val %) 1) n->count)]
+                             (when (seq dupes)
+                               (fail-nyi!
+                                (str "duplicate field names on def-atom `" name
+                                     "` (collision between data:/use:/nested-slot): "
+                                     (mapv key dupes))
                                 {:atom name :dupes (mapv key dupes)})))
              merged-dsec   (assoc (or dsec {:node :data-section}) :fields merged-fields)
              fields        (fields-from-data-section merged-dsec {} env enum-env)
