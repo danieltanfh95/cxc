@@ -121,6 +121,7 @@
   (case (:node node)
     :call     (str (emit-expr node) ";")
     :objc-msg (str (emit-expr node) ";")
+    :ffi-call (str (emit-expr node) ";")
     :return   (str "return " (emit-expr (:value node)) ";")
     :assign   (str (emit-expr (:lhs node)) " = " (emit-expr (:rhs node)) ";")
     :raw-c    (:text node)

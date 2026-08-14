@@ -299,3 +299,9 @@
     (let [{:keys [exit stdout]} (compile-and-run "test-keyboard")]
       (is (zero? exit))
       (is (= "3\n" stdout)))))
+
+(deftest end-to-end-ticker
+  (testing "ticker.cxc — Layer 5c Step 10. Prelude ships `Ticker(rate_ms: Int, count: Int)` — a real dispatch_source_t periodic timer wired to send `beat` back to the atom's queue via an FFI-hatched call (`native_schedule_periodic_beat`). Timer runs on its own serial queue (macOS libdispatch quirk: timers targeting the main queue don't fire under dispatch_main). Timer objects get an unbalanced CFBridgingRetain to survive main()'s @autoreleasepool drain — matches the design invariant that Ticker lives until cxc_shutdown/exit(0). Program counts 3 ticks (10ms apart), prints 3, exits 0. Method-returned Stream subscribe (Step 8 original design) is deferred; multiple Ticker instances cover the polymorphism use case."
+    (let [{:keys [exit stdout]} (compile-and-run "ticker")]
+      (is (zero? exit))
+      (is (= "3\n" stdout)))))

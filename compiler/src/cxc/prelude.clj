@@ -36,6 +36,7 @@
    "Clock"              "_Cxc_Clock"
    "Random"             "_Cxc_Random"
    "TestKeyboardInput"  "_Cxc_TestKeyboardInput"
+   "Ticker"             "_Cxc_Ticker"
    "Key"                "_Cxc_Key"})
 
 (defn rename-if
@@ -53,7 +54,7 @@
    (mangled) form. Tree-shaking in cxc.lower compares against these
    after the rewrite pass runs, so entries here match what the
    lowered AST carries — not what the prelude source spelled."
-  #{"_Cxc_Clock" "_Cxc_Random" "_Cxc_TestKeyboardInput"})
+  #{"_Cxc_Clock" "_Cxc_Random" "_Cxc_TestKeyboardInput" "_Cxc_Ticker"})
 
 (def source
   "Prelude source text spliced ahead of user source. Indentation is
@@ -117,6 +118,24 @@ def TestKeyboardInput(events: Int = 0):
         do:
             :> pressed(key: remaining)
             self :> beat
+
+    running <: beat -> end
+        when: remaining == 0
+
+def Ticker(rate_ms: Int, count: Int = 3):
+    data:
+        remaining: Int = count
+
+    -> running
+        do: native_schedule_periodic_beat(self, rate_ms)
+
+    -> end
+        do: :> done
+
+    running <: beat -> running
+        when: remaining > 0
+        then: remaining => remaining - 1
+        do: :> tick
 
     running <: beat -> end
         when: remaining == 0
