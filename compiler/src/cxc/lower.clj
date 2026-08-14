@@ -694,27 +694,73 @@
      skeleton
      atoms)))
 
+;; ---------------------------------------------------------------------------
+;; Container-synth scaffolding (Hickey simplification pass)
+;;
+;; List / Map / Set container synthesis converged on the same
+;; three-stage pipeline: scan atom-env for `_Cxc_<Kind>Of...` prefixed
+;; field/ctor types, produce an atom-env entry per instantiation, and
+;; emit an @objc-class per entry. The scan pattern and the atom-env
+;; entry skeleton are the same across all three; only what identifies
+;; an instantiation (element name for List/Set, [K V] tuple for Map)
+;; and what methods live on the container class differ. Retiring the
+;; skeleton duplication so a fourth container in the future is one
+;; specialization site, not three.
+;; ---------------------------------------------------------------------------
+
+(defn- container-entry-defaults
+  "The 15 always-empty keys every synthesized container atom-env entry
+   carries. Container-specific synth code merges its distinguishing
+   keys (`:kind`, `:element-type` / `:key-type`+`:val-type`, methods,
+   observables, fan-in) on top."
+  []
+  {:fields               []
+   :field-index          {}
+   :ctor-params          []
+   :methods              []
+   :method-index         {}
+   :observables          []
+   :observables-typed    []
+   :observable-index     {}
+   :invariants           []
+   :transitions          []
+   :message-index        {}
+   :stream-index         {}
+   :stream-order         []
+   :stream-payload-index {}
+   :subscription-map     {}
+   :slot-names           []
+   :extras               []})
+
+(defn- scan-atom-env-fields
+  "Walk every atom-env entry's :fields + :ctor-params, threading each
+   field/param through `f`. `f` receives (acc, field-or-param) and
+   returns the updated acc. Common scaffolding for the container-
+   instantiation-collection pattern (List / Map / Set)."
+  [atom-env acc f]
+  (reduce (fn [acc [_ info]]
+            (as-> acc a
+              (reduce f a (:fields info))
+              (reduce f a (:ctor-params info))))
+          acc
+          atom-env))
+
 (defn- list-instantiations-from-atom-env
   "Scan every atom-env entry's fields + ctor-params for `List of T`
    usages; return a map {element-type-name → list-class-name}. Feeds
    Step 3 class synthesis: one compiler-generated ObjC class per
    distinct element type."
   [atom-env]
-  (let [seed (fn [acc field-or-param]
-               (let [ty (:cxc-ty field-or-param)]
-                 ;; Field/ctor-param carries the already-mangled class
-                 ;; name in :cxc-ty (see base-type-name), so detect via
-                 ;; the `_Cxc_ListOf` prefix and recover the element.
-                 (if (and (string? ty) (.startsWith ^String ty "_Cxc_ListOf"))
-                   (let [elem (subs ty (count "_Cxc_ListOf"))]
-                     (assoc acc elem ty))
-                   acc)))]
-    (reduce (fn [acc [_ info]]
-              (as-> acc a
-                (reduce seed a (:fields info))
-                (reduce seed a (:ctor-params info))))
-            {}
-            atom-env)))
+  (scan-atom-env-fields
+   atom-env {}
+   (fn [acc fp]
+     (let [ty (:cxc-ty fp)]
+       ;; Field/ctor-param carries the already-mangled class name in
+       ;; :cxc-ty (see base-type-name), so detect via the `_Cxc_ListOf`
+       ;; prefix and recover the element.
+       (if (and (string? ty) (.startsWith ^String ty "_Cxc_ListOf"))
+         (assoc acc (subs ty (count "_Cxc_ListOf")) ty)
+         acc)))))
 
 (defn- map-instantiations-from-atom-env
   "Scan every atom-env entry's fields + ctor-params for `Map of (K, V)`
@@ -722,27 +768,33 @@
    Layer 6 Step 8 class synthesis: one compiler-generated ObjC class
    per distinct (K, V) pair."
   [atom-env]
-  (let [seed (fn [acc field-or-param]
-               (let [ty (:cxc-ty field-or-param)]
-                 (if (and (string? ty) (.startsWith ^String ty "_Cxc_MapOf"))
-                   ;; K and V both live in the mangled suffix. Rather
-                   ;; than parse back out of the string, remember the
-                   ;; original type-node components in the field/param
-                   ;; and read K/V from there. field-or-param carries
-                   ;; :cxc-ty as the mangled name — need auxiliary
-                   ;; metadata for K/V. See :map-key/:map-val recorded
-                   ;; in fields-from-data-section / ctor-params-normalized
-                   ;; (Layer 6 Step 8 addendum).
-                   (let [k (:map-key field-or-param)
-                         v (:map-val field-or-param)]
-                     (assoc acc [k v] ty))
-                   acc)))]
-    (reduce (fn [acc [_ info]]
-              (as-> acc a
-                (reduce seed a (:fields info))
-                (reduce seed a (:ctor-params info))))
-            {}
-            atom-env)))
+  (scan-atom-env-fields
+   atom-env {}
+   (fn [acc fp]
+     (let [ty (:cxc-ty fp)]
+       (if (and (string? ty) (.startsWith ^String ty "_Cxc_MapOf"))
+         ;; K and V live in the mangled suffix. Rather than parse back
+         ;; out of the string, we recorded :map-key / :map-val on the
+         ;; field/param at normalization time (see map-key-val-of in
+         ;; fields-from-data-section / ctor-params-normalized).
+         (assoc acc [(:map-key fp) (:map-val fp)] ty)
+         acc)))))
+
+(def ^:private count-observable-defaults
+  "Every container gains a `count` observable — factored so all three
+   container-entry synthesizers share the same shape."
+  {:observables-typed [{:name "count" :type-kw :int}]
+   :observable-index  {"count" {:name "count" :type-kw :int}}})
+
+(defn- container-method
+  "Build a method-index entry for a synthesized container method.
+   `return-ty` is a cxc type-name string (or nil for void); params
+   receive self implicitly prepended."
+  [method-name params return-ty]
+  {:name               method-name
+   :params             (into [{:name "self"}] params)
+   :cxc-return-ty      return-ty
+   :cxc-return-ty-node (when return-ty {:node :type-ref :name return-ty})})
 
 (defn- synthesize-map-container-entries
   "Given {[K V] → map-class-name} produce atom-env entries for each
@@ -753,61 +805,37 @@
   [instantiations]
   (into {}
         (map (fn [[[k v] class-name]]
-               (let [methods [{:name "add"
-                               :params [{:name "self"}
-                                        {:name "k" :cxc-ty k}
-                                        {:name "v" :cxc-ty v}]
-                               :cxc-return-ty nil
-                               :cxc-return-ty-node nil}
-                              {:name "remove"
-                               :params [{:name "self"}
-                                        {:name "k" :cxc-ty k}]
-                               :cxc-return-ty nil
-                               :cxc-return-ty-node nil}
-                              {:name "contains"
-                               :params [{:name "self"}
-                                        {:name "k" :cxc-ty k}]
-                               :cxc-return-ty "Bool"
-                               :cxc-return-ty-node {:node :type-ref :name "Bool"}}]]
+               (let [methods [(container-method "add"
+                                                [{:name "k" :cxc-ty k}
+                                                 {:name "v" :cxc-ty v}]
+                                                nil)
+                              (container-method "remove"
+                                                [{:name "k" :cxc-ty k}]
+                                                nil)
+                              (container-method "contains"
+                                                [{:name "k" :cxc-ty k}]
+                                                "Bool")]]
                  [class-name
-                  {:kind             :map-container
-                   :key-type         k
-                   :val-type         v
-                   :fields           []
-                   :field-index      {}
-                   :ctor-params      []
-                   :methods          methods
-                   :method-index     (into {} (map (juxt :name identity) methods))
-                   :observables      []
-                   :observables-typed [{:name "count" :type-kw :int}]
-                   :observable-index {"count" {:name "count" :type-kw :int}}
-                   :invariants       []
-                   :transitions      []
-                   :message-index    {}
-                   :stream-index     {}
-                   :stream-order     []
-                   :stream-payload-index {}
-                   :subscription-map {}
-                   :slot-names       []
-                   :extras           []}]))
+                  (merge (container-entry-defaults)
+                         count-observable-defaults
+                         {:kind         :map-container
+                          :key-type     k
+                          :val-type     v
+                          :methods      methods
+                          :method-index (into {} (map (juxt :name identity) methods))})]))
              instantiations)))
 
 (defn- set-instantiations-from-atom-env
   "Scan atom-env fields + ctor-params for `Set of T` usages; return
    {element-name → set-class-name}."
   [atom-env]
-  (let [seed (fn [acc field-or-param]
-               (let [ty (:cxc-ty field-or-param)]
-                 (if (and (string? ty) (.startsWith ^String ty "_Cxc_SetOf"))
-                   (let [elem (subs ty (count "_Cxc_SetOf"))]
-                     (assoc acc elem ty))
-                   acc)))]
-    (reduce (fn [acc [_ info]]
-              (as-> acc a
-                (reduce seed a (:fields info))
-                (reduce seed a (:ctor-params info))))
-            {}
-            atom-env)))
+  (scan-atom-env-fields
+   atom-env {}
+   (fn [acc fp]
+     (let [ty (:cxc-ty fp)]
+       (if (and (string? ty) (.startsWith ^String ty "_Cxc_SetOf"))
+         (assoc acc (subs ty (count "_Cxc_SetOf")) ty)
+         acc)))))
 
 (defn- synthesize-set-container-entries
   "Given {element-name → set-class-name}, produce atom-env entries.
@@ -816,41 +844,19 @@
   [instantiations]
   (into {}
         (map (fn [[elem class-name]]
-               (let [methods [{:name "add"
-                               :params [{:name "self"}
-                                        {:name "e" :cxc-ty elem}]
-                               :cxc-return-ty nil
-                               :cxc-return-ty-node nil}
-                              {:name "remove"
-                               :params [{:name "self"}
-                                        {:name "e" :cxc-ty elem}]
-                               :cxc-return-ty nil
-                               :cxc-return-ty-node nil}
-                              {:name "contains"
-                               :params [{:name "self"}
-                                        {:name "e" :cxc-ty elem}]
-                               :cxc-return-ty "Bool"
-                               :cxc-return-ty-node {:node :type-ref :name "Bool"}}]]
+               (let [methods [(container-method "add"
+                                                [{:name "e" :cxc-ty elem}] nil)
+                              (container-method "remove"
+                                                [{:name "e" :cxc-ty elem}] nil)
+                              (container-method "contains"
+                                                [{:name "e" :cxc-ty elem}] "Bool")]]
                  [class-name
-                  {:kind             :set-container
-                   :element-type     elem
-                   :fields           []
-                   :field-index      {}
-                   :ctor-params      []
-                   :methods          methods
-                   :method-index     (into {} (map (juxt :name identity) methods))
-                   :observables      []
-                   :observables-typed [{:name "count" :type-kw :int}]
-                   :observable-index {"count" {:name "count" :type-kw :int}}
-                   :invariants       []
-                   :transitions      []
-                   :message-index    {}
-                   :stream-index     {}
-                   :stream-order     []
-                   :stream-payload-index {}
-                   :subscription-map {}
-                   :slot-names       []
-                   :extras           []}]))
+                  (merge (container-entry-defaults)
+                         count-observable-defaults
+                         {:kind         :set-container
+                          :element-type elem
+                          :methods      methods
+                          :method-index (into {} (map (juxt :name identity) methods))})]))
              instantiations)))
 
 (defn- synthesize-list-container-entries
@@ -901,25 +907,13 @@
                                                    (:payload entry [])))])
                                 elem-index))]
                  [class-name
-                  {:kind             :list-container
-                   :element-type     elem
-                   :fields           []
-                   :field-index      {}
-                   :ctor-params      []
-                   :methods          []
-                   :method-index     {}
-                   :observables      []
-                   :observables-typed [{:name "count" :type-kw :int}]
-                   :observable-index {"count" {:name "count" :type-kw :int}}
-                   :invariants       []
-                   :transitions      []
-                   :message-index    {}
-                   :stream-index     fanin-index
-                   :stream-order     elem-streams
-                   :stream-payload-index fanin-payloads
-                   :subscription-map {}
-                   :slot-names       []
-                   :extras           []}]))
+                  (merge (container-entry-defaults)
+                         count-observable-defaults
+                         {:kind                 :list-container
+                          :element-type         elem
+                          :stream-index         fanin-index
+                          :stream-order         elem-streams
+                          :stream-payload-index fanin-payloads})]))
              instantiations)))
 
 (defn- build-enum-env
@@ -3828,24 +3822,8 @@
         ;; it's not in top-nodes; the runtime definition ships in
         ;; cxc.emit/cxc-runtime-helpers.
         atom-env   (assoc atom-env "CxcStream"
-                          {:kind             :runtime-provided
-                           :fields           []
-                           :field-index      {}
-                           :ctor-params      []
-                           :methods          []
-                           :method-index     {}
-                           :observables      []
-                           :observables-typed []
-                           :observable-index {}
-                           :invariants       []
-                           :transitions      []
-                           :message-index    {}
-                           :stream-index     {}
-                           :stream-order     []
-                           :stream-payload-index {}
-                           :subscription-map {}
-                           :slot-names       []
-                           :extras           []})
+                          (merge (container-entry-defaults)
+                                 {:kind :runtime-provided}))
         ;; Prelude tree-shaking: only keep prelude atoms that the
         ;; user program actually references. Prevents compiler errors
         ;; from fanout bodies that message subscriber-side selectors
