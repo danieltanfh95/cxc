@@ -888,6 +888,17 @@
         (contains? (:record-env ctx) nm) {:record nm}
         (contains? (:atom-env   ctx) nm) {:atom nm}
         (= "print" nm)                   :void
+        (= "clamp" nm)                   ;; polymorphic on first arg
+        (let [args (:args node)
+              _    (when-not (= 3 (count args))
+                     (fail-nyi! (str "clamp expects 3 args (x, lo, hi), got "
+                                     (count args))
+                                node))
+              x-ty (infer-type (:value (first args)) ctx)]
+          (when-not (contains? #{:int :float} x-ty)
+            (fail-nyi! (str "clamp arg must be numeric; got " (pr-str x-ty))
+                       node))
+          x-ty)
         (ffi-builtin? nm)                (:return-kw (get ffi-builtins nm))
         :else (fail-nyi! (str "call to `" nm "`") node)))
     :dot   (infer-method-call-type node ctx)
@@ -1295,6 +1306,26 @@
 
             (= "print" callee-name)
             (lower-print node ctx)
+
+            (= "clamp" callee-name)
+            ;; Polymorphic numeric clamp. Emits a nested ternary
+            ;; `((x)<(lo) ? (lo) : ((x)>(hi) ? (hi) : (x)))` — one
+            ;; conditional per bound, no branches on the outer form.
+            ;; Preserves signedness: integer args stay integer,
+            ;; float args stay float. Only two-way choice C ternary
+            ;; suffices because clamp has no non-numeric branch.
+            (let [args (:args node)
+                  [x-arg lo-arg hi-arg] (map :value args)]
+              {:node :ffi-call
+               :name "clamp"
+               :args [(lower-expr x-arg ctx)
+                      (lower-expr lo-arg ctx)
+                      (lower-expr hi-arg ctx)]
+               :emit-c-fn (fn [rendered]
+                            (let [[x lo hi] rendered]
+                              (str "((" x ") < (" lo ") ? (" lo ") : "
+                                   "((" x ") > (" hi ") ? (" hi ") : ("
+                                   x ")))")))})
 
             (ffi-builtin? callee-name)
             (let [spec (get ffi-builtins callee-name)

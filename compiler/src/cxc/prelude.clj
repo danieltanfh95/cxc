@@ -38,6 +38,7 @@
    "TestKeyboardInput"  "_Cxc_TestKeyboardInput"
    "Ticker"             "_Cxc_Ticker"
    "Key"                "_Cxc_Key"
+   "Position"           "_Cxc_Position"
    ;; Layer 5c Step 8: Stream is the user-visible type for
    ;; method-returned reactive streams. Maps to CxcStream, the
    ;; runtime helper class defined inline in emit's helpers block
@@ -92,6 +93,15 @@ record Instant:
     methods:
         function plus(self, delta: Duration) -> Instant:
             return Instant(millis: self.millis + delta.millis)
+
+record Position:
+    data:
+        x: Float
+        y: Float
+
+    methods:
+        function plus(self, other: Position) -> Position:
+            return Position(x: self.x + other.x, y: self.y + other.y)
 
 def Random:
     next_u32 :< native_random_u32()
@@ -214,6 +224,37 @@ def Clock(ticks: Int = 3):
                    :name  "millis"
                    :value {:node :lit-int :value millis}}]}))))
 
+(def ^:private class-member-desugars
+  "Static-like accessors on prelude record types. Rewrite
+   `<Type>.<member>` (post-rename mangled) to an equivalent value
+   construction. Small, closed set — general record-class-members
+   are Layer 5.5+ machinery, but a handful of designated static
+   constants are enough for the common cases (`Instant.epoch`,
+   `Position.origin`)."
+  {["_Cxc_Instant" "epoch"]
+   {:node   :call
+    :callee {:node :ident :name "_Cxc_Instant"}
+    :args   [{:kind :named :name "millis"
+              :value {:node :lit-int :value 0}}]}
+   ["_Cxc_Position" "origin"]
+   {:node   :call
+    :callee {:node :ident :name "_Cxc_Position"}
+    :args   [{:kind :named :name "x" :value {:node :lit-float :value 0.0}}
+             {:kind :named :name "y" :value {:node :lit-float :value 0.0}}]}})
+
+(defn- desugar-class-member
+  "If `node` is a `:dot` whose target is a bare ident naming a
+   prelude type with a known static member, replace it with the
+   equivalent constructor call. Otherwise return unchanged."
+  [node]
+  (if (and (= :dot (:node node))
+           (map? (:target node))
+           (= :ident (get-in node [:target :node])))
+    (or (get class-member-desugars
+            [(get-in node [:target :name]) (:field node)])
+        node)
+    node))
+
 (defn rewrite-prelude-names
   "Post-parse walk that mangles every occurrence of a user-visible
    prelude name to its internal form. Walks the parsed top-nodes
@@ -236,6 +277,9 @@ def Clock(ticks: Int = 3):
         (cond
           (contains? #{:lit-int-unit :lit-float-unit} (:node x))
           (desugar-unit-literal x)
+
+          (= :dot (:node x))
+          (desugar-class-member x)
 
           :else
           (cond-> x
