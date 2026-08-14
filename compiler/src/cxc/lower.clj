@@ -832,17 +832,21 @@
    "native_clock_every"
    ;; Layer 5c Step 8/10 — real method-returned Stream. Called from
    ;; Clock's `every(rate_ms: Int) -> Stream` method body; creates a
-   ;; CxcStream carrying the exact receiver-side selector subscribers
-   ;; will declare, plus a dispatch_source_t periodic timer whose
-   ;; event handler fans the stream. Same macOS quirks as
-   ;; `native_schedule_periodic_beat` (dedicated queue for timer).
+   ;; CxcStream carrying subscribers plus a dispatch_source_t periodic
+   ;; timer whose event handler builds a fresh `_Cxc_Instant` and
+   ;; fans it to every subscriber via `objc_msgSend` cast. Same macOS
+   ;; quirks as `native_schedule_periodic_beat` (dedicated queue for
+   ;; timer).
    ;;
-   ;; The selector name is hardcoded to
-   ;; `cxc_stream_every_from__Cxc_ClockWithsender:` — mirrors what
-   ;; `stream-selector` builds for a method-stream group-key with
-   ;; source-class `_Cxc_Clock` and method-name `every`. If a future
-   ;; Layer 5c FFI supports method-name/source-class as compile-time
-   ;; params, this becomes generic; today it's Clock-specific.
+   ;; Payload shape (`t: Instant`) matches the registration in
+   ;; `method-stream-payload-shapes` for `[_Cxc_Clock every]`. Selector
+   ;; on the subscriber side is
+   ;; `cxc_stream_every_from__Cxc_ClockWithsender:t:` — receiver-side
+   ;; method synthesis in `lower-receive-glyph-transitions` builds the
+   ;; matching signature. The fanout bypasses CxcStream's generic
+   ;; `-cxc_emit` because that method assumes a fixed (id, id)
+   ;; signature; typed payload needs a per-payload-shape cast, which
+   ;; we specialize inline here.
    ;;
    ;; Lifecycle: the CxcStream owns the timer via its teardown block.
    ;; The subscriber owns the CxcStream (see :raw-stream-subscribe in
@@ -883,7 +887,7 @@
                         "__cxc_ms * NSEC_PER_MSEC, 0); "
                         "CxcStream *__cxc_s = "
                         "[[CxcStream alloc] initWithSelector:"
-                        "@\"cxc_stream_every_from__Cxc_ClockWithsender:\" "
+                        "@\"cxc_stream_every_from__Cxc_ClockWithsender:t:\" "
                         "source:__cxc_src]; "
                         ;; Weak ref inside the event handler so the
                         ;; timer's block doesn't keep the stream
@@ -892,7 +896,26 @@
                         ;; stream is a real cycle.
                         "__weak CxcStream *__cxc_ws = __cxc_s; "
                         "dispatch_source_set_event_handler(__cxc_t, ^{ "
-                        "[__cxc_ws cxc_emit]; "
+                        "CxcStream *__cxc_ss = __cxc_ws; "
+                        "if (__cxc_ss == nil) return; "
+                        ;; Build a fresh Instant per fire — matches
+                        ;; the receive-side `{t: Instant}` type. Layer
+                        ;; 5 keeps Instant.millis as int (see prelude
+                        ;; Instant record); a wider integral type
+                        ;; requires plumbing all the way through.
+                        "_Cxc_Instant __cxc_inst = { .millis = "
+                        "(int)([[NSDate date] timeIntervalSince1970] * 1000) }; "
+                        "SEL __cxc_sel = sel_registerName("
+                        "\"cxc_stream_every_from__Cxc_ClockWithsender:t:\"); "
+                        "for (id sub in __cxc_ss.subscribers) { "
+                        ;; Hop to subscriber via cxc_send_async so
+                        ;; the msg lands on the subscriber's own_queue
+                        ;; — same delivery model as generic cxc_emit.
+                        "cxc_send_async(sub, ^{ "
+                        "((void (*)(id, SEL, id, _Cxc_Instant))objc_msgSend)"
+                        "(sub, __cxc_sel, __cxc_src, __cxc_inst); "
+                        "}); "
+                        "} "
                         "}); "
                         "dispatch_resume(__cxc_t); "
                         "CxcTimerHandle *__cxc_h = [[CxcTimerHandle alloc] init]; "
@@ -902,6 +925,28 @@
                         "__cxc_s; })")))}})
 
 (defn- ffi-builtin? [name] (contains? ffi-builtins name))
+
+(def ^:private method-stream-payload-shapes
+  "Compiler-known payload shapes for method-returned streams. Keyed by
+   [source-class method-name] → vector of {:name :cxc-ty} entries (in
+   order). Empty vector = no user payload, just the sender: arg.
+
+   The receive-side `<: source.method(args){k: T}` clause must match
+   the shape declared here — name-wise and type-wise. The corresponding
+   FFI hatch that creates the stream (`native_clock_every` today) is
+   responsible for emitting fanout code that includes each payload as
+   a typed argument in the objc_msgSend cast.
+
+   Layer 5c has one entry: `Clock.every` emits `t: Instant` on each
+   fire. Layer 6 formalizes as `Stream[T]` return-type inference from
+   the method signature; today the compiler carries this table."
+  {["_Cxc_Clock" "every"] [{:name "t" :cxc-ty "_Cxc_Instant"}]})
+
+(defn- method-stream-payload
+  "Registered payload shape for [source-class method-name], or empty
+   vector if none (legacy sender-only method-streams)."
+  [source-class method-name]
+  (get method-stream-payload-shapes [source-class method-name] []))
 
 (defn- infer-call-type
   [{:keys [callee] :as node} ctx]
@@ -2006,9 +2051,14 @@
                         :method-stream
                         ;; Layer 5c Step 8: source is `<field>.<method>(args)`.
                         ;; The method must be declared on the source-class atom
-                        ;; and return a Stream (CxcStream). Payload beyond the
-                        ;; leading sender: arg isn't supported at this landing
-                        ;; — CxcStream is untyped at runtime.
+                        ;; and return a Stream (CxcStream). Payload shape (if
+                        ;; any) comes from the compiler's
+                        ;; `method-stream-payload-shapes` registry — Clock.every
+                        ;; declares `t: Instant` today. The receive site's
+                        ;; `{...}` clause must match the registered shape
+                        ;; name-for-name and type-for-type; omission when the
+                        ;; registry declares a shape is an error (subscribers
+                        ;; must acknowledge the payload they'll receive).
                         (let [src        (get-in t [:receive :msg :source])
                               dot        (:callee src)
                               target     (:target dot)
@@ -2052,21 +2102,41 @@
                                                    return-ty "`, but receive-glyph "
                                                    "requires a `Stream` return type")
                                               src))
-                              payload      (or (:payload (get-in t [:receive :msg]))
+                              expected     (method-stream-payload source-class method-nm)
+                              declared     (or (:payload (get-in t [:receive :msg]))
                                                [])
-                              _            (when (seq payload)
+                              expected-names (mapv :name expected)
+                              declared-names (mapv :name declared)
+                              _            (when (not= expected-names declared-names)
                                              (fail-nyi!
                                               (str "method-stream `" field-nm "."
-                                                   method-nm "()` payload not "
-                                                   "supported at Layer 5c Step 8; "
-                                                   "CxcStream is untyped — omit "
-                                                   "the `{...}` shape")
-                                              src))]
+                                                   method-nm "()` payload shape "
+                                                   "mismatch: source emits "
+                                                   expected-names ", receive declared "
+                                                   declared-names)
+                                              src))
+                              _            (doseq [[dec exp] (map vector declared expected)]
+                                             (let [dec-ty (base-type-name (:type dec))]
+                                               (when (not= dec-ty (:cxc-ty exp))
+                                                 (fail-nyi!
+                                                  (str "method-stream `" field-nm "."
+                                                       method-nm "()` payload key `"
+                                                       (:name dec) "` declared as `"
+                                                       dec-ty "`, but source emits `"
+                                                       (:cxc-ty exp) "`")
+                                                  src))))
+                              ;; Prefer the receive site's typed payload
+                              ;; (has :type nodes for method-params emit);
+                              ;; fall back to fabricating from the registry
+                              ;; when no payload was declared but shape is
+                              ;; empty (both are `[]` — no-op).
+                              payload      (if (seq declared) declared expected)
+                              payload-keys (mapv :name payload)]
                           {:kind          :method-stream
                            :txn           t
                            :group-key     [:method-stream source-class method-nm]
-                           :selector      (stream-selector source-class method-nm [])
-                           :payload       []
+                           :selector      (stream-selector source-class method-nm payload-keys)
+                           :payload       payload
                            :source-class  source-class
                            :source-field  field-nm
                            :method-name   method-nm

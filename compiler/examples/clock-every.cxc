@@ -10,7 +10,7 @@ def main:
     -> end
         do: print(beats > 0)
 
-    running <: clock.every(rate_ms: 5) -> running
+    running <: clock.every(rate_ms: 5){t: Instant} -> running
         then: beats => beats + 1
 
     running <: limit.done -> end

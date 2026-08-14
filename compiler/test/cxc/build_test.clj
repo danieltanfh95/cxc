@@ -313,8 +313,14 @@
       (is (= "6\n" stdout)))))
 
 (deftest end-to-end-clock-every
-  (testing "clock-every.cxc — Layer 5c Step 8 (method-returned Stream subscribe). Clock ships a real `every(rate_ms: Int) -> Stream` method (via `native_clock_every` FFI hatch) that creates a CxcStream carrying a per-instance receiver-side selector plus a dispatch_source_t timer. Main subscribes via `<: clock.every(rate_ms: 5)` and Ticker(rate_ms: 50, count: 1) bounds the run. `beats > 0` at end verifies the stream fired at least once — deterministic across runs since the 5ms every-tick easily fires before the 50ms limit. Prints 1."
+  (testing "clock-every.cxc — Layer 5c Step 8 (method-returned Stream subscribe). Clock ships a real `every(rate_ms: Int) -> Stream` method (via `native_clock_every` FFI hatch) that creates a CxcStream carrying a per-instance receiver-side selector plus a dispatch_source_t timer. Main subscribes via `<: clock.every(rate_ms: 5){t: Instant}` and Ticker(rate_ms: 50, count: 1) bounds the run. `beats > 0` at end verifies the stream fired at least once — deterministic across runs since the 5ms every-tick easily fires before the 50ms limit. The `{t: Instant}` clause is required by the method-stream payload registry entry for `[_Cxc_Clock every]`; here the body ignores `t`. Prints 1."
     (let [{:keys [exit stdout]} (compile-and-run "clock-every")]
+      (is (zero? exit))
+      (is (= "1\n" stdout)))))
+
+(deftest end-to-end-clock-every-typed
+  (testing "clock-every-typed.cxc — method-stream typed payload. Extends clock-every.cxc by reading `t.millis` in the subscriber body (`then: got_millis => t.millis`). Verifies the whole typed-payload chain: `method-stream-payload-shapes` registry entry for `[_Cxc_Clock every]` declaring `t: Instant`, receive-side validation matching the declared shape, selector `cxc_stream_every_from__Cxc_ClockWithsender:t:` synthesized on both fanout and receive sides, and native_clock_every's specialized event handler building a fresh `_Cxc_Instant` per fire and dispatching via `((void(*)(id,SEL,id,_Cxc_Instant))objc_msgSend)` cast. `got_millis > 0` at end because timeIntervalSince1970 is always positive on any live system. Prints 1."
+    (let [{:keys [exit stdout]} (compile-and-run "clock-every-typed")]
       (is (zero? exit))
       (is (= "1\n" stdout)))))
 
