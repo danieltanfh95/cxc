@@ -598,7 +598,7 @@ cxc inverts Swift's nil-safety model. Reference types allow nil at runtime (matc
 - **Grammar (§10).** Type production adds `!` suffix (reference-type contract). `?` suffix narrows to value-type Optional-sum only. Value expressions: `?.` and value-position `!` productions removed.
 - **Rationale.** Swift's nil-safety model paid two visible taxes: `?.` at every optional call site (readers stop seeing it) and `!` at value site (attractor for hidden panics as codebases evolve). cxc inherits the ObjC runtime, which already allows nil for every reference — Swift's type system was fighting this truth and paying the tax. v0.7.0 reverses the direction: nil is the baseline for references, non-nil is the exception marked by contract. The Clojure-style pun-on-nil semantics (via ObjC runtime + `on_nil` for user code) removes the safety motivation for the taxes, so the taxes go too.
 
-Downstream cleanups: §3.1.1 (`Any?` note removed — `Any` allows nil directly), §3.2 (Optionals split into reference vs value cases), §3.4.2 (Connection example — retire `Socket?` and `socket!.send`), new §3.6.1 (Nullability and Nil-Punning), new §4.10.9 (`on_nil` section), new §5.7 (Nil-Receiver Dispatch), §6.14 (Reference Modifiers — retire redundant `?` on `weak`), §8.6 (channel section field types), §9.3.2 (ObjC nullability round-trip), §10 (grammar). Roughly 15-20 substantive edits across the spec.
+Downstream cleanups: §3.1.3 (`Any?` note removed — `Any` allows nil directly), §3.2 (Optionals split into reference vs value cases), §3.4.2 (Connection example — retire `Socket?` and `socket!.send`), new §3.6.1 (Nullability and Nil-Punning), new §4.10.9 (`on_nil` section), new §5.7 (Nil-Receiver Dispatch), §6.14 (Reference Modifiers — retire redundant `?` on `weak`), §8.6 (channel section field types), §9.3.2 (ObjC nullability round-trip), §10 (grammar). Roughly 15-20 substantive edits across the spec.
 
 **Change log from v0.5.2 → v0.6.0 (structural unification):**
 
@@ -1185,7 +1185,7 @@ The atom substrate is the design commitment. §1.11–§1.14 document the substr
 **Preserved from v0.11 without change.** The following are v1.0-native as documented:
 
 - Records as functional-swap (methods return new selves; no in-place mutation).
-- Primitives as records over Bytes (unified with user records; §3.1).
+- Primitives as atoms with `data:` + `value :<` + `invariants:` (unified with user domain types; §3.1). Retires the "primitives are records with a single `bytes` field" framing from v0.11 — the current form derives primitives from `Bit` → `Byte` → sized atoms per the exploration in `design/explorations/integers-from-bits.cxc`.
 - Canonical bytes as value-type base-class property (§3.4.6, §3.10.10).
 - Types-as-guards at wire boundaries (§1.3).
 - Nullability + nil-punning + nil-receiver dispatch (§3.6.1, §5.7).
@@ -2438,59 +2438,148 @@ Because these are prelude aliases, they are inspectable — users can look up wh
 > **What changes.** `class Foo:` → `def Foo:` with sugar-keyword equivalents documented per shape. `state:` section retires; all fields are `data:`, all mutations happen through transitions. `method_decl` with imperative bodies (`self.x = y`) is retired in favor of transitions with `then:` field-update blocks. Method call semantics preserve — dispatch to a transition or handler on the receiver atom is the same as a method call at the call site.
 
 ### 3.1 Primitive Types
-- `Int`, `Int8`, `Int16`, `Int32`, `Int64` (and unsigned variants: `UInt`, `UInt8`, `UInt16`, `UInt32`, `UInt64`)
-- `Float`, `Double`
-- `Bool`
-- `Char` (Unicode grapheme cluster), `String` (UTF-8, immutable), `Bytes`
-- `Unit` (the type with one value, written `()`)
-- `Never` (the type with no values, for divergent functions)
-- `Any` — dynamically-typed value; the type system knows nothing about it. See §3.1.1.
 
-**Primitives are records over `Bytes`, shipped in prelude.** No separate "primitive family" with independent semantics — every primitive is a `kind: record` class with a single `data: bytes: Bytes` field constrained by a length refinement. Byte methods (`.as() -> Bytes`, `class function from(source: Bytes)`) synthesize from the field layout the same way they do for user records (§3.4.6). Arithmetic, comparison, IEEE 754 semantics, bitwise operations remain compiler intrinsics — the compiler recognizes primitives by name and lowers their methods to machine instructions; storage is specialized to inline machine words.
+**Types are atoms. Predicates are contracts, not refinements.** Every "primitive type" is a first-class atom with `data:` + `value :<` observable + optional `invariants:` — the same mechanism used for user-defined types (§1.3). There is no primitive/refined distinction. The set below is what the prelude ships; user domain types (Age, UserId, Percent, ...) are declared the same way and get the same treatment.
+
+**Domain code writes bare `Nat`/`Int` (or a domain-narrowing atom like `Age`) and puts value ranges in `invariants:`.** Sized atoms (`UInt8`, `Int32`, `Float`, `Double`, ...) appear in interop code and where explicit width matters (protocols, hardware registers, FFI). They are not the primary surface for domain code.
+
+#### 3.1.1 The Derivation
+
+The full worked derivation lives in `design/explorations/integers-from-bits.cxc`. Summary:
+
+**`Bit`** — the bottom of the tower.
 
 ```
-# Prelude ships (illustrative shape — arithmetic methods elided):
-record Bool:
-    data: bytes: Bytes where bytes.length == 1
-    methods:
-        # ... boolean intrinsics ...
-
-record UInt8:
-    data: bytes: Bytes where bytes.length == 1
-    methods:
-        # ... unsigned-arithmetic intrinsics ...
-
-record UInt32:
-    data: bytes: Bytes where bytes.length == 4
-    methods:
-        # ... unsigned-arithmetic intrinsics ...
-
-record Int32:
-    data: bytes: Bytes where bytes.length == 4
-    methods:
-        # ... two's-complement-arithmetic intrinsics ...
-
-record Float:
-    data: bytes: Bytes where bytes.length == 4
-    methods:
-        # ... IEEE 754 single-precision intrinsics ...
-
-record Double:
-    data: bytes: Bytes where bytes.length == 8
-    methods:
-        # ... IEEE 754 double-precision intrinsics ...
-
-record Char:
-    data: bytes: Bytes where bytes.length >= 1 and bytes.length <= 255
-    methods:
-        # ... grapheme intrinsics ...
+def Bit:
+    kind: enum
+    cases:
+        zero
+        one
 ```
 
-**Consequences.** Value semantics falls out of `kind: record` at the record boundary (§3.3), same as any user record. Copy-on-assign, structural equality (byte-wise field comparison), structural hashing, canonical bytes — all synthesized via the record base-class properties (§3.4.6). No per-primitive prelude `extend class Foo: methods: function as(): ...` needed — the byte methods synthesize from the field. Storage (inline machine word) is a compiler specialization invisible to the surface; semantically primitives ARE records with a bytes field. Bit-pattern-carrying types like `Int` and `Bool` have no nil representation (records without nil-annotation are non-nil per §3.6.1). Reference-shaped types (`String`, `Bytes`) still get nil-allowed status when annotated as receivers because the runtime carries them via handles.
+**`Byte`** — eight bits. Purely structural; no interpretation observable. Meaning comes from wrappers.
 
-**Numeric literals infer their type from context** (§2.7). `Char` literals use `'x'` form; `String` literals use `"..."` form; both support C-style and Unicode escape sequences.
+```
+def Byte:
+    data:
+        bits: List of Bit
+    invariants:
+        bits.count == 8
+```
 
-#### 3.1.1 The Any Type
+**`UInt8`, `Int8`, `Char`** — same eight bits, different interpretations. The `value :<` observable IS the interpretation; the `invariants:` state what the observable produces.
+
+```
+def UInt8:
+    data:
+        raw: Byte
+    value :< bit_ops.decode_uint(raw.bits)
+    invariants:
+        value in 0..255
+
+def Int8:
+    data:
+        raw: Byte
+    value :< bit_ops.decode_int_2c(raw.bits)
+    invariants:
+        value in -128..127
+```
+
+**`UInt16`, `UInt32`, `UInt64`, `Int16`, `Int32`, `Int64`** — same pattern with `List of Byte` and a `count == N` invariant on the raw bytes. The `value :<` observable delegates to the corresponding `bit_ops.decode_*` prelude function.
+
+**`Nat` and `Int`** — variable-width unsigned/signed. No fixed byte count. The compiler picks a sized representation from the enclosing atom's declared invariants on the field.
+
+```
+def Nat:
+    data:
+        raw: List of Byte
+    value :< bit_ops.decode_uint_variable(raw)
+    invariants:
+        value >= 0
+
+def Int:
+    data:
+        raw: List of Byte
+    value :< bit_ops.decode_int_variable(raw)
+    # No lower/upper bound — user narrows via containing atom's invariants
+```
+
+**`Float`, `Double`** — IEEE 754 single- and double-precision. Fixed width per `bytes.length` invariant.
+
+```
+def Float:
+    data:
+        raw: List of Byte
+    invariants:
+        raw.count == 4
+    value :< bit_ops.decode_ieee_f32(raw)
+
+def Double:
+    data:
+        raw: List of Byte
+    invariants:
+        raw.count == 8
+    value :< bit_ops.decode_ieee_f64(raw)
+```
+
+**`Bool`** — single byte carrying `zero`/`one`.
+
+```
+def Bool:
+    data:
+        raw: Byte
+    value :< bit_ops.decode_uint(raw.bits) == 1
+    invariants:
+        bit_ops.decode_uint(raw.bits) in 0..1
+```
+
+**`Char`** — a Unicode grapheme cluster. Variable-length UTF-8-encoded bytes. Reference-shaped at the runtime layer (carried via handle to allow grapheme boundaries wider than one byte).
+
+```
+def Char:
+    data:
+        raw: List of Byte
+    invariants:
+        raw.count in 1..255
+        bit_ops.is_valid_grapheme(raw)
+    value :< bit_ops.grapheme_of(raw)
+```
+
+**`String`** — UTF-8, immutable. Reference-shaped (`kind: regular` per §3.10.5). Methods per §3.10.5.
+
+**`Bytes`** — mutable byte buffer. Reference-shaped (`kind: regular` per §3.10.4). Methods per §3.10.4.
+
+**`Unit`** — the type with exactly one value, written `()`. Used as the return type of transitions/methods that produce no meaningful value.
+
+**`Never`** — the type with no values. Used as the return type of divergent transitions/methods (functions that abort, loop forever, or otherwise never return).
+
+**`Any`** — dynamically-typed value; the type system knows nothing about it. See §3.1.3.
+
+#### 3.1.2 Compiler Representation-Picking
+
+The compiler picks a machine-instruction representation for each numeric field from its **declared invariants**, following these rules:
+
+1. **Sized atoms (`UInt8`, `Int32`, `Float`, `Double`, ...) pin the representation.** A field typed `hp: UInt16` gets 16-bit unsigned storage always. The atom's `bytes.count == N` invariant fixes the width.
+
+2. **Bare `Nat` picks the smallest unsigned representation that satisfies the enclosing atom's invariants on the field.** A field `hp: Nat` in an atom with `invariants: hp in 0..999` compiles to UInt16 storage. Without a bounds invariant on the field, `Nat` defaults to UInt64.
+
+3. **Bare `Int` picks the smallest signed representation similarly.** Default: Int64.
+
+4. **Domain atoms (`Age`, `HP`, `UserId`, ...) picked by the compiler based on the domain atom's own invariants**, propagated through the `data:` chain. Example: `Age` wraps `Nat` with `invariants: value in 0..150`; a field `player_age: Age` compiles to UInt8 storage.
+
+5. **No use-based inference.** The compiler reads what's WRITTEN in `invariants:` — nothing more. If the user wants tight representation, they write the invariant. If the user writes no invariant, they get the conservative default. This keeps representation choice source-visible: a reader knows what the compiler picked by reading the invariants, not by running an inspection tool. Contracts stay load-bearing (spec §1.3) rather than becoming optional performance hints.
+
+6. **Bit-pattern types (`Int`, `Nat`, sized ints, `Float`, `Double`, `Bool`) have no nil representation** — records without nil-annotation are non-nil per §3.6.1. Reference-shaped types (`String`, `Bytes`, `Char`, `Any`) get nil-allowed status when annotated as receivers because the runtime carries them via handles.
+
+7. **Storage is a compiler specialization invisible to the surface.** Semantically primitives ARE atoms with the derivation above; the compiler emits inline machine words (or a heap handle for reference-shaped types) as an optimization. `.as() -> Bytes` and structural equality synthesize from the atom's `data:` shape via §3.4.6.
+
+**Numeric literals infer their atom name from context** (§2.7). `Char` literals use `'x'` form; `String` literals use `"..."` form; both support C-style and Unicode escape sequences.
+
+**Arithmetic across mixed widths.** Arithmetic between values of different sized atoms (e.g. `x: UInt8 + y: UInt16`) requires explicit widening at the call site — user calls a widening constructor (`UInt16.from(x)`) or a widen operator per §3.11. No implicit promotion. Arithmetic between two `Nat`-typed fields is compiled per the wider of their picked representations.
+
+**Escape hatches deferred to v1.1+.** Explicit representation pins (`Integer as i64`, `#[repr]` markers) for hot-loop performance, and full use-based / whole-graph representation inference (Julia-style), are v1.1+ work. v1.0 ships the invariant-driven picker only. See design/working-notes for the design horizon.
+
+#### 3.1.3 The Any Type
 
 `Any` represents a value whose concrete type is not known at compile time. Method calls on `Any` are dispatched through the runtime:
 
@@ -2592,7 +2681,7 @@ All user types are declared via `class`. The `metadata: kind:` section entry (§
 
 **Value-type base-class properties are language commitments, not protocol conformances.** Records and enums have `.as() -> Bytes`, `==`, `hash`, and copy-on-assign as *fundamental properties of what value types ARE* — the compiler synthesizes these methods per class from field layout, same shape as automatic structural equality in Haskell records or Rust structs. Structural conformance to `As<Bytes>` / `From<Bytes>` / `Equatable` / `Hashable` (§3.4) falls out as a consequence — the base methods exist, so structural checks succeed with no separate "auto-conformance" mechanism. See §3.4.6 for the byte-property detail and §3.10.10 for the canonical wire format.
 
-Primitives (`Int`, `Float`, `Bool`, `Char`, etc.) are `kind: record` and inherit the same base-class properties. Prelude ships the byte methods explicitly (§3.11.4) because primitives have no field layout for the compiler to synthesize from — the encoding is per-type (IEEE 754 for floats, big-endian for integers, etc.).
+Primitives (`Int`, `Float`, `Bool`, `Char`, etc.) are atoms with the same `data:` + `value :<` + `invariants:` structure user domain types use — see §3.1 for the derivation from `Bit` → `Byte` → sized atoms. The compiler synthesizes byte methods from each primitive's field layout via the same pathway as user records (§3.4.6). Storage is a compiler specialization (inline machine word) invisible to the surface; semantically primitives ARE atoms.
 
 `kind: regular` classes get **none of these base-class properties automatically** — mutable state, potential cycles, and identity make mechanical equality/hashing/serialization unsafe. Regular-class authors define `==` / `hash(self)` / `.as() -> Bytes` explicitly if they want those behaviors.
 
@@ -4735,9 +4824,11 @@ switch big.checked_to::<UInt8>():
 
 #### 3.11.4 Byte Methods on Primitives
 
-Primitives are `kind: record` shipped in prelude with a `data: bytes: Bytes where length == N` field (§3.1); byte methods synthesize from that field layout via the same pathway as user records (§3.4.6). Under §3.10.10's refinement-driven length-prefix specialization, a `Bytes` field with `where length == N` synthesizes to raw N bytes with no runtime prefix — so `record UInt8: data: bytes: Bytes where length == 1` synthesizes to `.as() -> Bytes` producing 1 raw byte (matches §3.10.10's UInt8 spec); `record UInt32: data: bytes: Bytes where length == 4` synthesizes to 4 raw big-endian bytes (matches UInt32 spec); and so on for every fixed-length primitive. Structural conformance to `As<Bytes>` and `From<Bytes>` (§3.4) follows because the synthesized methods exist on the class.
+> **Revision pending (2026-08-15).** §3.1 has been rewritten to derive primitives from `Bit` → `Byte` → sized atoms (see the exploration in `design/explorations/integers-from-bits.cxc`). The specific field-layout examples in this section still reference the earlier v0.11 framing (`data: bytes: Bytes where length == N`); the mechanism it describes — byte-method synthesis from field layout via the §3.4.6 pathway — carries over unchanged. Full rewrite of the examples to match the new atom shapes (`data: raw: Byte` for UInt8, `data: raw: List of Byte` with `invariants: raw.count == N` for wider atoms) is a follow-on pass.
 
-**No per-primitive prelude implementation.** Prior to the (A) reframe, prelude shipped a hand-written `extend class UInt8: methods: function as() -> Bytes: ...` block per primitive — under the "primitives have no field layout" claim in early v0.11 drafts. That claim was false (primitives DO have field layout, one field: `bytes: Bytes where length == N`), and the reframe removed the per-primitive prelude blocks: the same synthesis pathway that gives a user's `record Point: data: x: Float, y: Float` its `.as() -> Bytes` gives `record UInt32` its `.as() -> Bytes`. One pathway; no hand-writes; no framing-fudge about "prelude extend blocks that are actually language-provided."
+Primitives are atoms shipped in prelude with `data:` + `value :<` + `invariants:` (see §3.1 for the derivation); byte methods synthesize from each atom's field layout via the same pathway as user records (§3.4.6). Under §3.10.10's refinement-driven length-prefix specialization, a fixed-length field synthesizes to raw N bytes with no runtime prefix — so `UInt8`'s single `Byte` field synthesizes to `.as() -> Bytes` producing 1 raw byte (matches §3.10.10's UInt8 spec); `UInt32`'s `List of Byte` with `raw.count == 4` invariant synthesizes to 4 raw big-endian bytes (matches UInt32 spec); and so on for every fixed-length primitive. Structural conformance to `As<Bytes>` and `From<Bytes>` (§3.4) follows because the synthesized methods exist on the class.
+
+**No per-primitive prelude implementation.** Prior to the (A) reframe, prelude shipped a hand-written `extend class UInt8: methods: function as() -> Bytes: ...` block per primitive — under the "primitives have no field layout" claim in early v0.11 drafts. That claim was false (primitives DO have field layout — the `Bit`/`Byte`/`List of Byte` chain per §3.1), and the reframe removed the per-primitive prelude blocks: the same synthesis pathway that gives a user's `record Point: data: x: Float, y: Float` its `.as() -> Bytes` gives `UInt32` its `.as() -> Bytes`. One pathway; no hand-writes; no framing-fudge about "prelude extend blocks that are actually language-provided."
 
 **Explicit-endian access.** Alongside the synthesized `.as() -> Bytes` (fixed to network-order per §3.10.10), each multi-byte primitive gets an ordinary `.as_bytes(order: ByteOrder) -> Bytes` method for callers who need explicit control:
 
