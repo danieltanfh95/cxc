@@ -139,6 +139,11 @@
       ;; checked at atom-env registration.
       (str (base-type-name ty-node) " *")
 
+      (= "Set" (:outer ty-node))
+      ;; Compiler-synthesized Set class (Layer 6 Step 9). Same shape
+      ;; as List/Map — pointer-typed at C.
+      (str (base-type-name ty-node) " *")
+
       :else
       (fail-nyi! (str "cxc-type->c: `" (:outer ty-node)
                       " of ...` unsupported")
@@ -176,10 +181,16 @@
                        (str "_Cxc_MapOf"
                             (base-type-name k) (base-type-name v)))
 
+                     (= "Set" (:outer ty-node))
+                     ;; Set of T (Layer 6 Step 9) — same shape as List
+                     ;; but distinct backing (NSMutableSet). Grammar
+                     ;; reuses single-type-arg after `of`.
+                     (str "_Cxc_SetOf" (base-type-name (:inner ty-node)))
+
                      :else
                      (fail-nyi! (str "base-type-name: `" (:outer ty-node)
-                                     " of ...` — only `List of T` and "
-                                     "`Map of (K, V)` supported")
+                                     " of ...` — only `List of T`, "
+                                     "`Map of (K, V)`, and `Set of T` supported")
                                 ty-node))
     (fail-nyi! (str "base-type-name: unknown type-node " (:node ty-node)) ty-node)))
 
@@ -194,6 +205,12 @@
    base-type-name's :type-of Map branch."
   [k-name v-name]
   (str "_Cxc_MapOf" k-name v-name))
+
+(defn- set-container-class-name
+  "Mangled ObjC class name for `Set of <element>`. Kept in sync with
+   base-type-name's :type-of Set branch."
+  [element-name]
+  (str "_Cxc_SetOf" element-name))
 
 (defn- cxc-type->type-kw
   "Map a cxc type-ref name to the type-keyword vocab used by infer-type.
@@ -735,6 +752,67 @@
                   {:kind             :map-container
                    :key-type         k
                    :val-type         v
+                   :fields           []
+                   :field-index      {}
+                   :ctor-params      []
+                   :methods          methods
+                   :method-index     (into {} (map (juxt :name identity) methods))
+                   :observables      []
+                   :observables-typed [{:name "count" :type-kw :int}]
+                   :observable-index {"count" {:name "count" :type-kw :int}}
+                   :invariants       []
+                   :transitions      []
+                   :message-index    {}
+                   :stream-index     {}
+                   :stream-order     []
+                   :stream-payload-index {}
+                   :subscription-map {}
+                   :slot-names       []
+                   :extras           []}]))
+             instantiations)))
+
+(defn- set-instantiations-from-atom-env
+  "Scan atom-env fields + ctor-params for `Set of T` usages; return
+   {element-name → set-class-name}."
+  [atom-env]
+  (let [seed (fn [acc field-or-param]
+               (let [ty (:cxc-ty field-or-param)]
+                 (if (and (string? ty) (.startsWith ^String ty "_Cxc_SetOf"))
+                   (let [elem (subs ty (count "_Cxc_SetOf"))]
+                     (assoc acc elem ty))
+                   acc)))]
+    (reduce (fn [acc [_ info]]
+              (as-> acc a
+                (reduce seed a (:fields info))
+                (reduce seed a (:ctor-params info))))
+            {}
+            atom-env)))
+
+(defn- synthesize-set-container-entries
+  "Given {element-name → set-class-name}, produce atom-env entries.
+   MVP shape: no fan-in (parallel to Map). Methods add/remove/contains
+   registered in :method-index; count observable in :observable-index."
+  [instantiations]
+  (into {}
+        (map (fn [[elem class-name]]
+               (let [methods [{:name "add"
+                               :params [{:name "self"}
+                                        {:name "e" :cxc-ty elem}]
+                               :cxc-return-ty nil
+                               :cxc-return-ty-node nil}
+                              {:name "remove"
+                               :params [{:name "self"}
+                                        {:name "e" :cxc-ty elem}]
+                               :cxc-return-ty nil
+                               :cxc-return-ty-node nil}
+                              {:name "contains"
+                               :params [{:name "self"}
+                                        {:name "e" :cxc-ty elem}]
+                               :cxc-return-ty "Bool"
+                               :cxc-return-ty-node {:node :type-ref :name "Bool"}}]]
+                 [class-name
+                  {:kind             :set-container
+                   :element-type     elem
                    :fields           []
                    :field-index      {}
                    :ctor-params      []
@@ -2799,6 +2877,10 @@
   (and (string? (:cxc-ty field))
        (.startsWith ^String (:cxc-ty field) "_Cxc_MapOf")))
 
+(defn- field-is-set-of? [field]
+  (and (string? (:cxc-ty field))
+       (.startsWith ^String (:cxc-ty field) "_Cxc_SetOf")))
+
 (defn- default-init-stmt-for [field ctx]
   (let [d (:default field)]
     (cond
@@ -2823,6 +2905,19 @@
                           "` with explicit default — Layer 6 Step 8 "
                           "MVP has no map-literal grammar; populate "
                           "via `<field>.add(k, v)` in transitions")
+                     field))
+        {:node :assign
+         :lhs  {:node :name :sym (str "_" (:name field))}
+         :rhs  {:node :objc-alloc-init :class (:cxc-ty field)}})
+
+      ;; Layer 6 Step 9 — Set of T mirrors Map's auto-init shape.
+      (field-is-set-of? field)
+      (do
+        (when d
+          (fail-nyi! (str "Set field `" (:name field)
+                          "` with explicit default — Layer 6 Step 9 "
+                          "MVP has no set-literal grammar; populate "
+                          "via `<field>.add(e)` in transitions")
                      field))
         {:node :assign
          :lhs  {:node :name :sym (str "_" (:name field))}
@@ -3567,6 +3662,75 @@
                                    :text (str "return ([_elements objectForKey:"
                                               box-k "] != nil) ? 1 : 0;")}]}]}))
 
+;; Layer 6 Step 9 — Set container class synthesis. MVP parallels Map:
+;; element type ∈ {Int, String} only (uses the same boxing helpers as
+;; Map for NSNumber/NSString conformance); no fan-in; auto-init to
+;; empty when no explicit default.
+
+(def ^:private set-supported-element-types #{"String" "Int"})
+
+(defn- synthesize-set-container-class
+  "Emit-ready :objc-class node for one `_Cxc_SetOf<T>` instantiation.
+   Contents:
+     - `NSMutableSet *_elements` ivar (allocated empty at init)
+     - `-count` observable
+     - `-addWithe:` — box element, `[_elements addObject:box(e)]`
+     - `-removeWithe:` — box element, `[_elements removeObject:box(e)]`
+     - `-containsWithe:` — box element, `[_elements containsObject:box(e)] ? 1 : 0`
+   No fan-in machinery at Step 9 MVP (parallels Map's landing —
+   deferred until element atoms with observable aggregation need it)."
+  [class-name element-name]
+  (when-not (contains? set-supported-element-types element-name)
+    (fail-nyi! (str "Set element type `" element-name "` — Layer 6 Step 9 "
+                    "MVP supports " (sort set-supported-element-types))
+               {:set-element element-name}))
+  (let [e-c   (map-c-type element-name)
+        box-e (map-box-expr element-name "e")]
+    {:node        :objc-class
+     :name        class-name
+     :superclass  "NSObject"
+     :phase-constants []
+     :properties  [{:name  "elements"
+                    :c-type "NSMutableSet *"
+                    :attrs ["nonatomic" "strong"]}]
+     :init-params []
+     :init-body   [{:node :assign
+                    :lhs  {:node :name :sym "_elements"}
+                    :rhs  {:node :objc-msg
+                           :recv {:node :name :sym "NSMutableSet"}
+                           :selector "set"
+                           :args []}}]
+     :methods     [{:name        "count"
+                    :selector    "count"
+                    :params      []
+                    :return-type "int"
+                    :body        [{:node :return
+                                   :value {:node :objc-cast
+                                           :c-type "int"
+                                           :expr  {:node :objc-msg
+                                                   :recv {:node :name :sym "_elements"}
+                                                   :selector "count"
+                                                   :args []}}}]}
+                   {:name        "addWithe"
+                    :selector    "addWithe:"
+                    :params      [{:name "e" :c-type e-c}]
+                    :return-type "void"
+                    :body        [{:node :raw-c
+                                   :text (str "[_elements addObject:" box-e "];")}]}
+                   {:name        "removeWithe"
+                    :selector    "removeWithe:"
+                    :params      [{:name "e" :c-type e-c}]
+                    :return-type "void"
+                    :body        [{:node :raw-c
+                                   :text (str "[_elements removeObject:" box-e "];")}]}
+                   {:name        "containsWithe"
+                    :selector    "containsWithe:"
+                    :params      [{:name "e" :c-type e-c}]
+                    :return-type "int"
+                    :body        [{:node :raw-c
+                                   :text (str "return [_elements containsObject:"
+                                              box-e "] ? 1 : 0;")}]}]}))
+
 (defn lower
   "Take parsed top-level nodes and produce an ObjC/C program AST."
   [top-nodes]
@@ -3637,6 +3801,10 @@
         map-instantiations  (map-instantiations-from-atom-env atom-env)
         map-atom-entries    (synthesize-map-container-entries map-instantiations)
         atom-env            (merge atom-env map-atom-entries)
+        ;; Layer 6 Step 9 — Set mirrors Map's instantiation pass.
+        set-instantiations  (set-instantiations-from-atom-env atom-env)
+        set-atom-entries    (synthesize-set-container-entries set-instantiations)
+        atom-env            (merge atom-env set-atom-entries)
         ctx        {:record-env record-env :atom-env atom-env :enum-env enum-env
                     :extern-env extern-env :locals {}}
         records    (filter #(= :record (:node %)) top-nodes)
@@ -3656,6 +3824,7 @@
         ;; phase / transition machinery lower-atom assumes.
         real-atom-names       (filter #(not (contains? #{:list-container
                                                           :map-container
+                                                          :set-container
                                                           :runtime-provided}
                                                         (:kind (get atom-env %))))
                                       (keys atom-env))
@@ -3663,6 +3832,9 @@
                                           (:kind (get atom-env %)))
                                       (keys atom-env))
         map-container-names   (filter #(= :map-container
+                                          (:kind (get atom-env %)))
+                                      (keys atom-env))
+        set-container-names   (filter #(= :set-container
                                           (:kind (get atom-env %)))
                                       (keys atom-env))
         real-atom-classes     (mapv (fn [nm]
@@ -3683,9 +3855,16 @@
                                          (:key-type entry)
                                          (:val-type entry))))
                                     map-container-names)
-        classes    (into (into (vec list-container-classes)
-                               map-container-classes)
-                         real-atom-classes)
+        set-container-classes (mapv (fn [nm]
+                                      (let [entry (get atom-env nm)]
+                                        (synthesize-set-container-class
+                                         nm
+                                         (:element-type entry))))
+                                    set-container-names)
+        classes    (-> (vec list-container-classes)
+                       (into map-container-classes)
+                       (into set-container-classes)
+                       (into real-atom-classes))
         needs-foundation? (boolean (seq classes))
         needs-abort?      (boolean (some #(seq (:invariants (second %))) atom-env))
         ;; Runtime helpers (cxc_send_async / cxc_send_sync / cxc_shutdown
