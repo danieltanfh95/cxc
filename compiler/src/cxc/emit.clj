@@ -523,7 +523,60 @@
        "}\n\n"
        "static inline void cxc_shutdown(void) {\n"
        "    exit(0);\n"
-       "}"))
+       "}\n\n"
+       ;; Layer 5 Step 7 — CxcStream: first-class stream value.
+       ;; Method-returning-stream calls (e.g. clock.every(rate) at
+       ;; Step 10) allocate a CxcStream per call. Subscribers register
+       ;; on the stream's own hashtable; the source (Clock, or a Layer
+       ;; 5b transformer) invokes cxc_emit on the stream to fan out to
+       ;; subscribers. Teardown block runs on end (Layer 5b cancels
+       ;; timers, releases OS resources).
+       ;;
+       ;; Value passing: CxcStream * is an id-typed handle; passed
+       ;; through data fields, let bindings, and receive-glyph source
+       ;; expressions like any other atom reference.
+       ;;
+       ;; Layer 5 Step 7 minimum: only `-cxc_emit` (no payload) plus
+       ;; per-stream own_queue for hop parity with Layer 4b atoms.
+       ;; Typed-payload emit (`-cxc_emit_Withk:...`) lands at Step 8
+       ;; once a real user of method-returned streams (Clock.every
+       ;; at Step 10) forces the shape.
+       "@interface CxcStream : NSObject\n"
+       "@property (nonatomic, strong) dispatch_queue_t own_queue;\n"
+       "@property (nonatomic, strong) NSHashTable *subscribers;\n"
+       "@property (nonatomic, copy) void (^teardown)(void);\n"
+       "- (void)cxc_addSubscriber:(id)sub;\n"
+       "- (void)cxc_removeSubscriber:(id)sub;\n"
+       "- (void)cxc_emit;\n"
+       "- (void)cxc_end;\n"
+       "@end\n\n"
+       "@implementation CxcStream\n"
+       "- (instancetype)init {\n"
+       "    self = [super init];\n"
+       "    if (self) {\n"
+       "        _own_queue = dispatch_queue_create(\"cxc.stream\", DISPATCH_QUEUE_SERIAL);\n"
+       "        dispatch_set_target_queue(_own_queue, dispatch_get_main_queue());\n"
+       "        _subscribers = [NSHashTable weakObjectsHashTable];\n"
+       "    }\n"
+       "    return self;\n"
+       "}\n"
+       "- (void)cxc_addSubscriber:(id)sub {\n"
+       "    if (sub != nil) [_subscribers addObject:sub];\n"
+       "}\n"
+       "- (void)cxc_removeSubscriber:(id)sub {\n"
+       "    if (sub != nil) [_subscribers removeObject:sub];\n"
+       "}\n"
+       "- (void)cxc_emit {\n"
+       "    for (id sub in _subscribers) {\n"
+       "        cxc_send_async(sub, ^{ [sub performSelector:@selector(cxc_stream_value)]; });\n"
+       "    }\n"
+       "}\n"
+       "- (void)cxc_end {\n"
+       "    if (_teardown) _teardown();\n"
+       "    _teardown = nil;\n"
+       "    [_subscribers removeAllObjects];\n"
+       "}\n"
+       "@end"))
 
 (defn emit
   "Emit a full .m source string from an :objc-program AST. Class output
