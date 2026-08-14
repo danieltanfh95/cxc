@@ -1,0 +1,7 @@
+def main:
+    data:
+        xs: List of Int = [1, 2]
+
+    -> running
+        then: xs => xs + 3
+        do: print(xs.count)

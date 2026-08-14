@@ -1166,21 +1166,68 @@
         subs      (get-in info [:subscription-map field-name])]
     (boolean (seq subs))))
 
+(defn- list-add-remove-pattern
+  "Detect `xs => xs + e` or `xs => xs - e` where xs is a List-typed
+   field on self. Returns {:op :add|:remove :element <element-expr>}
+   or nil if not the pattern. Layer 5 Step 4 — mutation-in-place
+   under the hybrid container shape (design §1)."
+  [update ctx]
+  (let [field-name (:field update)
+        expr       (:expr update)
+        self-field (get-in ctx [:self-fields field-name])]
+    (when (and self-field
+               (string? (:cxc-ty self-field))
+               (.startsWith ^String (:cxc-ty self-field) "_Cxc_ListOf")
+               (map? expr)
+               (= :binop (:node expr))
+               (contains? #{"+" "-"} (:op expr))
+               (= :ident (get-in expr [:left :node]))
+               (= field-name (get-in expr [:left :name])))
+      {:op      (case (:op expr) "+" :add "-" :remove)
+       :element (:right expr)})))
+
+(defn- lower-list-add-remove
+  "Emit `[_field cxc_add:e]` / `[_field cxc_remove:e]` for the
+   list-add/remove pattern detected by `list-add-remove-pattern`.
+   Element is boxed by type: primitives → NSNumber literal;
+   atoms/records lower normally (id-typed pass-through)."
+  [update pattern ctx]
+  (let [field-name (:field update)
+        elem-expr  (:element pattern)
+        elem-ty    (infer-type elem-expr ctx)
+        boxed      (case elem-ty
+                     :int   {:node :objc-num-lit :kind :int
+                             :value (:value elem-expr)}
+                     :float {:node :objc-num-lit :kind :float
+                             :value (:value elem-expr)}
+                     ;; Non-primitive element: lower and hand to
+                     ;; NSMutableArray directly (ObjC objects work
+                     ;; as-is; boxing needed only for primitives).
+                     (lower-expr elem-expr ctx))]
+    {:node :objc-msg
+     :recv {:node :name :sym (str "_" field-name)}
+     :selector (case (:op pattern) :add "cxc_add:" :remove "cxc_remove:")
+     :args [boxed]}))
+
 (defn- lower-then-update
   "`then: field => expr` → `_field = <expr>;` for the common case.
    For atom-typed subscription-root fields (Layer 4b nullable-slot
    dynamic subscription), routes through the synthesized slot setter
    `-set<Field>:` so it can (un)register subscriptions on old/new
-   source values."
+   source values. For `xs => xs + e` / `xs => xs - e` on List-typed
+   fields, routes to `-cxc_add:` / `-cxc_remove:` (Step 4 mutation-
+   in-place shape — the hybrid container's operation surface)."
   [update ctx]
-  (if (field-needs-slot-setter? (:field update) ctx)
-    {:node :objc-msg
-     :recv {:node :name :sym "self"}
-     :selector (str "set" (capitalize-first (:field update)) ":")
-     :args [(lower-expr (:expr update) ctx)]}
-    {:node :assign
-     :lhs  {:node :name :sym (str "_" (:field update))}
-     :rhs  (lower-expr (:expr update) ctx)}))
+  (if-let [pat (list-add-remove-pattern update ctx)]
+    (lower-list-add-remove update pat ctx)
+    (if (field-needs-slot-setter? (:field update) ctx)
+      {:node :objc-msg
+       :recv {:node :name :sym "self"}
+       :selector (str "set" (capitalize-first (:field update)) ":")
+       :args [(lower-expr (:expr update) ctx)]}
+      {:node :assign
+       :lhs  {:node :name :sym (str "_" (:field update))}
+       :rhs  (lower-expr (:expr update) ctx)})))
 
 (defn- lower-on-enter-body
   "Body of a wildcard on-enter transition when inlined into init. Same
@@ -2468,7 +2515,28 @@
                                          :expr  {:node :objc-msg
                                                  :recv {:node :name :sym "_elements"}
                                                  :selector "count"
-                                                 :args []}}}]}]
+                                                 :args []}}}]}
+                 ;; Layer 5 Step 4 — mutation-in-place add/remove on
+                 ;; the hybrid container. Void return; call site is
+                 ;; a statement inside a `then:` clause. Element type
+                 ;; is `id` at the ObjC level (NSMutableArray holds
+                 ;; boxed primitives / atom references uniformly).
+                 {:name        "cxc_add"
+                  :selector    "cxc_add:"
+                  :params      [{:name "e" :c-type "id"}]
+                  :return-type "void"
+                  :body        [{:node :objc-msg
+                                 :recv {:node :name :sym "_elements"}
+                                 :selector "addObject:"
+                                 :args [{:node :name :sym "e"}]}]}
+                 {:name        "cxc_remove"
+                  :selector    "cxc_remove:"
+                  :params      [{:name "e" :c-type "id"}]
+                  :return-type "void"
+                  :body        [{:node :objc-msg
+                                 :recv {:node :name :sym "_elements"}
+                                 :selector "removeObject:"
+                                 :args [{:node :name :sym "e"}]}]}]
    :element-name element-name})
 
 (defn lower

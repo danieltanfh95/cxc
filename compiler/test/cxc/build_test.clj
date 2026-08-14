@@ -257,3 +257,15 @@
     (let [{:keys [exit stdout]} (compile-and-run "list-count")]
       (is (zero? exit))
       (is (= "4\n" stdout)))))
+
+(deftest end-to-end-list-add
+  (testing "list-add.cxc — Layer 5 Step 4 `then: xs => xs + e` on a List-typed field detects the mutation-in-place pattern and lowers to `[_xs cxc_add:@e]` via the synthesized `-cxc_add:` method on the container class. Initial [1,2] + 3 → count=3."
+    (let [{:keys [exit stdout]} (compile-and-run "list-add")]
+      (is (zero? exit))
+      (is (= "3\n" stdout)))))
+
+(deftest end-to-end-list-remove
+  (testing "list-remove.cxc — mirror of list-add: `xs => xs - e` routes to `-cxc_remove:` → `[_elements removeObject:@e]`. NSMutableArray isEqual: matches boxed NSNumber, so removing @20 from [10,20,30] leaves count=2."
+    (let [{:keys [exit stdout]} (compile-and-run "list-remove")]
+      (is (zero? exit))
+      (is (= "2\n" stdout)))))
