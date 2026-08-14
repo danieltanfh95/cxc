@@ -11,3 +11,7 @@ dist/
 .lsp/.cache/
 .cpcache/
 .nrepl-port
+
+# cxc build cache — content-hashed clang output + last-emitted .m per
+# example, kept between test runs to skip clang on unchanged emit
+.cxc-cache/

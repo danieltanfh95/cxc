@@ -71,6 +71,22 @@ clj -M -m cxc.core examples/hello.cxc /tmp
 The CLI compiles `examples/<name>.cxc` to `/tmp/<name>` (a native
 binary) via clang. Deletion is up to you.
 
+## Reading the generated ObjC
+
+Every `build_test.clj` run (and every CLI invocation) copies the last
+emitted `.m` for each named example to
+`compiler/.cxc-cache/last/<name>.m`, so you can browse the current
+lowering without re-invoking the compiler:
+
+```
+less compiler/.cxc-cache/last/clock-now.m
+```
+
+The cache directory is gitignored. Its `bin/` sibling stores clang
+outputs keyed by the SHA-256 of the emitted `.m`; a re-run with no
+compiler-source change skips clang entirely on cache hit. Nuke
+`.cxc-cache/` any time — it's pure derived state.
+
 ## Adding a new example
 
 1. Write the `.cxc` file. Keep it minimal — one thing per file.
