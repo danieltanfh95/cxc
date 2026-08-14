@@ -1,0 +1,9 @@
+module com.example.demo.counter
+
+def Counter(seed: Int):
+    data:
+        val: Int = seed
+
+    methods:
+        function bump(self) -> Int:
+            return val + 1

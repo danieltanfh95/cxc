@@ -49,6 +49,49 @@
   ;; hit "Permission denied".
   (.setExecutable f true false))
 
+;; Layer 6 Step 2/3 — stdlib import manifest + validation. Defined
+;; here (before compile-source-to-file) so the single-file entrypoint
+;; can call validate-imports without a forward declare.
+
+(def ^:private stdlib-manifest
+  "Known exports from prelude std.* modules. Keyed by dotted module
+   name → set of exported symbol names. Layer 6 seeds this from the
+   current prelude's rename-table — each mangled type gets its
+   user-facing name registered under the appropriate std.<sub>
+   module. Expands as later Layer 6 steps add capabilities."
+  {"std.time"        #{"Duration" "Instant" "Clock" "Ticker"}
+   "std.geometry"    #{"Position"}
+   "std.random"      #{"Random"}
+   "std.io"          #{"KeyboardInput" "TestKeyboardInput" "Console"}
+   "std.math"        #{"clamp"}
+   "std.stream"      #{"Stream"}
+   "std.collections" #{"List" "Map" "Set"}
+   "std.result"      #{"Result" "Ok" "Err"}
+   "std.fs"          #{"Filesystem" "File" "IOError"}
+   "std.extern"      #{"Extern"}})
+
+(defn- validate-imports
+  "Walk parsed top-nodes, check every `:from-import` entry: (a) the
+   from-module exists in stdlib-manifest, (b) each imported name is
+   exported by it. Returns nil on success, throws with a specific
+   diagnostic on the first bad import."
+  [top-nodes]
+  (doseq [n top-nodes
+          :when (= :from-import (:node n))]
+    (let [from  (:from n)
+          names (:names n)
+          exported (get stdlib-manifest from)]
+      (when-not exported
+        (throw (ex-info (str "unknown module `" from "` in `from " from
+                             " import ...` — check `stdlib-manifest` in "
+                             "cxc.build for registered modules")
+                        {:kind :unknown-module :module from})))
+      (doseq [nm names]
+        (when-not (contains? exported nm)
+          (throw (ex-info (str "module `" from "` does not export `" nm
+                               "`; available: " (sort exported))
+                          {:kind :unknown-import :module from :name nm})))))))
+
 (defn compile-source-to-file
   "Compile cxc source text through parse → lower → emit → clang.
    Prepends the compiler-shipped prelude (see cxc.prelude) before
@@ -69,6 +112,8 @@
             :cache-hit? <bool>}."
   [source name out-dir]
   (let [_        (io/make-parents (io/file out-dir "placeholder"))
+        parsed   (parse/parse source)
+        _        (validate-imports parsed)
         m-src    (-> (str prelude/source source)
                      parse/parse
                      prelude/rewrite-prelude-names
@@ -108,3 +153,74 @@
   [bin-path]
   (let [{:keys [exit out err]} (shell/sh bin-path)]
     {:exit exit :stdout out :stderr err}))
+
+;; ---------------------------------------------------------------------------
+;; Multi-file compile (Layer 6 Steps 2+3 — minimum viable module system)
+;;
+;; Reads every `*.cxc` file under a root directory, concatenates the
+;; sources (module/import lines strip to whitespace so downstream
+;; parsing sees one big program), and feeds through the single-file
+;; pipeline. Module boundaries are ADVISORY at this landing —
+;; concatenation makes every user-authored declaration globally
+;; visible. Real per-module name scoping ships when the compiler grows
+;; a name-resolution pass; this landing proves the multi-file build
+;; entrypoint + import parse without requiring that pass yet.
+;;
+;; Stdlib import validation: `from std.<sub> import <name>` is
+;; checked against the prelude — if the name isn't exported from
+;; that module (or the module doesn't exist), compile fails cleanly
+;; instead of hitting an inscrutable downstream unresolved-ref error.
+;; ---------------------------------------------------------------------------
+
+(defn- strip-module-and-import-lines
+  "Blank out `module <dotted>` and `from <dotted> import ...` lines in
+   a source string. Keeps line numbers stable for downstream errors
+   while making the concatenated multi-file source parse as a single
+   program without redundant/conflicting module headers."
+  [src]
+  (->> (clojure.string/split-lines src)
+       (map (fn [line]
+              (let [trimmed (clojure.string/trim line)]
+                (cond
+                  (clojure.string/starts-with? trimmed "module ") ""
+                  (clojure.string/starts-with? trimmed "from ")   ""
+                  :else line))))
+       (clojure.string/join "\n")))
+
+(defn compile-directory-to-file
+  "Compile every `*.cxc` file under `src-dir` as one program. Files
+   are read in sorted order (stable across runs), imports are
+   validated against the stdlib manifest, module/from-import lines
+   are stripped from each source (all decls concatenate into one
+   flat namespace at this Layer 6 landing), and the combined source
+   feeds through the single-file pipeline.
+
+   Real per-module name scoping (a name-resolution pass that respects
+   module boundaries) is a future Layer 6 followon — the entrypoint
+   here proves the multi-file build shape and validates imports.
+
+   Same return shape as compile-source-to-file."
+  [src-dir name out-dir]
+  (let [dir     (io/file src-dir)
+        _       (when-not (.isDirectory dir)
+                  (throw (ex-info (str "src-dir is not a directory: " src-dir)
+                                  {:src-dir src-dir})))
+        files   (->> (file-seq dir)
+                     (filter #(and (.isFile ^java.io.File %)
+                                   (.endsWith (.getName ^java.io.File %) ".cxc")))
+                     (sort-by #(.getPath ^java.io.File %)))
+        srcs    (mapv slurp files)
+        ;; Parse+validate each file independently so import errors
+        ;; point at the offending file.
+        _       (doseq [[f src] (map vector files srcs)]
+                  (try
+                    (validate-imports (parse/parse src))
+                    (catch clojure.lang.ExceptionInfo e
+                      (throw (ex-info (str "in " (.getName ^java.io.File f)
+                                           ": " (.getMessage e))
+                                      (assoc (ex-data e)
+                                             :file (.getPath ^java.io.File f))
+                                      e)))))
+        combined (clojure.string/join "\n\n"
+                                      (map strip-module-and-import-lines srcs))]
+    (compile-source-to-file combined name out-dir)))

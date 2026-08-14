@@ -27,6 +27,19 @@
     (when (zero? status)
       (build/run-binary bin-path))))
 
+(defn- compile-dir-and-run
+  "Compile every `*.cxc` file under `examples/<dir-name>` as one
+   program (Layer 6 Step 2/3 multi-file compile), run the binary,
+   return {:status :stdout}."
+  [dir-name]
+  (let [src-dir (str "examples/" dir-name)
+        out-dir (tmp-dir)
+        {:keys [status stderr bin-path]}
+        (build/compile-directory-to-file src-dir dir-name (.getPath out-dir))]
+    (is (zero? status) (str "clang failed for " dir-name ":\n" stderr))
+    (when (zero? status)
+      (build/run-binary bin-path))))
+
 (deftest end-to-end-hello-world
   (testing "hello.cxc — print of a string literal"
     (let [{:keys [exit stdout]} (compile-and-run "hello")]
@@ -317,6 +330,12 @@
     (let [{:keys [exit stdout]} (compile-and-run "clock-every")]
       (is (zero? exit))
       (is (= "1\n" stdout)))))
+
+(deftest end-to-end-multi-file-demo
+  (testing "multi-file-demo/ — Layer 6 Steps 2+3 (module system minimum viable). Two-file program: counter.cxc declares a Counter record; main.cxc uses it via `Counter(seed: 41).bump()`. Each file has a `module <dotted>` header; main declares `from std.time import Duration` (advisory — unused). `compile-directory-to-file` reads both files, validates the import against `stdlib-manifest`, strips module/import lines, concatenates, and processes as one program. Prints 42."
+    (let [{:keys [exit stdout]} (compile-dir-and-run "multi-file-demo")]
+      (is (zero? exit))
+      (is (= "42\n" stdout)))))
 
 (deftest end-to-end-list-atom-fan-in
   (testing "list-atom-fan-in.cxc — `List of AtomType` fan-in with element identity. Container holds a `List of Emitter` populated by a literal `[Emitter(seed: 10), Emitter(seed: 20)]`. Each Emitter emits `beep(v: val)` on its `-> running do:`. Main subscribes via `<: xs.beep{e: Emitter, v: Int}` and accumulates `v` into total; a Ticker(rate_ms: 50, count: 1) bounds the run. Verifies three landing pieces: (1) atom-typed elements accepted in list literals (previously fail-nyi as `not boxable`); (2) container auto-subscribes to each element's fan-in stream at `-initWithElements:` for literal-loaded elements (runtime `cxc_add:` path already did this; init-load path was silently unhooked); (3) untargeted `:>` in transition do: blocks defers via `cxc_send_async(self, ...)` so subscribers registered in later init phases (container init, main runtimeBinding) are hooked up when the fanout runs on dispatch_main. Total = 10 + 20 = 30."

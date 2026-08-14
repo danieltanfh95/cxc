@@ -1,6 +1,6 @@
 module com.example.hello
 
-from com.cxc.stdlib import Duration, Instant
+from std.time import Duration, Instant
 
 def main:
     -> running
