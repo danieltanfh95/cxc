@@ -25,7 +25,6 @@
     "def" "record" "class" "enum" "protocol"
     "data" "use" "methods" "invariants" "contracts" "constructor" "metadata"
     "deprecated"
-    "extern"
     "then" "do" "when" "let" "cases"
     "self" "nil" "true" "false"
     "and" "or" "not" "is" "in" "of"

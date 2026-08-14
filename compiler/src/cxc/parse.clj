@@ -117,7 +117,7 @@
         [inner p] (cond
                     ;; `T of ( K , V , ... )` — Layer 6 Step 8. Paren-
                     ;; tuple as the `of` operand carries multiple type
-                    ;; params (Map of (K, V), Result of (T, E) etc). The
+                    ;; params (Map of (K, V), Pair of (A, B) etc). The
                     ;; :inner slot becomes a :type-tuple node whose
                     ;; :types is the ordered vector of sub-types.
                     (and (at? tokens p :kw "of")
@@ -383,9 +383,20 @@
 (declare parse-block)
 
 (defn- parse-function-decl
-  "function name(params) -> RetType: <block>"
+  "Method declaration in two accepted forms:
+     function name(params) -> RetType: <block>   ; legacy — audit K8
+     def name(params) -> RetType: <block>        ; spec §2.5 canonical
+
+   The `function` keyword is retired at v1.0 (spec §1201/§2330); we
+   still parse it during the grace period and emit no warning yet
+   (deprecation-warning is a follow-up). The `def` form is
+   distinguished from a nested-atom slot (`def name: TypeName`) by
+   the paren immediately after the name."
   [tokens pos]
-  (let [[_ p]      (expect tokens pos :kw "function")
+  (let [[_ p]      (cond
+                     (at? tokens pos :kw "function") (expect tokens pos :kw "function")
+                     (at? tokens pos :kw "def")      (expect tokens pos :kw "def")
+                     :else (fail! tokens pos "expected `def` or `function` for method"))
         [name p]   (expect tokens p :ident)
         [params p] (parse-param-list-parens tokens p)
         [ret p]    (if (at? tokens p :glyph "->")
@@ -395,6 +406,16 @@
         [_ p]      (expect tokens p :newline)
         [body p]   (parse-block tokens p)]
     [{:node :function :name name :params params :return-type ret :body body} p]))
+
+(defn- at-def-method?
+  "Look-ahead for the spec-canonical `def name(...)` method form
+   inside a def-body or methods: section — distinguishes from the
+   F34 nested-slot form `def name: TypeName` (paren vs colon after
+   the identifier)."
+  [tokens pos]
+  (and (at? tokens pos :kw "def")
+       (at? tokens (inc pos) :ident)
+       (at? tokens (+ pos 2) :punct "(")))
 
 ;; ---------------------------------------------------------------------------
 ;; Statements & blocks
@@ -543,11 +564,12 @@
       (cond
         (at? tokens p :dedent) [{:node :methods-section :methods methods} (inc p)]
         (at? tokens p :newline) (recur methods (inc p))
-        (at? tokens p :kw "function")
+        (or (at? tokens p :kw "function")
+            (at-def-method? tokens p))
         (let [[fdecl p2] (parse-function-decl tokens p)
               p3 (skip-newlines tokens p2)]
           (recur (conj methods fdecl) p3))
-        :else (fail! tokens p "expected `function` in methods section")))))
+        :else (fail! tokens p "expected `def` or `function` in methods section")))))
 
 (defn- parse-deprecated-section
   "deprecated: \"<message>\"
@@ -918,12 +940,15 @@
         (let [[s p2] (parse-methods-section tokens p)]
           (recur (conj body s) (skip-newlines tokens p2)))
 
-        (at? tokens p :kw "function")
+        (or (at? tokens p :kw "function")
+            (at-def-method? tokens p))
         (let [[f p2] (parse-function-decl tokens p)]
           (recur (conj body f) (skip-newlines tokens p2)))
 
         ;; Nested atom slot: `def <name>: <TypeName>[(ctor-args)]`
-        ;; Distinct from top-level `def <Name>:` (which opens a block).
+        ;; Distinct from top-level `def <Name>:` (which opens a block)
+        ;; and from the spec-canonical method form `def name(...) -> T:`
+        ;; caught above. F34-retirement-pending shape.
         (at? tokens p :kw "def")
         (let [[_ p2]   (expect tokens p :kw "def")
               [nm p3]  (expect tokens p2 :ident)
@@ -934,6 +959,18 @@
                           [nil p5])]
           (recur (conj body {:node :nested-atom :name nm :type ty :ctor-args args})
                  (skip-newlines tokens p6)))
+
+        ;; `state:` section retired at v1.0 (spec §1.11, §1.259). All
+        ;; fields are `data:` (per-instance; updated only through
+        ;; transitions). Targeted diagnostic beats the generic
+        ;; "expected …" fall-through so the migration path is visible.
+        (and (at? tokens p :ident)
+             (= "state" (t-value (peek-tok tokens p)))
+             (at? tokens (inc p) :punct ":"))
+        (fail! tokens p
+               (str "`state:` section is retired at v1.0. All fields are "
+                    "`data:` (per-instance, updated only through "
+                    "transitions). See spec §1.11."))
 
         (looks-like-observable? tokens p)
         (let [[o p2] (parse-observable tokens p)]
@@ -984,58 +1021,16 @@
               p3 (skip-newlines tokens p2)]
           (recur (conj sections s) p3))
 
+        ;; `state:` section retired at v1.0 (spec §1.11).
+        (and (at? tokens p :ident)
+             (= "state" (t-value (peek-tok tokens p)))
+             (at? tokens (inc p) :punct ":"))
+        (fail! tokens p
+               (str "`state:` section is retired at v1.0. Records are "
+                    "immutable; use `data:` fields. See spec §1.11."))
+
         :else
         (fail! tokens p "expected data:, methods:, deprecated:, or dedent in record body")))))
-
-(defn- parse-extern-signature
-  "A body-less function signature inside an extern block:
-     function <name>(<params>) -> <ret>
-   No `:` / body — the declaration binds a foreign symbol at
-   link-time; there is no cxc body to lower."
-  [tokens pos]
-  (let [[_ p]      (expect tokens pos :kw "function")
-        [name p]   (expect tokens p :ident)
-        [params p] (parse-param-list-parens tokens p)
-        [ret p]    (if (at? tokens p :glyph "->")
-                     (parse-type tokens (inc p))
-                     [nil p])
-        [_ p]      (expect tokens p :newline)]
-    [{:node :extern-fn :name name :params params :return-type ret} p]))
-
-(defn- parse-extern
-  "Layer 6 Step 7 — extern capability. Declares a namespace of
-   foreign function symbols the compiler wires to bare C-linkage
-   calls. Grammar:
-
-     extern <Name>:
-         function foo(a: Int) -> Int
-         function bar(s: String) -> Int
-
-   Signature params/returns must be primitives at MVP; the linker
-   resolves each name against the process's loaded C symbols (libc
-   comes in transitively via Foundation.h/stdio.h). Callers reach
-   them via `<Name>.<method>(args)` — see lower-method-call."
-  [tokens pos]
-  (let [[_ p]    (expect tokens pos :kw "extern")
-        [name p] (expect tokens p :ident)
-        [_ p]    (expect tokens p :punct ":")
-        [_ p]    (expect tokens p :newline)
-        [_ p]    (expect tokens p :indent)]
-    (loop [syms [] p p]
-      (cond
-        (at? tokens p :dedent)
-        [{:node :extern :name name :symbols syms} (inc p)]
-
-        (at? tokens p :newline)
-        (recur syms (inc p))
-
-        (at? tokens p :kw "function")
-        (let [[s p2] (parse-extern-signature tokens p)]
-          (recur (conj syms s) (skip-newlines tokens p2)))
-
-        :else
-        (fail! tokens p
-               "expected `function` signature or dedent in extern body")))))
 
 (defn- parse-enum
   "Parse `enum Foo:` followed by an indented list of ident cases,
@@ -1110,8 +1105,18 @@
       (at? tokens p :kw "from")    (parse-from-import tokens p)
       (at? tokens p :kw "record")  (parse-record tokens p)
       (at? tokens p :kw "enum")    (parse-enum tokens p)
-      (at? tokens p :kw "extern")  (parse-extern tokens p)
       (at? tokens p :kw "def")     (parse-def-atom tokens p)
+      ;; `extern <Name>:` section retired at v1.0 (spec §1.12, §2335).
+      ;; FFI is a capability atom (Extern) provisioned to stdlib shims
+      ;; via `use: extern: Extern`; foreign symbols are declared in
+      ;; per-target prelude `foreign library "..."` blocks (§1.14).
+      ;; Both are deferred to Phase D (see compiler/design/spec-drift-audit.md).
+      (and (at? tokens p :ident)
+           (= "extern" (t-value (peek-tok tokens p))))
+      (fail! tokens p
+             (str "`extern` as a top-level section keyword is retired at v1.0. "
+                  "FFI moves to prelude `foreign library` blocks + the "
+                  "`Extern` capability atom. See spec §1.12 and §1.14."))
       :else (fail! tokens p "expected top-level form"))))
 
 (defn parse

@@ -206,3 +206,41 @@
       (is (= :block (:node body)))
       (is (= 2 (count (:stmts body))))
       (is (every? #(= :emit (:node %)) (:stmts body))))))
+
+(deftest extern-section-retired
+  (testing "`extern <Name>:` as a top-level section is retired at v1.0 (spec §1.12, §2335). Parser emits a targeted diagnostic pointing at the migration path (prelude `foreign library` blocks + `Extern` capability atom, §1.14) rather than a generic `expected top-level form` error."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"`extern` as a top-level section keyword is retired at v1.0"
+         (p/parse "extern C_stdio:\n    function puts(s: String) -> Int\n")))))
+
+(deftest state-section-retired-in-def-atom
+  (testing "`state:` section in a def-atom body is retired at v1.0 (spec §1.11). Parser emits a targeted migration diagnostic pointing at `data:` instead of a generic fall-through error."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"`state:` section is retired at v1.0"
+         (p/parse "def main:\n    state:\n        count: Int = 0\n")))))
+
+(deftest state-section-retired-in-record
+  (testing "`state:` section in a record body is also retired (records are immutable; use `data:`)."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"`state:` section is retired at v1.0"
+         (p/parse "record V:\n    state:\n        x: Float\n")))))
+
+(deftest def-method-form-accepted
+  (testing "Audit K8: spec-canonical `def name(params) -> Ret:` method form is accepted alongside `function name(params) -> Ret:`. Both produce a `:function` node so downstream lowering is unaffected."
+    (let [src "record V:\n    data:\n        x: Int\n    methods:\n        def bumped(self) -> Int:\n            return x\n"
+          n   (first-node src)]
+      (is (= :record (node-kind n)))
+      (let [ms (second (:sections n))]
+        (is (= :methods-section (node-kind ms)))
+        (is (= 1 (count (:methods ms))))
+        (let [m (first (:methods ms))]
+          (is (= :function (node-kind m)))
+          (is (= "bumped" (:name m)))))))
+  (testing "def-form method inside a def-atom body — same parse shape as function-form."
+    (let [src "def M:\n    data:\n        n: Int = 0\n    def bumped(self) -> Int:\n        return n\n"
+          nodes (p/parse src)
+          body  (:body (first nodes))]
+      (is (some #(and (= :function (:node %)) (= "bumped" (:name %))) body)))))

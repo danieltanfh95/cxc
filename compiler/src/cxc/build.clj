@@ -116,13 +116,10 @@
   {"std.time"        #{"Duration" "Instant" "Clock" "Ticker"}
    "std.geometry"    #{"Position"}
    "std.random"      #{"Random"}
-   "std.io"          #{"KeyboardInput" "TestKeyboardInput" "Console"}
+   "std.io"          #{"TestKeyboardInput" "Console"}
    "std.math"        #{"clamp"}
    "std.stream"      #{"Stream"}
-   "std.collections" #{"List" "Map" "Set"}
-   "std.result"      #{"Result" "Ok" "Err"}
-   "std.fs"          #{"Filesystem" "File" "IOError"}
-   "std.extern"      #{"Extern"}})
+   "std.collections" #{"List" "Map" "Set"}})
 
 (defn- validate-imports
   "Walk parsed top-nodes, check every `:from-import` entry: (a) the

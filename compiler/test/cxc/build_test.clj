@@ -272,13 +272,13 @@
       (is (= "4\n" stdout)))))
 
 (deftest end-to-end-list-add
-  (testing "list-add.cxc — Layer 5 Step 4 `then: xs => xs + e` on a List-typed field detects the mutation-in-place pattern and lowers to `[_xs cxc_add:@e]` via the synthesized `-cxc_add:` method on the container class. Initial [1,2] + 3 → count=3."
+  (testing "list-add.cxc — audit F44 landing: `do: xs.add(e)` on a List-typed field dispatches through the container's method-index (name `add` → selector `addWithe:`), lowering to `[_xs addWithe:@(e)]` with call-site NSNumber boxing for primitive elements. Retires the former `then: xs => xs + e` pattern-match (which violated spec §3.9 arithmetic-only + / - and spec §1.11 pure-then: rule). Initial [1,2].add(3) → count=3."
     (let [{:keys [exit stdout]} (compile-and-run "list-add")]
       (is (zero? exit))
       (is (= "3\n" stdout)))))
 
 (deftest end-to-end-list-remove
-  (testing "list-remove.cxc — mirror of list-add: `xs => xs - e` routes to `-cxc_remove:` → `[_elements removeObject:@e]`. NSMutableArray isEqual: matches boxed NSNumber, so removing @20 from [10,20,30] leaves count=2."
+  (testing "list-remove.cxc — mirror of list-add under audit F44: `do: xs.remove(e)` routes to `-removeWithe:` → `[_elements removeObject:@(e)]`. NSMutableArray isEqual: matches boxed NSNumber, so removing 20 from [10,20,30] leaves count=2."
     (let [{:keys [exit stdout]} (compile-and-run "list-remove")]
       (is (zero? exit))
       (is (= "2\n" stdout)))))
@@ -354,12 +354,6 @@
     (let [{:keys [exit stdout]} (compile-and-run "map-basic")]
       (is (zero? exit))
       (is (= "1\n0\n1\n" stdout)))))
-
-(deftest end-to-end-extern-puts
-  (testing "extern-puts.cxc — Layer 6 Step 7. Declares `extern C_stdio: function puts(s: String) -> Int; function abs(n: Int) -> Int` and calls both from main. Compiler builds `:extern-env`, threads it through ctx, and dispatches `C_stdio.puts(...)` / `C_stdio.abs(...)` as raw C function calls (`{:node :call :fn puts :args ...}`). Emit produces `extern int puts(const char *s);` / `extern int abs(int n);` forward-decl prototypes at the top so the linker resolves the symbols regardless of which system headers Foundation.h transitively pulls in (stdio yes, stdlib no). Prints `hello from extern` then `7`."
-    (let [{:keys [exit stdout]} (compile-and-run "extern-puts")]
-      (is (zero? exit))
-      (is (= "hello from extern\n7\n" stdout)))))
 
 (deftest end-to-end-console-hello
   (testing "console-hello.cxc — Layer 6 Step 5. Console prelude atom with `write(msg: String) -> Int` method wrapping the `native_console_write` FFI hatch (printf %s). Main nests a Console (`def console: Console`) and calls `console.write(\"hi\\n\")` in its `-> running do:`. Prints `hi` + newline."

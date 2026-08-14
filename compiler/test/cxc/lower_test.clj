@@ -557,3 +557,22 @@ def main:
       (is (some? branch))
       ;; guard is `(hp > 0) && (hp > 0)` — header AND body
       (is (= "&&" (get-in branch [:guard :op]))))))
+
+(deftest wildcard-end-then-clause-rejected
+  (testing "Audit F26: spec §1.11 line 1281 — `then:` on the wildcard `-> end` form is a compile error (the atom's state is about to be discarded, so field updates are meaningless). Uses an accompanying dummy atom so main is atom-promoted and the end-transition path runs. Positive semantic-fix cases (specific transition to end with `do:` inlining before -transitionToEnd, and `then:` rejection on specific) exercise through the existing end-to-end suite; explicit regression scaffolding for those would need multi-atom message wiring beyond what parse+lower can construct without the prelude."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"`then:` on `-> end` wildcard .* compile error"
+         (lower-src "def Sidekick:
+    -> running
+
+def main:
+    def s: Sidekick
+    data:
+        n: Int = 0
+
+    -> running
+
+    -> end
+        then: n => 99
+")))))

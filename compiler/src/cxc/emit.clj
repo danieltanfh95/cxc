@@ -777,27 +777,6 @@
         enums       (str/join "\n\n" (map emit-c-enum   (:enums prog)))
         structs     (str/join "\n\n" (map emit-struct   (:structs prog)))
         functions   (str/join "\n\n" (map emit-function (:functions prog)))
-        ;; Layer 6 Step 7 — extern block prototypes. Each `extern
-        ;; <Name>: function foo(...) -> R` yields `extern R foo(...);`,
-        ;; making the linker's symbol lookup independent of which
-        ;; headers happen to be transitively #imported. Uses C
-        ;; extern-linkage (default for functions, but explicit reads
-        ;; better).
-        extern-decls
-        (when (seq (:extern-decls prog))
-          (str "// extern declarations\n"
-               (str/join "\n"
-                         (map (fn [d]
-                                (str "extern " (:ret-c d) " " (:name d) "("
-                                     (str/join ", "
-                                               (if (empty? (:params d))
-                                                 ["void"]
-                                                 (map (fn [p]
-                                                        (str (:c-type p) " "
-                                                             (:name p)))
-                                                      (:params d))))
-                                     ");"))
-                              (:extern-decls prog)))))
         ;; Forward @class declarations for every user/synthesized class
         ;; so cross-references in @interface method signatures (e.g. a
         ;; List container declaring `- (void)... :(Element *)e`) don't
@@ -819,7 +798,6 @@
     (str/join "\n\n"
               (remove str/blank? [includes
                                   helpers enums structs functions
-                                  extern-decls
                                   forward-classes
                                   interfaces fanout-cat impls
                                   main-static main]))))

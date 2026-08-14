@@ -899,12 +899,18 @@
                                   [nm (assoc entry :payload
                                              (into [{:name "e"}]
                                                    (:payload entry [])))])
-                                elem-index))]
+                                elem-index))
+                     methods       [(container-method "add"
+                                                      [{:name "e" :cxc-ty elem}] nil)
+                                    (container-method "remove"
+                                                      [{:name "e" :cxc-ty elem}] nil)]]
                  [class-name
                   (merge (container-entry-defaults)
                          count-observable-defaults
                          {:kind                 :list-container
                           :element-type         elem
+                          :methods              methods
+                          :method-index         (into {} (map (juxt :name identity) methods))
                           :stream-index         fanin-index
                           :stream-order         elem-streams
                           :stream-payload-index fanin-payloads})]))
@@ -921,33 +927,6 @@
           [(:name e) {:cases      (:cases e)
                       :case-index (into {} (map-indexed (fn [i c] [c i])
                                                         (:cases e)))}])))
-
-(defn- build-extern-env
-  "Layer 6 Step 7 — collect `extern <Name>: function <sig>...` blocks
-   into a namespace → symbol-index map. Signatures are stored raw
-   (params carry :type nodes, return-type is a type-node) so
-   downstream resolution can defer type-kw translation until the
-   full record-/atom-/enum-env is available.
-
-   Duplicate declarations across blocks with the same Name merge
-   into one symbol-index; a duplicate symbol name across blocks
-   throws to catch user typos (a real name-resolution pass would
-   scope this per import; MVP concatenates globally)."
-  [top-nodes]
-  (reduce
-   (fn [env n]
-     (let [nm (:name n)
-           existing (get env nm {})
-           new-syms (into {} (map (fn [s] [(:name s) s]) (:symbols n)))
-           dupes (filter (set (keys existing)) (keys new-syms))]
-       (when (seq dupes)
-         (fail-nyi! (str "extern `" nm "` declares symbol"
-                         (if (= 1 (count dupes)) "" "s")
-                         " twice: " (sort dupes))
-                    n))
-       (assoc env nm (merge existing new-syms))))
-   {}
-   (filter #(= :extern (:node %)) top-nodes)))
 
 ;; ---------------------------------------------------------------------------
 ;; Type inference (ctx-threaded)
@@ -1007,20 +986,6 @@
           :else (fail-nyi! (str "method/observable `" method-name "` on atom `" an "`")
                            call-node)))
 
-      (and (map? target-ty) (:extern target-ty))
-      (let [en  (:extern target-ty)
-            sig (get-in (:extern-env ctx) [en method-name])
-            rt  (:return-type sig)]
-        (when-not sig
-          (fail-nyi! (str "extern `" en "` declares no symbol `"
-                          method-name "`")
-                     call-node))
-        (if (nil? rt)
-          :void
-          (cxc-type->type-kw (base-type-name rt)
-                             (:record-env ctx) (:atom-env ctx) (:enum-env ctx)
-                             call-node)))
-
       :else
       (fail-nyi! "method call on non-record/non-atom target" call-node))))
 
@@ -1034,9 +999,12 @@
    nodes and returning the raw C expression string that will be
    spliced into the emit output via a `:raw-c-expr` node.
 
-   Layer 5b Step A introduces this in place of a full extern-body
-   syntax; the surface remains pure cxc, and the escape hatch stays
-   compiler-internal (`use: Extern` in Layer 7 will formalize it)."
+   Retirement pending — this registry is a compiler-invented mechanism
+   (audit F/K7) parallel to the spec's `foreign library` blocks (§1.14)
+   consumed via the `Extern` capability atom (§1.12). Real machinery
+   requires prelude directory tree + name resolution + capability
+   provisioning (Phase D). Until that lands, prelude bodies (Clock,
+   Random, Console) use this hatch."
   {"native_millis_now"
    {:return-kw :int
     :arity     0
@@ -1328,12 +1296,6 @@
                           (cxc-type->type-kw (:cxc-ty f)
                                              (:record-env ctx) (:atom-env ctx)
                                              (:enum-env ctx) node)))
-                    ;; Layer 6 Step 7 — bare extern-namespace ident
-                    ;; appears as the target of a dot in `C_stdio.puts(...)`.
-                    ;; No runtime value; just a static namespace label
-                    ;; the method-call dispatcher unpacks.
-                    (when (contains? (:extern-env ctx) (:name node))
-                      {:extern (:name node)})
                     (fail-nyi! (str "type-of identifier `" (:name node)
                                     "` (no local-binding env yet)")
                                node))
@@ -1478,7 +1440,24 @@
                  call-node))
     (if for-each-with-lambda?
       (lower-for-each-call target-lo target-ty (get-in args [0 :value]) ctx)
-      (let [arg-exprs (mapv #(lower-expr (:value %) ctx) args)]
+      (let [arg-exprs (mapv #(lower-expr (:value %) ctx) args)
+            ;; Audit F44 — List container's `add`/`remove` take the
+            ;; element as `id`, so primitive callers need boxing at
+            ;; the call site. Element type comes from the container's
+            ;; `:element-type` field (a cxc type name string). Atoms
+            ;; and records pass through as-is.
+            list-add-or-remove?
+            (and list-cont?
+                 (contains? #{"add" "remove"} method-name)
+                 (= 1 (count arg-exprs)))
+            arg-exprs
+            (if list-add-or-remove?
+              (let [elem-ty (infer-type (:value (first args)) ctx)]
+                (case elem-ty
+                  (:int :float)
+                  [{:node :objc-num-lit :kind :box :expr (first arg-exprs)}]
+                  arg-exprs))
+              arg-exprs)]
         (cond
           (and (map? target-ty) (:record target-ty))
           {:node :call
@@ -1501,24 +1480,6 @@
              :recv     target-lo
              :selector (objc-method-selector method-name param-names)
              :args     arg-exprs})
-
-          ;; Layer 6 Step 7 — extern namespace call. Lowers to a raw
-          ;; C function call keyed on the symbol name; the linker
-          ;; resolves against the process's loaded C symbols
-          ;; (libc/libSystem is reachable via Foundation.h/stdio.h,
-          ;; which -framework Foundation transitively pulls in).
-          ;; Arity is checked here so a mismatched call fails at
-          ;; compile time rather than as a clang warning.
-          (and (map? target-ty) (:extern target-ty))
-          (let [en  (:extern target-ty)
-                sig (get-in ctx [:extern-env en method-name])
-                declared (count (:params sig))
-                supplied (count arg-exprs)]
-            (when-not (= declared supplied)
-              (fail-nyi! (str "extern `" en "." method-name "` expects "
-                              declared " arg(s), got " supplied)
-                         call-node))
-            {:node :call :fn method-name :args arg-exprs})
 
           :else
           (fail-nyi! "method call on non-record/non-atom target" call-node))))))
@@ -1921,68 +1882,28 @@
         subs      (get-in info [:subscription-map field-name])]
     (boolean (seq subs))))
 
-(defn- list-add-remove-pattern
-  "Detect `xs => xs + e` or `xs => xs - e` where xs is a List-typed
-   field on self. Returns {:op :add|:remove :element <element-expr>}
-   or nil if not the pattern. Layer 5 Step 4 — mutation-in-place
-   under the hybrid container shape (design §1)."
-  [update ctx]
-  (let [field-name (:field update)
-        expr       (:expr update)
-        self-field (get-in ctx [:self-fields field-name])]
-    (when (and self-field
-               (string? (:cxc-ty self-field))
-               (.startsWith ^String (:cxc-ty self-field) "_Cxc_ListOf")
-               (map? expr)
-               (= :binop (:node expr))
-               (contains? #{"+" "-"} (:op expr))
-               (= :ident (get-in expr [:left :node]))
-               (= field-name (get-in expr [:left :name])))
-      {:op      (case (:op expr) "+" :add "-" :remove)
-       :element (:right expr)})))
-
-(defn- lower-list-add-remove
-  "Emit `[_field cxc_add:e]` / `[_field cxc_remove:e]` for the
-   list-add/remove pattern detected by `list-add-remove-pattern`.
-   Element is boxed by type: primitives → NSNumber literal;
-   atoms/records lower normally (id-typed pass-through)."
-  [update pattern ctx]
-  (let [field-name (:field update)
-        elem-expr  (:element pattern)
-        elem-ty    (infer-type elem-expr ctx)
-        boxed      (case elem-ty
-                     :int   {:node :objc-num-lit :kind :int
-                             :value (:value elem-expr)}
-                     :float {:node :objc-num-lit :kind :float
-                             :value (:value elem-expr)}
-                     ;; Non-primitive element: lower and hand to
-                     ;; NSMutableArray directly (ObjC objects work
-                     ;; as-is; boxing needed only for primitives).
-                     (lower-expr elem-expr ctx))]
-    {:node :objc-msg
-     :recv {:node :name :sym (str "_" field-name)}
-     :selector (case (:op pattern) :add "cxc_add:" :remove "cxc_remove:")
-     :args [boxed]}))
-
 (defn- lower-then-update
   "`then: field => expr` → `_field = <expr>;` for the common case.
    For atom-typed subscription-root fields (Layer 4b nullable-slot
    dynamic subscription), routes through the synthesized slot setter
    `-set<Field>:` so it can (un)register subscriptions on old/new
-   source values. For `xs => xs + e` / `xs => xs - e` on List-typed
-   fields, routes to `-cxc_add:` / `-cxc_remove:` (Step 4 mutation-
-   in-place shape — the hybrid container's operation surface)."
+   source values.
+
+   Audit F44 retirement — the former `xs => xs + e` / `xs => xs - e`
+   pattern-match on List-typed fields (which silently mutated in
+   place from inside `then:`) is retired. Container mutation belongs
+   in `do:` as an ordinary method call: `do: xs.add(e)` / `do: xs.remove(e)`.
+   Spec §3.9 uses `+`/`-` for arithmetic only; §1.11 keeps `then:` as
+   pure state updates and puts side-effecting method sends in `do:`."
   [update ctx]
-  (if-let [pat (list-add-remove-pattern update ctx)]
-    (lower-list-add-remove update pat ctx)
-    (if (field-needs-slot-setter? (:field update) ctx)
-      {:node :objc-msg
-       :recv {:node :name :sym "self"}
-       :selector (str "set" (capitalize-first (:field update)) ":")
-       :args [(lower-expr (:expr update) ctx)]}
-      {:node :assign
-       :lhs  {:node :name :sym (str "_" (:field update))}
-       :rhs  (lower-expr (:expr update) ctx)})))
+  (if (field-needs-slot-setter? (:field update) ctx)
+    {:node :objc-msg
+     :recv {:node :name :sym "self"}
+     :selector (str "set" (capitalize-first (:field update)) ":")
+     :args [(lower-expr (:expr update) ctx)]}
+    {:node :assign
+     :lhs  {:node :name :sym (str "_" (:field update))}
+     :rhs  (lower-expr (:expr update) ctx)}))
 
 (defn- lower-on-enter-body
   "Body of a wildcard on-enter transition when inlined into init. Same
@@ -2232,19 +2153,25 @@
         w-do-stmts   (inline-wildcard-do-stmts   target-wildcards ctx')
         ;; target=end routes through -transitionToEnd (design §7.3);
         ;; that method owns phase-set, `-> end` wildcard, cascade,
-        ;; parent notify. Specific then:/do: on the target=end
-        ;; transition would run OUTSIDE that flow — order-sensitive
-        ;; and confusing — so reject for now (users fold side effects
-        ;; into the `-> end do:` wildcard).
+        ;; parent notify. Audit F26: spec §1.11 line 1281 —
+        ;; *"`end` transitions may have `when:` and `do:` blocks;
+        ;; `then:` in an `end` transition is meaningless (the atom's
+        ;; state is being discarded) and is a compile error."* Prior
+        ;; behaviour rejected BOTH `then:` and `do:` on target=end;
+        ;; corrected to reject only `then:` and to run `do:` stmts
+        ;; before `-transitionToEnd` (they must fire while the atom
+        ;; is still in the origin phase — sibling atoms still see the
+        ;; source state during the emission).
         end-target?  (= "end" target)
-        _            (when (and end-target? (or (seq then-stmts) (seq do-stmts)))
-                       (fail-nyi!
-                        (str "specific `then:`/`do:` on a target=`end` transition "
-                             "(atom `" atom-name "`, trigger `"
-                             (transition-display-name t)
-                             "`) — end handling runs through -transitionToEnd; "
-                             "put side effects on the `-> end do:` wildcard instead")
-                        t))
+        _            (when (and end-target? (seq then-stmts))
+                       (throw (ex-info
+                               (str "`then:` on a target=`end` transition "
+                                    "(atom `" atom-name "`, trigger `"
+                                    (transition-display-name t)
+                                    "`) is a compile error — the atom's state "
+                                    "is about to be discarded, so field updates "
+                                    "are meaningless. See spec §1.11.")
+                               {:kind :compile-error :node t})))
         ;; Post-transition invariant check (design §14). Skipped for
         ;; target=end — the transitionToEnd path owns invariant checks
         ;; on its own trajectory.
@@ -2266,10 +2193,15 @@
         ;; they're just `[self transitionToEnd]`, and transitionToEnd
         ;; owns its own catch (loop-guard variant).
         body         (if end-target?
-                       [{:node :objc-msg
-                         :recv {:node :name :sym "self"}
-                         :selector "transitionToEnd"
-                         :args []}]
+                       ;; Audit F26: run the transition's `do:` stmts
+                       ;; while still in the source phase, then hand
+                       ;; off to -transitionToEnd for phase-set +
+                       ;; `-> end` wildcard + cascade + parent notify.
+                       (into (vec do-stmts)
+                             [{:node :objc-msg
+                               :recv {:node :name :sym "self"}
+                               :selector "transitionToEnd"
+                               :args []}])
                        [{:node :end-catch-wrap :body raw-body}])]
     {:node        :transition-branch
      :source-phase-const (phase-constant-name atom-name source-name)
@@ -3324,6 +3256,20 @@
           ;; layers main-atom cxc_shutdown() on top.
           end-const       (phase-constant-name atom-name "end")
           end-wildcards   (get (wildcards-by-target-phase transitions) "end" [])
+          ;; Audit F26: spec §1.11 line 1281 — `then:` in an `end`
+          ;; transition is a compile error, including the wildcard
+          ;; `-> end` form (the atom's state is about to be
+          ;; discarded, so field updates are meaningless).
+          _               (doseq [w end-wildcards
+                                  c (:body w)
+                                  :when (= :then-clause (:node c))]
+                            (throw (ex-info
+                                    (str "`then:` on `-> end` wildcard "
+                                         "(atom `" atom-name "`) is a compile "
+                                         "error — the atom's state is about to "
+                                         "be discarded, so field updates are "
+                                         "meaningless. See spec §1.11.")
+                                    {:kind :compile-error :node w})))
           end-wildcard-then (inline-wildcard-then-stmts end-wildcards ctx-in-init)
           end-wildcard-do   (inline-wildcard-do-stmts   end-wildcards ctx-in-init)
           cascade-stmts   (mapv (fn [slot-name]
@@ -3481,9 +3427,12 @@
      - `-initWithElements:(NSArray *)elements` constructor that copies
        the input NSArray into a new NSMutableArray
      - `-count` returning `(int)[_elements count]`
-     - `-cxc_add:` / `-cxc_remove:` — Step 4 mutation ops. Under
-       Step 6 these also (un)subscribe the container to each
-       element-side stream so fan-in works.
+     - `-addWithe:` / `-removeWithe:` — mutation ops (audit F44:
+       former `cxc_add:`/`cxc_remove:` selectors renamed to match
+       the standard `objc-method-selector` shape so ordinary
+       method-call dispatch resolves them). Under Step 6 these
+       also (un)subscribe the container to each element-side
+       stream so fan-in works.
      - `-cxc_for_each:` — Step 5 iteration.
      - Layer 4b stream-source machinery (per fan-in stream: subscribers
        hashtable ivar + emit method + add/remove-subscriber methods
@@ -3615,13 +3564,13 @@
                                                          :recv {:node :name :sym "_elements"}
                                                          :selector "count"
                                                          :args []}}}]}
-                         {:name        "cxc_add"
-                          :selector    "cxc_add:"
+                         {:name        "addWithe"
+                          :selector    "addWithe:"
                           :params      [{:name "e" :c-type "id"}]
                           :return-type "void"
                           :body        add-body}
-                         {:name        "cxc_remove"
-                          :selector    "cxc_remove:"
+                         {:name        "removeWithe"
+                          :selector    "removeWithe:"
                           :params      [{:name "e" :c-type "id"}]
                           :return-type "void"
                           :body        remove-body}
@@ -3808,7 +3757,6 @@
                      (throw (ex-info "no `def main` entry point found at top level"
                                      {:top top-nodes})))
         enum-env   (build-enum-env top-nodes)
-        extern-env (build-extern-env top-nodes)
         atom-env   (build-atom-env top-nodes enum-env)
         ;; Layer 5c Step 8: seed CxcStream as a runtime-provided atom
         ;; entry so type-refs like `Stream` (mangled to `CxcStream`)
@@ -3859,7 +3807,7 @@
         set-atom-entries    (synthesize-set-container-entries set-instantiations)
         atom-env            (merge atom-env set-atom-entries)
         ctx        {:record-env record-env :atom-env atom-env :enum-env enum-env
-                    :extern-env extern-env :locals {}}
+                    :locals {}}
         records    (filter #(= :record (:node %)) top-nodes)
         enums      (filter #(= :enum   (:node %)) top-nodes)
         c-enums    (mapv lower-enum enums)
@@ -3955,27 +3903,6 @@
                             needs-runtime? (conj "<stdlib.h>"))
         ;; Dedup includes while preserving order.
         includes          (vec (distinct includes))
-        ;; Layer 6 Step 7 — emit-side forward declarations for every
-        ;; declared extern symbol. Makes each `extern <Name>: ...` block
-        ;; self-sufficient: the linker resolves the symbol against loaded
-        ;; C libraries regardless of which headers happen to be included
-        ;; (Foundation.h transitively drags in stdio, but not stdlib or
-        ;; math). Params are drawn from primitive-c-type; unknown types
-        ;; fail-nyi at lower time so users see the error at the extern
-        ;; decl, not a clang diagnostic.
-        extern-decls
-        (vec (for [[_ syms] extern-env
-                   [_ sig]  syms]
-               {:name    (:name sig)
-                :ret-c   (if (nil? (:return-type sig))
-                           "void"
-                           (cxc-type->c (:return-type sig)
-                                        record-env atom-env enum-env))
-                :params  (mapv (fn [p]
-                                 {:name  (:name p)
-                                  :c-type (cxc-type->c (:type p)
-                                                       record-env atom-env enum-env)})
-                               (:params sig))}))
         main-body         (if main-as-atom?
                             ;; Bootstrap the Main atom. Stored in file-
                             ;; scope static (emit renders both the decl
@@ -3990,7 +3917,6 @@
      :includes            includes
      :needs-runtime?      needs-runtime?
      :needs-dispatch-loop? needs-dispatch-loop?
-     :extern-decls        extern-decls
      :enums               c-enums
      :structs             structs
      :functions           functions
