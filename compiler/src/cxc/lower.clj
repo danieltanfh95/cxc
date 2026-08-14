@@ -1499,14 +1499,22 @@
 
 (defn- stream-selector
   "Cocoa selector on the SUBSCRIBER side for a stream receive. Encoding:
-   `cxc_stream_<streamname>_from_<SourceClass>[With<k1>:<k2>:...]`. The
-   `_from_<Source>` suffix scopes the selector to the source class, so
-   two receive-glyph transitions on the same subscriber pulling streams
-   named identically from different sources compile to distinct selectors
-   (Choice 1A, see design analysis)."
+   `cxc_stream_<streamname>_from_<SourceClass>Withsender:<k1>:<k2>:...`.
+   The `_from_<Source>` suffix scopes the selector to the source class,
+   so two receive-glyph transitions on the same subscriber pulling
+   streams named identically from different sources compile to distinct
+   selectors (Choice 1A, see design analysis).
+
+   Layer 5b Step 6b: every subscriber-side selector carries a leading
+   `sender:` argument (typed `id`) filled by the source's fanout with
+   `self`. Container fan-in forwarding methods use it as the element
+   pointer on re-emit (`e:`); ordinary main-side subscribers receive it
+   but can ignore it. Source-side selectors (`cxc_emit_<name>[With...]`)
+   are unchanged — sender is derived at fanout, not passed by the caller
+   of `:> name`."
   [source-class stream-name payload-keys]
   (objc-method-selector (str "cxc_stream_" stream-name "_from_" source-class)
-                        payload-keys))
+                        (into ["sender"] payload-keys)))
 
 (defn- stream-emit-selector
   "Cocoa selector on the SOURCE side for a stream emit method:
@@ -1825,15 +1833,26 @@
                      (let [group (get by-key k)
                            first-d (first group)
                            payload (:payload first-d)
-                           method-params (mapv
-                                          (fn [p]
-                                            {:name   (:name p)
-                                             :c-type (cxc-type->c
-                                                      (:type p)
-                                                      (:record-env ctx)
-                                                      (:atom-env ctx)
-                                                      (:enum-env ctx))})
-                                          payload)
+                           user-params (mapv
+                                        (fn [p]
+                                          {:name   (:name p)
+                                           :c-type (cxc-type->c
+                                                    (:type p)
+                                                    (:record-env ctx)
+                                                    (:atom-env ctx)
+                                                    (:enum-env ctx))})
+                                        payload)
+                           ;; Layer 5b Step 6b: stream receives (`:stream`
+                           ;; kind) carry a leading sender:(id) param
+                           ;; matching the source's fanout-side arg. Message
+                           ;; receives (`:message` kind) don't — they use
+                           ;; `self :> foo` from the source and always run
+                           ;; in the receiver's own address, so sender
+                           ;; identity is a no-op there.
+                           method-params (if (= :stream (:kind first-d))
+                                           (into [{:name "sender" :c-type "id"}]
+                                                 user-params)
+                                           user-params)
                            branches (mapv #(lower-transition-branch
                                             atom-name (:txn %) ctx
                                             wildcards-by-phase)
@@ -2022,11 +2041,16 @@
                      :selector    (stream-emit-selector nm keys)
                      :return-type "void"
                      :params      method-params
-                     :body        [{:node       :stream-fanout
-                                    :ivar       (stream-subscribers-ivar-name nm)
-                                    :selector   (stream-selector source-class nm keys)
-                                    :arg-names  keys
-                                    :arg-c-types c-types}]}))
+                     ;; Layer 5b Step 6b: fanout dispatches to subscribers
+                     ;; with `sender: self` prepended to the user payload.
+                     ;; :arg-names / :arg-c-types match `stream-selector`
+                     ;; (which now also prepends "sender").
+                     :body        [{:node        :stream-fanout
+                                    :ivar        (stream-subscribers-ivar-name nm)
+                                    :selector    (stream-selector source-class nm keys)
+                                    :arg-names   (into ["sender"] keys)
+                                    :arg-c-types (into ["id"] c-types)
+                                    :prepend-self? true}]}))
                 stream-order)
           per-stream-add
           (mapv (fn [nm]
@@ -2674,32 +2698,26 @@
                       ;; prepends `e:`) drives the subscriber-side
                       ;; selector shape — the "from" class in the
                       ;; selector is the ELEMENT type (the container
-                      ;; is subscribing to element's stream).
+                      ;; is subscribing to element's stream). Layer 5b
+                      ;; Step 6b: the selector now carries a leading
+                      ;; sender:(id) arg filled by the element's fanout
+                      ;; with itself — that's exactly the element
+                      ;; pointer we want to re-emit as `e:`.
                       elem-keys   (mapv :name (rest (get fanin-payloads nm [])))
-                      elem-params (mapv (fn [p] {:name (:name p)
-                                                 :c-type (:c-type p)})
-                                        (rest (get fanin-payloads nm [])))
+                      elem-params (into [{:name "sender" :c-type "id"}]
+                                        (mapv (fn [p] {:name (:name p)
+                                                       :c-type (:c-type p)})
+                                              (rest (get fanin-payloads nm []))))
                       ;; Container's own emit-side keys — prepends "e".
                       cont-keys   (into ["e"] elem-keys)]
                   {:node        :objc-method
                    :selector    (stream-selector element-name nm elem-keys)
                    :return-type "void"
                    :params      elem-params
-                   :body        [;; Sender identity through Layer 4b's
-                                 ;; static-selector fanout would need
-                                 ;; adding a sender: arg to every
-                                 ;; subscriber-side selector, a
-                                 ;; multi-step Layer 4b evolution not
-                                 ;; scoped to Step 6 minimum. Pass nil
-                                 ;; for `e` for now; subscribers of a
-                                 ;; container's fan-in stream receive
-                                 ;; events but the element pointer is
-                                 ;; nil. Full sender-carrying plumbing
-                                 ;; is Step 6b (documented deferral).
-                                 {:node     :objc-msg
+                   :body        [{:node     :objc-msg
                                   :recv     {:node :name :sym "self"}
                                   :selector (stream-emit-selector nm cont-keys)
-                                  :args     (into [{:node :name :sym "nil"}]
+                                  :args     (into [{:node :name :sym "sender"}]
                                                   (map #(hash-map :node :name :sym %)
                                                        elem-keys))}]}))
               (or fanin-streams []))

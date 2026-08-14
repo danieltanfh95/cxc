@@ -246,14 +246,18 @@
     (let [ivar (:ivar node)
           sel  (:selector node)
           keys (:arg-names node)
-          ;; Build the message-send text. Zero-arg selector has no colons;
-          ;; multi-arg interleaves selector parts with argument names.
+          ;; Layer 5b Step 6b: the fanout site injects the SOURCE as
+          ;; the value for the leading `sender:` arg. Arg-name "sender"
+          ;; is a marker; at emit we substitute `self` (the source atom
+          ;; itself). Every other key names a param of the enclosing
+          ;; emit-method and carries through as a plain identifier.
+          arg-value (fn [k] (if (= "sender" k) "self" k))
           send-expr (if (empty? keys)
                       (str "[sub " sel "]")
                       (let [parts (str/split sel #":")]
                         (str "[sub "
                              (str/join " "
-                                       (map (fn [p k] (str p ":" k))
+                                       (map (fn [p k] (str p ":" (arg-value k)))
                                             parts keys))
                              "]")))]
       (str "for (id sub in " ivar ") {\n"
