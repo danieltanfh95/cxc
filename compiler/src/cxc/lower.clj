@@ -204,17 +204,11 @@
   [element-name]
   (str "_Cxc_ListOf" element-name))
 
-(defn- map-container-class-name
-  "Mangled ObjC class name for `Map of (K, V)`. Kept in sync with
-   base-type-name's :type-of Map branch."
-  [k-name v-name]
-  (str "_Cxc_MapOf" k-name v-name))
-
-(defn- set-container-class-name
-  "Mangled ObjC class name for `Set of <element>`. Kept in sync with
-   base-type-name's :type-of Set branch."
-  [element-name]
-  (str "_Cxc_SetOf" element-name))
+;; Note: `map-container-class-name` / `set-container-class-name` were
+;; introduced alongside Steps 8/9 for symmetry but never called — the
+;; mangling happens inline in `base-type-name`'s :type-of branch and
+;; then flows through as :cxc-ty on fields. Deleted rather than kept
+;; as dead symmetry.
 
 (defn- cxc-type->type-kw
   "Map a cxc type-ref name to the type-keyword vocab used by infer-type.
