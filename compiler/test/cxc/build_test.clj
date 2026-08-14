@@ -275,3 +275,9 @@
     (let [{:keys [exit stdout]} (compile-and-run "list-for-each")]
       (is (zero? exit))
       (is (= "7\n11\n13\n" stdout)))))
+
+(deftest end-to-end-module-header
+  (testing "module-header.cxc — Layer 5 Step 13 makes `module com.example.foo` and `from com.cxc.stdlib import Duration, Instant` advisory-parse. Lower/emit ignore the nodes (all names still resolve globally in Layer 5); full multi-module resolution is Layer 6. Program computes 500 + 250 → 750."
+    (let [{:keys [exit stdout]} (compile-and-run "module-header")]
+      (is (zero? exit))
+      (is (= "750\n" stdout)))))

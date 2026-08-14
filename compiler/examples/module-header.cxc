@@ -1,0 +1,7 @@
+module com.example.hello
+
+from com.cxc.stdlib import Duration, Instant
+
+def main:
+    -> running
+        do: print(Instant(millis: 500).plus(Duration(millis: 250)).millis)
