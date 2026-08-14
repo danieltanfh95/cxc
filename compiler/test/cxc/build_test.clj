@@ -251,3 +251,9 @@
     (let [{:keys [exit stdout]} (compile-and-run "prelude-clock")]
       (is (zero? exit))
       (is (= "3\n" stdout)))))
+
+(deftest end-to-end-list-count
+  (testing "list-count.cxc — Layer 5 Step 3 lands `List of T` as a compiler-synth class per instantiation. main declares `xs: List of Int = [10,20,30,40]`; init constructs a `_Cxc_ListOfInt` instance backed by NSMutableArray; `xs.count` observable getter returns the element count via (int)[_elements count]. Prints 4."
+    (let [{:keys [exit stdout]} (compile-and-run "list-count")]
+      (is (zero? exit))
+      (is (= "4\n" stdout)))))

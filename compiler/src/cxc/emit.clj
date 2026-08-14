@@ -66,6 +66,17 @@
     (let [stmts (str/join "\n" (map emit-stmt (:stmts node)))
           indented (indent-lines 4 stmts)]
       (str "^{\n" indented "\n}"))
+    :objc-cast       (str "(" (:c-type node) ")" (emit-expr (:expr node)))
+    :objc-num-lit    (case (:kind node)
+                       :int   (str "@" (:value node))
+                       :float (str "@(" (:value node) ")")
+                       (str "@(" (emit-expr (:expr node)) ")"))
+    :objc-array-literal
+    ;; ObjC boxed-array literal `@[<items>]`. Items are already emitted
+    ;; in their boxed form (NSNumber for primitives, id for references).
+    ;; Used by List of T initializers to feed the container class'
+    ;; -initWithElements:(NSArray *) constructor.
+    (str "@[" (str/join ", " (map emit-expr (:items node))) "]")
     :objc-msg        (let [sel (:selector node)
                            args (:args node)]
                        ;; ObjC selectors either have zero colons (bare name,
@@ -355,15 +366,23 @@
                                  parts ps))]
         (str "- (" (:return-type m) ")" body)))))
 
+(declare init-signature)
+
 (defn- emit-interface [cls]
   (let [props     (->> (:properties cls)
                        (map emit-property)
                        (map #(str "  " %))
                        (str/join "\n"))
+        ;; Custom -initWith... needs an @interface declaration too, else
+        ;; call sites using the class through a bare `id` can't type-check
+        ;; the selector. Bare `-init` inherits from NSObject and needs no
+        ;; extra declaration; only emit when init-params are non-empty.
+        init-decl (when (seq (:init-params cls))
+                    (str "  " (init-signature (:init-params cls)) ";"))
         method-decls (->> (:methods cls)
                           (map #(str "  " (method-signature %) ";"))
                           (str/join "\n"))
-        body-parts (remove str/blank? [props method-decls])
+        body-parts (remove str/blank? [props init-decl method-decls])
         body       (if (empty? body-parts) "" (str "\n" (str/join "\n" body-parts) "\n"))]
     (str "@interface " (:name cls) " : " (:superclass cls) body "@end")))
 

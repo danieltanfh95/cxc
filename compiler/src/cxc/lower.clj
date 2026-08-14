@@ -93,6 +93,8 @@
    "String"  "const char *"
    "Bool"    "int"})
 
+(declare base-type-name)
+
 (defn- cxc-type->c
   "Primitives → C type name; records → own struct name (value); atoms →
    `<name> *` (pointer, already nullable in ObjC); enums → own typedef
@@ -102,14 +104,19 @@
   [ty-node record-env atom-env enum-env]
   (case (:node ty-node)
     :type-nullable
-    (let [inner (:inner ty-node)
-          nm    (:name inner)]
-      (cond
-        (contains? atom-env nm) (str nm " *")
-        :else (fail-nyi! (str "nullable non-atom type `" nm "?` "
-                              "(only atom types are nullable today; "
-                              "primitives/records/enums would need an Optional wrapper)")
-                         ty-node)))
+    (let [inner (:inner ty-node)]
+      (case (:node inner)
+        :type-of  (str (base-type-name inner) " *")
+        :type-ref (let [nm (:name inner)]
+                    (cond
+                      (contains? atom-env nm) (str nm " *")
+                      :else
+                      (fail-nyi! (str "nullable non-atom type `" nm "?` "
+                                      "(only atom types are nullable today; "
+                                      "primitives/records/enums would need an Optional wrapper)")
+                                 ty-node)))
+        (fail-nyi! (str "cxc-type->c: nullable of unknown inner " (:node inner))
+                   ty-node)))
     :type-ref
     (let [nm (:name ty-node)]
       (cond
@@ -118,6 +125,15 @@
         (contains? atom-env nm)         (str nm " *")
         (contains? enum-env nm)         nm
         :else                            (fail-nyi! (str "type " nm) ty-node)))
+    :type-of
+    (if (= "List" (:outer ty-node))
+      ;; Compiler-synthesized List class — reference-typed, pointer at
+      ;; the C level. Element-type validity is checked at the atom-env
+      ;; registration site.
+      (str (base-type-name ty-node) " *")
+      (fail-nyi! (str "cxc-type->c: `" (:outer ty-node)
+                      " of ...` unsupported at Layer 5 Step 3")
+                 ty-node))
     (fail-nyi! (str "cxc-type->c: unknown type-node " (:node ty-node)) ty-node)))
 
 (defn- base-type-name
@@ -128,8 +144,24 @@
   [ty-node]
   (case (:node ty-node)
     :type-ref      (:name ty-node)
-    :type-nullable (:name (:inner ty-node))
+    :type-nullable (base-type-name (:inner ty-node))
+    :type-of       (if (= "List" (:outer ty-node))
+                     ;; List of T → mangled ObjC class name. Deterministic
+                     ;; function of the element type, no env lookup needed.
+                     ;; Registered in atom-env by build-atom-env so
+                     ;; infer-type / method-call resolution find it.
+                     (str "_Cxc_ListOf" (base-type-name (:inner ty-node)))
+                     (fail-nyi! (str "base-type-name: `" (:outer ty-node)
+                                     " of ...` — only `List of T` is "
+                                     "supported at Layer 5 Step 3")
+                                ty-node))
     (fail-nyi! (str "base-type-name: unknown type-node " (:node ty-node)) ty-node)))
+
+(defn- list-container-class-name
+  "Mangled ObjC class name for `List of <element-name>`. Kept in sync
+   with base-type-name's :type-of branch."
+  [element-name]
+  (str "_Cxc_ListOf" element-name))
 
 (defn- cxc-type->type-kw
   "Map a cxc type-ref name to the type-keyword vocab used by infer-type.
@@ -418,9 +450,20 @@
         main-has-atom-slot-or-cap?
         (boolean (some #(contains? #{:nested-atom :use-section} (:node %))
                        (:body main-node)))
+        ;; A List of T field on main is atom-typed (compiler-synth
+        ;; container class), so its ivar needs a real class to live on.
+        ;; Plain-main-body path can't hold instance state — promote to
+        ;; atom class whenever main carries container-typed data fields.
+        main-has-list-field?
+        (boolean (some (fn [n]
+                         (and (= :data-section (:node n))
+                              (some #(= :type-of (get-in % [:type :node]))
+                                    (:fields n))))
+                       (:body main-node)))
         include-main? (or (seq other-atoms)
                           main-has-message-txn?
-                          main-has-atom-slot-or-cap?)
+                          main-has-atom-slot-or-cap?
+                          main-has-list-field?)
         atoms    (if include-main?
                    (filter #(= :def-atom (:node %)) top-nodes)
                    other-atoms)
@@ -545,6 +588,61 @@
                           :extras        extras})))
      skeleton
      atoms)))
+
+(defn- list-instantiations-from-atom-env
+  "Scan every atom-env entry's fields + ctor-params for `List of T`
+   usages; return a map {element-type-name → list-class-name}. Feeds
+   Step 3 class synthesis: one compiler-generated ObjC class per
+   distinct element type."
+  [atom-env]
+  (let [seed (fn [acc field-or-param]
+               (let [ty (:cxc-ty field-or-param)]
+                 ;; Field/ctor-param carries the already-mangled class
+                 ;; name in :cxc-ty (see base-type-name), so detect via
+                 ;; the `_Cxc_ListOf` prefix and recover the element.
+                 (if (and (string? ty) (.startsWith ^String ty "_Cxc_ListOf"))
+                   (let [elem (subs ty (count "_Cxc_ListOf"))]
+                     (assoc acc elem ty))
+                   acc)))]
+    (reduce (fn [acc [_ info]]
+              (as-> acc a
+                (reduce seed a (:fields info))
+                (reduce seed a (:ctor-params info))))
+            {}
+            atom-env)))
+
+(defn- synthesize-list-container-entries
+  "Given {element-name → list-class-name}, produce atom-env entries
+   for each list-class. The synthetic entry carries enough shape for
+   method resolution / infer-type: a `count` observable with return
+   type Int, a `:kind :list-container` marker, and a `:element-type`
+   pointer to the element atom/record/primitive name. The class body
+   itself is generated by `synthesize-list-container-class` in the
+   emit-classes phase — these entries are skipped in `lower-atom`."
+  [instantiations]
+  (into {}
+        (map (fn [[elem class-name]]
+               [class-name
+                {:kind             :list-container
+                 :element-type     elem
+                 :fields           []
+                 :field-index      {}
+                 :ctor-params      []
+                 :methods          []
+                 :method-index     {}
+                 :observables      []
+                 :observables-typed [{:name "count" :type-kw :int}]
+                 :observable-index {"count" {:name "count" :type-kw :int}}
+                 :invariants       []
+                 :transitions      []
+                 :message-index    {}
+                 :stream-index     {}
+                 :stream-order     []
+                 :stream-payload-index {}
+                 :subscription-map {}
+                 :slot-names       []
+                 :extras           []}])
+             instantiations)))
 
 (defn- build-enum-env
   "Top-level `enum Foo: a, b, c` decls. Env is keyed by enum name;
@@ -1812,13 +1910,63 @@
              m               (:methods info)]
          (lower-method-fn rec-name m ctx))))
 
-(defn- default-init-stmt-for [field ctx]
-  (let [rhs (if-let [d (:default field)]
-              (lower-expr d ctx)
-              {:node :int :value 0})]
+(defn- lower-list-literal-init
+  "Lower `xs: List of T = [e1, e2, ...]` in a data-field default.
+   Produces `_xs = [[_Cxc_ListOfT alloc] initWithElements:@[<boxed items>]]`.
+   Element boxing follows the element type: primitives → NSNumber
+   literal (`@n`); records/atoms/enums land in later steps as
+   game-toys forces the shape."
+  [field element-name items ctx]
+  (let [class-name (list-container-class-name element-name)
+        box        (fn [item-node]
+                     (let [ty (infer-type item-node ctx)]
+                       (cond
+                         (= :int ty)
+                         {:node :objc-num-lit :kind :int
+                          :value (:value item-node)}
+                         (= :float ty)
+                         {:node :objc-num-lit :kind :float
+                          :value (:value item-node)}
+                         :else
+                         (fail-nyi! (str "List of `" element-name "` literal — "
+                                         "element type " (pr-str ty) " not "
+                                         "boxable at Layer 5 Step 3")
+                                    item-node))))
+        boxed      (mapv box items)
+        array-lit  {:node :objc-array-literal :items boxed}]
     {:node :assign
      :lhs  {:node :name :sym (str "_" (:name field))}
-     :rhs  rhs}))
+     :rhs  {:node :objc-init-with
+            :class class-name
+            :args  [{:name "elements" :value array-lit}]}}))
+
+(defn- field-is-list-of?
+  "Field's :cxc-ty is a `List of T` mangled class name."
+  [field]
+  (and (string? (:cxc-ty field))
+       (.startsWith ^String (:cxc-ty field) "_Cxc_ListOf")))
+
+(defn- field-list-element-name [field]
+  (subs (:cxc-ty field) (count "_Cxc_ListOf")))
+
+(defn- default-init-stmt-for [field ctx]
+  (let [d (:default field)]
+    (cond
+      ;; List of T with a list literal default: synthesize a
+      ;; -initWithElements: call instead of dropping through to
+      ;; lower-expr (which doesn't know list-literal nodes).
+      (and (field-is-list-of? field)
+           (map? d) (= :list (:node d)))
+      (lower-list-literal-init field
+                               (field-list-element-name field)
+                               (:items d)
+                               ctx)
+
+      :else
+      (let [rhs (if d (lower-expr d ctx) {:node :int :value 0})]
+        {:node :assign
+         :lhs  {:node :name :sym (str "_" (:name field))}
+         :rhs  rhs}))))
 
 (defn- lower-atom-method
   "A def-atom method becomes an ObjC instance method. `self` and each
@@ -2268,6 +2416,61 @@
   [top-nodes prelude-atom-names]
   (names-mentioned-in top-nodes prelude-atom-names))
 
+(defn- elem-c-type
+  "C-level type for boxing a List element into NSArray. Primitives
+   box via NSNumber literal syntax at the emit site; records/atoms/
+   enums pass through as pointers or values as their nature dictates.
+   Layer 5 Step 3 supports Int only; wider element types land as the
+   game-toys example forces them."
+  [element-name record-env atom-env enum-env]
+  (cond
+    (= "Int" element-name)             "int"
+    (contains? record-env element-name) element-name
+    (contains? atom-env element-name)   (str element-name " *")
+    (contains? enum-env element-name)   element-name
+    :else (fail-nyi! (str "List of `" element-name "` — element type "
+                          "not supported at Layer 5 Step 3 (Int only)")
+                     {:element element-name})))
+
+(defn- synthesize-list-container-class
+  "Emit-ready :objc-class node for one `_Cxc_ListOf<T>` instantiation.
+   Contents:
+     - `NSMutableArray *_elements` ivar (via a property so the setter
+       isn't emitted — we access `_elements` directly)
+     - `-initWithElements:(NSArray *)elements` constructor that copies
+       the input NSArray into a new NSMutableArray
+     - `-count` returning `(int)[_elements count]` (satisfies Int
+       observable typing)
+   Fan-in / add/remove / for_each ivars + methods land at Steps
+   4-6; the shape here is deliberately minimal."
+  [class-name element-name]
+  {:node        :objc-class
+   :name        class-name
+   :superclass  "NSObject"
+   :phase-constants []
+   :properties  [{:name  "elements"
+                  :c-type "NSMutableArray *"
+                  :attrs ["nonatomic" "strong"]}]
+   :init-params [{:name "elements" :c-type "NSArray *"}]
+   :init-body   [{:node :assign
+                  :lhs  {:node :name :sym "_elements"}
+                  :rhs  {:node :objc-msg
+                         :recv {:node :name :sym "NSMutableArray"}
+                         :selector "arrayWithArray:"
+                         :args [{:node :name :sym "elements"}]}}]
+   :methods     [{:name        "count"
+                  :selector    "count"
+                  :params      []
+                  :return-type "int"
+                  :body        [{:node :return
+                                 :value {:node :objc-cast
+                                         :c-type "int"
+                                         :expr  {:node :objc-msg
+                                                 :recv {:node :name :sym "_elements"}
+                                                 :selector "count"
+                                                 :args []}}}]}]
+   :element-name element-name})
+
 (defn lower
   "Take parsed top-level nodes and produce an ObjC/C program AST."
   [top-nodes]
@@ -2295,6 +2498,16 @@
         record-env (build-record-env top-nodes atom-env enum-env)
         atom-env   (infer-observables-in-atom-env atom-env record-env enum-env)
         atom-env   (infer-streams-in-atom-env atom-env record-env enum-env)
+        ;; Layer 5 Step 3: scan post-inference atom-env for `List of T`
+        ;; field/ctor usages, register a synthesized entry per distinct
+        ;; T for method-lookup, and generate a matching :objc-class per
+        ;; instantiation. Runs after inference so any observable typed
+        ;; as `List of T` also participates. Registration is idempotent
+        ;; across the two passes: entries keyed by mangled class name
+        ;; (which is a deterministic function of the element type).
+        list-instantiations (list-instantiations-from-atom-env atom-env)
+        list-atom-entries   (synthesize-list-container-entries list-instantiations)
+        atom-env            (merge atom-env list-atom-entries)
         ctx        {:record-env record-env :atom-env atom-env :enum-env enum-env :locals {}}
         records    (filter #(= :record (:node %)) top-nodes)
         enums      (filter #(= :enum   (:node %)) top-nodes)
@@ -2307,9 +2520,25 @@
         _              (when (and main-as-atom? (seq (get-in atom-env ["main" :ctor-params])))
                          (fail-nyi! "def main with ctor params (env-cap wiring for main is Layer 5)"
                                     {:atom "main"}))
-        classes    (mapv (fn [nm]
-                           (lower-atom nm ctx :is-main? (= "main" nm)))
-                         (keys atom-env))
+        ;; Split atom-env into real atoms (get lower-atom) and
+        ;; container synth-classes (get their own generator). Container
+        ;; entries carry `:kind :list-container` and skip the queue /
+        ;; phase / transition machinery lower-atom assumes.
+        real-atom-names       (filter #(not= :list-container
+                                             (:kind (get atom-env %)))
+                                      (keys atom-env))
+        container-atom-names  (filter #(= :list-container
+                                          (:kind (get atom-env %)))
+                                      (keys atom-env))
+        real-atom-classes     (mapv (fn [nm]
+                                      (lower-atom nm ctx :is-main? (= "main" nm)))
+                                    real-atom-names)
+        list-container-classes (mapv (fn [nm]
+                                       (synthesize-list-container-class
+                                        nm
+                                        (:element-type (get atom-env nm))))
+                                     container-atom-names)
+        classes    (into (vec list-container-classes) real-atom-classes)
         needs-foundation? (boolean (seq classes))
         needs-abort?      (boolean (some #(seq (:invariants (second %))) atom-env))
         ;; Runtime helpers (cxc_send_async / cxc_send_sync / cxc_shutdown
