@@ -39,6 +39,7 @@
    "Ticker"             "_Cxc_Ticker"
    "Key"                "_Cxc_Key"
    "Position"           "_Cxc_Position"
+   "Console"            "_Cxc_Console"
    ;; Layer 5c Step 8: Stream is the user-visible type for
    ;; method-returned reactive streams. Maps to CxcStream, the
    ;; runtime helper class defined inline in emit's helpers block
@@ -62,7 +63,8 @@
    (mangled) form. Tree-shaking in cxc.lower compares against these
    after the rewrite pass runs, so entries here match what the
    lowered AST carries — not what the prelude source spelled."
-  #{"_Cxc_Clock" "_Cxc_Random" "_Cxc_TestKeyboardInput" "_Cxc_Ticker"})
+  #{"_Cxc_Clock" "_Cxc_Random" "_Cxc_TestKeyboardInput" "_Cxc_Ticker"
+    "_Cxc_Console"})
 
 (def source
   "Prelude source text spliced ahead of user source. Indentation is
@@ -182,6 +184,15 @@ def Clock(ticks: Int = 3):
 
     running <: beat -> end
         when: remaining == 0
+
+def Console:
+    methods:
+        function write(self, msg: String) -> Int:
+            return native_console_write(msg)
+
+    -> running
+
+    -> end
 
 ")
 

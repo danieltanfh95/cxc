@@ -1,0 +1,7 @@
+def main:
+    def console: Console
+
+    -> running
+        do: console.write("hi\n")
+
+    -> end

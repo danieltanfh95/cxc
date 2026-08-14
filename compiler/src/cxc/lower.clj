@@ -793,6 +793,15 @@
     :arity     0
     :emit-c    (fn [_args]
                  "((int)(arc4random() & 0x7FFFFFFF))")}
+   "native_console_write"
+   ;; Layer 6 Step 5: Console.write(msg) writes to stdout, returns
+   ;; the number of bytes written. Wraps printf's %s to route
+   ;; through the same underlying fd as `print` — subsequent output
+   ;; from either path interleaves correctly.
+   {:return-kw :int
+    :arity     1
+    :emit-c    (fn [args]
+                 (str "printf(\"%s\", " (first args) ")"))}
    "native_random_below"
    {:return-kw :int
     :arity     1
