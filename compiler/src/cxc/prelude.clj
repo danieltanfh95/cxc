@@ -175,6 +175,45 @@ def Clock(ticks: Int = 3):
 
 ")
 
+(def duration-units
+  "Recognized unit suffixes on numeric literals. Value = multiplier
+   into `millis` — the canonical unit for `Duration`. Layer 5.4
+   scope: time only; other physical dimensions (bytes, distance) are
+   spec-committed but wait for a program that needs them.
+
+   Fractional multipliers (e.g. `1.5s` at :float-unit) are handled
+   by the same table via double arithmetic before construction."
+  {"ms"  1
+   "s"   1000
+   "min" 60000})
+
+(defn- desugar-unit-literal
+  "Rewrite a `:lit-int-unit` or `:lit-float-unit` node into an
+   equivalent `Duration(millis: N)` construction if the unit is one
+   of the recognized time units. Unrecognized units drop through
+   (lower still fails on them, keeping the diagnostic tied to a
+   real user surface).
+
+   Post-rename note: this runs INSIDE `rewrite-prelude-names`'s
+   walker, which has already mapped `Duration` → `_Cxc_Duration`
+   at the type-ref level — but the synthesized ctor callee here is
+   a fresh `:ident` node we insert *after* renaming has traversed
+   the tree, so we spell the mangled name directly."
+  [node]
+  (let [unit (:unit node)
+        mult (get duration-units unit)]
+    (if-not mult
+      node
+      (let [raw   (:value node)
+            millis (if (= :lit-float-unit (:node node))
+                     (long (Math/round ^double (double (* raw mult))))
+                     (* raw mult))]
+        {:node   :call
+         :callee {:node :ident :name "_Cxc_Duration"}
+         :args   [{:kind  :named
+                   :name  "millis"
+                   :value {:node :lit-int :value millis}}]}))))
+
 (defn rewrite-prelude-names
   "Post-parse walk that mangles every occurrence of a user-visible
    prelude name to its internal form. Walks the parsed top-nodes
@@ -183,6 +222,10 @@ def Clock(ticks: Int = 3):
    maps (nested type nodes) and get renamed recursively by
    postwalk's own descent, not by this fn's direct value check.
 
+   Also desugars unit-suffixed numeric literals (`1000ms`, `1.5s`)
+   into `_Cxc_Duration(millis: N)` calls at the same walk — same
+   post-parse timing, same postwalk mechanism.
+
    Safe to run over any parsed AST — the rename table only contains
    specific prelude names, so a program that never mentions them is
    an identity transform."
@@ -190,9 +233,14 @@ def Clock(ticks: Int = 3):
   (walk/postwalk
     (fn [x]
       (if (map? x)
-        (cond-> x
-          (contains? x :name)  (update :name  rename-if)
-          (contains? x :type)  (update :type  rename-if)
-          (contains? x :outer) (update :outer rename-if))
+        (cond
+          (contains? #{:lit-int-unit :lit-float-unit} (:node x))
+          (desugar-unit-literal x)
+
+          :else
+          (cond-> x
+            (contains? x :name)  (update :name  rename-if)
+            (contains? x :type)  (update :type  rename-if)
+            (contains? x :outer) (update :outer rename-if)))
         x))
     nodes))

@@ -1,0 +1,3 @@
+def main:
+    -> running
+        do: print(500ms.millis + 2s.millis)

@@ -317,3 +317,9 @@
     (let [{:keys [exit stdout]} (compile-and-run "clock-every")]
       (is (zero? exit))
       (is (= "1\n" stdout)))))
+
+(deftest end-to-end-unit-literals
+  (testing "unit-literals.cxc — Layer 5.4 unit literal desugar. Numeric literals with a recognized time-unit suffix (`500ms`, `2s`) rewrite at post-parse to `_Cxc_Duration(millis: N)` calls, with the multiplier baked in (`s` → *1000). Rewrite happens in `rewrite-prelude-names` so no lower changes needed. Expression `500ms.millis + 2s.millis` computes 500 + 2000 = 2500. Retires the `unit-suffixed integer literal` fail-nyi for the recognized units — unrecognized units still surface the diagnostic."
+    (let [{:keys [exit stdout]} (compile-and-run "unit-literals")]
+      (is (zero? exit))
+      (is (= "2500\n" stdout)))))
