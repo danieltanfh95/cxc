@@ -337,6 +337,12 @@
       (is (zero? exit))
       (is (= "7\n" stdout)))))
 
+(deftest end-to-end-map-basic
+  (testing "map-basic.cxc — Layer 6 Step 8. `Map of (String, Int)` field on main, populated via `.add(k, v)`, mutated via `.remove(k)`, queried via `.count` observable and `.contains(k)`. Verifies: (1) grammar for `Map of (K, V)` (paren-tuple as `of` operand → :type-tuple :inner); (2) mangled class name `_Cxc_MapOfStringInt` from base-type-name; (3) auto-init to empty NSMutableDictionary when no field default (MVP has no map-literal grammar; explicit defaults fail-nyi); (4) K/V restricted to Int/String at MVP — String boxes via `[NSString stringWithUTF8String:]`, Int via `@(v)`; (5) synthesized container class ships with `count` observable and `addWithk:v:` / `removeWithk:` / `containsWithk:` methods on the atom method-dispatch path. Add apples=3, pears=7, remove apples → count=1, contains(apples)=0, contains(pears)=1. Prints `1`, `0`, `1`."
+    (let [{:keys [exit stdout]} (compile-and-run "map-basic")]
+      (is (zero? exit))
+      (is (= "1\n0\n1\n" stdout)))))
+
 (deftest end-to-end-extern-puts
   (testing "extern-puts.cxc — Layer 6 Step 7. Declares `extern C_stdio: function puts(s: String) -> Int; function abs(n: Int) -> Int` and calls both from main. Compiler builds `:extern-env`, threads it through ctx, and dispatches `C_stdio.puts(...)` / `C_stdio.abs(...)` as raw C function calls (`{:node :call :fn puts :args ...}`). Emit produces `extern int puts(const char *s);` / `extern int abs(int n);` forward-decl prototypes at the top so the linker resolves the symbols regardless of which system headers Foundation.h transitively pulls in (stdio yes, stdlib no). Prints `hello from extern` then `7`."
     (let [{:keys [exit stdout]} (compile-and-run "extern-puts")]

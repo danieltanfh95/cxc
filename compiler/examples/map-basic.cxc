@@ -1,0 +1,13 @@
+def main:
+    data:
+        m: Map of (String, Int)
+
+    -> running
+        do: m.add("apples", 3)
+        do: m.add("pears", 7)
+        do: m.remove("apples")
+        do: print(m.count)
+        do: print(m.contains("apples"))
+        do: print(m.contains("pears"))
+
+    -> end

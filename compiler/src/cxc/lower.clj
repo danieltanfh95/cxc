@@ -126,13 +126,22 @@
         (contains? enum-env nm)         nm
         :else                            (fail-nyi! (str "type " nm) ty-node)))
     :type-of
-    (if (= "List" (:outer ty-node))
+    (cond
+      (= "List" (:outer ty-node))
       ;; Compiler-synthesized List class — reference-typed, pointer at
       ;; the C level. Element-type validity is checked at the atom-env
       ;; registration site.
       (str (base-type-name ty-node) " *")
+
+      (= "Map" (:outer ty-node))
+      ;; Compiler-synthesized Map class (Layer 6 Step 8). Same shape as
+      ;; List — mangled class name, pointer-typed at C. K/V validity
+      ;; checked at atom-env registration.
+      (str (base-type-name ty-node) " *")
+
+      :else
       (fail-nyi! (str "cxc-type->c: `" (:outer ty-node)
-                      " of ...` unsupported at Layer 5 Step 3")
+                      " of ...` unsupported")
                  ty-node))
     (fail-nyi! (str "cxc-type->c: unknown type-node " (:node ty-node)) ty-node)))
 
@@ -145,15 +154,32 @@
   (case (:node ty-node)
     :type-ref      (:name ty-node)
     :type-nullable (base-type-name (:inner ty-node))
-    :type-of       (if (= "List" (:outer ty-node))
+    :type-of       (cond
+                     (= "List" (:outer ty-node))
                      ;; List of T → mangled ObjC class name. Deterministic
                      ;; function of the element type, no env lookup needed.
                      ;; Registered in atom-env by build-atom-env so
                      ;; infer-type / method-call resolution find it.
                      (str "_Cxc_ListOf" (base-type-name (:inner ty-node)))
+
+                     (= "Map" (:outer ty-node))
+                     ;; Map of (K, V) → mangled name incorporating both
+                     ;; type params. :inner is a :type-tuple with :types
+                     ;; [K-node V-node].
+                     (let [tuple (:inner ty-node)
+                           _ (when-not (and (= :type-tuple (:node tuple))
+                                            (= 2 (count (:types tuple))))
+                               (fail-nyi! (str "Map of ... expects (K, V) — got "
+                                               (pr-str tuple))
+                                          ty-node))
+                           [k v] (:types tuple)]
+                       (str "_Cxc_MapOf"
+                            (base-type-name k) (base-type-name v)))
+
+                     :else
                      (fail-nyi! (str "base-type-name: `" (:outer ty-node)
-                                     " of ...` — only `List of T` is "
-                                     "supported at Layer 5 Step 3")
+                                     " of ...` — only `List of T` and "
+                                     "`Map of (K, V)` supported")
                                 ty-node))
     (fail-nyi! (str "base-type-name: unknown type-node " (:node ty-node)) ty-node)))
 
@@ -162,6 +188,12 @@
    with base-type-name's :type-of branch."
   [element-name]
   (str "_Cxc_ListOf" element-name))
+
+(defn- map-container-class-name
+  "Mangled ObjC class name for `Map of (K, V)`. Kept in sync with
+   base-type-name's :type-of Map branch."
+  [k-name v-name]
+  (str "_Cxc_MapOf" k-name v-name))
 
 (defn- cxc-type->type-kw
   "Map a cxc type-ref name to the type-keyword vocab used by infer-type.
@@ -196,14 +228,29 @@
     :else (fail-nyi! (str "unrepresentable observable type " (pr-str tk))
                      node)))
 
+(defn- map-key-val-of
+  "If ty-node is `Map of (K, V)`, return {:map-key K-name :map-val
+   V-name}; else return {}. Used to decorate fields/ctor-params so
+   downstream map-container instantiation collection can recover K/V
+   from the mangled type without re-parsing the name."
+  [ty-node]
+  (if (and (= :type-of (:node ty-node))
+           (= "Map" (:outer ty-node))
+           (= :type-tuple (get-in ty-node [:inner :node])))
+    (let [[k v] (get-in ty-node [:inner :types])]
+      {:map-key (base-type-name k)
+       :map-val (base-type-name v)})
+    {}))
+
 (defn- fields-from-data-section
   [data-section record-env atom-env enum-env]
   (mapv (fn [f]
-          {:name      (:name f)
-           :cxc-ty    (base-type-name (:type f))
-           :nullable? (= :type-nullable (get-in f [:type :node]))
-           :c-type    (cxc-type->c (:type f) record-env atom-env enum-env)
-           :default   (:default f)})
+          (merge {:name      (:name f)
+                  :cxc-ty    (base-type-name (:type f))
+                  :nullable? (= :type-nullable (get-in f [:type :node]))
+                  :c-type    (cxc-type->c (:type f) record-env atom-env enum-env)
+                  :default   (:default f)}
+                 (map-key-val-of (:type f))))
         (:fields data-section)))
 
 (defn- normalize-method-param
@@ -267,11 +314,12 @@
    `{:name :cxc-ty :nullable? :c-type :default}` for the atom-env."
   [ctor-params record-env atom-env enum-env]
   (mapv (fn [p]
-          {:name      (:name p)
-           :cxc-ty    (base-type-name (:type p))
-           :nullable? (= :type-nullable (get-in p [:type :node]))
-           :c-type    (cxc-type->c (:type p) record-env atom-env enum-env)
-           :default   (:default p)})
+          (merge {:name      (:name p)
+                  :cxc-ty    (base-type-name (:type p))
+                  :nullable? (= :type-nullable (get-in p [:type :node]))
+                  :c-type    (cxc-type->c (:type p) record-env atom-env enum-env)
+                  :default   (:default p)}
+                 (map-key-val-of (:type p))))
         ctor-params))
 
 (defn- def-atom-methods-section [atom-node]
@@ -629,6 +677,82 @@
                 (reduce seed a (:ctor-params info))))
             {}
             atom-env)))
+
+(defn- map-instantiations-from-atom-env
+  "Scan every atom-env entry's fields + ctor-params for `Map of (K, V)`
+   usages; return a map {[K-name V-name] → map-class-name}. Feeds
+   Layer 6 Step 8 class synthesis: one compiler-generated ObjC class
+   per distinct (K, V) pair."
+  [atom-env]
+  (let [seed (fn [acc field-or-param]
+               (let [ty (:cxc-ty field-or-param)]
+                 (if (and (string? ty) (.startsWith ^String ty "_Cxc_MapOf"))
+                   ;; K and V both live in the mangled suffix. Rather
+                   ;; than parse back out of the string, remember the
+                   ;; original type-node components in the field/param
+                   ;; and read K/V from there. field-or-param carries
+                   ;; :cxc-ty as the mangled name — need auxiliary
+                   ;; metadata for K/V. See :map-key/:map-val recorded
+                   ;; in fields-from-data-section / ctor-params-normalized
+                   ;; (Layer 6 Step 8 addendum).
+                   (let [k (:map-key field-or-param)
+                         v (:map-val field-or-param)]
+                     (assoc acc [k v] ty))
+                   acc)))]
+    (reduce (fn [acc [_ info]]
+              (as-> acc a
+                (reduce seed a (:fields info))
+                (reduce seed a (:ctor-params info))))
+            {}
+            atom-env)))
+
+(defn- synthesize-map-container-entries
+  "Given {[K V] → map-class-name} produce atom-env entries for each
+   map-class. Layer 6 Step 8 MVP: no fan-in over map values (deferred);
+   entries carry :kind :map-container marker, key/value type names, and
+   a `count` observable. Method-index registers add/remove/contains so
+   infer-method-call-type resolves them."
+  [instantiations]
+  (into {}
+        (map (fn [[[k v] class-name]]
+               (let [methods [{:name "add"
+                               :params [{:name "self"}
+                                        {:name "k" :cxc-ty k}
+                                        {:name "v" :cxc-ty v}]
+                               :cxc-return-ty nil
+                               :cxc-return-ty-node nil}
+                              {:name "remove"
+                               :params [{:name "self"}
+                                        {:name "k" :cxc-ty k}]
+                               :cxc-return-ty nil
+                               :cxc-return-ty-node nil}
+                              {:name "contains"
+                               :params [{:name "self"}
+                                        {:name "k" :cxc-ty k}]
+                               :cxc-return-ty "Bool"
+                               :cxc-return-ty-node {:node :type-ref :name "Bool"}}]]
+                 [class-name
+                  {:kind             :map-container
+                   :key-type         k
+                   :val-type         v
+                   :fields           []
+                   :field-index      {}
+                   :ctor-params      []
+                   :methods          methods
+                   :method-index     (into {} (map (juxt :name identity) methods))
+                   :observables      []
+                   :observables-typed [{:name "count" :type-kw :int}]
+                   :observable-index {"count" {:name "count" :type-kw :int}}
+                   :invariants       []
+                   :transitions      []
+                   :message-index    {}
+                   :stream-index     {}
+                   :stream-order     []
+                   :stream-payload-index {}
+                   :subscription-map {}
+                   :slot-names       []
+                   :extras           []}]))
+             instantiations)))
 
 (defn- synthesize-list-container-entries
   "Given {element-name → list-class-name} and the current atom-env
@@ -2671,6 +2795,10 @@
 (defn- field-list-element-name [field]
   (subs (:cxc-ty field) (count "_Cxc_ListOf")))
 
+(defn- field-is-map-of? [field]
+  (and (string? (:cxc-ty field))
+       (.startsWith ^String (:cxc-ty field) "_Cxc_MapOf")))
+
 (defn- default-init-stmt-for [field ctx]
   (let [d (:default field)]
     (cond
@@ -2683,6 +2811,22 @@
                                (field-list-element-name field)
                                (:items d)
                                ctx)
+
+      ;; Layer 6 Step 8 — Map of (K, V) auto-initializes to an empty
+      ;; container when no explicit default is provided (MVP has no
+      ;; map-literal expression grammar). Explicit defaults surface
+      ;; a NYI diagnostic — populate via `.add(k, v)` in transitions.
+      (field-is-map-of? field)
+      (do
+        (when d
+          (fail-nyi! (str "Map field `" (:name field)
+                          "` with explicit default — Layer 6 Step 8 "
+                          "MVP has no map-literal grammar; populate "
+                          "via `<field>.add(k, v)` in transitions")
+                     field))
+        {:node :assign
+         :lhs  {:node :name :sym (str "_" (:name field))}
+         :rhs  {:node :objc-alloc-init :class (:cxc-ty field)}})
 
       :else
       (let [rhs (if d (lower-expr d ctx) {:node :int :value 0})]
@@ -3327,6 +3471,102 @@
                               (:methods stream-parts)))
      :element-name element-name}))
 
+;; Layer 6 Step 8 — Map container class synthesis. MVP restricts K/V
+;; to Int/String — the boxing helpers below cover exactly those. K/V
+;; outside the supported set surfaces fail-nyi at the atom-env
+;; registration site (map-instantiations-from-atom-env → synthesize-
+;; map-container-class construction).
+
+(def ^:private map-supported-key-types #{"String" "Int"})
+(def ^:private map-supported-val-types #{"String" "Int"})
+
+(defn- map-box-expr
+  "Cxc-typed expr → NSDictionary-safe ObjC expr. Int wraps as NSNumber
+   `@(v)`; String wraps `const char *` as NSString via
+   `[NSString stringWithUTF8String:...]`."
+  [ty raw-name]
+  (case ty
+    "Int"    (str "@(" raw-name ")")
+    "String" (str "[NSString stringWithUTF8String:" raw-name "]")))
+
+(defn- map-c-type
+  "C-level parameter type for a supported K or V map type."
+  [ty]
+  (case ty
+    "Int"    "int"
+    "String" "const char *"))
+
+(defn- synthesize-map-container-class
+  "Emit-ready :objc-class node for one `_Cxc_MapOf<K><V>` instantiation.
+   Contents:
+     - `NSMutableDictionary *_elements` ivar (allocated empty at init)
+     - `-count` observable
+     - `-addWithk:v:` — box K/V, `[_elements setObject:box(v) forKey:box(k)]`
+     - `-removeWithk:` — box K, `[_elements removeObjectForKey:box(k)]`
+     - `-containsWithk:` — box K, returns 1/0
+   No fan-in machinery at Step 8 MVP (deferred until value atoms need
+   observable aggregation; parallels List's Step 3 → Step 6 arc)."
+  [class-name k-name v-name]
+  (when-not (contains? map-supported-key-types k-name)
+    (fail-nyi! (str "Map key type `" k-name "` — Layer 6 Step 8 MVP "
+                    "supports " (sort map-supported-key-types))
+               {:map-key k-name}))
+  (when-not (contains? map-supported-val-types v-name)
+    (fail-nyi! (str "Map value type `" v-name "` — Layer 6 Step 8 MVP "
+                    "supports " (sort map-supported-val-types))
+               {:map-val v-name}))
+  (let [k-c   (map-c-type k-name)
+        v-c   (map-c-type v-name)
+        box-k (map-box-expr k-name "k")
+        box-v (map-box-expr v-name "v")]
+    {:node        :objc-class
+     :name        class-name
+     :superclass  "NSObject"
+     :phase-constants []
+     :properties  [{:name  "elements"
+                    :c-type "NSMutableDictionary *"
+                    :attrs ["nonatomic" "strong"]}]
+     :init-params []
+     :init-body   [{:node :assign
+                    :lhs  {:node :name :sym "_elements"}
+                    :rhs  {:node :objc-msg
+                           :recv {:node :name :sym "NSMutableDictionary"}
+                           :selector "dictionary"
+                           :args []}}]
+     :methods     [{:name        "count"
+                    :selector    "count"
+                    :params      []
+                    :return-type "int"
+                    :body        [{:node :return
+                                   :value {:node :objc-cast
+                                           :c-type "int"
+                                           :expr  {:node :objc-msg
+                                                   :recv {:node :name :sym "_elements"}
+                                                   :selector "count"
+                                                   :args []}}}]}
+                   {:name        "addWithk_v"
+                    :selector    "addWithk:v:"
+                    :params      [{:name "k" :c-type k-c}
+                                  {:name "v" :c-type v-c}]
+                    :return-type "void"
+                    :body        [{:node :raw-c
+                                   :text (str "[_elements setObject:" box-v
+                                              " forKey:" box-k "];")}]}
+                   {:name        "removeWithk"
+                    :selector    "removeWithk:"
+                    :params      [{:name "k" :c-type k-c}]
+                    :return-type "void"
+                    :body        [{:node :raw-c
+                                   :text (str "[_elements removeObjectForKey:"
+                                              box-k "];")}]}
+                   {:name        "containsWithk"
+                    :selector    "containsWithk:"
+                    :params      [{:name "k" :c-type k-c}]
+                    :return-type "int"
+                    :body        [{:node :raw-c
+                                   :text (str "return ([_elements objectForKey:"
+                                              box-k "] != nil) ? 1 : 0;")}]}]}))
+
 (defn lower
   "Take parsed top-level nodes and produce an ObjC/C program AST."
   [top-nodes]
@@ -3390,6 +3630,13 @@
         list-atom-entries   (synthesize-list-container-entries
                              list-instantiations atom-env)
         atom-env            (merge atom-env list-atom-entries)
+        ;; Layer 6 Step 8 — mirror of the List instantiation pass for
+        ;; Map. Runs after inference so an observable typed `Map of
+        ;; (K, V)` also participates (though no observable produces a
+        ;; Map today; setup is future-proof).
+        map-instantiations  (map-instantiations-from-atom-env atom-env)
+        map-atom-entries    (synthesize-map-container-entries map-instantiations)
+        atom-env            (merge atom-env map-atom-entries)
         ctx        {:record-env record-env :atom-env atom-env :enum-env enum-env
                     :extern-env extern-env :locals {}}
         records    (filter #(= :record (:node %)) top-nodes)
@@ -3408,10 +3655,14 @@
         ;; entries carry `:kind :list-container` and skip the queue /
         ;; phase / transition machinery lower-atom assumes.
         real-atom-names       (filter #(not (contains? #{:list-container
+                                                          :map-container
                                                           :runtime-provided}
                                                         (:kind (get atom-env %))))
                                       (keys atom-env))
         container-atom-names  (filter #(= :list-container
+                                          (:kind (get atom-env %)))
+                                      (keys atom-env))
+        map-container-names   (filter #(= :map-container
                                           (:kind (get atom-env %)))
                                       (keys atom-env))
         real-atom-classes     (mapv (fn [nm]
@@ -3425,7 +3676,16 @@
                                           :fanin-streams  (:stream-order entry)
                                           :fanin-payloads (:stream-payload-index entry))))
                                      container-atom-names)
-        classes    (into (vec list-container-classes) real-atom-classes)
+        map-container-classes (mapv (fn [nm]
+                                      (let [entry (get atom-env nm)]
+                                        (synthesize-map-container-class
+                                         nm
+                                         (:key-type entry)
+                                         (:val-type entry))))
+                                    map-container-names)
+        classes    (into (into (vec list-container-classes)
+                               map-container-classes)
+                         real-atom-classes)
         needs-foundation? (boolean (seq classes))
         needs-abort?      (boolean (some #(seq (:invariants (second %))) atom-env))
         ;; Runtime helpers (cxc_send_async / cxc_send_sync / cxc_shutdown

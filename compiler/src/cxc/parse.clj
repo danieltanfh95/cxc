@@ -114,9 +114,33 @@
 
 (defn- parse-type [tokens pos]
   (let [[name p]  (expect tokens pos :ident)
-        [inner p] (if (at? tokens p :kw "of")
+        [inner p] (cond
+                    ;; `T of ( K , V , ... )` — Layer 6 Step 8. Paren-
+                    ;; tuple as the `of` operand carries multiple type
+                    ;; params (Map of (K, V), Result of (T, E) etc). The
+                    ;; :inner slot becomes a :type-tuple node whose
+                    ;; :types is the ordered vector of sub-types.
+                    (and (at? tokens p :kw "of")
+                         (at? tokens (inc p) :punct "("))
+                    (loop [ts [] p (inc (inc p))]
+                      (let [[t p2] (parse-type tokens p)
+                            ts (conj ts t)]
+                        (cond
+                          (at? tokens p2 :punct ",")
+                          (recur ts (inc p2))
+                          (at? tokens p2 :punct ")")
+                          [{:node :type-of :outer name
+                            :inner {:node :type-tuple :types ts}}
+                           (inc p2)]
+                          :else
+                          (fail! tokens p2
+                                 "expected `,` or `)` in type-parameter list"))))
+
+                    (at? tokens p :kw "of")
                     (let [[inner-t p2] (parse-type tokens (inc p))]
                       [{:node :type-of :outer name :inner inner-t} p2])
+
+                    :else
                     [{:node :type-ref :name name} p])
         [wrapped p] (if (at? tokens p :punct "?")
                       [{:node :type-nullable :inner inner} (inc p)]
