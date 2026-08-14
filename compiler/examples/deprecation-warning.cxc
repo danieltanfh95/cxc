@@ -1,0 +1,11 @@
+record OldBox:
+    deprecated: "use NewBox instead — OldBox loses precision on large values"
+
+    data:
+        n: Int = 0
+
+def main:
+    -> running
+        do: print(OldBox(n: 7).n)
+
+    -> end

@@ -513,6 +513,21 @@
           (recur (conj methods fdecl) p3))
         :else (fail! tokens p "expected `function` in methods section")))))
 
+(defn- parse-deprecated-section
+  "deprecated: \"<message>\"
+   Layer 6 Step 11 — inline body-form deprecation marker. Emits a
+   `:deprecated` node the compiler attaches to the enclosing def
+   (record or atom). Requires a non-empty string literal — the
+   message that use-site warnings will carry."
+  [tokens pos]
+  (let [[_ p]   (expect tokens pos :kw "deprecated")
+        [_ p]   (expect tokens p :punct ":")
+        [msg p] (expect tokens p :string)
+        _       (when (str/blank? msg)
+                  (fail! tokens p "deprecated: message must be non-empty"))
+        [_ p]   (expect tokens p :newline)]
+    [{:node :deprecated :message msg} p]))
+
 (defn- parse-use-section
   "use:
        cap: SomeCapability
@@ -851,6 +866,10 @@
         (let [[s p2] (parse-use-section tokens p)]
           (recur (conj body s) (skip-newlines tokens p2)))
 
+        (at? tokens p :kw "deprecated")
+        (let [[s p2] (parse-deprecated-section tokens p)]
+          (recur (conj body s) (skip-newlines tokens p2)))
+
         (at? tokens p :kw "data")
         (let [[s p2] (parse-data-section tokens p)]
           (recur (conj body s) (skip-newlines tokens p2)))
@@ -889,7 +908,7 @@
           (recur (conj body t) (skip-newlines tokens p2)))
 
         :else
-        (fail! tokens p "expected use:, data:, invariants:, methods:, observable, or transition inside def-atom body")))))
+        (fail! tokens p "expected use:, data:, invariants:, methods:, deprecated:, observable, or transition inside def-atom body")))))
 
 ;; ---------------------------------------------------------------------------
 ;; Record  — the smallest top-level form
@@ -924,8 +943,13 @@
               p3 (skip-newlines tokens p2)]
           (recur (conj sections s) p3))
 
+        (at? tokens p :kw "deprecated")
+        (let [[s p2] (parse-deprecated-section tokens p)
+              p3 (skip-newlines tokens p2)]
+          (recur (conj sections s) p3))
+
         :else
-        (fail! tokens p "expected data:, methods:, or dedent in record body")))))
+        (fail! tokens p "expected data:, methods:, deprecated:, or dedent in record body")))))
 
 (defn- parse-enum
   "Parse `enum Foo:` followed by an indented list of ident cases,

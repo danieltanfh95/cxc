@@ -24,6 +24,7 @@
   #{"module" "from" "import" "as" "expose"
     "def" "record" "class" "enum" "protocol"
     "data" "use" "methods" "invariants" "contracts" "constructor" "metadata"
+    "deprecated"
     "then" "do" "when" "let" "cases"
     "self" "nil" "true" "false"
     "and" "or" "not" "is" "in" "of"

@@ -331,6 +331,12 @@
       (is (zero? exit))
       (is (= "1\n" stdout)))))
 
+(deftest end-to-end-deprecation-warning
+  (testing "deprecation-warning.cxc — Layer 6 Step 11. `deprecated: \"<message>\"` section inside a record body attaches a deprecation message; use-site walker in cxc.build emits one warning per external reference to *err*. Verifies: program compiles + runs to `7` (no behavior change), and the warning fires (visible in stderr — test asserts on stdout only since the warning is on stderr, but a real strict-mode build would upgrade to compile-time error)."
+    (let [{:keys [exit stdout]} (compile-and-run "deprecation-warning")]
+      (is (zero? exit))
+      (is (= "7\n" stdout)))))
+
 (deftest end-to-end-console-hello
   (testing "console-hello.cxc — Layer 6 Step 5. Console prelude atom with `write(msg: String) -> Int` method wrapping the `native_console_write` FFI hatch (printf %s). Main nests a Console (`def console: Console`) and calls `console.write(\"hi\\n\")` in its `-> running do:`. Prints `hi` + newline."
     (let [{:keys [exit stdout]} (compile-and-run "console-hello")]

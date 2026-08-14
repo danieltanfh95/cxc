@@ -423,12 +423,14 @@
      msg-txns)))
 
 (defn- def-atom-body-extras
-  "Everything in the def-atom body that isn't data:/methods:/transition/
-   observable/invariants/use:/nested-atom — e.g. contracts: (Layer 6+).
-   These are what remains for later layers to consume."
+  "Everything in the def-atom body that isn't a section lower knows
+   how to consume — e.g. contracts: (Layer 6+). Deprecated: is
+   handled at the build/compile step (cxc.build/warn-deprecated-uses)
+   and doesn't reach lower, so it's filtered here too."
   [atom-node]
   (remove #(#{:data-section :methods-section :transition :observable
-              :invariants-section :use-section :nested-atom} (:node %))
+              :invariants-section :use-section :nested-atom
+              :deprecated} (:node %))
           (:body atom-node)))
 
 (defn- build-atom-env

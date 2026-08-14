@@ -49,6 +49,60 @@
   ;; hit "Permission denied".
   (.setExecutable f true false))
 
+;; Layer 6 Step 11 — deprecation walker. `deprecated: "msg"` inside
+;; a def-atom body or record body attaches a message to the enclosing
+;; declaration. Use-site walker below finds every `:ident` /
+;; `:type-ref` / `:call` reference to a deprecated name and emits a
+;; warning to stderr with the migration message.
+
+(defn- collect-deprecations
+  "Walk top-level nodes; return map of {name → message} for every
+   def-atom or record carrying a `:deprecated` section."
+  [top-nodes]
+  (into {}
+        (keep (fn [n]
+                (when (contains? #{:def-atom :record} (:node n))
+                  (let [body (or (:body n) (:sections n) [])
+                        dep  (first (filter #(= :deprecated (:node %)) body))]
+                    (when dep
+                      [(:name n) (:message dep)]))))
+              top-nodes)))
+
+(defn- warn-deprecated-uses
+  "Walk the parsed AST looking for references to any name in the
+   `deprecations` map (built by collect-deprecations). Prints one
+   warning per reference to *err*. Refs checked: `:ident` (name
+   uses), `:type-ref` (type annotations), `:call` (constructor
+   calls via ident callee). Definition sites in the deprecated def
+   itself are skipped — a deprecated Foo referencing its own name
+   in its methods doesn't self-warn."
+  [top-nodes deprecations]
+  (when (seq deprecations)
+    (doseq [n top-nodes]
+      (let [decl-name (:name n)
+            skip-self (and (contains? #{:def-atom :record} (:node n))
+                           (contains? deprecations decl-name))]
+        (clojure.walk/postwalk
+         (fn [x]
+           (when (map? x)
+             ;; Only :ident and :type-ref — a `:call` node with an
+             ;; ident callee has its callee's :ident visited by the
+             ;; postwalk already, so covering :call too would
+             ;; double-warn on `Foo(...)` (once for the callee, once
+             ;; for the call).
+             (let [ref-name (cond
+                              (= :ident (:node x))    (:name x)
+                              (= :type-ref (:node x)) (:name x))]
+               (when (and ref-name
+                          (contains? deprecations ref-name)
+                          (not (and skip-self (= ref-name decl-name))))
+                 (binding [*out* *err*]
+                   (println (str "warning: `" ref-name
+                                 "` is deprecated: "
+                                 (get deprecations ref-name)))))))
+           x)
+         n)))))
+
 ;; Layer 6 Step 2/3 — stdlib import manifest + validation. Defined
 ;; here (before compile-source-to-file) so the single-file entrypoint
 ;; can call validate-imports without a forward declare.
@@ -114,8 +168,10 @@
   (let [_        (io/make-parents (io/file out-dir "placeholder"))
         parsed   (parse/parse source)
         _        (validate-imports parsed)
-        m-src    (-> (str prelude/source source)
-                     parse/parse
+        full-parsed (parse/parse (str prelude/source source))
+        deprecations (collect-deprecations full-parsed)
+        _        (warn-deprecated-uses parsed deprecations)
+        m-src    (-> full-parsed
                      prelude/rewrite-prelude-names
                      lower/lower
                      emit/emit)
