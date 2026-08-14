@@ -305,3 +305,9 @@
     (let [{:keys [exit stdout]} (compile-and-run "ticker")]
       (is (zero? exit))
       (is (= "3\n" stdout)))))
+
+(deftest end-to-end-game-loop
+  (testing "game-loop.cxc — Layer 5c integration slice. Composes two prelude capabilities (Ticker + TestKeyboardInput) in one main atom subscribing to four streams: ticker.tick, input.pressed, input.done (consumed as no-op), and ticker.done (exit trigger). Increments a counter on every tick + press. TestKeyboardInput fires its 2 pressed events immediately via async self-send; Ticker's first tick is 5ms out via dispatch_source_t. Both drain into main's own_queue, get serialized, and terminate on ticker.done after 4 ticks — total = 2 + 4 = 6. Deterministic across runs. Prints 6."
+    (let [{:keys [exit stdout]} (compile-and-run "game-loop")]
+      (is (zero? exit))
+      (is (= "6\n" stdout)))))

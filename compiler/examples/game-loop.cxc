@@ -1,0 +1,21 @@
+def main:
+    def ticker: Ticker(rate_ms: 5, count: 4)
+    def input: TestKeyboardInput(events: 2)
+
+    data:
+        n: Int = 0
+
+    -> running
+
+    -> end
+        do: print(n)
+
+    running <: ticker.tick -> running
+        then: n => n + 1
+
+    running <: input.pressed{key: Int} -> running
+        then: n => n + 1
+
+    running <: input.done -> running
+
+    running <: ticker.done -> end
