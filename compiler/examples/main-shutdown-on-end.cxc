@@ -1,0 +1,8 @@
+def main:
+    -> running
+        do: self :> stop
+
+    -> end
+        do: print(7)
+
+    running <: stop -> end

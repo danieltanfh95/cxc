@@ -129,6 +129,12 @@
          "        cxc_send_async(p, ^{ [(id<CXCAtom>)p nilSlot:sn]; });\n"
          "    }\n"
          "}")
+    :main-bootstrap
+    ;; Construct the Main atom into the file-scope static that survives
+    ;; across the autoreleasepool boundary into dispatch_main(). The
+    ;; static declaration is emitted by the top-level emit function
+    ;; before main(); here we just do the assignment.
+    (str "cxc_main_atom = [[" (:class-name node) " alloc] init];")
     :nil-slot-branch
     ;; One arm of parent's -nilSlot: switch — sets the named slot ivar
     ;; to nil when the incoming slotName matches. isEqualToString: is
@@ -193,6 +199,56 @@
          "    dispatch_set_target_queue(" (:ivar node)
          ", dispatch_get_main_queue());\n"
          "}")
+    :hashtable-init
+    ;; NSHashTable with weak-object membership: subscribers can dealloc
+    ;; freely, entries auto-disappear (design §18). Zero-cost when no
+    ;; subscribers ever register.
+    (str (:ivar node) " = [NSHashTable weakObjectsHashTable];")
+    :stream-fanout
+    ;; Emit-method body for a compiler-synthesized stream. Iterates the
+    ;; subscriber hashtable and cxc_send_async's each with a block that
+    ;; dispatches the compile-time-known subscriber-side selector
+    ;; (`cxc_stream_<name>_from_<Source>[With<k>:]`). Sub is captured by
+    ;; block per-iteration under ARC (retained for block lifetime, released
+    ;; after execution — safe against sub dealloc between fanout + fire).
+    ;; Zero-payload path only at Layer 4 (typed payload plumbing is a
+    ;; follow-up — see stream-source-methods).
+    (let [ivar (:ivar node)
+          sel  (:selector node)
+          keys (:arg-names node)
+          _    (when (seq keys)
+                 (throw (ex-info "stream-fanout: payload keys not supported at emit layer yet"
+                                 {:selector sel :keys keys})))]
+      (str "for (id sub in " ivar ") {\n"
+           "    cxc_send_async(sub, ^{ [sub " sel "]; });\n"
+           "}"))
+    :stream-add-sub
+    ;; Per-stream `-cxc_addSubscriberFor_<name>:` body. Direct
+    ;; addObject under Layer 4 single-thread — all init runs on main
+    ;; before dispatch_main() starts, so no concurrent mutation is
+    ;; possible. The earlier design analysis suggested wrapping in
+    ;; dispatch_sync(_own_queue, ^{...}) for Layer 4c multi-thread
+    ;; future-proofing, but under Layer 4's queues-target-main model
+    ;; that's a deadlock (main thread → dispatch_sync → queue targeting
+    ;; main → waits for main thread). Layer 4c will re-add the sync
+    ;; wrap once queues target concurrent globals.
+    (str "[" (:ivar node) " addObject:sub];")
+    :stream-add-sub-dispatch
+    ;; Generic `-cxc_addSubscriberToStream:sub:` body. If-chain over the
+    ;; source atom's declared streams; unknown names log for debug
+    ;; visibility rather than silently drop. Matches design §18's
+    ;; serialization/restore path (subscriber-atom-ID + stream-name +
+    ;; selector-name tuples on restore).
+    (let [branches
+          (->> (:branches node)
+               (map (fn [b]
+                      (str "if ([streamName isEqualToString:@\""
+                           (escape-c-string (:stream-name b))
+                           "\"]) { [self " (:selector b) "sub]; return; }")))
+               (str/join "\n"))]
+      (str branches
+           "\nNSLog(@\"cxc: unknown stream `%@` on %@\", "
+           "streamName, [self class]);"))
     (throw (ex-info (str "emit-stmt: unknown node " (:node node))
                     {:node node}))))
 
@@ -332,27 +388,50 @@
                      " = @\"" (escape-c-string (:value pc)) "\";")))
          (str/join "\n"))))
 
-(defn- emit-class [cls]
+(defn- emit-class-interface-block
+  "Phase constants + @interface for one class. Emitted in the interface
+   pass at the top of the file so every class's selectors are visible
+   before any @implementation body runs — matters for stream-fanout
+   sites that message `id`-typed subscribers with the receiver-side
+   `cxc_stream_<name>_from_<Source>` selector, which needs a visible
+   declaration to pick a type signature."
+  [cls]
   (let [phase-consts (emit-phase-constants cls)
         parts        (remove str/blank? [phase-consts
-                                         (emit-interface cls)
-                                         (emit-implementation cls)])]
+                                         (emit-interface cls)])]
     (str/join "\n\n" parts)))
+
+(defn- emit-class [cls]
+  (emit-implementation cls))
 
 ;; ---------------------------------------------------------------------------
 ;; Program emission
 ;; ---------------------------------------------------------------------------
 
-(defn- emit-main [main-node]
-  (let [body (emit-body 4 (:body main-node))]
+(defn- emit-main
+  "C main() function. Two shapes:
+     - No dispatch loop: run body inside @autoreleasepool, return 0.
+       Fits programs with no message-triggered transitions (their work
+       runs synchronously during init and completes before return).
+     - Dispatch loop: run bootstrap (Main atom construction) inside
+       @autoreleasepool, then call dispatch_main() which never returns.
+       cxc_shutdown() from a `-> end` transition on the main atom is
+       the termination path (design §19)."
+  [main-node needs-dispatch-loop?]
+  (let [body (emit-body 4 (:body main-node))
+        dispatch-suffix (if needs-dispatch-loop?
+                          "\n    dispatch_main();\n    return 0;   /* unreachable */"
+                          "")]
     (if (:autorelease? main-node)
       (str "int main(int argc, char *argv[]) {\n"
            "    @autoreleasepool {\n"
            (indent-lines 4 body)
-           "\n    }\n"
-           "}")
+           "\n    }"
+           dispatch-suffix
+           "\n}")
       (str "int main(int argc, char *argv[]) {\n"
            body
+           dispatch-suffix
            "\n}"))))
 
 (def ^:private cxc-runtime-helpers
@@ -383,14 +462,28 @@
        "}"))
 
 (defn emit
-  "Emit a full .m source string from an :objc-program AST."
+  "Emit a full .m source string from an :objc-program AST. Class output
+   is split into an INTERFACES section (phase constants + @interface
+   blocks) followed by an IMPLEMENTATIONS section — so every class's
+   method declarations are visible before ANY @implementation body runs.
+   Matters for stream fan-out: `[sub cxc_stream_beep_from_Emitter]` on
+   an `id`-typed subscriber needs the subscriber-class's @interface to
+   be in scope when the source's fanout body compiles."
   [prog]
-  (let [includes  (str/join "\n"   (map #(str "#import " %) (:includes prog)))
-        helpers   (when (:needs-runtime? prog) cxc-runtime-helpers)
-        enums     (str/join "\n\n" (map emit-c-enum   (:enums prog)))
-        structs   (str/join "\n\n" (map emit-struct   (:structs prog)))
-        functions (str/join "\n\n" (map emit-function (:functions prog)))
-        classes   (str/join "\n\n" (map emit-class    (:classes prog)))
-        main      (emit-main (:main prog))]
+  (let [includes    (str/join "\n"   (map #(str "#import " %) (:includes prog)))
+        helpers     (when (:needs-runtime? prog) cxc-runtime-helpers)
+        enums       (str/join "\n\n" (map emit-c-enum   (:enums prog)))
+        structs     (str/join "\n\n" (map emit-struct   (:structs prog)))
+        functions   (str/join "\n\n" (map emit-function (:functions prog)))
+        interfaces  (str/join "\n\n" (map emit-class-interface-block (:classes prog)))
+        impls       (str/join "\n\n" (map emit-class    (:classes prog)))
+        ;; File-scope static that main() assigns to. Lives across the
+        ;; @autoreleasepool boundary into dispatch_main() so the atom
+        ;; isn't released before the queue starts draining.
+        main-static (when (some #(= "CxcMain" (:name %)) (:classes prog))
+                      "static CxcMain *cxc_main_atom = nil;")
+        main        (emit-main (:main prog) (:needs-dispatch-loop? prog))]
     (str/join "\n\n"
-              (remove str/blank? [includes helpers enums structs functions classes main]))))
+              (remove str/blank? [includes helpers enums structs functions
+                                  interfaces impls
+                                  main-static main]))))

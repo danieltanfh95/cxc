@@ -60,11 +60,27 @@
      {:record-env <name -> {:fields :field-index :methods :method-index}>
       :atom-env   <name -> {:fields :field-index :extras}>
       :locals     <name -> ty>       ; local scope for method bodies etc."
-  (:require [clojure.string :as str]))
+  (:require [clojure.string :as str]
+            [clojure.walk :as walk]))
 
 (defn- fail-nyi! [what node]
   (throw (ex-info (str "lowering not yet implemented: " what)
                   {:kind :not-yet-implemented :what what :node node})))
+
+(defn- program-has-async-sends?
+  "Walk the parsed AST for any `:emit` node with `:async? true` — a
+   `:>` targeted send OR an untargeted stream emission. Programs
+   without async sends don't need dispatch_main; their work completes
+   synchronously during construction and main() returns normally."
+  [top-nodes]
+  (let [found (atom false)]
+    (walk/postwalk
+     (fn [n]
+       (when (and (map? n) (= :emit (:node n)) (:async? n))
+         (reset! found true))
+       n)
+     top-nodes)
+    @found))
 
 ;; ---------------------------------------------------------------------------
 ;; Type env
@@ -250,6 +266,80 @@
   [payload]
   (mapv (fn [p] [(:name p) (base-type-name (:type p))]) payload))
 
+(defn- emit-nodes-in
+  "Walk any parsed AST subtree and return every `:emit` node whose
+   `:target` is nil (untargeted `:>` / `|>` — stream emissions). Skips
+   targeted sends. Used both to discover the streams a source atom
+   owns (Step 13) and to gate `dispatch_main()` on presence of any
+   async work."
+  [subtree]
+  (let [found (java.util.ArrayList.)]
+    (walk/postwalk
+     (fn [n]
+       (when (and (map? n) (= :emit (:node n)) (nil? (:target n)))
+         (.add found n))
+       n)
+     subtree)
+    (vec found)))
+
+(defn- collect-stream-shapes
+  "Walk every transition body on this atom, gather all `:>` untargeted
+   emit sites, and index them by stream name with payload signature.
+   Two emits of the same stream name with different arg-name shapes are
+   a design smell — same source-line reads would produce different
+   subscriber-side selectors. Fail-nyi on mismatch, parallel to
+   collect-message-shapes. Returns `{stream-name {:payload [{:name
+   :type}]}}` where each payload entry captures `:name` and an inferred
+   `:type` when the arg carried a `k: T` typed shape. Layer 4 payloads
+   are typed via the same `{k: T}` grammar receivers use on the receive
+   side; if the sender's args-block doesn't carry type info, the payload
+   entry has :type nil and downstream lookup falls back on the
+   subscriber-side declaration for the C type."
+  [atom-name transitions]
+  (let [emits (emit-nodes-in transitions)
+        ;; Sync `|>` untargeted emits aren't defined for streams (spec
+        ;; only ever pairs bare `|>` with a target). Reject early so
+        ;; the meaning stays crisp: `:>` is fan-out, no other option.
+        _     (doseq [e emits]
+                (when-not (:async? e)
+                  (fail-nyi! (str "sync stream emit `|> " (:msg e)
+                                  "` — Layer 4 streams are async-only "
+                                  "(design §18 chose Option A: async fan-out)")
+                             e)))]
+    (reduce
+     (fn [acc e]
+       (let [name    (:msg e)
+             ;; Emit-site args have shape [{:kind :named/:positional
+             ;; :name :value}]. Only named args carry a stream-payload
+             ;; key. Positional args on stream emits are legal (spec
+             ;; allows bare `:> value` for single-channel), but Layer
+             ;; 4 requires named args so the payload shape is
+             ;; unambiguous — same rule as message-triggered
+             ;; transitions.
+             _       (doseq [a (:args e)]
+                       (when (= :positional (:kind a))
+                         (fail-nyi!
+                          (str "positional arg on stream emit `:> " name
+                               "` — Layer 4 requires `:> " name "(key: value)` "
+                               "named form so payload shape matches subscriber "
+                               "receive pattern")
+                          e)))
+             payload (mapv (fn [a] {:name (:name a)}) (:args e))
+             sig     (mapv :name payload)]
+         (if-let [existing (get acc name)]
+           (do (when (not= (mapv :name (:payload existing)) sig)
+                 (fail-nyi!
+                  (str "def-atom `" atom-name "` emits stream `" name
+                       "` twice with different payload shapes: "
+                       (mapv :name (:payload existing)) " vs " sig
+                       "; every emit of a stream must carry the same "
+                       "keys so subscribers can bind a single receive shape")
+                  {:atom atom-name :stream name}))
+               acc)
+           (assoc acc name {:payload payload}))))
+     {}
+     emits)))
+
 (defn- collect-message-shapes
   "Walk an atom's message-triggered transitions, grouping by message
    name. Every transition sharing a message name must declare the SAME
@@ -292,10 +382,28 @@
           (:body atom-node)))
 
 (defn- build-atom-env
+  "Build the atom-env from every top-level `def X:` — includes `main`
+   whenever the program has any other atoms (so main can send to them
+   via the same shape check as any other sender) OR whenever main itself
+   declares message-triggered transitions (needs a class to receive
+   messages). For pure hello-world (no other atoms, no receive
+   transitions on main), main stays out of the env and the old
+   main-atom-body path handles it as a plain function body."
   [top-nodes enum-env]
-  (let [atoms    (filter #(and (= :def-atom (:node %))
-                               (not= "main" (:name %)))
-                         top-nodes)
+  (let [other-atoms (filter #(and (= :def-atom (:node %))
+                                  (not= "main" (:name %)))
+                            top-nodes)
+        main-node   (first (filter #(and (= :def-atom (:node %))
+                                         (= "main" (:name %)))
+                                   top-nodes))
+        main-has-message-txn?
+        (boolean (some #(and (= :transition (:node %))
+                             (contains? #{"<:" "<|"} (get-in % [:receive :glyph])))
+                       (:body main-node)))
+        include-main? (or (seq other-atoms) main-has-message-txn?)
+        atoms    (if include-main?
+                   (filter #(= :def-atom (:node %)) top-nodes)
+                   other-atoms)
         skeleton (into {} (map (fn [a] [(:name a) {:fields [] :field-index {}
                                                    :ctor-params [] :methods []
                                                    :method-index {} :observables []
@@ -373,6 +481,12 @@
              ctor-params   (ctor-params-normalized merged-ctor {} env enum-env)
              methods       (extract-methods name msec)
              message-index (collect-message-shapes name transitions)
+             ;; Streams this atom EMITS (untargeted `:>` in any transition
+             ;; body). Indexed by stream name; the ordered list preserves
+             ;; declaration order so the emitted ivars + methods have a
+             ;; stable footprint. Layer 4 Step 13.
+             stream-index  (collect-stream-shapes name transitions)
+             stream-order  (vec (distinct (map :msg (emit-nodes-in transitions))))
              ;; Names of fields that are nested-slot children — Step 11
              ;; installs a parent back-ref on each after construction, and
              ;; -transitionToEnd cascades end into each on this atom's end.
@@ -386,6 +500,8 @@
                           :invariants    invariants
                           :transitions   transitions
                           :message-index message-index
+                          :stream-index  stream-index
+                          :stream-order  stream-order
                           :slot-names    slot-names
                           :extras        extras})))
      skeleton
@@ -790,19 +906,58 @@
 ;; Statement lowering
 ;; ---------------------------------------------------------------------------
 
+(defn- lower-stream-emit
+  "Lower an untargeted `:>` — stream emission from the enclosing atom.
+   The stream must have been discovered during build-atom-env (i.e. the
+   atom has some `:>` site declaring this stream, which this call is
+   one of). Payload args are marshalled by name against the emit-site's
+   declared payload shape; the enclosing atom is identified via
+   `self` in ctx locals (set by lower-atom / lower-message-triggered-
+   transitions before descending into body clauses). Lowers to
+   `[self cxc_emit_<stream>[With<k>:...]]` — the synthesized emit
+   method (see stream-methods-for-atom) owns fan-out."
+  [node ctx]
+  (let [self-info (get-in ctx [:locals "self"])
+        _         (when-not (and (map? self-info) (:atom self-info))
+                    (fail-nyi! (str "untargeted `:> " (:msg node)
+                                    "` outside a def-atom transition body "
+                                    "(no `self` in scope)")
+                               node))
+        atom-name (:atom self-info)
+        stream    (get-in ctx [:atom-env atom-name :stream-index (:msg node)])
+        _         (when-not stream
+                    ;; Shouldn't happen — collect-stream-shapes registered
+                    ;; every emit site — but guard against ctx drift.
+                    (fail-nyi! (str "atom `" atom-name "` has no `:> "
+                                    (:msg node) "` emit registered "
+                                    "(stream-index missed it)")
+                               node))
+        declared-params (mapv (fn [p] {:name (:name p) :default nil})
+                              (:payload stream))
+        resolved  (resolve-args-against-params
+                   (str "stream emit `:> " (:msg node) "` on `" atom-name "`")
+                   declared-params
+                   (:args node))
+        arg-exprs (mapv (fn [{:keys [value]}] (lower-expr value ctx)) resolved)
+        param-names (mapv :name (:payload stream))
+        selector  (objc-method-selector (str "cxc_emit_" (:msg node)) param-names)]
+    {:node :objc-msg
+     :recv {:node :name :sym "self"}
+     :selector selector
+     :args arg-exprs}))
+
 (defn- lower-send
   "Lower a targeted `:emit` node to a `cxc_send_async` / `cxc_send_sync`
-   runtime helper call. Untargeted `:> msg` (stream emission) lands in
-   Step 13. Payload args are matched by name against the receiver's
-   declared `msg{...}` payload shape (design §9/§12) — arg order in the
-   sender may differ from receiver declaration order. Sync sends are
-   direct method calls under Layer 4 single-thread (design §15); Layer
-   4c upgrades them to real `dispatch_sync` when queue targets differ."
+   runtime helper call. Untargeted `:>` fans out through the enclosing
+   atom's synthesized stream emit method (Step 13). Payload args are
+   matched by name against the receiver's declared `msg{...}` payload
+   shape (design §9/§12) — arg order in the sender may differ from
+   receiver declaration order. Sync sends are direct method calls under
+   Layer 4 single-thread (design §15); Layer 4c upgrades them to real
+   `dispatch_sync` when queue targets differ."
   [node ctx]
-  (when (nil? (:target node))
-    (fail-nyi! (str "untargeted send `" (if (:async? node) ":>" "|>") " "
-                    (:msg node) "` — stream emission is Layer 4 Step 13")
-               node))
+  (if (nil? (:target node))
+    (lower-stream-emit node ctx)
   (let [target-lo (lower-expr (:target node) ctx)
         target-ty (infer-type (:target node) ctx)
         _         (when-not (and (map? target-ty) (:atom target-ty))
@@ -839,7 +994,7 @@
              :stmts [{:node :objc-msg
                       :recv target-lo
                       :selector selector
-                      :args arg-exprs}]}]}))
+                      :args arg-exprs}]}]})))
 
 (defn- lower-stmt [node ctx]
   (case (:node node)
@@ -922,18 +1077,55 @@
   [t]
   (contains? #{"<:" "<|"} (get-in t [:receive :glyph])))
 
+(defn- transition-trigger-kind
+  "Classify a receive-glyph transition's source pattern:
+   - :message — bare ident like `bump`. Direct message-triggered
+     transition (Steps 4-7).
+   - :stream  — dot expression like `source.beep`. Stream subscription
+     (Step 13); source expression names an atom whose stream emits
+     drive this transition.
+
+   Anything else (complex expressions, method calls in the source
+   position) is out of scope for Layer 4."
+  [t]
+  (let [src (get-in t [:receive :msg :source])]
+    (case (:node src)
+      :ident :message
+      :dot   :stream
+      (fail-nyi! (str "receive-glyph source pattern must be a bare ident "
+                      "(message) or a dot expression (stream); got "
+                      (:node src))
+                 src))))
+
 (defn- transition-msg-name
-  "Extract the message-name from a receive-glyph transition's pattern.
-   Only bare-ident patterns (`bump`, `take_damage`) are handled at
-   Layer 4 Step 4-7; dotted sources like `input.pressed` land in Step 13."
+  "Extract the message-name from a message-triggered receive-glyph
+   transition. Only bare-ident sources call this; stream transitions
+   go through transition-stream-descriptor."
   [t]
   (let [src (get-in t [:receive :msg :source])]
     (case (:node src)
       :ident (:name src)
-      (fail-nyi! (str "message pattern source on transition must be a bare ident "
-                      "(got " (:node src) "); dotted sources like `input.pressed` "
-                      "are Layer 4 Step 13")
+      (fail-nyi! (str "expected bare-ident message source (got " (:node src) ")")
                  src))))
+
+(defn- stream-selector
+  "Cocoa selector on the SUBSCRIBER side for a stream receive. Encoding:
+   `cxc_stream_<streamname>_from_<SourceClass>[With<k1>:<k2>:...]`. The
+   `_from_<Source>` suffix scopes the selector to the source class, so
+   two receive-glyph transitions on the same subscriber pulling streams
+   named identically from different sources compile to distinct selectors
+   (Choice 1A, see design analysis)."
+  [source-class stream-name payload-keys]
+  (objc-method-selector (str "cxc_stream_" stream-name "_from_" source-class)
+                        payload-keys))
+
+(defn- stream-emit-selector
+  "Cocoa selector on the SOURCE side for a stream emit method:
+   `cxc_emit_<streamname>[With<k1>:<k2>:...]`. Called by `:>` emit-site
+   lowering; body iterates the subscriber hashtable + cxc_send_async's
+   each."
+  [stream-name payload-keys]
+  (objc-method-selector (str "cxc_emit_" stream-name) payload-keys))
 
 (defn- wildcards-by-target-phase
   "Index wildcards (`-> phase then:/do:`) by their target phase. A
@@ -1093,57 +1285,269 @@
      :guard       guard-lo
      :body        body}))
 
-(defn- lower-message-triggered-transitions
-  "Group transitions by message-selector. Each group becomes a single
-   ObjC instance method whose body is a sequence of :transition-branch
-   nodes in source-order. Same-selector transitions on different source
-   phases are the common case (`alive <: bump ...` and `dying <: bump ...`);
-   emitting them as branches in one method is what makes ObjC selector
-   dispatch work — you can't have two methods with identical selectors.
+(defn- resolve-stream-source
+  "The receive-glyph's source is `source.event` (a :dot node). Walk
+   the target to determine which atom class emits the stream; must be
+   a live, non-nullable atom-typed slot or use: cap on the enclosing
+   atom (Layer 4). Nullable slots and List-of-T fan-in are deferred.
+   Returns `{:source-class C :source-field F}` when legal, else fails."
+  [atom-name enclosing-fields dot-src]
+  (let [target (:target dot-src)
+        _      (when-not (= :ident (:node target))
+                 (fail-nyi! (str "receive-glyph source `" (:field dot-src)
+                                 "` must be `<field>." (:field dot-src)
+                                 "` where <field> names a data-field / cap "
+                                 "on the enclosing atom (got "
+                                 (:node target) ")")
+                            dot-src))
+        fname  (:name target)
+        field  (get enclosing-fields fname)
+        _      (when-not field
+                 (fail-nyi! (str "receive-glyph source `" fname "." (:field dot-src)
+                                 "` — no data-field / cap named `" fname
+                                 "` on atom `" atom-name "`")
+                            dot-src))
+        ;; Field type must be an atom (non-nullable at Layer 4).
+        cxc-ty (:cxc-ty field)]
+    (when (:nullable? field)
+      (fail-nyi! (str "receive-glyph source `" fname "` is nullable; "
+                      "dynamic subscription lifetime (register on slot fill, "
+                      "unregister on nil) is Layer 4b")
+                 dot-src))
+    {:source-class cxc-ty
+     :source-field fname}))
 
-   Wildcards (implicit-source `-> phase ...`) indexed by target phase
-   thread through so each transition-branch inlines its target's
-   wildcard body at the right emit position (§6)."
+(defn- validate-stream-subscribe
+  "Cross-check a stream subscription against the source atom's
+   stream-index: source class must exist, stream must be declared
+   (i.e. source atom has some `:>` emit for it), payload keys must
+   match. Fail-nyi with a diagnostic naming the mismatch — parallels
+   the cross-atom message shape check at Step 10."
+  [atom-name t {:keys [source-class]} ctx]
+  (let [msg          (get-in t [:receive :msg])
+        stream-name  (get-in msg [:source :field])
+        payload      (or (:payload msg) [])
+        source-info  (get-in ctx [:atom-env source-class])
+        _            (when-not source-info
+                       (fail-nyi! (str "receive-glyph source `" source-class
+                                       "` is not a def-atom in the program")
+                                  t))
+        stream       (get-in source-info [:stream-index stream-name])
+        _            (when-not stream
+                       (fail-nyi! (str "atom `" source-class "` emits no `:> "
+                                       stream-name "` stream — receive-glyph "
+                                       "`" (:source-field t) "." stream-name
+                                       "` on `" atom-name "` has no source")
+                                  t))
+        expected-keys (mapv :name (:payload stream))
+        got-keys      (mapv :name payload)
+        _            (when (not= expected-keys got-keys)
+                       (fail-nyi! (str "receive-glyph payload shape on atom `"
+                                       atom-name "` subscribing to `"
+                                       source-class "." stream-name
+                                       "` differs from source-side emit shape: "
+                                       "declared " got-keys ", source emits "
+                                       expected-keys)
+                                  t))]
+    {:source-class source-class
+     :stream-name  stream-name
+     :payload      payload}))
+
+(defn- lower-receive-glyph-transitions
+  "Lower every receive-glyph transition on this atom, grouping by
+   selector so `alive <: bump ...` and `dying <: bump ...` collapse
+   into one ObjC method with two first-match branches (design §12).
+   Handles both discriminants of receive-glyph source (Step 13):
+     - :message — bare-ident (`bump`), receiver selector = `<msg>[With...]`
+     - :stream  — dot expression (`source.beep`), receiver selector =
+       `cxc_stream_<stream>_from_<Source>[With...]`, plus a
+       subscription tuple registered later in cxc_runtimeBinding.
+   Returns `{:methods [...], :stream-subscriptions [...]}`. The
+   subscription vector carries `{:source-field :source-class
+   :stream-name}` per unique subscription (dedup'd, so multiple
+   receive sites on the same source-class.stream register once)."
   [atom-name transitions ctx]
-  (let [msg-txns    (filter message-triggered? transitions)
-        _           (doseq [t msg-txns]
-                      (when (= "<|" (get-in t [:receive :glyph]))
-                        (fail-nyi! (str "sync-receive glyph `<|` on transition "
-                                        "(rendezvous semantics — deferred to Layer 4b)")
-                                   t)))
+  (let [receive-txns (filter #(and (:receive %)
+                                   (contains? #{"<:" "<|"}
+                                              (get-in % [:receive :glyph])))
+                             transitions)
+        _            (doseq [t receive-txns]
+                       (when (= "<|" (get-in t [:receive :glyph]))
+                         (fail-nyi! (str "sync-receive glyph `<|` on transition "
+                                         "(rendezvous semantics — deferred to Layer 4b)")
+                                    t)))
         wildcards-by-phase (wildcards-by-target-phase transitions)
-        ;; group-by preserves group order per key; sort by first appearance
-        ;; to keep emit order deterministic and match declaration order.
-        by-selector (reduce (fn [acc t] (update acc (transition-msg-name t)
-                                                (fnil conj []) t))
-                            {}
-                            msg-txns)
-        ;; Preserve declaration order of selectors.
-        selector-order (distinct (mapv transition-msg-name msg-txns))]
-    (mapv (fn [msg-name]
-            (let [ts       (get by-selector msg-name)
-                  ;; Payload declared consistently across transitions on
-                  ;; the same msg-name (enforced by collect-message-shapes).
-                  payload  (or (get-in (first ts) [:receive :msg :payload]) [])
-                  param-names (mapv :name payload)
-                  selector    (objc-method-selector msg-name param-names)
-                  method-params (mapv (fn [p]
-                                        {:name   (:name p)
-                                         :c-type (cxc-type->c
-                                                  (:type p)
-                                                  (:record-env ctx)
-                                                  (:atom-env ctx)
-                                                  (:enum-env ctx))})
-                                      payload)
-                  branches (mapv #(lower-transition-branch atom-name % ctx
-                                                           wildcards-by-phase)
-                                 ts)]
-              {:node        :objc-method
-               :selector    selector
-               :return-type "void"
-               :params      method-params
-               :body        branches}))
-          selector-order)))
+        enclosing-fields (get-in ctx [:self-fields])
+        ;; Descriptor per transition: {:kind :group-key :source-selector-info}.
+        descs      (mapv
+                    (fn [t]
+                      (case (transition-trigger-kind t)
+                        :message
+                        (let [msg-name (transition-msg-name t)
+                              payload  (or (get-in t [:receive :msg :payload]) [])
+                              param-names (mapv :name payload)]
+                          {:kind        :message
+                           :txn         t
+                           :group-key   [:message msg-name]
+                           :selector    (objc-method-selector msg-name param-names)
+                           :payload     payload})
+                        :stream
+                        (let [src-info (resolve-stream-source
+                                        atom-name enclosing-fields
+                                        (get-in t [:receive :msg :source]))
+                              validated (validate-stream-subscribe
+                                         atom-name t src-info ctx)
+                              stream-name (:stream-name validated)
+                              source-class (:source-class validated)
+                              payload    (:payload validated)
+                              param-names (mapv :name payload)]
+                          {:kind         :stream
+                           :txn          t
+                           :group-key    [:stream source-class stream-name]
+                           :selector     (stream-selector source-class stream-name param-names)
+                           :payload      payload
+                           :source-class source-class
+                           :source-field (:source-field src-info)
+                           :stream-name  stream-name})))
+                    receive-txns)
+        by-key    (reduce (fn [acc d] (update acc (:group-key d) (fnil conj []) d))
+                          {}
+                          descs)
+        key-order (distinct (mapv :group-key descs))
+        methods   (mapv
+                   (fn [k]
+                     (let [group (get by-key k)
+                           first-d (first group)
+                           payload (:payload first-d)
+                           method-params (mapv
+                                          (fn [p]
+                                            {:name   (:name p)
+                                             :c-type (cxc-type->c
+                                                      (:type p)
+                                                      (:record-env ctx)
+                                                      (:atom-env ctx)
+                                                      (:enum-env ctx))})
+                                          payload)
+                           branches (mapv #(lower-transition-branch
+                                            atom-name (:txn %) ctx
+                                            wildcards-by-phase)
+                                          group)]
+                       {:node        :objc-method
+                        :selector    (:selector first-d)
+                        :return-type "void"
+                        :params      method-params
+                        :body        branches}))
+                   key-order)
+        ;; Dedup stream subscriptions by (source-field, stream-name):
+        ;; multiple receive-glyphs on the same source.stream on THIS
+        ;; atom register only once (the ObjC method holds all branches).
+        subs (->> descs
+                  (filter #(= :stream (:kind %)))
+                  (map (fn [d] (select-keys d [:source-field :source-class
+                                               :stream-name])))
+                  distinct
+                  vec)]
+    {:methods              methods
+     :stream-subscriptions subs}))
+
+;; ---------------------------------------------------------------------------
+;; Stream source-side synthesis (Step 13, Choice 3A + generic dispatch).
+;;
+;; A source atom owns one NSHashTable (weak refs) per stream it emits.
+;; The compiler synthesizes four kinds of members per atom:
+;;   1. Ivar/property `_stream_subscribers_<name>` per stream
+;;   2. Init statement in cxc_structuralSetup: hashtable allocation
+;;   3. Emit method `-cxc_emit_<name>[With<k>:...]` iterating + fan-out
+;;   4. Subscribe methods:
+;;        - Per-stream `-cxc_addSubscriberFor_<name>:` (compiled sites)
+;;        - Generic  `-cxc_addSubscriberToStream:sub:` (restore/reflection)
+;;
+;; All subscribe bodies wrap addObject in dispatch_sync(_own_queue, ^{})
+;; to future-proof against Layer 4c multi-thread — free under single-
+;; thread (dispatch_sync-to-current-queue is fast). See design analysis
+;; §4.5 for the rationale.
+;; ---------------------------------------------------------------------------
+
+(defn- stream-subscribers-ivar-name
+  [stream-name]
+  (str "_stream_subscribers_" stream-name))
+
+(defn- stream-subscribers-prop
+  "Per-stream `NSHashTable *_stream_subscribers_<name>` property.
+   `strong` under ARC because the hashtable itself is owned by this
+   atom; weak semantics are on the HASHTABLE's stored subscribers
+   (configured via +weakObjectsHashTable), not on the container."
+  [stream-name]
+  {:name   (subs (stream-subscribers-ivar-name stream-name) 1)  ; drop leading _
+   :c-type "NSHashTable *"
+   :attrs  ["nonatomic" "strong"]})
+
+(defn- stream-source-methods
+  "Synthesize the per-stream ivars, init statements, and methods for
+   an atom that emits `streams` (from stream-order + stream-index).
+   Callers wire the returned pieces into the class's :properties,
+   cxc_structuralSetup body, and :methods list."
+  [source-class stream-order stream-index]
+  (if (empty? stream-order)
+    {:properties [] :init-stmts [] :methods []}
+    (let [props     (mapv stream-subscribers-prop stream-order)
+          init-stmts (mapv (fn [nm]
+                             {:node :hashtable-init
+                              :ivar (stream-subscribers-ivar-name nm)})
+                           stream-order)
+          emit-methods
+          (mapv (fn [nm]
+                  (let [payload (:payload (get stream-index nm))
+                        keys    (mapv :name payload)
+                        ;; Emit method's own signature: takes payload
+                        ;; params through by name. Layer 4 zero-payload
+                        ;; case is `- (void)cxc_emit_<nm>`; typed
+                        ;; payload inference is a follow-up (currently
+                        ;; only zero-payload emit is exercised end-to-
+                        ;; end — see stream-simple.cxc).
+                        _       (when (seq keys)
+                                  (fail-nyi!
+                                   (str "typed payload on `:> " nm "` — "
+                                        "stream emit with payload keys "
+                                        keys " requires type inference "
+                                        "across all emit sites (Step 13 "
+                                        "follow-up; see design analysis §7)")
+                                   {:stream nm :keys keys}))]
+                    {:node        :objc-method
+                     :selector    (stream-emit-selector nm keys)
+                     :return-type "void"
+                     :params      []
+                     :body        [{:node       :stream-fanout
+                                    :ivar       (stream-subscribers-ivar-name nm)
+                                    :selector   (stream-selector source-class nm keys)
+                                    :arg-names  keys}]}))
+                stream-order)
+          per-stream-add
+          (mapv (fn [nm]
+                  {:node        :objc-method
+                   :selector    (str "cxc_addSubscriberFor_" nm ":")
+                   :return-type "void"
+                   :params      [{:name "sub" :c-type "id"}]
+                   :body        [{:node :stream-add-sub
+                                  :ivar (stream-subscribers-ivar-name nm)}]})
+                stream-order)
+          generic-add
+          {:node        :objc-method
+           :selector    "cxc_addSubscriberToStream:sub:"
+           :return-type "void"
+           :params      [{:name "streamName" :c-type "NSString *"}
+                         {:name "sub"        :c-type "id"}]
+           :body        [{:node     :stream-add-sub-dispatch
+                          :branches (mapv (fn [nm]
+                                            {:stream-name nm
+                                             :selector    (str "cxc_addSubscriberFor_"
+                                                               nm ":")})
+                                          stream-order)}]}]
+      {:properties props
+       :init-stmts init-stmts
+       :methods    (-> emit-methods
+                       (into per-stream-add)
+                       (conj generic-add))})))
 
 ;; ---------------------------------------------------------------------------
 ;; Top-level lowering — records, methods, atoms, main
@@ -1279,7 +1683,14 @@
    ;; Fires from init AND post-transition (Step 14); label stays generic.
    :label (str atom-name " invariant #" idx " failed")})
 
-(defn- lower-atom [atom-name ctx]
+(defn- class-name-for-atom
+  "Emitted ObjC class name. Regular atoms use their cxc name verbatim.
+   Main gets `CxcMain` — `main` collides with C's main() symbol and
+   also isn't idiomatic ObjC (class names are UpperCamel)."
+  [atom-name]
+  (if (= "main" atom-name) "CxcMain" atom-name))
+
+(defn- lower-atom [atom-name ctx & {:keys [is-main?]}]
   (let [rec           (get-in ctx [:atom-env atom-name])
         extras        (:extras rec)
         ctor-params   (:ctor-params rec)
@@ -1401,9 +1812,22 @@
                            :selector state-selector
                            :args (mapv (fn [p] {:node :name :sym (:name p)})
                                        ctor-params)}
+          ;; Step 13 stream-source infrastructure. Every atom that
+          ;; emits any `:>` gets per-stream ivars, a hashtable init in
+          ;; structuralSetup, an emit method, per-stream + generic
+          ;; subscribe methods.
+          stream-order    (:stream-order rec)
+          stream-index    (:stream-index rec)
+          stream-parts    (stream-source-methods
+                           (class-name-for-atom atom-name)
+                           stream-order stream-index)
+          stream-props        (:properties stream-parts)
+          stream-init-stmts   (:init-stmts stream-parts)
+          stream-source-mths  (:methods stream-parts)
           setup-method    {:node :objc-method :selector "cxc_structuralSetup"
                            :return-type "void" :params []
-                           :body [queue-init-stmt phase-init-stmt]}
+                           :body (-> [queue-init-stmt phase-init-stmt]
+                                     (into stream-init-stmts))}
           state-method    {:node :objc-method :selector state-selector
                            :return-type "void"
                            :params (mapv (fn [p] {:name (:name p) :c-type (:c-type p)})
@@ -1417,14 +1841,33 @@
                                    :selector "checkInvariants"
                                    :return-type "void" :params []
                                    :body invariant-stmts}
+          txn-result      (lower-receive-glyph-transitions
+                           atom-name transitions ctx-with-self)
+          txn-methods     (:methods txn-result)
+          stream-subs     (:stream-subscriptions txn-result)
+          ;; Subscribe registrations run in cxc_runtimeBinding BEFORE
+          ;; the invariant check. Timing: this atom's stateInit has
+          ;; already run (so nested-slot sources like `_source` exist),
+          ;; source atom's own runtimeBinding also ran (see design §7.4).
+          ;; Any events source dispatches to its queue during its own
+          ;; init will still be picked up because the queue targets main
+          ;; and dispatch_main hasn't started yet — by the time it does,
+          ;; we're subscribed.
+          sub-register-stmts
+          (mapv (fn [s]
+                  {:node :objc-msg
+                   :recv {:node :name :sym (str "_" (:source-field s))}
+                   :selector (str "cxc_addSubscriberFor_" (:stream-name s) ":")
+                   :args [{:node :name :sym "self"}]})
+                stream-subs)
           bind-method     {:node :objc-method :selector "cxc_runtimeBinding"
                            :return-type "void" :params []
-                           :body [(self-msg-noargs "checkInvariants")]}
+                           :body (-> []
+                                     (into sub-register-stmts)
+                                     (conj (self-msg-noargs "checkInvariants")))}
           init-shell      [(self-msg-noargs "cxc_structuralSetup")
                            state-init-msg
                            (self-msg-noargs "cxc_runtimeBinding")]
-          txn-methods     (lower-message-triggered-transitions
-                           atom-name transitions ctx-with-self)
           ;; -cxc_installParent:inSlot: setter. Called by the PARENT
           ;; right after constructing this atom in its cxc_stateInit,
           ;; so this atom can cascade nil back on -> end.
@@ -1465,7 +1908,15 @@
                                     {:node :objc-msg
                                      :recv {:node :name :sym "self"}
                                      :selector "checkInvariants"
-                                     :args []}))
+                                     :args []})
+                              ;; Main atom's end shuts down the process
+                              ;; (design §19). exit(0) after cascade so
+                              ;; children get a chance to run their -> end
+                              ;; handlers — best-effort under async cascade
+                              ;; (a full sync shutdown needs `<|` in 4b).
+                              (cond-> is-main?
+                                (conj {:node :call
+                                       :fn "cxc_shutdown" :args []})))
           ;; Idempotency guard OUTSIDE the try/catch — a re-entry from
           ;; within a raised catch (e.g. our own cascade or invariant
           ;; check throws) would loop otherwise. Design §20 loop-guard.
@@ -1489,12 +1940,13 @@
                            :params [{:name "slotName" :c-type "NSString *"}]
                            :body slot-clear-stmts}]
       {:node            :objc-class
-       :name            atom-name
+       :name            (class-name-for-atom atom-name)
        :superclass      "NSObject"
        :phase-constants (mapv (fn [p] {:name (phase-constant-name atom-name p)
                                        :value p}) phase-names)
-       :properties      (into [phase-prop own-queue-prop parent-prop parent-slot-prop]
-                              data-props)
+       :properties      (-> [phase-prop own-queue-prop parent-prop parent-slot-prop]
+                            (into data-props)
+                            (into stream-props))
        :init-params     (mapv (fn [p] {:name (:name p) :c-type (:c-type p)}) ctor-params)
        :init-body       init-shell
        :methods         (-> [setup-method state-method bind-method
@@ -1502,7 +1954,8 @@
                              install-method end-method nil-slot-method]
                             (into user-methods)
                             (into obs-methods)
-                            (into txn-methods))})))
+                            (into txn-methods)
+                            (into stream-source-mths))})))
 
 (defn- main-atom-body [main-node ctx]
   (let [transitions (filter #(= :transition (:node %)) (:body main-node))
@@ -1567,7 +2020,15 @@
         c-enums    (mapv lower-enum enums)
         structs    (mapv #(lower-record-struct % ctx) records)
         functions  (record-method-functions ctx)
-        classes    (mapv #(lower-atom % ctx) (keys atom-env))
+        ;; main-as-atom kicks in whenever the atom-env contains main
+        ;; (build-atom-env puts it in iff other atoms exist).
+        main-as-atom?  (contains? atom-env "main")
+        _              (when (and main-as-atom? (seq (get-in atom-env ["main" :ctor-params])))
+                         (fail-nyi! "def main with ctor params (env-cap wiring for main is Layer 5)"
+                                    {:atom "main"}))
+        classes    (mapv (fn [nm]
+                           (lower-atom nm ctx :is-main? (= "main" nm)))
+                         (keys atom-env))
         needs-foundation? (boolean (seq classes))
         needs-abort?      (boolean (some #(seq (:invariants (second %))) atom-env))
         ;; Runtime helpers (cxc_send_async / cxc_send_sync / cxc_shutdown
@@ -1576,6 +2037,12 @@
         ;; and casts to id<CXCAtom>). So the presence of any atom class
         ;; means we emit the runtime block.
         needs-runtime?    (boolean (seq classes))
+        ;; dispatch_main() only when the program actually enqueues async
+        ;; work (`:>` send). Programs whose only cross-atom talk is sync
+        ;; (`|>` — direct call under Layer 4) complete synchronously in
+        ;; the constructor and exit normally — no dispatch loop needed,
+        ;; no `-> end` termination path required from the user.
+        needs-dispatch-loop? (program-has-async-sends? top-nodes)
         base-includes     (if needs-foundation?
                             ["<Foundation/Foundation.h>"]
                             ["<stdio.h>"])
@@ -1583,14 +2050,27 @@
                             needs-abort?   (conj "<stdlib.h>")
                             needs-runtime? (conj "<stdlib.h>"))
         ;; Dedup includes while preserving order.
-        includes          (vec (distinct includes))]
-    {:node           :objc-program
-     :includes       includes
-     :needs-runtime? needs-runtime?
-     :enums          c-enums
-     :structs        structs
-     :functions      functions
-     :classes        classes
-     :main           {:body         (conj (main-atom-body main-atom ctx)
-                                          {:node :return :value {:node :int :value 0}})
-                      :autorelease? needs-foundation?}}))
+        includes          (vec (distinct includes))
+        main-body         (if main-as-atom?
+                            ;; Bootstrap the Main atom. Stored in file-
+                            ;; scope static (emit renders both the decl
+                            ;; and the alloc/init) so it stays alive
+                            ;; across dispatch_main() — the auto-release
+                            ;; pool ends before dispatch_main starts;
+                            ;; a local would deallocate at pool drain.
+                            [{:node :main-bootstrap
+                              :class-name (class-name-for-atom "main")}]
+                            (main-atom-body main-atom ctx))]
+    {:node                :objc-program
+     :includes            includes
+     :needs-runtime?      needs-runtime?
+     :needs-dispatch-loop? needs-dispatch-loop?
+     :enums               c-enums
+     :structs             structs
+     :functions           functions
+     :classes             classes
+     :main                {:body         (if main-as-atom?
+                                           main-body   ; return 0 unreachable after dispatch_main
+                                           (conj main-body
+                                                 {:node :return :value {:node :int :value 0}}))
+                           :autorelease? needs-foundation?}}))

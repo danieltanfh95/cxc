@@ -5,6 +5,15 @@
 
 (defn- lower-src [src] (lower/lower (p/parse src)))
 
+(defn- main-work-body
+  "Return the body of CxcMain's cxc_stateInit — the effective site of
+   `def main: -> running do: <stmts>` under main-as-atom (Steps 16/17).
+   Falls back to the raw main body for programs without ObjC classes."
+  [prog]
+  (if-let [cxc-main (first (filter #(= "CxcMain" (:name %)) (:classes prog)))]
+    (:body (first (filter #(= "cxc_stateInit" (:selector %)) (:methods cxc-main))))
+    (get-in prog [:main :body])))
+
 (deftest hello-world-program-lowers
   (testing "def main: -> running do: print(\"hello, world\") lowers cleanly"
     (let [prog (lower-src "def main:
@@ -143,7 +152,9 @@
 (deftest def-atom-ctor-lowers-to-alloc-init
   (testing "Counter() in expression position → :objc-alloc-init"
     (let [prog (lower-src "def Counter:\n    data:\n        n: Int = 42\n\ndef main:\n    -> running\n        do: print(Counter().n)\n")
-          call (first (get-in prog [:main :body]))
+          ;; main-as-atom (Steps 16/17): the print call lives inside
+          ;; CxcMain's cxc_stateInit body, not directly in main().
+          call (first (main-work-body prog))
           ctor (get-in call [:args 1 :target])]
       (is (= :objc-alloc-init (:node ctor)))
       (is (= "Counter" (:class ctor))))))
@@ -297,8 +308,8 @@ def main:
 (deftest atom-ctor-params-lower-to-init-with
   (testing "def-atom with ctor params → :init-params on class + :objc-init-with at call site"
     (let [prog (lower-src "def Counter(initial: Int = 0):\n    data:\n        n: Int = initial\n\ndef main:\n    -> running\n        do: print(Counter(initial: 42).n)\n")
-          cls  (first (:classes prog))
-          call (first (get-in prog [:main :body]))
+          cls  (first (filter #(= "Counter" (:name %)) (:classes prog)))
+          call (first (main-work-body prog))
           ctor (get-in call [:args 1 :target])]
       (is (= [{:name "initial" :c-type "int"}] (:init-params cls)))
       ;; -init shell calls cxc_structuralSetup, cxc_stateInitWithinitial:initial,
@@ -353,7 +364,7 @@ def main:
 (deftest atom-method-call-lowers-to-objc-msg
   (testing "counter.bump() → :objc-msg with the receiver as :recv and bare selector"
     (let [prog (lower-src "def Counter:\n    data:\n        n: Int = 10\n\n    methods:\n        function bump(self) -> Int:\n            return self.n + 1\n\ndef main:\n    -> running\n        do: print(Counter().bump())\n")
-          call (first (get-in prog [:main :body]))
+          call (first (main-work-body prog))
           msg  (get-in call [:args 1])]
       (is (= :objc-msg (:node msg)))
       (is (= "bump" (:selector msg)))
@@ -364,8 +375,8 @@ def main:
   (testing "plus(self, other: Int) → selector `plusWithother:` and matching call"
     (let [prog (lower-src "def Counter:\n    data:\n        n: Int = 10\n\n    methods:\n        function plus(self, other: Int) -> Int:\n            return self.n + other\n\ndef main:\n    -> running\n        do: print(Counter().plus(5))\n")
           m    (first (filter #(= "plusWithother:" (:selector %))
-                              (:methods (first (:classes prog)))))
-          call (first (get-in prog [:main :body]))
+                              (:methods (first (filter #(= "Counter" (:name %)) (:classes prog))))))
+          call (first (main-work-body prog))
           msg  (get-in call [:args 1])]
       (is (= "plusWithother:" (:selector m)))
       (is (= [{:name "other" :c-type "int"}] (:params m)))
@@ -384,7 +395,7 @@ def main:
 (deftest is-nil-emits-pointer-eq
   (testing "`x is nil` → `x == nil` at emit layer (pointer identity in ObjC)"
     (let [prog (lower-src "def Counter:\n    data:\n        other: Counter? = nil\n\ndef main:\n    -> running\n        do: print(Counter().other is nil)\n")
-          call (first (get-in prog [:main :body]))
+          call (first (main-work-body prog))
           expr (get-in call [:args 1])]
       (is (= :binop (:node expr)))
       (is (= "==" (:op expr)))
@@ -412,7 +423,7 @@ def main:
 (deftest atom-ctor-params-default-fills-when-omitted
   (testing "Counter() with no args uses ctor-param defaults"
     (let [prog (lower-src "def Counter(initial: Int = 5):\n    data:\n        n: Int = initial\n\ndef main:\n    -> running\n        do: print(Counter().n)\n")
-          call (first (get-in prog [:main :body]))
+          call (first (main-work-body prog))
           ctor (get-in call [:args 1 :target])]
       (is (= :objc-init-with (:node ctor)))
       (is (= [{:name "initial" :value {:node :int :value 5}}] (:args ctor))))))

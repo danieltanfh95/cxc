@@ -209,3 +209,15 @@
       (is (not (zero? exit)) "expected non-zero exit from abort()")
       (is (re-find #"Gauge invariant #0 failed" (or stderr ""))
           "expected diagnostic naming the violated invariant"))))
+
+(deftest end-to-end-main-shutdown-on-end
+  (testing "main-shutdown-on-end.cxc — `self :> stop` triggers `running <: stop -> end`; `-> end do:` prints 7; CxcMain's transitionToEnd invokes cxc_shutdown() to exit the dispatch_main loop cleanly (Steps 16/17)"
+    (let [{:keys [exit stdout]} (compile-and-run "main-shutdown-on-end")]
+      (is (zero? exit))
+      (is (= "7\n" stdout)))))
+
+(deftest end-to-end-stream-simple
+  (testing "stream-simple.cxc — Emitter emits `:> beep` in `-> end do:` after self-firing; main subscribes to `source.beep` via CxcMain's cxc_runtimeBinding; Emitter fanout dispatches to CxcMain via cxc_send_async; CxcMain's transition prints 9 then shuts down (Step 13)"
+    (let [{:keys [exit stdout]} (compile-and-run "stream-simple")]
+      (is (zero? exit))
+      (is (= "9\n" stdout)))))
