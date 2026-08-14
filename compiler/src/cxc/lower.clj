@@ -646,7 +646,23 @@
                                               :type-kw {:atom elem}
                                               :c-type (str elem " *")}]
                                             (get elem-payloads nm []))])
-                                elem-streams))]
+                                elem-streams))
+                     ;; Container-side stream-index also mirrors the
+                     ;; fan-in shape — element's index has {:payload
+                     ;; [{:name "v"}]}; container's re-emit prepends
+                     ;; {:name "e"} because the fan-in forwarding
+                     ;; method attaches element identity. Receive-side
+                     ;; payload validation (validate-stream-subscribe)
+                     ;; keys off :stream-index, so this needs the "e"
+                     ;; prefix or `xs.beep{e, v}` subscribers fail
+                     ;; shape check.
+                     fanin-index
+                     (into {}
+                           (map (fn [[nm entry]]
+                                  [nm (assoc entry :payload
+                                             (into [{:name "e"}]
+                                                   (:payload entry [])))])
+                                elem-index))]
                  [class-name
                   {:kind             :list-container
                    :element-type     elem
@@ -661,7 +677,7 @@
                    :invariants       []
                    :transitions      []
                    :message-index    {}
-                   :stream-index     elem-index
+                   :stream-index     fanin-index
                    :stream-order     elem-streams
                    :stream-payload-index fanin-payloads
                    :subscription-map {}
@@ -1463,11 +1479,27 @@
                    (:args node))
         arg-exprs (mapv (fn [{:keys [value]}] (lower-expr value ctx)) resolved)
         param-names (mapv :name (:payload stream))
-        selector  (objc-method-selector (str "cxc_emit_" (:msg node)) param-names)]
-    {:node :objc-msg
-     :recv {:node :name :sym "self"}
-     :selector selector
-     :args arg-exprs}))
+        selector  (objc-method-selector (str "cxc_emit_" (:msg node)) param-names)
+        direct-send {:node :objc-msg
+                     :recv {:node :name :sym "self"}
+                     :selector selector
+                     :args arg-exprs}]
+    (if (:async? node)
+      ;; Truly async — defer the emit itself to self's own_queue.
+      ;; Fanout still runs synchronously WITHIN the deferred block
+      ;; (one cxc_send_async per subscriber). Critical for the
+      ;; "atom's initial-phase do: emits before anyone subscribed"
+      ;; problem: the block sits on own_queue until dispatch_main
+      ;; starts, by which point subscribers hooked up in other
+      ;; atoms' init/runtimeBinding phases are present.
+      {:node :call
+       :fn "cxc_send_async"
+       :args [{:node :name :sym "self"}
+              {:node :objc-block-literal
+               :params []
+               :stmts [direct-send]}]}
+      ;; `|> foo` sync emit — direct call, no queue hop.
+      direct-send)))
 
 (defn- lower-send
   "Lower a targeted `:emit` node to a `cxc_send_async` / `cxc_send_sync`
@@ -2502,6 +2534,16 @@
                          (= :float ty)
                          {:node :objc-num-lit :kind :float
                           :value (:value item-node)}
+                         ;; Atom-typed elements: the item's lowered form
+                         ;; is already an id-compatible pointer (from an
+                         ;; `[[T alloc] initWith...:...]` ctor call), so
+                         ;; NSArray literal accepts it directly — no
+                         ;; NSNumber/NSValue wrapping needed. Container's
+                         ;; `-cxc_for_each:` unboxing prelude in
+                         ;; `unbox-prelude-for-element` already casts the
+                         ;; block's `id` param back to the atom pointer.
+                         (and (map? ty) (:atom ty))
+                         (lower-expr item-node ctx)
                          :else
                          (fail-nyi! (str "List of `" element-name "` literal — "
                                          "element type " (pr-str ty) " not "
@@ -3123,14 +3165,32 @@
                           :attrs ["nonatomic" "strong"]}]
                         (:properties stream-parts))
      :init-params [{:name "elements" :c-type "NSArray *"}]
-     :init-body   (into [{:node :assign
-                          :lhs  {:node :name :sym "_elements"}
-                          :rhs  {:node :objc-msg
-                                 :recv {:node :name :sym "NSMutableArray"}
-                                 :selector "arrayWithArray:"
-                                 :args [{:node :name :sym "elements"}]}}
-                         {:node :queue-init :ivar "_own_queue"}]
-                        (:init-stmts stream-parts))
+     :init-body   (-> [{:node :assign
+                        :lhs  {:node :name :sym "_elements"}
+                        :rhs  {:node :objc-msg
+                               :recv {:node :name :sym "NSMutableArray"}
+                               :selector "arrayWithArray:"
+                               :args [{:node :name :sym "elements"}]}}
+                       {:node :queue-init :ivar "_own_queue"}]
+                      ;; Auto-subscribe container to each element's
+                      ;; fan-in stream for the initial literal load.
+                      ;; Without this, elements provided via
+                      ;; `xs: List of T = [a, b]` would participate
+                      ;; in fan-in on the runtime `cxc_add:` path
+                      ;; only — literal-init elements would be
+                      ;; silently unhooked, and their emits (fired
+                      ;; during their own -> running) would drop
+                      ;; when main queues them post-dispatch_main.
+                      (cond-> (seq (or fanin-streams []))
+                        (conj {:node :raw-c
+                               :text (str "for (id _cxc_ie in _elements) { "
+                                          (str/join " "
+                                                    (map (fn [nm]
+                                                           (str "[_cxc_ie cxc_addSubscriberFor_"
+                                                                nm ":self];"))
+                                                         fanin-streams))
+                                          " }")}))
+                      (into (:init-stmts stream-parts)))
      :methods     (into [{:name        "count"
                           :selector    "count"
                           :params      []

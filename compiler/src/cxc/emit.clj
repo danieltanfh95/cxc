@@ -768,6 +768,16 @@
         enums       (str/join "\n\n" (map emit-c-enum   (:enums prog)))
         structs     (str/join "\n\n" (map emit-struct   (:structs prog)))
         functions   (str/join "\n\n" (map emit-function (:functions prog)))
+        ;; Forward @class declarations for every user/synthesized class
+        ;; so cross-references in @interface method signatures (e.g. a
+        ;; List container declaring `- (void)... :(Element *)e`) don't
+        ;; hit "unknown type" errors from clang when their @interface
+        ;; order happens to be Container-before-Element.
+        forward-classes (when (seq (:classes prog))
+                          (str "// forward declarations\n"
+                               (str/join "\n"
+                                         (map #(str "@class " (:name %) ";")
+                                              (:classes prog)))))
         interfaces  (str/join "\n\n" (map emit-class-interface-block (:classes prog)))
         impls       (str/join "\n\n" (map emit-class    (:classes prog)))
         ;; File-scope static that main() assigns to. Lives across the
@@ -779,5 +789,6 @@
     (str/join "\n\n"
               (remove str/blank? [includes
                                   helpers enums structs functions
+                                  forward-classes
                                   interfaces fanout-cat impls
                                   main-static main]))))

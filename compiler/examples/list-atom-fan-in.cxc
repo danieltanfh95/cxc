@@ -1,0 +1,26 @@
+def Emitter(seed: Int):
+    data:
+        val: Int = seed
+
+    -> running
+        do: :> beep(v: val)
+
+    -> end
+
+def main:
+    def limit: Ticker(rate_ms: 50, count: 1)
+
+    data:
+        xs: List of Emitter = [Emitter(seed: 10), Emitter(seed: 20)]
+        total: Int = 0
+
+    -> running
+
+    -> end
+        do: print(total)
+
+    running <: xs.beep{e: Emitter, v: Int} -> running
+        then:
+            total => total + v
+
+    running <: limit.done -> end
