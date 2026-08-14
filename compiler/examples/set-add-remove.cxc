@@ -3,12 +3,13 @@ def main:
         s: Set of String
 
     -> running
-        do: s.add("alpha")
-        do: s.add("beta")
-        do: s.add("alpha")
-        do: s.remove("beta")
-        do: print(s.count)
-        do: print(s.contains("alpha"))
-        do: print(s.contains("beta"))
+        do:
+            s.add("alpha")
+            s.add("beta")
+            s.add("alpha")
+            s.remove("beta")
+            print(s.count)
+            print(s.contains("alpha"))
+            print(s.contains("beta"))
 
     -> end

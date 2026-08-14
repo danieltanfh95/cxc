@@ -951,6 +951,13 @@
       ;; for enums/ints/nil. Returns bool.
       (= "is" op) :bool
 
+      ;; Audit F47: `in` is a membership predicate (spec §1.3). Full
+      ;; lowering — dispatching to a container's contains method — is
+      ;; deferred; but the type IS bool regardless of operand kinds,
+      ;; and inferring it as :bool here prevents accidental arithmetic
+      ;; classification below.
+      (= "in" op) :bool
+
       (or (= lt :float) (= rt :float)) :float
       (and (= lt :int) (= rt :int))    :int
 
@@ -1631,14 +1638,24 @@
                     :else
                     {:node :name :sym n}))
     :self       {:node :name  :sym "self"}
-    :binop      {:node  :binop
-                 :op    (case (:op node)
-                          "and" "&&"
-                          "or"  "||"
-                          "is"  "=="            ; pointer-eq for atoms, value-eq for enums/ints
-                          (:op node))
-                 :left  (lower-expr (:left node)  ctx)
-                 :right (lower-expr (:right node) ctx)}
+    :binop      (do
+                  ;; Audit F47: `in` parses as a binop but its semantic
+                  ;; lowering — dispatch to a container's contains
+                  ;; method — is Phase D work (needs the container
+                  ;; contains method design). Reject with a targeted
+                  ;; diagnostic instead of silently emitting literal
+                  ;; `in` into C, which clang would then reject as
+                  ;; an unknown operator far from the source.
+                  (when (= "in" (:op node))
+                    (fail-nyi! "`in` membership operator" node))
+                  {:node  :binop
+                   :op    (case (:op node)
+                            "and" "&&"
+                            "or"  "||"
+                            "is"  "=="            ; pointer-eq for atoms, value-eq for enums/ints
+                            (:op node))
+                   :left  (lower-expr (:left node)  ctx)
+                   :right (lower-expr (:right node) ctx)})
     :neg        {:node :unary :op "-"
                  :expr (lower-expr (:expr node) ctx)}
     :not        {:node :unary :op "!"
@@ -1931,12 +1948,13 @@
    implicit `init` and `end` sentinels. Order-preserving dedup — the
    first mention fixes ordering, which matters for readability of the
    emitted `static NSString * const` block. `init` is always first,
-   `end` always last."
+   `end` always last. `self` (audit F24 — spec §1.11) is a target
+   pseudo-phase meaning \"no phase change\" and is NOT a real phase."
   [transitions]
   (let [mentioned (concat (keep #(when (= :phase (get-in % [:source :kind]))
                                    (get-in % [:source :name])) transitions)
                           (map :target transitions))
-        middle    (remove #{"init" "end"} (distinct mentioned))]
+        middle    (remove #{"init" "end" "self"} (distinct mentioned))]
     (vec (concat ["init"] middle ["end"]))))
 
 (defn- phase-constant-name
@@ -2135,18 +2153,28 @@
                                                 (:updates c)))
                                   then-clauses))
         do-stmts     (vec (mapcat (fn [c] (lower-do-clause c ctx')) do-clauses))
-        phase-update (when (not= target source-name)
+        ;; Audit F24: `-> self` means self-transition, no phase change
+        ;; (spec §1.11 line 1312 — *"target phase. May be a phase name,
+        ;; `self` (self-transition, no phase change), or `end`
+        ;; (deconstruct)"*). Prior code treated `self` as a literal
+        ;; phase name and generated `k<Atom>_phase_self`, causing a
+        ;; bogus phase change. Now `self` is treated the same as
+        ;; source-name for both phase-update suppression and wildcard
+        ;; inlining.
+        self-target? (= target "self")
+        phase-update (when (and (not self-target?) (not= target source-name))
                        {:node :assign
                         :lhs {:node :name :sym "_phase"}
                         :rhs {:node :name
                               :sym (phase-constant-name atom-name target)}})
         ;; Wildcards inline only when the transition actually CHANGES
-        ;; phase (target != source). Self-loops don't count as "entering"
-        ;; the phase — the atom was already there — so a wildcard's `do:`
-        ;; doesn't rerun on every message that keeps the phase the same.
-        ;; Without this, `-> alive do: self |> bump` combined with
-        ;; `alive <: bump -> alive` would recurse infinitely.
-        target-wildcards (if (= target source-name)
+        ;; phase (target != source). Self-loops (both `-> <source>` and
+        ;; `-> self`) don't count as "entering" the phase — the atom
+        ;; was already there — so a wildcard's `do:` doesn't rerun on
+        ;; every message that keeps the phase the same. Without this,
+        ;; `-> alive do: self |> bump` combined with `alive <: bump ->
+        ;; alive` (or `-> self`) would recurse infinitely.
+        target-wildcards (if (or self-target? (= target source-name))
                            []
                            (get wildcards-by-phase target []))
         w-then-stmts (inline-wildcard-then-stmts target-wildcards ctx')
@@ -3346,11 +3374,21 @@
                             (into slot-setter-methods))})))
 
 (defn- main-atom-body [main-node ctx]
+  ;; Audit F50: spec §1.11 does not privilege the phase name `running`
+  ;; — `def main` is the entry point by naming convention, and its
+  ;; initial transition may target any phase name. For the plain-main
+  ;; path (no other atoms, no message txns) the target name is
+  ;; effectively unused: this path emits the transition body inline
+  ;; into C `main()` with no phase-state machinery. Accept any
+  ;; initial transition (source implicit — the `-> X` form) rather
+  ;; than requiring target == "running".
   (let [transitions (filter #(= :transition (:node %)) (:body main-node))
-        running-txn (first (filter #(= "running" (:target %)) transitions))]
-    (when-not running-txn
-      (fail-nyi! "`def main` must have a `-> running` transition" main-node))
-    (lower-transition-body (:body running-txn) ctx)))
+        initial-txn (first (filter #(= :implicit (get-in % [:source :kind]))
+                                   transitions))]
+    (when-not initial-txn
+      (fail-nyi! "`def main` must have an initial transition (e.g. `-> running`)"
+                 main-node))
+    (lower-transition-body (:body initial-txn) ctx)))
 
 (defn- main-def-atom? [node]
   (and (= :def-atom (:node node)) (= "main" (:name node))))

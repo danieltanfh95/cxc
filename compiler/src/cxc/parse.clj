@@ -21,10 +21,13 @@
 ;; `((a <= b) <= c)`. That's incorrect C semantics for chained bounds
 ;; like `-max <= y <= max`. Desugar to `(a <= b) and (b <= c)`.
 ;;
-;; Caveat: `b` is evaluated twice. Safe for pure value expressions
-;; (records, fields, literals, arithmetic). Method calls on atoms would
-;; double-send — for those the user should use `let:` to bind the
-;; intermediate. Not enforced yet.
+;; Audit F27: the middle `b` appears in BOTH comparisons after
+;; desugaring, so it is evaluated twice. Duplicating pure value
+;; expressions (idents, fields, literals, arithmetic) is harmless.
+;; Duplicating an effectful expression — a call, a message send —
+;; changes program semantics (double-send, double-log, double-alloc).
+;; We reject those with a targeted diagnostic that tells the user to
+;; hoist the middle into a `let:` binding first.
 ;; ---------------------------------------------------------------------------
 
 (def ^:private cmp-ops #{"<" "<=" ">" ">="})
@@ -37,10 +40,33 @@
        (= :binop (get-in n [:left :node]))
        (contains? cmp-ops (get-in n [:left :op]))))
 
+(def ^:private effectful-node-kinds
+  ;; Audit F27: node kinds whose duplication in a chained-comparison
+  ;; middle would change program semantics.
+  #{:call :emit})
+
+(defn- expr-has-effectful-descendant? [expr]
+  (let [found (atom false)]
+    (walk/postwalk
+     (fn [n]
+       (when (and (map? n) (contains? effectful-node-kinds (:node n)))
+         (reset! found true))
+       n)
+     expr)
+    @found))
+
 (defn- desugar-chained-node [n]
   (if (chained? n)
     (let [inner       (:left n)
           inner-right (:right inner)]
+      (when (expr-has-effectful-descendant? inner-right)
+        (throw (ex-info
+                (str "chained comparison middle expression has side effects "
+                     "(call or emit); it would be evaluated twice after "
+                     "desugaring `a cmp b cmp c` into `a cmp b and b cmp c`. "
+                     "Hoist to a `let:` binding first — spec §10.")
+                {:kind :chained-comparison-effectful-middle
+                 :middle inner-right})))
       {:node :binop
        :op   "and"
        :left inner
@@ -810,11 +836,45 @@
        (#{"then" "do" "let" "when"} (t-value (peek-tok tokens pos)))
        (at? tokens (inc pos) :punct ":")))
 
+;; Audit F22: spec §10 requires transition sub-blocks in the order
+;; `when, let, then, do`, each at most once. `clause-order` is the
+;; canonical index used to detect out-of-order and duplicate clauses.
+(def ^:private clause-order
+  {:when-clause 0 :let-clause 1 :then-clause 2 :do-clause 3})
+
+(defn- clause-kw->src [kw]
+  ({:when-clause "when" :let-clause "let"
+    :then-clause "then" :do-clause "do"} kw))
+
+(defn- enforce-clause-order-and-multiplicity!
+  "Audit F22: reject repeated clauses and out-of-order clauses in a
+   transition body. Message spec: `when, let, then, do`."
+  [clauses tokens pos]
+  (loop [seen #{} prev-idx -1 [c & rest] clauses]
+    (when c
+      (let [kw  (:node c)
+            idx (clause-order kw)]
+        (when (contains? seen kw)
+          (fail! tokens pos
+                 (str "duplicate `" (clause-kw->src kw)
+                      ":` clause in transition body (each of when/let/then/do "
+                      "may appear at most once — spec §10)")))
+        (when (< idx prev-idx)
+          (fail! tokens pos
+                 (str "`" (clause-kw->src kw) ":` clause out of order — "
+                      "spec §10 requires transition sub-blocks in the order "
+                      "`when, let, then, do`")))
+        (recur (conj seen kw) idx rest)))))
+
 (defn- parse-transition-body
   "After the `-> target` head, an optional body:
      - if next token is a body-clause keyword on same line → inline body
      - if next is :newline :indent → indented body with multiple clauses
-     - else → no body (transition ends)"
+     - else → no body (transition ends)
+
+   Audit F22: after collecting clauses, verify they appear in
+   canonical order (`when, let, then, do`) with each kind at most
+   once."
   [tokens pos]
   (cond
     (body-clause-head? tokens pos)
@@ -832,7 +892,9 @@
     (let [p (+ pos 2)]
       (loop [clauses [] p p]
         (cond
-          (at? tokens p :dedent) [clauses (inc p)]
+          (at? tokens p :dedent)
+          (do (enforce-clause-order-and-multiplicity! clauses tokens p)
+              [clauses (inc p)])
           (at? tokens p :newline) (recur clauses (inc p))
           (body-clause-head? tokens p)
           (let [[clause p2]
@@ -843,7 +905,9 @@
                   "when" (parse-when-clause tokens p)
                   (fail! tokens p "unexpected clause"))]
             (recur (conj clauses clause) (skip-newlines tokens p2)))
-          :else [clauses p])))
+          :else
+          (do (enforce-clause-order-and-multiplicity! clauses tokens p)
+              [clauses p]))))
 
     :else [[] pos]))
 

@@ -228,6 +228,75 @@
          #"`state:` section is retired at v1.0"
          (p/parse "record V:\n    state:\n        x: Float\n")))))
 
+(deftest chained-comparison-rejects-effectful-middle
+  (testing "Audit F27: `a <= b <= c` desugars to `a <= b and b <= c`, which evaluates the middle expression twice. A call in the middle would double-execute (double-send for atom methods, double-alloc for ctors). Parser rejects with a targeted diagnostic pointing at hoisting to `let:`. Pure-value middles (ident, arithmetic, field) remain accepted."
+    ;; Middle is a call → reject
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"chained comparison middle expression has side effects"
+         (p/parse "record V:
+    data:
+        x: Int
+    methods:
+        function mid(self) -> Int:
+            return x
+
+def main:
+    data:
+        v: V = V(x: 5)
+
+    -> running
+
+    running <: check -> self
+        when: 0 <= v.mid() <= 10
+        then: v => v
+")))
+    ;; Middle is an ident → OK (structural regression: this is the
+    ;; invariant-chained.cxc pattern `-lim <= val <= lim`).
+    (is (some? (p/parse "def main:
+    data:
+        val: Int = 5
+
+    -> running
+
+    running <: bump -> self
+        when: -10 <= val <= 10
+        then: val => val + 1
+")))))
+
+(deftest transition-clause-order-enforced
+  (testing "Audit F22: spec §10 — transition sub-blocks must appear in the order `when, let, then, do`. Out-of-order clauses (e.g. `then:` before `let:`) parse-error with a specific diagnostic."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"`let:` clause out of order"
+         (p/parse "def main:
+    data:
+        n: Int = 0
+
+    -> running
+
+    running <: bump -> self
+        then: n => n + 1
+        let:
+            k: Int = 2
+")))))
+
+(deftest transition-clause-multiplicity-enforced
+  (testing "Audit F22: spec §10 — each of when/let/then/do may appear at most once per transition body. Duplicates parse-error with a specific diagnostic."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"duplicate `then:` clause"
+         (p/parse "def main:
+    data:
+        n: Int = 0
+
+    -> running
+
+    running <: bump -> self
+        then: n => n + 1
+        then: n => n + 2
+")))))
+
 (deftest def-method-form-accepted
   (testing "Audit K8: spec-canonical `def name(params) -> Ret:` method form is accepted alongside `function name(params) -> Ret:`. Both produce a `:function` node so downstream lowering is unaffected."
     (let [src "record V:\n    data:\n        x: Int\n    methods:\n        def bumped(self) -> Int:\n            return x\n"

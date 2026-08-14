@@ -3,5 +3,6 @@ def main:
         xs: List of Int = [1, 2]
 
     -> running
-        do: xs.add(3)
-        do: print(xs.count)
+        do:
+            xs.add(3)
+            print(xs.count)

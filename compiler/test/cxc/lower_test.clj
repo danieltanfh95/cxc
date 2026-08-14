@@ -558,6 +558,29 @@ def main:
       ;; guard is `(hp > 0) && (hp > 0)` — header AND body
       (is (= "&&" (get-in branch [:guard :op]))))))
 
+(deftest target-self-lowers-as-no-phase-change
+  (testing "Audit F24: spec §1.11 line 1312 — `-> self` means self-transition, no phase change. Prior code generated a bogus `k<Atom>_phase_self` constant and phase-set assignment; now target=self skips the phase update entirely and treats the transition as staying in the source phase."
+    (let [prog (lower-src "def Sidekick:
+    -> running
+
+def main:
+    def s: Sidekick
+    data:
+        n: Int = 0
+
+    -> running
+
+    running <: bump -> self
+        then: n => n + 1
+")
+          cls  (first (filter #(= "CxcMain" (:name %)) (:classes prog)))
+          phases (:phase-constants cls)]
+      ;; The bug was `self` becoming a phase name; verify it isn't one
+      (is (not-any? #(re-find #"_phase_self$" %) (map :name phases))
+          "`self` must not be interned as a phase constant")
+      (is (some #(re-find #"_phase_running$" %) (map :name phases))
+          "`running` remains a real phase constant"))))
+
 (deftest wildcard-end-then-clause-rejected
   (testing "Audit F26: spec §1.11 line 1281 — `then:` on the wildcard `-> end` form is a compile error (the atom's state is about to be discarded, so field updates are meaningless). Uses an accompanying dummy atom so main is atom-promoted and the end-transition path runs. Positive semantic-fix cases (specific transition to end with `do:` inlining before -transitionToEnd, and `then:` rejection on specific) exercise through the existing end-to-end suite; explicit regression scaffolding for those would need multi-atom message wiring beyond what parse+lower can construct without the prelude."
     (is (thrown-with-msg?
@@ -575,4 +598,37 @@ def main:
 
     -> end
         then: n => 99
+")))))
+
+(deftest def-main-accepts-non-running-initial-phase
+  (testing "Audit F50: spec §1.11 — `def main` is entry point by naming convention; the phase name in the initial transition is not privileged. Plain-main emission does not use the target name (there is no ObjC phase-state), so any phase name should compile. Previously lower hardcoded target == \"running\"."
+    ;; Baseline sanity: `-> running` still works.
+    (is (some? (lower-src "def main:
+    -> running
+        do: print(1)
+")))
+    ;; F50 fix: any phase name is accepted.
+    (is (some? (lower-src "def main:
+    -> playing
+        do: print(1)
+")))
+    (is (some? (lower-src "def main:
+    -> tick
+        do: print(1)
+")))))
+
+(deftest in-operator-raises-targeted-diagnostic
+  (testing "Audit F47: `x in y` parses as a binop but its semantic lowering (dispatch to a container `contains` method — spec §1.3 membership predicates) is Phase D work. Silently emitting the literal token `in` into the generated C causes clang to fail far from the source; lower now raises a targeted diagnostic naming the operator so the failure points to the actual language feature."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"`in` membership operator"
+         (lower-src "def main:
+    data:
+        n: Int = 0
+
+    -> running
+
+    running <: check -> self
+        when: n in n
+        then: n => n
 ")))))
