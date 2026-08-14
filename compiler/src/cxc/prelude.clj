@@ -31,10 +31,12 @@
    types is a no-op; a user program that redefines a prelude name
    (e.g. `def Duration:`) gets silently rewritten too, which is a
    collision the compiler doesn't diagnose in Layer 5 minimum."
-  {"Duration" "_Cxc_Duration"
-   "Instant"  "_Cxc_Instant"
-   "Clock"    "_Cxc_Clock"
-   "Random"   "_Cxc_Random"})
+  {"Duration"           "_Cxc_Duration"
+   "Instant"            "_Cxc_Instant"
+   "Clock"              "_Cxc_Clock"
+   "Random"             "_Cxc_Random"
+   "TestKeyboardInput"  "_Cxc_TestKeyboardInput"
+   "Key"                "_Cxc_Key"})
 
 (defn rename-if
   "Rename `s` via `rename-table` if `s` is a string that appears in
@@ -51,7 +53,7 @@
    (mangled) form. Tree-shaking in cxc.lower compares against these
    after the rewrite pass runs, so entries here match what the
    lowered AST carries — not what the prelude source spelled."
-  #{"_Cxc_Clock" "_Cxc_Random"})
+  #{"_Cxc_Clock" "_Cxc_Random" "_Cxc_TestKeyboardInput"})
 
 (def source
   "Prelude source text spliced ahead of user source. Indentation is
@@ -89,6 +91,35 @@ def Random:
     methods:
         function below(self, n: Int) -> Int:
             return native_random_below(n)
+
+enum Key:
+    arrow_up
+    arrow_down
+    arrow_left
+    arrow_right
+    space
+    escape
+    f
+
+def TestKeyboardInput(events: Int = 0):
+    data:
+        remaining: Int = events
+
+    -> running
+        do: self :> beat
+
+    -> end
+        do: :> done
+
+    running <: beat -> running
+        when: remaining > 0
+        then: remaining => remaining - 1
+        do:
+            :> pressed(key: remaining)
+            self :> beat
+
+    running <: beat -> end
+        when: remaining == 0
 
 def Clock(ticks: Int = 3):
     data:

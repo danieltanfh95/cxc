@@ -293,3 +293,9 @@
     (let [{:keys [exit stdout]} (compile-and-run "random-below")]
       (is (zero? exit))
       (is (= "0\n" stdout)))))
+
+(deftest end-to-end-test-keyboard
+  (testing "test-keyboard.cxc — Layer 5b Step 12. Prelude ships `TestKeyboardInput(events: Int)` — an async self-send loop emitting `pressed(key: Int)` `events` times followed by `done`, mirroring the Clock stub shape. Main subscribes to both, counts presses in a `then:` update, transitions on `done`, prints 3. Also confirms the collect-message-shapes fix: dot-sourced receives (`<: input.pressed{key: Int}`) route through the subscription-map path, not the internal message-index (which would collide on nil msg-name for two dot-sourced streams). Prelude enum `Key` is emitted but unused by this program — game-toys is Step 14."
+    (let [{:keys [exit stdout]} (compile-and-run "test-keyboard")]
+      (is (zero? exit))
+      (is (= "3\n" stdout)))))

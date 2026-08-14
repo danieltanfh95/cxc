@@ -24,7 +24,7 @@ what the current compiler can lower.
 | [`record-methods.cxc`](record-methods.cxc) | Record method → C free function; `v.plus(o)` → `V_plus(v, o)` | `4.000000` |
 | [`atom-ctor-params.cxc`](atom-ctor-params.cxc) | Def-atom ctor params → `initWithFoo:` selector; `data:` defaults resolve against ctor scope | `42` |
 | [`nullable-nil-punning.cxc`](nullable-nil-punning.cxc) | `Counter?` type + `nil` literal; property access on nil → 0 (ObjC nil-messaging) | `0` |
-| [`enum-cases.cxc`](enum-cases.cxc) | `enum Key: ...` → C typedef enum; `Key.arrow_down` → `Key_arrow_down` (index 1) | `1` |
+| [`enum-cases.cxc`](enum-cases.cxc) | `enum Direction: ...` → C typedef enum; `Direction.arrow_down` → `Direction_arrow_down` (index 1). Renamed from `Key` because Layer 5b Step 12 reserves `Key` as a prelude enum. | `1` |
 | [`bool-and-is.cxc`](bool-and-is.cxc) | `and`/`or`/`is` lower to `&&`/`\|\|`/`==`; identity check on nil pointer | `1` |
 | [`atom-methods.cxc`](atom-methods.cxc) | Methods on def-atoms → ObjC instance methods; `[c bump]` and `[c plusWithother:5]` selectors | `26` |
 | [`atom-on-enter.cxc`](atom-on-enter.cxc) | Wildcard on-enter for initial phase — `then: n => 100` fires during init, overrides `data:` default | `100` |
@@ -58,6 +58,7 @@ what the current compiler can lower.
 | [`module-header.cxc`](module-header.cxc) | Layer 5 Step 13 — `module com.example.foo` + `from ... import ...` parse advisory-only under Layer 5; names still resolve globally. Full multi-module resolution + per-target prelude directories are Layer 6. Verifies parse compat + emit no-op through Duration/Instant arithmetic (500+250=750). | `750` |
 | [`clock-now.cxc`](clock-now.cxc) | Layer 5b Step A + Step 9 — Clock gains a `now :< native_millis_now()` observable via the compiler-internal FFI hatch (`native_*` builtins lower to raw C). Program transitions on `clock.done` after snapshotting `clock.now > 0` (a liveness check on the observable — always 1 on any live system). Also exercises the `@interface NSObject (CxcFanoutSelectors)` category that emit now ships at the top of the file: Clock's tick/done streams have zero subscribers here, and Apple clang treats an unknown-selector send to an `id`-typed receiver as a hard error; the category declares every fanout selector so unsubscribed sources still compile. | `1` |
 | [`random-below.cxc`](random-below.cxc) | Layer 5b Step 11 — prelude `Random` capability with `next_u32 :< native_random_u32()` observable and `below(n)` method wrapping `native_random_below(n)`; both lower through the FFI hatch to `arc4random` / `arc4random_uniform`. Deterministic assertion: `rng.below(1)` always returns 0. | `0` |
+| [`test-keyboard.cxc`](test-keyboard.cxc) | Layer 5b Step 12 — prelude `TestKeyboardInput(events: Int)` async self-send loop emits `pressed(key: Int)` `events` times then `done`, matching the Clock stub shape. Main counts presses via `<: input.pressed{key: Int}` (dot-sourced receive routed through subscription-map instead of internal message-index), transitions on `input.done`. Prints 3. | `3` |
 
 ## Running one by hand
 

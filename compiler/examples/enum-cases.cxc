@@ -1,10 +1,10 @@
-enum Key:
+enum Direction:
     arrow_up
     arrow_down
     f
 
 def main:
     -> running
-        # Enum case access lowers to a C constant `Key_arrow_down`
+        # Enum case access lowers to a C constant `Direction_arrow_down`
         # (index 1 in declaration order). Prints "1".
-        do: print(Key.arrow_down)
+        do: print(Direction.arrow_down)

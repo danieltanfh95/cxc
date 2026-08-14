@@ -1,0 +1,15 @@
+def main:
+    def input: TestKeyboardInput(events: 3)
+
+    data:
+        count: Int = 0
+
+    -> running
+
+    -> end
+        do: print(count)
+
+    running <: input.pressed{key: Int} -> running
+        then: count => count + 1
+
+    running <: input.done -> end

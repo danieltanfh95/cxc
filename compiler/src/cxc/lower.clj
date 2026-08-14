@@ -383,7 +383,12 @@
   [atom-name transitions]
   (let [msg-txns (filter #(and (:receive %)
                                (contains? #{"<:" "<|"}
-                                          (get-in % [:receive :glyph])))
+                                          (get-in % [:receive :glyph]))
+                               ;; Ident source only: `<: msg` (internal msg).
+                               ;; Dot sources (`<: foo.bar`) are external
+                               ;; stream subscriptions, handled by the
+                               ;; subscription-map pass, not here.
+                               (= :ident (get-in % [:receive :msg :source :node])))
                          transitions)]
     (reduce
      (fn [acc t]
