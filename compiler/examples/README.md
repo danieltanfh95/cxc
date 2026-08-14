@@ -46,6 +46,7 @@ what the current compiler can lower.
 | [`invariant-post-transition-fail.cxc`](invariant-post-transition-fail.cxc) | Third bump makes `value(=6) > max(=5)`; post-transition `-checkInvariants` runs at end of every message-triggered branch (Step 14) and aborts | *(abort)* |
 | [`main-shutdown-on-end.cxc`](main-shutdown-on-end.cxc) | `def main` with `self :> stop` async self-send + `running <: stop -> end`; CxcMain runs `-> end do: print(7)` wildcard, then `transitionToEnd` invokes `cxc_shutdown()` to exit the `dispatch_main()` loop cleanly (Steps 16/17) | `7` |
 | [`stream-simple.cxc`](stream-simple.cxc) | Emitter atom emits `:> beep` in its `-> end do:` wildcard; main holds a `def source: Emitter` slot and subscribes via `running <: source.beep -> end`; source-side fanout iterates its `_stream_subscribers_beep` NSHashTable and `cxc_send_async`s onto each subscriber's own queue; CxcMain's receive method fires, prints 9, `-> end` triggers `cxc_shutdown()` (Step 13) | `9` |
+| [`stream-typed-payload.cxc`](stream-typed-payload.cxc) | `:> value(n: 42)` carries a typed payload; cross-emit-site type inference on Emitter derives `n: Int`; emit method signature becomes `-cxc_emit_value_Withn:(int)n`; fan-out block captures typed args; main subscribes with `source.value{n: Int}`, cross-atom type check at subscribe site, `then: last_n => n` stashes; self-send `done` advances to `end`; `-> end do: print(last_n)` prints 42 (Step 13 typed payload follow-up) | `42` |
 
 ## Running one by hand
 

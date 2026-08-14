@@ -1108,6 +1108,17 @@
       (fail-nyi! (str "expected bare-ident message source (got " (:node src) ")")
                  src))))
 
+(defn- transition-display-name
+  "Human-readable identifier for a receive-glyph transition, used in
+   diagnostics. Handles both message-triggered (`bump`) and stream-
+   subscribed (`source.beep`) shapes without discriminating on kind."
+  [t]
+  (let [src (get-in t [:receive :msg :source])]
+    (case (:node src)
+      :ident (:name src)
+      :dot   (str (get-in src [:target :name]) "." (:field src))
+      (pr-str src))))
+
 (defn- stream-selector
   "Cocoa selector on the SUBSCRIBER side for a stream receive. Encoding:
    `cxc_stream_<streamname>_from_<SourceClass>[With<k1>:<k2>:...]`. The
@@ -1250,7 +1261,8 @@
         _            (when (and end-target? (or (seq then-stmts) (seq do-stmts)))
                        (fail-nyi!
                         (str "specific `then:`/`do:` on a target=`end` transition "
-                             "(atom `" atom-name "`, msg `" (transition-msg-name t)
+                             "(atom `" atom-name "`, trigger `"
+                             (transition-display-name t)
                              "`) — end handling runs through -transitionToEnd; "
                              "put side effects on the `-> end do:` wildcard instead")
                         t))
@@ -1320,9 +1332,10 @@
 (defn- validate-stream-subscribe
   "Cross-check a stream subscription against the source atom's
    stream-index: source class must exist, stream must be declared
-   (i.e. source atom has some `:>` emit for it), payload keys must
-   match. Fail-nyi with a diagnostic naming the mismatch — parallels
-   the cross-atom message shape check at Step 10."
+   (i.e. source atom has some `:>` emit for it), payload keys AND
+   inferred types must match the subscriber's declared payload.
+   Fail-nyi with a diagnostic naming the mismatch — parallels the
+   cross-atom message shape check at Step 10."
   [atom-name t {:keys [source-class]} ctx]
   (let [msg          (get-in t [:receive :msg])
         stream-name  (get-in msg [:source :field])
@@ -1348,7 +1361,24 @@
                                        "` differs from source-side emit shape: "
                                        "declared " got-keys ", source emits "
                                        expected-keys)
-                                  t))]
+                                  t))
+        ;; Type check: subscriber's declared types vs source's inferred.
+        source-typed (get-in source-info [:stream-payload-index stream-name])
+        _            (when (seq payload)
+                       (doseq [[sub-p src-p] (map vector payload source-typed)]
+                         (let [sub-ty (cxc-type->type-kw
+                                       (base-type-name (:type sub-p))
+                                       (:record-env ctx) (:atom-env ctx)
+                                       (:enum-env ctx) sub-p)
+                               src-ty (:type-kw src-p)]
+                           (when (not= sub-ty src-ty)
+                             (fail-nyi!
+                              (str "receive-glyph payload key `" (:name sub-p)
+                                   "` on atom `" atom-name "` subscribing to `"
+                                   source-class "." stream-name
+                                   "` declared as " (pr-str sub-ty)
+                                   ", but source emits it as " (pr-str src-ty))
+                              t)))))]
     {:source-class source-class
      :stream-name  stream-name
      :payload      payload}))
@@ -1450,6 +1480,113 @@
     {:methods              methods
      :stream-subscriptions subs}))
 
+(defn- transition-payload-locals
+  "Locals a receive-glyph transition body sees, keyed by payload name →
+   inferred :type-kw. Used to build ctx for stream emit type inference
+   inside receive-glyph bodies (design §9/§12 payload binding)."
+  [t record-env atom-env enum-env]
+  (let [payload (or (get-in t [:receive :msg :payload]) [])]
+    (into {} (map (fn [p]
+                    [(:name p)
+                     (cxc-type->type-kw (base-type-name (:type p))
+                                        record-env atom-env enum-env p)])
+                  payload))))
+
+(defn- infer-streams-in-atom-env
+  "Second pass over atom-env: for every atom, walk every emit site in
+   the ctx that would exist at that site's textual position and infer
+   each named arg's :type-kw + :c-type. Group by stream name; every
+   emit of the same stream must agree on each key's type
+   (subscriber-side selector encodes types into a single signature).
+
+   Ctx per site (mirrors the lowering ctx):
+   - wildcard-on-enter targeting the initial phase → self-fields +
+     ctor-params (matches ctx-in-init)
+   - wildcard-on-enter targeting a non-initial phase → self-fields
+     only. Non-initial wildcards inline at multiple transition sites
+     with different payload bindings; picking one arbitrarily would
+     miscompile — so payload-consuming emits inside such wildcards
+     fail during infer-type on the unknown local (users move them
+     to the specific transition's `do:`).
+   - receive-glyph transition → self-fields + payload locals
+
+   Populates :stream-payload-index on each atom-env entry:
+     {stream-name [{:name :type-kw :c-type} ...]}
+   Must run AFTER infer-observables-in-atom-env because emit args
+   may reference observables (typed on that pass)."
+  [atom-env record-env enum-env]
+  (reduce-kv
+   (fn [env atom-name info]
+     (let [self-fields (into {} (map (juxt :name identity) (:fields info)))
+           self-plus-obs (into self-fields
+                               (map (juxt :name identity)
+                                    (:observables-typed info)))
+           ctor-locals (into {} (map (fn [p]
+                                       [(:name p)
+                                        (cxc-type->type-kw (:cxc-ty p)
+                                                           record-env atom-env
+                                                           enum-env p)])
+                                     (:ctor-params info)))
+           self-local  {"self" {:atom atom-name}}
+           base-ctx    {:record-env record-env :atom-env atom-env
+                        :enum-env enum-env
+                        :self-fields self-plus-obs}
+           initial-phase (initial-phase-for (:transitions info))
+           ctx-for
+           (fn [t]
+             (cond
+               (and (wildcard-on-enter? t) (= initial-phase (:target t)))
+               (assoc base-ctx :locals (merge ctor-locals self-local))
+
+               (wildcard-on-enter? t)
+               (assoc base-ctx :locals self-local)
+
+               :else
+               (assoc base-ctx :locals
+                      (merge self-local
+                             (transition-payload-locals
+                              t record-env atom-env enum-env)))))
+           sites (mapcat
+                  (fn [t]
+                    (let [ctx (ctx-for t)]
+                      (map (fn [e]
+                             {:stream (:msg e)
+                              :emit   e
+                              :args   (mapv (fn [a]
+                                              {:name (:name a)
+                                               :type-kw (infer-type (:value a) ctx)})
+                                            (:args e))})
+                           (emit-nodes-in [t]))))
+                  (:transitions info))
+           typed (reduce
+                  (fn [acc {:keys [stream args emit]}]
+                    (if-let [existing (get acc stream)]
+                      (do (doseq [[i {:keys [name type-kw]}]
+                                  (map-indexed vector args)]
+                            (let [prev (get-in existing [i :type-kw])]
+                              (when (not= prev type-kw)
+                                (fail-nyi!
+                                 (str "def-atom `" atom-name
+                                      "` emits stream `" stream
+                                      "` with inconsistent type on key `"
+                                      name "`: previously " (pr-str prev)
+                                      ", here " (pr-str type-kw)
+                                      "; every emit of the same stream must "
+                                      "agree on payload key types")
+                                 emit))))
+                          acc)
+                      (assoc acc stream
+                             (mapv (fn [{:keys [name type-kw]}]
+                                     {:name    name
+                                      :type-kw type-kw
+                                      :c-type  (type-kw->c-type type-kw emit)})
+                                   args))))
+                  {}
+                  sites)]
+       (assoc env atom-name
+              (assoc info :stream-payload-index typed))))
+   atom-env atom-env))
+
 ;; ---------------------------------------------------------------------------
 ;; Stream source-side synthesis (Step 13, Choice 3A + generic dispatch).
 ;;
@@ -1484,10 +1621,12 @@
 
 (defn- stream-source-methods
   "Synthesize the per-stream ivars, init statements, and methods for
-   an atom that emits `streams` (from stream-order + stream-index).
-   Callers wire the returned pieces into the class's :properties,
-   cxc_structuralSetup body, and :methods list."
-  [source-class stream-order stream-index]
+   an atom that emits `streams`. `typed-payloads` maps stream-name →
+   inferred payload [{:name :type-kw :c-type} ...] (from
+   infer-stream-payload-types). Callers wire the returned pieces into
+   the class's :properties, cxc_structuralSetup body, and :methods
+   list."
+  [source-class stream-order typed-payloads]
   (if (empty? stream-order)
     {:properties [] :init-stmts [] :methods []}
     (let [props     (mapv stream-subscribers-prop stream-order)
@@ -1497,26 +1636,15 @@
                            stream-order)
           emit-methods
           (mapv (fn [nm]
-                  (let [payload (:payload (get stream-index nm))
+                  (let [payload (get typed-payloads nm [])
                         keys    (mapv :name payload)
-                        ;; Emit method's own signature: takes payload
-                        ;; params through by name. Layer 4 zero-payload
-                        ;; case is `- (void)cxc_emit_<nm>`; typed
-                        ;; payload inference is a follow-up (currently
-                        ;; only zero-payload emit is exercised end-to-
-                        ;; end — see stream-simple.cxc).
-                        _       (when (seq keys)
-                                  (fail-nyi!
-                                   (str "typed payload on `:> " nm "` — "
-                                        "stream emit with payload keys "
-                                        keys " requires type inference "
-                                        "across all emit sites (Step 13 "
-                                        "follow-up; see design analysis §7)")
-                                   {:stream nm :keys keys}))]
+                        method-params (mapv (fn [p] {:name (:name p)
+                                                     :c-type (:c-type p)})
+                                            payload)]
                     {:node        :objc-method
                      :selector    (stream-emit-selector nm keys)
                      :return-type "void"
-                     :params      []
+                     :params      method-params
                      :body        [{:node       :stream-fanout
                                     :ivar       (stream-subscribers-ivar-name nm)
                                     :selector   (stream-selector source-class nm keys)
@@ -1815,12 +1943,14 @@
           ;; Step 13 stream-source infrastructure. Every atom that
           ;; emits any `:>` gets per-stream ivars, a hashtable init in
           ;; structuralSetup, an emit method, per-stream + generic
-          ;; subscribe methods.
+          ;; subscribe methods. Payload types on the emit method
+          ;; signature are inferred across all emit sites in this
+          ;; atom (Step 13 follow-up) — see infer-stream-payload-types.
           stream-order    (:stream-order rec)
-          stream-index    (:stream-index rec)
+          typed-payloads  (:stream-payload-index rec)
           stream-parts    (stream-source-methods
                            (class-name-for-atom atom-name)
-                           stream-order stream-index)
+                           stream-order typed-payloads)
           stream-props        (:properties stream-parts)
           stream-init-stmts   (:init-stmts stream-parts)
           stream-source-mths  (:methods stream-parts)
@@ -2014,6 +2144,7 @@
         atom-env   (build-atom-env top-nodes enum-env)
         record-env (build-record-env top-nodes atom-env enum-env)
         atom-env   (infer-observables-in-atom-env atom-env record-env enum-env)
+        atom-env   (infer-streams-in-atom-env atom-env record-env enum-env)
         ctx        {:record-env record-env :atom-env atom-env :enum-env enum-env :locals {}}
         records    (filter #(= :record (:node %)) top-nodes)
         enums      (filter #(= :enum   (:node %)) top-nodes)

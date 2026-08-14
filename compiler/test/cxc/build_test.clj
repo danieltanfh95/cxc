@@ -221,3 +221,9 @@
     (let [{:keys [exit stdout]} (compile-and-run "stream-simple")]
       (is (zero? exit))
       (is (= "9\n" stdout)))))
+
+(deftest end-to-end-stream-typed-payload
+  (testing "stream-typed-payload.cxc — `:> value(n: 42)` on Emitter carries a typed payload; main subscribes with `source.value{n: Int}`, binds `n` locally, stashes it in `last_n` via `then:`, self-sends `done` to advance to `end`, and `-> end do: print(last_n)` prints 42. Exercises cross-emit-site type inference on Emitter, typed method signature on `-cxc_emit_value_Withn:`, block-capture of typed args on fan-out, and cross-atom type check at the subscribe site."
+    (let [{:keys [exit stdout]} (compile-and-run "stream-typed-payload")]
+      (is (zero? exit))
+      (is (= "42\n" stdout)))))

@@ -211,16 +211,23 @@
     ;; (`cxc_stream_<name>_from_<Source>[With<k>:]`). Sub is captured by
     ;; block per-iteration under ARC (retained for block lifetime, released
     ;; after execution — safe against sub dealloc between fanout + fire).
-    ;; Zero-payload path only at Layer 4 (typed payload plumbing is a
-    ;; follow-up — see stream-source-methods).
+    ;; Payload args are captured by value into the block (primitives copy,
+    ;; records copy, atom pointers strong-retain under ARC).
     (let [ivar (:ivar node)
           sel  (:selector node)
           keys (:arg-names node)
-          _    (when (seq keys)
-                 (throw (ex-info "stream-fanout: payload keys not supported at emit layer yet"
-                                 {:selector sel :keys keys})))]
+          ;; Build the message-send text. Zero-arg selector has no colons;
+          ;; multi-arg interleaves selector parts with argument names.
+          send-expr (if (empty? keys)
+                      (str "[sub " sel "]")
+                      (let [parts (str/split sel #":")]
+                        (str "[sub "
+                             (str/join " "
+                                       (map (fn [p k] (str p ":" k))
+                                            parts keys))
+                             "]")))]
       (str "for (id sub in " ivar ") {\n"
-           "    cxc_send_async(sub, ^{ [sub " sel "]; });\n"
+           "    cxc_send_async(sub, ^{ " send-expr "; });\n"
            "}"))
     :stream-add-sub
     ;; Per-stream `-cxc_addSubscriberFor_<name>:` body. Direct
