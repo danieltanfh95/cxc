@@ -311,3 +311,9 @@
     (let [{:keys [exit stdout]} (compile-and-run "game-loop")]
       (is (zero? exit))
       (is (= "6\n" stdout)))))
+
+(deftest end-to-end-clock-every
+  (testing "clock-every.cxc — Layer 5c Step 8 (method-returned Stream subscribe). Clock ships a real `every(rate_ms: Int) -> Stream` method (via `native_clock_every` FFI hatch) that creates a CxcStream carrying a per-instance receiver-side selector plus a dispatch_source_t timer. Main subscribes via `<: clock.every(rate_ms: 5)` and Ticker(rate_ms: 50, count: 1) bounds the run. `beats > 0` at end verifies the stream fired at least once — deterministic across runs since the 5ms every-tick easily fires before the 50ms limit. Prints 1."
+    (let [{:keys [exit stdout]} (compile-and-run "clock-every")]
+      (is (zero? exit))
+      (is (= "1\n" stdout)))))

@@ -37,7 +37,14 @@
    "Random"             "_Cxc_Random"
    "TestKeyboardInput"  "_Cxc_TestKeyboardInput"
    "Ticker"             "_Cxc_Ticker"
-   "Key"                "_Cxc_Key"})
+   "Key"                "_Cxc_Key"
+   ;; Layer 5c Step 8: Stream is the user-visible type for
+   ;; method-returned reactive streams. Maps to CxcStream, the
+   ;; runtime helper class defined inline in emit's helpers block
+   ;; (see cxc.emit/cxc-runtime-helpers). Registered in atom-env at
+   ;; lower time as a runtime-provided kind so type-refs resolve
+   ;; but no class synthesis runs on it.
+   "Stream"             "CxcStream"})
 
 (defn rename-if
   "Rename `s` via `rename-table` if `s` is a string that appears in
@@ -145,6 +152,10 @@ def Clock(ticks: Int = 3):
         remaining: Int = ticks
 
     now :< native_millis_now()
+
+    methods:
+        function every(self, rate_ms: Int) -> Stream:
+            return native_clock_every(self, rate_ms)
 
     -> running
         do: self :> beat

@@ -125,6 +125,29 @@
     :return   (str "return " (emit-expr (:value node)) ";")
     :assign   (str (emit-expr (:lhs node)) " = " (emit-expr (:rhs node)) ";")
     :raw-c    (:text node)
+    :raw-stream-subscribe
+    ;; Layer 5c Step 8: method-returned Stream subscribe. Emits as a
+    ;; scoped block so the temporary CxcStream doesn't leak into
+    ;; surrounding stmt namespace. The method call returns a
+    ;; CxcStream *; -cxc_addSubscriber:self hooks the enclosing atom
+    ;; to the returned stream. The source atom is expected to retain
+    ;; the stream itself (Layer 5c Step 10's FFI hatch does exactly
+    ;; that via CFBridgingRetain).
+    (let [field    (:field node)
+          selector (:selector node)
+          args     (:args node)
+          arg-names (:arg-names node)
+          method-send (if (empty? args)
+                        (str "[_" field " " selector "]")
+                        (let [parts (str/split selector #":")]
+                          (str "[_" field " "
+                               (str/join " "
+                                         (map (fn [p a] (str p ":" (emit-expr a)))
+                                              parts args))
+                               "]")))
+          _ arg-names]
+      (str "{ CxcStream *__cxc_ms = " method-send "; "
+           "[__cxc_ms cxc_addSubscriber:self]; }"))
     :invariant-check
     ;; Direct if/abort — NSAssert is compiled out by NS_BLOCK_ASSERTIONS
     ;; in release builds; invariants must always fire.
@@ -557,7 +580,18 @@
        "@interface CxcStream : NSObject\n"
        "@property (nonatomic, strong) dispatch_queue_t own_queue;\n"
        "@property (nonatomic, strong) NSHashTable *subscribers;\n"
+       ;; Layer 5c Step 8: per-instance fanout selector + source
+       ;; identity. Each CxcStream carries the receiver-side selector
+       ;; name it dispatches to when emitting; a method-returned
+       ;; stream (e.g. clock.every(rate)) uses the same encoding as
+       ;; static streams (cxc_stream_<method>_from_<Source>Withsender:)
+       ;; so subscribers implement one method regardless of source
+       ;; kind. `source` fills the sender: arg at emit time — matches
+       ;; Step 6b's fanout-side identity.
+       "@property (nonatomic, copy) NSString *fanoutSelector;\n"
+       "@property (nonatomic, weak) id source;\n"
        "@property (nonatomic, copy) void (^teardown)(void);\n"
+       "- (instancetype)initWithSelector:(NSString *)selectorName source:(id)source;\n"
        "- (void)cxc_addSubscriber:(id)sub;\n"
        "- (void)cxc_removeSubscriber:(id)sub;\n"
        "- (void)cxc_emit;\n"
@@ -573,6 +607,14 @@
        "    }\n"
        "    return self;\n"
        "}\n"
+       "- (instancetype)initWithSelector:(NSString *)selectorName source:(id)source {\n"
+       "    self = [self init];\n"
+       "    if (self) {\n"
+       "        _fanoutSelector = [selectorName copy];\n"
+       "        _source = source;\n"
+       "    }\n"
+       "    return self;\n"
+       "}\n"
        "- (void)cxc_addSubscriber:(id)sub {\n"
        "    if (sub != nil) [_subscribers addObject:sub];\n"
        "}\n"
@@ -580,8 +622,17 @@
        "    if (sub != nil) [_subscribers removeObject:sub];\n"
        "}\n"
        "- (void)cxc_emit {\n"
+       "    SEL sel = _fanoutSelector ? NSSelectorFromString(_fanoutSelector)\n"
+       "                              : @selector(cxc_stream_value);\n"
+       "    __weak id src = _source;\n"
        "    for (id sub in _subscribers) {\n"
-       "        cxc_send_async(sub, ^{ [sub performSelector:@selector(cxc_stream_value)]; });\n"
+       ;; objc_msgSend cast — selector is dynamic, not declared on any
+       ;; static receiver type at compile time; the NSObject fanout
+       ;; category already declares it for the specific method streams
+       ;; the program uses, but this generic path handles any.
+       "        cxc_send_async(sub, ^{\n"
+       "            ((void (*)(id, SEL, id))objc_msgSend)(sub, sel, src);\n"
+       "        });\n"
        "    }\n"
        "}\n"
        "- (void)cxc_end {\n"

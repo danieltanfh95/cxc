@@ -832,7 +832,50 @@
                         ;; "runs until exit(0)" design.
                         "(void)CFBridgingRetain(__cxc_t); "
                         "(void)CFBridgingRetain(__cxc_tq); "
-                        "(void)0; })")))}})
+                        "(void)0; })")))}
+   "native_clock_every"
+   ;; Layer 5c Step 8/10 — real method-returned Stream. Called from
+   ;; Clock's `every(rate_ms: Int) -> Stream` method body; creates a
+   ;; CxcStream carrying the exact receiver-side selector subscribers
+   ;; will declare, plus a dispatch_source_t periodic timer whose
+   ;; event handler fans the stream. Same macOS quirks as
+   ;; `native_schedule_periodic_beat` (dedicated queue for timer, ARC
+   ;; unbalanced-retain on both queue and source).
+   ;;
+   ;; The selector name is hardcoded to
+   ;; `cxc_stream_every_from__Cxc_ClockWithsender:` — mirrors what
+   ;; `stream-selector` builds for a method-stream group-key with
+   ;; source-class `_Cxc_Clock` and method-name `every`. If a future
+   ;; Layer 5c FFI supports method-name/source-class as compile-time
+   ;; params, this becomes generic; today it's Clock-specific.
+   {:return-kw {:atom "CxcStream"}
+    :arity     2
+    :emit-c    (fn [args]
+                 (let [src  (first args)
+                       rate (second args)]
+                   (str "({ "
+                        "id __cxc_src = " src "; "
+                        "int64_t __cxc_ms = (int64_t)(" rate "); "
+                        "dispatch_queue_t __cxc_q = "
+                        "dispatch_queue_create(\"cxc.every\", DISPATCH_QUEUE_SERIAL); "
+                        "dispatch_source_t __cxc_t = "
+                        "dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, "
+                        "__cxc_q); "
+                        "dispatch_source_set_timer(__cxc_t, "
+                        "dispatch_time(DISPATCH_TIME_NOW, __cxc_ms * NSEC_PER_MSEC), "
+                        "__cxc_ms * NSEC_PER_MSEC, 0); "
+                        "CxcStream *__cxc_s = "
+                        "[[CxcStream alloc] initWithSelector:"
+                        "@\"cxc_stream_every_from__Cxc_ClockWithsender:\" "
+                        "source:__cxc_src]; "
+                        "dispatch_source_set_event_handler(__cxc_t, ^{ "
+                        "[__cxc_s cxc_emit]; "
+                        "}); "
+                        "dispatch_resume(__cxc_t); "
+                        "(void)CFBridgingRetain(__cxc_t); "
+                        "(void)CFBridgingRetain(__cxc_q); "
+                        "(void)CFBridgingRetain(__cxc_s); "
+                        "__cxc_s; })")))}})
 
 (defn- ffi-builtin? [name] (contains? ffi-builtins name))
 
@@ -1519,22 +1562,30 @@
 
 (defn- transition-trigger-kind
   "Classify a receive-glyph transition's source pattern:
-   - :message — bare ident like `bump`. Direct message-triggered
-     transition (Steps 4-7).
-   - :stream  — dot expression like `source.beep`. Stream subscription
-     (Step 13); source expression names an atom whose stream emits
-     drive this transition.
-
-   Anything else (complex expressions, method calls in the source
-   position) is out of scope for Layer 4."
+   - :message       — bare ident like `bump`. Direct message-triggered
+                      transition (Steps 4-7).
+   - :stream        — dot expression like `source.beep`. Stream
+                      subscription (Layer 4b Step 13); source atom's
+                      static stream emit drives the transition.
+   - :method-stream — call expression like `source.every(rate)`. The
+                      source atom's method returns a CxcStream value
+                      (Layer 5c Step 8); subscriber attaches at
+                      cxc_runtimeBinding via -cxc_addSubscriber:."
   [t]
   (let [src (get-in t [:receive :msg :source])]
     (case (:node src)
       :ident :message
       :dot   :stream
+      :call  (if (and (map? (:callee src))
+                      (= :dot (get-in src [:callee :node])))
+               :method-stream
+               (fail-nyi! (str "receive-glyph source `:call` needs a "
+                               "dot callee (`source.method(args)`); got "
+                               (get-in src [:callee :node]))
+                          src))
       (fail-nyi! (str "receive-glyph source pattern must be a bare ident "
-                      "(message) or a dot expression (stream); got "
-                      (:node src))
+                      "(message), dot expression (static stream), or "
+                      "method call (returned stream); got " (:node src))
                  src))))
 
 (defn- transition-msg-name
@@ -1884,7 +1935,76 @@
                            :payload      payload
                            :source-class source-class
                            :source-field (:source-field src-info)
-                           :stream-name  stream-name})))
+                           :stream-name  stream-name})
+
+                        :method-stream
+                        ;; Layer 5c Step 8: source is `<field>.<method>(args)`.
+                        ;; The method must be declared on the source-class atom
+                        ;; and return a Stream (CxcStream). Payload beyond the
+                        ;; leading sender: arg isn't supported at this landing
+                        ;; — CxcStream is untyped at runtime.
+                        (let [src        (get-in t [:receive :msg :source])
+                              dot        (:callee src)
+                              target     (:target dot)
+                              method-nm  (:field dot)
+                              _          (when-not (= :ident (:node target))
+                                           (fail-nyi!
+                                            (str "receive-glyph method-stream source "
+                                                 "must be `<field>." method-nm "(args)`; "
+                                                 "got a nested expression as receiver")
+                                            src))
+                              field-nm   (:name target)
+                              field      (get enclosing-fields field-nm)
+                              _          (when-not field
+                                           (fail-nyi!
+                                            (str "receive-glyph method-stream source `"
+                                                 field-nm "." method-nm
+                                                 "()` — no data-field / cap named `"
+                                                 field-nm "` on atom `" atom-name "`")
+                                            src))
+                              source-class (:cxc-ty field)
+                              source-info  (get-in ctx [:atom-env source-class])
+                              _            (when-not source-info
+                                             (fail-nyi!
+                                              (str "method-stream source `" source-class
+                                                   "` is not a def-atom in the program")
+                                              src))
+                              method-info  (get-in source-info [:method-index method-nm])
+                              _            (when-not method-info
+                                             (fail-nyi!
+                                              (str "atom `" source-class "` has no `"
+                                                   method-nm "()` method — "
+                                                   "receive-glyph `" field-nm "."
+                                                   method-nm "()` on `" atom-name
+                                                   "` has no source")
+                                              src))
+                              return-ty    (:cxc-return-ty method-info)
+                              _            (when-not (= "CxcStream" return-ty)
+                                             (fail-nyi!
+                                              (str "method `" source-class "."
+                                                   method-nm "()` returns `"
+                                                   return-ty "`, but receive-glyph "
+                                                   "requires a `Stream` return type")
+                                              src))
+                              payload      (or (:payload (get-in t [:receive :msg]))
+                                               [])
+                              _            (when (seq payload)
+                                             (fail-nyi!
+                                              (str "method-stream `" field-nm "."
+                                                   method-nm "()` payload not "
+                                                   "supported at Layer 5c Step 8; "
+                                                   "CxcStream is untyped — omit "
+                                                   "the `{...}` shape")
+                                              src))]
+                          {:kind          :method-stream
+                           :txn           t
+                           :group-key     [:method-stream source-class method-nm]
+                           :selector      (stream-selector source-class method-nm [])
+                           :payload       []
+                           :source-class  source-class
+                           :source-field  field-nm
+                           :method-name   method-nm
+                           :method-args   (:args src)})))
                     receive-txns)
         by-key    (reduce (fn [acc d] (update acc (:group-key d) (fnil conj []) d))
                           {}
@@ -1904,14 +2024,16 @@
                                                     (:atom-env ctx)
                                                     (:enum-env ctx))})
                                         payload)
-                           ;; Layer 5b Step 6b: stream receives (`:stream`
-                           ;; kind) carry a leading sender:(id) param
-                           ;; matching the source's fanout-side arg. Message
-                           ;; receives (`:message` kind) don't — they use
-                           ;; `self :> foo` from the source and always run
-                           ;; in the receiver's own address, so sender
-                           ;; identity is a no-op there.
-                           method-params (if (= :stream (:kind first-d))
+                           ;; Layer 5b Step 6b: stream receives carry a
+                           ;; leading sender:(id) param matching the
+                           ;; source's fanout-side arg. Applies to both
+                           ;; static streams (Step 13) and method-returned
+                           ;; streams (Step 8) — CxcStream's cxc_emit fills
+                           ;; sender from its `source` property. Message
+                           ;; receives (`:message` kind) skip it — same-atom
+                           ;; self-sends don't need sender identity.
+                           method-params (if (contains? #{:stream :method-stream}
+                                                        (:kind first-d))
                                            (into [{:name "sender" :c-type "id"}]
                                                  user-params)
                                            user-params)
@@ -1933,9 +2055,21 @@
                   (map (fn [d] (select-keys d [:source-field :source-class
                                                :stream-name])))
                   distinct
-                  vec)]
-    {:methods              methods
-     :stream-subscriptions subs}))
+                  vec)
+        ;; Method-returned stream subscriptions (Layer 5c Step 8) run a
+        ;; different registration path: at cxc_runtimeBinding, call the
+        ;; method to get a CxcStream, then -cxc_addSubscriber:self. We
+        ;; keep the original AST call args so lowering happens against
+        ;; the correct ctx at runtimeBinding-emit time.
+        method-subs (->> descs
+                         (filter #(= :method-stream (:kind %)))
+                         (map (fn [d] (select-keys d [:source-field :source-class
+                                                      :method-name :method-args])))
+                         distinct
+                         vec)]
+    {:methods                methods
+     :stream-subscriptions   subs
+     :method-stream-subs     method-subs}))
 
 (defn- transition-payload-locals
   "Locals a receive-glyph transition body sees, keyed by payload name →
@@ -2534,6 +2668,7 @@
                            atom-name transitions ctx-with-self)
           txn-methods     (:methods txn-result)
           stream-subs     (:stream-subscriptions txn-result)
+          method-subs     (:method-stream-subs txn-result)
           ;; Subscribe registrations run in cxc_runtimeBinding BEFORE
           ;; the invariant check. Timing: this atom's stateInit has
           ;; already run (so nested-slot sources like `_source` exist),
@@ -2549,10 +2684,32 @@
                    :selector (str "cxc_addSubscriberFor_" (:stream-name s) ":")
                    :args [{:node :name :sym "self"}]})
                 stream-subs)
+          ;; Layer 5c Step 8: method-returned stream subscription.
+          ;; Call the method to get a CxcStream, then -cxc_addSubscriber:.
+          ;; Both messages emit as raw C — the method-call args need
+          ;; lowering against the atom's init-ctx so unqualified refs
+          ;; resolve (e.g. `rate_ms` is a data-field). Wrapping in a
+          ;; block scope keeps the CxcStream local; ARC retains it
+          ;; through the source atom's own reference (returned stream
+          ;; is held by whatever ivar/leak strategy the FFI hatch uses).
+          method-sub-stmts
+          (mapv (fn [s]
+                  (let [method-nm (:method-name s)
+                        args-lo   (mapv (fn [a] (lower-expr (:value a) ctx-in-init))
+                                        (:method-args s))
+                        arg-names (mapv :name (:method-args s))
+                        selector  (objc-method-selector method-nm arg-names)]
+                    {:node :raw-stream-subscribe
+                     :field (:source-field s)
+                     :selector selector
+                     :args args-lo
+                     :arg-names arg-names}))
+                method-subs)
           bind-method     {:node :objc-method :selector "cxc_runtimeBinding"
                            :return-type "void" :params []
                            :body (-> []
                                      (into sub-register-stmts)
+                                     (into method-sub-stmts)
                                      (conj (self-msg-noargs "checkInvariants")))}
           init-shell      [(self-msg-noargs "cxc_structuralSetup")
                            state-init-msg
@@ -2874,6 +3031,30 @@
                                      {:top top-nodes})))
         enum-env   (build-enum-env top-nodes)
         atom-env   (build-atom-env top-nodes enum-env)
+        ;; Layer 5c Step 8: seed CxcStream as a runtime-provided atom
+        ;; entry so type-refs like `Stream` (mangled to `CxcStream`)
+        ;; resolve during cxc-type->c. Class synthesis skips it because
+        ;; it's not in top-nodes; the runtime definition ships in
+        ;; cxc.emit/cxc-runtime-helpers.
+        atom-env   (assoc atom-env "CxcStream"
+                          {:kind             :runtime-provided
+                           :fields           []
+                           :field-index      {}
+                           :ctor-params      []
+                           :methods          []
+                           :method-index     {}
+                           :observables      []
+                           :observables-typed []
+                           :observable-index {}
+                           :invariants       []
+                           :transitions      []
+                           :message-index    {}
+                           :stream-index     {}
+                           :stream-order     []
+                           :stream-payload-index {}
+                           :subscription-map {}
+                           :slot-names       []
+                           :extras           []})
         ;; Prelude tree-shaking: only keep prelude atoms that the
         ;; user program actually references. Prevents compiler errors
         ;; from fanout bodies that message subscriber-side selectors
@@ -2919,8 +3100,9 @@
         ;; container synth-classes (get their own generator). Container
         ;; entries carry `:kind :list-container` and skip the queue /
         ;; phase / transition machinery lower-atom assumes.
-        real-atom-names       (filter #(not= :list-container
-                                             (:kind (get atom-env %)))
+        real-atom-names       (filter #(not (contains? #{:list-container
+                                                          :runtime-provided}
+                                                        (:kind (get atom-env %))))
                                       (keys atom-env))
         container-atom-names  (filter #(= :list-container
                                           (:kind (get atom-env %)))
