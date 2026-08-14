@@ -323,3 +323,9 @@
     (let [{:keys [exit stdout]} (compile-and-run "unit-literals")]
       (is (zero? exit))
       (is (= "2500\n" stdout)))))
+
+(deftest end-to-end-invariant-chained
+  (testing "invariant-chained.cxc — Layer 1.X / stale-check retirement. `-lim <= val <= lim` in an invariants: block. Chained comparisons desugar to `(A <= B) and (B <= C)` at parse time (parser's `desugar-chained-comparisons` walks the entire AST); the stale fail-nyi in lower's invariant path was dead code and is retired. Unary minus (`-lim`) lands as `:neg` (parser) → `:unary` op `-` in emit — pairs cleanly with lower's new `:neg` inference (numeric-preserving). Program constructs Bounded(y: 3, limit: 7); passing invariant runs through; prints 3."
+    (let [{:keys [exit stdout]} (compile-and-run "invariant-chained")]
+      (is (zero? exit))
+      (is (= "3\n" stdout)))))

@@ -33,6 +33,7 @@
     :binop           (str "(" (emit-expr (:left node))
                           " " (:op node) " "
                           (emit-expr (:right node)) ")")
+    :unary           (str "(" (:op node) (emit-expr (:expr node)) ")")
     :field           (str (emit-expr (:target node)) "." (:field node))
     :struct-lit      (str "((" (:type node) "){"
                           (str/join ", "

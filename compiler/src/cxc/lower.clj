@@ -962,6 +962,13 @@
                                     "` (no local-binding env yet)")
                                node))
     :binop      (infer-binop-type node ctx)
+    :neg        (let [t (infer-type (:expr node) ctx)]
+                  (if (contains? #{:int :float} t)
+                    t
+                    (fail-nyi! (str "unary minus on non-numeric type "
+                                    (pr-str t))
+                               node)))
+    :not        :bool
     :call       (infer-call-type node ctx)
     :dot        (if (enum-case-access? node ctx)
                   {:enum (get-in node [:target :name])}
@@ -1264,6 +1271,10 @@
                           (:op node))
                  :left  (lower-expr (:left node)  ctx)
                  :right (lower-expr (:right node) ctx)}
+    :neg        {:node :unary :op "-"
+                 :expr (lower-expr (:expr node) ctx)}
+    :not        {:node :unary :op "!"
+                 :expr (lower-expr (:expr node) ctx)}
     :dot        (if (enum-case-access? node ctx)
                   {:node :name
                    :sym  (str (get-in node [:target :name]) "_" (:field node))}
@@ -2456,30 +2467,15 @@
    :params      []
    :body        [{:node :return :value (lower-expr (:expr o) ctx)}]})
 
-(def ^:private comparison-ops #{"<" "<=" ">" ">=" "==" "!="})
-
-(defn- chained-comparison?
-  "Detects `a <= b <= c`-shaped predicates. Parser produces these as a
-   left-assoc binop with a comparison inside a comparison, which is NOT
-   what the user meant — needs desugaring at the parser layer (Layer 1.X).
-   Fail-nyi in invariants so users don't get silent miscompilation."
-  [expr]
-  (and (= :binop (:node expr))
-       (contains? comparison-ops (:op expr))
-       (or (and (= :binop (get-in expr [:left :node]))
-                (contains? comparison-ops (get-in expr [:left :op])))
-           (and (= :binop (get-in expr [:right :node]))
-                (contains? comparison-ops (get-in expr [:right :op]))))))
-
 (defn- lower-invariant-check
   "One predicate → an :invariant-check init statement. Ctx must carry
-   self-fields + init-locals so unqualified names resolve as in init."
+   self-fields + init-locals so unqualified names resolve as in init.
+
+   Chained comparisons (`a <= b <= c`) are desugared to
+   `(a <= b) and (b <= c)` at the parser layer's
+   `desugar-chained-comparisons` pass before lower ever sees them —
+   no special handling here."
   [atom-name idx pred ctx]
-  (when (chained-comparison? pred)
-    (fail-nyi! (str "chained comparison in invariant on `" atom-name
-                    "` — needs parser-side desugaring (Layer 1.X); "
-                    "for now split into `a <= b and b <= c`")
-               pred))
   {:node  :invariant-check
    :cond  (lower-expr pred ctx)
    ;; Fires from init AND post-transition (Step 14); label stays generic.
