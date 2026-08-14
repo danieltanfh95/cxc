@@ -487,6 +487,24 @@
              ;; stable footprint. Layer 4 Step 13.
              stream-index  (collect-stream-shapes name transitions)
              stream-order  (vec (distinct (map :msg (emit-nodes-in transitions))))
+             ;; Streams this atom SUBSCRIBES to, indexed by the local
+             ;; field name whose value is the source atom. Layer 4b uses
+             ;; this to synthesize slot setters that (un)register on
+             ;; field mutation. Format: {"action" ["cast_completed"], ...}
+             subscription-map
+             (reduce
+              (fn [acc t]
+                (let [src (get-in t [:receive :msg :source])]
+                  (if (and (= "<:" (get-in t [:receive :glyph]))
+                           (= :dot (:node src))
+                           (= :ident (get-in src [:target :node])))
+                    (update acc (get-in src [:target :name])
+                            (fnil conj []) (:field src))
+                    acc)))
+              {}
+              transitions)
+             subscription-map (into {} (map (fn [[k v]] [k (vec (distinct v))])
+                                            subscription-map))
              ;; Names of fields that are nested-slot children — Step 11
              ;; installs a parent back-ref on each after construction, and
              ;; -transitionToEnd cascades end into each on this atom's end.
@@ -502,6 +520,7 @@
                           :message-index message-index
                           :stream-index  stream-index
                           :stream-order  stream-order
+                          :subscription-map subscription-map
                           :slot-names    slot-names
                           :extras        extras})))
      skeleton
@@ -1013,13 +1032,37 @@
                    (fail-nyi! (str "transition body clause " (:node c)) c)))
                clauses)))
 
+(defn- capitalize-first
+  [s]
+  (if (str/blank? s) s (str (str/upper-case (subs s 0 1)) (subs s 1))))
+
+(defn- field-needs-slot-setter?
+  "True when writing this field in a `then:` update must route through
+   the synthesized slot setter instead of a direct ivar assignment.
+   Applies when the field is a subscription root on the enclosing
+   atom's :subscription-map. Other fields keep the simple write."
+  [field-name ctx]
+  (let [self-info (get-in ctx [:locals "self"])
+        atom-name (and (map? self-info) (:atom self-info))
+        info      (get-in ctx [:atom-env atom-name])
+        subs      (get-in info [:subscription-map field-name])]
+    (boolean (seq subs))))
+
 (defn- lower-then-update
-  "`then: field => expr` → `_field = <expr>;`. LHS is the atom's own
-   ivar (direct ivar access, same as data-default init statements)."
+  "`then: field => expr` → `_field = <expr>;` for the common case.
+   For atom-typed subscription-root fields (Layer 4b nullable-slot
+   dynamic subscription), routes through the synthesized slot setter
+   `-set<Field>:` so it can (un)register subscriptions on old/new
+   source values."
   [update ctx]
-  {:node :assign
-   :lhs  {:node :name :sym (str "_" (:field update))}
-   :rhs  (lower-expr (:expr update) ctx)})
+  (if (field-needs-slot-setter? (:field update) ctx)
+    {:node :objc-msg
+     :recv {:node :name :sym "self"}
+     :selector (str "set" (capitalize-first (:field update)) ":")
+     :args [(lower-expr (:expr update) ctx)]}
+    {:node :assign
+     :lhs  {:node :name :sym (str "_" (:field update))}
+     :rhs  (lower-expr (:expr update) ctx)}))
 
 (defn- lower-on-enter-body
   "Body of a wildcard on-enter transition when inlined into init. Same
@@ -1299,10 +1342,11 @@
 
 (defn- resolve-stream-source
   "The receive-glyph's source is `source.event` (a :dot node). Walk
-   the target to determine which atom class emits the stream; must be
-   a live, non-nullable atom-typed slot or use: cap on the enclosing
-   atom (Layer 4). Nullable slots and List-of-T fan-in are deferred.
-   Returns `{:source-class C :source-field F}` when legal, else fails."
+   the target to determine which atom class emits the stream; must
+   be an atom-typed data-field / cap on the enclosing atom. Nullable
+   slots are supported at Layer 4b via slot setters that re-register
+   subscriptions on assignment. Returns `{:source-class C
+   :source-field F}` when legal, else fails."
   [atom-name enclosing-fields dot-src]
   (let [target (:target dot-src)
         _      (when-not (= :ident (:node target))
@@ -1319,13 +1363,7 @@
                                  "` — no data-field / cap named `" fname
                                  "` on atom `" atom-name "`")
                             dot-src))
-        ;; Field type must be an atom (non-nullable at Layer 4).
         cxc-ty (:cxc-ty field)]
-    (when (:nullable? field)
-      (fail-nyi! (str "receive-glyph source `" fname "` is nullable; "
-                      "dynamic subscription lifetime (register on slot fill, "
-                      "unregister on nil) is Layer 4b")
-                 dot-src))
     {:source-class cxc-ty
      :source-field fname}))
 
@@ -1659,6 +1697,19 @@
                    :body        [{:node :stream-add-sub
                                   :ivar (stream-subscribers-ivar-name nm)}]})
                 stream-order)
+          per-stream-remove
+          ;; Layer 4b: nullable-slot dynamic subscription. When a slot
+          ;; is reassigned, the setter unsubs from the old source. Sends
+          ;; are nil-message-safe (Cocoa), so callers pass whatever's in
+          ;; the slot without pre-checking.
+          (mapv (fn [nm]
+                  {:node        :objc-method
+                   :selector    (str "cxc_removeSubscriberFor_" nm ":")
+                   :return-type "void"
+                   :params      [{:name "sub" :c-type "id"}]
+                   :body        [{:node :stream-remove-sub
+                                  :ivar (stream-subscribers-ivar-name nm)}]})
+                stream-order)
           generic-add
           {:node        :objc-method
            :selector    "cxc_addSubscriberToStream:sub:"
@@ -1670,12 +1721,25 @@
                                             {:stream-name nm
                                              :selector    (str "cxc_addSubscriberFor_"
                                                                nm ":")})
+                                          stream-order)}]}
+          generic-remove
+          {:node        :objc-method
+           :selector    "cxc_removeSubscriberFromStream:sub:"
+           :return-type "void"
+           :params      [{:name "streamName" :c-type "NSString *"}
+                         {:name "sub"        :c-type "id"}]
+           :body        [{:node     :stream-add-sub-dispatch
+                          :branches (mapv (fn [nm]
+                                            {:stream-name nm
+                                             :selector    (str "cxc_removeSubscriberFor_"
+                                                               nm ":")})
                                           stream-order)}]}]
       {:properties props
        :init-stmts init-stmts
        :methods    (-> emit-methods
                        (into per-stream-add)
-                       (conj generic-add))})))
+                       (into per-stream-remove)
+                       (conj generic-add generic-remove))})))
 
 ;; ---------------------------------------------------------------------------
 ;; Top-level lowering — records, methods, atoms, main
@@ -1954,6 +2018,25 @@
           stream-props        (:properties stream-parts)
           stream-init-stmts   (:init-stmts stream-parts)
           stream-source-mths  (:methods stream-parts)
+          ;; Layer 4b: slot setters for atom-typed subscription-root
+          ;; fields. Each maps to a `-set<Field>:(<Type>)newValue`
+          ;; method that unsubs self from every stream on the old
+          ;; source value, assigns the ivar, and subs self to every
+          ;; stream on the new source value. Cocoa nil-messaging keeps
+          ;; both branches safe on the nil case (start-nil or transition
+          ;; -to-nil), so no explicit guards are needed.
+          slot-setter-methods
+          (mapv (fn [[field-name streams]]
+                  (let [field-info (get-in rec [:field-index field-name])
+                        c-type     (:c-type field-info)]
+                    {:node        :objc-method
+                     :selector    (str "set" (capitalize-first field-name) ":")
+                     :return-type "void"
+                     :params      [{:name "newValue" :c-type c-type}]
+                     :body        [{:node    :slot-setter-body
+                                    :ivar    (str "_" field-name)
+                                    :streams streams}]}))
+                (:subscription-map rec))
           setup-method    {:node :objc-method :selector "cxc_structuralSetup"
                            :return-type "void" :params []
                            :body (-> [queue-init-stmt phase-init-stmt]
@@ -2085,7 +2168,8 @@
                             (into user-methods)
                             (into obs-methods)
                             (into txn-methods)
-                            (into stream-source-mths))})))
+                            (into stream-source-mths)
+                            (into slot-setter-methods))})))
 
 (defn- main-atom-body [main-node ctx]
   (let [transitions (filter #(= :transition (:node %)) (:body main-node))

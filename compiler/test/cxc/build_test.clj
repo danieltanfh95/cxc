@@ -227,3 +227,9 @@
     (let [{:keys [exit stdout]} (compile-and-run "stream-typed-payload")]
       (is (zero? exit))
       (is (= "42\n" stdout)))))
+
+(deftest end-to-end-stream-nullable-slot
+  (testing "stream-nullable-slot.cxc — nullable slot `source: Emitter? = nil` filled dynamically via `then: source => Emitter()`; slot setter unsubs from old (nil→no-op), assigns, subs to new; subscription actually registers with Emitter at that point; Emitter fires beep → main receives → prints 9 → exits (Layer 4b nullable-slot dynamic subscription)"
+    (let [{:keys [exit stdout]} (compile-and-run "stream-nullable-slot")]
+      (is (zero? exit))
+      (is (= "9\n" stdout)))))

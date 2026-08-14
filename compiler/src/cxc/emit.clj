@@ -240,6 +240,33 @@
     ;; main → waits for main thread). Layer 4c will re-add the sync
     ;; wrap once queues target concurrent globals.
     (str "[" (:ivar node) " addObject:sub];")
+    :stream-remove-sub
+    ;; Mirror of :stream-add-sub for slot-setter unsubscribe path
+    ;; (Layer 4b nullable-slot dynamic subscription). NSHashTable's
+    ;; removeObject: no-ops when the object isn't present, which
+    ;; happens naturally at first assignment (nothing to remove yet).
+    (str "[" (:ivar node) " removeObject:sub];")
+    :slot-setter-body
+    ;; Layer 4b slot setter for a nullable atom field that is a
+    ;; subscription root. Sequence: early-return on identity match,
+    ;; unsubscribe self from each stream on the OLD value (nil-message
+    ;; -safe), assign the ivar, subscribe self to each stream on the
+    ;; NEW value (also nil-message-safe). No explicit nil check needed
+    ;; because Cocoa nil-messaging returns 0/nil.
+    (let [ivar    (:ivar node)
+          streams (:streams node)
+          unsub-lines (->> streams
+                           (map (fn [s]
+                                  (str "[" ivar " cxc_removeSubscriberFor_" s ":self];")))
+                           (str/join "\n    "))
+          sub-lines   (->> streams
+                           (map (fn [s]
+                                  (str "[newValue cxc_addSubscriberFor_" s ":self];")))
+                           (str/join "\n    "))]
+      (str "if (" ivar " == newValue) return;\n"
+           "    " unsub-lines "\n"
+           "    " ivar " = newValue;\n"
+           "    " sub-lines))
     :stream-add-sub-dispatch
     ;; Generic `-cxc_addSubscriberToStream:sub:` body. If-chain over the
     ;; source atom's declared streams; unknown names log for debug
