@@ -951,6 +951,56 @@
         :else
         (fail! tokens p "expected data:, methods:, deprecated:, or dedent in record body")))))
 
+(defn- parse-extern-signature
+  "A body-less function signature inside an extern block:
+     function <name>(<params>) -> <ret>
+   No `:` / body — the declaration binds a foreign symbol at
+   link-time; there is no cxc body to lower."
+  [tokens pos]
+  (let [[_ p]      (expect tokens pos :kw "function")
+        [name p]   (expect tokens p :ident)
+        [params p] (parse-param-list-parens tokens p)
+        [ret p]    (if (at? tokens p :glyph "->")
+                     (parse-type tokens (inc p))
+                     [nil p])
+        [_ p]      (expect tokens p :newline)]
+    [{:node :extern-fn :name name :params params :return-type ret} p]))
+
+(defn- parse-extern
+  "Layer 6 Step 7 — extern capability. Declares a namespace of
+   foreign function symbols the compiler wires to bare C-linkage
+   calls. Grammar:
+
+     extern <Name>:
+         function foo(a: Int) -> Int
+         function bar(s: String) -> Int
+
+   Signature params/returns must be primitives at MVP; the linker
+   resolves each name against the process's loaded C symbols (libc
+   comes in transitively via Foundation.h/stdio.h). Callers reach
+   them via `<Name>.<method>(args)` — see lower-method-call."
+  [tokens pos]
+  (let [[_ p]    (expect tokens pos :kw "extern")
+        [name p] (expect tokens p :ident)
+        [_ p]    (expect tokens p :punct ":")
+        [_ p]    (expect tokens p :newline)
+        [_ p]    (expect tokens p :indent)]
+    (loop [syms [] p p]
+      (cond
+        (at? tokens p :dedent)
+        [{:node :extern :name name :symbols syms} (inc p)]
+
+        (at? tokens p :newline)
+        (recur syms (inc p))
+
+        (at? tokens p :kw "function")
+        (let [[s p2] (parse-extern-signature tokens p)]
+          (recur (conj syms s) (skip-newlines tokens p2)))
+
+        :else
+        (fail! tokens p
+               "expected `function` signature or dedent in extern body")))))
+
 (defn- parse-enum
   "Parse `enum Foo:` followed by an indented list of ident cases,
    one per line. Cases carry no payloads in this subset (v1.0 spec
@@ -1024,6 +1074,7 @@
       (at? tokens p :kw "from")    (parse-from-import tokens p)
       (at? tokens p :kw "record")  (parse-record tokens p)
       (at? tokens p :kw "enum")    (parse-enum tokens p)
+      (at? tokens p :kw "extern")  (parse-extern tokens p)
       (at? tokens p :kw "def")     (parse-def-atom tokens p)
       :else (fail! tokens p "expected top-level form"))))
 

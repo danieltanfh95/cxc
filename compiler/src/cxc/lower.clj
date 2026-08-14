@@ -711,6 +711,33 @@
                       :case-index (into {} (map-indexed (fn [i c] [c i])
                                                         (:cases e)))}])))
 
+(defn- build-extern-env
+  "Layer 6 Step 7 — collect `extern <Name>: function <sig>...` blocks
+   into a namespace → symbol-index map. Signatures are stored raw
+   (params carry :type nodes, return-type is a type-node) so
+   downstream resolution can defer type-kw translation until the
+   full record-/atom-/enum-env is available.
+
+   Duplicate declarations across blocks with the same Name merge
+   into one symbol-index; a duplicate symbol name across blocks
+   throws to catch user typos (a real name-resolution pass would
+   scope this per import; MVP concatenates globally)."
+  [top-nodes]
+  (reduce
+   (fn [env n]
+     (let [nm (:name n)
+           existing (get env nm {})
+           new-syms (into {} (map (fn [s] [(:name s) s]) (:symbols n)))
+           dupes (filter (set (keys existing)) (keys new-syms))]
+       (when (seq dupes)
+         (fail-nyi! (str "extern `" nm "` declares symbol"
+                         (if (= 1 (count dupes)) "" "s")
+                         " twice: " (sort dupes))
+                    n))
+       (assoc env nm (merge existing new-syms))))
+   {}
+   (filter #(= :extern (:node %)) top-nodes)))
+
 ;; ---------------------------------------------------------------------------
 ;; Type inference (ctx-threaded)
 ;; ---------------------------------------------------------------------------
@@ -768,6 +795,20 @@
           o (:type-kw o)
           :else (fail-nyi! (str "method/observable `" method-name "` on atom `" an "`")
                            call-node)))
+
+      (and (map? target-ty) (:extern target-ty))
+      (let [en  (:extern target-ty)
+            sig (get-in (:extern-env ctx) [en method-name])
+            rt  (:return-type sig)]
+        (when-not sig
+          (fail-nyi! (str "extern `" en "` declares no symbol `"
+                          method-name "`")
+                     call-node))
+        (if (nil? rt)
+          :void
+          (cxc-type->type-kw (base-type-name rt)
+                             (:record-env ctx) (:atom-env ctx) (:enum-env ctx)
+                             call-node)))
 
       :else
       (fail-nyi! "method call on non-record/non-atom target" call-node))))
@@ -1061,6 +1102,12 @@
                           (cxc-type->type-kw (:cxc-ty f)
                                              (:record-env ctx) (:atom-env ctx)
                                              (:enum-env ctx) node)))
+                    ;; Layer 6 Step 7 — bare extern-namespace ident
+                    ;; appears as the target of a dot in `C_stdio.puts(...)`.
+                    ;; No runtime value; just a static namespace label
+                    ;; the method-call dispatcher unpacks.
+                    (when (contains? (:extern-env ctx) (:name node))
+                      {:extern (:name node)})
                     (fail-nyi! (str "type-of identifier `" (:name node)
                                     "` (no local-binding env yet)")
                                node))
@@ -1228,6 +1275,24 @@
              :recv     target-lo
              :selector (objc-method-selector method-name param-names)
              :args     arg-exprs})
+
+          ;; Layer 6 Step 7 — extern namespace call. Lowers to a raw
+          ;; C function call keyed on the symbol name; the linker
+          ;; resolves against the process's loaded C symbols
+          ;; (libc/libSystem is reachable via Foundation.h/stdio.h,
+          ;; which -framework Foundation transitively pulls in).
+          ;; Arity is checked here so a mismatched call fails at
+          ;; compile time rather than as a clang warning.
+          (and (map? target-ty) (:extern target-ty))
+          (let [en  (:extern target-ty)
+                sig (get-in ctx [:extern-env en method-name])
+                declared (count (:params sig))
+                supplied (count arg-exprs)]
+            (when-not (= declared supplied)
+              (fail-nyi! (str "extern `" en "." method-name "` expects "
+                              declared " arg(s), got " supplied)
+                         call-node))
+            {:node :call :fn method-name :args arg-exprs})
 
           :else
           (fail-nyi! "method call on non-record/non-atom target" call-node))))))
@@ -3270,6 +3335,7 @@
                      (throw (ex-info "no `def main` entry point found at top level"
                                      {:top top-nodes})))
         enum-env   (build-enum-env top-nodes)
+        extern-env (build-extern-env top-nodes)
         atom-env   (build-atom-env top-nodes enum-env)
         ;; Layer 5c Step 8: seed CxcStream as a runtime-provided atom
         ;; entry so type-refs like `Stream` (mangled to `CxcStream`)
@@ -3324,7 +3390,8 @@
         list-atom-entries   (synthesize-list-container-entries
                              list-instantiations atom-env)
         atom-env            (merge atom-env list-atom-entries)
-        ctx        {:record-env record-env :atom-env atom-env :enum-env enum-env :locals {}}
+        ctx        {:record-env record-env :atom-env atom-env :enum-env enum-env
+                    :extern-env extern-env :locals {}}
         records    (filter #(= :record (:node %)) top-nodes)
         enums      (filter #(= :enum   (:node %)) top-nodes)
         c-enums    (mapv lower-enum enums)
@@ -3396,6 +3463,27 @@
                             needs-runtime? (conj "<stdlib.h>"))
         ;; Dedup includes while preserving order.
         includes          (vec (distinct includes))
+        ;; Layer 6 Step 7 — emit-side forward declarations for every
+        ;; declared extern symbol. Makes each `extern <Name>: ...` block
+        ;; self-sufficient: the linker resolves the symbol against loaded
+        ;; C libraries regardless of which headers happen to be included
+        ;; (Foundation.h transitively drags in stdio, but not stdlib or
+        ;; math). Params are drawn from primitive-c-type; unknown types
+        ;; fail-nyi at lower time so users see the error at the extern
+        ;; decl, not a clang diagnostic.
+        extern-decls
+        (vec (for [[_ syms] extern-env
+                   [_ sig]  syms]
+               {:name    (:name sig)
+                :ret-c   (if (nil? (:return-type sig))
+                           "void"
+                           (cxc-type->c (:return-type sig)
+                                        record-env atom-env enum-env))
+                :params  (mapv (fn [p]
+                                 {:name  (:name p)
+                                  :c-type (cxc-type->c (:type p)
+                                                       record-env atom-env enum-env)})
+                               (:params sig))}))
         main-body         (if main-as-atom?
                             ;; Bootstrap the Main atom. Stored in file-
                             ;; scope static (emit renders both the decl
@@ -3410,6 +3498,7 @@
      :includes            includes
      :needs-runtime?      needs-runtime?
      :needs-dispatch-loop? needs-dispatch-loop?
+     :extern-decls        extern-decls
      :enums               c-enums
      :structs             structs
      :functions           functions

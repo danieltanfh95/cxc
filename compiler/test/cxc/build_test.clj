@@ -337,6 +337,12 @@
       (is (zero? exit))
       (is (= "7\n" stdout)))))
 
+(deftest end-to-end-extern-puts
+  (testing "extern-puts.cxc — Layer 6 Step 7. Declares `extern C_stdio: function puts(s: String) -> Int; function abs(n: Int) -> Int` and calls both from main. Compiler builds `:extern-env`, threads it through ctx, and dispatches `C_stdio.puts(...)` / `C_stdio.abs(...)` as raw C function calls (`{:node :call :fn puts :args ...}`). Emit produces `extern int puts(const char *s);` / `extern int abs(int n);` forward-decl prototypes at the top so the linker resolves the symbols regardless of which system headers Foundation.h transitively pulls in (stdio yes, stdlib no). Prints `hello from extern` then `7`."
+    (let [{:keys [exit stdout]} (compile-and-run "extern-puts")]
+      (is (zero? exit))
+      (is (= "hello from extern\n7\n" stdout)))))
+
 (deftest end-to-end-console-hello
   (testing "console-hello.cxc — Layer 6 Step 5. Console prelude atom with `write(msg: String) -> Int` method wrapping the `native_console_write` FFI hatch (printf %s). Main nests a Console (`def console: Console`) and calls `console.write(\"hi\\n\")` in its `-> running do:`. Prints `hi` + newline."
     (let [{:keys [exit stdout]} (compile-and-run "console-hello")]

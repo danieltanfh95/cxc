@@ -1,0 +1,10 @@
+extern C_stdio:
+    function puts(s: String) -> Int
+    function abs(n: Int) -> Int
+
+def main:
+    -> running
+        do: C_stdio.puts("hello from extern")
+        do: print(C_stdio.abs(-7))
+
+    -> end
