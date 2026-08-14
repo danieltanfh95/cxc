@@ -239,3 +239,9 @@
     (let [{:keys [exit stdout]} (compile-and-run "prelude-duration")]
       (is (zero? exit))
       (is (= "1500\n" stdout)))))
+
+(deftest end-to-end-sync-receive
+  (testing "sync-receive.cxc — `running <| bump{by: Int}` sync-receive under Layer 4 single-thread compiles identically to `<:` (serial-queue semantics already provide `<|`'s no-interleave guarantee); two `|>` sync-sends followed by `|> stop` cleanly walks main to end printing 15"
+    (let [{:keys [exit stdout]} (compile-and-run "sync-receive")]
+      (is (zero? exit))
+      (is (= "15\n" stdout)))))

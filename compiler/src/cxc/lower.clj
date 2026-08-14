@@ -1439,11 +1439,14 @@
                                    (contains? #{"<:" "<|"}
                                               (get-in % [:receive :glyph])))
                              transitions)
-        _            (doseq [t receive-txns]
-                       (when (= "<|" (get-in t [:receive :glyph]))
-                         (fail-nyi! (str "sync-receive glyph `<|` on transition "
-                                         "(rendezvous semantics — deferred to Layer 4b)")
-                                    t)))
+        ;; Under Layer 4's single-thread model (queues target main),
+        ;; `<:` and `<|` are functionally equivalent: the atom's serial
+        ;; queue already ensures "no other transition runs meanwhile"
+        ;; that spec §11 attributes to `<|`. Blocks dispatched via
+        ;; cxc_send_async run in the enqueue order; cxc_send_sync
+        ;; already runs the block synchronously. Layer 4c multi-thread
+        ;; will need actual dispatch_semaphore rendezvous for `<|` to
+        ;; distinguish from `<:` semantically.
         wildcards-by-phase (wildcards-by-target-phase transitions)
         enclosing-fields (get-in ctx [:self-fields])
         ;; Descriptor per transition: {:kind :group-key :source-selector-info}.
