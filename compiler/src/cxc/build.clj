@@ -3,18 +3,22 @@
    the resulting binary's path. Assumes clang is on PATH."
   (:require [clojure.java.io :as io]
             [clojure.java.shell :as shell]
-            [cxc.parse :as parse]
-            [cxc.lower :as lower]
-            [cxc.emit  :as emit]))
+            [cxc.parse   :as parse]
+            [cxc.lower   :as lower]
+            [cxc.emit    :as emit]
+            [cxc.prelude :as prelude]))
 
 (defn compile-source-to-file
   "Compile cxc source text through parse → lower → emit → clang.
-   Writes .m to `<out-dir>/<name>.m` and produces binary at `<out-dir>/<name>`.
+   Prepends the compiler-shipped prelude (see cxc.prelude) before
+   parsing so records/atoms defined there are visible to user code
+   without an import statement. Writes .m to `<out-dir>/<name>.m`
+   and produces binary at `<out-dir>/<name>`.
    Returns {:m-path <path> :bin-path <path> :status <clang-exit-code>
             :stdout <clang-stdout> :stderr <clang-stderr>}."
   [source name out-dir]
   (let [_        (io/make-parents (io/file out-dir "placeholder"))
-        m-src    (-> source parse/parse lower/lower emit/emit)
+        m-src    (-> (str prelude/source source) parse/parse lower/lower emit/emit)
         m-file   (io/file out-dir (str name ".m"))
         bin-file (io/file out-dir name)]
     (spit m-file m-src)

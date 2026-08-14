@@ -233,3 +233,9 @@
     (let [{:keys [exit stdout]} (compile-and-run "stream-nullable-slot")]
       (is (zero? exit))
       (is (= "9\n" stdout)))))
+
+(deftest end-to-end-prelude-duration
+  (testing "prelude-duration.cxc — the prelude-shipped CxcDuration + CxcInstant records are visible without an import; construct + method-call chain (CxcInstant + CxcDuration = CxcInstant with summed millis) prints 1500"
+    (let [{:keys [exit stdout]} (compile-and-run "prelude-duration")]
+      (is (zero? exit))
+      (is (= "1500\n" stdout)))))
