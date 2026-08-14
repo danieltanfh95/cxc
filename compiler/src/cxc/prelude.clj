@@ -164,7 +164,7 @@ def Clock(ticks: Int = 3):
     now :< native_millis_now()
 
     methods:
-        function every(self, rate_ms: Int) -> Stream:
+        function every(self, rate_ms: Int) -> Stream of Instant:
             return native_clock_every(self, rate_ms)
 
     -> running

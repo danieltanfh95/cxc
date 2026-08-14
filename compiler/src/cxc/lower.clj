@@ -215,14 +215,26 @@
     {:name (:name p) :cxc-ty (:name (:type p)) :is-self? false}))
 
 (defn- extract-methods
-  "Return [{:name :params [{:name :cxc-ty :is-self?}] :cxc-return-ty :body}]
-   from a record's :methods-section (may be nil)."
+  "Return [{:name :params [{:name :cxc-ty :is-self?}] :cxc-return-ty
+   :cxc-return-ty-node :body}] from a record's :methods-section (may
+   be nil). `:cxc-return-ty` carries the outer type name (works for
+   both `:type-ref` and `:type-of` — for `-> Stream of Instant`, it's
+   `\"CxcStream\"` after prelude-rename). `:cxc-return-ty-node`
+   retains the full type node so Layer 6's method-stream payload
+   inference can read the parametric inner type."
   [record-name methods-section]
   (mapv (fn [m]
-          {:name          (:name m)
-           :params        (mapv #(normalize-method-param record-name %) (:params m))
-           :cxc-return-ty (:name (:return-type m))
-           :body          (:body m)})
+          (let [rt (:return-type m)]
+            {:name               (:name m)
+             :params             (mapv #(normalize-method-param record-name %) (:params m))
+             :cxc-return-ty      (case (:node rt)
+                                   :type-ref      (:name rt)
+                                   :type-of       (:outer rt)
+                                   :type-nullable (base-type-name rt)
+                                   nil            nil
+                                   (:name rt))
+             :cxc-return-ty-node rt
+             :body               (:body m)}))
         (:methods methods-section)))
 
 (defn- build-record-env
@@ -903,7 +915,7 @@
                         "__cxc_ms * NSEC_PER_MSEC, 0); "
                         "CxcStream *__cxc_s = "
                         "[[CxcStream alloc] initWithSelector:"
-                        "@\"cxc_stream_every_from__Cxc_ClockWithsender:t:\" "
+                        "@\"cxc_stream_every_from__Cxc_ClockWithsender:value:\" "
                         "source:__cxc_src]; "
                         ;; Weak ref inside the event handler so the
                         ;; timer's block doesn't keep the stream
@@ -922,7 +934,7 @@
                         "_Cxc_Instant __cxc_inst = { .millis = "
                         "(int)([[NSDate date] timeIntervalSince1970] * 1000) }; "
                         "SEL __cxc_sel = sel_registerName("
-                        "\"cxc_stream_every_from__Cxc_ClockWithsender:t:\"); "
+                        "\"cxc_stream_every_from__Cxc_ClockWithsender:value:\"); "
                         "for (id sub in __cxc_ss.subscribers) { "
                         ;; Hop to subscriber via cxc_send_async so
                         ;; the msg lands on the subscriber's own_queue
@@ -942,27 +954,11 @@
 
 (defn- ffi-builtin? [name] (contains? ffi-builtins name))
 
-(def ^:private method-stream-payload-shapes
-  "Compiler-known payload shapes for method-returned streams. Keyed by
-   [source-class method-name] → vector of {:name :cxc-ty} entries (in
-   order). Empty vector = no user payload, just the sender: arg.
-
-   The receive-side `<: source.method(args){k: T}` clause must match
-   the shape declared here — name-wise and type-wise. The corresponding
-   FFI hatch that creates the stream (`native_clock_every` today) is
-   responsible for emitting fanout code that includes each payload as
-   a typed argument in the objc_msgSend cast.
-
-   Layer 5c has one entry: `Clock.every` emits `t: Instant` on each
-   fire. Layer 6 formalizes as `Stream[T]` return-type inference from
-   the method signature; today the compiler carries this table."
-  {["_Cxc_Clock" "every"] [{:name "t" :cxc-ty "_Cxc_Instant"}]})
-
-(defn- method-stream-payload
-  "Registered payload shape for [source-class method-name], or empty
-   vector if none (legacy sender-only method-streams)."
-  [source-class method-name]
-  (get method-stream-payload-shapes [source-class method-name] []))
+;; Layer 6 Step 1: retired `method-stream-payload-shapes` registry.
+;; Payload type for `<: source.method(...){k: T}` receives now derives
+;; from the method's declared `-> Stream of T` return type node — read
+;; inline in `lower-receive-glyph-transitions`' `:method-stream` branch
+;; via `:cxc-return-ty-node`.
 
 (defn- infer-call-type
   [{:keys [callee] :as node} ctx]
@@ -2081,16 +2077,20 @@
                            :stream-name  stream-name})
 
                         :method-stream
-                        ;; Layer 5c Step 8: source is `<field>.<method>(args)`.
+                        ;; Layer 6 Step 1: source is `<field>.<method>(args)`.
                         ;; The method must be declared on the source-class atom
-                        ;; and return a Stream (CxcStream). Payload shape (if
-                        ;; any) comes from the compiler's
-                        ;; `method-stream-payload-shapes` registry — Clock.every
-                        ;; declares `t: Instant` today. The receive site's
-                        ;; `{...}` clause must match the registered shape
-                        ;; name-for-name and type-for-type; omission when the
-                        ;; registry declares a shape is an error (subscribers
-                        ;; must acknowledge the payload they'll receive).
+                        ;; and return `Stream of T`. Payload type comes from
+                        ;; the method's return-type node's `:inner` (T), NOT
+                        ;; a compiler-side registry — this retires the
+                        ;; Layer 5c `method-stream-payload-shapes` shim.
+                        ;;
+                        ;; Wire-side selector key is fixed as `value:` for the
+                        ;; single-payload case. The receive site declares its
+                        ;; own local name for the payload (`{whatever: T}`) —
+                        ;; that name becomes the ObjC method param name; the
+                        ;; selector part stays `value:`. Different receivers
+                        ;; can bind different local names without producing
+                        ;; different selectors.
                         (let [src        (get-in t [:receive :msg :source])
                               dot        (:callee src)
                               target     (:target dot)
@@ -2127,6 +2127,7 @@
                                                    "` has no source")
                                               src))
                               return-ty    (:cxc-return-ty method-info)
+                              return-node  (:cxc-return-ty-node method-info)
                               _            (when-not (= "CxcStream" return-ty)
                                              (fail-nyi!
                                               (str "method `" source-class "."
@@ -2134,40 +2135,68 @@
                                                    return-ty "`, but receive-glyph "
                                                    "requires a `Stream` return type")
                                               src))
-                              expected     (method-stream-payload source-class method-nm)
+                              ;; Extract T from `Stream of T`. `:type-of` node
+                              ;; carries :inner as another type node.
+                              inner-node   (:inner return-node)
+                              payload-cxc-ty (when (and inner-node
+                                                        (contains? #{:type-ref :type-nullable}
+                                                                   (:node inner-node)))
+                                               (base-type-name inner-node))
                               declared     (or (:payload (get-in t [:receive :msg]))
                                                [])
-                              expected-names (mapv :name expected)
-                              declared-names (mapv :name declared)
-                              _            (when (not= expected-names declared-names)
+                              expects-payload? (some? payload-cxc-ty)
+                              _            (cond
+                                             ;; Bare `Stream` without `of T` and receiver declared payload — mismatch.
+                                             (and (not expects-payload?) (seq declared))
+                                             (fail-nyi!
+                                              (str "method `" source-class "."
+                                                   method-nm "()` returns bare `Stream`, "
+                                                   "but receive declares payload "
+                                                   (mapv :name declared))
+                                              src)
+                                             ;; `Stream of T` with no receive-declared payload — need one.
+                                             (and expects-payload? (empty? declared))
+                                             (fail-nyi!
+                                              (str "method `" source-class "."
+                                                   method-nm "()` returns `Stream of "
+                                                   payload-cxc-ty
+                                                   "` — receive must declare `{name: "
+                                                   payload-cxc-ty "}` to bind the "
+                                                   "payload locally")
+                                              src)
+                                             ;; Multi-key declared payload — Layer 6 single-key only for now.
+                                             (and expects-payload? (> (count declared) 1))
                                              (fail-nyi!
                                               (str "method-stream `" field-nm "."
-                                                   method-nm "()` payload shape "
-                                                   "mismatch: source emits "
-                                                   expected-names ", receive declared "
-                                                   declared-names)
+                                                   method-nm "()` payload has "
+                                                   (count declared) " keys; Layer 6 "
+                                                   "supports single-key payload "
+                                                   "(`Stream of T` shape)")
+                                              src)
+                                             ;; Type check the single declared payload against T.
+                                             (and expects-payload?
+                                                  (= 1 (count declared))
+                                                  (not= payload-cxc-ty
+                                                        (base-type-name (:type (first declared)))))
+                                             (fail-nyi!
+                                              (str "method-stream `" field-nm "."
+                                                   method-nm "()` payload key `"
+                                                   (:name (first declared))
+                                                   "` declared as `"
+                                                   (base-type-name (:type (first declared)))
+                                                   "`, but source emits `Stream of "
+                                                   payload-cxc-ty "`")
                                               src))
-                              _            (doseq [[dec exp] (map vector declared expected)]
-                                             (let [dec-ty (base-type-name (:type dec))]
-                                               (when (not= dec-ty (:cxc-ty exp))
-                                                 (fail-nyi!
-                                                  (str "method-stream `" field-nm "."
-                                                       method-nm "()` payload key `"
-                                                       (:name dec) "` declared as `"
-                                                       dec-ty "`, but source emits `"
-                                                       (:cxc-ty exp) "`")
-                                                  src))))
-                              ;; Prefer the receive site's typed payload
-                              ;; (has :type nodes for method-params emit);
-                              ;; fall back to fabricating from the registry
-                              ;; when no payload was declared but shape is
-                              ;; empty (both are `[]` — no-op).
-                              payload      (if (seq declared) declared expected)
-                              payload-keys (mapv :name payload)]
+                              payload      declared
+                              ;; Wire selector uses fixed `value:` key part so
+                              ;; all subscribers to the same method-stream get
+                              ;; the same selector regardless of their local
+                              ;; binding name. Empty payload → no key parts.
+                              wire-keys    (if expects-payload? ["value"] [])]
                           {:kind          :method-stream
                            :txn           t
                            :group-key     [:method-stream source-class method-nm]
-                           :selector      (stream-selector source-class method-nm payload-keys)
+                           :selector      (stream-selector source-class method-nm wire-keys)
                            :payload       payload
                            :source-class  source-class
                            :source-field  field-nm
