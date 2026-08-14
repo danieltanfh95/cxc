@@ -33,7 +33,8 @@
    collision the compiler doesn't diagnose in Layer 5 minimum."
   {"Duration" "_Cxc_Duration"
    "Instant"  "_Cxc_Instant"
-   "Clock"    "_Cxc_Clock"})
+   "Clock"    "_Cxc_Clock"
+   "Random"   "_Cxc_Random"})
 
 (defn rename-if
   "Rename `s` via `rename-table` if `s` is a string that appears in
@@ -50,7 +51,7 @@
    (mangled) form. Tree-shaking in cxc.lower compares against these
    after the rewrite pass runs, so entries here match what the
    lowered AST carries — not what the prelude source spelled."
-  #{"_Cxc_Clock"})
+  #{"_Cxc_Clock" "_Cxc_Random"})
 
 (def source
   "Prelude source text spliced ahead of user source. Indentation is
@@ -81,6 +82,13 @@ record Instant:
     methods:
         function plus(self, delta: Duration) -> Instant:
             return Instant(millis: self.millis + delta.millis)
+
+def Random:
+    next_u32 :< native_random_u32()
+
+    methods:
+        function below(self, n: Int) -> Int:
+            return native_random_below(n)
 
 def Clock(ticks: Int = 3):
     data:

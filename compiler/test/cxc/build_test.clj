@@ -287,3 +287,9 @@
     (let [{:keys [exit stdout]} (compile-and-run "clock-now")]
       (is (zero? exit))
       (is (= "1\n" stdout)))))
+
+(deftest end-to-end-random-below
+  (testing "random-below.cxc — Layer 5b Step 11. Prelude ships `Random` with `next_u32 :< native_random_u32()` observable and `below(n)` method wrapping `native_random_below(n)` — both hatched through the FFI-builtin registry to `arc4random`/`arc4random_uniform`. Deterministic assertion: `rng.below(1)` always returns 0."
+    (let [{:keys [exit stdout]} (compile-and-run "random-below")]
+      (is (zero? exit))
+      (is (= "0\n" stdout)))))
