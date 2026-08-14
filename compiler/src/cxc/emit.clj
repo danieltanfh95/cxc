@@ -128,12 +128,17 @@
     :raw-c    (:text node)
     :raw-stream-subscribe
     ;; Layer 5c Step 8: method-returned Stream subscribe. Emits as a
-    ;; scoped block so the temporary CxcStream doesn't leak into
-    ;; surrounding stmt namespace. The method call returns a
-    ;; CxcStream *; -cxc_addSubscriber:self hooks the enclosing atom
-    ;; to the returned stream. The source atom is expected to retain
-    ;; the stream itself (Layer 5c Step 10's FFI hatch does exactly
-    ;; that via CFBridgingRetain).
+    ;; scoped block so the temporary CxcStream reference doesn't
+    ;; leak into surrounding stmt namespace. The method call returns
+    ;; a CxcStream *; -cxc_addSubscriber:self hooks the enclosing
+    ;; atom to the returned stream. Layer 5c lifecycle: subscriber
+    ;; owns the stream via cxc_own_resource, so the stream (and its
+    ;; underlying timer, wired via the stream's teardown block)
+    ;; lives exactly as long as the subscribing atom. When the
+    ;; subscriber's -transitionToEnd fires, cxc_owned_resources
+    ;; drops the stream → ARC dealloc → cxc_end → teardown cancels
+    ;; the timer. No cross-atom retain of the source (Clock) needed
+    ;; — it's a factory, not a lifetime anchor.
     (let [field    (:field node)
           selector (:selector node)
           args     (:args node)
@@ -148,6 +153,7 @@
                                "]")))
           _ arg-names]
       (str "{ CxcStream *__cxc_ms = " method-send "; "
+           "cxc_own_resource(self, __cxc_ms); "
            "[__cxc_ms cxc_addSubscriber:self]; }"))
     :invariant-check
     ;; Direct if/abort — NSAssert is compiled out by NS_BLOCK_ASSERTIONS
@@ -172,6 +178,16 @@
     ;; without needing the concrete child type at this call site.
     (let [slot (str "_" (:slot-name node))]
       (str "cxc_send_async(" slot ", ^{ [(id<CXCAtom>)" slot " transitionToEnd]; });"))
+    :owned-resources-clear
+    ;; Layer 5c lifecycle: at -transitionToEnd, release everything the
+    ;; atom acquired via cxc_own_resource (dispatch timers, method-
+    ;; returned CxcStreams, etc). removeAllObjects triggers ARC dealloc
+    ;; on each entry — CxcTimerHandle cancels its source, CxcStream
+    ;; routes to cxc_end (fires teardown block, drops subscribers).
+    ;; Nil-guarded: atoms that never spawned anything have a nil array
+    ;; and skip the message entirely (removeAllObjects on nil is a
+    ;; no-op under Cocoa nil-messaging).
+    "[_cxc_owned_resources removeAllObjects];"
     :end-cascade-parent
     ;; Notify parent (weak back-ref) to nil the slot holding self.
     ;; Snapshot _parent + _parent_slot_name to strong locals so the
@@ -547,8 +563,31 @@
   ;; 4c retargets to dispatch_sync when queue targets differ.
   (str "@protocol CXCAtom\n"
        "@property (nonatomic, strong) dispatch_queue_t own_queue;\n"
+       ;; Layer 5c lifecycle cleanup — atoms carry an NSMutableArray of
+       ;; resources (dispatch timers, CxcStreams) they must release on
+       ;; -> end. Removing all objects triggers ARC dealloc on each,
+       ;; and each resource cleans itself up in dealloc (timer cancel,
+       ;; stream teardown). Retires the previous "unbalanced
+       ;; CFBridgingRetain forever" leak strategy of Layer 5c initial.
+       "@property (nonatomic, strong) NSMutableArray *cxc_owned_resources;\n"
        "- (void)nilSlot:(NSString *)slotName;\n"
        "- (void)transitionToEnd;\n"
+       "@end\n\n"
+       ;; CxcTimerHandle — wraps a (dispatch_source_t, dispatch_queue_t)
+       ;; pair so ARC controls its lifetime. On dealloc, cancels the
+       ;; source (idempotent if already canceled) and drops the queue.
+       ;; Atoms holding one in cxc_owned_resources dispose of both by
+       ;; removing the handle from the array.
+       "@interface CxcTimerHandle : NSObject\n"
+       "@property (nonatomic, strong) dispatch_source_t source;\n"
+       "@property (nonatomic, strong) dispatch_queue_t queue;\n"
+       "@end\n\n"
+       "@implementation CxcTimerHandle\n"
+       "- (void)dealloc {\n"
+       "    if (_source) dispatch_source_cancel(_source);\n"
+       "    _source = nil;\n"
+       "    _queue = nil;\n"
+       "}\n"
        "@end\n\n"
        "static inline void cxc_send_async(id target, void (^block)(void)) {\n"
        "    if (target == nil) return;\n"
@@ -560,6 +599,20 @@
        "}\n\n"
        "static inline void cxc_shutdown(void) {\n"
        "    exit(0);\n"
+       "}\n\n"
+       ;; Own a resource for cleanup on the atom's -> end. Lazily
+       ;; allocates the owner's resources array on first call —
+       ;; atoms that never spawn timers/streams pay one pointer of
+       ;; overhead (the nil ivar) and no allocation.
+       "static inline void cxc_own_resource(id owner, id resource) {\n"
+       "    if (owner == nil || resource == nil) return;\n"
+       "    id<CXCAtom> a = (id<CXCAtom>)owner;\n"
+       "    NSMutableArray *arr = a.cxc_owned_resources;\n"
+       "    if (arr == nil) {\n"
+       "        arr = [NSMutableArray array];\n"
+       "        a.cxc_owned_resources = arr;\n"
+       "    }\n"
+       "    [arr addObject:resource];\n"
        "}\n\n"
        ;; Layer 5 Step 7 — CxcStream: first-class stream value.
        ;; Method-returning-stream calls (e.g. clock.every(rate) at
@@ -640,6 +693,13 @@
        "    if (_teardown) _teardown();\n"
        "    _teardown = nil;\n"
        "    [_subscribers removeAllObjects];\n"
+       "}\n"
+       ;; When an owning atom drops the stream from its
+       ;; cxc_owned_resources, ARC calls dealloc — route through
+       ;; cxc_end so any teardown block still fires (idempotent since
+       ;; cxc_end nils _teardown after invoking it).
+       "- (void)dealloc {\n"
+       "    [self cxc_end];\n"
        "}\n"
        "@end"))
 

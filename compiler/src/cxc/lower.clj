@@ -774,17 +774,15 @@
    "native_schedule_periodic_beat"
    ;; Layer 5c Step 10 (via prelude Ticker atom): create a repeating
    ;; dispatch_source_t timer that sends the `beat` message to `target`
-   ;; every `rate_ms` milliseconds. The timer is leaked on purpose —
-   ;; Ticker atoms live for the process lifetime; cxc_shutdown/exit(0)
-   ;; tears everything down. Wrapped in a GNU statement-expression
-   ;; `({...})` so the call is legal both as an expression and in
-   ;; do:-clause statement position.
+   ;; every `rate_ms` milliseconds. Wrapped in a GNU statement-
+   ;; expression `({...})` so the call is legal both as an expression
+   ;; and in do:-clause statement position.
    ;;
    ;; Timer queue: a dedicated serial queue, NOT the main queue.
    ;; `dispatch_source_t` timers targeting `dispatch_get_main_queue()`
    ;; do not fire under `dispatch_main()` on macOS — a known
    ;; libdispatch quirk. The event handler hops back to main via
-   ;; `cxc_send_async(target, ...)`, which routes through Ticker's
+   ;; `cxc_send_async(target, ...)`, which routes through the target's
    ;; own_queue → main. All actor code still runs on main; only the
    ;; timer itself lives elsewhere.
    ;;
@@ -793,6 +791,13 @@
    ;; the cxc body is dead simple: one `<: beat` receiver re-emits
    ;; `:> tick`. FFI builtins that target arbitrary selector names
    ;; can wait for a real need (Layer 5c+).
+   ;;
+   ;; Lifecycle: timer + queue are wrapped in a CxcTimerHandle and
+   ;; attached to the target atom's cxc_owned_resources. On the
+   ;; target's -transitionToEnd, removeAllObjects triggers ARC
+   ;; dealloc on the handle, which dispatch_source_cancel's the
+   ;; timer and drops the queue. Retires the earlier CFBridgingRetain
+   ;; leak that kept both alive to end of process.
    {:return-kw :void
     :arity     2
     :emit-c    (fn [args]
@@ -819,19 +824,10 @@
                         "}); "
                         "}); "
                         "dispatch_resume(__cxc_t); "
-                        ;; Under ARC, libdispatch objects are ObjC
-                        ;; objects. Local variables in this scope
-                        ;; lose their retain when main()'s
-                        ;; @autoreleasepool drains at end of init,
-                        ;; leaving the timer with only the source's
-                        ;; internal self-retain and its queue with
-                        ;; no owner. Both get released, timer never
-                        ;; fires. Unbalanced +1 retain via
-                        ;; CFBridgingRetain keeps them alive for the
-                        ;; process lifetime — matches the timer's
-                        ;; "runs until exit(0)" design.
-                        "(void)CFBridgingRetain(__cxc_t); "
-                        "(void)CFBridgingRetain(__cxc_tq); "
+                        "CxcTimerHandle *__cxc_h = [[CxcTimerHandle alloc] init]; "
+                        "__cxc_h.source = __cxc_t; "
+                        "__cxc_h.queue = __cxc_tq; "
+                        "cxc_own_resource(__cxc_tgt, __cxc_h); "
                         "(void)0; })")))}
    "native_clock_every"
    ;; Layer 5c Step 8/10 — real method-returned Stream. Called from
@@ -839,8 +835,7 @@
    ;; CxcStream carrying the exact receiver-side selector subscribers
    ;; will declare, plus a dispatch_source_t periodic timer whose
    ;; event handler fans the stream. Same macOS quirks as
-   ;; `native_schedule_periodic_beat` (dedicated queue for timer, ARC
-   ;; unbalanced-retain on both queue and source).
+   ;; `native_schedule_periodic_beat` (dedicated queue for timer).
    ;;
    ;; The selector name is hardcoded to
    ;; `cxc_stream_every_from__Cxc_ClockWithsender:` — mirrors what
@@ -848,6 +843,28 @@
    ;; source-class `_Cxc_Clock` and method-name `every`. If a future
    ;; Layer 5c FFI supports method-name/source-class as compile-time
    ;; params, this becomes generic; today it's Clock-specific.
+   ;;
+   ;; Lifecycle: the CxcStream owns the timer via its teardown block.
+   ;; The subscriber owns the CxcStream (see :raw-stream-subscribe in
+   ;; emit — cxc_own_resource(self, stream) at subscription site).
+   ;; When the subscriber -> end, its resources drop the stream →
+   ;; ARC dealloc → -cxc_end fires teardown → timer cancelled → the
+   ;; CxcTimerHandle deallocs → queue released. Clock (the source)
+   ;; is just a factory here; it holds no reference to the stream
+   ;; and its own lifecycle is independent. Retires the earlier
+   ;; CFBridgingRetain leaks and unblocks per-subscriber lifetime
+   ;; (a Clock with a short internal beat count doesn't kill a
+   ;; subscriber's every-stream anymore).
+   ;;
+   ;; The event handler holds a strong ref to the CxcStream — that
+   ;; ref lives inside the timer's captured block. The
+   ;; CxcTimerHandle in the teardown-captured `__cxc_h` closure keeps
+   ;; the timer + queue alive as long as the stream lives. Cycle:
+   ;; stream → teardown block → handle → (no back-ref to stream).
+   ;; No retain cycle; when subscriber drops stream, stream deallocs
+   ;; → teardown runs → handle released → block destroyed → strong
+   ;; stream ref inside block also released (already dealloc'd, so
+   ;; no-op).
    {:return-kw {:atom "CxcStream"}
     :arity     2
     :emit-c    (fn [args]
@@ -868,13 +885,20 @@
                         "[[CxcStream alloc] initWithSelector:"
                         "@\"cxc_stream_every_from__Cxc_ClockWithsender:\" "
                         "source:__cxc_src]; "
+                        ;; Weak ref inside the event handler so the
+                        ;; timer's block doesn't keep the stream
+                        ;; alive after subscribers drop it. Without
+                        ;; the weak, stream → handle → block → strong
+                        ;; stream is a real cycle.
+                        "__weak CxcStream *__cxc_ws = __cxc_s; "
                         "dispatch_source_set_event_handler(__cxc_t, ^{ "
-                        "[__cxc_s cxc_emit]; "
+                        "[__cxc_ws cxc_emit]; "
                         "}); "
                         "dispatch_resume(__cxc_t); "
-                        "(void)CFBridgingRetain(__cxc_t); "
-                        "(void)CFBridgingRetain(__cxc_q); "
-                        "(void)CFBridgingRetain(__cxc_s); "
+                        "CxcTimerHandle *__cxc_h = [[CxcTimerHandle alloc] init]; "
+                        "__cxc_h.source = __cxc_t; "
+                        "__cxc_h.queue = __cxc_q; "
+                        "__cxc_s.teardown = ^{ (void)__cxc_h; }; "
                         "__cxc_s; })")))}})
 
 (defn- ffi-builtin? [name] (contains? ffi-builtins name))
@@ -2616,6 +2640,16 @@
                           ;; keeps it alive for the atom's lifetime.
                           {:name "own_queue" :c-type "dispatch_queue_t"
                            :attrs ["nonatomic" "strong"]}
+          ;; Layer 5c lifecycle: any resource whose lifetime the atom
+          ;; wants to bound (dispatch timers, method-returned
+          ;; CxcStreams, etc) is appended here via cxc_own_resource.
+          ;; -transitionToEnd calls removeAllObjects, cascading ARC
+          ;; release + each element's cleanup. Nil until first own —
+          ;; atoms that never spawn anything pay one pointer of
+          ;; overhead and no allocation.
+          owned-res-prop  {:name "cxc_owned_resources"
+                           :c-type "NSMutableArray *"
+                           :attrs ["nonatomic" "strong"]}
           ;; Parent back-ref (weak → parent isn't kept alive by children;
           ;; child is removed from parent's slot via nilSlot: on end).
           ;; Slot name is copied — defensive against callers passing
@@ -2776,6 +2810,14 @@
                                      :lhs {:node :name :sym "_phase"}
                                      :rhs {:node :name :sym end-const}})
                               (into end-wildcard-do)
+                              ;; Release owned dispatch/stream resources
+                              ;; before cascading to children so timers
+                              ;; that would otherwise fire once more mid-
+                              ;; cascade stop first. Order: user do:
+                              ;; blocks (may still need timers) → clear
+                              ;; resources → cascade to children →
+                              ;; notify parent.
+                              (conj {:node :owned-resources-clear})
                               (into cascade-stmts)
                               (conj {:node :end-cascade-parent}
                                     {:node :objc-msg
@@ -2817,7 +2859,8 @@
        :superclass      "NSObject"
        :phase-constants (mapv (fn [p] {:name (phase-constant-name atom-name p)
                                        :value p}) phase-names)
-       :properties      (-> [phase-prop own-queue-prop parent-prop parent-slot-prop]
+       :properties      (-> [phase-prop own-queue-prop owned-res-prop
+                             parent-prop parent-slot-prop]
                             (into data-props)
                             (into stream-props))
        :init-params     (mapv (fn [p] {:name (:name p) :c-type (:c-type p)}) ctor-params)

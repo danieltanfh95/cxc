@@ -122,6 +122,7 @@
       (is (= "NSObject" (:superclass cls)))
       (is (= [{:name "phase"            :c-type "NSString *"       :attrs ["nonatomic" "copy"]}
               {:name "own_queue"        :c-type "dispatch_queue_t" :attrs ["nonatomic" "strong"]}
+              {:name "cxc_owned_resources" :c-type "NSMutableArray *" :attrs ["nonatomic" "strong"]}
               {:name "parent"           :c-type "id"               :attrs ["nonatomic" "weak"]}
               {:name "parent_slot_name" :c-type "NSString *"       :attrs ["nonatomic" "copy"]}
               {:name "n"                :c-type "int"              :attrs ["assign"]}]
@@ -339,6 +340,7 @@ def main:
           cls  (first (:classes prog))]
       (is (= [{:name "phase"            :c-type "NSString *"       :attrs ["nonatomic" "copy"]}
               {:name "own_queue"        :c-type "dispatch_queue_t" :attrs ["nonatomic" "strong"]}
+              {:name "cxc_owned_resources" :c-type "NSMutableArray *" :attrs ["nonatomic" "strong"]}
               {:name "parent"           :c-type "id"               :attrs ["nonatomic" "weak"]}
               {:name "parent_slot_name" :c-type "NSString *"       :attrs ["nonatomic" "copy"]}
               {:name "n"                :c-type "int"              :attrs ["assign"]}
