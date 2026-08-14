@@ -174,3 +174,35 @@
       (is (= ["Vector2"] (mapv :name (filter #(= :record (:node %)) nodes))))
       (is (= ["Paddle" "ActionMachine" "Player" "Enemy" "EnemySpawner" "Game" "main"]
              (mapv :name (filter #(= :def-atom (:node %)) nodes)))))))
+
+(defn- for-call
+  "Helper: extract the `xs.for_each(e => body)` :call node from a
+   `def main` with a single `-> running` transition whose body's
+   first do-clause statement is the for-sugar rewrite."
+  [nodes]
+  (let [main   (first (filter #(= :def-atom (:node %)) nodes))
+        txn    (first (filter #(= :transition (:node %)) (:body main)))
+        do-cl  (first (filter #(= :do-clause  (:node %)) (:body txn)))]
+    (get-in do-cl [:stmts 0 :expr])))
+
+(deftest for-sugar-inline
+  (testing "`for e in xs: <stmt>` desugars at parse time to `xs.for_each(e => <stmt>)`; Step 2 parse-time rewrite only, runtime support arrives at Step 5"
+    (let [nodes (p/parse "def main:\n    -> running\n        do:\n            for e in xs: e :> tick\n")
+          call  (for-call nodes)]
+      (is (= :call (:node call)))
+      (is (= :dot (get-in call [:callee :node])))
+      (is (= "for_each" (get-in call [:callee :field])))
+      (is (= "xs"       (get-in call [:callee :target :name])))
+      (let [lambda (get-in call [:args 0 :value])]
+        (is (= :lambda (:node lambda)))
+        (is (= "e"     (get-in lambda [:params 0 :name])))
+        (is (= :emit   (get-in lambda [:body :node])))))))
+
+(deftest for-sugar-block
+  (testing "`for e in xs:` newline indented body wraps as `{:node :block :stmts [...]}` inside the lambda; multi-statement bodies preserved"
+    (let [nodes (p/parse "def main:\n    -> running\n        do:\n            for e in xs:\n                e :> tick\n                e :> ping\n")
+          call  (for-call nodes)
+          body  (get-in call [:args 0 :value :body])]
+      (is (= :block (:node body)))
+      (is (= 2 (count (:stmts body))))
+      (is (every? #(= :emit (:node %)) (:stmts body))))))

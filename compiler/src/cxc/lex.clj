@@ -28,7 +28,8 @@
     "self" "nil" "true" "false"
     "and" "or" "not" "is" "in" "of"
     "if" "else" "return" "match" "case" "switch"
-    "function"})
+    "function"
+    "for"})
 
 (def multi-char-glyphs
   ["<:" "<|" "|>" ":>" ":<" "->" "=>" "==" "!=" "<=" ">=" "//" "**"])

@@ -379,6 +379,8 @@
                    [[] p])]
     [{:msg name :args args} p]))
 
+(declare parse-for-statement)
+
 (defn- parse-statement
   "One statement:
      return <expr>
@@ -386,6 +388,7 @@
      |> <msg>[(args)]                        — untargeted sync emit
      <expr> :> <msg>[(args)]                 — targeted async send
      <expr> |> <msg>[(args)]                 — targeted sync send
+     for <var> in <expr>: <body>             — sugar → <expr>.for_each(<var> => <body>)
      <expr>                                  — bare expression"
   [tokens pos]
   (cond
@@ -401,11 +404,55 @@
     (let [[m p] (parse-emit-message tokens (inc pos))]
       [{:node :emit :async? false :target nil :msg (:msg m) :args (:args m)} p])
 
+    (at? tokens pos :kw "for")
+    (parse-for-statement tokens pos)
+
     :else
     (let [[e p] (parse-expr tokens pos)]
       (if (= :emit (:node e))
         [e p]                              ; targeted send parsed as postfix — already a statement
         [{:node :expr-stmt :expr e} p]))))
+
+(defn- parse-for-statement
+  "Sugar: `for <var> in <expr>: <body>` desugars at parse time to
+   `<expr>.for_each(<var> => <body>)`. Body forms:
+     - inline:  `for e in xs: <single-stmt>`
+     - block:   `for e in xs:\\n    <stmts...>` (indented)
+   Multi-stmt bodies wrap as `{:node :block :stmts [...]}`. Grammar
+   production `for_expr` per spec §1.11 note; downstream lowering
+   treats the result as an ordinary method call whose sole positional
+   arg is a lambda literal. Runtime support for the lambda arg lands
+   in Step 5 (List.for_each + ObjC blocks); Step 2 lands the parse
+   rewrite only, verified via parse_test.clj."
+  [tokens pos]
+  (let [[_ p]     (expect tokens pos :kw "for")
+        [var-name p] (expect tokens p :ident)
+        [_ p]     (expect tokens p :kw "in")
+        [coll p]  (parse-expr tokens p)
+        [_ p]     (expect tokens p :punct ":")
+        [body p]  (if (at? tokens p :newline)
+                    ;; block form
+                    (let [[_ p]  (expect tokens p :newline)
+                          [_ p]  (expect tokens p :indent)]
+                      (loop [stmts [] p p]
+                        (cond
+                          (at? tokens p :dedent)
+                          [{:node :block :stmts stmts} (inc p)]
+                          (at? tokens p :newline)
+                          (recur stmts (inc p))
+                          :else
+                          (let [[s p2] (parse-statement tokens p)
+                                p3     (skip-newlines tokens p2)]
+                            (recur (conj stmts s) p3)))))
+                    ;; inline form — single statement is the body
+                    (parse-statement tokens p))
+        lambda    {:node :lambda
+                   :params [{:name var-name}]
+                   :body body}
+        call      {:node :call
+                   :callee {:node :dot :target coll :field "for_each"}
+                   :args [{:kind :positional :value lambda}]}]
+    [{:node :expr-stmt :expr call} p]))
 
 (defn- parse-block
   "Parse an indented block: :indent (stmt :newline)+ :dedent."
