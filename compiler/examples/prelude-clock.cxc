@@ -1,0 +1,15 @@
+def main:
+    def clock: CxcClock(ticks: 3)
+
+    data:
+        count: Int = 0
+
+    -> running
+
+    -> end
+        do: print(count)
+
+    running <: clock.tick -> running
+        then: count => count + 1
+
+    running <: clock.done -> end

@@ -61,7 +61,8 @@
       :atom-env   <name -> {:fields :field-index :extras}>
       :locals     <name -> ty>       ; local scope for method bodies etc."
   (:require [clojure.string :as str]
-            [clojure.walk :as walk]))
+            [clojure.walk :as walk]
+            [cxc.prelude :as prelude]))
 
 (defn- fail-nyi! [what node]
   (throw (ex-info (str "lowering not yet implemented: " what)
@@ -383,15 +384,24 @@
 
 (defn- build-atom-env
   "Build the atom-env from every top-level `def X:` — includes `main`
-   whenever the program has any other atoms (so main can send to them
-   via the same shape check as any other sender) OR whenever main itself
-   declares message-triggered transitions (needs a class to receive
-   messages). For pure hello-world (no other atoms, no receive
-   transitions on main), main stays out of the env and the old
-   main-atom-body path handles it as a plain function body."
+   whenever the program has any other user-declared atoms (so main can
+   send to them via the same shape check as any other sender) OR
+   whenever main itself declares message-triggered transitions
+   (needs a class to receive messages). Prelude atoms are ignored for
+   this decision so records-only user programs don't get promoted to
+   ObjC classes just because CxcClock exists in the prelude — user
+   programs that DO reference a prelude atom will separately reach
+   into it via the shape check and pull main in through referenced
+   atoms.
+
+   For pure hello-world (no user atoms, no receive transitions on
+   main), main stays out of the env and the old main-atom-body path
+   handles it as a plain function body."
   [top-nodes enum-env]
   (let [other-atoms (filter #(and (= :def-atom (:node %))
-                                  (not= "main" (:name %)))
+                                  (not= "main" (:name %))
+                                  (not (contains? prelude/atom-names
+                                                  (:name %))))
                             top-nodes)
         main-node   (first (filter #(and (= :def-atom (:node %))
                                          (= "main" (:name %)))
@@ -400,7 +410,17 @@
         (boolean (some #(and (= :transition (:node %))
                              (contains? #{"<:" "<|"} (get-in % [:receive :glyph])))
                        (:body main-node)))
-        include-main? (or (seq other-atoms) main-has-message-txn?)
+        ;; A nested slot / use: cap on main brings that atom's lifecycle
+        ;; into main's — cascade end + parent-back-ref plumbing require
+        ;; main to be a real atom class. This catches the case where
+        ;; the user program's ONLY atom references are prelude atoms
+        ;; via `def clock: CxcClock`.
+        main-has-atom-slot-or-cap?
+        (boolean (some #(contains? #{:nested-atom :use-section} (:node %))
+                       (:body main-node)))
+        include-main? (or (seq other-atoms)
+                          main-has-message-txn?
+                          main-has-atom-slot-or-cap?)
         atoms    (if include-main?
                    (filter #(= :def-atom (:node %)) top-nodes)
                    other-atoms)
@@ -2220,6 +2240,33 @@
                      :observable-index  (into {} (map (juxt :name identity) typed))))))
    atom-env atom-env))
 
+(defn- names-mentioned-in
+  "Set of :ident-node names and :type-ref-node names anywhere in a
+   subtree that fall in the given name-set. Single-pass walk; cheap
+   enough to run over full top-nodes for prelude tree-shaking."
+  [subtree name-set]
+  (let [found (java.util.HashSet.)]
+    (walk/postwalk
+     (fn [n]
+       (when (map? n)
+         (let [nm (or (and (contains? #{:ident :type-ref :name} (:node n))
+                           (or (:name n) (:sym n)))
+                      (:name n))]
+           (when (and nm (contains? name-set nm))
+             (.add found nm))))
+       n)
+     subtree)
+    (into #{} found)))
+
+(defn- reachable-prelude-atoms
+  "Which prelude atoms are actually referenced by non-prelude
+   top-nodes. Non-prelude atoms are always kept (users authored them
+   directly). Prelude atoms are added only when the user program
+   mentions them by name, so shipping capability stubs like CxcClock
+   doesn't pull their fanout selectors into unrelated programs."
+  [top-nodes prelude-atom-names]
+  (names-mentioned-in top-nodes prelude-atom-names))
+
 (defn lower
   "Take parsed top-level nodes and produce an ObjC/C program AST."
   [top-nodes]
@@ -2229,6 +2276,21 @@
                                      {:top top-nodes})))
         enum-env   (build-enum-env top-nodes)
         atom-env   (build-atom-env top-nodes enum-env)
+        ;; Prelude tree-shaking: only keep prelude atoms that the
+        ;; user program actually references. Prevents compiler errors
+        ;; from fanout bodies that message subscriber-side selectors
+        ;; on classes no user atom declares. The `def CxcClock: ...`
+        ;; node itself is filtered out before scanning so it doesn't
+        ;; count as a self-reference.
+        non-prelude-nodes (remove #(and (= :def-atom (:node %))
+                                        (contains? prelude/atom-names (:name %)))
+                                  top-nodes)
+        atom-env   (let [kept-prelude (reachable-prelude-atoms
+                                       non-prelude-nodes prelude/atom-names)]
+                     (into {} (filter (fn [[k _]]
+                                        (or (not (contains? prelude/atom-names k))
+                                            (contains? kept-prelude k)))
+                                      atom-env)))
         record-env (build-record-env top-nodes atom-env enum-env)
         atom-env   (infer-observables-in-atom-env atom-env record-env enum-env)
         atom-env   (infer-streams-in-atom-env atom-env record-env enum-env)
@@ -2260,7 +2322,17 @@
         ;; (`|>` — direct call under Layer 4) complete synchronously in
         ;; the constructor and exit normally — no dispatch loop needed,
         ;; no `-> end` termination path required from the user.
-        needs-dispatch-loop? (program-has-async-sends? top-nodes)
+        ;; dispatch_main() gated on ANY reachable atom (including kept
+        ;; prelude atoms) doing an async send. non-prelude-nodes alone
+        ;; would miss prelude-atom self-sends the user reaches into.
+        ;; Reachable prelude atoms live in atom-env already (after
+        ;; tree-shaking above); scan all their transitions.
+        needs-dispatch-loop? (or (program-has-async-sends? non-prelude-nodes)
+                                 (some (fn [[nm info]]
+                                         (and (contains? prelude/atom-names nm)
+                                              (program-has-async-sends?
+                                               (:transitions info))))
+                                       atom-env))
         base-includes     (if needs-foundation?
                             ["<Foundation/Foundation.h>"]
                             ["<stdio.h>"])

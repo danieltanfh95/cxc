@@ -245,3 +245,9 @@
     (let [{:keys [exit stdout]} (compile-and-run "sync-receive")]
       (is (zero? exit))
       (is (= "15\n" stdout)))))
+
+(deftest end-to-end-prelude-clock
+  (testing "prelude-clock.cxc — prelude-shipped CxcClock capability atom fires 3 ticks then a `done` stream; main subscribes to both, increments count on each tick, and transitions to end on done, printing 3. Exercises prelude tree-shaking (CxcClock only included because referenced), main-atom-lifecycle with a nested-slot cap, and multi-stream subscription per source atom."
+    (let [{:keys [exit stdout]} (compile-and-run "prelude-clock")]
+      (is (zero? exit))
+      (is (= "3\n" stdout)))))
