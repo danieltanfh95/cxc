@@ -1,0 +1,8 @@
+def main:
+    data:
+        xs: List of Int = [7, 11, 13]
+
+    -> running
+        do:
+            for e in xs:
+                print(e)

@@ -269,3 +269,9 @@
     (let [{:keys [exit stdout]} (compile-and-run "list-remove")]
       (is (zero? exit))
       (is (= "2\n" stdout)))))
+
+(deftest end-to-end-list-for-each
+  (testing "list-for-each.cxc — Layer 5 Step 5. Step 2's parse-time `for e in xs: print(e)` sugar produces `xs.for_each(e => print(e))`; lower special-cases for_each on a List container with a lambda arg, emitting `[xs cxc_for_each:^(id _cxc_e) { int e = [_cxc_e intValue]; ... }]`. Element unboxed per element-type (Int→intValue). Prints 7 11 13."
+    (let [{:keys [exit stdout]} (compile-and-run "list-for-each")]
+      (is (zero? exit))
+      (is (= "7\n11\n13\n" stdout)))))

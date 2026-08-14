@@ -57,15 +57,25 @@
                           (str/join ", " (map emit-expr (:args node)))
                           ")")
     :objc-block-literal
-    ;; `^{ stmt; stmt; }` — a void^(void) ObjC block literal. Used to
-    ;; wrap message-send bodies for cxc_send_async / cxc_send_sync so
-    ;; the target's queue can defer execution (design §10). Blocks
-    ;; capture surrounding variables by copy — atom pointers via
-    ;; ARC-strong retain, primitives by value; safe by construction
-    ;; because the block's target lifetime is the outer expression.
-    (let [stmts (str/join "\n" (map emit-stmt (:stmts node)))
-          indented (indent-lines 4 stmts)]
-      (str "^{\n" indented "\n}"))
+    ;; `^{ stmt; stmt; }` (or `^(T1 a, T2 b) { ... }` when :params
+    ;; present) — an ObjC block literal. Used both to wrap message-
+    ;; send bodies for cxc_send_async / cxc_send_sync (void^(void))
+    ;; and to pass callbacks into container methods like
+    ;; `-cxc_for_each:` (void^(id) — Layer 5 Step 5). Blocks capture
+    ;; surrounding variables by copy — atom pointers via ARC-strong
+    ;; retain, primitives by value; safe by construction because
+    ;; the block's target lifetime is the outer expression.
+    (let [stmts    (str/join "\n" (map emit-stmt (:stmts node)))
+          indented (indent-lines 4 stmts)
+          params   (:params node)
+          sig      (if (seq params)
+                     (str "^("
+                          (str/join ", "
+                                    (map (fn [p] (str (:c-type p) " " (:name p)))
+                                         params))
+                          ")")
+                     "^")]
+      (str sig "{\n" indented "\n}"))
     :objc-cast       (str "(" (:c-type node) ")" (emit-expr (:expr node)))
     :objc-num-lit    (case (:kind node)
                        :int   (str "@" (:value node))
@@ -105,6 +115,7 @@
     :objc-msg (str (emit-expr node) ";")
     :return   (str "return " (emit-expr (:value node)) ";")
     :assign   (str (emit-expr (:lhs node)) " = " (emit-expr (:rhs node)) ";")
+    :raw-c    (:text node)
     :invariant-check
     ;; Direct if/abort — NSAssert is compiled out by NS_BLOCK_ASSERTIONS
     ;; in release builds; invariants must always fire.

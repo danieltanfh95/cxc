@@ -899,6 +899,8 @@
     (str method-name "With" (first arg-names) ":"
          (str/join "" (map #(str % ":") (rest arg-names))))))
 
+(declare lower-for-each-call lambda-body-stmts unbox-prelude-for-element)
+
 (defn- lower-method-call
   "`target.method(args)` dispatches on target type:
    - record target → C free function call `Record_method(target, args...)`
@@ -906,6 +908,9 @@
    - atom target → ObjC message send `[target methodWithArg:...]` with
      arg-name-derived selector parts, falling back to observable-index
      for zero-arg synthesized getters
+   - list-container target + method `for_each` → special-cased block
+     literal path (Layer 5 Step 5); the lambda arg gets bound + body
+     lowered inside a fresh ctx with the element name in locals
    Named args on method calls fail-nyi — parameters have declaration
    order in the source-level method decl."
   [call-node ctx]
@@ -913,36 +918,122 @@
         target-ty   (infer-type (:target dot) ctx)
         method-name (:field dot)
         args        (:args call-node)
-        _           (when (some #(= :named (:kind %)) args)
-                      (fail-nyi! "named args on method call (positional only for now)"
-                                 call-node))
-        arg-exprs   (mapv #(lower-expr (:value %) ctx) args)
-        target-lo   (lower-expr (:target dot) ctx)]
+        target-lo   (lower-expr (:target dot) ctx)
+        list-cont?  (and (map? target-ty) (:atom target-ty)
+                         (= :list-container
+                            (get-in ctx [:atom-env (:atom target-ty) :kind])))
+        for-each-with-lambda?
+        (and list-cont?
+             (= "for_each" method-name)
+             (= 1 (count args))
+             (= :lambda (get-in args [0 :value :node])))]
+    (when (some #(= :named (:kind %)) args)
+      (fail-nyi! "named args on method call (positional only for now)"
+                 call-node))
+    (if for-each-with-lambda?
+      (lower-for-each-call target-lo target-ty (get-in args [0 :value]) ctx)
+      (let [arg-exprs (mapv #(lower-expr (:value %) ctx) args)]
+        (cond
+          (and (map? target-ty) (:record target-ty))
+          {:node :call
+           :fn   (c-method-name (:record target-ty) method-name)
+           :args (into [target-lo] arg-exprs)}
+
+          (and (map? target-ty) (:atom target-ty))
+          (let [atom-name   (:atom target-ty)
+                m           (get-in ctx [:atom-env atom-name :method-index method-name])
+                o           (get-in ctx [:atom-env atom-name :observable-index method-name])
+                _           (when (and (nil? m) (nil? o))
+                              (fail-nyi! (str "method/observable `" method-name "` on atom `"
+                                              atom-name "`") call-node))
+                _           (when (and o (seq arg-exprs))
+                              (fail-nyi! (str "observable `" method-name "` called with "
+                                              "arguments — observables are zero-arg reads")
+                                         call-node))
+                param-names (if m (mapv :name (rest (:params m))) [])]
+            {:node     :objc-msg
+             :recv     target-lo
+             :selector (objc-method-selector method-name param-names)
+             :args     arg-exprs})
+
+          :else
+          (fail-nyi! "method call on non-record/non-atom target" call-node))))))
+
+(defn- lambda-body-stmts
+  "Extract the sequence of body statements from a lambda AST node.
+   `body` may be a single statement (from inline `for e in xs:
+   <stmt>`) or a `:block` wrapping multi-statement form. Wrapping
+   the single case in a vector keeps the downstream emit consistent."
+  [lambda-node]
+  (let [body (:body lambda-node)]
     (cond
-      (and (map? target-ty) (:record target-ty))
-      {:node :call
-       :fn   (c-method-name (:record target-ty) method-name)
-       :args (into [target-lo] arg-exprs)}
+      (nil? body) []
+      (and (map? body) (= :block (:node body))) (:stmts body)
+      :else [body])))
 
-      (and (map? target-ty) (:atom target-ty))
-      (let [atom-name   (:atom target-ty)
-            m           (get-in ctx [:atom-env atom-name :method-index method-name])
-            o           (get-in ctx [:atom-env atom-name :observable-index method-name])
-            _           (when (and (nil? m) (nil? o))
-                          (fail-nyi! (str "method/observable `" method-name "` on atom `"
-                                          atom-name "`") call-node))
-            _           (when (and o (seq arg-exprs))
-                          (fail-nyi! (str "observable `" method-name "` called with "
-                                          "arguments — observables are zero-arg reads")
-                                     call-node))
-            param-names (if m (mapv :name (rest (:params m))) [])]
-        {:node     :objc-msg
-         :recv     target-lo
-         :selector (objc-method-selector method-name param-names)
-         :args     arg-exprs})
+(defn- unbox-prelude-for-element
+  "Given the block's raw id-typed parameter name (`_cxc_e`) and the
+   user-declared lambda param name + element type, produce zero or
+   one prelude statements that bind the user name at the correct
+   primitive/pointer type inside the block body.
 
-      :else
-      (fail-nyi! "method call on non-record/non-atom target" call-node))))
+   - :int   → `int <name> = [<raw> intValue];`
+   - :float → `double <name> = [<raw> doubleValue];`
+   - atom   → `<AtomType> *<name> = (<AtomType> *)<raw>;`
+   - id/other → no prelude; user name is bound directly to raw id"
+  [raw-name user-name element-type-kw]
+  (cond
+    (= :int element-type-kw)
+    [{:node :raw-c
+      :text (str "int " user-name " = [" raw-name " intValue];")}]
+
+    (= :float element-type-kw)
+    [{:node :raw-c
+      :text (str "double " user-name " = [" raw-name " doubleValue];")}]
+
+    (and (map? element-type-kw) (:atom element-type-kw))
+    [{:node :raw-c
+      :text (str (:atom element-type-kw) " *" user-name
+                 " = (" (:atom element-type-kw) " *)" raw-name ";")}]
+
+    :else
+    ;; id-typed pass-through: just alias user-name to raw
+    [{:node :raw-c
+      :text (str "id " user-name " = " raw-name ";")}]))
+
+(defn- lower-for-each-call
+  "Special-case lowering for `xs.for_each(e => body)` on a List
+   container atom. Produces `[xs cxc_for_each:^(id _cxc_e) { <prelude>
+   <body-stmts> }]`. Prelude unboxes the id-typed block param into
+   the user's declared name at the element's type; body stmts are
+   lowered with `e` bound as a local in ctx (so `infer-type` on
+   uses of `e` succeeds).
+
+   Free-variable capture: self and any locals from the enclosing
+   scope are captured by ObjC's block copy semantics automatically
+   (self as strong reference, primitives by value)."
+  [target-lo target-ty lambda-node ctx]
+  (let [list-name        (:atom target-ty)
+        element-name     (get-in ctx [:atom-env list-name :element-type])
+        element-type-kw  (cxc-type->type-kw element-name
+                                            (:record-env ctx)
+                                            (:atom-env ctx)
+                                            (:enum-env ctx)
+                                            lambda-node)
+        user-param-name  (get-in lambda-node [:params 0 :name])
+        raw-param-name   "_cxc_e"
+        prelude          (unbox-prelude-for-element raw-param-name
+                                                    user-param-name
+                                                    element-type-kw)
+        body-ctx         (assoc-in ctx [:locals user-param-name] element-type-kw)
+        body-nodes       (lambda-body-stmts lambda-node)
+        body-stmts       (mapv #(lower-stmt % body-ctx) body-nodes)]
+    {:node :objc-msg
+     :recv target-lo
+     :selector "cxc_for_each:"
+     :args [{:node :objc-block-literal
+             :params [{:name raw-param-name :c-type "id"}]
+             :stmts (into (vec prelude) body-stmts)}]}))
 
 (defn- print-format-string [arg-type]
   (cond
@@ -2463,22 +2554,6 @@
   [top-nodes prelude-atom-names]
   (names-mentioned-in top-nodes prelude-atom-names))
 
-(defn- elem-c-type
-  "C-level type for boxing a List element into NSArray. Primitives
-   box via NSNumber literal syntax at the emit site; records/atoms/
-   enums pass through as pointers or values as their nature dictates.
-   Layer 5 Step 3 supports Int only; wider element types land as the
-   game-toys example forces them."
-  [element-name record-env atom-env enum-env]
-  (cond
-    (= "Int" element-name)             "int"
-    (contains? record-env element-name) element-name
-    (contains? atom-env element-name)   (str element-name " *")
-    (contains? enum-env element-name)   element-name
-    :else (fail-nyi! (str "List of `" element-name "` — element type "
-                          "not supported at Layer 5 Step 3 (Int only)")
-                     {:element element-name})))
-
 (defn- synthesize-list-container-class
   "Emit-ready :objc-class node for one `_Cxc_ListOf<T>` instantiation.
    Contents:
@@ -2536,7 +2611,21 @@
                   :body        [{:node :objc-msg
                                  :recv {:node :name :sym "_elements"}
                                  :selector "removeObject:"
-                                 :args [{:node :name :sym "e"}]}]}]
+                                 :args [{:node :name :sym "e"}]}]}
+                 ;; Layer 5 Step 5 — for_each on the hybrid container.
+                 ;; Iterates via NSFastEnumeration (`for (id e in ...)`)
+                 ;; and invokes the caller-supplied block on each
+                 ;; element. Snapshot iteration: observation at call
+                 ;; time (query view semantics per design §4); the
+                 ;; block runs synchronously inside the calling
+                 ;; transition, so mutations to _elements during the
+                 ;; block are outside spec.
+                 {:name        "cxc_for_each"
+                  :selector    "cxc_for_each:"
+                  :params      [{:name "block" :c-type "void (^)(id)"}]
+                  :return-type "void"
+                  :body        [{:node :raw-c
+                                 :text "for (id _cxc_e in _elements) { block(_cxc_e); }"}]}]
    :element-name element-name})
 
 (defn lower

@@ -54,6 +54,7 @@ what the current compiler can lower.
 | [`list-count.cxc`](list-count.cxc) | Layer 5 Step 3 — `List of T` compiles to a synthesized `_Cxc_ListOfT` NSObject class per element-type instantiation, backed by NSMutableArray; the `.count` observable getter returns `(int)[_elements count]`. Main declares `xs: List of Int = [10, 20, 30, 40]`, prints 4. `add`/`remove`/`for_each` land at Steps 4–5. | `4` |
 | [`list-add.cxc`](list-add.cxc) | Layer 5 Step 4 — `then: xs => xs + e` on a List-typed field detects the mutation-in-place pattern and routes to `-cxc_add:` (backed by `[_elements addObject:@e]`). Initial `[1, 2]` + 3 → count 3. | `3` |
 | [`list-remove.cxc`](list-remove.cxc) | Mirror of list-add: `xs => xs - e` routes to `-cxc_remove:` → `[_elements removeObject:@e]`. NSMutableArray isEqual: matches boxed NSNumber so removing `@20` from `[10,20,30]` leaves count 2. | `2` |
+| [`list-for-each.cxc`](list-for-each.cxc) | Layer 5 Step 5 — `for e in xs: print(e)` (Step 2 sugar → `xs.for_each(e => print(e))`) special-cases at lower into `[xs cxc_for_each:^(id _cxc_e) { int e = [_cxc_e intValue]; ... }]`. Prelude unboxes id-typed block param per element type (Int→intValue). Iterates `[7, 11, 13]`. | `7`\|`11`\|`13` |
 
 ## Running one by hand
 
