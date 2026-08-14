@@ -18,7 +18,11 @@
             :stdout <clang-stdout> :stderr <clang-stderr>}."
   [source name out-dir]
   (let [_        (io/make-parents (io/file out-dir "placeholder"))
-        m-src    (-> (str prelude/source source) parse/parse lower/lower emit/emit)
+        m-src    (-> (str prelude/source source)
+                     parse/parse
+                     prelude/rewrite-prelude-names
+                     lower/lower
+                     emit/emit)
         m-file   (io/file out-dir (str name ".m"))
         bin-file (io/file out-dir name)]
     (spit m-file m-src)

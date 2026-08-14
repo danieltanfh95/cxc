@@ -7,39 +7,66 @@
 
    Prelude atoms are tree-shaken by cxc.lower: only those actually
    referenced from user code are emitted, so shipping capability
-   stubs like CxcClock doesn't pull their fanout selectors into
+   stubs like Clock doesn't pull their fanout selectors into
    programs that never subscribe to them.
 
    Kept minimal — anything here becomes part of the language's stable
    surface for callers. Grows conservatively.
 
-   Naming discipline (Layer 4b provisional): prelude types carry a
-   `Cxc` prefix to avoid colliding with Cocoa/CoreFoundation typedefs
-   that atom programs pick up via Foundation.h — e.g. bare `Duration`
-   clashes with CoreServices' SInt32 typedef of the same name. Layer
-   5 will introduce a module system with proper namespacing; at that
-   point users write `Duration` and the compiler mangles it under the
-   hood.")
+   Naming (Layer 5 minimum). Users write bare `Duration`, `Instant`,
+   `Clock`. Post-parse, `rewrite-prelude-names` mangles every
+   occurrence to `_Cxc_Duration`, `_Cxc_Instant`, `_Cxc_Clock` so the
+   emitted C/ObjC source dodges CoreServices' `Duration` SInt32
+   typedef and any other Cocoa/CoreFoundation collision that
+   Foundation.h drags in. This replaces Layer 4b's user-visible
+   `Cxc` prefix — the mangling is now internal-only. Layer 6's full
+   module system supersedes the rename table with proper
+   namespace-scoped resolution."
+  (:require [clojure.walk :as walk]))
+
+(def rename-table
+  "User-visible → mangled internal name. Applied post-parse to every
+   `:name`, `:type`, `:outer` string in the AST. Table entries are
+   specific enough that a user program that doesn't touch prelude
+   types is a no-op; a user program that redefines a prelude name
+   (e.g. `def Duration:`) gets silently rewritten too, which is a
+   collision the compiler doesn't diagnose in Layer 5 minimum."
+  {"Duration" "_Cxc_Duration"
+   "Instant"  "_Cxc_Instant"
+   "Clock"    "_Cxc_Clock"})
+
+(defn rename-if
+  "Rename `s` via `rename-table` if `s` is a string that appears in
+   the table; otherwise return `s` unchanged. Non-string inputs pass
+   through so callers can apply this uniformly across AST fields
+   whose values may be strings, maps, or nil."
+  [s]
+  (if (and (string? s) (contains? rename-table s))
+    (get rename-table s)
+    s))
 
 (def atom-names
-  "Names of def-atom entries in the prelude. Tree-shaking in
-   cxc.lower drops any atom in this set that user code doesn't
-   reference, so shipping capability stubs (like CxcClock) is free
-   for programs that don't use them."
-  #{"CxcClock"})
+  "Names of def-atom entries in the prelude, in their POST-RENAME
+   (mangled) form. Tree-shaking in cxc.lower compares against these
+   after the rewrite pass runs, so entries here match what the
+   lowered AST carries — not what the prelude source spelled."
+  #{"_Cxc_Clock"})
 
 (def source
   "Prelude source text spliced ahead of user source. Indentation is
    canonical cxc (4-space blocks); keep flush-left at column 0.
+   Users write bare names; `rewrite-prelude-names` mangles them
+   post-parse.
 
    Contents:
-   - CxcDuration / CxcInstant: value-typed millisecond records
-   - CxcClock: capability stub emitting `tick` N times then `done`.
+   - Duration / Instant: value-typed millisecond records
+   - Clock: capability stub emitting `tick` N times then `done`.
      Not a real periodic timer (would need dispatch_source_t at
      Layer 4c multi-thread); an async self-send loop drives the
-     tick count under Layer 4 single-thread. `every(rate)` returning
-     a Stream of Instant is Layer 5 (needs Stream-as-value)."
-  "record CxcDuration:
+     tick count under Layer 4 single-thread. Real
+     `every(rate) -> Stream of Instant` returning a first-class
+     Stream value is Layer 5 (needs Stream-as-value)."
+  "record Duration:
     data:
         millis: Int
 
@@ -47,15 +74,15 @@
         function to_seconds(self) -> Float:
             return self.millis / 1000.0
 
-record CxcInstant:
+record Instant:
     data:
         millis: Int
 
     methods:
-        function plus(self, delta: CxcDuration) -> CxcInstant:
-            return CxcInstant(millis: self.millis + delta.millis)
+        function plus(self, delta: Duration) -> Instant:
+            return Instant(millis: self.millis + delta.millis)
 
-def CxcClock(ticks: Int = 3):
+def Clock(ticks: Int = 3):
     data:
         remaining: Int = ticks
 
@@ -76,3 +103,25 @@ def CxcClock(ticks: Int = 3):
         when: remaining == 0
 
 ")
+
+(defn rewrite-prelude-names
+  "Post-parse walk that mangles every occurrence of a user-visible
+   prelude name to its internal form. Walks the parsed top-nodes
+   vector; renames strings at map keys that carry type/identifier
+   names (`:name`, `:type`, `:outer`). Other :inner values are
+   maps (nested type nodes) and get renamed recursively by
+   postwalk's own descent, not by this fn's direct value check.
+
+   Safe to run over any parsed AST — the rename table only contains
+   specific prelude names, so a program that never mentions them is
+   an identity transform."
+  [nodes]
+  (walk/postwalk
+    (fn [x]
+      (if (map? x)
+        (cond-> x
+          (contains? x :name)  (update :name  rename-if)
+          (contains? x :type)  (update :type  rename-if)
+          (contains? x :outer) (update :outer rename-if))
+        x))
+    nodes))

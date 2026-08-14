@@ -235,7 +235,7 @@
       (is (= "9\n" stdout)))))
 
 (deftest end-to-end-prelude-duration
-  (testing "prelude-duration.cxc — the prelude-shipped CxcDuration + CxcInstant records are visible without an import; construct + method-call chain (CxcInstant + CxcDuration = CxcInstant with summed millis) prints 1500"
+  (testing "prelude-duration.cxc — the prelude-shipped Duration + Instant records are visible without an import; construct + method-call chain (Instant + Duration = Instant with summed millis) prints 1500. Layer 5 Step 1 dropped the Cxc user-visible prefix; internal names are `_Cxc_Duration`/`_Cxc_Instant` via the rename table."
     (let [{:keys [exit stdout]} (compile-and-run "prelude-duration")]
       (is (zero? exit))
       (is (= "1500\n" stdout)))))
@@ -247,7 +247,7 @@
       (is (= "15\n" stdout)))))
 
 (deftest end-to-end-prelude-clock
-  (testing "prelude-clock.cxc — prelude-shipped CxcClock capability atom fires 3 ticks then a `done` stream; main subscribes to both, increments count on each tick, and transitions to end on done, printing 3. Exercises prelude tree-shaking (CxcClock only included because referenced), main-atom-lifecycle with a nested-slot cap, and multi-stream subscription per source atom."
+  (testing "prelude-clock.cxc — prelude-shipped Clock capability atom fires 3 ticks then a `done` stream; main subscribes to both, increments count on each tick, and transitions to end on done, printing 3. Exercises prelude tree-shaking (Clock only included because referenced), main-atom-lifecycle with a nested-slot cap, and multi-stream subscription per source atom."
     (let [{:keys [exit stdout]} (compile-and-run "prelude-clock")]
       (is (zero? exit))
       (is (= "3\n" stdout)))))

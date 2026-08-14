@@ -389,7 +389,7 @@
    whenever main itself declares message-triggered transitions
    (needs a class to receive messages). Prelude atoms are ignored for
    this decision so records-only user programs don't get promoted to
-   ObjC classes just because CxcClock exists in the prelude — user
+   ObjC classes just because Clock exists in the prelude — user
    programs that DO reference a prelude atom will separately reach
    into it via the shape check and pull main in through referenced
    atoms.
@@ -414,7 +414,7 @@
         ;; into main's — cascade end + parent-back-ref plumbing require
         ;; main to be a real atom class. This catches the case where
         ;; the user program's ONLY atom references are prelude atoms
-        ;; via `def clock: CxcClock`.
+        ;; via `def clock: Clock` (post-rename `_Cxc_Clock`).
         main-has-atom-slot-or-cap?
         (boolean (some #(contains? #{:nested-atom :use-section} (:node %))
                        (:body main-node)))
@@ -2262,8 +2262,9 @@
   "Which prelude atoms are actually referenced by non-prelude
    top-nodes. Non-prelude atoms are always kept (users authored them
    directly). Prelude atoms are added only when the user program
-   mentions them by name, so shipping capability stubs like CxcClock
-   doesn't pull their fanout selectors into unrelated programs."
+   mentions them by name, so shipping capability stubs like Clock
+   doesn't pull their fanout selectors into unrelated programs.
+   Names here are post-rename (see cxc.prelude/rename-table)."
   [top-nodes prelude-atom-names]
   (names-mentioned-in top-nodes prelude-atom-names))
 
@@ -2279,7 +2280,7 @@
         ;; Prelude tree-shaking: only keep prelude atoms that the
         ;; user program actually references. Prevents compiler errors
         ;; from fanout bodies that message subscriber-side selectors
-        ;; on classes no user atom declares. The `def CxcClock: ...`
+        ;; on classes no user atom declares. The `def Clock: ...`
         ;; node itself is filtered out before scanning so it doesn't
         ;; count as a self-reference.
         non-prelude-nodes (remove #(and (= :def-atom (:node %))

@@ -1,5 +1,5 @@
 def main:
-    def clock: CxcClock(ticks: 3)
+    def clock: Clock(ticks: 3)
 
     data:
         count: Int = 0
