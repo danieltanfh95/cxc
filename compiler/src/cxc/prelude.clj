@@ -266,6 +266,39 @@ def Console:
         node)
     node))
 
+(def ^:private user-declaration-kinds
+  ;; Top-level node kinds whose `:name` field is a user-visible
+  ;; identifier that would collide with a prelude type.
+  #{:def-atom :record :enum})
+
+(defn validate-no-prelude-collisions!
+  "Audit F56 — bounded starter for Phase D prelude architecture: raise
+   a targeted compile error when a user top-level declaration reuses a
+   protected prelude name (spec §4.20 — prelude aliases protected and
+   unshadowable). Previously `rewrite-prelude-names` would silently
+   rename a `def Duration:` to `def _Cxc_Duration:` and merge it into
+   the prelude namespace, producing baffling downstream errors.
+
+   Takes user-only top-nodes (before prelude prepending) — expects to
+   run right after `parse/parse` on the user source and before the
+   prelude+user re-parse. Full namespace-scoped resolution (retiring
+   the postwalk entirely) is deferred to Phase D."
+  [user-top-nodes]
+  (doseq [n user-top-nodes
+          :when (and (map? n)
+                     (contains? user-declaration-kinds (:node n))
+                     (contains? rename-table (:name n)))]
+    (throw (ex-info
+            (str "user declaration `" (:name n)
+                 "` collides with a protected prelude name (spec §4.20). "
+                 "Rename the declaration; namespace-scoped resolution that "
+                 "would let user code shadow prelude names is deferred to "
+                 "Phase D.")
+            {:kind    :prelude-name-collision
+             :name    (:name n)
+             :node    (:node n)
+             :mangled (get rename-table (:name n))}))))
+
 (defn rewrite-prelude-names
   "Post-parse walk that mangles every occurrence of a user-visible
    prelude name to its internal form. Walks the parsed top-nodes

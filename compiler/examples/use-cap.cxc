@@ -1,16 +1,16 @@
-def Clock:
+def OffsetSource:
     data:
         offset: Int = 1000
 
 def Timer:
     use:
-        clock: Clock
+        src: OffsetSource
 
     data:
         base: Int = 42
 
-    total :< base + clock.offset
+    total :< base + src.offset
 
 def main:
     -> running
-        do: print(Timer(clock: Clock()).total)
+        do: print(Timer(src: OffsetSource()).total)

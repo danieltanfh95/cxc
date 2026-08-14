@@ -40,6 +40,17 @@
     (when (zero? status)
       (build/run-binary bin-path))))
 
+(deftest user-declaration-collides-with-prelude-name-rejected
+  (testing "Audit F56 — bounded starter: a user declaration reusing a protected prelude name (e.g. `record Duration:`) parses cleanly, but `compile-source-to-file` raises a targeted diagnostic before the prelude is even prepended. Previously the postwalk in `rewrite-prelude-names` silently renamed the user's `Duration` to `_Cxc_Duration` and merged it with the prelude atom, producing baffling downstream errors."
+    (let [out-dir (tmp-dir)]
+      (is (thrown-with-msg?
+           clojure.lang.ExceptionInfo
+           #"collides with a protected prelude name"
+           (build/compile-source-to-file
+            "record Duration:\n    data:\n        n: Int\n\ndef main:\n    -> running\n        do: print(1)\n"
+            "collision-check"
+            (.getPath out-dir)))))))
+
 (deftest end-to-end-hello-world
   (testing "hello.cxc — print of a string literal"
     (let [{:keys [exit stdout]} (compile-and-run "hello")]
@@ -157,7 +168,7 @@
           "expected diagnostic naming the failing invariant index"))))
 
 (deftest end-to-end-use-cap
-  (testing "use-cap.cxc — `use: clock: Clock` sugars to required ctor-param + data-field; capability accessible via `clock.offset` in observables"
+  (testing "use-cap.cxc — `use: src: OffsetSource` sugars to required ctor-param + data-field; capability accessible via `src.offset` in observables. (Renamed away from the prelude `Clock` collision that F56 diagnostic now rejects — the example's intent is `use:` sugar, not shadowing.)"
     (let [{:keys [exit stdout]} (compile-and-run "use-cap")]
       (is (zero? exit))
       (is (= "1042\n" stdout)))))

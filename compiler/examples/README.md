@@ -33,7 +33,7 @@ what the current compiler can lower.
 | [`observable-chain.cxc`](observable-chain.cxc) | Observables typed in declaration order; later observable may reference earlier one | `7` |
 | [`invariant-pass.cxc`](invariant-pass.cxc) | `invariants:` predicates checked at end of init; passing case runs through | `50` |
 | [`invariant-fail.cxc`](invariant-fail.cxc) | Failing invariant aborts init with a stderr diagnostic; nonzero exit | *(abort)* |
-| [`use-cap.cxc`](use-cap.cxc) | `use: clock: Clock` sugars to a required ctor-param + data-field; cap accessible in observables via `clock.offset` | `1042` |
+| [`use-cap.cxc`](use-cap.cxc) | `use: src: OffsetSource` sugars to a required ctor-param + data-field; cap accessible in observables via `src.offset`. Uses a non-prelude atom name so the F56 collision diagnostic isn't triggered. | `1042` |
 | [`chained-comparison.cxc`](chained-comparison.cxc) | `lo <= val <= hi` desugars to `(lo<=val) and (val<=hi)` at parse-time; passing case runs through | `5` |
 | [`nested-slot.cxc`](nested-slot.cxc) | `def paddle: Paddle` self-constructs a sub-atom in parent init; observable reads through the slot | `7` |
 | [`nested-slot-ctor-args.cxc`](nested-slot-ctor-args.cxc) | `def cell: Cell(v: 99)` passes named args to the sub-atom's initWith selector | `99` |

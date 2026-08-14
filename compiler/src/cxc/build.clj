@@ -165,6 +165,7 @@
   (let [_        (io/make-parents (io/file out-dir "placeholder"))
         parsed   (parse/parse source)
         _        (validate-imports parsed)
+        _        (prelude/validate-no-prelude-collisions! parsed)
         full-parsed (parse/parse (str prelude/source source))
         deprecations (collect-deprecations full-parsed)
         _        (warn-deprecated-uses parsed deprecations)
