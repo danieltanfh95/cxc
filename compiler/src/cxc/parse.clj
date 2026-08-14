@@ -262,9 +262,21 @@
             [{:node :lambda :params [{:name (t-value t)}] :body body} p])
           [ident-node (inc pos)]))
       :punct  (case (t-value t)
-                "(" (let [[e p] (parse-expr tokens (inc pos))
-                          [_ p2] (expect tokens p :punct ")")]
-                      [e p2])
+                "(" (cond
+                      ;; Layer 6 Step 12 — zero-arg lambda `() => body`.
+                      ;; Distinct from `(expr)` grouping via the `)` `=>`
+                      ;; lookahead. Currently the only escaping-block
+                      ;; grammar path — `Block` at MVP is zero-arg void
+                      ;; return, so a zero-param lambda is what matches.
+                      (and (at? tokens (inc pos) :punct ")")
+                           (at? tokens (+ pos 2) :glyph "=>"))
+                      (let [[body p] (parse-expr tokens (+ pos 3))]
+                        [{:node :lambda :params [] :body body} p])
+
+                      :else
+                      (let [[e p] (parse-expr tokens (inc pos))
+                            [_ p2] (expect tokens p :punct ")")]
+                        [e p2]))
                 "[" (let [[items p] (parse-list-literal tokens pos)]
                       [items p])
                 (fail! tokens pos "unexpected punctuation in expression"))

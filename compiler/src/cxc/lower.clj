@@ -91,7 +91,11 @@
   {"Int"     "int"
    "Float"   "double"
    "String"  "const char *"
-   "Bool"    "int"})
+   "Bool"    "int"
+   ;; Layer 6 Step 12 — escaping-block field type. MVP is zero-arg
+   ;; void return only; a future landing generalizes to
+   ;; `Block[(params) -> R]` grammar with full signature support.
+   "Block"   "void (^)(void)"})
 
 (declare base-type-name)
 
@@ -223,6 +227,10 @@
     "Float"  :float
     "String" :string
     "Bool"   :bool
+    ;; Layer 6 Step 12 — Block is a first-class type at the type-kw
+    ;; level so infer-call-type / lower-expr can dispatch on it when
+    ;; a self-field-typed callee gets invoked.
+    "Block"  :block
     (cond
       (contains? record-env cxc-name) {:record cxc-name}
       (contains? atom-env   cxc-name) {:atom   cxc-name}
@@ -239,6 +247,7 @@
     (= :float  tk) "double"
     (= :string tk) "const char *"
     (= :bool   tk) "int"
+    (= :block  tk) "void (^)(void)"
     (and (map? tk) (:record tk)) (:record tk)
     (and (map? tk) (:atom   tk)) (str (:atom tk) " *")
     (and (map? tk) (:enum   tk)) (:enum tk)
@@ -544,10 +553,22 @@
                               (some #(= :type-of (get-in % [:type :node]))
                                     (:fields n))))
                        (:body main-node)))
+        ;; Layer 6 Step 12 — Block-typed data field needs ivar storage
+        ;; (ObjC block type `void (^)(void)`), so main must be an atom
+        ;; class. Distinct from list-field because Block is a :type-ref
+        ;; (a "primitive" in the C mapping), not a :type-of.
+        main-has-block-field?
+        (boolean (some (fn [n]
+                         (and (= :data-section (:node n))
+                              (some #(and (= :type-ref (get-in % [:type :node]))
+                                          (= "Block" (get-in % [:type :name])))
+                                    (:fields n))))
+                       (:body main-node)))
         include-main? (or (seq other-atoms)
                           main-has-message-txn?
                           main-has-atom-slot-or-cap?
-                          main-has-list-field?)
+                          main-has-list-field?
+                          main-has-block-field?)
         atoms    (if include-main?
                    (filter #(= :def-atom (:node %)) top-nodes)
                    other-atoms)
@@ -1235,6 +1256,13 @@
                        node))
           x-ty)
         (ffi-builtin? nm)                (:return-kw (get ffi-builtins nm))
+        ;; Layer 6 Step 12 — bare call on a Block-typed self-field.
+        ;; `cb()` where cb is `data: cb: Block` in the enclosing atom
+        ;; invokes the stored block. MVP is zero-arg void-return only,
+        ;; so return :void.
+        (and (get-in ctx [:self-fields nm])
+             (= "Block" (:cxc-ty (get-in ctx [:self-fields nm]))))
+        :void
         :else (fail-nyi! (str "call to `" nm "`") node)))
     :dot   (infer-method-call-type node ctx)
     (fail-nyi! (str "call with non-ident/non-dot callee " (:node callee)) node)))
@@ -1292,10 +1320,18 @@
                                     "` — needs stdlib type for unit "
                                     "`" (:unit node) "` (Layer 5.4)")
                                node)
-    :lambda     (fail-nyi! (str "lambda expression — needs a consumer to "
-                                "invoke through (Layer 5 collection methods "
-                                "`.map`/`.for_each`; will lower to ObjC blocks)")
-                           node)
+    :lambda     (if (empty? (:params node))
+                  ;; Layer 6 Step 12 — zero-arg lambda's type is :block.
+                  ;; MVP restricts to void-return, so no signature to
+                  ;; encode beyond the marker. lower-expr :lambda
+                  ;; handles the actual block-literal emit.
+                  :block
+                  (fail-nyi! (str "lambda expression with " (count (:params node))
+                                  " params — needs a consumer to invoke "
+                                  "through (Layer 5 collection methods "
+                                  "`.map`/`.for_each`; will lower to ObjC "
+                                  "blocks)")
+                             node))
     :self       (or (get (:locals ctx) "self")
                     (fail-nyi! "type-of `self` outside a method body" node))
     :ident      (or (get (:locals ctx) (:name node))
@@ -1608,10 +1644,23 @@
                                     "` — needs stdlib type for unit "
                                     "`" (:unit node) "` (Layer 5.4)")
                                node)
-    :lambda     (fail-nyi! (str "lambda expression — needs a consumer to "
-                                "invoke through (Layer 5 collection methods "
-                                "`.map`/`.for_each`; will lower to ObjC blocks)")
-                           node)
+    :lambda     (if (empty? (:params node))
+                  ;; Layer 6 Step 12 — zero-arg lambda `() => <expr>`
+                  ;; lowers to an ObjC block literal `^{ <stmt>; }`.
+                  ;; Body lowers as an expression; emit-stmt on `:call`
+                  ;; / `:objc-msg` already produces `<expr>;`, so no
+                  ;; extra wrapper needed. Non-zero-arg lambdas remain
+                  ;; consumer-dispatched (for_each etc); this branch is
+                  ;; escaping-block only at MVP.
+                  {:node :objc-block-literal
+                   :params []
+                   :stmts  [(lower-expr (:body node) ctx)]}
+                  (fail-nyi! (str "lambda expression with " (count (:params node))
+                                  " params — needs a consumer to invoke "
+                                  "through (Layer 5 collection methods "
+                                  "`.map`/`.for_each`; will lower to ObjC "
+                                  "blocks)")
+                             node))
     :ident      (let [n  (:name node)
                       sf (get (:self-fields ctx) n)]
                   (cond
@@ -1706,6 +1755,24 @@
                ;; already-rendered strings from emit-expr. Precomputed
                ;; here so emit stays registry-free.
                :emit-c-fn (:emit-c spec)})
+
+            ;; Layer 6 Step 12 — bare call on a Block-typed self-field.
+            ;; `cb()` lowers to `_cb()` — a nil-safe check would be
+            ;; nice, but ObjC blocks are ARC-managed pointers; invoking
+            ;; a nil block crashes. Users must nil-check via `if cb` or
+            ;; ensure installation before invocation.
+            (and (get-in ctx [:self-fields callee-name])
+                 (= "Block" (:cxc-ty (get-in ctx [:self-fields callee-name]))))
+            (do
+              (when (seq (:args node))
+                (fail-nyi! (str "block invocation `" callee-name
+                                "(...)` with args — Layer 6 Step 12 MVP "
+                                "supports zero-arg void-return `Block` "
+                                "only")
+                           node))
+              ;; Uses the generic :call emit path — fn-name is the
+              ;; block ivar (`_cb`), args empty for MVP.
+              {:node :call :fn (str "_" callee-name) :args []})
 
             :else
             (fail-nyi! (str "call to `" callee-name "`") node)))
@@ -1835,10 +1902,18 @@
 (defn- lower-do-clause [clause ctx]
   (mapv #(lower-stmt % ctx) (:stmts clause)))
 
+(declare lower-then-update)
+
 (defn- lower-transition-body [clauses ctx]
   (vec (mapcat (fn [c]
                  (case (:node c)
-                   :do-clause (lower-do-clause c ctx)
+                   :do-clause   (lower-do-clause c ctx)
+                   ;; Layer 6 Step 12 — `then:` on general transitions
+                   ;; (previously restricted to on-enter-body paths).
+                   ;; Escaping-block install-then-invoke `then: cb => ...
+                   ;; do: cb()` needs the assignment to happen before
+                   ;; the do:-clause runs.
+                   :then-clause (mapv #(lower-then-update % ctx) (:updates c))
                    (fail-nyi! (str "transition body clause " (:node c)) c)))
                clauses)))
 
@@ -3081,13 +3156,19 @@
           obs-methods     (mapv #(lower-observable-method % ctx-with-self) observables)
           data-props      (mapv (fn [f]
                                   ;; ARC discipline: object pointers (atom types) → strong;
-                                  ;; scalars/records → assign. `strong` gives standard
-                                  ;; owning-reference semantics; `assign` is right for
-                                  ;; primitives and copyable values that ARC ignores.
-                                  (let [is-atom-ptr? (contains? (:atom-env ctx) (:cxc-ty f))]
+                                  ;; blocks → copy (ARC needs Block_copy on retain to
+                                  ;; move stack blocks to heap); scalars/records → assign.
+                                  ;; `strong` gives standard owning-reference semantics;
+                                  ;; `assign` is right for primitives and copyable values
+                                  ;; that ARC ignores.
+                                  (let [is-atom-ptr? (contains? (:atom-env ctx) (:cxc-ty f))
+                                        is-block?    (= "Block" (:cxc-ty f))]
                                     {:name (:name f)
                                      :c-type (:c-type f)
-                                     :attrs (if is-atom-ptr? ["strong"] ["assign"])}))
+                                     :attrs (cond
+                                              is-block?    ["nonatomic" "copy"]
+                                              is-atom-ptr? ["strong"]
+                                              :else        ["assign"])}))
                                 (:fields rec))
           phase-prop      {:name "phase" :c-type "NSString *"
                            :attrs ["nonatomic" "copy"]}
