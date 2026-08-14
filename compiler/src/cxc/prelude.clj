@@ -86,6 +86,8 @@ def Clock(ticks: Int = 3):
     data:
         remaining: Int = ticks
 
+    now :< native_millis_now()
+
     -> running
         do: self :> beat
 

@@ -3,7 +3,8 @@
 
    Output is a single `.m` string per :objc-program. Grown feature by
    feature alongside the lower pass."
-  (:require [clojure.string :as str]))
+  (:require [clojure.string :as str]
+            [clojure.walk :as walk]))
 
 (declare emit-expr emit-stmt emit-class emit-struct indent-lines)
 
@@ -87,6 +88,13 @@
     ;; Used by List of T initializers to feed the container class'
     ;; -initWithElements:(NSArray *) constructor.
     (str "@[" (str/join ", " (map emit-expr (:items node))) "]")
+    :ffi-call
+    ;; Compiler-recognized native call (Layer 5b Step A). The lower
+    ;; pass attached `:emit-c-fn`, a fn taking rendered arg strings
+    ;; and returning the raw C expression. Keeps emit registry-free
+    ;; while letting one place (lower's ffi-builtins map) own the
+    ;; native surface.
+    ((:emit-c-fn node) (mapv emit-expr (:args node)))
     :objc-msg        (let [sel (:selector node)
                            args (:args node)]
                        ;; ObjC selectors either have zero colons (bare name,
@@ -578,6 +586,56 @@
        "}\n"
        "@end"))
 
+(defn- collect-fanout-selectors
+  "Walk the emit AST for all :stream-fanout nodes; return a vector of
+   unique {:selector :arg-names :arg-c-types} triples, in first-seen
+   order. Feeds the NSObject category that declares every receiver-side
+   fanout selector — needed because Apple clang treats a message send
+   to an `id`-typed receiver with an unknown selector as a hard error
+   (not a warning), so an unsubscribed stream would otherwise refuse
+   to compile."
+  [prog]
+  (let [seen (java.util.LinkedHashSet.)
+        out  (java.util.ArrayList.)]
+    (walk/postwalk
+     (fn [n]
+       (when (and (map? n) (= :stream-fanout (:node n)))
+         (let [key [(:selector n) (:arg-names n) (:arg-c-types n)]]
+           (when-not (.contains seen key)
+             (.add seen key)
+             (.add out {:selector    (:selector n)
+                        :arg-names   (:arg-names n)
+                        :arg-c-types (:arg-c-types n)}))))
+       n)
+     (:classes prog))
+    (vec out)))
+
+(defn- emit-fanout-selector-category
+  "One `@interface NSObject (CxcFanoutSelectors) ... @end` block
+   declaring every receiver-side selector used by :stream-fanout in the
+   program. Argument names come from :arg-names, types from :arg-c-types;
+   zero-arg selectors emit as bare method names. Emitted ahead of any
+   @implementation so every subscriber-facing selector is declared and
+   `[sub selector]` message sends on `id` type-check even if no atom
+   subscribes to that stream at build time."
+  [prog]
+  (let [entries (collect-fanout-selectors prog)]
+    (when (seq entries)
+      (let [decls (map (fn [{:keys [selector arg-names arg-c-types]}]
+                         (if (empty? arg-names)
+                           (str "- (void)" selector ";")
+                           (let [parts (str/split selector #":")]
+                             (str "- (void)"
+                                  (str/join " "
+                                            (map (fn [p n t]
+                                                   (str p ":(" t ") " n))
+                                                 parts arg-names arg-c-types))
+                                  ";"))))
+                       entries)]
+        (str "@interface NSObject (CxcFanoutSelectors)\n"
+             (str/join "\n" decls)
+             "\n@end")))))
+
 (defn emit
   "Emit a full .m source string from an :objc-program AST. Class output
    is split into an INTERFACES section (phase constants + @interface
@@ -588,6 +646,7 @@
    be in scope when the source's fanout body compiles."
   [prog]
   (let [includes    (str/join "\n"   (map #(str "#import " %) (:includes prog)))
+        fanout-cat  (emit-fanout-selector-category prog)
         helpers     (when (:needs-runtime? prog) cxc-runtime-helpers)
         enums       (str/join "\n\n" (map emit-c-enum   (:enums prog)))
         structs     (str/join "\n\n" (map emit-struct   (:structs prog)))
@@ -601,6 +660,7 @@
                       "static CxcMain *cxc_main_atom = nil;")
         main        (emit-main (:main prog) (:needs-dispatch-loop? prog))]
     (str/join "\n\n"
-              (remove str/blank? [includes helpers enums structs functions
-                                  interfaces impls
+              (remove str/blank? [includes
+                                  helpers enums structs functions
+                                  interfaces fanout-cat impls
                                   main-static main]))))

@@ -737,6 +737,38 @@
       :else
       (fail-nyi! "method call on non-record/non-atom target" call-node))))
 
+(def ^:private ffi-builtins
+  "Compiler-recognized function names that lower to raw C/ObjC. Intended
+   for prelude-authored bodies (real Clock/Random capabilities); users
+   may name-collide only by writing these names themselves, which
+   surfaces as an unknown-call from lower today. Each entry declares
+   the return type (as a type-kw for infer-type) and the arg count.
+   `:emit-c` is a function taking the vector of already-lowered arg
+   nodes and returning the raw C expression string that will be
+   spliced into the emit output via a `:raw-c-expr` node.
+
+   Layer 5b Step A introduces this in place of a full extern-body
+   syntax; the surface remains pure cxc, and the escape hatch stays
+   compiler-internal (`use: Extern` in Layer 7 will formalize it)."
+  {"native_millis_now"
+   {:return-kw :int
+    :arity     0
+    :emit-c    (fn [_args]
+                 "((int)([[NSDate date] timeIntervalSince1970] * 1000))")}
+   "native_random_u32"
+   {:return-kw :int
+    :arity     0
+    :emit-c    (fn [_args]
+                 "((int)(arc4random() & 0x7FFFFFFF))")}
+   "native_random_below"
+   {:return-kw :int
+    :arity     1
+    :emit-c    (fn [args]
+                 (str "((int)arc4random_uniform((uint32_t)("
+                      (first args) ")))"))}})
+
+(defn- ffi-builtin? [name] (contains? ffi-builtins name))
+
 (defn- infer-call-type
   [{:keys [callee] :as node} ctx]
   (case (:node callee)
@@ -746,6 +778,7 @@
         (contains? (:record-env ctx) nm) {:record nm}
         (contains? (:atom-env   ctx) nm) {:atom nm}
         (= "print" nm)                   :void
+        (ffi-builtin? nm)                (:return-kw (get ffi-builtins nm))
         :else (fail-nyi! (str "call to `" nm "`") node)))
     :dot   (infer-method-call-type node ctx)
     (fail-nyi! (str "call with non-ident/non-dot callee " (:node callee)) node)))
@@ -1141,6 +1174,27 @@
 
             (= "print" callee-name)
             (lower-print node ctx)
+
+            (ffi-builtin? callee-name)
+            (let [spec (get ffi-builtins callee-name)
+                  args (:args node)]
+              (when-not (= (:arity spec) (count args))
+                (fail-nyi! (str "FFI builtin `" callee-name
+                                "` expects " (:arity spec)
+                                " arg(s), got " (count args))
+                           node))
+              ;; The emit-c template runs against arg strings, but at
+              ;; lower time we only have lowered arg NODES — emit renders
+              ;; nodes. We carry the template through unchanged and hand
+              ;; it emit-side placeholders {0}, {1}, ... that emit-expr
+              ;; substitutes with each argument's rendered form.
+              {:node :ffi-call
+               :name callee-name
+               :args (mapv #(lower-expr (:value %) ctx) args)
+               ;; The final emit template — arg positions replaced with
+               ;; already-rendered strings from emit-expr. Precomputed
+               ;; here so emit stays registry-free.
+               :emit-c-fn (:emit-c spec)})
 
             :else
             (fail-nyi! (str "call to `" callee-name "`") node)))
@@ -1955,6 +2009,7 @@
           (mapv (fn [nm]
                   (let [payload (get typed-payloads nm [])
                         keys    (mapv :name payload)
+                        c-types (mapv :c-type payload)
                         method-params (mapv (fn [p] {:name (:name p)
                                                      :c-type (:c-type p)})
                                             payload)]
@@ -1965,7 +2020,8 @@
                      :body        [{:node       :stream-fanout
                                     :ivar       (stream-subscribers-ivar-name nm)
                                     :selector   (stream-selector source-class nm keys)
-                                    :arg-names  keys}]}))
+                                    :arg-names  keys
+                                    :arg-c-types c-types}]}))
                 stream-order)
           per-stream-add
           (mapv (fn [nm]

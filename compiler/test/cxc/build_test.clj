@@ -281,3 +281,9 @@
     (let [{:keys [exit stdout]} (compile-and-run "module-header")]
       (is (zero? exit))
       (is (= "750\n" stdout)))))
+
+(deftest end-to-end-clock-now
+  (testing "clock-now.cxc — Layer 5b Step A + Step 9. Clock gains a `now :< native_millis_now()` observable via the compiler-internal FFI hatch (native_* builtins lower to raw C expressions). Program takes `clock.now > 0` — always 1 on any system with a valid wall clock — as a liveness check on the observable and prints 1. Also exercises the fanout-selector NSObject category emitted at the top of the file: Clock's tick/done streams have no subscribers here, and Apple clang treats an unknown-selector send to an `id`-typed receiver as a hard error; the category makes every fanout selector declared program-wide."
+    (let [{:keys [exit stdout]} (compile-and-run "clock-now")]
+      (is (zero? exit))
+      (is (= "1\n" stdout)))))

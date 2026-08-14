@@ -1,0 +1,17 @@
+def main:
+    def clock: Clock(ticks: 1)
+
+    data:
+        alive: Int = 1
+
+    -> running
+        do: self :> stop
+
+    -> end
+        do: print(alive)
+
+    running <: stop -> snapshot
+        then: alive => clock.now > 0
+        do: self :> finish
+
+    snapshot <: finish -> end
