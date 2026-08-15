@@ -9,7 +9,7 @@ def Emitter:
 
 def main:
     data:
-        source: Emitter? = nil
+        source: Emitter = nil
 
     -> running
         do: self :> setup

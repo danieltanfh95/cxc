@@ -222,17 +222,36 @@
   [ty-node record-env atom-env enum-env]
   (case (:node ty-node)
     :type-nullable
+    ;; F39 Landing 1 — `T?` on reference types is spec-refused as
+    ;; redundant (spec §3.6.1: reference types are already nil-allowed
+    ;; by default; the `?` adds nothing). `T?` on value types (primitive
+    ;; scalar / record / enum) needs an Optional<T> representation
+    ;; (F39 Landing 5) — reject with a distinct diagnostic pointing at
+    ;; that follow-on landing.
     (let [inner (:inner ty-node)]
       (case (:node inner)
-        :type-of  (str (base-type-name inner) " *")
-        :type-ref (let [nm (:name inner)]
-                    (cond
-                      (contains? atom-env nm) (str nm " *")
-                      :else
-                      (fail-nyi! (str "nullable non-atom type `" nm "?` "
-                                      "(only atom types are nullable today; "
-                                      "primitives/records/enums would need an Optional wrapper)")
-                                 ty-node)))
+        :type-ref
+        (let [nm (:name inner)]
+          (cond
+            (contains? atom-env nm)
+            (fail-compile! :cxc-f39-nullable-on-reference
+                           (str "redundant nullable on reference type `"
+                                nm "?` — reference types are already "
+                                "nil-allowed by default (spec §3.6.1). "
+                                "Fix: drop the `?` and write `" nm "`.")
+                           ty-node)
+            (= "String" nm)
+            (fail-compile! :cxc-f39-nullable-on-reference
+                           (str "redundant nullable on reference type `String?` "
+                                "— String is reference-shaped (NSString *) and "
+                                "already nil-allowed (spec §3.6.1). Fix: drop "
+                                "the `?` and write `String`.")
+                           ty-node)
+            :else
+            (fail-nyi! (str "nullable value type `" nm "?` — Optional<T> "
+                            "value representation waits on F39 Landing 5 "
+                            "(spec §3.6.1)")
+                       ty-node)))
         (fail-nyi! (str "cxc-type->c: nullable of unknown inner " (:node inner))
                    ty-node)))
     :type-ref

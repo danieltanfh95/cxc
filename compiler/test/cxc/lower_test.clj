@@ -428,9 +428,9 @@ def main:
       (is (= "Counter" (:class ctor)))
       (is (= [{:name "initial" :value {:node :int :value 42}}] (:args ctor))))))
 
-(deftest nullable-atom-type-lowers-as-pointer
-  (testing "T? on an atom lowers to the same `T *` pointer; nil default fills _other = nil; property is strong (ARC)"
-    (let [prog (lower-src "def Counter:\n    data:\n        n: Int = 5\n        other: Counter? = nil\n\ndef main:\n    -> running\n        do: print(1)\n")
+(deftest atom-typed-field-defaults-to-nil-and-lowers-as-pointer
+  (testing "F39 L1 — reference-typed atom fields are already nil-allowed (spec §3.6.1) — no `?` needed. `other: Counter = nil` lowers to `Counter *` (ARC strong)."
+    (let [prog (lower-src "def Counter:\n    data:\n        n: Int = 5\n        other: Counter = nil\n\ndef main:\n    -> running\n        do: print(1)\n")
           cls  (first (:classes prog))]
       (is (= [{:name "phase"            :c-type "NSString *"       :attrs ["nonatomic" "copy"]}
               {:name "own_queue"        :c-type "dispatch_queue_t" :attrs ["nonatomic" "strong"]}
@@ -634,7 +634,7 @@ def main:
 
 (deftest is-nil-emits-pointer-eq
   (testing "`x is nil` → `x == nil` at emit layer (pointer identity in ObjC)"
-    (let [prog (lower-src "def Counter:\n    data:\n        raw_other: Counter? = nil\n\n    other :< raw_other\n\ndef main:\n    -> running\n        do: print(Counter().other is nil)\n")
+    (let [prog (lower-src "def Counter:\n    data:\n        raw_other: Counter = nil\n\n    other :< raw_other\n\ndef main:\n    -> running\n        do: print(Counter().other is nil)\n")
           call (first (main-work-body prog))
           expr (get-in call [:args 1])]
       (is (= :binop (:node expr)))
@@ -1315,6 +1315,27 @@ def main:
 
     -> running
 ")))))
+
+(deftest f39-l1-nullable-on-atom-rejected
+  (testing "F39 Landing 1 — `T?` where T is a reference type (atom) is spec-refused as redundant (§3.6.1: reference types are already nil-allowed). Diagnostic names the type and points at the drop-the-`?` fix."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"redundant nullable on reference type `Counter\?`.*§3\.6\.1.*drop the `\?`"
+         (lower-src "def Counter:\n    data:\n        other: Counter? = nil\n\ndef main:\n    -> running\n        do: print(0)\n")))))
+
+(deftest f39-l1-nullable-on-string-rejected
+  (testing "F39 Landing 1 — `String?` is also redundant: String is reference-shaped (NSString *)."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"redundant nullable on reference type `String\?`.*§3\.6\.1"
+         (lower-src "def X:\n    data:\n        name: String? = nil\n\ndef main:\n    -> running\n        do: print(0)\n")))))
+
+(deftest f39-l1-nullable-on-value-primitive-still-nyi
+  (testing "F39 Landing 1 keeps value-typed nullables in fail-nyi land — the Optional<T> value rep waits on F39 Landing 5. Distinct diagnostic from the reference-type reject so users see the migration path."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"nullable value type `Int\?`.*F39 Landing 5"
+         (lower-src "def X:\n    data:\n        n: Int? = nil\n\ndef main:\n    -> running\n        do: print(0)\n")))))
 
 (deftest f33-l1-cross-atom-data-field-read-rejected
   (testing "F33 Landing 1 — reading a `data:` field from outside the enclosing atom is a compile error. Spec §1.11: data-fields are internal; external reads must go through an observable or reader method. Diagnostic names the field, the owner atom, cites §1.11, and offers both migration paths."

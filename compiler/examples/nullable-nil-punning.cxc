@@ -1,7 +1,7 @@
 def Counter:
     data:
         raw_n:     Int      = 5
-        raw_other: Counter? = nil
+        raw_other: Counter  = nil
 
     n     :< raw_n
     other :< raw_other
