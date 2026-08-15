@@ -233,18 +233,37 @@
          #"`state:` section is retired at v1.0"
          (p/parse "record V:\n    state:\n        x: Float\n")))))
 
-(deftest chained-comparison-rejects-effectful-middle
-  (testing "Audit F27: `a <= b <= c` desugars to `a <= b and b <= c`, which evaluates the middle expression twice. A call in the middle would double-execute (double-send for atom methods, double-alloc for ctors). Parser rejects with a targeted diagnostic pointing at hoisting to `let:`. Pure-value middles (ident, arithmetic, field) remain accepted."
-    ;; Middle is a call → reject
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"chained comparison middle expression has side effects"
-         (p/parse "record V:
+(deftest chained-comparison-desugars-to-chained-cmp
+  (testing "F27 semantic once-only: `a <= b <= c` becomes a `:chained-cmp` node carrying flat operands + ops vectors. Emit renders it as a GNU statement-expression that binds each interior operand once (via `__typeof__`) so an effectful middle like a call fires exactly once at runtime."
+    ;; Middle is an ident — desugars to :chained-cmp with 3 operands.
+    (let [tree (p/parse "def main:
+    data:
+        val: Int = 5
+
+    -> running
+
+    running <: bump -> self
+        when: -10 <= val <= 10
+        then: val => val + 1
+")
+          when-expr (some (fn [n]
+                            (some (fn [t]
+                                    (some (fn [c] (when (= :when-clause (:node c))
+                                                    (:expr c)))
+                                          (:body t)))
+                                  (filter #(= :transition (:node %)) (:body n))))
+                          tree)]
+      (is (= :chained-cmp (:node when-expr)))
+      (is (= 3 (count (:operands when-expr))))
+      (is (= ["<=" "<="] (:ops when-expr))))
+    ;; Middle is a call — accepted (semantic once-only makes the
+    ;; former double-eval concern moot).
+    (is (some? (p/parse "record V:
     data:
         x: Int
     methods:
         function mid(self) -> Int:
-            return x
+            return self.x
 
 def main:
     data:
@@ -256,18 +275,29 @@ def main:
         when: 0 <= v.mid() <= 10
         then: v => v
 ")))
-    ;; Middle is an ident → OK (structural regression: this is the
-    ;; invariant-chained.cxc pattern `-lim <= val <= lim`).
-    (is (some? (p/parse "def main:
+    ;; 4-operand chain: -10 <= a <= b <= 10 → :chained-cmp with
+    ;; 4 operands + 3 ops (fold-into on the postwalk pass).
+    (let [tree (p/parse "def main:
     data:
-        val: Int = 5
+        a: Int = 0
+        b: Int = 5
 
     -> running
 
-    running <: bump -> self
-        when: -10 <= val <= 10
-        then: val => val + 1
-")))))
+    running <: check -> self
+        when: -10 <= a <= b <= 10
+        then: a => a
+")
+          when-expr (some (fn [n]
+                            (some (fn [t]
+                                    (some (fn [c] (when (= :when-clause (:node c))
+                                                    (:expr c)))
+                                          (:body t)))
+                                  (filter #(= :transition (:node %)) (:body n))))
+                          tree)]
+      (is (= :chained-cmp (:node when-expr)))
+      (is (= 4 (count (:operands when-expr))))
+      (is (= ["<=" "<=" "<="] (:ops when-expr))))))
 
 (deftest transition-clause-order-enforced
   (testing "Audit F22: spec §10 — transition sub-blocks must appear in the order `when, let, then, do`. Out-of-order clauses (e.g. `then:` before `let:`) parse-error with a specific diagnostic. F23-form let: binding used here."

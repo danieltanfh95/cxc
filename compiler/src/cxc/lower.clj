@@ -1746,6 +1746,7 @@
                                     "` (no local-binding env yet)")
                                node))
     :binop      (infer-binop-type node ctx)
+    :chained-cmp :bool
     :neg        (let [t (infer-type (:expr node) ctx)]
                   (if (numeric-family? t)
                     t
@@ -2238,6 +2239,16 @@
                  :expr (lower-expr (:expr node) ctx)}
     :not        {:node :unary :op "!"
                  :expr (lower-expr (:expr node) ctx)}
+    ;; F27 semantic once-only: bind each interior operand to a
+    ;; `__typeof__` local via GNU statement-expression, then chain
+    ;; comparisons over the bound locals. Emit renders the
+    ;; statement-expression from the operand + op vectors.
+    :chained-cmp {:node :chained-cmp
+                  :operands (mapv #(lower-expr % ctx) (:operands node))
+                  :ops      (mapv (fn [op]
+                                    (case op
+                                      "<" "<" "<=" "<=" ">" ">" ">=" ">="))
+                                  (:ops node))}
     :dot        (if (enum-case-access? node ctx)
                   {:node :name
                    :sym  (str (get-in node [:target :name]) "_" (:field node))}

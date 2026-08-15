@@ -19,15 +19,20 @@
 ;;
 ;; The general binop parser left-associates comparison ops, producing
 ;; `((a <= b) <= c)`. That's incorrect C semantics for chained bounds
-;; like `-max <= y <= max`. Desugar to `(a <= b) and (b <= c)`.
+;; like `-max <= y <= max`. We rewrite the left-associated tree into a
+;; `:chained-cmp` node carrying the flat operand + op vectors:
 ;;
-;; Audit F27: the middle `b` appears in BOTH comparisons after
-;; desugaring, so it is evaluated twice. Duplicating pure value
-;; expressions (idents, fields, literals, arithmetic) is harmless.
-;; Duplicating an effectful expression — a call, a message send —
-;; changes program semantics (double-send, double-log, double-alloc).
-;; We reject those with a targeted diagnostic that tells the user to
-;; hoist the middle into a `let:` binding first.
+;;   {:node :chained-cmp
+;;    :operands [a b c ...]
+;;    :ops      [cmp1 cmp2 ...]}
+;;
+;; Lower/emit render this as a GNU statement-expression that binds
+;; each *interior* operand (operands[1..n-2]) to a `__typeof__` local,
+;; then evaluates `operands[0] op0 t1 && t1 op1 t2 && ...` against
+;; the bound locals. Result: every interior operand — including the
+;; middle of a 3-operand chain — is evaluated exactly once at
+;; runtime, so `-max <= counter.next() <= max` no longer duplicates
+;; the call. (F27 semantic-once-only landing.)
 ;; ---------------------------------------------------------------------------
 
 (def ^:private cmp-ops #{"<" "<=" ">" ">="})
@@ -37,47 +42,36 @@
        (= :binop (:node n))
        (contains? cmp-ops (:op n))
        (map? (:left n))
-       (= :binop (get-in n [:left :node]))
-       (contains? cmp-ops (get-in n [:left :op]))))
-
-(def ^:private effectful-node-kinds
-  ;; Audit F27: node kinds whose duplication in a chained-comparison
-  ;; middle would change program semantics.
-  #{:call :emit})
-
-(defn- expr-has-effectful-descendant? [expr]
-  (let [found (atom false)]
-    (walk/postwalk
-     (fn [n]
-       (when (and (map? n) (contains? effectful-node-kinds (:node n)))
-         (reset! found true))
-       n)
-     expr)
-    @found))
+       (or (and (= :binop (get-in n [:left :node]))
+                (contains? cmp-ops (get-in n [:left :op])))
+           (= :chained-cmp (get-in n [:left :node])))))
 
 (defn- desugar-chained-node [n]
-  (if (chained? n)
-    (let [inner       (:left n)
-          inner-right (:right inner)]
-      (when (expr-has-effectful-descendant? inner-right)
-        (throw (ex-info
-                (str "chained comparison middle expression has side effects "
-                     "(call or emit); it would be evaluated twice after "
-                     "desugaring `a cmp b cmp c` into `a cmp b and b cmp c`. "
-                     "Hoist to a `let:` binding first — spec §10.")
-                {:kind :chained-comparison-effectful-middle
-                 :middle inner-right})))
-      {:node :binop
-       :op   "and"
-       :left inner
-       :right {:node :binop :op (:op n)
-               :left inner-right :right (:right n)}})
-    n))
+  (cond
+    (not (chained? n)) n
+
+    ;; Left operand is an already-desugared :chained-cmp: extend it
+    ;; with the new (op, rhs) pair. Postwalk visits children first,
+    ;; so a 3+-operand chain (((a<b)<c)<d) is rebuilt into a single
+    ;; :chained-cmp node in one pass.
+    (= :chained-cmp (get-in n [:left :node]))
+    (let [inner (:left n)]
+      {:node :chained-cmp
+       :operands (conj (:operands inner) (:right n))
+       :ops      (conj (:ops inner)      (:op    n))})
+
+    ;; Left operand is a bare binop cmp: fold into the base :chained-
+    ;; cmp shape with three operands and two ops.
+    :else
+    (let [inner (:left n)]
+      {:node :chained-cmp
+       :operands [(:left inner) (:right inner) (:right n)]
+       :ops      [(:op inner)   (:op n)]})))
 
 (defn- desugar-chained-comparisons
-  "Bottom-up rewrite: every `(a cmp1 b) cmp2 c` becomes `(a cmp1 b) and
-   (b cmp2 c)`. Recursively applied via postwalk so inner chains rewrite
-   before outer ones — needed for 3+ operand chains."
+  "Bottom-up rewrite: every left-associated cmp chain becomes a single
+   `:chained-cmp` node. Recursively applied via postwalk so inner
+   chains rewrite before outer ones — needed for 3+ operand chains."
   [ast]
   (walk/postwalk desugar-chained-node ast))
 

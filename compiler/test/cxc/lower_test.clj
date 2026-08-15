@@ -1,7 +1,9 @@
 (ns cxc.lower-test
   (:require [clojure.test :refer [deftest is testing]]
+            [clojure.string :as str]
             [cxc.parse :as p]
-            [cxc.lower :as lower]))
+            [cxc.lower :as lower]
+            [cxc.emit :as emit]))
 
 (defn- lower-src [src] (lower/lower (p/parse src)))
 
@@ -567,6 +569,22 @@ def main:
       (is ex "expected exception")
       (is (= :not-yet-implemented (:kind (ex-data ex))))
       (is (re-find #"unknown named arg" (.getMessage ex))))))
+
+;; F27 semantic once-only — chained comparison lowers to :chained-cmp;
+;; emit renders as GNU stmt-expr binding each interior operand once.
+
+(deftest f27-emit-renders-gnu-stmt-expr
+  (testing "when: -10 <= val <= 10 emits a GNU stmt-expr binding _val once"
+    (let [prog (lower-src "def main:\n    data:\n        val: Int = 5\n\n    -> running\n\n    running <: bump -> self\n        when: -10 <= val <= 10\n        then: val => val + 1\n")
+          c-src (emit/emit prog)]
+      ;; The interior operand is bound to __cxc_cc_1 via __typeof__.
+      (is (str/includes? c-src "__typeof__(_val) __cxc_cc_1 = (_val);"))
+      ;; Comparisons reference the bound local, not the raw _val.
+      (is (str/includes? c-src "(-10) <= __cxc_cc_1 && __cxc_cc_1 <= 10"))
+      ;; Wrapped in a GNU statement-expression.
+      (is (str/includes?
+           c-src
+           "({ __typeof__(_val) __cxc_cc_1 = (_val); (-10) <= __cxc_cc_1 && __cxc_cc_1 <= 10; })")))))
 
 ;; F46 — clamp single-evaluation: emit-c-fn binds each arg to a
 ;; typeof-declared local so a side-effectful arg fires once.

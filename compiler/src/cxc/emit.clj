@@ -34,6 +34,37 @@
                           " " (:op node) " "
                           (emit-expr (:right node)) ")")
     :unary           (str "(" (:op node) (emit-expr (:expr node)) ")")
+    :chained-cmp
+    ;; F27 semantic once-only: render `-max <= counter.next() <= max`
+    ;; as a GNU statement-expression that binds each *interior*
+    ;; operand (operands[1..len-2]) to a `__typeof__` local, then
+    ;; ANDs the chained comparisons using the bound locals. Head +
+    ;; tail operands appear once each; interior operands appear once
+    ;; at the binding site and once per adjacent comparison against
+    ;; the bound local. `__typeof__` is compile-time and doesn't
+    ;; evaluate its operand.
+    (let [operands   (:operands node)
+          ops        (:ops node)
+          n          (count operands)
+          rendered   (mapv emit-expr operands)
+          interior?  (fn [i] (and (pos? i) (< i (dec n))))
+          binding-of (fn [i] (str "__cxc_cc_" i))
+          prelude    (->> (range n)
+                          (filter interior?)
+                          (map (fn [i]
+                                 (str "__typeof__(" (nth rendered i) ") "
+                                      (binding-of i) " = ("
+                                      (nth rendered i) "); ")))
+                          (apply str))
+          eff        (fn [i]
+                       (if (interior? i)
+                         (binding-of i)
+                         (nth rendered i)))
+          chain      (->> (range (dec n))
+                          (map (fn [i]
+                                 (str (eff i) " " (nth ops i) " " (eff (inc i)))))
+                          (str/join " && "))]
+      (str "({ " prelude chain "; })"))
     :field           (str (emit-expr (:target node)) "." (:field node))
     :struct-lit      (str "((" (:type node) "){"
                           (str/join ", "
