@@ -15,13 +15,14 @@
     (get-in prog [:main :body])))
 
 (deftest hello-world-program-lowers
-  (testing "def main: -> running do: print(\"hello, world\") lowers cleanly"
+  (testing "def main: -> running do: print(\"hello, world\") lowers cleanly. F65 — Foundation is always included because String is NSString *; the string literal lowers as :objc-str (`@\"...\"`) rather than :str (`\"...\"`)."
     (let [prog (lower-src "def main:
     -> running
         do: print(\"hello, world\")
 ")]
       (is (= :objc-program (:node prog)))
-      (is (some #{"<stdio.h>"} (:includes prog)))
+      (is (some #{"<Foundation/Foundation.h>"} (:includes prog))
+          "F65 — Foundation always included; NSString literal requires it")
       (let [body (get-in prog [:main :body])]
         ;; expect the printf call then a `return 0`
         (is (= 2 (count body)))
@@ -30,6 +31,8 @@
           (is (= "printf" (:fn call)))
           (is (= 2 (count (:args call))))
           (is (= "%s\n" (get-in call [:args 0 :value])))
+          (is (= :objc-str (get-in call [:args 1 :node]))
+              "F65 — string literal lowers as NSString literal")
           (is (= "hello, world" (get-in call [:args 1 :value]))))
         (let [ret (second body)]
           (is (= :return (:node ret)))
@@ -169,11 +172,13 @@
       (is (some #{"<stdlib.h>"} (:includes prog)))
       (is (true? (get-in prog [:main :autorelease?]))))))
 
-(deftest hello-world-stays-pure-c
-  (testing "no ObjC classes → stdio.h include, no autoreleasepool"
+(deftest hello-world-includes-foundation
+  (testing "F65 — every program includes Foundation because string literals are NSString; autoreleasepool wraps main"
     (let [prog (lower-src "def main:\n    -> running\n        do: print(\"hi\")\n")]
-      (is (= ["<stdio.h>"] (:includes prog)))
-      (is (not (true? (get-in prog [:main :autorelease?])))))))
+      (is (some #{"<Foundation/Foundation.h>"} (:includes prog))
+          "F65 — Foundation always included; NSString literal requires it")
+      (is (true? (get-in prog [:main :autorelease?]))
+          "F65 — autoreleasepool wraps main since NSString literals allocate"))))
 
 (deftest wildcard-on-enter-inlined-into-init
   (testing "initial-phase wildcard on-enter → its then:/do: append to :init-body after data defaults"

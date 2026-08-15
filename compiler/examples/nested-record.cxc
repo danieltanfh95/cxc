@@ -1,13 +1,13 @@
-record Point:
+record Vec2:
     data:
         x: Float
         y: Float
 
 record Line:
     data:
-        start: Point
-        stop:  Point
+        start: Vec2
+        stop:  Vec2
 
 def main:
     -> running
-        do: print(Line(start: Point(x: 1.5, y: 2.0), stop: Point(x: 3.0, y: 4.0)).start.x)
+        do: print(Line(start: Vec2(x: 1.5, y: 2.0), stop: Vec2(x: 3.0, y: 4.0)).start.x)

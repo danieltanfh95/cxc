@@ -115,7 +115,13 @@
    "UInt64"  "uint64_t"
    "Float"   "float"        ; §3.1: 32-bit IEEE 754
    "Double"  "double"       ; §3.1: 64-bit IEEE 754
-   "String"  "const char *"
+   ;; F65 — String is NSString * per spec §3.10.5 (`kind: regular`,
+   ;; toll-free bridged to NSString). Reference-shaped: ARC handles
+   ;; retain/release, nullable at C level (like any ObjC object
+   ;; pointer). Full grapheme-native method surface per §3.10.5
+   ;; (grapheme_count, first_grapheme, substring, ...) is a separate
+   ;; follow-on landing.
+   "String"  "NSString *"
    "Bool"    "int"
    ;; Phase D F36a Landing 3a — spec §3.1 non-numeric substrate.
    ;;
@@ -343,7 +349,7 @@
   (cond
     (= :int    tk) "int64_t"
     (= :float  tk) "double"
-    (= :string tk) "const char *"
+    (= :string tk) "NSString *"           ; F65 §3.10.5
     (= :bool   tk) "int"
     (= :unit   tk) "void"
     (= :never  tk) "void"
@@ -1380,10 +1386,12 @@
    ;; the number of bytes written. Wraps printf's %s to route
    ;; through the same underlying fd as `print` — subsequent output
    ;; from either path interleaves correctly.
+   ;;
+   ;; F65: msg is NSString *; extract UTF8 bytes at the print site.
    {:return-kw :int
     :arity     1
     :emit-c    (fn [args]
-                 (str "printf(\"%s\", " (first args) ")"))}
+                 (str "printf(\"%s\", [" (first args) " UTF8String])"))}
    "native_random_below"
    {:return-kw :int
     :arity     1
@@ -1892,6 +1900,12 @@
       :text (str (:atom element-type-kw) " *" user-name
                  " = (" (:atom element-type-kw) " *)" raw-name ";")}]
 
+    ;; F65 — String is NSString *; bind with the correct static type
+    ;; so downstream reads/methods see NSString, not id.
+    (= :string element-type-kw)
+    [{:node :raw-c
+      :text (str "NSString *" user-name " = (NSString *)" raw-name ";")}]
+
     :else
     ;; id-typed pass-through: just alias user-name to raw
     [{:node :raw-c
@@ -1965,7 +1979,10 @@
 
 (defn- lower-expr [node ctx]
   (case (:node node)
-    :lit-string {:node :str   :value (:value node)}
+    ;; F65 §3.10.5 — String is NSString *. String literals emit as
+    ;; `@"..."` (NSString literal) instead of `"..."` (const char *).
+    ;; :objc-str already exists as an emit-node kind for this shape.
+    :lit-string {:node :objc-str :value (:value node)}
     :lit-int    {:node :int   :value (:value node)}
     :lit-float  {:node :float :value (:value node)}
     :lit-nil    {:node :nil}
@@ -3609,16 +3626,20 @@
           data-props      (mapv (fn [f]
                                   ;; ARC discipline: object pointers (atom types) → strong;
                                   ;; blocks → copy (ARC needs Block_copy on retain to
-                                  ;; move stack blocks to heap); scalars/records → assign.
+                                  ;; move stack blocks to heap); NSString → copy (Cocoa
+                                  ;; idiom — defensive against mutable NSStrings; canonical
+                                  ;; @"..." literals no-op the copy); scalars/records → assign.
                                   ;; `strong` gives standard owning-reference semantics;
                                   ;; `assign` is right for primitives and copyable values
                                   ;; that ARC ignores.
                                   (let [is-atom-ptr? (contains? (:atom-env ctx) (:cxc-ty f))
-                                        is-block?    (= "Block" (:cxc-ty f))]
+                                        is-block?    (= "Block" (:cxc-ty f))
+                                        is-string?   (= "String" (:cxc-ty f))]  ; F65
                                     {:name (:name f)
                                      :c-type (:c-type f)
                                      :attrs (cond
                                               is-block?    ["nonatomic" "copy"]
+                                              is-string?   ["nonatomic" "copy"]  ; F65
                                               is-atom-ptr? ["strong"]
                                               :else        ["assign"])}))
                                 (:fields rec))
@@ -4155,19 +4176,19 @@
 
 (defn- map-box-expr
   "Cxc-typed expr → NSDictionary-safe ObjC expr. Int wraps as NSNumber
-   `@(v)`; String wraps `const char *` as NSString via
-   `[NSString stringWithUTF8String:...]`."
+   `@(v)`; String is ALREADY NSString * per F65 §3.10.5, no wrapping
+   needed."
   [ty raw-name]
   (case ty
     "Int"    (str "@(" raw-name ")")
-    "String" (str "[NSString stringWithUTF8String:" raw-name "]")))
+    "String" raw-name))
 
 (defn- map-c-type
   "C-level parameter type for a supported K or V map type."
   [ty]
   (case ty
     "Int"    "int"
-    "String" "const char *"))
+    "String" "NSString *"))                 ; F65 §3.10.5
 
 (defn- synthesize-map-container-class
   "Emit-ready :objc-class node for one `_Cxc_MapOf<K><V>` instantiation.
@@ -4426,7 +4447,16 @@
                        (into map-container-classes)
                        (into set-container-classes)
                        (into real-atom-classes))
-        needs-foundation? (boolean (seq classes))
+        ;; F65 — String is NSString * per §3.10.5, so any program
+        ;; emitting a string literal (`@"..."`) or calling `-UTF8String`
+        ;; needs Foundation. Rather than scanning the whole AST for
+        ;; those, we include Foundation whenever the program has
+        ;; classes OR uses strings. Detecting the latter is broader
+        ;; than needed — string literals appear in almost every program
+        ;; except numeric-only smoke tests — so we simply always
+        ;; include Foundation. The extra compile-time cost is a few
+        ;; hundred ms on modern clang; correctness beats it here.
+        needs-foundation? true
         needs-abort?      (boolean (some #(seq (:invariants (second %))) atom-env))
         ;; Runtime helpers (cxc_send_async / cxc_send_sync / cxc_shutdown
         ;; + CXCAtom protocol) are needed by every atom's compiler-inserted

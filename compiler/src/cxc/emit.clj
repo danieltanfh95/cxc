@@ -70,20 +70,27 @@
                            ;; `[:float N]`. Signed ints cast to long
                            ;; long; unsigned ints to unsigned long
                            ;; long; floats to double.
+                           ;;
+                           ;; F65: for :string, extract UTF8 bytes at
+                           ;; the print site — String is NSString *
+                           ;; (§3.10.5), but `%s` printf takes const
+                           ;; char *. `[str UTF8String]` bridges.
                            printf-family (cond
-                                           (= :int printf-tk)   :int
-                                           (= :float printf-tk) :float
-                                           (vector? printf-tk)  (first printf-tk))
-                           cast-c    (case printf-family
-                                       :int   "long long"
-                                       :uint  "unsigned long long"
-                                       :float "double"
+                                           (= :int printf-tk)    :int
+                                           (= :float printf-tk)  :float
+                                           (= :string printf-tk) :string
+                                           (vector? printf-tk)   (first printf-tk))
+                           wrap-arg  (case printf-family
+                                       :int    (fn [s] (str "(long long)(" s ")"))
+                                       :uint   (fn [s] (str "(unsigned long long)(" s ")"))
+                                       :float  (fn [s] (str "(double)(" s ")"))
+                                       :string (fn [s] (str "[" s " UTF8String]"))
                                        nil)
                            arg-strs  (map-indexed
                                        (fn [i a]
                                          (let [s (emit-expr a)]
-                                           (if (and cast-c (= i 1))
-                                             (str "(" cast-c ")(" s ")")
+                                           (if (and wrap-arg (= i 1))
+                                             (wrap-arg s)
                                              s)))
                                        args)]
                        (str (:fn node)
