@@ -704,6 +704,48 @@ def main:
       (is (= "void" (fn-return-type "NonNumeric_fatal"))
           "Never return → void (§3.1.1 — divergent; _Noreturn attribute is a follow-on)"))))
 
+(deftest pre-store-invariant-check-fires-before-field-assignment
+  (testing "Phase D F49 Landing A — invariant enforcement runs on the SOURCE VALUE (ctor param or default expression) before any narrowing store can truncate. Pre-store check statements are prepended to cxc_stateInit body so the abort fires before `_field = <source>;`. Distinguishing label (`at construction (source value violates)`) points diagnostic at pre-store site.
+
+  Unblocks F36 Landing 2a (picker) — narrowed storage (e.g. `Age.value` as `uint8_t` when invariant is `0 <= value <= 150`) cannot silently accept `Age(value: 300)` (which would store 44 = 300 & 0xff and then pass a post-store check on 44)."
+    (let [prog (lower-src "def Bounded:
+    data:
+        v: Int = 42
+    invariants:
+        0 <= v
+        v <= 150
+
+def main:
+    -> running
+        do: print(1)
+")
+          cls  (first (filter #(= "Bounded" (:name %)) (:classes prog)))
+          state-method (first (filter #(= "cxc_stateInit" (:selector %))
+                                      (:methods cls)))
+          body         (:body state-method)
+          checks       (filter #(= :invariant-check (:node %)) body)
+          assigns      (filter #(= :assign (:node %)) body)
+          first-assign-idx (first (keep-indexed
+                                    #(when (= :assign (:node %2)) %1)
+                                    body))
+          last-check-idx   (last (keep-indexed
+                                    #(when (= :invariant-check (:node %2)) %1)
+                                    body))]
+      (is (= 2 (count checks))
+          "one pre-store check per invariant predicate")
+      (is (< last-check-idx first-assign-idx)
+          "every pre-store check statement precedes every field assignment")
+      (is (every? #(re-find #"at construction \(source value violates\)"
+                            (:label %))
+                  checks)
+          "pre-store labels distinguish from post-store checkInvariants site")
+      (is (= [{:node :int :value 0} {:node :int :value 42}]
+             [(:left (:cond (first checks))) (:right (:cond (first checks)))])
+          "first check reads default value (42), not ivar (_v) — checks the source before store")
+      (is (= [{:node :int :value 42} {:node :int :value 150}]
+             [(:left (:cond (second checks))) (:right (:cond (second checks)))])
+          "second check also reads default value — proves substitution fires uniformly"))))
+
 (deftest in-operator-raises-targeted-diagnostic
   (testing "Audit F47: `x in y` parses as a binop but its semantic lowering (dispatch to a container `contains` method — spec §1.3 membership predicates) is Phase D work. Silently emitting the literal token `in` into the generated C causes clang to fail far from the source; lower now raises a targeted diagnostic naming the operator so the failure points to the actual language feature."
     (is (thrown-with-msg?

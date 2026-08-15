@@ -1785,9 +1785,20 @@
                                   "`.map`/`.for_each`; will lower to ObjC "
                                   "blocks)")
                              node))
-    :ident      (let [n  (:name node)
-                      sf (get (:self-fields ctx) n)]
+    :ident      (let [n    (:name node)
+                      fsub (get (:field-substitutions ctx) n)
+                      sf   (get (:self-fields ctx) n)]
                   (cond
+                    ;; F49 Landing A: pre-store invariant check substitutes
+                    ;; field references with an already-lowered expression
+                    ;; that reads the value which WILL BE stored (ctor
+                    ;; param via `{:node :name :sym ...}`, or a default
+                    ;; expression pre-lowered by the caller). Emit the
+                    ;; substitution verbatim — do NOT re-lower through
+                    ;; this branch (that recurses on the same name).
+                    fsub
+                    fsub
+
                     (contains? (:locals ctx) n)
                     {:node :name :sym n}
 
@@ -3183,6 +3194,45 @@
    ;; Fires from init AND post-transition (Step 14); label stays generic.
    :label (str atom-name " invariant #" idx " failed")})
 
+(defn- collect-self-field-refs
+  "Walk `pred` bottom-up, returning the set of unqualified :ident names
+   that would resolve to a self-field (not to a local, not to a fully-
+   qualified path). Used by F49 Landing A to decide whether a predicate
+   is safe to pre-store-check: if every field ref has a source value in
+   the substitution map, the pre-store check emits before any field
+   assignment truncates."
+  [pred ctx]
+  (let [acc (atom #{})]
+    (walk/postwalk
+     (fn [n]
+       (when (and (map? n)
+                  (= :ident (:node n))
+                  (not (contains? (:locals ctx) (:name n)))
+                  (get (:self-fields ctx) (:name n)))
+         (swap! acc conj (:name n)))
+       n)
+     pred)
+    @acc))
+
+(defn- pre-store-invariant-check
+  "F49 Landing A: emit the pre-store construction check for `pred` when
+   every self-field it references has a source-value entry in
+   `field-subs` (ctor-param ident or default expression). Returns nil
+   if any field reference lacks a source value — those predicates fall
+   back to the post-store checkInvariants call from cxc_runtimeBinding,
+   which is still correct for non-narrowed storage.
+
+   The label distinguishes pre-store from post-store so a diagnostic on
+   a narrowed-field violation names the correct site."
+  [atom-name idx pred ctx field-subs]
+  (let [refs (collect-self-field-refs pred ctx)
+        all-substituted? (every? #(contains? field-subs %) refs)]
+    (when all-substituted?
+      {:node  :invariant-check
+       :cond  (lower-expr pred (assoc ctx :field-substitutions field-subs))
+       :label (str atom-name " invariant #" idx
+                   " failed at construction (source value violates)")})))
+
 (defn- class-name-for-atom
   "Emitted ObjC class name. Regular atoms use their cxc name verbatim.
    Main gets `CxcMain` — `main` collides with C's main() symbol and
@@ -3268,6 +3318,47 @@
           invariant-stmts (vec (map-indexed
                                 (fn [i p] (lower-invariant-check atom-name i p ctx-in-init))
                                 (:invariants rec)))
+          ;; F49 Landing A — pre-store construction check. Maps each
+          ;; field name to an ALREADY-LOWERED expression that reads
+          ;; the value which will be stored:
+          ;;   - Ctor param: `{:node :name :sym <p>}` — bare-name (the
+          ;;     ctor param is in scope inside cxc_stateInit).
+          ;;   - Default expression: lowered once against ctx-in-init
+          ;;     without field substitutions (defaults that reference
+          ;;     other fields will resolve to `_field`, which reads the
+          ;;     zero-init value at pre-store time — accepted MVP
+          ;;     limitation; simple literal defaults dominate real use).
+          ;; The already-lowered form goes straight into the emitted C
+          ;; without re-entering :ident lowering, avoiding the recursion
+          ;; that would happen if `hp` substituted to another
+          ;; :ident-node named `hp`.
+          ;; Defaults that lower-expr can safely handle at this site.
+          ;; Aggregate literals (`:list`, `:map`, `:set`) use dedicated
+          ;; init helpers (`default-init-stmt-for`) that don't route
+          ;; through `lower-expr`; skip them from the substitution map —
+          ;; the picker never narrows aggregate storage anyway, and the
+          ;; post-store checkInvariants covers `xs.count`-style
+          ;; invariants correctly (aggregates aren't truncatable).
+          lowerable-default? (fn [d]
+                               (and (map? d)
+                                    (not (contains? #{:list :map :set}
+                                                    (:node d)))))
+          field-substitutions
+          (into {}
+                (concat
+                 (keep (fn [f]
+                         (let [d (:default f)]
+                           (when (lowerable-default? d)
+                             [(:name f) (lower-expr d ctx-in-init)])))
+                       (:fields rec))
+                 (map (fn [p] [(:name p) {:node :name :sym (:name p)}])
+                      ctor-params)))
+          pre-store-invariant-stmts
+          (vec (keep-indexed
+                (fn [i p]
+                  (pre-store-invariant-check
+                   atom-name i p ctx-in-init field-substitutions))
+                (:invariants rec)))
           user-methods    (mapv #(lower-atom-method atom-name % ctx-with-self) methods)
           obs-methods     (mapv #(lower-observable-method % ctx-with-self) observables)
           data-props      (mapv (fn [f]
@@ -3369,7 +3460,14 @@
                            :return-type "void"
                            :params (mapv (fn [p] {:name (:name p) :c-type (:c-type p)})
                                          ctor-params)
-                           :body (into default-stmts on-enter-stmts)}
+                           ;; F49 Landing A: pre-store invariant checks
+                           ;; run first so ctor-param / default values
+                           ;; failing the invariant abort before any
+                           ;; narrowing store loses information.
+                           :body (-> []
+                                     (into pre-store-invariant-stmts)
+                                     (into default-stmts)
+                                     (into on-enter-stmts))}
           ;; Factor invariants into -checkInvariants (design §14) so
           ;; init AND every message-triggered transition can call it —
           ;; duplication-free, single source of truth. cxc_runtimeBinding
