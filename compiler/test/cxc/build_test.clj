@@ -434,6 +434,12 @@
           (is (zero? exit))
           (is (= "hello, world\n" stdout)))))))
 
+(deftest end-to-end-record-equality
+  (testing "record-equality.cxc — F37 synthesized structural equality. Vec2(1,2)==Vec2(1,2) prints 1; Vec2(1,2)==Vec2(1,3) prints 0; nested Line equality with per-field record recursion prints 1. Prior lowering emitted raw C `==` on struct values (illegal C); F37 reroutes through `<Record>_cxc_equals`."
+    (let [{:keys [exit stdout]} (compile-and-run "record-equality")]
+      (is (zero? exit))
+      (is (= "1\n0\n1\n" stdout)))))
+
 (deftest explicit-target-unknown-rejected
   (testing "F55 Landing 3 — an unknown target name raises a targeted diagnostic naming the missing resource path"
     (let [src     (example "hello")

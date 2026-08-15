@@ -1016,6 +1016,42 @@ def main:
         do: print(n[0])
 ")))))
 
+(deftest f37-synthesizes-record-equals-and-hash-functions
+  (testing "F37 — every record gets a synthesized `<Record>_cxc_equals` (bool a,b) and `<Record>_cxc_hash` (long) free C function. Prefix `cxc_` avoids collision with user-defined equals/hash methods."
+    (let [prog (lower-src "record V:\n    data:\n        x: Int\n        y: Int\n\ndef main:\n    -> running\n")
+          fn-names (set (map :name (:functions prog)))]
+      (is (contains? fn-names "V_cxc_equals"))
+      (is (contains? fn-names "V_cxc_hash")))))
+
+(deftest f37-rewrites-record-eq-to-synthesized-equals-call
+  (testing "F37 — `==` between two same-record-type operands lowers to a call to the synthesized equals fn instead of an illegal raw-C struct comparison. `!=` wraps the call in a `!`."
+    ;; Feed lower a record + == inside an atom method body so we can
+    ;; inspect the lowered call node.
+    (let [src "record V:\n    data:\n        x: Int\n\ndef main:\n    -> running\n        do: print(V(x: 1) == V(x: 2))\n"
+          prog (lower-src src)
+          m    (some #(when (= :main (:node %)) %) (:classes prog))
+          ;; Not present in this shape — main isn't a class here.
+          ;; Simpler: inspect main's body directly.
+          main-body (get-in prog [:main :body])
+          ;; Find the print call and check its arg.
+          call-arg (loop [stmts main-body]
+                     (when-let [s (first stmts)]
+                       (or (when (= :call (:node s))
+                             (first (:args s)))
+                           (recur (rest stmts)))))]
+      ;; The printf call's second arg (formatted value) is the F37 call.
+      ;; Loop over stmts to find any :call whose args mention V_cxc_equals.
+      (let [walker (fn walker [x]
+                     (cond
+                       (map? x)
+                       (or (when (and (= :call (:node x))
+                                      (= "V_cxc_equals" (:fn x)))
+                             x)
+                           (some walker (vals x)))
+                       (sequential? x) (some walker x)))]
+        (is (some? (walker main-body))
+            "expected V_cxc_equals call in main body")))))
+
 (deftest handler-decl-raises-targeted-diagnostic
   (testing "Audit F14: `-> handler(args):` parses as a distinct AST node (spec §1.11), but lowering waits on F9 + F38. Diagnostic names the handler + alternative (methods: section) so users get an actionable message. Needs a companion def-atom + def main so lower reaches the atom body before failing (main-atom promotion path fires first if the handler-decl sits on main itself)."
     (is (thrown-with-msg?

@@ -57,7 +57,8 @@
    authoritative for resolving user references without text-level
    rewriting.
    "
-  (:require [cxc.prelude :as prelude]))
+  (:require [clojure.set]
+            [cxc.prelude :as prelude]))
 
 ;; ---------------------------------------------------------------------------
 ;; Prelude module → declared-names index

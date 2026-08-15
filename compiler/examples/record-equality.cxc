@@ -1,0 +1,17 @@
+record Vec2:
+    data:
+        x: Int
+        y: Int
+
+record Line:
+    data:
+        start: Vec2
+        stop:  Vec2
+
+def main:
+    -> running
+        do:
+            print(Vec2(x: 1, y: 2) == Vec2(x: 1, y: 2))
+            print(Vec2(x: 1, y: 2) == Vec2(x: 1, y: 3))
+            print(Line(start: Vec2(x: 1, y: 2), stop: Vec2(x: 3, y: 4))
+                    == Line(start: Vec2(x: 1, y: 2), stop: Vec2(x: 3, y: 4)))

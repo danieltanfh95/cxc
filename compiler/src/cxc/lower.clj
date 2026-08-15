@@ -1694,7 +1694,7 @@
 ;; Expression lowering (ctx-threaded)
 ;; ---------------------------------------------------------------------------
 
-(declare lower-expr lower-stmt)
+(declare lower-expr lower-stmt record-synth-equals-name)
 
 (defn- lower-record-ctor
   [record-name args ctx]
@@ -2063,14 +2063,32 @@
                   ;; an unknown operator far from the source.
                   (when (= "in" (:op node))
                     (fail-nyi! "`in` membership operator" node))
-                  {:node  :binop
-                   :op    (case (:op node)
-                            "and" "&&"
-                            "or"  "||"
-                            "is"  "=="            ; pointer-eq for atoms, value-eq for enums/ints
-                            (:op node))
-                   :left  (lower-expr (:left node)  ctx)
-                   :right (lower-expr (:right node) ctx)})
+                  ;; F37: record-typed `==` / `!=` reroutes through the
+                  ;; synthesized `<Record>_cxc_equals` free function.
+                  ;; Raw C `struct1 == struct2` is not valid C — this
+                  ;; is a correctness fix, not an optimization.
+                  (if-let [rec-name (and (contains? #{"==" "!="} (:op node))
+                                         (let [lt (infer-type (:left node)  ctx)
+                                               rt (infer-type (:right node) ctx)]
+                                           (when (and (map? lt) (:record lt)
+                                                      (map? rt) (:record rt)
+                                                      (= (:record lt) (:record rt)))
+                                             (:record lt))))]
+                    (let [call {:node :call
+                                :fn   (record-synth-equals-name rec-name)
+                                :args [(lower-expr (:left node)  ctx)
+                                       (lower-expr (:right node) ctx)]}]
+                      (if (= "==" (:op node))
+                        call
+                        {:node :unary :op "!" :expr call}))
+                    {:node  :binop
+                     :op    (case (:op node)
+                              "and" "&&"
+                              "or"  "||"
+                              "is"  "=="            ; pointer-eq for atoms, value-eq for enums/ints
+                              (:op node))
+                     :left  (lower-expr (:left node)  ctx)
+                     :right (lower-expr (:right node) ctx)}))
     :neg        {:node :unary :op "-"
                  :expr (lower-expr (:expr node) ctx)}
     :not        {:node :unary :op "!"
@@ -3269,6 +3287,127 @@
              m               (:methods info)]
          (lower-method-fn rec-name m ctx))))
 
+;; ---------------------------------------------------------------------------
+;; F37 — synthesized record equality + hash
+;;
+;; Spec §3.3, §3.4.6: records auto-derive structural equality and hash.
+;; Currently `V == W` on two struct-typed operands lowers to raw C
+;; `V == W`, which is not valid C (structs don't compare with ==). This
+;; landing synthesizes `<Record>_cxc_equals` and `<Record>_cxc_hash`
+;; free C functions and reroutes `==`/`!=` between record-typed operands
+;; through the equals fn. Prefix `cxc_` avoids collision with user-
+;; defined `equals` / `hash` methods; user methods would still lower to
+;; `<Record>_equals` via `c-method-name`.
+;;
+;; Bytes encoding (`as() to Bytes` / `from(Bytes)` per §3.4.6) is a
+;; follow-on landing — requires per-field byte layout decisions that
+;; are more subtle than equals.
+;; ---------------------------------------------------------------------------
+
+(defn- record-synth-equals-name [record-name]
+  (str record-name "_cxc_equals"))
+
+(defn- record-synth-hash-name [record-name]
+  (str record-name "_cxc_hash"))
+
+(defn- primitive-eq-op?
+  "True when the field's cxc type name is a primitive whose C
+   representation supports raw `==` (all numerics, char, bool, and
+   enums-as-int)."
+  [cxc-ty ctx]
+  (or (contains? primitive-c-type cxc-ty)
+      (contains? (:enum-env ctx) cxc-ty)))
+
+(defn- field-equals-c-src
+  "Emit a C expression comparing field `f` between two record variables
+   `a` and `b`. Dispatched on field type: primitives + enums use `==`;
+   NSString uses `-isEqualToString:`; nested records recurse into their
+   synthesized equals; atoms and NSObject containers use pointer / NSObject
+   equality."
+  [f a-name b-name ctx]
+  (let [fname   (:name f)
+        cxc-ty  (:cxc-ty f)]
+    (cond
+      (= "String" cxc-ty)
+      (str "((" a-name "." fname " == " b-name "." fname ") || "
+           "[" a-name "." fname " isEqualToString:" b-name "." fname "])")
+
+      (contains? (:record-env ctx) cxc-ty)
+      (str (record-synth-equals-name cxc-ty)
+           "(" a-name "." fname ", " b-name "." fname ")")
+
+      (contains? (:atom-env ctx) cxc-ty)
+      (str "(" a-name "." fname " == " b-name "." fname ")")
+
+      (primitive-eq-op? cxc-ty ctx)
+      (str "(" a-name "." fname " == " b-name "." fname ")")
+
+      :else
+      (str "[" a-name "." fname " isEqual:" b-name "." fname "]"))))
+
+(defn- field-hash-c-src
+  "Emit a C expression producing a `long` hash contribution for one
+   field. Combined with 31-multiply accumulator."
+  [f var-name ctx]
+  (let [fname   (:name f)
+        cxc-ty  (:cxc-ty f)]
+    (cond
+      (= "String" cxc-ty)
+      (str "(long)[" var-name "." fname " hash]")
+
+      (contains? (:record-env ctx) cxc-ty)
+      (str (record-synth-hash-name cxc-ty)
+           "(" var-name "." fname ")")
+
+      (contains? (:atom-env ctx) cxc-ty)
+      (str "(long)(intptr_t)" var-name "." fname)
+
+      (primitive-eq-op? cxc-ty ctx)
+      (str "(long)" var-name "." fname)
+
+      :else
+      (str "(long)[" var-name "." fname " hash]"))))
+
+(defn- synthesize-record-equals-fn
+  "Produce a `:c-function` node implementing structural equality for
+   `record-name`. Empty records return `true` (all zero fields agree)."
+  [record-name info ctx]
+  (let [fields   (:fields info)
+        body-src (if (empty? fields)
+                   "true"
+                   (str/join "\n           && "
+                             (map #(field-equals-c-src % "a" "b" ctx) fields)))]
+    {:node        :c-function
+     :name        (record-synth-equals-name record-name)
+     :return-type "bool"
+     :params      [{:name "a" :c-type record-name}
+                   {:name "b" :c-type record-name}]
+     :body        [{:node :raw-c :text (str "return " body-src ";")}]}))
+
+(defn- synthesize-record-hash-fn
+  "Produce a `:c-function` node implementing structural hash for
+   `record-name`. Uses 31-multiply accumulator over per-field hashes;
+   empty records hash to 0."
+  [record-name info ctx]
+  (let [fields   (:fields info)
+        lines    (map (fn [f]
+                        (str "  h = h * 31 + " (field-hash-c-src f "a" ctx) ";"))
+                      fields)
+        body-src (str "long h = 0;\n" (str/join "\n" lines) "\n  return h;")]
+    {:node        :c-function
+     :name        (record-synth-hash-name record-name)
+     :return-type "long"
+     :params      [{:name "a" :c-type record-name}]
+     :body        [{:node :raw-c :text body-src}]}))
+
+(defn- synthesized-record-functions
+  "Emit the synthesized equals + hash function pair for every record."
+  [ctx]
+  (vec (for [[rec-name info] (:record-env ctx)
+             f-fn            [synthesize-record-equals-fn
+                              synthesize-record-hash-fn]]
+         (f-fn rec-name info ctx))))
+
 (defn- lower-list-literal-init
   "Lower `xs: List of T = [e1, e2, ...]` in a data-field default.
    Produces `_xs = [[_Cxc_ListOfT alloc] initWithElements:@[<boxed items>]]`.
@@ -4440,7 +4579,9 @@
         enums      (filter #(= :enum   (:node %)) top-nodes)
         c-enums    (mapv lower-enum enums)
         structs    (mapv #(lower-record-struct % ctx) records)
-        functions  (record-method-functions ctx)
+        functions  (into (record-method-functions ctx)
+                         ;; F37 — synthesized equals + hash per record
+                         (synthesized-record-functions ctx))
         ;; main-as-atom kicks in whenever the atom-env contains main
         ;; (build-atom-env puts it in iff other atoms exist).
         main-as-atom?  (contains? atom-env "main")
