@@ -1397,6 +1397,69 @@ def main:
       (is (not (some #{"<execinfo.h>"} (:includes without-panic)))
           "non-panic program doesn't pull in <execinfo.h>"))))
 
+(deftest f31-f35-l3-sync-send-cycle-warning
+  (testing "F31/F35 Landing 3 — cross-atom `|>` cycle emits a compile-time warning to *err*. Spec §1.11 line 1523 keeps cycle-avoidance on the user; the warning surfaces the failure mode before Layer 4 stack-overflow or F32 deadlock fires it at runtime."
+    (let [src (str "def A:\n"
+                   "    use:\n"
+                   "        b: B\n"
+                   "\n"
+                   "    -> alive\n"
+                   "\n"
+                   "    alive <: ping -> alive\n"
+                   "        do: b |> pong\n"
+                   "\n"
+                   "def B:\n"
+                   "    use:\n"
+                   "        a: A\n"
+                   "\n"
+                   "    -> alive\n"
+                   "\n"
+                   "    alive <: pong -> alive\n"
+                   "        do: a |> ping\n"
+                   "\n"
+                   "def main:\n"
+                   "    def a: A(b: B(a: a))\n"
+                   "    -> running\n"
+                   "        do: print(0)\n")
+          warnings (with-out-str
+                     (binding [*err* *out*]
+                       (try (lower-src src) (catch Exception _))))]
+      (is (str/includes? warnings "`|>` cycle")
+          "warning names the cycle keyword")
+      (is (str/includes? warnings "`A`")
+          "warning names the first atom in the cycle")
+      (is (str/includes? warnings "`B`")
+          "warning names the second atom in the cycle")
+      (is (str/includes? warnings "§1.11 line 1523")
+          "warning cites the spec anchor"))))
+
+(deftest f31-f35-l3-sync-send-no-cycle-no-warning
+  (testing "F31/F35 Landing 3 — a `|>` chain without a cycle emits no warning. Guards against false-positive noise from linear chains and self-sends."
+    (let [src (str "def B:\n"
+                   "    -> alive\n"
+                   "\n"
+                   "    alive <: pong -> alive\n"
+                   "\n"
+                   "def A:\n"
+                   "    use:\n"
+                   "        b: B\n"
+                   "\n"
+                   "    -> alive\n"
+                   "\n"
+                   "    alive <: ping -> alive\n"
+                   "        do: b |> pong\n"
+                   "\n"
+                   "def main:\n"
+                   "    def b: B\n"
+                   "    def a: A(b: b)\n"
+                   "    -> running\n"
+                   "        do: print(0)\n")
+          warnings (with-out-str
+                     (binding [*err* *out*]
+                       (try (lower-src src) (catch Exception _))))]
+      (is (not (str/includes? warnings "`|>` cycle"))
+          "no warning for a linear |> chain"))))
+
 (deftest f31-f35-l1-sync-send-lowers-to-wait-for-processing
   (testing "F31/F35 Landing 1 — `|>` sync send lowers to `cxc_wait_for_processing` (spec framing: `|>` is a processing barrier). Retires the old `cxc_send_sync` name; under Layer 4 CXC_SINGLE_MAIN_QUEUE the helper is a nil-guarded direct call, under F32 it upgrades to dispatch_sync — the emit site is the sole substitution point."
     (let [prog (lower-src "def Sink:\n    data:\n        n: Int = 0\n\n    -> alive\n\n    alive <: absorb -> alive\n        then: n => n + 1\n\ndef main:\n    def sink: Sink\n\n    -> running\n        do:\n            sink |> absorb\n")
