@@ -146,6 +146,23 @@
      top-nodes)
     @found))
 
+(defn- program-uses-panic?
+  "F31/F35 L2 — walk the parsed AST for any `:call` node whose callee is
+   `panic`. Programs that use panic need <execinfo.h> and <stdlib.h> for
+   the inlined backtrace + free()."
+  [top-nodes]
+  (let [found (atom false)]
+    (walk/postwalk
+     (fn [n]
+       (when (and (map? n)
+                  (= :call (:node n))
+                  (= :ident (get-in n [:callee :node]))
+                  (= "panic" (get-in n [:callee :name])))
+         (reset! found true))
+       n)
+     top-nodes)
+    @found))
+
 ;; ---------------------------------------------------------------------------
 ;; Type env
 ;; ---------------------------------------------------------------------------
@@ -1678,6 +1695,10 @@
         (contains? (:record-env ctx) nm) {:record nm}
         (contains? (:atom-env   ctx) nm) {:atom nm}
         (= "print" nm)                   :void
+        ;; F31/F35 Landing 2 — panic halts the process. Type-wise it
+        ;; never returns; the closest cxc type is :void (return-position
+        ;; use is illegal but not currently type-checked).
+        (= "panic" nm)                   :void
         (= "clamp" nm)                   ;; polymorphic on first arg
         (let [args (:args node)
               _    (when-not (= 3 (count args))
@@ -2339,6 +2360,44 @@
 
             (= "print" callee-name)
             (lower-print node ctx)
+
+            ;; F31/F35 Landing 2 — `panic(msg)` writes `msg` + backtrace
+            ;; to stderr and traps. Uncatchable: bypasses `@try/@catch`
+            ;; wrappers (which stay for BEAM-style transition isolation
+            ;; on ObjC-level faults). MVP accepts a single string arg.
+            ;; See plans/f31-f35-concurrency.md L2.
+            (= "panic" callee-name)
+            (let [args (:args node)
+                  _    (when-not (= 1 (count args))
+                         (fail-nyi! (str "panic() expects exactly one string "
+                                         "arg, got " (count args))
+                                    node))
+                  msg-expr (:value (first args))
+                  _    (when-not (= :lit-string (:node msg-expr))
+                         (fail-nyi! (str "panic() arg must be a string literal "
+                                         "for MVP (spec §3.5.4). Domain-error "
+                                         "payload waits on Result infra.")
+                                    node))]
+              {:node :ffi-call
+               :name "panic"
+               :args [(lower-expr msg-expr ctx)]
+               :emit-c-fn (fn [rendered]
+                            (let [[m] rendered]
+                              ;; Inline the backtrace loop so panic works
+                              ;; in programs that don't otherwise pull in
+                              ;; the runtime-helpers block (needs-runtime?
+                              ;; is atom-gated).
+                              (str "({ fprintf(stderr, \"panic: %s\\n\", ["
+                                   m " UTF8String]); "
+                                   "void *__cxc_frs[32]; "
+                                   "int __cxc_n = backtrace(__cxc_frs, 32); "
+                                   "char **__cxc_sy = backtrace_symbols(__cxc_frs, __cxc_n); "
+                                   "if (__cxc_sy) { "
+                                   "for (int __cxc_i = 0; __cxc_i < __cxc_n; __cxc_i++) "
+                                   "fprintf(stderr, \"    %s\\n\", __cxc_sy[__cxc_i]); "
+                                   "free(__cxc_sy); } "
+                                   "__builtin_trap(); "
+                                   "(void)0; })")))})
 
             (= "clamp" callee-name)
             ;; Polymorphic numeric clamp. F46: bind each arg to a
@@ -4948,6 +5007,7 @@
         ;; and casts to id<CXCAtom>). So the presence of any atom class
         ;; means we emit the runtime block.
         needs-runtime?    (boolean (seq classes))
+        needs-panic?      (program-uses-panic? non-prelude-nodes)
         ;; dispatch_main() only when the program actually enqueues async
         ;; work (`:>` send). Programs whose only cross-atom talk is sync
         ;; (`|>` — direct call under Layer 4) complete synchronously in
@@ -4974,7 +5034,10 @@
                             ["<stdio.h>"])
         includes          (cond-> base-includes
                             needs-abort?   (conj "<stdlib.h>")
-                            needs-runtime? (conj "<stdlib.h>"))
+                            needs-runtime? (conj "<stdlib.h>")
+                            ;; F31/F35 L2 — panic()'s inline backtrace
+                            ;; pulls in execinfo.h + stdlib.h (free()).
+                            needs-panic?   (conj "<stdlib.h>" "<execinfo.h>"))
         ;; Dedup includes while preserving order.
         includes          (vec (distinct includes))
         main-body         (if main-as-atom?

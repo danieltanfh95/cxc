@@ -1316,6 +1316,43 @@ def main:
     -> running
 ")))))
 
+(deftest f31-f35-l2-panic-lowers-to-inline-trap
+  (testing "F31/F35 Landing 2 — `panic(\"msg\")` lowers to an inline expr that prints `panic: <msg>` + backtrace and calls `__builtin_trap()`. Uncatchable (bypasses `@try/@catch`); BEAM-style transition isolation is preserved separately."
+    (let [prog (lower-src "def main:\n    -> running\n        do: panic(\"boom\")\n")
+          call (first (get-in prog [:main :body]))]
+      (is (= :ffi-call (:node call)))
+      (is (= "panic" (:name call)))
+      (let [rendered ((:emit-c-fn call) ["@\"boom\""])]
+        (is (clojure.string/includes? rendered "panic: %s")
+            "renders the panic-prefixed format string")
+        (is (clojure.string/includes? rendered "backtrace(")
+            "renders the inline backtrace call")
+        (is (clojure.string/includes? rendered "__builtin_trap()")
+            "renders the uncatchable trap")))))
+
+(deftest f31-f35-l2-panic-non-string-arg-rejected
+  (testing "F31/F35 Landing 2 — MVP accepts a string-literal arg only (spec §3.5.4). Domain-error payload waits on Result infra."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"panic\(\) arg must be a string literal"
+         (lower-src "def main:\n    -> running\n        do: panic(42)\n")))))
+
+(deftest f31-f35-l2-panic-wrong-arity-rejected
+  (testing "F31/F35 Landing 2 — panic expects exactly one arg."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"panic\(\) expects exactly one"
+         (lower-src "def main:\n    -> running\n        do: panic(\"a\", \"b\")\n")))))
+
+(deftest f31-f35-l2-panic-pulls-execinfo-include
+  (testing "F31/F35 Landing 2 — programs using panic get `<execinfo.h>` in includes (for the inlined backtrace() call). Programs without panic don't."
+    (let [with-panic    (lower-src "def main:\n    -> running\n        do: panic(\"x\")\n")
+          without-panic (lower-src "def main:\n    -> running\n        do: print(1)\n")]
+      (is (some #{"<execinfo.h>"} (:includes with-panic))
+          "panic program includes <execinfo.h>")
+      (is (not (some #{"<execinfo.h>"} (:includes without-panic)))
+          "non-panic program doesn't pull in <execinfo.h>"))))
+
 (deftest f31-f35-l1-sync-send-lowers-to-wait-for-processing
   (testing "F31/F35 Landing 1 — `|>` sync send lowers to `cxc_wait_for_processing` (spec framing: `|>` is a processing barrier). Retires the old `cxc_send_sync` name; under Layer 4 CXC_SINGLE_MAIN_QUEUE the helper is a nil-guarded direct call, under F32 it upgrades to dispatch_sync — the emit site is the sole substitution point."
     (let [prog (lower-src "def Sink:\n    data:\n        n: Int = 0\n\n    -> alive\n\n    alive <: absorb -> alive\n        then: n => n + 1\n\ndef main:\n    def sink: Sink\n\n    -> running\n        do:\n            sink |> absorb\n")

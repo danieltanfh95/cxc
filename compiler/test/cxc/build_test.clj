@@ -167,6 +167,14 @@
       (is (re-find #"Gauge invariant #1 failed" (or stderr ""))
           "expected diagnostic naming the failing invariant index"))))
 
+(deftest end-to-end-panic-halts
+  (testing "panic-halts.cxc — F31/F35 L2. `panic(\"boom\")` writes `panic: <msg>` + backtrace to stderr, then traps. Uncatchable — bypasses `@try/@catch` wrappers (which stay for BEAM-style transition isolation). Exit is SIGTRAP (128 + 5 = 133 on darwin)."
+    (let [{:keys [exit stderr]} (compile-and-run "panic-halts")]
+      (is (not (zero? exit))
+          "expected non-zero exit from __builtin_trap()")
+      (is (re-find #"panic: boom" (or stderr ""))
+          "expected `panic:` prefix + user-supplied message on stderr"))))
+
 (deftest end-to-end-use-cap
   (testing "use-cap.cxc — `use: src: OffsetSource` sugars to required ctor-param + data-field; capability accessible via `src.offset` in observables. (Renamed away from the prelude `Clock` collision that F56 diagnostic now rejects — the example's intent is `use:` sugar, not shadowing.)"
     (let [{:keys [exit stdout]} (compile-and-run "use-cap")]
