@@ -617,6 +617,23 @@ def main:
         do: print(1)
 ")))))
 
+(deftest width-variants-preserve-c-type-across-observable-return
+  (testing "Phase D F36a Landing 1b — width variants (`[:int 32]`/`[:uint 8]`/`[:float 32]`) carry their C type in metadata so `type-kw->c-type` picks the correct width for observable return types. Prior to 1b, all integer widths collapsed to `int64_t` at observable boundary regardless of the source width."
+    (let [prog (lower-src "def Counter:
+    data:
+        n: UInt8 = 0
+    small_next :< n
+
+def main:
+    -> running
+        do: print(1)
+")
+          cls  (first (filter #(= "Counter" (:name %)) (:classes prog)))
+          obs  (first (filter #(= "small_next" (:selector %)) (:methods cls)))]
+      (is (some? obs) "observable emitted as an :objc-method under :methods")
+      (is (= "uint8_t" (:return-type obs))
+          "observable that reads a UInt8 field returns uint8_t, not int64_t"))))
+
 (deftest sized-numeric-atoms-lower-to-correct-c-types
   (testing "Phase D F36a Landing 1a — spec §3.1 primitive substrate. Sized atoms UInt8/16/32/64, Int8/16/32/64, Double flow through primitive-c-type to their exact C widths. Int aliased to Int64. Float is 32-bit (fixes v0.11 lowering bug — was double)."
     (let [prog (lower-src "record Widths:

@@ -64,8 +64,19 @@
                            ;; when a narrower sized-int flows into
                            ;; `%lld` or when Double flows into `%f`.
                            printf-tk (:printf-arg-type node)
-                           cast-c    (case printf-tk
+                           ;; Phase D F36a Landing 1b — printf-arg-type
+                           ;; is either `:int`/`:float` (defaults) or a
+                           ;; width variant `[:int N]`/`[:uint N]`/
+                           ;; `[:float N]`. Signed ints cast to long
+                           ;; long; unsigned ints to unsigned long
+                           ;; long; floats to double.
+                           printf-family (cond
+                                           (= :int printf-tk)   :int
+                                           (= :float printf-tk) :float
+                                           (vector? printf-tk)  (first printf-tk))
+                           cast-c    (case printf-family
                                        :int   "long long"
+                                       :uint  "unsigned long long"
                                        :float "double"
                                        nil)
                            arg-strs  (map-indexed

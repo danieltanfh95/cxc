@@ -237,27 +237,32 @@
 
 (defn- cxc-type->type-kw
   "Map a cxc type-ref name to the type-keyword vocab used by infer-type.
-   Primitive names → :int/:float/:string/:bool. Aggregate names →
-   {:record N}, {:atom N}, or {:enum N} depending on which env they
-   resolve in.
+   Primitive names → :int/:float/:string/:bool (family markers, possibly
+   width-carrying). Aggregate names → {:record N}, {:atom N}, or
+   {:enum N} depending on which env they resolve in.
 
-   Phase D F36a — sized numeric atoms (UInt8..UInt64, Int8..Int64,
-   Double) collapse into the existing `:int`/`:float` type-kw family.
-   Storage widths on fields flow through `primitive-c-type` and are
-   correct; precision preservation across arithmetic + observables
-   is Landing 1b (splitting the type-kw into `:int-N`/`:float-N`)."
+   Phase D F36a — sized numeric atoms carry their C storage width in
+   metadata on the type-kw so downstream `type-kw->c-type` can preserve
+   the width without a full type-kw split. `:int` (default, Int/Int64)
+   and `:float` (default, Double) stay as the bare kw for existing
+   pattern matches; width variants attach `:cxc-c-type` metadata.
+
+   Width preservation across observables + arithmetic + typed payloads
+   flows through the metadata-carrying `type-kw->c-type` — narrower
+   variants preserve their C type in emission, same-width family
+   arithmetic still works via bare-kw pattern matches."
   [cxc-name record-env atom-env enum-env node]
   (case cxc-name
     "Int"    :int
-    "Int8"   :int
-    "Int16"  :int
-    "Int32"  :int
-    "Int64"  :int
-    "UInt8"  :int
-    "UInt16" :int
-    "UInt32" :int
-    "UInt64" :int
-    "Float"  :float
+    "Int8"   ^{:cxc-c-type "int8_t"}   [:int 8]
+    "Int16"  ^{:cxc-c-type "int16_t"}  [:int 16]
+    "Int32"  ^{:cxc-c-type "int32_t"}  [:int 32]
+    "Int64"  ^{:cxc-c-type "int64_t"}  [:int 64]
+    "UInt8"  ^{:cxc-c-type "uint8_t"}  [:uint 8]
+    "UInt16" ^{:cxc-c-type "uint16_t"} [:uint 16]
+    "UInt32" ^{:cxc-c-type "uint32_t"} [:uint 32]
+    "UInt64" ^{:cxc-c-type "uint64_t"} [:uint 64]
+    "Float"  ^{:cxc-c-type "float"}    [:float 32]
     "Double" :float
     "String" :string
     "Bool"   :bool
@@ -271,17 +276,41 @@
       (contains? enum-env   cxc-name) {:enum   cxc-name}
       :else (fail-nyi! (str "unresolved type name `" cxc-name "`") node))))
 
+(defn- int-family?
+  "True when tk is any integer type-kw: bare `:int` or a `[:int N]`/`[:uint N]` variant."
+  [tk]
+  (or (= :int tk)
+      (and (vector? tk) (contains? #{:int :uint} (first tk)))))
+
+(defn- float-family?
+  "True when tk is any float type-kw: bare `:float` or a `[:float N]` variant."
+  [tk]
+  (or (= :float tk)
+      (and (vector? tk) (= :float (first tk)))))
+
+(defn- numeric-family?
+  "True when tk is any numeric type-kw (int or float family)."
+  [tk]
+  (or (int-family? tk) (float-family? tk)))
+
+(defn- int-bit-width
+  "Width in bits of an integer type-kw. Bare `:int` = 64 (Int alias)."
+  [tk]
+  (cond
+    (= :int tk)                              64
+    (and (vector? tk) (int-family? tk))      (second tk)
+    :else                                    nil))
+
 (defn- type-kw->c-type
   "Reverse of cxc-type->type-kw for the C emit side. Observable return
    types are inferred as type-kws directly; this converts them back to
    emit-ready C type strings.
 
-   Phase D F36a Landing 1a — `:int` collapses to `int64_t` (Int alias),
-   `:float` collapses to `double` (widest floating). Full width
-   preservation across arithmetic + observables + typed payloads is
-   Landing 1b (type-kw split into `:int-N` / `:float-N` variants).
-   Kept in sync with `primitive-c-type` — divergence between the two
-   causes clang errors like duplicate-method-signature."
+   Phase D F36a Landing 1b — width variants like `[:int 32]` and
+   `[:float 32]` carry their C type in `:cxc-c-type` metadata (set by
+   `cxc-type->type-kw`); this fn reads that metadata. Bare `:int` (Int
+   alias for Int64) and bare `:float` (Double) fall back to `int64_t`
+   and `double`."
   [tk node]
   (cond
     (= :int    tk) "int64_t"
@@ -289,6 +318,8 @@
     (= :string tk) "const char *"
     (= :bool   tk) "int"
     (= :block  tk) "void (^)(void)"
+    ;; Width variants carry their C type in metadata (Landing 1b).
+    (and (vector? tk) (:cxc-c-type (meta tk))) (:cxc-c-type (meta tk))
     (and (map? tk) (:record tk)) (:record tk)
     (and (map? tk) (:atom   tk)) (str (:atom tk) " *")
     (and (map? tk) (:enum   tk)) (:enum tk)
@@ -1005,8 +1036,40 @@
       ;; classification below.
       (= "in" op) :bool
 
-      (or (= lt :float) (= rt :float)) :float
-      (and (= lt :int) (= rt :int))    :int
+      ;; Phase D F36a Landing 1b — arithmetic widening rules:
+      ;;
+      ;; 1. int + float (either side) → float family wins (int→float
+      ;;    is always widening; standard C/PL convention). Result's
+      ;;    float width is the float operand's width.
+      ;; 2. Same int family (both signed or both unsigned) → pick the
+      ;;    wider operand's type-kw. Same for same-width case (identity).
+      ;; 3. Cross-signedness (signed int + unsigned int) → reject.
+      ;;    Semantics vary by width; explicit conversion required
+      ;;    (spec §3.11 narrowing/widening methods).
+      ;; 4. Two floats → pick wider.
+      ;;
+      ;; Bare `:int` and `:float` are the defaults (Int64 and Double,
+      ;; treated as widest-in-family for widening arithmetic).
+      (and (float-family? lt) (float-family? rt))
+      (if (>= (or (and (vector? lt) (second lt)) 64)
+              (or (and (vector? rt) (second rt)) 64))
+        lt rt)
+
+      (and (float-family? lt) (int-family? rt))  lt
+      (and (int-family? lt)   (float-family? rt)) rt
+
+      (and (int-family? lt) (int-family? rt))
+      (let [l-fam (or (and (vector? lt) (first lt)) :int)
+            r-fam (or (and (vector? rt) (first rt)) :int)]
+        (cond
+          (not= l-fam r-fam)
+          (fail-nyi! (str "binop " op " mixes signed " lt " with unsigned " rt
+                          " — spec §3.11 requires an explicit conversion")
+                     {:left lt :right rt})
+          :else
+          (let [lw (int-bit-width lt)
+                rw (int-bit-width rt)]
+            (if (>= lw rw) lt rt))))
 
       :else (fail-nyi! (str "binop " op " between " lt " and " rt)
                        {:left lt :right rt}))))
@@ -1261,7 +1324,7 @@
                                      (count args))
                                 node))
               x-ty (infer-type (:value (first args)) ctx)]
-          (when-not (contains? #{:int :float} x-ty)
+          (when-not (numeric-family? x-ty)
             (fail-nyi! (str "clamp arg must be numeric; got " (pr-str x-ty))
                        node))
           x-ty)
@@ -1355,7 +1418,7 @@
                                node))
     :binop      (infer-binop-type node ctx)
     :neg        (let [t (infer-type (:expr node) ctx)]
-                  (if (contains? #{:int :float} t)
+                  (if (numeric-family? t)
                     t
                     (fail-nyi! (str "unary minus on non-numeric type "
                                     (pr-str t))
@@ -1556,19 +1619,30 @@
    one prelude statements that bind the user name at the correct
    primitive/pointer type inside the block body.
 
-   - :int   → `int <name> = [<raw> intValue];`
+   - :int   → `int64_t <name> = [<raw> longLongValue];`
    - :float → `double <name> = [<raw> doubleValue];`
+   - width variants: use the picked C type + NSNumber accessor
    - atom   → `<AtomType> *<name> = (<AtomType> *)<raw>;`
    - id/other → no prelude; user name is bound directly to raw id"
   [raw-name user-name element-type-kw]
   (cond
-    (= :int element-type-kw)
-    [{:node :raw-c
-      :text (str "int " user-name " = [" raw-name " intValue];")}]
+    (int-family? element-type-kw)
+    (let [c-ty     (type-kw->c-type element-type-kw nil)
+          nsnum-fn (case (int-bit-width element-type-kw)
+                     8  "charValue"
+                     16 "shortValue"
+                     32 "intValue"
+                     "longLongValue")]
+      [{:node :raw-c
+        :text (str c-ty " " user-name " = [" raw-name " " nsnum-fn "];")}])
 
-    (= :float element-type-kw)
-    [{:node :raw-c
-      :text (str "double " user-name " = [" raw-name " doubleValue];")}]
+    (float-family? element-type-kw)
+    (let [c-ty     (type-kw->c-type element-type-kw nil)
+          nsnum-fn (if (= [:float 32] element-type-kw)
+                     "floatValue"
+                     "doubleValue")]
+      [{:node :raw-c
+        :text (str c-ty " " user-name " = [" raw-name " " nsnum-fn "];")}])
 
     (and (map? element-type-kw) (:atom element-type-kw))
     [{:node :raw-c
@@ -1617,14 +1691,17 @@
 (defn- print-format-string [arg-type]
   (cond
     (= :string arg-type)                    "%s\n"
-    ;; Phase D F36a Landing 1a — `:int` type-kw now covers all integer
-    ;; widths (Int64, Int32, Int8, UInt8, ...). Emit `%lld` because Int
-    ;; is aliased to Int64 and needs 8-byte read; narrower sized ints
-    ;; passed via varargs are UB under `%lld`, so emit wraps the arg in
-    ;; a `(long long)` cast at printf-call emit time (see emit.clj).
-    (= :int arg-type)                       "%lld\n"
+    ;; Phase D F36a Landing 1b — signed int family → `%lld` + cast to
+    ;; long long; unsigned int family → `%llu` + cast to unsigned long
+    ;; long; float family → `%f` + cast to double (varargs already
+    ;; promote float→double so cast is safe for :float 32).
+    (and (int-family? arg-type)
+         (or (= :int arg-type)
+             (= :int (first arg-type))))    "%lld\n"
+    (and (int-family? arg-type)
+         (= :uint (first arg-type)))        "%llu\n"
     (= :bool arg-type)                      "%d\n"
-    (= :float arg-type)                     "%f\n"
+    (float-family? arg-type)                "%f\n"
     (and (map? arg-type) (:enum arg-type))  "%d\n"    ; enums are int-backed
     :else (fail-nyi! (str "print of type " (pr-str arg-type)) {:type arg-type})))
 
@@ -2917,10 +2994,10 @@
         box        (fn [item-node]
                      (let [ty (infer-type item-node ctx)]
                        (cond
-                         (= :int ty)
+                         (int-family? ty)
                          {:node :objc-num-lit :kind :int
                           :value (:value item-node)}
-                         (= :float ty)
+                         (float-family? ty)
                          {:node :objc-num-lit :kind :float
                           :value (:value item-node)}
                          ;; Atom-typed elements: the item's lowered form
