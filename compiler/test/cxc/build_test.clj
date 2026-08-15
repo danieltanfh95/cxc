@@ -175,6 +175,13 @@
       (is (re-find #"panic: boom" (or stderr ""))
           "expected `panic:` prefix + user-supplied message on stderr"))))
 
+(deftest end-to-end-nil-dot-method
+  (testing "nil-dot-method.cxc — F39 Landing 4. `.method()` on a nil atom returns the zero-value for the declared return type (ObjC nil-messaging semantics). Locks in the behaviour so an emit refactor can't silently regress the nil-flow-through-`.` promise (spec §3.6.1 line 3690, §5.7 line 7448)."
+    (let [{:keys [exit stdout]} (compile-and-run "nil-dot-method")]
+      (is (zero? exit))
+      (is (= "0\n" stdout)
+          "nil.get_n() returns 0 (Int zero-value via ObjC nil-messaging)"))))
+
 (deftest end-to-end-use-cap
   (testing "use-cap.cxc — `use: src: OffsetSource` sugars to required ctor-param + data-field; capability accessible via `src.offset` in observables. (Renamed away from the prelude `Clock` collision that F56 diagnostic now rejects — the example's intent is `use:` sugar, not shadowing.)"
     (let [{:keys [exit stdout]} (compile-and-run "use-cap")]

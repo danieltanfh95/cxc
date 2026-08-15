@@ -1,0 +1,32 @@
+# F39 Landing 4 — nil-flow-through on `.` (codify).
+#
+# Spec §3.6.1 line 3690 and §5.7 line 7448: `nil.method(args)` is a
+# legal expression. On atom targets this works today by inheritance
+# from ObjC's nil-messaging semantics: sending to nil returns the
+# zero-value for the declared return type (0 for scalars, nil for
+# pointers). This example locks in the behaviour so a future emit
+# refactor can't silently regress it.
+#
+# The `wrapper.c` observable exposes a Counter reference that starts
+# nil. `.get_n()` on nil returns 0 (ObjC nil-messaging on an Int
+# return). Prints `0`.
+
+def Counter:
+    data:
+        raw_n: Int = 5
+
+    n :< raw_n
+
+    methods:
+        function get_n(self) -> Int:
+            return n
+
+def Wrapper:
+    data:
+        raw_c: Counter = nil
+
+    c :< raw_c
+
+def main:
+    -> running
+        do: print(Wrapper().c.get_n())
