@@ -611,6 +611,163 @@
               :deprecated} (:node %))
           (:body atom-node)))
 
+;; ---------------------------------------------------------------------------
+;; F36 Landing 2a — invariant-driven representation picker (§3.1.2 rule 3).
+;;
+;; For each primitive-typed `data:` field, walk the atom's invariants for
+;; chained-comparison predicates that constrain the field to a range that
+;; fits a sized atom (UInt8/UInt16/... or Int8/Int16/...). Narrow the
+;; field's storage to that sized atom.
+;;
+;; Safety: F49 Landing A's pre-store check runs on the wide source value
+;; before the narrowing assignment, so a source value that doesn't fit
+;; the narrowed storage aborts at construction (not silently truncates).
+;; Without F49 A, this narrowing would be a silent-corruption path.
+;;
+;; MVP form: only recognizes literal bounds (compile-time integer/float
+;; constants) and only when BOTH lower AND upper bounds are present.
+;; Observable-form invariants (`value :< decode(raw)` with
+;; `<= value <=`) are v1.1+ picker work — this pass matches direct
+;; field references only.
+;; ---------------------------------------------------------------------------
+
+(defn- literal-int?
+  [n]
+  (and (map? n) (contains? #{:lit-int :int :num} (:node n))))
+
+(defn- literal-int-value
+  [n]
+  (:value n))
+
+(defn- field-ident?
+  [n field-name]
+  (and (map? n) (= :ident (:node n)) (= field-name (:name n))))
+
+(defn- neg-of-literal-int?
+  "Match `-<literal-int>` — the parser lowers `-128` as `:neg` with
+   the operand under `:expr`. Returns the negated value or nil."
+  [n]
+  (when (and (map? n) (= :neg (:node n)) (literal-int? (:expr n)))
+    (- (literal-int-value (:expr n)))))
+
+(defn- int-constant-value
+  "Extract a compile-time integer constant from `n` — either a bare
+   integer literal or a `-<literal>` unary-neg. Returns nil if `n`
+   isn't a recognized integer constant expression."
+  [n]
+  (cond
+    (literal-int? n)         (literal-int-value n)
+    (neg-of-literal-int? n)  (neg-of-literal-int? n)
+    :else                    nil))
+
+(defn- collect-bounds-for-field
+  "Walk `pred` (after chained-comparison desugaring) collecting bounds on
+   `field-name`. Returns `{:lo <n or nil> :hi <n or nil>}` — where each
+   is the tightest constant discovered across all conjuncts. Predicates
+   with a shape the picker doesn't recognize contribute nothing (the
+   post-store checkInvariants still evaluates them)."
+  [pred field-name]
+  (let [acc (atom {:lo nil :hi nil})
+        note-lo (fn [v] (swap! acc update :lo (fn [cur] (if cur (max cur v) v))))
+        note-hi (fn [v] (swap! acc update :hi (fn [cur] (if cur (min cur v) v))))]
+    (walk/postwalk
+     (fn [n]
+       (when (and (map? n) (= :binop (:node n)))
+         (let [op (:op n) L (:left n) R (:right n)
+               lv (int-constant-value L) rv (int-constant-value R)]
+           (cond
+             ;; <lit> op <field>
+             (and lv (field-ident? R field-name))
+             (case op
+               "<=" (note-lo lv)
+               "<"  (note-lo (inc lv))
+               ">=" (note-hi lv)
+               ">"  (note-hi (dec lv))
+               nil)
+             ;; <field> op <lit>
+             (and rv (field-ident? L field-name))
+             (case op
+               "<=" (note-hi rv)
+               "<"  (note-hi (dec rv))
+               ">=" (note-lo rv)
+               ">"  (note-lo (inc rv))
+               nil)
+             :else nil)))
+       n)
+     pred)
+    @acc))
+
+(def ^:private sized-int-atoms
+  ;; Ordered narrowest → widest so `first` picks the smallest fit.
+  ;; Each entry: {:name cxc-atom :lo <inclusive> :hi <inclusive>
+  ;;              :c-type <C storage> :cxc-ty <cxc source-level name>}
+  [{:name "UInt8"  :lo 0                   :hi 255
+    :c-type "uint8_t"  :cxc-ty "UInt8"}
+   {:name "Int8"   :lo -128                :hi 127
+    :c-type "int8_t"   :cxc-ty "Int8"}
+   {:name "UInt16" :lo 0                   :hi 65535
+    :c-type "uint16_t" :cxc-ty "UInt16"}
+   {:name "Int16"  :lo -32768              :hi 32767
+    :c-type "int16_t"  :cxc-ty "Int16"}
+   {:name "UInt32" :lo 0                   :hi 4294967295
+    :c-type "uint32_t" :cxc-ty "UInt32"}
+   {:name "Int32"  :lo -2147483648         :hi 2147483647
+    :c-type "int32_t"  :cxc-ty "Int32"}])
+
+(defn- pick-sized-atom
+  "Given inclusive `lo`/`hi` bounds, return the entry from
+   `sized-int-atoms` whose range fully contains [lo, hi], or nil if
+   no narrower-than-Int64 atom fits."
+  [lo hi]
+  (when (and (integer? lo) (integer? hi) (<= lo hi))
+    (first (filter #(and (<= (:lo %) lo) (<= hi (:hi %)))
+                   sized-int-atoms))))
+
+(def ^:private picker-eligible-cxc-tys
+  ;; Only bare `Int` gets picked — sized atoms already pin their width
+  ;; per §3.1.2 rule 1, and non-numeric types don't narrow.
+  #{"Int"})
+
+(defn- narrow-fields-by-invariants
+  "F36 Landing 2a — for each primitive-int-typed field, walk the atom's
+   invariants for chained-comparison bounds on that field's name; if
+   the union of bounds fits a sized atom, override the field's
+   `:c-type` and `:cxc-ty` to the narrower storage.
+
+   Only bare `Int` (Int64) fields are considered — sized-atom fields
+   already pin their width per §3.1.2 rule 1. Fields with only one
+   bound (or no bounds) keep Int64 storage — narrowing requires both
+   lo AND hi.
+
+   Post-store checkInvariants + F49-A pre-store check both still fire
+   on the picked field; a violating source value aborts at
+   construction without hitting the narrowing store."
+  [fields invariants]
+  (mapv
+   (fn [f]
+     (if-not (contains? picker-eligible-cxc-tys (:cxc-ty f))
+       f
+       (let [bounds  (reduce (fn [{:keys [lo hi]} p]
+                               (let [{plo :lo phi :hi} (collect-bounds-for-field p (:name f))]
+                                 {:lo (cond (nil? lo) plo
+                                            (nil? plo) lo
+                                            :else (max lo plo))
+                                  :hi (cond (nil? hi) phi
+                                            (nil? phi) hi
+                                            :else (min hi phi))}))
+                             {:lo nil :hi nil}
+                             invariants)
+             {:keys [lo hi]} bounds
+             picked  (pick-sized-atom lo hi)]
+         (if picked
+           (assoc f
+                  :c-type (:c-type picked)
+                  :cxc-ty (:cxc-ty picked)
+                  :picker-narrowed-from "Int"
+                  :picker-bounds [lo hi])
+           f))))
+   fields))
+
 (defn- build-atom-env
   "Build the atom-env from every top-level `def X:` — includes `main`
    whenever the program has any other user-declared atoms (so main can
@@ -749,7 +906,14 @@
                                      (mapv key dupes))
                                 {:atom name :dupes (mapv key dupes)})))
              merged-dsec   (assoc (or dsec {:node :data-section}) :fields merged-fields)
-             fields        (fields-from-data-section merged-dsec {} env enum-env)
+             fields        (-> (fields-from-data-section merged-dsec {} env enum-env)
+                               ;; F36 Landing 2a: invariant-driven picker
+                               ;; narrows Int fields whose invariants
+                               ;; range-bound them to fit a sized atom.
+                               ;; Safe because F49 Landing A's pre-store
+                               ;; check runs on the wide source before
+                               ;; the narrowing store.
+                               (narrow-fields-by-invariants invariants))
              ctor-params   (ctor-params-normalized merged-ctor {} env enum-env)
              methods       (extract-methods name msec)
              message-index (collect-message-shapes name transitions)

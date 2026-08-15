@@ -820,6 +820,101 @@ def main:
       (is (< (second check-idxs) return-idx)
           "exit check runs before the return statement (verifies final state before returning)"))))
 
+(deftest invariant-driven-picker-narrows-int-fields-to-sized-atoms
+  (testing "Phase D F36 Landing 2a — spec §3.1.2 rule 3 invariant-driven representation picker. For each bare-Int `data:` field whose invariants chain-comparison-bound it to a range that fits a sized atom (UInt8/UInt16/... or Int8/Int16/Int32), storage narrows to the smallest fitting atom. Sized-atom fields (§3.1.2 rule 1) already pin their width; only bare Int gets picked. Fields with only one bound stay Int64.
+
+  Safety hinges on F49 Landing A's pre-store check running on the wide ctor param / default before the narrowing assignment. Without F49 A this would be a silent-corruption path."
+    (let [prog (lower-src "def Age:
+    data:
+        value: Int = 42
+    invariants:
+        0 <= value
+        value <= 150
+
+def Port:
+    data:
+        value: Int = 8080
+    invariants:
+        1 <= value
+        value <= 65535
+
+def Temp:
+    data:
+        value: Int = 0
+    invariants:
+        -128 <= value
+        value <= 127
+
+def Signed16:
+    data:
+        value: Int = 0
+    invariants:
+        -1000 <= value
+        value <= 1000
+
+def OneBound:
+    data:
+        value: Int = 5
+    invariants:
+        value >= 0
+
+def Unbounded:
+    data:
+        value: Int = 0
+
+def main:
+    -> running
+        do: print(1)
+")
+          value-c-type
+          (fn [nm]
+            (:c-type (first (filter #(= "value" (:name %))
+                                    (:properties (first (filter #(= nm (:name %))
+                                                                (:classes prog))))))))]
+      (is (= "uint8_t"  (value-c-type "Age"))       "[0..150] → UInt8")
+      (is (= "uint16_t" (value-c-type "Port"))      "[1..65535] → UInt16")
+      (is (= "int8_t"   (value-c-type "Temp"))      "[-128..127] → Int8")
+      (is (= "int16_t"  (value-c-type "Signed16")) "[-1000..1000] → Int16")
+      (is (= "int64_t"  (value-c-type "OneBound"))
+          "only lower bound → no narrowing (MVP requires both bounds)")
+      (is (= "int64_t"  (value-c-type "Unbounded"))
+          "no invariants → no narrowing"))))
+
+(deftest picker-narrowed-field-still-fires-pre-store-invariant-check
+  (testing "Phase D F36 Landing 2a × F49 Landing A — a picker-narrowed field's pre-store invariant check still fires on the WIDE source value before the narrowing store. This is the correctness contract that made Landing 2a safe to ship."
+    (let [prog (lower-src "def Age:
+    data:
+        value: Int = 42
+    invariants:
+        0 <= value
+        value <= 150
+
+def main:
+    -> running
+        do: print(1)
+")
+          cls  (first (filter #(= "Age" (:name %)) (:classes prog)))
+          value-prop (first (filter #(= "value" (:name %)) (:properties cls)))
+          state-method (first (filter #(= "cxc_stateInit" (:selector %))
+                                      (:methods cls)))
+          body (:body state-method)
+          checks (filter #(= :invariant-check (:node %)) body)
+          last-check-idx (last (keep-indexed
+                                 #(when (= :invariant-check (:node %2)) %1)
+                                 body))
+          first-assign-idx (first (keep-indexed
+                                    #(when (= :assign (:node %2)) %1)
+                                    body))]
+      (is (= "uint8_t" (:c-type value-prop))
+          "picker narrowed value to uint8_t")
+      (is (= 2 (count checks))
+          "one pre-store check per invariant predicate")
+      (is (< last-check-idx first-assign-idx)
+          "pre-store checks precede any narrowing field assignment")
+      (is (= {:node :int :value 42}
+             (get-in (first checks) [:cond :right]))
+          "check reads the default literal 42 (source value), not the narrowed ivar _value"))))
+
 (deftest in-operator-raises-targeted-diagnostic
   (testing "Audit F47: `x in y` parses as a binop but its semantic lowering (dispatch to a container `contains` method — spec §1.3 membership predicates) is Phase D work. Silently emitting the literal token `in` into the generated C causes clang to fail far from the source; lower now raises a targeted diagnostic naming the operator so the failure points to the actual language feature."
     (is (thrown-with-msg?
