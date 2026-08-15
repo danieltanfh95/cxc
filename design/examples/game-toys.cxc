@@ -65,7 +65,7 @@ module com.example.game_toys
 #   <source> <:|<| <msg>[{args}]                    # or `<source> when: <cond>` for guard-only triggers
 #   -> <target>
 #       when: <additional guard>                    # optional
-#       let:  <name>: <expr>+                       # optional
+#       let:  <name>: <expr>+                       # optional; type inferred (spec §1.11)
 #       then: <field> => <expr>+                    # optional
 #       do:   <side-effect statement>+              # optional
 #
@@ -403,9 +403,9 @@ def EnemySpawner:
     self <: clock.every(spawn_rate){_: Instant}
     -> self
         let:
-            random_y:  Float = random.range_int(spawn_y_min, spawn_y_max).to_float()
-            new_enemy: Enemy = Enemy(start: Vector2(x: spawn_x, y: random_y),
-                                     hp:    base_hp)
+            random_y:  random.range_int(spawn_y_min, spawn_y_max).to_float()
+            new_enemy: Enemy(start: Vector2(x: spawn_x, y: random_y),
+                             hp:    base_hp)
         then:
             active_enemies => active_enemies + new_enemy
 

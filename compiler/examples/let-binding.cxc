@@ -1,0 +1,8 @@
+def main:
+    -> running
+        let:
+            doubled:  10 * 2
+            plus_one: doubled + 1
+        do:
+            print(doubled)
+            print(plus_one)

@@ -265,7 +265,7 @@ def main:
 ")))))
 
 (deftest transition-clause-order-enforced
-  (testing "Audit F22: spec §10 — transition sub-blocks must appear in the order `when, let, then, do`. Out-of-order clauses (e.g. `then:` before `let:`) parse-error with a specific diagnostic."
+  (testing "Audit F22: spec §10 — transition sub-blocks must appear in the order `when, let, then, do`. Out-of-order clauses (e.g. `then:` before `let:`) parse-error with a specific diagnostic. F23-form let: binding used here."
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
          #"`let:` clause out of order"
@@ -278,7 +278,7 @@ def main:
     running <: bump -> self
         then: n => n + 1
         let:
-            k: Int = 2
+            k: 2
 ")))))
 
 (deftest transition-clause-multiplicity-enforced
@@ -340,6 +340,37 @@ def main:
       (is (= :dot (get-in call [:callee :node])))
       (is (= "bar" (get-in call [:callee :field])))
       (is (= :subscript (get-in call [:callee :target :node]))))))
+
+(deftest f23-let-clause-uses-name-colon-expr-spec-form
+  (testing "F23 / spec §1.11 — `let: k: expr` (bare, no type annotation, no `=`); binding shape is {:name :expr}"
+    (let [src "def main:\n    data:\n        n: Int = 0\n\n    -> running\n\n    running <: bump -> self\n        let:\n            k: n + 1\n        then: n => k\n"
+          nodes (p/parse src)
+          body  (:body (first nodes))
+          txn   (some #(when (and (= :transition (:node %))
+                                  (get-in % [:receive :glyph]))
+                         %) body)
+          let-c (first (filter #(= :let-clause (:node %)) (:body txn)))
+          b     (first (:bindings let-c))]
+      (is (= "k" (:name b)))
+      (is (= :binop (get-in b [:expr :node]))
+          "bare expression parses; no :type wrapper on the binding"))))
+
+(deftest f23-let-clause-legacy-type-form-rejected
+  (testing "F23 — legacy `let: k: Int = 2` form (with type annotation + `=`) rejects with a targeted migration diagnostic pointing at the spec form."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"`let:` binding uses `name: expression`"
+         (p/parse "def main:
+    data:
+        n: Int = 0
+
+    -> running
+
+    running <: bump -> self
+        let:
+            k: Int = 2
+        then: n => k
+")))))
 
 (deftest handler-decl-parses-as-distinct-node
   (testing "F14 / §1.11 — `-> handler(args):` inside a def-atom body parses as a :handler-decl node distinct from the wildcard-source transition (`-> target-phase`)."

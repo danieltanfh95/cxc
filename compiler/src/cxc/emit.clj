@@ -164,6 +164,7 @@
     :ffi-call (str (emit-expr node) ";")
     :return   (str "return " (emit-expr (:value node)) ";")
     :assign   (str (emit-expr (:lhs node)) " = " (emit-expr (:rhs node)) ";")
+    :var-decl (str (:c-type node) " " (:name node) " = " (emit-expr (:rhs node)) ";")
     :raw-c    (:text node)
     :raw-stream-subscribe
     ;; Layer 5c Step 8: method-returned Stream subscribe. Emits as a

@@ -434,6 +434,12 @@
           (is (zero? exit))
           (is (= "hello, world\n" stdout)))))))
 
+(deftest end-to-end-let-binding
+  (testing "let-binding.cxc — F23 landing. `let:` uses spec form `name: expr` (no type, no `=`); bindings emit as local variable declarations at the top of the transition body; sequential bindings reference each other. Program: `let: doubled: 10*2; plus_one: doubled+1` prints 20, then 21."
+    (let [{:keys [exit stdout]} (compile-and-run "let-binding")]
+      (is (zero? exit))
+      (is (= "20\n21\n" stdout)))))
+
 (deftest end-to-end-record-equality
   (testing "record-equality.cxc — F37 synthesized structural equality. Vec2(1,2)==Vec2(1,2) prints 1; Vec2(1,2)==Vec2(1,3) prints 0; nested Line equality with per-field record recursion prints 1. Prior lowering emitted raw C `==` on struct values (illegal C); F37 reroutes through `<Record>_cxc_equals`."
     (let [{:keys [exit stdout]} (compile-and-run "record-equality")]

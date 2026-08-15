@@ -2316,17 +2316,41 @@
 (declare lower-then-update)
 
 (defn- lower-transition-body [clauses ctx]
-  (vec (mapcat (fn [c]
-                 (case (:node c)
-                   :do-clause   (lower-do-clause c ctx)
-                   ;; Layer 6 Step 12 — `then:` on general transitions
-                   ;; (previously restricted to on-enter-body paths).
-                   ;; Escaping-block install-then-invoke `then: cb => ...
-                   ;; do: cb()` needs the assignment to happen before
-                   ;; the do:-clause runs.
-                   :then-clause (mapv #(lower-then-update % ctx) (:updates c))
-                   (fail-nyi! (str "transition body clause " (:node c)) c)))
-               clauses)))
+  (let [[stmts _]
+        (reduce
+          (fn [[out c] clause]
+            (case (:node clause)
+              :do-clause
+              [(into out (lower-do-clause clause c)) c]
+
+              ;; Layer 6 Step 12 — `then:` on general transitions
+              ;; (previously restricted to on-enter-body paths).
+              ;; Escaping-block install-then-invoke `then: cb => ...
+              ;; do: cb()` needs the assignment to happen before
+              ;; the do:-clause runs.
+              :then-clause
+              [(into out (mapv #(lower-then-update % c) (:updates clause))) c]
+
+              ;; F23 — let: bindings emit local variable decls and enter
+              ;; the ctx as they land; subsequent then/do references
+              ;; resolve to them.
+              :let-clause
+              (let [[decls c']
+                    (reduce (fn [[ds cc] b]
+                              (let [tk     (infer-type (:expr b) cc)
+                                    ct     (type-kw->c-type tk (:expr b))
+                                    rhs-lo (lower-expr (:expr b) cc)]
+                                [(conj ds {:node :var-decl :name (:name b)
+                                           :c-type ct :rhs rhs-lo})
+                                 (update cc :locals assoc (:name b) tk)]))
+                            [[] c]
+                            (:bindings clause))]
+                [(into out decls) c'])
+
+              (fail-nyi! (str "transition body clause " (:node clause)) clause)))
+          [[] ctx]
+          clauses)]
+    stmts))
 
 (defn- capitalize-first
   [s]
@@ -2370,14 +2394,39 @@
 (defn- lower-on-enter-body
   "Body of a wildcard on-enter transition when inlined into init. Same
    as a general transition body but with `then:` support — regular
-   `do:` stmts pass through unchanged."
+   `do:` stmts pass through unchanged.
+
+   F23 — `let:` bindings emit local variable declarations at the top
+   of the block and enter the ctx as they land, so subsequent
+   then/do clauses reference them."
   [clauses ctx]
-  (vec (mapcat (fn [c]
-                 (case (:node c)
-                   :then-clause (mapv #(lower-then-update % ctx) (:updates c))
-                   :do-clause   (lower-do-clause c ctx)
-                   (fail-nyi! (str "on-enter body clause " (:node c)) c)))
-               clauses)))
+  (let [[stmts _]
+        (reduce
+          (fn [[out c] clause]
+            (case (:node clause)
+              :let-clause
+              (let [[decls c']
+                    (reduce (fn [[ds cc] b]
+                              (let [tk     (infer-type (:expr b) cc)
+                                    ct     (type-kw->c-type tk (:expr b))
+                                    rhs-lo (lower-expr (:expr b) cc)]
+                                [(conj ds {:node :var-decl :name (:name b)
+                                           :c-type ct :rhs rhs-lo})
+                                 (update cc :locals assoc (:name b) tk)]))
+                            [[] c]
+                            (:bindings clause))]
+                [(into out decls) c'])
+
+              :then-clause
+              [(into out (mapv #(lower-then-update % c) (:updates clause))) c]
+
+              :do-clause
+              [(into out (lower-do-clause clause c)) c]
+
+              (fail-nyi! (str "on-enter body clause " (:node clause)) clause)))
+          [[] ctx]
+          clauses)]
+    stmts))
 
 (defn- initial-phase-for
   "First phase mentioned as a transition target — i.e. the phase the
@@ -2581,8 +2630,23 @@
         do-clauses   (filter #(= :do-clause   (:node %)) body-clauses)
         let-clauses  (filter #(= :let-clause  (:node %)) body-clauses)
         when-clauses (filter #(= :when-clause (:node %)) body-clauses)
-        _            (when (seq let-clauses)
-                       (fail-nyi! "`let:` bindings on message-triggered transition (Layer 4 Step 9+)" t))
+        ;; F23 — let: bindings lower to local variable declarations that
+        ;; sit at the top of the transition body. Each binding's RHS
+        ;; expression is type-inferred (spec §1.11 — bare `name: expr`,
+        ;; no user type annotation); the inferred type-kw maps to a C
+        ;; type via `type-kw->c-type` for the declaration. Bindings
+        ;; enter `ctx' :locals` as they land, so later bindings + the
+        ;; when/then/do clauses reference them directly.
+        [let-decls ctx']
+        (reduce (fn [[decls c] b]
+                  (let [tk       (infer-type (:expr b) c)
+                        c-type   (type-kw->c-type tk (:expr b))
+                        rhs-lo   (lower-expr (:expr b) c)]
+                    [(conj decls {:node :var-decl :name (:name b)
+                                  :c-type c-type :rhs rhs-lo})
+                     (update c :locals assoc (:name b) tk)]))
+                [[] ctx']
+                (mapcat :bindings let-clauses))
         body-whens   (mapv :expr when-clauses)
         guard-exprs  (cond-> []
                        header-when      (conj header-when)
@@ -2653,6 +2717,9 @@
                                :selector "checkInvariants"
                                :args []}
         raw-body     (cond-> []
+                       ;; F23 — let: bindings sit at the top of the
+                       ;; body so they're in scope for guards+then+do.
+                       (seq let-decls)    (into let-decls)
                        (seq w-then-stmts) (into w-then-stmts)
                        (seq then-stmts)   (into then-stmts)
                        phase-update       (conj phase-update)

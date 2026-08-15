@@ -790,20 +790,42 @@
     (parse-do-clause-block tokens pos)
     (parse-do-clause-inline tokens pos)))
 
+(defn- reject-legacy-let-type-annotation!
+  "F23 — the pre-spec `let: k: Int = 2` shape (with `<Type> = <expr>`
+   after the binding-name colon) is retired. Spec §1.11 form is
+   `let: k: <expr>` with the type inferred from the expression."
+  [tokens pos]
+  (fail! tokens pos
+         (str "`let:` binding uses `name: expression` (spec §1.11) — the "
+              "type is inferred from the RHS. Remove the `Type = ` between "
+              "the binding-name colon and the expression: `let: k: 2` "
+              "instead of `let: k: Int = 2`.")))
+
+(defn- parse-let-binding-rhs
+  "After `<name> :`, parse the binding's RHS. Spec form is a bare
+   expression; reject the legacy `<Type> = <expr>` shape with a
+   targeted migration diagnostic."
+  [tokens pos]
+  (let [[rhs p] (parse-expr tokens pos)]
+    ;; If parse-expr stopped short of `=`, it means the user gave us
+    ;; a legacy `Type = expr` form (parse-expr grabbed `Type` as an
+    ;; ident, then couldn't consume `=`). Detect and reject.
+    (if (at? tokens p :glyph "=")
+      (reject-legacy-let-type-annotation! tokens pos)
+      [rhs p])))
+
 (defn- parse-let-clause-inline
-  "let: <name>: <type> = <expr>"
+  "let: <name>: <expr>       (spec §1.11 — type inferred from RHS)"
   [tokens pos]
   (let [[_ p]     (expect tokens pos :kw "let")
         [_ p]     (expect tokens p :punct ":")
         [name p]  (expect tokens p :ident)
         [_ p]     (expect tokens p :punct ":")
-        [ty p]    (parse-type tokens p)
-        [_ p]     (expect tokens p :glyph "=")
-        [rhs p]   (parse-expr tokens p)]
-    [{:node :let-clause :bindings [{:name name :type ty :expr rhs}]} p]))
+        [rhs p]   (parse-let-binding-rhs tokens p)]
+    [{:node :let-clause :bindings [{:name name :expr rhs}]} p]))
 
 (defn- parse-let-clause-block
-  "let:  (indented block of `<name>: <type> = <expr>` lines)"
+  "let:  (indented block of `<name>: <expr>` lines)"
   [tokens pos]
   (let [[_ p] (expect tokens pos :kw "let")
         [_ p] (expect tokens p :punct ":")
@@ -815,11 +837,9 @@
         (at? tokens p :newline) (recur bindings (inc p))
         :else (let [[name p2] (expect tokens p :ident)
                     [_ p3]    (expect tokens p2 :punct ":")
-                    [ty p4]   (parse-type tokens p3)
-                    [_ p5]    (expect tokens p4 :glyph "=")
-                    [rhs p6]  (parse-expr tokens p5)
-                    p7        (skip-newlines tokens p6)]
-                (recur (conj bindings {:name name :type ty :expr rhs}) p7))))))
+                    [rhs p4]  (parse-let-binding-rhs tokens p3)
+                    p5        (skip-newlines tokens p4)]
+                (recur (conj bindings {:name name :expr rhs}) p5))))))
 
 (defn- parse-let-clause [tokens pos]
   (if (at? tokens (+ pos 2) :newline)
