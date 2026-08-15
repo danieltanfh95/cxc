@@ -1931,6 +1931,21 @@
 
 (defn- field-type-for-owner [owner-ty ctx field-name node]
   (cond
+    ;; F37b L1 — `Bytes` inspection surface. `.length` returns Int
+    ;; (grapheme/element-count convention, matches List/String;
+    ;; §3.10.10 uses UInt32 for the wire-length prefix but user-
+    ;; facing `.length` is a count). NSMutableData exposes a
+    ;; readonly `length` property → ObjC property syntax on the
+    ;; emit side lowers as `[bytes length]` unchanged; only the
+    ;; type-inference plumbing needs to learn the shape.
+    (= :bytes owner-ty)
+    (case field-name
+      "length" :int
+      (fail-nyi! (str "field `" field-name "` on Bytes — only `.length` "
+                      "ships in F37b L1 (spec §3.10.10). Slice/at/builder "
+                      "methods follow when a use case forces them.")
+                 node))
+
     (and (map? owner-ty) (:record owner-ty))
     (let [owner (:record owner-ty)
           f     (get-in (:record-env ctx) [owner :field-index field-name])]
@@ -2496,28 +2511,46 @@
                   ;; synthesized `<Record>_cxc_equals` free function.
                   ;; Raw C `struct1 == struct2` is not valid C — this
                   ;; is a correctness fix, not an optimization.
-                  (if-let [rec-name (and (contains? #{"==" "!="} (:op node))
-                                         (let [lt (infer-type (:left node)  ctx)
-                                               rt (infer-type (:right node) ctx)]
-                                           (when (and (map? lt) (:record lt)
-                                                      (map? rt) (:record rt)
-                                                      (= (:record lt) (:record rt)))
-                                             (:record lt))))]
-                    (let [call {:node :call
-                                :fn   (record-synth-equals-name rec-name)
-                                :args [(lower-expr (:left node)  ctx)
-                                       (lower-expr (:right node) ctx)]}]
-                      (if (= "==" (:op node))
-                        call
-                        {:node :unary :op "!" :expr call}))
-                    {:node  :binop
-                     :op    (case (:op node)
-                              "and" "&&"
-                              "or"  "||"
-                              "is"  "=="            ; pointer-eq for atoms, value-eq for enums/ints
-                              (:op node))
-                     :left  (lower-expr (:left node)  ctx)
-                     :right (lower-expr (:right node) ctx)}))
+                  (let [cmp?     (contains? #{"==" "!="} (:op node))
+                        lt       (when cmp? (infer-type (:left node)  ctx))
+                        rt       (when cmp? (infer-type (:right node) ctx))
+                        rec-name (when cmp?
+                                   (when (and (map? lt) (:record lt)
+                                              (map? rt) (:record rt)
+                                              (= (:record lt) (:record rt)))
+                                     (:record lt)))
+                        ;; F37b L1 — `Bytes` == `Bytes` reroutes to
+                        ;; `-isEqualToData:` (NSData's value-eq for
+                        ;; byte content). Raw C `==` on two NSData
+                        ;; pointers is pointer-eq, which is almost
+                        ;; never what the user wrote.
+                        bytes-eq? (and cmp? (= :bytes lt) (= :bytes rt))]
+                    (cond
+                      rec-name
+                      (let [call {:node :call
+                                  :fn   (record-synth-equals-name rec-name)
+                                  :args [(lower-expr (:left node)  ctx)
+                                         (lower-expr (:right node) ctx)]}]
+                        (if (= "==" (:op node))
+                          call
+                          {:node :unary :op "!" :expr call}))
+                      bytes-eq?
+                      (let [msg {:node :objc-msg
+                                 :recv (lower-expr (:left node) ctx)
+                                 :selector "isEqualToData:"
+                                 :args [(lower-expr (:right node) ctx)]}]
+                        (if (= "==" (:op node))
+                          msg
+                          {:node :unary :op "!" :expr msg}))
+                      :else
+                      {:node  :binop
+                       :op    (case (:op node)
+                                "and" "&&"
+                                "or"  "||"
+                                "is"  "=="            ; pointer-eq for atoms, value-eq for enums/ints
+                                (:op node))
+                       :left  (lower-expr (:left node)  ctx)
+                       :right (lower-expr (:right node) ctx)})))
     :neg        {:node :unary :op "-"
                  :expr (lower-expr (:expr node) ctx)}
     :not        {:node :unary :op "!"

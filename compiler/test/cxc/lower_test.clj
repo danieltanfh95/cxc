@@ -1397,6 +1397,63 @@ def main:
       (is (not (some #{"<execinfo.h>"} (:includes without-panic)))
           "non-panic program doesn't pull in <execinfo.h>"))))
 
+(deftest f37b-l1-bytes-length-returns-int
+  (testing "F37b Landing 1 — `.length` on a `Bytes`-typed expression type-checks as `Int` (spec §3.10.10 user-facing convention: `.length` is an element count matching List/String; wire-format `UInt32` prefix is a different concern). Emitted C uses ObjC property syntax, dispatching to NSData's `-length`."
+    (let [prog (lower-src (str "record Msg:\n"
+                               "    data:\n"
+                               "        payload: Bytes\n"
+                               "    methods:\n"
+                               "        function size(self) -> Int:\n"
+                               "            return self.payload.length\n"
+                               "\n"
+                               "def main:\n"
+                               "    -> running\n"
+                               "        do: print(0)\n"))
+          fn-body (some (fn [f]
+                          (when (= "Msg_size" (:name f))
+                            (:body f)))
+                        (:functions prog))]
+      (is (some? fn-body) "Msg_size lowered")
+      (is (some (fn [s]
+                  (and (= :return (:node s))
+                       (= :field (get-in s [:value :node]))
+                       (= "length" (get-in s [:value :field]))))
+                fn-body)
+          "return expression is a `.length` field access"))))
+
+(deftest f37b-l1-bytes-equality-lowers-to-isEqualToData
+  (testing "F37b Landing 1 — `==`/`!=` between two `Bytes` operands intercepts before the raw C `==` fallthrough and dispatches to `-isEqualToData:` (NSData's value-eq). Raw C `==` on two NSData pointers is pointer-eq, which is almost never what the user wrote."
+    (let [prog (lower-src (str "record Cmp:\n"
+                               "    data:\n"
+                               "        a: Bytes\n"
+                               "        b: Bytes\n"
+                               "    methods:\n"
+                               "        function eq(self) -> Bool:\n"
+                               "            return self.a == self.b\n"
+                               "        function neq(self) -> Bool:\n"
+                               "            return self.a != self.b\n"
+                               "\n"
+                               "def main:\n"
+                               "    -> running\n"
+                               "        do: print(0)\n"))
+          fn-body (fn [nm]
+                    (some (fn [f] (when (= nm (:name f)) (:body f)))
+                          (:functions prog)))
+          eq-body  (fn-body "Cmp_eq")
+          neq-body (fn-body "Cmp_neq")
+          eq-ret  (last eq-body)
+          neq-ret (last neq-body)]
+      (is (= :objc-msg (get-in eq-ret [:value :node]))
+          "`==` on Bytes lowers as an ObjC message send")
+      (is (= "isEqualToData:" (get-in eq-ret [:value :selector]))
+          "selector is isEqualToData:")
+      (is (= :unary (get-in neq-ret [:value :node]))
+          "`!=` wraps the same selector in `!`")
+      (is (= "!" (get-in neq-ret [:value :op]))
+          "negation operator")
+      (is (= "isEqualToData:" (get-in neq-ret [:value :expr :selector]))
+          "wrapped selector is isEqualToData:"))))
+
 (deftest f31-f35-l3-sync-send-cycle-warning
   (testing "F31/F35 Landing 3 — cross-atom `|>` cycle emits a compile-time warning to *err*. Spec §1.11 line 1523 keeps cycle-avoidance on the user; the warning surfaces the failure mode before Layer 4 stack-overflow or F32 deadlock fires it at runtime."
     (let [src (str "def A:\n"
