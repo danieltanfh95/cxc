@@ -72,6 +72,29 @@
 (defn- fail-compile! [kind msg node]
   (throw (ex-info msg {:kind kind :what msg :node node})))
 
+(defn- c-string-lit
+  "Render a Clojure string as a valid C double-quoted string literal.
+   Escapes backslash and double-quote; other bytes pass through (the
+   sites that use this feed short compiler-authored labels with
+   ASCII-safe content — atom/field/param/method names)."
+  [s]
+  (str "\""
+       (-> s
+           (str/replace "\\" "\\\\")
+           (str/replace "\"" "\\\""))
+       "\""))
+
+(defn- nonnil-check-stmt
+  "F39 L3 — inline `if ((expr-c) == nil) cxc_nonnil_violation(site, name);`
+   guard as a :raw-c stmt. `expr-c` is the already-rendered C expression
+   whose nil-ness is being checked (a bare identifier at every current
+   observation point — ctor-param name, field ivar, or return-temp).
+   `site` and `name` are compiler-authored labels."
+  [expr-c site name]
+  {:node :raw-c
+   :text (str "if ((" expr-c ") == nil) cxc_nonnil_violation("
+              (c-string-lit site) ", " (c-string-lit name) ");")})
+
 (defn- validate-defaults-after-required!
   "Spec §3.8.5 rule 3: in any parameter list, all defaulted params must
    follow all non-defaulted (required) params. `f(x: Int = 0, y: Int)`
@@ -2668,7 +2691,7 @@
               ;; do: cb()` needs the assignment to happen before
               ;; the do:-clause runs.
               :then-clause
-              [(into out (mapv #(lower-then-update % c) (:updates clause))) c]
+              [(into out (mapcat #(lower-then-update % c) (:updates clause))) c]
 
               ;; F23 — let: bindings emit local variable decls and enter
               ;; the ctx as they land; subsequent then/do references
@@ -2707,6 +2730,17 @@
         subs      (get-in info [:subscription-map field-name])]
     (boolean (seq subs))))
 
+(defn- field-nonnil?
+  "F39 L3 — is the field with this name declared `T!` on the enclosing
+   atom? Reads self-fields from ctx; returns false when not found (so
+   containers without the enclosing-atom context degrade gracefully)."
+  [field-name ctx]
+  (let [self-info (get-in ctx [:locals "self"])
+        atom-name (and (map? self-info) (:atom self-info))
+        info      (get-in ctx [:atom-env atom-name])
+        f         (get-in info [:field-index field-name])]
+    (boolean (:nonnil? f))))
+
 (defn- lower-then-update
   "`then: field => expr` → `_field = <expr>;` for the common case.
    For atom-typed subscription-root fields (Layer 4b nullable-slot
@@ -2719,16 +2753,29 @@
    place from inside `then:`) is retired. Container mutation belongs
    in `do:` as an ordinary method call: `do: xs.add(e)` / `do: xs.remove(e)`.
    Spec §3.9 uses `+`/`-` for arithmetic only; §1.11 keeps `then:` as
-   pure state updates and puts side-effecting method sends in `do:`."
+   pure state updates and puts side-effecting method sends in `do:`.
+
+   F39 L3 — for a `T!` field, appends a post-store nonnil-check reading
+   the just-assigned ivar. Post-store is safe (warning-grade, no abort)
+   and sidesteps eval-once discipline on the RHS expression. Returns
+   a vector of stmts so callers `mapcat` naturally over each update."
   [update ctx]
-  (if (field-needs-slot-setter? (:field update) ctx)
-    {:node :objc-msg
-     :recv {:node :name :sym "self"}
-     :selector (str "set" (capitalize-first (:field update)) ":")
-     :args [(lower-expr (:expr update) ctx)]}
-    {:node :assign
-     :lhs  {:node :name :sym (str "_" (:field update))}
-     :rhs  (lower-expr (:expr update) ctx)}))
+  (let [primary (if (field-needs-slot-setter? (:field update) ctx)
+                  {:node :objc-msg
+                   :recv {:node :name :sym "self"}
+                   :selector (str "set" (capitalize-first (:field update)) ":")
+                   :args [(lower-expr (:expr update) ctx)]}
+                  {:node :assign
+                   :lhs  {:node :name :sym (str "_" (:field update))}
+                   :rhs  (lower-expr (:expr update) ctx)})]
+    (if (field-nonnil? (:field update) ctx)
+      (let [self-info (get-in ctx [:locals "self"])
+            atom-name (or (and (map? self-info) (:atom self-info)) "?")]
+        [primary
+         (nonnil-check-stmt (str "_" (:field update))
+                            (str "def-atom `" atom-name "` field write")
+                            (:field update))])
+      [primary])))
 
 (defn- lower-on-enter-body
   "Body of a wildcard on-enter transition when inlined into init. Same
@@ -2757,7 +2804,7 @@
                 [(into out decls) c'])
 
               :then-clause
-              [(into out (mapv #(lower-then-update % c) (:updates clause))) c]
+              [(into out (mapcat #(lower-then-update % c) (:updates clause))) c]
 
               :do-clause
               [(into out (lower-do-clause clause c)) c]
@@ -2906,7 +2953,7 @@
    (design §6 emit ordering: wildcard defaults, then specific overrides)."
   [wildcards ctx]
   (vec (mapcat (fn [w]
-                 (mapcat (fn [c] (mapv #(lower-then-update % ctx) (:updates c)))
+                 (mapcat (fn [c] (mapcat #(lower-then-update % ctx) (:updates c)))
                          (filter #(= :then-clause (:node %)) (:body w))))
                wildcards)))
 
@@ -2997,8 +3044,8 @@
                                   :left acc :right (lower-expr e ctx')})
                                (lower-expr (first guard-exprs) ctx')
                                (rest guard-exprs)))
-        then-stmts   (vec (mapcat (fn [c] (mapv #(lower-then-update % ctx')
-                                                (:updates c)))
+        then-stmts   (vec (mapcat (fn [c] (mapcat #(lower-then-update % ctx')
+                                                  (:updates c)))
                                   then-clauses))
         do-stmts     (vec (mapcat (fn [c] (lower-do-clause c ctx')) do-clauses))
         ;; Audit F24: `-> self` means self-transition, no phase change
@@ -3970,13 +4017,32 @@
                      :recv {:node :name :sym "self"}
                      :selector "checkInvariants"
                      :args []}
+        ;; F39 L3 — method-return check for `-> T!`. Rewrite the
+        ;; trailing `return <expr>` into a `_Cxc_ret = <expr>; guard;
+        ;; return _Cxc_ret;` triple so the returned value is bound
+        ;; once, checked, then returned. Only fires when the return
+        ;; type node is `:type-nonnil`; other returns pass through.
+        nonnil-ret? (= :type-nonnil (get-in method [:cxc-return-ty-node :node]))
+        ret-check-stmts
+        (fn [ret-stmt]
+          (if nonnil-ret?
+            [{:node :var-decl :name "_Cxc_ret" :c-type ret-c
+              :rhs  (:value ret-stmt)}
+             (nonnil-check-stmt "_Cxc_ret"
+                                (str "def-atom `" atom-name "` method `"
+                                     (:name method) "` return")
+                                "return value")
+             {:node :return :value {:node :name :sym "_Cxc_ret"}}]
+            [ret-stmt]))
         wrapped     (cond
                       ;; Trailing `return <expr>` — insert exit check
                       ;; before it so state is verified before the
                       ;; return statement runs.
                       (and (seq stmts) (= :return (:node (last stmts))))
-                      (into (into [check-stmt] (pop stmts))
-                            [check-stmt (last stmts)])
+                      (-> [check-stmt]
+                          (into (pop stmts))
+                          (conj check-stmt)
+                          (into (ret-check-stmts (last stmts))))
                       ;; Void body or falls-through — entry + append exit.
                       :else
                       (-> [check-stmt] (into stmts) (conj check-stmt)))]
@@ -4295,6 +4361,20 @@
                            :return-type "void" :params []
                            :body (-> [queue-init-stmt phase-init-stmt]
                                      (into stream-init-stmts))}
+          ;; F39 L3 — `T!` ctor-param bind check. One `if (p == nil)
+          ;; cxc_nonnil_violation(...)` guard per param declared with
+          ;; the non-nil contract. Runs before invariants so a nil
+          ;; passed for a `T!` param logs even if invariants would also
+          ;; catch it (they cover different failure modes: `T!` is a
+          ;; boundary contract, invariants are a state predicate).
+          nonnil-ctor-check-stmts
+          (vec (keep (fn [p]
+                       (when (:nonnil? p)
+                         (nonnil-check-stmt
+                          (:name p)
+                          (str "def-atom `" atom-name "` ctor param")
+                          (:name p))))
+                     ctor-params))
           state-method    {:node :objc-method :selector state-selector
                            :return-type "void"
                            :params (mapv (fn [p] {:name (:name p) :c-type (:c-type p)})
@@ -4304,6 +4384,7 @@
                            ;; failing the invariant abort before any
                            ;; narrowing store loses information.
                            :body (-> []
+                                     (into nonnil-ctor-check-stmts)
                                      (into pre-store-invariant-stmts)
                                      (into default-stmts)
                                      (into on-enter-stmts))}

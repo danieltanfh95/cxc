@@ -1402,6 +1402,165 @@ def main:
          #"cannot stack"
          (lower-src "def X:\n    data:\n        bus: Widget!? = nil\n\ndef main:\n    -> running\n        do: print(0)\n")))))
 
+(deftest f39-l3-nonnil-ctor-param-check-inserted
+  (testing "F39 Landing 3 — a `T!` ctor param gets an inline `if (p == nil) cxc_nonnil_violation(...)` guard at the top of cxc_stateInit. Warning-grade per spec §3.6.1 line 3686."
+    (let [prog (lower-src (str "def EventBus:\n"
+                               "    data:\n"
+                               "        n: Int = 0\n"
+                               "\n"
+                               "def Widget(bus: EventBus!):\n"
+                               "    data:\n"
+                               "        n: Int = 0\n"
+                               "\n"
+                               "def main:\n"
+                               "    def b: EventBus\n"
+                               "    def w: Widget(bus: b)\n"
+                               "    -> running\n"
+                               "        do: print(0)\n"))
+          widget (first (filter #(= "Widget" (:name %)) (:classes prog)))
+          state  (first (filter #(str/starts-with? (:selector %) "cxc_stateInit")
+                                (:methods widget)))
+          first-stmt (first (:body state))]
+      (is (= :raw-c (:node first-stmt))
+          "F39 L3 — first stmt of cxc_stateInit is the ctor-param nonnil-check")
+      (is (str/includes? (:text first-stmt) "(bus) == nil")
+          "check reads the incoming param name")
+      (is (str/includes? (:text first-stmt) "cxc_nonnil_violation")
+          "check dispatches to the runtime helper")
+      (is (str/includes? (:text first-stmt) "ctor param")
+          "site label names the observation point")
+      (is (str/includes? (:text first-stmt) "\"bus\"")
+          "check passes the parameter name to the runtime helper"))))
+
+(deftest f39-l3-nonnil-field-write-check-inserted
+  (testing "F39 Landing 3 — a `then: field => rhs` on a `T!` field appends a post-store nonnil-check reading the just-assigned ivar. Post-store is safe because the check is warning-grade (no abort)."
+    (let [prog (lower-src (str "def Widget:\n"
+                               "    data:\n"
+                               "        peer: Widget! = Widget()\n"
+                               "\n"
+                               "    -> boot\n"
+                               "        do: self |> bump\n"
+                               "\n"
+                               "    boot <: bump -> on\n"
+                               "        then: peer => Widget()\n"
+                               "\n"
+                               "def main:\n"
+                               "    def w: Widget\n"
+                               "    -> running\n"
+                               "        do: print(0)\n"))
+          widget (first (filter #(= "Widget" (:name %)) (:classes prog)))
+          bump-mth (first (filter #(= "bump" (:selector %))
+                                  (:methods widget)))
+          ;; Receive-glyph methods wrap the transition body in a
+          ;; :transition-branch → :end-catch-wrap. Unwrap two layers
+          ;; to reach the actual statement sequence.
+          branch (first (:body bump-mth))
+          catch-wrap (first (:body branch))
+          body (:body catch-wrap)
+          assign-idx (first (keep-indexed
+                             (fn [i s]
+                               (when (and (= :assign (:node s))
+                                          (= "_peer" (get-in s [:lhs :sym])))
+                                 i))
+                             body))
+          check-stmt (get body (inc assign-idx))]
+      (is assign-idx "peer ivar is written in the bump transition body")
+      (is (= :raw-c (:node check-stmt))
+          "F39 L3 — the stmt directly after the peer write is the nonnil-check")
+      (is (str/includes? (:text check-stmt) "(_peer) == nil")
+          "check reads the just-stored ivar")
+      (is (str/includes? (:text check-stmt) "field write")
+          "site label names the observation point"))))
+
+(deftest f39-l3-nonnil-non-annotated-field-write-no-check
+  (testing "F39 Landing 3 — `then:` on a field NOT declared `T!` gets no check (zero-cost for non-annotated fields)."
+    (let [prog (lower-src (str "def Widget:\n"
+                               "    data:\n"
+                               "        peer: Widget = Widget()\n"
+                               "\n"
+                               "    -> boot\n"
+                               "        do: self |> bump\n"
+                               "\n"
+                               "    boot <: bump -> on\n"
+                               "        then: peer => Widget()\n"
+                               "\n"
+                               "def main:\n"
+                               "    def w: Widget\n"
+                               "    -> running\n"
+                               "        do: print(0)\n"))
+          widget (first (filter #(= "Widget" (:name %)) (:classes prog)))
+          bump-mth (first (filter #(= "bump" (:selector %))
+                                  (:methods widget)))
+          ;; Receive-glyph methods wrap the transition body in a
+          ;; :transition-branch → :end-catch-wrap. Unwrap two layers
+          ;; to reach the actual statement sequence.
+          branch (first (:body bump-mth))
+          catch-wrap (first (:body branch))
+          body (:body catch-wrap)]
+      (is (nil? (some (fn [s]
+                        (and (= :raw-c (:node s))
+                             (str/includes? (or (:text s) "") "cxc_nonnil_violation")))
+                      body))
+          "no nonnil-check emitted when the field is bare `T`"))))
+
+(deftest f39-l3-nonnil-method-return-check-wrapped
+  (testing "F39 Landing 3 — a method declared `-> T!` has its trailing `return <expr>` rewritten to `T *_Cxc_ret = <expr>; if (_Cxc_ret == nil) cxc_nonnil_violation(...); return _Cxc_ret;` — bind once, check, return."
+    (let [prog (lower-src (str "def Widget:\n"
+                               "    data:\n"
+                               "        peer: Widget = Widget()\n"
+                               "    methods:\n"
+                               "        function get_peer(self) -> Widget!:\n"
+                               "            return peer\n"
+                               "\n"
+                               "def main:\n"
+                               "    def w: Widget\n"
+                               "    -> running\n"
+                               "        do: print(0)\n"))
+          widget (first (filter #(= "Widget" (:name %)) (:classes prog)))
+          get-peer (first (filter #(str/starts-with? (:selector %) "get_peer")
+                                  (:methods widget)))
+          body     (:body get-peer)
+          last-3   (subvec body (max 0 (- (count body) 3)))]
+      (is (= :var-decl (:node (first last-3)))
+          "return-expr bound to a temp before the check")
+      (is (= "_Cxc_ret" (:name (first last-3)))
+          "temp name is _Cxc_ret")
+      (is (= :raw-c (:node (second last-3)))
+          "second-to-last stmt is the nonnil-check")
+      (is (str/includes? (:text (second last-3)) "(_Cxc_ret) == nil")
+          "check reads the return temp")
+      (is (str/includes? (:text (second last-3)) "method `get_peer` return")
+          "site label names the method")
+      (is (= :return (:node (last last-3)))
+          "final stmt returns the temp")
+      (is (= "_Cxc_ret" (get-in (last last-3) [:value :sym]))
+          "final stmt returns _Cxc_ret"))))
+
+(deftest f39-l3-nonnil-method-return-non-annotated-no-wrap
+  (testing "F39 Landing 3 — a bare `-> Foo` method keeps its plain `return <expr>` — no temp, no check."
+    (let [prog (lower-src (str "def Widget:\n"
+                               "    data:\n"
+                               "        peer: Widget = Widget()\n"
+                               "    methods:\n"
+                               "        function get_peer(self) -> Widget:\n"
+                               "            return peer\n"
+                               "\n"
+                               "def main:\n"
+                               "    def w: Widget\n"
+                               "    -> running\n"
+                               "        do: print(0)\n"))
+          widget (first (filter #(= "Widget" (:name %)) (:classes prog)))
+          get-peer (first (filter #(str/starts-with? (:selector %) "get_peer")
+                                  (:methods widget)))
+          body     (:body get-peer)]
+      (is (= :return (:node (last body)))
+          "trailing return stays a plain :return")
+      (is (nil? (some (fn [s]
+                        (and (= :var-decl (:node s))
+                             (= "_Cxc_ret" (:name s))))
+                      body))
+          "no _Cxc_ret temp for bare-return methods"))))
+
 (deftest f39-l1-nullable-on-atom-rejected
   (testing "F39 Landing 1 — `T?` where T is a reference type (atom) is spec-refused as redundant (§3.6.1: reference types are already nil-allowed). Diagnostic names the type and points at the drop-the-`?` fix."
     (is (thrown-with-msg?

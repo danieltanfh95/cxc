@@ -703,6 +703,15 @@
        "static inline void cxc_shutdown(void) {\n"
        "    exit(0);\n"
        "}\n\n"
+       ;; F39 L3 — `T!` runtime enforcement. Warning-grade per spec §3.6.1
+       ;; line 3686: "logs a warning in development, configurable action
+       ;; in release." The check itself is inlined at each observation
+       ;; point (ctor-param bind, field write, method return) via a
+       ;; plain `if (x == nil) cxc_nonnil_violation(...)` guard — no
+       ;; dispatch, no allocation, one branch per site.
+       "static inline void cxc_nonnil_violation(const char *site, const char *name) {\n"
+       "    fprintf(stderr, \"cxc: `T!` violation at %s: `%s` is nil (spec §3.6.1)\\n\", site, name);\n"
+       "}\n\n"
        ;; Own a resource for cleanup on the atom's -> end. Lazily
        ;; allocates the owner's resources array on first call —
        ;; atoms that never spawn timers/streams pay one pointer of
