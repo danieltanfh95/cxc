@@ -47,11 +47,11 @@
         (is (= :not-yet-implemented (:kind (ex-data e))))))))
 
 (deftest arithmetic-in-print-int
-  (testing "int + int keeps %d format; binop lowers with left/right"
+  (testing "int + int uses %lld format (Phase D F36a — Int aliased to Int64; printf format widens accordingly); binop lowers with left/right"
     (let [prog (lower-src "def main:\n    -> running\n        do: print(3 + 4 * 2)\n")
           call (first (get-in prog [:main :body]))]
       (is (= "printf" (:fn call)))
-      (is (= "%d\n" (get-in call [:args 0 :value])))
+      (is (= "%lld\n" (get-in call [:args 0 :value])))
       (let [expr (get-in call [:args 1])]
         (is (= :binop (:node expr)))
         (is (= "+" (:op expr)))
@@ -71,8 +71,8 @@
           s    (first (:structs prog))]
       (is (= :c-struct (:node s)))
       (is (= "V" (:name s)))
-      (is (= [{:name "x" :c-type "int"}
-              {:name "y" :c-type "double"}]
+      (is (= [{:name "x" :c-type "int64_t"}
+              {:name "y" :c-type "float"}]
              (:fields s))))))
 
 (deftest record-construction-with-named-args
@@ -125,7 +125,7 @@
               {:name "cxc_owned_resources" :c-type "NSMutableArray *" :attrs ["nonatomic" "strong"]}
               {:name "parent"           :c-type "id"               :attrs ["nonatomic" "weak"]}
               {:name "parent_slot_name" :c-type "NSString *"       :attrs ["nonatomic" "copy"]}
-              {:name "n"                :c-type "int"              :attrs ["assign"]}]
+              {:name "n"                :c-type "int64_t"          :attrs ["assign"]}]
              (:properties cls)))
       (is (= [{:name "kCounter_phase_init" :value "init"}
               {:name "kCounter_phase_end"  :value "end"}]
@@ -312,7 +312,7 @@ def main:
           cls  (first (filter #(= "Counter" (:name %)) (:classes prog)))
           call (first (main-work-body prog))
           ctor (get-in call [:args 1 :target])]
-      (is (= [{:name "initial" :c-type "int"}] (:init-params cls)))
+      (is (= [{:name "initial" :c-type "int64_t"}] (:init-params cls)))
       ;; -init shell calls cxc_structuralSetup, cxc_stateInitWithinitial:initial,
       ;; cxc_runtimeBinding — ctor-params thread through the state-init selector.
       (is (= [{:node :objc-msg :recv {:node :name :sym "self"}
@@ -325,7 +325,7 @@ def main:
              (:init-body cls)))
       (let [state (first (filter #(= "cxc_stateInitWithinitial:" (:selector %))
                                  (:methods cls)))]
-        (is (= [{:name "initial" :c-type "int"}] (:params state)))
+        (is (= [{:name "initial" :c-type "int64_t"}] (:params state)))
         (is (= [{:node :assign
                  :lhs  {:node :name :sym "_n"}
                  :rhs  {:node :name :sym "initial"}}]
@@ -343,7 +343,7 @@ def main:
               {:name "cxc_owned_resources" :c-type "NSMutableArray *" :attrs ["nonatomic" "strong"]}
               {:name "parent"           :c-type "id"               :attrs ["nonatomic" "weak"]}
               {:name "parent_slot_name" :c-type "NSString *"       :attrs ["nonatomic" "copy"]}
-              {:name "n"                :c-type "int"              :attrs ["assign"]}
+              {:name "n"                :c-type "int64_t"          :attrs ["assign"]}
               {:name "other"            :c-type "Counter *"        :attrs ["strong"]}]
              (:properties cls)))
       (let [state-init (first (filter #(= "cxc_stateInit" (:selector %)) (:methods cls)))]
@@ -360,7 +360,7 @@ def main:
           m    (first (filter #(= "bump" (:selector %)) (:methods cls)))]
       (is (= :objc-method (:node m)))
       (is (= "bump" (:selector m)))
-      (is (= "int" (:return-type m)))
+      (is (= "int64_t" (:return-type m)))
       (is (empty? (:params m))))))
 
 (deftest atom-method-call-lowers-to-objc-msg
@@ -381,7 +381,7 @@ def main:
           call (first (main-work-body prog))
           msg  (get-in call [:args 1])]
       (is (= "plusWithother:" (:selector m)))
-      (is (= [{:name "other" :c-type "int"}] (:params m)))
+      (is (= [{:name "other" :c-type "int64_t"}] (:params m)))
       (is (= "plusWithother:" (:selector msg)))
       (is (= 1 (count (:args msg)))))))
 
@@ -616,6 +616,44 @@ def main:
     -> tick
         do: print(1)
 ")))))
+
+(deftest sized-numeric-atoms-lower-to-correct-c-types
+  (testing "Phase D F36a Landing 1a — spec §3.1 primitive substrate. Sized atoms UInt8/16/32/64, Int8/16/32/64, Double flow through primitive-c-type to their exact C widths. Int aliased to Int64. Float is 32-bit (fixes v0.11 lowering bug — was double)."
+    (let [prog (lower-src "record Widths:
+    data:
+        u8:  UInt8
+        u16: UInt16
+        u32: UInt32
+        u64: UInt64
+        i8:  Int8
+        i16: Int16
+        i32: Int32
+        i64: Int64
+        n:   Int
+        f:   Float
+        d:   Double
+        b:   Bool
+
+def main:
+    -> running
+        do: print(1)
+")
+          widths (first (filter #(= "Widths" (:name %)) (:structs prog)))
+          field-c-type (fn [n] (-> (filter #(= n (:name %)) (:fields widths))
+                                   first :c-type))]
+      (is (some? widths) "Widths struct emitted")
+      (is (= "uint8_t"  (field-c-type "u8")))
+      (is (= "uint16_t" (field-c-type "u16")))
+      (is (= "uint32_t" (field-c-type "u32")))
+      (is (= "uint64_t" (field-c-type "u64")))
+      (is (= "int8_t"   (field-c-type "i8")))
+      (is (= "int16_t"  (field-c-type "i16")))
+      (is (= "int32_t"  (field-c-type "i32")))
+      (is (= "int64_t"  (field-c-type "i64")))
+      (is (= "int64_t"  (field-c-type "n"))  "Int alias for Int64")
+      (is (= "float"    (field-c-type "f"))  "Float is 32-bit IEEE 754 (fix)")
+      (is (= "double"   (field-c-type "d"))  "Double is 64-bit IEEE 754")
+      (is (= "int"      (field-c-type "b"))  "Bool unchanged — future work"))))
 
 (deftest in-operator-raises-targeted-diagnostic
   (testing "Audit F47: `x in y` parses as a binop but its semantic lowering (dispatch to a container `contains` method — spec §1.3 membership predicates) is Phase D work. Silently emitting the literal token `in` into the generated C causes clang to fail far from the source; lower now raises a targeted diagnostic naming the operator so the failure points to the actual language feature."

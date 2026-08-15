@@ -88,8 +88,33 @@
 ;; ---------------------------------------------------------------------------
 
 (def ^:private primitive-c-type
-  {"Int"     "int"
-   "Float"   "double"
+  ;; Phase D F36a — spec §3.1 primitive substrate.
+  ;;
+  ;; `Int` is a prelude alias for `Int64` — 64-bit signed always. Users
+  ;; who want tighter storage write a domain atom (see §3.1.2) or reach
+  ;; for a sized atom directly.
+  ;;
+  ;; `Float` = 32-bit IEEE 754 (fixes v0.11 lowering bug — was `double`).
+  ;; `Double` = 64-bit IEEE 754.
+  ;;
+  ;; Sized atoms (UInt8..UInt64, Int8..Int64) pin exact widths for
+  ;; interop, wire formats, and explicit-width contexts.
+  ;;
+  ;; Precision-preservation across arithmetic + observables (a full
+  ;; type-kw split into `:int-N` / `:float-N` variants) is Landing 1b —
+  ;; currently all integer widths share `:int`, all float widths share
+  ;; `:float`. Storage widths on FIELDS are correct.
+  {"Int"     "int64_t"      ; §3.1: Int aliased to Int64
+   "Int8"    "int8_t"
+   "Int16"   "int16_t"
+   "Int32"   "int32_t"
+   "Int64"   "int64_t"
+   "UInt8"   "uint8_t"
+   "UInt16"  "uint16_t"
+   "UInt32"  "uint32_t"
+   "UInt64"  "uint64_t"
+   "Float"   "float"        ; §3.1: 32-bit IEEE 754
+   "Double"  "double"       ; §3.1: 64-bit IEEE 754
    "String"  "const char *"
    "Bool"    "int"
    ;; Layer 6 Step 12 — escaping-block field type. MVP is zero-arg
@@ -214,11 +239,26 @@
   "Map a cxc type-ref name to the type-keyword vocab used by infer-type.
    Primitive names → :int/:float/:string/:bool. Aggregate names →
    {:record N}, {:atom N}, or {:enum N} depending on which env they
-   resolve in."
+   resolve in.
+
+   Phase D F36a — sized numeric atoms (UInt8..UInt64, Int8..Int64,
+   Double) collapse into the existing `:int`/`:float` type-kw family.
+   Storage widths on fields flow through `primitive-c-type` and are
+   correct; precision preservation across arithmetic + observables
+   is Landing 1b (splitting the type-kw into `:int-N`/`:float-N`)."
   [cxc-name record-env atom-env enum-env node]
   (case cxc-name
     "Int"    :int
+    "Int8"   :int
+    "Int16"  :int
+    "Int32"  :int
+    "Int64"  :int
+    "UInt8"  :int
+    "UInt16" :int
+    "UInt32" :int
+    "UInt64" :int
     "Float"  :float
+    "Double" :float
     "String" :string
     "Bool"   :bool
     ;; Layer 6 Step 12 — Block is a first-class type at the type-kw
@@ -234,10 +274,17 @@
 (defn- type-kw->c-type
   "Reverse of cxc-type->type-kw for the C emit side. Observable return
    types are inferred as type-kws directly; this converts them back to
-   emit-ready C type strings."
+   emit-ready C type strings.
+
+   Phase D F36a Landing 1a — `:int` collapses to `int64_t` (Int alias),
+   `:float` collapses to `double` (widest floating). Full width
+   preservation across arithmetic + observables + typed payloads is
+   Landing 1b (type-kw split into `:int-N` / `:float-N` variants).
+   Kept in sync with `primitive-c-type` — divergence between the two
+   causes clang errors like duplicate-method-signature."
   [tk node]
   (cond
-    (= :int    tk) "int"
+    (= :int    tk) "int64_t"
     (= :float  tk) "double"
     (= :string tk) "const char *"
     (= :bool   tk) "int"
@@ -1570,7 +1617,12 @@
 (defn- print-format-string [arg-type]
   (cond
     (= :string arg-type)                    "%s\n"
-    (= :int arg-type)                       "%d\n"
+    ;; Phase D F36a Landing 1a — `:int` type-kw now covers all integer
+    ;; widths (Int64, Int32, Int8, UInt8, ...). Emit `%lld` because Int
+    ;; is aliased to Int64 and needs 8-byte read; narrower sized ints
+    ;; passed via varargs are UB under `%lld`, so emit wraps the arg in
+    ;; a `(long long)` cast at printf-call emit time (see emit.clj).
+    (= :int arg-type)                       "%lld\n"
     (= :bool arg-type)                      "%d\n"
     (= :float arg-type)                     "%f\n"
     (and (map? arg-type) (:enum arg-type))  "%d\n"    ; enums are int-backed
@@ -1581,6 +1633,13 @@
         arg-ty   (infer-type arg-expr ctx)]
     {:node :call
      :fn   "printf"
+     ;; :printf-arg-type carries the picker's type-kw through to emit
+     ;; so the printf emit path can cast varargs to a width that
+     ;; matches the format specifier (long long for :int; double for
+     ;; :float). Kept out of the AST proper (as metadata on the call
+     ;; node, not a wrapper on the arg) so existing tests that inspect
+     ;; :args continue to see the raw lowered expression.
+     :printf-arg-type arg-ty
      :args [{:node :str :value (print-format-string arg-ty)}
             (lower-expr arg-expr ctx)]}))
 

@@ -54,10 +54,31 @@
                             first-part
                             (when-not (str/blank? rest-parts) (str " " rest-parts))
                             "]"))
-    :call            (str (:fn node)
-                          "("
-                          (str/join ", " (map emit-expr (:args node)))
-                          ")")
+    :call            (let [args (:args node)
+                           ;; Phase D F36a Landing 1a — printf varargs
+                           ;; need explicit width matching. lower-print
+                           ;; tags the call with :printf-arg-type so we
+                           ;; can wrap arg[1] (the value; arg[0] is the
+                           ;; format string) in a cast to the format
+                           ;; specifier's expected width. Prevents UB
+                           ;; when a narrower sized-int flows into
+                           ;; `%lld` or when Double flows into `%f`.
+                           printf-tk (:printf-arg-type node)
+                           cast-c    (case printf-tk
+                                       :int   "long long"
+                                       :float "double"
+                                       nil)
+                           arg-strs  (map-indexed
+                                       (fn [i a]
+                                         (let [s (emit-expr a)]
+                                           (if (and cast-c (= i 1))
+                                             (str "(" cast-c ")(" s ")")
+                                             s)))
+                                       args)]
+                       (str (:fn node)
+                            "("
+                            (str/join ", " arg-strs)
+                            ")"))
     :objc-block-literal
     ;; `^{ stmt; stmt; }` (or `^(T1 a, T2 b) { ... }` when :params
     ;; present) — an ObjC block literal. Used both to wrap message-
