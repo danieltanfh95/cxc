@@ -1370,6 +1370,38 @@ def main:
       (is (= "cxc_wait_for_processing" (:fn send-call))
           "sync send lowers to the renamed helper, not the retired cxc_send_sync"))))
 
+(deftest f39-l2-nonnil-on-atom-accepted
+  (testing "F39 Landing 2 — `T!` on a reference type (atom) is legal. C-level representation identical to bare `T` (still a pointer); the contract is enforced at observation points in F39 L3 (not this landing)."
+    (let [prog (lower-src "def Widget:\n    data:\n        bus: Widget! = Widget()\n\ndef main:\n    def w: Widget\n\n    -> running\n        do: print(0)\n")]
+      (is (= :objc-program (:node prog))
+          "T! on atom lowers cleanly"))))
+
+(deftest f39-l2-nonnil-on-string-accepted
+  (testing "F39 Landing 2 — `String!` is legal (String is reference-shaped)."
+    (let [prog (lower-src "def X:\n    data:\n        name: String! = \"anon\"\n\ndef main:\n    def x: X\n\n    -> running\n        do: print(0)\n")]
+      (is (= :objc-program (:node prog))))))
+
+(deftest f39-l2-nonnil-on-value-primitive-rejected
+  (testing "F39 Landing 2 — `T!` on a value primitive is trivially true (spec §3.6.1)."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"`Int!` is trivially true.*§3\.6\.1.*drop the `!`"
+         (lower-src "def X:\n    data:\n        n: Int! = 5\n\ndef main:\n    -> running\n        do: print(0)\n")))))
+
+(deftest f39-l2-nonnil-on-record-rejected
+  (testing "F39 Landing 2 — `T!` on a record (value type) is trivially true."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"`P!` is trivially true.*value type.*§3\.6\.1"
+         (lower-src "record P:\n    data:\n        x: Int\n\ndef X:\n    data:\n        p: P! = P(x: 0)\n\ndef main:\n    -> running\n        do: print(0)\n")))))
+
+(deftest f39-l2-nonnil-and-nullable-cannot-stack
+  (testing "F39 Landing 2 — `T!?` / `T?!` are grammar errors — the two suffixes are mutually exclusive per spec §3.6.1."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"cannot stack"
+         (lower-src "def X:\n    data:\n        bus: Widget!? = nil\n\ndef main:\n    -> running\n        do: print(0)\n")))))
+
 (deftest f39-l1-nullable-on-atom-rejected
   (testing "F39 Landing 1 — `T?` where T is a reference type (atom) is spec-refused as redundant (§3.6.1: reference types are already nil-allowed). Diagnostic names the type and points at the drop-the-`?` fix."
     (is (thrown-with-msg?

@@ -211,9 +211,27 @@
                             :else
                             [{:node :type-ref :name name} p])]
             [inner p]))
-        [wrapped p] (if (at? tokens p :punct "?")
-                      [{:node :type-nullable :inner inner} (inc p)]
-                      [inner p])]
+        ;; F39 Landing 2 — postfix `?` / `!` are grammar-mutually-exclusive.
+        ;; `T?` is nullable (Optional for value types, redundant on refs
+        ;; per L1). `T!` is non-nil contract (author expectation; runtime
+        ;; enforced at observation points in L3). Nesting like `T?!` or
+        ;; `T!?` is a grammar error.
+        [wrapped p] (cond
+                      (at? tokens p :punct "?")
+                      (let [w [{:node :type-nullable :inner inner} (inc p)]]
+                        (when (or (at? tokens (inc p) :punct "?")
+                                  (at? tokens (inc p) :punct "!"))
+                          (fail! tokens (inc p)
+                                 "cannot stack `?`/`!` on the same type (spec §3.6.1)"))
+                        w)
+                      (at? tokens p :punct "!")
+                      (let [w [{:node :type-nonnil :inner inner} (inc p)]]
+                        (when (or (at? tokens (inc p) :punct "?")
+                                  (at? tokens (inc p) :punct "!"))
+                          (fail! tokens (inc p)
+                                 "cannot stack `?`/`!` on the same type (spec §3.6.1)"))
+                        w)
+                      :else [inner p])]
     [wrapped p]))
 
 ;; ---------------------------------------------------------------------------

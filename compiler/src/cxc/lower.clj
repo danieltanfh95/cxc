@@ -271,6 +271,54 @@
                        ty-node)))
         (fail-nyi! (str "cxc-type->c: nullable of unknown inner " (:node inner))
                    ty-node)))
+    :type-nonnil
+    ;; F39 Landing 2 — `T!` non-nil contract. Legal only on reference
+    ;; types (spec §3.6.1: `!` on value types is trivially true —
+    ;; primitives/records/enums have no nil rep). C-level representation
+    ;; identical to bare `T`; the contract fires at observation points
+    ;; (param bind, field write, method return) via F39 L3.
+    (let [inner (:inner ty-node)]
+      (case (:node inner)
+        :type-ref
+        (let [nm (:name inner)]
+          (cond
+            (contains? atom-env nm) (str nm " *")
+            (= "String" nm)         "NSString *"
+            (contains? primitive-c-type nm)
+            (fail-compile! :cxc-f39-nonnil-on-value
+                           (str "`" nm "!` is trivially true — `" nm
+                                "` is a value type with no nil "
+                                "representation (spec §3.6.1). Fix: "
+                                "drop the `!` and write `" nm "`.")
+                           ty-node)
+            (contains? record-env nm)
+            (fail-compile! :cxc-f39-nonnil-on-value
+                           (str "`" nm "!` is trivially true — records "
+                                "are value types with no nil representation "
+                                "(spec §3.6.1). Fix: drop the `!`.")
+                           ty-node)
+            (contains? enum-env nm)
+            (fail-compile! :cxc-f39-nonnil-on-value
+                           (str "`" nm "!` is trivially true — enums are "
+                                "value types with no nil representation "
+                                "(spec §3.6.1). Fix: drop the `!`.")
+                           ty-node)
+            :else
+            ;; Bootstrap: build-atom-env resolves ctor-param / data-field
+            ;; types with record-env={} because records haven't been built
+            ;; yet. If T isn't in any known reference-type family
+            ;; (atom-env/String), it must be a value-shaped user type
+            ;; (record/enum) — `!` is trivially true either way. Diagnose
+            ;; as such; a genuine typo will surface as "unknown type" once
+            ;; the user drops the `!`.
+            (fail-compile! :cxc-f39-nonnil-on-value
+                           (str "`" nm "!` is trivially true — `" nm
+                                "` is a value type (record/enum) with no "
+                                "nil representation (spec §3.6.1). Fix: "
+                                "drop the `!` and write `" nm "`.")
+                           ty-node)))
+        (fail-nyi! (str "cxc-type->c: `!` on unknown inner " (:node inner))
+                   ty-node)))
     :type-ref
     (let [nm (:name ty-node)]
       (cond
@@ -313,6 +361,7 @@
   (case (:node ty-node)
     :type-ref      (:name ty-node)
     :type-nullable (base-type-name (:inner ty-node))
+    :type-nonnil   (base-type-name (:inner ty-node))
     :type-of       (cond
                      (= "List" (:outer ty-node))
                      ;; List of T → mangled ObjC class name. Deterministic
@@ -483,6 +532,9 @@
           (merge {:name      (:name f)
                   :cxc-ty    (base-type-name (:type f))
                   :nullable? (= :type-nullable (get-in f [:type :node]))
+                  ;; F39 L2 — record `T!` intent on the field; enforcement
+                  ;; wires in L3 (observation-point runtime checks).
+                  :nonnil?   (= :type-nonnil (get-in f [:type :node]))
                   :c-type    (cxc-type->c (:type f) record-env atom-env enum-env)
                   :default   (:default f)}
                  (map-key-val-of (:type f))))
@@ -521,6 +573,7 @@
                                    :type-ref      (:name rt)
                                    :type-of       (:outer rt)
                                    :type-nullable (base-type-name rt)
+                                   :type-nonnil   (base-type-name rt)
                                    nil            nil
                                    (:name rt))
              :cxc-return-ty-node rt
@@ -568,6 +621,9 @@
           (merge {:name      (:name p)
                   :cxc-ty    (base-type-name (:type p))
                   :nullable? (= :type-nullable (get-in p [:type :node]))
+                  ;; F39 L2 — carry `T!` intent on ctor params too.
+                  ;; Runtime binding check wires in L3.
+                  :nonnil?   (= :type-nonnil (get-in p [:type :node]))
                   :c-type    (cxc-type->c (:type p) record-env atom-env enum-env)
                   :default   (:default p)}
                  (map-key-val-of (:type p))))
