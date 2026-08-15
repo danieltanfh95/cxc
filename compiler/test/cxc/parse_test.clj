@@ -430,3 +430,38 @@ def main:
       (is (some? hd))
       (is (= "tick" (:name hd)))
       (is (empty? (:params hd))))))
+
+(deftest f15-l1-named-tuple-type-at-param-position
+  (testing "F15 Landing 1 — `(x: Float, y: Float)` at param position parses as :type-named-tuple with declaration-order fields."
+    (let [src "record R:\n    data:\n        p: (x: Float, y: Float)\n"
+          rec (first-node src)
+          fld (-> rec :sections first :fields first)
+          ty  (:type fld)]
+      (is (= :type-named-tuple (:node ty)))
+      (is (= [{:name "x" :type {:node :type-ref :name "Float"}}
+              {:name "y" :type {:node :type-ref :name "Float"}}]
+             (:fields ty))))))
+
+(deftest f15-l1-anonymous-tuple-type
+  (testing "F15 Landing 1 — `(Int, String)` at type position parses as :type-tuple."
+    (let [src "record R:\n    data:\n        pair: (Int, String)\n"
+          rec (first-node src)
+          ty  (-> rec :sections first :fields first :type)]
+      (is (= :type-tuple (:node ty)))
+      (is (= 2 (count (:types ty)))))))
+
+(deftest f15-l1-single-paren-groups-not-tuple
+  (testing "F15 Landing 1 — a single-element paren group `(T)` parses as T, not a 1-tuple. Preserves the parens-as-grouping intuition."
+    (let [src "record R:\n    data:\n        n: (Int)\n"
+          rec (first-node src)
+          ty  (-> rec :sections first :fields first :type)]
+      (is (= :type-ref (:node ty)))
+      (is (= "Int" (:name ty))))))
+
+(deftest f15-l1-nullable-named-tuple
+  (testing "F15 Landing 1 — `(x: Int, y: Int)?` — nullable suffix wraps the whole tuple type."
+    (let [src "record R:\n    data:\n        config: (host: String, port: UInt16)?\n"
+          rec (first-node src)
+          ty  (-> rec :sections first :fields first :type)]
+      (is (= :type-nullable (:node ty)))
+      (is (= :type-named-tuple (get-in ty [:inner :node]))))))

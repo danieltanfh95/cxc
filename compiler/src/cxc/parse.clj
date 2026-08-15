@@ -133,35 +133,84 @@
 (declare parse-expr)
 
 (defn- parse-type [tokens pos]
-  (let [[name p]  (expect tokens pos :ident)
-        [inner p] (cond
-                    ;; `T of ( K , V , ... )` — Layer 6 Step 8. Paren-
-                    ;; tuple as the `of` operand carries multiple type
-                    ;; params (Map of (K, V), Pair of (A, B) etc). The
-                    ;; :inner slot becomes a :type-tuple node whose
-                    ;; :types is the ordered vector of sub-types.
-                    (and (at? tokens p :kw "of")
-                         (at? tokens (inc p) :punct "("))
-                    (loop [ts [] p (inc (inc p))]
-                      (let [[t p2] (parse-type tokens p)
-                            ts (conj ts t)]
-                        (cond
-                          (at? tokens p2 :punct ",")
-                          (recur ts (inc p2))
-                          (at? tokens p2 :punct ")")
-                          [{:node :type-of :outer name
-                            :inner {:node :type-tuple :types ts}}
-                           (inc p2)]
-                          :else
-                          (fail! tokens p2
-                                 "expected `,` or `)` in type-parameter list"))))
-
-                    (at? tokens p :kw "of")
-                    (let [[inner-t p2] (parse-type tokens (inc p))]
-                      [{:node :type-of :outer name :inner inner-t} p2])
-
+  (let [[inner p]
+        (cond
+          ;; F15 Landing 1 — paren-tuple type at start position. Two
+          ;; shapes disambiguated by peeking after the `(`:
+          ;;   (x: Int, y: Int)  — named tuple / shape (spec §3.2)
+          ;;   (Int, String)     — anonymous tuple (spec §3.2)
+          ;; Mixed forms are grammar errors: every field named, or none.
+          (at? tokens pos :punct "(")
+          (let [after-lp (inc pos)
+                ;; Named tuple iff `ident :` follows the `(`.
+                named? (and (at? tokens after-lp :ident)
+                            (at? tokens (inc after-lp) :punct ":"))]
+            (if named?
+              ;; (ident : type, ident : type, ...)
+              (loop [fields [] p after-lp]
+                (let [[nm p1] (expect tokens p :ident)
+                      _       (when-not (at? tokens p1 :punct ":")
+                                (fail! tokens p1
+                                       "expected `:` in named-tuple field decl"))
+                      [ty p2] (parse-type tokens (inc p1))
+                      fields  (conj fields {:name nm :type ty})]
+                  (cond
+                    (at? tokens p2 :punct ",")
+                    (recur fields (inc p2))
+                    (at? tokens p2 :punct ")")
+                    [{:node :type-named-tuple :fields fields} (inc p2)]
                     :else
-                    [{:node :type-ref :name name} p])
+                    (fail! tokens p2
+                           "expected `,` or `)` in named-tuple type"))))
+              ;; (type, type, ...) — anonymous tuple; error on mixed
+              ;; ident+colon form we didn't recognize as named.
+              (loop [ts [] p after-lp]
+                (let [[t p1] (parse-type tokens p)
+                      ts (conj ts t)]
+                  (cond
+                    (at? tokens p1 :punct ",")
+                    (recur ts (inc p1))
+                    (at? tokens p1 :punct ")")
+                    (if (= 1 (count ts))
+                      ;; `(T)` = paren-grouped single type; no tuple.
+                      [t (inc p1)]
+                      [{:node :type-tuple :types ts} (inc p1)])
+                    :else
+                    (fail! tokens p1
+                           "expected `,` or `)` in tuple type"))))))
+
+          :else
+          (let [[name p]  (expect tokens pos :ident)
+                [inner p] (cond
+                            ;; `T of ( K , V , ... )` — Layer 6 Step 8.
+                            ;; Paren-tuple as the `of` operand carries
+                            ;; multiple type params (Map of (K, V), Pair
+                            ;; of (A, B) etc). The :inner slot becomes a
+                            ;; :type-tuple node whose :types is the
+                            ;; ordered vector of sub-types.
+                            (and (at? tokens p :kw "of")
+                                 (at? tokens (inc p) :punct "("))
+                            (loop [ts [] p (inc (inc p))]
+                              (let [[t p2] (parse-type tokens p)
+                                    ts (conj ts t)]
+                                (cond
+                                  (at? tokens p2 :punct ",")
+                                  (recur ts (inc p2))
+                                  (at? tokens p2 :punct ")")
+                                  [{:node :type-of :outer name
+                                    :inner {:node :type-tuple :types ts}}
+                                   (inc p2)]
+                                  :else
+                                  (fail! tokens p2
+                                         "expected `,` or `)` in type-parameter list"))))
+
+                            (at? tokens p :kw "of")
+                            (let [[inner-t p2] (parse-type tokens (inc p))]
+                              [{:node :type-of :outer name :inner inner-t} p2])
+
+                            :else
+                            [{:node :type-ref :name name} p])]
+            [inner p]))
         [wrapped p] (if (at? tokens p :punct "?")
                       [{:node :type-nullable :inner inner} (inc p)]
                       [inner p])]
