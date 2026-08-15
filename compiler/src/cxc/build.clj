@@ -158,15 +158,22 @@
    recently emitted ObjC for any named example without hunting
    through test tmpdirs.
 
+   F55 Landing 3: optional `:target` key selects the platform prelude
+   (`prelude/target/<target>/*.cxc`). Defaults to `prelude/default-target`
+   (:macos) so existing callers are backward-compatible.
+
    Returns {:m-path <path> :bin-path <path> :status <clang-exit-code>
             :stdout <clang-stdout> :stderr <clang-stderr>
             :cache-hit? <bool>}."
-  [source name out-dir]
+  ([source name out-dir]
+   (compile-source-to-file source name out-dir {}))
+  ([source name out-dir {:keys [target] :or {target prelude/default-target}}]
   (let [_        (io/make-parents (io/file out-dir "placeholder"))
         parsed   (parse/parse source)
         _        (validate-imports parsed)
         _        (prelude/validate-no-prelude-collisions! parsed)
-        full-parsed (parse/parse (str prelude/source source))
+        prelude-src (prelude/assemble-source target)
+        full-parsed (parse/parse (str prelude-src source))
         deprecations (collect-deprecations full-parsed)
         _        (warn-deprecated-uses parsed deprecations)
         m-src    (-> full-parsed
@@ -200,7 +207,7 @@
          :status     exit
          :stdout     out
          :stderr     err
-         :cache-hit? false}))))
+         :cache-hit? false})))))
 
 (defn run-binary
   "Execute the compiled binary and return {:exit :stdout :stderr}."
@@ -253,8 +260,13 @@
    module boundaries) is a future Layer 6 followon — the entrypoint
    here proves the multi-file build shape and validates imports.
 
+   F55 Landing 3: `opts` map with `:target` selects the platform
+   prelude; passed through to `compile-source-to-file`.
+
    Same return shape as compile-source-to-file."
-  [src-dir name out-dir]
+  ([src-dir name out-dir]
+   (compile-directory-to-file src-dir name out-dir {}))
+  ([src-dir name out-dir opts]
   (let [dir     (io/file src-dir)
         _       (when-not (.isDirectory dir)
                   (throw (ex-info (str "src-dir is not a directory: " src-dir)
@@ -277,4 +289,4 @@
                                       e)))))
         combined (clojure.string/join "\n\n"
                                       (map strip-module-and-import-lines srcs))]
-    (compile-source-to-file combined name out-dir)))
+    (compile-source-to-file combined name out-dir opts))))

@@ -421,3 +421,26 @@
     (let [{:keys [exit stdout]} (compile-and-run "stdlib-basics")]
       (is (zero? exit))
       (is (= "11.000000\n" stdout)))))
+
+(deftest end-to-end-explicit-target-macos
+  (testing "F55 Landing 3 — passing `:target :macos` through the opts arity produces byte-equivalent output to the default arity (backward compat + wiring proof). Uses hello.cxc which touches no target-specific caps so behavior is identical; the assertion here is 'no regression from opts arity'."
+    (let [src     (example "hello")
+          out-dir (tmp-dir)
+          {:keys [status stderr bin-path]}
+          (build/compile-source-to-file src "hello" (.getPath out-dir) {:target :macos})]
+      (is (zero? status) (str "compile failed with explicit :macos target:\n" stderr))
+      (when (zero? status)
+        (let [{:keys [exit stdout]} (build/run-binary bin-path)]
+          (is (zero? exit))
+          (is (= "hello, world\n" stdout)))))))
+
+(deftest explicit-target-unknown-rejected
+  (testing "F55 Landing 3 — an unknown target name raises a targeted diagnostic naming the missing resource path"
+    (let [src     (example "hello")
+          out-dir (tmp-dir)
+          ex      (try (build/compile-source-to-file
+                        src "hello" (.getPath out-dir) {:target :nowhere})
+                       nil
+                       (catch clojure.lang.ExceptionInfo e e))]
+      (is (some? ex) "expected an exception for an unknown target")
+      (is (re-find #"prelude module resource missing" (ex-message ex))))))
