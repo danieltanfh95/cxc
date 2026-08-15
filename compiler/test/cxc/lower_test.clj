@@ -463,6 +463,62 @@ def main:
       (is (= "plusWithother:" (:selector msg)))
       (is (= 1 (count (:args msg)))))))
 
+;; F40 Landing 3 — reject non-compile-time-constant defaults.
+
+(deftest f40-record-field-default-computed-rejected
+  (testing "record V { x: Int = 1 + 1 } — arithmetic expr as default fails"
+    (let [ex (try
+               (lower-src "record V:\n    data:\n        x: Int = 1 + 1\n\ndef main:\n    -> running\n        do: print(V(x: 10).x)\n")
+               nil
+               (catch clojure.lang.ExceptionInfo e e))]
+      (is ex "expected exception")
+      (is (= :not-yet-implemented (:kind (ex-data ex))))
+      (is (re-find #"not a compile-time constant" (.getMessage ex))))))
+
+(deftest f40-record-field-default-call-rejected
+  (testing "record V { x: Int = foo() } — call as default fails"
+    (let [ex (try
+               (lower-src "record V:\n    data:\n        x: Int = foo()\n\ndef main:\n    -> running\n        do: print(V(x: 10).x)\n")
+               nil
+               (catch clojure.lang.ExceptionInfo e e))]
+      (is ex "expected exception")
+      (is (= :not-yet-implemented (:kind (ex-data ex))))
+      (is (re-find #"not a compile-time constant" (.getMessage ex))))))
+
+(deftest f40-atom-ctor-default-computed-rejected
+  (testing "def Widget(x: Int = 1 + 1) — arithmetic expr as ctor default fails"
+    (let [ex (try
+               (lower-src "def Widget(x: Int = 1 + 1):\n    data:\n        n: Int = x\n\ndef main:\n    -> running\n        do: print(Widget().n)\n")
+               nil
+               (catch clojure.lang.ExceptionInfo e e))]
+      (is ex "expected exception")
+      (is (= :not-yet-implemented (:kind (ex-data ex))))
+      (is (re-find #"not a compile-time constant" (.getMessage ex))))))
+
+(deftest f40-method-default-computed-rejected
+  (testing "record method with `factor: Int = 2 * 2` default fails"
+    (let [ex (try
+               (lower-src "record V:\n    data:\n        x: Int\n    methods:\n        function scaled(self, factor: Int = 2 * 2) -> Int:\n            return self.x * factor\n\ndef main:\n    -> running\n        do: print(V(x: 5).scaled())\n")
+               nil
+               (catch clojure.lang.ExceptionInfo e e))]
+      (is ex "expected exception")
+      (is (= :not-yet-implemented (:kind (ex-data ex))))
+      (is (re-find #"not a compile-time constant" (.getMessage ex))))))
+
+(deftest f40-neg-literal-default-accepted
+  (testing "record V { x: Int = -5 } — unary neg on literal is const"
+    (let [prog (lower-src "record V:\n    data:\n        x: Int = -5\n\ndef main:\n    -> running\n        do: print(V().x)\n")
+          call (first (main-work-body prog))
+          ctor (get-in call [:args 1 :target])]
+      (is (= :struct-lit (:node ctor)))
+      (is (= 1 (count (:fields ctor))))
+      (is (= "x" (get-in ctor [:fields 0 :name])))
+      ;; Lower rewrites the parser's :neg wrapper to :unary op "-"; the
+      ;; const-check happens on the parser AST and accepts :neg.
+      (let [v (get-in ctor [:fields 0 :value])]
+        (is (contains? #{:neg :unary} (:node v)))
+        (is (= 5 (get-in v [:expr :value])))))))
+
 ;; F40 Landing 2 — named args + default insertion on method calls.
 
 (deftest f40-atom-method-accepts-named-args

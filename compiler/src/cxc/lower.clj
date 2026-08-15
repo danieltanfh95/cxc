@@ -90,6 +90,45 @@
           (recur (or seen-default? (some? (:default p)))
                  (next ps)))))))
 
+(defn- default-expr-const-shape?
+  "Spec §3.8.5 rule 1: default expressions must be compile-time
+   constants. Permitted forms: primitive literals (int/float/string/
+   char/bool/nil, with or without unit), unary `-`/`not` wrapping a
+   permitted form, and bare identifiers (value-alias references —
+   validated as-such once value aliases land; treated permissively
+   pre-alias).
+
+   Explicitly rejected: calls, dots, subscripts, binops, collection
+   literals, message-shapes, emit sites, blocks, ifs, switches."
+  [expr]
+  (case (:node expr)
+    (:lit-int :lit-float :lit-string :lit-char
+     :lit-int-unit :lit-float-unit
+     :lit-nil :lit-bool)             true
+    :ident                           true
+    (:neg :not)                      (default-expr-const-shape? (:expr expr))
+    false))
+
+(defn- validate-default-is-const!
+  "Reject user-authored defaults that aren't compile-time constants
+   per spec §3.8.5 rule 1. Skips params/fields whose :default is nil
+   (no default) and those marked `:cxc-f41-synthesized` or
+   `:cxc-compiler-synthesized` (compiler-inserted defaults for
+   nested slots / use-caps aren't user surface)."
+  [site params]
+  (doseq [p params
+          :let [d (:default p)]
+          :when (and (some? d)
+                     (not (:cxc-f41-synthesized p))
+                     (not (:cxc-compiler-synthesized p)))]
+    (when-not (default-expr-const-shape? d)
+      (fail-nyi! (str "default for `" (:name p) "` on " site
+                      " is not a compile-time constant (spec §3.8.5 "
+                      "permits primitive literals, `nil`, unary `-`/"
+                      "`not` on those, or a value-alias identifier); "
+                      "got `" (:node d) "` node")
+                 {:site site :param (:name p) :default-node (:node d)}))))
+
 (defn- program-has-async-sends?
   "Walk the parsed AST for any `:emit` node with `:async? true` — a
    `:>` targeted send OR an untargeted stream emission. Programs
@@ -434,10 +473,10 @@
   [record-name methods-section]
   (mapv (fn [m]
           (let [rt          (:return-type m)
-                user-params (remove #(= "self" (:name %)) (:params m))]
-            (validate-defaults-after-required!
-             (str "method `" record-name "." (:name m) "`")
-             user-params)
+                user-params (remove #(= "self" (:name %)) (:params m))
+                site        (str "method `" record-name "." (:name m) "`")]
+            (validate-defaults-after-required! site user-params)
+            (validate-default-is-const!       site user-params)
             {:name               (:name m)
              :params             (mapv #(normalize-method-param record-name %) (:params m))
              :cxc-return-ty      (case (:node rt)
@@ -464,9 +503,9 @@
              dsec    (first (filter #(= :data-section    (:node %)) (:sections r)))
              msec    (first (filter #(= :methods-section (:node %)) (:sections r)))
              fields  (fields-from-data-section dsec env atom-env enum-env)
-             _       (validate-defaults-after-required!
-                      (str "record `" name "` fields (auto-ctor)")
-                      fields)
+             site    (str "record `" name "` fields (auto-ctor)")
+             _       (validate-defaults-after-required! site fields)
+             _       (validate-default-is-const!       site fields)
              methods (extract-methods name msec)
              ;; F38 auto-detect: any method → :class variant, else :struct.
              ;; Structural trigger, no user syntax.
@@ -918,12 +957,14 @@
              cap-idents     (mapv (fn [c] {:node :ident :name (:name c)}) use-caps)
              cap-as-params  (mapv (fn [c] {:name (:name c) :type (:type c) :default nil})
                                   use-caps)
-             cap-as-fields  (mapv (fn [c id] {:name (:name c) :type (:type c) :default id})
+             cap-as-fields  (mapv (fn [c id] {:name (:name c) :type (:type c) :default id
+                                              :cxc-compiler-synthesized true})
                                   use-caps cap-idents)
              nested-as-fields (mapv
                                (fn [s]
                                  {:name (:name s)
                                   :type (:type s)
+                                  :cxc-compiler-synthesized true
                                   :default
                                   {:node :call
                                    :callee {:node :ident :name (base-type-name (:type s))}
@@ -965,8 +1006,9 @@
                        (if (f41-eligible? f)
                          (-> acc
                              (update :fields conj
-                                     (assoc f :default
-                                            {:node :ident :name (:name f)}))
+                                     (assoc f
+                                            :default {:node :ident :name (:name f)}
+                                            :cxc-f41-synthesized true))
                              (update :ctor-params conj
                                      {:name (:name f) :type (:type f)
                                       :default nil
@@ -1005,9 +1047,15 @@
                                ;; check runs on the wide source before
                                ;; the narrowing store.
                                (narrow-fields-by-invariants invariants))
-             _             (validate-defaults-after-required!
-                            (str "def-atom `" name "` ctor-params")
-                            merged-ctor)
+             _             (let [site (str "def-atom `" name "` ctor-params")]
+                             (validate-defaults-after-required! site merged-ctor)
+                             (validate-default-is-const!       site merged-ctor))
+             ;; NOTE: atom `data:` field defaults are field
+             ;; INITIALIZERS, not ctor-param defaults — the auto-ctor
+             ;; produced by F41 uses ctor-params (which get const-
+             ;; checked above), and any default on a field runs in the
+             ;; field initializer, not at the ctor call site. Spec
+             ;; §3.8.5 governs param defaults, so no const-check here.
              ctor-params   (ctor-params-normalized merged-ctor {} env enum-env)
              methods       (extract-methods name msec)
              message-index (collect-message-shapes name transitions)
