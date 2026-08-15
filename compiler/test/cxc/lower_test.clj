@@ -351,6 +351,50 @@ def main:
       (is (= "cxc_installParent:inSlot:" (:selector install-msg)))
       (is (= "cell" (get-in install-msg [:args 1 :value]))))))
 
+(deftest f31-f35-l4-atom-typed-data-field-becomes-slot
+  (testing "F31/F35 Landing 4 — an atom-typed `data:` field with a default (eager Foo() or nil) participates in the slot machinery: parent installs back-ref at ctor time and cascades on -transitionToEnd. Retires the pre-L4 gap where only invented `def slot: Type` nested-atoms received back-refs. Spec-canonical `data:` form now matches (§1.11)."
+    (let [prog (lower-src "def Helper:\n    -> alive\n\ndef X:\n    data:\n        h: Helper = Helper()\n\ndef main:\n    def x: X\n    -> running\n        do: print(0)\n")
+          x-cls (first (filter #(= "X" (:name %)) (:classes prog)))
+          state (first (filter #(= "cxc_stateInit" (:selector %)) (:methods x-cls)))
+          install-msg (second (:body state))
+          end   (first (filter #(= "transitionToEnd" (:selector %)) (:methods x-cls)))
+          catch-wrap (first (filter #(= :end-catch-log-only (:node %)) (:body end)))
+          cascade-child (first (filter #(= :end-cascade-child (:node %))
+                                       (:body catch-wrap)))]
+      (is (= :objc-msg (:node install-msg)) "second stmt is install-parent-msg")
+      (is (= "cxc_installParent:inSlot:" (:selector install-msg))
+          "install fires on the freshly-constructed Helper")
+      (is (= "h" (get-in install-msg [:args 1 :value]))
+          "slot name matches the data-field name")
+      (is (some? cascade-child)
+          "F31/F35 L4 — data-field slot participates in -transitionToEnd cascade")
+      (is (= "h" (:slot-name cascade-child))
+          "cascade targets the data-field slot"))))
+
+(deftest f31-f35-l4-nil-default-data-field-cascades-nil-safe
+  (testing "F31/F35 Landing 4 — `data: h: Helper = nil` still gets the install/cascade wiring; the runtime calls on nil are no-ops (ObjC nil-messaging). Verifies the broadened filter doesn't break nullable atom-typed fields."
+    (let [prog (lower-src "def Helper:\n    -> alive\n\ndef X:\n    data:\n        h: Helper = nil\n\ndef main:\n    def x: X\n    -> running\n        do: print(0)\n")
+          x-cls (first (filter #(= "X" (:name %)) (:classes prog)))
+          state (first (filter #(= "cxc_stateInit" (:selector %)) (:methods x-cls)))
+          install-msg (second (:body state))]
+      (is (= :objc-msg (:node install-msg))
+          "install-parent still emitted for nil-default slot")
+      (is (= "cxc_installParent:inSlot:" (:selector install-msg))
+          "runtime nil-messaging swallows the call at zero cost"))))
+
+(deftest f31-f35-l4-f41-synthesized-field-not-a-slot
+  (testing "F31/F35 Landing 4 — a no-default atom-typed data field is F41-sugared to a required ctor param (caller-provided reference). Since ownership is ambiguous, it is NOT treated as an owned slot — no back-ref, no cascade. Preserves the caller-supplies-shared-reference semantics."
+    (let [prog (lower-src "def Helper:\n    -> alive\n\ndef X:\n    data:\n        h: Helper\n\ndef main:\n    def hh: Helper\n    def x: X(h: hh)\n    -> running\n        do: print(0)\n")
+          x-cls (first (filter #(= "X" (:name %)) (:classes prog)))
+          state (first (filter #(and (:selector %)
+                                     (str/starts-with? (:selector %) "cxc_stateInit"))
+                               (:methods x-cls)))
+          install-msgs (filter #(and (= :objc-msg (:node %))
+                                     (= "cxc_installParent:inSlot:" (:selector %)))
+                               (:body state))]
+      (is (empty? install-msgs)
+          "no install-parent for F41-synthesized ctor-param fields"))))
+
 (deftest self-loop-transition-does-not-fire-wildcard
   (testing "`alive <: bump -> alive` targets same phase → wildcard on alive does NOT re-fire (would recurse)"
     (let [prog (lower-src "def Counter:

@@ -1203,7 +1203,36 @@
              ;; Names of fields that are nested-slot children — Step 11
              ;; installs a parent back-ref on each after construction, and
              ;; -transitionToEnd cascades end into each on this atom's end.
-             slot-names    (mapv :name nested-slots)]
+             ;;
+             ;; F31/F35 Landing 4 broadens the set to include ordinary
+             ;; atom-typed `data:` fields (the spec-canonical form). A
+             ;; field qualifies iff its declared type resolves to a
+             ;; regular-kind atom (excludes primitives, records, enums,
+             ;; and synthesized container atoms). `use:` cap fields and
+             ;; F41-synthesized ctor-param fields carry an explicit
+             ;; `:cxc-compiler-synthesized` marker and are excluded —
+             ;; caps live in the shared env, not as owned children.
+             ;; Nested-slot F34 fields are already in `nested-as-fields`
+             ;; and re-collected here via the same predicate.
+             non-slot-kinds #{:list-container :map-container :set-container
+                              :runtime-provided}
+             regular-atom-name?
+             (fn [nm]
+               (let [info (get env nm)]
+                 (and info
+                      (not (contains? non-slot-kinds (:kind info))))))
+             data-slot-names
+             (vec
+              (keep (fn [f]
+                      (let [ty-nm (base-type-name (:type f))]
+                        (when (and (not (:cxc-compiler-synthesized f))
+                                   (not (:cxc-f41-synthesized f))
+                                   (regular-atom-name? ty-nm))
+                          (:name f))))
+                    (:fields merged-dsec)))
+             slot-names    (vec (distinct
+                                 (into (mapv :name nested-slots)
+                                       data-slot-names)))]
          (assoc env name {:fields        fields
                           :field-index   (into {} (map (juxt :name identity) fields))
                           :ctor-params   ctor-params
