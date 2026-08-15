@@ -2473,14 +2473,19 @@
       direct-send)))
 
 (defn- lower-send
-  "Lower a targeted `:emit` node to a `cxc_send_async` / `cxc_send_sync`
-   runtime helper call. Untargeted `:>` fans out through the enclosing
-   atom's synthesized stream emit method (Step 13). Payload args are
-   matched by name against the receiver's declared `msg{...}` payload
-   shape (design §9/§12) — arg order in the sender may differ from
-   receiver declaration order. Sync sends are direct method calls under
-   Layer 4 single-thread (design §15); Layer 4c upgrades them to real
-   `dispatch_sync` when queue targets differ."
+  "Lower a targeted `:emit` node to a `cxc_send_async` /
+   `cxc_wait_for_processing` runtime helper call. Untargeted `:>` fans
+   out through the enclosing atom's synthesized stream emit method
+   (Step 13). Payload args are matched by name against the receiver's
+   declared `msg{...}` payload shape (design §9/§12) — arg order in the
+   sender may differ from receiver declaration order.
+
+   F31/F35 L1 — sync send lowers to `cxc_wait_for_processing`
+   (spec framing: `|>` is a processing barrier, not send-with-reply).
+   Under Layer 4 single-main-queue, the helper is a nil-guarded direct
+   call with a debug-build queue-invariant assertion. F32 flips it to
+   `dispatch_sync` onto the target's queue — the emit site is the sole
+   substitution point. See plans/f31-f35-concurrency.md L1."
   [node ctx]
   (if (nil? (:target node))
     (lower-stream-emit node ctx)
@@ -2512,7 +2517,7 @@
         arg-exprs (mapv (fn [{:keys [value]}] (lower-expr value ctx)) resolved)
         param-names (mapv :name (:payload msg-shape))
         selector  (objc-method-selector msg-name param-names)
-        helper    (if (:async? node) "cxc_send_async" "cxc_send_sync")]
+        helper    (if (:async? node) "cxc_send_async" "cxc_wait_for_processing")]
     {:node :call
      :fn   helper
      :args [target-lo

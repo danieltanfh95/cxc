@@ -638,9 +638,16 @@
   ;;   - nilSlot: parent-side nested-slot auto-nil (§7.2)
   ;;   - transitionToEnd: cascade entry-point (§7.3)
   ;; Helpers cast id → id<CXCAtom> for calls that need those messages,
-  ;; cheaper than KVC / objc_msgSend / dynamic lookup. `cxc_send_sync`
-  ;; under Layer 4 single-thread is a nil-guarded direct call; Layer
-  ;; 4c retargets to dispatch_sync when queue targets differ.
+  ;; cheaper than KVC / objc_msgSend / dynamic lookup.
+  ;;
+  ;; F31/F35 Landing 1 — the sync-send primitive is `cxc_wait_for_processing`
+  ;; (spec framing: `|>` is a processing barrier, not "send with reply").
+  ;; Under Layer 4 (CXC_SINGLE_MAIN_QUEUE) every atom's queue targets
+  ;; main, so the primitive is a direct call. Under F32 (concurrent
+  ;; queues) it upgrades to `dispatch_sync` onto the target's queue plus
+  ;; cycle-detection scaffolding — the emit site is the single hook that
+  ;; substitutes when the runtime toggle flips. See
+  ;; plans/f31-f35-concurrency.md L1.
   (str "@protocol CXCAtom\n"
        "@property (nonatomic, strong) dispatch_queue_t own_queue;\n"
        ;; Layer 5c lifecycle cleanup — atoms carry an NSMutableArray of
@@ -673,9 +680,25 @@
        "    if (target == nil) return;\n"
        "    dispatch_async([(id<CXCAtom>)target own_queue], block);\n"
        "}\n\n"
-       "static inline void cxc_send_sync(id target, void (^block)(void)) {\n"
+       ;; F31/F35 L1 — sync-send primitive. Under Layer 4 (single main
+       ;; queue), direct call is correct because every atom's own_queue
+       ;; targets main and the caller is on main. The debug-build
+       ;; dispatch_assert_queue verifies the invariant (fires only if
+       ;; the queue target ever silently changes). F32 flips the else
+       ;; branch to `dispatch_sync` onto the target's queue.
+       "#ifndef CXC_SINGLE_MAIN_QUEUE\n"
+       "#define CXC_SINGLE_MAIN_QUEUE 1\n"
+       "#endif\n\n"
+       "static inline void cxc_wait_for_processing(id target, void (^block)(void)) {\n"
        "    if (target == nil) return;\n"
+       "#if CXC_SINGLE_MAIN_QUEUE\n"
+       "#ifdef DEBUG\n"
+       "    dispatch_assert_queue([(id<CXCAtom>)target own_queue]);\n"
+       "#endif\n"
        "    block();\n"
+       "#else\n"
+       "    dispatch_sync([(id<CXCAtom>)target own_queue], block);\n"
+       "#endif\n"
        "}\n\n"
        "static inline void cxc_shutdown(void) {\n"
        "    exit(0);\n"

@@ -1316,6 +1316,23 @@ def main:
     -> running
 ")))))
 
+(deftest f31-f35-l1-sync-send-lowers-to-wait-for-processing
+  (testing "F31/F35 Landing 1 — `|>` sync send lowers to `cxc_wait_for_processing` (spec framing: `|>` is a processing barrier). Retires the old `cxc_send_sync` name; under Layer 4 CXC_SINGLE_MAIN_QUEUE the helper is a nil-guarded direct call, under F32 it upgrades to dispatch_sync — the emit site is the sole substitution point."
+    (let [prog (lower-src "def Sink:\n    data:\n        n: Int = 0\n\n    -> alive\n\n    alive <: absorb -> alive\n        then: n => n + 1\n\ndef main:\n    def sink: Sink\n\n    -> running\n        do:\n            sink |> absorb\n")
+          main-cls (first (filter #(= "CxcMain" (:name %)) (:classes prog)))
+          state-body (:body (first (filter #(clojure.string/starts-with?
+                                             (:selector %) "cxc_stateInit")
+                                           (:methods main-cls))))
+          send-call (some (fn [stmt]
+                            (when (and (= :call (:node stmt))
+                                       (clojure.string/includes?
+                                        (or (:fn stmt) "") "cxc_"))
+                              stmt))
+                          state-body)]
+      (is (some? send-call) "expected a cxc_* send helper in main's state-init")
+      (is (= "cxc_wait_for_processing" (:fn send-call))
+          "sync send lowers to the renamed helper, not the retired cxc_send_sync"))))
+
 (deftest f39-l1-nullable-on-atom-rejected
   (testing "F39 Landing 1 — `T?` where T is a reference type (atom) is spec-refused as redundant (§3.6.1: reference types are already nil-allowed). Diagnostic names the type and points at the drop-the-`?` fix."
     (is (thrown-with-msg?
