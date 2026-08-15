@@ -103,7 +103,6 @@
   [expr]
   (case (:node expr)
     (:lit-int :lit-float :lit-string :lit-char
-     :lit-int-unit :lit-float-unit
      :lit-nil :lit-bool)             true
     :ident                           true
     (:neg :not)                      (default-expr-const-shape? (:expr expr))
@@ -1723,16 +1722,6 @@
     :lit-int    :int
     :lit-float  :float
     :lit-nil    :nil
-    :lit-int-unit   (fail-nyi! (str "unit-suffixed integer literal `"
-                                    (:value node) (:unit node)
-                                    "` — needs stdlib type for unit "
-                                    "`" (:unit node) "` (Layer 5.4)")
-                               node)
-    :lit-float-unit (fail-nyi! (str "unit-suffixed float literal `"
-                                    (:value node) (:unit node)
-                                    "` — needs stdlib type for unit "
-                                    "`" (:unit node) "` (Layer 5.4)")
-                               node)
     :lambda     (if (empty? (:params node))
                   ;; Layer 6 Step 12 — zero-arg lambda's type is :block.
                   ;; MVP restricts to void-return, so no signature to
@@ -2160,16 +2149,6 @@
     :lit-int    {:node :int   :value (:value node)}
     :lit-float  {:node :float :value (:value node)}
     :lit-nil    {:node :nil}
-    :lit-int-unit   (fail-nyi! (str "unit-suffixed integer literal `"
-                                    (:value node) (:unit node)
-                                    "` — needs stdlib type for unit "
-                                    "`" (:unit node) "` (Layer 5.4)")
-                               node)
-    :lit-float-unit (fail-nyi! (str "unit-suffixed float literal `"
-                                    (:value node) (:unit node)
-                                    "` — needs stdlib type for unit "
-                                    "`" (:unit node) "` (Layer 5.4)")
-                               node)
     :lambda     (if (empty? (:params node))
                   ;; Layer 6 Step 12 — zero-arg lambda `() => <expr>`
                   ;; lowers to an ObjC block literal `^{ <stmt>; }`.

@@ -141,44 +141,12 @@
    through `assemble-source` waits on Landing 3."
   (assemble-source default-target))
 
-(def duration-units
-  "Recognized unit suffixes on numeric literals. Value = multiplier
-   into `millis` — the canonical unit for `Duration`. Layer 5.4
-   scope: time only; other physical dimensions (bytes, distance) are
-   spec-committed but wait for a program that needs them.
-
-   Fractional multipliers (e.g. `1.5s` at :float-unit) are handled
-   by the same table via double arithmetic before construction."
-  {"ms"  1
-   "s"   1000
-   "min" 60000})
-
-(defn- desugar-unit-literal
-  "Rewrite a `:lit-int-unit` or `:lit-float-unit` node into an
-   equivalent `Duration(millis: N)` construction if the unit is one
-   of the recognized time units. Unrecognized units drop through
-   (lower still fails on them, keeping the diagnostic tied to a
-   real user surface).
-
-   Post-rename note: this runs INSIDE `rewrite-prelude-names`'s
-   walker, which has already mapped `Duration` → `_Cxc_Duration`
-   at the type-ref level — but the synthesized ctor callee here is
-   a fresh `:ident` node we insert *after* renaming has traversed
-   the tree, so we spell the mangled name directly."
-  [node]
-  (let [unit (:unit node)
-        mult (get duration-units unit)]
-    (if-not mult
-      node
-      (let [raw   (:value node)
-            millis (if (= :lit-float-unit (:node node))
-                     (long (Math/round ^double (double (* raw mult))))
-                     (* raw mult))]
-        {:node   :call
-         :callee {:node :ident :name "_Cxc_Duration"}
-         :args   [{:kind  :named
-                   :name  "millis"
-                   :value {:node :lit-int :value millis}}]}))))
+;; F5 retirement (2026-08-15): unit-suffix desugaring (`100ms`,
+;; `2s`, `1.5min` → `Duration(millis: N)`) is retired per spec
+;; §2.7.1 (suffix syntax not part of v1). Users construct dimensioned
+;; values via the type's ordinary constructor. Lex + parse reject the
+;; suffix at source-position with a targeted diagnostic; this walker
+;; only needs to handle class-member desugars now.
 
 (def ^:private class-member-desugars
   "Static-like accessors on prelude record types. Rewrite
@@ -252,21 +220,19 @@
    maps (nested type nodes) and get renamed recursively by
    postwalk's own descent, not by this fn's direct value check.
 
-   Also desugars unit-suffixed numeric literals (`1000ms`, `1.5s`)
-   into `_Cxc_Duration(millis: N)` calls at the same walk — same
-   post-parse timing, same postwalk mechanism.
-
    Safe to run over any parsed AST — the rename table only contains
    specific prelude names, so a program that never mentions them is
-   an identity transform."
+   an identity transform.
+
+   Unit-suffix desugaring (formerly `1000ms` → `_Cxc_Duration(millis:
+   1000)`) was retired 2026-08-15 per spec §2.7.1 (F5). Users
+   construct dimensioned values via the type's ordinary constructor;
+   lex + parse reject the suffix form at source-position."
   [nodes]
   (walk/postwalk
     (fn [x]
       (if (map? x)
         (cond
-          (contains? #{:lit-int-unit :lit-float-unit} (:node x))
-          (desugar-unit-literal x)
-
           (= :dot (:node x))
           (desugar-class-member x)
 

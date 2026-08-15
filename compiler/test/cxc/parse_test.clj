@@ -135,19 +135,24 @@
     (is (= "other" (get-in (second stmts) [:target :name])))
     (is (= "tick" (:msg (second stmts))))))
 
-(deftest unit-suffixed-numbers
-  (let [n (first-node "def A:
-    data:
-        d: Duration = 200ms
-        f: Float = 2.5s
-")
-        [d f] (-> n :body first :fields)]
-    (is (= :lit-int-unit (get-in d [:default :node])))
-    (is (= 200 (get-in d [:default :value])))
-    (is (= "ms" (get-in d [:default :unit])))
-    (is (= :lit-float-unit (get-in f [:default :node])))
-    (is (= 2.5 (get-in f [:default :value])))
-    (is (= "s" (get-in f [:default :unit])))))
+(deftest f5-unit-suffix-retired
+  (testing "F5: numeric literals with unit suffix (`200ms`, `2.5s`) lex-error per spec §2.7.1"
+    (let [ex (try
+               (first-node "def A:\n    data:\n        d: Duration = 200ms\n")
+               nil
+               (catch clojure.lang.ExceptionInfo e e))]
+      (is ex "expected lex-error")
+      (is (= :lex-unit-suffix-retired (:kind (ex-data ex))))
+      (is (= "ms" (:suffix (ex-data ex))))
+      (is (re-find #"unit suffixes are not part of v1" (.getMessage ex)))
+      (is (re-find #"Duration\(millis: 200\)" (.getMessage ex))))
+    (let [ex (try
+               (first-node "def A:\n    data:\n        f: Float = 2.5s\n")
+               nil
+               (catch clojure.lang.ExceptionInfo e e))]
+      (is ex "expected lex-error for float form")
+      (is (= :lex-unit-suffix-retired (:kind (ex-data ex))))
+      (is (= "s" (:suffix (ex-data ex)))))))
 
 (deftest nested-atom-slot
   (let [n (first-node "def Game:

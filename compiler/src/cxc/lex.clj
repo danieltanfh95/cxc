@@ -74,15 +74,21 @@
             (recur (inc j) buf))))))
 
 (defn- scan-number
-  "Scan digits, optional single dot for float (no exponent for v1.0-lite),
-   and optional trailing unit-suffix identifier (`1000ms`, `500ms`, `16ms`,
-   `2.5s`). Returns [numeric-substring unit-or-nil end-index kind]."
-  [s i]
+  "Scan digits and an optional single dot for float (no exponent for
+   v1.0-lite). Returns [numeric-substring end-index kind].
+
+   F5 retirement (2026-08-15): unit suffixes (`100ms`, `2s`, `1.5min`,
+   etc.) are no longer accepted per spec §2.7.1 (\"suffix syntax is not
+   part of v1\"). A digit immediately followed by a letter raises a
+   targeted lex error pointing at the offending run. Users construct
+   dimensioned values via the type's ordinary constructor
+   (e.g. `Duration(millis: 100)`)."
+  [s i line-no]
   (let [n (count s)]
     (loop [j i seen-dot? false]
       (cond
         (>= j n)
-        [(subs s i j) nil j (if seen-dot? :float :int)]
+        [(subs s i j) j (if seen-dot? :float :int)]
 
         (Character/isDigit (.charAt s j))
         (recur (inc j) seen-dot?)
@@ -94,20 +100,26 @@
         (recur (inc j) true)
 
         (Character/isLetter (.charAt s j))
-        ;; unit suffix: consume identifier chars up to non-word
         (let [unit-start j]
           (loop [k j]
             (if (and (< k n)
                      (let [c (.charAt s k)]
                        (or (Character/isLetterOrDigit c) (= c \_))))
               (recur (inc k))
-              [(subs s i unit-start)
-               (subs s unit-start k)
-               k
-               (if seen-dot? :float :int)])))
+              (throw (ex-info
+                      (str "numeric literal with unit suffix at line " line-no
+                           ", col " (inc unit-start) ": `" (subs s i k)
+                           "` — unit suffixes are not part of v1 (spec §2.7.1). "
+                           "Use the type constructor instead, e.g. "
+                           "`Duration(millis: " (subs s i unit-start) ")`.")
+                      {:kind      :lex-unit-suffix-retired
+                       :line      line-no
+                       :col       (inc unit-start)
+                       :numeric   (subs s i unit-start)
+                       :suffix    (subs s unit-start k)})))))
 
         :else
-        [(subs s i j) nil j (if seen-dot? :float :int)]))))
+        [(subs s i j) j (if seen-dot? :float :int)]))))
 
 (defn- scan-word [s i]
   (let [n (count s)]
@@ -144,16 +156,11 @@
           (recur j (conj! out [:string s line-no (inc i)])))
 
         (Character/isDigit (.charAt line i))
-        (let [[num unit j kind] (scan-number line i)
+        (let [[num j kind] (scan-number line i line-no)
               value (if (= kind :int)
                       (Long/parseLong num)
-                      (Double/parseDouble num))
-              tok-kind (cond
-                         (and unit (= kind :int))   :int-unit
-                         (and unit (= kind :float)) :float-unit
-                         :else                       kind)
-              tok-val  (if unit {:value value :unit unit} value)]
-          (recur j (conj! out [tok-kind tok-val line-no (inc i)])))
+                      (Double/parseDouble num))]
+          (recur j (conj! out [kind value line-no (inc i)])))
 
         (or (Character/isLetter (.charAt line i)) (= \_ (.charAt line i)))
         (let [[w j] (scan-word line i)]

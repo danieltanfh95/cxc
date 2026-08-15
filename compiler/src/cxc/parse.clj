@@ -276,10 +276,6 @@
       :float  [{:node :lit-float  :value (t-value t)} (inc pos)]
       :string [{:node :lit-string :value (t-value t)} (inc pos)]
       :char   [{:node :lit-char   :value (t-value t)} (inc pos)]
-      :int-unit   (let [{:keys [value unit]} (t-value t)]
-                    [{:node :lit-int-unit :value value :unit unit} (inc pos)])
-      :float-unit (let [{:keys [value unit]} (t-value t)]
-                    [{:node :lit-float-unit :value value :unit unit} (inc pos)])
       :kw     (case (t-value t)
                 "self"  [{:node :self}    (inc pos)]
                 "nil"   [{:node :lit-nil} (inc pos)]

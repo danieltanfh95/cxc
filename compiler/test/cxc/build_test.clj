@@ -390,9 +390,9 @@
       (is (zero? exit))
       (is (= "1\n" stdout)))))
 
-(deftest end-to-end-unit-literals
-  (testing "unit-literals.cxc — Layer 5.4 unit literal desugar. Numeric literals with a recognized time-unit suffix (`500ms`, `2s`) rewrite at post-parse to `_Cxc_Duration(millis: N)` calls, with the multiplier baked in (`s` → *1000). Rewrite happens in `rewrite-prelude-names` so no lower changes needed. Expression `500ms.millis + 2s.millis` computes 500 + 2000 = 2500. Retires the `unit-suffixed integer literal` fail-nyi for the recognized units — unrecognized units still surface the diagnostic."
-    (let [{:keys [exit stdout]} (compile-and-run "unit-literals")]
+(deftest end-to-end-duration-basics
+  (testing "duration-basics.cxc — F5 retirement. Unit suffixes (`500ms`, `2s`, `16ms`) removed per spec §2.7.1 (\"suffix syntax is not part of v1\"). Users construct durations explicitly via `Duration(millis: N)`; suffix machinery in lex + prelude retired. Expression `Duration(millis: 500).millis + Duration(millis: 2000).millis` computes 500 + 2000 = 2500."
+    (let [{:keys [exit stdout]} (compile-and-run "duration-basics")]
       (is (zero? exit))
       (is (= "2500\n" stdout)))))
 
@@ -417,7 +417,7 @@
           "expected pre-store diagnostic naming construction site + source value violation"))))
 
 (deftest end-to-end-stdlib-basics
-  (testing "stdlib-basics.cxc — three stdlib additions in one program. (1) Prelude `Position` record with `x: Float, y: Float`; ctor + field access. (2) `clamp(x, lo, hi)` compiler builtin — polymorphic on first arg's numeric type (Int here), lowers to nested-ternary via a fresh :ffi-call with an inline emit-c-fn. (3) `Instant.epoch` desugars at rewrite-prelude-names to `Instant(millis: 0)` — same walk that handles unit-literals; a small closed set of prelude class-member statics registered in `class-member-desugars`. Program: `clamp(15,0,10) + Instant.epoch.millis + Position(x:1.0, y:2.0).x` → 10 + 0 + 1.0 = 11.0."
+  (testing "stdlib-basics.cxc — three stdlib additions in one program. (1) Prelude `Position` record with `x: Float, y: Float`; ctor + field access. (2) `clamp(x, lo, hi)` compiler builtin — polymorphic on first arg's numeric type (Int here), lowers to nested-ternary via a fresh :ffi-call with an inline emit-c-fn. (3) `Instant.epoch` desugars at rewrite-prelude-names to `Instant(millis: 0)` — a small closed set of prelude class-member statics registered in `class-member-desugars`. Program: `clamp(15,0,10) + Instant.epoch.millis + Position(x:1.0, y:2.0).x` → 10 + 0 + 1.0 = 11.0."
     (let [{:keys [exit stdout]} (compile-and-run "stdlib-basics")]
       (is (zero? exit))
       (is (= "11.000000\n" stdout)))))
