@@ -2288,12 +2288,13 @@
             (lower-print node ctx)
 
             (= "clamp" callee-name)
-            ;; Polymorphic numeric clamp. Emits a nested ternary
-            ;; `((x)<(lo) ? (lo) : ((x)>(hi) ? (hi) : (x)))` — one
-            ;; conditional per bound, no branches on the outer form.
-            ;; Preserves signedness: integer args stay integer,
-            ;; float args stay float. Only two-way choice C ternary
-            ;; suffices because clamp has no non-numeric branch.
+            ;; Polymorphic numeric clamp. F46: bind each arg to a
+            ;; local via GNU statement-expression + `__typeof__`, so
+            ;; side-effectful expressions fire once each. Prior
+            ;; emit rendered x three times, lo twice, hi twice —
+            ;; visible to `clamp(counter.next(), 0, 100)` and
+            ;; friends. Preserves signedness: `__typeof__` picks
+            ;; the exact C type of each argument.
             (let [args (:args node)
                   [x-arg lo-arg hi-arg] (map :value args)]
               {:node :ffi-call
@@ -2303,9 +2304,13 @@
                       (lower-expr hi-arg ctx)]
                :emit-c-fn (fn [rendered]
                             (let [[x lo hi] rendered]
-                              (str "((" x ") < (" lo ") ? (" lo ") : "
-                                   "((" x ") > (" hi ") ? (" hi ") : ("
-                                   x ")))")))})
+                              (str "({ "
+                                   "__typeof__(" x ") __cxc_cv = (" x "); "
+                                   "__typeof__(" lo ") __cxc_clo = (" lo "); "
+                                   "__typeof__(" hi ") __cxc_chi = (" hi "); "
+                                   "__cxc_cv < __cxc_clo ? __cxc_clo : "
+                                   "(__cxc_cv > __cxc_chi ? __cxc_chi : "
+                                   "__cxc_cv); })")))})
 
             (ffi-builtin? callee-name)
             (let [spec (get ffi-builtins callee-name)
