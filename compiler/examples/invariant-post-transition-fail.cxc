@@ -1,10 +1,12 @@
 def Gauge:
     data:
-        value: Int = 3
-        max:   Int = 5
+        raw_value: Int = 3
+        max:       Int = 5
+
+    value :< raw_value
 
     invariants:
-        value <= max
+        raw_value <= max
 
     -> alive
         do:
@@ -13,7 +15,7 @@ def Gauge:
             self |> bump
 
     alive <: bump -> alive
-        then: value => value + 1
+        then: raw_value => raw_value + 1
 
 def main:
     -> running

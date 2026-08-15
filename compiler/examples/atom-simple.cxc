@@ -1,6 +1,8 @@
 def Counter:
     data:
-        n: Int = 42
+        raw_n: Int = 42
+
+    n :< raw_n
 
 def main:
     -> running

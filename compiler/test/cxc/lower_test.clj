@@ -174,7 +174,7 @@
 (deftest f40-atom-ctor-duplicate-named-arg-rejected
   (testing "duplicate named arg on atom ctor fails"
     (let [ex (try
-               (lower-src "def Widget(a: Int, b: Int):\n    data:\n        n: Int = a\n\ndef main:\n    -> running\n        do: print(Widget(a: 1, a: 2, b: 3).n)\n")
+               (lower-src "def Widget(a: Int, b: Int):\n    data:\n        n: Int = a\n\ndef main:\n    def w: Widget(a: 1, a: 2, b: 3)\n\n    -> running\n        do: print(0)\n")
                nil
                (catch clojure.lang.ExceptionInfo e e))]
       (is ex "expected exception")
@@ -184,7 +184,7 @@
 (deftest f40-atom-ctor-unknown-named-arg-rejected
   (testing "unknown named arg on atom ctor fails"
     (let [ex (try
-               (lower-src "def Widget(a: Int):\n    data:\n        n: Int = a\n\ndef main:\n    -> running\n        do: print(Widget(a: 1, ghost: 2).n)\n")
+               (lower-src "def Widget(a: Int):\n    data:\n        n: Int = a\n\ndef main:\n    def w: Widget(a: 1, ghost: 2)\n\n    -> running\n        do: print(0)\n")
                nil
                (catch clojure.lang.ExceptionInfo e e))]
       (is ex "expected exception")
@@ -193,7 +193,7 @@
 
 (deftest def-atom-lowers-to-objc-class
   (testing "def-atom with data:-only → :objc-class with @property ivars + -init defaults"
-    (let [prog (lower-src "def Counter:\n    data:\n        n: Int = 42\n\ndef main:\n    -> running\n        do: print(Counter().n)\n")
+    (let [prog (lower-src "def Counter:\n    data:\n        n: Int = 42\n\ndef main:\n    def c: Counter\n\n    -> running\n        do: print(0)\n")
           cls  (first (:classes prog))]
       (is (= :objc-class (:node cls)))
       (is (= "Counter" (:name cls)))
@@ -229,18 +229,23 @@
                (:body state)))))))
 
 (deftest def-atom-ctor-lowers-to-alloc-init
-  (testing "Counter() in expression position → :objc-alloc-init"
-    (let [prog (lower-src "def Counter:\n    data:\n        n: Int = 42\n\ndef main:\n    -> running\n        do: print(Counter().n)\n")
-          ;; main-as-atom (Steps 16/17): the print call lives inside
-          ;; CxcMain's cxc_stateInit body, not directly in main().
-          call (first (main-work-body prog))
-          ctor (get-in call [:args 1 :target])]
+  (testing "Counter in def-slot position → :objc-alloc-init"
+    (let [prog (lower-src "def Counter:\n    data:\n        n: Int = 42\n\ndef main:\n    def c: Counter\n\n    -> running\n        do: print(0)\n")
+          main-cls (first (filter #(= "CxcMain" (:name %)) (:classes prog)))
+          state-body (:body (first (filter #(clojure.string/starts-with?
+                                             (:selector %) "cxc_stateInit")
+                                           (:methods main-cls))))
+          ctor (some (fn [stmt]
+                       (when (and (= :assign (:node stmt))
+                                  (= "_c" (get-in stmt [:lhs :sym])))
+                         (:rhs stmt)))
+                     state-body)]
       (is (= :objc-alloc-init (:node ctor)))
       (is (= "Counter" (:class ctor))))))
 
 (deftest def-atom-triggers-foundation-and-autoreleasepool
   (testing "presence of an ObjC class flips includes to Foundation and wraps main in @autoreleasepool"
-    (let [prog (lower-src "def Counter:\n    data:\n        n: Int = 42\n\ndef main:\n    -> running\n        do: print(Counter().n)\n")]
+    (let [prog (lower-src "def Counter:\n    data:\n        n: Int = 42\n\ndef main:\n    def c: Counter\n\n    -> running\n        do: print(0)\n")]
       ;; Foundation for ObjC; stdlib for cxc_shutdown() (needed by every
       ;; atom class's transitionToEnd cascade infrastructure).
       (is (some #{"<Foundation/Foundation.h>"} (:includes prog)))
@@ -257,7 +262,7 @@
 
 (deftest wildcard-on-enter-inlined-into-init
   (testing "initial-phase wildcard on-enter → its then:/do: append to :init-body after data defaults"
-    (let [prog (lower-src "def Ticker:\n    data:\n        n: Int = 0\n\n    -> incremented\n        then: n => n + 1\n\ndef main:\n    -> running\n        do: print(Ticker().n)\n")
+    (let [prog (lower-src "def Ticker:\n    data:\n        n: Int = 0\n\n    -> incremented\n        then: n => n + 1\n\ndef main:\n    def t: Ticker\n\n    -> running\n        do: print(0)\n")
           cls  (first (:classes prog))]
       ;; State-init runs data defaults then the initial-phase on-enter body.
       ;; Structural setup owns queue + phase = initial constant.
@@ -388,10 +393,19 @@ def main:
 
 (deftest atom-ctor-params-lower-to-init-with
   (testing "def-atom with ctor params → :init-params on class + :objc-init-with at call site"
-    (let [prog (lower-src "def Counter(initial: Int = 0):\n    data:\n        n: Int = initial\n\ndef main:\n    -> running\n        do: print(Counter(initial: 42).n)\n")
+    (let [prog (lower-src "def Counter(initial: Int = 0):\n    data:\n        n: Int = initial\n\ndef main:\n    def c: Counter(initial: 42)\n\n    -> running\n        do: print(0)\n")
           cls  (first (filter #(= "Counter" (:name %)) (:classes prog)))
-          call (first (main-work-body prog))
-          ctor (get-in call [:args 1 :target])]
+          ;; ctor call is inside main's :init-body — the def-slot form
+          ;; lowers to an assign to _c whose rhs is the alloc/init.
+          main-cls (first (filter #(= "CxcMain" (:name %)) (:classes prog)))
+          state-body (:body (first (filter #(clojure.string/starts-with?
+                                             (:selector %) "cxc_stateInit")
+                                           (:methods main-cls))))
+          ctor (some (fn [stmt]
+                       (when (and (= :assign (:node stmt))
+                                  (= "_c" (get-in stmt [:lhs :sym])))
+                         (:rhs stmt)))
+                     state-body)]
       (is (= [{:name "initial" :c-type "int64_t"}] (:init-params cls)))
       ;; -init shell calls cxc_structuralSetup, cxc_stateInitWithinitial:initial,
       ;; cxc_runtimeBinding — ctor-params thread through the state-init selector.
@@ -620,7 +634,7 @@ def main:
 
 (deftest is-nil-emits-pointer-eq
   (testing "`x is nil` → `x == nil` at emit layer (pointer identity in ObjC)"
-    (let [prog (lower-src "def Counter:\n    data:\n        other: Counter? = nil\n\ndef main:\n    -> running\n        do: print(Counter().other is nil)\n")
+    (let [prog (lower-src "def Counter:\n    data:\n        raw_other: Counter? = nil\n\n    other :< raw_other\n\ndef main:\n    -> running\n        do: print(Counter().other is nil)\n")
           call (first (main-work-body prog))
           expr (get-in call [:args 1])]
       (is (= :binop (:node expr)))
@@ -648,9 +662,16 @@ def main:
 
 (deftest atom-ctor-params-default-fills-when-omitted
   (testing "Counter() with no args uses ctor-param defaults"
-    (let [prog (lower-src "def Counter(initial: Int = 5):\n    data:\n        n: Int = initial\n\ndef main:\n    -> running\n        do: print(Counter().n)\n")
-          call (first (main-work-body prog))
-          ctor (get-in call [:args 1 :target])]
+    (let [prog (lower-src "def Counter(initial: Int = 5):\n    data:\n        n: Int = initial\n\ndef main:\n    def c: Counter\n\n    -> running\n        do: print(0)\n")
+          main-cls (first (filter #(= "CxcMain" (:name %)) (:classes prog)))
+          state-body (:body (first (filter #(clojure.string/starts-with?
+                                             (:selector %) "cxc_stateInit")
+                                           (:methods main-cls))))
+          ctor (some (fn [stmt]
+                       (when (and (= :assign (:node stmt))
+                                  (= "_c" (get-in stmt [:lhs :sym])))
+                         (:rhs stmt)))
+                     state-body)]
       (is (= :objc-init-with (:node ctor)))
       (is (= [{:name "initial" :value {:node :int :value 5}}] (:args ctor))))))
 
@@ -1159,8 +1180,10 @@ def Container:
         xs: List of Int
 
 def main:
+    def a: Age(value: 42)
+
     -> running
-        do: print(Age(value: 42).value)
+        do: print(0)
 ")
           age-cls  (first (filter #(= "Age" (:name %)) (:classes prog)))
           age-init-params (:init-params age-cls)
@@ -1187,8 +1210,10 @@ def main:
         value <= 150
 
 def main:
+    def a: Age(value: 42)
+
     -> running
-        do: print(Age(value: 42).value)
+        do: print(0)
 ")
           cls (first (filter #(= "Age" (:name %)) (:classes prog)))
           value-prop (first (filter #(= "value" (:name %)) (:properties cls)))
@@ -1290,3 +1315,22 @@ def main:
 
     -> running
 ")))))
+
+(deftest f33-l1-cross-atom-data-field-read-rejected
+  (testing "F33 Landing 1 — reading a `data:` field from outside the enclosing atom is a compile error. Spec §1.11: data-fields are internal; external reads must go through an observable or reader method. Diagnostic names the field, the owner atom, cites §1.11, and offers both migration paths."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"cross-atom `data:` field access.*`n`.*`Counter`.*§1\.11.*observable.*reader method"
+         (lower-src "def Counter:\n    data:\n        n: Int = 42\n\ndef main:\n    -> running\n        do: print(Counter().n)\n")))))
+
+(deftest f33-l1-observable-read-still-allowed
+  (testing "F33 Landing 1 exempts observables. `n :< raw_n` on the atom exposes the field to external reads without violating encapsulation."
+    (let [prog (lower-src "def Counter:\n    data:\n        raw_n: Int = 42\n\n    n :< raw_n\n\ndef main:\n    -> running\n        do: print(Counter().n)\n")]
+      (is (= :objc-program (:node prog))
+          "compiles cleanly — observable read is spec-legal"))))
+
+(deftest f33-l1-self-field-read-still-allowed
+  (testing "F33 Landing 1 exempts self-field reads. Inside the atom's own method / invariant / transition body, `self.n` (or bare `n`) reads the data field directly — the guard only fires for cross-atom reads."
+    (let [prog (lower-src "def Counter:\n    data:\n        n: Int = 10\n\n    methods:\n        function bump(self) -> Int:\n            return self.n + 1\n\ndef main:\n    def c: Counter\n\n    -> running\n        do: print(0)\n")]
+      (is (= :objc-program (:node prog))
+          "self.n inside Counter's own method compiles cleanly"))))

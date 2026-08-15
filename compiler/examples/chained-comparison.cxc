@@ -1,11 +1,13 @@
 def Bounded:
     data:
-        lo:  Int = 0
-        val: Int = 5
-        hi:  Int = 10
+        lo:      Int = 0
+        raw_val: Int = 5
+        hi:      Int = 10
+
+    val :< raw_val
 
     invariants:
-        lo <= val <= hi
+        lo <= raw_val <= hi
 
 def main:
     -> running

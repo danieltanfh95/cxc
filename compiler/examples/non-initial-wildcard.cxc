@@ -1,6 +1,8 @@
 def Machine:
     data:
-        n: Int = 0
+        raw_n: Int = 0
+
+    n :< raw_n
 
     -> ready
         do:
@@ -10,11 +12,11 @@ def Machine:
     # Wildcard on `armed`: sets n to 100 on entry.
     # Fires when `arm` transitions us in — not on init (init lands us in `ready`).
     -> armed
-        then: n => 100
+        then: raw_n => 100
 
     ready <: arm  -> armed
     armed <: fire -> done
-        then: n => n + 1
+        then: raw_n => raw_n + 1
 
 def main:
     -> running

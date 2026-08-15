@@ -69,6 +69,9 @@
   (throw (ex-info (str "lowering not yet implemented: " what)
                   {:kind :not-yet-implemented :what what :node node})))
 
+(defn- fail-compile! [kind msg node]
+  (throw (ex-info msg {:kind kind :what msg :node node})))
+
 (defn- validate-defaults-after-required!
   "Spec §3.8.5 rule 3: in any parameter list, all defaulted params must
    follow all non-defaulted (required) params. `f(x: Int = 0, y: Int)`
@@ -1690,15 +1693,48 @@
                          (:record-env ctx) (:atom-env ctx) (:enum-env ctx) node))
 
     (and (map? owner-ty) (:atom owner-ty))
-    (let [owner (:atom owner-ty)
-          f     (get-in (:atom-env ctx) [owner :field-index field-name])
-          o     (get-in (:atom-env ctx) [owner :observable-index field-name])]
+    (let [owner     (:atom owner-ty)
+          f         (get-in (:atom-env ctx) [owner :field-index field-name])
+          o         (get-in (:atom-env ctx) [owner :observable-index field-name])
+          ;; Fallback: infer-observables-in-atom-env may not yet have
+          ;; typed this atom's observables when we're mid-pass on a
+          ;; peer atom that references it. Use the raw `:observables`
+          ;; list to detect the observable's existence; type inference
+          ;; below re-runs on the raw expression.
+          raw-obs   (some #(when (= field-name (:name %)) %)
+                          (get-in (:atom-env ctx) [owner :observables]))
+          self-atom (:atom (get-in ctx [:locals "self"]))]
       (cond
+        ;; F33 Landing 1 — reject cross-atom `data:` field reads. Spec
+        ;; §1.11: `data:` fields are internal to the enclosing atom;
+        ;; external code sees entrypoints, observables, emissions. The
+        ;; happy accident of ObjC `@property`-synthesized getters is
+        ;; spec-invalid — see plans/f33-encapsulation.md L1.
+        (and f (not o) (not raw-obs) (not= owner self-atom))
+        (fail-compile! :cxc-f33-cross-atom-data-access
+                       (str "cross-atom `data:` field access: `"
+                            field-name "` is a data-field on atom `"
+                            owner "` and cannot be read from outside "
+                            "(spec §1.11). Fix: on `" owner "`, add "
+                            "either an observable `" field-name " :< <expr>` "
+                            "or a reader method `function " field-name
+                            "(self) -> T: return self." field-name "`.")
+                       node)
+
         f (cxc-type->type-kw (:cxc-ty f)
                              (:record-env ctx) (:atom-env ctx) (:enum-env ctx) node)
         ;; Observables read like fields — dot syntax on an ObjC object
         ;; dispatches to our synthesized zero-arg method.
         o (:type-kw o)
+        ;; Peer-atom observable not yet typed in this pass — infer its
+        ;; expression against the owner's own self-fields.
+        raw-obs (let [owner-fields (into {} (map (juxt :name identity)
+                                                 (get-in (:atom-env ctx)
+                                                         [owner :fields])))
+                      obs-ctx (assoc ctx :self-fields owner-fields
+                                     :locals (assoc (or (:locals ctx) {})
+                                                    "self" {:atom owner}))]
+                  (infer-type (:expr raw-obs) obs-ctx))
         :else
         (fail-nyi! (str "field/observable `" field-name "` on atom `" owner "`") node)))
 
@@ -2252,9 +2288,17 @@
     :dot        (if (enum-case-access? node ctx)
                   {:node :name
                    :sym  (str (get-in node [:target :name]) "_" (:field node))}
-                  {:node   :field
-                   :target (lower-expr (:target node) ctx)
-                   :field  (:field node)})
+                  (do
+                    ;; F33 Landing 1 — reject cross-atom `data:` field
+                    ;; reads. infer-type triggers field-type-for-owner
+                    ;; which owns the diagnostic; call it here so a bare
+                    ;; `.field` in a stmt context (where lower-expr
+                    ;; doesn't otherwise type-check) still catches it.
+                    (field-type-for-owner (infer-type (:target node) ctx)
+                                          ctx (:field node) node)
+                    {:node   :field
+                     :target (lower-expr (:target node) ctx)
+                     :field  (:field node)}))
     :subscript  (fail-nyi! (str "subscript `expr[i]` — parses (spec §3.9) "
                                 "but not yet lowered. Container index access "
                                 "waits on F42 (from_literal) + F43 (container-"

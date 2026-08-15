@@ -1,7 +1,10 @@
 def Counter:
     data:
-        n:     Int      = 5
-        other: Counter? = nil
+        raw_n:     Int      = 5
+        raw_other: Counter? = nil
+
+    n     :< raw_n
+    other :< raw_other
 
 def main:
     -> running

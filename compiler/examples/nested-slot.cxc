@@ -1,6 +1,8 @@
 def Paddle:
     data:
-        y: Int = 7
+        raw_y: Int = 7
+
+    y :< raw_y
 
 def Game:
     def paddle: Paddle

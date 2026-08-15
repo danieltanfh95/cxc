@@ -1,11 +1,13 @@
 def Sink:
     data:
-        total: Int = 0
+        raw_total: Int = 0
+
+    total :< raw_total
 
     -> alive
 
     alive <: absorb{amount: Int} -> alive
-        then: total => total + amount
+        then: raw_total => raw_total + amount
 
 def Source:
     use:
@@ -17,5 +19,8 @@ def Source:
             sink |> absorb(amount: 5)
 
 def main:
+    def sink: Sink
+    def src: Source(sink: sink)
+
     -> running
-        do: print(Source(sink: Sink()).sink.total)
+        do: print(sink.total)

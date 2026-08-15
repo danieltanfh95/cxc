@@ -1,10 +1,12 @@
 def Player:
     data:
         max_hp: Int = 30
-        hp: Int = 0
+        raw_hp: Int = 0
+
+    hp :< raw_hp
 
     -> alive
-        then: hp => max_hp
+        then: raw_hp => max_hp
 
 def main:
     -> running

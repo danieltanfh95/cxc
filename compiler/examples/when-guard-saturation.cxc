@@ -1,7 +1,9 @@
 def Counter:
     data:
-        n:   Int = 0
-        max: Int = 3
+        raw_n: Int = 0
+        max:   Int = 3
+
+    n :< raw_n
 
     -> alive
         do:
@@ -10,8 +12,8 @@ def Counter:
             self |> bump
             self |> bump
 
-    alive <: bump when: n < max -> alive
-        then: n => n + 1
+    alive <: bump when: raw_n < max -> alive
+        then: raw_n => raw_n + 1
 
 def main:
     -> running

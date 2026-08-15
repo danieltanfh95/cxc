@@ -1,6 +1,8 @@
 def Counter:
     data:
-        n: Int = 0
+        raw_n: Int = 0
+
+    n :< raw_n
 
     -> alive
         do:
@@ -9,7 +11,7 @@ def Counter:
             self |> add(by: 3)
 
     alive <: add{by: Int} when: by > 0 -> alive
-        then: n => n + by
+        then: raw_n => raw_n + by
 
 def main:
     -> running

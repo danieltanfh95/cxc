@@ -1,6 +1,8 @@
 def OffsetSource:
     data:
-        offset: Int = 1000
+        raw_offset: Int = 1000
+
+    offset :< raw_offset
 
 def Timer:
     use:

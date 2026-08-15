@@ -1,10 +1,12 @@
 def Bounded(y: Int = 5, limit: Int = 10):
     data:
-        val: Int = y
-        lim: Int = limit
+        raw_val: Int = y
+        lim:     Int = limit
+
+    val :< raw_val
 
     invariants:
-        -lim <= val <= lim
+        -lim <= raw_val <= lim
 
 def main:
     def b: Bounded(y: 3, limit: 7)

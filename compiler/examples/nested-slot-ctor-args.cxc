@@ -1,6 +1,8 @@
 def Cell(v: Int = 0):
     data:
-        stored: Int = v
+        raw_stored: Int = v
+
+    stored :< raw_stored
 
 def Container:
     def cell: Cell(v: 99)

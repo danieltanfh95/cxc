@@ -1,9 +1,12 @@
-def Age:
+def Age(value: Int):
     data:
-        value: Int
+        raw_value: Int = value
+
+    value :< raw_value
+
     invariants:
-        0 <= value
-        value <= 150
+        0 <= raw_value
+        raw_value <= 150
 
 def main:
     -> running
