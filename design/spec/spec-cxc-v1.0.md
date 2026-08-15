@@ -2441,7 +2441,7 @@ Because these are prelude aliases, they are inspectable — users can look up wh
 
 **Types are atoms. Predicates are contracts, not refinements.** Every "primitive type" is a first-class atom with `data:` + `value :<` observable + optional `invariants:` — the same mechanism used for user-defined types (§1.3). There is no primitive/refined distinction. The set below is what the prelude ships; user domain types (Age, UserId, Percent, ...) are declared the same way and get the same treatment.
 
-**Domain code writes bare `Nat`/`Int` (or a domain-narrowing atom like `Age`) and puts value ranges in `invariants:`.** Sized atoms (`UInt8`, `Int32`, `Float`, `Double`, ...) appear in interop code and where explicit width matters (protocols, hardware registers, FFI). They are not the primary surface for domain code.
+**Prelude ships the concrete substrate.** Sized atoms (`UInt8`/`Int8`/`UInt16`/`Int16`/`UInt32`/`Int32`/`UInt64`/`Int64`, `Float`, `Double`), plus `Bool`, `Char`, `String`, `Bytes`, `Unit`, `Never`, `Any`, plus bare `Int` (aliased to `Int64` as the ergonomic default). Domain narrowing types (`Nat`, `Age`, `UserId`, `Percent`, `Port`, ...) are **NOT** in the prelude — users define them as ordinary atoms using the same `data:` + `value :<` + `invariants:` mechanism the prelude uses. `Nat` in the exploration file is an example of what a user-defined narrowing atom looks like, not a prelude commitment.
 
 #### 3.1.1 The Derivation
 
@@ -2487,22 +2487,37 @@ def Int8:
 
 **`UInt16`, `UInt32`, `UInt64`, `Int16`, `Int32`, `Int64`** — same pattern with `List of Byte` and a `count == N` invariant on the raw bytes. The `value :<` observable delegates to the corresponding `bit_ops.decode_*` prelude function.
 
-**`Nat` and `Int`** — variable-width unsigned/signed. No fixed byte count. The compiler picks a sized representation from the enclosing atom's declared invariants on the field.
+**`Int`** — bare signed integer. **Aliased to `Int64` in the prelude.** No prelude-level "compiler picks representation" behavior; users who want tighter representation write a domain atom that wraps `Int` with narrower invariants (see below).
 
 ```
+# Prelude:
+alias Int = Int64
+```
+
+**Domain narrowing (user-defined, NOT in prelude).** A user who wants a bounded non-negative integer defines the domain atom themselves — same mechanism as any other user type:
+
+```
+# User code:
 def Nat:
     data:
-        raw: List of Byte
-    value :< bit_ops.decode_uint_variable(raw)
+        raw: Int
     invariants:
         value >= 0
 
-def Int:
+def Age:
     data:
-        raw: List of Byte
-    value :< bit_ops.decode_int_variable(raw)
-    # No lower/upper bound — user narrows via containing atom's invariants
+        raw: Nat
+    invariants:
+        value in 0..150
+
+def Port:
+    data:
+        raw: Int
+    invariants:
+        value in 1..65535
 ```
+
+The compiler picks storage for these domain atoms from their declared invariants — `Age` compiles to `UInt8` storage; `Port` to `UInt16`. See §3.1.2 for the picker rules.
 
 **`Float`, `Double`** — IEEE 754 single- and double-precision. Fixed width per `bytes.length` invariant.
 
@@ -2559,25 +2574,23 @@ def Char:
 
 The compiler picks a machine-instruction representation for each numeric field from its **declared invariants**, following these rules:
 
-1. **Sized atoms (`UInt8`, `Int32`, `Float`, `Double`, ...) pin the representation.** A field typed `hp: UInt16` gets 16-bit unsigned storage always. The atom's `bytes.count == N` invariant fixes the width.
+1. **Sized atoms (`UInt8`, `Int32`, `Float`, `Double`, ...) pin the representation.** A field typed `hp: UInt16` gets 16-bit unsigned storage always. The atom's `raw.count == N` invariant fixes the width.
 
-2. **Bare `Nat` picks the smallest unsigned representation that satisfies the enclosing atom's invariants on the field.** A field `hp: Nat` in an atom with `invariants: hp in 0..999` compiles to UInt16 storage. Without a bounds invariant on the field, `Nat` defaults to UInt64.
+2. **Bare `Int` is Int64.** A field `hp: Int` gets 64-bit signed storage. No picker runs — `Int` is a prelude alias for `Int64`.
 
-3. **Bare `Int` picks the smallest signed representation similarly.** Default: Int64.
+3. **User-defined domain atoms picked by the compiler based on the domain atom's own invariants**, propagated through the `data:` chain. Example: user defines `Age` wrapping `Int` with `invariants: value in 0..150`; a field `player_age: Age` compiles to UInt8 storage. Same rule for user-defined `Nat`, `Port`, `Percent`, `UserId`, etc. — the compiler reads the domain atom's invariants and picks the narrowest sized-atom representation that satisfies them, then elides the wrapper at runtime.
 
-4. **Domain atoms (`Age`, `HP`, `UserId`, ...) picked by the compiler based on the domain atom's own invariants**, propagated through the `data:` chain. Example: `Age` wraps `Nat` with `invariants: value in 0..150`; a field `player_age: Age` compiles to UInt8 storage.
+4. **No use-based inference.** The compiler reads what's WRITTEN in `invariants:` — nothing more. If the user wants tight representation, they define a domain atom with narrower invariants. If the user writes bare `Int`, they get Int64. This keeps representation choice source-visible: a reader knows what the compiler picked by reading the invariants, not by running an inspection tool. Contracts stay load-bearing (spec §1.3) rather than becoming optional performance hints.
 
-5. **No use-based inference.** The compiler reads what's WRITTEN in `invariants:` — nothing more. If the user wants tight representation, they write the invariant. If the user writes no invariant, they get the conservative default. This keeps representation choice source-visible: a reader knows what the compiler picked by reading the invariants, not by running an inspection tool. Contracts stay load-bearing (spec §1.3) rather than becoming optional performance hints.
+5. **Bit-pattern types (`Int`, sized ints, `Float`, `Double`, `Bool`, user-defined domain atoms wrapping any of these) have no nil representation** — atoms without nil-annotation are non-nil per §3.6.1. Reference-shaped types (`String`, `Bytes`, `Char`, `Any`) get nil-allowed status when annotated as receivers because the runtime carries them via handles.
 
-6. **Bit-pattern types (`Int`, `Nat`, sized ints, `Float`, `Double`, `Bool`) have no nil representation** — records without nil-annotation are non-nil per §3.6.1. Reference-shaped types (`String`, `Bytes`, `Char`, `Any`) get nil-allowed status when annotated as receivers because the runtime carries them via handles.
-
-7. **Storage is a compiler specialization invisible to the surface.** Semantically primitives ARE atoms with the derivation above; the compiler emits inline machine words (or a heap handle for reference-shaped types) as an optimization. `.as() -> Bytes` and structural equality synthesize from the atom's `data:` shape via §3.4.6.
+6. **Storage is a compiler specialization invisible to the surface.** Semantically primitives ARE atoms with the derivation in §3.1.1; the compiler emits inline machine words (or a heap handle for reference-shaped types) as an optimization. `.as() -> Bytes` and structural equality synthesize from the atom's `data:` shape via §3.4.6.
 
 **Numeric literals infer their atom name from context** (§2.7). `Char` literals use `'x'` form; `String` literals use `"..."` form; both support C-style and Unicode escape sequences.
 
-**Arithmetic across mixed widths.** Arithmetic between values of different sized atoms (e.g. `x: UInt8 + y: UInt16`) requires explicit widening at the call site — user calls a widening constructor (`UInt16.from(x)`) or a widen operator per §3.11. No implicit promotion. Arithmetic between two `Nat`-typed fields is compiled per the wider of their picked representations.
+**Arithmetic across mixed widths.** Arithmetic between values of different sized atoms (e.g. `x: UInt8 + y: UInt16`) requires explicit widening at the call site — user calls a widening constructor (`UInt16.from(x)`) or a widen operator per §3.11. No implicit promotion. Arithmetic between two same-width sized atoms produces a value of that width (with overflow contract per the operation chosen — `plus` with `requires` for no-overflow, `wrapping_plus` for mod-2^N, `saturating_plus` for clamped).
 
-**Escape hatches deferred to v1.1+.** Explicit representation pins (`Integer as i64`, `#[repr]` markers) for hot-loop performance, and full use-based / whole-graph representation inference (Julia-style), are v1.1+ work. v1.0 ships the invariant-driven picker only. See design/working-notes for the design horizon.
+**Escape hatches deferred to v1.1+.** Explicit representation pins (`Int as i64` etc.), full use-based / whole-graph representation inference (Julia-style), and prelude-shipped `Nat`/`Port`/etc. domain atoms are v1.1+ work. v1.0 ships the concrete substrate + invariant-driven picker for user-defined domain atoms only. See design/working-notes for the design horizon.
 
 #### 3.1.3 The Any Type
 
