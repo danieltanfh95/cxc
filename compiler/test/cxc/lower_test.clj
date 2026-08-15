@@ -672,6 +672,38 @@ def main:
       (is (= "double"   (field-c-type "d"))  "Double is 64-bit IEEE 754")
       (is (= "int"      (field-c-type "b"))  "Bool unchanged — future work"))))
 
+(deftest non-numeric-substrate-lowers-to-correct-c-types
+  (testing "Phase D F36a Landing 3a — spec §3.1 non-numeric substrate (Unit/Never/Any/Bytes). Bytes and Any resolve as reference-typed field storage; Unit and Never resolve as `void` return types. Char is deferred pending grapheme cluster design; `()` literal syntax + Any runtime dispatch are follow-on landings."
+    (let [prog (lower-src "record NonNumeric:
+    data:
+        payload: Bytes
+        opaque:  Any
+
+    methods:
+        function noop(self)  -> Unit:
+            return self.opaque
+        function fatal(self) -> Never:
+            return self.opaque
+
+def main:
+    -> running
+        do: print(1)
+")
+          rec  (first (filter #(= "NonNumeric" (:name %)) (:structs prog)))
+          field-c-type (fn [n] (-> (filter #(= n (:name %)) (:fields rec))
+                                   first :c-type))
+          fn-return-type (fn [n] (-> (filter #(= n (:name %)) (:functions prog))
+                                     first :return-type))]
+      (is (some? rec) "NonNumeric struct emitted")
+      (is (= "NSMutableData *" (field-c-type "payload"))
+          "Bytes → NSMutableData * (reference-shaped, §3.10.4)")
+      (is (= "id" (field-c-type "opaque"))
+          "Any → id (dynamic dispatch boundary, §3.1.3)")
+      (is (= "void" (fn-return-type "NonNumeric_noop"))
+          "Unit return → void (§3.1.1 — one-value type)")
+      (is (= "void" (fn-return-type "NonNumeric_fatal"))
+          "Never return → void (§3.1.1 — divergent; _Noreturn attribute is a follow-on)"))))
+
 (deftest in-operator-raises-targeted-diagnostic
   (testing "Audit F47: `x in y` parses as a binop but its semantic lowering (dispatch to a container `contains` method — spec §1.3 membership predicates) is Phase D work. Silently emitting the literal token `in` into the generated C causes clang to fail far from the source; lower now raises a targeted diagnostic naming the operator so the failure points to the actual language feature."
     (is (thrown-with-msg?

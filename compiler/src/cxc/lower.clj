@@ -117,6 +117,26 @@
    "Double"  "double"       ; §3.1: 64-bit IEEE 754
    "String"  "const char *"
    "Bool"    "int"
+   ;; Phase D F36a Landing 3a — spec §3.1 non-numeric substrate.
+   ;;
+   ;; Unit: the type with exactly one value, `()`. Return-position only for
+   ;; MVP; usage as field/param yields a clang-visible `void field;` error.
+   ;; `()` literal syntax + typed use in expression position is a follow-on.
+   ;;
+   ;; Never: divergent return. Emitted as `void` for MVP; `_Noreturn`
+   ;; attribute wiring depends on flow analysis and lands separately.
+   ;;
+   ;; Any: dynamic type per §3.1.3. Ships as ObjC `id` — nil-allowable
+   ;; at C level, which matches the runtime-typed nature. Method dispatch
+   ;; on Any values (runtime lookup, fail-if-no-selector) is a follow-on.
+   ;;
+   ;; Bytes: mutable byte buffer, reference-shaped per §3.10.4. Ships as
+   ;; NSMutableData *. Method surface (append/read/slice/length/...) is a
+   ;; follow-on Bytes-methods landing.
+   "Unit"    "void"
+   "Never"   "void"
+   "Any"     "id"
+   "Bytes"   "NSMutableData *"
    ;; Layer 6 Step 12 — escaping-block field type. MVP is zero-arg
    ;; void return only; a future landing generalizes to
    ;; `Block[(params) -> R]` grammar with full signature support.
@@ -266,6 +286,14 @@
     "Double" :float
     "String" :string
     "Bool"   :bool
+    ;; Phase D F36a Landing 3a — non-numeric substrate. Each gets a
+    ;; distinct type-kw so infer-type can reject arithmetic on them
+    ;; (Unit/Never/Any/Bytes are not numeric family) and so downstream
+    ;; type-kw->c-type resolves them to the correct C type.
+    "Unit"   :unit
+    "Never"  :never
+    "Any"    :any
+    "Bytes"  :bytes
     ;; Layer 6 Step 12 — Block is a first-class type at the type-kw
     ;; level so infer-call-type / lower-expr can dispatch on it when
     ;; a self-field-typed callee gets invoked.
@@ -317,6 +345,10 @@
     (= :float  tk) "double"
     (= :string tk) "const char *"
     (= :bool   tk) "int"
+    (= :unit   tk) "void"
+    (= :never  tk) "void"
+    (= :any    tk) "id"
+    (= :bytes  tk) "NSMutableData *"
     (= :block  tk) "void (^)(void)"
     ;; Width variants carry their C type in metadata (Landing 1b).
     (and (vector? tk) (:cxc-c-type (meta tk))) (:cxc-c-type (meta tk))
