@@ -76,7 +76,7 @@ def UInt8:
     value :< bit_ops.decode_uint(raw.bits)         # interpretation lives HERE, not on Byte
 
     invariants:
-        value in 0..255                             # follows from Byte having 8 bits;
+        0 <= value <= 255                           # follows from Byte having 8 bits;
                                                     # invariant states the contract explicitly
 
 
@@ -90,7 +90,7 @@ def Int8:
     value :< bit_ops.decode_int_2c(raw.bits)
 
     invariants:
-        value in -128..127
+        -128 <= value <= 127
 
 
 # ---- Char -------------------------------------------------------------------
@@ -103,7 +103,7 @@ def Char:
     value :< bit_ops.ascii_decode(raw.bits)         # a Char, not an Int
 
     invariants:
-        bit_ops.decode_uint(raw.bits) in 0..127     # only ASCII range is valid Char
+        0 <= bit_ops.decode_uint(raw.bits) <= 127   # only ASCII range is valid Char
 
 
 # ---- Nat --------------------------------------------------------------------
@@ -132,7 +132,7 @@ def Age:
     value :< raw.value
 
     invariants:
-        value in 0..150
+        0 <= value <= 150
 
 
 # ---- UInt16, UInt32 ---------------------------------------------------------
@@ -143,7 +143,7 @@ def UInt16:
         raw: List of Byte
     invariants:
         raw.count == 2                                            # two bytes = 16 bits
-        value in 0..65535
+        0 <= value <= 65535
 
     value :< bit_ops.decode_uint_bytes(raw, endian: little)       # ??? endian choice pinned?
 
@@ -153,7 +153,7 @@ def UInt32:
         raw: List of Byte
     invariants:
         raw.count == 4
-        value in 0..(2^32 - 1)
+        0 <= value <= 2^32 - 1
 
     value :< bit_ops.decode_uint_bytes(raw, endian: little)
 
@@ -198,8 +198,8 @@ def saturating_plus(self: UInt8, other: UInt8) -> UInt8
 #
 #   UInt8 is this case:
 #     Byte's invariant: bits.count == 8
-#     bit_ops.decode_uint's ensures: result in 0..(2^bits.count - 1)
-#     UInt8's invariant: value in 0..255
+#     bit_ops.decode_uint's ensures: 0 <= result <= 2^bits.count - 1
+#     UInt8's invariant: 0 <= value <= 255
 #   Compiler derivation: 0..(2^8 - 1) = 0..255. Proved. Zero runtime cost.
 #
 # Path 2 — runtime check at construction.
@@ -209,7 +209,7 @@ def saturating_plus(self: UInt8, other: UInt8) -> UInt8
 #
 #   Age is this case:
 #     Nat's invariant: value >= 0
-#     Age's invariant: value in 0..150
+#     Age's invariant: 0 <= value <= 150
 #   Compiler can't prove `value <= 150` from Nat alone. `Age{raw: some_nat}`
 #   compiles to an implicit runtime check that fires at construction.
 
@@ -237,7 +237,7 @@ age: Age = Age{raw: some_nat}                   # aborts if some_nat.value > 150
 age_result: Result of Age = Age.try(raw: some_nat)
 
 def Age.try(raw: Nat) -> Result of Age
-    ensures result is ok(a) implies a.value in 0..150:
+    ensures result is ok(a) implies 0 <= a.value <= 150:
     ...
 
 # Rule:
@@ -276,7 +276,7 @@ def Age.try(raw: Nat) -> Result of Age
 # can; runtime check or Result-form otherwise.
 
 def bit_ops.narrow_u16_to_u8(u16: UInt16) -> UInt8
-    requires u16.value in 0..255
+    requires 0 <= u16.value <= 255
     ensures  result.value == u16.value:
     ...
 

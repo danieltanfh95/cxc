@@ -1129,12 +1129,12 @@ def Byte:
 def UInt8:
     data: raw: Byte
     value :< bit_ops.decode_uint(raw.bits)
-    invariants: value in 0..255
+    invariants: 0 <= value <= 255
 
 def Int8:
     data: raw: Byte
     value :< bit_ops.decode_int_2c(raw.bits)
-    invariants: value in -128..127
+    invariants: -128 <= value <= 127
 ```
 
 Same 8 bits, different interpretations, different invariants. Compiler eliminates the wrapper layer at runtime (same bits, different observable). Adding a new interpretation (`Fixed48Point`, `IPv4Octet`, `PackedDecimal`) defines its own type with its own `value :<`; Byte stays uninterpreted.
@@ -1158,14 +1158,14 @@ Everywhere else, no annotations; inference + manifest.
 
 Two paths at construction, compiler picks per-case:
 
-- **Statically proved (no runtime check emitted).** Invariant derivable from underlying data's invariants + observable's computation contract (`ensures`). UInt8 is this case: Byte's `bits.count == 8` + decoder's `ensures result in 0..(2^bits.count - 1)` derives `value in 0..255`. Zero runtime cost; invariant serves as documentation + verification checkpoint.
+- **Statically proved (no runtime check emitted).** Invariant derivable from underlying data's invariants + observable's computation contract (`ensures`). UInt8 is this case: Byte's `bits.count == 8` + decoder's `ensures 0 <= result <= 2^bits.count - 1` derives `0 <= value <= 255`. Zero runtime cost; invariant serves as documentation + verification checkpoint.
 - **Runtime check at construction.** Invariant narrower than upstream guarantees. Age is this case: Nat's `value >= 0` doesn't prove `value <= 150`; compiler emits a check that fires when `Age{raw: nat}` is constructed. Failure → contract violation → abort. No disable-in-release.
 
 **Two construction forms per type, one-runtime-cost model.** For types with non-trivially-derivable invariants, the compiler auto-generates:
 
 | Form | Precondition | Failure mode |
 |---|---|---|
-| `Age{raw: n}` | Caller asserts `n.value in 0..150` | Contract violation → abort |
+| `Age{raw: n}` | Caller asserts `0 <= n.value <= 150` | Contract violation → abort |
 | `Age.try(raw: n)` | None | Returns `Result of Age` |
 
 Direct construction is for "I know this holds." Try-construction is for "I don't know; handle failure." Same underlying invariant check; different failure modes.
@@ -2475,14 +2475,14 @@ def UInt8:
         raw: Byte
     value :< bit_ops.decode_uint(raw.bits)
     invariants:
-        value in 0..255
+        0 <= value <= 255
 
 def Int8:
     data:
         raw: Byte
     value :< bit_ops.decode_int_2c(raw.bits)
     invariants:
-        value in -128..127
+        -128 <= value <= 127
 ```
 
 **`UInt16`, `UInt32`, `UInt64`, `Int16`, `Int32`, `Int64`** — same pattern with `List of Byte` and a `count == N` invariant on the raw bytes. The `value :<` observable delegates to the corresponding `bit_ops.decode_*` prelude function.
@@ -2508,13 +2508,13 @@ def Age:
     data:
         raw: Nat
     invariants:
-        value in 0..150
+        0 <= value <= 150
 
 def Port:
     data:
         raw: Int
     invariants:
-        value in 1..65535
+        1 <= value <= 65535
 ```
 
 The compiler picks storage for these domain atoms from their declared invariants — `Age` compiles to `UInt8` storage; `Port` to `UInt16`. See §3.1.2 for the picker rules.
@@ -2545,7 +2545,7 @@ def Bool:
         raw: Byte
     value :< bit_ops.decode_uint(raw.bits) == 1
     invariants:
-        bit_ops.decode_uint(raw.bits) in 0..1
+        0 <= bit_ops.decode_uint(raw.bits) <= 1
 ```
 
 **`Char`** — a Unicode grapheme cluster. Variable-length UTF-8-encoded bytes. Reference-shaped at the runtime layer (carried via handle to allow grapheme boundaries wider than one byte).
@@ -2555,7 +2555,7 @@ def Char:
     data:
         raw: List of Byte
     invariants:
-        raw.count in 1..255
+        1 <= raw.count <= 255
         bit_ops.is_valid_grapheme(raw)
     value :< bit_ops.grapheme_of(raw)
 ```
@@ -2578,7 +2578,9 @@ The compiler picks a machine-instruction representation for each numeric field f
 
 2. **Bare `Int` is Int64.** A field `hp: Int` gets 64-bit signed storage. No picker runs — `Int` is a prelude alias for `Int64`.
 
-3. **User-defined domain atoms picked by the compiler based on the domain atom's own invariants**, propagated through the `data:` chain. Example: user defines `Age` wrapping `Int` with `invariants: value in 0..150`; a field `player_age: Age` compiles to UInt8 storage. Same rule for user-defined `Nat`, `Port`, `Percent`, `UserId`, etc. — the compiler reads the domain atom's invariants and picks the narrowest sized-atom representation that satisfies them, then elides the wrapper at runtime.
+3. **User-defined domain atoms picked by the compiler based on the domain atom's own invariants**, propagated through the `data:` chain. Example: user defines `Age` wrapping `Nat` with `invariants: 0 <= value <= 150`; a field `player_age: Age` compiles to UInt8 storage. Same rule for user-defined `Nat`, `Port`, `Percent`, `UserId`, etc. — the compiler reads the domain atom's invariants and picks the narrowest sized-atom representation that satisfies them, then elides the wrapper at runtime.
+
+   **Invariant forms the picker recognizes.** Chained-comparison predicates in the invariants block: `lo <= field <= hi`, `lo <= field < hi`, `field >= lo`, `field <= hi`, and same forms substituting `value` when the atom declares `value :< field` (identity observable). Bounds must be compile-time constants. Multiple bounds compose (intersect). Invariants not in this form (arbitrary predicate expressions, dependent bounds) don't narrow — the field keeps its declared width. Full decode-expression observables (`value :< bit_ops.decode_uint(raw.bits)`) are v1.1+ picker work.
 
 4. **No use-based inference.** The compiler reads what's WRITTEN in `invariants:` — nothing more. If the user wants tight representation, they define a domain atom with narrower invariants. If the user writes bare `Int`, they get Int64. This keeps representation choice source-visible: a reader knows what the compiler picked by reading the invariants, not by running an inspection tool. Contracts stay load-bearing (spec §1.3) rather than becoming optional performance hints.
 
