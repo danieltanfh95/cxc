@@ -22,7 +22,8 @@
    `Cxc` prefix — the mangling is now internal-only. Layer 6's full
    module system supersedes the rename table with proper
    namespace-scoped resolution."
-  (:require [clojure.string]
+  (:require [clojure.java.io :as io]
+            [clojure.string]
             [clojure.walk :as walk]))
 
 (def rename-table
@@ -67,177 +68,66 @@
   #{"_Cxc_Clock" "_Cxc_Random" "_Cxc_TestKeyboardInput" "_Cxc_Ticker"
     "_Cxc_Console"})
 
-;; F55 Landing 1 (2026-08-15) — prelude broken into per-module chunks
-;; (still all in-process; file-tree move is Landing 2). Each chunk is
-;; classified `:shared` (pure cxc, no platform natives — cross-target)
-;; or `:target` (calls native_* runtime — target-specific). `source`
-;; below is still a single concatenated string that gets prepended
-;; to user source; the split serves as (1) documentation of module
-;; boundaries the resolver will later respect, (2) provenance for
-;; the name-resolution pass (which module owns which declared name),
-;; and (3) a checkpoint that per-module editing works before touching
-;; the loader. NO semantic change from prior single-string version —
-;; the ordering below matches the historical prelude source exactly,
-;; and modules that don't declare types resolve to no-ops.
+;; F55 Landing 2 (2026-08-15) — prelude lives in a real directory tree
+;; on the classpath: `resources/prelude/shared/*.cxc` (cross-target,
+;; pure cxc) and `resources/prelude/target/<target>/*.cxc` (calls
+;; native_* runtime — target-specific). The registry below names each
+;; module and its declared user-visible names; sources load on demand
+;; via `io/resource` so a runtime with a stripped-down classpath (e.g.
+;; a future non-macos target) doesn't need to ship the .cxc it never
+;; assembles. Selected target is passed through `assemble-source`;
+;; default is :macos until Landing 3 wires proper target selection.
 
-(def ^:private prelude-module-time-src
-  "record Duration:
-    data:
-        millis: Int
+(def default-target
+  "Default target when the compiler is invoked without an explicit
+   target. Landing 3 will introduce target-selection plumbing."
+  :macos)
 
-    methods:
-        function to_seconds(self) -> Float:
-            return self.millis / 1000.0
-
-record Instant:
-    data:
-        millis: Int
-
-    methods:
-        function plus(self, delta: Duration) -> Instant:
-            return Instant(millis: self.millis + delta.millis)
-")
-
-(def ^:private prelude-module-geom-src
-  "record Position:
-    data:
-        x: Float
-        y: Float
-
-    methods:
-        function plus(self, other: Position) -> Position:
-            return Position(x: self.x + other.x, y: self.y + other.y)
-")
-
-(def ^:private prelude-module-random-src
-  "def Random:
-    next_u32 :< native_random_u32()
-
-    methods:
-        function below(self, n: Int) -> Int:
-            return native_random_below(n)
-")
-
-(def ^:private prelude-module-input-src
-  "enum Key:
-    arrow_up
-    arrow_down
-    arrow_left
-    arrow_right
-    space
-    escape
-    f
-
-def TestKeyboardInput(events: Int = 0):
-    data:
-        remaining: Int = events
-
-    -> running
-        do: self :> beat
-
-    -> end
-        do: :> done
-
-    running <: beat -> running
-        when: remaining > 0
-        then: remaining => remaining - 1
-        do:
-            :> pressed(key: remaining)
-            self :> beat
-
-    running <: beat -> end
-        when: remaining == 0
-")
-
-(def ^:private prelude-module-ticker-src
-  "def Ticker(rate_ms: Int, count: Int = 3):
-    data:
-        remaining: Int = count
-
-    -> running
-        do: native_schedule_periodic_beat(self, rate_ms)
-
-    -> end
-        do: :> done
-
-    running <: beat -> running
-        when: remaining > 0
-        then: remaining => remaining - 1
-        do: :> tick
-
-    running <: beat -> end
-        when: remaining == 0
-")
-
-(def ^:private prelude-module-clock-src
-  "def Clock(ticks: Int = 3):
-    data:
-        remaining: Int = ticks
-
-    now :< native_millis_now()
-
-    methods:
-        function every(self, rate_ms: Int) -> Stream of Instant:
-            return native_clock_every(self, rate_ms)
-
-    -> running
-        do: self :> beat
-
-    -> end
-        do: :> done
-
-    running <: beat -> running
-        when: remaining > 0
-        then: remaining => remaining - 1
-        do:
-            :> tick
-            self :> beat
-
-    running <: beat -> end
-        when: remaining == 0
-")
-
-(def ^:private prelude-module-io-src
-  "def Console:
-    methods:
-        function write(self, msg: String) -> Int:
-            return native_console_write(msg)
-
-    -> running
-
-    -> end
-")
+(defn- load-module-src
+  "Read the .cxc source for a prelude module via classpath resource
+   lookup. Path: `prelude/shared/<name>.cxc` or
+   `prelude/target/<target>/<name>.cxc`. Throws with an actionable
+   message if the resource is missing (indicates a packaging error
+   or a name typo in the registry, not a user problem)."
+  [{:keys [name kind]} target]
+  (let [path (case kind
+               :shared (str "prelude/shared/" (clojure.core/name name) ".cxc")
+               :target (str "prelude/target/" (clojure.core/name target)
+                            "/" (clojure.core/name name) ".cxc"))
+        r    (io/resource path)]
+    (when-not r
+      (throw (ex-info (str "prelude module resource missing: `" path
+                           "`. Check compiler/resources/prelude/ and "
+                           "deps.edn `:paths`.")
+                      {:module name :kind kind :target target :path path})))
+    (slurp r)))
 
 (def prelude-modules
-  "Per-module registry. Ordering here is the concatenation order for
-   `source` and is chosen so that declared types precede their users
-   (Duration before Random/Clock is not required but matches
-   historical layout; the resolver will make ordering irrelevant once
-   it lands).
+  "Per-module registry. Ordering is the concatenation order for the
+   assembled source string — chosen so declared types precede their
+   users (historical: Duration before Random/Clock). The resolver
+   will make ordering irrelevant once it lands.
 
-   :kind
-     :shared  — pure cxc, no platform runtime calls; ships regardless
-                of target
-     :target  — uses `native_*` FFI; ships only when the compiler
-                targets a runtime that provides those symbols
-                (Layer 6 target selection will gate this)
-   :names — user-visible names declared inside the module. Used by
-            F51/F56 to make the resolver name→module map without
-            re-parsing the prelude."
-  [{:name :time    :kind :shared :src prelude-module-time-src
-    :names ["Duration" "Instant"]}
-   {:name :geom    :kind :shared :src prelude-module-geom-src
-    :names ["Position"]}
-   {:name :input   :kind :shared :src prelude-module-input-src
-    :names ["Key" "TestKeyboardInput"]}
-   {:name :random  :kind :target :src prelude-module-random-src
-    :names ["Random"]}
-   {:name :ticker  :kind :target :src prelude-module-ticker-src
-    :names ["Ticker"]}
-   {:name :clock   :kind :target :src prelude-module-clock-src
-    :names ["Clock"]}
-   {:name :io      :kind :target :src prelude-module-io-src
-    :names ["Console"]}])
+   :name — symbolic module name (matches `<name>.cxc` on disk)
+   :kind — `:shared` (cross-target) or `:target` (needs runtime)
+   :names — user-visible declarations in the module. Used by F51/F56
+            to build the resolver's name→module index without
+            re-parsing the .cxc source."
+  [{:name :time    :kind :shared :names ["Duration" "Instant"]}
+   {:name :geom    :kind :shared :names ["Position"]}
+   {:name :input   :kind :shared :names ["Key" "TestKeyboardInput"]}
+   {:name :random  :kind :target :names ["Random"]}
+   {:name :ticker  :kind :target :names ["Ticker"]}
+   {:name :clock   :kind :target :names ["Clock"]}
+   {:name :io      :kind :target :names ["Console"]}])
+
+(defn assemble-source
+  "Load and concatenate prelude module sources for a given target.
+   Shared modules load unconditionally; `:target` modules load from
+   the selected target's directory. Returns the same byte-equivalent
+   string historical `source` produced when target=:macos."
+  [target]
+  (clojure.string/join "\n" (map #(load-module-src % target) prelude-modules)))
 
 (def source
   "Prelude source text spliced ahead of user source. Indentation is
@@ -245,10 +135,11 @@ def TestKeyboardInput(events: Int = 0):
    Users write bare names; `rewrite-prelude-names` mangles them
    post-parse.
 
-   F55 Landing 1: assembled from `prelude-modules` — one string per
-   registered module concatenated in registry order. Same byte-
-   equivalent output as the historical single-string prelude."
-  (clojure.string/join "\n" (map :src prelude-modules)))
+   F55 Landing 2: assembled from `prelude-modules` loaded via
+   `io/resource` from the classpath prelude directory tree. Target
+   defaults to `default-target` (macos); explicit target selection
+   through `assemble-source` waits on Landing 3."
+  (assemble-source default-target))
 
 (def duration-units
   "Recognized unit suffixes on numeric literals. Value = multiplier

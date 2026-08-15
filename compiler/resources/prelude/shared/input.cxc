@@ -1,0 +1,28 @@
+enum Key:
+    arrow_up
+    arrow_down
+    arrow_left
+    arrow_right
+    space
+    escape
+    f
+
+def TestKeyboardInput(events: Int = 0):
+    data:
+        remaining: Int = events
+
+    -> running
+        do: self :> beat
+
+    -> end
+        do: :> done
+
+    running <: beat -> running
+        when: remaining > 0
+        then: remaining => remaining - 1
+        do:
+            :> pressed(key: remaining)
+            self :> beat
+
+    running <: beat -> end
+        when: remaining == 0

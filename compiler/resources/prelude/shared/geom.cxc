@@ -1,0 +1,8 @@
+record Position:
+    data:
+        x: Float
+        y: Float
+
+    methods:
+        function plus(self, other: Position) -> Position:
+            return Position(x: self.x + other.x, y: self.y + other.y)
