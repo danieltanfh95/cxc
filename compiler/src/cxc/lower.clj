@@ -426,7 +426,8 @@
   (let [records  (filter #(= :record (:node %)) top-nodes)
         skeleton (into {} (map (fn [r]
                                  [(:name r) {:fields [] :field-index {}
-                                             :methods [] :method-index {}}])
+                                             :methods [] :method-index {}
+                                             :variant :struct}])
                                records))]
     (reduce
      (fn [env r]
@@ -434,11 +435,15 @@
              dsec    (first (filter #(= :data-section    (:node %)) (:sections r)))
              msec    (first (filter #(= :methods-section (:node %)) (:sections r)))
              fields  (fields-from-data-section dsec env atom-env enum-env)
-             methods (extract-methods name msec)]
+             methods (extract-methods name msec)
+             ;; F38 auto-detect: any method → :class variant, else :struct.
+             ;; Structural trigger, no user syntax.
+             variant (if (seq methods) :class :struct)]
          (assoc env name {:fields       fields
                           :field-index  (into {} (map (juxt :name identity) fields))
                           :methods      methods
-                          :method-index (into {} (map (juxt :name identity) methods))})))
+                          :method-index (into {} (map (juxt :name identity) methods))
+                          :variant      variant})))
      skeleton
      records)))
 
