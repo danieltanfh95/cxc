@@ -174,16 +174,31 @@
               (throw (ex-info (str "unexpected character: " (pr-str c))
                               {:line line-no :col (inc i) :char c})))))))))
 
-(defn- leading-indent [line]
+(defn- leading-indent [line line-no]
   "Return [indent-count content] where indent-count is spaces and content
    is the rest of the line. Tabs count as 8 spaces (matches ObjC/Cocoa
-   convention). Blank / comment-only lines return [nil nil] and are skipped."
+   convention). Blank / comment-only lines return [nil nil] and are skipped.
+
+   F3 / §2.4: tabs and spaces MUST NOT mix within a single line's leading
+   indent. Mixing raises a compile error naming the line + offending column."
   (let [n (count line)]
-    (loop [i 0 indent 0]
+    (loop [i 0 indent 0 saw-space? false saw-tab? false]
       (cond
         (>= i n) [nil nil]
-        (= \space (.charAt line i)) (recur (inc i) (inc indent))
-        (= \tab   (.charAt line i)) (recur (inc i) (+ indent 8))
+        (= \space (.charAt line i))
+        (if saw-tab?
+          (throw (ex-info (str "indent mixes tabs and spaces (spec §2.4 forbids). "
+                               "Pick one convention per file; convert tabs to spaces "
+                               "or vice versa.")
+                          {:line line-no :col (inc i) :char \space}))
+          (recur (inc i) (inc indent) true saw-tab?))
+        (= \tab (.charAt line i))
+        (if saw-space?
+          (throw (ex-info (str "indent mixes tabs and spaces (spec §2.4 forbids). "
+                               "Pick one convention per file; convert tabs to spaces "
+                               "or vice versa.")
+                          {:line line-no :col (inc i) :char \tab}))
+          (recur (inc i) (+ indent 8) saw-space? true))
         (= \# (.charAt line i)) [nil nil]
         :else [indent (subs line i)]))))
 
@@ -198,6 +213,71 @@
           0
           toks))
 
+(defn- strip-block-comments
+  "F2 / §2.2 — remove `#| ... |#` block comments from source before the
+   line-based tokenizer runs. Nesting is supported (Racket-style). String
+   literals are opaque; `#|` inside a `\"...\"` is not a comment start.
+   Newlines are preserved verbatim and non-newline comment content is
+   replaced with spaces so that line numbers and columns downstream stay
+   truthful to the original source. Unterminated block comment raises a
+   compile error pointing at the opener."
+  [source]
+  (let [n (count source)
+        sb (StringBuilder.)]
+    (loop [i 0 in-string? false depth 0 open-line 1 line 1]
+      (cond
+        (>= i n)
+        (if (pos? depth)
+          (throw (ex-info "unterminated block comment `#|` (spec §2.2)"
+                          {:line open-line}))
+          (.toString sb))
+
+        in-string?
+        (let [c (.charAt source i)]
+          (.append sb c)
+          (cond
+            (= c \\)
+            (do (when (< (inc i) n) (.append sb (.charAt source (inc i))))
+                (recur (+ i 2) true depth open-line
+                       (if (and (< (inc i) n) (= \newline (.charAt source (inc i))))
+                         (inc line) line)))
+            (= c \")
+            (recur (inc i) false depth open-line line)
+            (= c \newline)
+            (recur (inc i) true depth open-line (inc line))
+            :else
+            (recur (inc i) true depth open-line line)))
+
+        (pos? depth)
+        (let [c (.charAt source i)]
+          (cond
+            (and (< (inc i) n) (= c \|) (= \# (.charAt source (inc i))))
+            (do (.append sb "  ") (recur (+ i 2) false (dec depth) open-line line))
+
+            (and (< (inc i) n) (= c \#) (= \| (.charAt source (inc i))))
+            (do (.append sb "  ") (recur (+ i 2) false (inc depth) open-line line))
+
+            (= c \newline)
+            (do (.append sb \newline) (recur (inc i) false depth open-line (inc line)))
+
+            :else
+            (do (.append sb \space) (recur (inc i) false depth open-line line))))
+
+        :else
+        (let [c (.charAt source i)]
+          (cond
+            (and (< (inc i) n) (= c \#) (= \| (.charAt source (inc i))))
+            (do (.append sb "  ") (recur (+ i 2) false 1 line line))
+
+            (= c \")
+            (do (.append sb c) (recur (inc i) true 0 open-line line))
+
+            (= c \newline)
+            (do (.append sb c) (recur (inc i) false 0 open-line (inc line)))
+
+            :else
+            (do (.append sb c) (recur (inc i) false 0 open-line line))))))))
+
 (defn tokenize
   "Tokenize cxc source into a flat vector of tokens with layout markers.
 
@@ -205,11 +285,16 @@
    parens/brackets/braces are open, subsequent lines are treated as
    physical-line continuations of the logical line — no INDENT/DEDENT/
    NEWLINE emitted, tokens simply concatenated. This lets multi-line
-   argument lists, list literals, and message payloads work naturally."
+   argument lists, list literals, and message payloads work naturally.
+
+   F2 / §2.2 — `#| ... |#` block comments (nested, multi-line) are
+   stripped first; `##` doc comments still lex as ordinary line comments
+   (attachment to declaration metadata waits on F10)."
   [source]
   (if (str/blank? source)
     [[:eof nil 1 1]]
-    (let [lines (str/split-lines source)
+    (let [source (strip-block-comments source)
+          lines (str/split-lines source)
           n     (count lines)]
     (loop [i 0
            indent-stack [0]
@@ -221,7 +306,7 @@
                           (rest indent-stack))]
           (persistent! (conj! out [:eof nil (inc n) 1])))
         (let [line (nth lines i)
-              [indent content] (leading-indent line)]
+              [indent content] (leading-indent line (inc i))]
           (cond
             ;; blank / comment-only line — skip entirely
             (nil? indent)

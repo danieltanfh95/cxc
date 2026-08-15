@@ -219,6 +219,11 @@
       (let [[args p2] (parse-args-parens tokens p)]
         (recur p2 {:node :call :callee node :args args}))
 
+      (at? tokens p :punct "[")
+      (let [[idx p2] (parse-expr tokens (inc p))
+            [_ p3]   (expect tokens p2 :punct "]")]
+        (recur p3 {:node :subscript :target node :index idx}))
+
       (at? tokens p :punct "{")
       (let [[margs p2] (parse-msg-args-braces tokens p)]
         (recur p2 {:node :msg-shape :target node :fields margs}))
@@ -957,6 +962,24 @@
   (and (at? tokens pos :ident)
        (at? tokens (inc pos) :glyph ":<")))
 
+;; F14 / spec §1.11 — `-> handler(args):` is an externally invocable
+;; side-effect-only handler declaration, distinguished from the
+;; wildcard-source transition `-> target-phase` by the paren after
+;; the identifier.
+(defn- looks-like-handler-decl? [tokens pos]
+  (and (at? tokens pos :glyph "->")
+       (at? tokens (inc pos) :ident)
+       (at? tokens (+ pos 2) :punct "(")))
+
+(defn- parse-handler-decl [tokens pos]
+  (let [[_ p]      (expect tokens pos :glyph "->")
+        [name p]   (expect tokens p :ident)
+        [params p] (parse-param-list-parens tokens p)
+        [_ p]      (expect tokens p :punct ":")
+        [_ p]      (expect tokens p :newline)
+        [body p]   (parse-block tokens p)]
+    [{:node :handler-decl :name name :params params :body body} p]))
+
 (defn- looks-like-transition? [tokens pos]
   ;; Called after observable / section checks have failed. At atom-body top
   ;; level, the remaining possibilities are transitions and errors. A
@@ -1039,6 +1062,10 @@
         (looks-like-observable? tokens p)
         (let [[o p2] (parse-observable tokens p)]
           (recur (conj body o) (skip-newlines tokens p2)))
+
+        (looks-like-handler-decl? tokens p)
+        (let [[h p2] (parse-handler-decl tokens p)]
+          (recur (conj body h) (skip-newlines tokens p2)))
 
         (looks-like-transition? tokens p)
         (let [[t p2] (parse-transition tokens p)]

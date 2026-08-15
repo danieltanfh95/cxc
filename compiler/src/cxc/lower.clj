@@ -1680,6 +1680,13 @@
                   {:enum (get-in node [:target :name])}
                   (field-type-for-owner (infer-type (:target node) ctx)
                                         ctx (:field node) node))
+    :subscript  (fail-nyi! (str "subscript `expr[i]` — parses (spec §3.9) "
+                                "but not yet lowered. Container index access "
+                                "waits on F42 (from_literal) + F43 (container-"
+                                "as-atom). Use `.at(i)` on lists / `.get(k)` "
+                                "on maps in the meantime, once those method "
+                                "surfaces land.")
+                           node)
     (fail-nyi! (str "infer-type " (:node node)) node)))
 
 ;; ---------------------------------------------------------------------------
@@ -2073,6 +2080,13 @@
                   {:node   :field
                    :target (lower-expr (:target node) ctx)
                    :field  (:field node)})
+    :subscript  (fail-nyi! (str "subscript `expr[i]` — parses (spec §3.9) "
+                                "but not yet lowered. Container index access "
+                                "waits on F42 (from_literal) + F43 (container-"
+                                "as-atom). Use `.at(i)` on lists / `.get(k)` "
+                                "on maps in the meantime, once those method "
+                                "surfaces land.")
+                           node)
     :call
     (let [callee (:callee node)]
       (case (:node callee)
@@ -3520,6 +3534,14 @@
         ;; `self` visible in on-enter bodies for `self :> foo` / `self.x`.
         ctx-in-init   (assoc ctx-with-self
                              :locals (assoc locals "self" {:atom atom-name}))]
+    (when-let [hd (first (filter #(= :handler-decl (:node %)) extras))]
+      (fail-nyi! (str "handler declaration `-> " (:name hd) "(...)` on def-atom `"
+                      atom-name "` — parses (spec §1.11) but not yet lowered. "
+                      "Externally invocable side-effect-only handlers wait on "
+                      "F9 (class/protocol/extension) + F38 (uniform dispatch). "
+                      "Define an ordinary method in a `methods:` section in the "
+                      "meantime.")
+                 hd))
     (when (seq extras)
       (fail-nyi! (str "def-atom `" atom-name "` has body items beyond `data:`/`methods:`"
                       "/observable/wildcard on-enter transition "

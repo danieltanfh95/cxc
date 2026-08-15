@@ -1002,3 +1002,36 @@ def main:
         when: n in n
         then: n => n
 ")))))
+
+(deftest subscript-raises-targeted-diagnostic
+  (testing "Audit F19: `expr[i]` now parses (spec §3.9), but lowering to a container access is Phase D work — waits on F42/F43. Lowering raises a targeted diagnostic pointing at the alternative (`.at(i)` / `.get(k)`) so downstream users get an actionable message instead of a mysterious clang error."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"subscript `expr\[i\]`"
+         (lower-src "def main:
+    data:
+        n: Int = 0
+
+    -> running
+        do: print(n[0])
+")))))
+
+(deftest handler-decl-raises-targeted-diagnostic
+  (testing "Audit F14: `-> handler(args):` parses as a distinct AST node (spec §1.11), but lowering waits on F9 + F38. Diagnostic names the handler + alternative (methods: section) so users get an actionable message. Needs a companion def-atom + def main so lower reaches the atom body before failing (main-atom promotion path fires first if the handler-decl sits on main itself)."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"handler declaration `-> tick"
+         (lower-src "def A:
+    data:
+        n: Int = 0
+
+    -> running
+
+    -> tick(msg: Int):
+        return n
+
+def main:
+    def a: A
+
+    -> running
+")))))

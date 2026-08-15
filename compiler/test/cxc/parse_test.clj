@@ -313,3 +313,54 @@ def main:
           nodes (p/parse src)
           body  (:body (first nodes))]
       (is (some #(and (= :function (:node %)) (= "bumped" (:name %))) body)))))
+
+(deftest subscript-postfix-parses
+  (testing "F19 / §3.9 — `expr[i]` parses as a :subscript node (index is any expression)"
+    ;; Wrap in a return statement inside a record method so the expression
+    ;; is in an expression position the parser reaches.
+    (let [src "record R:\n    data:\n        xs: List of Int\n    methods:\n        def head(self) -> Int:\n            return xs[0]\n"
+          rec (first-node src)
+          ms  (second (:sections rec))
+          m   (first (:methods ms))
+          ret (first (:stmts (:body m)))]
+      (is (= :return (:node ret)))
+      (is (= :subscript (get-in ret [:expr :node])))
+      (is (= "xs" (get-in ret [:expr :target :name])))
+      (is (= :lit-int (get-in ret [:expr :index :node])))
+      (is (= 0 (get-in ret [:expr :index :value]))))))
+
+(deftest subscript-chains-with-other-postfix
+  (testing "F19 — subscript composes with `.field` and `(args)` in any order"
+    (let [src "record R:\n    data:\n        xs: List of Int\n    methods:\n        def z(self) -> Int:\n            return xs[0].bar(1)\n"
+          rec (first-node src)
+          m   (first (:methods (second (:sections rec))))
+          ret (first (:stmts (:body m)))
+          call (:expr ret)]
+      (is (= :call (:node call)))
+      (is (= :dot (get-in call [:callee :node])))
+      (is (= "bar" (get-in call [:callee :field])))
+      (is (= :subscript (get-in call [:callee :target :node]))))))
+
+(deftest handler-decl-parses-as-distinct-node
+  (testing "F14 / §1.11 — `-> handler(args):` inside a def-atom body parses as a :handler-decl node distinct from the wildcard-source transition (`-> target-phase`)."
+    (let [src "def A:\n    data:\n        n: Int = 0\n\n    -> running\n\n    -> tick(msg: Int):\n        return n\n"
+          atom-node (first-node src)
+          hd (first (filter #(= :handler-decl (:node %)) (:body atom-node)))]
+      (is (= :def-atom (:node atom-node)))
+      (is (some? hd) "handler-decl AST node present")
+      (is (= "tick" (:name hd)))
+      (is (= 1 (count (:params hd))))
+      (is (= "msg" (get-in hd [:params 0 :name])))
+      (is (= "Int" (get-in hd [:params 0 :type :name])))
+      ;; and the ordinary transition still parses next to it
+      (is (some #(= :transition (:node %)) (:body atom-node))
+          "wildcard transition `-> running` still parses as :transition"))))
+
+(deftest handler-decl-zero-args-parses
+  (testing "F14 — `-> tick():` with empty param list parses (explicit parens disambiguate from `-> target-phase`)"
+    (let [src "def A:\n    data:\n        n: Int = 0\n\n    -> running\n\n    -> tick():\n        return n\n"
+          atom-node (first-node src)
+          hd (first (filter #(= :handler-decl (:node %)) (:body atom-node)))]
+      (is (some? hd))
+      (is (= "tick" (:name hd)))
+      (is (empty? (:params hd))))))
