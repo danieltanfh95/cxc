@@ -62,7 +62,8 @@
       :locals     <name -> ty>       ; local scope for method bodies etc."
   (:require [clojure.string :as str]
             [clojure.walk :as walk]
-            [cxc.prelude :as prelude]))
+            [cxc.prelude :as prelude]
+            [cxc.resolve :as resolve]))
 
 (defn- fail-nyi! [what node]
   (throw (ex-info (str "lowering not yet implemented: " what)
@@ -4409,7 +4410,31 @@
         set-instantiations  (set-instantiations-from-atom-env atom-env)
         set-atom-entries    (synthesize-set-container-entries set-instantiations)
         atom-env            (merge atom-env set-atom-entries)
+        ;; F51 Landing 1 — build the unified symbol table alongside the
+        ;; ad-hoc envs. `verify-parity!` catches drift between the two
+        ;; views so migration is stepwise; downstream landings will
+        ;; replace `(:record-env ctx)` / `(:atom-env ctx)` /
+        ;; `(:enum-env ctx)` lookups with `resolve/lookup ctx name`.
+        symbol-table (resolve/build-symbol-table top-nodes)
+        _            (resolve/verify-parity!
+                       symbol-table
+                       ;; Trim atom-env of runtime-provided + synthesized
+                       ;; container entries — those aren't in top-nodes
+                       ;; (they're added by the passes above) and so
+                       ;; can't appear in the symbol table by design.
+                       {:record-env record-env
+                        :atom-env   (into {}
+                                          (filter (fn [[_ v]]
+                                                    (not (contains?
+                                                           #{:runtime-provided
+                                                             :list-container
+                                                             :map-container
+                                                             :set-container}
+                                                           (:kind v))))
+                                                  atom-env))
+                        :enum-env   enum-env})
         ctx        {:record-env record-env :atom-env atom-env :enum-env enum-env
+                    :symbol-table symbol-table
                     :locals {}}
         records    (filter #(= :record (:node %)) top-nodes)
         enums      (filter #(= :enum   (:node %)) top-nodes)
