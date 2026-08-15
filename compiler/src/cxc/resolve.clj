@@ -98,6 +98,38 @@
     {:fields  (vec (:fields dsec))
      :methods (vec (:methods msec))}))
 
+;; F38 auto-detect — a record's storage variant follows from its shape.
+;; No user syntax picks it; the compiler observes whether the record
+;; carries any behavior and lowers accordingly.
+;;
+;;   :struct  — pure data, no methods. Lowers to a C typedef struct
+;;              with value copy semantics. F37 equality/hash ship as
+;;              free C functions. Cheap; matches C interop naturally.
+;;              Spec §5.1 dispatch requirement is vacuous — no methods
+;;              to dispatch — so struct storage is fully spec-compliant.
+;;
+;;   :class   — has one or more methods. Lowers to an ObjC class with
+;;              methods as selectors (spec §5.1 dispatch guarantee);
+;;              F37 equality/hash ship as `-isEqual:` / `-hash`; ctor
+;;              lowers to `[[T alloc] initWith...:]`. Reference storage.
+;;              F9 extensions later augment the class's method table.
+;;
+;; A data-only record that later grows a method silently transitions
+;; from :struct to :class. For immutable records the transition is
+;; observably transparent — reads return the same value regardless of
+;; whether the field storage is shared or copied. FFI/interop that
+;; leaks a raw C pointer would notice; no current cxc code path does
+;; so, and F54 (backend targeting + generated headers) is deferred.
+
+(defn record-variant
+  "Return `:struct` for a data-only record, `:class` for one with
+   methods. Trigger is structural — no user syntax picks it. Used
+   by F38 lowering to route ctor / dispatch / F37 synthesis."
+  [record-node]
+  (if (seq (:methods (record-members record-node)))
+    :class
+    :struct))
+
 (defn- atom-members
   "Extract every kind of body item from a `def-atom` AST node. Keys
    match the ad-hoc filters currently spread across
@@ -138,11 +170,16 @@
   #{:record :def-atom :enum})
 
 (defn- entry-for [node module]
-  {:name    (:name node)
-   :module  module
-   :kind    (:node node)
-   :node    node
-   :members (extract-members node)})
+  (cond-> {:name    (:name node)
+           :module  module
+           :kind    (:node node)
+           :node    node
+           :members (extract-members node)}
+    ;; F38 auto-detect: only records carry :variant. Atoms are always
+    ;; ObjC classes; enums are always ints. Recording it here lets
+    ;; downstream lowering key off `(resolve/lookup ...)` alone.
+    (= :record (:node node))
+    (assoc :variant (record-variant node))))
 
 (defn build-symbol-table
   "Walk `top-nodes` (the combined prelude + user AST as `cxc.lower`

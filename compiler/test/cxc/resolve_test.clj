@@ -72,6 +72,21 @@
       (is (some? (resolve/lookup ctx "V")))
       (is (nil?  (resolve/lookup ctx "Nonexistent"))))))
 
+(deftest f38-record-variant-auto-detected
+  (testing "F38 — a record with no methods is :struct; a record with any method is :class. Trigger is structural — no user syntax."
+    (let [table (table-from "record P:\n    data:\n        x: Int\n\nrecord V:\n    data:\n        n: Int\n    methods:\n        function bumped(self) -> Int:\n            return n + 1\n\ndef main:\n    -> running\n")]
+      (is (= :struct (get-in table ["P" :variant]))
+          "P has no methods → :struct variant")
+      (is (= :class  (get-in table ["V" :variant]))
+          "V has one method → :class variant"))))
+
+(deftest f38-prelude-records-with-methods-are-class-variant
+  (testing "F38 — prelude Duration/Instant/Position all carry methods → all classified :class"
+    (let [table (table-from "def main:\n    -> running\n")]
+      (is (= :class (get-in table ["_Cxc_Duration" :variant])))
+      (is (= :class (get-in table ["_Cxc_Instant"  :variant])))
+      (is (= :class (get-in table ["_Cxc_Position" :variant]))))))
+
 (deftest lookup-member-drills-into-declaration
   (testing "F51 — `lookup-member` finds a member by kind + name inside a decl"
     (let [table (table-from "record V:\n    data:\n        x: Int\n    methods:\n        function bump(self) -> Int:\n            return x\n\ndef main:\n    -> running\n")
