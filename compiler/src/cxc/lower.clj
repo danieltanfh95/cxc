@@ -885,8 +885,55 @@
                                    :callee {:node :ident :name (base-type-name (:type s))}
                                    :args   (or (:ctor-args s) [])}})
                                nested-slots)
-             merged-ctor    (into (vec (:ctor-params a)) cap-as-params)
-             merged-fields  (-> (or (:fields dsec) [])
+             ;; F41 — data fields without a `:default` become **required
+             ;; ctor params** per spec §10 ("constructor parameters
+             ;; become data fields; construction auto-synthesised from
+             ;; data fields + parameters"). Prior impl silently
+             ;; zero-initialized them. Rewrite each no-default data
+             ;; field so its default IS the synthesized ctor param ident
+             ;; of the same name — reuses the existing ctor-param
+             ;; passthrough machinery (same pattern as `use:` caps).
+             ;;
+             ;; Preserves declaration order: explicit `def X(a, b):`
+             ;; ctor params come first, then F41-synthesized field
+             ;; params in data-declaration order, then use:-capability
+             ;; params. Named-args at call sites keep order irrelevant
+             ;; for callers.
+             ;;
+             ;; Skipped for:
+             ;; - `main` atom — has a dedicated construction path;
+             ;;   env-cap wiring for main-with-ctor-params is Layer 5
+             ;;   scope tracked separately.
+             ;; - Container-typed fields (`List of T`, `Map of (K,V)`,
+             ;;   `Set of T`) — they auto-initialize to empty via
+             ;;   `default-init-stmt-for`. No literal syntax exists for
+             ;;   passing containers as ctor args, and empty-container
+             ;;   default is the ergonomic behavior anyway.
+             container-outer? #{"List" "Map" "Set"}
+             container-field?
+             (fn [f] (and (= :type-of (get-in f [:type :node]))
+                          (container-outer? (get-in f [:type :outer]))))
+             f41-eligible? (fn [f] (and (nil? (:default f))
+                                        (not (container-field? f))
+                                        (not= "main" name)))
+             f41-transform
+             (reduce (fn [acc f]
+                       (if (f41-eligible? f)
+                         (-> acc
+                             (update :fields conj
+                                     (assoc f :default
+                                            {:node :ident :name (:name f)}))
+                             (update :ctor-params conj
+                                     {:name (:name f) :type (:type f)
+                                      :default nil
+                                      :cxc-f41-synthesized true}))
+                         (update acc :fields conj f)))
+                     {:fields [] :ctor-params []}
+                     (or (:fields dsec) []))
+             merged-ctor    (-> (vec (:ctor-params a))
+                                (into (:ctor-params f41-transform))
+                                (into cap-as-params))
+             merged-fields  (-> (:fields f41-transform)
                                 (into cap-as-fields)
                                 (into nested-as-fields))
              _             (let [n->count (frequencies (map :name merged-ctor))
@@ -3503,8 +3550,18 @@
           on-enter-stmts  (if initial-on-enter
                             (lower-on-enter-body (:body initial-on-enter) ctx-in-init)
                             [])
+          ;; The post-store `checkInvariants` method must lower field
+          ;; refs to `_field` ivars — not to ctor-param locals. Prior
+          ;; to F41 this was moot (ctor params were rare, and their
+          ;; names rarely matched field names), but F41 synthesizes
+          ;; ctor params from every no-default field, making the name
+          ;; collision the default. Post-store lowering uses ctx WITHOUT
+          ;; init-locals so bare `value` resolves to `_value` in the
+          ;; emitted checkInvariants body.
+          ctx-post-store  ctx-with-self
           invariant-stmts (vec (map-indexed
-                                (fn [i p] (lower-invariant-check atom-name i p ctx-in-init))
+                                (fn [i p]
+                                  (lower-invariant-check atom-name i p ctx-post-store))
                                 (:invariants rec)))
           ;; F49 Landing A — pre-store construction check. Maps each
           ;; field name to an ALREADY-LOWERED expression that reads

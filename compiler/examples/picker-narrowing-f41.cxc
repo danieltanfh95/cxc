@@ -1,0 +1,10 @@
+def Age:
+    data:
+        value: Int
+    invariants:
+        0 <= value
+        value <= 150
+
+def main:
+    -> running
+        do: print(Age(value: 42).value)

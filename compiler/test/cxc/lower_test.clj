@@ -915,6 +915,73 @@ def main:
              (get-in (first checks) [:cond :right]))
           "check reads the default literal 42 (source value), not the narrowed ivar _value"))))
 
+(deftest f41-data-fields-without-defaults-become-ctor-params
+  (testing "Phase D F41 — spec §10 requires data fields without defaults to become required ctor params (`construction auto-synthesised from data fields + parameters`). Prior impl silently zero-initialized them.
+
+  Ctor-param synthesis is skipped for:
+  - `main` atom — special construction path (env-cap wiring for main-with-ctor-params is Layer 5)
+  - Container-typed fields (`List of T`, `Map of (K,V)`, `Set of T`) — auto-init to empty container
+
+  Field ordering preserved: explicit `def X(a, b):` ctor params first, then F41-synthesized field params in data-declaration order, then use:-capability params."
+    (let [prog (lower-src "def Age:
+    data:
+        value: Int
+    invariants:
+        0 <= value
+        value <= 150
+
+def Container:
+    data:
+        xs: List of Int
+
+def main:
+    -> running
+        do: print(Age(value: 42).value)
+")
+          age-cls  (first (filter #(= "Age" (:name %)) (:classes prog)))
+          age-init-params (:init-params age-cls)
+          age-state (first (filter #(clojure.string/starts-with? (:selector %) "cxc_stateInit")
+                                   (:methods age-cls)))
+          cont-cls (first (filter #(= "Container" (:name %)) (:classes prog)))
+          cont-init-params (:init-params cont-cls)]
+      (is (= [{:name "value" :c-type "int64_t"}] age-init-params)
+          "Age.value field became required ctor param (int64_t — the source-level Int, NOT the picker-narrowed uint8_t)")
+      (is (= "cxc_stateInitWithvalue:" (:selector age-state))
+          "cxc_stateInit selector reflects the value parameter")
+      (is (= [] cont-init-params)
+          "Container fields (List of Int) skipped F41 — auto-init to empty container"))))
+
+(deftest f41-picker-and-f49-a-end-to-end-narrowing-safety
+  (testing "Phase D F41 × F36 Landing 2a × F49 Landing A end-to-end: user writes `data: value: Int; invariants: 0 <= value <= 150`, constructs `Age(value: 42)`, gets uint8_t storage for value, and out-of-range construction aborts on the wide ctor param before the narrowing assignment.
+
+  This is the complete picker safety story — F41 makes ctor params real, picker narrows storage, pre-store check on the wide source aborts if the value doesn't fit. Without any of these three, silent truncation could occur."
+    (let [prog (lower-src "def Age:
+    data:
+        value: Int
+    invariants:
+        0 <= value
+        value <= 150
+
+def main:
+    -> running
+        do: print(Age(value: 42).value)
+")
+          cls (first (filter #(= "Age" (:name %)) (:classes prog)))
+          value-prop (first (filter #(= "value" (:name %)) (:properties cls)))
+          init-params (:init-params cls)
+          state (first (filter #(clojure.string/starts-with? (:selector %) "cxc_stateInit")
+                               (:methods cls)))
+          body (:body state)
+          pre-checks (filter #(= :invariant-check (:node %)) body)]
+      (is (= "uint8_t" (:c-type value-prop))
+          "picker narrows Age.value storage to uint8_t")
+      (is (= "int64_t" (:c-type (first init-params)))
+          "ctor param stays int64_t — the wide source that the pre-check runs against")
+      (is (= 2 (count pre-checks))
+          "pre-store check fires on both invariant predicates")
+      (is (every? #(re-find #"source value violates" (:label %)) pre-checks)
+          "pre-store checks tagged with source-value label"))))
+
 (deftest in-operator-raises-targeted-diagnostic
   (testing "Audit F47: `x in y` parses as a binop but its semantic lowering (dispatch to a container `contains` method — spec §1.3 membership predicates) is Phase D work. Silently emitting the literal token `in` into the generated C causes clang to fail far from the source; lower now raises a targeted diagnostic naming the operator so the failure points to the actual language feature."
     (is (thrown-with-msg?

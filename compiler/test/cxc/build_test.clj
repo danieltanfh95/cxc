@@ -402,6 +402,20 @@
       (is (zero? exit))
       (is (= "3\n" stdout)))))
 
+(deftest end-to-end-picker-narrowing-with-f41-ctor-params
+  (testing "picker-narrowing-f41.cxc — F41 × F36 Landing 2a × F49 Landing A end-to-end. Age has `data: value: Int` (no default → F41 makes it a required ctor param) + `invariants: 0 <= value <= 150` (picker narrows storage to uint8_t). Program constructs `Age(value: 42)`, reads back the value, prints 42. In-range case runs to completion — storage narrowing is transparent to the user."
+    (let [{:keys [exit stdout]} (compile-and-run "picker-narrowing-f41")]
+      (is (zero? exit))
+      (is (= "42\n" stdout)))))
+
+(deftest end-to-end-picker-narrowing-out-of-range-aborts-on-pre-store-check
+  (testing "picker-narrowing-oor.cxc — same shape but `Age(value: 300)` violates the invariant. Pre-store check (F49 Landing A) fires on the WIDE int64 ctor param BEFORE the narrowing uint8_t assignment. Without pre-store check, storage would silently truncate 300 → 44 (300 & 0xff) and the post-store check would pass on 44. With pre-store check, aborts with the source-value-violates diagnostic — 300 never reaches the narrowing store."
+    (let [{:keys [exit stderr]} (compile-and-run "picker-narrowing-oor")]
+      (is (not (zero? exit)) "expected non-zero exit from pre-store check abort")
+      (is (re-find #"Age invariant #1 failed at construction \(source value violates\)"
+                   (or stderr ""))
+          "expected pre-store diagnostic naming construction site + source value violation"))))
+
 (deftest end-to-end-stdlib-basics
   (testing "stdlib-basics.cxc — three stdlib additions in one program. (1) Prelude `Position` record with `x: Float, y: Float`; ctor + field access. (2) `clamp(x, lo, hi)` compiler builtin — polymorphic on first arg's numeric type (Int here), lowers to nested-ternary via a fresh :ffi-call with an inline emit-c-fn. (3) `Instant.epoch` desugars at rewrite-prelude-names to `Instant(millis: 0)` — same walk that handles unit-literals; a small closed set of prelude class-member statics registered in `class-member-desugars`. Program: `clamp(15,0,10) + Instant.epoch.millis + Position(x:1.0, y:2.0).x` → 10 + 0 + 1.0 = 11.0."
     (let [{:keys [exit stdout]} (compile-and-run "stdlib-basics")]
