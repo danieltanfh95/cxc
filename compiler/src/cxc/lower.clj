@@ -3136,7 +3136,17 @@
    typed param join the locals env before the body is lowered. `self`
    isn't emitted as a formal param — ObjC provides it implicitly. Ivars
    are visible via property syntax (`self.n`) which lowers to a normal
-   `.n` field access — the emitted C sees an object with a property."
+   `.n` field access — the emitted C sees an object with a property.
+
+   F49 Landing C: wraps the body with entry + exit `checkInvariants`
+   calls per spec §3.4.2 (\"invariants hold ... before/after each
+   method\"). Exit check fires after any straight-line `return <expr>`
+   at the tail — the check runs on already-computed final state,
+   before the return statement executes. Early returns (inside
+   if/switch/loop branches) don't get exit checks in this MVP; that's
+   a follow-on landing (single-exit transform or emit-time return
+   rewrite). Methods without a trailing return get exit-check
+   appended after the last statement."
   [atom-name method ctx]
   (let [self-ty     {:atom atom-name}
         locals      (into {}
@@ -3162,12 +3172,26 @@
                                                   (:enum-env ctx))})
                           args)
         ret-c       (cxc-type->c {:node :type-ref :name (:cxc-return-ty method)}
-                                 (:record-env ctx) (:atom-env ctx) (:enum-env ctx))]
+                                 (:record-env ctx) (:atom-env ctx) (:enum-env ctx))
+        check-stmt  {:node :objc-msg
+                     :recv {:node :name :sym "self"}
+                     :selector "checkInvariants"
+                     :args []}
+        wrapped     (cond
+                      ;; Trailing `return <expr>` — insert exit check
+                      ;; before it so state is verified before the
+                      ;; return statement runs.
+                      (and (seq stmts) (= :return (:node (last stmts))))
+                      (into (into [check-stmt] (pop stmts))
+                            [check-stmt (last stmts)])
+                      ;; Void body or falls-through — entry + append exit.
+                      :else
+                      (-> [check-stmt] (into stmts) (conj check-stmt)))]
     {:node        :objc-method
      :selector    (objc-method-selector (:name method) param-names)
      :return-type ret-c
      :params      objc-params
-     :body        stmts}))
+     :body        wrapped}))
 
 (defn- lower-observable-method
   "An observable `name :< expr` becomes a zero-arg synthesized method
@@ -3575,20 +3599,31 @@
                                      :lhs {:node :name :sym "_phase"}
                                      :rhs {:node :name :sym end-const}})
                               (into end-wildcard-do)
+                              ;; F49 Landing D: pre-destruction invariant
+                              ;; check per spec §3.4.2 — invariants hold
+                              ;; BEFORE destruction. Runs after user
+                              ;; on-end `do:` blocks (which may fix up
+                              ;; state to satisfy invariants) but BEFORE
+                              ;; resource clear + child cascade tear
+                              ;; things down. Prior to Landing D this
+                              ;; check fired last, after cascade — a
+                              ;; failure at that point named a state the
+                              ;; atom was no longer in.
+                              (conj {:node :objc-msg
+                                     :recv {:node :name :sym "self"}
+                                     :selector "checkInvariants"
+                                     :args []})
                               ;; Release owned dispatch/stream resources
                               ;; before cascading to children so timers
                               ;; that would otherwise fire once more mid-
                               ;; cascade stop first. Order: user do:
-                              ;; blocks (may still need timers) → clear
-                              ;; resources → cascade to children →
-                              ;; notify parent.
+                              ;; blocks (may still need timers) → invariant
+                              ;; check (§3.4.2 pre-destruction) → clear
+                              ;; resources → cascade to children → notify
+                              ;; parent.
                               (conj {:node :owned-resources-clear})
                               (into cascade-stmts)
-                              (conj {:node :end-cascade-parent}
-                                    {:node :objc-msg
-                                     :recv {:node :name :sym "self"}
-                                     :selector "checkInvariants"
-                                     :args []})
+                              (conj {:node :end-cascade-parent})
                               ;; Main atom's end shuts down the process
                               ;; (design §19). exit(0) after cascade so
                               ;; children get a chance to run their -> end

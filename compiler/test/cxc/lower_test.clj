@@ -746,6 +746,80 @@ def main:
              [(:left (:cond (second checks))) (:right (:cond (second checks)))])
           "second check also reads default value — proves substitution fires uniformly"))))
 
+(deftest pre-destruction-invariant-check-runs-before-resource-clear-and-cascade
+  (testing "Phase D F49 Landing D — spec §3.4.2 requires invariants to hold BEFORE destruction. Prior to Landing D, `checkInvariants` fired last in transitionToEnd (after resource clear + child cascade + parent notify) — a failure at that site named a state the atom was no longer in. Landing D reorders: user on-end `do:` (may fix up state) → invariant check → resource clear → cascade → notify parent → (main: shutdown)."
+    (let [prog (lower-src "def Bounded:
+    data:
+        v: Int = 42
+    invariants:
+        0 <= v
+        v <= 150
+
+def main:
+    -> running
+        do: print(1)
+")
+          cls  (first (filter #(= "Bounded" (:name %)) (:classes prog)))
+          end-method (first (filter #(= "transitionToEnd" (:selector %))
+                                    (:methods cls)))
+          ;; end-body is wrapped in :end-catch-log-only inside :phase-guard-eq;
+          ;; unwrap to find the ordered stmt list.
+          end-body   (:body (second (:body end-method)))
+          check-idx  (first (keep-indexed
+                             #(when (and (= :objc-msg (:node %2))
+                                         (= "checkInvariants" (:selector %2)))
+                                %1)
+                             end-body))
+          clear-idx  (first (keep-indexed
+                             #(when (= :owned-resources-clear (:node %2)) %1)
+                             end-body))
+          parent-idx (first (keep-indexed
+                             #(when (= :end-cascade-parent (:node %2)) %1)
+                             end-body))]
+      (is (some? check-idx) "checkInvariants call present in end-body")
+      (is (some? clear-idx) "owned-resources-clear present in end-body")
+      (is (< check-idx clear-idx)
+          "invariant check precedes resource clear (pre-destruction ordering)")
+      (is (< check-idx parent-idx)
+          "invariant check precedes parent notification"))))
+
+(deftest user-method-body-wrapped-with-entry-exit-invariant-checks
+  (testing "Phase D F49 Landing C — spec §3.4.2 requires invariants to hold before/after each method. User method bodies now wrap with `[self checkInvariants]` calls at entry and exit. Trailing `return <expr>` gets the exit check inserted BEFORE the return so state is verified before the return statement runs. Early returns inside if/switch/loop branches don't get exit checks in this MVP (single-exit transform is a follow-on landing).
+
+  Prior to Landing C, user method bodies emitted with no invariant enforcement — a method could mutate state into an invariant-violating shape and the violation would only surface later at the next transition boundary."
+    (let [prog (lower-src "def Bounded:
+    data:
+        v: Int = 42
+    invariants:
+        0 <= v
+        v <= 150
+
+    methods:
+        function noop(self) -> Int:
+            return self.v
+
+def main:
+    -> running
+        do: print(1)
+")
+          cls  (first (filter #(= "Bounded" (:name %)) (:classes prog)))
+          noop (first (filter #(= "noop" (:selector %)) (:methods cls)))
+          body (:body noop)
+          check-idxs (keep-indexed
+                       #(when (and (= :objc-msg (:node %2))
+                                   (= "checkInvariants" (:selector %2)))
+                          %1)
+                       body)
+          return-idx (first (keep-indexed
+                              #(when (= :return (:node %2)) %1)
+                              body))]
+      (is (= 2 (count check-idxs))
+          "entry AND exit checks emitted")
+      (is (= 0 (first check-idxs))
+          "entry check is the first statement in the body")
+      (is (< (second check-idxs) return-idx)
+          "exit check runs before the return statement (verifies final state before returning)"))))
+
 (deftest in-operator-raises-targeted-diagnostic
   (testing "Audit F47: `x in y` parses as a binop but its semantic lowering (dispatch to a container `contains` method — spec §1.3 membership predicates) is Phase D work. Silently emitting the literal token `in` into the generated C causes clang to fail far from the source; lower now raises a targeted diagnostic naming the operator so the failure points to the actual language feature."
     (is (thrown-with-msg?
