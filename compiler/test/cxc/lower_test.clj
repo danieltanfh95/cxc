@@ -463,6 +463,55 @@ def main:
       (is (= "plusWithother:" (:selector msg)))
       (is (= 1 (count (:args msg)))))))
 
+;; F40 Landing 2 — named args + default insertion on method calls.
+
+(deftest f40-atom-method-accepts-named-args
+  (testing "counter.plus(other: 7) — named arg on atom method resolves"
+    (let [prog (lower-src "def Counter:\n    data:\n        n: Int = 10\n\n    methods:\n        function plus(self, other: Int) -> Int:\n            return self.n + other\n\ndef main:\n    -> running\n        do: print(Counter().plus(other: 7))\n")
+          call (first (main-work-body prog))
+          msg  (get-in call [:args 1])]
+      (is (= "plusWithother:" (:selector msg)))
+      (is (= 1 (count (:args msg))))
+      (is (= 7 (get-in msg [:args 0 :value]))))))
+
+(deftest f40-atom-method-defaults-fill-when-omitted
+  (testing "counter.plus() with other defaulted uses default"
+    (let [prog (lower-src "def Counter:\n    data:\n        n: Int = 10\n\n    methods:\n        function plus(self, other: Int = 3) -> Int:\n            return self.n + other\n\ndef main:\n    -> running\n        do: print(Counter().plus())\n")
+          call (first (main-work-body prog))
+          msg  (get-in call [:args 1])]
+      (is (= "plusWithother:" (:selector msg)))
+      (is (= 1 (count (:args msg))))
+      (is (= 3 (get-in msg [:args 0 :value]))))))
+
+(deftest f40-atom-method-named-out-of-order-reorders
+  (testing "counter.plus3(c: 3, a: 1, b: 2) — reordered to decl order"
+    (let [prog (lower-src "def Counter:\n    data:\n        n: Int = 0\n\n    methods:\n        function plus3(self, a: Int, b: Int, c: Int) -> Int:\n            return self.n + a + b + c\n\ndef main:\n    -> running\n        do: print(Counter().plus3(c: 3, a: 1, b: 2))\n")
+          call (first (main-work-body prog))
+          msg  (get-in call [:args 1])
+          arg-values (mapv :value (:args msg))]
+      (is (= [1 2 3] arg-values)))))
+
+(deftest f40-record-method-defaults-fill-when-omitted
+  (testing "record method with param default inserts default at call site"
+    (let [prog (lower-src "record V:\n    data:\n        x: Int\n    methods:\n        function scaled(self, factor: Int = 4) -> Int:\n            return self.x * factor\n\ndef main:\n    -> running\n        do: print(V(x: 5).scaled())\n")
+          call (first (main-work-body prog))
+          inner (get-in call [:args 1])]
+      (is (= :call (:node inner)))
+      (is (= "V_scaled" (:fn inner)))
+      ;; args = [self, factor]
+      (is (= 2 (count (:args inner))))
+      (is (= 4 (get-in inner [:args 1 :value]))))))
+
+(deftest f40-method-unknown-named-arg-rejected
+  (testing "atom method with unknown named arg fails"
+    (let [ex (try
+               (lower-src "def Counter:\n    data:\n        n: Int = 10\n\n    methods:\n        function plus(self, other: Int) -> Int:\n            return self.n + other\n\ndef main:\n    -> running\n        do: print(Counter().plus(bogus: 5))\n")
+               nil
+               (catch clojure.lang.ExceptionInfo e e))]
+      (is ex "expected exception")
+      (is (= :not-yet-implemented (:kind (ex-data ex))))
+      (is (re-find #"unknown named arg" (.getMessage ex))))))
+
 (deftest and-or-is-lower-to-c-ops
   (testing "and → &&, or → ||, is → ==; all infer :bool"
     (let [prog (lower-src "def main:\n    -> running\n        do: print(1 == 2 and 3 == 3 or 4 == 4)\n")

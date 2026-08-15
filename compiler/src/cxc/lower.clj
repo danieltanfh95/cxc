@@ -413,11 +413,15 @@
 
 (defn- normalize-method-param
   "Parser hands us `self` as {:node :param :name \"self\"} and typed params
-   as {:node :field :name ... :type ...}. Normalize to {:name :cxc-ty}."
+   as {:node :field :name ... :type ...}. Normalize to {:name :cxc-ty
+   :is-self? :default}. `:default` preserves the parser's default-
+   expr node (nil when absent) so `resolve-args-against-params` can
+   insert it at call sites where the arg is omitted (spec §3.8.5)."
   [enclosing-record-name p]
   (if (= "self" (:name p))
-    {:name "self" :cxc-ty enclosing-record-name :is-self? true}
-    {:name (:name p) :cxc-ty (:name (:type p)) :is-self? false}))
+    {:name "self" :cxc-ty enclosing-record-name :is-self? true :default nil}
+    {:name (:name p) :cxc-ty (:name (:type p)) :is-self? false
+     :default (:default p)}))
 
 (defn- extract-methods
   "Return [{:name :params [{:name :cxc-ty :is-self?}] :cxc-return-ty
@@ -1879,8 +1883,11 @@
    - list-container target + method `for_each` → special-cased block
      literal path (Layer 5 Step 5); the lambda arg gets bound + body
      lowered inside a fresh ctx with the element name in locals
-   Named args on method calls fail-nyi — parameters have declaration
-   order in the source-level method decl."
+
+   F40 Landing 2 — args are resolved against the method's declared
+   params via `resolve-args-against-params`: named and positional
+   both accepted, defaults inserted where callers omit an arg, and
+   dup/unknown/surplus/collision all fail at the call site."
   [call-node ctx]
   (let [dot         (:callee call-node)
         target-ty   (infer-type (:target dot) ctx)
@@ -1894,13 +1901,40 @@
         (and list-cont?
              (= "for_each" method-name)
              (= 1 (count args))
-             (= :lambda (get-in args [0 :value :node])))]
-    (when (some #(= :named (:kind %)) args)
-      (fail-nyi! "named args on method call (positional only for now)"
-                 call-node))
+             (= :lambda (get-in args [0 :value :node])))
+        method-info
+        (cond
+          (and (map? target-ty) (:record target-ty))
+          (get-in ctx [:record-env (:record target-ty) :method-index method-name])
+          (and (map? target-ty) (:atom target-ty))
+          (get-in ctx [:atom-env (:atom target-ty) :method-index method-name]))
+        ;; F40 Landing 2: user-facing params (skip self, which is
+        ;; either flagged `:is-self? true` on user-authored methods or
+        ;; carries name "self" on prelude-synthesized container
+        ;; methods).
+        user-params
+        (when method-info
+          (remove #(or (:is-self? %) (= "self" (:name %)))
+                  (:params method-info)))
+        ;; When we can resolve, do so: named+positional get merged,
+        ;; defaults inserted, decl-order preserved. When we can't
+        ;; (prelude container synth, observables, for_each-with-lambda),
+        ;; fall back to positional args as-supplied.
+        ordered-args
+        (cond
+          for-each-with-lambda? args
+          method-info
+          (mapv (fn [{:keys [name value]}] {:kind :positional :name name :value value})
+                (resolve-args-against-params
+                 (str "method call `" method-name "` on "
+                      (pr-str target-ty))
+                 (mapv (fn [p] {:name (:name p) :default (:default p)})
+                       user-params)
+                 args))
+          :else args)]
     (if for-each-with-lambda?
       (lower-for-each-call target-lo target-ty (get-in args [0 :value]) ctx)
-      (let [arg-exprs (mapv #(lower-expr (:value %) ctx) args)
+      (let [arg-exprs (mapv #(lower-expr (:value %) ctx) ordered-args)
             ;; Audit F44 — List container's `add`/`remove` take the
             ;; element as `id`, so primitive callers need boxing at
             ;; the call site. Element type comes from the container's
@@ -1912,7 +1946,7 @@
                  (= 1 (count arg-exprs)))
             arg-exprs
             (if list-add-or-remove?
-              (let [elem-ty (infer-type (:value (first args)) ctx)]
+              (let [elem-ty (infer-type (:value (first ordered-args)) ctx)]
                 (case elem-ty
                   (:int :float)
                   [{:node :objc-num-lit :kind :box :expr (first arg-exprs)}]
