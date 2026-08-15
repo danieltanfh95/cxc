@@ -116,6 +116,79 @@
               {:name "y" :value {:node :int :value 2}}]    ; default kicked in
              (:fields ctor))))))
 
+;; F40 Landing 1 — call-site + decl-site validation (spec §3.8.5)
+
+(deftest f40-record-ctor-duplicate-named-arg-rejected
+  (testing "V(x: 1, x: 2) — duplicate named arg fails, not silently collapsed"
+    (let [ex (try
+               (lower-src "record V:\n    data:\n        x: Int\n        y: Int\n\ndef main:\n    -> running\n        do: print(V(x: 1, x: 2, y: 3).x)\n")
+               nil
+               (catch clojure.lang.ExceptionInfo e e))]
+      (is ex "expected exception")
+      (is (= :not-yet-implemented (:kind (ex-data ex))))
+      (is (re-find #"duplicate named arg" (.getMessage ex))))))
+
+(deftest f40-record-ctor-unknown-named-arg-rejected
+  (testing "V(bogus: 1) — unknown named arg fails, not silently ignored"
+    (let [ex (try
+               (lower-src "record V:\n    data:\n        x: Int\n        y: Int\n\ndef main:\n    -> running\n        do: print(V(x: 1, y: 2, bogus: 3).x)\n")
+               nil
+               (catch clojure.lang.ExceptionInfo e e))]
+      (is ex "expected exception")
+      (is (= :not-yet-implemented (:kind (ex-data ex))))
+      (is (re-find #"unknown named arg" (.getMessage ex)))
+      (is (re-find #"bogus" (.getMessage ex))))))
+
+(deftest f40-record-ctor-surplus-positional-rejected
+  (testing "V(1, 2, 3) when V has 2 fields — surplus positional fails"
+    (let [ex (try
+               (lower-src "record V:\n    data:\n        x: Int\n        y: Int\n\ndef main:\n    -> running\n        do: print(V(1, 2, 3).x)\n")
+               nil
+               (catch clojure.lang.ExceptionInfo e e))]
+      (is ex "expected exception")
+      (is (= :not-yet-implemented (:kind (ex-data ex))))
+      (is (re-find #"too many positional" (.getMessage ex))))))
+
+(deftest f40-record-ctor-positional-and-named-collision-rejected
+  (testing "V(1, x: 2) — same param supplied positionally AND by name fails"
+    (let [ex (try
+               (lower-src "record V:\n    data:\n        x: Int\n        y: Int\n\ndef main:\n    -> running\n        do: print(V(1, x: 2, y: 3).x)\n")
+               nil
+               (catch clojure.lang.ExceptionInfo e e))]
+      (is ex "expected exception")
+      (is (= :not-yet-implemented (:kind (ex-data ex))))
+      (is (re-find #"both positionally and by name" (.getMessage ex))))))
+
+(deftest f40-record-fields-defaults-must-follow-required
+  (testing "record V { x: Int = 1, y: Int } — defaulted before required is a compile error"
+    (let [ex (try
+               (lower-src "record V:\n    data:\n        x: Int = 1\n        y: Int\n\ndef main:\n    -> running\n        do: print(V(x: 10, y: 20).x)\n")
+               nil
+               (catch clojure.lang.ExceptionInfo e e))]
+      (is ex "expected exception")
+      (is (= :not-yet-implemented (:kind (ex-data ex))))
+      (is (re-find #"defaulted param" (.getMessage ex))))))
+
+(deftest f40-atom-ctor-duplicate-named-arg-rejected
+  (testing "duplicate named arg on atom ctor fails"
+    (let [ex (try
+               (lower-src "def Widget(a: Int, b: Int):\n    data:\n        n: Int = a\n\ndef main:\n    -> running\n        do: print(Widget(a: 1, a: 2, b: 3).n)\n")
+               nil
+               (catch clojure.lang.ExceptionInfo e e))]
+      (is ex "expected exception")
+      (is (= :not-yet-implemented (:kind (ex-data ex))))
+      (is (re-find #"duplicate named arg" (.getMessage ex))))))
+
+(deftest f40-atom-ctor-unknown-named-arg-rejected
+  (testing "unknown named arg on atom ctor fails"
+    (let [ex (try
+               (lower-src "def Widget(a: Int):\n    data:\n        n: Int = a\n\ndef main:\n    -> running\n        do: print(Widget(a: 1, ghost: 2).n)\n")
+               nil
+               (catch clojure.lang.ExceptionInfo e e))]
+      (is ex "expected exception")
+      (is (= :not-yet-implemented (:kind (ex-data ex))))
+      (is (re-find #"unknown named arg" (.getMessage ex))))))
+
 (deftest def-atom-lowers-to-objc-class
   (testing "def-atom with data:-only → :objc-class with @property ivars + -init defaults"
     (let [prog (lower-src "def Counter:\n    data:\n        n: Int = 42\n\ndef main:\n    -> running\n        do: print(Counter().n)\n")

@@ -69,6 +69,27 @@
   (throw (ex-info (str "lowering not yet implemented: " what)
                   {:kind :not-yet-implemented :what what :node node})))
 
+(defn- validate-defaults-after-required!
+  "Spec §3.8.5 rule 3: in any parameter list, all defaulted params must
+   follow all non-defaulted (required) params. `f(x: Int = 0, y: Int)`
+   is a compile error — a caller giving `f(1)` couldn't tell whether
+   `1` bound `x` or `y`.
+
+   `params` is a seq of maps carrying `:name` and `:default` (nil when
+   no default). `site` is a short label for the diagnostic."
+  [site params]
+  (loop [seen-default? false
+         ps            (seq params)]
+    (when ps
+      (let [p (first ps)]
+        (if (and seen-default? (nil? (:default p)))
+          (fail-nyi! (str "required param `" (:name p) "` follows a defaulted "
+                          "param on " site " — spec §3.8.5 requires "
+                          "defaulted params to come last")
+                     {:site site :param (:name p)})
+          (recur (or seen-default? (some? (:default p)))
+                 (next ps)))))))
+
 (defn- program-has-async-sends?
   "Walk the parsed AST for any `:emit` node with `:async? true` — a
    `:>` targeted send OR an untargeted stream emission. Programs
@@ -408,7 +429,11 @@
    inference can read the parametric inner type."
   [record-name methods-section]
   (mapv (fn [m]
-          (let [rt (:return-type m)]
+          (let [rt          (:return-type m)
+                user-params (remove #(= "self" (:name %)) (:params m))]
+            (validate-defaults-after-required!
+             (str "method `" record-name "." (:name m) "`")
+             user-params)
             {:name               (:name m)
              :params             (mapv #(normalize-method-param record-name %) (:params m))
              :cxc-return-ty      (case (:node rt)
@@ -435,6 +460,9 @@
              dsec    (first (filter #(= :data-section    (:node %)) (:sections r)))
              msec    (first (filter #(= :methods-section (:node %)) (:sections r)))
              fields  (fields-from-data-section dsec env atom-env enum-env)
+             _       (validate-defaults-after-required!
+                      (str "record `" name "` fields (auto-ctor)")
+                      fields)
              methods (extract-methods name msec)
              ;; F38 auto-detect: any method → :class variant, else :struct.
              ;; Structural trigger, no user syntax.
@@ -973,6 +1001,9 @@
                                ;; check runs on the wide source before
                                ;; the narrowing store.
                                (narrow-fields-by-invariants invariants))
+             _             (validate-defaults-after-required!
+                            (str "def-atom `" name "` ctor-params")
+                            merged-ctor)
              ctor-params   (ctor-params-normalized merged-ctor {} env enum-env)
              methods       (extract-methods name msec)
              message-index (collect-message-shapes name transitions)
@@ -1699,40 +1730,87 @@
 ;; Expression lowering (ctx-threaded)
 ;; ---------------------------------------------------------------------------
 
-(declare lower-expr lower-stmt record-synth-equals-name)
+(declare lower-expr lower-stmt record-synth-equals-name
+         resolve-args-against-params)
 
 (defn- lower-record-ctor
   [record-name args ctx]
-  (let [rec        (get-in ctx [:record-env record-name])
-        by-name    (into {} (keep (fn [a] (when (= :named (:kind a))
-                                            [(:name a) (:value a)]))
-                                  args))
-        positional (filterv #(= :positional (:kind %)) args)
-        fields     (mapv (fn [i f]
-                           (let [v (or (get by-name (:name f))
-                                       (:value (get positional i))
-                                       (:default f))]
-                             (when-not v
-                               (fail-nyi! (str "no value provided for field `"
-                                               (:name f) "` on `" record-name
-                                               "` (no arg and no default)")
-                                          {:record record-name :field (:name f)}))
-                             {:name  (:name f)
-                              :value (lower-expr v ctx)}))
-                         (range)
-                         (:fields rec))]
+  (let [rec      (get-in ctx [:record-env record-name])
+        params   (mapv (fn [f] {:name (:name f) :default (:default f)})
+                       (:fields rec))
+        resolved (resolve-args-against-params
+                  (str "record `" record-name "` constructor")
+                  params args)
+        fields   (mapv (fn [{:keys [name value]}]
+                         {:name name :value (lower-expr value ctx)})
+                       resolved)]
     {:node :struct-lit :type record-name :fields fields}))
 
 (defn- resolve-args-against-params
   "Match named/positional call args against declared params in decl
    order. Fall back to each param's declared default; fail-nyi if
    neither is available. Returns a vector of {:name :value} pairs in
-   declaration order."
+   declaration order.
+
+   F40 Landing 1 — call-site validation (spec §3.8.5):
+   - duplicate named args              → fail
+   - unknown named args                → fail
+   - surplus positional args           → fail
+   - same param supplied twice
+     (once positionally, once named)   → fail
+   - missing arg without default       → fail-nyi (pre-existing)"
   [call-site-label params args]
-  (let [by-name    (into {} (keep (fn [a] (when (= :named (:kind a))
-                                            [(:name a) (:value a)]))
-                                  args))
-        positional (filterv #(= :positional (:kind %)) args)]
+  (let [param-names   (mapv :name params)
+        param-set     (set param-names)
+        named-args    (filterv #(= :named (:kind %)) args)
+        positional    (filterv #(= :positional (:kind %)) args)
+        ;; Duplicate named args
+        _ (let [dupes (->> (map :name named-args)
+                           frequencies
+                           (keep (fn [[n c]] (when (> c 1) n)))
+                           sort)]
+            (when (seq dupes)
+              (fail-nyi! (str "duplicate named arg" (when (> (count dupes) 1) "s")
+                              " on " call-site-label ": "
+                              (str/join ", " (map #(str "`" % "`") dupes)))
+                         {:site call-site-label :duplicates dupes})))
+        ;; Unknown named args
+        _ (let [unknown (->> named-args
+                             (map :name)
+                             (remove param-set)
+                             distinct
+                             sort)]
+            (when (seq unknown)
+              (fail-nyi! (str "unknown named arg" (when (> (count unknown) 1) "s")
+                              " on " call-site-label ": "
+                              (str/join ", " (map #(str "`" % "`") unknown))
+                              " (declared params: "
+                              (str/join ", " (map #(str "`" % "`") param-names))
+                              ")")
+                         {:site call-site-label :unknown unknown
+                          :declared param-names})))
+        ;; Surplus positional args
+        _ (when (> (count positional) (count params))
+            (fail-nyi! (str "too many positional args on " call-site-label
+                            ": got " (count positional) ", expected at most "
+                            (count params))
+                       {:site call-site-label
+                        :positional-count (count positional)
+                        :param-count (count params)}))
+        ;; Same param supplied positionally AND by name
+        _ (let [by-name-set (set (map :name named-args))
+                collisions  (->> (map-indexed (fn [i _] (get param-names i))
+                                              positional)
+                                 (filter by-name-set)
+                                 distinct
+                                 sort)]
+            (when (seq collisions)
+              (fail-nyi! (str "arg for param" (when (> (count collisions) 1) "s")
+                              " " (str/join ", " (map #(str "`" % "`") collisions))
+                              " supplied both positionally and by name on "
+                              call-site-label)
+                         {:site call-site-label :collisions collisions})))
+        by-name (into {} (map (juxt :name :value) named-args))]
     (mapv (fn [i p]
             (let [v (or (get by-name (:name p))
                         (:value (get positional i))
@@ -1745,6 +1823,7 @@
               {:name (:name p) :value v}))
           (range)
           params)))
+
 
 (defn- lower-atom-ctor
   "`X(a: 1, b: 2)` → ObjC init call. With no ctor params, emits plain
