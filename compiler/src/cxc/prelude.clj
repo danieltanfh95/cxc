@@ -22,7 +22,8 @@
    `Cxc` prefix — the mangling is now internal-only. Layer 6's full
    module system supersedes the rename table with proper
    namespace-scoped resolution."
-  (:require [clojure.walk :as walk]))
+  (:require [clojure.string]
+            [clojure.walk :as walk]))
 
 (def rename-table
   "User-visible → mangled internal name. Applied post-parse to every
@@ -66,20 +67,20 @@
   #{"_Cxc_Clock" "_Cxc_Random" "_Cxc_TestKeyboardInput" "_Cxc_Ticker"
     "_Cxc_Console"})
 
-(def source
-  "Prelude source text spliced ahead of user source. Indentation is
-   canonical cxc (4-space blocks); keep flush-left at column 0.
-   Users write bare names; `rewrite-prelude-names` mangles them
-   post-parse.
+;; F55 Landing 1 (2026-08-15) — prelude broken into per-module chunks
+;; (still all in-process; file-tree move is Landing 2). Each chunk is
+;; classified `:shared` (pure cxc, no platform natives — cross-target)
+;; or `:target` (calls native_* runtime — target-specific). `source`
+;; below is still a single concatenated string that gets prepended
+;; to user source; the split serves as (1) documentation of module
+;; boundaries the resolver will later respect, (2) provenance for
+;; the name-resolution pass (which module owns which declared name),
+;; and (3) a checkpoint that per-module editing works before touching
+;; the loader. NO semantic change from prior single-string version —
+;; the ordering below matches the historical prelude source exactly,
+;; and modules that don't declare types resolve to no-ops.
 
-   Contents:
-   - Duration / Instant: value-typed millisecond records
-   - Clock: capability stub emitting `tick` N times then `done`.
-     Not a real periodic timer (would need dispatch_source_t at
-     Layer 4c multi-thread); an async self-send loop drives the
-     tick count under Layer 4 single-thread. Real
-     `every(rate) -> Stream of Instant` returning a first-class
-     Stream value is Layer 5 (needs Stream-as-value)."
+(def ^:private prelude-module-time-src
   "record Duration:
     data:
         millis: Int
@@ -95,8 +96,10 @@ record Instant:
     methods:
         function plus(self, delta: Duration) -> Instant:
             return Instant(millis: self.millis + delta.millis)
+")
 
-record Position:
+(def ^:private prelude-module-geom-src
+  "record Position:
     data:
         x: Float
         y: Float
@@ -104,15 +107,19 @@ record Position:
     methods:
         function plus(self, other: Position) -> Position:
             return Position(x: self.x + other.x, y: self.y + other.y)
+")
 
-def Random:
+(def ^:private prelude-module-random-src
+  "def Random:
     next_u32 :< native_random_u32()
 
     methods:
         function below(self, n: Int) -> Int:
             return native_random_below(n)
+")
 
-enum Key:
+(def ^:private prelude-module-input-src
+  "enum Key:
     arrow_up
     arrow_down
     arrow_left
@@ -140,8 +147,10 @@ def TestKeyboardInput(events: Int = 0):
 
     running <: beat -> end
         when: remaining == 0
+")
 
-def Ticker(rate_ms: Int, count: Int = 3):
+(def ^:private prelude-module-ticker-src
+  "def Ticker(rate_ms: Int, count: Int = 3):
     data:
         remaining: Int = count
 
@@ -158,8 +167,10 @@ def Ticker(rate_ms: Int, count: Int = 3):
 
     running <: beat -> end
         when: remaining == 0
+")
 
-def Clock(ticks: Int = 3):
+(def ^:private prelude-module-clock-src
+  "def Clock(ticks: Int = 3):
     data:
         remaining: Int = ticks
 
@@ -184,8 +195,10 @@ def Clock(ticks: Int = 3):
 
     running <: beat -> end
         when: remaining == 0
+")
 
-def Console:
+(def ^:private prelude-module-io-src
+  "def Console:
     methods:
         function write(self, msg: String) -> Int:
             return native_console_write(msg)
@@ -193,8 +206,49 @@ def Console:
     -> running
 
     -> end
-
 ")
+
+(def prelude-modules
+  "Per-module registry. Ordering here is the concatenation order for
+   `source` and is chosen so that declared types precede their users
+   (Duration before Random/Clock is not required but matches
+   historical layout; the resolver will make ordering irrelevant once
+   it lands).
+
+   :kind
+     :shared  — pure cxc, no platform runtime calls; ships regardless
+                of target
+     :target  — uses `native_*` FFI; ships only when the compiler
+                targets a runtime that provides those symbols
+                (Layer 6 target selection will gate this)
+   :names — user-visible names declared inside the module. Used by
+            F51/F56 to make the resolver name→module map without
+            re-parsing the prelude."
+  [{:name :time    :kind :shared :src prelude-module-time-src
+    :names ["Duration" "Instant"]}
+   {:name :geom    :kind :shared :src prelude-module-geom-src
+    :names ["Position"]}
+   {:name :input   :kind :shared :src prelude-module-input-src
+    :names ["Key" "TestKeyboardInput"]}
+   {:name :random  :kind :target :src prelude-module-random-src
+    :names ["Random"]}
+   {:name :ticker  :kind :target :src prelude-module-ticker-src
+    :names ["Ticker"]}
+   {:name :clock   :kind :target :src prelude-module-clock-src
+    :names ["Clock"]}
+   {:name :io      :kind :target :src prelude-module-io-src
+    :names ["Console"]}])
+
+(def source
+  "Prelude source text spliced ahead of user source. Indentation is
+   canonical cxc (4-space blocks); keep flush-left at column 0.
+   Users write bare names; `rewrite-prelude-names` mangles them
+   post-parse.
+
+   F55 Landing 1: assembled from `prelude-modules` — one string per
+   registered module concatenated in registry order. Same byte-
+   equivalent output as the historical single-string prelude."
+  (clojure.string/join "\n" (map :src prelude-modules)))
 
 (def duration-units
   "Recognized unit suffixes on numeric literals. Value = multiplier
