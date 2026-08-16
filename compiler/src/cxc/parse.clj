@@ -1152,6 +1152,226 @@
         (fail! tokens p "expected use:, data:, invariants:, methods:, deprecated:, observable, or transition inside def-atom body")))))
 
 ;; ---------------------------------------------------------------------------
+;; F9 Landing 1 — `class` / `protocol` sugar over `class + metadata: kind:`.
+;;
+;;   class Foo:
+;;       metadata:
+;;           kind: regular            # or record / enum / protocol / section
+;;       <sections>+
+;;
+;;   Sugar form (spec §4.11 — sugar desugars losslessly):
+;;   protocol P:                      → class P + metadata: kind: protocol
+;;       <sections>+
+;;
+;;   Header parens conformances (§3.4.5):
+;;   class Foo(P1, P2):               → :conforms [P1 P2] on the class node
+;;       <sections>+
+;;
+;;   Body-form conformances (§3.4.5, canonical for extensions / long lists):
+;;   class Foo:
+;;       conforms: P1
+;;       conforms: P2                 → :conforms [P1 P2]
+;;
+;;   L1 is grammar-only. Lower emits `fail-nyi!` on `:class` nodes with a
+;;   pointer at F9 L2 (which builds protocol-env + attaches semantics).
+;;   Existing `record` / `enum` sugar keywords keep their dedicated parsers
+;;   and continue to produce `:record` / `:enum` nodes for backward compat;
+;;   the L1 → :class path handles ONLY `class` / `protocol` at top level.
+;; ---------------------------------------------------------------------------
+
+(def ^:private legal-kinds
+  #{"regular" "record" "enum" "protocol" "section"})
+
+(defn- parse-metadata-section
+  "L1: accepts only `kind: <value>` inside. Other metadata keys (thread,
+   qos, pool, superclass, extends, custom user keys) belong to F10 and
+   fail-nyi with a targeted pointer."
+  [tokens pos]
+  (let [[_ p] (expect tokens pos :kw "metadata")
+        [_ p] (expect tokens p :punct ":")
+        [_ p] (expect tokens p :newline)
+        [_ p] (expect tokens p :indent)]
+    (loop [entries [] p p]
+      (cond
+        (at? tokens p :dedent)
+        [{:node :metadata-section :entries entries} (inc p)]
+
+        (at? tokens p :newline)
+        (recur entries (inc p))
+
+        (and (at? tokens p :ident) (= "kind" (t-value (peek-tok tokens p)))
+             (at? tokens (inc p) :punct ":"))
+        (let [[_ p2]   (expect tokens p :ident)
+              [_ p3]   (expect tokens p2 :punct ":")
+              [kv p4]  (cond
+                         (at? tokens p3 :ident) (expect tokens p3 :ident)
+                         (at? tokens p3 :kw)    (expect tokens p3 :kw))
+              _        (when-not (legal-kinds kv)
+                         (fail! tokens p3
+                                (str "unknown `metadata: kind:` value `" kv "`; "
+                                     "must be one of: regular, record, enum, "
+                                     "protocol, section (spec §3.3).")))]
+          (recur (conj entries {:key :kind :value (keyword kv)})
+                 (skip-newlines tokens p4)))
+
+        (at? tokens p :ident)
+        (fail! tokens p
+               (str "`metadata:` key `" (t-value (peek-tok tokens p))
+                    "` is not yet implemented — F9 Landing 1 accepts "
+                    "only `kind:`. Full metadata surface (threading, "
+                    "QoS, dispatch pool, superclass, custom keys) "
+                    "lands with F10. See spec §4.10.6."))
+
+        :else
+        (fail! tokens p "expected `kind:` entry or dedent in metadata section")))))
+
+(defn- parse-conforms-line
+  "Body-form conformance declaration:
+     conforms: <TypeName>
+   Multiple `conforms:` lines legal per §3.4.5 rule 5 (union semantics)."
+  [tokens pos]
+  (let [[_ p]  (expect tokens pos :ident)                      ; \"conforms\"
+        [_ p]  (expect tokens p :punct ":")
+        [ty p] (parse-type tokens p)
+        [_ p]  (expect tokens p :newline)]
+    [{:node :conforms-line :type ty} p]))
+
+(defn- parse-header-parens-conformances
+  "Parse `(P1, P2, ...)` after a class/protocol name. Empty parens `()` is
+   a hard error (nothing conforms to nothing — this is not the Unit type
+   at type-position, per §3.4.5 rule not-said-but-implied)."
+  [tokens pos]
+  (let [[_ p] (expect tokens pos :punct "(")]
+    (when (at? tokens p :punct ")")
+      (fail! tokens p
+             "empty conformance list `()` — omit the parens if no protocols."))
+    (loop [confs [] p p]
+      (let [[ty p2] (parse-type tokens p)]
+        (cond
+          (at? tokens p2 :punct ",")
+          (recur (conj confs ty) (inc p2))
+          (at? tokens p2 :punct ")")
+          [(conj confs ty) (inc p2)]
+          :else
+          (fail! tokens p2
+                 "expected `,` or `)` in conformance list"))))))
+
+(defn- fold-class-body
+  "Post-parse fold: extract `metadata: kind:` into the class node's `:kind`
+   field; extract body-form `conforms:` entries into `:conforms`. Validates
+   sugar-kind agreement (e.g. `protocol Foo: metadata: kind: enum` errors).
+
+   sugar-kind is a keyword (:protocol, :regular) inferred from the top-level
+   keyword; nil for the primitive `class` form."
+  [tokens pos-for-diag class-name sugar-kind header-conforms body]
+  (let [metadata-secs (filter #(= :metadata-section (:node %)) body)
+        conforms-lines (filter #(= :conforms-line (:node %)) body)
+        other-sections (remove #(contains? #{:metadata-section :conforms-line}
+                                            (:node %))
+                                body)
+        kinds-from-metadata (keep (fn [ms]
+                                    (some (fn [e]
+                                            (when (= :kind (:key e)) (:value e)))
+                                          (:entries ms)))
+                                  metadata-secs)
+        _ (when (> (count metadata-secs) 1)
+            (fail! tokens pos-for-diag
+                   (str "multiple `metadata:` sections on class `" class-name
+                        "` — collapse into one.")))
+        _ (when (> (count kinds-from-metadata) 1)
+            (fail! tokens pos-for-diag
+                   (str "duplicate `kind:` entries in `metadata:` on class `"
+                        class-name "` — kind is set once at declaration.")))
+        explicit-kind (first kinds-from-metadata)
+        final-kind (cond
+                     (and sugar-kind explicit-kind
+                          (not= sugar-kind explicit-kind))
+                     (fail! tokens pos-for-diag
+                            (str "sugar keyword `" (name sugar-kind)
+                                 "` on class `" class-name "` contradicts "
+                                 "`metadata: kind: " (name explicit-kind)
+                                 "` — pick one."))
+                     :else
+                     (or explicit-kind sugar-kind :regular))
+        body-conforms (mapv :type conforms-lines)
+        all-conforms  (into (vec header-conforms) body-conforms)]
+    {:node     :class
+     :name     class-name
+     :kind     final-kind
+     :conforms all-conforms
+     :body     (vec other-sections)}))
+
+(declare parse-transition parse-observable)
+
+(defn- parse-class-section
+  "Dispatch one section inside a `class`/`protocol` body. L1 accepts:
+   - metadata: (kind: only)
+   - data:
+   - methods:
+   - invariants:
+   - use:
+   - deprecated:
+   - conforms: (body-form)
+   Rejects `state:` (retired at v1.0); other keys fall through to the
+   caller's else-branch."
+  [tokens pos]
+  (cond
+    (at? tokens pos :kw "metadata")   (parse-metadata-section tokens pos)
+    (at? tokens pos :kw "data")       (parse-data-section tokens pos)
+    (at? tokens pos :kw "methods")    (parse-methods-section tokens pos)
+    (at? tokens pos :kw "invariants") (parse-invariants-section tokens pos)
+    (at? tokens pos :kw "use")        (parse-use-section tokens pos)
+    (at? tokens pos :kw "deprecated") (parse-deprecated-section tokens pos)
+
+    (and (at? tokens pos :ident) (= "conforms" (t-value (peek-tok tokens pos)))
+         (at? tokens (inc pos) :punct ":"))
+    (parse-conforms-line tokens pos)
+
+    (and (at? tokens pos :ident) (= "state" (t-value (peek-tok tokens pos)))
+         (at? tokens (inc pos) :punct ":"))
+    (fail! tokens pos
+           (str "`state:` section is retired at v1.0 — all fields are `data:`. "
+                "See spec §1.11."))
+
+    :else nil))
+
+(defn- parse-class
+  "Parse a `class` or `protocol` top-level form. Returns [{:node :class …}
+   next-pos]. Detects `sealed protocol Foo:` — spec-retired form (§3.4.1) —
+   with a targeted diagnostic pointing at `enum` for closed sum types."
+  [tokens pos sugar-kind]
+  (let [pos-for-diag pos
+        [_ p] (cond
+                (= :protocol sugar-kind) (expect tokens pos :kw "protocol")
+                (= :regular sugar-kind)  (expect tokens pos :kw "class")
+                :else                    (expect tokens pos :kw "class"))
+        [class-name p] (expect tokens p :ident)
+        [header-conforms p] (if (at? tokens p :punct "(")
+                              (parse-header-parens-conformances tokens p)
+                              [[] p])
+        [_ p] (expect tokens p :punct ":")
+        [_ p] (expect tokens p :newline)
+        [_ p] (expect tokens p :indent)]
+    (loop [body [] p p]
+      (cond
+        (at? tokens p :dedent)
+        [(fold-class-body tokens pos-for-diag class-name sugar-kind
+                          header-conforms body)
+         (inc p)]
+
+        (at? tokens p :newline)
+        (recur body (inc p))
+
+        :else
+        (if-let [[sec p2] (parse-class-section tokens p)]
+          (recur (conj body sec) (skip-newlines tokens p2))
+          (fail! tokens p
+                 (str "expected metadata:, data:, methods:, invariants:, "
+                      "use:, deprecated:, conforms:, or dedent in `"
+                      (if (= :protocol sugar-kind) "protocol" "class")
+                      " " class-name "` body")))))))
+
+;; ---------------------------------------------------------------------------
 ;; Record  — the smallest top-level form
 ;;
 ;;   record <Name>:
@@ -1274,6 +1494,21 @@
       (at? tokens p :kw "record")  (parse-record tokens p)
       (at? tokens p :kw "enum")    (parse-enum tokens p)
       (at? tokens p :kw "def")     (parse-def-atom tokens p)
+
+      ;; F9 L1 — `class Foo:` / `protocol Foo:` produce a `:class` node
+      ;; with `:kind` populated from the sugar keyword (or `metadata: kind:`
+      ;; in the body). Lower fail-nyis until F9 L2+ wires semantics.
+      (at? tokens p :kw "class")    (parse-class tokens p :regular)
+      (at? tokens p :kw "protocol") (parse-class tokens p :protocol)
+
+      ;; F9 L1 — spec §3.4.1 removed `sealed protocol`. Enumerations
+      ;; cover the closed-sum-type case with better ergonomics.
+      (and (at? tokens p :ident) (= "sealed" (t-value (peek-tok tokens p)))
+           (at? tokens (inc p) :kw "protocol"))
+      (fail! tokens p
+             (str "`sealed protocol` is retired at v1.0 (spec §3.4.1). "
+                  "For closed sum types use `enum` with associated values; "
+                  "for open protocols (any type may conform), drop `sealed`."))
       ;; `extern <Name>:` section retired at v1.0 (spec §1.12, §2335).
       ;; FFI is a capability atom (Extern) provisioned to stdlib shims
       ;; via `use: extern: Extern`; foreign symbols are declared in

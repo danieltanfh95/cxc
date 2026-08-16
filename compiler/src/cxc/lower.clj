@@ -5152,6 +5152,18 @@
         _          (when-not main-atom
                      (throw (ex-info "no `def main` entry point found at top level"
                                      {:top top-nodes})))
+        ;; F9 L1 — `class`/`protocol` produce `:class` nodes but semantics
+        ;; land in L2+ (protocol-env, extension composition, conformance
+        ;; validation, default-method inheritance). Fail loudly so grammar-
+        ;; only landings don't silently produce broken output.
+        _          (when-let [c (first (filter #(= :class (:node %)) top-nodes))]
+                     (fail-nyi! (str "`" (name (:kind c)) " " (:name c) "`: "
+                                     "F9 Landing 1 parses class/protocol "
+                                     "declarations but the semantics "
+                                     "(protocol-env, conformance, dispatch) "
+                                     "land in F9 L2+. See "
+                                     "plans/f9-class-protocol-extension.md.")
+                                c))
         ;; F31/F35 L3 — walk the |> send graph and warn on cross-atom
         ;; cycles. Best-effort compile-time detection; spec §1.11 line
         ;; 1523 keeps cycle-avoidance on the user. No runtime scaffolding

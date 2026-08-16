@@ -1397,6 +1397,19 @@ def main:
       (is (not (some #{"<execinfo.h>"} (:includes without-panic)))
           "non-panic program doesn't pull in <execinfo.h>"))))
 
+(deftest f9-l1-class-node-fails-nyi-at-lower
+  (testing "F9 Landing 1 — `class`/`protocol` parse cleanly (see parse-test) but semantics land in F9 L2+. Lower emits fail-nyi with a pointer at the plan so the grammar-only landing doesn't silently drop the user's declaration."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"F9 Landing 1 parses.*L2\+"
+         (lower-src (str "class Foo:\n"
+                         "    metadata:\n"
+                         "        kind: regular\n"
+                         "\n"
+                         "def main:\n"
+                         "    -> running\n"
+                         "        do: print(0)\n"))))))
+
 (deftest f37b-l1-bytes-length-returns-int
   (testing "F37b Landing 1 — `.length` on a `Bytes`-typed expression type-checks as `Int` (spec §3.10.10 user-facing convention: `.length` is an element count matching List/String; wire-format `UInt32` prefix is a different concern). Emitted C uses ObjC property syntax, dispatching to NSData's `-length`."
     (let [prog (lower-src (str "record Msg:\n"

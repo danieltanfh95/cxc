@@ -465,3 +465,97 @@ def main:
           ty  (-> rec :sections first :fields first :type)]
       (is (= :type-nullable (:node ty)))
       (is (= :type-named-tuple (get-in ty [:inner :node]))))))
+
+(deftest f9-l1-class-with-explicit-kind
+  (testing "F9 Landing 1 — `class Foo:` with `metadata: kind: regular` produces `:class :kind :regular`. Body-form kind matches sugar-less class keyword."
+    (let [n (first-node "class Foo:\n    metadata:\n        kind: regular\n")]
+      (is (= :class (:node n)))
+      (is (= "Foo" (:name n)))
+      (is (= :regular (:kind n)))
+      (is (empty? (:conforms n)))
+      (is (empty? (:body n))
+          "metadata: section is folded into :kind, not kept in :body"))))
+
+(deftest f9-l1-protocol-sugar
+  (testing "F9 Landing 1 — `protocol P:` sugar desugars to `:class :kind :protocol`. Sugar keyword sets kind; no explicit metadata needed."
+    (let [n (first-node "protocol P:\n    data:\n        x: Int\n")]
+      (is (= :class (:node n)))
+      (is (= "P" (:name n)))
+      (is (= :protocol (:kind n))))))
+
+(deftest f9-l1-header-parens-conformance
+  (testing "F9 Landing 1 — `class Foo(P1, P2):` populates `:conforms` in declaration order."
+    (let [n (first-node "class Foo(P1, P2):\n    metadata:\n        kind: regular\n")]
+      (is (= :class (:node n)))
+      (is (= [{:node :type-ref :name "P1"}
+              {:node :type-ref :name "P2"}]
+             (:conforms n))))))
+
+(deftest f9-l1-body-form-conforms
+  (testing "F9 Landing 1 — body-form `conforms: P` populates `:conforms`; multiple `conforms:` lines legal per §3.4.5 rule 5."
+    (let [n (first-node "class Foo:\n    metadata:\n        kind: regular\n    conforms: P1\n    conforms: P2\n")]
+      (is (= [{:node :type-ref :name "P1"}
+              {:node :type-ref :name "P2"}]
+             (:conforms n))))))
+
+(deftest f9-l1-header-and-body-conformances-additive
+  (testing "F9 Landing 1 — header parens conformances and body-form entries stack additively (§3.4.5 rule 5)."
+    (let [n (first-node "class Foo(P1):\n    metadata:\n        kind: regular\n    conforms: P2\n")]
+      (is (= [{:node :type-ref :name "P1"}
+              {:node :type-ref :name "P2"}]
+             (:conforms n))))))
+
+(deftest f9-l1-sugar-vs-metadata-mismatch-rejected
+  (testing "F9 Landing 1 — sugar keyword (`protocol`) contradicting `metadata: kind:` (`enum`) is a hard parse error to prevent lying-about-kind."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"sugar keyword `protocol`.*contradicts.*enum"
+         (first-node "protocol Foo:\n    metadata:\n        kind: enum\n")))))
+
+(deftest f9-l1-unknown-metadata-key-fail-nyi
+  (testing "F9 Landing 1 — non-`kind:` metadata entries (thread, qos, pool, custom keys) fail-nyi with a pointer at F10."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"`metadata:` key `pool`.*F10"
+         (first-node "class Foo:\n    metadata:\n        pool: main\n")))))
+
+(deftest f9-l1-unknown-kind-value-rejected
+  (testing "F9 Landing 1 — `metadata: kind:` value must be one of the five spec-legal kinds (§3.3)."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"unknown `metadata: kind:` value `interface`"
+         (first-node "class Foo:\n    metadata:\n        kind: interface\n")))))
+
+(deftest f9-l1-sealed-protocol-retired
+  (testing "F9 Landing 1 — `sealed protocol Foo:` is a spec-retired form (§3.4.1); diagnostic points at `enum` for closed sum types."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"`sealed protocol` is retired at v1.0.*§3\.4\.1"
+         (first-node "sealed protocol Foo:\n    data:\n        x: Int\n")))))
+
+(deftest f9-l1-class-body-accepts-data-methods-invariants
+  (testing "F9 Landing 1 — class body accepts data:, methods:, invariants:, use:, deprecated: sections (same as records/atoms)."
+    (let [n (first-node (str "class Foo:\n"
+                             "    metadata:\n"
+                             "        kind: regular\n"
+                             "    data:\n"
+                             "        x: Int\n"
+                             "    methods:\n"
+                             "        function get(self) -> Int:\n"
+                             "            return x\n"))]
+      (is (= :class (:node n)))
+      (is (= 2 (count (:body n)))
+          "data + methods sections in body; metadata folded out"))))
+
+(deftest f9-l1-empty-conformance-parens-rejected
+  (testing "F9 Landing 1 — `class Foo():` is a hard error; omit the parens if no protocols conform."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"empty conformance list"
+         (first-node "class Foo():\n    metadata:\n        kind: regular\n")))))
+
+(deftest f9-l1-record-sugar-still-produces-record-node
+  (testing "F9 Landing 1 — backward compat: existing `record Foo:` sugar continues to produce a `:record` node (not routed through parse-class). Existing lower path unchanged."
+    (let [n (first-node "record R:\n    data:\n        x: Int\n")]
+      (is (= :record (:node n))
+          "record sugar keeps its dedicated parser + AST kind for backward compat"))))
