@@ -1406,16 +1406,89 @@ def main:
         (is (some? (walker main-body))
             "expected V_cxc_equals call in main body")))))
 
-(deftest handler-decl-raises-targeted-diagnostic
-  (testing "Audit F14: `-> handler(args):` parses as a distinct AST node (spec §1.11), but lowering waits on F9 + F38. Diagnostic names the handler + alternative (methods: section) so users get an actionable message. Needs a companion def-atom + def main so lower reaches the atom body before failing (main-atom promotion path fires first if the handler-decl sits on main itself)."
+(deftest f14-handler-decl-lowers-as-method
+  (testing "F14 Landing 1: `-> handler(args):` on a def-atom body lowers as a void ObjC method on the atom's class (spec §1265, §2160). The method selector matches the handler name; return type is void (side-effect-only per spec)."
+    (let [prog (lower-src "def A:
+    data:
+        n: Int = 0
+
+    -> running
+
+    -> tick(msg: Int):
+        return n
+
+def main:
+    def a: A
+
+    -> running
+")
+          a-cls (first (filter #(= "A" (:name %)) (:classes prog)))
+          tick  (first (filter #(and (= :objc-method (:node %))
+                                     (re-find #"tick" (str (:selector %))))
+                               (:methods a-cls)))]
+      (is (some? tick) "tick handler emits as a method on class A")
+      (is (= "void" (:return-type tick)) "handler methods return void"))))
+
+(deftest f14-zero-arg-handler-lowers
+  (testing "F14 Landing 1: zero-arg handler `-> tick():` lowers with a plain selector (no colon) and no params (self implicit)."
+    (let [prog (lower-src "def A:
+    data:
+        n: Int = 0
+
+    -> running
+
+    -> tick():
+        return n
+
+def main:
+    def a: A
+
+    -> running
+")
+          a-cls (first (filter #(= "A" (:name %)) (:classes prog)))
+          tick  (first (filter #(and (= :objc-method (:node %))
+                                     (= "tick" (:selector %)))
+                               (:methods a-cls)))]
+      (is (some? tick) "zero-arg handler present with bare selector `tick`")
+      (is (empty? (:params tick)) "no user params (self implicit)"))))
+
+(deftest f14-handler-name-collides-with-method
+  (testing "F14 Landing 1: a handler and a same-name `methods:` entry create ambiguous dispatch. Reject at fold with a spec §2160 pointer naming both."
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
-         #"handler declaration `-> tick"
+         #"declares handler `-> tick"
+         (lower-src "def A:
+    data:
+        n: Int = 0
+
+    methods:
+        def tick(self):
+            return 0
+
+    -> running
+
+    -> tick(msg: Int):
+        return n
+
+def main:
+    def a: A
+
+    -> running
+")))))
+
+(deftest f14-duplicate-handler-decl-rejected
+  (testing "F14 Landing 1: two `-> tick():` declarations on the same atom are rejected as duplicate handler declaration (each handler name unique per atom per spec §1265)."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"declares handler `-> tick.*more than once"
          (lower-src "def A:
     data:
         n: Int = 0
 
     -> running
+
+    -> tick(msg: Int):
+        return n
 
     -> tick(msg: Int):
         return n

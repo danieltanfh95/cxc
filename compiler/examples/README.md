@@ -27,6 +27,7 @@ what the current compiler can lower.
 | [`enum-cases.cxc`](enum-cases.cxc) | `enum Direction: ...` → C typedef enum; `Direction.arrow_down` → `Direction_arrow_down` (index 1). Renamed from `Key` because Layer 5b Step 12 reserves `Key` as a prelude enum. | `1` |
 | [`bool-and-is.cxc`](bool-and-is.cxc) | `and`/`or`/`is` lower to `&&`/`\|\|`/`==`; identity check on nil pointer | `1` |
 | [`atom-methods.cxc`](atom-methods.cxc) | Methods on def-atoms → ObjC instance methods; `[c bump]` and `[c plusWithother:5]` selectors | `26` |
+| [`atom-handler.cxc`](atom-handler.cxc) | F14: `-> shout(msg: Int):` handler declaration on an atom lowers as a void ObjC method sharing the atom's dispatch table (spec §1265, §2160). Externally invoked via `logger.shout(42)` from main. | `42` |
 | [`atom-on-enter.cxc`](atom-on-enter.cxc) | Wildcard on-enter for initial phase — `then: n => 100` fires during init, overrides `data:` default | `100` |
 | [`atom-on-enter-self-field.cxc`](atom-on-enter-self-field.cxc) | Unqualified data-field reference on RHS of `then:` resolves to `self.<field>` (direct ivar) | `30` |
 | [`observable-simple.cxc`](observable-simple.cxc) | `doubled :< raw + raw` synthesizes zero-arg getter method; `.doubled` reads it via ObjC dot syntax | `42` |

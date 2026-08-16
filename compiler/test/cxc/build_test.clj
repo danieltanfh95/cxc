@@ -129,6 +129,12 @@
       (is (zero? exit))
       (is (= "26\n" stdout)))))
 
+(deftest end-to-end-atom-handler
+  (testing "atom-handler.cxc — F14: `-> shout(msg: Int):` on an atom lowers as a void ObjC method sharing the atom's dispatch table (spec §1265, §2160). Externally invoked via `logger.shout(42)` from main."
+    (let [{:keys [exit stdout]} (compile-and-run "atom-handler")]
+      (is (zero? exit))
+      (is (= "42\n" stdout)))))
+
 (deftest end-to-end-atom-on-enter
   (testing "atom-on-enter.cxc — `-> ready then: n => 100` fires during init, overrides data default"
     (let [{:keys [exit stdout]} (compile-and-run "atom-on-enter")]

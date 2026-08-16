@@ -706,6 +706,30 @@
              :replace?           (boolean (:replace? m))}))
         (:methods methods-section)))
 
+(defn- handler-decl->method-entry
+  "F14 — convert an atom-body `-> name(args):` handler declaration
+   into a method-shaped entry compatible with `:methods` in atom-env.
+   Handlers are externally-invocable side-effect-only methods (spec
+   §1265); `:cxc-return-ty nil` marks void return, `:handler? true`
+   is provenance for future wire-attachment work. `self` is implicit
+   on handlers (spec §1265; user writes `-> log_it(msg: String):`) —
+   we synthesize the self-param at position 0 to match the methods-
+   section entry shape downstream `lower-atom-method` expects."
+  [atom-name hd-node]
+  (let [site         (str "handler `" atom-name ".-> " (:name hd-node) "`")
+        user-params  (:params hd-node)
+        self-param   {:name "self" :type nil :default nil}
+        with-self    (into [self-param] user-params)]
+    (validate-defaults-after-required! site user-params)
+    (validate-default-is-const!        site user-params)
+    {:name               (:name hd-node)
+     :params             (mapv #(normalize-method-param atom-name %) with-self)
+     :cxc-return-ty      nil
+     :cxc-return-ty-node nil
+     :body               (:body hd-node)
+     :replace?           false
+     :handler?           true}))
+
 (defn- build-record-env
   [top-nodes atom-env enum-env]
   (let [records  (filter #(= :record (:node %)) top-nodes)
@@ -1492,15 +1516,21 @@
      {}
      msg-txns)))
 
+(defn- def-atom-handler-decls
+  "F14 — `-> name(args):` handler declarations at atom-body top level."
+  [atom-node]
+  (filterv #(= :handler-decl (:node %)) (:body atom-node)))
+
 (defn- def-atom-body-extras
   "Everything in the def-atom body that isn't a section lower knows
    how to consume — e.g. contracts: (Layer 6+). Deprecated: is
    handled at the build/compile step (cxc.build/warn-deprecated-uses)
-   and doesn't reach lower, so it's filtered here too."
+   and doesn't reach lower, so it's filtered here too. Handler-decls
+   are consumed separately by F14."
   [atom-node]
   (remove #(#{:data-section :methods-section :transition :observable
               :invariants-section :use-section :nested-atom
-              :deprecated} (:node %))
+              :handler-decl :deprecated} (:node %))
           (:body atom-node)))
 
 ;; ---------------------------------------------------------------------------
@@ -1866,7 +1896,39 @@
              ;; field initializer, not at the ctor call site. Spec
              ;; §3.8.5 governs param defaults, so no const-check here.
              ctor-params   (ctor-params-normalized merged-ctor {} env enum-env)
-             methods       (extract-methods name msec)
+             base-methods  (extract-methods name msec)
+             ;; F14 — atom-body `-> name(args):` handler declarations
+             ;; lower as method-shaped entries participating in the
+             ;; same dispatch table. Detect duplicate handler names
+             ;; and handler-vs-method name collisions; both are
+             ;; ambiguous dispatch → hard error (spec §1265, §2160).
+             handler-decls (def-atom-handler-decls a)
+             _             (let [dups (->> handler-decls
+                                           (map :name)
+                                           frequencies
+                                           (filter (fn [[_ n]] (> n 1)))
+                                           (map first))]
+                             (when (seq dups)
+                               (fail-compile!
+                                :cxc-f14-duplicate-handler-decl
+                                (str "atom `" name "` declares handler `-> "
+                                     (first dups) "(...):` more than once "
+                                     "(spec §1265: each handler name unique per atom).")
+                                (first handler-decls))))
+             method-names  (set (map :name base-methods))
+             _             (doseq [hd handler-decls]
+                             (when (contains? method-names (:name hd))
+                               (fail-compile!
+                                :cxc-f14-handler-name-collides-with-method
+                                (str "atom `" name "` declares handler `-> "
+                                     (:name hd) "(...):` AND a `methods:` entry "
+                                     "with the same name — handlers share the "
+                                     "atom's method table (spec §2160), so this "
+                                     "would create ambiguous dispatch. Rename one, "
+                                     "or fold the handler body into the method.")
+                                hd)))
+             handler-methods (mapv #(handler-decl->method-entry name %) handler-decls)
+             methods       (into base-methods handler-methods)
              message-index (collect-message-shapes name transitions)
              ;; Streams this atom EMITS (untargeted `:>` in any transition
              ;; body). Indexed by stream name; the ordered list preserves
@@ -4791,8 +4853,10 @@
                                                   (:atom-env ctx)
                                                   (:enum-env ctx))})
                           args)
-        ret-c       (cxc-type->c {:node :type-ref :name (:cxc-return-ty method)}
-                                 (:record-env ctx) (:atom-env ctx) (:enum-env ctx))
+        ret-c       (if (nil? (:cxc-return-ty method))
+                      "void"
+                      (cxc-type->c {:node :type-ref :name (:cxc-return-ty method)}
+                                   (:record-env ctx) (:atom-env ctx) (:enum-env ctx)))
         check-stmt  {:node :objc-msg
                      :recv {:node :name :sym "self"}
                      :selector "checkInvariants"
@@ -4931,14 +4995,6 @@
         ;; `self` visible in on-enter bodies for `self :> foo` / `self.x`.
         ctx-in-init   (assoc ctx-with-self
                              :locals (assoc locals "self" {:atom atom-name}))]
-    (when-let [hd (first (filter #(= :handler-decl (:node %)) extras))]
-      (fail-nyi! (str "handler declaration `-> " (:name hd) "(...)` on def-atom `"
-                      atom-name "` — parses (spec §1.11) but not yet lowered. "
-                      "Externally invocable side-effect-only handlers wait on "
-                      "F9 (class/protocol/extension) + F38 (uniform dispatch). "
-                      "Define an ordinary method in a `methods:` section in the "
-                      "meantime.")
-                 hd))
     (when (seq extras)
       (fail-nyi! (str "def-atom `" atom-name "` has body items beyond `data:`/`methods:`"
                       "/observable/wildcard on-enter transition "
