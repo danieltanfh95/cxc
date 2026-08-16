@@ -143,3 +143,163 @@
   (testing "F2 — `##` doc comment currently lexes as ordinary line comment (F10 will attach it)"
     (is (= [[:ident "a"] [:glyph "="] [:int 1]]
            (vals-of (lex/tokenize "## doc\na = 1\n"))))))
+
+;; ---------------------------------------------------------------------------
+;; F1 — Unicode identifiers per UAX #31
+;; ---------------------------------------------------------------------------
+
+(deftest f1-latin-extended-identifier
+  (testing "F1 — Latin-Extended identifiers (café, résumé) lex as :ident, not stopped at the diacritic."
+    (is (= [[:ident "café"]]
+           (vals-of (lex/tokenize "café"))))
+    (is (= [[:ident "résumé"] [:glyph "="] [:int 1]]
+           (vals-of (lex/tokenize "résumé = 1"))))))
+
+(deftest f1-cjk-identifier
+  (testing "F1 — CJK ideographs qualify as UAX #31 identifier chars."
+    (is (= [[:ident "変数"] [:glyph "="] [:int 42]]
+           (vals-of (lex/tokenize "変数 = 42"))))))
+
+(deftest f1-greek-identifier
+  (testing "F1 — Greek letters (common math variable names)."
+    (is (= [[:ident "α"] [:glyph "+"] [:ident "β"]]
+           (vals-of (lex/tokenize "α + β"))))))
+
+(deftest f1-leading-underscore-still-legal
+  (testing "F1 — leading `_` (Pc category, outside UAX #31 ID_Start) remains legal by explicit allowance."
+    (is (= [[:ident "_x"] [:glyph "="] [:int 1]]
+           (vals-of (lex/tokenize "_x = 1"))))))
+
+(deftest f1-digit-continuation-with-unicode
+  (testing "F1 — identifier continuation accepts digits after Unicode start."
+    (is (= [[:ident "café1"]]
+           (vals-of (lex/tokenize "café1"))))))
+
+;; ---------------------------------------------------------------------------
+;; F4 — numeric literal grammar per spec §2.7.1
+;; ---------------------------------------------------------------------------
+
+(deftest f4-decimal-with-underscore-separators
+  (testing "F4 — `_` between digits is legal readability separator; stripped before parsing."
+    (is (= [[:int 1000000]]
+           (vals-of (lex/tokenize "1_000_000"))))))
+
+(deftest f4-hex-integer
+  (testing "F4 — `0xFF` / `0xDEAD_BEEF` — hex prefix, case-insensitive, underscores legal."
+    (is (= [[:int 255]]        (vals-of (lex/tokenize "0xFF"))))
+    (is (= [[:int 255]]        (vals-of (lex/tokenize "0xff"))))
+    (is (= [[:int 0xDEADBEEF]] (vals-of (lex/tokenize "0xDEAD_BEEF"))))
+    (is (= [[:int 255]]        (vals-of (lex/tokenize "0XfF"))))))
+
+(deftest f4-binary-integer
+  (testing "F4 — `0b1010` / `0b1111_0000` — binary prefix, case-insensitive."
+    (is (= [[:int 10]]  (vals-of (lex/tokenize "0b1010"))))
+    (is (= [[:int 240]] (vals-of (lex/tokenize "0b1111_0000"))))
+    (is (= [[:int 10]]  (vals-of (lex/tokenize "0B1010"))))))
+
+(deftest f4-octal-integer
+  (testing "F4 — `0o17` / `0o755` — octal prefix (NOT C's leading-zero form)."
+    (is (= [[:int 15]]  (vals-of (lex/tokenize "0o17"))))
+    (is (= [[:int 493]] (vals-of (lex/tokenize "0o755"))))))
+
+(deftest f4-leading-zero-decimal-rejected
+  (testing "F4 — C-style leading-zero-octal (`017`) rejected as ambiguous per spec §2.7.1."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"leading-zero integer.*cxc rejects C's `017` octal"
+         (lex/tokenize "017")))))
+
+(deftest f4-decimal-exponent
+  (testing "F4 — decimal float with exponent: `1e10`, `2.5e-3`, `1.5E+2`."
+    (is (= [[:float 1.0e10]]  (vals-of (lex/tokenize "1e10"))))
+    (is (= [[:float 2.5e-3]]  (vals-of (lex/tokenize "2.5e-3"))))
+    (is (= [[:float 150.0]]   (vals-of (lex/tokenize "1.5E+2"))))))
+
+(deftest f4-hex-float
+  (testing "F4 — C99 hex-float `0x1.8p+1` (= 3.0). Requires the `p`/`P` binary exponent."
+    (is (= [[:float 3.0]]  (vals-of (lex/tokenize "0x1.8p+1"))))
+    (is (= [[:float 0.5]]  (vals-of (lex/tokenize "0x1p-1"))))))
+
+(deftest f4-hex-float-requires-p-exponent
+  (testing "F4 — `0x1.8` without `p` exponent is rejected (C99 hex-floats mandate `p`)."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"hex-float literal requires the `p`/`P` binary exponent"
+         (lex/tokenize "0x1.8")))))
+
+(deftest f4-underscore-at-numeric-start-rejected
+  (testing "F4 — `_` immediately after prefix (`0x_FF`) — no preceding digit → rejected."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"`_` in numeric literal must follow a digit"
+         (lex/tokenize "0x_FF")))))
+
+(deftest f4-empty-prefix-rejected
+  (testing "F4 — `0x` with no digits is rejected."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"empty numeric literal after `0x`"
+         (lex/tokenize "0x")))))
+
+(deftest f4-f5-unit-suffix-still-rejected-on-hex
+  (testing "F4 — F5 unit-suffix diagnostic still fires on `0xFFms` (identifier char after numeric run)."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"unit suffixes are not part of v1"
+         (lex/tokenize "0xFFms")))))
+
+;; ---------------------------------------------------------------------------
+;; F6 — character literals + escape sequences per spec §2.7.1
+;; ---------------------------------------------------------------------------
+
+(deftest f6-simple-char-literal
+  (testing "F6 — `'a'` lexes as :char with the scalar as payload."
+    (is (= [[:char "a"]] (vals-of (lex/tokenize "'a'"))))))
+
+(deftest f6-char-escape-sequences
+  (testing "F6 — standard C-style escapes: `\\n \\t \\r \\\\ \\' \\\" \\0 \\a \\b \\f \\v`."
+    (is (= [[:char "\n"]]        (vals-of (lex/tokenize "'\\n'"))))
+    (is (= [[:char "\t"]]        (vals-of (lex/tokenize "'\\t'"))))
+    (is (= [[:char "\\"]]        (vals-of (lex/tokenize "'\\\\'"))))
+    (is (= [[:char "'"]]         (vals-of (lex/tokenize "'\\''"))))
+    (is (= [[:char (str (char 0))]] (vals-of (lex/tokenize "'\\0'"))))))
+
+(deftest f6-char-hex-byte-escape
+  (testing "F6 — `\\xNN` hex-byte escape, exactly two hex digits."
+    (is (= [[:char (str (char 0x1F))]]
+           (vals-of (lex/tokenize "'\\x1F'"))))))
+
+(deftest f6-char-unicode-scalar-escape
+  (testing "F6 — `\\u{HEX+}` Unicode scalar escape; supports supplementary code points (emoji)."
+    (is (= [[:char (String. (Character/toChars 0x1F600))]]
+           (vals-of (lex/tokenize "'\\u{1F600}'"))))))
+
+(deftest f6-empty-char-rejected
+  (testing "F6 — empty char literal `''` rejected with a helpful message."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"empty char literal"
+         (lex/tokenize "''")))))
+
+(deftest f6-multi-char-rejected
+  (testing "F6 — `'ab'` rejected — char literal holds exactly one scalar."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"char literal must contain exactly one character"
+         (lex/tokenize "'ab'")))))
+
+(deftest f6-unknown-escape-rejected
+  (testing "F6 — unknown escape (`\\q`) is a hard error, not silently dropped."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"unknown escape sequence"
+         (lex/tokenize "\"a\\qb\"")))))
+
+(deftest f6-string-hex-byte-escape
+  (testing "F6 — string literals share the extended escape set (\\xNN, \\u{...})."
+    (is (= [[:string "A B"]]  (vals-of (lex/tokenize "\"A\\x20B\""))))))
+
+(deftest f6-string-unicode-escape
+  (testing "F6 — `\\u{...}` in strings supports supplementary code points."
+    (is (= [[:string (str "hi " (String. (Character/toChars 0x1F44B)))]]
+           (vals-of (lex/tokenize "\"hi \\u{1F44B}\""))))))

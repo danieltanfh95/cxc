@@ -46,6 +46,93 @@
 (defn- classify-word [w]
   (if (reserved-words w) :kw :ident))
 
+;; ---------------------------------------------------------------------------
+;; F6 — character literals + full escape sequences per spec §2.7.1.
+;;
+;;   simple      := \n \t \r \\ \" \' \0 \a \b \f \v
+;;   hex-byte    := \xNN          (exactly two hex digits, U+0000..U+00FF)
+;;   unicode     := \u{HEX+}      (1-6 hex digits, U+0000..U+10FFFF)
+;;
+;; Shared scanner: strings (`"..."`) and char literals (`'x'`) accept
+;; the same escape set. Unknown escapes are a hard error (spec is
+;; explicit: only the listed sequences are legal).
+;;
+;; Char literal shape: `'<one-char-or-escape>'`. Rejects empty (`''`)
+;; and multi-char (`'ab'`). Char token payload is the string form of the
+;; scalar (upstream `parse-primary` reads `:lit-char :value` as a
+;; string).
+;; ---------------------------------------------------------------------------
+
+(defn- scan-hex-byte-escape
+  "After `\\x`: read exactly two hex digits, return [char end-index]."
+  [s j n line col]
+  (when (< (+ j 2) n)
+    :ok)
+  (when-not (and (<= (+ j 2) n)
+                 (not= -1 (Character/digit (.charAt s j) 16))
+                 (not= -1 (Character/digit (.charAt s (inc j)) 16)))
+    (throw (ex-info "`\\xNN` escape requires exactly two hex digits"
+                    {:line line :col col})))
+  [(char (Integer/parseInt (subs s j (+ j 2)) 16)) (+ j 2)])
+
+(defn- scan-unicode-escape
+  "After `\\u`: read `{HEX+}` (1-6 hex digits, U+0000..U+10FFFF).
+   Returns [string end-index]. Uses a string (not a char) because
+   supplementary code points don't fit in a single Java char."
+  [s j n line col]
+  (when-not (and (< j n) (= \{ (.charAt s j)))
+    (throw (ex-info "`\\u` escape requires `{...}` (e.g. `\\u{1F600}`)"
+                    {:line line :col col})))
+  (let [start (inc j)
+        end (loop [k start]
+              (cond
+                (>= k n)
+                (throw (ex-info "unterminated `\\u{...}` escape"
+                                {:line line :col col}))
+                (= \} (.charAt s k)) k
+                (not= -1 (Character/digit (.charAt s k) 16)) (recur (inc k))
+                :else (throw (ex-info
+                              "`\\u{...}` escape body must be hex digits"
+                              {:line line :col col}))))
+        hex (subs s start end)]
+    (when (or (zero? (count hex)) (> (count hex) 6))
+      (throw (ex-info "`\\u{...}` escape requires 1-6 hex digits"
+                      {:line line :col col})))
+    (let [cp (Integer/parseInt hex 16)]
+      (when (> cp 0x10FFFF)
+        (throw (ex-info (str "Unicode escape U+" hex " exceeds U+10FFFF")
+                        {:line line :col col})))
+      [(String. (Character/toChars cp)) (inc end)])))
+
+(defn- append-escape!
+  "Consume an escape sequence starting at index `j` (which points at
+   the char after `\\`). Appends the decoded chars to `buf`. Returns
+   the index after the escape."
+  [s buf j n line col]
+  (let [esc (.charAt s j)]
+    (case esc
+      \n (do (.append buf \newline) (inc j))
+      \t (do (.append buf \tab)     (inc j))
+      \r (do (.append buf \return)  (inc j))
+      \\ (do (.append buf \\)       (inc j))
+      \" (do (.append buf \")       (inc j))
+      \' (do (.append buf \')       (inc j))
+      \0 (do (.append buf (char 0)) (inc j))
+      \a (do (.append buf (char 7)) (inc j))
+      \b (do (.append buf (char 8)) (inc j))
+      \f (do (.append buf (char 12)) (inc j))
+      \v (do (.append buf (char 11)) (inc j))
+      \x (let [[ch end] (scan-hex-byte-escape s (inc j) n line col)]
+           (.append buf ch)
+           end)
+      \u (let [[s' end] (scan-unicode-escape s (inc j) n line col)]
+           (.append buf s')
+           end)
+      (throw (ex-info (str "unknown escape sequence `\\" esc
+                           "` — legal escapes: \\n \\t \\r \\\\ \\\" \\' "
+                           "\\0 \\a \\b \\f \\v \\xNN \\u{...} (spec §2.7.1)")
+                      {:line line :col col})))))
+
 (defn- scan-string [s i line col]
   ;; s starts with " at index i; scan to matching closing "
   (let [n (count s)]
@@ -60,75 +147,283 @@
         (= \\ (.charAt s j))
         (if (>= (inc j) n)
           (throw (ex-info "trailing backslash in string" {:line line :col col}))
-          (let [esc (.charAt s (inc j))
-                ch  (case esc
-                      \n \newline
-                      \t \tab
-                      \r \return
-                      \\ \\
-                      \" \"
-                      esc)]
-            (.append buf ch)
-            (recur (+ j 2) buf)))
+          (let [end (append-escape! s buf (inc j) n line col)]
+            (recur end buf)))
 
         :else
         (do (.append buf (.charAt s j))
             (recur (inc j) buf))))))
 
-(defn- scan-number
-  "Scan digits and an optional single dot for float (no exponent for
-   v1.0-lite). Returns [numeric-substring end-index kind].
+(defn- scan-char
+  "Scan a `'x'` char literal starting at `i` (which points at the
+   opening `'`). Returns [payload-string end-index]. Payload is the
+   scalar as a string (may be >1 char for supplementary code points
+   via `\\u{...}`).
 
-   F5 retirement (2026-08-15): unit suffixes (`100ms`, `2s`, `1.5min`,
-   etc.) are no longer accepted per spec §2.7.1 (\"suffix syntax is not
-   part of v1\"). A digit immediately followed by a letter raises a
-   targeted lex error pointing at the offending run. Users construct
-   dimensioned values via the type's ordinary constructor
-   (e.g. `Duration(millis: 100)`)."
-  [s i line-no]
-  (let [n (count s)]
-    (loop [j i seen-dot? false]
+   Rejects: empty `''`; unterminated (`'x`); multi-char (`'ab'`)."
+  [s i line col]
+  (let [n (count s)
+        buf (StringBuilder.)]
+    (when (>= (inc i) n)
+      (throw (ex-info "unterminated char literal" {:line line :col col})))
+    (let [c1 (.charAt s (inc i))]
       (cond
-        (>= j n)
-        [(subs s i j) j (if seen-dot? :float :int)]
+        (= \' c1)
+        (throw (ex-info "empty char literal `''` — need one character"
+                        {:line line :col col}))
 
-        (Character/isDigit (.charAt s j))
-        (recur (inc j) seen-dot?)
-
-        (and (= \. (.charAt s j))
-             (not seen-dot?)
-             (< (inc j) n)
-             (Character/isDigit (.charAt s (inc j))))
-        (recur (inc j) true)
-
-        (Character/isLetter (.charAt s j))
-        (let [unit-start j]
-          (loop [k j]
-            (if (and (< k n)
-                     (let [c (.charAt s k)]
-                       (or (Character/isLetterOrDigit c) (= c \_))))
-              (recur (inc k))
-              (throw (ex-info
-                      (str "numeric literal with unit suffix at line " line-no
-                           ", col " (inc unit-start) ": `" (subs s i k)
-                           "` — unit suffixes are not part of v1 (spec §2.7.1). "
-                           "Use the type constructor instead, e.g. "
-                           "`Duration(millis: " (subs s i unit-start) ")`.")
-                      {:kind      :lex-unit-suffix-retired
-                       :line      line-no
-                       :col       (inc unit-start)
-                       :numeric   (subs s i unit-start)
-                       :suffix    (subs s unit-start k)})))))
+        (= \\ c1)
+        (do (when (>= (+ i 2) n)
+              (throw (ex-info "trailing backslash in char literal"
+                              {:line line :col col})))
+            (let [end (append-escape! s buf (+ i 2) n line col)]
+              (when (or (>= end n) (not= \' (.charAt s end)))
+                (throw (ex-info "unterminated char literal — expected `'`"
+                                {:line line :col col})))
+              [(.toString buf) (inc end)]))
 
         :else
-        [(subs s i j) j (if seen-dot? :float :int)]))))
+        (do (.append buf c1)
+            (when (or (>= (+ i 2) n) (not= \' (.charAt s (+ i 2))))
+              (throw (ex-info "char literal must contain exactly one character"
+                              {:line line :col col})))
+            [(.toString buf) (+ i 3)])))))
+
+;; ---------------------------------------------------------------------------
+;; F4 — numeric literals per spec §2.7.1.
+;;
+;;   decimal   := digit(_?digit)*
+;;   hex-int   := 0[xX] hex-digit(_?hex-digit)*
+;;   binary    := 0[bB] bin-digit(_?bin-digit)*
+;;   octal     := 0[oO] oct-digit(_?oct-digit)*
+;;   float     := decimal `.` decimal (e[+-]?decimal)?
+;;              | decimal e[+-]?decimal
+;;   hex-float := 0[xX] hex-digits (`.` hex-digits)? [pP][+-]?decimal
+;;
+;; C-style leading-zero-octal (`017`) is rejected as ambiguous.
+;; Underscore separators must sit between two digits (no leading, no
+;; trailing, no `__` runs). F5 unit-suffix retirement is preserved via
+;; `reject-unit-suffix!` — any identifier-like char immediately after a
+;; numeric run raises `:lex-unit-suffix-retired`.
+;; ---------------------------------------------------------------------------
+
+(defn- scan-digits
+  "Scan a run of base-N digits with legal `_` separators from `s`
+   starting at `start`. Returns [digits-string end-index] with `_`
+   stripped. Empty run returns [\"\" start] — caller decides whether
+   that's legal (hex-float integer part is optional). `_` at the
+   start/end of the run or adjacent to a non-digit throws."
+  [s start n base line-no]
+  (let [sb (StringBuilder.)]
+    (loop [j start last-was-digit? false]
+      (cond
+        (>= j n)
+        (do (when (and (pos? (.length sb)) (not last-was-digit?))
+              (throw (ex-info "numeric literal ends with `_`"
+                              {:line line-no :col j})))
+            [(.toString sb) j])
+
+        (not= -1 (Character/digit (.charAt s j) base))
+        (do (.append sb (.charAt s j)) (recur (inc j) true))
+
+        (= \_ (.charAt s j))
+        (if last-was-digit?
+          (recur (inc j) false)
+          (throw (ex-info "`_` in numeric literal must follow a digit"
+                          {:line line-no :col (inc j)})))
+
+        :else
+        (do (when (and (pos? (.length sb)) (not last-was-digit?))
+              (throw (ex-info "numeric literal has trailing `_`"
+                              {:line line-no :col j})))
+            [(.toString sb) j])))))
+
+(defn- reject-unit-suffix!
+  "F5 retirement — any identifier-continuation char immediately after
+   a numeric run is a retired unit suffix. Raises
+   `:lex-unit-suffix-retired` with a pointer at the equivalent type-
+   constructor form."
+  [s j n num-str line-no]
+  (when (and (< j n)
+             (let [c (.charAt s j)]
+               (or (Character/isLetter c) (= c \_))))
+    (let [k (loop [k j]
+              (if (and (< k n)
+                       (let [c (.charAt s k)]
+                         (or (Character/isLetterOrDigit c) (= c \_))))
+                (recur (inc k))
+                k))]
+      (throw (ex-info
+              (str "numeric literal with unit suffix at line " line-no
+                   ", col " (inc j) ": `" num-str (subs s j k)
+                   "` — unit suffixes are not part of v1 (spec §2.7.1). "
+                   "Use the type constructor instead, e.g. "
+                   "`Duration(millis: " num-str ")`.")
+              {:kind      :lex-unit-suffix-retired
+               :line      line-no
+               :col       (inc j)
+               :numeric   num-str
+               :suffix    (subs s j k)})))))
+
+(defn- scan-signed-exponent
+  "Scan `[+-]?decimal-digits` for `e`/`E` / `p`/`P` exponents. Returns
+   [sign-string exp-digits-string end-index]. Empty exp-digits throws."
+  [s start n line-no marker-col]
+  (let [[sign j0] (cond
+                    (and (< start n) (= \+ (.charAt s start)))
+                    ["+" (inc start)]
+                    (and (< start n) (= \- (.charAt s start)))
+                    ["-" (inc start)]
+                    :else ["" start])
+        [exp-digits j] (scan-digits s j0 n 10 line-no)]
+    (when (zero? (count exp-digits))
+      (throw (ex-info "exponent requires digits after `e`/`E`/`p`/`P`"
+                      {:line line-no :col marker-col})))
+    [sign exp-digits j]))
+
+(defn- scan-hex-number
+  "Handle `0[xX]...` — hex integer OR C99 hex-float `0x1.8p+1` (which
+   REQUIRES the `p`/`P` binary exponent). Returns [end-index kind
+   value]."
+  [s i n line-no]
+  (let [digit-start (+ i 2)
+        [int-digits j] (scan-digits s digit-start n 16 line-no)
+        has-dot? (and (< j n) (= \. (.charAt s j))
+                      (< (inc j) n)
+                      (not= -1 (Character/digit (.charAt s (inc j)) 16)))
+        [frac-digits j2] (if has-dot?
+                           (scan-digits s (inc j) n 16 line-no)
+                           [nil j])
+        has-p? (and (< j2 n)
+                    (contains? #{\p \P} (.charAt s j2)))]
+    (cond
+      (and (not has-dot?) (not has-p?))
+      (do (when (zero? (count int-digits))
+            (throw (ex-info "empty numeric literal after `0x`/`0X` prefix"
+                            {:line line-no :col (inc i)})))
+          (reject-unit-suffix! s j n (str "0x" int-digits) line-no)
+          [j :int (Long/parseLong int-digits 16)])
+
+      has-p?
+      (let [[sign exp-digits j3] (scan-signed-exponent
+                                  s (inc j2) n line-no (inc j2))
+            hex-lit (str "0x" int-digits
+                         (when has-dot? (str "." frac-digits))
+                         "p" sign exp-digits)]
+        (reject-unit-suffix! s j3 n hex-lit line-no)
+        [j3 :float (Double/parseDouble hex-lit)])
+
+      :else
+      (throw (ex-info
+              (str "hex-float literal requires the `p`/`P` binary "
+                   "exponent (C99 form; e.g. `0x1.8p+1`)")
+              {:line line-no :col (inc i)})))))
+
+(defn- scan-decimal-number
+  "Decimal integer, decimal float, or decimal float with `e`/`E`
+   exponent. Returns [end-index kind value]."
+  [s i n line-no]
+  (let [[int-digits j] (scan-digits s i n 10 line-no)
+        _              (when (zero? (count int-digits))
+                         (throw (ex-info "empty numeric literal"
+                                         {:line line-no :col (inc i)})))
+        has-dot? (and (< j n) (= \. (.charAt s j))
+                      (< (inc j) n)
+                      (Character/isDigit (.charAt s (inc j))))
+        [frac-digits j2] (if has-dot?
+                           (scan-digits s (inc j) n 10 line-no)
+                           [nil j])
+        has-e? (and (< j2 n)
+                    (contains? #{\e \E} (.charAt s j2)))]
+    (cond
+      has-e?
+      (let [[sign exp-digits j3] (scan-signed-exponent
+                                  s (inc j2) n line-no (inc j2))
+            lit (str int-digits
+                     (when has-dot? (str "." frac-digits))
+                     "e" sign exp-digits)]
+        (reject-unit-suffix! s j3 n lit line-no)
+        [j3 :float (Double/parseDouble lit)])
+
+      has-dot?
+      (let [lit (str int-digits "." frac-digits)]
+        (reject-unit-suffix! s j2 n lit line-no)
+        [j2 :float (Double/parseDouble lit)])
+
+      :else
+      (do (reject-unit-suffix! s j n int-digits line-no)
+          [j :int (Long/parseLong int-digits)]))))
+
+(defn- scan-number
+  "Scan a numeric literal starting at `i` (which must be a digit).
+   Returns [end-index kind value]. Handles decimal, hex, binary,
+   octal, decimal-float, exponent, and C99 hex-float shapes per
+   spec §2.7.1. F5 unit-suffix retirement fires uniformly across
+   shapes via `reject-unit-suffix!`."
+  [s i line-no]
+  (let [n (count s)
+        c0 (.charAt s i)
+        prefix-char (when (and (= c0 \0) (< (inc i) n))
+                      (Character/toLowerCase (.charAt s (inc i))))]
+    (cond
+      (= prefix-char \x)
+      (scan-hex-number s i n line-no)
+
+      (= prefix-char \b)
+      (let [[digits j] (scan-digits s (+ i 2) n 2 line-no)]
+        (when (zero? (count digits))
+          (throw (ex-info "empty numeric literal after `0b`/`0B` prefix"
+                          {:line line-no :col (inc i)})))
+        (reject-unit-suffix! s j n (str "0b" digits) line-no)
+        [j :int (Long/parseLong digits 2)])
+
+      (= prefix-char \o)
+      (let [[digits j] (scan-digits s (+ i 2) n 8 line-no)]
+        (when (zero? (count digits))
+          (throw (ex-info "empty numeric literal after `0o`/`0O` prefix"
+                          {:line line-no :col (inc i)})))
+        (reject-unit-suffix! s j n (str "0o" digits) line-no)
+        [j :int (Long/parseLong digits 8)])
+
+      ;; Reject C-style leading-zero-octal (`017`) as ambiguous per spec.
+      ;; `0.5`, `0`, `0e1` are fine — the guard checks for a digit right
+      ;; after the leading zero, not `.`/`e`/end-of-token.
+      (and (= c0 \0) (< (inc i) n) (Character/isDigit (.charAt s (inc i))))
+      (throw (ex-info
+              (str "leading-zero integer `" (subs s i (min n (+ i 5))) "…` — "
+                   "cxc rejects C's `017` octal form as ambiguous. Use "
+                   "`0o17` for octal or drop the leading zero for decimal. "
+                   "See spec §2.7.1.")
+              {:line line-no :col (inc i)}))
+
+      :else
+      (scan-decimal-number s i n line-no))))
+
+(defn- id-start?
+  "F1 / §2.1 — an identifier-start character per UAX #31. Delegates
+   to Java's `isUnicodeIdentifierStart` (Unicode categories Lu, Ll,
+   Lt, Lm, Lo, Nl + Other_ID_Start) and explicitly allows `_` since
+   Unicode's Pc category isn't in UAX #31's ID_Start set but Corvid
+   permits leading underscores (private-name convention)."
+  [c]
+  (or (Character/isUnicodeIdentifierStart ^int (int c))
+      (= c \_)))
+
+(defn- id-continue?
+  "F1 / §2.1 — an identifier-continue character per UAX #31. Adds
+   digits and combining marks to the start set via
+   `isUnicodeIdentifierPart`; keeps the explicit `_` fallback
+   symmetric with `id-start?`. Supplementary code points (>U+FFFF)
+   and NFC normalization are deferred — this MVP handles the BMP
+   Unicode range which covers all v1 use cases."
+  [c]
+  (or (Character/isUnicodeIdentifierPart ^int (int c))
+      (= c \_)))
 
 (defn- scan-word [s i]
   (let [n (count s)]
     (loop [j i]
-      (if (and (< j n)
-               (let [c (.charAt s j)]
-                 (or (Character/isLetterOrDigit c) (= c \_))))
+      (if (and (< j n) (id-continue? (.charAt s j)))
         (recur (inc j))
         [(subs s i j) j]))))
 
@@ -157,14 +452,15 @@
         (let [[s j] (scan-string line i line-no (inc i))]
           (recur j (conj! out [:string s line-no (inc i)])))
 
+        (= \' (.charAt line i))
+        (let [[ch j] (scan-char line i line-no (inc i))]
+          (recur j (conj! out [:char ch line-no (inc i)])))
+
         (Character/isDigit (.charAt line i))
-        (let [[num j kind] (scan-number line i line-no)
-              value (if (= kind :int)
-                      (Long/parseLong num)
-                      (Double/parseDouble num))]
+        (let [[j kind value] (scan-number line i line-no)]
           (recur j (conj! out [kind value line-no (inc i)])))
 
-        (or (Character/isLetter (.charAt line i)) (= \_ (.charAt line i)))
+        (id-start? (.charAt line i))
         (let [[w j] (scan-word line i)]
           (recur j (conj! out [(classify-word w) w line-no (inc i)])))
 
