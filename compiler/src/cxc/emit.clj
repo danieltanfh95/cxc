@@ -276,7 +276,24 @@
     ;; across the autoreleasepool boundary into dispatch_main(). The
     ;; static declaration is emitted by the top-level emit function
     ;; before main(); here we just do the assignment.
-    (str "cxc_main_atom = [[" (:class-name node) " alloc] init];")
+    ;;
+    ;; F50 — when main has ctor-params (capabilities), each is
+    ;; auto-constructed via lower-atom-ctor (already lowered into
+    ;; `:cap-init` ObjC expressions) and passed as `initWith<name>:...`
+    ;; parts. Zero-cap-args form falls back to plain `-init`.
+    (if-let [caps (seq (:cap-args node))]
+      (let [first-cap  (first caps)
+            first-part (str "initWith" (:name first-cap) ":"
+                            (emit-expr (:cap-init first-cap)))
+            rest-parts (str/join " " (map (fn [c]
+                                            (str (:name c) ":"
+                                                 (emit-expr (:cap-init c))))
+                                          (rest caps)))]
+        (str "cxc_main_atom = [[" (:class-name node) " alloc] "
+             first-part
+             (when-not (str/blank? rest-parts) (str " " rest-parts))
+             "];"))
+      (str "cxc_main_atom = [[" (:class-name node) " alloc] init];"))
     :nil-slot-branch
     ;; One arm of parent's -nilSlot: switch — sets the named slot ivar
     ;; to nil when the incoming slotName matches. isEqualToString: is

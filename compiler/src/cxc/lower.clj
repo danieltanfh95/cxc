@@ -5908,9 +5908,28 @@
         ;; main-as-atom kicks in whenever the atom-env contains main
         ;; (build-atom-env puts it in iff other atoms exist).
         main-as-atom?  (contains? atom-env "main")
-        _              (when (and main-as-atom? (seq (get-in atom-env ["main" :ctor-params])))
-                         (fail-nyi! "def main with ctor params (env-cap wiring for main is Layer 5)"
-                                    {:atom "main"}))
+        ;; F50 — validate main's ctor-params for auto-provisioning.
+        ;; Every ctor-param's type must resolve to an atom in atom-env
+        ;; so the compiler can synthesize `[[T alloc] init]` (or
+        ;; `initWith...:` with T's own declared defaults) at main
+        ;; construction. Non-atom-typed params fail-compile with a
+        ;; §1.13 pointer at capability provisioning. Actual construction
+        ;; wiring lives in the `main-body` builder below via
+        ;; `lower-atom-ctor`.
+        _              (when main-as-atom?
+                         (doseq [p (get-in atom-env ["main" :ctor-params])
+                                 :let [ty-name   (:cxc-ty p)
+                                       atom-info (get atom-env ty-name)]]
+                           (when-not atom-info
+                             (fail-compile!
+                              :cxc-f50-non-atom-main-param
+                              (str "def main param `" (:name p) ": " ty-name
+                                   "` — every ctor-param on `main` must "
+                                   "resolve to an atom (capability) so the "
+                                   "compiler can auto-provision it at "
+                                   "startup. Non-atom types have no "
+                                   "provisioning story. See spec §1.13.")
+                              p))))
         ;; Split atom-env into real atoms (get lower-atom) and
         ;; container synth-classes (get their own generator). Container
         ;; entries carry `:kind :list-container` and skip the queue /
@@ -6015,8 +6034,23 @@
                             ;; across dispatch_main() — the auto-release
                             ;; pool ends before dispatch_main starts;
                             ;; a local would deallocate at pool drain.
-                            [{:node :main-bootstrap
-                              :class-name (class-name-for-atom "main")}]
+                            ;;
+                            ;; F50 — when `def main(cap1: T1, cap2: T2, ...)`
+                            ;; declares ctor-params, each capability atom is
+                            ;; auto-constructed via `lower-atom-ctor` (with
+                            ;; empty args, so T's own declared defaults
+                            ;; apply) and passed as `initWith<name>:...`
+                            ;; parts. Ctor-param types were validated as
+                            ;; atoms upstream.
+                            (let [main-ctor (get-in atom-env ["main" :ctor-params])]
+                              [{:node :main-bootstrap
+                                :class-name (class-name-for-atom "main")
+                                :cap-args (when (seq main-ctor)
+                                            (mapv (fn [p]
+                                                    {:name     (:name p)
+                                                     :cap-init (lower-atom-ctor
+                                                                (:cxc-ty p) [] ctx)})
+                                                  main-ctor))}])
                             (main-atom-body main-atom ctx))]
     {:node                :objc-program
      :includes            includes

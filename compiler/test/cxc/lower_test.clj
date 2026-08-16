@@ -906,6 +906,44 @@ def main:
         do: print(1)
 ")))))
 
+(deftest f50-promoted-main-with-capability-ctor-params
+  (testing "F50 — `def main(cap: T)` where T is an atom lowers cleanly. Each ctor-param is auto-provisioned via `[[T alloc] init]` (or `initWith...:` when T declares defaulted ctor-params of its own). The lowered `:main-bootstrap` node carries `:cap-args` with per-cap init expressions; emit produces `[[CxcMain alloc] initWithcap:[[T alloc] init]]`."
+    (let [prog (lower-src (str "def Widget:\n"
+                               "    data:\n"
+                               "        n: Int = 0\n"
+                               "    -> running\n"
+                               "    -> end\n"
+                               "\n"
+                               "def main(w: Widget):\n"
+                               "    -> running\n"
+                               "        do: print(0)\n"))
+          bootstrap (first (filter #(= :main-bootstrap (:node %))
+                                   (get-in prog [:main :body])))]
+      (is (some? bootstrap) "main-bootstrap node present")
+      (is (= "CxcMain" (:class-name bootstrap)))
+      (is (= 1 (count (:cap-args bootstrap))))
+      (let [cap (first (:cap-args bootstrap))]
+        (is (= "w" (:name cap)))
+        ;; Widget's ctor-params come from data-field F41 synthesis;
+        ;; construction should still succeed (fields have defaults).
+        (is (some? (:cap-init cap))
+            "capability init lowered")))))
+
+(deftest f50-non-atom-main-ctor-param-rejected
+  (testing "F50 — `def main(x: Int)` fails at lower: Int is not an atom and can't be auto-provisioned. Diagnostic points at §1.13 (capability catalog)."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"every ctor-param on `main` must resolve to an atom"
+         (lower-src (str "def Peer:\n"
+                         "    data:\n"
+                         "        n: Int = 0\n"
+                         "    -> running\n"
+                         "    -> end\n"
+                         "\n"
+                         "def main(x: Int):\n"
+                         "    -> running\n"
+                         "        do: print(0)\n"))))))
+
 (deftest width-variants-preserve-c-type-across-observable-return
   (testing "Phase D F36a Landing 1b — width variants (`[:int 32]`/`[:uint 8]`/`[:float 32]`) carry their C type in metadata so `type-kw->c-type` picks the correct width for observable return types. Prior to 1b, all integer widths collapsed to `int64_t` at observable boundary regardless of the source width."
     (let [prog (lower-src "def Counter:
