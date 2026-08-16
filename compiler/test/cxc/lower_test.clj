@@ -1291,18 +1291,46 @@ def main:
         then: n => n
 ")))))
 
-(deftest subscript-raises-targeted-diagnostic
-  (testing "Audit F19: `expr[i]` now parses (spec §3.9), but lowering to a container access is Phase D work — waits on F42/F43. Lowering raises a targeted diagnostic pointing at the alternative (`.at(i)` / `.get(k)`) so downstream users get an actionable message instead of a mysterious clang error."
+(deftest subscript-on-non-string-raises-targeted-diagnostic
+  (testing "F19 L2 — subscript lowering handles `String[i]` only. On any other target type (Int, atom, container), lowering raises a targeted diagnostic naming the F42/F43 dependency and the workaround."
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
-         #"subscript `expr\[i\]`"
-         (lower-src "def main:
+         #"subscript `expr\[i\]` on target of type :int"
+         (lower-src "record R:
     data:
-        n: Int = 0
+        n: Int
+    methods:
+        function first(self) -> Int:
+            return self.n[0]
 
+def main:
     -> running
-        do: print(n[0])
+        do: print(0)
 ")))))
+
+(deftest f19-l2-string-subscript-lowers-to-character-at-index
+  (testing "F19 L2 — `s[i]` on a String lowers to `(int64_t)[s characterAtIndex:i]` returning Int. Bounds behavior follows NSString: NSRangeException on OOB, caught by F48's `@try/@catch` transition wrapper."
+    (let [prog (lower-src "record R:
+    data:
+        s: String
+    methods:
+        function first_char(self) -> Int:
+            return self.s[0]
+
+def main:
+    -> running
+        do: print(0)
+")
+          fn         (first (filter #(= "R_first_char" (:name %))
+                                    (:functions prog)))
+          return-stmt (first (filter #(= :return (:node %)) (:body fn)))
+          subscript-expr (:value return-stmt)]
+      (is (some? fn) "R_first_char lowered")
+      (is (= :objc-cast (:node subscript-expr)))
+      (is (= "int64_t" (:c-type subscript-expr)))
+      (is (= :objc-msg (get-in subscript-expr [:expr :node])))
+      (is (= "characterAtIndex" (get-in subscript-expr [:expr :selector])))
+      (is (= [{:node :int :value 0}] (get-in subscript-expr [:expr :args]))))))
 
 (deftest f37-synthesizes-record-equals-and-hash-functions
   (testing "F37 — every record gets a synthesized `<Record>_cxc_equals` (bool a,b) and `<Record>_cxc_hash` (long) free C function. Prefix `cxc_` avoids collision with user-defined equals/hash methods."

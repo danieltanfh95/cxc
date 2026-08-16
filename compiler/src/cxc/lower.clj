@@ -2594,13 +2594,25 @@
                   {:enum (get-in node [:target :name])}
                   (field-type-for-owner (infer-type (:target node) ctx)
                                         ctx (:field node) node))
-    :subscript  (fail-nyi! (str "subscript `expr[i]` — parses (spec §3.9) "
-                                "but not yet lowered. Container index access "
-                                "waits on F42 (from_literal) + F43 (container-"
-                                "as-atom). Use `.at(i)` on lists / `.get(k)` "
-                                "on maps in the meantime, once those method "
-                                "surfaces land.")
-                           node)
+    ;; F19 L2 — subscript index access. String[i] returns Int (Unicode
+    ;; codepoint from `-characterAtIndex:`, cast to int64_t at emit).
+    ;; List of T / Map / Set indexing tangles with F42/F43 container
+    ;; infrastructure (element unboxing, key-type validation, spec-
+    ;; undefined bounds behavior) — defer to a follow-on that coordinates
+    ;; with those landings. Bounds behavior for String[i] matches
+    ;; NSString: NSRangeException on OOB, caught by F48's `@try/@catch`
+    ;; transition wrapper.
+    :subscript  (let [target-ty (infer-type (:target node) ctx)]
+                  (cond
+                    (= target-ty :string) :int
+                    :else
+                    (fail-nyi! (str "subscript `expr[i]` on target of type "
+                                    (pr-str target-ty)
+                                    " — F19 L2 handles `String[i]` only. "
+                                    "List / Map indexing waits on F42 "
+                                    "(from_literal) + F43 (container-as-"
+                                    "atom); use `.get`/`.contains` for now.")
+                               node)))
     (fail-nyi! (str "infer-type " (:node node)) node)))
 
 ;; ---------------------------------------------------------------------------
@@ -3116,13 +3128,27 @@
                     {:node   :field
                      :target (lower-expr (:target node) ctx)
                      :field  (:field node)}))
-    :subscript  (fail-nyi! (str "subscript `expr[i]` — parses (spec §3.9) "
-                                "but not yet lowered. Container index access "
-                                "waits on F42 (from_literal) + F43 (container-"
-                                "as-atom). Use `.at(i)` on lists / `.get(k)` "
-                                "on maps in the meantime, once those method "
-                                "surfaces land.")
-                           node)
+    ;; F19 L2 — String[i] lowers to `(int64_t)[str characterAtIndex:i]`.
+    ;; Other container types still fail-nyi (see infer-type site for the
+    ;; F42/F43 dependency rationale).
+    :subscript  (let [target-ty (infer-type (:target node) ctx)]
+                  (cond
+                    (= target-ty :string)
+                    {:node   :objc-cast
+                     :c-type "int64_t"
+                     :expr   {:node     :objc-msg
+                              :recv     (lower-expr (:target node) ctx)
+                              :selector "characterAtIndex"
+                              :args     [(lower-expr (:index node) ctx)]}}
+
+                    :else
+                    (fail-nyi! (str "subscript `expr[i]` on target of type "
+                                    (pr-str target-ty)
+                                    " — F19 L2 handles `String[i]` only. "
+                                    "List / Map indexing waits on F42 "
+                                    "(from_literal) + F43 (container-as-"
+                                    "atom); use `.get`/`.contains` for now.")
+                               node)))
     :call
     (let [callee (:callee node)]
       (case (:node callee)
