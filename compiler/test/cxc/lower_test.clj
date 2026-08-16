@@ -1681,6 +1681,163 @@ def main:
                          "    -> running\n"
                          "        do: print(0)\n"))))))
 
+;; ---------------------------------------------------------------------------
+;; F9 Landing 5 — explicit conformance validation.
+;;
+;; Validates every `:conforms` declaration on the composed method table.
+;; Missing methods, signature mismatches, and unknown protocols all
+;; fail-compile with §3.4.5-pointer diagnostics.
+;; ---------------------------------------------------------------------------
+
+(deftest f9-l5-conformance-satisfied-by-extension-method
+  (testing "F9 Landing 5 — `extend class Widget(P):` supplying `m` matching P's accepts entry validates cleanly."
+    (let [prog (lower-src (str "protocol P:\n"
+                               "    accepts:\n"
+                               "        m() -> Int\n"
+                               "\n"
+                               "record Widget:\n"
+                               "    data:\n"
+                               "        n: Int\n"
+                               "\n"
+                               "extend class Widget(P):\n"
+                               "    methods:\n"
+                               "        function m(self) -> Int:\n"
+                               "            return 1\n"
+                               "\n"
+                               "def main:\n"
+                               "    -> running\n"
+                               "        do: print(0)\n"))]
+      (is (some #(= "Widget_m" (:name %)) (:functions prog))))))
+
+(deftest f9-l5-unknown-protocol-rejected
+  (testing "F9 Landing 5 — conformance to a protocol name that doesn't resolve fires a §3.4.5-pointer diagnostic."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"unknown protocol `BogusProto`"
+         (lower-src (str "record Widget:\n"
+                         "    data:\n"
+                         "        n: Int\n"
+                         "\n"
+                         "extend class Widget(BogusProto):\n"
+                         "    methods:\n"
+                         "        function m(self) -> Int:\n"
+                         "            return 1\n"
+                         "\n"
+                         "def main:\n"
+                         "    -> running\n"
+                         "        do: print(0)\n"))))))
+
+(deftest f9-l5-missing-method-rejected
+  (testing "F9 Landing 5 — class conforms to protocol but doesn't implement one of its accepts entries and no default is provided → fail-compile."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"claims conformance to `P` but neither implements nor inherits a default for `m`"
+         (lower-src (str "protocol P:\n"
+                         "    accepts:\n"
+                         "        m() -> Int\n"
+                         "\n"
+                         "record Widget:\n"
+                         "    data:\n"
+                         "        n: Int\n"
+                         "\n"
+                         "extend class Widget(P):\n"
+                         "    methods:\n"
+                         "        function unrelated(self) -> Int:\n"
+                         "            return 1\n"
+                         "\n"
+                         "def main:\n"
+                         "    -> running\n"
+                         "        do: print(0)\n"))))))
+
+(deftest f9-l5-signature-mismatch-return-type-rejected
+  (testing "F9 Landing 5 — method with mismatched return type fails with a specific detail line."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"return type mismatch — expected `Int`, got `String`"
+         (lower-src (str "protocol P:\n"
+                         "    accepts:\n"
+                         "        m() -> Int\n"
+                         "\n"
+                         "record Widget:\n"
+                         "    data:\n"
+                         "        n: Int\n"
+                         "\n"
+                         "extend class Widget(P):\n"
+                         "    methods:\n"
+                         "        function m(self) -> String:\n"
+                         "            return \"x\"\n"
+                         "\n"
+                         "def main:\n"
+                         "    -> running\n"
+                         "        do: print(0)\n"))))))
+
+(deftest f9-l5-signature-mismatch-param-name-rejected
+  (testing "F9 Landing 5 — Cxc supports named-arg calls (§3.4.5 rule 2), so protocol conformance requires param names to match too, not just types."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"param name mismatch — expected `x`, got `y`"
+         (lower-src (str "protocol P:\n"
+                         "    accepts:\n"
+                         "        m(x: Int) -> Int\n"
+                         "\n"
+                         "record Widget:\n"
+                         "    data:\n"
+                         "        n: Int\n"
+                         "\n"
+                         "extend class Widget(P):\n"
+                         "    methods:\n"
+                         "        function m(self, y: Int) -> Int:\n"
+                         "            return y\n"
+                         "\n"
+                         "def main:\n"
+                         "    -> running\n"
+                         "        do: print(0)\n"))))))
+
+(deftest f9-l5-signature-mismatch-param-type-rejected
+  (testing "F9 Landing 5 — param type must match too."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"param `x` type mismatch — expected `Int`, got `String`"
+         (lower-src (str "protocol P:\n"
+                         "    accepts:\n"
+                         "        m(x: Int) -> Int\n"
+                         "\n"
+                         "record Widget:\n"
+                         "    data:\n"
+                         "        n: Int\n"
+                         "\n"
+                         "extend class Widget(P):\n"
+                         "    methods:\n"
+                         "        function m(self, x: String) -> Int:\n"
+                         "            return 1\n"
+                         "\n"
+                         "def main:\n"
+                         "    -> running\n"
+                         "        do: print(0)\n"))))))
+
+(deftest f9-l5-protocol-default-satisfies-conformance
+  (testing "F9 Landing 5 — protocol carries a default `methods:` body for `m`; class declares `conforms: P` and doesn't implement `m` itself. L5 accepts the default's presence as structural satisfaction (L6 wires actual inheritance at call sites)."
+    (let [prog (lower-src (str "protocol P:\n"
+                               "    accepts:\n"
+                               "        m() -> Int\n"
+                               "    methods:\n"
+                               "        function m(self) -> Int:\n"
+                               "            return 42\n"
+                               "\n"
+                               "record Widget:\n"
+                               "    data:\n"
+                               "        n: Int\n"
+                               "\n"
+                               "extend class Widget(P):\n"
+                               "    methods:\n"
+                               "        function unrelated(self) -> Int:\n"
+                               "            return 1\n"
+                               "\n"
+                               "def main:\n"
+                               "    -> running\n"
+                               "        do: print(0)\n"))]
+      (is (some? prog) "compiles cleanly — default satisfies the accepts"))))
+
 (deftest f37b-l1-bytes-length-returns-int
   (testing "F37b Landing 1 — `.length` on a `Bytes`-typed expression type-checks as `Int` (spec §3.10.10 user-facing convention: `.length` is an element count matching List/String; wire-format `UInt32` prefix is a different concern). Emitted C uses ObjC property syntax, dispatching to NSData's `-length`."
     (let [prog (lower-src (str "record Msg:\n"

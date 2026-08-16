@@ -1017,6 +1017,143 @@
    atom-env
    atom-env))
 
+;; ---------------------------------------------------------------------------
+;; F9 L5 — explicit conformance validation.
+;;
+;; For every class carrying `:conforms [P1, P2, ...]` (from header parens,
+;; body-form `conforms:`, or extension-added conformance), validate at
+;; the class declaration site that the class satisfies each protocol
+;; structurally per §3.4.5.
+;;
+;; Validation runs *after* L4 composition — so extension-added methods
+;; count toward satisfying the protocol surface.
+;;
+;; Rules:
+;;   1. Protocol name must resolve in protocol-env; unknown → fail-compile.
+;;   2. For every accepts entry P.foo the class must have (a) an own or
+;;      extension-provided method named `foo`, or (b) a protocol default
+;;      for `foo` (default-inheritance is L6 — for L5 we accept the
+;;      structural presence of the default as satisfaction).
+;;   3. When present on the class, the method's signature (param names,
+;;      param types, return type) must match the accepts entry.
+;;
+;; Effect-set matching (`async` / `io`) — deferred until effects are
+;; first-class in the parser (L2 rejects contract clauses; effects fall
+;; out with F49 protocol-contract-inheritance).
+;;
+;; Diamond ambiguity is NOT a class-declaration error (§3.4.4 makes it a
+;; call-site error). L5 checks each conformance independently; L6 wires
+;; call-site resolution + diamond detection.
+;; ---------------------------------------------------------------------------
+
+(defn- type-node-name
+  "Extract the outer type name from an AST type-node. Nil-safe."
+  [ty]
+  (when ty
+    (case (:node ty)
+      :type-ref      (:name ty)
+      :type-of       (:outer ty)
+      :type-nullable (base-type-name ty)
+      :type-nonnil   (base-type-name ty)
+      nil)))
+
+(defn- non-self-params
+  "Filter out `self` — it's implicit in both class methods (marked
+   `:is-self? true` by normalize-method-param) and protocol accepts
+   entries (users may write `foo(self, x: Int)` or the shorter
+   `foo(x: Int)` since self is implied)."
+  [params]
+  (remove #(or (:is-self? %) (= "self" (:name %))) params))
+
+(defn- signature-mismatch-detail
+  "Return a human-readable string describing the first signature
+   mismatch between a composed-table method and a protocol accepts
+   entry, or nil if they match."
+  [method accepts-entry]
+  (let [method-params  (non-self-params (:params method))
+        accepts-params (non-self-params (:params accepts-entry))
+        expected-ret   (type-node-name (:return-type accepts-entry))
+        actual-ret     (:cxc-return-ty method)]
+    (cond
+      (not= (count method-params) (count accepts-params))
+      (str "expected " (count accepts-params) " param(s), got "
+           (count method-params))
+
+      (not= expected-ret actual-ret)
+      (str "return type mismatch — expected `" expected-ret
+           "`, got `" actual-ret "`")
+
+      :else
+      (some (fn [[mp ap]]
+              (let [expected-ty (type-node-name (:type ap))]
+                (cond
+                  (not= (:name mp) (:name ap))
+                  (str "param name mismatch — expected `" (:name ap)
+                       "`, got `" (:name mp) "`")
+                  (not= (:cxc-ty mp) expected-ty)
+                  (str "param `" (:name ap) "` type mismatch — expected `"
+                       expected-ty "`, got `" (:cxc-ty mp) "`"))))
+            (map vector method-params accepts-params)))))
+
+(defn- validate-one-conformance!
+  "Validate one class-conforms-to-protocol claim. Throws on failure
+   with a targeted §3.4.5 diagnostic. Composed-methods is the
+   post-L4 method vector for the class."
+  [class-name protocol-name composed-methods protocol-env]
+  (let [proto (get protocol-env protocol-name)]
+    (when-not proto
+      (fail-compile! :cxc-f9-unknown-protocol-conformance
+                     (str "class `" class-name "` declares conformance to "
+                          "unknown protocol `" protocol-name "` — check "
+                          "imports and typo. See spec §3.4.5.")
+                     {:class class-name :protocol protocol-name}))
+    (let [method-by-name (into {} (map (juxt :name identity) composed-methods))
+          defaults-by-name (into {} (map (juxt :name identity) (:defaults proto)))]
+      (doseq [ae (:accepts proto)]
+        (let [ae-name (:name ae)
+              m       (get method-by-name ae-name)]
+          (cond
+            m
+            (when-let [detail (signature-mismatch-detail m ae)]
+              (fail-compile! :cxc-f9-signature-mismatch
+                             (str "class `" class-name "." ae-name
+                                  "` does not match protocol `" protocol-name
+                                  "`'s accepts declaration — " detail
+                                  ". See spec §3.4.5.")
+                             {:class class-name :protocol protocol-name
+                              :method ae-name}))
+
+            ;; L6 wires the actual inheritance; L5 accepts the default's
+            ;; presence as structural satisfaction.
+            (contains? defaults-by-name ae-name)
+            :ok
+
+            :else
+            (fail-compile! :cxc-f9-missing-conformance-method
+                           (str "class `" class-name "` claims conformance "
+                                "to `" protocol-name "` but neither "
+                                "implements nor inherits a default for `"
+                                ae-name "`. Either add `def " ae-name
+                                "(...)` on `" class-name "` (or an "
+                                "extension), or provide a default in `"
+                                protocol-name "`. See spec §3.4.5.")
+                           {:class class-name :protocol protocol-name
+                            :missing ae-name})))))))
+
+(defn- validate-explicit-conformances!
+  "Walk record-env + atom-env post-L4-composition and validate every
+   `:conforms` entry against protocol-env. Throws on the first
+   failure with a targeted §3.4.5 diagnostic."
+  [record-env atom-env protocol-env]
+  (doseq [[class-name entry] record-env
+          proto-ty (:conforms entry)]
+    (validate-one-conformance! class-name (type-node-name proto-ty)
+                               (:methods entry) protocol-env))
+  (doseq [[class-name entry] atom-env
+          proto-ty (:conforms entry)]
+    (validate-one-conformance! class-name (type-node-name proto-ty)
+                               (:methods entry) protocol-env)))
+
 (defn- def-atom-data-section [atom-node]
   (first (filter #(= :data-section (:node %)) (:body atom-node))))
 
@@ -5547,6 +5684,13 @@
         ;; see the composed table (no API change).
         record-env (compose-record-env-with-extensions record-env extension-env)
         atom-env   (compose-atom-env-with-extensions   atom-env   extension-env)
+        ;; F9 L5 — validate explicit `:conforms` declarations against
+        ;; the composed method tables. Missing methods, signature
+        ;; mismatches, and unknown protocols all fail-compile with
+        ;; §3.4.5-pointer diagnostics. Effect-set matching is deferred
+        ;; until effects are first-class.
+        _          (validate-explicit-conformances! record-env atom-env
+                                                    protocol-env)
         ctx        {:record-env record-env :atom-env atom-env :enum-env enum-env
                     :symbol-table symbol-table
                     :locals {}}
