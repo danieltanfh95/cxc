@@ -617,3 +617,128 @@ def main:
                "    accepts:\n"
                "        foo(x: Int) -> Int\n"
                "            requires: true\n"))))))
+
+;; ---------------------------------------------------------------------------
+;; F9 Landing 3 — `extend class Foo:` parsing + strict body dispatch;
+;; `replace` method modifier; target-resolution deferred to lower.
+;; ---------------------------------------------------------------------------
+
+(deftest f9-l3-extend-class-with-methods
+  (testing "F9 Landing 3 — `extend class Foo:` at top level parses into an `:extend-class` node carrying the target name and body sections."
+    (let [n (first-node
+             (str "extend class Foo:\n"
+                  "    methods:\n"
+                  "        function bar(self) -> Int:\n"
+                  "            return 1\n"))]
+      (is (= :extend-class (:node n)))
+      (is (= "Foo" (:target n)))
+      (is (empty? (:conforms n)))
+      (let [msec (first (:body n))]
+        (is (= :methods-section (:node msec)))
+        (is (= "bar" (:name (first (:methods msec)))))
+        (is (nil? (:replace? (first (:methods msec)))))))))
+
+(deftest f9-l3-extend-class-with-replace-modifier
+  (testing "F9 Landing 3 — `replace function ...` inside `extend class` body sets `:replace?` on the method entry. `replace` is now reserved; the modifier is consumed by shared parse-methods-section."
+    (let [n (first-node
+             (str "extend class Foo:\n"
+                  "    methods:\n"
+                  "        replace function bar(self) -> Int:\n"
+                  "            return 2\n"))
+          m (first (:methods (first (:body n))))]
+      (is (= "bar" (:name m)))
+      (is (true? (:replace? m))))))
+
+(deftest f9-l3-extend-class-with-header-conforms
+  (testing "F9 Landing 3 — `extend class Foo(NewProtocol):` populates `:conforms` from header parens."
+    (let [n (first-node
+             (str "extend class Foo(NewProtocol):\n"
+                  "    methods:\n"
+                  "        function bar(self) -> Int:\n"
+                  "            return 3\n"))]
+      (is (= [{:node :type-ref :name "NewProtocol"}]
+             (:conforms n))))))
+
+(deftest f9-l3-extend-class-with-body-conforms
+  (testing "F9 Landing 3 — body-form `conforms: P` inside `extend class` extracted into `:conforms` and dropped from :body."
+    (let [n (first-node
+             (str "extend class Foo:\n"
+                  "    conforms: NewProtocol\n"
+                  "    methods:\n"
+                  "        function bar(self) -> Int:\n"
+                  "            return 4\n"))]
+      (is (= [{:node :type-ref :name "NewProtocol"}]
+             (:conforms n)))
+      (is (= [:methods-section] (mapv :node (:body n)))))))
+
+(deftest f9-l3-extend-class-with-invariants
+  (testing "F9 Landing 3 — `invariants:` section legal inside `extend class` (extensions may add invariants per §3.3.2)."
+    (let [n (first-node
+             (str "extend class Foo:\n"
+                  "    invariants:\n"
+                  "        x > 0\n"))]
+      (is (= :invariants-section (:node (first (:body n))))))))
+
+(deftest f9-l3-extend-class-rejects-data
+  (testing "F9 Landing 3 — `data:` inside `extend class` fails at parse per §3.3.2 (extensions cannot add state)."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"`data:` is not permitted inside `extend class"
+         (first-node
+          (str "extend class Foo:\n"
+               "    data:\n"
+               "        x: Int\n"))))))
+
+(deftest f9-l3-extend-class-rejects-state
+  (testing "F9 Landing 3 — `state:` inside `extend class` fails at parse. `state:` is retired at v1.0 AND extensions cannot add fields either way."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"`state:` section is retired"
+         (first-node
+          (str "extend class Foo:\n"
+               "    state:\n"
+               "        x: Int\n"))))))
+
+(deftest f9-l3-extend-class-rejects-metadata
+  (testing "F9 Landing 3 — `metadata:` inside `extend class` fails at parse — kind/threading/QoS are set at the original definition."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"`metadata:` is not permitted inside `extend class"
+         (first-node
+          (str "extend class Foo:\n"
+               "    metadata:\n"
+               "        kind: enum\n"))))))
+
+(deftest f9-l3-extend-class-rejects-use
+  (testing "F9 Landing 3 — `use:` inside `extend class` fails at parse (extensions cannot add capabilities)."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"`use:` is not permitted inside `extend class"
+         (first-node
+          (str "extend class Foo:\n"
+               "    use:\n"
+               "        clock: Clock\n"))))))
+
+(deftest f9-l3-extend-rejects-non-class-target
+  (testing "F9 Landing 3 — `extend enum Foo:` / `extend protocol Foo:` etc. fail at parse with a §3.3.2 pointer — `extend class` is the only extension form."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"expected `class` after `extend`"
+         (first-node
+          (str "extend enum Foo:\n"
+               "    methods:\n"
+               "        function bar(self) -> Int:\n"
+               "            return 1\n"))))))
+
+(deftest f9-l3-replace-on-plain-class-rejected
+  (testing "F9 Landing 3 — `replace` modifier on a method inside a plain (non-extension) class body is rejected at fold with a §3.3.2 rule-4 pointer. `replace` requires a target to shadow, which only exists in an `extend class` context."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"`replace` modifier on method.*only meaningful inside an `extend class`"
+         (first-node
+          (str "class Foo:\n"
+               "    metadata:\n"
+               "        kind: regular\n"
+               "    methods:\n"
+               "        replace function bar(self) -> Int:\n"
+               "            return 1\n"))))))

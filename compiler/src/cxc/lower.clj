@@ -783,6 +783,48 @@
    {}
    (protocol-classes top-nodes)))
 
+;; ---------------------------------------------------------------------------
+;; F9 L3 — extension-env: target-name -> [<:extend-class node>, ...].
+;;
+;; Multiple extensions per target are legal per §3.3.2 (rules 1-7 handle
+;; conflict resolution in L4). L3 is registration-only: we just collect
+;; the raw parsed nodes keyed by target name and verify the target
+;; resolves against the full symbol table (record-env ∪ atom-env ∪
+;; protocol-env). Composition — merging extension methods into the
+;; target's method table, applying `replace` shadowing, running
+;; conflict resolution — lands in L4.
+;;
+;; Unknown target-name is a hard error at lower (`extend class BogusFoo:`
+;; with no matching class in scope). Parse can't check because it doesn't
+;; know the symbol table; lower runs after all envs are built.
+;; ---------------------------------------------------------------------------
+
+(defn- extension-nodes [top-nodes]
+  (filter #(= :extend-class (:node %)) top-nodes))
+
+(defn- build-extension-env
+  "Collect all `extend class Foo:` blocks keyed by target name. Validates
+   that each target resolves against the record/atom/protocol envs. Does
+   NOT merge extension methods into the target's method table — that's
+   L4 composition."
+  [top-nodes record-env atom-env protocol-env]
+  (let [extensions (extension-nodes top-nodes)
+        known?     (fn [nm]
+                     (or (contains? record-env   nm)
+                         (contains? atom-env     nm)
+                         (contains? protocol-env nm)))]
+    (doseq [e extensions]
+      (when-not (known? (:target e))
+        (fail-compile! :cxc-f9-unknown-extension-target
+                       (str "`extend class " (:target e) ":` targets unknown "
+                            "class `" (:target e) "` — no record, atom, or "
+                            "protocol with that name is in scope. Check "
+                            "imports and typo. See spec §3.3.2.")
+                       e)))
+    (reduce (fn [env e] (update env (:target e) (fnil conj []) e))
+            {}
+            extensions)))
+
 (defn- def-atom-data-section [atom-node]
   (first (filter #(= :data-section (:node %)) (:body atom-node))))
 
@@ -5301,6 +5343,11 @@
                                                            (:kind v))))
                                                   atom-env))
                         :enum-env   enum-env})
+        ;; F9 L3 — collect extension blocks and validate targets against
+        ;; the full symbol table. Composition (merging methods,
+        ;; applying `replace`, running §3.3.2 rules 1-7) is L4.
+        extension-env (build-extension-env top-nodes record-env atom-env
+                                           protocol-env)
         ctx        {:record-env record-env :atom-env atom-env :enum-env enum-env
                     :symbol-table symbol-table
                     :locals {}}
@@ -5437,6 +5484,9 @@
      ;; and downstream L4+ landings can wire dispatch off a single
      ;; source of truth.
      :protocols           protocol-env
+     ;; F9 L3 — target-validated `extend class` blocks, keyed by target.
+     ;; L4 composition consumes this; no code-gen effect yet.
+     :extensions          extension-env
      :main                {:body         (if main-as-atom?
                                            main-body   ; return 0 unreachable after dispatch_main
                                            (conj main-body

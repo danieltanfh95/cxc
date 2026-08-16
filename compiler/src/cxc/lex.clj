@@ -25,6 +25,7 @@
     "def" "record" "class" "enum" "protocol"
     "data" "use" "methods" "invariants" "contracts" "constructor" "metadata"
     "accepts"
+    "extend" "replace"
     "deprecated"
     "then" "do" "when" "let" "cases"
     "self" "nil" "true" "false"

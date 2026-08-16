@@ -643,7 +643,16 @@
                     p3 (skip-newlines tokens p2)]
                 (recur (conj fields f) p3))))))
 
-(defn- parse-methods-section [tokens pos]
+(defn- parse-methods-section
+  "Parse a `methods:` block. Method entries may carry a leading `replace`
+   modifier (F9 L3) — parsed unconditionally here and flagged via
+   `:replace?` on the entry. `fold-class-body` rejects `:replace?`
+   entries on non-extension classes; `parse-extend-class` accepts them.
+
+   Keeping the prefix in the shared parser means `replace`-shape source
+   errors get one uniform diagnostic path (misplaced-replace on a plain
+   class body fires at fold, not scattered in the parser)."
+  [tokens pos]
   (let [[_ p] (expect tokens pos :kw "methods")
         [_ p] (expect tokens p :punct ":")
         [_ p] (expect tokens p :newline)
@@ -652,12 +661,20 @@
       (cond
         (at? tokens p :dedent) [{:node :methods-section :methods methods} (inc p)]
         (at? tokens p :newline) (recur methods (inc p))
+
+        (at? tokens p :kw "replace")
+        (let [[_ p2]    (expect tokens p :kw "replace")
+              [fdecl p3] (parse-function-decl tokens p2)
+              p4        (skip-newlines tokens p3)]
+          (recur (conj methods (assoc fdecl :replace? true)) p4))
+
         (or (at? tokens p :kw "function")
             (at-def-method? tokens p))
         (let [[fdecl p2] (parse-function-decl tokens p)
               p3 (skip-newlines tokens p2)]
           (recur (conj methods fdecl) p3))
-        :else (fail! tokens p "expected `def` or `function` in methods section")))))
+
+        :else (fail! tokens p "expected `def`, `function`, or `replace` in methods section")))))
 
 (defn- parse-deprecated-section
   "deprecated: \"<message>\"
@@ -1365,6 +1382,21 @@
                    (str "`data:` is not permitted on `kind: protocol` — "
                         "protocols declare no state, only method surface. "
                         "See spec §3.4.5. Class `" class-name "`.")))
+        ;; F9 L3 — `replace` modifier is only valid inside an
+        ;; `extend class Foo:` body; on a plain class body it has no
+        ;; target to shadow. Detect and reject at fold with a pointer at
+        ;; §3.3.2 rule 4 (shadowing rules).
+        replaced-methods (->> (filter #(= :methods-section (:node %)) body)
+                              (mapcat :methods)
+                              (filter :replace?))
+        _ (when (seq replaced-methods)
+            (fail! tokens pos-for-diag
+                   (str "`replace` modifier on method `"
+                        (:name (first replaced-methods))
+                        "` inside class `" class-name "` — `replace` is "
+                        "only meaningful inside an `extend class` body "
+                        "(shadows the original definition). See spec "
+                        "§3.3.2 rule 4.")))
         accepts-entries (vec (mapcat :entries accepts-secs))
         body-conforms (mapv :type conforms-lines)
         all-conforms  (into (vec header-conforms) body-conforms)]
@@ -1459,6 +1491,125 @@
                       "use:, deprecated:, conforms:, or dedent in `"
                       (if (= :protocol sugar-kind) "protocol" "class")
                       " " class-name "` body")))))))
+
+;; ---------------------------------------------------------------------------
+;; F9 Landing 3 — `extend class Foo:` top-level form.
+;;
+;;   extend class Foo:                    → :extend-class :target Foo
+;;       methods:
+;;           function bar(self): ...
+;;
+;;   extend class Foo(NewProtocol):       → header-parens add to :conforms
+;;       ...
+;;   extend class Foo:
+;;       conforms: NewProtocol            → body-form adds to :conforms
+;;
+;; Per §3.3.2 "What extensions cannot add", extension bodies accept only
+;; methods:, invariants:, and conforms:. `data:`, `state:`, `use:`,
+;; `cases:`, `metadata:` (any subkey), and `deprecated:` are rejected
+;; at parse with a targeted §3.3.2 pointer. Method entries carry the
+;; `replace` modifier via `:replace?` (parsed by shared parse-methods-section).
+;;
+;; Extension target-name resolution is deferred to lower (L4 composition
+;; consumes extension-env; unknown-target diagnostics fire there when the
+;; full symbol table is available).
+;; ---------------------------------------------------------------------------
+
+(defn- parse-extend-section
+  "Dispatch one section inside an `extend class Foo:` body. Strict —
+   rejects sections spec §3.3.2 forbids (data/state/use/cases/metadata/
+   deprecated). Accepts only methods:, invariants:, conforms:."
+  [tokens pos target]
+  (cond
+    (at? tokens pos :kw "methods")    (parse-methods-section tokens pos)
+    (at? tokens pos :kw "invariants") (parse-invariants-section tokens pos)
+
+    (and (at? tokens pos :ident) (= "conforms" (t-value (peek-tok tokens pos)))
+         (at? tokens (inc pos) :punct ":"))
+    (parse-conforms-line tokens pos)
+
+    (at? tokens pos :kw "data")
+    (fail! tokens pos
+           (str "`data:` is not permitted inside `extend class " target
+                "` — extensions cannot add state (§3.3.2). Add fields "
+                "at the original class definition."))
+
+    (at? tokens pos :kw "use")
+    (fail! tokens pos
+           (str "`use:` is not permitted inside `extend class " target
+                "` — extensions cannot add capabilities (§3.3.2). "
+                "Declare `use:` at the original class definition."))
+
+    (at? tokens pos :kw "cases")
+    (fail! tokens pos
+           (str "`cases:` is not permitted inside `extend class " target
+                "` — extensions cannot change an enum's case set (§3.3.2)."))
+
+    (at? tokens pos :kw "metadata")
+    (fail! tokens pos
+           (str "`metadata:` is not permitted inside `extend class " target
+                "` — kind/threading/QoS are set at the original class "
+                "definition and not modifiable by extensions (§3.3.2)."))
+
+    (at? tokens pos :kw "deprecated")
+    (fail! tokens pos
+           (str "`deprecated:` is not permitted inside `extend class "
+                target "` — deprecation belongs on the original definition."))
+
+    (and (at? tokens pos :ident) (= "state" (t-value (peek-tok tokens pos)))
+         (at? tokens (inc pos) :punct ":"))
+    (fail! tokens pos
+           (str "`state:` section is retired at v1.0 — and extensions "
+                "cannot add fields anyway (§3.3.2, §1.11)."))
+
+    :else nil))
+
+(defn- parse-extend-class
+  "Parse a top-level `extend class Foo:` form. Header-parens conformances
+   and body-form `conforms:` lines stack additively (§3.4.5 rule 5).
+   Rejects nested `extend` blocks (top-level form only, per plan Q3.3)."
+  [tokens pos]
+  (let [[_ p]   (expect tokens pos :kw "extend")
+        _       (when-not (at? tokens p :kw "class")
+                  (fail! tokens p
+                         (str "expected `class` after `extend` — `extend class Foo:` "
+                              "is the only extension form. `extend enum` / `extend "
+                              "protocol` are not spec surfaces; extend the underlying "
+                              "class instead. See spec §3.3.2.")))
+        [_ p]   (expect tokens p :kw "class")
+        [target p] (expect tokens p :ident)
+        [header-conforms p] (if (at? tokens p :punct "(")
+                              (parse-header-parens-conformances tokens p)
+                              [[] p])
+        [_ p]   (expect tokens p :punct ":")
+        [_ p]   (expect tokens p :newline)
+        [_ p]   (expect tokens p :indent)]
+    (loop [body [] p p]
+      (cond
+        (at? tokens p :dedent)
+        (let [conforms-lines (filter #(= :conforms-line (:node %)) body)
+              other-sections (remove #(= :conforms-line (:node %)) body)
+              body-conforms  (mapv :type conforms-lines)]
+          [{:node     :extend-class
+            :target   target
+            :conforms (into (vec header-conforms) body-conforms)
+            :body     (vec other-sections)}
+           (inc p)])
+
+        (at? tokens p :newline)
+        (recur body (inc p))
+
+        (at? tokens p :kw "extend")
+        (fail! tokens p
+               (str "nested `extend` blocks are not permitted — extension "
+                    "is a top-level form only. See F9 plan Q3.3."))
+
+        :else
+        (if-let [[sec p2] (parse-extend-section tokens p target)]
+          (recur (conj body sec) (skip-newlines tokens p2))
+          (fail! tokens p
+                 (str "expected methods:, invariants:, conforms:, or dedent "
+                      "in `extend class " target "` body")))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Record  — the smallest top-level form
@@ -1589,6 +1740,12 @@
       ;; in the body). Lower fail-nyis until F9 L2+ wires semantics.
       (at? tokens p :kw "class")    (parse-class tokens p :regular)
       (at? tokens p :kw "protocol") (parse-class tokens p :protocol)
+
+      ;; F9 L3 — `extend class Foo:` at top level. Extension body is
+      ;; strict per §3.3.2: methods:/invariants:/conforms: only.
+      ;; Target-name resolution and composition (§3.3.2 rules 1-7)
+      ;; land in L4.
+      (at? tokens p :kw "extend")   (parse-extend-class tokens p)
 
       ;; F9 L1 — spec §3.4.1 removed `sealed protocol`. Enumerations
       ;; cover the closed-sum-type case with better ergonomics.

@@ -1458,6 +1458,60 @@ def main:
                          "    -> running\n"
                          "        do: print(0)\n"))))))
 
+(deftest f9-l3-extension-env-keyed-by-target
+  (testing "F9 Landing 3 — `extend class Foo:` blocks land in the program's `:extensions` map keyed by target name. Multiple extensions per target stack in a vector. No composition here — L4 merges these into the target's method table."
+    (let [prog (lower-src (str "record Widget:\n"
+                               "    data:\n"
+                               "        n: Int\n"
+                               "\n"
+                               "extend class Widget:\n"
+                               "    methods:\n"
+                               "        function bar(self) -> Int:\n"
+                               "            return 1\n"
+                               "\n"
+                               "extend class Widget:\n"
+                               "    methods:\n"
+                               "        function baz(self) -> Int:\n"
+                               "            return 2\n"
+                               "\n"
+                               "def main:\n"
+                               "    -> running\n"
+                               "        do: print(0)\n"))
+          exts (get-in prog [:extensions "Widget"])]
+      (is (= 2 (count exts))
+          "both `extend class Widget:` blocks register under target `Widget`")
+      (is (every? #(= :extend-class (:node %)) exts)))))
+
+(deftest f9-l3-extension-target-must-resolve
+  (testing "F9 Landing 3 — `extend class BogusFoo:` with no matching record/atom/protocol in scope fails at lower with a §3.3.2 pointer. Parse-time can't catch this because the symbol table isn't ready yet."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"targets unknown class `BogusFoo`.*§3.3.2"
+         (lower-src (str "extend class BogusFoo:\n"
+                         "    methods:\n"
+                         "        function bar(self) -> Int:\n"
+                         "            return 1\n"
+                         "\n"
+                         "def main:\n"
+                         "    -> running\n"
+                         "        do: print(0)\n"))))))
+
+(deftest f9-l3-extension-may-target-protocol
+  (testing "F9 Landing 3 — `extend class P:` where P is a protocol is legal at L3: extension-env just records; L6 will handle default-method inheritance from extension methods (extension provides defaults, structurally). Registration succeeds; no L4-style composition on protocols yet."
+    (let [prog (lower-src (str "protocol P:\n"
+                               "    accepts:\n"
+                               "        foo(x: Int) -> Int\n"
+                               "\n"
+                               "extend class P:\n"
+                               "    methods:\n"
+                               "        function bar(self) -> Int:\n"
+                               "            return 1\n"
+                               "\n"
+                               "def main:\n"
+                               "    -> running\n"
+                               "        do: print(0)\n"))]
+      (is (= 1 (count (get-in prog [:extensions "P"])))))))
+
 (deftest f37b-l1-bytes-length-returns-int
   (testing "F37b Landing 1 — `.length` on a `Bytes`-typed expression type-checks as `Int` (spec §3.10.10 user-facing convention: `.length` is an element count matching List/String; wire-format `UInt32` prefix is a different concern). Emitted C uses ObjC property syntax, dispatching to NSData's `-length`."
     (let [prog (lower-src (str "record Msg:\n"
