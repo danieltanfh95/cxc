@@ -345,20 +345,14 @@
       (is (zero? exit))
       (is (= "3\n" stdout)))))
 
-(deftest end-to-end-ticker
-  (testing "ticker.cxc — Layer 5c Step 10. Prelude ships `Ticker(rate_ms: Int, count: Int)` — a real dispatch_source_t periodic timer wired to send `beat` back to the atom's queue via an FFI-hatched call (`native_schedule_periodic_beat`). Timer runs on its own serial queue (macOS libdispatch quirk: timers targeting the main queue don't fire under dispatch_main). Timer objects get an unbalanced CFBridgingRetain to survive main()'s @autoreleasepool drain — matches the design invariant that Ticker lives until cxc_shutdown/exit(0). Program counts 3 ticks (10ms apart), prints 3, exits 0. Method-returned Stream subscribe (Step 8 original design) is deferred; multiple Ticker instances cover the polymorphism use case."
-    (let [{:keys [exit stdout]} (compile-and-run "ticker")]
-      (is (zero? exit))
-      (is (= "3\n" stdout)))))
-
 (deftest end-to-end-game-loop
-  (testing "game-loop.cxc — Layer 5c integration slice. Composes two prelude capabilities (Ticker + TestKeyboardInput) in one main atom subscribing to four streams: ticker.tick, input.pressed, input.done (consumed as no-op), and ticker.done (exit trigger). Increments a counter on every tick + press. TestKeyboardInput fires its 2 pressed events immediately via async self-send; Ticker's first tick is 5ms out via dispatch_source_t. Both drain into main's own_queue, get serialized, and terminate on ticker.done after 4 ticks — total = 2 + 4 = 6. Deterministic across runs. Prints 6."
+  (testing "game-loop.cxc — F62-migrated. Composes two prelude capabilities (Clock + TestKeyboardInput) in one main atom. Uses a two-transition `when:` guard pattern on `clock.every(rate_ms: 5){t: Instant}` — one running-guard that increments through 4 ticks, one end-guard that fires when the count reaches 4. Also subscribes to input.pressed (adds 1) and input.done (no-op). Total = 2 presses + 4 ticks = 6. Deterministic across runs since 5ms is well under the input-fire deadline; both sources drain into main's own_queue and serialize."
     (let [{:keys [exit stdout]} (compile-and-run "game-loop")]
       (is (zero? exit))
       (is (= "6\n" stdout)))))
 
 (deftest end-to-end-clock-every
-  (testing "clock-every.cxc — Layer 5c Step 8 (method-returned Stream subscribe). Clock ships a real `every(rate_ms: Int) -> Stream` method (via `native_clock_every` FFI hatch) that creates a CxcStream carrying a per-instance receiver-side selector plus a dispatch_source_t timer. Main subscribes via `<: clock.every(rate_ms: 5){t: Instant}` and Ticker(rate_ms: 50, count: 1) bounds the run. `beats > 0` at end verifies the stream fired at least once — deterministic across runs since the 5ms every-tick easily fires before the 50ms limit. The `{t: Instant}` clause is required by the method-stream payload registry entry for `[_Cxc_Clock every]`; here the body ignores `t`. Prints 1."
+  (testing "clock-every.cxc — F62-migrated. Method-returned Stream subscribe with receive-side counting bound (no external Ticker). Clock ships `every(rate_ms: Int) -> Stream of Instant` (spec §1913 signature) via `native_clock_every` FFI hatch — creates a CxcStream carrying a per-instance receiver-side selector plus a dispatch_source_t timer. Main subscribes via `<: clock.every(rate_ms: 5){t: Instant}` with a two-transition `when:` guard pair (increment through 1 tick, then exit). `beats > 0` at end verifies the stream fired at least once."
     (let [{:keys [exit stdout]} (compile-and-run "clock-every")]
       (is (zero? exit))
       (is (= "1\n" stdout)))))
@@ -400,7 +394,7 @@
       (is (= "42\n" stdout)))))
 
 (deftest end-to-end-list-atom-fan-in
-  (testing "list-atom-fan-in.cxc — `List of AtomType` fan-in with element identity. Container holds a `List of Emitter` populated by a literal `[Emitter(seed: 10), Emitter(seed: 20)]`. Each Emitter emits `beep(v: val)` on its `-> running do:`. Main subscribes via `<: xs.beep{e: Emitter, v: Int}` and accumulates `v` into total; a Ticker(rate_ms: 50, count: 1) bounds the run. Verifies three landing pieces: (1) atom-typed elements accepted in list literals (previously fail-nyi as `not boxable`); (2) container auto-subscribes to each element's fan-in stream at `-initWithElements:` for literal-loaded elements (runtime `cxc_add:` path already did this; init-load path was silently unhooked); (3) untargeted `:>` in transition do: blocks defers via `cxc_send_async(self, ...)` so subscribers registered in later init phases (container init, main runtimeBinding) are hooked up when the fanout runs on dispatch_main. Total = 10 + 20 = 30."
+  (testing "list-atom-fan-in.cxc — F62-migrated. `List of AtomType` fan-in with element identity. Container holds a `List of Emitter` populated by a literal `[Emitter(seed: 10), Emitter(seed: 20)]`. Each Emitter emits `beep(v: val)` on its `-> running do:`. Main subscribes via `<: xs.beep{e: Emitter, v: Int}` and accumulates `v` into total; a Clock.every(50) receive-side count bound (single tick) fires `-> end` after both beeps arrive. Verifies three landing pieces: (1) atom-typed elements accepted in list literals (previously fail-nyi as `not boxable`); (2) container auto-subscribes to each element's fan-in stream at `-initWithElements:` for literal-loaded elements (runtime `cxc_add:` path already did this; init-load path was silently unhooked); (3) untargeted `:>` in transition do: blocks defers via `cxc_send_async(self, ...)` so subscribers registered in later init phases (container init, main runtimeBinding) are hooked up when the fanout runs on dispatch_main. Total = 10 + 20 = 30."
     (let [{:keys [exit stdout]} (compile-and-run "list-atom-fan-in")]
       (is (zero? exit))
       (is (= "30\n" stdout)))))

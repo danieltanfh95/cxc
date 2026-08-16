@@ -26,8 +26,7 @@
       (is (= :std.input (get-in table ["_Cxc_TestKeyboardInput" :module])))
       (is (= :std.io   (get-in table ["_Cxc_Console"  :module])))
       (is (= :std.clock (get-in table ["_Cxc_Clock"   :module])))
-      (is (= :std.random (get-in table ["_Cxc_Random" :module])))
-      (is (= :std.ticker (get-in table ["_Cxc_Ticker" :module]))))))
+      (is (= :std.random (get-in table ["_Cxc_Random" :module]))))))
 
 (deftest table-carries-user-provenance
   (testing "F51 — user declarations get :user provenance"

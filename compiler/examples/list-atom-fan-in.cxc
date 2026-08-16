@@ -8,11 +8,12 @@ def Emitter(seed: Int):
     -> end
 
 def main:
-    def limit: Ticker(rate_ms: 50, count: 1)
+    def clock: Clock
 
     data:
         xs: List of Emitter = [Emitter(seed: 10), Emitter(seed: 20)]
         total: Int = 0
+        bound_ticks: Int = 0
 
     -> running
 
@@ -23,4 +24,9 @@ def main:
         then:
             total => total + v
 
-    running <: limit.done -> end
+    running <: clock.every(rate_ms: 50){t: Instant} -> running
+        when: bound_ticks == 0
+        then: bound_ticks => bound_ticks + 1
+
+    running <: clock.every(rate_ms: 50){t: Instant} -> end
+        when: bound_ticks >= 1

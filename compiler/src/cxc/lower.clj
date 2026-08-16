@@ -2387,72 +2387,15 @@
     :emit-c    (fn [args]
                  (str "((int)arc4random_uniform((uint32_t)("
                       (first args) ")))"))}
-   "native_schedule_periodic_beat"
-   ;; Layer 5c Step 10 (via prelude Ticker atom): create a repeating
-   ;; dispatch_source_t timer that sends the `beat` message to `target`
-   ;; every `rate_ms` milliseconds. Wrapped in a GNU statement-
-   ;; expression `({...})` so the call is legal both as an expression
-   ;; and in do:-clause statement position.
-   ;;
-   ;; Timer queue: a dedicated serial queue, NOT the main queue.
-   ;; `dispatch_source_t` timers targeting `dispatch_get_main_queue()`
-   ;; do not fire under `dispatch_main()` on macOS — a known
-   ;; libdispatch quirk. The event handler hops back to main via
-   ;; `cxc_send_async(target, ...)`, which routes through the target's
-   ;; own_queue → main. All actor code still runs on main; only the
-   ;; timer itself lives elsewhere.
-   ;;
-   ;; Sends `beat` because that's the internal message name convention
-   ;; established by the Clock stub — Ticker follows the same shape so
-   ;; the cxc body is dead simple: one `<: beat` receiver re-emits
-   ;; `:> tick`. FFI builtins that target arbitrary selector names
-   ;; can wait for a real need (Layer 5c+).
-   ;;
-   ;; Lifecycle: timer + queue are wrapped in a CxcTimerHandle and
-   ;; attached to the target atom's cxc_owned_resources. On the
-   ;; target's -transitionToEnd, removeAllObjects triggers ARC
-   ;; dealloc on the handle, which dispatch_source_cancel's the
-   ;; timer and drops the queue. Retires the earlier CFBridgingRetain
-   ;; leak that kept both alive to end of process.
-   {:return-kw :void
-    :arity     2
-    :emit-c    (fn [args]
-                 (let [tgt  (first args)
-                       rate (second args)]
-                   (str "({ "
-                        "id __cxc_tgt = " tgt "; "
-                        "int64_t __cxc_ms = (int64_t)(" rate "); "
-                        "dispatch_queue_t __cxc_tq = "
-                        "dispatch_queue_create(\"cxc.ticker\", DISPATCH_QUEUE_SERIAL); "
-                        "dispatch_source_t __cxc_t = "
-                        "dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, "
-                        "__cxc_tq); "
-                        "dispatch_source_set_timer(__cxc_t, "
-                        "dispatch_time(DISPATCH_TIME_NOW, __cxc_ms * NSEC_PER_MSEC), "
-                        "__cxc_ms * NSEC_PER_MSEC, 0); "
-                        "dispatch_source_set_event_handler(__cxc_t, ^{ "
-                        "cxc_send_async(__cxc_tgt, ^{ "
-                        ;; objc_msgSend cast bypasses static selector
-                        ;; lookup — target is id and `beat` isn't
-                        ;; declared on NSObject anywhere.
-                        "((void (*)(id, SEL))objc_msgSend)(__cxc_tgt, "
-                        "sel_registerName(\"beat\")); "
-                        "}); "
-                        "}); "
-                        "dispatch_resume(__cxc_t); "
-                        "CxcTimerHandle *__cxc_h = [[CxcTimerHandle alloc] init]; "
-                        "__cxc_h.source = __cxc_t; "
-                        "__cxc_h.queue = __cxc_tq; "
-                        "cxc_own_resource(__cxc_tgt, __cxc_h); "
-                        "(void)0; })")))}
    "native_clock_every"
    ;; Layer 5c Step 8/10 — real method-returned Stream. Called from
    ;; Clock's `every(rate_ms: Int) -> Stream` method body; creates a
    ;; CxcStream carrying subscribers plus a dispatch_source_t periodic
    ;; timer whose event handler builds a fresh `_Cxc_Instant` and
-   ;; fans it to every subscriber via `objc_msgSend` cast. Same macOS
-   ;; quirks as `native_schedule_periodic_beat` (dedicated queue for
-   ;; timer).
+   ;; fans it to every subscriber via `objc_msgSend` cast. macOS
+   ;; libdispatch quirk: `dispatch_source_t` timers targeting the main
+   ;; queue don't fire under `dispatch_main()`, so the timer lives on
+   ;; a dedicated serial queue.
    ;;
    ;; Payload shape (`t: Instant`) matches the registration in
    ;; `method-stream-payload-shapes` for `[_Cxc_Clock every]`. Selector
@@ -6072,7 +6015,7 @@
                              ;; Layer 5c: objc_msgSend / sel_registerName
                              ;; used by FFI builtins that need to invoke
                              ;; arbitrary receiver-side selectors (e.g.
-                             ;; Ticker's periodic-beat dispatch).
+                             ;; Clock.every's typed-payload dispatch).
                              "<objc/message.h>"]
                             ["<stdio.h>"])
         includes          (cond-> base-includes

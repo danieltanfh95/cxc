@@ -113,7 +113,7 @@
    current prelude's rename-table — each mangled type gets its
    user-facing name registered under the appropriate std.<sub>
    module. Expands as later Layer 6 steps add capabilities."
-  {"std.time"        #{"Duration" "Instant" "Clock" "Ticker"}
+  {"std.time"        #{"Duration" "Instant" "Clock"}
    "std.geometry"    #{"Position"}
    "std.random"      #{"Random"}
    "std.io"          #{"TestKeyboardInput" "Console"}

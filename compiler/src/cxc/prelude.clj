@@ -38,7 +38,6 @@
    "Clock"              "_Cxc_Clock"
    "Random"             "_Cxc_Random"
    "TestKeyboardInput"  "_Cxc_TestKeyboardInput"
-   "Ticker"             "_Cxc_Ticker"
    "Key"                "_Cxc_Key"
    "Position"           "_Cxc_Position"
    "Console"            "_Cxc_Console"
@@ -65,7 +64,7 @@
    (mangled) form. Tree-shaking in cxc.lower compares against these
    after the rewrite pass runs, so entries here match what the
    lowered AST carries — not what the prelude source spelled."
-  #{"_Cxc_Clock" "_Cxc_Random" "_Cxc_TestKeyboardInput" "_Cxc_Ticker"
+  #{"_Cxc_Clock" "_Cxc_Random" "_Cxc_TestKeyboardInput"
     "_Cxc_Console"})
 
 ;; F55 Landing 2 (2026-08-15) — prelude lives in a real directory tree
@@ -117,7 +116,6 @@
    {:name :geom    :kind :shared :names ["Position"]}
    {:name :input   :kind :shared :names ["Key" "TestKeyboardInput"]}
    {:name :random  :kind :target :names ["Random"]}
-   {:name :ticker  :kind :target :names ["Ticker"]}
    {:name :clock   :kind :target :names ["Clock"]}
    {:name :io      :kind :target :names ["Console"]}])
 

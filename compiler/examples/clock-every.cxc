@@ -1,6 +1,5 @@
 def main:
-    def clock: Clock(ticks: 1)
-    def limit: Ticker(rate_ms: 50, count: 1)
+    def clock: Clock
 
     data:
         beats: Int = 0
@@ -11,6 +10,8 @@ def main:
         do: print(beats > 0)
 
     running <: clock.every(rate_ms: 5){t: Instant} -> running
+        when: beats < 1
         then: beats => beats + 1
 
-    running <: limit.done -> end
+    running <: clock.every(rate_ms: 5){t: Instant} -> end
+        when: beats == 1
