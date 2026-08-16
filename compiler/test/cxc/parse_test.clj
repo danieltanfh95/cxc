@@ -349,6 +349,24 @@ def main:
           body  (:body (first nodes))]
       (is (some #(and (= :function (:node %)) (= "bumped" (:name %))) body)))))
 
+(deftest k8-function-keyword-emits-deprecation-warning
+  (testing "K8 — `function` method opener is retired at v1.0 (spec §1201, §2330). Parser still accepts it during the grace period but emits a per-occurrence deprecation warning to *err* naming file line/col so users can migrate. Non-fatal."
+    (let [sw (java.io.StringWriter.)]
+      (binding [*err* sw]
+        (p/parse "record V:\n    data:\n        x: Int\n    methods:\n        function bumped(self) -> Int:\n            return x\n"))
+      (let [stderr (str sw)]
+        (is (re-find #"`function` method opener is deprecated" stderr))
+        (is (re-find #"spec §1201" stderr))
+        (is (re-find #"use `def` instead" stderr))))))
+
+(deftest k8-def-method-emits-no-deprecation-warning
+  (testing "K8 — `def` method form (spec-canonical) fires no deprecation warning."
+    (let [sw (java.io.StringWriter.)]
+      (binding [*err* sw]
+        (p/parse "record V:\n    data:\n        x: Int\n    methods:\n        def bumped(self) -> Int:\n            return x\n"))
+      (is (= "" (str sw))
+          "def form is clean — no K8 warning"))))
+
 (deftest subscript-postfix-parses
   (testing "F19 / §3.9 — `expr[i]` parses as a :subscript node (index is any expression)"
     ;; Wrap in a return statement inside a record method so the expression

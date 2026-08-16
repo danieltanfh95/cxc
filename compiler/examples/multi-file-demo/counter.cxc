@@ -5,5 +5,5 @@ def Counter(seed: Int):
         val: Int = seed
 
     methods:
-        function bump(self) -> Int:
+        def bump(self) -> Int:
             return val + 1

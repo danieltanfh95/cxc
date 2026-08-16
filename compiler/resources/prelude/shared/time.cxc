@@ -3,7 +3,7 @@ record Duration:
         millis: Int
 
     methods:
-        function to_seconds(self) -> Float:
+        def to_seconds(self) -> Float:
             return self.millis / 1000.0
 
 record Instant:
@@ -11,5 +11,5 @@ record Instant:
         millis: Int
 
     methods:
-        function plus(self, delta: Duration) -> Instant:
+        def plus(self, delta: Duration) -> Instant:
             return Instant(millis: self.millis + delta.millis)

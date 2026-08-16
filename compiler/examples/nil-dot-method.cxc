@@ -18,7 +18,7 @@ def Counter:
     n :< raw_n
 
     methods:
-        function get_n(self) -> Int:
+        def get_n(self) -> Int:
             return n
 
 def Wrapper:

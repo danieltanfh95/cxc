@@ -470,19 +470,34 @@
 
 (declare parse-block)
 
+(defn- warn-function-deprecated!
+  "K8 — the `function` method opener is retired at v1.0 (spec §1201,
+   §2330); spec canonical is `def`. Prints a per-occurrence
+   deprecation warning to *err* naming file/line so users can migrate.
+   Non-fatal — parser still accepts the keyword. A `--strict-
+   deprecations` flag to promote to error is a follow-on."
+  [tokens pos]
+  (let [t (peek-tok tokens pos)]
+    (binding [*out* *err*]
+      (println (str "warning: `function` method opener is deprecated at v1.0 "
+                    "(spec §1201, §2330) — use `def` instead. At line "
+                    (t-line t) ", col " (t-col t) ".")))))
+
 (defn- parse-function-decl
   "Method declaration in two accepted forms:
      function name(params) -> RetType: <block>   ; legacy — audit K8
      def name(params) -> RetType: <block>        ; spec §2.5 canonical
 
    The `function` keyword is retired at v1.0 (spec §1201/§2330); we
-   still parse it during the grace period and emit no warning yet
-   (deprecation-warning is a follow-up). The `def` form is
-   distinguished from a nested-atom slot (`def name: TypeName`) by
-   the paren immediately after the name."
+   still parse it during the grace period but emit a per-occurrence
+   deprecation warning via `warn-function-deprecated!`. The `def`
+   form is distinguished from a nested-atom slot (`def name: TypeName`)
+   by the paren immediately after the name."
   [tokens pos]
   (let [[_ p]      (cond
-                     (at? tokens pos :kw "function") (expect tokens pos :kw "function")
+                     (at? tokens pos :kw "function")
+                     (do (warn-function-deprecated! tokens pos)
+                         (expect tokens pos :kw "function"))
                      (at? tokens pos :kw "def")      (expect tokens pos :kw "def")
                      :else (fail! tokens pos "expected `def` or `function` for method"))
         [name p]   (expect tokens p :ident)
@@ -1207,7 +1222,9 @@
    signature fail-nyi with a pointer at a follow-on landing."
   [tokens pos]
   (let [[_ p]      (cond
-                     (at? tokens pos :kw "function") (expect tokens pos :kw "function")
+                     (at? tokens pos :kw "function")
+                     (do (warn-function-deprecated! tokens pos)
+                         (expect tokens pos :kw "function"))
                      (at? tokens pos :kw "def")      (expect tokens pos :kw "def")
                      :else                            [nil pos])
         [name p]   (expect tokens p :ident)

@@ -4,7 +4,7 @@ record V:
         y: Float
 
     methods:
-        function plus(self, other: V) -> V:
+        def plus(self, other: V) -> V:
             return V(x: self.x + other.x, y: self.y + other.y)
 
 def main:

@@ -3,10 +3,10 @@ def Counter:
         n: Int = 10
 
     methods:
-        function bump(self) -> Int:
+        def bump(self) -> Int:
             return self.n + 1
 
-        function plus(self, other: Int) -> Int:
+        def plus(self, other: Int) -> Int:
             return self.n + other
 
 def main:
