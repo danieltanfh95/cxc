@@ -1512,6 +1512,175 @@ def main:
                                "        do: print(0)\n"))]
       (is (= 1 (count (get-in prog [:extensions "P"])))))))
 
+;; ---------------------------------------------------------------------------
+;; F9 Landing 4 — extension composition (single-module) + `replace`
+;; + conflict-resolution warnings.
+;; ---------------------------------------------------------------------------
+
+(defn- capture-warnings [thunk]
+  (let [sw (java.io.StringWriter.)]
+    (binding [*err* sw]
+      (let [result (thunk)]
+        [result (str sw)]))))
+
+(deftest f9-l4-single-extension-adds-method
+  (testing "F9 Landing 4 — one extension of a record adds a method that composes into the record's method table with no conflict. Post-composition, the target's :methods contains both own and extension methods."
+    (let [[prog stderr] (capture-warnings
+                        #(lower-src (str "record Widget:\n"
+                                         "    data:\n"
+                                         "        n: Int\n"
+                                         "    methods:\n"
+                                         "        function own_m(self) -> Int:\n"
+                                         "            return 1\n"
+                                         "\n"
+                                         "extend class Widget:\n"
+                                         "    methods:\n"
+                                         "        function ext_m(self) -> Int:\n"
+                                         "            return 2\n"
+                                         "\n"
+                                         "def main:\n"
+                                         "    -> running\n"
+                                         "        do: print(0)\n")))
+          widget-fns (filter #(str/starts-with? (or (:name %) "") "Widget_")
+                             (:functions prog))]
+      (is (= "" stderr) "no warnings for a clean add-a-method extension")
+      (is (some #(= "Widget_own_m" (:name %)) widget-fns))
+      (is (some #(= "Widget_ext_m" (:name %)) widget-fns)))))
+
+(deftest f9-l4-shadowing-warns-and-picks-own
+  (testing "F9 Landing 4 — extension declares `own_m` with no `replace`; own wins (§3.3.2 rule 1) and a shadowing warning fires naming the target. Composed emit uses the own body."
+    (let [[prog stderr] (capture-warnings
+                        #(lower-src (str "record Widget:\n"
+                                         "    data:\n"
+                                         "        n: Int\n"
+                                         "    methods:\n"
+                                         "        function own_m(self) -> Int:\n"
+                                         "            return 100\n"
+                                         "\n"
+                                         "extend class Widget:\n"
+                                         "    methods:\n"
+                                         "        function own_m(self) -> Int:\n"
+                                         "            return 200\n"
+                                         "\n"
+                                         "def main:\n"
+                                         "    -> running\n"
+                                         "        do: print(0)\n")))
+          fn         (first (filter #(= "Widget_own_m" (:name %))
+                                    (:functions prog)))
+          return-stmt (first (filter #(= :return (:node %)) (:body fn)))]
+      (is (re-find #"shadows the class's own definition.*not marked `replace`" stderr))
+      (is (= 100 (get-in return-stmt [:value :value]))
+          "own body wins (returns 100, not extension's 200)"))))
+
+(deftest f9-l4-replace-suppresses-warning-and-shadows
+  (testing "F9 Landing 4 — `replace function own_m(self)` in extension overrides the own definition with no warning. Composed emit uses the extension body."
+    (let [[prog stderr] (capture-warnings
+                        #(lower-src (str "record Widget:\n"
+                                         "    data:\n"
+                                         "        n: Int\n"
+                                         "    methods:\n"
+                                         "        function own_m(self) -> Int:\n"
+                                         "            return 100\n"
+                                         "\n"
+                                         "extend class Widget:\n"
+                                         "    methods:\n"
+                                         "        replace function own_m(self) -> Int:\n"
+                                         "            return 200\n"
+                                         "\n"
+                                         "def main:\n"
+                                         "    -> running\n"
+                                         "        do: print(0)\n")))
+          fn         (first (filter #(= "Widget_own_m" (:name %))
+                                    (:functions prog)))
+          return-stmt (first (filter #(= :return (:node %)) (:body fn)))]
+      (is (= "" stderr) "replace suppresses shadowing warning (rule 3)")
+      (is (= 200 (get-in return-stmt [:value :value]))
+          "replace extension body wins (returns 200)"))))
+
+(deftest f9-l4-replace-without-target-warns
+  (testing "F9 Landing 4 — `replace function unique_m(self)` in extension with no other declaration for `unique_m` fires `replace-without-target`. The method still lands (replace has no effect but doesn't drop the code)."
+    (let [[_ stderr] (capture-warnings
+                     #(lower-src (str "record Widget:\n"
+                                      "    data:\n"
+                                      "        n: Int\n"
+                                      "\n"
+                                      "extend class Widget:\n"
+                                      "    methods:\n"
+                                      "        replace function unique_m(self) -> Int:\n"
+                                      "            return 1\n"
+                                      "\n"
+                                      "def main:\n"
+                                      "    -> running\n"
+                                      "        do: print(0)\n")))]
+      (is (re-find #"replace-without-target" stderr)))))
+
+(deftest f9-l4-two-extensions-conflict-later-wins
+  (testing "F9 Landing 4 — two extensions declare the same method without `replace` and no own definition exists; §3.3.2 rule 5 says later wins with a shadowing warning for the earlier."
+    (let [[prog stderr] (capture-warnings
+                        #(lower-src (str "record Widget:\n"
+                                         "    data:\n"
+                                         "        n: Int\n"
+                                         "\n"
+                                         "extend class Widget:\n"
+                                         "    methods:\n"
+                                         "        function m(self) -> Int:\n"
+                                         "            return 1\n"
+                                         "\n"
+                                         "extend class Widget:\n"
+                                         "    methods:\n"
+                                         "        function m(self) -> Int:\n"
+                                         "            return 2\n"
+                                         "\n"
+                                         "def main:\n"
+                                         "    -> running\n"
+                                         "        do: print(0)\n")))
+          fn         (first (filter #(= "Widget_m" (:name %))
+                                    (:functions prog)))
+          return-stmt (first (filter #(= :return (:node %)) (:body fn)))]
+      (is (re-find #"shadowed by a later extension" stderr))
+      (is (= 2 (get-in return-stmt [:value :value]))
+          "later extension wins"))))
+
+(deftest f9-l4-extension-conforms-union
+  (testing "F9 Landing 4 — extension-added conformances union into the target's `:conforms` at composition time."
+    (let [prog (lower-src (str "protocol P:\n"
+                               "    accepts:\n"
+                               "        m(self) -> Int\n"
+                               "\n"
+                               "record Widget:\n"
+                               "    data:\n"
+                               "        n: Int\n"
+                               "\n"
+                               "extend class Widget(P):\n"
+                               "    methods:\n"
+                               "        function m(self) -> Int:\n"
+                               "            return 1\n"
+                               "\n"
+                               "def main:\n"
+                               "    -> running\n"
+                               "        do: print(0)\n"))]
+      ;; L4 stores conforms on record-env; not directly surfaced on the
+      ;; program shape, but the compose path must not throw and the
+      ;; extension method must land.
+      (is (some #(= "Widget_m" (:name %)) (:functions prog))))))
+
+(deftest f9-l4-extension-invariant-on-record-fail-nyi
+  (testing "F9 Landing 4 — record targets have no runtime invariant path yet; extension-added `invariants:` on a record fails-nyi with a pointer at the follow-on sub-landing. Atoms already handle invariants natively (no fail-nyi)."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"record targets have no runtime invariant path"
+         (lower-src (str "record Widget:\n"
+                         "    data:\n"
+                         "        n: Int\n"
+                         "\n"
+                         "extend class Widget:\n"
+                         "    invariants:\n"
+                         "        n > 0\n"
+                         "\n"
+                         "def main:\n"
+                         "    -> running\n"
+                         "        do: print(0)\n"))))))
+
 (deftest f37b-l1-bytes-length-returns-int
   (testing "F37b Landing 1 — `.length` on a `Bytes`-typed expression type-checks as `Int` (spec §3.10.10 user-facing convention: `.length` is an element count matching List/String; wire-format `UInt32` prefix is a different concern). Emitted C uses ObjC property syntax, dispatching to NSData's `-length`."
     (let [prog (lower-src (str "record Msg:\n"

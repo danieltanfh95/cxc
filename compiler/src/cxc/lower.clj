@@ -699,7 +699,11 @@
                                    nil            nil
                                    (:name rt))
              :cxc-return-ty-node rt
-             :body               (:body m)}))
+             :body               (:body m)
+             ;; F9 L4 — carry `replace` intent through composition so
+             ;; the shadowing rules can consult it. Absent on non-
+             ;; extension entries (nil is the "no intent" signal).
+             :replace?           (boolean (:replace? m))}))
         (:methods methods-section)))
 
 (defn- build-record-env
@@ -824,6 +828,194 @@
     (reduce (fn [env e] (update env (:target e) (fnil conj []) e))
             {}
             extensions)))
+
+;; ---------------------------------------------------------------------------
+;; F9 L4 — extension composition (single-module) + `replace` shadowing.
+;;
+;; For each extension target that resolves to a record or atom, merge the
+;; target's own method table with the extension-declared methods, applying
+;; §3.3.2 rules 1-7:
+;;
+;;   Rule 1 — Own definition wins over extension.
+;;   Rule 2 — Same-name methods in one body → hard error (parse-time; already
+;;            fires for records/atoms; per-extension bodies re-validated here).
+;;   Rule 3 — `replace` on an extension winner suppresses the shadowing
+;;            warning IF it actually shadows something; otherwise
+;;            `replace-without-target` warning fires.
+;;   Rule 5 — Among competing extensions of the same rank, later declaration
+;;            wins.
+;;   Rule 6 — Protocol default vs. extension is L6's story.
+;;   Rule 7 — Cross-file / cross-module priority is L8.
+;;
+;; Extension `conforms:` union into the target's `:conforms`. Extension
+;; invariants on records fail-nyi (records have no runtime invariant path
+;; yet). Extension methods on protocol targets don't compose here (their
+;; role as defaults is L6); L4 only touches record + atom targets.
+;;
+;; Warnings go to *err* (mirrors warn-sync-send-cycles!) — non-fatal.
+;; ---------------------------------------------------------------------------
+
+(defn- warn! [msg]
+  (binding [*out* *err*]
+    (println (str "warning: " msg))))
+
+(defn- extension-methods-for
+  "Return a flat vector of extension methods (in env shape, with :replace?)
+   for `target-name`, in declaration order across all its extensions."
+  [target-name extension-env]
+  (vec
+   (mapcat
+    (fn [ext]
+      (extract-methods
+       target-name
+       (first (filter #(= :methods-section (:node %)) (:body ext)))))
+    (get extension-env target-name []))))
+
+(defn- extension-conforms-for
+  "Return all extension-added conformances for `target-name`, in
+   declaration order across extensions."
+  [target-name extension-env]
+  (vec (mapcat :conforms (get extension-env target-name []))))
+
+(defn- pick-winner-with-warnings!
+  "For a group of same-name declarations (each tagged `:__source` :own
+   or :ext), pick the winner per §3.3.2 rules 1/3/5 and emit warnings
+   for losers. Returns the winning method entry (with :__source
+   stripped)."
+  [target-name method-name decls]
+  (let [replaces (filter :replace? decls)
+        own-decl (first (filter #(= :own (:__source %)) decls))
+        ext-decls (filter #(= :ext (:__source %)) decls)]
+    (cond
+      ;; Single declaration — no conflict. Replace-without-target if
+      ;; a lone extension declaration carries `replace?`.
+      (= 1 (count decls))
+      (let [d (first decls)]
+        (when (:replace? d)
+          (warn! (str "`replace` on `" method-name "` in extension of `"
+                      target-name "` has no target to shadow — "
+                      "replace-without-target. Drop the `replace` "
+                      "modifier or verify the target name. "
+                      "See §3.3.2 rule 3.")))
+        (dissoc d :__source))
+
+      ;; Any `replace` extension present — last replace wins.
+      (seq replaces)
+      (do
+        ;; If a replace-flagged extension exists among multiple decls
+        ;; there IS a target; suppress the shadow warning for the
+        ;; winner. Losers among non-replace extensions still lose but
+        ;; silently (the user documented replace intent).
+        (dissoc (last replaces) :__source))
+
+      ;; Own present, no replace — own wins; warn on shadow extensions.
+      own-decl
+      (do
+        (doseq [_ ext-decls]
+          (warn! (str "extension of `" target-name "` declares `"
+                      method-name "` which shadows the class's own "
+                      "definition and is not marked `replace` — the "
+                      "own definition wins. Add `replace` to the "
+                      "extension method to shadow deliberately. "
+                      "See §3.3.2 rule 1.")))
+        (dissoc own-decl :__source))
+
+      ;; Only extensions, none replace — last wins; warn on earlier.
+      :else
+      (do
+        (doseq [_ (butlast ext-decls)]
+          (warn! (str "extension of `" target-name "` declares `"
+                      method-name "`, shadowed by a later extension. "
+                      "Add `replace` to the winning declaration to "
+                      "document the shadow. See §3.3.2 rule 5.")))
+        (dissoc (last ext-decls) :__source)))))
+
+(defn- compose-target-methods
+  "Compose own methods with extension-declared methods for one target.
+   Emits shadowing / replace-without-target warnings. Returns the
+   composed method vector in a deterministic order: winners appear in
+   the order their winning declaration was seen (own methods first,
+   then per-extension in declaration order)."
+  [target-name own-methods ext-methods]
+  (let [tagged  (concat (map #(assoc % :__source :own) own-methods)
+                        (map #(assoc % :__source :ext) ext-methods))
+        by-name (reduce (fn [m d]
+                          (update m (:name d) (fnil conj []) d))
+                        (array-map)   ; preserve first-seen order
+                        tagged)
+        winners (reduce-kv
+                 (fn [acc nm decls]
+                   (assoc acc nm (pick-winner-with-warnings!
+                                  target-name nm decls)))
+                 (array-map)
+                 by-name)]
+    (vec (vals winners))))
+
+(defn- extension-has-invariants? [ext]
+  (some #(= :invariants-section (:node %)) (:body ext)))
+
+(defn- compose-record-env-with-extensions
+  "Post-composition rebuild of record-env: for each record target with
+   extensions, replace its :methods + :method-index with the composed
+   table, union :conforms, and (F38) re-detect :variant since new
+   methods may promote struct → class."
+  [record-env extension-env]
+  (reduce-kv
+   (fn [env target rec]
+     (if-let [exts (seq (get extension-env target))]
+       (let [_          (doseq [e exts]
+                          (when (extension-has-invariants? e)
+                            (fail-nyi!
+                             (str "`invariants:` inside `extend class "
+                                  target "` — record targets have no "
+                                  "runtime invariant path yet. F9 L4 "
+                                  "composes method tables and conforms; "
+                                  "record-invariant emission is a "
+                                  "follow-on sub-landing.")
+                             e)))
+             ext-methods (extension-methods-for target extension-env)
+             composed    (compose-target-methods target (:methods rec) ext-methods)
+             new-conforms (into (vec (:conforms rec))
+                                (extension-conforms-for target extension-env))
+             variant     (if (seq composed) :class :struct)]
+         (assoc env target
+                (assoc rec
+                       :methods       composed
+                       :method-index  (into {} (map (juxt :name identity) composed))
+                       :conforms      new-conforms
+                       :variant       variant)))
+       env))
+   record-env
+   record-env))
+
+(defn- compose-atom-env-with-extensions
+  "Same as compose-record-env-with-extensions for atom-env. Atoms already
+   support invariants natively, so extension invariants can compose into
+   the existing invariant list (append in extension declaration order)."
+  [atom-env extension-env]
+  (reduce-kv
+   (fn [env target entry]
+     (if-let [exts (seq (get extension-env target))]
+       (let [ext-methods (extension-methods-for target extension-env)
+             composed    (compose-target-methods target (:methods entry) ext-methods)
+             new-conforms (into (vec (:conforms entry))
+                                (extension-conforms-for target extension-env))
+             ext-invs    (vec (mapcat (fn [e]
+                                        (:predicates
+                                         (first
+                                          (filter #(= :invariants-section (:node %))
+                                                  (:body e)))))
+                                      exts))
+             new-invs    (into (vec (:invariants entry)) ext-invs)]
+         (assoc env target
+                (assoc entry
+                       :methods       composed
+                       :method-index  (into {} (map (juxt :name identity) composed))
+                       :conforms      new-conforms
+                       :invariants    new-invs)))
+       env))
+   atom-env
+   atom-env))
 
 (defn- def-atom-data-section [atom-node]
   (first (filter #(= :data-section (:node %)) (:body atom-node))))
@@ -5348,6 +5540,13 @@
         ;; applying `replace`, running §3.3.2 rules 1-7) is L4.
         extension-env (build-extension-env top-nodes record-env atom-env
                                            protocol-env)
+        ;; F9 L4 — compose each target's own method table with its
+        ;; visible extensions, emit shadowing / replace-without-target
+        ;; warnings, and rebuild record-env / atom-env with the
+        ;; post-composition tables. Downstream lookups transparently
+        ;; see the composed table (no API change).
+        record-env (compose-record-env-with-extensions record-env extension-env)
+        atom-env   (compose-atom-env-with-extensions   atom-env   extension-env)
         ctx        {:record-env record-env :atom-env atom-env :enum-env enum-env
                     :symbol-table symbol-table
                     :locals {}}
