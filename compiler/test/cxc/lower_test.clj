@@ -1397,14 +1397,62 @@ def main:
       (is (not (some #{"<execinfo.h>"} (:includes without-panic)))
           "non-panic program doesn't pull in <execinfo.h>"))))
 
-(deftest f9-l1-class-node-fails-nyi-at-lower
-  (testing "F9 Landing 1 — `class`/`protocol` parse cleanly (see parse-test) but semantics land in F9 L2+. Lower emits fail-nyi with a pointer at the plan so the grammar-only landing doesn't silently drop the user's declaration."
+(deftest f9-l2-non-protocol-class-still-fails-nyi
+  (testing "F9 Landing 2 — regular/record/enum classes via `class`/`metadata: kind:` still fail-nyi (extension composition lands with L4). L2 opens up ONLY `kind: protocol`."
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
-         #"F9 Landing 1 parses.*L2\+"
+         #"F9 L2 lands.*protocol.*L4"
          (lower-src (str "class Foo:\n"
                          "    metadata:\n"
                          "        kind: regular\n"
+                         "\n"
+                         "def main:\n"
+                         "    -> running\n"
+                         "        do: print(0)\n"))))))
+
+(deftest f9-l2-protocol-lowers-and-registers
+  (testing "F9 Landing 2 — a `protocol` declaration lowers cleanly and its `accepts:` entries land in the program's :protocols map. Registration-only for now — dispatch wires in L4, conformance validation in L5."
+    (let [prog (lower-src (str "protocol P:\n"
+                               "    accepts:\n"
+                               "        foo(x: Int) -> Int\n"
+                               "        bar(s: String) -> Bool\n"
+                               "\n"
+                               "def main:\n"
+                               "    -> running\n"
+                               "        do: print(0)\n"))
+          proto (get-in prog [:protocols "P"])]
+      (is (some? proto) "protocol P registered on the lowered program")
+      (is (= 2 (count (:accepts proto))))
+      (is (= #{"foo" "bar"}
+             (into #{} (map :name (:accepts proto)))))
+      (is (contains? (:accepts-index proto) "foo"))
+      (is (contains? (:accepts-index proto) "bar"))
+      (is (empty? (:conforms proto)) "no explicit protocol-extends here"))))
+
+(deftest f9-l2-protocol-with-default-methods-registered
+  (testing "F9 Landing 2 — protocols may carry default `methods:` bodies; L2 stores them under :defaults for L6 (inheritance) to consume. L2 does not yet emit or dispatch them."
+    (let [prog (lower-src (str "protocol P:\n"
+                               "    methods:\n"
+                               "        function greet(self) -> Int:\n"
+                               "            return 42\n"
+                               "\n"
+                               "def main:\n"
+                               "    -> running\n"
+                               "        do: print(0)\n"))
+          proto (get-in prog [:protocols "P"])]
+      (is (some? proto))
+      (is (= 1 (count (:defaults proto))))
+      (is (= "greet" (:name (first (:defaults proto))))))))
+
+(deftest f9-l2-duplicate-accepts-rejected
+  (testing "F9 Landing 2 — duplicate `accepts` entry names in the same protocol fail at lower: each selector appears at most once in a protocol's surface (§3.4.5)."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"declares `accepts` entry `foo` more than once"
+         (lower-src (str "protocol P:\n"
+                         "    accepts:\n"
+                         "        foo(x: Int) -> Int\n"
+                         "        foo(y: String) -> Bool\n"
                          "\n"
                          "def main:\n"
                          "    -> running\n"

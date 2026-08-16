@@ -1182,6 +1182,59 @@
 (def ^:private legal-kinds
   #{"regular" "record" "enum" "protocol" "section"})
 
+(defn- parse-accepts-signature
+  "Parse one `accepts:` entry — a method signature with no body.
+     [def|function] name(params) -> ReturnType
+   L2 MVP: no contract clauses (`requires`/`ensures`) and no effect
+   annotations (`async`/`io`). Continuation-indented lines after the
+   signature fail-nyi with a pointer at a follow-on landing."
+  [tokens pos]
+  (let [[_ p]      (cond
+                     (at? tokens pos :kw "function") (expect tokens pos :kw "function")
+                     (at? tokens pos :kw "def")      (expect tokens pos :kw "def")
+                     :else                            [nil pos])
+        [name p]   (expect tokens p :ident)
+        [params p] (parse-param-list-parens tokens p)
+        [ret p]    (if (at? tokens p :glyph "->")
+                     (parse-type tokens (inc p))
+                     [nil p])
+        [_ p]      (expect tokens p :newline)
+        ;; Reject continuation lines (requires/ensures/async/io).
+        _          (when (at? tokens p :indent)
+                     (fail! tokens p
+                            (str "contract clauses (`requires`/`ensures`) and "
+                                 "effect annotations (`async`/`io`) on `accepts:` "
+                                 "entries are not yet implemented. F9 L2 ships the "
+                                 "signature surface; contract inheritance lands "
+                                 "with F49 protocol-inherited-contracts. See "
+                                 "plans/f9-class-protocol-extension.md L2.")))]
+    [{:node :accepts-entry :name name :params params :return-type ret} p]))
+
+(defn- parse-accepts-section
+  "`accepts:` block on `kind: protocol` classes.
+     accepts:
+         foo(Int) -> Int
+         bar(String) -> Bool
+   Also supports the per-entry sugar at class-body level:
+     accepts foo(Int) -> Int
+   handled inside parse-class-section."
+  [tokens pos]
+  (let [[_ p] (expect tokens pos :kw "accepts")
+        [_ p] (expect tokens p :punct ":")
+        [_ p] (expect tokens p :newline)
+        [_ p] (expect tokens p :indent)]
+    (loop [entries [] p p]
+      (cond
+        (at? tokens p :dedent)
+        [{:node :accepts-section :entries entries} (inc p)]
+
+        (at? tokens p :newline)
+        (recur entries (inc p))
+
+        :else
+        (let [[e p2] (parse-accepts-signature tokens p)]
+          (recur (conj entries e) (skip-newlines tokens p2)))))))
+
 (defn- parse-metadata-section
   "L1: accepts only `kind: <value>` inside. Other metadata keys (thread,
    qos, pool, superclass, extends, custom user keys) belong to F10 and
@@ -1258,15 +1311,22 @@
 
 (defn- fold-class-body
   "Post-parse fold: extract `metadata: kind:` into the class node's `:kind`
-   field; extract body-form `conforms:` entries into `:conforms`. Validates
-   sugar-kind agreement (e.g. `protocol Foo: metadata: kind: enum` errors).
+   field; extract body-form `conforms:` entries into `:conforms`; extract
+   `:accepts-section` entries into `:accepts` (merged across all sections
+   in the same class, per §3.4.5 rule 5's union semantics for repeated
+   headers). Validates sugar-kind agreement (e.g. `protocol Foo:
+   metadata: kind: enum` errors) and kind-vs-section legality (e.g.
+   `accepts:` only on `kind: protocol`; `data:` forbidden on protocols).
 
    sugar-kind is a keyword (:protocol, :regular) inferred from the top-level
    keyword; nil for the primitive `class` form."
   [tokens pos-for-diag class-name sugar-kind header-conforms body]
   (let [metadata-secs (filter #(= :metadata-section (:node %)) body)
         conforms-lines (filter #(= :conforms-line (:node %)) body)
-        other-sections (remove #(contains? #{:metadata-section :conforms-line}
+        accepts-secs  (filter #(= :accepts-section (:node %)) body)
+        data-secs     (filter #(= :data-section (:node %)) body)
+        other-sections (remove #(contains? #{:metadata-section :conforms-line
+                                             :accepts-section}
                                             (:node %))
                                 body)
         kinds-from-metadata (keep (fn [ms]
@@ -1293,25 +1353,41 @@
                                  "` — pick one."))
                      :else
                      (or explicit-kind sugar-kind :regular))
+        _ (when (and (seq accepts-secs) (not= :protocol final-kind))
+            (fail! tokens pos-for-diag
+                   (str "`accepts:` is only valid on `kind: protocol`; "
+                        "class `" class-name "` has kind `" (name final-kind)
+                        "`. Regular/record/enum classes declare their "
+                        "surface via `methods:` (with bodies). See spec "
+                        "§3.4.5.")))
+        _ (when (and (= :protocol final-kind) (seq data-secs))
+            (fail! tokens pos-for-diag
+                   (str "`data:` is not permitted on `kind: protocol` — "
+                        "protocols declare no state, only method surface. "
+                        "See spec §3.4.5. Class `" class-name "`.")))
+        accepts-entries (vec (mapcat :entries accepts-secs))
         body-conforms (mapv :type conforms-lines)
         all-conforms  (into (vec header-conforms) body-conforms)]
     {:node     :class
      :name     class-name
      :kind     final-kind
      :conforms all-conforms
+     :accepts  accepts-entries
      :body     (vec other-sections)}))
 
 (declare parse-transition parse-observable)
 
 (defn- parse-class-section
-  "Dispatch one section inside a `class`/`protocol` body. L1 accepts:
-   - metadata: (kind: only)
+  "Dispatch one section inside a `class`/`protocol` body. Accepts:
+   - metadata: (L1 — kind: only)
    - data:
    - methods:
    - invariants:
    - use:
    - deprecated:
    - conforms: (body-form)
+   - accepts:         (L2 — protocol signature section)
+   - accepts <sig>    (L2 — per-entry sugar at class body level)
    Rejects `state:` (retired at v1.0); other keys fall through to the
    caller's else-branch."
   [tokens pos]
@@ -1322,6 +1398,19 @@
     (at? tokens pos :kw "invariants") (parse-invariants-section tokens pos)
     (at? tokens pos :kw "use")        (parse-use-section tokens pos)
     (at? tokens pos :kw "deprecated") (parse-deprecated-section tokens pos)
+
+    ;; F9 L2 — `accepts:` section (multiple signatures under one header)
+    (and (at? tokens pos :kw "accepts") (at? tokens (inc pos) :punct ":"))
+    (parse-accepts-section tokens pos)
+
+    ;; F9 L2 — `accepts foo(...)` per-entry sugar at class body level.
+    ;; Distinguished from `accepts:` by presence of an identifier (not
+    ;; `:`) immediately after the keyword. Produces a single-entry
+    ;; :accepts-section for uniform downstream consumption.
+    (and (at? tokens pos :kw "accepts") (at? tokens (inc pos) :ident))
+    (let [[_ p]  (expect tokens pos :kw "accepts")
+          [e p2] (parse-accepts-signature tokens p)]
+      [{:node :accepts-section :entries [e]} p2])
 
     (and (at? tokens pos :ident) (= "conforms" (t-value (peek-tok tokens pos)))
          (at? tokens (inc pos) :punct ":"))

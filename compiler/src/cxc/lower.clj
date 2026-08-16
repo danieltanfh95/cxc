@@ -731,6 +731,58 @@
      skeleton
      records)))
 
+;; ---------------------------------------------------------------------------
+;; F9 L2 — protocol-env: name -> {:accepts :accepts-index :conforms :defaults}
+;;
+;;   :accepts        vec of {:name :params :return-type} — method signatures
+;;                   the protocol requires (from `accepts:` / `accepts <sig>`)
+;;   :accepts-index  {name -> entry} for O(1) lookup + dupe detection
+;;   :conforms       vec of type-nodes this protocol extends (protocol->protocol
+;;                   subtyping; §3.4.5). Validated in L5.
+;;   :defaults       raw methods-section entries (default implementations).
+;;                   Parsed and stored here; inheritance semantics land in L6.
+;;
+;; Type-resolution against protocol accepts entries is deferred — L2 only
+;; establishes the registry. L5+ validates conforming atoms cover it.
+;; ---------------------------------------------------------------------------
+
+(defn- protocol-classes [top-nodes]
+  (filter (fn [n] (and (= :class (:node n)) (= :protocol (:kind n))))
+          top-nodes))
+
+(defn- validate-unique-accepts! [proto-name entries]
+  (let [names (map :name entries)
+        dupes (->> names frequencies (filter #(> (val %) 1)) (map key))]
+    (when (seq dupes)
+      (fail-compile! :cxc-f9-duplicate-accepts
+                     (str "protocol `" proto-name "` declares `accepts` entry `"
+                          (first dupes) "` more than once — each selector "
+                          "appears at most once in a protocol's surface. "
+                          "See spec §3.4.5.")
+                     {:proto proto-name :dupes (vec dupes)}))))
+
+(defn- build-protocol-env
+  "Scan top-level `:class` nodes with `:kind :protocol` and build the
+   protocol-env. L2 is registration-only: no cross-protocol conformance
+   validation (L5), no default-method inheritance (L6), no dispatch
+   wiring (L4)."
+  [top-nodes]
+  (reduce
+   (fn [env p]
+     (let [nm       (:name p)
+           accepts  (vec (:accepts p))
+           _        (validate-unique-accepts! nm accepts)
+           msec     (first (filter #(= :methods-section (:node %)) (:body p)))
+           defaults (vec (:methods msec))
+           conforms (vec (:conforms p))]
+       (assoc env nm {:accepts       accepts
+                      :accepts-index (into {} (map (juxt :name identity)
+                                                   accepts))
+                      :conforms      conforms
+                      :defaults      defaults})))
+   {}
+   (protocol-classes top-nodes)))
+
 (defn- def-atom-data-section [atom-node]
   (first (filter #(= :data-section (:node %)) (:body atom-node))))
 
@@ -5152,18 +5204,22 @@
         _          (when-not main-atom
                      (throw (ex-info "no `def main` entry point found at top level"
                                      {:top top-nodes})))
-        ;; F9 L1 — `class`/`protocol` produce `:class` nodes but semantics
-        ;; land in L2+ (protocol-env, extension composition, conformance
-        ;; validation, default-method inheritance). Fail loudly so grammar-
-        ;; only landings don't silently produce broken output.
-        _          (when-let [c (first (filter #(= :class (:node %)) top-nodes))]
+        ;; F9 L2 — `kind: protocol` classes are registered in the
+        ;; protocol-env (surface only; conformance validation is L5,
+        ;; dispatch is L4, default-method inheritance is L6). Other
+        ;; kinds (`regular`/`record`/`enum`/`section` via `class`) still
+        ;; fail-nyi until L4 opens up extension composition.
+        _          (when-let [c (first (filter #(and (= :class (:node %))
+                                                     (not= :protocol (:kind %)))
+                                                top-nodes))]
                      (fail-nyi! (str "`" (name (:kind c)) " " (:name c) "`: "
-                                     "F9 Landing 1 parses class/protocol "
-                                     "declarations but the semantics "
-                                     "(protocol-env, conformance, dispatch) "
-                                     "land in F9 L2+. See "
-                                     "plans/f9-class-protocol-extension.md.")
+                                     "F9 L2 lands `kind: protocol` only; "
+                                     "regular/record/enum classes via "
+                                     "`class`/`metadata: kind:` land with "
+                                     "F9 L4 (single-module composition). "
+                                     "See plans/f9-class-protocol-extension.md.")
                                 c))
+        protocol-env (build-protocol-env top-nodes)
         ;; F31/F35 L3 — walk the |> send graph and warn on cross-atom
         ;; cycles. Best-effort compile-time detection; spec §1.11 line
         ;; 1523 keeps cycle-avoidance on the user. No runtime scaffolding
@@ -5376,6 +5432,11 @@
      :structs             structs
      :functions           functions
      :classes             classes
+     ;; F9 L2 — registration-only for now (no consumer yet). Surfaced
+     ;; on the lowered program so tests can assert protocol-env shape
+     ;; and downstream L4+ landings can wire dispatch off a single
+     ;; source of truth.
+     :protocols           protocol-env
      :main                {:body         (if main-as-atom?
                                            main-body   ; return 0 unreachable after dispatch_main
                                            (conj main-body

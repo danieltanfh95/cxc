@@ -477,8 +477,8 @@ def main:
           "metadata: section is folded into :kind, not kept in :body"))))
 
 (deftest f9-l1-protocol-sugar
-  (testing "F9 Landing 1 — `protocol P:` sugar desugars to `:class :kind :protocol`. Sugar keyword sets kind; no explicit metadata needed."
-    (let [n (first-node "protocol P:\n    data:\n        x: Int\n")]
+  (testing "F9 Landing 1 — `protocol P:` sugar desugars to `:class :kind :protocol`. Sugar keyword sets kind; no explicit metadata needed. (Uses `methods:` body — `data:` on protocol is rejected at fold, see f9-l2-data-on-protocol-rejected.)"
+    (let [n (first-node "protocol P:\n    methods:\n        function f() -> Int:\n            return 1\n")]
       (is (= :class (:node n)))
       (is (= "P" (:name n)))
       (is (= :protocol (:kind n))))))
@@ -559,3 +559,61 @@ def main:
     (let [n (first-node "record R:\n    data:\n        x: Int\n")]
       (is (= :record (:node n))
           "record sugar keeps its dedicated parser + AST kind for backward compat"))))
+
+;; ---------------------------------------------------------------------------
+;; F9 Landing 2 — parse `accepts:` (section-form and per-entry sugar);
+;; validate kind-vs-section constraints in fold-class-body.
+;; ---------------------------------------------------------------------------
+
+(deftest f9-l2-accepts-section-parses
+  (testing "F9 Landing 2 — `accepts:` block on a protocol collects each signature into `:accepts` on the class node. Params follow the standard `name: Type` convention (§2.5)."
+    (let [n (first-node
+             (str "protocol P:\n"
+                  "    accepts:\n"
+                  "        foo(x: Int) -> Int\n"
+                  "        bar(s: String) -> Bool\n"))]
+      (is (= :class    (:node n)))
+      (is (= :protocol (:kind n)))
+      (is (= 2 (count (:accepts n))))
+      (is (= "foo" (:name (first  (:accepts n)))))
+      (is (= "bar" (:name (second (:accepts n))))))))
+
+(deftest f9-l2-accepts-per-entry-sugar
+  (testing "F9 Landing 2 — per-entry sugar `accepts foo(x: Int) -> Int` at class body level folds into `:accepts` alongside section-form entries."
+    (let [n (first-node
+             (str "protocol P:\n"
+                  "    accepts foo(x: Int) -> Int\n"
+                  "    accepts:\n"
+                  "        bar(s: String) -> Bool\n"))]
+      (is (= 2 (count (:accepts n))))
+      (is (= #{"foo" "bar"} (into #{} (map :name (:accepts n))))))))
+
+(deftest f9-l2-accepts-rejected-on-non-protocol
+  (testing "F9 Landing 2 — `accepts:` on `kind: regular` fails at fold with a pointer at §3.4.5 (only protocols declare method surface)."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"`accepts:` is only valid on `kind: protocol`"
+         (first-node
+          (str "class Foo:\n"
+               "    metadata:\n"
+               "        kind: regular\n"
+               "    accepts:\n"
+               "        foo(x: Int) -> Int\n"))))))
+
+(deftest f9-l2-data-on-protocol-rejected
+  (testing "F9 Landing 2 — `data:` on `kind: protocol` fails at fold: protocols have no state per §3.4.5."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"`data:` is not permitted on `kind: protocol`"
+         (first-node "protocol P:\n    data:\n        x: Int\n")))))
+
+(deftest f9-l2-accepts-contract-clauses-fail-nyi
+  (testing "F9 Landing 2 — `accepts:` entries reject continuation-indented `requires`/`ensures`/effect annotations, with a pointer at F49 (contract inheritance)."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"contract clauses.*not yet implemented|F49"
+         (first-node
+          (str "protocol P:\n"
+               "    accepts:\n"
+               "        foo(x: Int) -> Int\n"
+               "            requires: true\n"))))))
