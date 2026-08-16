@@ -1838,6 +1838,135 @@ def main:
                                "        do: print(0)\n"))]
       (is (some? prog) "compiles cleanly — default satisfies the accepts"))))
 
+;; ---------------------------------------------------------------------------
+;; F9 Landing 6 — default-method inheritance (explicit-conformance) +
+;; diamond-ambiguity detection.
+;;
+;; Structural-conformance-based inheritance is L6b (deferred).
+;; ---------------------------------------------------------------------------
+
+(deftest f9-l6-inherits-default-into-composed-table
+  (testing "F9 Landing 6 — class explicitly conforms to P, P provides default `m`, class doesn't define `m` — default folded into class's composed :methods and emitted as a C function keyed by the class name."
+    (let [prog (lower-src (str "protocol P:\n"
+                               "    accepts:\n"
+                               "        m() -> Int\n"
+                               "    methods:\n"
+                               "        function m(self) -> Int:\n"
+                               "            return 42\n"
+                               "\n"
+                               "record Widget:\n"
+                               "    data:\n"
+                               "        n: Int\n"
+                               "\n"
+                               "extend class Widget(P):\n"
+                               "    methods:\n"
+                               "        function unrelated(self) -> Int:\n"
+                               "            return 1\n"
+                               "\n"
+                               "def main:\n"
+                               "    -> running\n"
+                               "        do: print(0)\n"))
+          fn         (first (filter #(= "Widget_m" (:name %))
+                                    (:functions prog)))
+          return-stmt (first (filter #(= :return (:node %)) (:body fn)))]
+      (is (some? fn)
+          "inherited default emits as Widget_m alongside class's own methods")
+      (is (= 42 (get-in return-stmt [:value :value]))
+          "inherited body returns 42 (from the protocol default)"))))
+
+(deftest f9-l6-own-method-shadows-default
+  (testing "F9 Landing 6 — when the class defines `m` itself (own or via extension), the own method wins over the protocol default with no diamond, no warning."
+    (let [prog (lower-src (str "protocol P:\n"
+                               "    accepts:\n"
+                               "        m() -> Int\n"
+                               "    methods:\n"
+                               "        function m(self) -> Int:\n"
+                               "            return 42\n"
+                               "\n"
+                               "record Widget:\n"
+                               "    data:\n"
+                               "        n: Int\n"
+                               "\n"
+                               "extend class Widget(P):\n"
+                               "    methods:\n"
+                               "        function m(self) -> Int:\n"
+                               "            return 100\n"
+                               "\n"
+                               "def main:\n"
+                               "    -> running\n"
+                               "        do: print(0)\n"))
+          fn         (first (filter #(= "Widget_m" (:name %))
+                                    (:functions prog)))
+          return-stmt (first (filter #(= :return (:node %)) (:body fn)))]
+      (is (= 100 (get-in return-stmt [:value :value]))
+          "own extension method wins (returns 100, not default's 42)"))))
+
+(deftest f9-l6-diamond-ambiguity-across-conformed-protocols
+  (testing "F9 Landing 6 — class explicitly conforms to two protocols P and Q that both provide a default `m`, and doesn't override → diamond ambiguity fires with a §3.4.4 diagnostic naming both candidates."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"diamond ambiguity.*method `m`.*Widget.*`P`.*`Q`"
+         (lower-src (str "protocol P:\n"
+                         "    accepts:\n"
+                         "        m() -> Int\n"
+                         "    methods:\n"
+                         "        function m(self) -> Int:\n"
+                         "            return 1\n"
+                         "\n"
+                         "protocol Q:\n"
+                         "    accepts:\n"
+                         "        m() -> Int\n"
+                         "    methods:\n"
+                         "        function m(self) -> Int:\n"
+                         "            return 2\n"
+                         "\n"
+                         "record Widget:\n"
+                         "    data:\n"
+                         "        n: Int\n"
+                         "\n"
+                         "extend class Widget(P, Q):\n"
+                         "    methods:\n"
+                         "        function unrelated(self) -> Int:\n"
+                         "            return 0\n"
+                         "\n"
+                         "def main:\n"
+                         "    -> running\n"
+                         "        do: print(0)\n"))))))
+
+(deftest f9-l6-diamond-resolved-by-own-method
+  (testing "F9 Landing 6 — same P/Q diamond setup + class defines its own `m` → own shadows all defaults per §3.4.4; no diamond error."
+    (let [prog (lower-src (str "protocol P:\n"
+                               "    accepts:\n"
+                               "        m() -> Int\n"
+                               "    methods:\n"
+                               "        function m(self) -> Int:\n"
+                               "            return 1\n"
+                               "\n"
+                               "protocol Q:\n"
+                               "    accepts:\n"
+                               "        m() -> Int\n"
+                               "    methods:\n"
+                               "        function m(self) -> Int:\n"
+                               "            return 2\n"
+                               "\n"
+                               "record Widget:\n"
+                               "    data:\n"
+                               "        n: Int\n"
+                               "\n"
+                               "extend class Widget(P, Q):\n"
+                               "    methods:\n"
+                               "        function m(self) -> Int:\n"
+                               "            return 999\n"
+                               "\n"
+                               "def main:\n"
+                               "    -> running\n"
+                               "        do: print(0)\n"))
+          fn         (first (filter #(= "Widget_m" (:name %))
+                                    (:functions prog)))
+          return-stmt (first (filter #(= :return (:node %)) (:body fn)))]
+      (is (= 999 (get-in return-stmt [:value :value]))
+          "own resolution — no diamond, own wins"))))
+
 (deftest f37b-l1-bytes-length-returns-int
   (testing "F37b Landing 1 — `.length` on a `Bytes`-typed expression type-checks as `Int` (spec §3.10.10 user-facing convention: `.length` is an element count matching List/String; wire-format `UInt32` prefix is a different concern). Emitted C uses ObjC property syntax, dispatching to NSData's `-length`."
     (let [prog (lower-src (str "record Msg:\n"

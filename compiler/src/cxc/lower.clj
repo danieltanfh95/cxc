@@ -1154,6 +1154,120 @@
     (validate-one-conformance! class-name (type-node-name proto-ty)
                                (:methods entry) protocol-env)))
 
+;; ---------------------------------------------------------------------------
+;; F9 L6 — default-method inheritance (explicit conformance).
+;;
+;; For each class with an explicit `:conforms [P1, P2, ...]`, inherit
+;; every P.defaults[m] where `m` is not already in the class's composed
+;; method table (from L4 own+extension composition). The inherited
+;; default's body is re-extracted with the *class* name so `self`
+;; type-resolves against the concrete class (rather than the protocol).
+;;
+;; **Diamond ambiguity** — if two or more explicitly-conformed protocols
+;; both provide a default for the same method name AND the class does
+;; not override it, fail-compile with a §3.4.4 diamond diagnostic naming
+;; the candidates. Resolution paths are documented in the error:
+;;   (a) define the method on the class (or via extension), or
+;;   (b) drop conformance to one of the ambiguous protocols.
+;;
+;; L6 MVP does explicit-conformance-only. Structural conformance
+;; detection at call sites (a class that satisfies P.accepts structurally
+;; but doesn't declare `conforms: P` — inheriting P's defaults implicitly)
+;; is deferred to L6b (per-lookup structural check + cache).
+;;
+;; Emission: inherited defaults get the same treatment as own methods
+;; — they land in the class's :methods list and emit via
+;; record-method-functions / lower-atom's method emission path.
+;; ---------------------------------------------------------------------------
+
+(defn- default-candidates-for-method
+  "For a class with explicit conforms `conforms-tys`, return the vector
+   of protocol names that (a) the class conforms to AND (b) provide a
+   default for `method-name`. Unknown protocols are skipped silently
+   (L5 already fired on them if the class reached this pass)."
+  [method-name conforms-tys protocol-env]
+  (vec (for [ty    conforms-tys
+             :let  [pn    (type-node-name ty)
+                    proto (get protocol-env pn)]
+             :when (and proto
+                        (some #(= method-name (:name %))
+                              (:defaults proto)))]
+         pn)))
+
+(defn- extract-default-as-method
+  "Given a raw default method node (parser shape :node :function ...)
+   and the concrete class name, run it through extract-methods so
+   `self` gets `:cxc-ty <class-name>` and downstream lowering treats
+   it as a normal class method."
+  [class-name default-node]
+  (first (extract-methods class-name
+                          {:node :methods-section :methods [default-node]})))
+
+(defn- inherit-defaults-for-class
+  "For one class entry, produce an updated :methods list with any
+   applicable protocol defaults inherited. Fires the diamond
+   diagnostic on multi-candidate conflicts. Returns the class entry
+   unchanged when no inheritance applies."
+  [class-name entry protocol-env]
+  (let [own-names   (set (map :name (:methods entry)))
+        conforms    (:conforms entry)
+        ;; Collect (default-name → [candidate-protocol ...]) across all
+        ;; conformed protocols. Only consider method names the class
+        ;; doesn't already own.
+        defaults-by-name (reduce
+                          (fn [acc ty]
+                            (let [pn    (type-node-name ty)
+                                  proto (get protocol-env pn)]
+                              (reduce
+                               (fn [a d]
+                                 (let [mn (:name d)]
+                                   (if (contains? own-names mn)
+                                     a
+                                     (update a mn (fnil conj [])
+                                             {:protocol pn :node d}))))
+                               acc
+                               (:defaults proto))))
+                          (array-map)
+                          conforms)
+        _ (doseq [[mn cands] defaults-by-name]
+            (when (> (count cands) 1)
+              (fail-compile!
+               :cxc-f9-diamond-ambiguity
+               (str "diamond ambiguity: method `" mn "` on class `"
+                    class-name "` has default definitions in multiple "
+                    "conformed protocols ("
+                    (str/join ", " (map #(str "`" (:protocol %) "`") cands))
+                    "). Resolve by (a) defining `" mn "` on `" class-name
+                    "` directly (own or via extension — this shadows all "
+                    "defaults per §3.4.4), or (b) dropping conformance "
+                    "to one of the ambiguous protocols. See spec §3.4.4.")
+               {:class class-name :method mn
+                :candidates (mapv :protocol cands)})))
+        inherited (mapv (fn [[_ cands]]
+                          (extract-default-as-method
+                           class-name (:node (first cands))))
+                        defaults-by-name)]
+    (if (seq inherited)
+      (let [new-methods (into (vec (:methods entry)) inherited)]
+        (assoc entry
+               :methods       new-methods
+               :method-index  (into {} (map (juxt :name identity) new-methods))
+               ;; If inheriting methods promoted the class to method-
+               ;; carrying, keep F38 variant auto-detect consistent.
+               :variant       (if (seq new-methods) :class :struct)))
+      entry)))
+
+(defn- inherit-defaults-into-env
+  "Walk an env (record-env or atom-env) and produce an updated env
+   with inherited default methods folded into each class's :methods."
+  [env protocol-env]
+  (reduce-kv
+   (fn [acc class-name entry]
+     (assoc acc class-name (inherit-defaults-for-class
+                            class-name entry protocol-env)))
+   {}
+   env))
+
 (defn- def-atom-data-section [atom-node]
   (first (filter #(= :data-section (:node %)) (:body atom-node))))
 
@@ -5691,6 +5805,14 @@
         ;; until effects are first-class.
         _          (validate-explicit-conformances! record-env atom-env
                                                     protocol-env)
+        ;; F9 L6 — fold protocol defaults into each explicitly-
+        ;; conforming class's composed method table. Diamond ambiguity
+        ;; (multi-protocol default conflict without an override) fires
+        ;; here. Structural-conformance-based default inheritance is
+        ;; L6b (per-lookup detection). Runs after L5 so we know every
+        ;; :conforms target resolves.
+        record-env (inherit-defaults-into-env record-env protocol-env)
+        atom-env   (inherit-defaults-into-env atom-env   protocol-env)
         ctx        {:record-env record-env :atom-env atom-env :enum-env enum-env
                     :symbol-table symbol-table
                     :locals {}}
