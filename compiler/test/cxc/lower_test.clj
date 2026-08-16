@@ -1961,6 +1961,142 @@ def main:
                          "    -> running\n"
                          "        do: print(0)\n"))))))
 
+(deftest f9-l6b-structural-conformance-inherits-default
+  (testing "F9 Landing 6b — class does NOT declare `conforms: P` but structurally satisfies P's accepts surface AND P provides defaults for other methods → class inherits those defaults implicitly. Enables spec §3.4 structural-conformance ergonomics: a class that has `iter()` picks up Iterable's `count` default without saying `conforms: Iterable`."
+    (let [prog (lower-src (str "protocol P:\n"
+                               "    accepts:\n"
+                               "        iter(self) -> Int\n"
+                               "    methods:\n"
+                               "        def count_helper(self) -> Int:\n"
+                               "            return 99\n"
+                               "\n"
+                               "record Widget:\n"
+                               "    data:\n"
+                               "        n: Int\n"
+                               "    methods:\n"
+                               "        def iter(self) -> Int:\n"
+                               "            return 7\n"
+                               "\n"
+                               "def main:\n"
+                               "    -> running\n"
+                               "        do: print(0)\n"))
+          fn         (first (filter #(= "Widget_count_helper" (:name %))
+                                    (:functions prog)))
+          return-stmt (first (filter #(= :return (:node %)) (:body fn)))]
+      (is (some? fn)
+          "Widget_count_helper lowered via structural conformance to P")
+      (is (= 99 (get-in return-stmt [:value :value])))))
+  (testing "F9 L6b — structural conformance requires signature match, not just method-name match. A `iter() -> String` doesn't satisfy `iter() -> Int` — no inheritance."
+    (let [prog (lower-src (str "protocol P:\n"
+                               "    accepts:\n"
+                               "        iter(self) -> Int\n"
+                               "    methods:\n"
+                               "        def helper(self) -> Int:\n"
+                               "            return 1\n"
+                               "\n"
+                               "record Widget:\n"
+                               "    data:\n"
+                               "        n: Int\n"
+                               "    methods:\n"
+                               "        def iter(self) -> String:\n"
+                               "            return \"x\"\n"
+                               "\n"
+                               "def main:\n"
+                               "    -> running\n"
+                               "        do: print(0)\n"))
+          fn (first (filter #(= "Widget_helper" (:name %)) (:functions prog)))]
+      (is (nil? fn)
+          "signature mismatch (return type differs) prevents structural conformance"))))
+
+(deftest f9-l6b-protocol-with-no-defaults-not-inherited
+  (testing "F9 Landing 6b — a protocol with no defaults produces no inheritance even under structural conformance. Structural-conformance detection is only for inheriting defaults; conforming-without-defaults is a call-site concern (L7+)."
+    (let [prog (lower-src (str "protocol P:\n"
+                               "    accepts:\n"
+                               "        iter(self) -> Int\n"
+                               "\n"
+                               "record Widget:\n"
+                               "    data:\n"
+                               "        n: Int\n"
+                               "    methods:\n"
+                               "        def iter(self) -> Int:\n"
+                               "            return 7\n"
+                               "\n"
+                               "def main:\n"
+                               "    -> running\n"
+                               "        do: print(0)\n"))
+          ;; F37 auto-synthesizes Widget_cxc_equals + Widget_cxc_hash for every
+          ;; record — filter those out; assert only Widget_iter (own method)
+          ;; remains from user-facing sites.
+          user-widget-fns (->> (:functions prog)
+                               (filter #(str/starts-with? (or (:name %) "") "Widget_"))
+                               (remove #(str/starts-with? (:name %) "Widget_cxc_"))
+                               (map :name)
+                               set)]
+      (is (= #{"Widget_iter"} user-widget-fns)
+          "no defaults inherited from P (P has no defaults)"))))
+
+(deftest f9-l6b-diamond-across-structural-conformances
+  (testing "F9 Landing 6b — diamond ambiguity fires when structural conformances (plus/minus explicit) produce multiple candidates for the same default. Diagnostic mentions structural conformance as a possible source."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"diamond ambiguity.*method `helper`.*Widget"
+         (lower-src (str "protocol P:\n"
+                         "    accepts:\n"
+                         "        iter(self) -> Int\n"
+                         "    methods:\n"
+                         "        def helper(self) -> Int:\n"
+                         "            return 1\n"
+                         "\n"
+                         "protocol Q:\n"
+                         "    accepts:\n"
+                         "        iter(self) -> Int\n"
+                         "    methods:\n"
+                         "        def helper(self) -> Int:\n"
+                         "            return 2\n"
+                         "\n"
+                         "record Widget:\n"
+                         "    data:\n"
+                         "        n: Int\n"
+                         "    methods:\n"
+                         "        def iter(self) -> Int:\n"
+                         "            return 7\n"
+                         "\n"
+                         "def main:\n"
+                         "    -> running\n"
+                         "        do: print(0)\n"))))))
+
+(deftest f9-l6b-explicit-and-structural-together-still-flat
+  (testing "F9 L6b — a class that explicitly conforms to P AND structurally conforms to Q, where both provide the same default, still fires diamond. Explicit doesn't beat structural — they're peers under §3.4.4."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"diamond ambiguity.*method `helper`.*Widget"
+         (lower-src (str "protocol P:\n"
+                         "    accepts:\n"
+                         "        iter(self) -> Int\n"
+                         "    methods:\n"
+                         "        def helper(self) -> Int:\n"
+                         "            return 1\n"
+                         "\n"
+                         "protocol Q:\n"
+                         "    accepts:\n"
+                         "        iter(self) -> Int\n"
+                         "    methods:\n"
+                         "        def helper(self) -> Int:\n"
+                         "            return 2\n"
+                         "\n"
+                         "record Widget:\n"
+                         "    data:\n"
+                         "        n: Int\n"
+                         "\n"
+                         "extend class Widget(P):\n"
+                         "    methods:\n"
+                         "        def iter(self) -> Int:\n"
+                         "            return 7\n"
+                         "\n"
+                         "def main:\n"
+                         "    -> running\n"
+                         "        do: print(0)\n"))))))
+
 (deftest f9-l6-diamond-resolved-by-own-method
   (testing "F9 Landing 6 — same P/Q diamond setup + class defines its own `m` → own shadows all defaults per §3.4.4; no diamond error."
     (let [prog (lower-src (str "protocol P:\n"

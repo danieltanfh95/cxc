@@ -1203,44 +1203,100 @@
   (first (extract-methods class-name
                           {:node :methods-section :methods [default-node]})))
 
+(defn- class-satisfies-protocol-structurally?
+  "L6b — true if every accepts entry in `proto` has a matching method
+   (name + signature) in `class-methods`. Empty accepts → trivially
+   true (a protocol with no requirements is satisfied by every class,
+   but such a protocol is pointless and this predicate is only called
+   under `structural-conformances-with-defaults` which also gates on
+   `(seq (:defaults proto))`, so the pathological case is filtered
+   out upstream). Reuses `signature-mismatch-detail` — L5's signature-
+   match rule (name, param names, param types, return type)."
+  [class-methods proto]
+  (let [by-name (into {} (map (juxt :name identity) class-methods))]
+    (every? (fn [ae]
+              (when-let [m (get by-name (:name ae))]
+                (nil? (signature-mismatch-detail m ae))))
+            (:accepts proto))))
+
+(defn- structural-conformances-with-defaults
+  "L6b — return the set of protocol names the class structurally
+   conforms to (satisfies all accepts) that also have at least one
+   default AND are not already in the class's explicit conformance
+   set. Protocols with no defaults are skipped — structural
+   conformance without inheritable defaults isn't observable here
+   (dispatch-only structural conformance is a call-site concern).
+   O(|protocols| × |accepts| × |methods|) per class — negligible at
+   compile-scale."
+  [class-methods explicit-name-set protocol-env]
+  (reduce-kv
+   (fn [acc pn proto]
+     (if (and (not (contains? explicit-name-set pn))
+              (seq (:defaults proto))
+              (class-satisfies-protocol-structurally? class-methods proto))
+       (conj acc pn)
+       acc))
+   #{}
+   protocol-env))
+
+(defn- collect-defaults-by-name
+  "For a seq of protocol names, collect (default-name → [candidates])
+   from each protocol's defaults, filtering out names the class
+   already owns. `candidates` carry both the protocol name and the
+   raw default node so downstream can extract the body per-class."
+  [protocol-names own-names protocol-env]
+  (reduce
+   (fn [acc pn]
+     (let [proto (get protocol-env pn)]
+       (reduce
+        (fn [a d]
+          (let [mn (:name d)]
+            (if (contains? own-names mn)
+              a
+              (update a mn (fnil conj [])
+                      {:protocol pn :node d}))))
+        acc
+        (:defaults proto))))
+   (array-map)
+   protocol-names))
+
 (defn- inherit-defaults-for-class
   "For one class entry, produce an updated :methods list with any
-   applicable protocol defaults inherited. Fires the diamond
-   diagnostic on multi-candidate conflicts. Returns the class entry
+   applicable protocol defaults inherited. L6 covers explicit
+   `:conforms`; L6b widens to include protocols the class satisfies
+   structurally (has all accepts methods with matching signatures).
+   Fires the diamond diagnostic on multi-candidate conflicts —
+   whether the candidates came from explicit or structural paths
+   doesn't change the ambiguity rule (§3.4.4 call-site error;
+   detected at class-composition site here). Returns the class entry
    unchanged when no inheritance applies."
   [class-name entry protocol-env]
-  (let [own-names   (set (map :name (:methods entry)))
-        conforms    (:conforms entry)
-        ;; Collect (default-name → [candidate-protocol ...]) across all
-        ;; conformed protocols. Only consider method names the class
-        ;; doesn't already own.
-        defaults-by-name (reduce
-                          (fn [acc ty]
-                            (let [pn    (type-node-name ty)
-                                  proto (get protocol-env pn)]
-                              (reduce
-                               (fn [a d]
-                                 (let [mn (:name d)]
-                                   (if (contains? own-names mn)
-                                     a
-                                     (update a mn (fnil conj [])
-                                             {:protocol pn :node d}))))
-                               acc
-                               (:defaults proto))))
-                          (array-map)
-                          conforms)
+  (let [own-names        (set (map :name (:methods entry)))
+        explicit-conforms (:conforms entry)
+        explicit-set     (into #{} (map type-node-name explicit-conforms))
+        ;; L6b — widen with structural conformances that have defaults.
+        structural-set   (structural-conformances-with-defaults
+                          (:methods entry) explicit-set protocol-env)
+        all-protos       (concat (map type-node-name explicit-conforms)
+                                 structural-set)
+        defaults-by-name (collect-defaults-by-name all-protos own-names
+                                                   protocol-env)
         _ (doseq [[mn cands] defaults-by-name]
             (when (> (count cands) 1)
               (fail-compile!
                :cxc-f9-diamond-ambiguity
                (str "diamond ambiguity: method `" mn "` on class `"
                     class-name "` has default definitions in multiple "
-                    "conformed protocols ("
+                    "conforming protocols ("
                     (str/join ", " (map #(str "`" (:protocol %) "`") cands))
-                    "). Resolve by (a) defining `" mn "` on `" class-name
+                    "). At least one of these conformances may be "
+                    "structural (F9 L6b) — check `accepts:` signatures. "
+                    "Resolve by (a) defining `" mn "` on `" class-name
                     "` directly (own or via extension — this shadows all "
-                    "defaults per §3.4.4), or (b) dropping conformance "
-                    "to one of the ambiguous protocols. See spec §3.4.4.")
+                    "defaults per §3.4.4), (b) dropping conformance "
+                    "to an ambiguous protocol, or (c) changing a "
+                    "method signature so structural conformance no "
+                    "longer matches. See spec §3.4.4.")
                {:class class-name :method mn
                 :candidates (mapv :protocol cands)})))
         inherited (mapv (fn [[_ cands]]
