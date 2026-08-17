@@ -174,7 +174,7 @@
 (deftest f40-atom-ctor-duplicate-named-arg-rejected
   (testing "duplicate named arg on atom ctor fails"
     (let [ex (try
-               (lower-src "def Widget(a: Int, b: Int):\n    n: Int = a\n\ndef main:\n    def w: Widget(a: 1, a: 2, b: 3)\n\n    -> running\n        do: print(0)\n")
+               (lower-src "def Widget(a: Int, b: Int):\n    n: Int = a\n\ndef main:\n    w: Widget = Widget(a: 1, a: 2, b: 3)\n\n    -> running\n        do: print(0)\n")
                nil
                (catch clojure.lang.ExceptionInfo e e))]
       (is ex "expected exception")
@@ -184,7 +184,7 @@
 (deftest f40-atom-ctor-unknown-named-arg-rejected
   (testing "unknown named arg on atom ctor fails"
     (let [ex (try
-               (lower-src "def Widget(a: Int):\n    n: Int = a\n\ndef main:\n    def w: Widget(a: 1, ghost: 2)\n\n    -> running\n        do: print(0)\n")
+               (lower-src "def Widget(a: Int):\n    n: Int = a\n\ndef main:\n    w: Widget = Widget(a: 1, ghost: 2)\n\n    -> running\n        do: print(0)\n")
                nil
                (catch clojure.lang.ExceptionInfo e e))]
       (is ex "expected exception")
@@ -193,7 +193,7 @@
 
 (deftest def-atom-lowers-to-objc-class
   (testing "def-atom with data:-only → :objc-class with @property ivars + -init defaults"
-    (let [prog (lower-src "def Counter:\n    n: Int = 42\n\n    -> running\n\n    -> end\n\ndef main:\n    def c: Counter\n\n    -> running\n        do: print(0)\n")
+    (let [prog (lower-src "def Counter:\n    n: Int = 42\n\n    -> running\n\n    -> end\n\ndef main:\n    c: Counter = Counter()\n\n    -> running\n        do: print(0)\n")
           cls  (first (:classes prog))]
       (is (= :objc-class (:node cls)))
       (is (= "Counter" (:name cls)))
@@ -231,7 +231,7 @@
 
 (deftest def-atom-ctor-lowers-to-alloc-init
   (testing "Counter in def-slot position → :objc-alloc-init"
-    (let [prog (lower-src "def Counter:\n    n: Int = 42\n\n    -> running\n\n    -> end\n\ndef main:\n    def c: Counter\n\n    -> running\n        do: print(0)\n")
+    (let [prog (lower-src "def Counter:\n    n: Int = 42\n\n    -> running\n\n    -> end\n\ndef main:\n    c: Counter = Counter()\n\n    -> running\n        do: print(0)\n")
           main-cls (first (filter #(= "CxcMain" (:name %)) (:classes prog)))
           state-body (:body (first (filter #(clojure.string/starts-with?
                                              (:selector %) "cxc_stateInit")
@@ -246,7 +246,7 @@
 
 (deftest def-atom-triggers-foundation-and-autoreleasepool
   (testing "presence of an ObjC class flips includes to Foundation and wraps main in @autoreleasepool"
-    (let [prog (lower-src "def Counter:\n    n: Int = 42\n\n    -> running\n\n    -> end\n\ndef main:\n    def c: Counter\n\n    -> running\n        do: print(0)\n")]
+    (let [prog (lower-src "def Counter:\n    n: Int = 42\n\n    -> running\n\n    -> end\n\ndef main:\n    c: Counter = Counter()\n\n    -> running\n        do: print(0)\n")]
       ;; Foundation for ObjC; stdlib for cxc_shutdown() (needed by every
       ;; atom class's transitionToEnd cascade infrastructure).
       (is (some #{"<Foundation/Foundation.h>"} (:includes prog)))
@@ -263,7 +263,7 @@
 
 (deftest wildcard-on-enter-inlined-into-init
   (testing "initial-phase wildcard on-enter → its then:/do: append to :init-body after data defaults"
-    (let [prog (lower-src "def Ticker:\n    n: Int = 0\n\n    -> incremented\n        then: n => n + 1\n\ndef main:\n    def t: Ticker\n\n    -> running\n        do: print(0)\n")
+    (let [prog (lower-src "def Ticker:\n    n: Int = 0\n\n    -> incremented\n        then: n => n + 1\n\ndef main:\n    t: Ticker = Ticker()\n\n    -> running\n        do: print(0)\n")
           cls  (first (:classes prog))]
       ;; State-init runs data defaults then the initial-phase on-enter body.
       ;; Structural setup owns queue + phase = initial constant.
@@ -342,7 +342,7 @@ def main:
 
 (deftest parent-installs-back-ref-on-nested-slot-child
   (testing "parent's cxc_stateInit calls -cxc_installParent:inSlot: on each nested slot after construction"
-    (let [prog (lower-src "def Cell:\n    n: Int = 0\n\n    -> running\n\n    -> end\n\ndef Container:\n    def cell: Cell\n\ndef main:\n    -> running\n        do: print(1)\n")
+    (let [prog (lower-src "def Cell:\n    n: Int = 0\n\n    -> running\n\n    -> end\n\ndef Container:\n    cell: Cell = Cell()\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        do: print(1)\n")
           container (first (filter #(= "Container" (:name %)) (:classes prog)))
           state (first (filter #(= "cxc_stateInit" (:selector %)) (:methods container)))
           install-msg (second (:body state))]     ; [_cell = Cell(), install-parent-msg]
@@ -352,7 +352,7 @@ def main:
 
 (deftest f31-f35-l4-atom-typed-data-field-becomes-slot
   (testing "F31/F35 Landing 4 — an atom-typed `data:` field with a default (eager Foo() or nil) participates in the slot machinery: parent installs back-ref at ctor time and cascades on -transitionToEnd. Retires the pre-L4 gap where only invented `def slot: Type` nested-atoms received back-refs. Spec-canonical `data:` form now matches (§1.11)."
-    (let [prog (lower-src "def Helper:\n    -> alive\n\ndef X:\n    h: Helper = Helper()\n\n    -> running\n\n    -> end\n\ndef main:\n    def x: X\n    -> running\n        do: print(0)\n")
+    (let [prog (lower-src "def Helper:\n    -> alive\n\ndef X:\n    h: Helper = Helper()\n\n    -> running\n\n    -> end\n\ndef main:\n    x: X = X()\n    -> running\n        do: print(0)\n")
           x-cls (first (filter #(= "X" (:name %)) (:classes prog)))
           state (first (filter #(= "cxc_stateInit" (:selector %)) (:methods x-cls)))
           install-msg (second (:body state))
@@ -372,7 +372,7 @@ def main:
 
 (deftest f31-f35-l4-nil-default-data-field-cascades-nil-safe
   (testing "F31/F35 Landing 4 — `data: h: Helper = nil` still gets the install/cascade wiring; the runtime calls on nil are no-ops (ObjC nil-messaging). Verifies the broadened filter doesn't break nullable atom-typed fields."
-    (let [prog (lower-src "def Helper:\n    -> alive\n\ndef X:\n    h: Helper = nil\n\n    -> running\n\n    -> end\n\ndef main:\n    def x: X\n    -> running\n        do: print(0)\n")
+    (let [prog (lower-src "def Helper:\n    -> alive\n\ndef X:\n    h: Helper = nil\n\n    -> running\n\n    -> end\n\ndef main:\n    x: X = X()\n    -> running\n        do: print(0)\n")
           x-cls (first (filter #(= "X" (:name %)) (:classes prog)))
           state (first (filter #(= "cxc_stateInit" (:selector %)) (:methods x-cls)))
           install-msg (second (:body state))]
@@ -383,7 +383,7 @@ def main:
 
 (deftest f31-f35-l4-f41-synthesized-field-not-a-slot
   (testing "F31/F35 Landing 4 — a no-default atom-typed data field is F41-sugared to a required ctor param (caller-provided reference). Since ownership is ambiguous, it is NOT treated as an owned slot — no back-ref, no cascade. Preserves the caller-supplies-shared-reference semantics."
-    (let [prog (lower-src "def Helper:\n    -> alive\n\ndef X:\n    h: Helper\n\n    -> running\n\n    -> end\n\ndef main:\n    def hh: Helper\n    def x: X(h: hh)\n    -> running\n        do: print(0)\n")
+    (let [prog (lower-src "def Helper:\n    -> alive\n\ndef X:\n    h: Helper\n\n    -> running\n\n    -> end\n\ndef main:\n    hh: Helper = Helper()\n    x: X = X(h: hh)\n    -> running\n        do: print(0)\n")
           x-cls (first (filter #(= "X" (:name %)) (:classes prog)))
           state (first (filter #(and (:selector %)
                                      (str/starts-with? (:selector %) "cxc_stateInit"))
@@ -435,7 +435,7 @@ def main:
 
 (deftest atom-ctor-params-lower-to-init-with
   (testing "def-atom with ctor params → :init-params on class + :objc-init-with at call site"
-    (let [prog (lower-src "def Counter(initial: Int = 0):\n    n: Int = initial\n\ndef main:\n    def c: Counter(initial: 42)\n\n    -> running\n        do: print(0)\n")
+    (let [prog (lower-src "def Counter(initial: Int = 0):\n    n: Int = initial\n\ndef main:\n    c: Counter = Counter(initial: 42)\n\n    -> running\n        do: print(0)\n")
           cls  (first (filter #(= "Counter" (:name %)) (:classes prog)))
           ;; ctor call is inside main's :init-body — the def-slot form
           ;; lowers to an assign to _c whose rhs is the alloc/init.
@@ -704,7 +704,7 @@ def main:
 
 (deftest atom-ctor-params-default-fills-when-omitted
   (testing "Counter() with no args uses ctor-param defaults"
-    (let [prog (lower-src "def Counter(initial: Int = 5):\n    n: Int = initial\n\ndef main:\n    def c: Counter\n\n    -> running\n        do: print(0)\n")
+    (let [prog (lower-src "def Counter(initial: Int = 5):\n    n: Int = initial\n\ndef main:\n    c: Counter = Counter()\n\n    -> running\n        do: print(0)\n")
           main-cls (first (filter #(= "CxcMain" (:name %)) (:classes prog)))
           state-body (:body (first (filter #(clojure.string/starts-with?
                                              (:selector %) "cxc_stateInit")
@@ -847,7 +847,7 @@ def main:
     -> running
 
 def main:
-    def s: Sidekick
+    s: Sidekick = Sidekick()
     n: Int = 0
 
     -> running
@@ -872,7 +872,7 @@ def main:
     -> running
 
 def main:
-    def s: Sidekick
+    s: Sidekick = Sidekick()
     n: Int = 0
 
     -> running
@@ -1273,7 +1273,7 @@ def Container:
     -> end
 
 def main:
-    def a: Age(value: 42)
+    a: Age = Age(value: 42)
 
     -> running
         do: print(0)
@@ -1306,7 +1306,7 @@ def main:
     -> end
 
 def main:
-    def a: Age(value: 42)
+    a: Age = Age(value: 42)
 
     -> running
         do: print(0)
@@ -1462,7 +1462,7 @@ def main:
         do: return n
 
 def main:
-    def a: A
+    a: A = A()
 
     -> running
 ")
@@ -1484,7 +1484,7 @@ def main:
         do: return n
 
 def main:
-    def a: A
+    a: A = A()
 
     -> running
 ")
@@ -1515,7 +1515,7 @@ def main:
         return n
 
 def main:
-    def a: A
+    a: A = A()
 
     -> running
 ")))))
@@ -1537,7 +1537,7 @@ def main:
         do: return n
 
 def main:
-    def a: A
+    a: A = A()
 
     -> running
 ")))))
@@ -2281,7 +2281,7 @@ def main:
                    "        do: a |> ping\n"
                    "\n"
                    "def main:\n"
-                   "    def a: A(b: B(a: a))\n"
+                   "    a: A = A(b: B(a: a))\n"
                    "    -> running\n"
                    "        do: print(0)\n")
           warnings (with-out-str
@@ -2313,8 +2313,8 @@ def main:
                    "        do: b |> pong\n"
                    "\n"
                    "def main:\n"
-                   "    def b: B\n"
-                   "    def a: A(b: b)\n"
+                   "    b: B = B()\n"
+                   "    a: A = A(b: b)\n"
                    "    -> running\n"
                    "        do: print(0)\n")
           warnings (with-out-str
@@ -2325,7 +2325,7 @@ def main:
 
 (deftest f31-f35-l1-sync-send-lowers-to-wait-for-processing
   (testing "F31/F35 Landing 1 — `|>` sync send lowers to `cxc_wait_for_processing` (spec framing: `|>` is a processing barrier). Retires the old `cxc_send_sync` name; under Layer 4 CXC_SINGLE_MAIN_QUEUE the helper is a nil-guarded direct call, under F32 it upgrades to dispatch_sync — the emit site is the sole substitution point."
-    (let [prog (lower-src "def Sink:\n    n: Int = 0\n\n    -> alive\n\n    alive <: absorb -> alive\n        then: n => n + 1\n\ndef main:\n    def sink: Sink\n\n    -> running\n        do:\n            sink |> absorb\n")
+    (let [prog (lower-src "def Sink:\n    n: Int = 0\n\n    -> alive\n\n    alive <: absorb -> alive\n        then: n => n + 1\n\ndef main(sink: Sink):\n    -> running\n        do:\n            sink |> absorb\n")
           main-cls (first (filter #(= "CxcMain" (:name %)) (:classes prog)))
           state-body (:body (first (filter #(clojure.string/starts-with?
                                              (:selector %) "cxc_stateInit")
@@ -2342,13 +2342,13 @@ def main:
 
 (deftest f39-l2-nonnil-on-atom-accepted
   (testing "F39 Landing 2 — `T!` on a reference type (atom) is legal. C-level representation identical to bare `T` (still a pointer); the contract is enforced at observation points in F39 L3 (not this landing)."
-    (let [prog (lower-src "def Widget:\n    bus: Widget! = Widget()\n\n    -> running\n\n    -> end\n\ndef main:\n    def w: Widget\n\n    -> running\n        do: print(0)\n")]
+    (let [prog (lower-src "def Widget:\n    bus: Widget! = Widget()\n\n    -> running\n\n    -> end\n\ndef main:\n    w: Widget = Widget()\n\n    -> running\n        do: print(0)\n")]
       (is (= :objc-program (:node prog))
           "T! on atom lowers cleanly"))))
 
 (deftest f39-l2-nonnil-on-string-accepted
   (testing "F39 Landing 2 — `String!` is legal (String is reference-shaped)."
-    (let [prog (lower-src "def X:\n    name: String! = \"anon\"\n\n    -> running\n\n    -> end\n\ndef main:\n    def x: X\n\n    -> running\n        do: print(0)\n")]
+    (let [prog (lower-src "def X:\n    name: String! = \"anon\"\n\n    -> running\n\n    -> end\n\ndef main:\n    x: X = X()\n\n    -> running\n        do: print(0)\n")]
       (is (= :objc-program (:node prog))))))
 
 (deftest f39-l2-nonnil-on-value-primitive-rejected
@@ -2385,8 +2385,8 @@ def main:
                                "    n: Int = 0\n"
                                "\n"
                                "def main:\n"
-                               "    def b: EventBus\n"
-                               "    def w: Widget(bus: b)\n"
+                               "    b: EventBus = EventBus()\n"
+                               "    w: Widget = Widget(bus: b)\n"
                                "    -> running\n"
                                "        do: print(0)\n"))
           widget (first (filter #(= "Widget" (:name %)) (:classes prog)))
@@ -2416,7 +2416,7 @@ def main:
                                "        then: peer => Widget()\n"
                                "\n"
                                "def main:\n"
-                               "    def w: Widget\n"
+                               "    w: Widget = Widget()\n"
                                "    -> running\n"
                                "        do: print(0)\n"))
           widget (first (filter #(= "Widget" (:name %)) (:classes prog)))
@@ -2455,7 +2455,7 @@ def main:
                                "        then: peer => Widget()\n"
                                "\n"
                                "def main:\n"
-                               "    def w: Widget\n"
+                               "    w: Widget = Widget()\n"
                                "    -> running\n"
                                "        do: print(0)\n"))
           widget (first (filter #(= "Widget" (:name %)) (:classes prog)))
@@ -2516,7 +2516,7 @@ def main:
 
 (deftest f33-self-field-read-still-allowed
   (testing "Self-field reads inside the atom's own observable / invariant / transition body compile — `self.n` (or bare `n`) reads the data field directly. Post F67 L4: observables replace the reader-method surface."
-    (let [prog (lower-src "def Counter:\n    n: Int = 10\n\n    bump() :< n + 1\n\n    -> running\n\n    -> end\n\ndef main:\n    def c: Counter\n\n    -> running\n        do: print(0)\n")]
+    (let [prog (lower-src "def Counter:\n    n: Int = 10\n\n    bump() :< n + 1\n\n    -> running\n\n    -> end\n\ndef main:\n    c: Counter = Counter()\n\n    -> running\n        do: print(0)\n")]
       (is (= :objc-program (:node prog))
           "self.n inside Counter's own observable compiles cleanly"))))
 

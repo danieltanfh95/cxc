@@ -52,7 +52,7 @@
 
 (deftest table-carries-atom-members
   (testing "F51 — atoms expose data-fields + transitions + observables"
-    (let [table (table-from "def Counter:\n    n: Int = 0\n\n    tally :< n\n\n    -> running\n\n    running <: bump -> self\n        then: n => n + 1\n\ndef main:\n    def c: Counter\n\n    -> running\n")
+    (let [table (table-from "def Counter:\n    n: Int = 0\n\n    tally :< n\n\n    -> running\n\n    running <: bump -> self\n        then: n => n + 1\n\ndef main:\n    c: Counter = Counter()\n\n    -> running\n")
           counter (get table "Counter")]
       (is (= ["n"]           (mapv :name (get-in counter [:members :data-fields]))))
       (is (>= (count (get-in counter [:members :transitions])) 2)

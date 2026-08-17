@@ -207,13 +207,13 @@
       (is (= "5\n" stdout)))))
 
 (deftest end-to-end-nested-slot
-  (testing "nested-slot.cxc — `def paddle: Paddle` self-constructs a sub-atom in parent init; observable reads through the slot"
+  (testing "nested-slot.cxc — `paddle: Paddle = Paddle()` self-constructs a sub-atom in parent init; observable reads through the slot"
     (let [{:keys [exit stdout]} (compile-and-run "nested-slot")]
       (is (zero? exit))
       (is (= "7\n" stdout)))))
 
 (deftest end-to-end-nested-slot-ctor-args
-  (testing "nested-slot-ctor-args.cxc — `def cell: Cell(v: 99)` passes named args to the sub-atom's initWith selector"
+  (testing "nested-slot-ctor-args.cxc — `cell: Cell = Cell(v: 99)` passes named args to the sub-atom's initWith selector"
     (let [{:keys [exit stdout]} (compile-and-run "nested-slot-ctor-args")]
       (is (zero? exit))
       (is (= "99\n" stdout)))))
@@ -388,7 +388,7 @@
       (is (= "1\n0\n1\n" stdout)))))
 
 (deftest end-to-end-console-hello
-  (testing "console-hello.cxc — Layer 6 Step 5. Console prelude atom with `write(msg: String) -> Int` method wrapping the `native_console_write` FFI hatch (printf %s). Main nests a Console (`def console: Console`) and calls `console.write(\"hi\\n\")` in its `-> running do:`. Prints `hi` + newline."
+  (testing "console-hello.cxc — Layer 6 Step 5. Console prelude atom with `write(msg: String) -> Int` method wrapping the `native_console_write` FFI hatch (printf %s). Main is capability-provisioned (`def main(console: Console)`) and calls `console.write(\"hi\\n\")` in its `-> running do:`. Prints `hi` + newline."
     (let [{:keys [exit stdout]} (compile-and-run "console-hello")]
       (is (zero? exit))
       (is (= "hi\n" stdout)))))
