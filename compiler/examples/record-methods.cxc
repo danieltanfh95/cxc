@@ -2,9 +2,7 @@ record V:
     x: Float
     y: Float
 
-    methods:
-        def plus(self, other: V) -> V:
-            return V(x: self.x + other.x, y: self.y + other.y)
+    plus(other: V) :< V(x: x + other.x, y: y + other.y)
 
 def main:
     -> running

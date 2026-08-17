@@ -1376,6 +1376,42 @@ def main:
         (is (some? (walker main-body))
             "expected V_cxc_equals call in main body")))))
 
+(deftest f67-l4a-zero-arg-record-observable-lowers-as-c-function
+  (testing "F67 L4a: `name :< expr` on a record lowers as a `Record_name(self)` C function. Return type inferred from the expression (int here); bare field refs (`x`, `y`) auto-rewrite to `self.x`, `self.y`."
+    (let [prog (lower-src "record V:
+    x: Int
+    y: Int
+
+    magnitude_sq :< x * x + y * y
+
+def main:
+    -> running
+        do: print(V(x: 3, y: 4).magnitude_sq)
+")
+          f    (first (filter #(= "V_magnitude_sq" (:name %)) (:functions prog)))]
+      (is (some? f) "record observable emitted as C function V_magnitude_sq")
+      (is (= :c-function (:node f)))
+      (is (= 1 (count (:params f))) "self is the sole param on zero-arg observable")
+      (is (= "V" (:c-type (first (:params f))))))))
+
+(deftest f67-l4a-parametric-record-observable-lowers-with-args
+  (testing "F67 L4a: `name(args) :< expr` on a record lowers as `Record_name(self, args...)` C function. Args become C params after self."
+    (let [prog (lower-src "record V:
+    x: Int
+    y: Int
+
+    scaled(k: Int) :< (x + y) * k
+
+def main:
+    -> running
+        do: print(V(x: 1, y: 2).scaled(10))
+")
+          f    (first (filter #(= "V_scaled" (:name %)) (:functions prog)))]
+      (is (some? f) "V_scaled function emitted")
+      (is (= 2 (count (:params f))) "self + k")
+      (is (= "self" (:name (first (:params f)))))
+      (is (= "k"    (:name (second (:params f))))))))
+
 (deftest f67-l3-wildcard-handler-transition-lowers-as-method
   (testing "F67 L3: `* <: name(args) -> * do: ...` (the handler-collapse form that subsumes the retired F14 `-> handler(args):` sugar) lowers as a void ObjC method on the atom's class. Same semantics as spec §1265/§2160 handler-decl; different surface syntax."
     (let [prog (lower-src "def A:

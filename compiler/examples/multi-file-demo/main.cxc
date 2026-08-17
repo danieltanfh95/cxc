@@ -3,7 +3,7 @@ module com.example.demo.main
 from std.time import Duration
 
 def main:
-    c: Int = Counter(seed: 41).bump()
+    c: Int = Counter(seed: 41).bump
 
     -> running
         do: print(c)

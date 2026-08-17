@@ -3,6 +3,4 @@ module com.example.demo.counter
 def Counter(seed: Int):
     val: Int = seed
 
-    methods:
-        def bump(self) -> Int:
-            return val + 1
+    bump :< val + 1

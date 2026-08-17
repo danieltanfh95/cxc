@@ -1849,6 +1849,16 @@
                     "immutable; use top-level field declarations. See "
                     "spec §1.11."))
 
+        ;; F67 L4a — observables on records (Proposal G: records
+        ;; collapse the same way — pure-data readers become
+        ;; observables `name(args) :< <expr>`, utility functions
+        ;; move to module scope). Same shape / same parser as atom
+        ;; observables (F67 L2).
+        (looks-like-observable? tokens p)
+        (let [[o p2] (parse-observable tokens p)
+              p3     (skip-newlines tokens p2)]
+          (recur (conj sections o) p3))
+
         ;; F67 L5 — top-level field declaration on records (replaces
         ;; `data:` section per Proposal D). Records are pure data holders;
         ;; the collapse removes the redundant grouping section.
@@ -1858,7 +1868,7 @@
           (recur (conj sections f) p3))
 
         :else
-        (fail! tokens p "expected field decl (`name: Type [= default]`), methods:, deprecated:, or dedent in record body")))))
+        (fail! tokens p "expected field decl (`name: Type [= default]`), observable (`name[(args)] :< expr`), methods:, deprecated:, or dedent in record body")))))
 
 (defn- parse-enum
   "Parse `enum Foo:` followed by an indented list of ident cases,

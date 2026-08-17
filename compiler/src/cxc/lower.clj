@@ -753,18 +753,23 @@
                        (seq top-fields)   {:node :data-section :fields top-fields}
                        :else              nil)
              msec    (first (filter #(= :methods-section (:node %)) (:sections r)))
+             ;; F67 L4a — observables on records (Proposal G collapse).
+             observables (filterv #(= :observable (:node %)) (:sections r))
              fields  (fields-from-data-section dsec env atom-env enum-env)
              site    (str "record `" name "` fields (auto-ctor)")
              _       (validate-defaults-after-required! site fields)
              _       (validate-default-is-const!       site fields)
              methods (extract-methods name msec)
-             ;; F38 auto-detect: any method → :class variant, else :struct.
-             ;; Structural trigger, no user syntax.
-             variant (if (seq methods) :class :struct)]
+             ;; F38 auto-detect: any method OR observable → :class
+             ;; variant, else :struct. Structural trigger, no user
+             ;; syntax; observables carry callable behaviour just as
+             ;; methods do.
+             variant (if (or (seq methods) (seq observables)) :class :struct)]
          (assoc env name {:fields       fields
                           :field-index  (into {} (map (juxt :name identity) fields))
                           :methods      methods
                           :method-index (into {} (map (juxt :name identity) methods))
+                          :observables  observables
                           :variant      variant})))
      skeleton
      records)))
@@ -2416,11 +2421,17 @@
     (cond
       (and (map? target-ty) (:record target-ty))
       (let [rn (:record target-ty)
-            m  (get-in (:record-env ctx) [rn :method-index method-name])]
-        (when-not m
-          (fail-nyi! (str "method `" method-name "` on record `" rn "`") call-node))
-        (cxc-type->type-kw (:cxc-return-ty m)
-                           (:record-env ctx) (:atom-env ctx) (:enum-env ctx) call-node))
+            m  (get-in (:record-env ctx) [rn :method-index method-name])
+            o  (get-in (:record-env ctx) [rn :observable-index method-name])]
+        (cond
+          m (cxc-type->type-kw (:cxc-return-ty m)
+                               (:record-env ctx) (:atom-env ctx) (:enum-env ctx) call-node)
+          ;; F67 L4a — record observables dispatch the same as record
+          ;; methods (both lower to `<Rec>_<name>(self, ...)` C
+          ;; functions); type-kw was pre-computed at env build.
+          o (:type-kw o)
+          :else (fail-nyi! (str "method/observable `" method-name "` on record `" rn "`")
+                           call-node)))
 
       (and (map? target-ty) (:atom target-ty))
       (let [an (:atom target-ty)
@@ -2638,11 +2649,16 @@
 
     (and (map? owner-ty) (:record owner-ty))
     (let [owner (:record owner-ty)
-          f     (get-in (:record-env ctx) [owner :field-index field-name])]
-      (when-not f
-        (fail-nyi! (str "field `" field-name "` on record `" owner "`") node))
-      (cxc-type->type-kw (:cxc-ty f)
-                         (:record-env ctx) (:atom-env ctx) (:enum-env ctx) node))
+          f     (get-in (:record-env ctx) [owner :field-index field-name])
+          ;; F67 L4a — zero-arg observables read as fields (no parens).
+          ;; Type came from inference at env build.
+          o     (get-in (:record-env ctx) [owner :observable-index field-name])]
+      (cond
+        f (cxc-type->type-kw (:cxc-ty f)
+                             (:record-env ctx) (:atom-env ctx) (:enum-env ctx) node)
+        o (:type-kw o)
+        :else
+        (fail-nyi! (str "field/observable `" field-name "` on record `" owner "`") node)))
 
     (and (map? owner-ty) (:atom owner-ty))
     (let [owner     (:atom owner-ty)
@@ -2935,7 +2951,29 @@
         method-info
         (cond
           (and (map? target-ty) (:record target-ty))
-          (get-in ctx [:record-env (:record target-ty) :method-index method-name])
+          ;; F67 L4a — parametric observables (`name(args) :< expr`)
+          ;; dispatch through the same C-function pathway as record
+          ;; methods. Return an observable-synthesized entry that
+          ;; mimics the method shape (self as first param) so
+          ;; `resolve-args-against-params` works uniformly.
+          (or (get-in ctx [:record-env (:record target-ty) :method-index method-name])
+              (when-let [o (get-in ctx [:record-env (:record target-ty)
+                                        :observable-index method-name])]
+                (let [tk (:type-kw o)
+                      ret-name (cond
+                                 (keyword? tk) (name tk)
+                                 (and (map? tk) (:record tk)) (:record tk)
+                                 (and (map? tk) (:atom tk))   (:atom tk)
+                                 :else (str tk))]
+                  {:name          method-name
+                   :params        (into [{:name "self" :cxc-ty (:record target-ty)
+                                          :is-self? true}]
+                                        (mapv (fn [p]
+                                                {:name  (:name p)
+                                                 :cxc-ty (:name (:type p))})
+                                              (:params o)))
+                   :cxc-return-ty ret-name
+                   :cxc-observable? true})))
           (and (map? target-ty) (:atom target-ty))
           (get-in ctx [:atom-env (:atom target-ty) :method-index method-name]))
         ;; F40 Landing 2: user-facing params (skip self, which is
@@ -3266,9 +3304,29 @@
                                     (case op
                                       "<" "<" "<=" "<=" ">" ">" ">=" ">="))
                                   (:ops node))}
-    :dot        (if (enum-case-access? node ctx)
+    :dot        (cond
+                  (enum-case-access? node ctx)
                   {:node :name
                    :sym  (str (get-in node [:target :name]) "_" (:field node))}
+
+                  ;; F67 L4a — zero-arg observable on a record. `V(...).mag`
+                  ;; is really `V_mag(V(...))` — a C function call, not
+                  ;; struct-field access. Detect by looking up the field
+                  ;; name in the record's `:observable-index` (populated
+                  ;; by `infer-observables-in-record-env`). Field-index
+                  ;; hits still emit struct access as before.
+                  (let [target-ty (infer-type (:target node) ctx)]
+                    (and (map? target-ty) (:record target-ty)
+                         (get-in (:record-env ctx)
+                                 [(:record target-ty) :observable-index (:field node)])
+                         (not (get-in (:record-env ctx)
+                                      [(:record target-ty) :field-index (:field node)]))))
+                  {:node :call
+                   :fn   (c-method-name (:record (infer-type (:target node) ctx))
+                                        (:field node))
+                   :args [(lower-expr (:target node) ctx)]}
+
+                  :else
                   (do
                     ;; F33 Landing 1 — reject cross-atom `data:` field
                     ;; reads. infer-type triggers field-type-for-owner
@@ -4621,6 +4679,81 @@
              m               (:methods info)]
          (lower-method-fn rec-name m ctx))))
 
+(defn- rewrite-self-field-refs
+  "Walk an expression and turn bare `:ident` nodes whose name matches
+   any of `field-names` into `self.<name>` dot-access nodes. Params
+   (in `param-names`) shadow field names — they stay bare so record
+   observables mirror the atom-observable scoping rule where args
+   shadow self-fields (F67 L2 comment on `lower-observable-method`)."
+  [expr field-names param-names]
+  (walk/postwalk
+   (fn [n]
+     (if (and (map? n)
+              (= :ident (:node n))
+              (contains? field-names (:name n))
+              (not (contains? param-names (:name n))))
+       {:node :dot
+        :target {:node :self}
+        :field (:name n)}
+       n))
+   expr))
+
+(defn- lower-record-observable-fn
+  "F67 L4a — a record observable becomes a free C function of self.
+   Return type inferred from the expression body; args (if parametric)
+   become C params. Same C-function shape as `lower-method-fn`, but
+   the body is a single `return <expr>` (observables are pure reads,
+   no statements).
+
+   Bare field references in the body are rewritten to `self.<field>`
+   so they emit as C struct-pointer access — matching the existing
+   record-method convention (which requires explicit `self.x`)."
+  [record-name obs ctx]
+  (let [param-locals (into {}
+                           (map (fn [p]
+                                  [(:name p)
+                                   (cxc-type->type-kw (:name (:type p))
+                                                      (:record-env ctx)
+                                                      (:atom-env ctx)
+                                                      (:enum-env ctx)
+                                                      p)])
+                                (:params obs)))
+        rec           (get-in ctx [:record-env record-name])
+        self-fields   (into {} (map (juxt :name identity) (:fields rec)))
+        field-names   (set (map :name (:fields rec)))
+        param-names   (set (map :name (:params obs)))
+        rewritten-expr (rewrite-self-field-refs (:expr obs) field-names param-names)
+        infer-ctx     {:record-env (:record-env ctx)
+                       :atom-env   (:atom-env ctx)
+                       :enum-env   (:enum-env ctx)
+                       :locals     (assoc param-locals "self" {:record record-name})
+                       :self-fields self-fields}
+        ret-kw        (infer-type rewritten-expr infer-ctx)
+        ret-c         (type-kw->c-type ret-kw obs)
+        body-ctx      (assoc ctx :locals (assoc param-locals "self" {:record record-name}))
+        params        (into [{:name "self" :c-type record-name}]
+                            (mapv (fn [p]
+                                    {:name   (:name p)
+                                     :c-type (cxc-type->c (:type p)
+                                                          (:record-env ctx)
+                                                          (:atom-env ctx)
+                                                          (:enum-env ctx))})
+                                  (:params obs)))]
+    {:node        :c-function
+     :name        (c-method-name record-name (:name obs))
+     :return-type ret-c
+     :params      params
+     :body        [{:node :return :value (lower-expr rewritten-expr body-ctx)}]}))
+
+(defn- record-observable-functions
+  "For every record, lower each of its observables to a :c-function
+   of self. Same shape as record methods so they share downstream
+   emission and call-site dispatch."
+  [ctx]
+  (vec (for [[rec-name info] (:record-env ctx)
+             o               (:observables info)]
+         (lower-record-observable-fn rec-name o ctx))))
+
 ;; ---------------------------------------------------------------------------
 ;; F37 — synthesized record equality + hash
 ;;
@@ -5493,6 +5626,50 @@
    :name  (:name enum-node)
    :cases (:cases enum-node)})
 
+(defn- infer-observables-in-record-env
+  "F67 L4a — mirror of `infer-observables-in-atom-env` for records.
+   With record-env built (fields resolved), infer each observable's
+   return type. Populates `:observables-typed` and `:observable-index`
+   on each record-env entry so call-site dispatch
+   (`lower-method-call`) can look up an observable's return type by
+   name without recomputing.
+
+   Bare field references get rewritten to `self.<field>` before
+   inference so the type walker resolves them as record-field access
+   (record-method convention; see `lower-record-observable-fn`)."
+  [record-env atom-env enum-env]
+  (reduce-kv
+   (fn [env rec-name info]
+     (let [self-fields (into {} (map (juxt :name identity) (:fields info)))
+           field-names (set (map :name (:fields info)))
+           typed (mapv (fn [o]
+                         (let [param-locals (into {}
+                                                  (map (fn [p]
+                                                         [(:name p)
+                                                          (cxc-type->type-kw
+                                                           (:name (:type p))
+                                                           record-env atom-env
+                                                           enum-env p)])
+                                                       (:params o)))
+                               param-names (set (map :name (:params o)))
+                               rewritten (rewrite-self-field-refs
+                                          (:expr o) field-names param-names)
+                               ctx {:record-env record-env
+                                    :atom-env   atom-env
+                                    :enum-env   enum-env
+                                    :locals     (assoc param-locals
+                                                       "self" {:record rec-name})
+                                    :self-fields self-fields}
+                               tk  (infer-type rewritten ctx)]
+                           (assoc o :type-kw tk
+                                  :c-type  (type-kw->c-type tk o))))
+                       (or (:observables info) []))]
+       (assoc env rec-name
+              (assoc info
+                     :observables-typed typed
+                     :observable-index  (into {} (map (juxt :name identity) typed))))))
+   record-env record-env))
+
 (defn- infer-observables-in-atom-env
   "Second pass: with the atom-env already built (so cross-atom types
    resolve), infer each observable's return type in a ctx where the
@@ -5950,6 +6127,7 @@
                                             (contains? kept-prelude k)))
                                       atom-env)))
         record-env (build-record-env top-nodes atom-env enum-env)
+        record-env (infer-observables-in-record-env record-env atom-env enum-env)
         atom-env   (infer-observables-in-atom-env atom-env record-env enum-env)
         atom-env   (infer-streams-in-atom-env atom-env record-env enum-env)
         ;; Layer 5 Step 3: scan post-inference atom-env for `List of T`
@@ -6031,9 +6209,13 @@
         enums      (filter #(= :enum   (:node %)) top-nodes)
         c-enums    (mapv lower-enum enums)
         structs    (mapv #(lower-record-struct % ctx) records)
-        functions  (into (record-method-functions ctx)
-                         ;; F37 — synthesized equals + hash per record
-                         (synthesized-record-functions ctx))
+        functions  (-> (record-method-functions ctx)
+                       ;; F67 L4a — record observables (Proposal G
+                       ;; class-body collapse: pure-data readers land
+                       ;; here as C functions of self).
+                       (into (record-observable-functions ctx))
+                       ;; F37 — synthesized equals + hash per record
+                       (into (synthesized-record-functions ctx)))
         ;; main-as-atom kicks in whenever the atom-env contains main
         ;; (build-atom-env puts it in iff other atoms exist).
         main-as-atom?  (contains? atom-env "main")
