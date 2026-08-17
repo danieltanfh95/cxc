@@ -3480,6 +3480,11 @@
     :lit-int    {:node :int   :value (:value node)}
     :lit-float  {:node :float :value (:value node)}
     :lit-nil    {:node :nil}
+    ;; F17 L1 companion — `true` / `false` literal exprs (spec §3.1
+    ;; Bool primitive). Emits as C `1` / `0` (Bool is a value type
+    ;; mapped to an integer per F36 L1). Callers that need actual
+    ;; `_Bool` typing get the correct type-kw via infer-type below.
+    :lit-bool   {:node :int :value (if (:value node) 1 0)}
     :lambda     (if (empty? (:params node))
                   ;; Layer 6 Step 12 — zero-arg lambda `() => <expr>`
                   ;; lowers to an ObjC block literal `^{ <stmt>; }`.
@@ -3897,6 +3902,33 @@
     :expr-stmt (lower-expr (:expr node) ctx)
     :emit      (lower-send node ctx)
     :return    {:node :return :value (lower-expr (:expr node) ctx)}
+
+    ;; F17 L1 — statement-position `while <cond>: <body>`. Body lowers
+    ;; as a stmt sequence via `lower-body-stmts` so nested `let`
+    ;; bindings inside the loop scope through the reduce. Loop-depth
+    ;; is stamped on ctx as `:in-loop?` for the recursive lowering so
+    ;; break/continue can validate they're inside a loop.
+    :while-stmt
+    (let [body-ctx (assoc ctx :in-loop? true)
+          body-stmts (lower-body-stmts (:stmts (:body node)) body-ctx)]
+      {:node :c-while
+       :cond (lower-expr (:cond node) ctx)
+       :body body-stmts})
+
+    :break-stmt
+    (do (when-not (:in-loop? ctx)
+          (fail-nyi!
+           "F17 L1: `break` outside a `while` body — legal only inside a loop."
+           node))
+        {:node :c-break})
+
+    :continue-stmt
+    (do (when-not (:in-loop? ctx)
+          (fail-nyi!
+           "F17 L1: `continue` outside a `while` body — legal only inside a loop."
+           node))
+        {:node :c-continue})
+
     (fail-nyi! (str "statement " (:node node)) node)))
 
 (defn- lower-let-stmt

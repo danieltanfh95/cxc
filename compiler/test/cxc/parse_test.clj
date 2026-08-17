@@ -840,6 +840,42 @@ def main:
       (is (= :let-stmt (:node (nth stmts 1))))
       (is (= "b"       (:name  (nth stmts 1)))))))
 
+;; ---------------------------------------------------------------------------
+;; F17 L1 — statement-position while / break / continue (spec §3.8.3 / §4.20.3)
+;; ---------------------------------------------------------------------------
+
+(deftest f17-l1-while-inline-body
+  (testing "F17 L1 — `while <cond>: <single-stmt>` parses to `:while-stmt` whose body is a single-stmt block."
+    (let [[s] (do-stmts-from "def main:\n    -> running\n        do:\n            while true: print(1)\n")]
+      (is (= :while-stmt (:node s)))
+      (is (= true (:value (:cond s))))
+      (is (= :block (:node (:body s))))
+      (is (= 1 (count (:stmts (:body s))))))))
+
+(deftest f17-l1-while-block-body
+  (testing "F17 L1 — `while <cond>:\\n    <stmts...>` parses to a `:while-stmt` whose body is an indented block of multiple stmts."
+    (let [[s] (do-stmts-from "def main:\n    -> running\n        do:\n            while true:\n                print(1)\n                print(2)\n")]
+      (is (= :while-stmt (:node s)))
+      (is (= 2 (count (:stmts (:body s))))))))
+
+(deftest f17-l1-break-and-continue-inside-while
+  (testing "F17 L1 — `break` and `continue` as bare statements inside a while body parse to `:break-stmt` and `:continue-stmt`."
+    (let [[s] (do-stmts-from "def main:\n    -> running\n        do:\n            while true:\n                break\n                continue\n")]
+      (is (= :while-stmt (:node s)))
+      (let [inner (:stmts (:body s))]
+        (is (= :break-stmt    (:node (nth inner 0))))
+        (is (= :continue-stmt (:node (nth inner 1))))))))
+
+(deftest f17-l1-break-with-value-rejected
+  (testing "F17 L1 — `break <expr>` (loop-with-value) is deferred to L2; parser emits a targeted diagnostic pointing at the L2 landing."
+    (let [ex (try
+               (do-stmts-from "def main:\n    -> running\n        do:\n            while true:\n                break 42\n")
+               nil
+               (catch clojure.lang.ExceptionInfo e e))]
+      (is ex "expected fail!")
+      (is (re-find #"F17 L1" (.getMessage ex)))
+      (is (re-find #"loop-with-value" (.getMessage ex))))))
+
 (deftest f18-l1-transition-let-clause-still-works
   (testing "F18 L1 — the pre-existing transition `let:` sub-block (F23, `let: <name>: <expr>`) still parses as a `:let-clause` — L1 didn't disturb the disambiguation. Distinguisher: `:` after `let` vs `<ident>` after `let`."
     (let [n (first-node "def X:\n    n: Int = 0\n\n    -> alive\n\n    alive <: bump -> alive\n        let: k: 5\n        then: n => n + k\n")

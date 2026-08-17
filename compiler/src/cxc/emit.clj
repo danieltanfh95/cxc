@@ -196,6 +196,19 @@
     :return   (str "return " (emit-expr (:value node)) ";")
     :assign   (str (emit-expr (:lhs node)) " = " (emit-expr (:rhs node)) ";")
     :var-decl (str (:c-type node) " " (:name node) " = " (emit-expr (:rhs node)) ";")
+
+    ;; F17 L1 — statement-position while / break / continue. Loop body
+    ;; is a flat vector of already-lowered stmts; each terminates itself
+    ;; with `;` via emit-stmt so we just newline-join and brace.
+    :c-while
+    (let [cond-expr (emit-expr (:cond node))
+          body-lines (mapv emit-stmt (:body node))]
+      (str "while (" cond-expr ") {\n"
+           (str/join "\n" (map #(str "    " %) body-lines))
+           "\n}"))
+    :c-break    "break;"
+    :c-continue "continue;"
+
     :raw-c    (:text node)
     :raw-stream-subscribe
     ;; Layer 5c Step 8: method-returned Stream subscribe. Emits as a

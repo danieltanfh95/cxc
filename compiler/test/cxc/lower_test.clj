@@ -2643,6 +2643,41 @@ def main:
       (is (some? bump))
       (is (= :objc-program (:node prog))))))
 
+;; ---------------------------------------------------------------------------
+;; F17 L1 — while / break / continue lowering (spec §3.8.3 / §4.20.3)
+;; ---------------------------------------------------------------------------
+
+(deftest f17-l1-while-lowers-to-c-while
+  (testing "F17 L1 — a statement-position `while <cond>: <body>` lowers to `:c-while` with `:cond` + `:body` (already-lowered stmts). `let` inside the body threads through `lower-body-stmts` so the loop is a proper sub-scope."
+    (let [prog (lower-src "def main:\n    -> running\n        do:\n            while true:\n                let n = 0\n                print(n)\n")
+          stmts (get-in prog [:main :body])
+          w     (first (filter #(= :c-while (:node %)) stmts))]
+      (is (some? w) ":c-while emitted")
+      (is (= 2 (count (:body w))))
+      (is (= :var-decl (:node (first (:body w))))
+          "let-stmt inside the while lowers into the body"))))
+
+(deftest f17-l1-break-continue-lower
+  (testing "F17 L1 — `break` and `continue` inside a while body lower to `:c-break` / `:c-continue` stmts, which emit as `break;`/`continue;`."
+    (let [prog (lower-src "def main:\n    -> running\n        do:\n            while true:\n                break\n                continue\n")
+          w    (first (filter #(= :c-while (:node %)) (get-in prog [:main :body])))]
+      (is (= :c-break    (:node (nth (:body w) 0))))
+      (is (= :c-continue (:node (nth (:body w) 1)))))))
+
+(deftest f17-l1-break-outside-loop-rejected
+  (testing "F17 L1 — `break` at statement position outside any enclosing while → error naming the constraint."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"F17 L1: `break` outside a `while` body"
+         (lower-src "def main:\n    -> running\n        do:\n            break\n")))))
+
+(deftest f17-l1-continue-outside-loop-rejected
+  (testing "F17 L1 — `continue` at statement position outside any enclosing while → error."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"F17 L1: `continue` outside a `while` body"
+         (lower-src "def main:\n    -> running\n        do:\n            continue\n")))))
+
 (deftest f13-l2-weak-field-excluded-from-owned-slot-cascade
   (testing "F13 L2 — a `weak` atom-typed field is a non-owning reference; parent must NOT install a back-ref on the child or cascade end into it. Verifies that install-parent + end-cascade wiring skips weak/unowned fields."
     (let [prog (lower-src "def Owner:\n    -> alive\n\n    -> end\n\ndef Child:\n    owner: weak Owner\n\n    -> alive\n\n    -> end\n\ndef main:\n    -> running\n        do: print(0)\n")

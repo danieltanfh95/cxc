@@ -612,7 +612,36 @@
                    [[] p])]
     [{:msg name :args args} p]))
 
-(declare parse-for-statement)
+(declare parse-statement parse-for-statement)
+
+(defn- parse-while-statement
+  "F17 L1 (spec §3.8.3, §4.20.3) — statement-position `while` loop.
+     while <cond>: <body>
+   Body forms:
+     - inline:  `while <cond>: <single-stmt>`
+     - block:   `while <cond>:\\n    <stmts...>` (indented)
+   Loop-value return (`while` as expression yielding `Bool`) is L3.
+   L1 lands the statement form only."
+  [tokens pos]
+  (let [[_ p]    (expect tokens pos :kw "while")
+        [cnd p]  (parse-expr tokens p)
+        [_ p]    (expect tokens p :punct ":")
+        [body p] (if (at? tokens p :newline)
+                   (let [[_ p]  (expect tokens p :newline)
+                         [_ p]  (expect tokens p :indent)]
+                     (loop [stmts [] p p]
+                       (cond
+                         (at? tokens p :dedent)
+                         [{:node :block :stmts stmts} (inc p)]
+                         (at? tokens p :newline)
+                         (recur stmts (inc p))
+                         :else
+                         (let [[s p2] (parse-statement tokens p)
+                               p3     (skip-newlines tokens p2)]
+                           (recur (conj stmts s) p3)))))
+                   (let [[s p2] (parse-statement tokens p)]
+                     [{:node :block :stmts [s]} p2]))]
+    [{:node :while-stmt :cond cnd :body body} p]))
 
 (defn- parse-let-statement
   "F18 L1 (spec §2.5) — local `let` binding at statement position.
@@ -666,6 +695,28 @@
 
     (at? tokens pos :kw "for")
     (parse-for-statement tokens pos)
+
+    ;; F17 L1 — statement-position `while <cond>: <body>`. `loop` is L2.
+    (at? tokens pos :kw "while")
+    (parse-while-statement tokens pos)
+
+    ;; F17 L1 — `break` / `continue` as statements. Legal only inside
+    ;; a while-body; enforcement happens at lower-time (the ctx tracks
+    ;; loop-depth then). At parse we produce the node uniformly.
+    ;; Value-form `break <expr>` is L2 (loop-with-value); L1 rejects.
+    (at? tokens pos :kw "break")
+    (let [p (inc pos)]
+      (if (or (at? tokens p :newline)
+              (at? tokens p :dedent))
+        [{:node :break-stmt} p]
+        (fail! tokens p
+               (str "F17 L1: `break <value>` (loop-with-value) is not "
+                    "yet supported — `break` in L1 exits the enclosing "
+                    "`while` without a value. `loop:` + `break <value>` "
+                    "land at F17 L2."))))
+
+    (at? tokens pos :kw "continue")
+    [{:node :continue-stmt} (inc pos)]
 
     :else
     (let [[e p] (parse-expr tokens pos)]

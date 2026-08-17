@@ -56,7 +56,13 @@
     ;; `name: unowned T`. Distinct from F35's compiler-synthesized
     ;; parent back-refs (those use an internal marker, not this
     ;; user-facing keyword).
-    "weak" "unowned"})
+    "weak" "unowned"
+    ;; F17 L1 (2026-08-18) — statement-form loop primitives per
+    ;; spec §3.8.3 / §4.20.3. `while <cond>: <body>` + `break` +
+    ;; `continue`. `loop` (infinite loop with `break value`) is
+    ;; F17 L2 — reserving the keyword is safe at L1 to reduce
+    ;; parser churn later.
+    "while" "loop" "break" "continue"})
 
 (def multi-char-glyphs
   ["<:" "<|" "|>" ":>" ":<" "->" "=>" "==" "!=" "<=" ">=" "//" "**"])
