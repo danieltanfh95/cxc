@@ -1,8 +1,7 @@
 def Bounded:
-    data:
-        lo:      Int = 0
-        raw_val: Int = 5
-        hi:      Int = 10
+    lo:      Int = 0
+    raw_val: Int = 5
+    hi:      Int = 10
 
     val :< raw_val
 

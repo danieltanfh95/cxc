@@ -1,6 +1,5 @@
 def Counter(initial: Int = 0):
-    data:
-        raw_n: Int = initial
+    raw_n: Int = initial
 
     n :< raw_n
 

@@ -1,7 +1,6 @@
 def Player:
-    data:
-        max_hp: Int = 30
-        raw_hp: Int = 0
+    max_hp: Int = 30
+    raw_hp: Int = 0
 
     hp :< raw_hp
 

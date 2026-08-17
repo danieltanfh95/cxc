@@ -1,6 +1,5 @@
 def main:
-    data:
-        s: Set of String
+    s: Set of String
 
     -> running
         do:

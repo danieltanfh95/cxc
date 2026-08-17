@@ -1,6 +1,5 @@
 def Cell(v: Int = 0):
-    data:
-        raw_stored: Int = v
+    raw_stored: Int = v
 
     stored :< raw_stored
 

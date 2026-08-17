@@ -1,6 +1,5 @@
 def Toggle:
-    data:
-        raw_state: Int = 0
+    raw_state: Int = 0
 
     state :< raw_state
 

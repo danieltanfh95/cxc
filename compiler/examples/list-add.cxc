@@ -1,6 +1,5 @@
 def main:
-    data:
-        xs: List of Int = [1, 2]
+    xs: List of Int = [1, 2]
 
     -> running
         do:

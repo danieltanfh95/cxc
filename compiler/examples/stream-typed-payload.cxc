@@ -10,8 +10,7 @@ def Emitter:
 def main:
     def source: Emitter
 
-    data:
-        last_n: Int = 0
+    last_n: Int = 0
 
     -> running
 

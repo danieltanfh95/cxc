@@ -1,6 +1,5 @@
 def Sensor(x: Int = 21):
-    data:
-        raw: Int = x
+    raw: Int = x
 
     doubled :< raw + raw
 

@@ -47,7 +47,7 @@
            clojure.lang.ExceptionInfo
            #"collides with a protected prelude name"
            (build/compile-source-to-file
-            "record Duration:\n    data:\n        n: Int\n\ndef main:\n    -> running\n        do: print(1)\n"
+            "record Duration:\n    n: Int\n\ndef main:\n    -> running\n        do: print(1)\n"
             "collision-check"
             (.getPath out-dir)))))))
 

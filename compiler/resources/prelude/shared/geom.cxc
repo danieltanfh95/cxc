@@ -1,7 +1,6 @@
 record Position:
-    data:
-        x: Float
-        y: Float
+    x: Float
+    y: Float
 
     methods:
         def plus(self, other: Position) -> Position:

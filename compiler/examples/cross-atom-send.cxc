@@ -1,6 +1,5 @@
 def Sink:
-    data:
-        raw_total: Int = 0
+    raw_total: Int = 0
 
     total :< raw_total
 

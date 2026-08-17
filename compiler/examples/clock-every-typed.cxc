@@ -1,8 +1,7 @@
 def main:
     def clock: Clock
 
-    data:
-        got_millis: Int = 0
+    got_millis: Int = 0
 
     -> running
 

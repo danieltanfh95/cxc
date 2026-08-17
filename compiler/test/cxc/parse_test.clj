@@ -19,7 +19,7 @@
 
 (deftest empty-record
   (testing "record with just data: section, one field"
-    (let [n (first-node "record V:\n    data:\n        x: Float\n")]
+    (let [n (first-node "record V:\n    x: Float\n")]
       (is (= :record (node-kind n)))
       (is (= "V" (:name n)))
       (let [ds (first (:sections n))]
@@ -30,9 +30,8 @@
 (deftest record-with-methods
   (testing "Vector2 — data + methods + a return expression"
     (let [src "record Vector2:
-    data:
-        x: Float
-        y: Float
+    x: Float
+    y: Float
 
     methods:
         function plus(self, other: Vector2) -> Vector2:
@@ -73,7 +72,7 @@
     (is (= "x" (-> call :args first :name)))))
 
 (deftest field-with-default
-  (let [n  (first-node "record R:\n    data:\n        n: Int = 42\n")
+  (let [n  (first-node "record R:\n    n: Int = 42\n")
         f  (-> n :sections first :fields first)]
     (is (= "n" (:name f)))
     (is (= "Int" (get-in f [:type :name])))
@@ -84,8 +83,7 @@
     use:
         cap: Capability
 
-    data:
-        x: Int = 0
+    x: Int = 0
 
     invariants:
         x >= 0
@@ -138,7 +136,7 @@
 (deftest f5-unit-suffix-retired
   (testing "F5: numeric literals with unit suffix (`200ms`, `2.5s`) lex-error per spec §2.7.1"
     (let [ex (try
-               (first-node "def A:\n    data:\n        d: Duration = 200ms\n")
+               (first-node "def A:\n    d: Duration = 200ms\n")
                nil
                (catch clojure.lang.ExceptionInfo e e))]
       (is ex "expected lex-error")
@@ -147,7 +145,7 @@
       (is (re-find #"unit suffixes are not part of v1" (.getMessage ex)))
       (is (re-find #"Duration\(millis: 200\)" (.getMessage ex))))
     (let [ex (try
-               (first-node "def A:\n    data:\n        f: Float = 2.5s\n")
+               (first-node "def A:\n    f: Float = 2.5s\n")
                nil
                (catch clojure.lang.ExceptionInfo e e))]
       (is ex "expected lex-error for float form")
@@ -237,8 +235,7 @@
   (testing "F27 semantic once-only: `a <= b <= c` becomes a `:chained-cmp` node carrying flat operands + ops vectors. Emit renders it as a GNU statement-expression that binds each interior operand once (via `__typeof__`) so an effectful middle like a call fires exactly once at runtime."
     ;; Middle is an ident — desugars to :chained-cmp with 3 operands.
     (let [tree (p/parse "def main:
-    data:
-        val: Int = 5
+    val: Int = 5
 
     -> running
 
@@ -259,15 +256,13 @@
     ;; Middle is a call — accepted (semantic once-only makes the
     ;; former double-eval concern moot).
     (is (some? (p/parse "record V:
-    data:
-        x: Int
+    x: Int
     methods:
         function mid(self) -> Int:
             return self.x
 
 def main:
-    data:
-        v: V = V(x: 5)
+    v: V = V(x: 5)
 
     -> running
 
@@ -278,9 +273,8 @@ def main:
     ;; 4-operand chain: -10 <= a <= b <= 10 → :chained-cmp with
     ;; 4 operands + 3 ops (fold-into on the postwalk pass).
     (let [tree (p/parse "def main:
-    data:
-        a: Int = 0
-        b: Int = 5
+    a: Int = 0
+    b: Int = 5
 
     -> running
 
@@ -305,8 +299,7 @@ def main:
          clojure.lang.ExceptionInfo
          #"`let:` clause out of order"
          (p/parse "def main:
-    data:
-        n: Int = 0
+    n: Int = 0
 
     -> running
 
@@ -322,8 +315,7 @@ def main:
          clojure.lang.ExceptionInfo
          #"duplicate `then:` clause"
          (p/parse "def main:
-    data:
-        n: Int = 0
+    n: Int = 0
 
     -> running
 
@@ -334,7 +326,7 @@ def main:
 
 (deftest def-method-form-accepted
   (testing "Audit K8: spec-canonical `def name(params) -> Ret:` method form is accepted alongside `function name(params) -> Ret:`. Both produce a `:function` node so downstream lowering is unaffected."
-    (let [src "record V:\n    data:\n        x: Int\n    methods:\n        def bumped(self) -> Int:\n            return x\n"
+    (let [src "record V:\n    x: Int\n    methods:\n        def bumped(self) -> Int:\n            return x\n"
           n   (first-node src)]
       (is (= :record (node-kind n)))
       (let [ms (second (:sections n))]
@@ -344,7 +336,7 @@ def main:
           (is (= :function (node-kind m)))
           (is (= "bumped" (:name m)))))))
   (testing "def-form method inside a def-atom body — same parse shape as function-form."
-    (let [src "def M:\n    data:\n        n: Int = 0\n    def bumped(self) -> Int:\n        return n\n"
+    (let [src "def M:\n    n: Int = 0\n    def bumped(self) -> Int:\n        return n\n"
           nodes (p/parse src)
           body  (:body (first nodes))]
       (is (some #(and (= :function (:node %)) (= "bumped" (:name %))) body)))))
@@ -353,7 +345,7 @@ def main:
   (testing "K8 — `function` method opener is retired at v1.0 (spec §1201, §2330). Parser still accepts it during the grace period but emits a per-occurrence deprecation warning to *err* naming file line/col so users can migrate. Non-fatal."
     (let [sw (java.io.StringWriter.)]
       (binding [*err* sw]
-        (p/parse "record V:\n    data:\n        x: Int\n    methods:\n        function bumped(self) -> Int:\n            return x\n"))
+        (p/parse "record V:\n    x: Int\n    methods:\n        function bumped(self) -> Int:\n            return x\n"))
       (let [stderr (str sw)]
         (is (re-find #"`function` method opener is deprecated" stderr))
         (is (re-find #"spec §1201" stderr))
@@ -363,7 +355,7 @@ def main:
   (testing "K8 — `def` method form (spec-canonical) fires no deprecation warning."
     (let [sw (java.io.StringWriter.)]
       (binding [*err* sw]
-        (p/parse "record V:\n    data:\n        x: Int\n    methods:\n        def bumped(self) -> Int:\n            return x\n"))
+        (p/parse "record V:\n    x: Int\n    methods:\n        def bumped(self) -> Int:\n            return x\n"))
       (is (= "" (str sw))
           "def form is clean — no K8 warning"))))
 
@@ -371,7 +363,7 @@ def main:
   (testing "F19 / §3.9 — `expr[i]` parses as a :subscript node (index is any expression)"
     ;; Wrap in a return statement inside a record method so the expression
     ;; is in an expression position the parser reaches.
-    (let [src "record R:\n    data:\n        xs: List of Int\n    methods:\n        def head(self) -> Int:\n            return xs[0]\n"
+    (let [src "record R:\n    xs: List of Int\n    methods:\n        def head(self) -> Int:\n            return xs[0]\n"
           rec (first-node src)
           ms  (second (:sections rec))
           m   (first (:methods ms))
@@ -384,7 +376,7 @@ def main:
 
 (deftest subscript-chains-with-other-postfix
   (testing "F19 — subscript composes with `.field` and `(args)` in any order"
-    (let [src "record R:\n    data:\n        xs: List of Int\n    methods:\n        def z(self) -> Int:\n            return xs[0].bar(1)\n"
+    (let [src "record R:\n    xs: List of Int\n    methods:\n        def z(self) -> Int:\n            return xs[0].bar(1)\n"
           rec (first-node src)
           m   (first (:methods (second (:sections rec))))
           ret (first (:stmts (:body m)))
@@ -396,7 +388,7 @@ def main:
 
 (deftest f23-let-clause-uses-name-colon-expr-spec-form
   (testing "F23 / spec §1.11 — `let: k: expr` (bare, no type annotation, no `=`); binding shape is {:name :expr}"
-    (let [src "def main:\n    data:\n        n: Int = 0\n\n    -> running\n\n    running <: bump -> self\n        let:\n            k: n + 1\n        then: n => k\n"
+    (let [src "def main:\n    n: Int = 0\n\n    -> running\n\n    running <: bump -> self\n        let:\n            k: n + 1\n        then: n => k\n"
           nodes (p/parse src)
           body  (:body (first nodes))
           txn   (some #(when (and (= :transition (:node %))
@@ -414,8 +406,7 @@ def main:
          clojure.lang.ExceptionInfo
          #"`let:` binding uses `name: expression`"
          (p/parse "def main:
-    data:
-        n: Int = 0
+    n: Int = 0
 
     -> running
 
@@ -425,9 +416,35 @@ def main:
         then: n => k
 ")))))
 
+(deftest f67-l5-data-header-retired-with-migration
+  (testing "F67 L5 — `data:` section header is retired (Proposal D). Parser emits a targeted diagnostic naming the retired form and pointing at the top-level field layout."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"(?s)F67 L5.*`data:` section header is retired"
+         (first-node "def A:\n    data:\n        n: Int = 0\n")))))
+
+(deftest f67-l5-top-level-fields-parse-as-synthetic-data-section
+  (testing "F67 L5 — fields at atom-body top level fold into a synthetic :data-section so downstream shape stays stable. Two fields in declaration order."
+    (let [n (first-node "def A:\n    n: Int = 10\n    m: Float = 1.5\n")
+          dsec (first (filter #(= :data-section (:node %)) (:body n)))]
+      (is (some? dsec) "synthesized :data-section present")
+      (is (= 2 (count (:fields dsec))))
+      (is (= "n" (get-in dsec [:fields 0 :name])))
+      (is (= "m" (get-in dsec [:fields 1 :name])))
+      (is (= "Int" (get-in dsec [:fields 0 :type :name]))))))
+
+(deftest f67-l5-top-level-fields-on-record
+  (testing "F67 L5 — records also collapse `data:` to top-level fields (Proposal D applies uniformly; records ARE pure data)."
+    (let [n (first-node "record V:\n    x: Float\n    y: Float\n")
+          dsec (first (filter #(= :data-section (:node %)) (:sections n)))]
+      (is (some? dsec))
+      (is (= [{:node :field :name "x" :type {:node :type-ref :name "Float"} :default nil}
+              {:node :field :name "y" :type {:node :type-ref :name "Float"} :default nil}]
+             (:fields dsec))))))
+
 (deftest f67-l3-handler-decl-sugar-retired-with-migration
   (testing "F67 L3 — the legacy `-> foo(args):` handler-decl sugar is retired at parse time. Users get a diagnostic naming the retired form and pointing at the explicit handler-shape transition `* <: foo(args) -> * do: ...` (spec §1265 semantics preserved)."
-    (let [src "def A:\n    data:\n        n: Int = 0\n\n    -> running\n\n    -> tick(msg: Int):\n        return n\n"]
+    (let [src "def A:\n    n: Int = 0\n\n    -> running\n\n    -> tick(msg: Int):\n        return n\n"]
       (is (thrown-with-msg?
            clojure.lang.ExceptionInfo
            #"F67 L3.*handler-decl sugar is retired"
@@ -435,7 +452,7 @@ def main:
 
 (deftest f67-l3-wildcard-handler-transition-parses
   (testing "F67 L3 — the migration target `* <: name(args) -> * do: ...` parses as a :transition with wildcard source, wildcard target, and typed :params on the receive-msg (distinguishing it from the payload-destructure `msg{payload}` form)."
-    (let [src "def A:\n    data:\n        n: Int = 0\n\n    -> running\n\n    * <: tick(msg: Int) -> *\n        do: return n\n"
+    (let [src "def A:\n    n: Int = 0\n\n    -> running\n\n    * <: tick(msg: Int) -> *\n        do: return n\n"
           atom-node (first-node src)
           t (last (filter #(= :transition (:node %)) (:body atom-node)))]
       (is (= :def-atom (:node atom-node)))
@@ -449,7 +466,7 @@ def main:
 
 (deftest f67-l3-wildcard-handler-zero-args-parses
   (testing "F67 L3 — zero-arg handler-shape `* <: tick() -> *` parses with empty :params (still distinguished from a payload-shape receive)."
-    (let [src "def A:\n    data:\n        n: Int = 0\n\n    -> running\n\n    * <: tick() -> *\n        do: return n\n"
+    (let [src "def A:\n    n: Int = 0\n\n    -> running\n\n    * <: tick() -> *\n        do: return n\n"
           atom-node (first-node src)
           t (last (filter #(= :transition (:node %)) (:body atom-node)))]
       (is (some? t))
@@ -460,7 +477,7 @@ def main:
 
 (deftest f15-l1-named-tuple-type-at-param-position
   (testing "F15 Landing 1 — `(x: Float, y: Float)` at param position parses as :type-named-tuple with declaration-order fields."
-    (let [src "record R:\n    data:\n        p: (x: Float, y: Float)\n"
+    (let [src "record R:\n    p: (x: Float, y: Float)\n"
           rec (first-node src)
           fld (-> rec :sections first :fields first)
           ty  (:type fld)]
@@ -471,7 +488,7 @@ def main:
 
 (deftest f15-l1-anonymous-tuple-type
   (testing "F15 Landing 1 — `(Int, String)` at type position parses as :type-tuple."
-    (let [src "record R:\n    data:\n        pair: (Int, String)\n"
+    (let [src "record R:\n    pair: (Int, String)\n"
           rec (first-node src)
           ty  (-> rec :sections first :fields first :type)]
       (is (= :type-tuple (:node ty)))
@@ -479,7 +496,7 @@ def main:
 
 (deftest f15-l1-single-paren-groups-not-tuple
   (testing "F15 Landing 1 — a single-element paren group `(T)` parses as T, not a 1-tuple. Preserves the parens-as-grouping intuition."
-    (let [src "record R:\n    data:\n        n: (Int)\n"
+    (let [src "record R:\n    n: (Int)\n"
           rec (first-node src)
           ty  (-> rec :sections first :fields first :type)]
       (is (= :type-ref (:node ty)))
@@ -487,7 +504,7 @@ def main:
 
 (deftest f15-l1-nullable-named-tuple
   (testing "F15 Landing 1 — `(x: Int, y: Int)?` — nullable suffix wraps the whole tuple type."
-    (let [src "record R:\n    data:\n        config: (host: String, port: UInt16)?\n"
+    (let [src "record R:\n    config: (host: String, port: UInt16)?\n"
           rec (first-node src)
           ty  (-> rec :sections first :fields first :type)]
       (is (= :type-nullable (:node ty)))
@@ -558,15 +575,14 @@ def main:
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
          #"`sealed protocol` is retired at v1.0.*§3\.4\.1"
-         (first-node "sealed protocol Foo:\n    data:\n        x: Int\n")))))
+         (first-node "sealed protocol Foo:\n    x: Int\n")))))
 
 (deftest f9-l1-class-body-accepts-data-methods-invariants
   (testing "F9 Landing 1 — class body accepts data:, methods:, invariants:, use:, deprecated: sections (same as records/atoms)."
     (let [n (first-node (str "class Foo:\n"
                              "    metadata:\n"
                              "        kind: regular\n"
-                             "    data:\n"
-                             "        x: Int\n"
+                             "    x: Int\n"
                              "    methods:\n"
                              "        function get(self) -> Int:\n"
                              "            return x\n"))]
@@ -583,7 +599,7 @@ def main:
 
 (deftest f9-l1-record-sugar-still-produces-record-node
   (testing "F9 Landing 1 — backward compat: existing `record Foo:` sugar continues to produce a `:record` node (not routed through parse-class). Existing lower path unchanged."
-    (let [n (first-node "record R:\n    data:\n        x: Int\n")]
+    (let [n (first-node "record R:\n    x: Int\n")]
       (is (= :record (:node n))
           "record sugar keeps its dedicated parser + AST kind for backward compat"))))
 
@@ -632,7 +648,7 @@ def main:
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
          #"`data:` is not permitted on `kind: protocol`"
-         (first-node "protocol P:\n    data:\n        x: Int\n")))))
+         (first-node "protocol P:\n    x: Int\n")))))
 
 (deftest f9-l2-accepts-contract-clauses-fail-nyi
   (testing "F9 Landing 2 — `accepts:` entries reject continuation-indented `requires`/`ensures`/effect annotations, with a pointer at F49 (contract inheritance)."
@@ -706,15 +722,14 @@ def main:
                   "        x > 0\n"))]
       (is (= :invariants-section (:node (first (:body n))))))))
 
-(deftest f9-l3-extend-class-rejects-data
-  (testing "F9 Landing 3 — `data:` inside `extend class` fails at parse per §3.3.2 (extensions cannot add state)."
+(deftest f9-l3-extend-class-rejects-top-level-fields
+  (testing "F9 Landing 3 + F67 L5 — a field declaration inside `extend class` fails at parse per §3.3.2 (extensions cannot add state). Post-L5 the surface is top-level fields (no `data:` header)."
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
-         #"`data:` is not permitted inside `extend class"
+         #"field declaration `x: …` is not permitted inside `extend class"
          (first-node
           (str "extend class Foo:\n"
-               "    data:\n"
-               "        x: Int\n"))))))
+               "    x: Int\n"))))))
 
 (deftest f9-l3-extend-class-rejects-state
   (testing "F9 Landing 3 — `state:` inside `extend class` fails at parse. `state:` is retired at v1.0 AND extensions cannot add fields either way."

@@ -8,8 +8,7 @@ enum Key:
     f
 
 def TestKeyboardInput(events: Int = 0):
-    data:
-        remaining: Int = events
+    remaining: Int = events
 
     -> running
         do: self :> beat

@@ -644,19 +644,32 @@
        (section-names (t-value (peek-tok tokens pos)))
        (at? tokens (inc pos) :punct ":")))
 
-(defn- parse-data-section [tokens pos]
-  ;; assumes at `data` keyword
-  (let [[_ p] (expect tokens pos :kw "data")
-        [_ p] (expect tokens p :punct ":")
-        [_ p] (expect tokens p :newline)
-        [_ p] (expect tokens p :indent)]
-    (loop [fields [] p p]
-      (cond
-        (at? tokens p :dedent) [{:node :data-section :fields fields} (inc p)]
-        (at? tokens p :newline) (recur fields (inc p))
-        :else (let [[f p2] (parse-field tokens p)
-                    p3 (skip-newlines tokens p2)]
-                (recur (conj fields f) p3))))))
+(defn- parse-data-section
+  "F67 L5 — `data:` section header is retired (Proposal D). Fields
+   move to class-body top level:
+
+     def X:                     def X:
+         data:              →       n: Int = 10
+             n: Int = 10           m: Float = 1.0
+             m: Float = 1.0
+
+   Semantics unchanged — the parser folds top-level `:field` nodes into
+   a synthetic `:data-section` (see fold-top-level-fields) so every
+   downstream lower/emit consumer keeps its shape. The collapse removes
+   the redundant grouping section: fields ARE the class body's default
+   content, so declaring the group is noise."
+  [tokens pos]
+  (fail! tokens pos
+         (str "F67 L5: `data:` section header is retired (Proposal G / "
+              "Proposal D — class-body collapse). Delete the `data:` line "
+              "and unindent the fields by 4 spaces so they sit at class-body "
+              "top level:\n\n"
+              "    def X:                     def X:\n"
+              "        data:              →       n: Int = 10\n"
+              "            n: Int = 10           m: Float = 1.0\n\n"
+              "Semantics unchanged (spec §1.11). Fields at top level are "
+              "gathered into the same data-section AST downstream; the "
+              "collapse removes the redundant grouping header.")))
 
 (defn- parse-methods-section
   "Parse a `methods:` block. Method entries may carry a leading `replace`
@@ -1166,13 +1179,66 @@
                 "parallel opener glyph so the class body has one shape per "
                 "kind of declaration."))))
 
+(defn- looks-like-field-decl?
+  "F67 L5 — top-level field declaration at atom/record body:
+     `<lowercase-ident> : <TypeRef> [= <expr>]`
+   Distinguished from transition source-phase (`<ident> <:` / `<ident> ->`)
+   and from observable (`<ident> :<` / `<ident>(...) :<`) by requiring
+   `:punct \":\"` at position 1 (observables use `:glyph \":<\"`,
+   transitions use `:glyph`). Section keywords are `:kw`, not `:ident`,
+   so they never match here.
+
+   The extra `NOT :newline at pos+2` guard rejects retired-section
+   headers with lowercase-ident-looking names (e.g. `state:` which
+   would otherwise slip through since `state` lexes as `:ident`, not
+   `:kw`). Field decls always have a type token after the colon."
+  [tokens pos]
+  (and (at? tokens pos :ident)
+       (at? tokens (inc pos) :punct ":")
+       (not (at? tokens (+ pos 2) :newline))))
+
+(defn- fold-top-level-fields
+  "F67 L5 — after parsing an atom/record body containing individual
+   `:field` nodes (Proposal D top-level surface), gather them into a
+   single synthetic `:data-section` at the position of the first field
+   so downstream AST consumers stay shape-stable. If a legacy
+   `:data-section` is also present, fold the top-level fields into it
+   at the section's position (preserving declaration order via the
+   section-first, top-level-fields-second convention).
+
+   Body positions of individual `:field` nodes are removed; the
+   synthesized/merged section takes their combined position slot."
+  [body]
+  (let [fields   (filterv #(= :field (:node %)) body)
+        legacy   (first (filter #(= :data-section (:node %)) body))]
+    (cond
+      (empty? fields)
+      body
+
+      legacy
+      (let [merged  (assoc legacy :fields
+                          (into (or (:fields legacy) []) fields))
+            without-fields (remove #(= :field (:node %)) body)]
+        (mapv (fn [n] (if (= :data-section (:node n)) merged n))
+              without-fields))
+
+      :else
+      (let [first-field-idx (some (fn [[i n]]
+                                    (when (= :field (:node n)) i))
+                                  (map-indexed vector body))
+            without-fields (remove #(= :field (:node %)) body)
+            synthetic       {:node :data-section :fields fields}]
+        (into (subvec (vec without-fields) 0 first-field-idx)
+              (into [synthetic]
+                    (subvec (vec without-fields) first-field-idx)))))))
+
 (defn- looks-like-transition? [tokens pos]
-  ;; Called after observable / section checks have failed. At atom-body top
-  ;; level, the remaining possibilities are transitions and errors. A
-  ;; transition starts with `->` (implicit source), `self`, `*` (F67 L3
-  ;; wildcard source), or a source-phase identifier. Since the observable
-  ;; case is already excluded, any bare ident is treated as a
-  ;; transition-source.
+  ;; Called after observable / field / section checks have failed. At
+  ;; atom-body top level, the remaining possibilities are transitions
+  ;; and errors. A transition starts with `->` (implicit source),
+  ;; `self`, `*` (F67 L3 wildcard source), or a source-phase identifier.
+  ;; Since the observable + field cases are already excluded, any bare
+  ;; ident is treated as a transition-source.
   (or (at? tokens pos :glyph "->")
       (at? tokens pos :glyph "*")
       (at? tokens pos :kw "self")
@@ -1190,7 +1256,9 @@
     (loop [body [] p p]
       (cond
         (at? tokens p :dedent)
-        [{:node :def-atom :name name :ctor-params ctor :body body} (inc p)]
+        [{:node :def-atom :name name :ctor-params ctor
+          :body (fold-top-level-fields body)}
+         (inc p)]
 
         (at? tokens p :newline)
         (recur body (inc p))
@@ -1255,12 +1323,21 @@
         (let [[h p2] (parse-handler-decl tokens p)]
           (recur (conj body h) (skip-newlines tokens p2)))
 
+        ;; F67 L5 — top-level field declaration (replaces `data:` section
+        ;; per Proposal D). Must precede `looks-like-transition?` because
+        ;; a bare ident matches both; the `:punct ":"` guard picks fields
+        ;; and leaves phase-source idents (`phase <:`, `phase ->`) to the
+        ;; transition branch.
+        (looks-like-field-decl? tokens p)
+        (let [[f p2] (parse-field tokens p)]
+          (recur (conj body f) (skip-newlines tokens p2)))
+
         (looks-like-transition? tokens p)
         (let [[t p2] (parse-transition tokens p)]
           (recur (conj body t) (skip-newlines tokens p2)))
 
         :else
-        (fail! tokens p "expected use:, data:, invariants:, methods:, deprecated:, observable, or transition inside def-atom body")))))
+        (fail! tokens p "expected use:, field decl (`name: Type [= default]`), invariants:, methods:, deprecated:, observable, or transition inside def-atom body")))))
 
 ;; ---------------------------------------------------------------------------
 ;; F9 Landing 1 — `class` / `protocol` sugar over `class + metadata: kind:`.
@@ -1550,6 +1627,12 @@
            (str "`state:` section is retired at v1.0 — all fields are `data:`. "
                 "See spec §1.11."))
 
+    ;; F67 L5 — top-level field declaration (Proposal D). Fold
+    ;; produces the same synthetic `:data-section` that `data:` did,
+    ;; so protocol-kind rejection etc still fires uniformly.
+    (looks-like-field-decl? tokens pos)
+    (parse-field tokens pos)
+
     :else nil))
 
 (defn- parse-class
@@ -1573,7 +1656,7 @@
       (cond
         (at? tokens p :dedent)
         [(fold-class-body tokens pos-for-diag class-name sugar-kind
-                          header-conforms body)
+                          header-conforms (fold-top-level-fields body))
          (inc p)]
 
         (at? tokens p :newline)
@@ -1627,6 +1710,16 @@
     (at? tokens pos :kw "data")
     (fail! tokens pos
            (str "`data:` is not permitted inside `extend class " target
+                "` — extensions cannot add state (§3.3.2). Add fields "
+                "at the original class definition."))
+
+    ;; F67 L5 — under Proposal D, fields live at class-body top level
+    ;; (no `data:` header). Extensions still can't add state; the
+    ;; message points at the new surface for consistency.
+    (looks-like-field-decl? tokens pos)
+    (fail! tokens pos
+           (str "field declaration `" (t-value (peek-tok tokens pos))
+                ": …` is not permitted inside `extend class " target
                 "` — extensions cannot add state (§3.3.2). Add fields "
                 "at the original class definition."))
 
@@ -1725,7 +1818,9 @@
     (loop [sections [] p p]
       (cond
         (at? tokens p :dedent)
-        [{:node :record :name name :sections sections} (inc p)]
+        [{:node :record :name name
+          :sections (fold-top-level-fields sections)}
+         (inc p)]
 
         (at? tokens p :newline)
         (recur sections (inc p))
@@ -1751,10 +1846,19 @@
              (at? tokens (inc p) :punct ":"))
         (fail! tokens p
                (str "`state:` section is retired at v1.0. Records are "
-                    "immutable; use `data:` fields. See spec §1.11."))
+                    "immutable; use top-level field declarations. See "
+                    "spec §1.11."))
+
+        ;; F67 L5 — top-level field declaration on records (replaces
+        ;; `data:` section per Proposal D). Records are pure data holders;
+        ;; the collapse removes the redundant grouping section.
+        (looks-like-field-decl? tokens p)
+        (let [[f p2] (parse-field tokens p)
+              p3     (skip-newlines tokens p2)]
+          (recur (conj sections f) p3))
 
         :else
-        (fail! tokens p "expected data:, methods:, deprecated:, or dedent in record body")))))
+        (fail! tokens p "expected field decl (`name: Type [= default]`), methods:, deprecated:, or dedent in record body")))))
 
 (defn- parse-enum
   "Parse `enum Foo:` followed by an indented list of ident cases,

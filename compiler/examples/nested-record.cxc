@@ -1,12 +1,10 @@
 record Vec2:
-    data:
-        x: Float
-        y: Float
+    x: Float
+    y: Float
 
 record Line:
-    data:
-        start: Vec2
-        stop:  Vec2
+    start: Vec2
+    stop:  Vec2
 
 def main:
     -> running

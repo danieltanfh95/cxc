@@ -741,7 +741,17 @@
     (reduce
      (fn [env r]
        (let [name    (:name r)
-             dsec    (first (filter #(= :data-section    (:node %)) (:sections r)))
+             legacy-dsec (first (filter #(= :data-section    (:node %)) (:sections r)))
+             top-fields  (filterv #(= :field (:node %)) (:sections r))
+             ;; F67 L5 — merge legacy `data:` section with top-level
+             ;; field decls. Either surface produces the same shape.
+             dsec    (cond
+                       (and legacy-dsec (seq top-fields))
+                       {:node :data-section
+                        :fields (into (or (:fields legacy-dsec) []) top-fields)}
+                       legacy-dsec        legacy-dsec
+                       (seq top-fields)   {:node :data-section :fields top-fields}
+                       :else              nil)
              msec    (first (filter #(= :methods-section (:node %)) (:sections r)))
              fields  (fields-from-data-section dsec env atom-env enum-env)
              site    (str "record `" name "` fields (auto-ctor)")
@@ -1351,6 +1361,31 @@
 (defn- def-atom-data-section [atom-node]
   (first (filter #(= :data-section (:node %)) (:body atom-node))))
 
+(defn- def-atom-top-level-fields
+  "F67 L5 — atom-body top-level `:field` nodes (replaces `data:` section
+   per Proposal D). Returns them wrapped in a synthetic data-section so
+   downstream `fields-from-data-section` consumes both surfaces
+   uniformly during the grace window."
+  [atom-node]
+  (let [top-fields (filterv #(= :field (:node %)) (:body atom-node))]
+    (when (seq top-fields)
+      {:node :data-section :fields top-fields})))
+
+(defn- def-atom-effective-data-section
+  "Merge legacy `data:`-section fields with F67 L5 top-level fields.
+   Both surfaces coexist during the migration window; either produces
+   the same downstream shape."
+  [atom-node]
+  (let [legacy (def-atom-data-section atom-node)
+        top    (def-atom-top-level-fields atom-node)]
+    (cond
+      (and legacy top) {:node :data-section
+                        :fields (into (or (:fields legacy) [])
+                                      (:fields top))}
+      legacy           legacy
+      top              top
+      :else            nil)))
+
 (defn- ctor-params-normalized
   "Def-atom :ctor-params come from the parser as `:field` nodes
    (`{:node :field :name :type :default}`). Normalize to
@@ -1566,11 +1601,12 @@
    how to consume — e.g. contracts: (Layer 6+). Deprecated: is
    handled at the build/compile step (cxc.build/warn-deprecated-uses)
    and doesn't reach lower, so it's filtered here too. Handler-decls
-   are consumed separately by F14."
+   are consumed separately by F14. F67 L5 top-level `:field` nodes
+   are consumed by `def-atom-effective-data-section`."
   [atom-node]
   (remove #(#{:data-section :methods-section :transition :observable
               :invariants-section :use-section :nested-atom
-              :handler-decl :deprecated} (:node %))
+              :handler-decl :deprecated :field} (:node %))
           (:body atom-node)))
 
 ;; ---------------------------------------------------------------------------
@@ -1766,27 +1802,30 @@
         main-has-atom-slot-or-cap?
         (boolean (some #(contains? #{:nested-atom :use-section} (:node %))
                        (:body main-node)))
+        ;; F67 L5 — fields at atom body live either under `:data-section`
+        ;; (legacy `data:`) or as top-level `:field` nodes (post-collapse).
+        ;; Collect from both surfaces uniformly for the promote-to-class
+        ;; heuristics below.
+        main-fields
+        (let [top (filterv #(= :field (:node %)) (:body main-node))
+              sec (mapcat :fields
+                          (filter #(= :data-section (:node %)) (:body main-node)))]
+          (into top sec))
         ;; A List of T field on main is atom-typed (compiler-synth
         ;; container class), so its ivar needs a real class to live on.
         ;; Plain-main-body path can't hold instance state — promote to
         ;; atom class whenever main carries container-typed data fields.
         main-has-list-field?
-        (boolean (some (fn [n]
-                         (and (= :data-section (:node n))
-                              (some #(= :type-of (get-in % [:type :node]))
-                                    (:fields n))))
-                       (:body main-node)))
+        (boolean (some #(= :type-of (get-in % [:type :node]))
+                       main-fields))
         ;; Layer 6 Step 12 — Block-typed data field needs ivar storage
         ;; (ObjC block type `void (^)(void)`), so main must be an atom
         ;; class. Distinct from list-field because Block is a :type-ref
         ;; (a "primitive" in the C mapping), not a :type-of.
         main-has-block-field?
-        (boolean (some (fn [n]
-                         (and (= :data-section (:node n))
-                              (some #(and (= :type-ref (get-in % [:type :node]))
-                                          (= "Block" (get-in % [:type :name])))
-                                    (:fields n))))
-                       (:body main-node)))
+        (boolean (some #(and (= :type-ref (get-in % [:type :node]))
+                             (= "Block" (get-in % [:type :name])))
+                       main-fields))
         include-main? (or (seq other-atoms)
                           main-has-message-txn?
                           main-has-atom-slot-or-cap?
@@ -1805,7 +1844,7 @@
     (reduce
      (fn [env a]
        (let [name          (:name a)
-             dsec          (def-atom-data-section a)
+             dsec          (def-atom-effective-data-section a)
              msec          (def-atom-methods-section a)
              raw-txns      (def-atom-transitions a)
              ;; F67 L3 — split handler-shape (`* <: msg(args) -> *`) from

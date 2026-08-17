@@ -1,6 +1,5 @@
 def main:
-    data:
-        xs: List of Int = [10, 20, 30, 40]
+    xs: List of Int = [10, 20, 30, 40]
 
     -> running
         do: print(xs.count)

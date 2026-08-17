@@ -1,6 +1,5 @@
 def main:
-    data:
-        cb: Block
+    cb: Block
 
     -> running
         then: cb => () => print(42)

@@ -1,8 +1,7 @@
 def main:
     def clock: Clock
 
-    data:
-        beats: Int = 0
+    beats: Int = 0
 
     -> running
 

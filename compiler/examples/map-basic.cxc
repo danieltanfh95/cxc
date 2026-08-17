@@ -1,6 +1,5 @@
 def main:
-    data:
-        m: Map of (String, Int)
+    m: Map of (String, Int)
 
     -> running
         do:

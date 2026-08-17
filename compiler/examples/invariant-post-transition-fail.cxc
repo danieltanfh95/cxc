@@ -1,7 +1,6 @@
 def Gauge:
-    data:
-        raw_value: Int = 3
-        max:       Int = 5
+    raw_value: Int = 3
+    max:       Int = 5
 
     value :< raw_value
 

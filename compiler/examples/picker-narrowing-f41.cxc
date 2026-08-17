@@ -1,6 +1,5 @@
 def Age(value: Int):
-    data:
-        raw_value: Int = value
+    raw_value: Int = value
 
     value :< raw_value
 

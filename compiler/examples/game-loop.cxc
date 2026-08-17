@@ -2,9 +2,8 @@ def main:
     def clock: Clock
     def input: TestKeyboardInput(events: 2)
 
-    data:
-        n: Int = 0
-        ticks: Int = 0
+    n: Int = 0
+    ticks: Int = 0
 
     -> running
 

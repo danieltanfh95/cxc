@@ -1,6 +1,5 @@
 def Logger:
-    data:
-        prefix: String = "log: "
+    prefix: String = "log: "
 
     * <: shout(msg: Int) -> *
         do: print(msg)

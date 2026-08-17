@@ -1,8 +1,7 @@
 def main:
     def clock: Clock(ticks: 1)
 
-    data:
-        alive: Int = 1
+    alive: Int = 1
 
     -> running
         do: self :> stop

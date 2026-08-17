@@ -1,6 +1,5 @@
 def Clock(ticks: Int = 3):
-    data:
-        remaining: Int = ticks
+    remaining: Int = ticks
 
     now :< native_millis_now()
 

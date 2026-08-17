@@ -1,8 +1,7 @@
 def main:
     def rng: Random
 
-    data:
-        pick: Int = 99
+    pick: Int = 99
 
     -> running
         do: self :> stop

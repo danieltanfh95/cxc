@@ -1,6 +1,5 @@
 def Counter:
-    data:
-        n: Int = 10
+    n: Int = 10
 
     methods:
         def bump(self) -> Int:

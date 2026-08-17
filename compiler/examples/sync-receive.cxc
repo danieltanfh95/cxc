@@ -1,6 +1,5 @@
 def main:
-    data:
-        n: Int = 0
+    n: Int = 0
 
     -> running
         do:

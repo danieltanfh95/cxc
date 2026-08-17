@@ -1,6 +1,5 @@
 def Emitter(seed: Int):
-    data:
-        val: Int = seed
+    val: Int = seed
 
     -> running
         do: :> beep(v: val)
@@ -10,10 +9,9 @@ def Emitter(seed: Int):
 def main:
     def clock: Clock
 
-    data:
-        xs: List of Emitter = [Emitter(seed: 10), Emitter(seed: 20)]
-        total: Int = 0
-        bound_ticks: Int = 0
+    xs: List of Emitter = [Emitter(seed: 10), Emitter(seed: 20)]
+    total: Int = 0
+    bound_ticks: Int = 0
 
     -> running
 

@@ -1,8 +1,7 @@
 def main:
     def clock: Clock(ticks: 3)
 
-    data:
-        count: Int = 0
+    count: Int = 0
 
     -> running
 

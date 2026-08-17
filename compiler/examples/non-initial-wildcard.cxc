@@ -1,6 +1,5 @@
 def Machine:
-    data:
-        raw_n: Int = 0
+    raw_n: Int = 0
 
     n :< raw_n
 

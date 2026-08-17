@@ -1,7 +1,6 @@
 def Bounded(y: Int = 5, limit: Int = 10):
-    data:
-        raw_val: Int = y
-        lim:     Int = limit
+    raw_val: Int = y
+    lim:     Int = limit
 
     val :< raw_val
 

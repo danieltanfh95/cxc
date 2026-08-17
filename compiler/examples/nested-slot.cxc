@@ -1,6 +1,5 @@
 def Paddle:
-    data:
-        raw_y: Int = 7
+    raw_y: Int = 7
 
     y :< raw_y
 

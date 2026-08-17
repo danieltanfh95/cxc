@@ -8,8 +8,7 @@ def Emitter:
     running <: fire -> end
 
 def main:
-    data:
-        source: Emitter = nil
+    source: Emitter = nil
 
     -> running
         do: self :> setup

@@ -1,8 +1,7 @@
 module com.example.demo.counter
 
 def Counter(seed: Int):
-    data:
-        val: Int = seed
+    val: Int = seed
 
     methods:
         def bump(self) -> Int:

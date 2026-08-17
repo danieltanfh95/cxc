@@ -1,7 +1,6 @@
 record V:
-    data:
-        x: Int
-        y: Int
+    x: Int
+    y: Int
 
 def main:
     -> running

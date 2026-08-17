@@ -12,8 +12,7 @@
 # return). Prints `0`.
 
 def Counter:
-    data:
-        raw_n: Int = 5
+    raw_n: Int = 5
 
     n :< raw_n
 
@@ -22,8 +21,7 @@ def Counter:
             return n
 
 def Wrapper:
-    data:
-        raw_c: Counter = nil
+    raw_c: Counter = nil
 
     c :< raw_c
 
