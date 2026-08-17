@@ -21,17 +21,22 @@
   (:require [clojure.string :as str]))
 
 (def reserved-words
-  ;; F68 L6b (Proposal H) — `record` / `class` / `enum` / `protocol` retired
-  ;; from the reserved set. `def` is the sole opener; kind flows from body
-  ;; structural cues (accepts:→protocol, case→enum, transition/use:/ctor
-  ;; params/nested-slot→class, otherwise→record). Retired keywords now lex
-  ;; as identifiers (safe: none of them read as an ordinary variable name
-  ;; anyone would reach for by accident). `methods` / `metadata` / `cases`
-  ;; retired with F67 L4 + F68 L6b bodies. `function` kept only for the
-  ;; grace-period module-scope `def name(...) -> T:` migration (K8).
+  ;; F68 L6b (Proposal H) — `record` / `class` / `enum` / `protocol` /
+  ;; `methods` / `metadata` / `cases` retired. `def` is the sole opener;
+  ;; kind flows from body structural cues (accepts:→protocol, case→enum,
+  ;; transition/use:/ctor params/nested-slot→class, otherwise→record).
+  ;;
+  ;; F68 L6c — `data` retired too (F67 L5 collapsed the `data:` header;
+  ;; L6c drops the diagnostic path and the reservation). `contracts` and
+  ;; `constructor` were reserved but never dispatched — removed as dead
+  ;; reservations.
+  ;;
+  ;; `function` kept only for the grace-period module-scope `def name(...)
+  ;; -> T:` migration (K8). `expose` still reserved — tracked separately
+  ;; as F33 L6.
   #{"module" "from" "import" "as" "expose"
     "def"
-    "data" "use" "invariants" "contracts" "constructor"
+    "use" "invariants"
     "accepts"
     "extend" "replace"
     "deprecated"

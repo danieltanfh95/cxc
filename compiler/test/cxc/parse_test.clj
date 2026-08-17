@@ -387,12 +387,10 @@ def main:
         then: n => k
 ")))))
 
-(deftest f67-l5-data-header-retired-with-migration
-  (testing "F67 L5 — `data:` section header is retired (Proposal D). Parser emits a targeted diagnostic naming the retired form and pointing at the top-level field layout."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"(?s)F67 L5.*`data:` section header is retired"
-         (first-node "def A:\n    data:\n        n: Int = 0\n")))))
+;; f67-l5-data-header-retired-with-migration deleted at F68 L6c — `data` is
+;; no longer a reserved word (the retirement is the reservation removal itself).
+;; A `data:` header now lexes as an :ident field decl and fails downstream on
+;; type parsing; the targeted hand-hold is gone (Option C philosophy).
 
 (deftest f67-l5-top-level-fields-parse-as-synthetic-data-section
   (testing "F67 L5 — fields at atom-body top level fold into a synthetic :data-section so downstream shape stays stable. Two fields in declaration order. F68 note: an atom-shaped body requires an explicit atom marker (transition/use/ctor) so the def-atom AST kind is preserved; the field folding is the assertion here."

@@ -644,33 +644,6 @@
        (section-names (t-value (peek-tok tokens pos)))
        (at? tokens (inc pos) :punct ":")))
 
-(defn- parse-data-section
-  "F67 L5 — `data:` section header is retired (Proposal D). Fields
-   move to class-body top level:
-
-     def X:                     def X:
-         data:              →       n: Int = 10
-             n: Int = 10           m: Float = 1.0
-             m: Float = 1.0
-
-   Semantics unchanged — the parser folds top-level `:field` nodes into
-   a synthetic `:data-section` (see fold-top-level-fields) so every
-   downstream lower/emit consumer keeps its shape. The collapse removes
-   the redundant grouping section: fields ARE the class body's default
-   content, so declaring the group is noise."
-  [tokens pos]
-  (fail! tokens pos
-         (str "F67 L5: `data:` section header is retired (Proposal G / "
-              "Proposal D — class-body collapse). Delete the `data:` line "
-              "and unindent the fields by 4 spaces so they sit at class-body "
-              "top level:\n\n"
-              "    def X:                     def X:\n"
-              "        data:              →       n: Int = 10\n"
-              "            n: Int = 10           m: Float = 1.0\n\n"
-              "Semantics unchanged (spec §1.11). Fields at top level are "
-              "gathered into the same data-section AST downstream; the "
-              "collapse removes the redundant grouping header.")))
-
 (defn- parse-deprecated-section
   "deprecated: \"<message>\"
    Layer 6 Step 11 — inline body-form deprecation marker. Emits a
@@ -1272,10 +1245,6 @@
         (let [[s p2] (parse-deprecated-section tokens p)]
           (recur (conj body s) (skip-newlines tokens p2)))
 
-        (at? tokens p :kw "data")
-        (let [[s p2] (parse-data-section tokens p)]
-          (recur (conj body s) (skip-newlines tokens p2)))
-
         (at? tokens p :kw "invariants")
         (let [[s p2] (parse-invariants-section tokens p)]
           (recur (conj body s) (skip-newlines tokens p2)))
@@ -1668,12 +1637,6 @@
     ;; transition here and defer the wildcard-only check to lower.
     (at? tokens pos :glyph "*")
     (parse-transition tokens pos)
-
-    (at? tokens pos :kw "data")
-    (fail! tokens pos
-           (str "`data:` is not permitted inside `extend " target
-                "` — extensions cannot add state (§3.3.2). Add fields "
-                "at the original class definition."))
 
     ;; F67 L5 — under Proposal D, fields live at class-body top level
     ;; (no `data:` header). Extensions still can't add state; the
