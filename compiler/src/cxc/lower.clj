@@ -2329,12 +2329,18 @@
                (let [info (get env nm)]
                  (and info
                       (not (contains? non-slot-kinds (:kind info))))))
+             ;; F13 L2 — `weak` / `unowned` fields are non-owning
+             ;; references. The child atom has a different owner (or
+             ;; no owner); this atom must NOT install a parent back-
+             ;; ref or cascade end into it. Skip such fields when
+             ;; collecting owned-slot names.
              data-slot-names
              (vec
               (keep (fn [f]
                       (let [ty-nm (base-type-name (:type f))]
                         (when (and (not (:cxc-compiler-synthesized f))
                                    (not (:cxc-f41-synthesized f))
+                                   (not (:modifier f))
                                    (regular-atom-name? ty-nm))
                           (:name f))))
                     (:fields merged-dsec)))
@@ -5634,12 +5640,22 @@
                                   ;; `strong` gives standard owning-reference semantics;
                                   ;; `assign` is right for primitives and copyable values
                                   ;; that ARC ignores.
-                                  (let [is-atom-ptr? (contains? (:atom-env ctx) (:cxc-ty f))
+                                  ;;
+                                  ;; F13 L2 — reference modifiers override the default
+                                  ;; ownership attr on reference-typed fields:
+                                  ;;   `weak T`    → `(nonatomic, weak) T *name`
+                                  ;;   `unowned T` → `(nonatomic, unsafe_unretained) T *name`
+                                  ;; Modifier presence was already validated in L1 to
+                                  ;; be on a reference type; here we just pick the attr.
+                                  (let [modifier     (:modifier f)
+                                        is-atom-ptr? (contains? (:atom-env ctx) (:cxc-ty f))
                                         is-block?    (= "Block" (:cxc-ty f))
                                         is-string?   (= "String" (:cxc-ty f))]  ; F65
                                     {:name (:name f)
                                      :c-type (:c-type f)
                                      :attrs (cond
+                                              (= :weak modifier)    ["nonatomic" "weak"]
+                                              (= :unowned modifier) ["nonatomic" "unsafe_unretained"]
                                               is-block?    ["nonatomic" "copy"]
                                               is-string?   ["nonatomic" "copy"]  ; F65
                                               is-atom-ptr? ["strong"]

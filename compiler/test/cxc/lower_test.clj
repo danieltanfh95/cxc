@@ -2585,3 +2585,48 @@ def main:
   (testing "F13 L1 — `unowned <AtomName>` on an atom-typed data field passes env-time validation."
     (let [prog (lower-src "def Parent:\n    -> alive\n\ndef Child:\n    parent: unowned Parent\n\n    -> alive\n\ndef main:\n    -> running\n        do: print(0)\n")]
       (is (= :objc-program (:node prog))))))
+
+;; ---------------------------------------------------------------------------
+;; F13 L2 — ObjC property emit for weak / unsafe_unretained (spec §6.14)
+;; ---------------------------------------------------------------------------
+
+(deftest f13-l2-weak-emits-nonatomic-weak-attrs
+  (testing "F13 L2 — `weak <AtomName>` field lowers to `@property (nonatomic, weak)` on the ObjC class definition. ARC handles the nil-out on target dealloc; no additional runtime scaffolding needed. Field name deliberately distinct from the compiler-synthesized `parent` back-ref ivar."
+    (let [prog (lower-src "def Owner:\n    -> alive\n\ndef Child:\n    owner: weak Owner\n\n    -> alive\n\ndef main:\n    -> running\n        do: print(0)\n")
+          child (first (filter #(= "Child" (:name %)) (:classes prog)))
+          f     (first (filter #(= "owner" (:name %)) (:properties child)))]
+      (is (= ["nonatomic" "weak"] (:attrs f))
+          "weak modifier picks (nonatomic, weak) attrs, overriding the default (strong) for atom pointers"))))
+
+(deftest f13-l2-unowned-emits-nonatomic-unsafe-unretained-attrs
+  (testing "F13 L2 — `unowned <AtomName>` field lowers to `@property (nonatomic, unsafe_unretained)`. Non-owning, non-zeroing pointer; access after target dealloc is UB per spec §6.14."
+    (let [prog (lower-src "def Owner:\n    -> alive\n\ndef Child:\n    owner: unowned Owner\n\n    -> alive\n\ndef main:\n    -> running\n        do: print(0)\n")
+          child (first (filter #(= "Child" (:name %)) (:classes prog)))
+          f     (first (filter #(= "owner" (:name %)) (:properties child)))]
+      (is (= ["nonatomic" "unsafe_unretained"] (:attrs f))
+          "unowned modifier picks (nonatomic, unsafe_unretained) attrs"))))
+
+(deftest f13-l2-weak-field-excluded-from-owned-slot-cascade
+  (testing "F13 L2 — a `weak` atom-typed field is a non-owning reference; parent must NOT install a back-ref on the child or cascade end into it. Verifies that install-parent + end-cascade wiring skips weak/unowned fields."
+    (let [prog (lower-src "def Owner:\n    -> alive\n\n    -> end\n\ndef Child:\n    owner: weak Owner\n\n    -> alive\n\n    -> end\n\ndef main:\n    -> running\n        do: print(0)\n")
+          child (first (filter #(= "Child" (:name %)) (:classes prog)))
+          state (first (filter #(= "cxc_stateInit" (:selector %)) (:methods child)))
+          install-msgs (filter #(and (= :objc-msg (:node %))
+                                     (= "cxc_installParent:inSlot:" (:selector %)))
+                               (:body state))
+          end (first (filter #(= "transitionToEnd" (:selector %)) (:methods child)))
+          catch-wrap (first (filter #(= :end-catch-log-only (:node %)) (:body end)))
+          cascade-children (filter #(= :end-cascade-child (:node %))
+                                   (:body catch-wrap))]
+      (is (empty? install-msgs)
+          "no install-parent call for weak field — child has a different owner")
+      (is (empty? cascade-children)
+          "no end-cascade for weak field — this atom doesn't own the child's lifecycle"))))
+
+(deftest f13-l2-no-modifier-keeps-default-strong-for-atoms
+  (testing "F13 L2 — an atom-typed data field WITHOUT a modifier still emits `(strong)` — the pre-L2 default is preserved for the no-modifier case."
+    (let [prog (lower-src "def Owner:\n    -> alive\n\ndef Child:\n    owner: Owner = Owner()\n\n    -> alive\n\ndef main:\n    -> running\n        do: print(0)\n")
+          child (first (filter #(= "Child" (:name %)) (:classes prog)))
+          f     (first (filter #(= "owner" (:name %)) (:properties child)))]
+      (is (= ["strong"] (:attrs f))
+          "unmodified atom-typed field still gets the pre-L2 default (strong)"))))
