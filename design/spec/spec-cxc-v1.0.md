@@ -8071,11 +8071,11 @@ function handshake(url: URL) -> Result<Response, Error>:
 
    No separate "definite assignment analysis" is spec'd or needed — the expression form provides the same "assigned exactly once, then immutable" guarantee.
 
-2. **Immutable.** No reassignment. `let` at module scope is the only form; `var`-equivalent module-level mutable state is not supported. Mutable module-level state uses a class with `state:` and a singleton pattern, so that access is scoped and metadata-queryable.
-3. **Type annotation required at module scope.** Module-level `let` must specify the type — no type inference across module boundaries. Ensures the exposed interface is deterministic without full-program analysis. Function-scope `let` allows type inference from the initializer.
+2. **Immutable.** No reassignment. `let` at module scope is the only form; `var`-equivalent module-level mutable state is not supported. Mutable module-level state uses an atom with `data:` fields and a singleton pattern, so that access is scoped and metadata-queryable.
+3. **Type annotation required at module scope.** Module-level `let` must specify the type — no type inference across module boundaries. Ensures the module's public interface is deterministic without full-program analysis. Function-scope `let` allows type inference from the initializer.
 4. **Evaluated at module load** (module scope) or **at binding site** (function scope). Module-level initializers run at module load time, in declaration order within the source. Cross-source ordering follows dependency order (§7.2).
 5. **Constant-expression preferred.** If the initializer is a compile-time constant, the compiler evaluates it at build time and inlines the value. Otherwise it becomes a module-load-time (or binding-time) expression.
-6. **`expose` legal at module scope.** A module-level `let` is internal by convention; `expose let PI: Double = 3.14159` includes it in the module's exposed interface.
+6. **Public by construction.** A module-level `let` is part of the module's public interface — no `expose` marker (§7.7, §7.8). `expose` was retired at v1.0; every top-level declaration is externally nameable.
 
 ### 7.2 Modules
 
@@ -9199,7 +9199,7 @@ module_decl := 'module' qualified_name
 top_level_item := section_usage | declaration | alias_decl | alias_use
 
 # Alias declarations (§4.16). One unified shape; category emerges from expansion.
-alias_decl := 'expose'? 'alias' alias_signature ':' alias_expansion
+alias_decl := 'alias' alias_signature ':' alias_expansion
 
 alias_signature := identifier                                        # section/type/value/module alias name
                  | identifier generic_params                         # parameterized type alias
@@ -9236,16 +9236,15 @@ section_contents := field_decl* | method_decl* | statement* | declaration*
                   | expression | ast_content
                   | metadata_entry* | case_decl* | accepts_decl*
 
-class_decl := 'expose'? 'extend'? 'class' identifier
+class_decl := 'extend'? 'class' identifier
               generic_params? conformance_clause? where_clause? ':' INDENT
                   class_member*
               DEDENT
               # `extend` prefix (§3.3.2, v0.9.0) marks the declaration as an
               # addition to an existing class of the same name. `extend` cannot
               # coexist with `metadata: kind: <kind>:` (kind is fixed at definition)
-              # and cannot declare new `state:` fields (memory layout is fixed).
-              # `expose` is legal on either form; on an extension it exposes the
-              # extension's members, not the target class itself.
+              # and cannot declare new `data:` fields (memory layout is fixed).
+              # `expose` retired at v1.0 (§7.7 uniform visibility).
               #
               # Header ordering (v0.10.2): generic_params, then conformance_clause,
               # then where_clause. Reads left-to-right as
@@ -9339,7 +9338,7 @@ processor_decl := 'processor' identifier '(' parameter_list ')' '->' type
 validator_decl := 'validator' identifier '(' parameter_list ')'
                   ':' INDENT statement* DEDENT
 
-method_decl := 'expose'? ('replace')? 'function' identifier
+method_decl := ('replace')? 'function' identifier
                generic_params? '(' parameter_list ')' ('->' type)?
                effect_clause? contract_clause?
                ':' INDENT statement* DEDENT
@@ -9381,8 +9380,10 @@ parameter_list := parameter (',' parameter)*
 parameter      := identifier ':' type ('=' const_expr)?
 const_expr     := primitive_literal | 'nil' | value_alias_reference
 
-field_decl := 'expose'? ('immutable' | 'mutable')? ('weak' | 'unowned')?
+field_decl := ('immutable' | 'mutable')? ('weak' | 'unowned')?
               identifier ':' type ('=' expr)?
+              # `expose` retired at v1.0 (§7.7). All fields are externally readable;
+              # external mutation is impossible by grammar under the actor substrate.
 
 # Expression forms (§3.8).
 expr := ... | if_expr | switch_expr | block_expr | while_expr | for_expr | loop_expr
@@ -9480,8 +9481,10 @@ binop := '*' | '/' | '%'
 assignment_expr := lvalue assignop expr
 assignop := '=' | '+=' | '-=' | '*=' | '/=' | '%='
 
-# Module-level immutable bindings (§7.1).
-module_let := 'expose'? 'let' identifier ':' type '=' expr
+# Module-level immutable bindings (§7.1). `expose` retired at v1.0 — every
+# top-level declaration is part of the module's public interface by
+# construction (§7.7, §7.8).
+module_let := 'let' identifier ':' type '=' expr
 
 # Layout primitives (§9.2) — C-interop only.
 layout_primitive := 'sizeof'   '(' type ')'
@@ -9492,7 +9495,7 @@ layout_primitive := 'sizeof'   '(' type ')'
 **Alias-signature pattern grammar** (§4.16.1, §4.16.16). The alias mechanism extends the base grammar with new productions at the position and precedence declared. User aliases require the `@` marker on the trigger; prelude aliases are unmarked (§4.16.16, §4.20).
 
 ```
-alias_decl := 'expose'? 'alias' alias_signature alias_modifiers ':' alias_expansion
+alias_decl := 'alias' alias_signature alias_modifiers ':' alias_expansion
 
 alias_signature := prelude_signature | user_signature
                 # `prelude_signature` may appear only in prelude source (`stdlib/prelude/`);
@@ -9597,7 +9600,7 @@ user_alias_decl     := '@' identifier identifier ':' INDENT class_member* DEDENT
 # top-level compound whose env is provided by the OS runtime is simply the
 # atom named `main`.
 
-def_decl := 'expose'? 'extend'? 'def' identifier
+def_decl := 'extend'? 'def' identifier
             ( '(' constructor_param_list ')' )?         # constructor params (optional)
             ( ':' channel_signature )?                   # inline channel signature for operator atoms
             where_clause?
@@ -10001,6 +10004,18 @@ ffi_type := 'CString' | 'Int8' | 'Int16' | 'Int32' | 'Int64'
 ---
 
 ## 11. Worked Example
+
+> **v1.0 note.** The worked example below is post-v0.11 legacy prose from an
+> earlier draft, retained until rewritten in the v1.0 shape. It uses several
+> retired surfaces: `class`/`enum`/`protocol` openers (retired F68 L6b —
+> `def` is the sole opener; kind flows from body structural cues), `state:`
+> section (retired v1.0 §1.11 — all fields are `data:` at class-body top
+> level, mutations happen through transitions per F67 L5), `methods:` section
+> (retired F67 L4 — readers are observables `:<`, writers are transitions
+> `<:`), `function constructor` (retired — auto-synthesized from `data:`
+> fields), and `expose` (retired F33 L6 — all members externally readable,
+> API stability is a documentation contract per §7.7). Read for
+> section-composition intent; ignore the syntax details.
 
 A complete small program demonstrating sections at multiple scopes:
 
