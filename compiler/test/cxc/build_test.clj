@@ -159,6 +159,12 @@
       (is (zero? exit))
       (is (= "7\n" stdout)))))
 
+(deftest end-to-end-observable-parametric
+  (testing "F67 L2 — observable-parametric.cxc: `scaled_area(sx: Int, sy: Int) :< (w * sx) * (h * sy)` — parametric observable emits as ObjC method with declared params; caller invokes `r.scaled_area(2, 5)` and gets (3*2)*(4*5) = 120."
+    (let [{:keys [exit stdout]} (compile-and-run "observable-parametric")]
+      (is (zero? exit))
+      (is (= "120\n" stdout)))))
+
 (deftest end-to-end-invariant-pass
   (testing "invariant-pass.cxc — init satisfies invariants; program runs to completion"
     (let [{:keys [exit stdout]} (compile-and-run "invariant-pass")]

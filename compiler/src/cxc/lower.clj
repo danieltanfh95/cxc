@@ -2903,11 +2903,18 @@
                 _           (when (and (nil? m) (nil? o))
                               (fail-nyi! (str "method/observable `" method-name "` on atom `"
                                               atom-name "`") call-node))
-                _           (when (and o (seq arg-exprs))
+                ;; F67 L2: parametric observables carry `:params`; a call
+                ;; with args must supply exactly those params.
+                _           (when (and o (seq arg-exprs)
+                                       (not= (count arg-exprs) (count (:params o))))
                               (fail-nyi! (str "observable `" method-name "` called with "
-                                              "arguments — observables are zero-arg reads")
+                                              (count arg-exprs) " args but declares "
+                                              (count (:params o)) " params")
                                          call-node))
-                param-names (if m (mapv :name (rest (:params m))) [])]
+                param-names (cond
+                              m (mapv :name (rest (:params m)))
+                              (and o (seq (:params o))) (mapv :name (:params o))
+                              :else [])]
             {:node     :objc-msg
              :recv     target-lo
              :selector (objc-method-selector method-name param-names)
@@ -4832,15 +4839,40 @@
      :body        wrapped}))
 
 (defn- lower-observable-method
-  "An observable `name :< expr` becomes a zero-arg synthesized method
-   `- (T)name { return <expr>; }`. Reads self-fields via ivar direct
-   access (matches init-body). Only readonly — no setter is emitted."
-  [o ctx]
-  {:node        :objc-method
-   :selector    (:name o)
-   :return-type (:c-type o)
-   :params      []
-   :body        [{:node :return :value (lower-expr (:expr o) ctx)}]})
+  "An observable becomes a synthesized method:
+     zero-arg   `foo :< expr`         → `-(T)foo { return <expr>; }`
+     parametric `foo(a: A) :< expr`   → `-(T)fooWithA:(A)a { return <expr>; }`
+
+   Reads self-fields via ivar direct access (matches init-body). Args
+   (if any) are ObjC method params visible in the body expression.
+   Only readonly — no setter is emitted. F67 L2 (Proposal G):
+   parametric observables replace reader methods, so the shape must
+   accept declared params in addition to the pure-read expression body."
+  [o ctx atom-name]
+  (let [param-locals (into {}
+                           (map (fn [p]
+                                  [(:name p)
+                                   (cxc-type->type-kw (:name (:type p))
+                                                      (:record-env ctx)
+                                                      (:atom-env ctx)
+                                                      (:enum-env ctx)
+                                                      p)])
+                                (:params o)))
+        body-ctx     (update ctx :locals #(merge (or % {}) param-locals))
+        objc-params  (mapv (fn [p]
+                             {:name   (:name p)
+                              :c-type (cxc-type->c (:type p)
+                                                   (:record-env ctx)
+                                                   (:atom-env ctx)
+                                                   (:enum-env ctx))})
+                           (:params o))]
+    {:node        :objc-method
+     :selector    (if (seq objc-params)
+                    (objc-method-selector (:name o) (mapv :name objc-params))
+                    (:name o))
+     :return-type (:c-type o)
+     :params      objc-params
+     :body        [{:node :return :value (lower-expr (:expr o) body-ctx)}]}))
 
 (defn- lower-invariant-check
   "One predicate → an :invariant-check init statement. Ctx must carry
@@ -5032,7 +5064,7 @@
                    atom-name i p ctx-in-init field-substitutions))
                 (:invariants rec)))
           user-methods    (mapv #(lower-atom-method atom-name % ctx-with-self) methods)
-          obs-methods     (mapv #(lower-observable-method % ctx-with-self) observables)
+          obs-methods     (mapv #(lower-observable-method % ctx-with-self atom-name) observables)
           data-props      (mapv (fn [f]
                                   ;; ARC discipline: object pointers (atom types) → strong;
                                   ;; blocks → copy (ARC needs Block_copy on retain to
@@ -5374,15 +5406,29 @@
    resolve), infer each observable's return type in a ctx where the
    atom's own data-fields are self-fields. Observables are typed in
    declaration order so a later observable may reference earlier ones.
-   Populates :observables-typed and :observable-index on each entry."
+   Populates :observables-typed and :observable-index on each entry.
+
+   F67 L2: parametric observables carry `:params` — each param's name
+   becomes a local (its type-kw resolved from the param TypeRef) during
+   inference of the body expression. Args shadow self-field names if
+   they collide (transient scope; consistent with method-param
+   behavior)."
   [atom-env record-env enum-env]
   (reduce-kv
    (fn [env atom-name info]
      (let [self-fields (into {} (map (juxt :name identity) (:fields info)))
            {:keys [typed]}
            (reduce (fn [{:keys [typed known]} o]
-                     (let [ctx    {:record-env record-env :atom-env atom-env
-                                   :enum-env enum-env :locals {}
+                     (let [param-locals (into {}
+                                              (map (fn [p]
+                                                     [(:name p)
+                                                      (cxc-type->type-kw
+                                                       (:name (:type p))
+                                                       record-env
+                                                       atom-env enum-env p)])
+                                                   (:params o)))
+                           ctx    {:record-env record-env :atom-env atom-env
+                                   :enum-env enum-env :locals param-locals
                                    :self-fields known}
                            tk     (infer-type (:expr o) ctx)
                            typed' (assoc o :type-kw tk

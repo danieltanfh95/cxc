@@ -747,15 +747,23 @@
                 (recur (conj preds e) p3))))))
 
 ;; ---------------------------------------------------------------------------
-;; Observables:  <name> :< <expr>
+;; Observables:
+;;   Zero-arg:   <name> :< <expr>
+;;   Parametric: <name>(<param-list>) :< <expr>       # F67 L2
 ;;   Declaration-flavored assignment (§1.11). The colon-less-than glyph.
+;;   Parametric observables (Proposal G L2) replace reader methods: any
+;;   pure computation over self's fields with args now goes here rather
+;;   than in a `methods:` section.
 ;; ---------------------------------------------------------------------------
 
 (defn- parse-observable [tokens pos]
-  (let [[name p]  (expect tokens pos :ident)
-        [_ p]     (expect tokens p :glyph ":<")
-        [expr p]  (parse-expr tokens p)]
-    [{:node :observable :name name :expr expr} p]))
+  (let [[name p]        (expect tokens pos :ident)
+        [params p]      (if (at? tokens p :punct "(")
+                          (parse-param-list-parens tokens p)
+                          [[] p])
+        [_ p]           (expect tokens p :glyph ":<")
+        [expr p]        (parse-expr tokens p)]
+    [{:node :observable :name name :params params :expr expr} p]))
 
 ;; ---------------------------------------------------------------------------
 ;; Transitions
@@ -1063,13 +1071,29 @@
 ;;
 ;;   Determines what to parse by look-ahead:
 ;;     - `use:`, `data:`, `invariants:`, `methods:` → section
-;;     - `<ident> :<`                                → observable
+;;     - `<ident> :<` or `<ident>(...) :<`           → observable (zero-arg or parametric)
 ;;     - `<ident|self> <:|<|` OR `<ident> ->` OR `->` → transition
 ;; ---------------------------------------------------------------------------
 
+(defn- scan-past-parens
+  "Given the token at `pos` is an open `(`, return the position just
+   after its matching close `)`. Balances nested parens. Returns nil if
+   no match is found before EOF."
+  [tokens pos]
+  (loop [p (inc pos) depth 1]
+    (cond
+      (>= p (count tokens)) nil
+      (at? tokens p :punct "(") (recur (inc p) (inc depth))
+      (at? tokens p :punct ")") (if (= depth 1) (inc p) (recur (inc p) (dec depth)))
+      :else                     (recur (inc p) depth))))
+
 (defn- looks-like-observable? [tokens pos]
   (and (at? tokens pos :ident)
-       (at? tokens (inc pos) :glyph ":<")))
+       (or (at? tokens (inc pos) :glyph ":<")
+           ;; F67 L2 — parametric observable: `<name>(params) :<`
+           (and (at? tokens (inc pos) :punct "(")
+                (when-let [after-close (scan-past-parens tokens (inc pos))]
+                  (at? tokens after-close :glyph ":<"))))))
 
 ;; F14 / spec §1.11 — `-> handler(args):` is an externally invocable
 ;; side-effect-only handler declaration, distinguished from the

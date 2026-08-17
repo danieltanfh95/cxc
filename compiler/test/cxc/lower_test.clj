@@ -2608,3 +2608,36 @@ def main:
     (let [prog (lower-src "def Counter:\n    data:\n        n: Int = 10\n\n    methods:\n        function bump(self) -> Int:\n            return self.n + 1\n\ndef main:\n    def c: Counter\n\n    -> running\n        do: print(0)\n")]
       (is (= :objc-program (:node prog))
           "self.n inside Counter's own method compiles cleanly"))))
+
+(deftest f67-l2-parametric-observable-lowers-with-args
+  (testing "F67 L2 (Proposal G): parametric observables `<name>(args) :< <expr>` emit as ObjC methods with declared params. The observable body may reference both self-fields and its own args; both resolve during type inference. Under Proposal G this shape replaces reader methods — `function healed_by(self, amt) -> Int: return self.hp + amt` migrates to `healed_by(amt: Int) :< hp + amt`."
+    (let [prog (lower-src "def Player:\n    data:\n        hp: Int = 100\n        max_hp: Int = 100\n\n    healed_by(amt: Int) :< hp + amt\n\ndef main:\n    -> running\n        do: print(0)\n")
+          cls  (first (filter #(= "Player" (:name %)) (:classes prog)))
+          obs  (first (filter #(re-matches #"healed_by.*" (or (:selector %) "")) (:methods cls)))]
+      (is (some? obs) "parametric observable emits as :objc-method")
+      (is (= 1 (count (:params obs)))
+          "parametric observable carries its declared param (amt: Int)")
+      (is (= "amt" (:name (first (:params obs))))
+          "param name preserved")
+      (is (= "int64_t" (:return-type obs))
+          "return type inferred from body expression (hp + amt : Int)"))))
+
+(deftest f67-l2-zero-arg-observable-still-lowers
+  (testing "F67 L2: zero-arg observable shape is preserved — `<name> :< <expr>` (no parens) still parses and lowers exactly as before. The parametric extension does not require parens on zero-arg observables."
+    (let [prog (lower-src "def Counter:\n    data:\n        n: Int = 0\n\n    doubled :< n + n\n\ndef main:\n    -> running\n        do: print(0)\n")
+          cls  (first (filter #(= "Counter" (:name %)) (:classes prog)))
+          obs  (first (filter #(= "doubled" (:selector %)) (:methods cls)))]
+      (is (some? obs) "zero-arg observable still emits with bare selector")
+      (is (= [] (:params obs))
+          "zero-arg observable has empty params list"))))
+
+(deftest f67-l2-parametric-observable-multi-arg
+  (testing "F67 L2: parametric observables with multiple args. Each arg becomes an ObjC method param; the body expression sees all args + self-fields in scope."
+    (let [prog (lower-src "def Box:\n    data:\n        w: Int = 0\n        h: Int = 0\n\n    scaled_area(sx: Int, sy: Int) :< (w * sx) * (h * sy)\n\ndef main:\n    -> running\n        do: print(0)\n")
+          cls  (first (filter #(= "Box" (:name %)) (:classes prog)))
+          obs  (first (filter #(re-matches #"scaled_area.*" (or (:selector %) "")) (:methods cls)))]
+      (is (some? obs) "multi-arg parametric observable emits")
+      (is (= 2 (count (:params obs)))
+          "both params carried through")
+      (is (= ["sx" "sy"] (mapv :name (:params obs)))
+          "param names preserved in order"))))
