@@ -1547,53 +1547,89 @@ Bare call-expressions (`pipe |> handler_name(arg)`) are rejected — the payload
 
 ---
 
-#### §1.11 addendum — Class body collapse to the receive-glyph transition primitive (Proposal G, 2026-08-17)
+#### §1.11 addendum — Class body collapse to two glyphs (Proposal G, revised 2026-08-17)
 
-Under Corvid's actor substrate, all external interaction with an atom is message-passing. The receive-glyph transition IS the message-handling primitive. Every class-body callable — what OO calls methods, handlers, and observables — collapses to one shape:
+Under Corvid's actor substrate, all external interaction with an atom is one of two things: **pull a computed view of state** (observable) or **send a message that may change state** (transition). Everything else — methods, handlers, function-groupings — is OO residue. The class body collapses to two glyphs, one primitive each.
+
+**Observable (`:<`) — pull-getter for a computed view of state.**
+
+```
+<name>[(args)] :< <expression>
+```
+
+- Pure expression over `self`'s fields (and args if parametric).
+- No `then:`, no `do:`, no `when:`, no side effects.
+- Zero-arg (`hp_display :< format(hp)`) — unchanged from prior spec.
+- Parametric (`healed_by(amt: Int) :< min(hp + amt, max_hp)`) — new. Replaces reader methods.
+
+**Receive-glyph transition (`<:`) — message handler that may change state.**
 
 ```
 <source-phase-or-*> <: <msg-name>(args) -> <target-phase-or-*>
     [when: <guard-expr>]
     [then: <field-update>[, ...]]
     [do: <side-effect-stmt>...]
-    [return: <expr>]
 ```
 
-- **Source `*`** — matches any phase (wildcard).
-- **Target `*`** — matched source phase (stay — no phase change).
-- **`when:`** — guard predicate; if false, transition doesn't fire and any sender expression yields the receiver's identity (no reply).
-- **`then:`** — accumulates field updates into next-state bag; commits atomically at transition exit.
-- **`do:`** — side effects (I/O, sync sends). Runs *after* commit.
-- **`return:`** — reply value to sender. If omitted, transition is void (senders using `atom.msg(args)` in value position get `Unit`).
+- Source `*` — from any phase (wildcard).
+- Target `*` — same as matched source phase (stay — no phase change).
+- `when:` guards; `then:` accumulates field updates into next-state bag (commits atomically per F33 L2-L3); `do:` runs side effects after commit.
+- **Void return per §1.11 line 1243.** Transitions produce new state, not values. Values come from observables.
 
-**Class body top-level content post-collapse:**
+**Class body top-level content:**
 
-1. **Field declarations** (`<name>: <TypeRef> [= <default>]`) — the atom's state. Fields live at top level; no `data:` header. Extensions cannot add fields (layout invariance §4.18.3).
-2. **Receive-glyph transitions** — the sole callable primitive.
-3. **Configuration sections** (`use:`, `metadata:`, `invariants:`, `contracts:`) — group *declarations about the class*, not callables. Keep their headers.
+1. **Field declarations** (`<name>: <TypeRef> [= <default>]`) — the atom's state. Fields at top level; no `data:` header. Extensions cannot add fields (layout invariance §4.18.3).
+2. **Observables** (`:<`) — pure reads.
+3. **Receive-glyph transitions** (`<:`) — message handlers.
+4. **Configuration sections** (`use:`, `metadata:`, `invariants:`, `contracts:`) — group *declarations about the class*, not callables. Keep their headers.
 
-**Nothing else.** No `methods:` section, no `-> handler:` prefix, no `:<` observable shorthand.
+**Nothing else.** No `methods:` section. No `-> handler:` prefix. No `function` inside class bodies.
 
-**Retirement mapping (surface → primitive):**
+**Retirement mapping (old surface → post-collapse form):**
 
-| Old surface | Collapse form |
+| Old surface | New form |
 |---|---|
-| `foo :< expr` (zero-arg observable) | `* <: foo() -> * return: expr` |
-| `-> log(msg: String): print(msg)` (handler decl) | `* <: log(msg: String) -> * do: print(msg)` |
-| `function heal(self, amt: Int) -> Int: return hp + amt` (reader method) | `* <: heal(amt: Int) -> * return: hp + amt` |
-| `data: hp: Int = 100` (data section) | `hp: Int = 100` (top-level field) |
+| `data: hp: Int = 100` (data section header) | `hp: Int = 100` (top-level field) |
+| `hp_display :< format(hp)` (zero-arg observable) | unchanged |
+| `function healed_by(self, amt: Int) -> Int: return min(hp + amt, max_hp)` (reader method) | `healed_by(amt: Int) :< min(hp + amt, max_hp)` (parametric observable) |
+| `-> log(msg: String): print(msg)` (F14 handler decl) | `* <: log(msg: String) -> * do: print(msg)` |
+| `function heal(self, amt: Int): <mutation>` (writer method — currently only possible via transitions) | `* <: heal(amt: Int) -> * then: <update>` |
+| `alive <: tick -> alive then: n => n + 1` (self-transition) | unchanged |
 
-**Why the collapse.** Corvid's atom substrate is actor-shaped. In actor languages (Erlang gen_server, Elixir GenServer, Clojure agents, Rust actix), all external interaction is a message; there is no separate "method" concept. Corvid inherited `methods:` from OO habit — the section became a namespace container for functions that happened to take `self`. That's exactly the OO-namespace-abuse pattern (grouping unrelated functions on a class) the actor model exists to prevent. Under the collapse: if a function operates on `self`'s state via a transition or produces a value from `self`'s state, it's a receive-glyph transition. If it doesn't, it belongs at module scope as a free function.
+**Why the collapse.** Corvid's atom substrate is actor-shaped. In actor languages (Erlang gen_server, Elixir GenServer, Clojure agents, Rust actix), all external interaction is either a state-query or a message; there is no separate "method" concept. Corvid inherited `methods:` from OO habit — the section became a namespace container for functions that happened to take `self`. That's the OO-namespace-abuse pattern the actor model exists to prevent. Under the collapse: if a function operates on `self`'s state via a transition or produces a value from `self`'s state via an observable, it belongs in the class body. Everything else belongs at module scope.
 
-**Records under collapse.** Records forbid transitions structurally (`kind: record`). Post-collapse, records may declare wildcard self-transitions with only `return:` sub-block — pure reads with implicit `self`. `then:` inside a record transition is a compile error (matches records' immutability). All record-scoped free computations live at module scope.
+**Canonical example:**
+```
+class Player:
+    hp: Int = 100
+    max_hp: Int = 100
 
-**Protocol contracts under collapse.** Protocols describe accepted receive-glyph transitions:
+    hp_display :< format(hp)                        # observable — zero-arg
+    healed_by(amt: Int) :< min(hp + amt, max_hp)    # observable — parametric
+
+    * <: log(msg: String) -> *                      # message handler (side-effect)
+        do: print(msg)
+
+    alive <: heal(amt: Int) -> alive                # message → mutate state
+        when: hp < max_hp
+        then: hp => min(hp + amt, max_hp)
+
+    alive <: die -> dead                            # message → phase change
+        do: cleanup()
+```
+
+**Records under collapse.** Records forbid state changes (`kind: record`). Records may declare observables (pure reads) and wildcard self-transitions with `do:` side effects only (I/O, logging). `then:` inside a record transition is a compile error.
+
+**Protocol contracts under collapse.** Protocols describe accepted observables and transitions:
 ```
 protocol Healable:
-    accepts * <: heal(amt: Int) -> * return: Int
+    accepts hp_display :< String
+    accepts heal(amt: Int)          # transition accept (void)
 ```
 
-**Cross-refs.** F67 audit entry + `compiler/design/plans/proposal-g-class-body-collapse.md` for the six-landing execution sequence. F14 handler-decl (landed 2026-08-16) retires at F67 L2. F33 rewrite (Proposal C+C1, landed 2026-08-17) is compatible — atomic-transition contract now spans the entire class body uniformly.
+**Cross-refs.** F67 audit entry + `compiler/design/plans/proposal-g-class-body-collapse.md` for the five-landing execution sequence (L1 design → L2 parametric observable syntax → L3 retire `-> handler:` → L4 retire `methods:` → L5 retire `data:` header). F14 handler-decl (landed 2026-08-16) retires at F67 L3. F33 rewrite (Proposal C+C1, landed 2026-08-17) is compatible — atomic-transition contract spans the entire class body uniformly.
+
+
 
 **Capabilities and OS boundary.**
 
