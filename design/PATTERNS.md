@@ -4,7 +4,9 @@
 
 **How to read.** Find your source language below. For each pattern you'd reach for, see the cxc form with a code sketch and a pointer to the spec section that explains why. When no source-language match applies, the "cxc-native patterns" section at the end summarizes the structural commitments the dissolutions descend from.
 
-**This is not the spec.** The spec (`spec/spec-v0.11.md`) is normative. This document is onboarding guidance. When they disagree, the spec wins.
+**This is not the spec.** The spec (`spec/spec-cxc-v1.0.md`) is normative. This document is onboarding guidance. When they disagree, the spec wins.
+
+> **Status note (post-collapse, 2026-08-17).** Under Proposal G (F67 L3/L4/L5) the class-body vocabulary has collapsed to two glyphs (`:<` observable, `<:` transition), with top-level fields and no `data:` / `methods:` sections. Many code examples below still use the retired `data:` / `state:` / `methods:` / `-> handler(args):` forms because this doc catalogs PATTERNS (what to reach for) — the shape of the answer is what matters; the surface syntax on the code sketches lags. Read code samples as illustrations; consult the spec §1.11 class-body-collapse addendum for the current surface. A pattern-level sweep is planned as a follow-up landing.
 
 ---
 
@@ -221,8 +223,8 @@ Value types (records, enums, primitives) carry canonical bytes as a **base-class
 
 ```
 record Point:
-    data: x: Float
-    data: y: Float
+    x: Float
+    y: Float
     # No user-written .as() needed. Compiler synthesizes:
     #   .as() -> Bytes           returns 8 bytes: [<x big-endian 4>, <y big-endian 4>]
     #   .from(source: Bytes)     returns DecodeOutcome<Point>
@@ -240,8 +242,8 @@ Rationale: `Codable`/`Serializable` reflection is the direction Java took and pa
 
 ```
 class Message:
-    data: id: String
-    data: body: Bytes
+    id: String
+    body: Bytes
     methods:
         function as(self) -> Bytes:
             # Author picks the wire format. Length-prefixed here.
@@ -275,8 +277,8 @@ s.replace_all(pattern: regex"\s+", with: " ")     # collapse whitespace
 ```
 class LevenshteinPattern:
     metadata: kind: regular
-    data: needle: String
-    data: max_distance: Int
+    needle: String
+    max_distance: Int
     methods:
         function first_match(self, source: String) -> Match?: ...
         function all_matches(self, source: String) -> Iterator<Match>: ...
@@ -314,9 +316,8 @@ No tuples. Return a class with named fields — either a domain-specific record 
 
 ```
 record Slice:
-    data:
-        position: Int
-        length: Int
+    position: Int
+    length: Int
 
 function locate(pattern: String, in text: String) -> Slice: ...
 ```
@@ -388,7 +389,7 @@ extend class MyType:
 
 ```
 class Config:
-    data: raw: Bytes
+    raw: Bytes
     methods:
         function as(self) -> Bytes: return self.raw               # As<Bytes>
         function as(self) -> String: return String.decoded(self.raw)  # As<String>
@@ -873,10 +874,10 @@ Use state-machine atoms with `-> before_destroy:` for RAII. Resources have natur
 
 ```
 def File:
-    data: path: Path
+    path: Path
     def unopened: pass
     def opened:
-        data: handle: NativeHandle
+        handle: NativeHandle
         -> read(n: Int) -> Stream of Bytes: ...
         -> close: native_close(handle); :> closed()
         -> before_destroy: native_close(handle)    # RAII cleanup
@@ -903,10 +904,9 @@ def PosixFs:
     conforms: Filesystem
     use:
         extern: Extern                       # runtime provisions Extern to stdlib shims only
-    data:
-        native_open:  (CString, Int32, Int32) -> Int32       = extern.get("open")
-        native_read:  (Int32, Ptr of Byte, SizeT) -> SsizeT  = extern.get("read")
-        native_close: (Int32) -> Int32                        = extern.get("close")
+    native_open:  (CString, Int32, Int32) -> Int32       = extern.get("open")
+    native_read:  (Int32, Ptr of Byte, SizeT) -> SsizeT  = extern.get("read")
+    native_close: (Int32) -> Int32                        = extern.get("close")
     -> open(path: Path) -> Future of (File | IOError):
         ...
 ```
@@ -956,10 +956,9 @@ def Game:
         clock:    Clock
         keyboard: KeyboardInput
     
-    data:
-        paddle:  Paddle        = Paddle{}
-        player:  Player        = Player{}
-        spawner: EnemySpawner  = EnemySpawner{}
+    paddle:  Paddle        = Paddle{}
+    player:  Player        = Player{}
+    spawner: EnemySpawner  = EnemySpawner{}
     
     # No `wires:` section, no top-level `|>`. Each stream we consume is a
     # receive-glyph transition, one per handler.
@@ -1023,10 +1022,9 @@ One question at the top: **does this state need its own lifecycle — phases, qu
 
 ```
 def Paddle:
-    data:
-        max_speed: Float = 500.0
-        y:         Float = 0.0
-        velocity:  Float = 0.0
+    max_speed: Float = 500.0
+    y:         Float = 0.0
+    velocity:  Float = 0.0
     
     # Phases idle / up / down inferred from arrows. Wildcard on-enter
     # sets phase-determined velocity — no enum field, no observable indirection.
@@ -1044,7 +1042,7 @@ def Paddle:
 
 ```
 def Paddle:
-    data: y: Float = 0.0
+    y: Float = 0.0
     
     self <: tick{dt: Duration} -> self
         then: y => clamp(y + velocity * dt.to_seconds(), -screen_bounds, +screen_bounds)
@@ -1110,8 +1108,7 @@ State-machine-shaped things — anything with phases, transitions, potential for
 
 ```
 def Player:
-    data:
-        action: ActionMachine? = nil    # nullable slot; nil = no action running
+    action: ActionMachine? = nil    # nullable slot; nil = no action running
     
     alive <: cast_fireball
     -> alive
@@ -1128,9 +1125,8 @@ def Player:
         do: :> fireball_flew(target: target)
 
 def ActionMachine(clock: Clock):
-    data:
-        fireball_target:    Position?  = nil
-        cast_started_at:    Instant?   = nil
+    fireball_target:    Position?  = nil
+    cast_started_at:    Instant?   = nil
     
     is_idle :< self is idle    # stable predicate for parents
     
@@ -1211,9 +1207,8 @@ Use the universal implicit phases `init` and `end`.
 
 ```
 def Player:
-    data:
-        hp: Int = 0            # value set by init transition, not this default
-        mana: Int = 0
+    hp: Int = 0            # value set by init transition, not this default
+    mana: Int = 0
     
     -> alive then:            # wildcard on-enter for alive; matches init transition
         hp   => 100
@@ -1226,7 +1221,7 @@ The `= 0` on the field declaration is placeholder; the init transition's `then:`
 
 ```
 def Enemy:
-    data: health: Int = 100
+    health: Int = 100
     
     alive <: take_damage{amount: Int}
     -> dead
@@ -1283,9 +1278,8 @@ No. **Exhaustiveness invariants on phases are redundant** — phases inferred fr
 ```
 # NO — restates what the compiler already knows:
 def Player:
-    data:
-        hp: Int = 100
-        mana: Int = 50
+    hp: Int = 100
+    mana: Int = 50
     
     # Phases alive/dead inferred from arrows below
     -> alive then: hp => 100; mana => 50
@@ -1297,10 +1291,9 @@ def Player:
 # YES — either omit `invariants:` entirely, or use it for constraints the type
 # system doesn't know about:
 def Player:
-    data:
-        hp: Int = 100
-        mana: Int = 50
-        last_cast_at: Instant = Instant.epoch
+    hp: Int = 100
+    mana: Int = 50
+    last_cast_at: Instant = Instant.epoch
     
     invariants:
         last_cast_at <= clock.now    # temporal constraint — not knowable from types
@@ -1318,7 +1311,7 @@ You don't — constructor params ARE data fields. `def File(path: Path):` desuga
 ```
 # NO — separate data field + explicit constructor:
 def File:
-    data: path: Path
+    path: Path
     constructor(path: Path):
         self.path = path
 

@@ -770,8 +770,7 @@ A "type" is a named contract: a set of accepted messages with signatures, precon
 
     ```
     def Counter:
-        data:
-            count: Int = 0
+        count: Int = 0
         invariants:
             0 <= count <= 100                # chained comparison — reads mathematically
     ```
@@ -793,7 +792,7 @@ A "type" is a named contract: a set of accepted messages with signatures, precon
         return 0.0 <= n <= 1.0
     
     def Foo:
-        data: rate: Float
+        rate: Float
         invariants:
             is_percentage(rate)
     ```
@@ -930,22 +929,22 @@ No smuggled imperative. Reasoning about a mutation is local to the atom that per
 
 ### 1.11 The atom substrate
 
-The premises §1.1–§1.10 point at a specific primitive: **the atom**. An atom is a reactive node with typed inputs, typed outputs, private per-instance state, phases, transitions, emissions to other atoms, and optionally contained atoms wired together. Every user-facing construct — `class`, `record`, `enum`, `protocol`, `function`, method, field — is sugar over a specific `def` shape. The runtime entry point is `def main` by naming convention (no dedicated keyword). **Atom is the sole primitive.**
+The premises §1.1–§1.10 point at a specific primitive: **the atom**. An atom is a reactive node with typed inputs, typed outputs, private per-instance state, phases, transitions, emissions to other atoms, and optionally contained atoms wired together. Every user-facing construct — `class`, `record`, `enum`, `protocol`, `function`, field, observable, transition — is sugar over a specific `def` shape. The runtime entry point is `def main` by naming convention (no dedicated keyword). **Atom is the sole primitive.**
 
 **Shape of the reduction:**
 
 | Construct | Atom shape |
 |---|---|
 | function | Leaf atom: 1 input, 1 output, no state, pure transition |
-| record | Compound atom containing only data atoms (immutable payload) |
-| class (regular) | Compound atom with state atoms + entrypoints + observables |
-| enum | Atom whose state is a sum type; handlers dispatch on variant |
+| record | Compound atom containing only immutable fields (with observables for computed views) |
+| class (regular) | Compound atom with state phases + fields + observables + transitions |
+| enum | Atom whose state is a sum type; transitions dispatch on variant |
 | protocol | Atom signature (I/O shape + contracts) without transition |
 | section | Compile-time atom (runs at compile time, produces program text) |
 | `def main` | Top-level compound atom with environment = OS — entry point by naming convention, no dedicated keyword |
-| method call | Route message to an atom's entrypoint |
-| state field | State atom (mutable payload) contained in a compound atom |
-| data field | Data atom (immutable payload) contained in a compound atom |
+| message send | Route a message to an atom, triggering its receive-glyph transition |
+| field | Immutable per-instance datum on a compound atom (top-level declaration; F67 L5) |
+| observable | Pull-channel derived view of state — pure computation over self's fields (`:<`) |
 | type (nominal or structural) | An atom (its named shape) |
 | generic type | A structurally-polymorphic atom (`def List: ...`; element type flows through body via `of`) |
 
@@ -1100,7 +1099,7 @@ def Enemy:
     dead -> end
 
 def EnemySpawner:
-    data: active_enemies: List of Enemy = []
+    active_enemies: List of Enemy = []
 
     self <: active_enemies.died{e: Enemy}
     -> self
@@ -1115,22 +1114,22 @@ def EnemySpawner:
 
 There is no primitive / refined type distinction in cxc. Every type is a **named contract on a shape**, where a shape is (recursively) a sequence of bits or a composition of shapes. `UInt8`, `Int8`, `Char`, `Nat`, `Age`, user-defined domain types are all constructed by the same mechanism: `def <name>: <underlying>` with optional `value :<` observable (the interpretation) and optional `invariants:` (the predicate). See §1.3 for the design premise ("contracts replace nominal types"); this section is the operational form.
 
-**Value-typed atoms — the substrate for values.** An atom with only `data:` (no phases, no transitions) is value-typed. `data:` is immutable per-instance; the atom IS its data. Every integer, character, enum case, and record is a value-typed atom.
+**Value-typed atoms — the substrate for values.** An atom with only fields (no phases, no transitions) is value-typed. Fields are immutable per-instance; the atom IS its data. Every integer, character, enum case, and record is a value-typed atom.
 
 **Interpretation lives on the derived type, not on the underlying shape.** Byte is 8 bits with a count invariant — purely structural, no interpretation. Meaning comes from types that wrap Byte and provide their own `value :<`:
 
 ```
 def Byte:
-    data: bits: List of Bit
+    bits: List of Bit
     invariants: bits.count == 8       # 8 bits; compiler picks packed representation
 
 def UInt8:
-    data: raw: Byte
+    raw: Byte
     value :< bit_ops.decode_uint(raw.bits)
     invariants: 0 <= value <= 255
 
 def Int8:
-    data: raw: Byte
+    raw: Byte
     value :< bit_ops.decode_int_2c(raw.bits)
     invariants: -128 <= value <= 127
 ```
@@ -1139,7 +1138,7 @@ Same 8 bits, different interpretations, different invariants. Compiler eliminate
 
 **`bit_ops` prelude module.** Bit-level primitives (`decode_uint`, `decode_int_2c`, `ascii_decode`, `add_bytes`, `narrow_*`, `widen_*`) are pure functions with contracts in a `bit_ops` prelude module. Not language substrate; compiler may special-case for perf but the surface is functions the author can call, extend, and inspect.
 
-**Aggressive contract inference within an atom.** Author writes names; compiler derives contracts from usage. `data: hp = 100` — shape derived from RHS; usage in transition bodies tightens further. `data: pos = start` — shape derived from constructor param `start`, refined by every method call on `pos`. Author annotates only when they want to CONSTRAIN beyond what usage implies.
+**Aggressive contract inference within an atom.** Author writes names; compiler derives contracts from usage. `hp = 100` — shape derived from RHS; usage in transition bodies tightens further. `pos = start` — shape derived from constructor param `start`, refined by every transition/observable that reads `pos`. Author annotates only when they want to CONSTRAIN beyond what usage implies.
 
 **No cross-atom principal-type inference.** Each atom's public surface (I/O signatures, emissions, phases, observables, derived contracts on constructor params) is derived from its own body only. Callers check against the derived surface at composition sites; a mismatch is an error at the wire site, not a re-derivation. Reason: stability. Cross-atom inference would ripple body changes non-locally; local surfaces bound the blast radius.
 
@@ -1182,8 +1181,8 @@ The atom substrate is the design commitment. §1.11–§1.14 document the substr
 
 **Preserved from v0.11 without change.** The following are v1.0-native as documented:
 
-- Records as functional-swap (methods return new selves; no in-place mutation).
-- Primitives as atoms with `data:` + `value :<` + `invariants:` (unified with user domain types; §3.1). Retires the "primitives are records with a single `bytes` field" framing from v0.11 — the current form derives primitives from `Bit` → `Byte` → sized atoms per the exploration in `design/explorations/integers-from-bits.cxc`.
+- Records as functional-swap (transitions return new selves; no in-place mutation).
+- Primitives as atoms with fields + `value :<` + `invariants:` (unified with user domain types; §3.1). Retires the "primitives are records with a single `bytes` field" framing from v0.11 — the current form derives primitives from `Bit` → `Byte` → sized atoms per the exploration in `design/explorations/integers-from-bits.cxc`.
 - Canonical bytes as value-type base-class property (§3.4.6, §3.10.10).
 - Types-as-guards at wire boundaries (§1.3).
 - Nullability + nil-punning + nil-receiver dispatch (§3.6.1, §5.7).
@@ -1197,8 +1196,11 @@ The atom substrate is the design commitment. §1.11–§1.14 document the substr
 
 - `class`, `record`, `enum`, `protocol` → sugar keywords over specific `def` shapes.
 - `function` → `def name(x) -> y:` (trivial atom shape).
-- Method call → route message to an atom's transition or handler.
-- `state:` section → retired; all fields are `data:`; mutability via transitions.
+- Method call → route message to an atom's transition (see class-body-collapse addendum below).
+- `state:` section → retired; all fields are per-instance immutable, updated only through transitions.
+- `data:` section header → retired (Proposal D, F67 L5). Fields sit at class-body top level: `name: Type [= default]`. Downstream AST folds into a synthetic data-section so tooling stays shape-stable.
+- `methods:` section → retired (Proposal G, F67 L4). Reader methods become parametric observables (`name(args) :< expr`); void-side-effect methods become wildcard handler-shape transitions (`* <: name(args) -> * do:`); state-mutating methods become wildcard self-transitions with `then:`; utility functions move to module scope.
+- `-> handler(args):` prefix → retired (Proposal G, F67 L3). Handlers are wildcard receive-glyph transitions: `* <: handler(args) -> * do: <body>`.
 - Structural type inference through atom bodies (retires `<T>` generic-parameter syntax; `of` qualifier is the sole form).
 
 **Surface syntax.**
@@ -1242,25 +1244,25 @@ cxc is a close-to-immutable OOP language built on the atom substrate. **Every tr
 
 **`state:` is retired.** All fields are `data:` (per-instance; updated only through transitions). Every change is a transition (either between phases of the current atom, or a self-transition on the compound for continuous accumulators, or an assignment to a sub-atom slot).
 
-*Sections:*
+*Sections* (metadata/configuration only — post-collapse; see the addendum for the full class-body table):
 
 | Section | Role | Required? |
 |---|---|---|
 | `use:` | Capability declarations (env-provided or locally constructed) | when the atom depends on env caps |
-| `data:` | Immutable per-instance fields (or via constructor param sugar) | when the atom holds any fields |
 | `invariants:` | Bare-field-name predicates that always hold | when the atom carries constraints |
 | `metadata:` | Arbitrary metadata (kind, execution, etc.) | when configuring the atom |
-| `observables:` | Grouping wrapper for observable declarations (optional; bare `:<` form suffices) | when grouping many observables reads better |
 | `constructor:` (optional) | Custom construction logic | when auto-synthesis is insufficient |
 | `conforms:` (optional) | Explicit capability-shape conformance declaration | documentation; compiler warns on likely-match if omitted |
+| `contracts:` (optional) | Signature-level `requires`/`ensures` grouping | when contracts are extensive |
 
-**Retired:** `state:` section (all fields are `data:`; mutability is expressed via transitions). `extern:` section (FFI is a capability atom `Extern`, provisioned via `use:` to stdlib shims only; foreign symbols are declared in prelude `foreign library` blocks — see §1.12, §1.14).
+**Retired:** `state:` section (all fields are per-instance immutable; mutability via transitions). `data:` section (Proposal D, F67 L5 — fields sit at class-body top level, no wrapper). `methods:` section (Proposal G, F67 L4 — callables collapse to `:<` observables + `<:` transitions). `extern:` section (FFI is a capability atom `Extern`, provisioned via `use:` to stdlib shims only; foreign symbols are declared in prelude `foreign library` blocks — see §1.12, §1.14).
 
 *Bare declarations at atom-body top level (each has a unique marker):*
 
-- **`name :< source`** — observable declaration. Pull channel; subscribers read on demand. `:<` marker unique.
-- **`<from> [receive_trigger] -> <to>[(args)] when <guard>`** — transition line. Declares a phase transition (source phase to target phase) or a self-transition on the current atom. The optional receive-glyph trigger (`<: source_expr {args}` or `<| ...`) makes the transition message-driven; without it the transition is guard-only. Compact single-line form is sugar for the block form. See "Transition-line block form" below.
-- **`* <: handler(args) -> * do: <body>`** — externally-invocable message handler (side-effect only, no state change). Written as a wildcard-source, wildcard-target receive-glyph transition with a typed-params receive pattern. Every state-changing handler is a phase-transition line with `then:`. *(The retired `-> handler(args):` prefix form (F14 sugar) migrated to this shape via F67 L3.)*
+- **`name: Type [= default]`** — field declaration (F67 L5, Proposal D). Immutable per-instance state; the atom's storage. `:` between name and type distinguishes from observable `:<` and transition-source `<:`/`->`.
+- **`name[(args)] :< source`** — observable declaration. Zero-arg (`name :< expr`) or parametric (`name(args) :< expr`, F67 L2). Pull channel; subscribers read on demand. `:<` marker unique.
+- **`<from> [receive_trigger] -> <to> [when <guard>]`** — transition line. Declares a phase transition (source phase to target phase), self-transition, or handler-shape (wildcard source AND target — see next entry). The optional receive-glyph trigger (`<: source_expr {args}` or `<| ...`) makes the transition message-driven; without it the transition is guard-only. Compact single-line form is sugar for the block form. See "Transition-line block form" below.
+- **`* <: handler(args) -> * do: <body>`** — externally-invocable message handler (side-effect only, no state change). Wildcard source AND wildcard target with a typed-params receive pattern. Every state-changing handler is a phase-transition line with `then:`. *(F67 L3 migration target for the retired `-> handler(args):` prefix.)*
 
 **Retired: bare `expr |> target` at atom-body top-level.** Standing wires do NOT exist as top-level statements. Every subscription is a receive-glyph transition (`<:` / `<|`) whose source expression may compose transformers via `|>`. See §1.11 "Stream composition in receive-glyph source expressions."
 
@@ -1428,8 +1430,7 @@ When a piece of state has its own lifecycle — phases, transitions, potential f
 
 ```
 def Player:
-    data:
-        action: ActionMachine? = nil    # sub-atom slot; nil = no action running
+    action: ActionMachine? = nil    # sub-atom slot; nil = no action running
     
     alive <: cast_fireball
     -> alive
@@ -1740,9 +1741,8 @@ def debounce(duration: Duration):
     use:
         clock: Clock                          # shape-only: inherit from parent env, must conform Clock
     
-    data:
-        pending: Any     = nil
-        fire_at: Instant = nil                # deadline for next fire
+    pending: Any     = nil
+    fire_at: Instant = nil                # deadline for next fire
     
     # Idle input starts the wait
     idle <: input{event: Any}
@@ -1865,8 +1865,7 @@ Same mechanism as top-level runtime bootstrap; different scope. Sandboxes, plugi
 
 ```
 def File(path: Path):                            # constructor param — implicitly a `data:` field
-    data:
-        handle: NativeHandle? = nil              # only meaningful while `opened`; nil otherwise
+    handle: NativeHandle? = nil              # only meaningful while `opened`; nil otherwise
     
     # Compound-level: request to open (async command from consumer).
     unopened <: open
@@ -1953,13 +1952,12 @@ def PosixFs:
     use:
         extern: Extern                                    # capability; runtime provisions to stdlib shims only
     
-    data:
-        # Typed handles retrieved from the target prelude's symbol table.
-        # Type on the LHS must match the declared type in prelude/<target>/libc.cxc.
-        native_open:  (CString, Int32, Int32) -> Int32           = extern.get("open")
-        native_read:  (Int32, Ptr of Byte, SizeT) -> SsizeT      = extern.get("read")
-        native_write: (Int32, Ptr of Byte, SizeT) -> SsizeT      = extern.get("write")
-        native_close: (Int32) -> Int32                            = extern.get("close")
+    # Typed handles retrieved from the target prelude's symbol table.
+    # Type on the LHS must match the declared type in prelude/<target>/libc.cxc.
+    native_open:  (CString, Int32, Int32) -> Int32           = extern.get("open")
+    native_read:  (Int32, Ptr of Byte, SizeT) -> SsizeT      = extern.get("read")
+    native_write: (Int32, Ptr of Byte, SizeT) -> SsizeT      = extern.get("write")
+    native_close: (Int32) -> Int32                            = extern.get("close")
     
     -> open(path: Path) -> Future of (File | IOError):
         let cpath = path.to_cstring()
@@ -2322,14 +2320,13 @@ def WallClock:
     use:
         extern: Extern
     
-    data:
-        # Typed handles from the prelude symbol table (compile-time resolved).
-        native_now:      () -> Instant           = extern.get("clock_gettime")
-        native_schedule: (Instant, Int) -> Unit  = extern.get("cxc_schedule_timer")
-        timer_callbacks: Stream of Int           = extern.get("cxc_schedule_timer_callback")
+    # Typed handles from the prelude symbol table (compile-time resolved).
+    native_now:      () -> Instant           = extern.get("clock_gettime")
+    native_schedule: (Instant, Int) -> Unit  = extern.get("cxc_schedule_timer")
+    timer_callbacks: Stream of Int           = extern.get("cxc_schedule_timer_callback")
         
-        pending:  Map of (Int, Handler) = {}
-        next_id:  Int                   = 0
+    pending:  Map of (Int, Handler) = {}
+    next_id:  Int                   = 0
     
     # Observable — pull channel exposing current wall time
     now :< native_now()
@@ -2520,7 +2517,13 @@ Because these are prelude aliases, they are inspectable — users can look up wh
 >
 > **What carries over unchanged.** The individual behaviors documented in §3–§9 are v1.0-native: nullability semantics + nil-punning (§3.6.1, §5.7), pattern matching with named-field discrimination (§3.7), the contract system — `requires`/`ensures`/`invariants:` (§3.4, §3.4.3), conversion protocols `As<T>` / `From<T>` (§3.10.3), byte / string / char / pattern subsystems (§3.10.4–§3.10.9), numeric conversion and bounded types (§3.11), sections mechanism (§4.10), prelude alias mechanism (§4.16, §4.20). Read these sections as documenting semantics that will be preserved; the syntactic packaging changes.
 >
-> **What changes.** `class Foo:` → `def Foo:` with sugar-keyword equivalents documented per shape. `state:` section retires; all fields are `data:`, all mutations happen through transitions. `method_decl` with imperative bodies (`self.x = y`) is retired in favor of transitions with `then:` field-update blocks. Method call semantics preserve — dispatch to a transition or handler on the receiver atom is the same as a method call at the call site.
+> **What changes (with post-collapse status, 2026-08-17).** `class Foo:` → `def Foo:` with sugar-keyword equivalents documented per shape. Under Proposal G (F67 L3/L4/L5):
+> - `state:` section retires; all fields are per-instance immutable, updated only through transitions.
+> - `data:` section header retires (F67 L5, Proposal D) — fields sit at class-body top level: `name: Type [= default]`.
+> - `methods:` section retires (F67 L4) — readers become parametric observables `name(args) :< expr`; void side-effect methods become `* <: name(args) -> * do:` (wildcard handler-shape transitions); state-mutating methods become wildcard self-transitions with `then:`; utilities move to module scope.
+> - `-> handler(args):` prefix retires (F67 L3) — handlers are `* <: handler(args) -> * do: <body>`.
+>
+> **Code examples in §3–§9 still use the retired forms** as historical illustrations of shape and semantics. The retirements are AST-preserving (surface syntax changed; downstream folds into the same AST), so the semantic content of every example carries over. The current class-body vocabulary is authoritative in §1.11 (see the addendum *Class body collapse to two glyphs (Proposal G)*).
 
 ### 3.1 Primitive Types
 
@@ -2546,8 +2549,7 @@ def Bit:
 
 ```
 def Byte:
-    data:
-        bits: List of Bit
+    bits: List of Bit
     invariants:
         bits.count == 8
 ```
@@ -2556,15 +2558,13 @@ def Byte:
 
 ```
 def UInt8:
-    data:
-        raw: Byte
+    raw: Byte
     value :< bit_ops.decode_uint(raw.bits)
     invariants:
         0 <= value <= 255
 
 def Int8:
-    data:
-        raw: Byte
+    raw: Byte
     value :< bit_ops.decode_int_2c(raw.bits)
     invariants:
         -128 <= value <= 127
@@ -2584,20 +2584,17 @@ alias Int = Int64
 ```
 # User code:
 def Nat:
-    data:
-        raw: Int
+    raw: Int
     invariants:
         value >= 0
 
 def Age:
-    data:
-        raw: Nat
+    raw: Nat
     invariants:
         0 <= value <= 150
 
 def Port:
-    data:
-        raw: Int
+    raw: Int
     invariants:
         1 <= value <= 65535
 ```
@@ -2608,15 +2605,13 @@ The compiler picks storage for these domain atoms from their declared invariants
 
 ```
 def Float:
-    data:
-        raw: List of Byte
+    raw: List of Byte
     invariants:
         raw.count == 4
     value :< bit_ops.decode_ieee_f32(raw)
 
 def Double:
-    data:
-        raw: List of Byte
+    raw: List of Byte
     invariants:
         raw.count == 8
     value :< bit_ops.decode_ieee_f64(raw)
@@ -2626,8 +2621,7 @@ def Double:
 
 ```
 def Bool:
-    data:
-        raw: Byte
+    raw: Byte
     value :< bit_ops.decode_uint(raw.bits) == 1
     invariants:
         0 <= bit_ops.decode_uint(raw.bits) <= 1
@@ -2637,8 +2631,7 @@ def Bool:
 
 ```
 def Char:
-    data:
-        raw: List of Byte
+    raw: List of Byte
     invariants:
         1 <= raw.count <= 255
         bit_ops.is_valid_grapheme(raw)
@@ -2850,10 +2843,9 @@ cxc does not support nested type declarations. All user-defined types (classes, 
 
 ```
 class FrameCollector:
-    data:
-        delegate: FrameCollectorDelegate
-        current_event: FrameCollectorEvent?
-        state: FrameCollectorState = .idle
+    delegate: FrameCollectorDelegate
+    current_event: FrameCollectorEvent?
+    state: FrameCollectorState = .idle
     ...
 
 enum FrameCollectorEvent:
@@ -2963,8 +2955,8 @@ Any class conforming to `Iterable<T>` (Array, Set, Map's entries iterator, user 
 
 ```
 class Reader:
-    data: string: String
-    data: current_index: StringIndex
+    string: String
+    current_index: StringIndex
     invariants:
         current_index >= string.start_index
 
@@ -3164,10 +3156,9 @@ Classes and structs can carry class-level contracts via the `invariants:` sectio
 
 ```
 class Connection:
-    data:
-        endpoint: URL
-        socket: Socket                         # reference type, nil-allowed by default
-        connection_state: ConnectionState = .closed
+    endpoint: URL
+    socket: Socket                         # reference type, nil-allowed by default
+    connection_state: ConnectionState = .closed
     
     invariants:
         connection_state == .opened implies socket != nil
@@ -3212,8 +3203,7 @@ There is no `old()` form. The pre-state was never lost — it's what `self` and 
 
 ```
 class Ledger:
-    data:
-        accounts: {AccountID: Money}
+    accounts: {AccountID: Money}
     
     invariants:
         accounts.values.sum == self.initial_total
@@ -3271,7 +3261,7 @@ protocol Countable:
         return n
 
 class MyCollection:
-    data: items: [Int]
+    items: [Int]
     methods:
         function iter(self) -> Iterator<Int>:
             return self.items.iter()
@@ -3313,7 +3303,7 @@ Extensions shadow inherited protocol defaults **without requiring `replace`** �
 
 ```
 class Payload:
-    data: bytes: Bytes
+    bytes: Bytes
     methods:
         function as(self) -> Bytes:  return self.bytes                     # As<Bytes>
         function as(self) -> Json:   return json_encode(self.bytes)        # As<Json>
@@ -3348,14 +3338,14 @@ Header parens sugar — canonical for the definition site with 1–3 conformance
 
 ```
 class Reader(Iterable<Char>):
-    data: source: String
-    data: position: StringPosition
+    source: String
+    position: StringPosition
     methods:
         function iter(self) -> Iterator<Char>: ...
 
 class Projectile(Positioned, Moving):
-    data: pos: Point
-    data: velocity: Vector
+    pos: Point
+    velocity: Vector
     methods:
         function position(self) -> Point: return self.pos
         function step(self, dt: Float): self.pos = self.pos + self.velocity * dt
@@ -3366,16 +3356,16 @@ Body-form entries — canonical for extensions, long conformance lists, or when 
 ```
 class Reader:
     conforms: Iterable<Char>
-    data: source: String
-    data: position: StringPosition
+    source: String
+    position: StringPosition
     methods:
         function iter(self) -> Iterator<Char>: ...
 
 class Projectile:
     conforms: Positioned
     conforms: Moving
-    data: pos: Point
-    data: velocity: Vector
+    pos: Point
+    velocity: Vector
     ...
 ```
 
@@ -3415,8 +3405,7 @@ cxc commits to composition-over-inheritance for pure cxc code (§1.5, §3.4). Th
 class MyViewController:
     metadata:
         extends: UIViewController
-    data:
-        table_view: UITableView?
+    table_view: UITableView?
     dynamic function viewDidLoad(self):
         super.viewDidLoad()
         self.table_view = UITableView()
@@ -3488,8 +3477,8 @@ This section documents the byte property — the equality/hash properties are do
 
 ```
 record Point:
-    data: x: Float
-    data: y: Float
+    x: Float
+    y: Float
     # Compiler synthesizes these two methods on Point (base-class properties, per §3.3):
     #   function as(self) -> Bytes:
     #       let out = Bytes.with_capacity(8)
@@ -3561,8 +3550,8 @@ help: or write `Model.as() -> Bytes` explicitly to opt out of synthesis
 
 ```
 record Timestamp:
-    data: seconds: UInt64
-    data: nanos: UInt32
+    seconds: UInt64
+    nanos: UInt32
     methods:
         function as(self) -> Bytes:
             # Custom format: single UInt64 nanoseconds since epoch, not two fields.
@@ -3953,8 +3942,7 @@ timeout: Duration = .milliseconds(500)        # inferred: field type
 
 ```
 class Order:
-    data:
-        status: OrderStatus = .pending      # inferred: OrderStatus, the field type
+    status: OrderStatus = .pending      # inferred: OrderStatus, the field type
 
     function submit(self):
         self.status = .submitted            # inferred: OrderStatus, the field type
@@ -4232,14 +4220,12 @@ cxc has no tuples and no destructuring (§3.7.1). Multi-value carriers are ordin
 
 ```
 record Pair<A, B>:
-    data:
-        first: A
-        second: B
+    first: A
+    second: B
 
 record Entry<K, V>:
-    data:
-        key: K
-        value: V
+    key: K
+    value: V
 ```
 
 Both are `kind: record` — value types, copy-on-assign, structural equality (§4.10.7).
@@ -4284,7 +4270,7 @@ protocol From<T>:
 
 ```
 class Config:
-    data: raw: Bytes
+    raw: Bytes
     methods:
         function as(self) -> Bytes:  return self.raw                # As<Bytes>
         function as(self) -> String: return String.decoded(self.raw) # As<String>
@@ -4579,9 +4565,9 @@ Two methods, structural conformance. Any class with these two methods is a Patte
 
 ```
 record Match:
-    data: source: String                       # the String this Match came from
-    data: range: MatchRange                    # extent of the match
-    data: captures: Map<String, MatchGroup>    # named captures only
+    source: String                       # the String this Match came from
+    range: MatchRange                    # extent of the match
+    captures: Map<String, MatchGroup>    # named captures only
     methods:
         function substring(self) -> String:
             return self.source.substring(from: self.range.start, to: self.range.end)
@@ -4589,13 +4575,13 @@ record Match:
             return self.captures.get(name)
 
 record MatchRange:
-    data: start: StringPosition
-    data: end: StringPosition
+    start: StringPosition
+    end: StringPosition
         # start <= end; both are positions in Match.source
 
 record MatchGroup:
-    data: range: MatchRange
-    data: value: String
+    range: MatchRange
+    value: String
 ```
 
 **Named-only captures.** The `captures:` map is keyed by `String` — the name declared in the pattern source. Positional captures are not exposed via numeric index. Consistent with §3.2 named-only record fields, §3.7.1 named-only enum associated values, §3.10.2 named-only multi-value carriers. cxc does not offer positional access anywhere; Pattern doesn't invent an exception.
@@ -4611,7 +4597,7 @@ All three are prelude classes with `kind: regular`.
 ```
 class Literal:
     metadata: kind: regular
-    data: needle: String
+    needle: String
     methods:
         function first_match(self, source: String) -> Match?
         function all_matches(self, source: String) -> Iterator<Match>
@@ -4624,7 +4610,7 @@ Matches the needle character-for-character (grapheme-cluster-for-grapheme-cluste
 ```
 class Glob:
     metadata: kind: regular
-    data: source: String
+    source: String
     methods:
         function first_match(self, source: String) -> Match?
         function all_matches(self, source: String) -> Iterator<Match>
@@ -4643,8 +4629,8 @@ Constructor: `Glob("*.txt")`, `Glob("[Ll]og_[0-9]?.txt")`. No captures.
 ```
 class Regex:
     metadata: kind: regular
-    data: source: String
-    data: options: RegexOptions
+    source: String
+    options: RegexOptions
     methods:
         function first_match(self, source: String) -> Match?
         function all_matches(self, source: String) -> Iterator<Match>
@@ -4658,10 +4644,10 @@ Compiled at construction time. cxc's regex flavor is PCRE2-adjacent — features
 
 ```
 record RegexOptions:
-    data: case_insensitive: Bool = false
-    data: multiline: Bool = false                  # `^` / `$` match line boundaries, not source boundaries
-    data: dot_matches_newline: Bool = false        # `.` matches newlines
-    data: extended: Bool = false                   # allow whitespace + comments in pattern source
+    case_insensitive: Bool = false
+    multiline: Bool = false                  # `^` / `$` match line boundaries, not source boundaries
+    dot_matches_newline: Bool = false        # `.` matches newlines
+    extended: Bool = false                   # allow whitespace + comments in pattern source
 ```
 
 Default constructor `Regex(source)` uses `RegexOptions()` (all false). Options-taking constructor: `Regex(source, options: RegexOptions(case_insensitive: true))`.
@@ -4934,7 +4920,7 @@ Primitives are atoms shipped in prelude with `data:` + `value :<` + `invariants:
 ```
 # Shipped in prelude on record UInt32 (analogous for other multi-byte primitives):
 record UInt32:
-    data: bytes: Bytes where bytes.length == 4
+    bytes: Bytes where bytes.length == 4
     methods:
         function as_bytes(self, order: ByteOrder) -> Bytes:
             switch order:
@@ -5091,15 +5077,13 @@ A section class is defined with `section class`:
 
 ```
 section class SectionName:
-    data:
-        # Configuration constants (compile-time, per-host-class)
-        contains: <content_type>
-        scope: [<scope>, ...]
-        # ... other configuration fields
+    # Configuration constants (compile-time, per-host-class)
+    contains: <content_type>
+    scope: [<scope>, ...]
+    # ... other configuration fields
     
-    data:
-        # Runtime state (per host class instance)
-        # ...
+    # Runtime state (per host class instance)
+    # ...
     
     # Compile-time capabilities
     generator name(field: FieldSpec) -> Code: ...
@@ -5196,16 +5180,14 @@ Parameters are declared on the section class header and referenced in generators
 
 ```
 section class Effect_Aware<E: Effect>:
-    data:
-        contains: type_signature
-        composition_mode: inline
+    contains: type_signature
+    composition_mode: inline
     
     expands_to: with ${E}
 
 section class Bounded<Max: Int>:
-    data:
-        contains: fields
-        composition_mode: nested
+    contains: fields
+    composition_mode: nested
     
     invariants:
         self.count <= ${Max}
@@ -5227,9 +5209,8 @@ A section class with `expands_to:` performs textual substitution at parse time. 
 
 ```
 section class Data:
-    data:
-        contains: fields
-        composition_mode: inline
+    contains: fields
+    composition_mode: inline
     
     expands_to: runtime immutable identity
 ```
@@ -5248,13 +5229,11 @@ Section classes are classes; they get class-level contracts (§3.4.2). Section c
 
 ```
 section class Channel:
-    data:
-        contains: fields
-        composition_mode: nested
+    contains: fields
+    composition_mode: nested
     
-    data:
-        subscribers: [Subscriber] = []
-        active: Bool = false
+    subscribers: [Subscriber] = []
+    active: Bool = false
     
     invariants:
         subscribers.count >= 0
@@ -5273,12 +5252,10 @@ A section can declare a describer that runs at compile time and returns structur
 
 ```
 section class Channel:
-    data:
-        contains: fields
-        composition_mode: nested
+    contains: fields
+    composition_mode: nested
     
-    data:
-        subscribers: [Subscriber] = []
+    subscribers: [Subscriber] = []
     
     generator field_setter(field: FieldSpec) -> Code:
         return quote:
@@ -5441,10 +5418,9 @@ Class bodies are sequences of sections. Members appearing directly in a class bo
 
 ```
 class Order:
-    data:
-        id: OrderID
-        items: [Item]
-        placed_at: Timestamp
+    id: OrderID
+    items: [Item]
+    placed_at: Timestamp
     
     # Implicit methods: section — these methods appear as if in `methods:`
     function is_valid(self) -> Bool:
@@ -5458,10 +5434,9 @@ Equivalent explicit form:
 
 ```
 class Order:
-    data:
-        id: OrderID
-        items: [Item]
-        placed_at: Timestamp
+    id: OrderID
+    items: [Item]
+    placed_at: Timestamp
     
     methods:
         function is_valid(self) -> Bool: ...
@@ -5520,6 +5495,8 @@ The `quote:` block is an expression evaluating to a `Code` value. `${expr}` spli
 ### 4.10 Built-in Section Classes
 
 These section classes ship with the language and are available in every module. They fall into three categories, described below.
+
+> **Status note (post-collapse, 2026-08-17).** Under Proposal G (F67 L3/L4/L5) the class body vocabulary has collapsed to two glyphs (`:<` observable, `<:` transition) with top-level fields and no `data:` / `methods:` sections. Several examples in this §4.10 still use the retired `data:` / `state:` / `methods:` / `-> handler(args):` forms because §4.10 documents the section MECHANISM (which survives — `use:`, `invariants:`, `metadata:`, `contracts:` still work). Read the retired forms as historical illustrations of the mechanism; the current class-body vocabulary is authoritative in §1.11 (see the addendum starting *Class body collapse to two glyphs (Proposal G)*).
 
 #### 4.10.0 Taxonomy — Primitives, Aliases, and Behavioral Sections
 
@@ -5645,10 +5622,9 @@ The implicit section for undecorated method declarations in class and struct bod
 
 ```
 section class Methods:
-    data:
-        contains: methods
-        scope: [class_body, struct_body]
-        composition_mode: nested    # methods can be wrapped by traced:, logged:, etc.
+    contains: methods
+    scope: [class_body, struct_body]
+    composition_mode: nested    # methods can be wrapped by traced:, logged:, etc.
 ```
 
 Applies no transformations — an identity container. Methods appearing directly in a class body without an enclosing section are implicitly wrapped in a `methods:` section (§4.7).
@@ -5663,15 +5639,14 @@ Read-only derived properties computed from other fields on access.
 
 ```
 section class Computed:
-    data:
-        contains: fields
-        scope: [class_body, struct_body]
-        composition_mode: nested
-        default_visibility: public
-        contributes_to_equality: false
-        contributes_to_hash: false
-        contributes_to_copy: false
-        incompatible_with: [Mutable, Persistent, Channel]
+    contains: fields
+    scope: [class_body, struct_body]
+    composition_mode: nested
+    default_visibility: public
+    contributes_to_equality: false
+    contributes_to_hash: false
+    contributes_to_copy: false
+    incompatible_with: [Mutable, Persistent, Channel]
     
     generator field_getter(field: FieldSpec) -> Code:
         return quote:
@@ -5687,8 +5662,7 @@ Usage:
 
 ```
 class Circle:
-    data:
-        radius: Float
+    radius: Float
     
     computed:
         area: Float = 3.14159 * self.radius ** 2
@@ -5703,14 +5677,13 @@ Marks contained members as deprecated with migration guidance and tooling integr
 
 ```
 section class Deprecated:
-    data:
-        contains: methods
-        scope: [class_body, struct_body, module_body]
-        composition_mode: nested
-        parameters:
-            reason: String
-            since_version: String
-            removed_in_version: String?
+    contains: methods
+    scope: [class_body, struct_body, module_body]
+    composition_mode: nested
+    parameters:
+        reason: String
+        since_version: String
+        removed_in_version: String?
     
     generator method_wrapper(method: MethodSpec) -> Code:
         return quote:
@@ -5766,10 +5739,9 @@ Explicit control over which methods are exposed to Objective-C callers, and in w
 
 ```
 section class ObjC_Exposed:
-    data:
-        contains: methods
-        scope: [class_body, struct_body]
-        composition_mode: nested
+    contains: methods
+    scope: [class_body, struct_body]
+    composition_mode: nested
     
     generator method_wrapper(method: MethodSpec) -> Code:
         # Method is emitted with ObjC-compatible signature in generated header.
@@ -5785,8 +5757,7 @@ Usage:
 
 ```
 expose class OrderProcessor:
-    data:
-        id: ProcessorID
+    id: ProcessorID
     
     # Auto-derived for ObjC — visible with default ObjC translation
     methods:
@@ -5808,10 +5779,9 @@ Scoped resource management. Contents are statements including resource-binding d
 
 ```
 section class With:
-    data:
-        contains: statements
-        scope: [function_body, method_body]
-        composition_mode: nested
+    contains: statements
+    scope: [function_body, method_body]
+    composition_mode: nested
     
     processor process(contents: Block) -> Block:
         # For each variable declaration whose type conforms to Resource,
@@ -5851,11 +5821,10 @@ Restricts contained code to pure computation — no I/O, no mutation of external
 
 ```
 section class Pure:
-    data:
-        contains: statements
-        scope: [function_body, method_body]
-        composition_mode: nested
-        incompatible_with: [Unsafe]
+    contains: statements
+    scope: [function_body, method_body]
+    composition_mode: nested
+    incompatible_with: [Unsafe]
     
     validator check(contents: Block):
         for statement in contents:
@@ -5880,11 +5849,10 @@ Enables restricted operations: raw pointer dereferencing, uninitialized memory a
 
 ```
 section class Unsafe:
-    data:
-        contains: statements
-        scope: [function_body, method_body]
-        composition_mode: nested
-        incompatible_with: [Pure]
+    contains: statements
+    scope: [function_body, method_body]
+    composition_mode: nested
+    incompatible_with: [Pure]
     
     processor process(contents: Block) -> Block:
         contents.enable_capability(.raw_pointer_access)
@@ -5899,10 +5867,9 @@ Precondition and assertion blocks at method prologues.
 
 ```
 section class Validate:
-    data:
-        contains: statements
-        scope: [method_body, function_body]
-        composition_mode: nested
+    contains: statements
+    scope: [method_body, function_body]
+    composition_mode: nested
     
     processor process(contents: Block) -> Block:
         return quote:
@@ -5930,11 +5897,10 @@ AST construction. Available inside generator bodies from Stage 1; generalized to
 
 ```
 section class Quote:
-    data:
-        contains: ast_fragment
-        scope: [expression_context]
-        composition_mode: nested
-        returns: Code
+    contains: ast_fragment
+    scope: [expression_context]
+    composition_mode: nested
+    returns: Code
     
     processor process(contents: AST) -> Code:
         return Code.from_ast(contents)
@@ -5950,10 +5916,9 @@ Enables C ABI features within the module.
 
 ```
 section class Interop:
-    data:
-        contains: declarations
-        scope: [module_body]
-        composition_mode: nested
+    contains: declarations
+    scope: [module_body]
+    composition_mode: nested
     
     processor process(contents: Block) -> Block:
         contents.enable_capability(.c_abi_functions)
@@ -5967,10 +5932,9 @@ Test-only declarations, excluded from release builds.
 
 ```
 section class Test:
-    data:
-        contains: declarations
-        scope: [module_body]
-        composition_mode: nested
+    contains: declarations
+    scope: [module_body]
+    composition_mode: nested
     
     processor process(contents: Block) -> Block:
         if compile_mode == .release:
@@ -5984,12 +5948,11 @@ Conditional compilation by platform.
 
 ```
 section class Platform:
-    data:
-        contains: declarations
-        scope: [module_body]
-        composition_mode: nested
-        parameters:
-            target: PlatformSpec
+    contains: declarations
+    scope: [module_body]
+    composition_mode: nested
+    parameters:
+        target: PlatformSpec
     
     processor process(contents: Block) -> Block:
         if compile_target != self.parameters.target:
@@ -6062,8 +6025,7 @@ class Foo:
         kind: record
         since: "0.6.0"
         platforms: [macos, ios]
-    data:
-        x: Int
+    x: Int
 ```
 
 **Rules:**
@@ -6124,14 +6086,12 @@ Users define section classes using the same syntax as built-in ones. Example —
 
 ```
 section class Channel:
-    data:
-        contains: fields
-        scope: [class_body]
-        default_mutability: mutable
-        contributes_to_equality: false
+    contains: fields
+    scope: [class_body]
+    default_mutability: mutable
+    contributes_to_equality: false
     
-    data:
-        subscribers: [Subscriber] = []
+    subscribers: [Subscriber] = []
     
     generator field_setter(field: FieldSpec) -> Code:
         return quote:
@@ -6547,10 +6507,9 @@ Used in type positions:
 
 ```
 class MyController:
-    data:
-        current_order: Order              # expands to com.example.orders.Order
-        cache: StringDict<CachedValue>    # expands to Dict<String, CachedValue>
-        handler: Callback<Receipt>        # expands to (Receipt, Error) -> Void
+    current_order: Order              # expands to com.example.orders.Order
+    cache: StringDict<CachedValue>    # expands to Dict<String, CachedValue>
+    handler: Callback<Receipt>        # expands to (Receipt, Error) -> Void
 ```
 
 #### 4.16.10 Value Aliases
@@ -6566,8 +6525,7 @@ alias GREETING: "Hello, world"
 Used in expression positions:
 
 ```
-data:
-    buffer: [Byte] = [Byte].filled(size: BUFFER_SIZE)
+buffer: [Byte] = [Byte].filled(size: BUFFER_SIZE)
 
 function timeout() -> Duration:
     return Duration.milliseconds(DEFAULT_TIMEOUT_MS)
@@ -6588,9 +6546,8 @@ Used to qualify names without writing the full module path:
 
 ```
 class MyController:
-    data:
-        client: core.HttpClient
-        current: orders.Order
+    client: core.HttpClient
+    current: orders.Order
 ```
 
 #### 4.16.12 Common Rules
@@ -7457,8 +7414,7 @@ filtered = array.filter(x => x > threshold)
 
 # Desugared:
 class __closure_at_L52:
-    data:
-        threshold: Int
+    threshold: Int
     methods:
         function call(self, x: Int) -> Bool:
             return x > self.threshold
@@ -7634,9 +7590,8 @@ Classes with `kind: record` and `kind: enum` are value types with these properti
 
 ```
 record Vec2:
-    data:
-        x: Float
-        y: Float
+    x: Float
+    y: Float
 
 # Auto-generated:
 # constructor Vec2(x: Float, y: Float)
@@ -7847,9 +7802,8 @@ The `dense_storage:` section (Stage 1 built-in) hints that a class should use St
 ```
 class Particle:
     dense_storage:
-    data:
-        color: Color
-        radius: Float
+    color: Color
+    radius: Float
     state:
         position: Vec3
         velocity: Vec3
@@ -8165,10 +8119,9 @@ Package manifests are declared using the `package:` section — a Stage 1 built-
 
 ```
 section class Package:
-    data:
-        contains: manifest_data
-        scope: [source_file_top, module_body]
-        composition_mode: inline  # appears once, not composed
+    contains: manifest_data
+    scope: [source_file_top, module_body]
+    composition_mode: inline  # appears once, not composed
     
     processor process(contents: ManifestData):
         # Validates the manifest structure.
@@ -8731,14 +8684,13 @@ Both patterns coexist under the same section; a class may use either or both.
 
 ```
 section class Channel:
-    data:
-        contains: fields
-        composition_mode: nested
-        parameters:
-            mode: DistributionMode = .work
-            capacity: Int? = nil          # Int is value-type; T? is Optional<Int> sum. nil = unbounded (default).
-            on_full: OverflowPolicy = .block   # required when capacity is set
-            topic_fn: TopicFn = nil       # TopicFn is a Callable (reference); nil-allowed by default. Required when mode = .pub.
+    contains: fields
+    composition_mode: nested
+    parameters:
+        mode: DistributionMode = .work
+        capacity: Int? = nil          # Int is value-type; T? is Optional<Int> sum. nil = unbounded (default).
+        on_full: OverflowPolicy = .block   # required when capacity is set
+        topic_fn: TopicFn = nil       # TopicFn is a Callable (reference); nil-allowed by default. Required when mode = .pub.
     
     state:
         instance_subscribers: [Subscriber] = []
@@ -8760,8 +8712,7 @@ Declare typed channel items as fields inside `channel:`. The compiler generates 
 
 ```
 class WSFramer:
-    data:
-        is_server: Bool
+    is_server: Bool
     state:
         buffer: Bytes = Bytes()
     channel:
@@ -8844,9 +8795,8 @@ The `signal:` section is Stage 1 built-in behavioral, providing one-shot complet
 
 ```
 section class Signal:
-    data:
-        contains: fields
-        composition_mode: nested
+    contains: fields
+    composition_mode: nested
     
     state:
         set: Bool = false
@@ -9163,8 +9113,7 @@ For fine-grained control, use the `objc_exposed:` section:
 
 ```
 class OrderProcessor:
-    data:
-        id: ProcessorID
+    id: ProcessorID
     
     state:
         internal_state: ProcessorState
@@ -9327,12 +9276,42 @@ where_clause := 'where' where_atom (',' where_atom)*
 where_atom   := identifier ':' identifier             # type-parameter conformance
 
 class_member := metadata_section | section_usage
-              | method_decl | constructor_decl | destructor_decl
+              | field_decl                                # F67 L5 (Proposal D)
+              | observable_decl                           # F67 L2 (parametric) + earlier
+              | transition_line                           # F67 L3 handler-shape is a subcase
+              | constructor_decl | destructor_decl
               | case_decl | accepts_decl
-              # methods without enclosing section are in implicit `methods:` section
-              # metadata_section must appear first if present (§4.10.8)
-              # method_decl may carry the `replace` modifier (§3.3.2) to shadow
-              # a same-named method from the original definition or another extension.
+              # metadata_section must appear first if present (§4.10.8).
+              #
+              # F67 (Proposal G) class-body collapse:
+              #   - `methods:` section retired; readers are observables,
+              #     writers/void-msgs are transitions (F67 L4).
+              #   - `-> handler(args):` prefix retired; handlers are wildcard
+              #     receive-glyph transitions `* <: name(args) -> * do:` (F67 L3).
+              #   - `data:` section header retired; fields are `field_decl`
+              #     at class-body top level (F67 L5).
+              # These retire the older method_decl / handler-decl productions.
+
+# `field_decl` — see production later in this section. F67 L5 (Proposal D)
+# moved fields to class-body top level (was wrapped in `data:` section);
+# the field production itself is unchanged.
+#
+# F67 L2 observable. Zero-arg or parametric.
+observable_decl := identifier ('(' parameter_list ')')? ':<' expr
+
+# Transition line — see §1.11 "Transition-line block form" for the full
+# body shape (when:/let:/then:/do:). Sources: phase name, `self`, `*`
+# (wildcard, F67 L3), or implicit (bare `-> target`). Targets: phase name,
+# `self`, `*` (wildcard = no phase change; handler-shape when source is
+# also `*`), or `end` (deconstruct).
+transition_line := transition_source? receive_glyph_head? '->' transition_target
+                   ('when' ':' expr)? transition_body?
+transition_source := 'self' | '*' | identifier
+receive_glyph_head := ('<:' | '<|') msg_pattern
+msg_pattern := identifier ( '(' parameter_list ')'      # F67 L3 typed-params (handler-shape)
+                          | '{' payload_list '}'         # payload destructure (stream/observable)
+                          )?
+transition_target := 'self' | '*' | 'end' | identifier
 
 metadata_section := 'metadata' ':' INDENT metadata_entry+ DEDENT
 
@@ -9363,6 +9342,11 @@ method_decl := 'expose'? ('replace')? 'function' identifier
                generic_params? '(' parameter_list ')' ('->' type)?
                effect_clause? contract_clause?
                ':' INDENT statement* DEDENT
+              # Retired inside class bodies at v1.0 (F67 L4, Proposal G) —
+              # class-body callables are observables (`:<`) or transitions
+              # (`<:` receive-glyph). This production remains for
+              # extend-class-`replace` and for the `function` keyword at
+              # module scope (free-function declarations).
               # `replace` (§3.3.2, v0.9.0) is legal only inside an `extend class`
               # body and marks explicit intent to shadow a same-named method from
               # the target class's original definition or another extension.
@@ -10026,10 +10010,9 @@ from com.example.inventory import Inventory, InventoryError
 
 ## An order is data — pure data class.
 class Order:
-    data:
-        id: OrderID
-        items: [Item]
-        placed_at: Timestamp
+    id: OrderID
+    items: [Item]
+    placed_at: Timestamp
     
     function is_valid(self) -> Bool:
         return not self.items.is_empty and self.total() > 0
@@ -10057,9 +10040,8 @@ protocol OrderProcessor:
 ## `expose` on the class adds the type name to the module's public surface;
 ## members opt in individually.
 class DefaultOrderProcessor(OrderProcessor):
-    data:
-        id: ProcessorID
-        created_at: Timestamp
+    id: ProcessorID
+    created_at: Timestamp
     
     state:
         inventory: Inventory              # internal by convention (no `expose`)
@@ -10116,9 +10098,8 @@ Example with primitive composition (expanded from aliases):
 # `data:` is an alias for `runtime immutable identity`. These are equivalent:
 
 class Order:
-    data:
-        id: OrderID
-        items: [Item]
+    id: OrderID
+    items: [Item]
 
 class Order:  # equivalent to above
     runtime immutable identity:
@@ -10167,8 +10148,7 @@ Example with user-defined sections:
 from com.example.observability import Channel
 
 class Counter:
-    data:
-        id: CounterID
+    id: CounterID
     
     channel:
         value: Int = 0
@@ -10201,14 +10181,12 @@ Example section class definition:
 
 ```
 section class Channel:
-    data:
-        contains: fields
-        scope: [class_body]
-        default_mutability: mutable
-        contributes_to_equality: false
+    contains: fields
+    scope: [class_body]
+    default_mutability: mutable
+    contributes_to_equality: false
     
-    data:
-        subscribers: [Subscriber] = []
+    subscribers: [Subscriber] = []
     
     generator field_setter(field: FieldSpec) -> Code:
         return quote:
