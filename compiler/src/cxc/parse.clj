@@ -614,9 +614,28 @@
 
 (declare parse-for-statement)
 
+(defn- parse-let-statement
+  "F18 L1 (spec §2.5) — local `let` binding at statement position.
+     let <ident> = <expr>
+     let <ident> : <type> = <expr>
+   Distinct from the transition `let:` sub-block (which uses
+   `let: <name>: <expr>` — see `parse-let-clause`). This form is
+   usable anywhere a statement is accepted (do:/then:-clause bodies,
+   method bodies, function bodies)."
+  [tokens pos]
+  (let [[_ p]    (expect tokens pos :kw "let")
+        [nm p]   (expect tokens p :ident)
+        [ty p]   (if (at? tokens p :punct ":")
+                   (parse-type tokens (inc p))
+                   [nil p])
+        [_ p]    (expect tokens p :glyph "=")
+        [rhs p]  (parse-expr tokens p)]
+    [{:node :let-stmt :name nm :type ty :expr rhs} p]))
+
 (defn- parse-statement
   "One statement:
      return <expr>
+     let <name> [: <type>] = <expr>           — F18 L1 local binding
      :> <msg>[(args)]                        — untargeted async emit
      |> <msg>[(args)]                        — untargeted sync emit
      <expr> :> <msg>[(args)]                 — targeted async send
@@ -628,6 +647,14 @@
     (at? tokens pos :kw "return")
     (let [[e p] (parse-expr tokens (inc pos))]
       [{:node :return :expr e} p])
+
+    ;; F18 L1 — a `let` at statement position followed by `<ident> [: T] =`
+    ;; is the local-binding form. Distinct from the transition `let:` sub-
+    ;; block (which starts `let :`). Disambiguation: local binding always
+    ;; has `ident` after `let`; sub-block always has `:` after `let`.
+    (and (at? tokens pos :kw "let")
+         (at? tokens (inc pos) :ident))
+    (parse-let-statement tokens pos)
 
     (at? tokens pos :glyph ":>")
     (let [[m p] (parse-emit-message tokens (inc pos))]

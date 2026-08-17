@@ -803,3 +803,49 @@ def main:
                                      (:body n))))]
       (is (not (contains? (first fs) :modifier))
           "no :modifier key present when no modifier declared"))))
+
+;; ---------------------------------------------------------------------------
+;; F18 L1 — local `let` binding at statement position (spec §2.5)
+;; ---------------------------------------------------------------------------
+
+(defn- do-stmts-from
+  "Extract the do-clause statement sequence from `def main`'s
+   `-> running do:` transition body for F18 L1 tests."
+  [source]
+  (let [main (first (filter #(= :def-atom (:node %)) (p/parse source)))
+        txn  (first (filter #(= :transition (:node %)) (:body main)))
+        do-c (first (filter #(= :do-clause (:node %)) (:body txn)))]
+    (:stmts do-c)))
+
+(deftest f18-l1-let-binding-no-annotation
+  (testing "F18 L1 — `let x = 5` in a do-block parses as `:let-stmt` with no `:type`."
+    (let [[s] (do-stmts-from "def main:\n    -> running\n        do:\n            let x = 5\n            print(x)\n")]
+      (is (= :let-stmt (:node s)))
+      (is (= "x" (:name s)))
+      (is (nil? (:type s)))
+      (is (= 5 (:value (:expr s)))))))
+
+(deftest f18-l1-let-binding-with-annotation
+  (testing "F18 L1 — `let x: Int = 5` parses with the type annotation on `:type`."
+    (let [[s] (do-stmts-from "def main:\n    -> running\n        do:\n            let x: Int = 5\n            print(x)\n")]
+      (is (= :let-stmt (:node s)))
+      (is (= "x" (:name s)))
+      (is (= "Int" (get-in s [:type :name]))))))
+
+(deftest f18-l1-multiple-lets-in-sequence
+  (testing "F18 L1 — multiple let-bindings in a do-block parse as separate `:let-stmt`s, in source order."
+    (let [stmts (do-stmts-from "def main:\n    -> running\n        do:\n            let a = 1\n            let b = 2\n            print(a)\n")]
+      (is (= :let-stmt (:node (nth stmts 0))))
+      (is (= "a"       (:name  (nth stmts 0))))
+      (is (= :let-stmt (:node (nth stmts 1))))
+      (is (= "b"       (:name  (nth stmts 1)))))))
+
+(deftest f18-l1-transition-let-clause-still-works
+  (testing "F18 L1 — the pre-existing transition `let:` sub-block (F23, `let: <name>: <expr>`) still parses as a `:let-clause` — L1 didn't disturb the disambiguation. Distinguisher: `:` after `let` vs `<ident>` after `let`."
+    (let [n (first-node "def X:\n    n: Int = 0\n\n    -> alive\n\n    alive <: bump -> alive\n        let: k: 5\n        then: n => n + k\n")
+          txns (filter #(= :transition (:node %)) (:body n))
+          bump (first (filter #(some (fn [c] (= :let-clause (:node c))) (:body %))
+                              txns))
+          lc   (first (filter #(= :let-clause (:node %)) (:body bump)))]
+      (is (some? lc) "transition sub-block still parses as :let-clause")
+      (is (= [{:name "k" :expr {:node :lit-int :value 5}}] (:bindings lc))))))

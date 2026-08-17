@@ -2606,6 +2606,43 @@ def main:
       (is (= ["nonatomic" "unsafe_unretained"] (:attrs f))
           "unowned modifier picks (nonatomic, unsafe_unretained) attrs"))))
 
+;; ---------------------------------------------------------------------------
+;; F18 L1 — local `let` statement lowers to C var-decl; ctx threads so
+;; subsequent stmts resolve the binding (spec §2.5).
+;; ---------------------------------------------------------------------------
+
+(deftest f18-l1-let-stmt-emits-var-decl
+  (testing "F18 L1 — `let x = 5` inside a `do:` block lowers to a `:var-decl` with inferred type. Uses the plain-main path (main body inlined into `main()`)."
+    (let [prog  (lower-src "def main:\n    -> running\n        do:\n            let x = 5\n            print(x)\n")
+          stmts (get-in prog [:main :body])
+          decl  (first (filter #(= :var-decl (:node %)) stmts))]
+      (is (some? decl) ":var-decl emitted for the let-stmt")
+      (is (= "x" (:name decl)))
+      (is (= "int64_t" (:c-type decl))
+          "Int inference produces int64_t per F36 L1a"))))
+
+(deftest f18-l1-let-stmt-with-annotation-uses-declared-type
+  (testing "F18 L1 — `let x: Int = 5` uses the annotation authoritatively; annotation-based typing is exercised even when it aligns with inference."
+    (let [prog  (lower-src "def main:\n    -> running\n        do:\n            let x: Int = 5\n            print(x)\n")
+          stmts (get-in prog [:main :body])
+          decl  (first (filter #(= :var-decl (:node %)) stmts))]
+      (is (= "int64_t" (:c-type decl))
+          "annotation `Int` lowers to int64_t"))))
+
+(deftest f18-l1-let-stmt-visible-to-subsequent-stmts
+  (testing "F18 L1 — a `let x = 5; print(x)` sequence resolves `x` in the second stmt via the ctx that lower-body-stmts threads through the reduce. Failure mode pre-L1: `print(x)` would fail ident-lookup because x wasn't in `:locals`."
+    (let [prog (lower-src "def main:\n    -> running\n        do:\n            let x = 5\n            print(x)\n")]
+      (is (= :objc-program (:node prog))
+          "no lowering error → subsequent stmt saw the let"))))
+
+(deftest f18-l1-let-in-do-clause-of-transition
+  (testing "F18 L1 — `let` also works inside a receive-glyph transition's `do:` clause on a real atom (main-as-atom path)."
+    (let [prog  (lower-src "def Counter:\n    n: Int = 0\n\n    -> running\n\n    -> end\n\n    running <: bump -> running\n        do:\n            let doubled = n + n\n            print(doubled)\n\ndef main:\n    c: Counter = Counter()\n\n    -> running\n        do: print(0)\n")
+          c-cls (first (filter #(= "Counter" (:name %)) (:classes prog)))
+          bump  (first (filter #(= "bump" (:selector %)) (:methods c-cls)))]
+      (is (some? bump))
+      (is (= :objc-program (:node prog))))))
+
 (deftest f13-l2-weak-field-excluded-from-owned-slot-cascade
   (testing "F13 L2 — a `weak` atom-typed field is a non-owning reference; parent must NOT install a back-ref on the child or cascade end into it. Verifies that install-parent + end-cascade wiring skips weak/unowned fields."
     (let [prog (lower-src "def Owner:\n    -> alive\n\n    -> end\n\ndef Child:\n    owner: weak Owner\n\n    -> alive\n\n    -> end\n\ndef main:\n    -> running\n        do: print(0)\n")

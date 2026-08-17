@@ -3049,7 +3049,7 @@
 ;; Expression lowering (ctx-threaded)
 ;; ---------------------------------------------------------------------------
 
-(declare lower-expr lower-stmt record-synth-equals-name
+(declare lower-expr lower-stmt lower-body-stmts record-synth-equals-name
          resolve-args-against-params)
 
 (defn- lower-record-ctor
@@ -3431,7 +3431,7 @@
                                                     element-type-kw)
         body-ctx         (assoc-in ctx [:locals user-param-name] element-type-kw)
         body-nodes       (lambda-body-stmts lambda-node)
-        body-stmts       (mapv #(lower-stmt % body-ctx) body-nodes)]
+        body-stmts       (lower-body-stmts body-nodes body-ctx)]
     {:node :objc-msg
      :recv target-lo
      :selector "cxc_for_each:"
@@ -3899,8 +3899,46 @@
     :return    {:node :return :value (lower-expr (:expr node) ctx)}
     (fail-nyi! (str "statement " (:node node)) node)))
 
+(defn- lower-let-stmt
+  "F18 L1 — lower a `let <name> [: <type>] = <expr>` statement into a
+   C `:var-decl`. If a type annotation is present, use it authoritatively
+   (its type-kw / c-type override inference on the RHS); otherwise infer
+   from the RHS expression. Returns `[decl ctx']` where `ctx'` has the
+   new local bound so subsequent statements resolve the name."
+  [node ctx]
+  (let [expr    (:expr node)
+        ann     (:type node)
+        ann-kw  (when ann (cxc-type->type-kw (base-type-name ann)
+                                             (:record-env ctx)
+                                             (:atom-env ctx)
+                                             (:enum-env ctx) ann))
+        tk      (or ann-kw (infer-type expr ctx))
+        ct      (if ann
+                  (cxc-type->c ann (:record-env ctx)
+                               (:atom-env ctx)
+                               (:enum-env ctx))
+                  (type-kw->c-type tk expr))
+        rhs-lo  (lower-expr expr ctx)
+        decl    {:node :var-decl :name (:name node) :c-type ct :rhs rhs-lo}]
+    [decl (update ctx :locals assoc (:name node) tk)]))
+
+(defn- lower-body-stmts
+  "Lower a sequence of statements, threading ctx so an F18 L1
+   `:let-stmt` mid-sequence becomes visible to subsequent stmts.
+   Shared by lower-do-clause and method-body / lambda-body lowering
+   so `let` is uniformly available anywhere a statement is."
+  [stmts ctx]
+  (first
+   (reduce (fn [[acc c] node]
+             (if (= :let-stmt (:node node))
+               (let [[decl c'] (lower-let-stmt node c)]
+                 [(conj acc decl) c'])
+               [(conj acc (lower-stmt node c)) c]))
+           [[] ctx]
+           stmts)))
+
 (defn- lower-do-clause [clause ctx]
-  (mapv #(lower-stmt % ctx) (:stmts clause)))
+  (lower-body-stmts (:stmts clause) ctx))
 
 (declare lower-then-update)
 
@@ -4979,7 +5017,7 @@
                                                      method)])
                                (:params method)))
         ctx'     (assoc ctx :locals locals)
-        stmts    (mapv #(lower-stmt % ctx') (:stmts (:body method)))
+        stmts    (lower-body-stmts (:stmts (:body method)) ctx')
         params   (mapv (fn [p]
                          {:name   (:name p)
                           :c-type (if (= "self" (:name p))
@@ -5335,7 +5373,7 @@
                                                        method))]))
                           (:params method))
         ctx'        (assoc ctx :locals locals)
-        stmts       (mapv #(lower-stmt % ctx') (:stmts (:body method)))
+        stmts       (lower-body-stmts (:stmts (:body method)) ctx')
         args        (rest (:params method))            ; drop self
         param-names (mapv :name args)
         objc-params (mapv (fn [p]
