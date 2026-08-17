@@ -4,6 +4,10 @@ def Box:
 
     scaled_area(sx: Int, sy: Int) :< (w * sx) * (h * sy)
 
+    -> running
+
+    -> end
+
 def main:
     def b: Box
 

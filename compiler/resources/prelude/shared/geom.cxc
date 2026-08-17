@@ -1,4 +1,4 @@
-record Position:
+def Position:
     x: Float
     y: Float
 

@@ -8,6 +8,10 @@ def Gauge:
         raw_value >= 0
         raw_value <= max
 
+    -> running
+
+    -> end
+
 def main:
     -> running
         do: print(Gauge().value)

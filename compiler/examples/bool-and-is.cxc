@@ -5,6 +5,10 @@ def Counter:
     n     :< raw_n
     other :< raw_other
 
+    -> running
+
+    -> end
+
 def main:
     -> running
         # `and`, `or`, `is` lower to `&&`, `||`, `==` respectively.

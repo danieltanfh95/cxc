@@ -1,7 +1,7 @@
-enum Direction:
-    arrow_up
-    arrow_down
-    f
+def Direction:
+    case arrow_up
+    case arrow_down
+    case f
 
 def main:
     -> running

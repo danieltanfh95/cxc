@@ -1249,6 +1249,7 @@
 (declare def-atom->record def-atom->protocol def-atom->enum
          def-atom-body-has-transition? def-atom-body-has-use?
          def-atom-body-has-accepts? def-atom-body-has-case?
+         def-atom-body-has-nested-slot?
          parse-accepts-section parse-accepts-signature)
 
 (defn- parse-def-atom [tokens pos]
@@ -1266,12 +1267,17 @@
         (let [folded  (fold-top-level-fields body)
               raw-def {:node :def-atom :name name :ctor-params ctor
                        :body folded}
-              ;; F68 L1/L2 (Proposal H) — protocol + enum reshape at
-              ;; parse. Record reshape (`def Foo: fields+observables`
-              ;; → :record) is scaffolded but not activated: it flips
-              ;; atom semantics for ~90 existing tests that use
-              ;; `def X:` for data-only atoms. Activation bundles with
-              ;; L5 sugar-keyword retirement + test migration.
+              ;; F68 L1/L2/L5 (Proposal H) — structural detection dispatch.
+              ;; Order matters: protocol (accepts:) > enum (case) > class
+              ;; (transition, use:, or ctor params) > record (fields +
+              ;; observables only, no ctor params). See
+              ;; compiler/design/plans/proposal-h-full-unification-under-
+              ;; def.md § "Structural detection".
+              ;;
+              ;; Ctor params are a class indicator: records auto-derive
+              ;; their ctor from the field list, so an explicit ctor-param
+              ;; list at the def-header is itself an intent signal
+              ;; (preserves pre-F68 atom syntax of `def X(a: T):`).
               reshaped
               (cond
                 (def-atom-body-has-accepts? folded)
@@ -1280,7 +1286,14 @@
                 (def-atom-body-has-case? folded)
                 (def-atom->enum raw-def tokens pos)
 
-                :else raw-def)]
+                (or (def-atom-body-has-transition? folded)
+                    (def-atom-body-has-use? folded)
+                    (def-atom-body-has-nested-slot? folded)
+                    (seq ctor))
+                raw-def
+
+                :else
+                (def-atom->record raw-def tokens pos))]
           [reshaped (inc p)])
 
         (at? tokens p :newline)
@@ -1445,6 +1458,9 @@
 
 (defn- def-atom-body-has-case? [body]
   (boolean (some #(= :enum-case (:node %)) body)))
+
+(defn- def-atom-body-has-nested-slot? [body]
+  (boolean (some #(= :nested-atom (:node %)) body)))
 
 (defn- def-atom->record
   "Reshape a parsed :def-atom into a :record node. Rejects at parse if

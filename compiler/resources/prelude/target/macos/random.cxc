@@ -2,3 +2,7 @@ def Random:
     next_u32 :< native_random_u32()
 
     below(n: Int) :< native_random_below(n)
+
+    -> running
+
+    -> end

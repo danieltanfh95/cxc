@@ -396,8 +396,8 @@ def main:
          (first-node "def A:\n    data:\n        n: Int = 0\n")))))
 
 (deftest f67-l5-top-level-fields-parse-as-synthetic-data-section
-  (testing "F67 L5 — fields at atom-body top level fold into a synthetic :data-section so downstream shape stays stable. Two fields in declaration order."
-    (let [n (first-node "def A:\n    n: Int = 10\n    m: Float = 1.5\n")
+  (testing "F67 L5 — fields at atom-body top level fold into a synthetic :data-section so downstream shape stays stable. Two fields in declaration order. F68 note: an atom-shaped body requires an explicit atom marker (transition/use/ctor) so the def-atom AST kind is preserved; the field folding is the assertion here."
+    (let [n (first-node "def A:\n    n: Int = 10\n    m: Float = 1.5\n\n    -> running\n\n    -> end\n")
           dsec (first (filter #(= :data-section (:node %)) (:body n)))]
       (is (some? dsec) "synthesized :data-section present")
       (is (= 2 (count (:fields dsec))))

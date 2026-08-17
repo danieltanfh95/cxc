@@ -3,6 +3,10 @@ def Paddle:
 
     y :< raw_y
 
+    -> running
+
+    -> end
+
 def Game:
     def paddle: Paddle
 

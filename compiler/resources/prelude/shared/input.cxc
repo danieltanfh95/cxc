@@ -1,11 +1,11 @@
-enum Key:
-    arrow_up
-    arrow_down
-    arrow_left
-    arrow_right
-    space
-    escape
-    f
+def Key:
+    case arrow_up
+    case arrow_down
+    case arrow_left
+    case arrow_right
+    case space
+    case escape
+    case f
 
 def TestKeyboardInput(events: Int = 0):
     remaining: Int = events

@@ -193,7 +193,7 @@
 
 (deftest def-atom-lowers-to-objc-class
   (testing "def-atom with data:-only → :objc-class with @property ivars + -init defaults"
-    (let [prog (lower-src "def Counter:\n    n: Int = 42\n\ndef main:\n    def c: Counter\n\n    -> running\n        do: print(0)\n")
+    (let [prog (lower-src "def Counter:\n    n: Int = 42\n\n    -> running\n\n    -> end\n\ndef main:\n    def c: Counter\n\n    -> running\n        do: print(0)\n")
           cls  (first (:classes prog))]
       (is (= :objc-class (:node cls)))
       (is (= "Counter" (:name cls)))
@@ -205,8 +205,9 @@
               {:name "parent_slot_name" :c-type "NSString *"       :attrs ["nonatomic" "copy"]}
               {:name "n"                :c-type "int64_t"          :attrs ["assign"]}]
              (:properties cls)))
-      (is (= [{:name "kCounter_phase_init" :value "init"}
-              {:name "kCounter_phase_end"  :value "end"}]
+      (is (= [{:name "kCounter_phase_init"    :value "init"}
+              {:name "kCounter_phase_running" :value "running"}
+              {:name "kCounter_phase_end"     :value "end"}]
              (:phase-constants cls)))
       ;; -init is a thin shell calling the three private factored methods.
       (is (= [{:node :objc-msg :recv {:node :name :sym "self"}
@@ -221,7 +222,7 @@
         (is (= [{:node :queue-init :ivar "_own_queue"}
                 {:node :assign
                  :lhs  {:node :name :sym "_phase"}
-                 :rhs  {:node :name :sym "kCounter_phase_init"}}]
+                 :rhs  {:node :name :sym "kCounter_phase_running"}}]
                (:body setup)))
         (is (= [{:node :assign
                  :lhs  {:node :name :sym "_n"}
@@ -230,7 +231,7 @@
 
 (deftest def-atom-ctor-lowers-to-alloc-init
   (testing "Counter in def-slot position → :objc-alloc-init"
-    (let [prog (lower-src "def Counter:\n    n: Int = 42\n\ndef main:\n    def c: Counter\n\n    -> running\n        do: print(0)\n")
+    (let [prog (lower-src "def Counter:\n    n: Int = 42\n\n    -> running\n\n    -> end\n\ndef main:\n    def c: Counter\n\n    -> running\n        do: print(0)\n")
           main-cls (first (filter #(= "CxcMain" (:name %)) (:classes prog)))
           state-body (:body (first (filter #(clojure.string/starts-with?
                                              (:selector %) "cxc_stateInit")
@@ -245,7 +246,7 @@
 
 (deftest def-atom-triggers-foundation-and-autoreleasepool
   (testing "presence of an ObjC class flips includes to Foundation and wraps main in @autoreleasepool"
-    (let [prog (lower-src "def Counter:\n    n: Int = 42\n\ndef main:\n    def c: Counter\n\n    -> running\n        do: print(0)\n")]
+    (let [prog (lower-src "def Counter:\n    n: Int = 42\n\n    -> running\n\n    -> end\n\ndef main:\n    def c: Counter\n\n    -> running\n        do: print(0)\n")]
       ;; Foundation for ObjC; stdlib for cxc_shutdown() (needed by every
       ;; atom class's transitionToEnd cascade infrastructure).
       (is (some #{"<Foundation/Foundation.h>"} (:includes prog)))
@@ -312,7 +313,7 @@ def main:
 
 (deftest atom-emits-transitionToEnd-nilSlot-and-installParent
   (testing "every atom class synthesizes the Step 11 lifecycle methods"
-    (let [prog (lower-src "def Counter:\n    n: Int = 0\n\ndef main:\n    -> running\n        do: print(1)\n")
+    (let [prog (lower-src "def Counter:\n    n: Int = 0\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        do: print(1)\n")
           cls  (first (:classes prog))
           sels (set (map :selector (:methods cls)))]
       (is (contains? sels "cxc_installParent:inSlot:"))
@@ -341,7 +342,7 @@ def main:
 
 (deftest parent-installs-back-ref-on-nested-slot-child
   (testing "parent's cxc_stateInit calls -cxc_installParent:inSlot: on each nested slot after construction"
-    (let [prog (lower-src "def Cell:\n    n: Int = 0\n\ndef Container:\n    def cell: Cell\n\ndef main:\n    -> running\n        do: print(1)\n")
+    (let [prog (lower-src "def Cell:\n    n: Int = 0\n\n    -> running\n\n    -> end\n\ndef Container:\n    def cell: Cell\n\ndef main:\n    -> running\n        do: print(1)\n")
           container (first (filter #(= "Container" (:name %)) (:classes prog)))
           state (first (filter #(= "cxc_stateInit" (:selector %)) (:methods container)))
           install-msg (second (:body state))]     ; [_cell = Cell(), install-parent-msg]
@@ -351,7 +352,7 @@ def main:
 
 (deftest f31-f35-l4-atom-typed-data-field-becomes-slot
   (testing "F31/F35 Landing 4 — an atom-typed `data:` field with a default (eager Foo() or nil) participates in the slot machinery: parent installs back-ref at ctor time and cascades on -transitionToEnd. Retires the pre-L4 gap where only invented `def slot: Type` nested-atoms received back-refs. Spec-canonical `data:` form now matches (§1.11)."
-    (let [prog (lower-src "def Helper:\n    -> alive\n\ndef X:\n    h: Helper = Helper()\n\ndef main:\n    def x: X\n    -> running\n        do: print(0)\n")
+    (let [prog (lower-src "def Helper:\n    -> alive\n\ndef X:\n    h: Helper = Helper()\n\n    -> running\n\n    -> end\n\ndef main:\n    def x: X\n    -> running\n        do: print(0)\n")
           x-cls (first (filter #(= "X" (:name %)) (:classes prog)))
           state (first (filter #(= "cxc_stateInit" (:selector %)) (:methods x-cls)))
           install-msg (second (:body state))
@@ -371,7 +372,7 @@ def main:
 
 (deftest f31-f35-l4-nil-default-data-field-cascades-nil-safe
   (testing "F31/F35 Landing 4 — `data: h: Helper = nil` still gets the install/cascade wiring; the runtime calls on nil are no-ops (ObjC nil-messaging). Verifies the broadened filter doesn't break nullable atom-typed fields."
-    (let [prog (lower-src "def Helper:\n    -> alive\n\ndef X:\n    h: Helper = nil\n\ndef main:\n    def x: X\n    -> running\n        do: print(0)\n")
+    (let [prog (lower-src "def Helper:\n    -> alive\n\ndef X:\n    h: Helper = nil\n\n    -> running\n\n    -> end\n\ndef main:\n    def x: X\n    -> running\n        do: print(0)\n")
           x-cls (first (filter #(= "X" (:name %)) (:classes prog)))
           state (first (filter #(= "cxc_stateInit" (:selector %)) (:methods x-cls)))
           install-msg (second (:body state))]
@@ -382,7 +383,7 @@ def main:
 
 (deftest f31-f35-l4-f41-synthesized-field-not-a-slot
   (testing "F31/F35 Landing 4 — a no-default atom-typed data field is F41-sugared to a required ctor param (caller-provided reference). Since ownership is ambiguous, it is NOT treated as an owned slot — no back-ref, no cascade. Preserves the caller-supplies-shared-reference semantics."
-    (let [prog (lower-src "def Helper:\n    -> alive\n\ndef X:\n    h: Helper\n\ndef main:\n    def hh: Helper\n    def x: X(h: hh)\n    -> running\n        do: print(0)\n")
+    (let [prog (lower-src "def Helper:\n    -> alive\n\ndef X:\n    h: Helper\n\n    -> running\n\n    -> end\n\ndef main:\n    def hh: Helper\n    def x: X(h: hh)\n    -> running\n        do: print(0)\n")
           x-cls (first (filter #(= "X" (:name %)) (:classes prog)))
           state (first (filter #(and (:selector %)
                                      (str/starts-with? (:selector %) "cxc_stateInit"))
@@ -471,7 +472,7 @@ def main:
 
 (deftest atom-typed-field-defaults-to-nil-and-lowers-as-pointer
   (testing "F39 L1 — reference-typed atom fields are already nil-allowed (spec §3.6.1) — no `?` needed. `other: Counter = nil` lowers to `Counter *` (ARC strong)."
-    (let [prog (lower-src "def Counter:\n    n: Int = 5\n    other: Counter = nil\n\ndef main:\n    -> running\n        do: print(1)\n")
+    (let [prog (lower-src "def Counter:\n    n: Int = 5\n    other: Counter = nil\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        do: print(1)\n")
           cls  (first (:classes prog))]
       (is (= [{:name "phase"            :c-type "NSString *"       :attrs ["nonatomic" "copy"]}
               {:name "own_queue"        :c-type "dispatch_queue_t" :attrs ["nonatomic" "strong"]}
@@ -490,7 +491,7 @@ def main:
 
 (deftest atom-observable-lowers-to-objc-method
   (testing "F67 L4 — def-atom parametric observable → :objc-method under class :methods (replaces reader methods per Proposal G)."
-    (let [prog (lower-src "def Counter:\n    n: Int = 10\n\n    bump() :< n + 1\n\ndef main:\n    -> running\n        do: print(Counter().bump())\n")
+    (let [prog (lower-src "def Counter:\n    n: Int = 10\n\n    bump() :< n + 1\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        do: print(Counter().bump())\n")
           cls  (first (:classes prog))
           m    (first (filter #(= "bump" (:selector %)) (:methods cls)))]
       (is (= :objc-method (:node m)))
@@ -500,7 +501,7 @@ def main:
 
 (deftest atom-observable-call-lowers-to-objc-msg
   (testing "counter.bump() → :objc-msg with the receiver as :recv and bare selector (observable call site, F67 L4)."
-    (let [prog (lower-src "def Counter:\n    n: Int = 10\n\n    bump() :< n + 1\n\ndef main:\n    -> running\n        do: print(Counter().bump())\n")
+    (let [prog (lower-src "def Counter:\n    n: Int = 10\n\n    bump() :< n + 1\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        do: print(Counter().bump())\n")
           call (first (main-work-body prog))
           msg  (get-in call [:args 1])]
       (is (= :objc-msg (:node msg)))
@@ -510,7 +511,7 @@ def main:
 
 (deftest atom-observable-multiarg-selector
   (testing "plus(other: Int) → selector `plusWithother:` and matching call (parametric observable selector construction, F67 L2/L4)."
-    (let [prog (lower-src "def Counter:\n    n: Int = 10\n\n    plus(other: Int) :< n + other\n\ndef main:\n    -> running\n        do: print(Counter().plus(5))\n")
+    (let [prog (lower-src "def Counter:\n    n: Int = 10\n\n    plus(other: Int) :< n + other\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        do: print(Counter().plus(5))\n")
           m    (first (filter #(= "plusWithother:" (:selector %))
                               (:methods (first (filter #(= "Counter" (:name %)) (:classes prog))))))
           call (first (main-work-body prog))
@@ -580,7 +581,7 @@ def main:
 
 (deftest f40-atom-observable-accepts-named-args
   (testing "counter.plus(other: 7) — named arg on atom observable resolves (F67 L4 parametric observable arg dispatch)."
-    (let [prog (lower-src "def Counter:\n    n: Int = 10\n\n    plus(other: Int) :< n + other\n\ndef main:\n    -> running\n        do: print(Counter().plus(other: 7))\n")
+    (let [prog (lower-src "def Counter:\n    n: Int = 10\n\n    plus(other: Int) :< n + other\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        do: print(Counter().plus(other: 7))\n")
           call (first (main-work-body prog))
           msg  (get-in call [:args 1])]
       (is (= "plusWithother:" (:selector msg)))
@@ -589,7 +590,7 @@ def main:
 
 (deftest f40-atom-observable-defaults-fill-when-omitted
   (testing "counter.plus() with other defaulted uses default (F67 L4)."
-    (let [prog (lower-src "def Counter:\n    n: Int = 10\n\n    plus(other: Int = 3) :< n + other\n\ndef main:\n    -> running\n        do: print(Counter().plus())\n")
+    (let [prog (lower-src "def Counter:\n    n: Int = 10\n\n    plus(other: Int = 3) :< n + other\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        do: print(Counter().plus())\n")
           call (first (main-work-body prog))
           msg  (get-in call [:args 1])]
       (is (= "plusWithother:" (:selector msg)))
@@ -598,7 +599,7 @@ def main:
 
 (deftest f40-atom-observable-named-out-of-order-reorders
   (testing "counter.plus3(c: 3, a: 1, b: 2) — reordered to decl order (F67 L4 parametric observable)."
-    (let [prog (lower-src "def Counter:\n    n: Int = 0\n\n    plus3(a: Int, b: Int, c: Int) :< n + a + b + c\n\ndef main:\n    -> running\n        do: print(Counter().plus3(c: 3, a: 1, b: 2))\n")
+    (let [prog (lower-src "def Counter:\n    n: Int = 0\n\n    plus3(a: Int, b: Int, c: Int) :< n + a + b + c\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        do: print(Counter().plus3(c: 3, a: 1, b: 2))\n")
           call (first (main-work-body prog))
           msg  (get-in call [:args 1])
           arg-values (mapv :value (:args msg))]
@@ -939,6 +940,10 @@ def main:
     n: UInt8 = 0
     small_next :< n
 
+    -> running
+
+    -> end
+
 def main:
     -> running
         do: print(1)
@@ -1015,6 +1020,10 @@ def main:
         0 <= v
         v <= 150
 
+    -> running
+
+    -> end
+
 def main:
     -> running
         do: print(1)
@@ -1054,6 +1063,10 @@ def main:
         0 <= v
         v <= 150
 
+    -> running
+
+    -> end
+
 def main:
     -> running
         do: print(1)
@@ -1092,6 +1105,10 @@ def main:
 
     noop() :< v
 
+    -> running
+
+    -> end
+
 def main:
     -> running
         do: print(1)
@@ -1124,11 +1141,19 @@ def main:
         0 <= value
         value <= 150
 
+    -> running
+
+    -> end
+
 def Port:
     value: Int = 8080
     invariants:
         1 <= value
         value <= 65535
+
+    -> running
+
+    -> end
 
 def Temp:
     value: Int = 0
@@ -1136,19 +1161,35 @@ def Temp:
         -128 <= value
         value <= 127
 
+    -> running
+
+    -> end
+
 def Signed16:
     value: Int = 0
     invariants:
         -1000 <= value
         value <= 1000
 
+    -> running
+
+    -> end
+
 def OneBound:
     value: Int = 5
     invariants:
         value >= 0
 
+    -> running
+
+    -> end
+
 def Unbounded:
     value: Int = 0
+
+    -> running
+
+    -> end
 
 def main:
     -> running
@@ -1175,6 +1216,10 @@ def main:
     invariants:
         0 <= value
         value <= 150
+
+    -> running
+
+    -> end
 
 def main:
     -> running
@@ -1216,8 +1261,16 @@ def main:
         0 <= value
         value <= 150
 
+    -> running
+
+    -> end
+
 def Container:
     xs: List of Int
+
+    -> running
+
+    -> end
 
 def main:
     def a: Age(value: 42)
@@ -1247,6 +1300,10 @@ def main:
     invariants:
         0 <= value
         value <= 150
+
+    -> running
+
+    -> end
 
 def main:
     def a: Age(value: 42)
@@ -2289,13 +2346,13 @@ def main:
 
 (deftest f39-l2-nonnil-on-atom-accepted
   (testing "F39 Landing 2 — `T!` on a reference type (atom) is legal. C-level representation identical to bare `T` (still a pointer); the contract is enforced at observation points in F39 L3 (not this landing)."
-    (let [prog (lower-src "def Widget:\n    bus: Widget! = Widget()\n\ndef main:\n    def w: Widget\n\n    -> running\n        do: print(0)\n")]
+    (let [prog (lower-src "def Widget:\n    bus: Widget! = Widget()\n\n    -> running\n\n    -> end\n\ndef main:\n    def w: Widget\n\n    -> running\n        do: print(0)\n")]
       (is (= :objc-program (:node prog))
           "T! on atom lowers cleanly"))))
 
 (deftest f39-l2-nonnil-on-string-accepted
   (testing "F39 Landing 2 — `String!` is legal (String is reference-shaped)."
-    (let [prog (lower-src "def X:\n    name: String! = \"anon\"\n\ndef main:\n    def x: X\n\n    -> running\n        do: print(0)\n")]
+    (let [prog (lower-src "def X:\n    name: String! = \"anon\"\n\n    -> running\n\n    -> end\n\ndef main:\n    def x: X\n\n    -> running\n        do: print(0)\n")]
       (is (= :objc-program (:node prog))))))
 
 (deftest f39-l2-nonnil-on-value-primitive-rejected
@@ -2323,6 +2380,10 @@ def main:
   (testing "F39 Landing 3 — a `T!` ctor param gets an inline `if (p == nil) cxc_nonnil_violation(...)` guard at the top of cxc_stateInit. Warning-grade per spec §3.6.1 line 3686."
     (let [prog (lower-src (str "def EventBus:\n"
                                "    n: Int = 0\n"
+                               "\n"
+                               "    -> running\n"
+                               "\n"
+                               "    -> end\n"
                                "\n"
                                "def Widget(bus: EventBus!):\n"
                                "    n: Int = 0\n"
@@ -2429,7 +2490,7 @@ def main:
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
          #"redundant nullable on reference type `Counter\?`.*§3\.6\.1.*drop the `\?`"
-         (lower-src "def Counter:\n    other: Counter? = nil\n\ndef main:\n    -> running\n        do: print(0)\n")))))
+         (lower-src "def Counter:\n    other: Counter? = nil\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        do: print(0)\n")))))
 
 (deftest f39-l1-nullable-on-string-rejected
   (testing "F39 Landing 1 — `String?` is also redundant: String is reference-shaped (NSString *)."
@@ -2459,13 +2520,13 @@ def main:
 
 (deftest f33-self-field-read-still-allowed
   (testing "Self-field reads inside the atom's own observable / invariant / transition body compile — `self.n` (or bare `n`) reads the data field directly. Post F67 L4: observables replace the reader-method surface."
-    (let [prog (lower-src "def Counter:\n    n: Int = 10\n\n    bump() :< n + 1\n\ndef main:\n    def c: Counter\n\n    -> running\n        do: print(0)\n")]
+    (let [prog (lower-src "def Counter:\n    n: Int = 10\n\n    bump() :< n + 1\n\n    -> running\n\n    -> end\n\ndef main:\n    def c: Counter\n\n    -> running\n        do: print(0)\n")]
       (is (= :objc-program (:node prog))
           "self.n inside Counter's own observable compiles cleanly"))))
 
 (deftest f67-l2-parametric-observable-lowers-with-args
   (testing "F67 L2 (Proposal G): parametric observables `<name>(args) :< <expr>` emit as ObjC methods with declared params. The observable body may reference both self-fields and its own args; both resolve during type inference. Under Proposal G this shape replaces reader methods — `function healed_by(self, amt) -> Int: return self.hp + amt` migrates to `healed_by(amt: Int) :< hp + amt`."
-    (let [prog (lower-src "def Player:\n    hp: Int = 100\n    max_hp: Int = 100\n\n    healed_by(amt: Int) :< hp + amt\n\ndef main:\n    -> running\n        do: print(0)\n")
+    (let [prog (lower-src "def Player:\n    hp: Int = 100\n    max_hp: Int = 100\n\n    healed_by(amt: Int) :< hp + amt\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        do: print(0)\n")
           cls  (first (filter #(= "Player" (:name %)) (:classes prog)))
           obs  (first (filter #(re-matches #"healed_by.*" (or (:selector %) "")) (:methods cls)))]
       (is (some? obs) "parametric observable emits as :objc-method")
@@ -2478,7 +2539,7 @@ def main:
 
 (deftest f67-l2-zero-arg-observable-still-lowers
   (testing "F67 L2: zero-arg observable shape is preserved — `<name> :< <expr>` (no parens) still parses and lowers exactly as before. The parametric extension does not require parens on zero-arg observables."
-    (let [prog (lower-src "def Counter:\n    n: Int = 0\n\n    doubled :< n + n\n\ndef main:\n    -> running\n        do: print(0)\n")
+    (let [prog (lower-src "def Counter:\n    n: Int = 0\n\n    doubled :< n + n\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        do: print(0)\n")
           cls  (first (filter #(= "Counter" (:name %)) (:classes prog)))
           obs  (first (filter #(= "doubled" (:selector %)) (:methods cls)))]
       (is (some? obs) "zero-arg observable still emits with bare selector")
@@ -2487,7 +2548,7 @@ def main:
 
 (deftest f67-l2-parametric-observable-multi-arg
   (testing "F67 L2: parametric observables with multiple args. Each arg becomes an ObjC method param; the body expression sees all args + self-fields in scope."
-    (let [prog (lower-src "def Box:\n    w: Int = 0\n    h: Int = 0\n\n    scaled_area(sx: Int, sy: Int) :< (w * sx) * (h * sy)\n\ndef main:\n    -> running\n        do: print(0)\n")
+    (let [prog (lower-src "def Box:\n    w: Int = 0\n    h: Int = 0\n\n    scaled_area(sx: Int, sy: Int) :< (w * sx) * (h * sy)\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        do: print(0)\n")
           cls  (first (filter #(= "Box" (:name %)) (:classes prog)))
           obs  (first (filter #(re-matches #"scaled_area.*" (or (:selector %) "")) (:methods cls)))]
       (is (some? obs) "multi-arg parametric observable emits")

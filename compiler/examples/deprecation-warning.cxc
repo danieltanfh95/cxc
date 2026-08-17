@@ -1,4 +1,4 @@
-record OldBox:
+def OldBox:
     deprecated: "use NewBox instead — OldBox loses precision on large values"
 
     n: Int = 0

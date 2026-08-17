@@ -1,4 +1,4 @@
-record V:
+def V:
     x: Float
     y: Float
 

@@ -16,10 +16,18 @@ def Counter:
 
     n :< raw_n
 
+    -> running
+
+    -> end
+
 def Wrapper:
     raw_c: Counter = nil
 
     c :< raw_c
+
+    -> running
+
+    -> end
 
 def main:
     -> running

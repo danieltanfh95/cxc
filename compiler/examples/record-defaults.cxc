@@ -1,4 +1,4 @@
-record V:
+def V:
     x: Int = 1
     y: Int = 2
 

@@ -1,8 +1,8 @@
-record Vec2:
+def Vec2:
     x: Int
     y: Int
 
-record Line:
+def Line:
     start: Vec2
     stop:  Vec2
 

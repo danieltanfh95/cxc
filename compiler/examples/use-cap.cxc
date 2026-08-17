@@ -3,6 +3,10 @@ def OffsetSource:
 
     offset :< raw_offset
 
+    -> running
+
+    -> end
+
 def Timer:
     use:
         src: OffsetSource

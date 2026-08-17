@@ -5,6 +5,10 @@ def Counter:
     n     :< raw_n
     other :< raw_other
 
+    -> running
+
+    -> end
+
 def main:
     -> running
         # Accessing .n on the nil `other` slot returns 0 — cxc's nil

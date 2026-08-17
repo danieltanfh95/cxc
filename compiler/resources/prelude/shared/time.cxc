@@ -1,9 +1,9 @@
-record Duration:
+def Duration:
     millis: Int
 
     to_seconds() :< self.millis / 1000.0
 
-record Instant:
+def Instant:
     millis: Int
 
     plus(delta: Duration) :< Instant(millis: self.millis + delta.millis)
