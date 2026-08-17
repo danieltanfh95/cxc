@@ -672,37 +672,39 @@
               "collapse removes the redundant grouping header.")))
 
 (defn- parse-methods-section
-  "Parse a `methods:` block. Method entries may carry a leading `replace`
-   modifier (F9 L3) — parsed unconditionally here and flagged via
-   `:replace?` on the entry. `fold-class-body` rejects `:replace?`
-   entries on non-extension classes; `parse-extend-class` accepts them.
+  "F67 L4 — `methods:` section is retired (Proposal G class-body collapse).
+   Under Corvid's actor substrate, class-body callables collapse to two
+   shapes:
 
-   Keeping the prefix in the shared parser means `replace`-shape source
-   errors get one uniform diagnostic path (misplaced-replace on a plain
-   class body fires at fold, not scattered in the parser)."
+     1. Observable (pure read):
+            <name>[(args)] :< <expression>
+     2. Receive-glyph transition (message handler; may mutate):
+            * <: <name>(args) -> *
+                [when: <guard>] [then: <update>] [do: <side effect>]
+
+   Utility functions unrelated to `self` move to module scope
+   (`def name(args) -> T: body`). Records get the reader + utility
+   cases; transitions are structurally forbidden on records."
   [tokens pos]
-  (let [[_ p] (expect tokens pos :kw "methods")
-        [_ p] (expect tokens p :punct ":")
-        [_ p] (expect tokens p :newline)
-        [_ p] (expect tokens p :indent)]
-    (loop [methods [] p p]
-      (cond
-        (at? tokens p :dedent) [{:node :methods-section :methods methods} (inc p)]
-        (at? tokens p :newline) (recur methods (inc p))
-
-        (at? tokens p :kw "replace")
-        (let [[_ p2]    (expect tokens p :kw "replace")
-              [fdecl p3] (parse-function-decl tokens p2)
-              p4        (skip-newlines tokens p3)]
-          (recur (conj methods (assoc fdecl :replace? true)) p4))
-
-        (or (at? tokens p :kw "function")
-            (at-def-method? tokens p))
-        (let [[fdecl p2] (parse-function-decl tokens p)
-              p3 (skip-newlines tokens p2)]
-          (recur (conj methods fdecl) p3))
-
-        :else (fail! tokens p "expected `def`, `function`, or `replace` in methods section")))))
+  (fail! tokens pos
+         (str "F67 L4: `methods:` section is retired (Proposal G class-body "
+              "collapse). Under Corvid's actor substrate, class-body callables "
+              "are one of two shapes:\n\n"
+              "  1. Observable (pure read):\n"
+              "         <name>(args) :< <expression>\n\n"
+              "  2. Receive-glyph transition (message handler; may mutate):\n"
+              "         * <: <name>(args) -> *\n"
+              "             [when: <guard>] [then: <update>] [do: <side effect>]\n\n"
+              "Migrate each method by category:\n\n"
+              "  - `function foo(self, args) -> T: return <expr>`  (reader)\n"
+              "      → `foo(args) :< <expr>`\n"
+              "  - `function foo(self, args): <side effect>`       (void)\n"
+              "      → `* <: foo(args) -> * do: <side effect>`\n"
+              "  - `function foo(self, args): <mutation>`          (writer)\n"
+              "      → `* <: foo(args) -> * then: <update>`\n\n"
+              "Utility functions that don't operate on `self` belong at module\n"
+              "scope: `def foo(args) -> T: body`.\n\n"
+              "See spec §1.11.")))
 
 (defn- parse-deprecated-section
   "deprecated: \"<message>\"
@@ -774,9 +776,17 @@
         [params p]      (if (at? tokens p :punct "(")
                           (parse-param-list-parens tokens p)
                           [[] p])
+        ;; F67 L4 — optional explicit return-type annotation
+        ;; `name(args) -> T :< expr`. Needed for observables serving as
+        ;; method-stream sources (receive-glyph subscription requires
+        ;; parametric `Stream of T` structure). Inference otherwise.
+        [ret p]         (if (at? tokens p :glyph "->")
+                          (parse-type tokens (inc p))
+                          [nil p])
         [_ p]           (expect tokens p :glyph ":<")
         [expr p]        (parse-expr tokens p)]
-    [{:node :observable :name name :params params :expr expr} p]))
+    [{:node :observable :name name :params params
+      :return-type ret :expr expr} p]))
 
 ;; ---------------------------------------------------------------------------
 ;; Transitions
@@ -1144,9 +1154,12 @@
   (and (at? tokens pos :ident)
        (or (at? tokens (inc pos) :glyph ":<")
            ;; F67 L2 — parametric observable: `<name>(params) :<`
+           ;; F67 L4 — optional explicit return type between `)` and `:<`:
+           ;;   `<name>(params) -> T :< expr`.
            (and (at? tokens (inc pos) :punct "(")
                 (when-let [after-close (scan-past-parens tokens (inc pos))]
-                  (at? tokens after-close :glyph ":<"))))))
+                  (or (at? tokens after-close :glyph ":<")
+                      (at? tokens after-close :glyph "->")))))))
 
 ;; F14 / F67 L3 — the legacy `-> handler(args):` sugar (F14) is retired
 ;; under Proposal G's class-body collapse. The migration target is the
@@ -1283,14 +1296,40 @@
         (let [[s p2] (parse-methods-section tokens p)]
           (recur (conj body s) (skip-newlines tokens p2)))
 
-        (or (at? tokens p :kw "function")
-            (at-def-method? tokens p))
-        (let [[f p2] (parse-function-decl tokens p)]
-          (recur (conj body f) (skip-newlines tokens p2)))
+        ;; F67 L4 — `function` keyword inside atom body retires with the
+        ;; `methods:` section (Proposal G class-body collapse). Free
+        ;; functions still live at module scope.
+        (at? tokens p :kw "function")
+        (fail! tokens p
+               (str "F67 L4: `function` keyword inside `def " name "` body is "
+                    "retired (Proposal G class-body collapse). Migrate the "
+                    "method by category:\n\n"
+                    "  - reader → observable: `name(args) :< <expr>`\n"
+                    "  - void   → transition: `* <: name(args) -> * do: <body>`\n"
+                    "  - writer → transition: `* <: name(args) -> * then: <update>`\n\n"
+                    "Utility functions unrelated to `self` belong at module "
+                    "scope (`def name(args) -> T: body`). See spec §1.11."))
+
+        ;; F67 L4 — spec-canonical method form `def name(args) -> T: body`
+        ;; inside a class body retires with `methods:` (Proposal G collapse).
+        (at-def-method? tokens p)
+        (fail! tokens p
+               (str "F67 L4: `def " (t-value (peek-tok tokens (inc p)))
+                    "(args)` method form inside `def " name "` body is "
+                    "retired (Proposal G class-body collapse). Migrate the "
+                    "method by category:\n\n"
+                    "  - reader → observable: `" (t-value (peek-tok tokens (inc p)))
+                    "(args) :< <expr>`\n"
+                    "  - void   → transition: `* <: " (t-value (peek-tok tokens (inc p)))
+                    "(args) -> * do: <body>`\n"
+                    "  - writer → transition: `* <: " (t-value (peek-tok tokens (inc p)))
+                    "(args) -> * then: <update>`\n\n"
+                    "Utility functions unrelated to `self` belong at module "
+                    "scope. See spec §1.11."))
 
         ;; Nested atom slot: `def <name>: <TypeName>[(ctor-args)]`
         ;; Distinct from top-level `def <Name>:` (which opens a block)
-        ;; and from the spec-canonical method form `def name(...) -> T:`
+        ;; and from the retired method form `def name(...) -> T:`
         ;; caught above. F34-retirement-pending shape.
         (at? tokens p :kw "def")
         (let [[_ p2]   (expect tokens p :kw "def")
@@ -1337,7 +1376,7 @@
           (recur (conj body t) (skip-newlines tokens p2)))
 
         :else
-        (fail! tokens p "expected use:, field decl (`name: Type [= default]`), invariants:, methods:, deprecated:, observable, or transition inside def-atom body")))))
+        (fail! tokens p "expected use:, field decl (`name: Type [= default]`), invariants:, deprecated:, observable (`name[(args)] :< expr`), or transition inside def-atom body")))))
 
 ;; ---------------------------------------------------------------------------
 ;; F9 Landing 1 — `class` / `protocol` sugar over `class + metadata: kind:`.
@@ -1548,28 +1587,14 @@
                    (str "`accepts:` is only valid on `kind: protocol`; "
                         "class `" class-name "` has kind `" (name final-kind)
                         "`. Regular/record/enum classes declare their "
-                        "surface via `methods:` (with bodies). See spec "
-                        "§3.4.5.")))
+                        "surface via observables (`name(args) :< expr`) "
+                        "and receive-glyph transitions "
+                        "(`* <: name(args) -> * do: <body>`). See spec §3.4.5.")))
         _ (when (and (= :protocol final-kind) (seq data-secs))
             (fail! tokens pos-for-diag
                    (str "`data:` is not permitted on `kind: protocol` — "
                         "protocols declare no state, only method surface. "
                         "See spec §3.4.5. Class `" class-name "`.")))
-        ;; F9 L3 — `replace` modifier is only valid inside an
-        ;; `extend class Foo:` body; on a plain class body it has no
-        ;; target to shadow. Detect and reject at fold with a pointer at
-        ;; §3.3.2 rule 4 (shadowing rules).
-        replaced-methods (->> (filter #(= :methods-section (:node %)) body)
-                              (mapcat :methods)
-                              (filter :replace?))
-        _ (when (seq replaced-methods)
-            (fail! tokens pos-for-diag
-                   (str "`replace` modifier on method `"
-                        (:name (first replaced-methods))
-                        "` inside class `" class-name "` — `replace` is "
-                        "only meaningful inside an `extend class` body "
-                        "(shadows the original definition). See spec "
-                        "§3.3.2 rule 4.")))
         accepts-entries (vec (mapcat :entries accepts-secs))
         body-conforms (mapv :type conforms-lines)
         all-conforms  (into (vec header-conforms) body-conforms)]
@@ -1585,14 +1610,17 @@
 (defn- parse-class-section
   "Dispatch one section inside a `class`/`protocol` body. Accepts:
    - metadata: (L1 — kind: only)
-   - data:
-   - methods:
+   - data:            (retired L5; raises with L5 diagnostic)
+   - methods:         (retired L4; raises with L4 diagnostic)
    - invariants:
    - use:
    - deprecated:
    - conforms: (body-form)
    - accepts:         (L2 — protocol signature section)
    - accepts <sig>    (L2 — per-entry sugar at class body level)
+   - observable       (F67 L4 — reader-default on protocols; observable
+                       body on regular/record kinds)
+   - transition       (F67 L4 — wildcard self-transition default)
    Rejects `state:` (retired at v1.0); other keys fall through to the
    caller's else-branch."
   [tokens pos]
@@ -1603,6 +1631,34 @@
     (at? tokens pos :kw "invariants") (parse-invariants-section tokens pos)
     (at? tokens pos :kw "use")        (parse-use-section tokens pos)
     (at? tokens pos :kw "deprecated") (parse-deprecated-section tokens pos)
+
+    ;; F67 L4 — `function` keyword inside class/protocol body retires
+    ;; with `methods:` (Proposal G collapse). Free functions still live
+    ;; at module scope.
+    (at? tokens pos :kw "function")
+    (fail! tokens pos
+           (str "F67 L4: `function` keyword inside class body is retired "
+                "(Proposal G class-body collapse). Migrate:\n\n"
+                "  - reader → observable: `name(args) :< <expr>`\n"
+                "  - void   → transition: `* <: name(args) -> * do: <body>`\n"
+                "  - writer → transition: `* <: name(args) -> * then: <update>`\n\n"
+                "Utility functions unrelated to `self` belong at module scope. "
+                "See spec §1.11."))
+
+    ;; F67 L4 — spec-canonical `def name(args) -> T: body` method form
+    ;; inside a class body retires (Proposal G collapse).
+    (at-def-method? tokens pos)
+    (fail! tokens pos
+           (str "F67 L4: `def " (t-value (peek-tok tokens (inc pos)))
+                "(args)` method form inside class body is retired "
+                "(Proposal G class-body collapse). Migrate:\n\n"
+                "  - reader → observable: `" (t-value (peek-tok tokens (inc pos)))
+                "(args) :< <expr>`\n"
+                "  - void   → transition: `* <: " (t-value (peek-tok tokens (inc pos)))
+                "(args) -> * do: <body>`\n"
+                "  - writer → transition: `* <: " (t-value (peek-tok tokens (inc pos)))
+                "(args) -> * then: <update>`\n\n"
+                "See spec §1.11."))
 
     ;; F9 L2 — `accepts:` section (multiple signatures under one header)
     (and (at? tokens pos :kw "accepts") (at? tokens (inc pos) :punct ":"))
@@ -1626,6 +1682,11 @@
     (fail! tokens pos
            (str "`state:` section is retired at v1.0 — all fields are `data:`. "
                 "See spec §1.11."))
+
+    ;; F67 L4 — observable (reader-default on protocols; observable
+    ;; body on regular/record classes). Must precede field-decl guard.
+    (looks-like-observable? tokens pos)
+    (parse-observable tokens pos)
 
     ;; F67 L5 — top-level field declaration (Proposal D). Fold
     ;; produces the same synthetic `:data-section` that `data:` did,
@@ -1666,8 +1727,10 @@
         (if-let [[sec p2] (parse-class-section tokens p)]
           (recur (conj body sec) (skip-newlines tokens p2))
           (fail! tokens p
-                 (str "expected metadata:, data:, methods:, invariants:, "
-                      "use:, deprecated:, conforms:, or dedent in `"
+                 (str "expected metadata:, invariants:, use:, deprecated:, "
+                      "conforms:, accepts:, observable "
+                      "(`name[(args)] :< expr`), transition, field decl, "
+                      "or dedent in `"
                       (if (= :protocol sugar-kind) "protocol" "class")
                       " " class-name "` body")))))))
 
@@ -1697,7 +1760,8 @@
 (defn- parse-extend-section
   "Dispatch one section inside an `extend class Foo:` body. Strict —
    rejects sections spec §3.3.2 forbids (data/state/use/cases/metadata/
-   deprecated). Accepts only methods:, invariants:, conforms:."
+   deprecated). Accepts observables (F67 L4), wildcard self-transitions
+   (F67 L4), invariants:, conforms:. `methods:` retires (F67 L4)."
   [tokens pos target]
   (cond
     (at? tokens pos :kw "methods")    (parse-methods-section tokens pos)
@@ -1706,6 +1770,17 @@
     (and (at? tokens pos :ident) (= "conforms" (t-value (peek-tok tokens pos)))
          (at? tokens (inc pos) :punct ":"))
     (parse-conforms-line tokens pos)
+
+    ;; F67 L4 — observable on extension (parametric or zero-arg).
+    (looks-like-observable? tokens pos)
+    (parse-observable tokens pos)
+
+    ;; F67 L4 — wildcard self-transition (`* <: msg(args) -> *`) on
+    ;; extension. Extensions can't add explicit-phase transitions
+    ;; (state-machine structure invariance §3.3.2), so we accept the
+    ;; transition here and defer the wildcard-only check to lower.
+    (at? tokens pos :glyph "*")
+    (parse-transition tokens pos)
 
     (at? tokens pos :kw "data")
     (fail! tokens pos
@@ -1797,16 +1872,19 @@
         (if-let [[sec p2] (parse-extend-section tokens p target)]
           (recur (conj body sec) (skip-newlines tokens p2))
           (fail! tokens p
-                 (str "expected methods:, invariants:, conforms:, or dedent "
-                      "in `extend class " target "` body")))))))
+                 (str "expected observable (`name[(args)] :< expr`), "
+                      "transition (`* <: msg(args) -> * …`), invariants:, "
+                      "conforms:, or dedent in `extend class " target "` body")))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Record  — the smallest top-level form
 ;;
 ;;   record <Name>:
-;;       <sections>+
+;;       <field declarations>
+;;       <observables — pure readers, parametric or zero-arg>
 ;;
-;;   Supported sections here: data:, methods:.
+;;   F67 L4 — `methods:` retires; records only carry fields + observables.
+;;   F67 L5 — `data:` header retires; fields live at record-body top level.
 ;; ---------------------------------------------------------------------------
 
 (defn- parse-record [tokens pos]
@@ -1868,7 +1946,7 @@
           (recur (conj sections f) p3))
 
         :else
-        (fail! tokens p "expected field decl (`name: Type [= default]`), observable (`name[(args)] :< expr`), methods:, deprecated:, or dedent in record body")))))
+        (fail! tokens p "expected field decl (`name: Type [= default]`), observable (`name[(args)] :< expr`), deprecated:, or dedent in record body")))))
 
 (defn- parse-enum
   "Parse `enum Foo:` followed by an indented list of ident cases,

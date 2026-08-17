@@ -674,37 +674,45 @@
     {:name (:name p) :cxc-ty (:name (:type p)) :is-self? false
      :default (:default p)}))
 
-(defn- extract-methods
-  "Return [{:name :params [{:name :cxc-ty :is-self?}] :cxc-return-ty
-   :cxc-return-ty-node :body}] from a record's :methods-section (may
-   be nil). `:cxc-return-ty` carries the outer type name (works for
-   both `:type-ref` and `:type-of` — for `-> Stream of Instant`, it's
-   `\"CxcStream\"` after prelude-rename). `:cxc-return-ty-node`
-   retains the full type node so Layer 6's method-stream payload
-   inference can read the parametric inner type."
-  [record-name methods-section]
-  (mapv (fn [m]
-          (let [rt          (:return-type m)
-                user-params (remove #(= "self" (:name %)) (:params m))
-                site        (str "method `" record-name "." (:name m) "`")]
-            (validate-defaults-after-required! site user-params)
-            (validate-default-is-const!       site user-params)
-            {:name               (:name m)
-             :params             (mapv #(normalize-method-param record-name %) (:params m))
-             :cxc-return-ty      (case (:node rt)
-                                   :type-ref      (:name rt)
-                                   :type-of       (:outer rt)
-                                   :type-nullable (base-type-name rt)
-                                   :type-nonnil   (base-type-name rt)
-                                   nil            nil
-                                   (:name rt))
-             :cxc-return-ty-node rt
-             :body               (:body m)
-             ;; F9 L4 — carry `replace` intent through composition so
-             ;; the shadowing rules can consult it. Absent on non-
-             ;; extension entries (nil is the "no intent" signal).
-             :replace?           (boolean (:replace? m))}))
-        (:methods methods-section)))
+(defn- observable->method-entry
+  "F67 L4 — convert an observable node into a method-shape env entry
+   compatible with `:methods` on record/atom env slots and `:defaults`
+   on protocol env slots. Observables are pure readers; the body
+   becomes `[{:node :return :value <expr>}]`. `self` is prepended to
+   params to match downstream expectations.
+
+   `:cxc-return-ty` is left nil — observable return type is inferred
+   from the body expression by observable-type inference (not the
+   method-return-type path). Signature-mismatch checks that need an
+   explicit return type on the observable-migration surface are not
+   supported at v1.0 (would require `name(args) -> T :< expr` syntax);
+   the migration retains all other signature checks (arity, param
+   name, param type)."
+  [owner-name obs]
+  (let [self-param {:name "self" :type nil :default nil}
+        with-self  (into [self-param] (:params obs))
+        site       (str "observable `" owner-name "." (:name obs) "`")]
+    (validate-defaults-after-required! site (:params obs))
+    (validate-default-is-const!        site (:params obs))
+    {:name               (:name obs)
+     :params             (mapv #(normalize-method-param owner-name %) with-self)
+     :cxc-return-ty      (when-let [rt (:return-type obs)]
+                           (case (:node rt)
+                             :type-ref      (:name rt)
+                             :type-of       (:outer rt)
+                             :type-nullable (base-type-name rt)
+                             :type-nonnil   (base-type-name rt)
+                             nil            nil
+                             (:name rt)))
+     :cxc-return-ty-node (:return-type obs)
+     ;; Body shape mirrors parse-block output: `{:node :block :stmts [...]}`
+     ;; with `:return` in parser shape (:expr, not :value; :value is the
+     ;; lowered form) so lower-method-fn's `(:stmts (:body method))` works
+     ;; uniformly for observable-derived and legacy `methods:` entries.
+     :body               {:node :block
+                          :stmts [{:node :return :expr (:expr obs)}]}
+     :replace?           false
+     :observable-derived? true}))
 
 (defn- handler-decl->method-entry
   "F14 — convert an atom-body `-> name(args):` handler declaration
@@ -752,23 +760,26 @@
                        legacy-dsec        legacy-dsec
                        (seq top-fields)   {:node :data-section :fields top-fields}
                        :else              nil)
-             msec    (first (filter #(= :methods-section (:node %)) (:sections r)))
-             ;; F67 L4a — observables on records (Proposal G collapse).
+             ;; F67 L4 — observables on records (Proposal G collapse).
+             ;; The `methods:` section is retired; observables carry
+             ;; the callable-reader surface. Extension methods still
+             ;; land in `:methods` via compose-record-env-with-extensions
+             ;; (extension observables convert to method-shape entries
+             ;; in extension-methods-for).
              observables (filterv #(= :observable (:node %)) (:sections r))
              fields  (fields-from-data-section dsec env atom-env enum-env)
              site    (str "record `" name "` fields (auto-ctor)")
              _       (validate-defaults-after-required! site fields)
              _       (validate-default-is-const!       site fields)
-             methods (extract-methods name msec)
-             ;; F38 auto-detect: any method OR observable → :class
-             ;; variant, else :struct. Structural trigger, no user
-             ;; syntax; observables carry callable behaviour just as
-             ;; methods do.
-             variant (if (or (seq methods) (seq observables)) :class :struct)]
+             ;; F38 auto-detect: any observable → :class variant, else
+             ;; :struct. Structural trigger, no user syntax. Base
+             ;; :methods is empty; ext-composed methods bump variant
+             ;; downstream if needed.
+             variant (if (seq observables) :class :struct)]
          (assoc env name {:fields       fields
                           :field-index  (into {} (map (juxt :name identity) fields))
-                          :methods      methods
-                          :method-index (into {} (map (juxt :name identity) methods))
+                          :methods      []
+                          :method-index {}
                           :observables  observables
                           :variant      variant})))
      skeleton
@@ -808,19 +819,45 @@
   "Scan top-level `:class` nodes with `:kind :protocol` and build the
    protocol-env. L2 is registration-only: no cross-protocol conformance
    validation (L5), no default-method inheritance (L6), no dispatch
-   wiring (L4)."
+   wiring (L4).
+
+   F67 L4 — protocol defaults are declared as observables (reader) or
+   wildcard self-transitions (side effect / mutation) inside the
+   protocol body. The `methods:` section retires (Proposal G class-body
+   collapse); observables provide the reader-default surface used by
+   F9 L6 default-method inheritance. Return types on default observables
+   fall back to the matching `accepts:` entry's return type (protocols
+   declare the shared shape once)."
   [top-nodes]
   (reduce
    (fn [env p]
      (let [nm       (:name p)
            accepts  (vec (:accepts p))
            _        (validate-unique-accepts! nm accepts)
-           msec     (first (filter #(= :methods-section (:node %)) (:body p)))
-           defaults (vec (:methods msec))
+           accepts-by-name (into {} (map (juxt :name identity) accepts))
+           obs-defaults (filterv #(= :observable (:node %)) (:body p))
+           defaults (mapv
+                     (fn [o]
+                       (let [entry (observable->method-entry nm o)
+                             accept (get accepts-by-name (:name o))
+                             ret    (or (:return-type o) (:return-type accept))
+                             ret-ty (when ret
+                                      (case (:node ret)
+                                        :type-ref      (:name ret)
+                                        :type-of       (:outer ret)
+                                        :type-nullable (base-type-name ret)
+                                        :type-nonnil   (base-type-name ret)
+                                        nil            nil
+                                        (:name ret)))]
+                         (assoc entry
+                                :cxc-return-ty      (or (:cxc-return-ty entry)
+                                                        ret-ty)
+                                :cxc-return-ty-node (or (:cxc-return-ty-node entry)
+                                                        ret))))
+                     obs-defaults)
            conforms (vec (:conforms p))]
        (assoc env nm {:accepts       accepts
-                      :accepts-index (into {} (map (juxt :name identity)
-                                                   accepts))
+                      :accepts-index accepts-by-name
                       :conforms      conforms
                       :defaults      defaults})))
    {}
@@ -900,14 +937,35 @@
 
 (defn- extension-methods-for
   "Return a flat vector of extension methods (in env shape, with :replace?)
-   for `target-name`, in declaration order across all its extensions."
+   for `target-name`, in declaration order across all its extensions.
+
+   F67 L4 — extensions declare methods as observables (readers) or
+   wildcard self-transitions (side effect / mutation). The `methods:`
+   section retires (Proposal G class-body collapse); observables here
+   convert to method-shape entries so composition, shadowing, and the
+   `:conforms` protocol-checking pipeline stay uniform. The observable
+   also lands in `:observables` via `extension-observables-for` so
+   call-site dispatch keeps its existing shape; shadow detection here
+   uses the method-shape representation."
   [target-name extension-env]
   (vec
    (mapcat
     (fn [ext]
-      (extract-methods
-       target-name
-       (first (filter #(= :methods-section (:node %)) (:body ext)))))
+      (mapv #(observable->method-entry target-name %)
+            (filterv #(= :observable (:node %)) (:body ext))))
+    (get extension-env target-name []))))
+
+(defn- extension-observables-for
+  "F67 L4 — return raw observable nodes contributed by extensions of
+   `target-name`, in declaration order. Composed into the target's
+   `:observables` alongside its own observables so downstream
+   observable emission (`record-observable-functions`) sees all
+   observables uniformly."
+  [target-name extension-env]
+  (vec
+   (mapcat
+    (fn [ext]
+      (filterv #(= :observable (:node %)) (:body ext)))
     (get extension-env target-name []))))
 
 (defn- extension-conforms-for
@@ -995,9 +1053,16 @@
 
 (defn- compose-record-env-with-extensions
   "Post-composition rebuild of record-env: for each record target with
-   extensions, replace its :methods + :method-index with the composed
-   table, union :conforms, and (F38) re-detect :variant since new
-   methods may promote struct → class."
+   extensions, merge own + extension observables (shadow detection via
+   `compose-target-methods` on the method-shape projection), union
+   :conforms, and (F38) re-detect :variant since new observables may
+   promote struct → class.
+
+   F67 L4 — records only carry observables (methods retire under
+   Proposal G). Shadowing between own observables and extension
+   observables of the same name fires the same warnings that
+   method-shadowing used to; the composed observable list becomes
+   the record's `:observables` for downstream emission."
   [record-env extension-env]
   (reduce-kv
    (fn [env target rec]
@@ -1012,15 +1077,41 @@
                                   "record-invariant emission is a "
                                   "follow-on sub-landing.")
                              e)))
+             own-obs (:observables rec)
+             ext-obs (extension-observables-for target extension-env)
+             ;; Shadow detection runs on the method-shape projection.
+             ;; `pick-winner-with-warnings!` emits warnings and picks
+             ;; per §3.3.2 rules 1/3/5; we discard its return value here
+             ;; and re-derive the observable list ourselves so we can
+             ;; keep source identity (own vs ext) — the composed
+             ;; method-entry projection strips :__source, and observable
+             ;; call-site emission needs the source observable node.
+             own-methods (mapv #(observable->method-entry target %) own-obs)
              ext-methods (extension-methods-for target extension-env)
-             composed    (compose-target-methods target (:methods rec) ext-methods)
+             _           (compose-target-methods target own-methods ext-methods)
+             ;; Composed observable list: own observables win over
+             ;; extension observables with the same name (§3.3.2 rule 1;
+             ;; `replace` support is a follow-on). Between competing
+             ;; extensions with the same name and no own, later wins
+             ;; (§3.3.2 rule 5). pick-winner-with-warnings! fired
+             ;; shadow warnings above.
+             own-names   (set (map :name own-obs))
+             ;; For ext-obs, keep only the last-declared under each
+             ;; name (rule 5); then drop entries shadowed by own.
+             ext-by-name (reduce (fn [m o] (assoc m (:name o) o)) {} ext-obs)
+             ext-winners (filterv (fn [o]
+                                    (and (not (contains? own-names (:name o)))
+                                         (identical? o (get ext-by-name (:name o)))))
+                                  ext-obs)
+             composed-obs (into (vec own-obs) ext-winners)
              new-conforms (into (vec (:conforms rec))
                                 (extension-conforms-for target extension-env))
-             variant     (if (seq composed) :class :struct)]
+             variant     (if (seq composed-obs) :class :struct)]
          (assoc env target
                 (assoc rec
-                       :methods       composed
-                       :method-index  (into {} (map (juxt :name identity) composed))
+                       :observables   composed-obs
+                       :methods       []
+                       :method-index  {}
                        :conforms      new-conforms
                        :variant       variant)))
        env))
@@ -1107,7 +1198,13 @@
 (defn- signature-mismatch-detail
   "Return a human-readable string describing the first signature
    mismatch between a composed-table method and a protocol accepts
-   entry, or nil if they match."
+   entry, or nil if they match.
+
+   F67 L4 — observable-derived entries without an explicit
+   `name(args) -> T :< expr` return-type annotation have nil
+   `:cxc-return-ty`; treat that as inferred-and-matching (the return
+   type comes from the observable expression at emit time). Param
+   name / type checks still fire — those are always explicit."
   [method accepts-entry]
   (let [method-params  (non-self-params (:params method))
         accepts-params (non-self-params (:params accepts-entry))
@@ -1118,7 +1215,8 @@
       (str "expected " (count accepts-params) " param(s), got "
            (count method-params))
 
-      (not= expected-ret actual-ret)
+      (and (some? actual-ret)
+           (not= expected-ret actual-ret))
       (str "return type mismatch — expected `" expected-ret
            "`, got `" actual-ret "`")
 
@@ -1179,19 +1277,32 @@
                            {:class class-name :protocol protocol-name
                             :missing ae-name})))))))
 
+(defn- observable-methods-view
+  "F67 L4 — for conformance checks, project a class's observables into
+   method-shape entries so `validate-one-conformance!` can match them
+   against protocol `accepts:` entries uniformly with own + extension
+   methods."
+  [class-name entry]
+  (into (vec (:methods entry))
+        (mapv #(observable->method-entry class-name %)
+              (:observables entry))))
+
 (defn- validate-explicit-conformances!
   "Walk record-env + atom-env post-L4-composition and validate every
    `:conforms` entry against protocol-env. Throws on the first
-   failure with a targeted §3.4.5 diagnostic."
+   failure with a targeted §3.4.5 diagnostic. F67 L4: observables
+   count as conformance-eligible methods."
   [record-env atom-env protocol-env]
   (doseq [[class-name entry] record-env
           proto-ty (:conforms entry)]
     (validate-one-conformance! class-name (type-node-name proto-ty)
-                               (:methods entry) protocol-env))
+                               (observable-methods-view class-name entry)
+                               protocol-env))
   (doseq [[class-name entry] atom-env
           proto-ty (:conforms entry)]
     (validate-one-conformance! class-name (type-node-name proto-ty)
-                               (:methods entry) protocol-env)))
+                               (observable-methods-view class-name entry)
+                               protocol-env)))
 
 ;; ---------------------------------------------------------------------------
 ;; F9 L6 — default-method inheritance (explicit conformance).
@@ -1234,13 +1345,20 @@
          pn)))
 
 (defn- extract-default-as-method
-  "Given a raw default method node (parser shape :node :function ...)
-   and the concrete class name, run it through extract-methods so
-   `self` gets `:cxc-ty <class-name>` and downstream lowering treats
-   it as a normal class method."
-  [class-name default-node]
-  (first (extract-methods class-name
-                          {:node :methods-section :methods [default-node]})))
+  "Given a default method-shape entry (produced by observable->method-entry
+   at build-protocol-env time) and the concrete class name, re-anchor
+   `self`'s :cxc-ty to `class-name` so downstream lowering treats it
+   as a normal class method. F67 L4: raw `:function` default nodes are
+   retired with the `methods:` section; defaults arrive here already
+   in method-shape via the observable-defaults path."
+  [class-name default-entry]
+  (update default-entry :params
+          (fn [ps]
+            (mapv (fn [p]
+                    (if (:is-self? p)
+                      (assoc p :cxc-ty class-name)
+                      p))
+                  ps))))
 
 (defn- class-satisfies-protocol-structurally?
   "L6b — true if every accepts entry in `proto` has a matching method
@@ -1310,12 +1428,15 @@
    detected at class-composition site here). Returns the class entry
    unchanged when no inheritance applies."
   [class-name entry protocol-env]
-  (let [own-names        (set (map :name (:methods entry)))
+  ;; F67 L4 — observables count as "own methods" for the shadowing +
+  ;; structural-conformance passes; project them into method-shape here.
+  (let [own-method-view   (observable-methods-view class-name entry)
+        own-names         (set (map :name own-method-view))
         explicit-conforms (:conforms entry)
-        explicit-set     (into #{} (map type-node-name explicit-conforms))
+        explicit-set      (into #{} (map type-node-name explicit-conforms))
         ;; L6b — widen with structural conformances that have defaults.
-        structural-set   (structural-conformances-with-defaults
-                          (:methods entry) explicit-set protocol-env)
+        structural-set    (structural-conformances-with-defaults
+                           own-method-view explicit-set protocol-env)
         all-protos       (concat (map type-node-name explicit-conforms)
                                  structural-set)
         defaults-by-name (collect-defaults-by-name all-protos own-names
@@ -1407,9 +1528,6 @@
                   :default   (:default p)}
                  (map-key-val-of (:type p))))
         ctor-params))
-
-(defn- def-atom-methods-section [atom-node]
-  (first (filter #(= :methods-section (:node %)) (:body atom-node))))
 
 (defn- def-atom-transitions [atom-node]
   (filterv #(= :transition (:node %)) (:body atom-node)))
@@ -1850,7 +1968,6 @@
      (fn [env a]
        (let [name          (:name a)
              dsec          (def-atom-effective-data-section a)
-             msec          (def-atom-methods-section a)
              raw-txns      (def-atom-transitions a)
              ;; F67 L3 — split handler-shape (`* <: msg(args) -> *`) from
              ;; real phase transitions. Handler-shape lower via the
@@ -1986,7 +2103,13 @@
              ;; field initializer, not at the ctor call site. Spec
              ;; §3.8.5 governs param defaults, so no const-check here.
              ctor-params   (ctor-params-normalized merged-ctor {} env enum-env)
-             base-methods  (extract-methods name msec)
+             ;; F67 L4 — atom bodies no longer carry `methods:` (retired
+             ;; under Proposal G class-body collapse); observables +
+             ;; wildcard-self-transitions provide the callable surface.
+             ;; `base-methods` remains as `[]` to preserve the merge
+             ;; shape below; handler-shaped transitions still fold into
+             ;; the method table.
+             base-methods  []
              ;; F14 / F67 L3 — handler-shaped declarations lower as
              ;; method entries in the shared dispatch table. Two source
              ;; forms feed this pipeline:
@@ -2970,12 +3093,36 @@
                                           :is-self? true}]
                                         (mapv (fn [p]
                                                 {:name  (:name p)
-                                                 :cxc-ty (:name (:type p))})
+                                                 :cxc-ty (:name (:type p))
+                                                 :default (:default p)})
                                               (:params o)))
                    :cxc-return-ty ret-name
                    :cxc-observable? true})))
           (and (map? target-ty) (:atom target-ty))
-          (get-in ctx [:atom-env (:atom target-ty) :method-index method-name]))
+          ;; F67 L4 — parametric observables on atoms dispatch as
+          ;; ObjC methods. Method-index lookup first (own/handler
+          ;; methods, protocol defaults inherited); fall back to
+          ;; observable-index and synthesize a method-shape entry so
+          ;; `resolve-args-against-params` fires uniformly.
+          (or (get-in ctx [:atom-env (:atom target-ty) :method-index method-name])
+              (when-let [o (get-in ctx [:atom-env (:atom target-ty)
+                                        :observable-index method-name])]
+                (let [tk (:type-kw o)
+                      ret-name (cond
+                                 (keyword? tk) (name tk)
+                                 (and (map? tk) (:record tk)) (:record tk)
+                                 (and (map? tk) (:atom tk))   (:atom tk)
+                                 :else (str tk))]
+                  {:name          method-name
+                   :params        (into [{:name "self" :cxc-ty (:atom target-ty)
+                                          :is-self? true}]
+                                        (mapv (fn [p]
+                                                {:name  (:name p)
+                                                 :cxc-ty (:name (:type p))
+                                                 :default (:default p)})
+                                              (:params o)))
+                   :cxc-return-ty ret-name
+                   :cxc-observable? true}))))
         ;; F40 Landing 2: user-facing params (skip self, which is
         ;; either flagged `:is-self? true` on user-authored methods or
         ;; carries name "self" on prelude-synthesized container
@@ -4250,17 +4397,40 @@
                                               (str "method-stream source `" source-class
                                                    "` is not a def-atom in the program")
                                               src))
+                              ;; F67 L4 — receive-glyph method-stream source
+                              ;; may be either a method (legacy) or an
+                              ;; observable declared with an explicit return
+                              ;; type (`name(args) -> T :< expr`; F67 L4
+                              ;; adjunct for Stream/collection returns).
+                              ;; Observables without an explicit return type
+                              ;; annotation aren't valid receive-glyph
+                              ;; sources — the resolver needs the parametric
+                              ;; `Stream of T` structure preserved.
                               method-info  (get-in source-info [:method-index method-nm])
-                              _            (when-not method-info
+                              obs-node     (when-not method-info
+                                             (first (filter #(= method-nm (:name %))
+                                                            (:observables source-info))))
+                              _            (when-not (or method-info
+                                                         (:return-type obs-node))
                                              (fail-nyi!
                                               (str "atom `" source-class "` has no `"
-                                                   method-nm "()` method — "
-                                                   "receive-glyph `" field-nm "."
-                                                   method-nm "()` on `" atom-name
-                                                   "` has no source")
+                                                   method-nm "()` method or observable "
+                                                   "with an explicit `Stream of T` "
+                                                   "return type — receive-glyph `"
+                                                   field-nm "." method-nm "()` on `"
+                                                   atom-name "` has no source. F67 L4: "
+                                                   "declare the observable as "
+                                                   "`" method-nm "(...) -> Stream of T :< "
+                                                   "<expr>` to allow method-stream "
+                                                   "subscription.")
                                               src))
-                              return-ty    (:cxc-return-ty method-info)
-                              return-node  (:cxc-return-ty-node method-info)
+                              return-node  (or (:cxc-return-ty-node method-info)
+                                               (:return-type obs-node))
+                              return-ty    (or (:cxc-return-ty method-info)
+                                               (case (:node return-node)
+                                                 :type-ref      (:name return-node)
+                                                 :type-of       (:outer return-node)
+                                                 nil))
                               _            (when-not (= "CxcStream" return-ty)
                                              (fail-nyi!
                                               (str "method `" source-class "."
@@ -5090,14 +5260,30 @@
                                                    (:record-env ctx)
                                                    (:atom-env ctx)
                                                    (:enum-env ctx))})
-                           (:params o))]
+                           (:params o))
+        ;; F67 L4 — under Proposal G class-body collapse, observables
+        ;; are the reader-method surface. Spec §3.4.2 requires
+        ;; invariants to hold before/after each method — wrap entry +
+        ;; exit checkInvariants around the observable's return the
+        ;; same way lower-atom-method does. Only fires when the atom
+        ;; declares invariants (empty invariants → wrap is a no-op
+        ;; but adds two selfmsg calls; skip when there are none).
+        has-invariants? (seq (get-in ctx [:atom-env atom-name :invariants]))
+        check-stmt   {:node :objc-msg
+                      :recv {:node :name :sym "self"}
+                      :selector "checkInvariants"
+                      :args []}
+        return-stmt  {:node :return :value (lower-expr (:expr o) body-ctx)}
+        body-stmts   (if has-invariants?
+                       [check-stmt check-stmt return-stmt]
+                       [return-stmt])]
     {:node        :objc-method
      :selector    (if (seq objc-params)
                     (objc-method-selector (:name o) (mapv :name objc-params))
                     (:name o))
      :return-type (:c-type o)
      :params      objc-params
-     :body        [{:node :return :value (lower-expr (:expr o) body-ctx)}]}))
+     :body        body-stmts}))
 
 (defn- lower-invariant-check
   "One predicate → an :invariant-check init statement. Ctx must carry
@@ -5697,7 +5883,9 @@
                                                        atom-env enum-env p)])
                                                    (:params o)))
                            ctx    {:record-env record-env :atom-env atom-env
-                                   :enum-env enum-env :locals param-locals
+                                   :enum-env enum-env
+                                   :locals (assoc param-locals
+                                                  "self" {:atom atom-name})
                                    :self-fields known}
                            tk     (infer-type (:expr o) ctx)
                            typed' (assoc o :type-kw tk
@@ -6187,6 +6375,10 @@
         ;; see the composed table (no API change).
         record-env (compose-record-env-with-extensions record-env extension-env)
         atom-env   (compose-atom-env-with-extensions   atom-env   extension-env)
+        ;; F67 L4 — re-run observable inference on the post-compose record
+        ;; env so extension-added observables get typed and land in
+        ;; `:observable-index` for call-site dispatch.
+        record-env (infer-observables-in-record-env record-env atom-env enum-env)
         ;; F9 L5 — validate explicit `:conforms` declarations against
         ;; the composed method tables. Missing methods, signature
         ;; mismatches, and unknown protocols all fail-compile with

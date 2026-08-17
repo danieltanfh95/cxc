@@ -121,12 +121,8 @@ record Vector2:
     x: Float
     y: Float
 
-    methods:
-        function plus(self, other: Vector2) -> Vector2:
-            return Vector2(x: self.x + other.x, y: self.y + other.y)
-
-        function scaled(self, k: Float) -> Vector2:
-            return Vector2(x: self.x * k, y: self.y * k)
+    plus(other: Vector2)  :< Vector2(x: self.x + other.x, y: self.y + other.y)
+    scaled(k: Float)      :< Vector2(x: self.x * k, y: self.y * k)
 
 
 # =============================================================================
@@ -310,8 +306,7 @@ def Player(max_hp: Int = 100, starting_mana: Int = 50):
 
     # ---- Helper — in a real game this reads from input capability ----
     # Placeholder for cursor position lookup at cast time.
-    function cursor_position() -> Position:
-        return input.cursor_position
+    cursor_position() :< input.cursor_position
 
 
 # =============================================================================

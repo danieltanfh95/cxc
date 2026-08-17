@@ -1,6 +1,4 @@
 def Random:
     next_u32 :< native_random_u32()
 
-    methods:
-        def below(self, n: Int) -> Int:
-            return native_random_below(n)
+    below(n: Int) :< native_random_below(n)

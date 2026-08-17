@@ -3,9 +3,7 @@ def Clock(ticks: Int = 3):
 
     now :< native_millis_now()
 
-    methods:
-        def every(self, rate_ms: Int) -> Stream of Instant:
-            return native_clock_every(self, rate_ms)
+    every(rate_ms: Int) -> Stream of Instant :< native_clock_every(self, rate_ms)
 
     -> running
         do: self :> beat

@@ -1,7 +1,5 @@
 def Console:
-    methods:
-        def write(self, msg: String) -> Int:
-            return native_console_write(msg)
+    write(msg: String) :< native_console_write(msg)
 
     -> running
 

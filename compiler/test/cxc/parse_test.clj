@@ -27,35 +27,28 @@
         (is (= 1 (count (:fields ds))))
         (is (= "x" (-> ds :fields first :name)))))))
 
-(deftest record-with-methods
-  (testing "Vector2 — data + methods + a return expression"
+(deftest record-with-observable
+  (testing "F67 L4: parametric observable replaces reader methods. Records collapse to fields + observables (Proposal G class-body collapse)."
     (let [src "record Vector2:
     x: Float
     y: Float
 
-    methods:
-        function plus(self, other: Vector2) -> Vector2:
-            return Vector2(x: self.x + other.x, y: self.y + other.y)
+    plus(other: Vector2) :< Vector2(x: self.x + other.x, y: self.y + other.y)
 "
           n (first-node src)]
       (is (= :record (node-kind n)))
-      (is (= 2 (count (:sections n))))
-      (let [ms (second (:sections n))]
-        (is (= :methods-section (node-kind ms)))
-        (let [f (first (:methods ms))]
-          (is (= :function (node-kind f)))
-          (is (= "plus" (:name f)))
-          (is (= 2 (count (:params f))))
-          (is (= "Vector2" (get-in f [:return-type :name])))
-          (let [ret (first (:stmts (:body f)))]
-            (is (= :return (node-kind ret)))
-            (is (= :call (node-kind (:expr ret))))))))))
+      (let [obs (first (filter #(= :observable (:node %)) (:sections n)))]
+        (is (some? obs))
+        (is (= "plus" (:name obs)))
+        (is (= 1 (count (:params obs)))
+            "observable :params exclude implicit self (self is prepended at lower)")
+        (is (= :call (node-kind (:expr obs))))))))
 
 (deftest expr-binops-and-dots
-  (testing "self.x + other.x — dot access + binary op"
-    (let [n   (first-node "record R:\n    methods:\n        function f(self) -> Float:\n            return self.x + other.x\n")
-          ret (-> n :sections first :methods first :body :stmts first)
-          expr (:expr ret)]
+  (testing "self.x + other.x — dot access + binary op inside observable body"
+    (let [n   (first-node "record R:\n    f() :< self.x + other.x\n")
+          obs (first (filter #(= :observable (:node %)) (:sections n)))
+          expr (:expr obs)]
       (is (= :binop (:node expr)))
       (is (= "+" (:op expr)))
       (is (= :dot (get-in expr [:left :node])))
@@ -63,9 +56,9 @@
       (is (= "x" (get-in expr [:left :field]))))))
 
 (deftest expr-nested-call-with-named-args
-  (let [n   (first-node "record R:\n    methods:\n        function f(self) -> V:\n            return V(x: 1, y: 2)\n")
-        ret (-> n :sections first :methods first :body :stmts first)
-        call (:expr ret)]
+  (let [n   (first-node "record R:\n    f() :< V(x: 1, y: 2)\n")
+        obs (first (filter #(= :observable (:node %)) (:sections n)))
+        call (:expr obs)]
     (is (= :call (:node call)))
     (is (= 2 (count (:args call))))
     (is (= :named (-> call :args first :kind)))
@@ -257,9 +250,8 @@
     ;; former double-eval concern moot).
     (is (some? (p/parse "record V:
     x: Int
-    methods:
-        function mid(self) -> Int:
-            return self.x
+
+    mid() :< self.x
 
 def main:
     v: V = V(x: 5)
@@ -324,63 +316,43 @@ def main:
         then: n => n + 2
 ")))))
 
-(deftest def-method-form-accepted
-  (testing "Audit K8: spec-canonical `def name(params) -> Ret:` method form is accepted alongside `function name(params) -> Ret:`. Both produce a `:function` node so downstream lowering is unaffected."
-    (let [src "record V:\n    x: Int\n    methods:\n        def bumped(self) -> Int:\n            return x\n"
-          n   (first-node src)]
-      (is (= :record (node-kind n)))
-      (let [ms (second (:sections n))]
-        (is (= :methods-section (node-kind ms)))
-        (is (= 1 (count (:methods ms))))
-        (let [m (first (:methods ms))]
-          (is (= :function (node-kind m)))
-          (is (= "bumped" (:name m)))))))
-  (testing "def-form method inside a def-atom body — same parse shape as function-form."
-    (let [src "def M:\n    n: Int = 0\n    def bumped(self) -> Int:\n        return n\n"
-          nodes (p/parse src)
-          body  (:body (first nodes))]
-      (is (some #(and (= :function (:node %)) (= "bumped" (:name %))) body)))))
+(deftest f67-l4-methods-section-retired-with-migration
+  (testing "F67 L4 — `methods:` section header is retired (Proposal G class-body collapse). Parser emits a targeted diagnostic naming each migration category (reader → observable, void → * <: … do:, writer → * <: … then:)."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"(?s)F67 L4.*`methods:` section is retired"
+         (first-node "record V:\n    x: Int\n    methods:\n        function bumped(self) -> Int:\n            return x\n")))))
 
-(deftest k8-function-keyword-emits-deprecation-warning
-  (testing "K8 — `function` method opener is retired at v1.0 (spec §1201, §2330). Parser still accepts it during the grace period but emits a per-occurrence deprecation warning to *err* naming file line/col so users can migrate. Non-fatal."
-    (let [sw (java.io.StringWriter.)]
-      (binding [*err* sw]
-        (p/parse "record V:\n    x: Int\n    methods:\n        function bumped(self) -> Int:\n            return x\n"))
-      (let [stderr (str sw)]
-        (is (re-find #"`function` method opener is deprecated" stderr))
-        (is (re-find #"spec §1201" stderr))
-        (is (re-find #"use `def` instead" stderr))))))
+(deftest f67-l4-function-keyword-in-def-atom-body-retired
+  (testing "F67 L4 — `function` keyword inside a def-atom body retires with `methods:`; free functions still live at module scope."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"F67 L4.*`function` keyword"
+         (p/parse "def M:\n    n: Int = 0\n    function bumped(self) -> Int:\n        return n\n")))))
 
-(deftest k8-def-method-emits-no-deprecation-warning
-  (testing "K8 — `def` method form (spec-canonical) fires no deprecation warning."
-    (let [sw (java.io.StringWriter.)]
-      (binding [*err* sw]
-        (p/parse "record V:\n    x: Int\n    methods:\n        def bumped(self) -> Int:\n            return x\n"))
-      (is (= "" (str sw))
-          "def form is clean — no K8 warning"))))
+(deftest f67-l4-def-method-form-in-def-atom-body-retired
+  (testing "F67 L4 — spec-canonical `def name(args)` method form inside a class body retires."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"F67 L4.*method form"
+         (p/parse "def M:\n    n: Int = 0\n    def bumped(self) -> Int:\n        return n\n")))))
 
 (deftest subscript-postfix-parses
-  (testing "F19 / §3.9 — `expr[i]` parses as a :subscript node (index is any expression)"
-    ;; Wrap in a return statement inside a record method so the expression
-    ;; is in an expression position the parser reaches.
-    (let [src "record R:\n    xs: List of Int\n    methods:\n        def head(self) -> Int:\n            return xs[0]\n"
+  (testing "F19 / §3.9 — `expr[i]` parses as a :subscript node (index is any expression). Post F67 L4: observable body is a bare expression, no `return`."
+    (let [src "record R:\n    xs: List of Int\n\n    head() :< xs[0]\n"
           rec (first-node src)
-          ms  (second (:sections rec))
-          m   (first (:methods ms))
-          ret (first (:stmts (:body m)))]
-      (is (= :return (:node ret)))
-      (is (= :subscript (get-in ret [:expr :node])))
-      (is (= "xs" (get-in ret [:expr :target :name])))
-      (is (= :lit-int (get-in ret [:expr :index :node])))
-      (is (= 0 (get-in ret [:expr :index :value]))))))
+          obs (first (filter #(= :observable (:node %)) (:sections rec)))]
+      (is (= :subscript (:node (:expr obs))))
+      (is (= "xs" (get-in obs [:expr :target :name])))
+      (is (= :lit-int (get-in obs [:expr :index :node])))
+      (is (= 0 (get-in obs [:expr :index :value]))))))
 
 (deftest subscript-chains-with-other-postfix
-  (testing "F19 — subscript composes with `.field` and `(args)` in any order"
-    (let [src "record R:\n    xs: List of Int\n    methods:\n        def z(self) -> Int:\n            return xs[0].bar(1)\n"
+  (testing "F19 — subscript composes with `.field` and `(args)` in any order. Post F67 L4: observable expression body."
+    (let [src "record R:\n    xs: List of Int\n\n    z() :< xs[0].bar(1)\n"
           rec (first-node src)
-          m   (first (:methods (second (:sections rec))))
-          ret (first (:stmts (:body m)))
-          call (:expr ret)]
+          obs (first (filter #(= :observable (:node %)) (:sections rec)))
+          call (:expr obs)]
       (is (= :call (:node call)))
       (is (= :dot (get-in call [:callee :node])))
       (is (= "bar" (get-in call [:callee :field])))
@@ -521,8 +493,8 @@ def main:
           "metadata: section is folded into :kind, not kept in :body"))))
 
 (deftest f9-l1-protocol-sugar
-  (testing "F9 Landing 1 — `protocol P:` sugar desugars to `:class :kind :protocol`. Sugar keyword sets kind; no explicit metadata needed. (Uses `methods:` body — `data:` on protocol is rejected at fold, see f9-l2-data-on-protocol-rejected.)"
-    (let [n (first-node "protocol P:\n    methods:\n        function f() -> Int:\n            return 1\n")]
+  (testing "F9 Landing 1 — `protocol P:` sugar desugars to `:class :kind :protocol`. Sugar keyword sets kind; no explicit metadata needed. Post F67 L4: protocol defaults carry as observables (reader) or wildcard self-transitions."
+    (let [n (first-node "protocol P:\n    f() :< 1\n")]
       (is (= :class (:node n)))
       (is (= "P" (:name n)))
       (is (= :protocol (:kind n))))))
@@ -577,18 +549,16 @@ def main:
          #"`sealed protocol` is retired at v1.0.*§3\.4\.1"
          (first-node "sealed protocol Foo:\n    x: Int\n")))))
 
-(deftest f9-l1-class-body-accepts-data-methods-invariants
-  (testing "F9 Landing 1 — class body accepts data:, methods:, invariants:, use:, deprecated: sections (same as records/atoms)."
+(deftest f9-l1-class-body-accepts-observables-invariants
+  (testing "F9 Landing 1 + F67 L4 — class body accepts observables (Proposal G reader surface), invariants:, use:, deprecated:, and top-level field decls. `methods:` retires."
     (let [n (first-node (str "class Foo:\n"
                              "    metadata:\n"
                              "        kind: regular\n"
                              "    x: Int\n"
-                             "    methods:\n"
-                             "        function get(self) -> Int:\n"
-                             "            return x\n"))]
+                             "    get() :< x\n"))]
       (is (= :class (:node n)))
       (is (= 2 (count (:body n)))
-          "data + methods sections in body; metadata folded out"))))
+          "data-section (from top-level x: Int) + observable in body; metadata folded out"))))
 
 (deftest f9-l1-empty-conformance-parens-rejected
   (testing "F9 Landing 1 — `class Foo():` is a hard error; omit the parens if no protocols conform."
@@ -666,39 +636,34 @@ def main:
 ;; `replace` method modifier; target-resolution deferred to lower.
 ;; ---------------------------------------------------------------------------
 
-(deftest f9-l3-extend-class-with-methods
-  (testing "F9 Landing 3 — `extend class Foo:` at top level parses into an `:extend-class` node carrying the target name and body sections."
+(deftest f9-l3-extend-class-with-observable
+  (testing "F9 Landing 3 + F67 L4 — `extend class Foo:` accepts observables (Proposal G reader surface). Extensions land in `:extend-class` node carrying target name and body sections."
     (let [n (first-node
              (str "extend class Foo:\n"
-                  "    methods:\n"
-                  "        function bar(self) -> Int:\n"
-                  "            return 1\n"))]
+                  "    bar() :< 1\n"))]
       (is (= :extend-class (:node n)))
       (is (= "Foo" (:target n)))
       (is (empty? (:conforms n)))
-      (let [msec (first (:body n))]
-        (is (= :methods-section (:node msec)))
-        (is (= "bar" (:name (first (:methods msec)))))
-        (is (nil? (:replace? (first (:methods msec)))))))))
+      (let [obs (first (:body n))]
+        (is (= :observable (:node obs)))
+        (is (= "bar" (:name obs)))))))
 
-(deftest f9-l3-extend-class-with-replace-modifier
-  (testing "F9 Landing 3 — `replace function ...` inside `extend class` body sets `:replace?` on the method entry. `replace` is now reserved; the modifier is consumed by shared parse-methods-section."
-    (let [n (first-node
-             (str "extend class Foo:\n"
-                  "    methods:\n"
-                  "        replace function bar(self) -> Int:\n"
-                  "            return 2\n"))
-          m (first (:methods (first (:body n))))]
-      (is (= "bar" (:name m)))
-      (is (true? (:replace? m))))))
+(deftest f67-l4-replace-modifier-retired
+  (testing "F67 L4 — the `replace` method modifier retires with `methods:` (Proposal G). Shadowing between extensions and own definitions is now expressed by observable name reuse; L4 shadowing/replace semantics await follow-on treatment."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"(?s)F67 L4.*`methods:` section is retired"
+         (first-node
+          (str "extend class Foo:\n"
+               "    methods:\n"
+               "        replace function bar(self) -> Int:\n"
+               "            return 2\n"))))))
 
 (deftest f9-l3-extend-class-with-header-conforms
   (testing "F9 Landing 3 — `extend class Foo(NewProtocol):` populates `:conforms` from header parens."
     (let [n (first-node
              (str "extend class Foo(NewProtocol):\n"
-                  "    methods:\n"
-                  "        function bar(self) -> Int:\n"
-                  "            return 3\n"))]
+                  "    bar() :< 3\n"))]
       (is (= [{:node :type-ref :name "NewProtocol"}]
              (:conforms n))))))
 
@@ -707,12 +672,10 @@ def main:
     (let [n (first-node
              (str "extend class Foo:\n"
                   "    conforms: NewProtocol\n"
-                  "    methods:\n"
-                  "        function bar(self) -> Int:\n"
-                  "            return 4\n"))]
+                  "    bar() :< 4\n"))]
       (is (= [{:node :type-ref :name "NewProtocol"}]
              (:conforms n)))
-      (is (= [:methods-section] (mapv :node (:body n)))))))
+      (is (= [:observable] (mapv :node (:body n)))))))
 
 (deftest f9-l3-extend-class-with-invariants
   (testing "F9 Landing 3 — `invariants:` section legal inside `extend class` (extensions may add invariants per §3.3.2)."
@@ -768,19 +731,4 @@ def main:
          #"expected `class` after `extend`"
          (first-node
           (str "extend enum Foo:\n"
-               "    methods:\n"
-               "        function bar(self) -> Int:\n"
-               "            return 1\n"))))))
-
-(deftest f9-l3-replace-on-plain-class-rejected
-  (testing "F9 Landing 3 — `replace` modifier on a method inside a plain (non-extension) class body is rejected at fold with a §3.3.2 rule-4 pointer. `replace` requires a target to shadow, which only exists in an `extend class` context."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"`replace` modifier on method.*only meaningful inside an `extend class`"
-         (first-node
-          (str "class Foo:\n"
-               "    metadata:\n"
-               "        kind: regular\n"
-               "    methods:\n"
-               "        replace function bar(self) -> Int:\n"
-               "            return 1\n"))))))
+               "    bar() :< 1\n"))))))

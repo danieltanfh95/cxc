@@ -2,6 +2,4 @@ record Position:
     x: Float
     y: Float
 
-    methods:
-        def plus(self, other: Position) -> Position:
-            return Position(x: self.x + other.x, y: self.y + other.y)
+    plus(other: Position) :< Position(x: self.x + other.x, y: self.y + other.y)

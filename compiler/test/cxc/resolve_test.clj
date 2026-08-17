@@ -42,8 +42,8 @@
       (is (= :def-atom (get-in table ["main" :kind]))))))
 
 (deftest table-carries-record-members
-  (testing "F51 — records expose their fields + methods in :members"
-    (let [table (table-from "record V:\n    x: Int\n    y: Int\n    methods:\n        function sum(self) -> Int:\n            return x + y\n\ndef main:\n    -> running\n")
+  (testing "F51 — records expose their fields + observables in :members. F67 L4: methods retire; observables carry the callable surface. `:methods` mirrors `:observables` for query-shape parity."
+    (let [table (table-from "record V:\n    x: Int\n    y: Int\n\n    sum() :< x + y\n\ndef main:\n    -> running\n")
           v     (get table "V")
           fs    (get-in v [:members :fields])
           ms    (get-in v [:members :methods])]
@@ -72,12 +72,12 @@
       (is (nil?  (resolve/lookup ctx "Nonexistent"))))))
 
 (deftest f38-record-variant-auto-detected
-  (testing "F38 — a record with no methods is :struct; a record with any method is :class. Trigger is structural — no user syntax."
-    (let [table (table-from "record P:\n    x: Int\n\nrecord V:\n    n: Int\n    methods:\n        function bumped(self) -> Int:\n            return n + 1\n\ndef main:\n    -> running\n")]
+  (testing "F38 — a record with no callables is :struct; a record with any observable is :class. Trigger is structural — no user syntax."
+    (let [table (table-from "record P:\n    x: Int\n\nrecord V:\n    n: Int\n\n    bumped() :< n + 1\n\ndef main:\n    -> running\n")]
       (is (= :struct (get-in table ["P" :variant]))
-          "P has no methods → :struct variant")
+          "P has no observables → :struct variant")
       (is (= :class  (get-in table ["V" :variant]))
-          "V has one method → :class variant"))))
+          "V has one observable → :class variant"))))
 
 (deftest f38-prelude-records-with-methods-are-class-variant
   (testing "F38 — prelude Duration/Instant/Position all carry methods → all classified :class"
@@ -87,8 +87,8 @@
       (is (= :class (get-in table ["_Cxc_Position" :variant]))))))
 
 (deftest lookup-member-drills-into-declaration
-  (testing "F51 — `lookup-member` finds a member by kind + name inside a decl"
-    (let [table (table-from "record V:\n    x: Int\n    methods:\n        function bump(self) -> Int:\n            return x\n\ndef main:\n    -> running\n")
+  (testing "F51 — `lookup-member` finds a member by kind + name inside a decl. F67 L4: `:methods` mirrors `:observables` for the parametric-reader surface."
+    (let [table (table-from "record V:\n    x: Int\n\n    bump() :< x\n\ndef main:\n    -> running\n")
           ctx   {:symbol-table table}]
       (is (= "bump" (:name (resolve/lookup-member ctx "V" :methods "bump"))))
       (is (= "x"    (:name (resolve/lookup-member ctx "V" :fields  "x"))))

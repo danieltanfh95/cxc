@@ -89,14 +89,21 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- record-members
-  "Extract fields + methods from a `record` AST node. Field entries
-   preserve the raw parser shape so lower's downstream
-   `fields-from-data-section` can consume them unchanged."
+  "Extract fields + observables from a `record` AST node. Field
+   entries preserve the raw parser shape so lower's downstream
+   `fields-from-data-section` can consume them unchanged.
+
+   F67 L4 — `methods:` is retired; observables carry the callable
+   surface. `:methods` in the table shape stays for downstream code
+   that queries method-shape entries (populated with derived shape
+   from observables); `:observables` exposes the raw observable
+   nodes."
   [record-node]
-  (let [dsec (first (filter #(= :data-section    (:node %)) (:sections record-node)))
-        msec (first (filter #(= :methods-section (:node %)) (:sections record-node)))]
-    {:fields  (vec (:fields dsec))
-     :methods (vec (:methods msec))}))
+  (let [dsec (first (filter #(= :data-section (:node %)) (:sections record-node)))
+        obs  (filterv #(= :observable (:node %)) (:sections record-node))]
+    {:fields      (vec (:fields dsec))
+     :methods     obs
+     :observables obs}))
 
 ;; F38 auto-detect — a record's storage variant follows from its shape.
 ;; No user syntax picks it; the compiler observes whether the record
@@ -132,20 +139,22 @@
 
 (defn- atom-members
   "Extract every kind of body item from a `def-atom` AST node. Keys
-   match the ad-hoc filters currently spread across
-   `def-atom-methods-section` / `def-atom-transitions` /
-   `def-atom-observables` / `def-atom-invariants` / etc. in
-   `cxc.lower` — future landings can route those helpers through
-   this map."
+   match the ad-hoc filters spread across `def-atom-transitions` /
+   `def-atom-observables` / `def-atom-invariants` etc. in `cxc.lower`
+   — future landings can route those helpers through this map.
+
+   F67 L4 — `methods:` is retired; observables carry the callable
+   reader surface. `:methods` stays for downstream code that queries
+   method-shape entries; it mirrors `:observables` here."
   [atom-node]
   (let [body  (:body atom-node)
         dsec  (first (filter #(= :data-section (:node %)) body))
-        msec  (first (filter #(= :methods-section (:node %)) body))
         invs  (first (filter #(= :invariants-section (:node %)) body))
-        uses  (first (filter #(= :use-section (:node %)) body))]
+        uses  (first (filter #(= :use-section (:node %)) body))
+        obs   (filterv #(= :observable (:node %)) body)]
     {:data-fields   (vec (:fields dsec))
-     :methods       (vec (:methods msec))
-     :observables   (filterv #(= :observable %)   (map :node body))
+     :methods       obs
+     :observables   obs
      :transitions   (filterv #(= :transition (:node %)) body)
      :use-caps      (vec (:caps uses))
      :nested-slots  (filterv #(= :nested-atom (:node %)) body)

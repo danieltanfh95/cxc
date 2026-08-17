@@ -1628,7 +1628,15 @@ protocol Healable:
     accepts heal(amt: Int)          # transition accept (void)
 ```
 
-**Cross-refs.** F67 audit entry + `compiler/design/plans/proposal-g-class-body-collapse.md` for the five-landing execution sequence (L1 design → L2 parametric observable syntax → L3 retire `-> handler:` → L4 retire `methods:` → L5 retire `data:` header). F14 handler-decl (landed 2026-08-16) retires at F67 L3. F33 rewrite (Proposal C+C1, landed 2026-08-17) is compatible — atomic-transition contract spans the entire class body uniformly.
+**Cross-refs.** F67 audit entry + `compiler/design/plans/proposal-g-class-body-collapse.md` for the five-landing execution sequence (L1 design → L2 parametric observable syntax → L3 retire `-> handler:` → L4 retire `methods:` **[landed 2026-08-17]** → L5 retire `data:` header). F14 handler-decl (landed 2026-08-16) retires at F67 L3. F33 rewrite (Proposal C+C1, landed 2026-08-17) is compatible — atomic-transition contract spans the entire class body uniformly.
+
+**F67 L4 addition — explicit return-type on observables.** An observable may carry an optional return-type annotation between the param list and `:<`:
+
+```
+<name>(args) -> <TypeRef> :< <expression>
+```
+
+Required when the observable serves as a receive-glyph method-stream source (e.g. `every(rate_ms: Int) -> Stream of Instant :< native_clock_every(self, rate_ms)`) or when the observable is a protocol default that does not correspond to an `accepts:` entry (the accepts entry supplies the return type otherwise). Absent the annotation, the observable's return type is inferred from its body expression at emit time.
 
 
 
