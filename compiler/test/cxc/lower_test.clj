@@ -1634,8 +1634,16 @@ def main:
 (defn- capture-warnings [thunk]
   (let [sw (java.io.StringWriter.)]
     (binding [*err* sw]
-      (let [result (thunk)]
-        [result (str sw)]))))
+      (let [result (thunk)
+            ;; F68 L1 — filter transient sugar-keyword deprecation
+            ;; noise from stderr so tests probing shadow-warnings /
+            ;; conformance-warnings / other semantic warnings aren't
+            ;; polluted. Sublanding scaffold — retires when the sugar
+            ;; keywords retire in F68 L5.
+            filtered (->> (str/split-lines (str sw))
+                          (remove #(str/includes? % "F68 Proposal H"))
+                          (str/join "\n"))]
+        [result (if (empty? filtered) "" (str filtered "\n"))]))))
 
 (deftest f9-l4-single-extension-adds-method
   (testing "F9 Landing 4 + F67 L4 — one extension of a record adds an observable that composes into the record's method table (extension observables convert to method-shape at compose time)."

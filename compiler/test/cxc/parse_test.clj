@@ -574,6 +574,71 @@ def main:
           "record sugar keeps its dedicated parser + AST kind for backward compat"))))
 
 ;; ---------------------------------------------------------------------------
+;; F68 L1 (Proposal H) — full unification under `def`.
+;; ---------------------------------------------------------------------------
+
+(deftest f68-l1-def-with-accepts-reshapes-to-protocol
+  (testing "F68 L1 — `def Foo:` body containing `accepts:` entries reshapes into `:class :kind :protocol` at parse. Downstream `build-protocol-env` sees the same AST kind that `protocol Foo:` produces."
+    (let [n (first-node (str "def Iterable:\n"
+                             "    accepts:\n"
+                             "        has_next() -> Bool\n"
+                             "        next() -> Element\n"))]
+      (is (= :class (:node n)))
+      (is (= :protocol (:kind n)))
+      (is (= "Iterable" (:name n)))
+      (is (= 2 (count (:accepts n)))))))
+
+(deftest f68-l1-def-with-per-entry-accepts-sugar-reshapes-to-protocol
+  (testing "F68 L1 — `def Foo:` body containing `accepts <sig>` per-entry sugar (not a `:` section) also reshapes to protocol."
+    (let [n (first-node (str "def Comparable:\n"
+                             "    accepts compare(self, other: Self) -> Int\n"))]
+      (is (= :class (:node n)))
+      (is (= :protocol (:kind n)))
+      (is (= 1 (count (:accepts n)))))))
+
+(deftest f68-l1-def-protocol-with-ctor-params-rejected
+  (testing "F68 L1 — `def Foo(...)` body with `accepts:` is rejected at parse — protocols declare signatures only and carry no state."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"F68 L1.*ctor params.*protocols declare signatures only"
+         (first-node (str "def Iterable(x: Int):\n"
+                          "    accepts:\n"
+                          "        has_next() -> Bool\n"))))))
+
+(deftest f68-l1-def-with-transition-stays-def-atom
+  (testing "F68 L1 — `def Foo:` with a transition stays `:def-atom` (structural detection classifies as class/atom; not reshaped)."
+    (let [n (first-node (str "def Counter:\n"
+                             "    n: Int = 0\n"
+                             "    self <: bump -> self then: n => n + 1\n"))]
+      (is (= :def-atom (:node n))))))
+
+(deftest f68-l1-record-sugar-emits-deprecation-warning
+  (testing "F68 L1 — `record Foo:` opener continues to parse but emits a deprecation warning naming Proposal H."
+    (let [sw (java.io.StringWriter.)]
+      (binding [*err* sw]
+        (first-node "record V:\n    x: Int\n"))
+      (let [stderr (str sw)]
+        (is (re-find #"`record V:` opener is deprecated" stderr))
+        (is (re-find #"F68 Proposal H" stderr))))))
+
+(deftest f68-l1-class-sugar-emits-deprecation-warning
+  (testing "F68 L1 — `class Foo:` opener continues to parse but emits a deprecation warning."
+    (let [sw (java.io.StringWriter.)]
+      (binding [*err* sw]
+        (first-node "class Foo:\n    metadata:\n        kind: regular\n    x: Int\n"))
+      (let [stderr (str sw)]
+        (is (re-find #"`class Foo:` opener is deprecated" stderr))))))
+
+(deftest f68-l1-protocol-sugar-emits-deprecation-warning
+  (testing "F68 L1 — `protocol Foo:` opener continues to parse but emits a deprecation warning pointing at `def` + `accepts:`."
+    (let [sw (java.io.StringWriter.)]
+      (binding [*err* sw]
+        (first-node "protocol P:\n    accepts:\n        f() -> Int\n"))
+      (let [stderr (str sw)]
+        (is (re-find #"`protocol P:` opener is deprecated" stderr))
+        (is (re-find #"accepts:" stderr))))))
+
+;; ---------------------------------------------------------------------------
 ;; F9 Landing 2 — parse `accepts:` (section-form and per-entry sugar);
 ;; validate kind-vs-section constraints in fold-class-body.
 ;; ---------------------------------------------------------------------------

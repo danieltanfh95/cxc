@@ -1246,6 +1246,11 @@
       (at? tokens pos :kw "self")
       (at? tokens pos :ident)))
 
+(declare def-atom->record def-atom->protocol
+         def-atom-body-has-transition? def-atom-body-has-use?
+         def-atom-body-has-accepts?
+         parse-accepts-section parse-accepts-signature)
+
 (defn- parse-def-atom [tokens pos]
   (let [[_ p]      (expect tokens pos :kw "def")
         [name p]   (expect tokens p :ident)
@@ -1258,9 +1263,24 @@
     (loop [body [] p p]
       (cond
         (at? tokens p :dedent)
-        [{:node :def-atom :name name :ctor-params ctor
-          :body (fold-top-level-fields body)}
-         (inc p)]
+        (let [folded  (fold-top-level-fields body)
+              raw-def {:node :def-atom :name name :ctor-params ctor
+                       :body folded}
+              ;; F68 L1 (Proposal H) — protocol detection reshapes at
+              ;; parse. The record structural-detect case is deferred
+              ;; to a later sublanding (after migration sweep), because
+              ;; existing `def Foo:` uses without transitions currently
+              ;; carry atom semantics via nested-slot syntax and other
+              ;; downstream conventions; flipping them to `:record`
+              ;; before those conventions migrate produces widespread
+              ;; test regressions.
+              reshaped
+              (cond
+                (def-atom-body-has-accepts? folded)
+                (def-atom->protocol raw-def tokens pos)
+
+                :else raw-def)]
+          [reshaped (inc p)])
 
         (at? tokens p :newline)
         (recur body (inc p))
@@ -1355,6 +1375,19 @@
                     "`data:` (per-instance, updated only through "
                     "transitions). See spec §1.11."))
 
+        ;; F68 L1 (Proposal H) — `accepts:` section / per-entry sugar
+        ;; inside a `def` body marks the declaration as a protocol at
+        ;; structural-detect time (see reshape at end of body loop).
+        (and (at? tokens p :kw "accepts") (at? tokens (inc p) :punct ":"))
+        (let [[s p2] (parse-accepts-section tokens p)]
+          (recur (conj body s) (skip-newlines tokens p2)))
+
+        (and (at? tokens p :kw "accepts") (at? tokens (inc p) :ident))
+        (let [[_ p2]  (expect tokens p :kw "accepts")
+              [e p3]  (parse-accepts-signature tokens p2)]
+          (recur (conj body {:node :accepts-section :entries [e]})
+                 (skip-newlines tokens p3)))
+
         (looks-like-observable? tokens p)
         (let [[o p2] (parse-observable tokens p)]
           (recur (conj body o) (skip-newlines tokens p2)))
@@ -1377,7 +1410,69 @@
           (recur (conj body t) (skip-newlines tokens p2)))
 
         :else
-        (fail! tokens p "expected use:, field decl (`name: Type [= default]`), invariants:, deprecated:, observable (`name[(args)] :< expr`), or transition inside def-atom body")))))
+        (fail! tokens p "expected use:, field decl (`name: Type [= default]`), invariants:, deprecated:, observable (`name[(args)] :< expr`), accepts:, or transition inside def-atom body")))))
+
+;; ---------------------------------------------------------------------------
+;; F68 L1 (Proposal H) — structural detection helpers for `def` reshape.
+;;
+;; A `def Foo:` body is inspected after parse. If it structurally matches
+;; a record or protocol shape, the parsed :def-atom node is reshaped into
+;; the appropriate existing AST kind so downstream env builders keep
+;; working unchanged. See compiler/design/plans/proposal-h-full-unification-
+;; under-def.md.
+;; ---------------------------------------------------------------------------
+
+(defn- def-atom-body-has-transition? [body]
+  (boolean (some #(= :transition (:node %)) body)))
+
+(defn- def-atom-body-has-use? [body]
+  (boolean (some #(= :use-section (:node %)) body)))
+
+(defn- def-atom-body-has-accepts? [body]
+  (boolean (some #(= :accepts-section (:node %)) body)))
+
+(defn- def-atom->record
+  "Reshape a parsed :def-atom into a :record node. Rejects at parse if
+   the `def` header carried ctor params — records use field-derived
+   auto-ctors, no explicit ctor-param list. Body-item shape matches
+   what `parse-record` produces (sections stay as-is)."
+  [def-atom tokens pos-for-diag]
+  (when (seq (:ctor-params def-atom))
+    (fail! tokens pos-for-diag
+           (str "F68 L1: `def " (:name def-atom) "(...)` with ctor "
+                "params has a record-shaped body (no transitions, no "
+                "`use:`) — records use field-derived auto-ctors and "
+                "cannot carry an explicit ctor-param list. Either "
+                "add a transition (to promote to a class), remove the "
+                "ctor params (to keep as a record), or list fields "
+                "with defaults inside the body.")))
+  {:node     :record
+   :name     (:name def-atom)
+   :sections (:body def-atom)})
+
+(defn- def-atom->protocol
+  "Reshape a parsed :def-atom into a :class :kind :protocol node. Flattens
+   all :accepts-section entries into a single :accepts vector; other body
+   sections pass through as `:body`. Rejects at parse if the `def` header
+   carried ctor params (protocols declare no state)."
+  [def-atom tokens pos-for-diag]
+  (when (seq (:ctor-params def-atom))
+    (fail! tokens pos-for-diag
+           (str "F68 L1: `def " (:name def-atom) "(...)` with ctor "
+                "params contains `accepts:` entries — protocols declare "
+                "signatures only and carry no state, so ctor params are "
+                "not permitted. Drop the ctor params to keep as a "
+                "protocol, or remove `accepts:` to promote to a class.")))
+  (let [body           (:body def-atom)
+        accepts-secs   (filter #(= :accepts-section (:node %)) body)
+        other-sections (remove #(= :accepts-section (:node %)) body)
+        accepts-entries (vec (mapcat :entries accepts-secs))]
+    {:node     :class
+     :name     (:name def-atom)
+     :kind     :protocol
+     :conforms []
+     :accepts  accepts-entries
+     :body     (vec other-sections)}))
 
 ;; ---------------------------------------------------------------------------
 ;; F9 Landing 1 — `class` / `protocol` sugar over `class + metadata: kind:`.
@@ -1715,6 +1810,9 @@
    with a targeted diagnostic pointing at `enum` for closed sum types."
   [tokens pos sugar-kind]
   (let [pos-for-diag pos
+        opener-tok   (peek-tok tokens pos)
+        opener-line  (t-line opener-tok)
+        opener-col   (t-col opener-tok)
         [_ p] (cond
                 (= :protocol sugar-kind) (expect tokens pos :kw "protocol")
                 (= :regular sugar-kind)  (expect tokens pos :kw "class")
@@ -1725,7 +1823,21 @@
                               [[] p])
         [_ p] (expect tokens p :punct ":")
         [_ p] (expect tokens p :newline)
-        [_ p] (expect tokens p :indent)]
+        [_ p] (expect tokens p :indent)
+        _ (binding [*out* *err*]
+            (println
+             (case sugar-kind
+               :protocol
+               (str "warning: `protocol " class-name ":` opener is "
+                    "deprecated (F68 Proposal H) at line " opener-line
+                    ":" opener-col ". Use `def " class-name ":` with "
+                    "`accepts:` entries — presence of `accepts:` marks "
+                    "the declaration as a protocol structurally.")
+               (str "warning: `class " class-name ":` opener is "
+                    "deprecated (F68 Proposal H) at line " opener-line
+                    ":" opener-col ". Use `def " class-name ":` — the "
+                    "parser infers class kind from body structural cues "
+                    "(presence of transitions or `use:`)."))))]
     (loop [body [] p p]
       (cond
         (at? tokens p :dedent)
@@ -1928,11 +2040,22 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- parse-record [tokens pos]
-  (let [[_ p]      (expect tokens pos :kw "record")
+  (let [tok        (peek-tok tokens pos)
+        line       (t-line tok)
+        col        (t-col tok)
+        [_ p]      (expect tokens pos :kw "record")
         [name p]   (expect tokens p :ident)
         [_ p]      (expect tokens p :punct ":")
         [_ p]      (expect tokens p :newline)
         [_ p]      (expect tokens p :indent)]
+    (binding [*out* *err*]
+      (println (str "warning: `record " name ":` opener is deprecated "
+                    "(F68 Proposal H — full unification under `def`) at "
+                    "line " line ":" col ". Use `def " name ":` — the "
+                    "parser infers record kind from body structural cues "
+                    "(no transitions, no `use:`). See "
+                    "compiler/design/plans/proposal-h-full-unification-"
+                    "under-def.md.")))
     (loop [sections [] p p]
       (cond
         (at? tokens p :dedent)
