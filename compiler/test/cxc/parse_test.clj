@@ -734,3 +734,72 @@ def main:
 ;; error since `enum` lexes as a bare identifier. Extensions always target
 ;; a `def`-declared thing under unification, so the non-class-target check
 ;; is now vacuous.
+
+;; ---------------------------------------------------------------------------
+;; F13 L1 — reference modifiers on `data:` fields (spec §6.14)
+;; ---------------------------------------------------------------------------
+
+(deftest f13-l1-weak-modifier-recognized
+  (testing "F13 L1 — `weak` between `:` and the type is captured on the field node."
+    (let [n (first-node "def X:\n    parent: weak X\n\n    -> alive\n")
+          fs (:fields (first (filter #(= :data-section (:node %))
+                                     (:body n))))]
+      (is (= "parent" (:name (first fs))))
+      (is (= :weak (:modifier (first fs))))
+      (is (= "X" (get-in (first fs) [:type :name]))))))
+
+(deftest f13-l1-unowned-modifier-recognized
+  (testing "F13 L1 — `unowned` between `:` and the type is captured on the field node."
+    (let [n (first-node "def X:\n    delegate: unowned X\n\n    -> alive\n")
+          fs (:fields (first (filter #(= :data-section (:node %))
+                                     (:body n))))]
+      (is (= :unowned (:modifier (first fs)))))))
+
+(deftest f13-l1-weak-on-nullable-rejected
+  (testing "F13 L1 — `weak T?` is rejected — reference types are nil-allowed by default (§3.6.1); `weak` doesn't require `?`."
+    (let [ex (try
+               (first-node "def X:\n    parent: weak X?\n\n    -> alive\n")
+               nil
+               (catch clojure.lang.ExceptionInfo e e))]
+      (is ex "expected fail!")
+      (is (re-find #"F13 L1" (.getMessage ex)))
+      (is (re-find #"Drop the `\?`" (.getMessage ex))))))
+
+(deftest f13-l1-weak-on-nonnil-rejected
+  (testing "F13 L1 — `weak T!` is rejected — the `!` contract is incompatible with `weak`'s nils-on-dealloc semantics."
+    (let [ex (try
+               (first-node "def X:\n    parent: weak X!\n\n    -> alive\n")
+               nil
+               (catch clojure.lang.ExceptionInfo e e))]
+      (is ex "expected fail!")
+      (is (re-find #"F13 L1" (.getMessage ex)))
+      (is (re-find #"Drop the `!`" (.getMessage ex))))))
+
+(deftest f13-l1-modifier-on-primitive-rejected
+  (testing "F13 L1 — `weak Int` etc. are rejected — reference modifiers apply to reference types (atoms, `String`) only."
+    (doseq [prim ["Int" "Float" "Bool" "Char" "Byte" "UInt32"]]
+      (let [ex (try
+                 (first-node (str "def X:\n    n: weak " prim "\n\n    -> alive\n"))
+                 nil
+                 (catch clojure.lang.ExceptionInfo e e))]
+        (is ex (str "expected fail! on `weak " prim "`"))
+        (is (re-find #"F13 L1" (.getMessage ex)))
+        (is (re-find #"value/primitive" (.getMessage ex)))))))
+
+(deftest f13-l1-modifier-on-container-rejected
+  (testing "F13 L1 — `weak List of T` is rejected — collections don't propagate reference modifiers to their elements."
+    (let [ex (try
+               (first-node "def X:\n    items: weak List of X\n\n    -> alive\n")
+               nil
+               (catch clojure.lang.ExceptionInfo e e))]
+      (is ex "expected fail!")
+      (is (re-find #"F13 L1" (.getMessage ex)))
+      (is (re-find #"collections don't propagate" (.getMessage ex))))))
+
+(deftest f13-l1-no-modifier-omits-key
+  (testing "F13 L1 — a plain field without a modifier has no `:modifier` key on the node — reserves the key for opt-in shape."
+    (let [n (first-node "def X:\n    n: Int = 0\n\n    -> alive\n")
+          fs (:fields (first (filter #(= :data-section (:node %))
+                                     (:body n))))]
+      (is (not (contains? (first fs) :modifier))
+          "no :modifier key present when no modifier declared"))))

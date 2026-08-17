@@ -665,9 +665,49 @@
        :map-val (base-type-name v)})
     {}))
 
+(defn- validate-reference-modifier-type!
+  "F13 L1 — a `weak`/`unowned` field must reference an atom (or
+   `String`, the sole reference-typed value). Records and enums are
+   value types; primitives were already rejected at parse time.
+   env context lets us distinguish record/atom/enum by looking up
+   the type name against each env."
+  [field record-env atom-env enum-env]
+  (when-let [modifier (:modifier field)]
+    (let [ty-nm    (base-type-name (:type field))
+          modifier-nm (clojure.core/name modifier)
+          in-record? (contains? record-env ty-nm)
+          in-enum?   (contains? enum-env ty-nm)
+          in-atom?   (contains? atom-env ty-nm)
+          string?    (contains? #{"String" "_Cxc_String"} ty-nm)]
+      (cond
+        in-record?
+        (fail-nyi!
+         (str "F13 L1: `" modifier-nm " " ty-nm "` on field `"
+              (:name field) "` — reference modifiers apply to reference "
+              "types (atoms, `String`); `" ty-nm "` is a record "
+              "(value type, §3.2). Drop the modifier (spec §6.14).")
+         field)
+
+        in-enum?
+        (fail-nyi!
+         (str "F13 L1: `" modifier-nm " " ty-nm "` on field `"
+              (:name field) "` — reference modifiers apply to reference "
+              "types (atoms, `String`); `" ty-nm "` is an enum "
+              "(value type, §3.2). Drop the modifier (spec §6.14).")
+         field)
+
+        (not (or in-atom? string?))
+        (fail-nyi!
+         (str "F13 L1: `" modifier-nm " " ty-nm "` on field `"
+              (:name field) "` — `" ty-nm "` is not a known reference type "
+              "(atom or `String`). Reference modifiers only apply to "
+              "reference types (spec §6.14).")
+         field)))))
+
 (defn- fields-from-data-section
   [data-section record-env atom-env enum-env]
   (mapv (fn [f]
+          (validate-reference-modifier-type! f record-env atom-env enum-env)
           (merge {:name      (:name f)
                   :cxc-ty    (base-type-name (:type f))
                   :nullable? (= :type-nullable (get-in f [:type :node]))
@@ -676,7 +716,12 @@
                   :nonnil?   (= :type-nonnil (get-in f [:type :node]))
                   :c-type    (cxc-type->c (:type f) record-env atom-env enum-env)
                   :default   (:default f)}
-                 (map-key-val-of (:type f))))
+                 (map-key-val-of (:type f))
+                 ;; F13 L1 — preserve the modifier on the lowered field
+                 ;; entry so L2's property emitter can pick `weak` /
+                 ;; `unsafe_unretained` attrs off the same shape used
+                 ;; for `strong` (default).
+                 (when-let [m (:modifier f)] {:modifier m})))
         (:fields data-section)))
 
 (defn- normalize-method-param
@@ -1994,7 +2039,14 @@
    main), main stays out of the env and the old main-atom-body path
    handles it as a plain function body."
   [top-nodes enum-env]
-  (let [other-atoms (filter #(and (= :def-atom (:node %))
+  (let [;; F13 L1 — build-record-env runs after this pass, so we can't
+        ;; thread the full record-env into fields-from-data-section.
+        ;; But the modifier-validation check only needs *names* to
+        ;; distinguish records from atoms/enums; a lightweight
+        ;; name-set built from top-nodes suffices as the `record-env`
+        ;; argument.
+        record-name-set (set (map :name (filter #(= :record (:node %)) top-nodes)))
+        other-atoms (filter #(and (= :def-atom (:node %))
                                   (not= "main" (:name %))
                                   (not (contains? prelude/atom-names
                                                   (:name %))))
@@ -2168,7 +2220,7 @@
                                      (mapv key dupes))
                                 {:atom name :dupes (mapv key dupes)})))
              merged-dsec   (assoc (or dsec {:node :data-section}) :fields merged-fields)
-             fields        (-> (fields-from-data-section merged-dsec {} env enum-env)
+             fields        (-> (fields-from-data-section merged-dsec record-name-set env enum-env)
                                ;; F36 Landing 2a: invariant-driven picker
                                ;; narrows Int fields whose invariants
                                ;; range-bound them to fit a sized atom.

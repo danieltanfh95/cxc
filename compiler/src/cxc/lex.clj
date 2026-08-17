@@ -50,7 +50,13 @@
     "and" "or" "not" "is" "in" "of"
     "if" "else" "return" "match" "case" "switch"
     "function"
-    "for"})
+    "for"
+    ;; F13 L1 (2026-08-18) — reference modifiers on `data:` field
+    ;; declarations. Shape per spec §6.14: `name: weak T` /
+    ;; `name: unowned T`. Distinct from F35's compiler-synthesized
+    ;; parent back-refs (those use an internal marker, not this
+    ;; user-facing keyword).
+    "weak" "unowned"})
 
 (def multi-char-glyphs
   ["<:" "<|" "|>" ":>" ":<" "->" "=>" "==" "!=" "<=" ">=" "//" "**"])

@@ -2552,3 +2552,36 @@ def main:
           "both params carried through")
       (is (= ["sx" "sy"] (mapv :name (:params obs)))
           "param names preserved in order"))))
+
+;; ---------------------------------------------------------------------------
+;; F13 L1 — env-time reference-modifier validation (spec §6.14)
+;; ---------------------------------------------------------------------------
+
+(deftest f13-l1-weak-on-atom-accepted
+  (testing "F13 L1 — `weak <AtomName>` on an atom-typed data field passes env-time validation; the modifier flows through to the lowered field entry so L2 can pick the ObjC property attrs."
+    (let [prog (lower-src "def Parent:\n    -> alive\n\ndef Child:\n    parent: weak Parent\n\n    -> alive\n\ndef main:\n    -> running\n        do: print(0)\n")
+          child (first (filter #(= "Child" (:name %)) (:classes prog)))
+          f     (first (filter #(= "parent" (:name %)) (:properties child)))]
+      (is (some? f) "Child.parent lowered as an ObjC property")
+      ;; Storage class is verified in L2; here we assert env-time
+      ;; validation didn't reject the field.
+      (is (= :objc-program (:node prog))))))
+
+(deftest f13-l1-weak-on-record-rejected
+  (testing "F13 L1 — `weak <Record>` fails env-time validation. Records are value types (§3.2); reference modifiers apply only to reference types (atoms, `String`)."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"F13 L1: `weak V` on field `p` .* record"
+         (lower-src "def V:\n    x: Int\n\ndef X:\n    p: weak V\n\n    -> alive\n\ndef main:\n    -> running\n        do: print(0)\n")))))
+
+(deftest f13-l1-weak-on-enum-rejected
+  (testing "F13 L1 — `weak <Enum>` fails env-time validation. Enums are value types."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"F13 L1: `weak Color` on field `c` .* enum"
+         (lower-src "def Color:\n    case red\n    case green\n\ndef X:\n    c: weak Color\n\n    -> alive\n\ndef main:\n    -> running\n        do: print(0)\n")))))
+
+(deftest f13-l1-unowned-on-atom-accepted
+  (testing "F13 L1 — `unowned <AtomName>` on an atom-typed data field passes env-time validation."
+    (let [prog (lower-src "def Parent:\n    -> alive\n\ndef Child:\n    parent: unowned Parent\n\n    -> alive\n\ndef main:\n    -> running\n        do: print(0)\n")]
+      (is (= :objc-program (:node prog))))))

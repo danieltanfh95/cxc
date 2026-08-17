@@ -432,17 +432,88 @@
 ;; Field declarations, function/method declarations
 ;; ---------------------------------------------------------------------------
 
+(def ^:private known-primitive-value-type-names
+  "Type names that are known to be value/primitive at parse time. Used
+   by F13 L1 to reject `weak`/`unowned` on obvious primitives without
+   waiting for env resolution. Not exhaustive — records/enums are
+   caught at lower-time by a type-kind check."
+  #{"Int" "Int8" "Int16" "Int32" "Int64"
+    "UInt" "UInt8" "UInt16" "UInt32" "UInt64"
+    "Float" "Double" "Bool" "Char" "Byte" "Bytes" "Unit" "Never"})
+
 (defn- parse-field
-  "name: Type [= default]"
+  "name: [<modifier>] Type [= default]
+
+   F13 L1 — optional `weak` / `unowned` reference modifier appears
+   between `:` and the type (spec §6.14). `weak` implies nil-
+   observability so an accompanying `?` suffix is a grammar error;
+   both modifiers are structurally rejected on known-primitive
+   value types at parse time (records/enums caught at lower-time)."
   [tokens pos]
-  (let [[name p]  (expect tokens pos :ident)
-        [_ p]     (expect tokens p :punct ":")
-        [ty p]    (parse-type tokens p)
-        [dflt p]  (if (at? tokens p :glyph "=")
-                    (let [[e p2] (parse-expr tokens (inc p))]
-                      [e p2])
-                    [nil p])]
-    [{:node :field :name name :type ty :default dflt} p]))
+  (let [[fname p]     (expect tokens pos :ident)
+        [_ p]         (expect tokens p :punct ":")
+        [modifier p]  (cond
+                        (at? tokens p :kw "weak")    [:weak    (inc p)]
+                        (at? tokens p :kw "unowned") [:unowned (inc p)]
+                        :else                        [nil      p])
+        modifier-pos  (dec p)
+        modifier-nm   (when modifier (clojure.core/name modifier))
+        [ty p]        (parse-type tokens p)
+        _             (when modifier
+                        (cond
+                          (= :type-nullable (:node ty))
+                          (fail! tokens modifier-pos
+                                 (str "F13 L1: `" modifier-nm " "
+                                      (or (:name (:inner ty)) "T") "?` is invalid — "
+                                      "reference types are nil-allowed by default "
+                                      "(§3.6.1) and `weak`/`unowned` don't add or "
+                                      "require the `?` suffix. Drop the `?` "
+                                      "(spec §6.14)."))
+
+                          (= :type-nonnil (:node ty))
+                          (fail! tokens modifier-pos
+                                 (str "F13 L1: `" modifier-nm " "
+                                      (or (:name (:inner ty)) "T") "!` is invalid — "
+                                      "`!` is the non-nil contract, but a `weak` "
+                                      "reference is observably nil once its target "
+                                      "deallocates. `unowned` names non-owning "
+                                      "strong references (undefined behavior on "
+                                      "dangle), which is orthogonal to the `!` "
+                                      "contract. Drop the `!` (spec §6.14)."))
+
+                          (and (= :type-ref (:node ty))
+                               (contains? known-primitive-value-type-names
+                                          (:name ty)))
+                          (fail! tokens modifier-pos
+                                 (str "F13 L1: `" modifier-nm " " (:name ty)
+                                      "` is invalid — reference modifiers apply "
+                                      "to reference types (atoms, `String`); `"
+                                      (:name ty) "` is a value/primitive type "
+                                      "(spec §6.14). Drop the modifier."))
+
+                          (= :type-of (:node ty))
+                          (fail! tokens modifier-pos
+                                 (str "F13 L1: `" modifier-nm " " (:outer ty)
+                                      " of ...` is invalid — collections don't "
+                                      "propagate reference modifiers to their "
+                                      "elements. Purpose-built weak-element "
+                                      "containers land as a follow-on (spec §6.14)."))
+
+                          (or (= :type-tuple (:node ty))
+                              (= :type-named-tuple (:node ty)))
+                          (fail! tokens modifier-pos
+                                 (str "F13 L1: `" modifier-nm "` on a tuple "
+                                      "type is invalid — reference modifiers apply "
+                                      "only to single reference types (atoms, "
+                                      "`String`), not to compound types "
+                                      "(spec §6.14)."))))
+        [dflt p]      (if (at? tokens p :glyph "=")
+                        (let [[e p2] (parse-expr tokens (inc p))]
+                          [e p2])
+                        [nil p])
+        base-field    {:node :field :name fname :type ty :default dflt}]
+    [(cond-> base-field
+       modifier (assoc :modifier modifier)) p]))
 
 (defn- parse-param
   "For function params & atom constructor params: name: Type [= default]."
