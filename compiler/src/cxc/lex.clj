@@ -26,15 +26,20 @@
   ;; kind flows from body structural cues (accepts:→protocol, case→enum,
   ;; transition/use:/ctor params/nested-slot→class, otherwise→record).
   ;;
-  ;; F68 L6c — `data` retired too (F67 L5 collapsed the `data:` header;
-  ;; L6c drops the diagnostic path and the reservation). `contracts` and
-  ;; `constructor` were reserved but never dispatched — removed as dead
-  ;; reservations.
+  ;; F68 L6c — `data` retired (F67 L5 collapsed the `data:` header).
+  ;; `contracts` / `constructor` were reserved but never dispatched.
+  ;;
+  ;; F33 L6 — `expose` retired under Proposal C+C1. External reads of
+  ;; `data:` fields are legitimate observation (Corvid's actor substrate
+  ;; makes external mutation impossible by grammar), so there is nothing
+  ;; to expose — every class member is readable by default and API
+  ;; stability is a documentation contract, not a compiler-enforced
+  ;; marker (spec §7.7). Weak/unowned reference modifiers stay a
+  ;; separate concern (F35 parent back-refs use a companion mechanism).
   ;;
   ;; `function` kept only for the grace-period module-scope `def name(...)
-  ;; -> T:` migration (K8). `expose` still reserved — tracked separately
-  ;; as F33 L6.
-  #{"module" "from" "import" "as" "expose"
+  ;; -> T:` migration (K8).
+  #{"module" "from" "import" "as"
     "def"
     "use" "invariants"
     "accepts"
