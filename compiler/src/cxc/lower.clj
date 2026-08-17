@@ -126,13 +126,12 @@
 
    F34 L1 (2026-08-18): when `atom-env` is provided, also accept
    `:call` nodes whose callee is a bare `:ident` naming an atom in
-   `atom-env`. This is the post-F34 replacement for `def slot: Type`
-   nested-atom construction (Proposal H structural detect makes atom
-   bodies with observable-only surfaces reshape to records; those
-   records still need to hold atom references, so atom-type ctor
-   calls in field defaults must be accepted). The exemption is
-   narrow: only ctor-shaped calls on atom types (not value-typed
-   records/enums, which have no runtime state to justify a ctor call).
+   `atom-env`. Records/atoms hold atom references through the
+   spec-canonical `<name>: <TypeName> = <TypeName>()` shape (§1.11),
+   so atom-type ctor calls in field defaults must be accepted. The
+   exemption is narrow: only ctor-shaped calls on atom types (not
+   value-typed records/enums, which have no runtime state to justify
+   a ctor call).
 
    Explicitly rejected: dots, subscripts, binops, collection
    literals, message-shapes, emit sites, blocks, ifs, switches."
@@ -211,7 +210,6 @@
           use-caps    (get (first (filter #(= :use-section (:node %))
                                           (:body atom-node)))
                            :caps [])
-          nested      (filter #(= :nested-atom (:node %)) (:body atom-node))
           ctor-params (:ctor-params atom-node)
           find-in    (fn [items key-fn]
                        (some (fn [it]
@@ -220,8 +218,7 @@
                              items))
           resolved   (or (find-in ctor-params :name)
                          (find-in data-fields :name)
-                         (find-in use-caps :name)
-                         (find-in nested :name))]
+                         (find-in use-caps :name))]
       (when (contains? atom-names resolved) resolved))
     nil))
 
@@ -1648,12 +1645,6 @@
   (or (:caps (first (filter #(= :use-section (:node %)) (:body atom-node))))
       []))
 
-(defn- def-atom-nested-slots
-  "Return the `def <lowercase>: <TypeRef>[(args)]` slots from the atom
-   body. Parser tags these as `:nested-atom`."
-  [atom-node]
-  (filterv #(= :nested-atom (:node %)) (:body atom-node)))
-
 (defn- payload-signature
   "Compact comparable representation of a payload shape — vector of
    `[name cxc-type]` pairs in declaration order. Used to catch
@@ -1826,7 +1817,7 @@
    are consumed by `def-atom-effective-data-section`."
   [atom-node]
   (remove #(#{:data-section :methods-section :transition :observable
-              :invariants-section :use-section :nested-atom
+              :invariants-section :use-section
               :handler-decl :deprecated :field} (:node %))
           (:body atom-node)))
 
@@ -2015,13 +2006,13 @@
         (boolean (some #(and (= :transition (:node %))
                              (contains? #{"<:" "<|"} (get-in % [:receive :glyph])))
                        (:body main-node)))
-        ;; A nested slot / use: cap on main brings that atom's lifecycle
-        ;; into main's — cascade end + parent-back-ref plumbing require
-        ;; main to be a real atom class. This catches the case where
-        ;; the user program's ONLY atom references are prelude atoms
-        ;; via `def clock: Clock` (post-rename `_Cxc_Clock`).
+        ;; A use: cap on main brings that atom's lifecycle into main's
+        ;; — cascade end + parent-back-ref plumbing require main to be
+        ;; a real atom class. Atom-typed data fields on main are
+        ;; handled by `main-has-atom-field?` below (spec-canonical
+        ;; §1.11 shape); this predicate covers the `use:` surface.
         main-has-atom-slot-or-cap?
-        (boolean (some #(contains? #{:nested-atom :use-section} (:node %))
+        (boolean (some #(= :use-section (:node %))
                        (:body main-node)))
         ;; F67 L5 — fields at atom body live either under `:data-section`
         ;; (legacy `data:`) or as top-level `:field` nodes (post-collapse).
@@ -2047,11 +2038,26 @@
         (boolean (some #(and (= :type-ref (get-in % [:type :node]))
                              (= "Block" (get-in % [:type :name])))
                        main-fields))
+        ;; F34 L3 companion — an atom-typed `data:` field on main
+        ;; requires main to be a real ObjC class so the field can live
+        ;; as an ivar and transition-body identifier refs resolve to
+        ;; `self.field` via `:self-fields`. Mirrors what nested-slot
+        ;; declarations were previously doing under the retired
+        ;; `def slot: Type` form.
+        atom-name-set
+        (into #{} (concat (map :name other-atoms) prelude/atom-names))
+        main-has-atom-field?
+        (boolean (some (fn [f]
+                         (and (= :type-ref (get-in f [:type :node]))
+                              (contains? atom-name-set
+                                         (get-in f [:type :name]))))
+                       main-fields))
         include-main? (or (seq other-atoms)
                           main-has-message-txn?
                           main-has-atom-slot-or-cap?
                           main-has-list-field?
-                          main-has-block-field?)
+                          main-has-block-field?
+                          main-has-atom-field?)
         atoms    (if include-main?
                    (filter #(= :def-atom (:node %)) top-nodes)
                    other-atoms)
@@ -2076,7 +2082,6 @@
              observables   (def-atom-observables a)
              invariants    (def-atom-invariants a)
              use-caps      (def-atom-use-caps a)
-             nested-slots  (def-atom-nested-slots a)
              extras        (def-atom-body-extras a)
              ;; use: caps are sugar for a required ctor-param plus a
              ;; same-named data-field defaulted to that ctor-param.
@@ -2089,31 +2094,12 @@
                                      (base-type-name (:type c)) "` (Layer 3.1 only "
                                      "supports capability atom types in use: for now)")
                                 c)))
-             ;; def <lowercase>: <AtomType>[(args)] synthesizes a data
-             ;; field whose default is the ctor call. Type must be an
-             ;; atom (nested slots hold sub-atoms, not values).
-             _             (doseq [s nested-slots]
-                             (when-not (contains? atom-names (base-type-name (:type s)))
-                               (fail-nyi!
-                                (str "nested slot `def " (:name s) "` requires an atom "
-                                     "type; got `" (base-type-name (:type s)) "`")
-                                s)))
              cap-idents     (mapv (fn [c] {:node :ident :name (:name c)}) use-caps)
              cap-as-params  (mapv (fn [c] {:name (:name c) :type (:type c) :default nil})
                                   use-caps)
              cap-as-fields  (mapv (fn [c id] {:name (:name c) :type (:type c) :default id
                                               :cxc-compiler-synthesized true})
                                   use-caps cap-idents)
-             nested-as-fields (mapv
-                               (fn [s]
-                                 {:name (:name s)
-                                  :type (:type s)
-                                  :cxc-compiler-synthesized true
-                                  :default
-                                  {:node :call
-                                   :callee {:node :ident :name (base-type-name (:type s))}
-                                   :args   (or (:ctor-args s) [])}})
-                               nested-slots)
              ;; F41 — data fields without a `:default` become **required
              ;; ctor params** per spec §10 ("constructor parameters
              ;; become data fields; construction auto-synthesised from
@@ -2164,8 +2150,7 @@
                                 (into (:ctor-params f41-transform))
                                 (into cap-as-params))
              merged-fields  (-> (:fields f41-transform)
-                                (into cap-as-fields)
-                                (into nested-as-fields))
+                                (into cap-as-fields))
              _             (let [n->count (frequencies (map :name merged-ctor))
                                  dupes    (filter #(> (val %) 1) n->count)]
                              (when (seq dupes)
@@ -2179,7 +2164,7 @@
                              (when (seq dupes)
                                (fail-nyi!
                                 (str "duplicate field names on def-atom `" name
-                                     "` (collision between data:/use:/nested-slot): "
+                                     "` (collision between data:/use:): "
                                      (mapv key dupes))
                                 {:atom name :dupes (mapv key dupes)})))
              merged-dsec   (assoc (or dsec {:node :data-section}) :fields merged-fields)
@@ -2272,20 +2257,19 @@
               transitions)
              subscription-map (into {} (map (fn [[k v]] [k (vec (distinct v))])
                                             subscription-map))
-             ;; Names of fields that are nested-slot children — Step 11
+             ;; Names of fields that are owned atom slots — Step 11
              ;; installs a parent back-ref on each after construction, and
              ;; -transitionToEnd cascades end into each on this atom's end.
              ;;
-             ;; F31/F35 Landing 4 broadens the set to include ordinary
-             ;; atom-typed `data:` fields (the spec-canonical form). A
-             ;; field qualifies iff its declared type resolves to a
-             ;; regular-kind atom (excludes primitives, records, enums,
-             ;; and synthesized container atoms). `use:` cap fields and
-             ;; F41-synthesized ctor-param fields carry an explicit
-             ;; `:cxc-compiler-synthesized` marker and are excluded —
-             ;; caps live in the shared env, not as owned children.
-             ;; Nested-slot F34 fields are already in `nested-as-fields`
-             ;; and re-collected here via the same predicate.
+             ;; F31/F35 Landing 4 broadened the set to any atom-typed
+             ;; `data:` field with a default (the spec-canonical §1.11
+             ;; shape). A field qualifies iff its declared type resolves
+             ;; to a regular-kind atom (excludes primitives, records,
+             ;; enums, and synthesized container atoms). `use:` cap
+             ;; fields and F41-synthesized ctor-param fields carry an
+             ;; explicit `:cxc-compiler-synthesized` marker and are
+             ;; excluded — caps live in the shared env, not as owned
+             ;; children.
              non-slot-kinds #{:list-container :map-container :set-container
                               :runtime-provided}
              regular-atom-name?
@@ -2302,9 +2286,7 @@
                                    (regular-atom-name? ty-nm))
                           (:name f))))
                     (:fields merged-dsec)))
-             slot-names    (vec (distinct
-                                 (into (mapv :name nested-slots)
-                                       data-slot-names)))]
+             slot-names    (vec (distinct data-slot-names))]
          (assoc env name {:fields        fields
                           :field-index   (into {} (map (juxt :name identity) fields))
                           :ctor-params   ctor-params

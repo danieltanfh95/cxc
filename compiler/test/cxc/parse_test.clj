@@ -145,19 +145,29 @@
       (is (= :lex-unit-suffix-retired (:kind (ex-data ex))))
       (is (= "s" (:suffix (ex-data ex)))))))
 
-(deftest nested-atom-slot
-  (let [n (first-node "def Game:
-    def paddle: Paddle
-    def player: Player(max_hp: 100)
-")
-        [p1 p2] (:body n)]
-    (is (= :nested-atom (:node p1)))
-    (is (= "paddle" (:name p1)))
-    (is (= "Paddle" (get-in p1 [:type :name])))
-    (is (nil? (:ctor-args p1)))
-    (is (= :nested-atom (:node p2)))
-    (is (= "player" (:name p2)))
-    (is (= 1 (count (:ctor-args p2))))))
+(deftest f34-l3-nested-atom-slot-form-rejected
+  (testing "F34 L3 — `def <name>: <TypeName>` inside a def body is retired at parse time. Diagnostic names the field, the type, and points at the spec-canonical `data:` migration."
+    (let [ex (try
+               (first-node "def Game:\n    def paddle: Paddle\n")
+               nil
+               (catch clojure.lang.ExceptionInfo e e))]
+      (is ex "expected fail! on the retired form")
+      (is (re-find #"F34 L3" (.getMessage ex))
+          "diagnostic tagged with the landing")
+      (is (re-find #"paddle: Paddle = Paddle\(\)" (.getMessage ex))
+          "diagnostic shows the exact rewrite"))))
+
+(deftest f34-l3-nested-atom-slot-with-ctor-args-rejected
+  (testing "F34 L3 — the ctor-args form (`def slot: Type(args)`) is also retired; the fix-it preserves args on the RHS ctor call."
+    (let [ex (try
+               (first-node "def Game:\n    def player: Player(max_hp: 100)\n")
+               nil
+               (catch clojure.lang.ExceptionInfo e e))]
+      (is ex "expected fail! on the ctor-args form")
+      (is (re-find #"F34 L3" (.getMessage ex)))
+      (is (re-find #"player: Player = Player\(args\.\.\.\)"
+                   (.getMessage ex))
+          "diagnostic mentions preserving args on the RHS"))))
 
 (deftest game-toys-parses
   (testing "the full game-toys.cxc example parses end-to-end — entry point is `def main`"

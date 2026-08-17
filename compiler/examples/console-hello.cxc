@@ -1,5 +1,5 @@
 def main:
-    def console: Console
+    console: Console = Console()
 
     -> running
         do: console.write("hi\n")

@@ -414,9 +414,9 @@ def Game:
     tick_rate: Duration = Duration(millis: 16)
 
     # Nested capability atoms — children inherit this compound's env.
-    def paddle:  Paddle
-    def player:  Player(max_hp: 100)
-    def spawner: EnemySpawner
+    paddle:  Paddle        = Paddle()
+    player:  Player        = Player(max_hp: 100)
+    spawner: EnemySpawner  = EnemySpawner()
 
     # ---- Compound observables aggregate child observables ----
     paddle_position :< paddle.position
@@ -449,7 +449,7 @@ def main:
         random:  Random
         console: Console
 
-    def game: Game
+    game: Game = Game()
 
     # Wildcard on-enter for `running` catches the implicit `init -> running`
     # transition; runs the one side effect on program start. Receive-glyph

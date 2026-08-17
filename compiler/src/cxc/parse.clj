@@ -491,8 +491,10 @@
    The `function` keyword is retired at v1.0 (spec §1201/§2330); we
    still parse it during the grace period but emit a per-occurrence
    deprecation warning via `warn-function-deprecated!`. The `def`
-   form is distinguished from a nested-atom slot (`def name: TypeName`)
-   by the paren immediately after the name."
+   form is distinguished from the retired nested-atom slot form
+   (`def name: TypeName`, F34 L3) by the paren immediately after
+   the name — this method-decl path only fires when parens are
+   present."
   [tokens pos]
   (let [[_ p]      (cond
                      (at? tokens pos :kw "function")
@@ -513,8 +515,8 @@
 (defn- at-def-method?
   "Look-ahead for the spec-canonical `def name(...)` method form
    inside a def-body or methods: section — distinguishes from the
-   F34 nested-slot form `def name: TypeName` (paren vs colon after
-   the identifier)."
+   retired F34 nested-slot form `def name: TypeName` (paren vs
+   colon after the identifier)."
   [tokens pos]
   (and (at? tokens pos :kw "def")
        (at? tokens (inc pos) :ident)
@@ -1187,7 +1189,6 @@
 (declare def-atom->record def-atom->protocol def-atom->enum
          def-atom-body-has-transition? def-atom-body-has-use?
          def-atom-body-has-accepts? def-atom-body-has-case?
-         def-atom-body-has-nested-slot?
          def-atom-body-has-atom-ctor-field-default?
          parse-accepts-section parse-accepts-signature)
 
@@ -1227,7 +1228,6 @@
 
                 (or (def-atom-body-has-transition? folded)
                     (def-atom-body-has-use? folded)
-                    (def-atom-body-has-nested-slot? folded)
                     (def-atom-body-has-atom-ctor-field-default? folded)
                     (seq ctor))
                 raw-def
@@ -1294,20 +1294,27 @@
                     "Utility functions unrelated to `self` belong at module "
                     "scope. See spec §1.11."))
 
-        ;; Nested atom slot: `def <name>: <TypeName>[(ctor-args)]`
-        ;; Distinct from top-level `def <Name>:` (which opens a block)
-        ;; and from the retired method form `def name(...) -> T:`
-        ;; caught above. F34-retirement-pending shape.
-        (at? tokens p :kw "def")
-        (let [[_ p2]   (expect tokens p :kw "def")
-              [nm p3]  (expect tokens p2 :ident)
-              [_ p4]   (expect tokens p3 :punct ":")
-              [ty p5]  (parse-type tokens p4)
-              [args p6] (if (at? tokens p5 :punct "(")
-                          (parse-args-parens tokens p5)
-                          [nil p5])]
-          (recur (conj body {:node :nested-atom :name nm :type ty :ctor-args args})
-                 (skip-newlines tokens p6)))
+        ;; F34 L3 — nested-atom slot `def <name>: <TypeName>[(args)]`
+        ;; at atom-body position is retired. The spec-canonical shape
+        ;; is a `data:` field (§1.11 line 960): `<name>: <TypeName> =
+        ;; <TypeName>([args])`. Emit an actionable fix-it pointing at
+        ;; the rewrite.
+        (and (at? tokens p :kw "def")
+             (at? tokens (inc p) :ident)
+             (at? tokens (+ p 2) :punct ":"))
+        (let [nm  (t-value (peek-tok tokens (inc p)))
+              ty-tok (peek-tok tokens (+ p 3))
+              ty-nm  (if (and ty-tok (= :ident (t-kind ty-tok)))
+                       (t-value ty-tok)
+                       "TypeName")]
+          (fail! tokens p
+                 (str "F34 L3: `def " nm ": " ty-nm "` nested-atom slot form "
+                      "inside `def " name "` body is retired. Migrate to the "
+                      "spec-canonical `data:` field shape (§1.11):\n\n"
+                      "  " nm ": " ty-nm " = " ty-nm "()\n\n"
+                      "If the original carried ctor args (`def " nm ": " ty-nm
+                      "(args...)`), preserve them on the RHS ctor call:\n\n"
+                      "  " nm ": " ty-nm " = " ty-nm "(args...)")))
 
         ;; `state:` section retired at v1.0 (spec §1.11, §1.259). All
         ;; fields are `data:` (per-instance; updated only through
@@ -1390,9 +1397,6 @@
 
 (defn- def-atom-body-has-case? [body]
   (boolean (some #(= :enum-case (:node %)) body)))
-
-(defn- def-atom-body-has-nested-slot? [body]
-  (boolean (some #(= :nested-atom (:node %)) body)))
 
 (defn- field-has-ident-callee-ctor-default?
   "F34 L2 signal: a top-level field whose default is a `Type()` call

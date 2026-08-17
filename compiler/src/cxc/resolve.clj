@@ -44,8 +44,7 @@
                     :node    <raw>
                     :members {:data-fields [...] :methods [...]
                               :observables [...] :transitions [...]
-                              :use-caps [...] :nested-slots [...]
-                              :invariants [...]}}
+                              :use-caps [...] :invariants [...]}}
       \"Key\"      {:name    \"Key\"
                     :module  :std.input
                     :kind    :enum
@@ -157,7 +156,6 @@
      :observables   obs
      :transitions   (filterv #(= :transition (:node %)) body)
      :use-caps      (vec (:caps uses))
-     :nested-slots  (filterv #(= :nested-atom (:node %)) body)
      :invariants    (vec (:predicates invs))
      :handler-decls (filterv #(= :handler-decl (:node %)) body)}))
 
