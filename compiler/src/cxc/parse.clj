@@ -772,21 +772,13 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- parse-observable [tokens pos]
-  (let [[name p]        (expect tokens pos :ident)
-        [params p]      (if (at? tokens p :punct "(")
-                          (parse-param-list-parens tokens p)
-                          [[] p])
-        ;; F67 L4 — optional explicit return-type annotation
-        ;; `name(args) -> T :< expr`. Needed for observables serving as
-        ;; method-stream sources (receive-glyph subscription requires
-        ;; parametric `Stream of T` structure). Inference otherwise.
-        [ret p]         (if (at? tokens p :glyph "->")
-                          (parse-type tokens (inc p))
-                          [nil p])
-        [_ p]           (expect tokens p :glyph ":<")
-        [expr p]        (parse-expr tokens p)]
-    [{:node :observable :name name :params params
-      :return-type ret :expr expr} p]))
+  (let [[name p]   (expect tokens pos :ident)
+        [params p] (if (at? tokens p :punct "(")
+                     (parse-param-list-parens tokens p)
+                     [[] p])
+        [_ p]      (expect tokens p :glyph ":<")
+        [expr p]   (parse-expr tokens p)]
+    [{:node :observable :name name :params params :expr expr} p]))
 
 ;; ---------------------------------------------------------------------------
 ;; Transitions
@@ -1154,12 +1146,9 @@
   (and (at? tokens pos :ident)
        (or (at? tokens (inc pos) :glyph ":<")
            ;; F67 L2 — parametric observable: `<name>(params) :<`
-           ;; F67 L4 — optional explicit return type between `)` and `:<`:
-           ;;   `<name>(params) -> T :< expr`.
            (and (at? tokens (inc pos) :punct "(")
                 (when-let [after-close (scan-past-parens tokens (inc pos))]
-                  (or (at? tokens after-close :glyph ":<")
-                      (at? tokens after-close :glyph "->")))))))
+                  (at? tokens after-close :glyph ":<"))))))
 
 ;; F14 / F67 L3 — the legacy `-> handler(args):` sugar (F14) is retired
 ;; under Proposal G's class-body collapse. The migration target is the

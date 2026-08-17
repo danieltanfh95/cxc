@@ -1801,12 +1801,24 @@ def main:
                          "    -> running\n"
                          "        do: print(0)\n"))))))
 
-;; F67 L4 — return-type signature-mismatch test retires. Observables
-;; (`name(args) :< expr`) do not carry an explicit return-type annotation;
-;; return type is inferred from the expression body. A `name(args) -> T :< expr`
-;; observable-return-type surface is a follow-on landing that would restore
-;; this specific mismatch check. Param-name and param-type mismatch checks
-;; still apply — the param decls carry types.
+(deftest f9-l5-signature-mismatch-return-type-rejected
+  (testing "F9 L5 + F67 L4b — extension observable whose inferred body type does not match the protocol's accepts return type fails conformance with a specific detail line. `observable-methods-view` sources the observable's return type from post-inference `:type-kw`; `signature-mismatch-detail` compares it against the accepts entry's declared return type."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"return type mismatch — expected `Int`, got `String`"
+         (lower-src (str "protocol P:\n"
+                         "    accepts:\n"
+                         "        m() -> Int\n"
+                         "\n"
+                         "record Widget:\n"
+                         "    n: Int\n"
+                         "\n"
+                         "extend class Widget(P):\n"
+                         "    m() :< \"x\"\n"
+                         "\n"
+                         "def main:\n"
+                         "    -> running\n"
+                         "        do: print(0)\n"))))))
 
 (deftest f9-l5-signature-mismatch-param-name-rejected
   (testing "F9 Landing 5 — Cxc supports named-arg calls (§3.4.5 rule 2), so protocol conformance requires param names to match. Post F67 L4: observable form."
@@ -1948,12 +1960,12 @@ def main:
                          "        do: print(0)\n"))))))
 
 (deftest f9-l6b-structural-conformance-inherits-default
-  (testing "F9 Landing 6b + F67 L4 — class does NOT declare `conforms: P` but structurally satisfies P's accepts surface AND P provides defaults for other observables → class inherits those defaults implicitly. Protocol defaults not covered by `accepts:` carry explicit `-> T` return types so downstream emission has a concrete type (see f67-l4 explicit-return-type observable extension)."
+  (testing "F9 Landing 6b + F67 L4b — class does NOT declare `conforms: P` but structurally satisfies P's accepts surface AND P provides helper defaults not covered by accepts → class inherits those defaults implicitly. Helper defaults carry no explicit return type on the observable; downstream C emission derives the return type from the accepts entry when present, and helpers with trivial literal bodies emit via the observable-inference path."
     (let [prog (lower-src (str "protocol P:\n"
                                "    accepts:\n"
                                "        iter(self) -> Int\n"
                                "\n"
-                               "    count_helper() -> Int :< 99\n"
+                               "    count_helper() :< 99\n"
                                "\n"
                                "record Widget:\n"
                                "    n: Int\n"
@@ -1968,12 +1980,7 @@ def main:
           return-stmt (first (filter #(= :return (:node %)) (:body fn)))]
       (is (some? fn)
           "Widget_count_helper lowered via structural conformance to P")
-      (is (= 99 (get-in return-stmt [:value :value])))))
-  ;; F67 L4: structural-conformance signature match on RETURN TYPE mismatch is
-  ;; no longer testable via observables (no explicit return type on the class's
-  ;; iter surface). Return-type mismatch check for structural conformance
-  ;; requires the observable-return-type extension across both sides.
-  )
+      (is (= 99 (get-in return-stmt [:value :value]))))))
 
 (deftest f9-l6b-protocol-with-no-defaults-not-inherited
   (testing "F9 Landing 6b — a protocol with no defaults produces no inheritance even under structural conformance. Structural-conformance detection is only for inheriting defaults; conforming-without-defaults is a call-site concern (L7+)."
@@ -2343,11 +2350,13 @@ def main:
                       body))
           "no nonnil-check emitted when the field is bare `T`"))))
 
-;; F67 L4: F39 L3 nonnil-return-check tests retire because they depend on
-;; `-> T!` explicit method return-type annotations, which don't have an
-;; observable-form counterpart. The observable body is a bare expression
-;; whose type is inferred; no `-> T!` surface exists. A `name(args) -> T :< expr`
-;; observable-return-type extension would restore this check as a follow-on.
+;; F67 L4 / L4b: F39 L3 nonnil-return-check retires — no observable-header
+;; surface to declare `-> T!` on a reader. Field-level nonnil enforcement
+;; (writes into `T!` slots) stays intact via `nonnil-check-stmt`. Restoring
+;; nonnil enforcement on observable returns requires deriving nonnil from
+;; the protocol accepts entry (accepts declares `-> T!` → wrap the derived
+;; method body's return) — separate follow-on landing, distinct from the
+;; observable-header annotation reverted in L4b.
 
 (deftest f39-l1-nullable-on-atom-rejected
   (testing "F39 Landing 1 — `T?` where T is a reference type (atom) is spec-refused as redundant (§3.6.1: reference types are already nil-allowed). Diagnostic names the type and points at the drop-the-`?` fix."

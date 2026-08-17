@@ -681,13 +681,12 @@
    becomes `[{:node :return :value <expr>}]`. `self` is prepended to
    params to match downstream expectations.
 
-   `:cxc-return-ty` is left nil — observable return type is inferred
-   from the body expression by observable-type inference (not the
-   method-return-type path). Signature-mismatch checks that need an
-   explicit return type on the observable-migration surface are not
-   supported at v1.0 (would require `name(args) -> T :< expr` syntax);
-   the migration retains all other signature checks (arity, param
-   name, param type)."
+   F67 L4b — observable return type is inferred from the body expression
+   during `infer-observables-in-{record,atom}-env`; callers that need it
+   at conformance-check time (see `observable-methods-view`) source
+   `:cxc-return-ty` from the post-inference `:type-kw` slot on the
+   observable-index entry. The entry produced here carries nil
+   `:cxc-return-ty` — the pre-inference view."
   [owner-name obs]
   (let [self-param {:name "self" :type nil :default nil}
         with-self  (into [self-param] (:params obs))
@@ -696,15 +695,8 @@
     (validate-default-is-const!        site (:params obs))
     {:name               (:name obs)
      :params             (mapv #(normalize-method-param owner-name %) with-self)
-     :cxc-return-ty      (when-let [rt (:return-type obs)]
-                           (case (:node rt)
-                             :type-ref      (:name rt)
-                             :type-of       (:outer rt)
-                             :type-nullable (base-type-name rt)
-                             :type-nonnil   (base-type-name rt)
-                             nil            nil
-                             (:name rt)))
-     :cxc-return-ty-node (:return-type obs)
+     :cxc-return-ty      nil
+     :cxc-return-ty-node nil
      ;; Body shape mirrors parse-block output: `{:node :block :stmts [...]}`
      ;; with `:return` in parser shape (:expr, not :value; :value is the
      ;; lowered form) so lower-method-fn's `(:stmts (:body method))` works
@@ -815,6 +807,38 @@
                           "See spec §3.4.5.")
                      {:proto proto-name :dupes (vec dupes)}))))
 
+(declare infer-type type-kw->cxc-name-str)
+
+(defn- infer-protocol-defaults
+  "F67 L4b — post-pass over protocol-env: for each default observable
+   whose `:cxc-return-ty` is still nil (helper default with no matching
+   `accepts:` entry), infer the return type by walking the observable
+   body expression with `infer-type` and stringify via
+   `type-kw->cxc-name-str`. Runs AFTER
+   `infer-observables-in-{record,atom}-env` so the ctx has real envs
+   for cross-record/atom references; helper bodies are typically
+   literals or arithmetic that infer cheaply."
+  [protocol-env record-env atom-env enum-env]
+  (reduce-kv
+   (fn [acc pn info]
+     (let [defaults' (mapv (fn [d]
+                             (if (:cxc-return-ty d)
+                               d
+                               (let [expr (get-in d [:body :stmts 0 :expr])
+                                     ctx  {:record-env record-env
+                                           :atom-env   atom-env
+                                           :enum-env   enum-env
+                                           :locals     {}}
+                                     tk   (try (infer-type expr ctx)
+                                               (catch Exception _ nil))
+                                     nm   (type-kw->cxc-name-str tk)]
+                                 (cond-> d
+                                   nm (assoc :cxc-return-ty nm)))))
+                           (:defaults info))]
+       (assoc acc pn (assoc info :defaults defaults'))))
+   {}
+   protocol-env))
+
 (defn- build-protocol-env
   "Scan top-level `:class` nodes with `:kind :protocol` and build the
    protocol-env. L2 is registration-only: no cross-protocol conformance
@@ -827,7 +851,8 @@
    collapse); observables provide the reader-default surface used by
    F9 L6 default-method inheritance. Return types on default observables
    fall back to the matching `accepts:` entry's return type (protocols
-   declare the shared shape once)."
+   declare the shared shape once); helper defaults without an accepts
+   entry infer via `infer-protocol-defaults` post-inference."
   [top-nodes]
   (reduce
    (fn [env p]
@@ -838,9 +863,9 @@
            obs-defaults (filterv #(= :observable (:node %)) (:body p))
            defaults (mapv
                      (fn [o]
-                       (let [entry (observable->method-entry nm o)
+                       (let [entry  (observable->method-entry nm o)
                              accept (get accepts-by-name (:name o))
-                             ret    (or (:return-type o) (:return-type accept))
+                             ret    (:return-type accept)
                              ret-ty (when ret
                                       (case (:node ret)
                                         :type-ref      (:name ret)
@@ -850,10 +875,8 @@
                                         nil            nil
                                         (:name ret)))]
                          (assoc entry
-                                :cxc-return-ty      (or (:cxc-return-ty entry)
-                                                        ret-ty)
-                                :cxc-return-ty-node (or (:cxc-return-ty-node entry)
-                                                        ret))))
+                                :cxc-return-ty      ret-ty
+                                :cxc-return-ty-node ret)))
                      obs-defaults)
            conforms (vec (:conforms p))]
        (assoc env nm {:accepts       accepts
@@ -1200,11 +1223,12 @@
    mismatch between a composed-table method and a protocol accepts
    entry, or nil if they match.
 
-   F67 L4 — observable-derived entries without an explicit
-   `name(args) -> T :< expr` return-type annotation have nil
-   `:cxc-return-ty`; treat that as inferred-and-matching (the return
-   type comes from the observable expression at emit time). Param
-   name / type checks still fire — those are always explicit."
+   F67 L4b — observable-derived entries carry `:cxc-return-ty`
+   populated from the inferred body type (see `observable-methods-view`);
+   return-type mismatch now fires uniformly whether the entry came from
+   a legacy `:method` or a post-collapse observable. Method-typed
+   entries with truly-nil `:cxc-return-ty` (rare — pre-inference legacy
+   paths) still short-circuit as inferred-and-matches."
   [method accepts-entry]
   (let [method-params  (non-self-params (:params method))
         accepts-params (non-self-params (:params accepts-entry))
@@ -1277,14 +1301,53 @@
                            {:class class-name :protocol protocol-name
                             :missing ae-name})))))))
 
+(defn- type-kw->cxc-name-str
+  "F67 L4b — reverse mapping from the internal type-kw vocabulary
+   (populated by `cxc-type->type-kw` + `infer-type`) back to the
+   user-facing cxc type name used by `signature-mismatch-detail`
+   for string-comparison against `accepts:` entry return types.
+   Symmetric with the primitives table in `cxc-type->type-kw`. Sized
+   numeric variants read the C-type metadata (which is deterministic)
+   and map back to the user name (Int8/UInt32/Float etc.)."
+  [tk]
+  (cond
+    (nil? tk)            nil
+    (= :int tk)          "Int"
+    (= :float tk)        "Double"
+    (= :string tk)       "String"
+    (= :bool tk)         "Bool"
+    (= :unit tk)         "Unit"
+    (= :never tk)        "Never"
+    (= :any tk)          "Any"
+    (= :bytes tk)        "Bytes"
+    (= :block tk)        "Block"
+    (and (vector? tk) (= :int (first tk)))   (str "Int"   (second tk))
+    (and (vector? tk) (= :uint (first tk)))  (str "UInt"  (second tk))
+    (and (vector? tk) (= :float (first tk))) (if (= 32 (second tk)) "Float" "Double")
+    (and (map? tk) (:record tk)) (:record tk)
+    (and (map? tk) (:atom   tk)) (:atom   tk)
+    (and (map? tk) (:enum   tk)) (:enum   tk)
+    :else                nil))
+
 (defn- observable-methods-view
   "F67 L4 — for conformance checks, project a class's observables into
    method-shape entries so `validate-one-conformance!` can match them
    against protocol `accepts:` entries uniformly with own + extension
-   methods."
+   methods.
+
+   F67 L4b — sources `:cxc-return-ty` from the post-inference
+   `:observable-index` entry's `:type-kw` (populated by
+   `infer-observables-in-{record,atom}-env`) so return-type mismatch
+   checks fire against the class's declared observable body — no
+   observable-header return-type annotation required."
   [class-name entry]
   (into (vec (:methods entry))
-        (mapv #(observable->method-entry class-name %)
+        (mapv (fn [obs]
+                (let [me         (observable->method-entry class-name obs)
+                      inferred   (get-in entry [:observable-index (:name obs)])
+                      inferred-tk (:type-kw inferred)
+                      name-str   (type-kw->cxc-name-str inferred-tk)]
+                  (assoc me :cxc-return-ty name-str)))
               (:observables entry))))
 
 (defn- validate-explicit-conformances!
@@ -2655,6 +2718,14 @@
    ;; stream ref inside block also released (already dealloc'd, so
    ;; no-op).
    {:return-kw {:atom "CxcStream"}
+    ;; F67 L4b — parametric return-type node consulted by the receive-glyph
+    ;; :method-stream resolver so observables wrapping this native inherit the
+    ;; `Stream of T` structure without an explicit `-> T` annotation on the
+    ;; observable header. Post-prelude-rename shape (Stream → CxcStream,
+    ;; Instant → _Cxc_Instant); the ffi table stays in the same naming
+    ;; convention as its C emission.
+    :return-type-node {:node :type-of :outer "CxcStream"
+                       :inner {:node :type-ref :name "_Cxc_Instant"}}
     :arity     2
     :emit-c    (fn [args]
                  (let [src  (first args)
@@ -4397,35 +4468,44 @@
                                               (str "method-stream source `" source-class
                                                    "` is not a def-atom in the program")
                                               src))
-                              ;; F67 L4 — receive-glyph method-stream source
+                              ;; F67 L4b — receive-glyph method-stream source
                               ;; may be either a method (legacy) or an
-                              ;; observable declared with an explicit return
-                              ;; type (`name(args) -> T :< expr`; F67 L4
-                              ;; adjunct for Stream/collection returns).
-                              ;; Observables without an explicit return type
-                              ;; annotation aren't valid receive-glyph
-                              ;; sources — the resolver needs the parametric
-                              ;; `Stream of T` structure preserved.
+                              ;; observable. Observables that wrap a bare
+                              ;; ffi-builtin call (e.g. Clock.every wrapping
+                              ;; native_clock_every) inherit the
+                              ;; parametric `Stream of T` structure from
+                              ;; the ffi-builtin table's `:return-type-node`
+                              ;; entry — no annotation on the observable
+                              ;; header needed.
                               method-info  (get-in source-info [:method-index method-nm])
                               obs-node     (when-not method-info
                                              (first (filter #(= method-nm (:name %))
                                                             (:observables source-info))))
+                              obs-native-ret-node
+                              (when obs-node
+                                (let [body (:expr obs-node)]
+                                  (when (and body
+                                             (= :call (:node body))
+                                             (= :ident (:node (:callee body)))
+                                             (ffi-builtin? (:name (:callee body))))
+                                    (:return-type-node
+                                     (get ffi-builtins (:name (:callee body)))))))
                               _            (when-not (or method-info
-                                                         (:return-type obs-node))
+                                                         obs-native-ret-node)
                                              (fail-nyi!
                                               (str "atom `" source-class "` has no `"
                                                    method-nm "()` method or observable "
-                                                   "with an explicit `Stream of T` "
+                                                   "with a resolvable `Stream of T` "
                                                    "return type — receive-glyph `"
                                                    field-nm "." method-nm "()` on `"
-                                                   atom-name "` has no source. F67 L4: "
-                                                   "declare the observable as "
-                                                   "`" method-nm "(...) -> Stream of T :< "
-                                                   "<expr>` to allow method-stream "
-                                                   "subscription.")
+                                                   atom-name "` has no source. "
+                                                   "Observable-body must be a bare call "
+                                                   "to a `Stream`-returning ffi-builtin "
+                                                   "for the receive-glyph resolver to "
+                                                   "derive the payload type.")
                                               src))
                               return-node  (or (:cxc-return-ty-node method-info)
-                                               (:return-type obs-node))
+                                               obs-native-ret-node)
                               return-ty    (or (:cxc-return-ty method-info)
                                                (case (:node return-node)
                                                  :type-ref      (:name return-node)
@@ -6318,6 +6398,12 @@
         record-env (infer-observables-in-record-env record-env atom-env enum-env)
         atom-env   (infer-observables-in-atom-env atom-env record-env enum-env)
         atom-env   (infer-streams-in-atom-env atom-env record-env enum-env)
+        ;; F67 L4b — infer return types on protocol helper defaults
+        ;; (observables with no matching `accepts:` entry) so downstream
+        ;; C emission has a concrete return type when the default gets
+        ;; inherited into a conforming class.
+        protocol-env (infer-protocol-defaults protocol-env record-env atom-env
+                                              enum-env)
         ;; Layer 5 Step 3: scan post-inference atom-env for `List of T`
         ;; field/ctor usages, register a synthesized entry per distinct
         ;; T for method-lookup, and generate a matching :objc-class per
