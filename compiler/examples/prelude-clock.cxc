@@ -1,5 +1,5 @@
 def main:
-    def clock: Clock(ticks: 3)
+    clock: Clock = Clock(ticks: 3)
 
     count: Int = 0
 

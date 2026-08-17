@@ -4,7 +4,7 @@ def Cell(v: Int = 0):
     stored :< raw_stored
 
 def Container:
-    def cell: Cell(v: 99)
+    cell: Cell = Cell(v: 99)
 
     stored :< cell.stored
 

@@ -5,7 +5,7 @@ def Logger:
         do: print(msg)
 
 def main:
-    def logger: Logger
+    logger: Logger = Logger()
 
     -> running
         do: logger.shout(42)

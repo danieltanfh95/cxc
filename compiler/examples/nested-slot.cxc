@@ -8,7 +8,7 @@ def Paddle:
     -> end
 
 def Game:
-    def paddle: Paddle
+    paddle: Paddle = Paddle()
 
     y_of_paddle :< paddle.y
 

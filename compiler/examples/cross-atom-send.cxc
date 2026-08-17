@@ -18,8 +18,8 @@ def Source:
             sink |> absorb(amount: 5)
 
 def main:
-    def sink: Sink
-    def src: Source(sink: sink)
+    sink: Sink = Sink()
+    src: Source = Source(sink: sink)
 
     -> running
         do: print(sink.total)

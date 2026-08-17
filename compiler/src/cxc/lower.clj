@@ -124,35 +124,55 @@
    validated as-such once value aliases land; treated permissively
    pre-alias).
 
-   Explicitly rejected: calls, dots, subscripts, binops, collection
+   F34 L1 (2026-08-18): when `atom-env` is provided, also accept
+   `:call` nodes whose callee is a bare `:ident` naming an atom in
+   `atom-env`. This is the post-F34 replacement for `def slot: Type`
+   nested-atom construction (Proposal H structural detect makes atom
+   bodies with observable-only surfaces reshape to records; those
+   records still need to hold atom references, so atom-type ctor
+   calls in field defaults must be accepted). The exemption is
+   narrow: only ctor-shaped calls on atom types (not value-typed
+   records/enums, which have no runtime state to justify a ctor call).
+
+   Explicitly rejected: dots, subscripts, binops, collection
    literals, message-shapes, emit sites, blocks, ifs, switches."
-  [expr]
-  (case (:node expr)
-    (:lit-int :lit-float :lit-string :lit-char
-     :lit-nil :lit-bool)             true
-    :ident                           true
-    (:neg :not)                      (default-expr-const-shape? (:expr expr))
-    false))
+  ([expr] (default-expr-const-shape? expr nil))
+  ([expr atom-env]
+   (case (:node expr)
+     (:lit-int :lit-float :lit-string :lit-char
+      :lit-nil :lit-bool)             true
+     :ident                           true
+     (:neg :not)                      (default-expr-const-shape? (:expr expr) atom-env)
+     :call                            (let [callee (:callee expr)]
+                                        (and (some? atom-env)
+                                             (map? callee)
+                                             (= :ident (:node callee))
+                                             (contains? atom-env (:name callee))))
+     false)))
 
 (defn- validate-default-is-const!
   "Reject user-authored defaults that aren't compile-time constants
    per spec §3.8.5 rule 1. Skips params/fields whose :default is nil
    (no default) and those marked `:cxc-f41-synthesized` or
    `:cxc-compiler-synthesized` (compiler-inserted defaults for
-   nested slots / use-caps aren't user surface)."
-  [site params]
-  (doseq [p params
-          :let [d (:default p)]
-          :when (and (some? d)
-                     (not (:cxc-f41-synthesized p))
-                     (not (:cxc-compiler-synthesized p)))]
-    (when-not (default-expr-const-shape? d)
-      (fail-nyi! (str "default for `" (:name p) "` on " site
-                      " is not a compile-time constant (spec §3.8.5 "
-                      "permits primitive literals, `nil`, unary `-`/"
-                      "`not` on those, or a value-alias identifier); "
-                      "got `" (:node d) "` node")
-                 {:site site :param (:name p) :default-node (:node d)}))))
+   nested slots / use-caps aren't user surface).
+
+   Optional `atom-env` unlocks the F34 L1 exemption for atom-type
+   ctor calls in field/param defaults (see `default-expr-const-shape?`)."
+  ([site params] (validate-default-is-const! site params nil))
+  ([site params atom-env]
+   (doseq [p params
+           :let [d (:default p)]
+           :when (and (some? d)
+                      (not (:cxc-f41-synthesized p))
+                      (not (:cxc-compiler-synthesized p)))]
+     (when-not (default-expr-const-shape? d atom-env)
+       (fail-nyi! (str "default for `" (:name p) "` on " site
+                       " is not a compile-time constant (spec §3.8.5 "
+                       "permits primitive literals, `nil`, unary `-`/"
+                       "`not` on those, or a value-alias identifier); "
+                       "got `" (:node d) "` node")
+                  {:site site :param (:name p) :default-node (:node d)})))))
 
 (defn- program-has-async-sends?
   "Walk the parsed AST for any `:emit` node with `:async? true` — a
@@ -762,7 +782,7 @@
              fields  (fields-from-data-section dsec env atom-env enum-env)
              site    (str "record `" name "` fields (auto-ctor)")
              _       (validate-defaults-after-required! site fields)
-             _       (validate-default-is-const!       site fields)
+             _       (validate-default-is-const!       site fields atom-env)
              ;; F38 auto-detect: any observable → :class variant, else
              ;; :struct. Structural trigger, no user syntax. Base
              ;; :methods is empty; ext-composed methods bump variant
@@ -2173,7 +2193,7 @@
                                (narrow-fields-by-invariants invariants))
              _             (let [site (str "def-atom `" name "` ctor-params")]
                              (validate-defaults-after-required! site merged-ctor)
-                             (validate-default-is-const!       site merged-ctor))
+                             (validate-default-is-const!       site merged-ctor env))
              ;; NOTE: atom `data:` field defaults are field
              ;; INITIALIZERS, not ctor-param defaults — the auto-ctor
              ;; produced by F41 uses ctor-params (which get const-

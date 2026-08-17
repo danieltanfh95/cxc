@@ -7,7 +7,7 @@ def Emitter(seed: Int):
     -> end
 
 def main:
-    def clock: Clock
+    clock: Clock = Clock()
 
     xs: List of Emitter = [Emitter(seed: 10), Emitter(seed: 20)]
     total: Int = 0

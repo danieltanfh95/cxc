@@ -1,6 +1,6 @@
 def main:
-    def clock: Clock
-    def input: TestKeyboardInput(events: 2)
+    clock: Clock = Clock()
+    input: TestKeyboardInput = TestKeyboardInput(events: 2)
 
     n: Int = 0
     ticks: Int = 0

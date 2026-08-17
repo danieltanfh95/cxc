@@ -8,7 +8,7 @@ def Emitter:
     running <: fire -> end
 
 def main:
-    def source: Emitter
+    source: Emitter = Emitter()
 
     last_n: Int = 0
 

@@ -1,5 +1,5 @@
 def main:
-    def rng: Random
+    rng: Random = Random()
 
     pick: Int = 99
 

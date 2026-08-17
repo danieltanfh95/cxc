@@ -1188,6 +1188,7 @@
          def-atom-body-has-transition? def-atom-body-has-use?
          def-atom-body-has-accepts? def-atom-body-has-case?
          def-atom-body-has-nested-slot?
+         def-atom-body-has-atom-ctor-field-default?
          parse-accepts-section parse-accepts-signature)
 
 (defn- parse-def-atom [tokens pos]
@@ -1227,6 +1228,7 @@
                 (or (def-atom-body-has-transition? folded)
                     (def-atom-body-has-use? folded)
                     (def-atom-body-has-nested-slot? folded)
+                    (def-atom-body-has-atom-ctor-field-default? folded)
                     (seq ctor))
                 raw-def
 
@@ -1391,6 +1393,33 @@
 
 (defn- def-atom-body-has-nested-slot? [body]
   (boolean (some #(= :nested-atom (:node %)) body)))
+
+(defn- field-has-ident-callee-ctor-default?
+  "F34 L2 signal: a top-level field whose default is a `Type()` call
+   with a bare-`:ident` callee whose name starts with an uppercase
+   letter (type-name convention). Syntactic — we can't check atom-env
+   at parse time, but this matches the post-F34 replacement shape for
+   `def slot: Type` nested slots. Lowercase-first callees stay
+   record-shaped so `f: Int = foo()` (invalid) reshapes to record and
+   trips F40's const-check with the expected diagnostic."
+  [field-node]
+  (let [d (:default field-node)]
+    (and (map? d)
+         (= :call (:node d))
+         (map? (:callee d))
+         (= :ident (:node (:callee d)))
+         (let [nm (:name (:callee d))]
+           (and (string? nm)
+                (pos? (count nm))
+                (Character/isUpperCase (first nm)))))))
+
+(defn- def-atom-body-has-atom-ctor-field-default?
+  "Fields are folded into a synthetic `:data-section` by
+   `fold-top-level-fields` before this check runs; peek inside the
+   section's `:fields` collection."
+  [body]
+  (let [dsec (first (filter #(= :data-section (:node %)) body))]
+    (boolean (some field-has-ident-callee-ctor-default? (:fields dsec)))))
 
 (defn- def-atom->record
   "Reshape a parsed :def-atom into a :record node. Rejects at parse if

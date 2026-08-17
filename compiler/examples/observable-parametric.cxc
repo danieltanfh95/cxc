@@ -9,7 +9,7 @@ def Box:
     -> end
 
 def main:
-    def b: Box
+    b: Box = Box()
 
     -> running
         do: print(b.scaled_area(2, 5))
