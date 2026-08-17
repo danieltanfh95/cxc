@@ -41,13 +41,13 @@
       (build/run-binary bin-path))))
 
 (deftest user-declaration-collides-with-prelude-name-rejected
-  (testing "Audit F56 — bounded starter: a user declaration reusing a protected prelude name (e.g. `record Duration:`) parses cleanly, but `compile-source-to-file` raises a targeted diagnostic before the prelude is even prepended. Previously the postwalk in `rewrite-prelude-names` silently renamed the user's `Duration` to `_Cxc_Duration` and merged it with the prelude atom, producing baffling downstream errors."
+  (testing "Audit F56 — bounded starter: a user declaration reusing a protected prelude name (e.g. `def Duration:`) parses cleanly, but `compile-source-to-file` raises a targeted diagnostic before the prelude is even prepended. Previously the postwalk in `rewrite-prelude-names` silently renamed the user's `Duration` to `_Cxc_Duration` and merged it with the prelude atom, producing baffling downstream errors."
     (let [out-dir (tmp-dir)]
       (is (thrown-with-msg?
            clojure.lang.ExceptionInfo
            #"collides with a protected prelude name"
            (build/compile-source-to-file
-            "record Duration:\n    n: Int\n\ndef main:\n    -> running\n        do: print(1)\n"
+            "def Duration:\n    n: Int\n\ndef main:\n    -> running\n        do: print(1)\n"
             "collision-check"
             (.getPath out-dir)))))))
 

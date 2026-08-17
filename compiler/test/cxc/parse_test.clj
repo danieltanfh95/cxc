@@ -19,7 +19,7 @@
 
 (deftest empty-record
   (testing "record with just data: section, one field"
-    (let [n (first-node "record V:\n    x: Float\n")]
+    (let [n (first-node "def V:\n    x: Float\n")]
       (is (= :record (node-kind n)))
       (is (= "V" (:name n)))
       (let [ds (first (:sections n))]
@@ -29,7 +29,7 @@
 
 (deftest record-with-observable
   (testing "F67 L4: parametric observable replaces reader methods. Records collapse to fields + observables (Proposal G class-body collapse)."
-    (let [src "record Vector2:
+    (let [src "def Vector2:
     x: Float
     y: Float
 
@@ -46,7 +46,7 @@
 
 (deftest expr-binops-and-dots
   (testing "self.x + other.x — dot access + binary op inside observable body"
-    (let [n   (first-node "record R:\n    f() :< self.x + other.x\n")
+    (let [n   (first-node "def R:\n    f() :< self.x + other.x\n")
           obs (first (filter #(= :observable (:node %)) (:sections n)))
           expr (:expr obs)]
       (is (= :binop (:node expr)))
@@ -56,7 +56,7 @@
       (is (= "x" (get-in expr [:left :field]))))))
 
 (deftest expr-nested-call-with-named-args
-  (let [n   (first-node "record R:\n    f() :< V(x: 1, y: 2)\n")
+  (let [n   (first-node "def R:\n    f() :< V(x: 1, y: 2)\n")
         obs (first (filter #(= :observable (:node %)) (:sections n)))
         call (:expr obs)]
     (is (= :call (:node call)))
@@ -65,7 +65,7 @@
     (is (= "x" (-> call :args first :name)))))
 
 (deftest field-with-default
-  (let [n  (first-node "record R:\n    n: Int = 42\n")
+  (let [n  (first-node "def R:\n    n: Int = 42\n")
         f  (-> n :sections first :fields first)]
     (is (= "n" (:name f)))
     (is (= "Int" (get-in f [:type :name])))
@@ -222,7 +222,7 @@
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
          #"`state:` section is retired at v1.0"
-         (p/parse "record V:\n    state:\n        x: Float\n")))))
+         (p/parse "def V:\n    state:\n        x: Float\n")))))
 
 (deftest chained-comparison-desugars-to-chained-cmp
   (testing "F27 semantic once-only: `a <= b <= c` becomes a `:chained-cmp` node carrying flat operands + ops vectors. Emit renders it as a GNU statement-expression that binds each interior operand once (via `__typeof__`) so an effectful middle like a call fires exactly once at runtime."
@@ -248,7 +248,7 @@
       (is (= ["<=" "<="] (:ops when-expr))))
     ;; Middle is a call — accepted (semantic once-only makes the
     ;; former double-eval concern moot).
-    (is (some? (p/parse "record V:
+    (is (some? (p/parse "def V:
     x: Int
 
     mid() :< self.x
@@ -321,7 +321,7 @@ def main:
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
          #"(?s)F67 L4.*`methods:` section is retired"
-         (first-node "record V:\n    x: Int\n    methods:\n        function bumped(self) -> Int:\n            return x\n")))))
+         (first-node "def V:\n    x: Int\n    methods:\n        function bumped(self) -> Int:\n            return x\n")))))
 
 (deftest f67-l4-function-keyword-in-def-atom-body-retired
   (testing "F67 L4 — `function` keyword inside a def-atom body retires with `methods:`; free functions still live at module scope."
@@ -339,7 +339,7 @@ def main:
 
 (deftest subscript-postfix-parses
   (testing "F19 / §3.9 — `expr[i]` parses as a :subscript node (index is any expression). Post F67 L4: observable body is a bare expression, no `return`."
-    (let [src "record R:\n    xs: List of Int\n\n    head() :< xs[0]\n"
+    (let [src "def R:\n    xs: List of Int\n\n    head() :< xs[0]\n"
           rec (first-node src)
           obs (first (filter #(= :observable (:node %)) (:sections rec)))]
       (is (= :subscript (:node (:expr obs))))
@@ -349,7 +349,7 @@ def main:
 
 (deftest subscript-chains-with-other-postfix
   (testing "F19 — subscript composes with `.field` and `(args)` in any order. Post F67 L4: observable expression body."
-    (let [src "record R:\n    xs: List of Int\n\n    z() :< xs[0].bar(1)\n"
+    (let [src "def R:\n    xs: List of Int\n\n    z() :< xs[0].bar(1)\n"
           rec (first-node src)
           obs (first (filter #(= :observable (:node %)) (:sections rec)))
           call (:expr obs)]
@@ -407,7 +407,7 @@ def main:
 
 (deftest f67-l5-top-level-fields-on-record
   (testing "F67 L5 — records also collapse `data:` to top-level fields (Proposal D applies uniformly; records ARE pure data)."
-    (let [n (first-node "record V:\n    x: Float\n    y: Float\n")
+    (let [n (first-node "def V:\n    x: Float\n    y: Float\n")
           dsec (first (filter #(= :data-section (:node %)) (:sections n)))]
       (is (some? dsec))
       (is (= [{:node :field :name "x" :type {:node :type-ref :name "Float"} :default nil}
@@ -449,7 +449,7 @@ def main:
 
 (deftest f15-l1-named-tuple-type-at-param-position
   (testing "F15 Landing 1 — `(x: Float, y: Float)` at param position parses as :type-named-tuple with declaration-order fields."
-    (let [src "record R:\n    p: (x: Float, y: Float)\n"
+    (let [src "def R:\n    p: (x: Float, y: Float)\n"
           rec (first-node src)
           fld (-> rec :sections first :fields first)
           ty  (:type fld)]
@@ -460,7 +460,7 @@ def main:
 
 (deftest f15-l1-anonymous-tuple-type
   (testing "F15 Landing 1 — `(Int, String)` at type position parses as :type-tuple."
-    (let [src "record R:\n    pair: (Int, String)\n"
+    (let [src "def R:\n    pair: (Int, String)\n"
           rec (first-node src)
           ty  (-> rec :sections first :fields first :type)]
       (is (= :type-tuple (:node ty)))
@@ -468,7 +468,7 @@ def main:
 
 (deftest f15-l1-single-paren-groups-not-tuple
   (testing "F15 Landing 1 — a single-element paren group `(T)` parses as T, not a 1-tuple. Preserves the parens-as-grouping intuition."
-    (let [src "record R:\n    n: (Int)\n"
+    (let [src "def R:\n    n: (Int)\n"
           rec (first-node src)
           ty  (-> rec :sections first :fields first :type)]
       (is (= :type-ref (:node ty)))
@@ -476,7 +476,7 @@ def main:
 
 (deftest f15-l1-nullable-named-tuple
   (testing "F15 Landing 1 — `(x: Int, y: Int)?` — nullable suffix wraps the whole tuple type."
-    (let [src "record R:\n    config: (host: String, port: UInt16)?\n"
+    (let [src "def R:\n    config: (host: String, port: UInt16)?\n"
           rec (first-node src)
           ty  (-> rec :sections first :fields first :type)]
       (is (= :type-nullable (:node ty)))
@@ -568,8 +568,8 @@ def main:
          (first-node "class Foo():\n    metadata:\n        kind: regular\n")))))
 
 (deftest f9-l1-record-sugar-still-produces-record-node
-  (testing "F9 Landing 1 — backward compat: existing `record Foo:` sugar continues to produce a `:record` node (not routed through parse-class). Existing lower path unchanged."
-    (let [n (first-node "record R:\n    x: Int\n")]
+  (testing "F9 Landing 1 — backward compat: existing `def Foo:` sugar continues to produce a `:record` node (not routed through parse-class). Existing lower path unchanged."
+    (let [n (first-node "def R:\n    x: Int\n")]
       (is (= :record (:node n))
           "record sugar keeps its dedicated parser + AST kind for backward compat"))))
 
@@ -675,7 +675,7 @@ def main:
         (is (re-find #"`case <ident>`" stderr))))))
 
 (deftest f68-l3-extend-without-class-word-parses
-  (testing "F68 L3 — `extend Foo:` (no `class` word) parses to the same `:extend-class` AST node as `extend class Foo:`."
+  (testing "F68 L3 — `extend Foo:` (no `class` word) parses to the same `:extend-class` AST node as `extend Foo:`."
     (let [n (first-node
              (str "extend Foo:\n"
                   "    bar() :< 1\n"))]
@@ -763,14 +763,14 @@ def main:
                "            requires: true\n"))))))
 
 ;; ---------------------------------------------------------------------------
-;; F9 Landing 3 — `extend class Foo:` parsing + strict body dispatch;
+;; F9 Landing 3 — `extend Foo:` parsing + strict body dispatch;
 ;; `replace` method modifier; target-resolution deferred to lower.
 ;; ---------------------------------------------------------------------------
 
 (deftest f9-l3-extend-class-with-observable
-  (testing "F9 Landing 3 + F67 L4 — `extend class Foo:` accepts observables (Proposal G reader surface). Extensions land in `:extend-class` node carrying target name and body sections."
+  (testing "F9 Landing 3 + F67 L4 — `extend Foo:` accepts observables (Proposal G reader surface). Extensions land in `:extend-class` node carrying target name and body sections."
     (let [n (first-node
-             (str "extend class Foo:\n"
+             (str "extend Foo:\n"
                   "    bar() :< 1\n"))]
       (is (= :extend-class (:node n)))
       (is (= "Foo" (:target n)))
@@ -782,7 +782,7 @@ def main:
 (deftest f67-l4c-replace-prefix-marks-extension-observable
   (testing "F67 L4c — `replace` keyword prefixed to an extension observable marks the parsed node with `:replace? true` so composition (§3.3.2 rule 4) can honor the intentional shadow without a warning."
     (let [n (first-node
-             (str "extend class Foo:\n"
+             (str "extend Foo:\n"
                   "    replace bar() :< 2\n"))]
       (is (= :extend-class (:node n)))
       (is (= "Foo" (:target n)))
@@ -794,7 +794,7 @@ def main:
 (deftest f67-l4c-replace-prefix-on-transition
   (testing "F67 L4c — `replace` prefix also legal on a wildcard self-transition inside an extension body (parses; composition wiring for transitions is a separate landing)."
     (let [n (first-node
-             (str "extend class Foo:\n"
+             (str "extend Foo:\n"
                   "    replace * <: reset() -> * do: print(0)\n"))]
       (is (= :extend-class (:node n)))
       (let [t (first (:body n))]
@@ -812,9 +812,9 @@ def main:
                "    replace bumped() :< n + 1\n"))))))
 
 (deftest f9-l3-extend-class-with-header-conforms
-  (testing "F9 Landing 3 — `extend class Foo(NewProtocol):` populates `:conforms` from header parens."
+  (testing "F9 Landing 3 — `extend Foo(NewProtocol):` populates `:conforms` from header parens."
     (let [n (first-node
-             (str "extend class Foo(NewProtocol):\n"
+             (str "extend Foo(NewProtocol):\n"
                   "    bar() :< 3\n"))]
       (is (= [{:node :type-ref :name "NewProtocol"}]
              (:conforms n))))))
@@ -822,7 +822,7 @@ def main:
 (deftest f9-l3-extend-class-with-body-conforms
   (testing "F9 Landing 3 — body-form `conforms: P` inside `extend class` extracted into `:conforms` and dropped from :body."
     (let [n (first-node
-             (str "extend class Foo:\n"
+             (str "extend Foo:\n"
                   "    conforms: NewProtocol\n"
                   "    bar() :< 4\n"))]
       (is (= [{:node :type-ref :name "NewProtocol"}]
@@ -832,7 +832,7 @@ def main:
 (deftest f9-l3-extend-class-with-invariants
   (testing "F9 Landing 3 — `invariants:` section legal inside `extend class` (extensions may add invariants per §3.3.2)."
     (let [n (first-node
-             (str "extend class Foo:\n"
+             (str "extend Foo:\n"
                   "    invariants:\n"
                   "        x > 0\n"))]
       (is (= :invariants-section (:node (first (:body n))))))))
@@ -843,7 +843,7 @@ def main:
          clojure.lang.ExceptionInfo
          #"field declaration `x: …` is not permitted inside `extend class"
          (first-node
-          (str "extend class Foo:\n"
+          (str "extend Foo:\n"
                "    x: Int\n"))))))
 
 (deftest f9-l3-extend-class-rejects-state
@@ -852,7 +852,7 @@ def main:
          clojure.lang.ExceptionInfo
          #"`state:` section is retired"
          (first-node
-          (str "extend class Foo:\n"
+          (str "extend Foo:\n"
                "    state:\n"
                "        x: Int\n"))))))
 
@@ -862,7 +862,7 @@ def main:
          clojure.lang.ExceptionInfo
          #"`metadata:` is not permitted inside `extend class"
          (first-node
-          (str "extend class Foo:\n"
+          (str "extend Foo:\n"
                "    metadata:\n"
                "        kind: enum\n"))))))
 
@@ -872,7 +872,7 @@ def main:
          clojure.lang.ExceptionInfo
          #"`use:` is not permitted inside `extend class"
          (first-node
-          (str "extend class Foo:\n"
+          (str "extend Foo:\n"
                "    use:\n"
                "        clock: Clock\n"))))))
 

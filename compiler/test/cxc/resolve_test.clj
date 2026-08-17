@@ -30,20 +30,20 @@
 
 (deftest table-carries-user-provenance
   (testing "F51 — user declarations get :user provenance"
-    (let [table (table-from "record V:\n    x: Int\n\ndef main:\n    -> running\n")]
+    (let [table (table-from "def V:\n    x: Int\n\ndef main:\n    -> running\n")]
       (is (= :user (get-in table ["V" :module])))
       (is (= :user (get-in table ["main" :module]))))))
 
 (deftest table-tags-kind
   (testing "F51 — each entry's :kind matches its declaration kind"
-    (let [table (table-from "record V:\n    x: Int\n\nenum E:\n    a\n    b\n\ndef main:\n    -> running\n")]
+    (let [table (table-from "def V:\n    x: Int\n\ndef E:\n    case a\n    case b\n\ndef main:\n    -> running\n")]
       (is (= :record   (get-in table ["V"    :kind])))
       (is (= :enum     (get-in table ["E"    :kind])))
       (is (= :def-atom (get-in table ["main" :kind]))))))
 
 (deftest table-carries-record-members
   (testing "F51 — records expose their fields + observables in :members. F67 L4: methods retire; observables carry the callable surface. `:methods` mirrors `:observables` for query-shape parity."
-    (let [table (table-from "record V:\n    x: Int\n    y: Int\n\n    sum() :< x + y\n\ndef main:\n    -> running\n")
+    (let [table (table-from "def V:\n    x: Int\n    y: Int\n\n    sum() :< x + y\n\ndef main:\n    -> running\n")
           v     (get table "V")
           fs    (get-in v [:members :fields])
           ms    (get-in v [:members :methods])]
@@ -60,20 +60,20 @@
 
 (deftest table-carries-enum-cases
   (testing "F51 — enums expose their case list"
-    (let [table (table-from "enum Color:\n    red\n    green\n    blue\n\ndef main:\n    -> running\n")]
+    (let [table (table-from "def Color:\n    case red\n    case green\n    case blue\n\ndef main:\n    -> running\n")]
       (is (= ["red" "green" "blue"]
              (get-in table ["Color" :members :cases]))))))
 
 (deftest lookup-returns-entry-or-nil
   (testing "F51 — `lookup` fetches by name; nil for unknown"
-    (let [table (table-from "record V:\n    x: Int\n\ndef main:\n    -> running\n")
+    (let [table (table-from "def V:\n    x: Int\n\ndef main:\n    -> running\n")
           ctx   {:symbol-table table}]
       (is (some? (resolve/lookup ctx "V")))
       (is (nil?  (resolve/lookup ctx "Nonexistent"))))))
 
 (deftest f38-record-variant-auto-detected
   (testing "F38 — a record with no callables is :struct; a record with any observable is :class. Trigger is structural — no user syntax."
-    (let [table (table-from "record P:\n    x: Int\n\nrecord V:\n    n: Int\n\n    bumped() :< n + 1\n\ndef main:\n    -> running\n")]
+    (let [table (table-from "def P:\n    x: Int\n\ndef V:\n    n: Int\n\n    bumped() :< n + 1\n\ndef main:\n    -> running\n")]
       (is (= :struct (get-in table ["P" :variant]))
           "P has no observables → :struct variant")
       (is (= :class  (get-in table ["V" :variant]))
@@ -88,7 +88,7 @@
 
 (deftest lookup-member-drills-into-declaration
   (testing "F51 — `lookup-member` finds a member by kind + name inside a decl. F67 L4: `:methods` mirrors `:observables` for the parametric-reader surface."
-    (let [table (table-from "record V:\n    x: Int\n\n    bump() :< x\n\ndef main:\n    -> running\n")
+    (let [table (table-from "def V:\n    x: Int\n\n    bump() :< x\n\ndef main:\n    -> running\n")
           ctx   {:symbol-table table}]
       (is (= "bump" (:name (resolve/lookup-member ctx "V" :methods "bump"))))
       (is (= "x"    (:name (resolve/lookup-member ctx "V" :fields  "x"))))
