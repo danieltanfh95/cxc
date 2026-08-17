@@ -2,8 +2,8 @@ def Logger:
     data:
         prefix: String = "log: "
 
-    -> shout(msg: Int):
-        print(msg)
+    * <: shout(msg: Int) -> *
+        do: print(msg)
 
 def main:
     def logger: Logger

@@ -1406,16 +1406,16 @@ def main:
         (is (some? (walker main-body))
             "expected V_cxc_equals call in main body")))))
 
-(deftest f14-handler-decl-lowers-as-method
-  (testing "F14 Landing 1: `-> handler(args):` on a def-atom body lowers as a void ObjC method on the atom's class (spec §1265, §2160). The method selector matches the handler name; return type is void (side-effect-only per spec)."
+(deftest f67-l3-wildcard-handler-transition-lowers-as-method
+  (testing "F67 L3: `* <: name(args) -> * do: ...` (the handler-collapse form that subsumes the retired F14 `-> handler(args):` sugar) lowers as a void ObjC method on the atom's class. Same semantics as spec §1265/§2160 handler-decl; different surface syntax."
     (let [prog (lower-src "def A:
     data:
         n: Int = 0
 
     -> running
 
-    -> tick(msg: Int):
-        return n
+    * <: tick(msg: Int) -> *
+        do: return n
 
 def main:
     def a: A
@@ -1426,19 +1426,19 @@ def main:
           tick  (first (filter #(and (= :objc-method (:node %))
                                      (re-find #"tick" (str (:selector %))))
                                (:methods a-cls)))]
-      (is (some? tick) "tick handler emits as a method on class A")
+      (is (some? tick) "tick handler-shape transition emits as a method on class A")
       (is (= "void" (:return-type tick)) "handler methods return void"))))
 
-(deftest f14-zero-arg-handler-lowers
-  (testing "F14 Landing 1: zero-arg handler `-> tick():` lowers with a plain selector (no colon) and no params (self implicit)."
+(deftest f67-l3-zero-arg-wildcard-handler-lowers
+  (testing "F67 L3: zero-arg `* <: tick() -> * do: ...` lowers with a plain selector (no colon) and no user params."
     (let [prog (lower-src "def A:
     data:
         n: Int = 0
 
     -> running
 
-    -> tick():
-        return n
+    * <: tick() -> *
+        do: return n
 
 def main:
     def a: A
@@ -1449,11 +1449,11 @@ def main:
           tick  (first (filter #(and (= :objc-method (:node %))
                                      (= "tick" (:selector %)))
                                (:methods a-cls)))]
-      (is (some? tick) "zero-arg handler present with bare selector `tick`")
+      (is (some? tick) "zero-arg handler-shape present with bare selector `tick`")
       (is (empty? (:params tick)) "no user params (self implicit)"))))
 
-(deftest f14-handler-name-collides-with-method
-  (testing "F14 Landing 1: a handler and a same-name `methods:` entry create ambiguous dispatch. Reject at fold with a spec §2160 pointer naming both."
+(deftest f67-l3-handler-shape-name-collides-with-method
+  (testing "F67 L3: handler-shape transition and same-name `methods:` entry create ambiguous dispatch — reject at fold (spec §2160). Message and pathway unchanged from F14."
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
          #"declares handler `-> tick"
@@ -1467,8 +1467,8 @@ def main:
 
     -> running
 
-    -> tick(msg: Int):
-        return n
+    * <: tick(msg: Int) -> *
+        do: return n
 
 def main:
     def a: A
@@ -1476,11 +1476,11 @@ def main:
     -> running
 ")))))
 
-(deftest f14-duplicate-handler-decl-rejected
-  (testing "F14 Landing 1: two `-> tick():` declarations on the same atom are rejected as duplicate handler declaration (each handler name unique per atom per spec §1265)."
+(deftest f67-l3-legacy-handler-decl-sugar-retired
+  (testing "F67 L3: the legacy `-> foo(args):` handler-decl sugar (F14) is retired at parse time; users get a migration diagnostic pointing at the explicit `* <: foo(args) -> *` handler-shape transition."
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
-         #"declares handler `-> tick.*more than once"
+         #"(?s)F67 L3.*handler-decl sugar is retired.*\* <: tick"
          (lower-src "def A:
     data:
         n: Int = 0
@@ -1490,8 +1490,28 @@ def main:
     -> tick(msg: Int):
         return n
 
-    -> tick(msg: Int):
-        return n
+def main:
+    def a: A
+
+    -> running
+")))))
+
+(deftest f67-l3-duplicate-handler-shape-rejected
+  (testing "F67 L3: two handler-shape transitions with the same message name on one atom → duplicate-handler diagnostic (spec §1265: name uniqueness)."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"declares handler `-> tick.*more than once"
+         (lower-src "def A:
+    data:
+        n: Int = 0
+
+    -> running
+
+    * <: tick(msg: Int) -> *
+        do: return n
+
+    * <: tick(msg: Int) -> *
+        do: return n
 
 def main:
     def a: A

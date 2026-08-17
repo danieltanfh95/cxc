@@ -425,29 +425,38 @@ def main:
         then: n => k
 ")))))
 
-(deftest handler-decl-parses-as-distinct-node
-  (testing "F14 / §1.11 — `-> handler(args):` inside a def-atom body parses as a :handler-decl node distinct from the wildcard-source transition (`-> target-phase`)."
-    (let [src "def A:\n    data:\n        n: Int = 0\n\n    -> running\n\n    -> tick(msg: Int):\n        return n\n"
-          atom-node (first-node src)
-          hd (first (filter #(= :handler-decl (:node %)) (:body atom-node)))]
-      (is (= :def-atom (:node atom-node)))
-      (is (some? hd) "handler-decl AST node present")
-      (is (= "tick" (:name hd)))
-      (is (= 1 (count (:params hd))))
-      (is (= "msg" (get-in hd [:params 0 :name])))
-      (is (= "Int" (get-in hd [:params 0 :type :name])))
-      ;; and the ordinary transition still parses next to it
-      (is (some #(= :transition (:node %)) (:body atom-node))
-          "wildcard transition `-> running` still parses as :transition"))))
+(deftest f67-l3-handler-decl-sugar-retired-with-migration
+  (testing "F67 L3 — the legacy `-> foo(args):` handler-decl sugar is retired at parse time. Users get a diagnostic naming the retired form and pointing at the explicit handler-shape transition `* <: foo(args) -> * do: ...` (spec §1265 semantics preserved)."
+    (let [src "def A:\n    data:\n        n: Int = 0\n\n    -> running\n\n    -> tick(msg: Int):\n        return n\n"]
+      (is (thrown-with-msg?
+           clojure.lang.ExceptionInfo
+           #"F67 L3.*handler-decl sugar is retired"
+           (first-node src))))))
 
-(deftest handler-decl-zero-args-parses
-  (testing "F14 — `-> tick():` with empty param list parses (explicit parens disambiguate from `-> target-phase`)"
-    (let [src "def A:\n    data:\n        n: Int = 0\n\n    -> running\n\n    -> tick():\n        return n\n"
+(deftest f67-l3-wildcard-handler-transition-parses
+  (testing "F67 L3 — the migration target `* <: name(args) -> * do: ...` parses as a :transition with wildcard source, wildcard target, and typed :params on the receive-msg (distinguishing it from the payload-destructure `msg{payload}` form)."
+    (let [src "def A:\n    data:\n        n: Int = 0\n\n    -> running\n\n    * <: tick(msg: Int) -> *\n        do: return n\n"
           atom-node (first-node src)
-          hd (first (filter #(= :handler-decl (:node %)) (:body atom-node)))]
-      (is (some? hd))
-      (is (= "tick" (:name hd)))
-      (is (empty? (:params hd))))))
+          t (last (filter #(= :transition (:node %)) (:body atom-node)))]
+      (is (= :def-atom (:node atom-node)))
+      (is (= :wildcard (get-in t [:source :kind])))
+      (is (= "*" (:target t)))
+      (is (= "<:" (get-in t [:receive :glyph])))
+      (is (= "tick" (get-in t [:receive :msg :source :name])))
+      (is (= 1 (count (get-in t [:receive :msg :params]))))
+      (is (= "msg" (get-in t [:receive :msg :params 0 :name])))
+      (is (= "Int" (get-in t [:receive :msg :params 0 :type :name]))))))
+
+(deftest f67-l3-wildcard-handler-zero-args-parses
+  (testing "F67 L3 — zero-arg handler-shape `* <: tick() -> *` parses with empty :params (still distinguished from a payload-shape receive)."
+    (let [src "def A:\n    data:\n        n: Int = 0\n\n    -> running\n\n    * <: tick() -> *\n        do: return n\n"
+          atom-node (first-node src)
+          t (last (filter #(= :transition (:node %)) (:body atom-node)))]
+      (is (some? t))
+      (is (= :wildcard (get-in t [:source :kind])))
+      (is (= "*" (:target t)))
+      (is (= "tick" (get-in t [:receive :msg :source :name])))
+      (is (empty? (get-in t [:receive :msg :params]))))))
 
 (deftest f15-l1-named-tuple-type-at-param-position
   (testing "F15 Landing 1 — `(x: Float, y: Float)` at param position parses as :type-named-tuple with declaration-order fields."

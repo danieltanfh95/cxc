@@ -1517,9 +1517,49 @@
      msg-txns)))
 
 (defn- def-atom-handler-decls
-  "F14 — `-> name(args):` handler declarations at atom-body top level."
+  "F14 — `-> name(args):` handler declarations at atom-body top level.
+
+   F67 L3 note: the legacy `-> name(args):` sugar is retired at parse
+   time (see parse.clj/parse-handler-decl); this helper still exists
+   because F67 L3 also folds handler-shape transitions
+   (`* <: name(args) -> *`) into the same downstream method-entry
+   pipeline via `transition->handler-decl`."
   [atom-node]
   (filterv #(= :handler-decl (:node %)) (:body atom-node)))
+
+(defn- transition-is-handler-shape?
+  "F67 L3 — recognize the handler-collapse form:
+     `* <: name(a: T, b: U) -> * do: <body>`
+   i.e. wildcard source, wildcard target, typed-params receive.
+
+   These lower to handler-shaped method entries (spec §1265 semantics),
+   subsuming the retired `-> name(args):` sugar."
+  [txn]
+  (and (= :wildcard (get-in txn [:source :kind]))
+       (= "*"       (:target txn))
+       (= "<:"      (get-in txn [:receive :glyph]))
+       (some?       (get-in txn [:receive :msg :params]))))
+
+(defn- transition->handler-decl
+  "F67 L3 — convert a handler-shape transition into a synthetic
+   :handler-decl node, so downstream lowering (name uniqueness checks
+   in lower-def-atom, `handler-decl->method-entry`) can consume it
+   with no branch.
+
+   Body shape: handler-decls historically stored `:body` as a
+   `parse-block` result `{:node :block :stmts [...]}` (downstream
+   lowering pulls `(:stmts (:body method))`). Wrap the do-clause
+   stmts the same way so the same accessor works uniformly."
+  [txn]
+  (let [do-clause (first (filter #(= :do-clause (:node %)) (:body txn)))
+        stmts     (or (:stmts do-clause) [])]
+    {:node   :handler-decl
+     :name   (get-in txn [:receive :msg :source :name])
+     :params (get-in txn [:receive :msg :params])
+     :body   {:node :block :stmts stmts}
+     ;; Preserve source-location hints for diagnostics.
+     :cxc-line (:cxc-line txn)
+     :cxc-col  (:cxc-col txn)}))
 
 (defn- def-atom-body-extras
   "Everything in the def-atom body that isn't a section lower knows
@@ -1767,7 +1807,13 @@
        (let [name          (:name a)
              dsec          (def-atom-data-section a)
              msec          (def-atom-methods-section a)
-             transitions   (def-atom-transitions a)
+             raw-txns      (def-atom-transitions a)
+             ;; F67 L3 — split handler-shape (`* <: msg(args) -> *`) from
+             ;; real phase transitions. Handler-shape lower via the
+             ;; handler-decl path (see below); real transitions keep
+             ;; their existing phase-machine treatment.
+             handler-txns  (filterv transition-is-handler-shape? raw-txns)
+             transitions   (filterv (complement transition-is-handler-shape?) raw-txns)
              observables   (def-atom-observables a)
              invariants    (def-atom-invariants a)
              use-caps      (def-atom-use-caps a)
@@ -1897,12 +1943,19 @@
              ;; §3.8.5 governs param defaults, so no const-check here.
              ctor-params   (ctor-params-normalized merged-ctor {} env enum-env)
              base-methods  (extract-methods name msec)
-             ;; F14 — atom-body `-> name(args):` handler declarations
-             ;; lower as method-shaped entries participating in the
-             ;; same dispatch table. Detect duplicate handler names
-             ;; and handler-vs-method name collisions; both are
-             ;; ambiguous dispatch → hard error (spec §1265, §2160).
-             handler-decls (def-atom-handler-decls a)
+             ;; F14 / F67 L3 — handler-shaped declarations lower as
+             ;; method entries in the shared dispatch table. Two source
+             ;; forms feed this pipeline:
+             ;;   (a) legacy `-> name(args):` handler-decl nodes — kept
+             ;;       during the F14 grace window (retirement lands in
+             ;;       parse-handler-decl per F67 L3).
+             ;;   (b) `* <: name(args) -> * do: ...` transitions —
+             ;;       collapsed to handler-decl-shaped nodes here.
+             ;; Downstream shape check (unique name; no collision with
+             ;; methods:) then runs uniformly against the merged set
+             ;; (spec §1265, §2160).
+             handler-decls (into (def-atom-handler-decls a)
+                                 (mapv transition->handler-decl handler-txns))
              _             (let [dups (->> handler-decls
                                            (map :name)
                                            frequencies
@@ -3618,7 +3671,7 @@
   (let [mentioned (concat (keep #(when (= :phase (get-in % [:source :kind]))
                                    (get-in % [:source :name])) transitions)
                           (map :target transitions))
-        middle    (remove #{"init" "end" "self"} (distinct mentioned))]
+        middle    (remove #{"init" "end" "self" "*"} (distinct mentioned))]
     (vec (concat ["init"] middle ["end"]))))
 
 (defn- phase-constant-name

@@ -782,24 +782,58 @@
 
 (declare parse-transition-body)
 
-(defn- parse-msg-pattern
-  "Parse a receive-glyph source pattern — a general expression optionally
-   suffixed by `{payload-shape}`. Handles the full range:
-     tick{dt: Duration}
-     input.pressed{key: Key}
-     clock.every(rate){_: Instant}
-     active_enemies.died{e: Enemy}
-   The expression parser already turns `X{...}` into a :msg-shape postfix,
-   so we just call parse-expr and unpack whichever shape came back."
+(defn- looks-like-typed-params?
+  "At `pos` = `(`. Distinguish an F67 L3 typed-params receive pattern
+   (`msg(a: T, b: U)` — the handler-collapse form) from a message-shape
+   expression's parens (`clock.every(rate){t: Instant}`). Typed-params
+   shape: `()` or `(ident : ...)`. Everything else = expression."
   [tokens pos]
-  (let [[e p] (parse-expr tokens pos)]
-    (if (= :msg-shape (:node e))
-      [{:source (:target e) :payload (:fields e)} p]
-      [{:source e :payload []} p])))
+  (let [p (inc pos)]
+    (or (at? tokens p :punct ")")
+        (and (at? tokens p :ident)
+             (at? tokens (inc p) :punct ":")))))
+
+(defn- parse-msg-pattern
+  "Parse a receive-glyph source pattern. Two shapes:
+
+     1. Payload destructure (from streams/observables):
+          tick{dt: Duration}
+          input.pressed{key: Key}
+          clock.every(rate){_: Instant}
+          active_enemies.died{e: Enemy}
+        parse-expr turns `X{...}` into a :msg-shape postfix.
+
+     2. F67 L3 — typed-params receive (handler-collapse form):
+          log(msg: String)
+          fire(target: Enemy, dmg: Int)
+        Distinguished by parens holding typed params (not expressions).
+        Under `* <: msg(args) -> *`, this lowers to a handler-shaped
+        method entry (spec §1265 semantics) — see lower-def-atom."
+  [tokens pos]
+  (cond
+    ;; F67 L3 — typed-params form: `<ident>(<params>)`
+    (and (at? tokens pos :ident)
+         (at? tokens (inc pos) :punct "(")
+         (looks-like-typed-params? tokens (inc pos)))
+    (let [[name p]   (expect tokens pos :ident)
+          [params p] (parse-param-list-parens tokens p)]
+      [{:source {:node :ident :name name}
+        :params params
+        :payload []}
+       p])
+
+    :else
+    (let [[e p] (parse-expr tokens pos)]
+      (if (= :msg-shape (:node e))
+        [{:source (:target e) :payload (:fields e) :params nil} p]
+        [{:source e :payload [] :params nil} p]))))
 
 (defn- parse-source-and-receive
   "Look at the head of a transition. Returns [source receive p] where:
-     source  = {:kind :phase :name X} | {:kind :self} | {:kind :implicit}
+     source  = {:kind :phase :name X}
+             | {:kind :self}
+             | {:kind :wildcard}     ; F67 L3 — `*` = from any phase
+             | {:kind :implicit}
      receive = {:glyph <: :msg {...}} | nil
 
    Allows newline between source and receive-glyph — the two- and three-line
@@ -811,9 +845,10 @@
 
     :else
     (let [source (cond
+                   (at? tokens pos :glyph "*")   {:kind :wildcard}
                    (at? tokens pos :kw "self")   {:kind :self}
                    (at? tokens pos :ident)       {:kind :phase :name (t-value (peek-tok tokens pos))}
-                   :else (fail! tokens pos "expected source-phase, self, or `->` at start of transition"))
+                   :else (fail! tokens pos "expected source-phase, self, `*`, or `->` at start of transition"))
           p (skip-newlines tokens (inc pos))]    ; allow newline after source
       (cond
         (at? tokens p :glyph "<:")
@@ -1052,9 +1087,14 @@
         p (skip-newlines tokens p)              ; allow newline before ->
         [_ p]      (expect tokens p :glyph "->")
         [target p] (cond
+                     ;; F67 L3 — `*` target = wildcard (no state change).
+                     ;; Semantically equivalent to `self` for phase-machine
+                     ;; purposes; kept separate so we can enforce
+                     ;; `* <: msg(args) -> *` = handler-shape at lowering.
+                     (at? tokens p :glyph "*") ["*" (inc p)]
                      (at? tokens p :kw "self") ["self" (inc p)]
                      (at? tokens p :ident)     [(t-value (peek-tok tokens p)) (inc p)]
-                     :else (fail! tokens p "expected target phase after `->`"))
+                     :else (fail! tokens p "expected target phase, `self`, or `*` after `->`"))
         [body p]   (parse-transition-body tokens p)]
     [{:node :transition
       :source source
@@ -1095,31 +1135,46 @@
                 (when-let [after-close (scan-past-parens tokens (inc pos))]
                   (at? tokens after-close :glyph ":<"))))))
 
-;; F14 / spec §1.11 — `-> handler(args):` is an externally invocable
-;; side-effect-only handler declaration, distinguished from the
-;; wildcard-source transition `-> target-phase` by the paren after
-;; the identifier.
+;; F14 / F67 L3 — the legacy `-> handler(args):` sugar (F14) is retired
+;; under Proposal G's class-body collapse. The migration target is the
+;; explicit wildcard-transition form:
+;;
+;;   -> foo(msg: T):    →    * <: foo(msg: T) -> *
+;;       stmt                     do: stmt
+;;
+;; Both forms lower to the same handler-shaped method entry (spec §1265
+;; semantics); the collapse removes the parallel opener glyph. This
+;; predicate + parser fire the migration diagnostic — see
+;; transition->handler-decl in lower.clj for the target lowering.
 (defn- looks-like-handler-decl? [tokens pos]
   (and (at? tokens pos :glyph "->")
        (at? tokens (inc pos) :ident)
        (at? tokens (+ pos 2) :punct "(")))
 
 (defn- parse-handler-decl [tokens pos]
-  (let [[_ p]      (expect tokens pos :glyph "->")
-        [name p]   (expect tokens p :ident)
-        [params p] (parse-param-list-parens tokens p)
-        [_ p]      (expect tokens p :punct ":")
-        [_ p]      (expect tokens p :newline)
-        [body p]   (parse-block tokens p)]
-    [{:node :handler-decl :name name :params params :body body} p]))
+  (let [[_ _]        (expect tokens pos :glyph "->")
+        name-tok     (peek-tok tokens (inc pos))
+        handler-name (t-value name-tok)]
+    (fail! tokens pos
+           (str "F67 L3: `-> " handler-name "(args):` handler-decl sugar is "
+                "retired (Proposal G class-body collapse). Migrate to the "
+                "explicit handler-shape transition:\n\n"
+                "    * <: " handler-name "(args) -> *\n"
+                "        do: <body>\n\n"
+                "Semantics unchanged (spec §1265) — same method-table entry, "
+                "same external invocation surface. The collapse removes the "
+                "parallel opener glyph so the class body has one shape per "
+                "kind of declaration."))))
 
 (defn- looks-like-transition? [tokens pos]
   ;; Called after observable / section checks have failed. At atom-body top
   ;; level, the remaining possibilities are transitions and errors. A
-  ;; transition starts with `->` (implicit source), `self`, or a source-phase
-  ;; identifier. Since the observable case is already excluded, any bare
-  ;; ident is treated as a transition-source.
+  ;; transition starts with `->` (implicit source), `self`, `*` (F67 L3
+  ;; wildcard source), or a source-phase identifier. Since the observable
+  ;; case is already excluded, any bare ident is treated as a
+  ;; transition-source.
   (or (at? tokens pos :glyph "->")
+      (at? tokens pos :glyph "*")
       (at? tokens pos :kw "self")
       (at? tokens pos :ident)))
 

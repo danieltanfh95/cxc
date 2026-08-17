@@ -1260,7 +1260,7 @@ cxc is a close-to-immutable OOP language built on the atom substrate. **Every tr
 
 - **`name :< source`** — observable declaration. Pull channel; subscribers read on demand. `:<` marker unique.
 - **`<from> [receive_trigger] -> <to>[(args)] when <guard>`** — transition line. Declares a phase transition (source phase to target phase) or a self-transition on the current atom. The optional receive-glyph trigger (`<: source_expr {args}` or `<| ...`) makes the transition message-driven; without it the transition is guard-only. Compact single-line form is sugar for the block form. See "Transition-line block form" below.
-- **`-> handler(args)?:`** — externally-invocable message handler. Reserved for side-effect-only handlers (no state change; only external effects like logging). Every state-changing handler is a transition line, not a `-> handler:`. `->` prefix at line-start unique.
+- **`* <: handler(args) -> * do: <body>`** — externally-invocable message handler (side-effect only, no state change). Written as a wildcard-source, wildcard-target receive-glyph transition with a typed-params receive pattern. Every state-changing handler is a phase-transition line with `then:`. *(The retired `-> handler(args):` prefix form (F14 sugar) migrated to this shape via F67 L3.)*
 
 **Retired: bare `expr |> target` at atom-body top-level.** Standing wires do NOT exist as top-level statements. Every subscription is a receive-glyph transition (`<:` / `<|`) whose source expression may compose transformers via `|>`. See §1.11 "Stream composition in receive-glyph source expressions."
 
