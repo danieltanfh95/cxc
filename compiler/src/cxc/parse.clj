@@ -1266,14 +1266,12 @@
         (let [folded  (fold-top-level-fields body)
               raw-def {:node :def-atom :name name :ctor-params ctor
                        :body folded}
-              ;; F68 L1/L2 (Proposal H) — protocol + enum reshapes at
-              ;; parse. The record structural-detect case is deferred
-              ;; to a later sublanding (after migration sweep), because
-              ;; existing `def Foo:` uses without transitions currently
-              ;; carry atom semantics via nested-slot syntax and other
-              ;; downstream conventions; flipping them to `:record`
-              ;; before those conventions migrate produces widespread
-              ;; test regressions.
+              ;; F68 L1/L2 (Proposal H) — protocol + enum reshape at
+              ;; parse. Record reshape (`def Foo: fields+observables`
+              ;; → :record) is scaffolded but not activated: it flips
+              ;; atom semantics for ~90 existing tests that use
+              ;; `def X:` for data-only atoms. Activation bundles with
+              ;; L5 sugar-keyword retirement + test migration.
               reshaped
               (cond
                 (def-atom-body-has-accepts? folded)

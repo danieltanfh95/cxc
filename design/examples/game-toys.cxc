@@ -116,8 +116,12 @@ from com.cxc.stdlib import Clock, Random, KeyboardInput, Console, Duration, Inst
 
 
 # ---- Shared value types (records) -------------------------------------------
+#
+# Under F68 (Proposal H — full unification under `def`), `def Foo:` with
+# fields + observables and no transitions is structurally a record. No
+# `record` keyword needed.
 
-record Vector2:
+def Vector2:
     x: Float
     y: Float
 
