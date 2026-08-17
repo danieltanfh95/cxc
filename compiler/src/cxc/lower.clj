@@ -703,7 +703,7 @@
      ;; uniformly for observable-derived and legacy `methods:` entries.
      :body               {:node :block
                           :stmts [{:node :return :expr (:expr obs)}]}
-     :replace?           false
+     :replace?           (boolean (:replace? obs))
      :observable-derived? true}))
 
 (defn- handler-decl->method-entry
@@ -1112,21 +1112,36 @@
              own-methods (mapv #(observable->method-entry target %) own-obs)
              ext-methods (extension-methods-for target extension-env)
              _           (compose-target-methods target own-methods ext-methods)
-             ;; Composed observable list: own observables win over
-             ;; extension observables with the same name (§3.3.2 rule 1;
-             ;; `replace` support is a follow-on). Between competing
-             ;; extensions with the same name and no own, later wins
-             ;; (§3.3.2 rule 5). pick-winner-with-warnings! fired
-             ;; shadow warnings above.
-             own-names   (set (map :name own-obs))
-             ;; For ext-obs, keep only the last-declared under each
-             ;; name (rule 5); then drop entries shadowed by own.
+             ;; Composed observable list, per §3.3.2:
+             ;;   Rule 1: own wins over unmarked extension observables of
+             ;;           the same name (shadow warning fired above by
+             ;;           `pick-winner-with-warnings!`).
+             ;;   Rule 4: an extension observable marked `:replace? true`
+             ;;           (F67 L4c prefix keyword) intentionally shadows
+             ;;           own — extension wins, no warning.
+             ;;   Rule 5: between competing extension observables with the
+             ;;           same name and no own, later wins.
+             ;; `pick-winner-with-warnings!` already fired appropriate
+             ;; warnings above; we re-derive the observable list here to
+             ;; keep source identity (own vs ext) intact for downstream
+             ;; observable emission that needs the raw node.
+             own-by-name (into {} (map (juxt :name identity) own-obs))
+             ext-replace-names (set (map :name (filter :replace? ext-obs)))
+             ;; Own drops out under any ext-replace on the same name.
+             own-effective (filterv #(not (contains? ext-replace-names (:name %)))
+                                    own-obs)
+             own-eff-names (set (map :name own-effective))
+             ;; For ext-obs: keep only the last-declared under each name
+             ;; (rule 5). Between multiple replace-flagged extensions,
+             ;; last replace wins (still deterministic).
              ext-by-name (reduce (fn [m o] (assoc m (:name o) o)) {} ext-obs)
              ext-winners (filterv (fn [o]
-                                    (and (not (contains? own-names (:name o)))
+                                    (and (or (:replace? o)
+                                             (not (contains? own-eff-names
+                                                             (:name o))))
                                          (identical? o (get ext-by-name (:name o)))))
                                   ext-obs)
-             composed-obs (into (vec own-obs) ext-winners)
+             composed-obs (into (vec own-effective) ext-winners)
              new-conforms (into (vec (:conforms rec))
                                 (extension-conforms-for target extension-env))
              variant     (if (seq composed-obs) :class :struct)]

@@ -1285,6 +1285,18 @@
         (let [[s p2] (parse-methods-section tokens p)]
           (recur (conj body s) (skip-newlines tokens p2)))
 
+        ;; F67 L4c — `replace` on a plain (non-extension) def-atom body
+        ;; has no shadow target; the modifier is only meaningful inside
+        ;; `extend class` per §3.3.2 rule 4.
+        (at? tokens p :kw "replace")
+        (fail! tokens p
+               (str "`replace` modifier inside `def " name "` body is only "
+                    "meaningful in an `extend class` context — a class's "
+                    "own declarations can't shadow themselves (§3.3.2 rule 4). "
+                    "Drop the `replace` prefix, or move the declaration "
+                    "into an `extend class` block if the intent was to "
+                    "shadow another declaration."))
+
         ;; F67 L4 — `function` keyword inside atom body retires with the
         ;; `methods:` section (Proposal G class-body collapse). Free
         ;; functions still live at module scope.
@@ -1621,6 +1633,18 @@
     (at? tokens pos :kw "use")        (parse-use-section tokens pos)
     (at? tokens pos :kw "deprecated") (parse-deprecated-section tokens pos)
 
+    ;; F67 L4c — `replace` inside a non-extension class body has no
+    ;; shadow target (own definitions can't shadow themselves; §3.3.2
+    ;; rule 4 requires an extension context).
+    (at? tokens pos :kw "replace")
+    (fail! tokens pos
+           (str "`replace` modifier on class-body declaration is only "
+                "meaningful inside an `extend class` block — a plain "
+                "class definition has no target to shadow (§3.3.2 rule 4). "
+                "Drop the `replace` prefix, or move the declaration into "
+                "an `extend class` body if you meant to shadow another "
+                "declaration."))
+
     ;; F67 L4 — `function` keyword inside class/protocol body retires
     ;; with `methods:` (Proposal G collapse). Free functions still live
     ;; at module scope.
@@ -1750,9 +1774,36 @@
   "Dispatch one section inside an `extend class Foo:` body. Strict —
    rejects sections spec §3.3.2 forbids (data/state/use/cases/metadata/
    deprecated). Accepts observables (F67 L4), wildcard self-transitions
-   (F67 L4), invariants:, conforms:. `methods:` retires (F67 L4)."
+   (F67 L4), invariants:, conforms:. `methods:` retires (F67 L4).
+
+   F67 L4c — a `replace` keyword prefix marks the following observable
+   or wildcard-transition as intentionally shadowing an existing
+   declaration on the target (§3.3.2 rule 4). The marker propagates
+   to the parsed node via `:replace? true`; composition consumes it
+   in `pick-winner-with-warnings!`. `replace` is legal only in
+   extension bodies — non-extension class bodies reject it in
+   `parse-class-section`."
   [tokens pos target]
   (cond
+    ;; F67 L4c — `replace` keyword prefixes an observable or transition.
+    (at? tokens pos :kw "replace")
+    (let [p (inc pos)]
+      (cond
+        (looks-like-observable? tokens p)
+        (let [[obs p2] (parse-observable tokens p)]
+          [(assoc obs :replace? true) p2])
+
+        (at? tokens p :glyph "*")
+        (let [[tr p2] (parse-transition tokens p)]
+          [(assoc tr :replace? true) p2])
+
+        :else
+        (fail! tokens p
+               (str "`replace` inside `extend class " target "` must "
+                    "prefix an observable (`replace name[(args)] :< expr`) "
+                    "or a wildcard self-transition (`replace * <: msg(args) "
+                    "-> * do: <body>`). See §3.3.2 rule 4."))))
+
     (at? tokens pos :kw "methods")    (parse-methods-section tokens pos)
     (at? tokens pos :kw "invariants") (parse-invariants-section tokens pos)
 

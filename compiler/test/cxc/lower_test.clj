@@ -1767,6 +1767,64 @@ def main:
                                "        do: print(0)\n"))]
       (is (some #(= "Widget_m" (:name %)) (:functions prog))))))
 
+(deftest f67-l4c-extension-replace-shadows-own-suppresses-warning
+  (testing "F67 L4c — extension observable prefixed with `replace` intentionally shadows the target class's own observable (§3.3.2 rule 4). Extension wins in the composed observable list; own is dropped; no shadow warning fires."
+    (let [sw (java.io.StringWriter.)
+          prog (binding [*err* sw]
+                 (lower-src (str "record Widget:\n"
+                                 "    n: Int\n"
+                                 "\n"
+                                 "    bar() :< 1\n"
+                                 "\n"
+                                 "extend class Widget:\n"
+                                 "    replace bar() :< 2\n"
+                                 "\n"
+                                 "def main:\n"
+                                 "    -> running\n"
+                                 "        do: print(0)\n")))
+          bar-fn (first (filter #(= "Widget_bar" (:name %))
+                                (:functions prog)))
+          return-stmt (first (filter #(= :return (:node %)) (:body bar-fn)))]
+      (is (some? bar-fn))
+      (is (= 2 (get-in return-stmt [:value :value]))
+          "extension's replace-flagged observable wins over own")
+      (is (not (str/includes? (str sw) "shadowed by"))
+          "no shadow warning when the extension is `replace`-marked"))))
+
+(deftest f67-l4c-extension-shadow-without-replace-still-warns
+  (testing "F67 L4c — extension observable colliding with own WITHOUT `replace` still fires the shadow warning (own wins; §3.3.2 rule 1)."
+    (let [sw (java.io.StringWriter.)
+          _prog (binding [*err* sw]
+                  (lower-src (str "record Widget:\n"
+                                  "    n: Int\n"
+                                  "\n"
+                                  "    bar() :< 1\n"
+                                  "\n"
+                                  "extend class Widget:\n"
+                                  "    bar() :< 2\n"
+                                  "\n"
+                                  "def main:\n"
+                                  "    -> running\n"
+                                  "        do: print(0)\n")))]
+      (is (str/includes? (str sw) "bar")
+          "shadow warning fires when extension shadows without `replace`"))))
+
+(deftest f67-l4c-replace-without-target-warns
+  (testing "F67 L4c — `replace` on an extension observable that has no matching own or other extension observable to shadow fires the replace-without-target warning (§3.3.2 rule 3)."
+    (let [sw (java.io.StringWriter.)
+          _prog (binding [*err* sw]
+                  (lower-src (str "record Widget:\n"
+                                  "    n: Int\n"
+                                  "\n"
+                                  "extend class Widget:\n"
+                                  "    replace unrelated() :< 1\n"
+                                  "\n"
+                                  "def main:\n"
+                                  "    -> running\n"
+                                  "        do: print(0)\n")))]
+      (is (str/includes? (str sw) "replace-without-target")
+          "warn when replace is used but no shadow target exists"))))
+
 (deftest f9-l5-unknown-protocol-rejected
   (testing "F9 Landing 5 — conformance to a protocol name that doesn't resolve fires a §3.4.5-pointer diagnostic."
     (is (thrown-with-msg?

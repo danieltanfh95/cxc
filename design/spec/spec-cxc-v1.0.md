@@ -2979,10 +2979,13 @@ The only *hard* compile error for same-name is when two same-named methods appea
 To silence the warning explicitly (document intent), use the `replace` modifier:
 
 ```
+# Post F67 L4c (Proposal G class-body collapse) — the modifier prefixes
+# the observable / wildcard-transition declaration directly:
 extend class NSString:
-    replace function shout(self) -> NSString:
-        return self.upper_case + "!"     # explicit intent: shadow the prior shout
+    replace shout() :< self.upper_case + "!"     # explicit intent: shadow the prior shout
 ```
+
+**Post-collapse form (F67 L4c).** `replace` is a *prefix keyword* on the observable or wildcard self-transition it modifies. It is legal *only* inside an `extend class` body — a plain class body has no shadow target and rejects `replace` at parse time (§3.3.2 rule 4 requires an extension context). The examples earlier in this section using pre-collapse `methods:` / `function` bodies remain semantically accurate but are being migrated to the post-collapse form during the F67 landing sequence (see `compiler/design/plans/proposal-g-class-body-collapse.md`).
 
 `replace` is *optional* — without it the composition still succeeds (with a warning), and the deterministic resolution rule picks the winner. With `replace` present, the warning is suppressed for that site (author signaled intent) and `replace` further enforces that *some* method is actually being shadowed (see rule 3 below).
 

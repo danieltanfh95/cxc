@@ -648,16 +648,37 @@ def main:
         (is (= :observable (:node obs)))
         (is (= "bar" (:name obs)))))))
 
-(deftest f67-l4-replace-modifier-retired
-  (testing "F67 L4 — the `replace` method modifier retires with `methods:` (Proposal G). Shadowing between extensions and own definitions is now expressed by observable name reuse; L4 shadowing/replace semantics await follow-on treatment."
+(deftest f67-l4c-replace-prefix-marks-extension-observable
+  (testing "F67 L4c — `replace` keyword prefixed to an extension observable marks the parsed node with `:replace? true` so composition (§3.3.2 rule 4) can honor the intentional shadow without a warning."
+    (let [n (first-node
+             (str "extend class Foo:\n"
+                  "    replace bar() :< 2\n"))]
+      (is (= :extend-class (:node n)))
+      (is (= "Foo" (:target n)))
+      (let [obs (first (:body n))]
+        (is (= :observable (:node obs)))
+        (is (= "bar" (:name obs)))
+        (is (true? (:replace? obs)))))))
+
+(deftest f67-l4c-replace-prefix-on-transition
+  (testing "F67 L4c — `replace` prefix also legal on a wildcard self-transition inside an extension body (parses; composition wiring for transitions is a separate landing)."
+    (let [n (first-node
+             (str "extend class Foo:\n"
+                  "    replace * <: reset() -> * do: print(0)\n"))]
+      (is (= :extend-class (:node n)))
+      (let [t (first (:body n))]
+        (is (= :transition (:node t)))
+        (is (true? (:replace? t)))))))
+
+(deftest f67-l4c-replace-on-plain-class-rejected
+  (testing "F67 L4c — `replace` inside a non-extension class body has no shadow target; parser rejects with §3.3.2 rule-4 pointer."
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
-         #"(?s)F67 L4.*`methods:` section is retired"
+         #"`replace` modifier.*only meaningful.*`extend class`"
          (first-node
-          (str "extend class Foo:\n"
-               "    methods:\n"
-               "        replace function bar(self) -> Int:\n"
-               "            return 2\n"))))))
+          (str "def Widget:\n"
+               "    n: Int = 0\n"
+               "    replace bumped() :< n + 1\n"))))))
 
 (deftest f9-l3-extend-class-with-header-conforms
   (testing "F9 Landing 3 — `extend class Foo(NewProtocol):` populates `:conforms` from header parens."
