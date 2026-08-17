@@ -1848,14 +1848,15 @@ User atoms see a `Filesystem` and a `Network`; they can't tell one is sandboxed 
 
 ```
 def PluginHost:
-    -> launch_plugin(id: PluginId, code: Bytes):
-        let plugin_env = {
-            clock:   env.clock,
-            fs:      SandboxedFs(inner: env.fs, allowed: [id.data_root]),
-            net:     BlockedNet(),
-            console: env.console
-        }
-        env.runtime.launch(code, env: plugin_env)
+    * <: launch_plugin(id: PluginId, code: Bytes) -> *
+        do:
+            let plugin_env = {
+                clock:   env.clock,
+                fs:      SandboxedFs(inner: env.fs, allowed: [id.data_root]),
+                net:     BlockedNet(),
+                console: env.console
+            }
+            env.runtime.launch(code, env: plugin_env)
 ```
 
 Same mechanism as top-level runtime bootstrap; different scope. Sandboxes, plugins, isolates, WASM guests — all the same shape.
@@ -2758,12 +2759,13 @@ All richer type expressions — brackets, braces, arrows, suffix operators — c
 ```
 def partition(predicate: (a) -> Bool):
     Stream of a -> (matched: Stream of a, unmatched: Stream of a)
-    
-    -> input(item):
-        if predicate(item):
-            :> matched(item)
-        else:
-            :> unmatched(item)
+
+    * <: input(item: a) -> *
+        do:
+            if predicate(item):
+                :> matched(item)
+            else:
+                :> unmatched(item)
 ```
 
 Single unnamed channel: bare `Stream of X` return type; emissions are `:> value` (default channel). Named channels: `(name1: Stream of X, name2: Stream of Y)` return type; emissions are `:> name(value)`. No separate `channels:` section — return type is authoritative.

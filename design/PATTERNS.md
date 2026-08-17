@@ -684,13 +684,14 @@ def debounce(duration: Duration):
     use: clock: Clock
     state: pending = nil
     
-    -> input(event):
-        state.pending = event
-        clock.after(duration) |> fire
-    
-    -> fire:
-        :> state.pending        # emit on default channel
-        state.pending = nil
+    * <: input(event: Event) -> *
+        then: pending => event
+        do: clock.after(duration) |> fire
+
+    -> fire
+        do:
+            :> pending           # emit on default channel
+            pending => nil
 ```
 
 Bare `:> value` emits on the default channel. `:> name(value)` emits on a named channel (required when the atom has a named-tuple return type). See §1.11 for the pull/push symmetry rationale.
@@ -740,19 +741,23 @@ See §1.11 wiring-glyph table. The six glyphs are: `->` (return-type + transitio
 
 ### "I need `on event(...):` for a handler declaration"
 
-Handler prefix is `->`, not `on`:
+Handlers are wildcard receive-glyph transitions — the same primitive as any other transition, no separate opener:
 
 ```
 # NO:
 on input(event):
     ...
 
-# YES:
+# NO — the `-> input(event):` prefix (F14 sugar) is RETIRED at F67 L3:
 -> input(event):
     ...
+
+# YES — explicit wildcard handler-shape transition:
+* <: input(event: Event) -> *
+    do: ...
 ```
 
-Reads as "→ input(event): [do]." Parser distinguishes handler `->` (at line-start inside atom body) from return-type `->` (between `)` and a type ref, before `:`). See §2.6 position-based disambiguation.
+`* <:` reads as "from any phase, receive"; `-> *` reads as "stay in whatever phase we were in" (side-effect handler; no phase change). The typed-params receive form `input(event: Event)` distinguishes a handler from a payload-destructure receive `input{event: Event}` (which reads a stream/observable emission). See §1.11 class-body-collapse addendum.
 
 ### "I need `atom Foo:` to declare an atom / stateful class"
 
@@ -804,7 +809,7 @@ def map<A, B>(f: (A) -> B, s: Stream<A>) -> Stream<B>: ...
 # YES:
 def map(f: (a) -> b):
     Stream of a -> Stream of b
-    -> input(item): :> f(item)
+    * <: input(item: a) -> * do: :> f(item)
 ```
 
 `a` binds first-mention in `f`'s input type; `b` binds first-mention in `f`'s return type; channel signature references both. No universal-quantifier syntax needed.
@@ -816,12 +821,13 @@ Use the named tuple return type. Return type is authoritative; no separate secti
 ```
 def partition(predicate: (a) -> Bool):
     Stream of a -> (matched: Stream of a, unmatched: Stream of a)
-    
-    -> input(item):
-        if predicate(item):
-            :> matched(item)
-        else:
-            :> unmatched(item)
+
+    * <: input(item: a) -> *
+        do:
+            if predicate(item):
+                :> matched(item)
+            else:
+                :> unmatched(item)
 ```
 
 Callers reference channels by name on the atom instance: `partitioner.matched |> handler_a`, `partitioner.unmatched |> handler_b`. See §3.2 multi-channel subsection.
@@ -926,19 +932,19 @@ Cardinality propagates via operator contracts: `map: emits(out) == emits(in)`, `
 
 ### "I need an `entrypoints:` section to declare my public API"
 
-Every `-> handler:` declaration is exposed by default. There is no `entrypoints:` section. External callers, internal wires, and any message sender all reach handlers the same way — a handler is a channel that receives messages; who's on the other end is composition context.
+Every receive-glyph transition is exposed by default. There is no `entrypoints:` section. External callers, internal wires, and any message sender all reach handlers the same way — a handler is a message name in the atom's dispatch table; who sends is composition context.
 
 ```
 # NO — special section:
 entrypoints:
     take_damage(amount: Int) |> active.damage(amount)
 
-# YES — plain handler (multi-line body):
--> take_damage(amount: Int):
-    self :> damage(amount: amount)
+# YES — wildcard handler-shape transition:
+* <: take_damage(amount: Int) -> *
+    do: self :> damage(amount: amount)
 ```
 
-If a truly private handler is ever needed, add `private ->` as an escape hatch — no such need has surfaced in the design so far. See §1.11 atom-body vocabulary.
+If a truly private handler is ever needed, some form of visibility marker (e.g. `private * <:`) would be an escape hatch — no such need has surfaced in the design so far. See §1.11 class-body-collapse addendum.
 
 ### "I need a `wires:` section for the compound atom's internal wiring graph"
 
