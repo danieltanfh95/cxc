@@ -1579,18 +1579,11 @@ def main:
       (is (not (some #{"<execinfo.h>"} (:includes without-panic)))
           "non-panic program doesn't pull in <execinfo.h>"))))
 
-(deftest f9-l2-non-protocol-class-still-fails-nyi
-  (testing "F9 Landing 2 — regular/record/enum classes via `class`/`metadata: kind:` still fail-nyi (extension composition lands with L4). L2 opens up ONLY `kind: protocol`."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"F9 L2 lands.*protocol.*L4"
-         (lower-src (str "class Foo:\n"
-                         "    metadata:\n"
-                         "        kind: regular\n"
-                         "\n"
-                         "def main:\n"
-                         "    -> running\n"
-                         "        do: print(0)\n"))))))
+;; f9-l2-non-protocol-class-still-fails-nyi deleted at F68 L6b — `class` /
+;; `metadata: kind:` sugar is retired; there is no non-protocol :class node
+;; anymore. Class kind (regular/record/enum) is derived structurally under
+;; `def` and its lowering is exercised by the atom/record/enum tests
+;; directly (no fail-nyi wall to enforce).
 
 (deftest f9-l2-protocol-lowers-and-registers
   (testing "F9 Landing 2 — a `protocol` declaration lowers cleanly and its `accepts:` entries land in the program's :protocols map. Registration-only for now — dispatch wires in L4, conformance validation in L5."

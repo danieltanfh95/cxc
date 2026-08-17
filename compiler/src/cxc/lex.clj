@@ -21,13 +21,21 @@
   (:require [clojure.string :as str]))
 
 (def reserved-words
+  ;; F68 L6b (Proposal H) — `record` / `class` / `enum` / `protocol` retired
+  ;; from the reserved set. `def` is the sole opener; kind flows from body
+  ;; structural cues (accepts:→protocol, case→enum, transition/use:/ctor
+  ;; params/nested-slot→class, otherwise→record). Retired keywords now lex
+  ;; as identifiers (safe: none of them read as an ordinary variable name
+  ;; anyone would reach for by accident). `methods` / `metadata` / `cases`
+  ;; retired with F67 L4 + F68 L6b bodies. `function` kept only for the
+  ;; grace-period module-scope `def name(...) -> T:` migration (K8).
   #{"module" "from" "import" "as" "expose"
-    "def" "record" "class" "enum" "protocol"
-    "data" "use" "methods" "invariants" "contracts" "constructor" "metadata"
+    "def"
+    "data" "use" "invariants" "contracts" "constructor"
     "accepts"
     "extend" "replace"
     "deprecated"
-    "then" "do" "when" "let" "cases"
+    "then" "do" "when" "let"
     "self" "nil" "true" "false"
     "and" "or" "not" "is" "in" "of"
     "if" "else" "return" "match" "case" "switch"

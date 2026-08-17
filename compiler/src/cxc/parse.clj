@@ -671,41 +671,6 @@
               "gathered into the same data-section AST downstream; the "
               "collapse removes the redundant grouping header.")))
 
-(defn- parse-methods-section
-  "F67 L4 — `methods:` section is retired (Proposal G class-body collapse).
-   Under Corvid's actor substrate, class-body callables collapse to two
-   shapes:
-
-     1. Observable (pure read):
-            <name>[(args)] :< <expression>
-     2. Receive-glyph transition (message handler; may mutate):
-            * <: <name>(args) -> *
-                [when: <guard>] [then: <update>] [do: <side effect>]
-
-   Utility functions unrelated to `self` move to module scope
-   (`def name(args) -> T: body`). Records get the reader + utility
-   cases; transitions are structurally forbidden on records."
-  [tokens pos]
-  (fail! tokens pos
-         (str "F67 L4: `methods:` section is retired (Proposal G class-body "
-              "collapse). Under Corvid's actor substrate, class-body callables "
-              "are one of two shapes:\n\n"
-              "  1. Observable (pure read):\n"
-              "         <name>(args) :< <expression>\n\n"
-              "  2. Receive-glyph transition (message handler; may mutate):\n"
-              "         * <: <name>(args) -> *\n"
-              "             [when: <guard>] [then: <update>] [do: <side effect>]\n\n"
-              "Migrate each method by category:\n\n"
-              "  - `function foo(self, args) -> T: return <expr>`  (reader)\n"
-              "      → `foo(args) :< <expr>`\n"
-              "  - `function foo(self, args): <side effect>`       (void)\n"
-              "      → `* <: foo(args) -> * do: <side effect>`\n"
-              "  - `function foo(self, args): <mutation>`          (writer)\n"
-              "      → `* <: foo(args) -> * then: <update>`\n\n"
-              "Utility functions that don't operate on `self` belong at module\n"
-              "scope: `def foo(args) -> T: body`.\n\n"
-              "See spec §1.11.")))
-
 (defn- parse-deprecated-section
   "deprecated: \"<message>\"
    Layer 6 Step 11 — inline body-form deprecation marker. Emits a
@@ -1315,20 +1280,16 @@
         (let [[s p2] (parse-invariants-section tokens p)]
           (recur (conj body s) (skip-newlines tokens p2)))
 
-        (at? tokens p :kw "methods")
-        (let [[s p2] (parse-methods-section tokens p)]
-          (recur (conj body s) (skip-newlines tokens p2)))
-
         ;; F67 L4c — `replace` on a plain (non-extension) def-atom body
         ;; has no shadow target; the modifier is only meaningful inside
-        ;; `extend class` per §3.3.2 rule 4.
+        ;; `extend` per §3.3.2 rule 4.
         (at? tokens p :kw "replace")
         (fail! tokens p
                (str "`replace` modifier inside `def " name "` body is only "
-                    "meaningful in an `extend class` context — a class's "
+                    "meaningful in an `extend` context — a class's "
                     "own declarations can't shadow themselves (§3.3.2 rule 4). "
                     "Drop the `replace` prefix, or move the declaration "
-                    "into an `extend class` block if the intent was to "
+                    "into an `extend` block if the intent was to "
                     "shadow another declaration."))
 
         ;; F67 L4 — `function` keyword inside atom body retires with the
@@ -1535,35 +1496,17 @@
      :cases (mapv :case-name cases)}))
 
 ;; ---------------------------------------------------------------------------
-;; F9 Landing 1 — `class` / `protocol` sugar over `class + metadata: kind:`.
-;;
-;;   class Foo:
-;;       metadata:
-;;           kind: regular            # or record / enum / protocol / section
-;;       <sections>+
-;;
-;;   Sugar form (spec §4.11 — sugar desugars losslessly):
-;;   protocol P:                      → class P + metadata: kind: protocol
-;;       <sections>+
-;;
-;;   Header parens conformances (§3.4.5):
-;;   class Foo(P1, P2):               → :conforms [P1 P2] on the class node
-;;       <sections>+
-;;
-;;   Body-form conformances (§3.4.5, canonical for extensions / long lists):
-;;   class Foo:
-;;       conforms: P1
-;;       conforms: P2                 → :conforms [P1 P2]
-;;
-;;   L1 is grammar-only. Lower emits `fail-nyi!` on `:class` nodes with a
-;;   pointer at F9 L2 (which builds protocol-env + attaches semantics).
-;;   Existing `record` / `enum` sugar keywords keep their dedicated parsers
-;;   and continue to produce `:record` / `:enum` nodes for backward compat;
-;;   the L1 → :class path handles ONLY `class` / `protocol` at top level.
+;; F9 protocol/accepts + F9 L3 extend surfaces. Post F68 L6b (Proposal H):
+;; `class` / `protocol` / `record` / `enum` sugar keywords and their
+;; supporting parsers (parse-class, parse-record, parse-enum,
+;; parse-class-section, fold-class-body, parse-metadata-section,
+;; legal-kinds) are all deleted; the sole class/protocol/record/enum
+;; surface is `def X:` with structural detection in parse-def-atom.
+;; parse-accepts-section + parse-accepts-signature + parse-conforms-line
+;; + parse-header-parens-conformances remain — accepts:/conforms: are
+;; still valid body constructs, just inside `def` (accepts:) or `extend`
+;; (both) blocks now.
 ;; ---------------------------------------------------------------------------
-
-(def ^:private legal-kinds
-  #{"regular" "record" "enum" "protocol" "section"})
 
 (defn- parse-accepts-signature
   "Parse one `accepts:` entry — a method signature with no body.
@@ -1620,49 +1563,6 @@
         (let [[e p2] (parse-accepts-signature tokens p)]
           (recur (conj entries e) (skip-newlines tokens p2)))))))
 
-(defn- parse-metadata-section
-  "L1: accepts only `kind: <value>` inside. Other metadata keys (thread,
-   qos, pool, superclass, extends, custom user keys) belong to F10 and
-   fail-nyi with a targeted pointer."
-  [tokens pos]
-  (let [[_ p] (expect tokens pos :kw "metadata")
-        [_ p] (expect tokens p :punct ":")
-        [_ p] (expect tokens p :newline)
-        [_ p] (expect tokens p :indent)]
-    (loop [entries [] p p]
-      (cond
-        (at? tokens p :dedent)
-        [{:node :metadata-section :entries entries} (inc p)]
-
-        (at? tokens p :newline)
-        (recur entries (inc p))
-
-        (and (at? tokens p :ident) (= "kind" (t-value (peek-tok tokens p)))
-             (at? tokens (inc p) :punct ":"))
-        (let [[_ p2]   (expect tokens p :ident)
-              [_ p3]   (expect tokens p2 :punct ":")
-              [kv p4]  (cond
-                         (at? tokens p3 :ident) (expect tokens p3 :ident)
-                         (at? tokens p3 :kw)    (expect tokens p3 :kw))
-              _        (when-not (legal-kinds kv)
-                         (fail! tokens p3
-                                (str "unknown `metadata: kind:` value `" kv "`; "
-                                     "must be one of: regular, record, enum, "
-                                     "protocol, section (spec §3.3).")))]
-          (recur (conj entries {:key :kind :value (keyword kv)})
-                 (skip-newlines tokens p4)))
-
-        (at? tokens p :ident)
-        (fail! tokens p
-               (str "`metadata:` key `" (t-value (peek-tok tokens p))
-                    "` is not yet implemented — F9 Landing 1 accepts "
-                    "only `kind:`. Full metadata surface (threading, "
-                    "QoS, dispatch pool, superclass, custom keys) "
-                    "lands with F10. See spec §4.10.6."))
-
-        :else
-        (fail! tokens p "expected `kind:` entry or dedent in metadata section")))))
-
 (defn- parse-conforms-line
   "Body-form conformance declaration:
      conforms: <TypeName>
@@ -1694,241 +1594,17 @@
           (fail! tokens p2
                  "expected `,` or `)` in conformance list"))))))
 
-(defn- fold-class-body
-  "Post-parse fold: extract `metadata: kind:` into the class node's `:kind`
-   field; extract body-form `conforms:` entries into `:conforms`; extract
-   `:accepts-section` entries into `:accepts` (merged across all sections
-   in the same class, per §3.4.5 rule 5's union semantics for repeated
-   headers). Validates sugar-kind agreement (e.g. `protocol Foo:
-   metadata: kind: enum` errors) and kind-vs-section legality (e.g.
-   `accepts:` only on `kind: protocol`; `data:` forbidden on protocols).
-
-   sugar-kind is a keyword (:protocol, :regular) inferred from the top-level
-   keyword; nil for the primitive `class` form."
-  [tokens pos-for-diag class-name sugar-kind header-conforms body]
-  (let [metadata-secs (filter #(= :metadata-section (:node %)) body)
-        conforms-lines (filter #(= :conforms-line (:node %)) body)
-        accepts-secs  (filter #(= :accepts-section (:node %)) body)
-        data-secs     (filter #(= :data-section (:node %)) body)
-        other-sections (remove #(contains? #{:metadata-section :conforms-line
-                                             :accepts-section}
-                                            (:node %))
-                                body)
-        kinds-from-metadata (keep (fn [ms]
-                                    (some (fn [e]
-                                            (when (= :kind (:key e)) (:value e)))
-                                          (:entries ms)))
-                                  metadata-secs)
-        _ (when (> (count metadata-secs) 1)
-            (fail! tokens pos-for-diag
-                   (str "multiple `metadata:` sections on class `" class-name
-                        "` — collapse into one.")))
-        _ (when (> (count kinds-from-metadata) 1)
-            (fail! tokens pos-for-diag
-                   (str "duplicate `kind:` entries in `metadata:` on class `"
-                        class-name "` — kind is set once at declaration.")))
-        explicit-kind (first kinds-from-metadata)
-        final-kind (cond
-                     (and sugar-kind explicit-kind
-                          (not= sugar-kind explicit-kind))
-                     (fail! tokens pos-for-diag
-                            (str "sugar keyword `" (name sugar-kind)
-                                 "` on class `" class-name "` contradicts "
-                                 "`metadata: kind: " (name explicit-kind)
-                                 "` — pick one."))
-                     :else
-                     (or explicit-kind sugar-kind :regular))
-        _ (when (and (seq accepts-secs) (not= :protocol final-kind))
-            (fail! tokens pos-for-diag
-                   (str "`accepts:` is only valid on `kind: protocol`; "
-                        "class `" class-name "` has kind `" (name final-kind)
-                        "`. Regular/record/enum classes declare their "
-                        "surface via observables (`name(args) :< expr`) "
-                        "and receive-glyph transitions "
-                        "(`* <: name(args) -> * do: <body>`). See spec §3.4.5.")))
-        _ (when (and (= :protocol final-kind) (seq data-secs))
-            (fail! tokens pos-for-diag
-                   (str "`data:` is not permitted on `kind: protocol` — "
-                        "protocols declare no state, only method surface. "
-                        "See spec §3.4.5. Class `" class-name "`.")))
-        accepts-entries (vec (mapcat :entries accepts-secs))
-        body-conforms (mapv :type conforms-lines)
-        all-conforms  (into (vec header-conforms) body-conforms)]
-    {:node     :class
-     :name     class-name
-     :kind     final-kind
-     :conforms all-conforms
-     :accepts  accepts-entries
-     :body     (vec other-sections)}))
-
-(declare parse-transition parse-observable)
-
-(defn- parse-class-section
-  "Dispatch one section inside a `class`/`protocol` body. Accepts:
-   - metadata: (L1 — kind: only)
-   - data:            (retired L5; raises with L5 diagnostic)
-   - methods:         (retired L4; raises with L4 diagnostic)
-   - invariants:
-   - use:
-   - deprecated:
-   - conforms: (body-form)
-   - accepts:         (L2 — protocol signature section)
-   - accepts <sig>    (L2 — per-entry sugar at class body level)
-   - observable       (F67 L4 — reader-default on protocols; observable
-                       body on regular/record kinds)
-   - transition       (F67 L4 — wildcard self-transition default)
-   Rejects `state:` (retired at v1.0); other keys fall through to the
-   caller's else-branch."
-  [tokens pos]
-  (cond
-    (at? tokens pos :kw "metadata")   (parse-metadata-section tokens pos)
-    (at? tokens pos :kw "data")       (parse-data-section tokens pos)
-    (at? tokens pos :kw "methods")    (parse-methods-section tokens pos)
-    (at? tokens pos :kw "invariants") (parse-invariants-section tokens pos)
-    (at? tokens pos :kw "use")        (parse-use-section tokens pos)
-    (at? tokens pos :kw "deprecated") (parse-deprecated-section tokens pos)
-
-    ;; F67 L4c — `replace` inside a non-extension class body has no
-    ;; shadow target (own definitions can't shadow themselves; §3.3.2
-    ;; rule 4 requires an extension context).
-    (at? tokens pos :kw "replace")
-    (fail! tokens pos
-           (str "`replace` modifier on class-body declaration is only "
-                "meaningful inside an `extend class` block — a plain "
-                "class definition has no target to shadow (§3.3.2 rule 4). "
-                "Drop the `replace` prefix, or move the declaration into "
-                "an `extend class` body if you meant to shadow another "
-                "declaration."))
-
-    ;; F67 L4 — `function` keyword inside class/protocol body retires
-    ;; with `methods:` (Proposal G collapse). Free functions still live
-    ;; at module scope.
-    (at? tokens pos :kw "function")
-    (fail! tokens pos
-           (str "F67 L4: `function` keyword inside class body is retired "
-                "(Proposal G class-body collapse). Migrate:\n\n"
-                "  - reader → observable: `name(args) :< <expr>`\n"
-                "  - void   → transition: `* <: name(args) -> * do: <body>`\n"
-                "  - writer → transition: `* <: name(args) -> * then: <update>`\n\n"
-                "Utility functions unrelated to `self` belong at module scope. "
-                "See spec §1.11."))
-
-    ;; F67 L4 — spec-canonical `def name(args) -> T: body` method form
-    ;; inside a class body retires (Proposal G collapse).
-    (at-def-method? tokens pos)
-    (fail! tokens pos
-           (str "F67 L4: `def " (t-value (peek-tok tokens (inc pos)))
-                "(args)` method form inside class body is retired "
-                "(Proposal G class-body collapse). Migrate:\n\n"
-                "  - reader → observable: `" (t-value (peek-tok tokens (inc pos)))
-                "(args) :< <expr>`\n"
-                "  - void   → transition: `* <: " (t-value (peek-tok tokens (inc pos)))
-                "(args) -> * do: <body>`\n"
-                "  - writer → transition: `* <: " (t-value (peek-tok tokens (inc pos)))
-                "(args) -> * then: <update>`\n\n"
-                "See spec §1.11."))
-
-    ;; F9 L2 — `accepts:` section (multiple signatures under one header)
-    (and (at? tokens pos :kw "accepts") (at? tokens (inc pos) :punct ":"))
-    (parse-accepts-section tokens pos)
-
-    ;; F9 L2 — `accepts foo(...)` per-entry sugar at class body level.
-    ;; Distinguished from `accepts:` by presence of an identifier (not
-    ;; `:`) immediately after the keyword. Produces a single-entry
-    ;; :accepts-section for uniform downstream consumption.
-    (and (at? tokens pos :kw "accepts") (at? tokens (inc pos) :ident))
-    (let [[_ p]  (expect tokens pos :kw "accepts")
-          [e p2] (parse-accepts-signature tokens p)]
-      [{:node :accepts-section :entries [e]} p2])
-
-    (and (at? tokens pos :ident) (= "conforms" (t-value (peek-tok tokens pos)))
-         (at? tokens (inc pos) :punct ":"))
-    (parse-conforms-line tokens pos)
-
-    (and (at? tokens pos :ident) (= "state" (t-value (peek-tok tokens pos)))
-         (at? tokens (inc pos) :punct ":"))
-    (fail! tokens pos
-           (str "`state:` section is retired at v1.0 — all fields are `data:`. "
-                "See spec §1.11."))
-
-    ;; F67 L4 — observable (reader-default on protocols; observable
-    ;; body on regular/record classes). Must precede field-decl guard.
-    (looks-like-observable? tokens pos)
-    (parse-observable tokens pos)
-
-    ;; F67 L5 — top-level field declaration (Proposal D). Fold
-    ;; produces the same synthetic `:data-section` that `data:` did,
-    ;; so protocol-kind rejection etc still fires uniformly.
-    (looks-like-field-decl? tokens pos)
-    (parse-field tokens pos)
-
-    :else nil))
-
-(defn- parse-class
-  "Parse a `class` or `protocol` top-level form. Returns [{:node :class …}
-   next-pos]. Detects `sealed protocol Foo:` — spec-retired form (§3.4.1) —
-   with a targeted diagnostic pointing at `enum` for closed sum types."
-  [tokens pos sugar-kind]
-  (let [pos-for-diag pos
-        opener-tok   (peek-tok tokens pos)
-        opener-line  (t-line opener-tok)
-        opener-col   (t-col opener-tok)
-        [_ p] (cond
-                (= :protocol sugar-kind) (expect tokens pos :kw "protocol")
-                (= :regular sugar-kind)  (expect tokens pos :kw "class")
-                :else                    (expect tokens pos :kw "class"))
-        [class-name p] (expect tokens p :ident)
-        [header-conforms p] (if (at? tokens p :punct "(")
-                              (parse-header-parens-conformances tokens p)
-                              [[] p])
-        [_ p] (expect tokens p :punct ":")
-        [_ p] (expect tokens p :newline)
-        [_ p] (expect tokens p :indent)
-        _ (binding [*out* *err*]
-            (println
-             (case sugar-kind
-               :protocol
-               (str "warning: `protocol " class-name ":` opener is "
-                    "deprecated (F68 Proposal H) at line " opener-line
-                    ":" opener-col ". Use `def " class-name ":` with "
-                    "`accepts:` entries — presence of `accepts:` marks "
-                    "the declaration as a protocol structurally.")
-               (str "warning: `class " class-name ":` opener is "
-                    "deprecated (F68 Proposal H) at line " opener-line
-                    ":" opener-col ". Use `def " class-name ":` — the "
-                    "parser infers class kind from body structural cues "
-                    "(presence of transitions or `use:`)."))))]
-    (loop [body [] p p]
-      (cond
-        (at? tokens p :dedent)
-        [(fold-class-body tokens pos-for-diag class-name sugar-kind
-                          header-conforms (fold-top-level-fields body))
-         (inc p)]
-
-        (at? tokens p :newline)
-        (recur body (inc p))
-
-        :else
-        (if-let [[sec p2] (parse-class-section tokens p)]
-          (recur (conj body sec) (skip-newlines tokens p2))
-          (fail! tokens p
-                 (str "expected metadata:, invariants:, use:, deprecated:, "
-                      "conforms:, accepts:, observable "
-                      "(`name[(args)] :< expr`), transition, field decl, "
-                      "or dedent in `"
-                      (if (= :protocol sugar-kind) "protocol" "class")
-                      " " class-name "` body")))))))
 
 ;; ---------------------------------------------------------------------------
-;; F9 Landing 3 — `extend class Foo:` top-level form.
+;; F9 Landing 3 — `extend Foo:` top-level form.
 ;;
-;;   extend class Foo:                    → :extend-class :target Foo
+;;   extend Foo:                    → :extend-class :target Foo
 ;;       methods:
 ;;           function bar(self): ...
 ;;
-;;   extend class Foo(NewProtocol):       → header-parens add to :conforms
+;;   extend Foo(NewProtocol):       → header-parens add to :conforms
 ;;       ...
-;;   extend class Foo:
+;;   extend Foo:
 ;;       conforms: NewProtocol            → body-form adds to :conforms
 ;;
 ;; Per §3.3.2 "What extensions cannot add", extension bodies accept only
@@ -1943,7 +1619,7 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- parse-extend-section
-  "Dispatch one section inside an `extend class Foo:` body. Strict —
+  "Dispatch one section inside an `extend Foo:` body. Strict —
    rejects sections spec §3.3.2 forbids (data/state/use/cases/metadata/
    deprecated). Accepts observables (F67 L4), wildcard self-transitions
    (F67 L4), invariants:, conforms:. `methods:` retires (F67 L4).
@@ -1971,12 +1647,11 @@
 
         :else
         (fail! tokens p
-               (str "`replace` inside `extend class " target "` must "
+               (str "`replace` inside `extend " target "` must "
                     "prefix an observable (`replace name[(args)] :< expr`) "
                     "or a wildcard self-transition (`replace * <: msg(args) "
                     "-> * do: <body>`). See §3.3.2 rule 4."))))
 
-    (at? tokens pos :kw "methods")    (parse-methods-section tokens pos)
     (at? tokens pos :kw "invariants") (parse-invariants-section tokens pos)
 
     (and (at? tokens pos :ident) (= "conforms" (t-value (peek-tok tokens pos)))
@@ -1996,7 +1671,7 @@
 
     (at? tokens pos :kw "data")
     (fail! tokens pos
-           (str "`data:` is not permitted inside `extend class " target
+           (str "`data:` is not permitted inside `extend " target
                 "` — extensions cannot add state (§3.3.2). Add fields "
                 "at the original class definition."))
 
@@ -2006,30 +1681,19 @@
     (looks-like-field-decl? tokens pos)
     (fail! tokens pos
            (str "field declaration `" (t-value (peek-tok tokens pos))
-                ": …` is not permitted inside `extend class " target
+                ": …` is not permitted inside `extend " target
                 "` — extensions cannot add state (§3.3.2). Add fields "
                 "at the original class definition."))
 
     (at? tokens pos :kw "use")
     (fail! tokens pos
-           (str "`use:` is not permitted inside `extend class " target
+           (str "`use:` is not permitted inside `extend " target
                 "` — extensions cannot add capabilities (§3.3.2). "
                 "Declare `use:` at the original class definition."))
 
-    (at? tokens pos :kw "cases")
-    (fail! tokens pos
-           (str "`cases:` is not permitted inside `extend class " target
-                "` — extensions cannot change an enum's case set (§3.3.2)."))
-
-    (at? tokens pos :kw "metadata")
-    (fail! tokens pos
-           (str "`metadata:` is not permitted inside `extend class " target
-                "` — kind/threading/QoS are set at the original class "
-                "definition and not modifiable by extensions (§3.3.2)."))
-
     (at? tokens pos :kw "deprecated")
     (fail! tokens pos
-           (str "`deprecated:` is not permitted inside `extend class "
+           (str "`deprecated:` is not permitted inside `extend "
                 target "` — deprecation belongs on the original definition."))
 
     (and (at? tokens pos :ident) (= "state" (t-value (peek-tok tokens pos)))
@@ -2041,39 +1705,11 @@
     :else nil))
 
 (defn- parse-extend-class
-  "Parse a top-level `extend class Foo:` or `extend Foo:` (F68 L3) form.
-   Header-parens conformances and body-form `conforms:` lines stack
-   additively (§3.4.5 rule 5). Rejects nested `extend` blocks (top-level
-   form only, per plan Q3.3)."
+  "Parse a top-level `extend Foo:` form. Header-parens conformances and
+   body-form `conforms:` lines stack additively (§3.4.5 rule 5). Rejects
+   nested `extend` blocks (top-level form only, per plan Q3.3)."
   [tokens pos]
-  (let [ext-tok (peek-tok tokens pos)
-        ext-line (t-line ext-tok)
-        ext-col  (t-col ext-tok)
-        [_ p]   (expect tokens pos :kw "extend")
-        ;; F68 L3 — the `class` word after `extend` is optional. When
-        ;; present, emit a deprecation warning; when absent, proceed to
-        ;; the target ident directly. `extend enum`/`extend protocol`
-        ;; were never spec surfaces — we still catch those as errors.
-        [uses-class-kw p]
-        (cond
-          (at? tokens p :kw "class")
-          (let [[_ p'] (expect tokens p :kw "class")]
-            (binding [*out* *err*]
-              (println (str "warning: `extend class …` is deprecated "
-                            "(F68 Proposal H) at line " ext-line ":"
-                            ext-col ". Use `extend Foo:` — the `class` "
-                            "word is redundant under unification (every "
-                            "extension targets a `def`-declared thing).")))
-            [true p'])
-
-          (or (at? tokens p :kw "enum") (at? tokens p :kw "protocol"))
-          (fail! tokens p
-                 (str "expected `class` (deprecated) or the target ident "
-                      "directly after `extend` — `extend enum` / `extend "
-                      "protocol` are not spec surfaces; extend the "
-                      "underlying class instead. See spec §3.3.2."))
-
-          :else [false p])
+  (let [[_ p]   (expect tokens pos :kw "extend")
         [target p] (expect tokens p :ident)
         [header-conforms p] (if (at? tokens p :punct "(")
                               (parse-header-parens-conformances tokens p)
@@ -2107,131 +1743,7 @@
           (fail! tokens p
                  (str "expected observable (`name[(args)] :< expr`), "
                       "transition (`* <: msg(args) -> * …`), invariants:, "
-                      "conforms:, or dedent in `extend class " target "` body")))))))
-
-;; ---------------------------------------------------------------------------
-;; Record  — the smallest top-level form
-;;
-;;   record <Name>:
-;;       <field declarations>
-;;       <observables — pure readers, parametric or zero-arg>
-;;
-;;   F67 L4 — `methods:` retires; records only carry fields + observables.
-;;   F67 L5 — `data:` header retires; fields live at record-body top level.
-;; ---------------------------------------------------------------------------
-
-(defn- parse-record [tokens pos]
-  (let [tok        (peek-tok tokens pos)
-        line       (t-line tok)
-        col        (t-col tok)
-        [_ p]      (expect tokens pos :kw "record")
-        [name p]   (expect tokens p :ident)
-        [_ p]      (expect tokens p :punct ":")
-        [_ p]      (expect tokens p :newline)
-        [_ p]      (expect tokens p :indent)]
-    (binding [*out* *err*]
-      (println (str "warning: `record " name ":` opener is deprecated "
-                    "(F68 Proposal H — full unification under `def`) at "
-                    "line " line ":" col ". Use `def " name ":` — the "
-                    "parser infers record kind from body structural cues "
-                    "(no transitions, no `use:`). See "
-                    "compiler/design/plans/proposal-h-full-unification-"
-                    "under-def.md.")))
-    (loop [sections [] p p]
-      (cond
-        (at? tokens p :dedent)
-        [{:node :record :name name
-          :sections (fold-top-level-fields sections)}
-         (inc p)]
-
-        (at? tokens p :newline)
-        (recur sections (inc p))
-
-        (at? tokens p :kw "data")
-        (let [[s p2] (parse-data-section tokens p)
-              p3 (skip-newlines tokens p2)]
-          (recur (conj sections s) p3))
-
-        (at? tokens p :kw "methods")
-        (let [[s p2] (parse-methods-section tokens p)
-              p3 (skip-newlines tokens p2)]
-          (recur (conj sections s) p3))
-
-        (at? tokens p :kw "deprecated")
-        (let [[s p2] (parse-deprecated-section tokens p)
-              p3 (skip-newlines tokens p2)]
-          (recur (conj sections s) p3))
-
-        ;; `state:` section retired at v1.0 (spec §1.11).
-        (and (at? tokens p :ident)
-             (= "state" (t-value (peek-tok tokens p)))
-             (at? tokens (inc p) :punct ":"))
-        (fail! tokens p
-               (str "`state:` section is retired at v1.0. Records are "
-                    "immutable; use top-level field declarations. See "
-                    "spec §1.11."))
-
-        ;; F67 L4a — observables on records (Proposal G: records
-        ;; collapse the same way — pure-data readers become
-        ;; observables `name(args) :< <expr>`, utility functions
-        ;; move to module scope). Same shape / same parser as atom
-        ;; observables (F67 L2).
-        (looks-like-observable? tokens p)
-        (let [[o p2] (parse-observable tokens p)
-              p3     (skip-newlines tokens p2)]
-          (recur (conj sections o) p3))
-
-        ;; F67 L5 — top-level field declaration on records (replaces
-        ;; `data:` section per Proposal D). Records are pure data holders;
-        ;; the collapse removes the redundant grouping section.
-        (looks-like-field-decl? tokens p)
-        (let [[f p2] (parse-field tokens p)
-              p3     (skip-newlines tokens p2)]
-          (recur (conj sections f) p3))
-
-        :else
-        (fail! tokens p "expected field decl (`name: Type [= default]`), observable (`name[(args)] :< expr`), deprecated:, or dedent in record body")))))
-
-(defn- parse-enum
-  "Parse `enum Foo:` followed by an indented list of ident cases,
-   one per line. Cases carry no payloads in this subset (v1.0 spec
-   allows tagged variants but game-toys uses bare cases only).
-
-     enum Key:
-         arrow_up
-         arrow_down
-         f"
-  [tokens pos]
-  (let [tok      (peek-tok tokens pos)
-        line     (t-line tok)
-        col      (t-col tok)
-        [_ p]    (expect tokens pos :kw "enum")
-        [name p] (expect tokens p :ident)
-        [_ p]    (expect tokens p :punct ":")
-        [_ p]    (expect tokens p :newline)
-        [_ p]    (expect tokens p :indent)
-        _        (binding [*out* *err*]
-                   (println (str "warning: `enum " name ":` opener is "
-                                 "deprecated (F68 Proposal H) at line "
-                                 line ":" col ". Use `def " name ":` "
-                                 "with `case <ident>` prefix on each "
-                                 "case — presence of `case` markers "
-                                 "in the body triggers enum kind "
-                                 "detection.")))]
-    (loop [cases [] p p]
-      (cond
-        (at? tokens p :dedent)
-        [{:node :enum :name name :cases cases} (inc p)]
-
-        (at? tokens p :newline)
-        (recur cases (inc p))
-
-        (at? tokens p :ident)
-        (let [[c p2] (expect tokens p :ident)]
-          (recur (conj cases c) (skip-newlines tokens p2)))
-
-        :else
-        (fail! tokens p "expected an enum case identifier or dedent in enum body")))))
+                      "conforms:, or dedent in `extend " target "` body")))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Module header  — module a.b.c
@@ -2274,20 +1786,10 @@
       (at? tokens p :eof)          [nil p]
       (at? tokens p :kw "module")  (parse-module-decl tokens p)
       (at? tokens p :kw "from")    (parse-from-import tokens p)
-      (at? tokens p :kw "record")  (parse-record tokens p)
-      (at? tokens p :kw "enum")    (parse-enum tokens p)
       (at? tokens p :kw "def")     (parse-def-atom tokens p)
 
-      ;; F9 L1 — `class Foo:` / `protocol Foo:` produce a `:class` node
-      ;; with `:kind` populated from the sugar keyword (or `metadata: kind:`
-      ;; in the body). Lower fail-nyis until F9 L2+ wires semantics.
-      (at? tokens p :kw "class")    (parse-class tokens p :regular)
-      (at? tokens p :kw "protocol") (parse-class tokens p :protocol)
-
-      ;; F9 L3 — `extend class Foo:` at top level. Extension body is
+      ;; F9 L3 — `extend Foo:` at top level. Extension body is
       ;; strict per §3.3.2: methods:/invariants:/conforms: only.
-      ;; Target-name resolution and composition (§3.3.2 rules 1-7)
-      ;; land in L4.
       (at? tokens p :kw "extend")   (parse-extend-class tokens p)
 
       ;; F9 L1 — spec §3.4.1 removed `sealed protocol`. Enumerations

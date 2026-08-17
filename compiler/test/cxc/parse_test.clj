@@ -316,12 +316,11 @@ def main:
         then: n => n + 2
 ")))))
 
-(deftest f67-l4-methods-section-retired-with-migration
-  (testing "F67 L4 — `methods:` section header is retired (Proposal G class-body collapse). Parser emits a targeted diagnostic naming each migration category (reader → observable, void → * <: … do:, writer → * <: … then:)."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"(?s)F67 L4.*`methods:` section is retired"
-         (first-node "def V:\n    x: Int\n    methods:\n        function bumped(self) -> Int:\n            return x\n")))))
+;; f67-l4-methods-section-retired-with-migration deleted at F68 L6b — `methods`
+;; is no longer a reserved word (Proposal H clears the sugar-body vocabulary),
+;; so `methods:` in a body lexes as `methods` (ident) + `:` and hits a generic
+;; parse error instead of a targeted diagnostic. F67 L4's migration guidance
+;; lives in the plan doc + git log.
 
 (deftest f67-l4-function-keyword-in-def-atom-body-retired
   (testing "F67 L4 — `function` keyword inside a def-atom body retires with `methods:`; free functions still live at module scope."
@@ -482,96 +481,12 @@ def main:
       (is (= :type-nullable (:node ty)))
       (is (= :type-named-tuple (get-in ty [:inner :node]))))))
 
-(deftest f9-l1-class-with-explicit-kind
-  (testing "F9 Landing 1 — `class Foo:` with `metadata: kind: regular` produces `:class :kind :regular`. Body-form kind matches sugar-less class keyword."
-    (let [n (first-node "class Foo:\n    metadata:\n        kind: regular\n")]
-      (is (= :class (:node n)))
-      (is (= "Foo" (:name n)))
-      (is (= :regular (:kind n)))
-      (is (empty? (:conforms n)))
-      (is (empty? (:body n))
-          "metadata: section is folded into :kind, not kept in :body"))))
-
-(deftest f9-l1-protocol-sugar
-  (testing "F9 Landing 1 — `protocol P:` sugar desugars to `:class :kind :protocol`. Sugar keyword sets kind; no explicit metadata needed. Post F67 L4: protocol defaults carry as observables (reader) or wildcard self-transitions."
-    (let [n (first-node "protocol P:\n    f() :< 1\n")]
-      (is (= :class (:node n)))
-      (is (= "P" (:name n)))
-      (is (= :protocol (:kind n))))))
-
-(deftest f9-l1-header-parens-conformance
-  (testing "F9 Landing 1 — `class Foo(P1, P2):` populates `:conforms` in declaration order."
-    (let [n (first-node "class Foo(P1, P2):\n    metadata:\n        kind: regular\n")]
-      (is (= :class (:node n)))
-      (is (= [{:node :type-ref :name "P1"}
-              {:node :type-ref :name "P2"}]
-             (:conforms n))))))
-
-(deftest f9-l1-body-form-conforms
-  (testing "F9 Landing 1 — body-form `conforms: P` populates `:conforms`; multiple `conforms:` lines legal per §3.4.5 rule 5."
-    (let [n (first-node "class Foo:\n    metadata:\n        kind: regular\n    conforms: P1\n    conforms: P2\n")]
-      (is (= [{:node :type-ref :name "P1"}
-              {:node :type-ref :name "P2"}]
-             (:conforms n))))))
-
-(deftest f9-l1-header-and-body-conformances-additive
-  (testing "F9 Landing 1 — header parens conformances and body-form entries stack additively (§3.4.5 rule 5)."
-    (let [n (first-node "class Foo(P1):\n    metadata:\n        kind: regular\n    conforms: P2\n")]
-      (is (= [{:node :type-ref :name "P1"}
-              {:node :type-ref :name "P2"}]
-             (:conforms n))))))
-
-(deftest f9-l1-sugar-vs-metadata-mismatch-rejected
-  (testing "F9 Landing 1 — sugar keyword (`protocol`) contradicting `metadata: kind:` (`enum`) is a hard parse error to prevent lying-about-kind."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"sugar keyword `protocol`.*contradicts.*enum"
-         (first-node "protocol Foo:\n    metadata:\n        kind: enum\n")))))
-
-(deftest f9-l1-unknown-metadata-key-fail-nyi
-  (testing "F9 Landing 1 — non-`kind:` metadata entries (thread, qos, pool, custom keys) fail-nyi with a pointer at F10."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"`metadata:` key `pool`.*F10"
-         (first-node "class Foo:\n    metadata:\n        pool: main\n")))))
-
-(deftest f9-l1-unknown-kind-value-rejected
-  (testing "F9 Landing 1 — `metadata: kind:` value must be one of the five spec-legal kinds (§3.3)."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"unknown `metadata: kind:` value `interface`"
-         (first-node "class Foo:\n    metadata:\n        kind: interface\n")))))
-
-(deftest f9-l1-sealed-protocol-retired
-  (testing "F9 Landing 1 — `sealed protocol Foo:` is a spec-retired form (§3.4.1); diagnostic points at `enum` for closed sum types."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"`sealed protocol` is retired at v1.0.*§3\.4\.1"
-         (first-node "sealed protocol Foo:\n    x: Int\n")))))
-
-(deftest f9-l1-class-body-accepts-observables-invariants
-  (testing "F9 Landing 1 + F67 L4 — class body accepts observables (Proposal G reader surface), invariants:, use:, deprecated:, and top-level field decls. `methods:` retires."
-    (let [n (first-node (str "class Foo:\n"
-                             "    metadata:\n"
-                             "        kind: regular\n"
-                             "    x: Int\n"
-                             "    get() :< x\n"))]
-      (is (= :class (:node n)))
-      (is (= 2 (count (:body n)))
-          "data-section (from top-level x: Int) + observable in body; metadata folded out"))))
-
-(deftest f9-l1-empty-conformance-parens-rejected
-  (testing "F9 Landing 1 — `class Foo():` is a hard error; omit the parens if no protocols conform."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"empty conformance list"
-         (first-node "class Foo():\n    metadata:\n        kind: regular\n")))))
-
-(deftest f9-l1-record-sugar-still-produces-record-node
-  (testing "F9 Landing 1 — backward compat: existing `def Foo:` sugar continues to produce a `:record` node (not routed through parse-class). Existing lower path unchanged."
-    (let [n (first-node "def R:\n    x: Int\n")]
-      (is (= :record (:node n))
-          "record sugar keeps its dedicated parser + AST kind for backward compat"))))
+;; F9 L1 sugar-path tests deleted at F68 L6b — the `class`/`protocol`/`record`
+;; sugar keywords and their `metadata: kind:` + header-conformance-parens
+;; surface are retired. `def Foo:` with structural detection is the sole
+;; opener. `sealed protocol` was never wired past L1 diagnostic — deleted
+;; alongside the rest of the L1 sugar surface. Header conformances now use
+;; body-form `conforms: P` (still supported inside `def` and `extend` bodies).
 
 ;; ---------------------------------------------------------------------------
 ;; F68 L1 (Proposal H) — full unification under `def`.
@@ -612,32 +527,6 @@ def main:
                              "    self <: bump -> self then: n => n + 1\n"))]
       (is (= :def-atom (:node n))))))
 
-(deftest f68-l1-record-sugar-emits-deprecation-warning
-  (testing "F68 L1 — `record Foo:` opener continues to parse but emits a deprecation warning naming Proposal H."
-    (let [sw (java.io.StringWriter.)]
-      (binding [*err* sw]
-        (first-node "record V:\n    x: Int\n"))
-      (let [stderr (str sw)]
-        (is (re-find #"`record V:` opener is deprecated" stderr))
-        (is (re-find #"F68 Proposal H" stderr))))))
-
-(deftest f68-l1-class-sugar-emits-deprecation-warning
-  (testing "F68 L1 — `class Foo:` opener continues to parse but emits a deprecation warning."
-    (let [sw (java.io.StringWriter.)]
-      (binding [*err* sw]
-        (first-node "class Foo:\n    metadata:\n        kind: regular\n    x: Int\n"))
-      (let [stderr (str sw)]
-        (is (re-find #"`class Foo:` opener is deprecated" stderr))))))
-
-(deftest f68-l1-protocol-sugar-emits-deprecation-warning
-  (testing "F68 L1 — `protocol Foo:` opener continues to parse but emits a deprecation warning pointing at `def` + `accepts:`."
-    (let [sw (java.io.StringWriter.)]
-      (binding [*err* sw]
-        (first-node "protocol P:\n    accepts:\n        f() -> Int\n"))
-      (let [stderr (str sw)]
-        (is (re-find #"`protocol P:` opener is deprecated" stderr))
-        (is (re-find #"accepts:" stderr))))))
-
 (deftest f68-l2-def-with-case-markers-reshapes-to-enum
   (testing "F68 L2 — `def Foo:` body with `case <ident>` prefix markers reshapes to `:enum` AST. Matches the shape `parse-enum` produces so downstream `build-enum-env` sees the same node kind."
     (let [n (first-node (str "def Color:\n"
@@ -665,15 +554,6 @@ def main:
                           "    case red\n"
                           "    n: Int = 0\n"))))))
 
-(deftest f68-l2-enum-sugar-emits-deprecation-warning
-  (testing "F68 L2 — `enum Foo:` opener continues to parse but emits a deprecation warning pointing at `def` + `case`."
-    (let [sw (java.io.StringWriter.)]
-      (binding [*err* sw]
-        (first-node "enum Direction:\n    up\n    down\n"))
-      (let [stderr (str sw)]
-        (is (re-find #"`enum Direction:` opener is deprecated" stderr))
-        (is (re-find #"`case <ident>`" stderr))))))
-
 (deftest f68-l3-extend-without-class-word-parses
   (testing "F68 L3 — `extend Foo:` (no `class` word) parses to the same `:extend-class` AST node as `extend Foo:`."
     (let [n (first-node
@@ -684,15 +564,6 @@ def main:
       (let [obs (first (:body n))]
         (is (= :observable (:node obs)))
         (is (= "bar" (:name obs)))))))
-
-(deftest f68-l3-extend-class-word-emits-deprecation-warning
-  (testing "F68 L3 — `extend class Foo:` (with the redundant `class` word) still parses but emits a deprecation warning pointing at `extend Foo:`."
-    (let [sw (java.io.StringWriter.)]
-      (binding [*err* sw]
-        (first-node "extend class Foo:\n    bar() :< 1\n"))
-      (let [stderr (str sw)]
-        (is (re-find #"`extend class …` is deprecated" stderr))
-        (is (re-find #"F68 Proposal H" stderr))))))
 
 (deftest f68-l3-extend-with-header-conforms-no-class-word
   (testing "F68 L3 — `extend Foo(NewProtocol):` (short form + header-parens conformance) parses to `:extend-class` with `:conforms` populated."
@@ -712,7 +583,7 @@ def main:
 (deftest f9-l2-accepts-section-parses
   (testing "F9 Landing 2 — `accepts:` block on a protocol collects each signature into `:accepts` on the class node. Params follow the standard `name: Type` convention (§2.5)."
     (let [n (first-node
-             (str "protocol P:\n"
+             (str "def P:\n"
                   "    accepts:\n"
                   "        foo(x: Int) -> Int\n"
                   "        bar(s: String) -> Bool\n"))]
@@ -722,34 +593,12 @@ def main:
       (is (= "foo" (:name (first  (:accepts n)))))
       (is (= "bar" (:name (second (:accepts n))))))))
 
-(deftest f9-l2-accepts-per-entry-sugar
-  (testing "F9 Landing 2 — per-entry sugar `accepts foo(x: Int) -> Int` at class body level folds into `:accepts` alongside section-form entries."
-    (let [n (first-node
-             (str "protocol P:\n"
-                  "    accepts foo(x: Int) -> Int\n"
-                  "    accepts:\n"
-                  "        bar(s: String) -> Bool\n"))]
-      (is (= 2 (count (:accepts n))))
-      (is (= #{"foo" "bar"} (into #{} (map :name (:accepts n))))))))
-
-(deftest f9-l2-accepts-rejected-on-non-protocol
-  (testing "F9 Landing 2 — `accepts:` on `kind: regular` fails at fold with a pointer at §3.4.5 (only protocols declare method surface)."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"`accepts:` is only valid on `kind: protocol`"
-         (first-node
-          (str "class Foo:\n"
-               "    metadata:\n"
-               "        kind: regular\n"
-               "    accepts:\n"
-               "        foo(x: Int) -> Int\n"))))))
-
-(deftest f9-l2-data-on-protocol-rejected
-  (testing "F9 Landing 2 — `data:` on `kind: protocol` fails at fold: protocols have no state per §3.4.5."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"`data:` is not permitted on `kind: protocol`"
-         (first-node "protocol P:\n    x: Int\n")))))
+;; f9-l2-accepts-per-entry-sugar / accepts-rejected-on-non-protocol /
+;; data-on-protocol-rejected deleted at F68 L6b — the per-entry `accepts <sig>`
+;; sugar lived in parse-class-section (retired); accepts-on-non-protocol and
+;; data-on-protocol were fold-class-body invariants (also retired). Structural
+;; detection in parse-def-atom handles the accepts→protocol / fields→record
+;; classification; there is no non-protocol accepts landing site anymore.
 
 (deftest f9-l2-accepts-contract-clauses-fail-nyi
   (testing "F9 Landing 2 — `accepts:` entries reject continuation-indented `requires`/`ensures`/effect annotations, with a pointer at F49 (contract inheritance)."
@@ -757,7 +606,7 @@ def main:
          clojure.lang.ExceptionInfo
          #"contract clauses.*not yet implemented|F49"
          (first-node
-          (str "protocol P:\n"
+          (str "def P:\n"
                "    accepts:\n"
                "        foo(x: Int) -> Int\n"
                "            requires: true\n"))))))
@@ -805,7 +654,7 @@ def main:
   (testing "F67 L4c — `replace` inside a non-extension class body has no shadow target; parser rejects with §3.3.2 rule-4 pointer."
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
-         #"`replace` modifier.*only meaningful.*`extend class`"
+         #"`replace` modifier.*only meaningful.*`extend"
          (first-node
           (str "def Widget:\n"
                "    n: Int = 0\n"
@@ -841,7 +690,7 @@ def main:
   (testing "F9 Landing 3 + F67 L5 — a field declaration inside `extend class` fails at parse per §3.3.2 (extensions cannot add state). Post-L5 the surface is top-level fields (no `data:` header)."
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
-         #"field declaration `x: …` is not permitted inside `extend class"
+         #"field declaration `x: …` is not permitted inside `extend"
          (first-node
           (str "extend Foo:\n"
                "    x: Int\n"))))))
@@ -856,31 +705,24 @@ def main:
                "    state:\n"
                "        x: Int\n"))))))
 
-(deftest f9-l3-extend-class-rejects-metadata
-  (testing "F9 Landing 3 — `metadata:` inside `extend class` fails at parse — kind/threading/QoS are set at the original definition."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"`metadata:` is not permitted inside `extend class"
-         (first-node
-          (str "extend Foo:\n"
-               "    metadata:\n"
-               "        kind: enum\n"))))))
+;; f9-l3-extend-class-rejects-metadata deleted at F68 L6b — `metadata` is no
+;; longer a reserved word; the retirement is the reservation removal itself.
+;; `metadata:` inside an extension body hits a generic parse error now.
 
 (deftest f9-l3-extend-class-rejects-use
   (testing "F9 Landing 3 — `use:` inside `extend class` fails at parse (extensions cannot add capabilities)."
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
-         #"`use:` is not permitted inside `extend class"
+         #"`use:` is not permitted inside `extend"
          (first-node
           (str "extend Foo:\n"
                "    use:\n"
                "        clock: Clock\n"))))))
 
-(deftest f9-l3-extend-rejects-non-class-target
-  (testing "F9 Landing 3 + F68 L3 — `extend enum Foo:` / `extend protocol Foo:` etc. fail at parse with a §3.3.2 pointer. Under F68 L3 the `class` word after `extend` is optional (the new form is `extend Foo:`), so the diagnostic explicitly names `enum`/`protocol` as non-extension surfaces."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"`extend enum` / `extend protocol` are not spec surfaces"
-         (first-node
-          (str "extend enum Foo:\n"
-               "    bar() :< 1\n"))))))
+;; f9-l3-extend-rejects-non-class-target deleted at F68 L6b — `enum` /
+;; `protocol` are no longer reserved words (both retired under Proposal H),
+;; so `extend enum Foo:` no longer needs a targeted diagnostic; it becomes
+;; a generic "expected `:` after ident" or "unexpected ident `Foo`" parse
+;; error since `enum` lexes as a bare identifier. Extensions always target
+;; a `def`-declared thing under unification, so the non-class-target check
+;; is now vacuous.
