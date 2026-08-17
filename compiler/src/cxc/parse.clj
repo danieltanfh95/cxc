@@ -1246,9 +1246,9 @@
       (at? tokens pos :kw "self")
       (at? tokens pos :ident)))
 
-(declare def-atom->record def-atom->protocol
+(declare def-atom->record def-atom->protocol def-atom->enum
          def-atom-body-has-transition? def-atom-body-has-use?
-         def-atom-body-has-accepts?
+         def-atom-body-has-accepts? def-atom-body-has-case?
          parse-accepts-section parse-accepts-signature)
 
 (defn- parse-def-atom [tokens pos]
@@ -1266,7 +1266,7 @@
         (let [folded  (fold-top-level-fields body)
               raw-def {:node :def-atom :name name :ctor-params ctor
                        :body folded}
-              ;; F68 L1 (Proposal H) — protocol detection reshapes at
+              ;; F68 L1/L2 (Proposal H) — protocol + enum reshapes at
               ;; parse. The record structural-detect case is deferred
               ;; to a later sublanding (after migration sweep), because
               ;; existing `def Foo:` uses without transitions currently
@@ -1278,6 +1278,9 @@
               (cond
                 (def-atom-body-has-accepts? folded)
                 (def-atom->protocol raw-def tokens pos)
+
+                (def-atom-body-has-case? folded)
+                (def-atom->enum raw-def tokens pos)
 
                 :else raw-def)]
           [reshaped (inc p)])
@@ -1388,6 +1391,17 @@
           (recur (conj body {:node :accepts-section :entries [e]})
                  (skip-newlines tokens p3)))
 
+        ;; F68 L2 (Proposal H) — `case <ident>` prefix marks an enum
+        ;; case. Presence of any `:enum-case` node in the body triggers
+        ;; the enum reshape at end-of-body-loop. Payload-carrying
+        ;; cases (`case ok(value: Int)`) deferred; current `parse-enum`
+        ;; only supports bare cases and this landing matches its scope.
+        (at? tokens p :kw "case")
+        (let [[_ p2]   (expect tokens p :kw "case")
+              [nm p3]  (expect tokens p2 :ident)]
+          (recur (conj body {:node :enum-case :case-name nm})
+                 (skip-newlines tokens p3)))
+
         (looks-like-observable? tokens p)
         (let [[o p2] (parse-observable tokens p)]
           (recur (conj body o) (skip-newlines tokens p2)))
@@ -1431,6 +1445,9 @@
 (defn- def-atom-body-has-accepts? [body]
   (boolean (some #(= :accepts-section (:node %)) body)))
 
+(defn- def-atom-body-has-case? [body]
+  (boolean (some #(= :enum-case (:node %)) body)))
+
 (defn- def-atom->record
   "Reshape a parsed :def-atom into a :record node. Rejects at parse if
    the `def` header carried ctor params — records use field-derived
@@ -1473,6 +1490,35 @@
      :conforms []
      :accepts  accepts-entries
      :body     (vec other-sections)}))
+
+(defn- def-atom->enum
+  "F68 L2 — reshape a parsed :def-atom into a :enum node when the body
+   contains `case <ident>` prefix markers. Matches the AST shape
+   `parse-enum` produces (`{:node :enum :name X :cases [str…]}`).
+   Rejects at parse if the body carries non-case items (fields,
+   observables, transitions) or ctor params — cases are exclusive."
+  [def-atom tokens pos-for-diag]
+  (when (seq (:ctor-params def-atom))
+    (fail! tokens pos-for-diag
+           (str "F68 L2: `def " (:name def-atom) "(...)` with ctor "
+                "params contains `case` markers — enums declare a "
+                "closed set of cases and carry no ctor state. Drop "
+                "the ctor params to keep as an enum, or remove the "
+                "`case` markers to promote to a class/atom.")))
+  (let [body   (:body def-atom)
+        cases  (filterv #(= :enum-case (:node %)) body)
+        others (remove #(= :enum-case (:node %)) body)]
+    (when (seq others)
+      (fail! tokens pos-for-diag
+             (str "F68 L2: `def " (:name def-atom) ":` mixes `case` "
+                  "markers with other body items (fields, observables, "
+                  "transitions, `use:`, `accepts:`). Enums are a closed "
+                  "set of cases with no per-instance state. Move the "
+                  "non-case items to a separate declaration, or drop "
+                  "the `case` markers if this was intended as a class.")))
+    {:node  :enum
+     :name  (:name def-atom)
+     :cases (mapv :case-name cases)}))
 
 ;; ---------------------------------------------------------------------------
 ;; F9 Landing 1 — `class` / `protocol` sugar over `class + metadata: kind:`.
@@ -1981,18 +2027,39 @@
     :else nil))
 
 (defn- parse-extend-class
-  "Parse a top-level `extend class Foo:` form. Header-parens conformances
-   and body-form `conforms:` lines stack additively (§3.4.5 rule 5).
-   Rejects nested `extend` blocks (top-level form only, per plan Q3.3)."
+  "Parse a top-level `extend class Foo:` or `extend Foo:` (F68 L3) form.
+   Header-parens conformances and body-form `conforms:` lines stack
+   additively (§3.4.5 rule 5). Rejects nested `extend` blocks (top-level
+   form only, per plan Q3.3)."
   [tokens pos]
-  (let [[_ p]   (expect tokens pos :kw "extend")
-        _       (when-not (at? tokens p :kw "class")
-                  (fail! tokens p
-                         (str "expected `class` after `extend` — `extend class Foo:` "
-                              "is the only extension form. `extend enum` / `extend "
-                              "protocol` are not spec surfaces; extend the underlying "
-                              "class instead. See spec §3.3.2.")))
-        [_ p]   (expect tokens p :kw "class")
+  (let [ext-tok (peek-tok tokens pos)
+        ext-line (t-line ext-tok)
+        ext-col  (t-col ext-tok)
+        [_ p]   (expect tokens pos :kw "extend")
+        ;; F68 L3 — the `class` word after `extend` is optional. When
+        ;; present, emit a deprecation warning; when absent, proceed to
+        ;; the target ident directly. `extend enum`/`extend protocol`
+        ;; were never spec surfaces — we still catch those as errors.
+        [uses-class-kw p]
+        (cond
+          (at? tokens p :kw "class")
+          (let [[_ p'] (expect tokens p :kw "class")]
+            (binding [*out* *err*]
+              (println (str "warning: `extend class …` is deprecated "
+                            "(F68 Proposal H) at line " ext-line ":"
+                            ext-col ". Use `extend Foo:` — the `class` "
+                            "word is redundant under unification (every "
+                            "extension targets a `def`-declared thing).")))
+            [true p'])
+
+          (or (at? tokens p :kw "enum") (at? tokens p :kw "protocol"))
+          (fail! tokens p
+                 (str "expected `class` (deprecated) or the target ident "
+                      "directly after `extend` — `extend enum` / `extend "
+                      "protocol` are not spec surfaces; extend the "
+                      "underlying class instead. See spec §3.3.2."))
+
+          :else [false p])
         [target p] (expect tokens p :ident)
         [header-conforms p] (if (at? tokens p :punct "(")
                               (parse-header-parens-conformances tokens p)
@@ -2121,11 +2188,22 @@
          arrow_down
          f"
   [tokens pos]
-  (let [[_ p]    (expect tokens pos :kw "enum")
+  (let [tok      (peek-tok tokens pos)
+        line     (t-line tok)
+        col      (t-col tok)
+        [_ p]    (expect tokens pos :kw "enum")
         [name p] (expect tokens p :ident)
         [_ p]    (expect tokens p :punct ":")
         [_ p]    (expect tokens p :newline)
-        [_ p]    (expect tokens p :indent)]
+        [_ p]    (expect tokens p :indent)
+        _        (binding [*out* *err*]
+                   (println (str "warning: `enum " name ":` opener is "
+                                 "deprecated (F68 Proposal H) at line "
+                                 line ":" col ". Use `def " name ":` "
+                                 "with `case <ident>` prefix on each "
+                                 "case — presence of `case` markers "
+                                 "in the body triggers enum kind "
+                                 "detection.")))]
     (loop [cases [] p p]
       (cond
         (at? tokens p :dedent)

@@ -638,6 +638,72 @@ def main:
         (is (re-find #"`protocol P:` opener is deprecated" stderr))
         (is (re-find #"accepts:" stderr))))))
 
+(deftest f68-l2-def-with-case-markers-reshapes-to-enum
+  (testing "F68 L2 — `def Foo:` body with `case <ident>` prefix markers reshapes to `:enum` AST. Matches the shape `parse-enum` produces so downstream `build-enum-env` sees the same node kind."
+    (let [n (first-node (str "def Color:\n"
+                             "    case red\n"
+                             "    case green\n"
+                             "    case blue\n"))]
+      (is (= :enum (:node n)))
+      (is (= "Color" (:name n)))
+      (is (= ["red" "green" "blue"] (:cases n))))))
+
+(deftest f68-l2-def-enum-with-ctor-params-rejected
+  (testing "F68 L2 — `def Foo(x: Int)` body with `case` markers is rejected — enums are a closed case set with no ctor state."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"F68 L2.*ctor params.*enums declare a closed set of cases"
+         (first-node (str "def Color(x: Int):\n"
+                          "    case red\n"))))))
+
+(deftest f68-l2-def-mixed-case-and-fields-rejected
+  (testing "F68 L2 — `def Foo:` mixing `case` markers with fields/observables/transitions is rejected — enums are a closed case set."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"F68 L2.*mixes `case` markers with other body items"
+         (first-node (str "def Color:\n"
+                          "    case red\n"
+                          "    n: Int = 0\n"))))))
+
+(deftest f68-l2-enum-sugar-emits-deprecation-warning
+  (testing "F68 L2 — `enum Foo:` opener continues to parse but emits a deprecation warning pointing at `def` + `case`."
+    (let [sw (java.io.StringWriter.)]
+      (binding [*err* sw]
+        (first-node "enum Direction:\n    up\n    down\n"))
+      (let [stderr (str sw)]
+        (is (re-find #"`enum Direction:` opener is deprecated" stderr))
+        (is (re-find #"`case <ident>`" stderr))))))
+
+(deftest f68-l3-extend-without-class-word-parses
+  (testing "F68 L3 — `extend Foo:` (no `class` word) parses to the same `:extend-class` AST node as `extend class Foo:`."
+    (let [n (first-node
+             (str "extend Foo:\n"
+                  "    bar() :< 1\n"))]
+      (is (= :extend-class (:node n)))
+      (is (= "Foo" (:target n)))
+      (let [obs (first (:body n))]
+        (is (= :observable (:node obs)))
+        (is (= "bar" (:name obs)))))))
+
+(deftest f68-l3-extend-class-word-emits-deprecation-warning
+  (testing "F68 L3 — `extend class Foo:` (with the redundant `class` word) still parses but emits a deprecation warning pointing at `extend Foo:`."
+    (let [sw (java.io.StringWriter.)]
+      (binding [*err* sw]
+        (first-node "extend class Foo:\n    bar() :< 1\n"))
+      (let [stderr (str sw)]
+        (is (re-find #"`extend class …` is deprecated" stderr))
+        (is (re-find #"F68 Proposal H" stderr))))))
+
+(deftest f68-l3-extend-with-header-conforms-no-class-word
+  (testing "F68 L3 — `extend Foo(NewProtocol):` (short form + header-parens conformance) parses to `:extend-class` with `:conforms` populated."
+    (let [n (first-node
+             (str "extend Foo(NewProtocol):\n"
+                  "    bar() :< 3\n"))]
+      (is (= :extend-class (:node n)))
+      (is (= "Foo" (:target n)))
+      (is (= [{:node :type-ref :name "NewProtocol"}]
+             (:conforms n))))))
+
 ;; ---------------------------------------------------------------------------
 ;; F9 Landing 2 — parse `accepts:` (section-form and per-entry sugar);
 ;; validate kind-vs-section constraints in fold-class-body.
@@ -811,10 +877,10 @@ def main:
                "        clock: Clock\n"))))))
 
 (deftest f9-l3-extend-rejects-non-class-target
-  (testing "F9 Landing 3 — `extend enum Foo:` / `extend protocol Foo:` etc. fail at parse with a §3.3.2 pointer — `extend class` is the only extension form."
+  (testing "F9 Landing 3 + F68 L3 — `extend enum Foo:` / `extend protocol Foo:` etc. fail at parse with a §3.3.2 pointer. Under F68 L3 the `class` word after `extend` is optional (the new form is `extend Foo:`), so the diagnostic explicitly names `enum`/`protocol` as non-extension surfaces."
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
-         #"expected `class` after `extend`"
+         #"`extend enum` / `extend protocol` are not spec surfaces"
          (first-node
           (str "extend enum Foo:\n"
                "    bar() :< 1\n"))))))
