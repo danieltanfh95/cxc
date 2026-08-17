@@ -204,14 +204,28 @@
    (F52), the `:user` fallback splits per input file."
   [top-nodes]
   (let [prelude-provenance (prelude-name->module)]
-    (reduce
-      (fn [table node]
-        (if-not (contains? declaration-kinds (:node node))
-          table
-          (let [module (get prelude-provenance (:name node) :user)]
-            (assoc table (:name node) (entry-for node module)))))
-      {}
-      top-nodes)))
+    (first
+     (reduce
+      (fn [[table current-module] node]
+        (cond
+          ;; F51 L1 — a `module <name>` node updates the current
+          ;; provenance for all subsequent declarations until the
+          ;; next `:module` node. Prelude declarations still get
+          ;; their std.* attribution from `prelude-provenance` (the
+          ;; prelude synthesizes no `:module` node when assembled).
+          (= :module (:node node))
+          [table (keyword (:name node))]
+
+          (contains? declaration-kinds (:node node))
+          (let [module (or (get prelude-provenance (:name node))
+                           current-module
+                           :user)]
+            [(assoc table (:name node) (entry-for node module)) current-module])
+
+          :else
+          [table current-module]))
+      [{} nil]
+      top-nodes))))
 
 ;; ---------------------------------------------------------------------------
 ;; Parity check — Landing 1 safety net

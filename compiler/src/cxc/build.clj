@@ -237,7 +237,12 @@
   "Blank out `module <dotted>` and `from <dotted> import ...` lines in
    a source string. Keeps line numbers stable for downstream errors
    while making the concatenated multi-file source parse as a single
-   program without redundant/conflicting module headers."
+   program without redundant/conflicting module headers.
+
+   F51 L1 (2026-08-18) — `module` headers are now rejected at compile-
+   directory entry (see `reject-user-module-header!`); the strip here
+   only sees `from` lines in practice. Kept as `strip-module-and-...`
+   until L3 removes the flat-namespace concatenation shim entirely."
   [src]
   (->> (clojure.string/split-lines src)
        (map (fn [line]
@@ -247,6 +252,94 @@
                   (clojure.string/starts-with? trimmed "from ")   ""
                   :else line))))
        (clojure.string/join "\n")))
+
+(def ^:private main-module-kw
+  "F51 L1 — root of src-dir (and single-file compile) is module `:main`.
+   Subdirectory named `main` collides with this — see
+   `reject-reserved-main-subdir!`."
+  :main)
+
+(defn- derive-module-name
+  "F51 L1 — derive a module keyword from a file's containing directory
+   relative to `src-dir`. Files directly in `src-dir/` → `:main`;
+   files in `src-dir/foo/` → `:foo`; files in `src-dir/foo/bar/` →
+   `:foo.bar`."
+  [^java.io.File src-dir ^java.io.File file]
+  (let [parent (.getParentFile file)]
+    (if (or (nil? parent) (= (.getCanonicalPath parent)
+                             (.getCanonicalPath src-dir)))
+      main-module-kw
+      (let [src-path    (.getCanonicalPath src-dir)
+            parent-path (.getCanonicalPath parent)
+            rel         (if (clojure.string/starts-with? parent-path
+                                                         (str src-path "/"))
+                          (subs parent-path (inc (count src-path)))
+                          parent-path)
+            dotted      (clojure.string/replace rel "/" ".")]
+        (keyword dotted)))))
+
+(defn- reject-user-module-header!
+  "F51 L1 — user-authored `module <name>` header is retired. Modules
+   are derived from directory structure (§7.2 refactor); a per-file
+   header is redundant and a source of drift. Fires a targeted
+   `:cxc-f51-module-header-removed` naming the file's derived module
+   and pointing at the migration (delete the line)."
+  [^java.io.File file parsed-nodes derived-module]
+  (when-let [m (first (filter #(= :module (:node %)) parsed-nodes))]
+    (throw (ex-info
+            (str "F51 L1: `module " (:name m) "` header in " (.getName file)
+                 " is retired — cxc modules are derived from directory "
+                 "structure (spec §7.2). This file's module is `"
+                 (name derived-module) "` based on its path relative to "
+                 "src-dir. Delete the `module` line.")
+            {:kind :cxc-f51-module-header-removed
+             :file (.getPath file)
+             :header-name (:name m)
+             :derived-module derived-module}))))
+
+(defn- reject-reserved-main-subdir!
+  "F51 L1 — a subdirectory named `main` at any level under `src-dir`
+   would collide with the reserved `:main` module (root of src-dir /
+   single-file compile). Refuse at compile start."
+  [^java.io.File src-dir]
+  (doseq [^java.io.File d (file-seq src-dir)]
+    (when (and (.isDirectory d)
+               (= "main" (.getName d))
+               (not= (.getCanonicalPath d) (.getCanonicalPath src-dir)))
+      (throw (ex-info
+              (str "F51 L1: subdirectory `" (.getPath d)
+                   "` collides with the reserved `:main` module "
+                   "(root of src-dir / single-file compile). Rename "
+                   "the directory (any other name works).")
+              {:kind :cxc-f51-reserved-directory-name
+               :dir (.getPath d)})))))
+
+(defn- reject-duplicate-declarations-per-module!
+  "F51 L1 — a declared name may appear at most once per module. Fires
+   with the offending name and both module positions so the user can
+   fix the collision."
+  [files-with-nodes]
+  (let [by-module (reduce
+                    (fn [acc {:keys [module nodes file]}]
+                      (reduce (fn [acc n]
+                                (if (contains? #{:record :def-atom :enum}
+                                               (:node n))
+                                  (update-in acc [module (:name n)]
+                                             (fnil conj []) file)
+                                  acc))
+                              acc nodes))
+                    {}
+                    files-with-nodes)]
+    (doseq [[module by-name] by-module
+            [nm files] by-name
+            :when (> (count files) 1)]
+      (throw (ex-info
+              (str "F51 L1: declaration `" nm "` appears more than once "
+                   "in module `" (name module) "` (files: "
+                   (mapv #(.getName ^java.io.File %) files) ").")
+              {:kind :cxc-f51-duplicate-declaration-in-module
+               :module module :name nm
+               :files (mapv #(.getPath ^java.io.File %) files)})))))
 
 (defn compile-directory-to-file
   "Compile every `*.cxc` file under `src-dir` as one program. Files
@@ -271,22 +364,51 @@
         _       (when-not (.isDirectory dir)
                   (throw (ex-info (str "src-dir is not a directory: " src-dir)
                                   {:src-dir src-dir})))
+        ;; F51 L1 — refuse `src-dir/main/` up front; it would produce
+        ;; a `:main` module colliding with the root's default.
+        _       (reject-reserved-main-subdir! dir)
         files   (->> (file-seq dir)
                      (filter #(and (.isFile ^java.io.File %)
                                    (.endsWith (.getName ^java.io.File %) ".cxc")))
                      (sort-by #(.getPath ^java.io.File %)))
         srcs    (mapv slurp files)
-        ;; Parse+validate each file independently so import errors
-        ;; point at the offending file.
-        _       (doseq [[f src] (map vector files srcs)]
+        ;; F51 L1 — parse each file separately, tag with derived
+        ;; module, reject user-authored `module` headers, and check
+        ;; import validity.
+        files-with-nodes
+        (mapv (fn [[^java.io.File f src]]
+                (let [module (derive-module-name dir f)
+                      parsed (try
+                               (parse/parse src)
+                               (catch clojure.lang.ExceptionInfo e
+                                 (throw (ex-info (str "in " (.getName f)
+                                                      ": " (.getMessage e))
+                                                 (assoc (ex-data e)
+                                                        :file (.getPath f))
+                                                 e))))]
+                  (reject-user-module-header! f parsed module)
                   (try
-                    (validate-imports (parse/parse src))
+                    (validate-imports parsed)
                     (catch clojure.lang.ExceptionInfo e
-                      (throw (ex-info (str "in " (.getName ^java.io.File f)
+                      (throw (ex-info (str "in " (.getName f)
                                            ": " (.getMessage e))
                                       (assoc (ex-data e)
-                                             :file (.getPath ^java.io.File f))
-                                      e)))))
-        combined (clojure.string/join "\n\n"
-                                      (map strip-module-and-import-lines srcs))]
+                                             :file (.getPath f))
+                                      e))))
+                  {:file f :module module :nodes parsed}))
+              (map vector files srcs))
+        _       (reject-duplicate-declarations-per-module! files-with-nodes)
+        ;; F51 L1 — prepend a synthetic `module <derived>` line to
+        ;; each source string before concatenation. The parser sees
+        ;; it as a normal `:module` node; `resolve/build-symbol-table`
+        ;; walks the stream stateful and attributes downstream decls
+        ;; to that module. `strip-module-and-import-lines` still runs
+        ;; to blank `from ...` (the flat-namespace concatenation shim
+        ;; stays until F51 L3 lands scoped resolution).
+        with-module-headers
+        (mapv (fn [[{:keys [module]} src]]
+                (str "module " (clojure.core/name module) "\n\n"
+                     (strip-module-and-import-lines src)))
+              (map vector files-with-nodes srcs))
+        combined (clojure.string/join "\n\n" with-module-headers)]
     (compile-source-to-file combined name out-dir opts))))

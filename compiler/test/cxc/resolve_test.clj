@@ -14,6 +14,19 @@
         renamed   (prelude/rewrite-prelude-names combined)]
     (resolve/build-symbol-table renamed)))
 
+(defn- table-from-with-module
+  "F51 L1 — like `table-from` but with a synthetic `module <mod>`
+   header prepended to the user source, mirroring what
+   `build/compile-directory-to-file` injects per file. Verifies
+   `build-symbol-table` walks `:module` nodes statefully and
+   attributes downstream user decls to that module (rather than
+   falling back to `:user`)."
+  [module-nm user-src]
+  (let [tagged   (str "module " module-nm "\n\n" user-src)
+        combined (parse/parse (str prelude/source tagged))
+        renamed  (prelude/rewrite-prelude-names combined)]
+    (resolve/build-symbol-table renamed)))
+
 (deftest table-carries-prelude-provenance
   (testing "F51 — each prelude declaration is attributed to its owning std.* module"
     (let [table (table-from "def main:\n    -> running\n        do: print(\"hi\")\n")]
@@ -93,3 +106,31 @@
       (is (= "bump" (:name (resolve/lookup-member ctx "V" :methods "bump"))))
       (is (= "x"    (:name (resolve/lookup-member ctx "V" :fields  "x"))))
       (is (nil?     (resolve/lookup-member ctx "V" :methods "nope"))))))
+
+;; ---------------------------------------------------------------------------
+;; F51 L1 — module header tags user decls with their file's derived module.
+;; The build layer synthesizes `module <derived>` per file; these tests
+;; exercise the symbol-table side of that shape directly.
+;; ---------------------------------------------------------------------------
+
+(deftest f51-l1-module-header-attributes-following-decls
+  (testing "F51 L1 — a `module foo` header attributes every subsequent user decl to `:foo`. Prelude decls keep their `:std.*` attribution regardless."
+    (let [table (table-from-with-module "foo" "def V:\n    x: Int\n\ndef main:\n    -> running\n")]
+      (is (= :foo   (get-in table ["V"    :module])))
+      (is (= :foo   (get-in table ["main" :module])))
+      (is (= :std.time (get-in table ["_Cxc_Duration" :module]))
+          "prelude decls unaffected by user module header"))))
+
+(deftest f51-l1-no-module-header-defaults-user-provenance
+  (testing "F51 L1 — a source with no `module` header (single-file compile before build injects the synthetic `main` header) keeps the legacy `:user` provenance for backward compatibility."
+    (let [table (table-from "def V:\n    x: Int\n\ndef main:\n    -> running\n")]
+      (is (= :user (get-in table ["V"    :module])))
+      (is (= :user (get-in table ["main" :module]))))))
+
+(deftest f51-l1-module-provenance-flips-mid-stream
+  (testing "F51 L1 — two `module` headers in one node stream (as multi-file compile produces after concatenation) attribute each region to its declared module."
+    (let [table (table-from-with-module "foo"
+                  "def V:\n    x: Int\n\nmodule bar\n\ndef W:\n    y: Int\n\ndef main:\n    -> running\n")]
+      (is (= :foo (get-in table ["V"    :module])))
+      (is (= :bar (get-in table ["W"    :module])))
+      (is (= :bar (get-in table ["main" :module]))))))

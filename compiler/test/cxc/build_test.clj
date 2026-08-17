@@ -477,3 +477,72 @@
                        (catch clojure.lang.ExceptionInfo e e))]
       (is (some? ex) "expected an exception for an unknown target")
       (is (re-find #"prelude module resource missing" (ex-message ex))))))
+
+;; ---------------------------------------------------------------------------
+;; F51 L1 — module identity + provenance at compile-directory entry.
+;; ---------------------------------------------------------------------------
+
+(defn- write-file! [^java.io.File dir rel-path content]
+  (let [f (java.io.File. dir rel-path)]
+    (.mkdirs (.getParentFile f))
+    (spit f content)
+    f))
+
+(deftest f51-l1-user-module-header-rejected-with-fix-it
+  (testing "F51 L1 — a `module <name>` header at the top of any source file is a hard error; diagnostic names the file's derived module and points at the fix (delete the line)."
+    (let [src-dir (tmp-dir)
+          out-dir (tmp-dir)
+          _       (write-file! src-dir "hello.cxc"
+                               "module com.example.hello\n\ndef main:\n    -> running\n        do: print(1)\n")
+          ex      (try
+                    (build/compile-directory-to-file (.getPath src-dir)
+                                                     "hello" (.getPath out-dir))
+                    nil
+                    (catch clojure.lang.ExceptionInfo e e))]
+      (is (some? ex) "expected fail! on the retired header")
+      (is (re-find #"F51 L1" (ex-message ex)))
+      (is (re-find #"derived from directory structure" (ex-message ex)))
+      (is (re-find #"main" (ex-message ex))
+          "diagnostic names the derived module (`:main` for root of src-dir)"))))
+
+(deftest f51-l1-reserved-main-subdirectory-rejected
+  (testing "F51 L1 — a `src-dir/main/` subdirectory collides with the reserved `:main` module (root of src-dir + single-file compile). Rejected at compile start with a rename fix-it."
+    (let [src-dir (tmp-dir)
+          out-dir (tmp-dir)
+          _       (write-file! src-dir "root.cxc"
+                               "def main:\n    -> running\n        do: print(1)\n")
+          _       (write-file! src-dir "main/other.cxc"
+                               "def X:\n    n: Int\n")
+          ex      (try
+                    (build/compile-directory-to-file (.getPath src-dir)
+                                                     "prog" (.getPath out-dir))
+                    nil
+                    (catch clojure.lang.ExceptionInfo e e))]
+      (is (some? ex))
+      (is (re-find #"F51 L1: subdirectory" (ex-message ex)))
+      (is (re-find #"reserved `:main`" (ex-message ex))))))
+
+(deftest f51-l1-duplicate-declaration-in-same-module-rejected
+  (testing "F51 L1 — same declaration name in two files in the same directory (== same module) is a hard error naming the collision and both files."
+    (let [src-dir (tmp-dir)
+          out-dir (tmp-dir)
+          _       (write-file! src-dir "a.cxc"
+                               "def V:\n    n: Int\n")
+          _       (write-file! src-dir "b.cxc"
+                               "def V:\n    n: Int\n\ndef main:\n    -> running\n        do: print(1)\n")
+          ex      (try
+                    (build/compile-directory-to-file (.getPath src-dir)
+                                                     "prog" (.getPath out-dir))
+                    nil
+                    (catch clojure.lang.ExceptionInfo e e))]
+      (is (some? ex))
+      (is (re-find #"F51 L1: declaration `V` appears more than once"
+                   (ex-message ex)))
+      (is (re-find #"main" (ex-message ex))
+          "names the module (root of src-dir → :main)"))))
+
+(deftest f51-l1-multi-file-demo-migrates-cleanly
+  (testing "F51 L1 — the migrated multi-file-demo (module headers removed) still compiles + runs. Uses the existing example on disk."
+    (let [{:keys [exit stdout]} (compile-dir-and-run "multi-file-demo")]
+      (is (zero? exit) "runs successfully after header removal")
+      (is (= "42\n" stdout) "prints Counter(seed: 41).bump = 42"))))
