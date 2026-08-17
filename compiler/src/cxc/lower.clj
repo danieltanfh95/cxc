@@ -2565,22 +2565,14 @@
                           (get-in (:atom-env ctx) [owner :observables]))
           self-atom (:atom (get-in ctx [:locals "self"]))]
       (cond
-        ;; F33 Landing 1 — reject cross-atom `data:` field reads. Spec
-        ;; §1.11: `data:` fields are internal to the enclosing atom;
-        ;; external code sees entrypoints, observables, emissions. The
-        ;; happy accident of ObjC `@property`-synthesized getters is
-        ;; spec-invalid — see plans/f33-encapsulation.md L1.
-        (and f (not o) (not raw-obs) (not= owner self-atom))
-        (fail-compile! :cxc-f33-cross-atom-data-access
-                       (str "cross-atom `data:` field access: `"
-                            field-name "` is a data-field on atom `"
-                            owner "` and cannot be read from outside "
-                            "(spec §1.11). Fix: on `" owner "`, add "
-                            "either an observable `" field-name " :< <expr>` "
-                            "or a reader method `function " field-name
-                            "(self) -> T: return self." field-name "`.")
-                       node)
-
+        ;; F33 (Proposal C+C1, rewrite 2026-08-17): external `.field`
+        ;; reads on any atom are spec-legal. Reading is observation, not
+        ;; mutation; external mutation is impossible by grammar (no
+        ;; `:assign` from parse). Atomic transitions (F33 L2-L3
+        ;; snapshot/commit) + F32 L4 (atomic-pointer-swap on cross-atom
+        ;; reads) provide the correctness story. The previous L1
+        ;; diagnostic that rejected cross-atom reads was retracted.
+        ;; See plans/f33-encapsulation.md L1.
         f (cxc-type->type-kw (:cxc-ty f)
                              (:record-env ctx) (:atom-env ctx) (:enum-env ctx) node)
         ;; Observables read like fields — dot syntax on an ObjC object

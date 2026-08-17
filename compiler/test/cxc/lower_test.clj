@@ -2591,21 +2591,20 @@ def main:
          #"nullable value type `Int\?`.*F39 Landing 5"
          (lower-src "def X:\n    data:\n        n: Int? = nil\n\ndef main:\n    -> running\n        do: print(0)\n")))))
 
-(deftest f33-l1-cross-atom-data-field-read-rejected
-  (testing "F33 Landing 1 — reading a `data:` field from outside the enclosing atom is a compile error. Spec §1.11: data-fields are internal; external reads must go through an observable or reader method. Diagnostic names the field, the owner atom, cites §1.11, and offers both migration paths."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"cross-atom `data:` field access.*`n`.*`Counter`.*§1\.11.*observable.*reader method"
-         (lower-src "def Counter:\n    data:\n        n: Int = 42\n\ndef main:\n    -> running\n        do: print(Counter().n)\n")))))
+(deftest f33-cross-atom-data-field-read-allowed
+  (testing "F33 (Proposal C+C1, 2026-08-17 rewrite): external `.field` reads on any atom are spec-legal. Reading is observation, not mutation; the previous cross-atom-read diagnostic was retracted. External mutation is impossible by grammar (parse has no `:assign`), so the encapsulation firewall is structural without needing a read-blocking guard."
+    (let [prog (lower-src "def Counter:\n    data:\n        n: Int = 42\n\ndef main:\n    -> running\n        do: print(Counter().n)\n")]
+      (is (= :objc-program (:node prog))
+          "external `Counter().n` read compiles cleanly under Proposal C+C1"))))
 
-(deftest f33-l1-observable-read-still-allowed
-  (testing "F33 Landing 1 exempts observables. `n :< raw_n` on the atom exposes the field to external reads without violating encapsulation."
+(deftest f33-observable-read-still-allowed
+  (testing "Observable reads compile — the observable-wrapped shape is one of two valid patterns for exposing computed views (the other being direct `.field` reads under Proposal C+C1)."
     (let [prog (lower-src "def Counter:\n    data:\n        raw_n: Int = 42\n\n    n :< raw_n\n\ndef main:\n    -> running\n        do: print(Counter().n)\n")]
       (is (= :objc-program (:node prog))
-          "compiles cleanly — observable read is spec-legal"))))
+          "observable read is spec-legal"))))
 
-(deftest f33-l1-self-field-read-still-allowed
-  (testing "F33 Landing 1 exempts self-field reads. Inside the atom's own method / invariant / transition body, `self.n` (or bare `n`) reads the data field directly — the guard only fires for cross-atom reads."
+(deftest f33-self-field-read-still-allowed
+  (testing "Self-field reads inside the atom's own method / invariant / transition body compile — `self.n` (or bare `n`) reads the data field directly, same as before."
     (let [prog (lower-src "def Counter:\n    data:\n        n: Int = 10\n\n    methods:\n        function bump(self) -> Int:\n            return self.n + 1\n\ndef main:\n    def c: Counter\n\n    -> running\n        do: print(0)\n")]
       (is (= :objc-program (:node prog))
           "self.n inside Counter's own method compiles cleanly"))))

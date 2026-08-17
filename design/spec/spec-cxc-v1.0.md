@@ -56,7 +56,7 @@ See `../working-notes.md` for the design-decision journal that led to the curren
 
 **Double-colon header form removed.** `class Foo: A, B:` → **compile error** in v0.11 (was warning in v0.10.2). `class MyViewController: UIViewController:` → **compile error**. Migration was mechanical during v0.10.2's grace period; any lingering uses need updating. Grammar `conformance_clause` is now the sole path for header-declared conformance.
 
-**`mutating` effect retired (§3.5.2).** Dead code surfaced by post-v0.11 audit. Carried over from a pre-v0.6.0 design that had `struct` as a live construct; v0.6.0 unified struct/enum/protocol/class under `kind:` metadata. No live use site: `kind: record` forbids `state:` so records can't mutate; `kind: regular` methods that mutate are inferred as writers by §8.4.1 reader/writer classification, no author declaration needed. Removed from §3.5.2 effect list and from grammar `method_decl` / `effect_atom` productions. Same reason `throws` was retired v0.8.5 — no live semantics under current design.
+**`mutating` effect retired (§3.5.2).** Dead code surfaced by post-v0.11 audit. Carried over from a pre-v0.6.0 design that had `struct` as a live construct; v0.6.0 unified struct/enum/protocol/class under `kind:` metadata. No live use site: `kind: record` structurally forbids transitions so records can't mutate; `kind: regular` methods that assign to `data:` fields via transitions are inferred as writers by §8.4.1 reader/writer classification, no author declaration needed. Removed from §3.5.2 effect list and from grammar `method_decl` / `effect_atom` productions. Same reason `throws` was retired v0.8.5 — no live semantics under current design.
 
 **§3.4.5 updated** — the retirement subsection reframed from "deprecated in v0.10.2, removed in v0.11" to "removed in v0.11." §10 grammar's deprecation note becomes a historical-record note.
 
@@ -298,15 +298,15 @@ Major-version bump. Not a "dissolves into existing mechanism" session — this i
 - **§3.4.4 new (Default Method Inheritance for Structural Conformers).** A class that structurally conforms to protocol `P` **inherits P's default methods** for messages the class does not define itself. This makes structural conformance load-bearing rather than a purely static-checking device. Diamond ambiguity (class conforms to two protocols, both provide defaults for the same message, class defines neither) is a compile error at the ambiguous call site — resolvable by defining the method on the class or by upcasting to a specific protocol.
 - **§4.10.4.3 (Category) retracted.** The Category section class is removed. Cross-references now point at §3.3.2. Existing `category(target_class: X):` syntax is no longer legal; migration is mechanical (`category(target_class: NSString):` → `extend class NSString:`).
 - **Conflict rules.** Two `extend class Foo:` blocks that add methods with the same name to the same class are a compile error at the composing site. To opt into shadowing, one extension declares the method with the `replace` modifier: `replace function foo(self):`. Consistent with §1.2 (author intent, not authority) — the shadowing intent must be visible in source, not implicit in link order (ObjC's fragile "last loaded wins" is retired).
-- **State fields still cannot be added via extension.** Adding a `state:` field would change memory layout, which §4.18.3 fixes at compile time. Extensions can add invariants over *existing* state fields, but not declare new ones. Same rule as under the previous `category(...)` mechanism.
+- **Data fields still cannot be added via extension.** Adding a `data:` field would change memory layout, which §4.18.3 fixes at compile time. Extensions can add invariants over *existing* data fields, but not declare new ones. Same rule as under the previous `category(...)` mechanism.
 - **§5.1 note.** Method-table population is uniform: original definition members and extension members feed the same runtime method table. At dispatch time there is no distinction between "defined here" and "extended in."
-- **§7.7 note.** Extension visibility follows module imports. Extensions declared in module B become visible when B is imported. Extensions themselves may carry `expose` on individual members exactly as a definition body can.
+- **§7.7 note.** Extension visibility follows module imports. Extensions declared in module B become visible when B is imported.
 - **§10 grammar.** `class_decl` production extended with an optional `extend` prefix. Generic-parameter and where-clause productions unchanged — they compose at the declaration position where they already worked for classes and functions.
 - **Ink #W-69, #W-70 resolved by unification.** See friction logs.
 
 **Cost / benefit.**
 
-- **One vocabulary.** `class Foo:` for definition, `extend class Foo:` for extension. Same class-body syntax, same section discipline (`data:` / `state:` / `methods:` / `invariants:` / `accepts:`). No `ClassSpec`, no invocation form.
+- **One vocabulary.** `class Foo:` for definition, `extend class Foo:` for extension. Same class-body syntax, same section discipline (`data:` / `methods:` / `invariants:` / `accepts:`). No `ClassSpec`, no invocation form.
 - **Structural conformance actually pays off.** Before v0.9.0, "conformance is structural" was true but toothless — it enabled static checks but conformers didn't gain the protocol's affordances. §3.4.4 makes conformance carry default-method inheritance, which is what users expect from protocols with defaults.
 - **Trade-off: default-method inheritance introduces the diamond problem.** cxc resolves it via compile-time detection + explicit disambiguation (define the method on the class, or upcast). Users writing broadly-conforming classes need to be aware of this; the compiler surfaces the ambiguity at the call site rather than silently picking one.
 - **Trade-off: `extend class` allows extensions from anywhere.** Module discipline (§7.7) constrains visibility — extensions in module B are only visible where B is imported — but the "extension can happen anywhere" property is genuinely more open than a system where classes are closed after declaration. cxc was already this open (§1.5 runtime as substrate; categories existed); the change is that the mechanism is now integrated with the class-body vocabulary rather than routed through section-class ceremony.
@@ -353,7 +353,7 @@ Sixth "language mechanism dissolves into existing tools" session. DispatchQueue'
 
 - **`execution:` section on classes (§8.4.2 new).** Declarative metadata: `thread:` (main / any), `qos:` (user_interactive / user_initiated / utility / background), `pool:` (implicit / dedicated). Class-level default with per-method override via nested `execution:` on the method. Runtime uses metadata to place the dispatch pool and enforce thread affinity. Inspectable via §4.18 class metadata.
 - **`@main_actor` retired.** Replaced by `execution: thread: main` at class or method level. Same runtime behavior; consistent with metadata-first style.
-- **Reader/writer method classification (§1.9 extension + §8.4.1 new).** Compiler infers from method body: reader = does not assign to any `state:` field and does not call any writer method; writer = does. Runtime uses RWLock-style dispatch: multiple readers concurrent, writers exclusive. No user-visible annotation required. `data:` fields (immutable after construction) skip coordination entirely.
+- **Reader/writer method classification (§1.9 extension + §8.4.1 new).** Compiler infers from method body: reader = does not participate in a transition that updates any `data:` field and does not call any writer method; writer = does. Runtime uses RWLock-style dispatch: multiple readers concurrent, writers exclusive. No user-visible annotation required. Methods on records (which have no transitions and therefore no updates to `data:` fields) skip coordination entirely.
 - **DispatchQueue mapping documented (§8.4.3 new).** Three-row table: serial-mutex-for-a-class → contracts + `execution:`; off-caller-thread scheduling → `spawn` / `async_scope`; main-thread affinity → `execution: thread: main`. QoS hints via `execution: qos:`. Cross-class pipelines via channels (§8.6, unchanged). Anything that would have needed cross-object coordination reduces to "one class owns the shared state."
 - **`coordination_scope` construct considered and retracted.** Every case where separate objects need shared invariants collapses to a single class owning all the state. The class boundary IS the coordination boundary. No new user-facing coordination construct.
 - **ObjC bridge extended (§9.3).** cxc class instances expose a `dispatch_pool` property at the ObjC bridge. ObjC callers use standard `dispatch_async(instance.dispatch_pool, ^{ [obj method]; })`; the pool routes through the class's contract-guarded serialization transparently. Instances declared `execution: thread: main` bind their pool to the ObjC main queue.
@@ -506,7 +506,7 @@ Aliases become cxc's syntactic metaprogramming primitive — the mechanism by wh
 
 Spec-committed stdlib aliases shipped with the language distribution. Users get these without imports.
 
-- **Section-composition** (from v0.6.0, unchanged shape): `data:`, `state:`, `methods:`, `static:`
+- **Section-composition** (v1.0 shape): `data:`, `methods:`, `static:`
 - **Class-kind** (from v0.7.2, unchanged shape): `record`, `enum`, `protocol`, `section`
 - **Type-expression aliases** (v0.8.0 — retired from language grammar, now prelude): `T?` (value-type Optional sum), `T!` (reference-type non-nil contract), `[T]` (Array), `{K:V}` (Map), `{T}` (Set), `(A,B) -> C` (Callable)
 - **Expression-position literal aliases** (v0.8.0 new, from Session 2): `[e1, e2, ...]` (Array literal), `{k1:v1, ...}` (Map literal), `{e1, e2, ...}` (Set literal)
@@ -606,15 +606,15 @@ Consolidates struct, enumeration, and protocol into a single declaration form: `
 
 - **Class-as-universal.** Retired `struct` and `enumeration` as top-level type-declaration keywords. All user types declare via `class`, with `metadata: kind:` selecting the variant (`regular` default, `record`, `enum`, `protocol`, `section`). `protocol` was already sugar in v0.5 and remains so; `struct`/`enumeration` disappear entirely as core forms.
 - **`metadata:` section (new).** First-class user-writable section on any class declaration. Must appear first if present. Contains spec-reserved keys (`kind:`, `raw_type:`, `mode:`, `capacity:`, `on_full:`) and user-defined keys. Populates the runtime-introspectable class metadata described in §4.18.
-- **`record` sugar.** `record Foo:` desugars to `class Foo: metadata: kind: record`. Records opt out of universal extents, disallow `state:`, get structural equality and copy-on-assign.
+- **`record` sugar.** `record Foo:` desugars to `class Foo: metadata: kind: record`. Records opt out of universal extents, forbid transitions structurally (making their `data:` fields immutable-per-instance), get structural equality and copy-on-assign.
 - **`enum` sugar with raw values.** `enum Foo: case a = 1; case b = 2` desugars to `class + metadata: kind: enum, raw_type: <inferred>` with auto-generated `raw_value(self)` and `class function from_raw(value:)`. Raw type inferred from case values (smallest fit); overridable via `metadata: raw_type:`. Resolves the widest single interop gap in v0.5.
 - **`protocol` sugar clarified.** Under `kind: protocol`, `accepts:` section holds required signatures, `methods:` section holds default implementations. `accepts foo(...)` per-method form remains legal as sugar for single-requirement protocols.
 - **Type-expression sugar formalized.** `T?` = `Optional<T>`, `[T]` = `Array<T>`, `{K: V}` = `Map<K, V>`, `{T}` = `Set<T>`, `(A, B) -> C` = `Callable<(A,B), C>`. Sugar is lossless; expanded forms always legal. New sugar requires spec commitment.
 - **Everything is an expression.** `if`, `switch`, block, and expression-position `do:` produce values. Field/parameter/return initializers accept control-flow expressions directly. Blocks return the value of their final expression unless an explicit `return` is present.
 - **Loops return Bool.** `while` and `for` produce `Bool` — `true` if the loop exhausted its condition/iteration naturally, `false` if exited via `break`. Break-with-value is not supported on `while`/`for`; use `loop { ... break value }` (Rust-style infinite loop) if a T-typed return is genuinely needed.
 - **Closures are anonymous classes.** A closure literal desugars to an anonymous `class` with a single `call` method. Sugar hierarchy: `function(x: T) -> R: ...` (explicit) → `x => x + 1` (arrow, inferred types) → method reference (`self.foo`). Strong capture by default; `[weak self, ...]` prefix opts into weak capture per variable. Compiler warns on closures capturing `self` strongly and stored in a field of `self` (classic retain-cycle pattern).
-- **Channel modes (§8.6).** `channel:` section extends with `metadata: mode:` — `work` (default, CSP-style competing consumers), `broadcast` (all subscribers see all items, slowest sets pace), `pub` (topic-partitioned, requires `topic_fn:`). Direct field entries (`input: Bytes`) declare channel items; composition with nested `state:` retains the v0.5 state-change auto-publish behavior. Unbounded by default; opt into `metadata: capacity: N` + `on_full:` for bounded.
-- **Grammar (§10).** `struct_decl` and `enumeration_decl` productions retired. Sugar keywords `record`, `enum` added and specified as desugaring rules; `protocol` sugar clarified. `metadata:` section usage documented alongside `data:`/`state:`/`methods:`. Loop expressions typed `Bool`.
+- **Channel modes (§8.6).** `channel:` section extends with `metadata: mode:` — `work` (default, CSP-style competing consumers), `broadcast` (all subscribers see all items, slowest sets pace), `pub` (topic-partitioned, requires `topic_fn:`). Direct field entries (`input: Bytes`) declare channel items; composition with nested `data:` retains the v0.5 change-auto-publish behavior. Unbounded by default; opt into `metadata: capacity: N` + `on_full:` for bounded.
+- **Grammar (§10).** `struct_decl` and `enumeration_decl` productions retired. Sugar keywords `record`, `enum` added and specified as desugaring rules; `protocol` sugar clarified. `metadata:` section usage documented alongside `data:`/`methods:`. Loop expressions typed `Bool`.
 - **Rationale.** The v0.5 spec carried three separate declaration keywords for what is structurally the same construct: a named collection of members with different capability sets. Under kind-as-metadata, one construct handles all four (record, enum, protocol, section) plus regular classes uniformly, and users write the sugar they already recognize. The interop payoff is immediate — enum raw values (the top-frequency interop gap in the Starscream translation pass) collapses to a single spec-committed feature.
 
 Downstream cleanups: §3.3 (defers to §6), §3.4 (protocol via kind), §3.7 (expression form extended), new §3.8 (loop expressions), §4.7 (class body includes `metadata:`), §4.10 (built-in kind section classes), new §4.11 (sugar layer), §6.1 (rewrites type categories as class kinds), §6.2 (record/enum runtime models), §8.6 (channel modes), new §5.6 (closures), §10 grammar. Roughly 40-60 substantive edits across the spec.
@@ -626,8 +626,7 @@ Sharpened §1.2 (intent, not authority) into a strict discipline. Every keyword 
 - **Removed `sealed`** — as sum-type marker (§3.4.1) and as dispatch hint (§5). Enums are closed by construction; protocols are open. Compiler devirtualizes automatically where safe.
 - **Removed `dynamic`** — meaningless once `sealed` is gone. All methods are semantically dynamic; devirtualization is an optimization the compiler makes without source hints.
 - **Removed `final`, `open`** — same problem. "No override allowed" was authority the runtime doesn't enforce.
-- **Removed `private`, `package`, `internal`** — as compile-time enforcement. Under intent-not-authority, absence of `expose` communicates internal-by-convention; compiler warns on external access rather than erroring.
-- **Renamed `public` → `expose`** — verb form matches the intent-based vocabulary (`accepts`, `requires`, `ensures`). Emphasizes the deliberate act of exposure.
+- **Removed `private`, `package`, `internal`, `public`, `expose`** — all visibility markers retired. Every class member is externally readable by default. External mutation is impossible by grammar (Corvid has no assignment in expression position; transitions are the sole mutation vector, and only run on `self`). API stability is a documentation contract, not a compiler-enforced marker.
 - **Removed module-level dispatch policy** (`sealed module`, `dynamic module`). Optimization policy is a build-tool concern.
 
 Downstream cleanups: §2.5 keyword list, §3.4.1 (closed sum types from enums, not sealed protocols), §3.7 pattern matching, §4.10.1 primitive sections (dropped Sealed/Dynamic/Private/Public/Package, renamed Public→Expose), §4.10.2 built-in aliases (no longer include visibility by default), §5 dispatch model, §7.7 visibility (two states, not three levels), §10 grammar sketch, §11 worked example, §14 Stage 1 primitives list. Roughly 60-80 substantive edits across the spec.
@@ -654,7 +653,7 @@ Rationale: §1.2 committed to intent, not authority — but the language kept au
 
 **Memory model resolved (§6):**
 - Three type categories: struct, enumeration, class. All share the section mechanism.
-- One-bit distinction: struct/enumeration disallow `state:` sections; class allows them. Everything else (value vs. reference semantics, static vs. dynamic dispatch, extent participation, ARC) follows from this restriction.
+- One-bit distinction: struct/enumeration disallow transitions; class permits them. Everything else (value vs. reference semantics, static vs. dynamic dispatch, extent participation, ARC) follows from this restriction — a type with no transitions cannot mutate, so it's value-typed and skips coordination.
 - **Universal extents** for all user-declared classes. No opt-in required. `Class.query()`, `Class.all()`, `Class.count()` universally available.
 - **Handle-based references** for all class instances. Compiler optimizes to direct pointers for scope-local references. FilC-style validation on cross-scope references.
 - **Tags (`Tag<T>`)** own contiguous storage regions within a class's extent. Iteration is cache-optimal. `dense_storage:` section enables SoA layout.
@@ -682,7 +681,7 @@ Rationale: §1.2 committed to intent, not authority — but the language kept au
 - **Implicit resolution with optional explicit imports.** Compiler resolves names against manifest-declared packages; `import` statements optional for disambiguation or readability.
 - **Explicit source declaration via `from` clause** in dependencies and imports (local paths, URLs, git refs, private registries).
 - **Standard library implicit.** No imports needed for stdlib.
-- **Two visibility states:** `expose` (part of the module's stable interface) or absent (internal by convention). Compiler warns on external access to non-exposed members; users configure strictness. No `public`, `private`, `internal`, `fileprivate`, or `public(package)` keywords — see §7.7.
+- **Uniform visibility.** All class members are externally readable. No `public`, `private`, `internal`, `fileprivate`, `public(package)`, or `expose` keywords. Under Corvid's actor substrate, external code can observe state but cannot mutate it (external mutation is impossible by grammar; transitions are the sole mutation vector and only run on `self`). API stability commitments are a documentation contract — see §7.7.
 - **Single-file scripts** work with zero ceremony: `oc5 hello.cxc` runs a script; embedded `package:` for scripts with dependencies.
 - **Deferred to post-v1:** package manager tooling, registry protocol, version resolution algorithm, workspace concept.
 
@@ -721,7 +720,7 @@ Rationale: §1.2 committed to intent, not authority — but the language kept au
 - User-alias export: aliases participate in module import/export system.
 - Consumer-side effect strictness: `--strict-effects` flag and `#strict` pragma.
 - `static:` at module scope removed — bare declarations at module level instead.
-- `Computed` no auto-caching. Users memoize with `state:` or use library caching sections.
+- `Computed` no auto-caching. Users memoize via a `data:` field updated by a transition or use library caching sections.
 - Cooperative-only threading for v0.1; preemptive Stage 3+.
 - Reflection API surface formalized (§4.17 new).
 - Error message and provenance commitments formalized (§4.18 new).
@@ -745,7 +744,6 @@ Method calls are messages sent to objects. The runtime knows how to route messag
 Library authors express intent about how their code will be used. Annotations that describe intent are welcome; annotations that enforce restrictions on downstream users are not.
 
 **What's intent:**
-- `expose` — this is part of the interface I designed for external use. Depend on it.
 - `async` — this method may suspend. Await it.
 - `requires`/`ensures`/`invariants` — these predicates document and enforce correctness at method boundaries.
 - Failure is expressed in the return type (nil or a domain enum), not as an effect (§3.5.4).
@@ -754,9 +752,9 @@ Library authors express intent about how their code will be used. Annotations th
 **What we removed as authority:**
 - No `sealed` or `final` — "you can't extend this" was a lie. The runtime always allows extension (categories, swizzling, dynamic proxies). If the compiler couldn't enforce it, we shouldn't pretend it does.
 - No `dynamic` as a source annotation — meaningless without `sealed`. Everything is dispatched dynamically; the compiler devirtualizes when it can prove safety, and deopt machinery handles the surprises.
-- No `private` — "you can't touch this" is the same authority pattern. Absence of `expose` communicates internal-by-convention. The compiler warns on external access; users choose whether to respect the warning.
+- No `private` — "you can't touch this" is the same authority pattern. Under Corvid's actor substrate the correctness guarantee is structural: external code reads state but cannot mutate it (transitions are the only mutation vector and only run on `self`). API stability commitments are documentation.
 
-**Downstream code always retains full capability** — to hook, override, extend, introspect, or modify — via the runtime. Metadata queries (§4.18) return everything the compiler knows regardless of `expose`. Categories add methods to any class. Swizzling replaces implementations. This is Objective-C's runtime philosophy carried forward honestly.
+**Downstream code always retains full capability** — to hook, override, extend, introspect — via the runtime. Metadata queries (§4.18) return everything the compiler knows. Categories add methods to any class. Swizzling replaces implementations. This is Objective-C's runtime philosophy carried forward honestly. The one thing external code cannot do is mutate an atom's state directly — that route is structurally closed.
 
 **Non-consequence:** intent-not-authority does not apply to semantics that change compilation itself. `async` changes the calling convention; mutability annotations change struct storage semantics; type shapes determine memory layout. These are semantic in the sense that different values would be produced under different rules, so they cannot be "just hints." See §3.5.
 
@@ -772,7 +770,7 @@ A "type" is a named contract: a set of accepted messages with signatures, precon
 
     ```
     def Counter:
-        state:
+        data:
             count: Int = 0
         invariants:
             0 <= count <= 100                # chained comparison — reads mathematically
@@ -795,7 +793,7 @@ A "type" is a named contract: a set of accepted messages with signatures, precon
         return 0.0 <= n <= 1.0
     
     def Foo:
-        state: rate: Float
+        data: rate: Float
         invariants:
             is_percentage(rate)
     ```
@@ -892,11 +890,11 @@ Under this design, all three are the same mechanism. `requires connection_state 
 - Not "everything is automatically thread-safe." Methods without contracts on mutable state get no synchronization guarantees. Users write contracts where thread safety matters.
 - Not a replacement for careful concurrent design. The mechanism prevents data races on contract-guarded state; it does not prevent deadlocks, livelocks, or logical errors.
 
-**Reader/writer classification (v0.8.6).** Methods on a class are classified by the compiler as **readers** (do not assign to any `state:` field and do not call any writer method) or **writers** (assign to state fields or call writer methods). Runtime uses RWLock-style dispatch:
+**Reader/writer classification (v0.8.6, updated v1.0).** Methods on a class are classified by the compiler as **readers** (do not participate in a transition that updates any `data:` field and do not call any writer method) or **writers** (do). Runtime uses RWLock-style dispatch:
 
 - Multiple readers execute concurrently — state is not changing.
 - A writer executes exclusively — blocks all readers and other writers.
-- Methods on `data:` fields only (records; classes with no `state:`) skip coordination entirely.
+- Methods on records (which have no transitions, so their `data:` fields never change per-instance) skip coordination entirely.
 
 The classification is inferred from method bodies, not user-annotated. `ensures` clauses that reference `result.<field>` (post-state) versus `self.<field>` (pre-state) per §3.4.3 are a documentation aid — the assignment in the body is what actually classifies the method as a writer. See §8.4.1 for the classification algorithm and its interaction with private methods and callback closures.
 
@@ -1217,7 +1215,7 @@ The atom substrate is the design commitment. §1.11–§1.14 document the substr
   - Concrete element type: `Stream of Bytes`, `List of Int`, `Map of (String, User)`, `Future of File`, `Ptr of Byte`.
   - Variable element type (shape variable): `Stream of s`, `List of a`, `Map of (k, v)`.
   - Case convention IS the type-variable marker: **TitleCase = concrete type reference; lowercase = shape variable**.
-- **Shape variable binding = first-mention in signature scope.** The first appearance of a lowercase name in an atom's signature scope (constructor param types + channel signature + `where` clause + `state:` types + `use:` types) is the binding site; subsequent appearances refer to the same variable. Compiler check: unresolvable subsequent mention = error ("`z` is unbound; did you mean `s`?"); bound-but-never-referenced = warning.
+- **Shape variable binding = first-mention in signature scope.** The first appearance of a lowercase name in an atom's signature scope (constructor param types + channel signature + `where` clause + `data:` field types + `use:` types) is the binding site; subsequent appearances refer to the same variable. Compiler check: unresolvable subsequent mention = error ("`z` is unbound; did you mean `s`?"); bound-but-never-referenced = warning.
 - **Constraints live in `where` clauses** alongside `requires`/`ensures`. `def dedupe: Stream of s -> Stream of s where s conforms Hashable`.
 - **Types-as-guards** at wire boundaries. Every wire endpoint is a checkpoint: upstream atom's output type must satisfy downstream atom's input type. Guard fails → compile error (when statically decidable) or runtime check (when not).
 - **Multi-channel output via named tuple return type** — the single mechanism for atoms with multiple named output channels:
@@ -2318,7 +2316,7 @@ self Self return
 section alias
 category objc_exposed
 if else switch case for in while break continue
-import from as expose module of
+import from as module of
 true false nil
 Any Effect
 with
@@ -2649,11 +2647,11 @@ The prelude declarations for these are in §4.20.1 ("Type-expression aliases"). 
 - **TitleCase `X`** = concrete type reference (`Stream of Bytes`, `Array of Int`).
 - **lowercase `x`** = shape variable, bound in the enclosing signature scope by first-mention (`Stream of s`, `Array of a`, `Map of (k, v)`). Subsequent appearances of the same name refer to the same variable; the compiler checks consistency and warns on unused-declared variables.
 
-Shape-variable binding scope: constructor param types + channel signature + `where` clause + `state:` types + `use:` types (see §1.11). No `[T]` binding block, no `'a` sigil — case convention IS the type-variable marker.
+Shape-variable binding scope: constructor param types + channel signature + `where` clause + `data:` field types + `use:` types (see §1.11). No `[T]` binding block, no `'a` sigil — case convention IS the type-variable marker.
 
-**Collection containers are reference-shaped (`kind: regular`).** `Array of T`, `Map of (K, V)`, `Set of T` are stdlib classes with `state:` (mutable contents) and are therefore `kind: regular` (reference-typed) — the same shape as any other stateful class. Passing an `Array of T` to a function and calling `.append(...)` or `.remove_at(...)` inside is visible to the caller; no `inout` / by-reference-parameter marker is needed. This falls out of §1.5 (class-as-universal) plus §6.1 (kind-regular = reference-typed with state) — collections have state, so they're regular classes, so they're reference-typed. The ObjC bridge mirrors this: `NSArray<T> *` in ObjC = `[T]` in cxc (§9.3), a pointer on both sides.
+**Collection containers are reference-shaped (`kind: regular`).** `Array of T`, `Map of (K, V)`, `Set of T` are stdlib classes with mutable-via-transition `data:` (their contents change over time) and are therefore `kind: regular` (reference-typed) — the same shape as any other class with transitions. Passing an `Array of T` to a function and calling `.append(...)` or `.remove_at(...)` inside is visible to the caller; no `inout` / by-reference-parameter marker is needed. This falls out of §1.5 (class-as-universal) plus §6.1 (kind-regular = reference-typed with state) — collections have state, so they're regular classes, so they're reference-typed. The ObjC bridge mirrors this: `NSArray<T> *` in ObjC = `[T]` in cxc (§9.3), a pointer on both sides.
 
-Records (`kind: record`) forbid `state:` (§4.10.7); a type that mutates in place cannot be a record. If a user wants an immutable, copy-on-assign array-like value, they declare a `record` wrapping an `Array of T` with only read-only methods exposed — copies happen at record boundaries, not on the internal Array.
+Records (`kind: record`) forbid transitions (§4.10.7); a type whose data changes over time cannot be a record. If a user wants an immutable, copy-on-assign array-like value, they declare a `record` wrapping an `Array of T` with only read-only methods exposed — copies happen at record boundaries, not on the internal Array.
 
 **Effect on the type expression grammar.** The bootstrap type grammar (§10) recognizes only:
 
@@ -2688,8 +2686,8 @@ Single unnamed channel: bare `Stream of X` return type; emissions are `:> value`
 
 All user types are declared via `class`. The `metadata: kind:` section entry (§4.10.6, §6.1) selects the variant:
 
-- **`kind: regular`** (default, omitted) — reference-typed with `state:`, extent participation, weak refs, dynamic dispatch. Traditional class.
-- **`kind: record`** — value-typed, no `state:`, no extent. Base-class properties: structural equality (`==`), structural hashing (`hash(self)`), copy-on-assign, canonical bytes (`.as() -> Bytes` / `.from(source: Bytes)` per §3.10.10). Replaces v0.5's `struct` keyword.
+- **`kind: regular`** (default, omitted) — reference-typed with mutable-via-transition `data:` fields, extent participation, weak refs, dynamic dispatch. Traditional class.
+- **`kind: record`** — value-typed, no transitions, no extent. Base-class properties: structural equality (`==`), structural hashing (`hash(self)`), copy-on-assign, canonical bytes (`.as() -> Bytes` / `.from(source: Bytes)` per §3.10.10). Replaces v0.5's `struct` keyword.
 - **`kind: enum`** — sealed sum type with `cases:` section and optional integer `raw_type:`. Same base-class properties as `kind: record` (equality, hashing, canonical bytes). Replaces v0.5's `enumeration` keyword.
 - **`kind: protocol`** — no instantiation; `accepts:` section holds required signatures, `methods:` holds default implementations. No value-type base properties (protocols are not instantiable).
 - **`kind: section`** — §4 metaprogramming section-class.
@@ -2763,24 +2761,24 @@ Users rarely write the desugared form; tooling operates on it.
 cxc does not support nested type declarations. All user-defined types (classes, records, enums, protocols, sections) live at module scope. Types conventionally associated with a specific class are named `<ClassName><Role>` at module scope:
 
 ```
-expose class FrameCollector:
-    state:
+class FrameCollector:
+    data:
         delegate: FrameCollectorDelegate
         current_event: FrameCollectorEvent?
         state: FrameCollectorState = .idle
     ...
 
-expose enum FrameCollectorEvent:
+enum FrameCollectorEvent:
     case text(String)
     case binary(Bytes)
     case closed(reason: String, code: UInt16)
 
-expose enum FrameCollectorState:
+enum FrameCollectorState:
     case idle
     case receiving
     case draining
 
-expose protocol FrameCollectorDelegate:
+protocol FrameCollectorDelegate:
     accepts did_form(event: FrameCollectorEvent)
 ```
 
@@ -2818,7 +2816,7 @@ The naming convention and leading-dot together make module-scope types read like
 
 ```
 # Original definition (possibly in another module):
-expose class NSString: ...
+class NSString: ...
 
 # Extension in the current module:
 extend class NSString:
@@ -2878,7 +2876,7 @@ Any class conforming to `Iterable<T>` (Array, Set, Map's entries iterator, user 
 ```
 class Reader:
     data: string: String
-    state: current_index: StringIndex
+    data: current_index: StringIndex
     invariants:
         current_index >= string.start_index
 
@@ -2892,7 +2890,7 @@ The composed class carries both invariants; the runtime checks them at every obs
 
 **What extensions cannot add.**
 
-- **`state:` fields.** Adding a new state field would change the class's memory layout, which is fixed at compile time (§4.18.3). Extensions can declare invariants over existing state fields, and can call any existing method — but the field set is closed at definition time. This restriction is the same one the retired Category section class carried.
+- **`data:` fields.** Adding a new data field would change the class's memory layout, which is fixed at compile time (§4.18.3). Extensions can declare invariants over existing data fields, and can call any existing method — but the field set is closed at definition time. This restriction is the same one the retired Category section class carried.
 - **New generic parameters on the target class itself.** `extend class Array<T, U>:` is not legal if `Array` was declared with only one generic parameter. The extension inherits the class's declared parameter count and can name them per shape 2 (see below); it cannot invent new ones.
 - **A different kind.** `extend class Foo:` inherits Foo's `metadata: kind:` from the original definition. An extension cannot promote a `record` to a `regular` class or vice-versa; the kind is set at definition time.
 
@@ -2977,13 +2975,13 @@ help: to reject shadowing at build time, use
 
 **Extension visibility follows module imports.** An `extend class Foo:` declared in module B becomes visible only to modules that import B (transitively, per §7.7). This scopes extension visibility to explicit dependency edges — a module can control which extensions it sees by controlling its imports.
 
-Individual extension members may carry `expose` exactly as members in a definition body may:
+Extension members are visible under the same rule as definition-body members (§7.7 uniform visibility): all top-level extensions and their members are part of the module's public interface. `expose` is retired; nothing to mark.
 
 ```
 extend class Foo:
     methods:
-        expose function public_helper(self): ...
-        function internal_helper(self): ...       # module-visible only
+        function helper(self): ...
+        function other_helper(self): ...
 ```
 
 **Extending Objective-C classes.** `extend class NSString:` and `extend class UIView:` work identically to extending cxc classes. The methods land in the runtime's method table for the target class and are dispatchable from both cxc and ObjC call sites (`[str shout]` on the ObjC side, `str.shout()` on the cxc side). See §9.3 for interop specifics.
@@ -3070,7 +3068,7 @@ Previously the spec had `sealed protocol` for enforcing single-module conformanc
 - Sealed protocols enforced a compile-time restriction via authority — matching the philosophy problem with `sealed` on classes (§5.2, §1.2).
 - The visibility rules of the module (§7.7) already scope internal-by-convention protocols to their module.
 
-For internal protocols that shouldn't be conformed to externally, just don't `expose` them. External conformance generates a warning; the module can convert conformances to enumerations if needed.
+Under uniform visibility (§7.7), all top-level protocols are part of the module's public interface — anyone importing the module can conform to them. Authors who want to constrain the conformance set at the type level model the finite set as an enum instead of a protocol.
 
 #### 3.4.2 Class-Level Contracts (Invariants)
 
@@ -3080,8 +3078,6 @@ Classes and structs can carry class-level contracts via the `invariants:` sectio
 class Connection:
     data:
         endpoint: URL
-    
-    state:
         socket: Socket                         # reference type, nil-allowed by default
         connection_state: ConnectionState = .closed
     
@@ -3128,14 +3124,14 @@ There is no `old()` form. The pre-state was never lost — it's what `self` and 
 
 ```
 class Ledger:
-    state:
+    data:
         accounts: {AccountID: Money}
     
     invariants:
         accounts.values.sum == self.initial_total
     
     methods:
-        expose function transfer(self, from: AccountID, to: AccountID, amount: Money):
+        function transfer(self, from: AccountID, to: AccountID, amount: Money):
             requires accounts[from] >= amount
             ensures result.accounts[from] == self.accounts[from] - amount
             ensures result.accounts[to]   == self.accounts[to]   + amount
@@ -3264,14 +3260,14 @@ Header parens sugar — canonical for the definition site with 1–3 conformance
 
 ```
 class Reader(Iterable<Char>):
-    state: source: String
-    state: position: StringPosition
+    data: source: String
+    data: position: StringPosition
     methods:
         function iter(self) -> Iterator<Char>: ...
 
 class Projectile(Positioned, Moving):
-    state: pos: Point
-    state: velocity: Vector
+    data: pos: Point
+    data: velocity: Vector
     methods:
         function position(self) -> Point: return self.pos
         function step(self, dt: Float): self.pos = self.pos + self.velocity * dt
@@ -3282,16 +3278,16 @@ Body-form entries — canonical for extensions, long conformance lists, or when 
 ```
 class Reader:
     conforms: Iterable<Char>
-    state: source: String
-    state: position: StringPosition
+    data: source: String
+    data: position: StringPosition
     methods:
         function iter(self) -> Iterator<Char>: ...
 
 class Projectile:
     conforms: Positioned
     conforms: Moving
-    state: pos: Point
-    state: velocity: Vector
+    data: pos: Point
+    data: velocity: Vector
     ...
 ```
 
@@ -3331,7 +3327,7 @@ cxc commits to composition-over-inheritance for pure cxc code (§1.5, §3.4). Th
 class MyViewController:
     metadata:
         extends: UIViewController
-    state:
+    data:
         table_view: UITableView?
     dynamic function viewDidLoad(self):
         super.viewDidLoad()
@@ -3514,7 +3510,7 @@ These annotations change compilation and cannot be "just hints."
 
 - `async` — changes calling convention (suspendable).
 
-**Retired v0.11 — `mutating`.** The `mutating` effect was carried over from a pre-v0.6.0 design that had `struct` as a live construct. v0.6.0 unified struct/enum/protocol/class under `kind:` metadata; there is no `struct` in cxc. `kind: record` forbids `state:` (§4.10.7) so records cannot have mutating methods; `kind: regular` methods that mutate state are inferred as writers by §8.4.1 reader/writer classification (no author declaration needed). The `mutating` effect had no live use site — neither author-declared (compiler infers) nor applicable (records can't mutate). Retired for the same reason `throws` was retired in v0.8.5 — no live semantics under the current design.
+**Retired v0.11 — `mutating`.** The `mutating` effect was carried over from a pre-v0.6.0 design that had `struct` as a live construct. v0.6.0 unified struct/enum/protocol/class under `kind:` metadata; there is no `struct` in cxc. `kind: record` structurally forbids transitions (§4.10.7) so records cannot mutate; `kind: regular` methods that assign to `data:` fields via transitions are inferred as writers by §8.4.1 reader/writer classification (no author declaration needed). The `mutating` effect had no live use site — neither author-declared (compiler infers) nor applicable (records can't mutate). Retired for the same reason `throws` was retired in v0.8.5 — no live semantics under the current design.
 
 #### 3.5.3 Effect Polymorphism
 
@@ -3869,7 +3865,7 @@ timeout: Duration = .milliseconds(500)        # inferred: field type
 
 ```
 class Order:
-    state:
+    data:
         status: OrderStatus = .pending      # inferred: OrderStatus, the field type
 
     function submit(self):
@@ -4243,7 +4239,7 @@ cxc's mutable byte-sequence type. `kind: regular` (reference-shaped), consistent
 **Class shape (illustrative — not exhaustive):**
 
 ```
-expose class Bytes:
+class Bytes:
     metadata: kind: regular
     metadata: bridge_to: NSMutableData
     
@@ -4314,7 +4310,7 @@ cxc's text type. `kind: regular`, corresponds to NSString at the runtime layer; 
 **Class shape (illustrative):**
 
 ```
-expose class String:
+class String:
     metadata: kind: regular
     metadata: bridge_to: NSString
     
@@ -4383,7 +4379,7 @@ Represents a single grapheme cluster — one user-visible character, potentially
 **Class shape:**
 
 ```
-expose class Char:
+class Char:
     metadata: kind: record
     
     # Predicates
@@ -4418,7 +4414,7 @@ Opaque position token into a specific `String` instance.
 **Class shape:**
 
 ```
-expose class StringPosition:
+class StringPosition:
     metadata: kind: record
     
     # Comparison — total order within a single source String.
@@ -4525,7 +4521,7 @@ All three are prelude classes with `kind: regular`.
 **`Literal` — exact-string match, no interpretation.**
 
 ```
-expose class Literal:
+class Literal:
     metadata: kind: regular
     data: needle: String
     methods:
@@ -4538,7 +4534,7 @@ Matches the needle character-for-character (grapheme-cluster-for-grapheme-cluste
 **`Glob` — filename-style patterns (`*`, `?`, `[abc]`).**
 
 ```
-expose class Glob:
+class Glob:
     metadata: kind: regular
     data: source: String
     methods:
@@ -4557,7 +4553,7 @@ Constructor: `Glob("*.txt")`, `Glob("[Ll]og_[0-9]?.txt")`. No captures.
 **`Regex` — regular expressions with configurable options.**
 
 ```
-expose class Regex:
+class Regex:
     metadata: kind: regular
     data: source: String
     data: options: RegexOptions
@@ -5013,7 +5009,7 @@ section class SectionName:
         scope: [<scope>, ...]
         # ... other configuration fields
     
-    state:
+    data:
         # Runtime state (per host class instance)
         # ...
     
@@ -5168,7 +5164,7 @@ section class Channel:
         contains: fields
         composition_mode: nested
     
-    state:
+    data:
         subscribers: [Subscriber] = []
         active: Bool = false
     
@@ -5193,7 +5189,7 @@ section class Channel:
         contains: fields
         composition_mode: nested
     
-    state:
+    data:
         subscribers: [Subscriber] = []
     
     generator field_setter(field: FieldSpec) -> Code:
@@ -6046,7 +6042,7 @@ section class Channel:
         default_mutability: mutable
         contributes_to_equality: false
     
-    state:
+    data:
         subscribers: [Subscriber] = []
     
     generator field_setter(field: FieldSpec) -> Code:
@@ -6463,7 +6459,7 @@ Used in type positions:
 
 ```
 class MyController:
-    state:
+    data:
         current_order: Order              # expands to com.example.orders.Order
         cache: StringDict<CachedValue>    # expands to Dict<String, CachedValue>
         handler: Callback<Receipt>        # expands to (Receipt, Error) -> Void
@@ -6504,7 +6500,7 @@ Used to qualify names without writing the full module path:
 
 ```
 class MyController:
-    state:
+    data:
         client: core.HttpClient
         current: orders.Order
 ```
@@ -8229,63 +8225,23 @@ help: qualify the reference:
       alias Order: com.example.orders.Order
 ```
 
-### 7.7 Visibility
+### §7.7 — Visibility
 
-Two visibility states, not levels:
+All class members are externally readable. Corvid has no visibility keywords (no `public`, `private`, `internal`, `fileprivate`, `expose`).
 
-- **`expose`** — this declaration is part of the interface I designed for external use. Depend on it.
-- **Absent (default)** — internal to the module by convention. Not part of the exposed interface.
+**Why uniform read visibility works.** Corvid's actor substrate makes external mutation structurally impossible: transitions are the sole mutation vector, and they only run on `self`. External code has no route to write to another atom's state — the grammar has no assignment operator in expression position, and setters are not synthesized on the ObjC bridge (F33 L5). Reading is safe because reading is observation, not mutation; atomic transitions (F33 L2-L3, F32 L4) guarantee readers see a consistent state, never a torn mid-transition mix.
 
-**No `public`, no `private`, no `internal` keyword.** The previous spec had three levels with hierarchical access control. That was authority framing: `private` said "you can't touch this," `public` said "you may touch this." Both were enforced at compile time, then blown open by runtime metadata queries (§4.18).
+**API stability commitments.** When you want to signal "this member is part of the stable API, expect it to persist across releases," use documentation — a docstring, a CHANGELOG entry, an ADR. Corvid does not encode stability as a compiler-enforced marker; the compiler cannot distinguish "I renamed this internally without meaning to break users" from "I renamed this deliberately to signal a breaking change." Semver commitments are the author's tool for that.
 
-Under intent-not-authority (§1.2), the compiler doesn't enforce access restrictions. It enforces intent:
-
-- `expose` on a declaration adds it to the module's stable public surface. Metadata artifacts (§4.18) list it as intended-for-external-use. IDE completions surface it prominently.
-- Absent `expose`, the declaration is internal to the module by convention. The compiler emits a warning when external code references it. The warning can be suppressed per-reference (for legitimate boundary-crossing) or upgraded to an error via build config (for stricter enforcement).
-
-**Runtime access is unrestricted.** Metadata queries return everything the compiler knows about a class regardless of `expose`. KVC-style access reaches non-exposed fields. `extend class Foo:` (§3.3.2) adds members to any visible class. This is the Objective-C runtime philosophy carried forward honestly: capability is preserved; intent is documented.
-
-**Extension visibility.** An `extend class Foo:` block declared in module B is visible to a consumer C only if C imports B (transitively per §7.2). Extensions do not leak across independent import paths. This scopes extension visibility to explicit dependency edges — a consumer chooses which extensions it sees by choosing which modules it imports. Individual members inside an extension may carry `expose` exactly as members in a definition body may; the enclosing extension itself is not marked `expose` (visibility of the extension follows from module-import visibility).
-
-**Type-scoped visibility (like Java's `private`) doesn't exist as a keyword.** Members inside a class declaration that aren't `expose`d are internal to the module — and by convention to the type. Same warning behavior for external access. If real usage shows need for type-scoped enforcement, we add it later; current position is that the convention is enough.
-
-**Scope of `expose`:**
-- On a class or struct: the type name is exposed as part of the module's interface.
-- On a method or field within a type: the member is exposed even when the containing type's members are otherwise internal.
-- On a function, alias, or constant at module scope: same as class — added to the exposed surface.
-
-**Example:**
-
-```
-class Order:
-    expose data:
-        id: OrderID
-        placed_at: Timestamp
-    
-    data:
-        internal_hash: Bytes    # not exposed; external code gets a warning
-    
-    expose methods:
-        function ship(self) -> ShipOutcome: ...
-    
-    methods:
-        function _validate(self): ...  # not exposed; convention indicates internal
-```
-
-Consumers reading this see the intended interface (`id`, `placed_at`, `ship`) clearly. They technically can reach `internal_hash` or `_validate` but on notice that they've stepped off the stable surface.
+**Runtime access is unrestricted by design.** Metadata queries (§4.18) return everything the compiler knows. KVC (`[obj valueForKey:@"n"]`) can reach any ivar. Categories add methods to any class. This is Objective-C's runtime philosophy carried forward honestly. Corvid does not attempt to plug these routes — they're capabilities, not vulnerabilities.
 
 ### 7.8 Public Interface
 
-A module's exposed interface consists of all declarations marked `expose`. This includes:
+A module's public interface is everything importers can name — all top-level declarations in the module: classes, records, enums, protocols, functions, constants, aliases, section classes. There is no `expose` marker; under uniform visibility (§7.7) every top-level declaration is part of the module's public interface by construction.
 
-- Public types (classes, structs, enumerations).
-- Public functions and constants.
-- Public aliases (all four categories).
-- Public sections and section classes.
+Consumers see the full structure of imported classes (fields, methods, invariants, sections). Adding a field, method, or section to an existing class extends the public interface — this is a semver minor change (§7.11).
 
-Section usages on exposed classes are part of the exposed interface (§4.18). Consumers see the class's structure including sections. This means adding a section to an exposed class is a semver minor change if the section is externally observable; non-exposed sections don't affect the interface.
-
-Public interfaces have compatibility guarantees per semver (§7.11).
+The stability of the public interface across releases is a documentation contract (docstring, CHANGELOG, ADR) plus semver discipline. The compiler does not enforce stability; it enforces correctness.
 
 ### 7.9 Compilation and Dependency Model
 
@@ -8322,21 +8278,21 @@ Sources may mix `.cxc` and `.m` (Objective-C) files within the same module. Both
 
 ### 7.11 Version Compatibility
 
-Packages follow semver:
+Packages follow semver. Under uniform visibility (§7.7) the public interface is everything the module declares at top level:
 
-- **Major (X.0.0)** — breaking changes to exposed interface. Consumers may need code changes.
-- **Minor (1.X.0)** — additive changes. New exposed declarations; no removals or signature changes.
-- **Patch (1.0.X)** — internal changes only. No exposed interface change.
+- **Major (X.0.0)** — breaking changes to the public interface. Consumers may need code changes.
+- **Minor (1.X.0)** — additive changes. New declarations; no removals or signature changes.
+- **Patch (1.0.X)** — internal changes only (bodies, invariants, section class implementations that don't change generator output).
 
 **What counts as breaking:**
-- Removing an exposed declaration.
-- Changing an exposed function's signature (parameters, return type, effects).
-- Removing an exposed field from a class.
+- Removing a top-level declaration.
+- Changing a function's signature (parameters, return type, effects).
+- Removing a field from a class (all fields are part of the public interface under §7.7).
 - Changing a section class's generator output (affects all consumers of that section).
 - Adding a required protocol method.
 
 **What is additive:**
-- New public declarations.
+- New top-level declarations.
 - New optional parameters with defaults.
 - New protocol methods with default implementations.
 - New sections on a public class (if the section's contribution to the public interface is additive).
@@ -8557,13 +8513,13 @@ class Ledger:
         accounts.values.sum == self.initial_total
     
     methods:
-        expose function balance(self, id: AccountID) -> Money:      # READER (no assignment)
+        function balance(self, id: AccountID) -> Money:      # READER (no assignment)
             return self.accounts[id] ?? 0
         
-        expose function total(self) -> Money:                        # READER
+        function total(self) -> Money:                        # READER
             return self.accounts.values.sum
         
-        expose function transfer(self, from: AccountID, to: AccountID, amount: Money):   # WRITER
+        function transfer(self, from: AccountID, to: AccountID, amount: Money):   # WRITER
             requires accounts[from] >= amount
             ensures result.accounts[from] == self.accounts[from] - amount
             ensures result.accounts[to]   == self.accounts[to]   + amount
@@ -8597,8 +8553,8 @@ class UIController:
         pending_updates: Int = 0
     
     methods:
-        expose async function refresh(self): ...          # runs on main thread
-        expose function pending_count(self) -> Int:       # main thread; reader
+        async function refresh(self): ...          # runs on main thread
+        function pending_count(self) -> Int:       # main thread; reader
             return self.pending_updates
 ```
 
@@ -8611,7 +8567,7 @@ class MixedController:
         qos: user_interactive
     
     methods:
-        expose async function refresh(self): ...
+        async function refresh(self): ...
         
         function precompute(self) -> [Item]:
             execution: thread: any, qos: utility          # off main thread
@@ -8734,7 +8690,7 @@ class WSFramer:
                 mode: pub
                 topic_fn: e => e.kind             # topic-partitioned
     methods:
-        expose function add(self, data: Bytes):
+        function add(self, data: Bytes):
             self.sections.channel.input.send(data)
         
         async function process_loop(self):
@@ -9118,7 +9074,7 @@ Users can accept the warning (auto-derivation continues), suppress with an expli
 For fine-grained control, use the `objc_exposed:` section:
 
 ```
-expose class OrderProcessor:
+class OrderProcessor:
     data:
         id: ProcessorID
     
@@ -10012,8 +9968,8 @@ protocol OrderProcessor:
 ## OrderProcessor is behavior — mixed class with data and state.
 ## `expose` on the class adds the type name to the module's public surface;
 ## members opt in individually.
-expose class DefaultOrderProcessor(OrderProcessor):
-    expose data:
+class DefaultOrderProcessor(OrderProcessor):
+    data:
         id: ProcessorID
         created_at: Timestamp
     
@@ -10022,7 +9978,7 @@ expose class DefaultOrderProcessor(OrderProcessor):
         weak delegate: OrderProcessorDelegate?   # exposed via the `expose state:` header below
         pending: [Order] = []
     
-    expose state:
+    state:
         # Alternative shape: an entire section header exposed.
         # Fields defined here are all exposed.
         # In this example we've kept inventory internal; delegate could move here.
@@ -10035,7 +9991,7 @@ expose class DefaultOrderProcessor(OrderProcessor):
     
     # Implicit methods: section for these methods.
     
-    expose async function process(self, order: Order) -> ProcessOutcome
+    async function process(self, order: Order) -> ProcessOutcome
             requires order.is_valid():
         self.notify_will_process(order)
         
@@ -10047,7 +10003,7 @@ expose class DefaultOrderProcessor(OrderProcessor):
                 self.notify_did_process(order, receipt)
                 return .completed(receipt: receipt)
     
-    expose function cancel(self, id: OrderID) -> CancelOutcome:
+    function cancel(self, id: OrderID) -> CancelOutcome:
         return self.inventory.release_reservation(id)
     
     # Not exposed — internal implementation detail. External callers get a
@@ -10061,7 +10017,7 @@ expose class DefaultOrderProcessor(OrderProcessor):
     function notify_did_process(self, order: Order, receipt: Receipt):
         self.delegate.order_processor(self, did_process: order, receipt: receipt)
 
-expose protocol OrderProcessorDelegate:
+protocol OrderProcessorDelegate:
     accepts order_processor(Self, will_process: Order)
     accepts order_processor(Self, did_process: Order, receipt: Receipt)
 ```
@@ -10106,7 +10062,7 @@ module com.example.myapp
 
 alias exposed_data: runtime immutable identity expose
 
-expose class PublicRecord:
+class PublicRecord:
     exposed_data:
         display_name: String
         record_id: UUID
@@ -10163,7 +10119,7 @@ section class Channel:
         default_mutability: mutable
         contributes_to_equality: false
     
-    state:
+    data:
         subscribers: [Subscriber] = []
     
     generator field_setter(field: FieldSpec) -> Code:
