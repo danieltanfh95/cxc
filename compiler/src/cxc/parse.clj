@@ -710,10 +710,16 @@
               (at? tokens p :dedent))
         [{:node :break-stmt} p]
         (fail! tokens p
-               (str "F17 L1: `break <value>` (loop-with-value) is not "
-                    "yet supported — `break` in L1 exits the enclosing "
-                    "`while` without a value. `loop:` + `break <value>` "
-                    "land at F17 L2."))))
+               (str "F17 L1: `break <value>` is not supported — "
+                    "value-yielding loops (`loop:` + `break <value>`) "
+                    "were rejected 2026-08-18 as redundant with actor "
+                    "state transitions. Model the accumulate-until-done "
+                    "pattern as a self-transition on an atom with a "
+                    "`when:` guard: the loop body becomes `then: field "
+                    "=> ...`, the exit condition becomes `when: <cond>` "
+                    "on a transition to the done phase, and the final "
+                    "value is read via an observable. See "
+                    "plans/f17-loop-primitives.md §\"Why not `loop:`\"."))))
 
     (at? tokens pos :kw "continue")
     [{:node :continue-stmt} (inc pos)]

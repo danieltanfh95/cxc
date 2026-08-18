@@ -867,14 +867,15 @@ def main:
         (is (= :continue-stmt (:node (nth inner 1))))))))
 
 (deftest f17-l1-break-with-value-rejected
-  (testing "F17 L1 — `break <expr>` (loop-with-value) is deferred to L2; parser emits a targeted diagnostic pointing at the L2 landing."
+  (testing "F17 L1 — `break <expr>` is rejected. Value-yielding loops (F17 L2) were rejected 2026-08-18 as redundant with actor state transitions; the diagnostic steers users at the self-transition + `when:` guard pattern instead."
     (let [ex (try
                (do-stmts-from "def main:\n    -> running\n        do:\n            while true:\n                break 42\n")
                nil
                (catch clojure.lang.ExceptionInfo e e))]
       (is ex "expected fail!")
       (is (re-find #"F17 L1" (.getMessage ex)))
-      (is (re-find #"loop-with-value" (.getMessage ex))))))
+      (is (re-find #"state transitions" (.getMessage ex))
+          "diagnostic points at the actor-substrate replacement"))))
 
 (deftest f18-l1-transition-let-clause-still-works
   (testing "F18 L1 — the pre-existing transition `let:` sub-block (F23, `let: <name>: <expr>`) still parses as a `:let-clause` — L1 didn't disturb the disambiguation. Distinguisher: `:` after `let` vs `<ident>` after `let`."
