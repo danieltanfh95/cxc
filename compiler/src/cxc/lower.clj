@@ -826,6 +826,42 @@
      :replace?           false
      :handler?           true}))
 
+(defn- user-declared-atom?
+  "True iff `nm` names a user-declared def-atom in `atom-env` (as
+   opposed to a runtime-provided entry or a synthesized container
+   class). Used by [[validate-no-agent-fields-in-records!]] to
+   distinguish `foo: Tally` (reject) from `foo: List of Int` (allow)."
+  [atom-env nm]
+  (when-let [info (get atom-env nm)]
+    (not (contains? #{:runtime-provided :list-container
+                      :map-container :set-container}
+                    (:kind info)))))
+
+(defn- validate-no-agent-fields-in-records!
+  "F38 — a structural (record) def can't hold a field whose type
+   resolves to a user-declared agent. Records are value-shape; a raw
+   agent-pointer field would silently alias the same instance across
+   supposed value copies (assignment, ctor bit-copy). Reject with a
+   promotion fix-it. Nested containers (`List of Tally`) are a
+   separate design question and aren't rejected here — this pass only
+   catches the direct field-of-agent shape."
+  [record-env atom-env]
+  (doseq [[rec-nm rec-info] record-env
+          f (:fields rec-info)
+          :let [ty (:cxc-ty f)]
+          :when (user-declared-atom? atom-env ty)]
+    (fail-compile!
+     :cxc-f38-record-holds-agent-field
+     (str "record `" rec-nm "` field `" (:name f) ": " ty
+          "` — a structural def can't hold an agent-typed field. "
+          "Records are value-shape; bit-copying `" rec-nm "` would "
+          "silently alias the same `" ty "` instance across copies, "
+          "breaking value semantics. Fix: promote `" rec-nm "` to an "
+          "agent (add a `-> phase` initial-phase marker to turn it "
+          "into a def-atom), or drop the field and message the `" ty
+          "` via `|>` from wherever `" rec-nm "` is used.")
+     f)))
+
 (defn- build-record-env
   [top-nodes atom-env enum-env]
   (let [records  (filter #(= :record (:node %)) top-nodes)
@@ -6866,6 +6902,12 @@
                                             (contains? kept-prelude k)))
                                       atom-env)))
         record-env (build-record-env top-nodes atom-env enum-env)
+        ;; F38 — reject records that hold a raw agent-typed field.
+        ;; Runs after atom-env is finalized (post-container-synthesis)
+        ;; so `user-declared-atom?` can exclude the synthesized
+        ;; List/Map/Set container classes, and before record-env is
+        ;; used for observable inference / struct emission.
+        _          (validate-no-agent-fields-in-records! record-env atom-env)
         record-env (infer-observables-in-record-env record-env atom-env enum-env)
         atom-env   (infer-observables-in-atom-env atom-env record-env enum-env)
         atom-env   (infer-streams-in-atom-env atom-env record-env enum-env)

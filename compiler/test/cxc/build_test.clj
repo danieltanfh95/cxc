@@ -518,8 +518,8 @@
     (spit f content)
     f))
 
-(deftest f51-l1-user-module-header-rejected-with-fix-it
-  (testing "F51 L1 — a `module <name>` header at the top of any source file is a hard error; diagnostic names the file's derived module and points at the fix (delete the line)."
+(deftest f73-user-module-header-rejected-with-fix-it
+  (testing "F73 (2026-08-20, supersedes F51 L1) — a `module <name>` header at the top of any source file is a hard error at parse time. Module identity is the file path relative to the source root; the resolver walks the tree. Diagnostic names the retirement and points at the fix (delete the line)."
     (let [src-dir (tmp-dir)
           out-dir (tmp-dir)
           _       (write-file! src-dir "hello.cxc"
@@ -530,10 +530,9 @@
                     nil
                     (catch clojure.lang.ExceptionInfo e e))]
       (is (some? ex) "expected fail! on the retired header")
-      (is (re-find #"F51 L1" (ex-message ex)))
-      (is (re-find #"derived from directory structure" (ex-message ex)))
-      (is (re-find #"main" (ex-message ex))
-          "diagnostic names the derived module (`:main` for root of src-dir)"))))
+      (is (re-find #"`module <name>` declaration is retired" (ex-message ex)))
+      (is (re-find #"file path relative to the source root" (ex-message ex))
+          "diagnostic names the file-path-authoritative rule"))))
 
 (deftest f51-l1-reserved-main-subdirectory-rejected
   (testing "F51 L1 — a `src-dir/main/` subdirectory collides with the reserved `:main` module (root of src-dir + single-file compile). Rejected at compile start with a rename fix-it."

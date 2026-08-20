@@ -167,13 +167,17 @@
             :cache-hit? <bool>}."
   ([source name out-dir]
    (compile-source-to-file source name out-dir {}))
-  ([source name out-dir {:keys [target] :or {target prelude/default-target}}]
-  (let [_        (io/make-parents (io/file out-dir "placeholder"))
-        parsed   (parse/parse source)
+  ([source name out-dir {:keys [target allow-build-modules?]
+                         :or {target prelude/default-target}}]
+  (let [parse-fn (if allow-build-modules?
+                   parse/parse-with-build-modules
+                   parse/parse)
+        _        (io/make-parents (io/file out-dir "placeholder"))
+        parsed   (parse-fn source)
         _        (validate-imports parsed)
         _        (prelude/validate-no-prelude-collisions! parsed)
         prelude-src (prelude/assemble-source target)
-        full-parsed (parse/parse (str prelude-src source))
+        full-parsed (parse-fn (str prelude-src source))
         deprecations (collect-deprecations full-parsed)
         _        (warn-deprecated-uses parsed deprecations)
         m-src    (-> full-parsed
@@ -239,10 +243,10 @@
    while making the concatenated multi-file source parse as a single
    program without redundant/conflicting module headers.
 
-   F51 L1 (2026-08-18) — `module` headers are now rejected at compile-
-   directory entry (see `reject-user-module-header!`); the strip here
-   only sees `from` lines in practice. Kept as `strip-module-and-...`
-   until L3 removes the flat-namespace concatenation shim entirely."
+   F73 (2026-08-20) — `module` headers are hard-rejected at parse-time.
+   The strip here only sees `from` lines in practice; the module-line
+   branch is dead but kept for defensive tolerance until L3 removes
+   the flat-namespace concatenation shim entirely."
   [src]
   (->> (clojure.string/split-lines src)
        (map (fn [line]
@@ -278,24 +282,9 @@
             dotted      (clojure.string/replace rel "/" ".")]
         (keyword dotted)))))
 
-(defn- reject-user-module-header!
-  "F51 L1 — user-authored `module <name>` header is retired. Modules
-   are derived from directory structure (§7.2 refactor); a per-file
-   header is redundant and a source of drift. Fires a targeted
-   `:cxc-f51-module-header-removed` naming the file's derived module
-   and pointing at the migration (delete the line)."
-  [^java.io.File file parsed-nodes derived-module]
-  (when-let [m (first (filter #(= :module (:node %)) parsed-nodes))]
-    (throw (ex-info
-            (str "F51 L1: `module " (:name m) "` header in " (.getName file)
-                 " is retired — cxc modules are derived from directory "
-                 "structure (spec §7.2). This file's module is `"
-                 (name derived-module) "` based on its path relative to "
-                 "src-dir. Delete the `module` line.")
-            {:kind :cxc-f51-module-header-removed
-             :file (.getPath file)
-             :header-name (:name m)
-             :derived-module derived-module}))))
+;; `reject-user-module-header!` retired 2026-08-20 (F73). The parser
+;; now hard-rejects `module <name>` at parse-time with a targeted
+;; diagnostic; the build-time check is unreachable and removed.
 
 (defn- reject-reserved-main-subdir!
   "F51 L1 — a subdirectory named `main` at any level under `src-dir`
@@ -386,7 +375,6 @@
                                                  (assoc (ex-data e)
                                                         :file (.getPath f))
                                                  e))))]
-                  (reject-user-module-header! f parsed module)
                   (try
                     (validate-imports parsed)
                     (catch clojure.lang.ExceptionInfo e
@@ -411,4 +399,9 @@
                      (strip-module-and-import-lines src)))
               (map vector files-with-nodes srcs))
         combined (clojure.string/join "\n\n" with-module-headers)]
-    (compile-source-to-file combined name out-dir opts))))
+    ;; F73 note: user `module` headers are rejected at parse-time; the
+    ;; build injects synthetic ones here for per-file provenance and
+    ;; passes `:allow-build-modules?` so the re-parse in
+    ;; `compile-source-to-file` accepts them via `parse-with-build-modules`.
+    (compile-source-to-file combined name out-dir
+                            (assoc opts :allow-build-modules? true)))))

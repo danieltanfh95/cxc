@@ -1,5 +1,3 @@
-module com.example.integers_from_bits
-
 # =============================================================================
 # integers-from-bits.cxc — deriving integer types from bit sequences
 #

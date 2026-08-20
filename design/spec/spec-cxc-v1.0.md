@@ -5535,8 +5535,6 @@ function compute(x: Int) -> Int:
 Sections in module bodies gate or transform declarations:
 
 ```
-module com.example.utils
-
 pure:
     function factorial(n: Int) -> Int: ...
     function fibonacci(n: Int) -> Int: ...
@@ -8101,7 +8099,6 @@ A **module** is a named compilation unit. Modules:
 
 ```
 # In every source file that belongs to this module:
-module com.example.orders
 ```
 
 All source files declaring `module com.example.orders` compose into that module. Their order of processing is determined by dependency (a source that references types defined in another source of the same module compiles after the defining source).
@@ -9202,9 +9199,12 @@ None of these paths require rewriting existing code. cxc adoption is additive.
 Everything not documented here as bootstrap grammar comes from aliases. See §4.20 for the prelude declarations that define standard surface syntax.
 
 ```
-program := (module_decl)? import* top_level_item*
+program := import* top_level_item*
 
-module_decl := 'module' qualified_name
+# `module <name>` declaration RETIRED 2026-08-20 (F73). Module identity
+# is the file path relative to the source root (Python/Go style); the
+# resolver walks the tree at Layer 6. The parser hard-rejects a
+# `module` header at any position with a targeted migration diagnostic.
 
 top_level_item := section_usage | declaration | alias_decl | alias_use
 
@@ -10053,8 +10053,6 @@ ffi_type := 'CString' | 'Int8' | 'Int16' | 'Int32' | 'Int64'
 A complete small program demonstrating sections at multiple scopes:
 
 ```
-module com.example.orders
-
 from com.example.inventory import Inventory, InventoryError
 
 ## An order is data — pure data class.
@@ -10176,8 +10174,6 @@ def SecureVault:
 Example with user-defined alias:
 
 ```
-module com.example.myapp
-
 alias exposed_data: runtime immutable identity expose
 
 def PublicRecord:

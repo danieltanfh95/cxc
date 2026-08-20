@@ -23,7 +23,10 @@
    falling back to `:user`)."
   [module-nm user-src]
   (let [tagged   (str "module " module-nm "\n\n" user-src)
-        combined (parse/parse (str prelude/source tagged))
+        ;; F73 (2026-08-20) — user `module` headers rejected at parse
+        ;; time; the resolve test mimics the multi-file build's synthetic
+        ;; injection and uses the same internal entry point the build does.
+        combined (parse/parse-with-build-modules (str prelude/source tagged))
         renamed  (prelude/rewrite-prelude-names combined)]
     (resolve/build-symbol-table renamed)))
 

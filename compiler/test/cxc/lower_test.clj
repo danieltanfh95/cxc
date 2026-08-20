@@ -2816,3 +2816,30 @@ def main:
   (testing "F69 L4c1 — wildcard-tail satisfies exhaustiveness regardless of covered cases."
     (let [prog (lower-src "def Signal:\n    case red\n    case yellow\n    case green\n\ndef main:\n    -> running\n        then:\n            let s: Signal = Signal.red\n            s:\n                <: red: print(1)\n                <: _: print(0)\n")]
       (is (some? prog)))))
+
+;; ---------------------------------------------------------------------------
+;; F38 — structural def can't hold an agent-typed field (value-semantics
+;; guard). A raw agent-pointer field on a record would silently alias the
+;; same instance across bit-copies. Reject at lower-time with a promotion
+;; fix-it. `List of Agent` / `Map of ... Agent` are not covered by this
+;; check — they surface a different design question and would fire only
+;; if they resolve to atom-env by name, which the container synthesis
+;; explicitly excludes via [[user-declared-atom?]].
+;; ---------------------------------------------------------------------------
+
+(deftest f38-record-with-agent-field-rejected
+  (testing "F38 — structural `X` with an agent-typed field fails compile with a promotion fix-it. Prior to the diagnostic, this shape emitted `Tally * c;` inside the struct BEFORE the `@class Tally;` forward decl, producing uncompilable C."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"(?s)record `X` field `c: Tally` .* value-shape.*promote `X` to an agent"
+         (lower-src "def Tally:\n    n: Int = 0\n\n    -> alive\n\n    alive <: bump -> alive\n        then: n => n + 1\n\ndef X:\n    c: Tally = nil\n\ndef main:\n    x: X = X()\n\n    -> end\n        then: print(0)\n")))))
+
+(deftest f38-record-with-value-field-accepted
+  (testing "F38 — a structural def holding value-typed fields (Int, String, another record, an enum) is accepted; the diagnostic only fires when the field type resolves to a user-declared agent."
+    (let [prog (lower-src "def V:\n    x: Int\n    y: Int\n\ndef X:\n    v: V\n    n: Int\n\ndef main:\n    -> running\n        then: print(0)\n")]
+      (is (= :objc-program (:node prog))))))
+
+(deftest f38-record-with-list-of-int-accepted
+  (testing "F38 — `List of Int` on a record is not rejected by this diagnostic; the field's `:cxc-ty` is the synthesized container class name (`_Cxc_ListOfInt`), which is explicitly excluded from the agent check via `:kind :list-container`."
+    (let [prog (lower-src "def X:\n    xs: List of Int\n\ndef main:\n    -> running\n        then: print(0)\n")]
+      (is (= :objc-program (:node prog))))))

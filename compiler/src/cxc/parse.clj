@@ -2305,11 +2305,33 @@
         (recur (conj parts (t-value (peek-tok tokens (inc p)))) (+ p 2))
         [(str/join "." parts) p]))))
 
-(defn- parse-module-decl [tokens pos]
+(defn- parse-module-decl-internal
+  "Internal-only — accepts `module <name>` and produces a `:module`
+   node. NOT reachable from `parse` (user source); reserved for
+   `parse-internal-with-module-nodes` which the multi-file build
+   uses to attribute per-file provenance to the resolver."
+  [tokens pos]
   (let [[_ p]   (expect tokens pos :kw "module")
         [dotted p] (parse-dotted tokens p)
         [_ p]   (expect tokens p :newline)]
     [{:node :module :name dotted} p]))
+
+(defn- reject-module-decl!
+  "F73 (2026-08-20) — the `module com.example.foo` header is retired.
+   Module identity is the file path relative to the source root
+   (Python/Go style); the resolver walks the tree at Layer 6. An
+   explicit declaration adds a second source of truth that can drift
+   from the path, buys nothing the resolver can't infer, and — under
+   `def main` — was already ignored by the lowerer."
+  [tokens pos]
+  (fail! tokens pos
+         (str "`module <name>` declaration is retired (2026-08-20). "
+              "Module identity is the file path relative to the source "
+              "root — the compiler walks the tree; no explicit "
+              "declaration is needed. Delete this line. If you were "
+              "using the declared name for imports elsewhere, rely on "
+              "the file path instead (e.g. `from com.example.foo import "
+              "X` where `com/example/foo.cxc` is the file).")))
 
 (defn- parse-from-import [tokens pos]
   (let [[_ p]      (expect tokens pos :kw "from")
@@ -2332,7 +2354,7 @@
   (let [p (skip-newlines tokens pos)]
     (cond
       (at? tokens p :eof)          [nil p]
-      (at? tokens p :kw "module")  (parse-module-decl tokens p)
+      (at? tokens p :kw "module")  (reject-module-decl! tokens p)
       (at? tokens p :kw "from")    (parse-from-import tokens p)
       (at? tokens p :kw "def")     (parse-def-atom tokens p)
 
@@ -2382,14 +2404,35 @@
 
       :else (fail! tokens p "expected top-level form"))))
 
-(defn parse
-  "Parse a cxc source string into a sequence of top-level AST nodes."
-  [source]
+(defn- parse* [source allow-module?]
   (let [tokens (lex/tokenize source)]
     (loop [nodes [] pos 0]
       (let [pos (skip-newlines tokens pos)]
         (if (at? tokens pos :eof)
           (desugar-chained-comparisons nodes)
-          (let [[node pos'] (parse-top tokens pos)]
+          (let [;; Only when explicitly allowed (multi-file build injection):
+                ;; route `module <name>` to the internal parser instead of the
+                ;; F73 rejection at the top-level dispatch.
+                [node pos']
+                (if (and allow-module?
+                         (at? tokens pos :kw "module"))
+                  (parse-module-decl-internal tokens pos)
+                  (parse-top tokens pos))]
             (recur (conj nodes node) pos')))))))
+
+(defn parse
+  "Parse a cxc source string into a sequence of top-level AST nodes.
+   User-facing: rejects `module <name>` headers (F73, 2026-08-20)."
+  [source]
+  (parse* source false))
+
+(defn parse-with-build-modules
+  "Internal — used by the multi-file build (`compile-directory-to-file`)
+   to re-parse a concatenation of per-file sources with synthesized
+   `module <derived>` lines prepended for provenance attribution.
+   Not for user source; the per-file first-pass parse used by
+   `compile-directory-to-file` still uses `parse` and rejects any
+   user-authored `module` line."
+  [source]
+  (parse* source true))
 

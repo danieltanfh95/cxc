@@ -7,9 +7,12 @@
 
 (defn- node-kind [n] (:node n))
 
-(deftest module-decl
-  (is (= {:node :module :name "com.example.foo"}
-         (first-node "module com.example.foo\n"))))
+(deftest module-decl-retired
+  (testing "F73 (2026-08-20) — the `module <name>` header is retired. Module identity is the file path relative to the source root; the resolver walks the tree. Parser rejects with a migration diagnostic instead of producing a `:module` node."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"`module <name>` declaration is retired"
+         (p/parse "module com.example.foo\n")))))
 
 (deftest from-import
   (let [n (first-node "from com.cxc.stdlib import Clock, Random\n")]
