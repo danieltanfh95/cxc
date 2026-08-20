@@ -1387,7 +1387,7 @@ when: <trigger condition>                                 # e.g. `clock.after(ti
   - **Side-effect statements** — emissions (`:> msg(args)`), sync sends (`|> receiver.msg(args)`), external calls, `print(...)`. Fire in source order after the field-update commit, reading the F33 snapshot.
   Multiple `then:` clauses in one transition body are allowed and merge at lowering (F22 exemption).
 
-**Header whitespace is flexible.** Source + trigger on line 1, arrow + target on line 2, is the canonical multi-line form. Compact single-line form `<source> <: <msg>{args} -> <target>` is legal for simple transitions. Grammar accepts either; users pick per readability.
+**Header whitespace is flexible.** Source + trigger on line 1, arrow + target on line 2, is the canonical multi-line form. Compact single-line form `<source> <: <msg>(args) -> <target>` is legal for simple transitions. Grammar accepts either; users pick per readability. (Pre-F70 I5, message-payload was written with braces `{args}`; retired Stage 3, 2026-08-20 — parens are now the sole payload syntax.)
 
 *Wildcard on-enter — `-> phase` shorthand.*
 
@@ -3605,20 +3605,21 @@ def Shape:
 
 **Discriminator width.** Tagged-variant defs with ≤256 cases use `UInt8` discriminator; those with 257–65536 cases use `UInt16`; beyond that use `UInt32`. Discriminator width is set at composition time from case count. Adding a case to a tagged-variant def that pushes it across a width boundary is a wire-incompatible change — flagged by the compiler at composition, since it would break decoding of existing serialized values.
 
-**Field-type recursion.** A structural-shape def with a field of type `T` requires `T` to have `.as() -> Bytes` and `class function from(source: Bytes)` methods, so synthesis of the containing def's byte methods can call them. If `T` is structural-shape / tagged-variant / primitive → guaranteed by the base-class property. If `T` is an agent-shape def → the author must have written the methods. If `T` has neither, the containing def's declaration fails at compile time with a diagnostic pointing at the field:
+**Field-type recursion.** A structural-shape def with a field of type `T` requires `T` to be a value shape (structural / tagged-variant / primitive). Value fields have `.as() -> Bytes` and `class function from(source: Bytes)` methods guaranteed by the base-class property. Agent-shape (reference) fields are **rejected outright** on structural defs by the F38 sub-landing (`:cxc-f38-record-holds-agent-field`, 2026-08-20) — bit-copying the containing structural would silently alias the same agent across value copies, breaking value semantics. The diagnostic points at the promotion fix-it (promote the containing def to an agent shape by adding a `-> phase` initial-phase marker) or the indirection fix-it (drop the field and message the agent via `|>` from where the containing struct is used). Pre-F38, the guidance was "author must supply byte methods on the agent" — that path never worked (emission also mis-ordered the agent forward-decl relative to the struct definition, producing uncompilable C).
+
+If `T` is a value shape but the author has hand-overridden byte-method synthesis in an incompatible way, the containing def's declaration fails at compile time with a diagnostic pointing at the field:
 
 ```
-error[E0520]: field `T`'s type `SomeRegularClass` has no `.as() -> Bytes` method
+error[E0520]: field `T`'s type `SomeStructural` has no `.as() -> Bytes` method
   --> src/model.cxc:12:9
    |
-12 |     data: helper: SomeRegularClass
-   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ cannot synthesize `Model.as() -> Bytes`
+12 |     helper: SomeStructural
+   |     ^^^^^^^^^^^^^^^^^^^^^^ cannot synthesize `Model.as() -> Bytes`
    |
-help: either write `.as() -> Bytes` on `SomeRegularClass` explicitly
+help: either write `.as() -> Bytes` on `SomeStructural` explicitly
    |
-   |     extend SomeRegularClass:
-   |         methods:
-   |             function as(self) -> Bytes: ...
+   |     extend SomeStructural:
+   |         def as(self) -> Bytes: ...
    |
 help: or write `Model.as() -> Bytes` explicitly to opt out of synthesis
 ```
@@ -9850,9 +9851,10 @@ field_path    := identifier                                            # unquali
 # with the same name silently changes resolution of unqualified refs in `then:`.
 # Compiler warns on the declaration site; users add explicit path or rename.
 
-# `do:` sub-block — RETIRED (F70 I3, 2026-08-19). Side-effect statements
-# fold into `then:` (see then_entry). Parser accepts `do:` during Stage 2
-# transition with a deprecation warning; Stage 3 removes it entirely.
+# `do:` sub-block — RETIRED (F70 I3 Stages 1+2 2026-08-19; Stage 3
+# 2026-08-20). Side-effect statements fold into `then:` (see then_entry).
+# Post-Stage-3, `do:` is a hard parse error with a migration diagnostic
+# pointing at `then:`.
 
 # Enum-valued phase transitions.
 # When `<from>` and `<to>` are enum cases (not state atoms), the compiler compiles

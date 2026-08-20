@@ -424,7 +424,7 @@
       (is (= "hi\n" stdout)))))
 
 (deftest end-to-end-multi-file-demo
-  (testing "multi-file-demo/ — Layer 6 Steps 2+3 (module system minimum viable). Two-file program: counter.cxc declares a Counter record; main.cxc uses it via `Counter(seed: 41).bump()`. Each file has a `module <dotted>` header; main declares `from std.time import Duration` (advisory — unused). `compile-directory-to-file` reads both files, validates the import against `stdlib-manifest`, strips module/import lines, concatenates, and processes as one program. Prints 42."
+  (testing "multi-file-demo/ — Layer 6 Steps 2+3 (module system minimum viable). Two-file program: `counter.cxc` declares a `Counter` record; `main.cxc` uses it via `Counter(seed: 41).bump()` and declares `from std.time import Duration` (advisory — unused). `compile-directory-to-file` reads both files, synthesizes per-file `module <derived>` headers internally for provenance (F73: user-facing `module <name>` retired, module identity is file path), validates the import against `stdlib-manifest`, strips the synthesized headers before lower, and processes as one program. Prints 42."
     (let [{:keys [exit stdout]} (compile-dir-and-run "multi-file-demo")]
       (is (zero? exit))
       (is (= "42\n" stdout)))))

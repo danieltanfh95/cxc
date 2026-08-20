@@ -963,8 +963,8 @@ def main:
       (is (= :emit (:node emit-stmt)))
       (is (= "bump" (:msg emit-stmt))))))
 
-(deftest f70-i5-brace-payload-legacy-still-parses
-  (testing "F70 I5 — legacy brace-payload `{name: Type}` still parses during the transition period (Stage 3 hard-retirement deferred until test-embedded cxc-source migrates)."
+(deftest f70-i5-parens-payload-parses-typed-payload
+  (testing "F70 I5 (Stage 3, 2026-08-20) — canonical parens payload `(name: Type)` on a receive-side transition parses to `{:name :type}` maps under `:payload`. (Renamed from `f70-i5-brace-payload-legacy-still-parses` 2026-08-20: Stage 3 rejects the brace form; the test's input was already migrated to parens; the old name lied about what it tested. Rejection of the brace form is covered by a distinct Stage-3 diagnostic test.)"
     (let [n (first-node "def A:\n    -> alive\n\n    alive <: input.pressed(key: Int) -> alive\n")
           t (first (filter #(and (= :transition (:node %))
                                  (some? (:receive %))) (:body n)))
@@ -996,12 +996,12 @@ def main:
       (is (= "finish" (:msg emit-stmt)))
       (is (empty? (:args emit-stmt))))))
 
-(deftest f70-i6-binary-send-legacy-still-parses
-  (testing "F70 I6 — legacy binary `<expr> |> <msg>(args)` still parses during the transition period (Stage 3 deferred)."
+(deftest f70-i6-prefix-send-under-then-parses
+  (testing "F70 I6 (Stage 3, 2026-08-20) — canonical prefix `|> receiver.msg(args)` inside a `then:` clause parses to `:emit`. Duplicate of `f70-i6-prefix-send-parses` above; kept because it exercises the specific `then:` embedding path (versus the standalone-in-block coverage). (Renamed from `f70-i6-binary-send-legacy-still-parses` 2026-08-20: Stage 3 rejects the legacy binary form; the test's input was already migrated to prefix; the old name lied about what it tested. Rejection of the legacy binary form is covered by a distinct Stage-3 diagnostic test.)"
     (let [n (first-node "def main:\n    -> running\n        then: |> self.bump(by: 1)\n")
           t (first (filter #(= :transition (:node %)) (:body n)))
-          do-c (first (:body t))
-          emit-stmt (first (:stmts do-c))]
+          then-c (first (:body t))
+          emit-stmt (first (:stmts then-c))]
       (is (= :emit (:node emit-stmt)))
       (is (= :self (get-in emit-stmt [:target :node])))
       (is (= "bump" (:msg emit-stmt))))))
