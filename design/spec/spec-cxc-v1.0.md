@@ -8089,23 +8089,17 @@ function handshake(url: URL) -> Result<Response, Error>:
 
 A **module** is a named compilation unit. Modules:
 
-- Have a reverse-DNS name (`com.example.orders`).
-- May span multiple sources declaring the same module name.
+- Take their name from their file path relative to the source root (Python/Go convention). `src/com/example/orders.cxc` → module `com.example.orders`. A directory of files under `src/com/example/orders/` composes into module `com.example.orders`; the resolver walks the tree at compile time.
+- May span multiple sources within the same directory.
 - Produce a unified metadata artifact (§4.18) shared across the module.
 - Define the boundary for `internal` visibility (§7.7).
 - Compile as a unit — cross-file references within the module resolve during a single compilation pass.
 
-**Declaration:**
+**No declaration is needed.** Module identity is structural — the compiler derives it from the file path. The `module <name>` header (v1.0-, F73) is retired and rejected at parse time with a fix-it pointing at the file-path convention. See §10 grammar retirement note.
 
-```
-# In every source file that belongs to this module:
-```
+**Single-source modules** compile as an implicit module named after the file when the source is compiled standalone.
 
-All source files declaring `module com.example.orders` compose into that module. Their order of processing is determined by dependency (a source that references types defined in another source of the same module compiles after the defining source).
-
-**Single-source modules** need no explicit declaration if the source is compiled standalone; the compiler treats the source as an implicit module named after the file.
-
-**Multi-source modules** benefit from shared metadata (LSP sees the whole module structure), cross-source visibility of internal-by-convention declarations, and unified exposed-interface export.
+**Multi-source modules** — a directory whose files share a common path prefix — benefit from shared metadata (LSP sees the whole module structure), cross-source visibility of internal-by-convention declarations, and unified exposed-interface export.
 
 ### 7.3 Packages
 

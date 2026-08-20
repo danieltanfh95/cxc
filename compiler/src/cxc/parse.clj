@@ -211,11 +211,16 @@
                             :else
                             [{:node :type-ref :name name} p])]
             [inner p]))
-        ;; F39 Landing 2 — postfix `?` / `!` are grammar-mutually-exclusive.
-        ;; `T?` is nullable (Optional for value types, redundant on refs
-        ;; per L1). `T!` is non-nil contract (author expectation; runtime
-        ;; enforced at observation points in L3). Nesting like `T?!` or
-        ;; `T!?` is a grammar error.
+        ;; Nullability suffixes (spec §3.6.1, unified rule 2026-08-20):
+        ;;   bare `T` — nil-allowed (default at every position)
+        ;;   `T!`     — non-nil contract (runtime enforced at three
+        ;;              observation points per F39 L3)
+        ;;   `T?`     — BANNED for all shapes. Parser still produces
+        ;;              `:type-nullable` so L1 can reject at lower-time
+        ;;              with a targeted diagnostic
+        ;;              (`:cxc-f39-nullable-on-reference` today; folds
+        ;;              into `:cxc-f39-nullable-suffix-banned` at L5).
+        ;; Nesting like `T?!` / `T!?` is a grammar error.
         [wrapped p] (cond
                       (at? tokens p :punct "?")
                       (let [w [{:node :type-nullable :inner inner} (inc p)]]

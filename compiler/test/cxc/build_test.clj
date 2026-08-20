@@ -357,9 +357,9 @@
       (is (zero? exit))
       (is (= "7\n11\n13\n" stdout)))))
 
-(deftest end-to-end-module-header
-  (testing "module-header.cxc — Layer 5 Step 13 makes `module com.example.foo` and `from com.cxc.stdlib import Duration, Instant` advisory-parse. Lower/emit ignore the nodes (all names still resolve globally in Layer 5); full multi-module resolution is Layer 6. Program computes 500 + 250 → 750."
-    (let [{:keys [exit stdout]} (compile-and-run "module-header")]
+(deftest end-to-end-import-only
+  (testing "import-only.cxc — `from std.time import Duration, Instant` names resolve against the prelude at Layer 5 (all names still resolve globally; namespace-scoped resolution is Layer 6). Program computes 500 + 250 → 750. (Renamed from module-header 2026-08-20: F73 retired the user `module <name>` header — module identity is file path — so the file no longer carries or exercises that shape.)"
+    (let [{:keys [exit stdout]} (compile-and-run "import-only")]
       (is (zero? exit))
       (is (= "750\n" stdout)))))
 

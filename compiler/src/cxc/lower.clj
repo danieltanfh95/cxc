@@ -45,7 +45,7 @@
      {:node :call            :fn \"printf\" :args [ ... ]}
 
    Coverage this file (2026-08-13):
-   - Hello-world: `def main: -> running do: print(\"...\")`
+   - Hello-world: `def main: -> running then: print(\"...\")`
    - Arithmetic in print; binops with %d/%f dispatch
    - Records → C typedef structs; construction; field access; defaults
    - Record methods → C functions (`V_plus(self, other)`); method-call
@@ -406,9 +406,15 @@
 (defn- cxc-type->c
   "Primitives → C type name; records → own struct name (value); atoms →
    `<name> *` (pointer, already nullable in ObjC); enums → own typedef
-   name (int-backed). `T?` wraps another type — legal today only for
-   atoms (their pointer type IS nullable). Nullable primitives/records/
-   enums would need Optional wrappers — fail-nyi."
+   name (int-backed).
+
+   Nullability (spec §3.6.1, unified rule 2026-08-20): bare `T` is
+   nil-allowed at every position; `T!` is the non-nil contract; `T?`
+   is BANNED for all shapes. Today L1 rejects `T?` on references via
+   `:cxc-f39-nullable-on-reference`; value-typed `T?` still fires a
+   distinct `fail-nyi!` pointing at L5 (which will fold both into a
+   unified `:cxc-f39-nullable-suffix-banned` diagnostic when it lands
+   and simultaneously flip bare value-typed `T` to Optional-boxed)."
   [ty-node record-env atom-env enum-env]
   (case (:node ty-node)
     :type-nullable
@@ -1891,7 +1897,7 @@
 
 (defn- transition-is-handler-shape?
   "F67 L3 — recognize the handler-collapse form:
-     `* <: name(a: T, b: U) -> * do: <body>`
+     `* <: name(a: T, b: U) -> * then: <body>`
    i.e. wildcard source, wildcard target, typed-params receive.
 
    These lower to handler-shaped method entries (spec §1265 semantics),
