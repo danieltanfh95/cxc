@@ -1642,7 +1642,7 @@
 ;; explicit wildcard-transition form:
 ;;
 ;;   -> foo(msg: T):    →    * <: foo(msg: T) -> *
-;;       stmt                     do: stmt
+;;       stmt                     then: stmt
 ;;
 ;; Both forms lower to the same handler-shaped method entry (spec §1265
 ;; semantics); the collapse removes the parallel opener glyph. This
@@ -1662,7 +1662,7 @@
                 "retired (Proposal G class-body collapse). Migrate to the "
                 "explicit handler-shape transition:\n\n"
                 "    * <: " handler-name "(args) -> *\n"
-                "        do: <body>\n\n"
+                "        then: <body>\n\n"
                 "Semantics unchanged (spec §1265) — same method-table entry, "
                 "same external invocation surface. The collapse removes the "
                 "parallel opener glyph so the class body has one shape per "
@@ -1822,7 +1822,7 @@
                     "retired (Proposal G class-body collapse). Migrate the "
                     "method by category:\n\n"
                     "  - reader → observable: `name(args) :< <expr>`\n"
-                    "  - void   → transition: `* <: name(args) -> * do: <body>`\n"
+                    "  - void   → transition: `* <: name(args) -> * then: <body>`\n"
                     "  - writer → transition: `* <: name(args) -> * then: <update>`\n\n"
                     "Utility functions unrelated to `self` belong at module "
                     "scope (`def name(args) -> T: body`). See spec §1.11."))
@@ -1838,7 +1838,7 @@
                     "  - reader → observable: `" (t-value (peek-tok tokens (inc p)))
                     "(args) :< <expr>`\n"
                     "  - void   → transition: `* <: " (t-value (peek-tok tokens (inc p)))
-                    "(args) -> * do: <body>`\n"
+                    "(args) -> * then: <body>`\n"
                     "  - writer → transition: `* <: " (t-value (peek-tok tokens (inc p)))
                     "(args) -> * then: <update>`\n\n"
                     "Utility functions unrelated to `self` belong at module "
@@ -2209,7 +2209,7 @@
                (str "`replace` inside `extend " target "` must "
                     "prefix an observable (`replace name[(args)] :< expr`) "
                     "or a wildcard self-transition (`replace * <: msg(args) "
-                    "-> * do: <body>`). See §3.3.2 rule 4."))))
+                    "-> * then: <body>`). See §3.3.2 rule 4."))))
 
     (at? tokens pos :kw "invariants") (parse-invariants-section tokens pos)
 

@@ -2,23 +2,22 @@
 
 Clojure implementation of the cxc compiler. Emits ObjC source; clang produces the binary.
 
-**Status.** Walking skeleton. No pipeline stages implemented yet.
+**Status (2026-08-20).** Bootstrap compiler under active development on `main`. Pipeline `lex → parse → resolve → lower → emit → build` is wired end-to-end; 408 tests / 1075 assertions passing. Coverage spans the v1.0 atom-substrate surface: `def <Name>:` with body-shape inference (F69), transitions + `then:` (F70), observables (`:<`), invariants, extensions, container atoms, streams, ObjC-inheriting runtime, multi-file build. Feature-level tracking in `design/spec-drift-audit.md` (per-item landing status) and `design/plans/` (per-feature landing plans).
 
 ## Layout
 
     compiler/
     ├── deps.edn                   Clojure deps + aliases
     ├── src/cxc/
-    │   ├── core.clj               entry point (see docstring for pipeline plan)
-    │   ├── lex.clj                (todo — tokenizer)
-    │   ├── parse.clj              (todo — parser, Instaparse-based)
-    │   ├── infer.clj              (todo — local inference)
-    │   ├── check.clj              (todo — contract discharge)
-    │   ├── lower.clj              (todo — cxc AST → ObjC AST)
-    │   ├── emit.clj               (todo — ObjC AST → .m/.h source)
-    │   └── build.clj              (todo — invoke clang)
-    └── test/cxc/
-        └── core_test.clj
+    │   ├── core.clj               CLI entry point + top-level pipeline
+    │   ├── lex.clj                tokenizer
+    │   ├── parse.clj              hand-rolled recursive-descent parser
+    │   ├── resolve.clj            symbol table + module provenance
+    │   ├── lower.clj              cxc AST → ObjC AST + all semantic checks
+    │   ├── emit.clj               ObjC AST → .m source
+    │   ├── build.clj              multi-file build + invoke clang
+    │   └── prelude.clj            std.* prelude sources + name mangling
+    └── test/cxc/                  test suites per module (build/emit/lex/lower/parse/resolve)
 
 ## Design references
 
@@ -56,7 +55,7 @@ At link time, cxc binaries depend on:
 - **libobjc2** — Objective-C runtime (dispatch, ARC, method tables)
 - **libdispatch** — concurrency (work-stealing thread pool)
 - **libuv** — async I/O event loop
-- **cxc runtime lib** — scheduler, mailboxes, contract-check helpers (in `../runtime/`, not yet created)
+- **cxc runtime lib** — ships inline as generated ObjC/C in the emitted source (`emit.clj` `cxc-runtime-helpers`); no separate library artifact today. Extraction to a linkable library is a future landing.
 
 ## Emission target
 

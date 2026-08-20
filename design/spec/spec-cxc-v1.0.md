@@ -575,7 +575,7 @@ Spec-committed stdlib aliases shipped with the language distribution. Users get 
 
 - **Section-composition** (v1.0 shape): `data:`, `methods:`, `static:`
 - **Class-kind** (from v0.7.2, unchanged shape): `record`, `enum`, `protocol`, `section`
-- **Type-expression aliases** (v0.8.0 — retired from language grammar, now prelude): `T?` (value-type Optional sum), `T!` (reference-type non-nil contract), `[T]` (Array), `{K:V}` (Map), `{T}` (Set), `(A,B) -> C` (Callable)
+- **Type-expression aliases** (v0.8.0 — retired from language grammar, now prelude): `T!` (non-nil contract; v1.0 unified rule 2026-08-20 broadens from reference-only to all shapes), `[T]` (Array), `{K:V}` (Map), `{T}` (Set), `(A,B) -> C` (Callable). `T?` was in this table pre-v1.0; retired 2026-08-20 (unified rule: bare `T` is nil-allowed universally, `T?` is banned).
 - **Expression-position literal aliases** (v0.8.0 new, from Session 2): `[e1, e2, ...]` (Array literal), `{k1:v1, ...}` (Map literal), `{e1, e2, ...}` (Set literal)
 - **Range operator aliases** (v0.8.0 new, from Session 2): `<lhs> ..< <rhs>` (half-open Range), `<lhs> ... <rhs>` (closed Range)
 - **String interpolation alias** (v0.8.0 new, from Session 2): `${<expr>}`
@@ -676,7 +676,7 @@ Consolidates struct, enumeration, and protocol into a single declaration form: `
 - **`record` sugar.** `record Foo:` desugars to `class Foo: metadata: kind: record`. Records opt out of universal extents, forbid transitions structurally (making their `data:` fields immutable-per-instance), get structural equality and copy-on-assign.
 - **`enum` sugar with raw values.** `enum Foo: case a = 1; case b = 2` desugars to `class + metadata: kind: enum, raw_type: <inferred>` with auto-generated `raw_value(self)` and `class function from_raw(value:)`. Raw type inferred from case values (smallest fit); overridable via `metadata: raw_type:`. Resolves the widest single interop gap in v0.5.
 - **`protocol` sugar clarified.** Under `kind: protocol`, `accepts:` section holds required signatures, `methods:` section holds default implementations. `accepts foo(...)` per-method form remains legal as sugar for single-requirement protocols.
-- **Type-expression sugar formalized.** `T?` = `Optional<T>`, `[T]` = `Array<T>`, `{K: V}` = `Map<K, V>`, `{T}` = `Set<T>`, `(A, B) -> C` = `Callable<(A,B), C>`. Sugar is lossless; expanded forms always legal. New sugar requires spec commitment.
+- **Type-expression sugar formalized.** `[T]` = `Array<T>`, `{K: V}` = `Map<K, V>`, `{T}` = `Set<T>`, `(A, B) -> C` = `Callable<(A,B), C>`. Sugar is lossless; expanded forms always legal. New sugar requires spec commitment. (`T?` was in this table pre-v1.0; retired 2026-08-20 under the unified nullability rule — see §3.6.1.)
 - **Everything is an expression.** `if`, `switch`, block, and expression-position `do:` produce values. Field/parameter/return initializers accept control-flow expressions directly. Blocks return the value of their final expression unless an explicit `return` is present. *(F69, 2026-08-18: `switch` retired; expression-position `<:` receive-glyph dispatch (§3.7) replaces it. Everything-is-an-expression principle unchanged.)*
 - **Loops return Bool.** `while` and `for` produce `Bool` — `true` if the loop exhausted its condition/iteration naturally, `false` if exited via `break`. Break-with-value is not supported on `while`/`for`; use `loop { ... break value }` (Rust-style infinite loop) if a T-typed return is genuinely needed. *(F20 REJECTED, 2026-08-18: `for` is not a keyword; iteration is method dispatch via `xs.for_each(e => body)`. `while` still returns `Bool` per §3.8.3.)*
 - **Closures are anonymous classes.** A closure literal desugars to an anonymous `class` with a single `call` method. Sugar hierarchy: `function(x: T) -> R: ...` (explicit) → `x => x + 1` (arrow, inferred types) → method reference (`self.foo`). Strong capture by default; `[weak self, ...]` prefix opts into weak capture per variable. Compiler warns on closures capturing `self` strongly and stored in a field of `self` (classic retain-cycle pattern).
@@ -4279,7 +4279,7 @@ protocol Iterator<T>:
     accepts for_each(f: (T) -> Void) -> Void       # convenience; default impl uses next()
 ```
 
-**Nil-on-exhaustion.** `next() -> T` returns nil when the iterator is exhausted. Under cxc's nil-messaging model (v0.7.0, §3.6.1), the return type auto-lifts for reference types; for value types, `next() -> T?` is the sugar-desugared form. Callers writing manual loops use `if let x = iter.next(): …` (v0.8.1 multi-binding form works too).
+**Nil-on-exhaustion.** `next() -> T` returns nil when the iterator is exhausted. Under cxc's nil-messaging model (v0.7.0, §3.6.1) and the unified nullability rule (2026-08-20), bare `T` is nil-allowed for both reference and value types — the return type is the same either way. Value-typed returns are Optional-boxed at the C level (F39 L5); reference-typed returns are ordinary nullable pointers. Callers writing manual loops use `if let x = iter.next(): …` (v0.8.1 multi-binding form works too).
 
 **Default `for_each`.** The `Iterator<T>` protocol ships a default implementation of `for_each` that loops on `next()`. Conformers may override for performance (SIMD, contiguous storage, etc.).
 
@@ -4835,7 +4835,7 @@ Wire-format specification for the byte methods that §3.4.6 documents as value-t
 | `Bytes` (unrefined) | `length: UInt32 (network-order)` `||` raw bytes | 4 + N bytes |
 | `Bytes where length == N` (fixed) | raw N bytes, no length prefix | N bytes |
 | `Bytes where length <= N` (bounded) | length-prefixed by smallest UInt type fitting N `||` raw bytes | 1/2/4 + N bytes |
-| `T?` (Optional) | presence byte (0x00 = nil, 0x01 = present) `||` `T` encoding if present | 1 or 1+sizeof(T) bytes |
+| bare `T` value-typed (nullable, Optional-boxed post-F39 L5) | presence byte (0x00 = nil, 0x01 = present) `||` `T` encoding if present | 1 or 1+sizeof(T) bytes |
 | `[T]` (Array) | `length: UInt32` `||` element encodings concatenated | 4 + N × sizeof(T) bytes |
 | `{K: V}` (Map) | `length: UInt32` `||` (`K` encoding `||` `V` encoding) × length | 4 + N × (sizeof(K) + sizeof(V)) bytes |
 | `{T}` (Set) | `length: UInt32` `||` element encodings concatenated (source-order iteration) | 4 + N × sizeof(T) bytes |
@@ -6121,9 +6121,9 @@ def UserList:
 
 1. **Entries.** Each entry is `method_name: value_expression`. The `method_name` must match a method declared on the class or one of its conformed protocols. The `value_expression` must be a compile-time constant, and its type must be assignable to the method's declared return type.
 2. **Applies to nil-receiver call sites only.** The generated dispatch consults `on_nil` only when the receiver is nil at call time. Non-nil receivers dispatch to the method body as normal.
-3. **Legal on defs whose emit permits nil.** Agent-shape defs (transitions present → handle emit) may declare `on_nil`. Structural-shape and tagged-variant defs reject `on_nil` — their emit is non-nil (bit-pattern / tag+payload), the section is meaningless.
+3. **Legal on defs whose emit permits nil.** Agent-shape defs (transitions present → handle emit) may declare `on_nil` — their instances are reference-typed pointers that ObjC nil-messaging can hit. Structural-shape and tagged-variant defs reject `on_nil` — they emit as value shapes (bit-pattern / tag+payload); a field of that type can be nil (bare `T` value-typed is Optional-boxed post-F39 L5), but the type's own methods cannot be dispatched on a nil receiver in the same ObjC-messaging sense, so `on_nil` is meaningless at the value-shape level.
 4. **Legal on protocols.** A protocol may declare `on_nil` entries. Conformers inherit the entries unless they override them at the class level. Precedence rules per §5.7.
-5. **Unlisted methods auto-lift.** Methods not listed in `on_nil` follow default nil-receiver semantics — return-type `T` auto-lifts to `T?`, return-type `Unit` no-ops.
+5. **Unlisted methods auto-lift.** Methods not listed in `on_nil` follow default nil-receiver semantics — a method declared to return `T!` on the atom auto-lifts to bare nullable `T` at the call site (because the receiver could be nil); return-type `Unit` no-ops. See §3.6.1's unified rule.
 6. **Composition.** `on_nil` composes inline like other sections. A class may declare at most one `on_nil` section directly; multiple protocol-inherited `on_nil` entries for the same method are a compile error unless resolved by a class-level entry (§5.7).
 
 **Stdlib protocols shipping default `on_nil`:**
@@ -6358,7 +6358,7 @@ Name a declaration keyword that expands to `class` plus prepended body content. 
 
 #### 4.16.5 Type-Expression Aliases
 
-Delimited or suffix patterns at type position, matching structural shapes of composite types. These aliases (shipped in the prelude, §4.20) are what makes `T?`, `[T]`, `{K:V}`, `(A,B) -> C` legal cxc type expressions — the language grammar itself only knows `identifier<generic_args>` for types; every richer shape is an alias.
+Delimited or suffix patterns at type position, matching structural shapes of composite types. These aliases (shipped in the prelude, §4.20) are what makes `[T]`, `{K:V}`, `(A,B) -> C`, and the `T!` non-nil-contract suffix legal cxc type expressions — the language grammar itself only knows `identifier<generic_args>` for types; every richer shape is an alias. The pre-v1.0 `T?` suffix alias was retired 2026-08-20 under the unified nullability rule (see §3.6.1); bare `T` is nil-allowed universally and `T?` is banned.
 
 **Delimited type-expression aliases:**
 
@@ -6378,17 +6378,14 @@ alias (<Args>) -> <R> in type_position:
 
 Match variables in `<>` at type position bind to type expressions. The `Args` in `(<Args>) -> <R>` binds to a comma-separated list of types.
 
-**Suffix type-expression aliases** — for nullability markers:
+**Suffix type-expression alias** — for the non-nil contract marker:
 
 ```
-alias <T> ? in type_position where T is value_type:
-    Optional<T>
-
-alias <T> ! in type_position where T is reference_type:
-    T with invariant: != nil
+alias <T> ! in type_position:
+    T with invariant: != nil (enforced at ctor-bind / then: write / method return)
 ```
 
-Guards restrict `T?` to value types (matching §3.6.1's rule that reference types are nil-allowed by default, so `?` on a reference type is redundant) and `T!` to reference types (value types can't be nil, so the invariant is trivially true).
+Under the unified nullability rule (§3.6.1, 2026-08-20), `T!` is meaningful for both reference and value types: reference `T!` is a non-nil pointer contract; value `T!` opts out of the Optional envelope and lowers to raw `T` (no presence byte, C-level bit-pattern). Bare `T` is nil-allowed universally — reference `T` is a nullable pointer (ObjC), value `T` is Optional-boxed (F39 L5 target). The pre-v1.0 `T?` suffix alias was retired; it's now a parse/lower-time reject with a fix-it pointing at bare `T` or `T!`.
 
 #### 4.16.6 Expression-Position Literal Aliases
 
@@ -8690,7 +8687,7 @@ section class Channel:
     composition_mode: nested
     parameters:
         mode: DistributionMode = .work
-        capacity: Int = nil          # Int is value-type; T? is Optional<Int> sum. nil = unbounded (default).
+        capacity: Int = nil          # bare `Int` is nil-allowed (unified rule §3.6.1); Optional-boxed at C level (F39 L5). nil = unbounded (default).
         on_full: OverflowPolicy = .block   # required when capacity is set
         topic_fn: TopicFn = nil       # TopicFn is a Callable (reference); nil-allowed by default. Required when mode = .pub.
     
