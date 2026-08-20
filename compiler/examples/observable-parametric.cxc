@@ -12,4 +12,4 @@ def main:
     b: Box = Box()
 
     -> running
-        do: print(b.scaled_area(2, 5))
+        then: print(b.scaled_area(2, 5))

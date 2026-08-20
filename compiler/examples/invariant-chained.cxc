@@ -11,4 +11,4 @@ def main:
     b: Bounded = Bounded(y: 3, limit: 7)
 
     -> running
-        do: print(b.val)
+        then: print(b.val)

@@ -2,6 +2,6 @@ def main:
     xs: List of Int = [10, 20, 30]
 
     -> running
-        do:
+        then:
             xs.remove(20)
             print(xs.count)

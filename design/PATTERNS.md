@@ -280,7 +280,7 @@ class LevenshteinPattern:
     needle: String
     max_distance: Int
     methods:
-        function first_match(self, source: String) -> Match?: ...
+        function first_match(self, source: String) -> Match: ...
         function all_matches(self, source: String) -> Iterator<Match>: ...
 
 # One-line prelude-style user alias for a literal form:
@@ -527,7 +527,7 @@ class MyViewController:
     metadata:
         extends: UIViewController                          # ObjC-only inheritance
     state:
-        table_view: UITableView?
+        table_view: UITableView
     dynamic function viewDidLoad(self):
         super.viewDidLoad()
         self.table_view = UITableView()
@@ -1016,7 +1016,7 @@ Retires the "you must declare conformance or the compiler won't accept your atom
 
 One question at the top: **does this state need its own lifecycle — phases, queueing, interruption, or independent concurrent activity?**
 
-**Yes → sub-atom in a nullable slot.** See the "state has phases with lifecycle" entry above. Sub-atom carries its own transitions, deconstructs on `end`, slot auto-nils. Example: Player's `action: ActionMachine?` for a fireball cast.
+**Yes → sub-atom in a nullable slot.** See the "state has phases with lifecycle" entry above. Sub-atom carries its own transitions, deconstructs on `end`, slot auto-nils. Example: Player's `action: ActionMachine` for a fireball cast (nullable by default under the unified rule — `T?` is banned).
 
 **No, but the atom discriminates behavior across discrete phases → phases on the current atom, fields at compound scope, wildcard on-enter (`-> phase`) for phase-determined values.** Phases are inferred from transition arrows; no `def phase` declarations. On-enter transitions carry per-phase constants:
 
@@ -1108,7 +1108,7 @@ State-machine-shaped things — anything with phases, transitions, potential for
 
 ```
 def Player:
-    action: ActionMachine? = nil    # nullable slot; nil = no action running
+    action: ActionMachine = nil    # nullable slot; nil = no action running
     
     alive <: cast_fireball
     -> alive
@@ -1125,8 +1125,8 @@ def Player:
         do: :> fireball_flew(target: target)
 
 def ActionMachine(clock: Clock):
-    fireball_target:    Position?  = nil
-    cast_started_at:    Instant?   = nil
+    fireball_target:    Position  = nil
+    cast_started_at:    Instant   = nil
     
     is_idle :< self is idle    # stable predicate for parents
     

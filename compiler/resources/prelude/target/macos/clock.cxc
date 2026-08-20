@@ -6,15 +6,15 @@ def Clock(ticks: Int = 3):
     every(rate_ms: Int) :< native_clock_every(self, rate_ms)
 
     -> running
-        do: self :> beat
+        then: self :> beat
 
     -> end
-        do: :> done
+        then: :> done
 
     running <: beat -> running
         when: remaining > 0
         then: remaining => remaining - 1
-        do:
+        then:
             :> tick
             self :> beat
 

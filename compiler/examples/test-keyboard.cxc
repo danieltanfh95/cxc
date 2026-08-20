@@ -6,9 +6,9 @@ def main:
     -> running
 
     -> end
-        do: print(count)
+        then: print(count)
 
-    running <: input.pressed{key: Int} -> running
+    running <: input.pressed(key: Int) -> running
         then: count => count + 1
 
     running <: input.done -> end

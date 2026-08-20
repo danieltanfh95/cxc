@@ -10,4 +10,4 @@ def Container:
 
 def main:
     -> running
-        do: print(Container().stored)
+        then: print(Container().stored)

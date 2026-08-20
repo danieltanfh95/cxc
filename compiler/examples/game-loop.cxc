@@ -8,18 +8,18 @@ def main:
     -> running
 
     -> end
-        do: print(n)
+        then: print(n)
 
-    running <: clock.every(rate_ms: 5){t: Instant} -> running
+    running <: clock.every(rate_ms: 5)(t: Instant) -> running
         when: ticks < 4
         then:
             n => n + 1
             ticks => ticks + 1
 
-    running <: input.pressed{key: Int} -> running
+    running <: input.pressed(key: Int) -> running
         then: n => n + 1
 
     running <: input.done -> running
 
-    running <: clock.every(rate_ms: 5){t: Instant} -> end
+    running <: clock.every(rate_ms: 5)(t: Instant) -> end
         when: ticks == 4

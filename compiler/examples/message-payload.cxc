@@ -4,14 +4,14 @@ def Counter:
     n :< raw_n
 
     -> alive
-        do:
-            self |> add(by: 5)
-            self |> add(by: 10)
-            self |> add(by: 3)
+        then:
+            |> self.add(by: 5)
+            |> self.add(by: 10)
+            |> self.add(by: 3)
 
-    alive <: add{by: Int} when: by > 0 -> alive
+    alive <: add(by: Int) when: by > 0 -> alive
         then: raw_n => raw_n + by
 
 def main:
     -> running
-        do: print(Counter().n)
+        then: print(Counter().n)

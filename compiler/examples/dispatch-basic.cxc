@@ -1,0 +1,16 @@
+def Signal:
+    case red
+    case yellow
+    case green
+
+def main:
+    -> running
+        then:
+            let s: Signal = Signal.yellow
+            s:
+                <: red:
+                    print(100)
+                <: yellow:
+                    print(200)
+                <: _:
+                    print(300)

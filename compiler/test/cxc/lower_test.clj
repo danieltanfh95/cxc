@@ -20,7 +20,7 @@
   (testing "def main: -> running do: print(\"hello, world\") lowers cleanly. F65 — Foundation is always included because String is NSString *; the string literal lowers as :objc-str (`@\"...\"`) rather than :str (`\"...\"`)."
     (let [prog (lower-src "def main:
     -> running
-        do: print(\"hello, world\")
+        then: print(\"hello, world\")
 ")]
       (is (= :objc-program (:node prog)))
       (is (some #{"<Foundation/Foundation.h>"} (:includes prog))
@@ -286,13 +286,13 @@
     -> alive
 
     -> dead
-        do: print(0)
+        then: print(0)
 
     alive <: die -> dead
 
 def main:
     -> running
-        do: print(1)
+        then: print(1)
 ")
           cls (first (:classes prog))
           die (first (filter #(= "die" (:selector %)) (:methods cls)))
@@ -331,7 +331,7 @@ def main:
 
 def main:
     -> running
-        do: print(1)
+        then: print(1)
 ")
           cls  (first (:classes prog))
           die  (first (filter #(= "die" (:selector %)) (:methods cls)))
@@ -400,14 +400,14 @@ def main:
     n: Int = 0
 
     -> alive
-        do: print(999)
+        then: print(999)
 
     alive <: bump -> alive
         then: n => n + 1
 
 def main:
     -> running
-        do: print(1)
+        then: print(1)
 ")
           cls  (first (:classes prog))
           bump (first (filter #(= "bump" (:selector %)) (:methods cls)))
@@ -743,7 +743,7 @@ def main:
 
 def main:
     -> running
-        do: print(1)
+        then: print(1)
 ")
           cls  (first (:classes prog))
           bump (first (filter #(= "bump" (:selector %)) (:methods cls)))]
@@ -778,11 +778,11 @@ def main:
     -> alive
 
     alive <: die -> dead
-        do: print(0)
+        then: print(0)
 
 def main:
     -> running
-        do: print(1)
+        then: print(1)
 ")
           cls  (first (:classes prog))
           die  (first (filter #(= "die" (:selector %)) (:methods cls)))
@@ -810,7 +810,7 @@ def main:
 
 def main:
     -> running
-        do: print(1)
+        then: print(1)
 ")
           cls  (first (:classes prog))
           die  (first (filter #(= "die" (:selector %)) (:methods cls)))]
@@ -832,7 +832,7 @@ def main:
 
 def main:
     -> running
-        do: print(1)
+        then: print(1)
 ")
           cls  (first (:classes prog))
           td   (first (filter #(= "take_damage" (:selector %)) (:methods cls)))
@@ -864,10 +864,10 @@ def main:
           "`running` remains a real phase constant"))))
 
 (deftest wildcard-end-then-clause-rejected
-  (testing "Audit F26: spec §1.11 line 1281 — `then:` on the wildcard `-> end` form is a compile error (the atom's state is about to be discarded, so field updates are meaningless). Uses an accompanying dummy atom so main is atom-promoted and the end-transition path runs. Positive semantic-fix cases (specific transition to end with `do:` inlining before -transitionToEnd, and `then:` rejection on specific) exercise through the existing end-to-end suite; explicit regression scaffolding for those would need multi-atom message wiring beyond what parse+lower can construct without the prelude."
+  (testing "Audit F26 + F70 I3: `then:` field updates on `-> end` are a compile error (the atom's state is about to be discarded, so writes are meaningless). Under I3, `then:` accepts both `:updates` and `:stmts`; the rule migrates from clause-level to entry-level — only non-empty `:updates` triggers the reject. Non-update entries (prints, sends) are allowed on `-> end` and lower as post-commit side effects."
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
-         #"`then:` on `-> end` wildcard .* compile error"
+         #"`then:` field updates on `-> end` wildcard .* compile error"
          (lower-src "def Sidekick:
     -> running
 
@@ -886,16 +886,16 @@ def main:
     ;; Baseline sanity: `-> running` still works.
     (is (some? (lower-src "def main:
     -> running
-        do: print(1)
+        then: print(1)
 ")))
     ;; F50 fix: any phase name is accepted.
     (is (some? (lower-src "def main:
     -> playing
-        do: print(1)
+        then: print(1)
 ")))
     (is (some? (lower-src "def main:
     -> tick
-        do: print(1)
+        then: print(1)
 ")))))
 
 (deftest f50-promoted-main-with-capability-ctor-params
@@ -946,7 +946,7 @@ def main:
 
 def main:
     -> running
-        do: print(1)
+        then: print(1)
 ")
           cls  (first (filter #(= "Counter" (:name %)) (:classes prog)))
           obs  (first (filter #(= "small_next" (:selector %)) (:methods cls)))]
@@ -972,7 +972,7 @@ def main:
 
 def main:
     -> running
-        do: print(1)
+        then: print(1)
 ")
           widths (first (filter #(= "Widths" (:name %)) (:structs prog)))
           field-c-type (fn [n] (-> (filter #(= n (:name %)) (:fields widths))
@@ -999,7 +999,7 @@ def main:
 
 def main:
     -> running
-        do: print(1)
+        then: print(1)
 ")
           rec  (first (filter #(= "NonNumeric" (:name %)) (:structs prog)))
           field-c-type (fn [n] (-> (filter #(= n (:name %)) (:fields rec))
@@ -1026,7 +1026,7 @@ def main:
 
 def main:
     -> running
-        do: print(1)
+        then: print(1)
 ")
           cls  (first (filter #(= "Bounded" (:name %)) (:classes prog)))
           state-method (first (filter #(= "cxc_stateInit" (:selector %))
@@ -1069,7 +1069,7 @@ def main:
 
 def main:
     -> running
-        do: print(1)
+        then: print(1)
 ")
           cls  (first (filter #(= "Bounded" (:name %)) (:classes prog)))
           end-method (first (filter #(= "transitionToEnd" (:selector %))
@@ -1111,7 +1111,7 @@ def main:
 
 def main:
     -> running
-        do: print(1)
+        then: print(1)
 ")
           cls  (first (filter #(= "Bounded" (:name %)) (:classes prog)))
           noop (first (filter #(= "noop" (:selector %)) (:methods cls)))
@@ -1193,7 +1193,7 @@ def Unbounded:
 
 def main:
     -> running
-        do: print(1)
+        then: print(1)
 ")
           value-c-type
           (fn [nm]
@@ -1223,7 +1223,7 @@ def main:
 
 def main:
     -> running
-        do: print(1)
+        then: print(1)
 ")
           cls  (first (filter #(= "Age" (:name %)) (:classes prog)))
           value-prop (first (filter #(= "value" (:name %)) (:properties cls)))
@@ -1276,7 +1276,7 @@ def main:
     a: Age = Age(value: 42)
 
     -> running
-        do: print(0)
+        then: print(0)
 ")
           age-cls  (first (filter #(= "Age" (:name %)) (:classes prog)))
           age-init-params (:init-params age-cls)
@@ -1309,7 +1309,7 @@ def main:
     a: Age = Age(value: 42)
 
     -> running
-        do: print(0)
+        then: print(0)
 ")
           cls (first (filter #(= "Age" (:name %)) (:classes prog)))
           value-prop (first (filter #(= "value" (:name %)) (:properties cls)))
@@ -1354,7 +1354,7 @@ def main:
 
 def main:
     -> running
-        do: print(0)
+        then: print(0)
 ")))))
 
 (deftest f19-l2-string-subscript-lowers-to-character-at-index
@@ -1366,7 +1366,7 @@ def main:
 
 def main:
     -> running
-        do: print(0)
+        then: print(0)
 ")
           fn         (first (filter #(= "R_first_char" (:name %))
                                     (:functions prog)))
@@ -1425,7 +1425,7 @@ def main:
 
 def main:
     -> running
-        do: print(V(x: 3, y: 4).magnitude_sq)
+        then: print(V(x: 3, y: 4).magnitude_sq)
 ")
           f    (first (filter #(= "V_magnitude_sq" (:name %)) (:functions prog)))]
       (is (some? f) "record observable emitted as C function V_magnitude_sq")
@@ -1443,7 +1443,7 @@ def main:
 
 def main:
     -> running
-        do: print(V(x: 1, y: 2).scaled(10))
+        then: print(V(x: 1, y: 2).scaled(10))
 ")
           f    (first (filter #(= "V_scaled" (:name %)) (:functions prog)))]
       (is (some? f) "V_scaled function emitted")
@@ -1459,7 +1459,7 @@ def main:
     -> running
 
     * <: tick(msg: Int) -> *
-        do: return n
+        then: return n
 
 def main:
     a: A = A()
@@ -1481,7 +1481,7 @@ def main:
     -> running
 
     * <: tick() -> *
-        do: return n
+        then: return n
 
 def main:
     a: A = A()
@@ -1531,10 +1531,10 @@ def main:
     -> running
 
     * <: tick(msg: Int) -> *
-        do: return n
+        then: return n
 
     * <: tick(msg: Int) -> *
-        do: return n
+        then: return n
 
 def main:
     a: A = A()
@@ -2702,3 +2702,117 @@ def main:
           f     (first (filter #(= "owner" (:name %)) (:properties child)))]
       (is (= ["strong"] (:attrs f))
           "unmodified atom-typed field still gets the pre-L2 default (strong)"))))
+
+;; ---------------------------------------------------------------------------
+;; F69 L2 — Unified body-shape lookup (def-kind)
+;; ---------------------------------------------------------------------------
+
+(defn- ctx-for
+  "Build a lowering ctx with just enough envs to exercise `def-kind`.
+   Runs `resolve/build-symbol-table` over the parsed source (with
+   prelude) and threads it plus a stub protocol-env into a bare ctx.
+   Anything downstream of the F51 read path lands here; the ad-hoc
+   envs are omitted because `def-kind` reads via `resolve/lookup`."
+  [src]
+  (let [combined  (p/parse (str (:source (find-ns 'cxc.prelude)) src))]
+    ;; use the same rename postwalk lower runs so table keys match
+    (let [renamed  ((requiring-resolve 'cxc.prelude/rewrite-prelude-names) combined)
+          table    ((requiring-resolve 'cxc.resolve/build-symbol-table) renamed)]
+      {:symbol-table table
+       :protocol-env {}})))
+
+(deftest f69-l2-def-kind-structural
+  (testing "F69 L2 — fields-only def resolves to :structural"
+    (let [ctx (ctx-for "def Point:\n    x: Int\n    y: Int\n\ndef main:\n    -> running\n")]
+      (is (= :structural (lower/def-kind ctx "Point"))))))
+
+(deftest f69-l2-def-kind-tagged-variant
+  (testing "F69 L2 — cases-only def resolves to :tagged-variant"
+    (let [ctx (ctx-for "def Color:\n    case red\n    case green\n\ndef main:\n    -> running\n")]
+      (is (= :tagged-variant (lower/def-kind ctx "Color"))))))
+
+(deftest f69-l2-def-kind-agent
+  (testing "F69 L2 — def with transitions resolves to :agent"
+    (let [ctx (ctx-for "def Counter:\n    n: Int = 0\n\n    -> running\n\n    running <: bump -> self\n        then: n => n + 1\n\ndef main:\n    -> running\n")]
+      (is (= :agent (lower/def-kind ctx "Counter"))))))
+
+(deftest f69-l2-def-kind-protocol
+  (testing "F69 L2 — accepts-only def resolves to :protocol via protocol-env fallback"
+    (let [ctx (assoc (ctx-for "def main:\n    -> running\n")
+                :protocol-env {"MyProto" {:accepts []}})]
+      (is (= :protocol (lower/def-kind ctx "MyProto"))))))
+
+(deftest f69-l2-def-kind-unknown-returns-nil
+  (testing "F69 L2 — unknown name resolves to nil"
+    (let [ctx (ctx-for "def main:\n    -> running\n")]
+      (is (nil? (lower/def-kind ctx "Nonexistent"))))))
+
+;; ---------------------------------------------------------------------------
+;; F69 L4b — `<:` dispatch lowering (statement position, tagged-variant scrutinee)
+;; ---------------------------------------------------------------------------
+
+(deftest f69-l4b-dispatch-lowers-to-scoped-if-chain
+  (testing "F69 L4b — a `<:` dispatch on an enum-typed scrutinee lowers to a `:c-scope` wrapping (a) a `:var-decl` binding the scrutinee to `_cxc_scrut` and (b) a `:c-if-chain` whose branches carry tag-equality conditions in declaration order, followed by the wildcard `else` branch."
+    (let [prog  (lower-src "def Signal:\n    case red\n    case green\n\ndef main:\n    -> running\n        do:\n            let s: Signal = Signal.red\n            s:\n                <: red: print(1)\n                <: green: print(2)\n                <: _: print(9)\n")
+          body  (main-work-body prog)
+          scope (first (filter #(= :c-scope (:node %)) body))]
+      (is (some? scope) "dispatch stmt lowered to :c-scope")
+      (let [stmts     (:stmts scope)
+            decl      (first stmts)
+            if-chain  (second stmts)
+            branches  (:branches if-chain)]
+        (is (= :var-decl (:node decl)))
+        (is (= "_cxc_scrut" (:name decl))
+            "scrutinee binds to the compiler-authored local name")
+        (is (= "Signal" (:c-type decl)) "temp carries the enum's C type")
+        (is (= :c-if-chain (:node if-chain)))
+        (is (= 3 (count branches)) "one branch per parsed arm")
+        (is (= "==" (get-in branches [0 :cond :op])))
+        (is (= "Signal_red" (get-in branches [0 :cond :right :sym]))
+            "first branch compares against the first case's C constant")
+        (is (= "Signal_green" (get-in branches [1 :cond :right :sym])))
+        (is (nil? (:cond (nth branches 2)))
+            "wildcard branch has no condition — emits as bare `else`")))))
+
+(deftest f69-l4b-dispatch-payload-binding-rejects-until-f16
+  (testing "F69 L4b — `<: name(let x):` payload binding parses but rejects at lower-time with a targeted diagnostic pointing at F16 (enum payloads) as the missing prerequisite."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"F69 L4b:.*payload bindings need F16"
+         (lower-src "def Outcome:\n    case ok\n    case err\n\ndef main:\n    -> running\n        do:\n            let o: Outcome = Outcome.ok\n            o:\n                <: ok(let x): print(1)\n                <: _: print(0)\n")))))
+
+(deftest f69-l4b-dispatch-non-enum-scrutinee-int-accepted-with-wildcard
+  (testing "F69 L4c4 — Int scrutinees are accepted (for literal patterns) as long as a `<: _:` wildcard tail is present (open type, exhaustiveness by wildcard). This supersedes the L4b-only rejection."
+    (let [prog (lower-src "def main:\n    -> running\n        do:\n            let n: Int = 3\n            n:\n                <: 3: print(1)\n                <: _: print(0)\n")]
+      (is (some? prog)))))
+
+(deftest f69-l4c4-dispatch-primitive-without-wildcard-rejected
+  (testing "F69 L4c4 — a primitive scrutinee without a wildcard rejects (spec §3.7 exhaustiveness — primitives are open types)."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"F69 L4c4: non-exhaustive.*primitive"
+         (lower-src "def main:\n    -> running\n        do:\n            let n: Int = 3\n            n:\n                <: 0: print(0)\n")))))
+
+(deftest f69-l4b-dispatch-unknown-case-rejected
+  (testing "F69 L4b — a `<:` arm naming a case not declared on the scrutinee's enum rejects at lower-time with a message listing the actual cases."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"F69 L4b: unknown case `purple`"
+         (lower-src "def Signal:\n    case red\n    case green\n\ndef main:\n    -> running\n        do:\n            let s: Signal = Signal.red\n            s:\n                <: purple: print(1)\n                <: _: print(0)\n")))))
+
+(deftest f69-l4c1-dispatch-exhaustiveness-enforced
+  (testing "F69 L4c1 — spec §3.7: a `<:` dispatch on a tagged-variant scrutinee must cover every declared case OR include a `<: _:` wildcard. Missing coverage without a wildcard rejects at lower-time listing the unhandled cases."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"non-exhaustive `<:` dispatch on `Signal`.*yellow"
+         (lower-src "def Signal:\n    case red\n    case yellow\n    case green\n\ndef main:\n    -> running\n        do:\n            let s: Signal = Signal.red\n            s:\n                <: red: print(1)\n                <: green: print(2)\n")))))
+
+(deftest f69-l4c1-dispatch-exhaustive-with-all-cases-covered
+  (testing "F69 L4c1 — every case handled and no wildcard is legal; no exhaustiveness diagnostic fires."
+    (let [prog (lower-src "def Signal:\n    case red\n    case green\n\ndef main:\n    -> running\n        do:\n            let s: Signal = Signal.red\n            s:\n                <: red: print(1)\n                <: green: print(2)\n")]
+      (is (some? prog)))))
+
+(deftest f69-l4c1-dispatch-exhaustive-via-wildcard
+  (testing "F69 L4c1 — wildcard-tail satisfies exhaustiveness regardless of covered cases."
+    (let [prog (lower-src "def Signal:\n    case red\n    case yellow\n    case green\n\ndef main:\n    -> running\n        do:\n            let s: Signal = Signal.red\n            s:\n                <: red: print(1)\n                <: _: print(0)\n")]
+      (is (some? prog)))))

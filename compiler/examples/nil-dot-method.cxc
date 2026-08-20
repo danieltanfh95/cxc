@@ -31,4 +31,4 @@ def Wrapper:
 
 def main:
     -> running
-        do: print(Wrapper().c.n)
+        then: print(Wrapper().c.n)

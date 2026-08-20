@@ -3,6 +3,6 @@ def main:
         let:
             doubled:  10 * 2
             plus_one: doubled + 1
-        do:
+        then:
             print(doubled)
             print(plus_one)

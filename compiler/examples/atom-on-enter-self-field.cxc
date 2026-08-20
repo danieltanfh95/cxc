@@ -9,4 +9,4 @@ def Player:
 
 def main:
     -> running
-        do: print(Player().hp)
+        then: print(Player().hp)

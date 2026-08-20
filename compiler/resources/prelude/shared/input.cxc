@@ -11,15 +11,15 @@ def TestKeyboardInput(events: Int = 0):
     remaining: Int = events
 
     -> running
-        do: self :> beat
+        then: self :> beat
 
     -> end
-        do: :> done
+        then: :> done
 
     running <: beat -> running
         when: remaining > 0
         then: remaining => remaining - 1
-        do:
+        then:
             :> pressed(key: remaining)
             self :> beat
 

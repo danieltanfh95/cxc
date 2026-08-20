@@ -14,4 +14,4 @@ def main:
         # Accessing .n on the nil `other` slot returns 0 — cxc's nil
         # punning matches ObjC's nil-messaging: reading a property on
         # a nil object yields zero-init for scalars.
-        do: print(Counter().other.n)
+        then: print(Counter().other.n)

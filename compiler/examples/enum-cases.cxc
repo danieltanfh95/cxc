@@ -7,4 +7,4 @@ def main:
     -> running
         # Enum case access lowers to a C constant `Direction_arrow_down`
         # (index 1 in declaration order). Prints "1".
-        do: print(Direction.arrow_down)
+        then: print(Direction.arrow_down)

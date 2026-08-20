@@ -2,15 +2,15 @@ def main:
     n: Int = 0
 
     -> running
-        do:
-            self |> bump(by: 10)
-            self |> bump(by: 5)
-            self |> stop
+        then:
+            |> self.bump(by: 10)
+            |> self.bump(by: 5)
+            |> self.stop()
 
     -> end
-        do: print(n)
+        then: print(n)
 
-    running <| bump{by: Int} -> running
+    running <| bump(by: Int) -> running
         then: n => n + by
 
     running <| stop -> end

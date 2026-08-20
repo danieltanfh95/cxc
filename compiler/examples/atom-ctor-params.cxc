@@ -5,4 +5,4 @@ def Counter(initial: Int = 0):
 
 def main:
     -> running
-        do: print(Counter(initial: 42).n + Counter().n)
+        then: print(Counter(initial: 42).n + Counter().n)

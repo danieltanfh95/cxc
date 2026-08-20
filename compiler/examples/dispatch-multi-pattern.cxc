@@ -1,0 +1,19 @@
+def Warmth:
+    case red
+    case orange
+    case yellow
+    case blue
+    case purple
+    case green
+
+def main:
+    -> running
+        then:
+            let c: Warmth = Warmth.orange
+            c:
+                <: red, orange, yellow:
+                    print(1)
+                <: blue, purple:
+                    print(2)
+                <: _:
+                    print(0)

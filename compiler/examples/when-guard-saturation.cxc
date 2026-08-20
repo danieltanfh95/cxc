@@ -5,15 +5,15 @@ def Counter:
     n :< raw_n
 
     -> alive
-        do:
-            self |> bump
-            self |> bump
-            self |> bump
-            self |> bump
+        then:
+            |> self.bump()
+            |> self.bump()
+            |> self.bump()
+            |> self.bump()
 
     alive <: bump when: raw_n < max -> alive
         then: raw_n => raw_n + 1
 
 def main:
     -> running
-        do: print(Counter().n)
+        then: print(Counter().n)

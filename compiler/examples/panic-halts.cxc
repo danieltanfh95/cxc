@@ -1,4 +1,4 @@
 def main:
     -> running
-        do:
+        then:
             panic("boom")

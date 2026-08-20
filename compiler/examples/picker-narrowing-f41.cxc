@@ -9,4 +9,4 @@ def Age(value: Int):
 
 def main:
     -> running
-        do: print(Age(value: 42).value)
+        then: print(Age(value: 42).value)

@@ -10,4 +10,4 @@ def Bounded:
 
 def main:
     -> running
-        do: print(Bounded().val)
+        then: print(Bounded().val)

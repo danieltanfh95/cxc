@@ -5,6 +5,6 @@ def OldBox:
 
 def main:
     -> running
-        do: print(OldBox(n: 7).n)
+        then: print(OldBox(n: 7).n)
 
     -> end

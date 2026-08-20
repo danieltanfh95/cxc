@@ -2,7 +2,7 @@ def main:
     s: Set of String
 
     -> running
-        do:
+        then:
             s.add("alpha")
             s.add("beta")
             s.add("alpha")

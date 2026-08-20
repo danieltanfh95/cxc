@@ -72,6 +72,40 @@
 (defn- fail-compile! [kind msg node]
   (throw (ex-info msg {:kind kind :what msg :node node})))
 
+;; ---------------------------------------------------------------------------
+;; F69 L2 — Unified body-shape lookup.
+;;
+;; parse-def-atom stamps `:inferred-kind` on every reshaped node:
+;;   :structural     — record-shaped (fields + observables only)
+;;   :tagged-variant — enum-shaped   (case markers only)
+;;   :agent          — class-shaped  (transitions / use: / ctor params)
+;;   :protocol       — protocol-shaped (accepts:)
+;;
+;; `def-kind` gives lowering-time consumers a single query into the
+;; three-env world — instead of ad-hoc `(contains? record-env nm)` /
+;; `(contains? atom-env nm)` chains, callers ask
+;; `(def-kind ctx name)` and pattern-match on the result. Downstream
+;; callers migrate opportunistically; L2 stops at the API.
+;; ---------------------------------------------------------------------------
+
+(defn def-kind
+  "Return the F69 body-shape of `name` as it appears in the compiled
+   world: :structural / :tagged-variant / :agent / :protocol / nil.
+
+   Primary read path: F51 unified symbol table (`ctx[:symbol-table]`).
+   Falls back to `:protocol-env` because protocols are not (yet) in
+   the F51 table — F51 L1 covers records/def-atoms/enums only. When
+   the symbol table absorbs protocols the fallback retires.
+
+   `name` is a def's user-visible short name (not the mangled C name)."
+  [ctx name]
+  (let [entry (resolve/lookup ctx name)]
+    (case (:kind entry)
+      :record   :structural
+      :def-atom :agent
+      :enum     :tagged-variant
+      (when (contains? (:protocol-env ctx) name) :protocol))))
+
 (defn- c-string-lit
   "Render a Clojure string as a valid C double-quoted string literal.
    Escapes backslash and double-quote; other bytes pass through (the
@@ -1840,11 +1874,22 @@
 
    Body shape: handler-decls historically stored `:body` as a
    `parse-block` result `{:node :block :stmts [...]}` (downstream
-   lowering pulls `(:stmts (:body method))`). Wrap the do-clause
-   stmts the same way so the same accessor works uniformly."
+   lowering pulls `(:stmts (:body method))`). Wrap the stmts the
+   same way so the same accessor works uniformly.
+
+   F70 I3 — collect stmts from BOTH `:do-clause` bodies (legacy)
+   and `:then-clause` `:stmts` (I3 unified). Field updates
+   (`:updates`) on a handler-shape transition remain a design
+   oddity but are ignored here — handlers have no phase state to
+   commit."
   [txn]
-  (let [do-clause (first (filter #(= :do-clause (:node %)) (:body txn)))
-        stmts     (or (:stmts do-clause) [])]
+  (let [body-clauses (:body txn)
+        stmts        (vec (mapcat (fn [c]
+                                    (case (:node c)
+                                      :do-clause   (:stmts c)
+                                      :then-clause (:stmts c)
+                                      nil))
+                                  body-clauses))]
     {:node   :handler-decl
      :name   (get-in txn [:receive :msg :source :name])
      :params (get-in txn [:receive :msg :params])
@@ -3346,17 +3391,25 @@
           :else
           (fail-nyi! "method call on non-record/non-atom target" call-node))))))
 
+(def ^:private statement-node-kinds
+  #{:expr-stmt :emit :break-stmt :continue-stmt :while-stmt
+    :let-stmt :if-stmt :block})
+
 (defn- lambda-body-stmts
   "Extract the sequence of body statements from a lambda AST node.
-   `body` may be a single statement (from inline `for e in xs:
-   <stmt>`) or a `:block` wrapping multi-statement form. Wrapping
-   the single case in a vector keeps the downstream emit consistent."
+   `body` may be:
+   - a `:block` wrapping multi-statement form → return its stmts
+   - a bare statement node → wrap in a single-element vector
+   - a bare expression (post-F20 REJECTED: `xs.for_each(e =>
+     print(e))` gives lambda body as raw `:call`) → wrap in
+     `:expr-stmt` so downstream stmt-lowering works uniformly"
   [lambda-node]
   (let [body (:body lambda-node)]
     (cond
       (nil? body) []
       (and (map? body) (= :block (:node body))) (:stmts body)
-      :else [body])))
+      (and (map? body) (contains? statement-node-kinds (:node body))) [body]
+      :else [{:node :expr-stmt :expr body}])))
 
 (defn- unbox-prelude-for-element
   "Given the block's raw id-typed parameter name (`_cxc_e`) and the
@@ -3780,6 +3833,21 @@
         :dot   (lower-method-call node ctx)
 
         (fail-nyi! (str "call with " (:node callee) " callee") node)))
+
+    ;; F69 L4b — dispatch at expression position (embedded inside a
+    ;; let-init / function arg / etc.) needs block-as-expression (F18)
+    ;; to yield a value. Statement-position dispatch lowers via
+    ;; lower-stmt :dispatch directly; only value-yielding embedding
+    ;; hits this branch. Reject with a targeted diagnostic pointing
+    ;; at the missing dependency.
+    :dispatch
+    (fail-nyi!
+     (str "F69 L4b: `<:` dispatch at expression position needs F18 "
+          "(block-as-expression) — not yet landed. Use dispatch at "
+          "statement position for now (top-level in a `do:` / method "
+          "body / branch body).")
+     node)
+
     (fail-nyi! (str "expression " (:node node)) node)))
 
 ;; ---------------------------------------------------------------------------
@@ -3897,11 +3965,228 @@
                       :selector selector
                       :args arg-exprs}]}]})))
 
+;; ---------------------------------------------------------------------------
+;; F69 L4b — Lower `<:` dispatch to inline tag-check chain.
+;;
+;; L4b scope: statement-position dispatch on tagged-variant (enum-typed)
+;; scrutinees with case + wildcard patterns only. Payload bindings
+;; (`<: name(let x):`) are parse-accepted but rejected at lower-time
+;; until F16 (enum payloads) lands. Expression-position dispatch is
+;; L4c (requires block-as-expression, F18).
+;; ---------------------------------------------------------------------------
+
+(defn- lower-dispatch-pattern-cond
+  "Lower a single pattern into a boolean condition against `scrut-tmp`.
+   Returns nil for the wildcard (its caller collapses the entire arm
+   into a bare `else` branch). Rejects case patterns with payload
+   bindings until F16 lands. `scrut-ty` is the scrutinee's inferred
+   type — enum-only for case patterns; int/bool for literal patterns."
+  [scrut-ty scrut-tmp pattern ctx]
+  (case (:kind pattern)
+    :wildcard nil
+
+    :literal
+    (let [lit-ty (:lit-type pattern)]
+      (case lit-ty
+        :int  (when-not (= :int scrut-ty)
+                (fail-nyi!
+                 (str "F69 L4c4: integer literal pattern requires an Int "
+                      "scrutinee — got " (pr-str scrut-ty) ".")
+                 pattern))
+        :bool (when-not (= :bool scrut-ty)
+                (fail-nyi!
+                 (str "F69 L4c4: bool literal pattern requires a Bool "
+                      "scrutinee — got " (pr-str scrut-ty) ".")
+                 pattern)))
+      {:node :binop :op "=="
+       :left  {:node :name :sym scrut-tmp}
+       :right (case lit-ty
+                :int  {:node :int :value (:value pattern)}
+                :bool {:node :int :value (if (:value pattern) 1 0)})})
+
+    :case
+    (do
+      (when-not (and (map? scrut-ty) (:enum scrut-ty))
+        (fail-nyi!
+         (str "F69 L4b: case pattern `<: " (:name pattern) ":` requires "
+              "a tagged-variant (enum) scrutinee — got " (pr-str scrut-ty) ".")
+         pattern))
+      (when (seq (:bindings pattern))
+        (fail-nyi!
+         (str "F69 L4b: `<: " (:name pattern) "(let ...):` payload bindings "
+              "need F16 (enum payloads) — not yet landed. Bare `<: "
+              (:name pattern) ":` case arms work today.")
+         pattern))
+      (let [enum-name (:enum scrut-ty)
+            case-nm   (:name pattern)
+            cases     (get-in ctx [:enum-env enum-name :case-index])]
+        (when-not (contains? cases case-nm)
+          (fail-nyi!
+           (str "F69 L4b: unknown case `" case-nm "` in `<:` dispatch on "
+                "enum `" enum-name "` — declared cases are "
+                (pr-str (vec (keys cases))) ".")
+           pattern))
+        {:node :binop :op "=="
+         :left  {:node :name :sym scrut-tmp}
+         :right {:node :name :sym (str enum-name "_" case-nm)}}))))
+
+(defn- lower-dispatch-arm
+  "Lower one dispatch arm into a `:c-if-chain` branch.
+
+   Single-pattern arms produce `{:cond <tag-eq> :body ...}`
+   (or `{:cond nil ...}` for the wildcard).
+
+   F69 L4c2 — multi-pattern arms (`<: red, orange, yellow: ...`)
+   OR the lowered conditions into a chained `||` expression. A
+   wildcard in a multi-pattern arm collapses the pattern condition
+   to nil (matches everything).
+
+   F69 L4c3 — guards (`<: pattern if <cond>:`) AND-compose with the
+   pattern condition. A guarded wildcard becomes `else if (guard)`
+   rather than a bare `else`."
+  [scrut-ty scrut-tmp arm ctx]
+  (let [{:keys [body guard]} arm
+        ;; fall back to :pattern for arms that pre-date L4c2
+        patterns   (or (:patterns arm) [(:pattern arm)])
+        body-stmts
+        (cond
+          (= :block (:node body))
+          (lower-body-stmts (:stmts body) ctx)
+
+          :else
+          [(lower-expr body ctx)])
+        conds      (mapv #(lower-dispatch-pattern-cond scrut-ty scrut-tmp % ctx)
+                         patterns)
+        pattern-cond
+        (cond
+          ;; any pattern is a wildcard — pattern-cond collapses to nil
+          (some nil? conds) nil
+
+          ;; single pattern — direct cond
+          (= 1 (count conds)) (first conds)
+
+          ;; multi-pattern — OR-chain via right-associative binops.
+          ;; Emit-ready `||` (post-lower); the `or → ||` translation in
+          ;; lower-expr:binop only runs on user-source binops.
+          :else
+          (reduce (fn [acc c] {:node :binop :op "||" :left c :right acc})
+                  (last conds)
+                  (reverse (butlast conds))))
+        guard-lo    (when guard (lower-expr guard ctx))
+        final-cond
+        (cond
+          (and pattern-cond guard-lo)
+          {:node :binop :op "&&" :left pattern-cond :right guard-lo}
+
+          pattern-cond pattern-cond
+          guard-lo     guard-lo
+          :else        nil)]
+    {:cond final-cond :body body-stmts}))
+
+(defn- arm-patterns
+  "Return the vector of patterns in `arm` — L4c2 arms carry `:patterns`;
+   older-shape arms fall back to `[(:pattern arm)]`."
+  [arm]
+  (or (:patterns arm) [(:pattern arm)]))
+
+(defn- check-dispatch-exhaustiveness!
+  "F69 L4c1 — spec §3.7 exhaustiveness rule for tagged-variant scrutinees:
+   every declared case must be covered, or a `<: _:` wildcard included.
+   Rejects at lower-time with a message listing the missing cases when
+   coverage is incomplete. Multi-pattern arms (L4c2) contribute every
+   pattern in their `:patterns` vector to coverage.
+
+   F69 L4c3 — guarded arms (with `if <cond>`) do NOT contribute to
+   coverage: the guard may be false at runtime, so an unguarded arm
+   for that case or a wildcard is still required."
+  [enum-name enum-cases arms node]
+  (let [unguarded-arms (remove :guard arms)
+        all-patterns   (mapcat arm-patterns unguarded-arms)
+        has-wildcard?  (some #(= :wildcard (:kind %)) all-patterns)]
+    (when-not has-wildcard?
+      (let [covered  (set (keep #(when (= :case (:kind %)) (:name %))
+                                all-patterns))
+            declared (set enum-cases)
+            missing  (clojure.set/difference declared covered)]
+        (when (seq missing)
+          (fail-nyi!
+           (str "F69 L4c1: non-exhaustive `<:` dispatch on `" enum-name
+                "` — case(s) " (pr-str (sort (vec missing)))
+                " unhandled. Add an arm per missing case, or a `<: _:` "
+                "wildcard tail (spec §3.7 exhaustiveness rule).")
+           node))))))
+
+(defn- scrut-ty->c-type
+  "Return the C type string for a scrutinee's inferred type. Enum
+   scrutinees carry the enum name (C typedef). Primitive scrutinees
+   (Int, Bool) resolve via type-kw->c-type."
+  [scrut-ty scrut-node]
+  (cond
+    (and (map? scrut-ty) (:enum scrut-ty)) (:enum scrut-ty)
+    :else                                  (type-kw->c-type scrut-ty scrut-node)))
+
+(defn- dispatch-scrutinee-supported?
+  "L4b/c4 — the scrutinee-type gate. Enum (tagged-variant) is the
+   L4b substrate; Int and Bool are the L4c4 primitive-literal
+   substrates. Structural / agent scrutinees remain L4d."
+  [scrut-ty]
+  (or (and (map? scrut-ty) (:enum scrut-ty))
+      (contains? #{:int :bool} scrut-ty)))
+
+(defn- lower-dispatch-stmt
+  "Statement-position `<:` dispatch. Binds the scrutinee to a local
+   temporary and emits an `if / else if / else` chain over the arms.
+
+   L4b substrate: tagged-variant (enum) scrutinees.
+   L4c4 substrate: Int / Bool primitives (for literal patterns).
+   Structural / agent scrutinees remain L4d.
+
+   L4c1 exhaustiveness applies only to tagged-variant scrutinees;
+   primitive scrutinees require a `<: _:` wildcard tail (open type)."
+  [node ctx]
+  (let [scrut-ty (infer-type (:scrutinee node) ctx)]
+    (when-not (dispatch-scrutinee-supported? scrut-ty)
+      (fail-nyi!
+       (str "F69 L4b: `<:` dispatch scrutinee must be tagged-variant "
+            "(enum) or a primitive supporting literal patterns (Int / "
+            "Bool) — got " (pr-str scrut-ty) ". Structural + agent "
+            "scrutinees land in L4d.")
+       node))
+    (let [enum?     (and (map? scrut-ty) (:enum scrut-ty))
+          _         (when enum?
+                      (let [enum-name  (:enum scrut-ty)
+                            enum-cases (get-in ctx [:enum-env enum-name :cases])]
+                        (check-dispatch-exhaustiveness! enum-name enum-cases
+                                                        (:arms node) node)))
+          _         (when-not enum?
+                      ;; primitive scrutinee — spec §3.7 requires wildcard
+                      ;; for open (non-closed-sum) types.
+                      (when-not (some #(= :wildcard (:kind %))
+                                      (mapcat arm-patterns (:arms node)))
+                        (fail-nyi!
+                         (str "F69 L4c4: non-exhaustive `<:` dispatch on "
+                              "primitive `" (pr-str scrut-ty) "` — primitive "
+                              "scrutinees require a `<: _:` wildcard tail "
+                              "(spec §3.7 exhaustiveness — primitives are "
+                              "open types).")
+                         node)))
+          scrut-tmp  "_cxc_scrut"
+          scrut-lo   (lower-expr (:scrutinee node) ctx)
+          scrut-ct   (scrut-ty->c-type scrut-ty (:scrutinee node))
+          arms       (mapv #(lower-dispatch-arm scrut-ty scrut-tmp % ctx)
+                           (:arms node))
+          scrut-decl {:node :var-decl :name scrut-tmp
+                      :c-type scrut-ct :rhs scrut-lo}
+          if-chain   {:node :c-if-chain :branches arms}]
+      {:node :c-scope
+       :stmts [scrut-decl if-chain]})))
+
 (defn- lower-stmt [node ctx]
   (case (:node node)
     :expr-stmt (lower-expr (:expr node) ctx)
     :emit      (lower-send node ctx)
     :return    {:node :return :value (lower-expr (:expr node) ctx)}
+    :dispatch  (lower-dispatch-stmt node ctx)
 
     ;; F17 L1 — statement-position `while <cond>: <body>`. Body lowers
     ;; as a stmt sequence via `lower-body-stmts` so nested `let`
@@ -3984,11 +4269,15 @@
 
               ;; Layer 6 Step 12 — `then:` on general transitions
               ;; (previously restricted to on-enter-body paths).
-              ;; Escaping-block install-then-invoke `then: cb => ...
-              ;; do: cb()` needs the assignment to happen before
-              ;; the do:-clause runs.
+              ;; F70 I3 — `:then-clause` now carries both `:updates`
+              ;; (field commits — assignments) and `:stmts`
+              ;; (side-effect stmts — same shape as retired `do:`).
+              ;; Emit updates first, then stmts (updates are "state
+              ;; changes"; stmts are "side effects").
               :then-clause
-              [(into out (mapcat #(lower-then-update % c) (:updates clause))) c]
+              [(-> out
+                   (into (mapcat #(lower-then-update % c) (:updates clause)))
+                   (into (lower-body-stmts (:stmts clause) c))) c]
 
               ;; F23 — let: bindings emit local variable decls and enter
               ;; the ctx as they land; subsequent then/do references
@@ -4100,8 +4389,11 @@
                             (:bindings clause))]
                 [(into out decls) c'])
 
+              ;; F70 I3 — see lower-transition-body comment for split.
               :then-clause
-              [(into out (mapcat #(lower-then-update % c) (:updates clause))) c]
+              [(-> out
+                   (into (mapcat #(lower-then-update % c) (:updates clause)))
+                   (into (lower-body-stmts (:stmts clause) c))) c]
 
               :do-clause
               [(into out (lower-do-clause clause c)) c]
@@ -4255,14 +4547,23 @@
                wildcards)))
 
 (defn- inline-wildcard-do-stmts
-  "Do-clauses from all wildcards targeting phase X, in order. Fires
-   BEFORE the specific transition's do: — wildcard's side effects
-   establish invariants of the phase, then the specific transition
-   layers its own on top."
+  "Post-commit side-effect stmts from all wildcards targeting phase
+   X, in order. Fires BEFORE the specific transition's post-commit
+   stmts — wildcard's side effects establish invariants of the
+   phase, then the specific transition layers its own on top.
+
+   F70 I3 — collects side-effect stmts from BOTH `:do-clause` bodies
+   (legacy) and `:then-clause` `:stmts` (I3 unified). Walks
+   wildcard body-clauses in source order so ordering across the
+   two kinds is preserved."
   [wildcards ctx]
   (vec (mapcat (fn [w]
-                 (mapcat (fn [c] (lower-do-clause c ctx))
-                         (filter #(= :do-clause (:node %)) (:body w))))
+                 (mapcat (fn [c]
+                           (case (:node c)
+                             :do-clause   (lower-do-clause c ctx)
+                             :then-clause (lower-body-stmts (:stmts c) ctx)
+                             nil))
+                         (:body w)))
                wildcards)))
 
 (defn- lower-transition-branch
@@ -4344,7 +4645,16 @@
         then-stmts   (vec (mapcat (fn [c] (mapcat #(lower-then-update % ctx')
                                                   (:updates c)))
                                   then-clauses))
-        do-stmts     (vec (mapcat (fn [c] (lower-do-clause c ctx')) do-clauses))
+        ;; F70 I3 — post-commit side-effect stmts come from BOTH
+        ;; `:do-clause` bodies (legacy) and `:then-clause` `:stmts`
+        ;; (I3 unified). Walk body-clauses in source order so
+        ;; ordering across the two kinds is preserved.
+        do-stmts     (vec (mapcat (fn [c]
+                                    (case (:node c)
+                                      :do-clause   (lower-do-clause c ctx')
+                                      :then-clause (lower-body-stmts (:stmts c) ctx')
+                                      nil))
+                                  body-clauses))
         ;; Audit F24: `-> self` means self-transition, no phase change
         ;; (spec §1.11 line 1312 — *"target phase. May be a phase name,
         ;; `self` (self-transition, no phase change), or `end`
@@ -5919,19 +6229,25 @@
           ;; layers main-atom cxc_shutdown() on top.
           end-const       (phase-constant-name atom-name "end")
           end-wildcards   (get (wildcards-by-target-phase transitions) "end" [])
-          ;; Audit F26: spec §1.11 line 1281 — `then:` in an `end`
-          ;; transition is a compile error, including the wildcard
-          ;; `-> end` form (the atom's state is about to be
-          ;; discarded, so field updates are meaningless).
+          ;; Audit F26: spec §1.11 line 1281 — field updates in an
+          ;; `-> end` transition are a compile error (the atom's
+          ;; state is about to be discarded, so writes are
+          ;; meaningless). F70 I3 migrates this rule from clause-
+          ;; level to ENTRY-level: reject only when `:then-clause`
+          ;; carries non-empty `:updates`. Non-update entries
+          ;; (`:stmts` — prints, sends) inside `then:` on `-> end`
+          ;; are allowed and lower as post-commit side effects.
           _               (doseq [w end-wildcards
                                   c (:body w)
-                                  :when (= :then-clause (:node c))]
+                                  :when (and (= :then-clause (:node c))
+                                             (seq (:updates c)))]
                             (throw (ex-info
-                                    (str "`then:` on `-> end` wildcard "
-                                         "(atom `" atom-name "`) is a compile "
-                                         "error — the atom's state is about to "
-                                         "be discarded, so field updates are "
-                                         "meaningless. See spec §1.11.")
+                                    (str "`then:` field updates on `-> end` "
+                                         "wildcard (atom `" atom-name "`) is a "
+                                         "compile error — the atom's state is "
+                                         "about to be discarded, so field "
+                                         "updates are meaningless. See spec "
+                                         "§1.11.")
                                     {:kind :compile-error :node w})))
           end-wildcard-then (inline-wildcard-then-stmts end-wildcards ctx-in-init)
           end-wildcard-do   (inline-wildcard-do-stmts   end-wildcards ctx-in-init)

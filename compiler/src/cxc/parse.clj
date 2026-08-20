@@ -263,12 +263,19 @@
       (or (and (= k :glyph) (glyph-precedence v))
           (and (= k :kw) (glyph-precedence v))))))
 
-(declare parse-primary parse-args-parens parse-msg-args-braces parse-list-literal parse-emit-message)
+(declare parse-primary parse-args-parens parse-msg-args-braces parse-msg-args-parens parse-list-literal parse-emit-message looks-like-msg-payload-parens?)
 
 (defn- parse-postfix
-  "Chain of .field, (args), {msg-args}, :> send, |> send suffixes on a
-   primary expression. `:>` / `|>` produce :emit expression nodes so that
-   sends can appear in lambda bodies and other expression positions."
+  "Chain of .field, (args)/(msg-args), {msg-args}, :> send, |> send
+   suffixes on a primary expression. The `(...)` branch is
+   content-dispatched: parens holding typed-params
+   (`(name: Type, ...)`) parse as I5 msg-shape payload; parens
+   holding value args parse as a call. The legacy `{...}` payload
+   form still parses (retired in F70 Stage 3 with a targeted
+   diagnostic). `:>` / `|>` produce :emit expression nodes so
+   sends can appear in lambda bodies and other expression
+   positions (I6 retires the binary `|>` postfix in Stage 3;
+   Stage 1 keeps it parseable)."
   [tokens pos base]
   (loop [p pos node base]
     (cond
@@ -277,14 +284,21 @@
         (recur p2 {:node :dot :target node :field fname}))
 
       (at? tokens p :punct "(")
-      (let [[args p2] (parse-args-parens tokens p)]
-        (recur p2 {:node :call :callee node :args args}))
+      (if (looks-like-msg-payload-parens? tokens p)
+        (let [[margs p2] (parse-msg-args-parens tokens p)]
+          (recur p2 {:node :msg-shape :target node :fields margs}))
+        (let [[args p2] (parse-args-parens tokens p)]
+          (recur p2 {:node :call :callee node :args args})))
 
       (at? tokens p :punct "[")
       (let [[idx p2] (parse-expr tokens (inc p))
             [_ p3]   (expect tokens p2 :punct "]")]
         (recur p3 {:node :subscript :target node :index idx}))
 
+      ;; F70 I5 legacy — brace-payload still parses (Stage 3
+      ;; hard-retirement deferred; test suite has ~200 inline
+      ;; cxc-source snippets using the legacy shape). New user
+      ;; code should use parens `(name: Type)`.
       (at? tokens p :punct "{")
       (let [[margs p2] (parse-msg-args-braces tokens p)]
         (recur p2 {:node :msg-shape :target node :fields margs}))
@@ -293,6 +307,9 @@
       (let [[m p2] (parse-emit-message tokens (inc p))]
         [{:node :emit :async? true :target node :msg (:msg m) :args (:args m)} p2])
 
+      ;; F70 I6 legacy — binary `<expr> |> <msg>(args)` still
+      ;; parses (Stage 3 hard-retirement deferred). New user code
+      ;; should use prefix `|> <expr>.<msg>(args)`.
       (at? tokens p :glyph "|>")
       (let [[m p2] (parse-emit-message tokens (inc p))]
         [{:node :emit :async? false :target node :msg (:msg m) :args (:args m)} p2])
@@ -327,8 +344,244 @@
           (recur [{:node :binop :op v :left lhs :right rhs} p2]))
         [lhs p]))))
 
+;; ---------------------------------------------------------------------------
+;; F69 L4 — `<:` expression-position dispatch (spec §3.7).
+;;
+;; Grammar:
+;;   <scrutinee_expr>:
+;;       <: pattern: body_expr
+;;       <: pattern: body_expr
+;;       <: _: body_expr
+;;
+;; Pattern subset (L4a/b — minimal):
+;;   name                    → case with no payload
+;;   name(let x)             → case with single positional payload bind
+;;   name(field: let x)      → case with named-field payload bind
+;;   _                       → wildcard
+;;
+;; Deferred to L4c: literal patterns, guards (`if <cond>`), leading-dot
+;; shorthand, structural patterns, comma-separated multi-pattern arms.
+;; Deferred to L4d: agent-scrutinee subscription lowering.
+;;
+;; AST shape:
+;;   {:node :dispatch
+;;    :scrutinee <expr>
+;;    :arms [{:pattern <pat> :body <expr-or-block>} ...]}
+;;   where <pat> = {:kind :case :name "n" :bindings [{:field <str-or-nil> :as "x"}]}
+;;               | {:kind :wildcard}
+;; ---------------------------------------------------------------------------
+
+(declare parse-expr parse-block)
+
+(defn- looks-like-dispatch-tail?
+  "After a scrutinee expression at pos, look for the exact 4-token
+   signature of a dispatch block header: `:` `\\n` INDENT `<:`. Only
+   this shape opts into dispatch wrapping — any deviation means the
+   trailing `:` belongs to something else (or nothing)."
+  [tokens p]
+  (and (at? tokens p :punct ":")
+       (at? tokens (inc p) :newline)
+       (at? tokens (+ p 2) :indent)
+       (at? tokens (+ p 3) :glyph "<:")))
+
+(defn- parse-dispatch-payload-binding
+  "Parse one payload binding entry inside `<: name(...)`:
+     `let x`             → positional  → {:field nil :as \"x\"}
+     `field: let x`      → named       → {:field \"field\" :as \"x\"}
+   Rejects bare idents / other shapes — dispatch patterns require
+   the `let` prefix so the reader sees discrimination-with-name-bind
+   as distinct from ordinary function-call argument passing."
+  [tokens pos]
+  (cond
+    ;; named form: `field: let x`
+    (and (at? tokens pos :ident)
+         (at? tokens (inc pos) :punct ":")
+         (at? tokens (+ pos 2) :kw "let")
+         (at? tokens (+ pos 3) :ident))
+    (let [field (t-value (peek-tok tokens pos))
+          as-nm (t-value (peek-tok tokens (+ pos 3)))]
+      [{:field field :as as-nm} (+ pos 4)])
+
+    ;; positional form: `let x`
+    (and (at? tokens pos :kw "let")
+         (at? tokens (inc pos) :ident))
+    (let [as-nm (t-value (peek-tok tokens (inc pos)))]
+      [{:field nil :as as-nm} (+ pos 2)])
+
+    :else
+    (fail! tokens pos
+           (str "F69 L4: expected `let <name>` or `<field>: let <name>` inside "
+                "a `<:` case pattern payload. Positional bindings without `let` "
+                "are not supported — spec §3.7.1 requires discrimination-with-"
+                "name-binding to be explicit."))))
+
+(defn- parse-dispatch-pattern
+  "Parse one L4a/b/c pattern:
+     _                          → wildcard
+     name                       → case with no payload
+     name(binding, binding...)  → case with payload bindings
+     <int-lit>                  → int literal (L4c4)
+     true / false               → bool literal (L4c4)
+
+   Deferred to a follow-on: string / char literals (need NSString
+   compare), leading-dot `.name(...)` (§3.7.2 target-typing)."
+  [tokens pos]
+  (cond
+    ;; wildcard `_`
+    (and (at? tokens pos :ident) (= "_" (t-value (peek-tok tokens pos))))
+    [{:kind :wildcard} (inc pos)]
+
+    ;; L4c4 — integer literal pattern
+    (at? tokens pos :int)
+    [{:kind :literal :lit-type :int :value (t-value (peek-tok tokens pos))}
+     (inc pos)]
+
+    ;; L4c4 — bool literal pattern
+    (and (at? tokens pos :kw) (#{"true" "false"} (t-value (peek-tok tokens pos))))
+    [{:kind :literal :lit-type :bool
+      :value (= "true" (t-value (peek-tok tokens pos)))}
+     (inc pos)]
+
+    ;; F69 L4c5 — leading-dot shorthand `<: .name(...):` per spec §3.7.2.
+    ;; Inside a `<:` block the scrutinee's type is the inferred target,
+    ;; so `.name` is unambiguous — parse as a case pattern named
+    ;; `name` (identical to bare `name`; the dot is documentary).
+    (and (at? tokens pos :punct ".") (at? tokens (inc pos) :ident))
+    (let [name (t-value (peek-tok tokens (inc pos)))
+          p    (+ pos 2)]
+      (cond
+        (at? tokens p :punct "(")
+        (loop [bindings [] p (inc p)]
+          (cond
+            (at? tokens p :punct ")")
+            [{:kind :case :name name :bindings bindings :leading-dot? true} (inc p)]
+
+            (at? tokens p :punct ",")
+            (recur bindings (inc p))
+
+            :else
+            (let [[b p2] (parse-dispatch-payload-binding tokens p)]
+              (recur (conj bindings b) p2))))
+
+        :else
+        [{:kind :case :name name :bindings [] :leading-dot? true} p]))
+
+    ;; case pattern — starts with an ident
+    (at? tokens pos :ident)
+    (let [name    (t-value (peek-tok tokens pos))
+          p       (inc pos)]
+      (cond
+        (at? tokens p :punct "(")
+        (loop [bindings [] p (inc p)]
+          (cond
+            (at? tokens p :punct ")")
+            [{:kind :case :name name :bindings bindings} (inc p)]
+
+            (at? tokens p :punct ",")
+            (recur bindings (inc p))
+
+            :else
+            (let [[b p2] (parse-dispatch-payload-binding tokens p)]
+              (recur (conj bindings b) p2))))
+
+        :else
+        [{:kind :case :name name :bindings []} p]))
+
+    :else
+    (fail! tokens pos
+           (str "F69 L4: expected a case pattern (name or `name(...)`), "
+                "literal (int / bool), or wildcard `_` at start of `<:` "
+                "dispatch arm."))))
+
+(defn- parse-dispatch-arm-body
+  "Parse the body of a `<: pattern:` arm. Two shapes:
+     - inline single expression on the same line: `<: pat: <expr>`
+     - indented block on subsequent lines: `<: pat:\\n    <stmts>`
+   Returns [body-node new-pos] where body-node is either an :expr-stmt-
+   wrapped expression or a :block node."
+  [tokens pos]
+  (let [[_ p] (expect tokens pos :punct ":")]
+    (cond
+      ;; indented block form
+      (and (at? tokens p :newline)
+           (at? tokens (inc p) :indent))
+      (let [[block p2] (parse-block tokens (inc p))]
+        [block p2])
+
+      ;; inline expression form
+      :else
+      (let [[e p2] (parse-expr tokens p)]
+        [e p2]))))
+
+(defn- parse-dispatch-arm
+  "Parse one `<: pattern[, pattern...] [when: <guard>]: body` arm.
+
+   F69 L4c2 — comma-separated multi-pattern arms per spec §3.7:
+   `<: red, orange, yellow: <body>` runs the same body when the
+   scrutinee matches any listed pattern. `:patterns` is always a
+   non-empty vector; single-pattern arms have length 1. The legacy
+   `:pattern` field is preserved for downstream code and holds the
+   first pattern.
+
+   F69 L4c3 — optional `when: <guard-expr>` clause per spec §3.7
+   patterns list: an arm fires only when its pattern list matches AND
+   the guard evaluates truthy. Reuses the class-body-transition
+   `when:` guard keyword (spec §4) — one guard keyword across the
+   language, not two. Guard AND-composes with the pattern condition
+   at lower time; guarded arms do NOT count toward exhaustiveness
+   coverage (their guard might be false at runtime)."
+  [tokens pos]
+  (let [[_ p]        (expect tokens pos :glyph "<:")
+        [pattern p]  (parse-dispatch-pattern tokens p)]
+    (loop [patterns [pattern] p p]
+      (cond
+        (at? tokens p :punct ",")
+        (let [[nxt p2] (parse-dispatch-pattern tokens (inc p))]
+          (recur (conj patterns nxt) p2))
+
+        :else
+        (let [[guard p]  (if (and (at? tokens p :kw "when")
+                                  (at? tokens (inc p) :punct ":"))
+                           (parse-expr tokens (+ p 2))
+                           [nil p])
+              [body p2]  (parse-dispatch-arm-body tokens p)]
+          [{:pattern  (first patterns)
+            :patterns patterns
+            :guard    guard
+            :body     body}
+           p2])))))
+
+(defn- parse-dispatch-block
+  "Parse a dispatch block: consumes `:` `\\n` INDENT (arm | newline)* DEDENT.
+   `scrutinee` is the already-parsed expression that heads the block;
+   `pos` is at the `:` token that opens the block."
+  [scrutinee tokens pos]
+  (let [[_ p] (expect tokens pos :punct ":")
+        [_ p] (expect tokens p :newline)
+        [_ p] (expect tokens p :indent)]
+    (loop [arms [] p p]
+      (cond
+        (at? tokens p :dedent)
+        [{:node :dispatch :scrutinee scrutinee :arms arms} (inc p)]
+
+        (at? tokens p :newline)
+        (recur arms (inc p))
+
+        (at? tokens p :glyph "<:")
+        (let [[arm p2] (parse-dispatch-arm tokens p)
+              p3       (skip-newlines tokens p2)]
+          (recur (conj arms arm) p3))
+
+        :else
+        (fail! tokens p
+               (str "F69 L4: expected `<: <pattern>: <body>` arm or dedent "
+                    "inside a dispatch block."))))))
+
 (defn- parse-expr [tokens pos]
-  (parse-binop tokens pos 1))
+  (let [[e p] (parse-binop tokens pos 1)]
+    (if (looks-like-dispatch-tail? tokens p)
+      (parse-dispatch-block e tokens p)
+      [e p])))
 
 (defn- parse-primary [tokens pos]
   (let [t (peek-tok tokens pos)]
@@ -410,7 +663,8 @@
             :else (fail! tokens p2 "expected `,` or `)` in arg list")))))))
 
 (defn- parse-msg-args-braces
-  "Parse {name: Type, name2: Type} — message payload shape."
+  "Parse {name: Type, name2: Type} — message payload shape (legacy;
+   retired by F70 I5 Stage 3 in favor of parse-msg-args-parens)."
   [tokens pos]
   (let [[_ p] (expect tokens pos :punct "{")]
     (if (at? tokens p :punct "}")
@@ -427,6 +681,72 @@
             [(conj args {:name name :type ty}) (inc p4)]
 
             :else (fail! tokens p4 "expected `,` or `}` in message shape")))))))
+
+(defn- parse-msg-args-parens
+  "Parse (name: Type, name2: Type) — I5 message payload shape.
+   Semantically identical to parse-msg-args-braces; distinguished
+   from a value-args call by parse-postfix's content-dispatch
+   (see `looks-like-msg-payload-parens?`)."
+  [tokens pos]
+  (let [[_ p] (expect tokens pos :punct "(")]
+    (if (at? tokens p :punct ")")
+      [[] (inc p)]
+      (loop [args [] p p]
+        (let [[name p2] (expect tokens p :ident)
+              [_ p3]    (expect tokens p2 :punct ":")
+              [ty p4]   (parse-type tokens p3)]
+          (cond
+            (at? tokens p4 :punct ",")
+            (recur (conj args {:name name :type ty}) (inc p4))
+
+            (at? tokens p4 :punct ")")
+            [(conj args {:name name :type ty}) (inc p4)]
+
+            :else (fail! tokens p4 "expected `,` or `)` in message shape")))))))
+
+(defn- looks-like-msg-payload-parens?
+  "At `pos` = `(`. Distinguish an I5 typed-params payload
+   (`(name: Type, ...)`) from a value-args call
+   (`(name: value, ...)` or `(positional, ...)`).
+
+   Heuristic: (1) first arg has `<name>:` prefix, (2) value
+   after `:` is a bare uppercase-starting ident, and (3) the
+   token after that Type ident is NOT `(` (which would mean a
+   constructor call like `Box(x: 1)` — a value, not a Type
+   annotation).
+
+   Types in cxc conventionally use PascalCase (`Int`, `String`,
+   `Player`, `Duration`); values use camelCase or literals.
+   Empty parens `()` are treated as a call. Constructor calls
+   with uppercase names (`Box(item: OldBox(x: 1))`) correctly
+   fall through to the call branch because the inner uppercase
+   ident is followed by `(`.
+
+   Note: this is only invoked from the general postfix parser —
+   receive-position parsing (`parse-msg-pattern`) has its own
+   F67 L3 typed-params branch and doesn't rely on this."
+  [tokens pos]
+  (let [p (inc pos)]  ; skip `(`
+    (cond
+      (at? tokens p :punct ")") false
+
+      (and (at? tokens p :ident)
+           (at? tokens (inc p) :punct ":"))
+      (let [after-colon (+ p 2)
+            t           (peek-tok tokens after-colon)]
+        (and t
+             (= :ident (t-kind t))
+             (let [v            (t-value t)
+                   after-type   (peek-tok tokens (inc after-colon))]
+               (and (not (empty? v))
+                    (Character/isUpperCase (first v))
+                    ;; NOT followed by `(` — else it's a
+                    ;; constructor call being passed as a value.
+                    (not (and after-type
+                              (= :punct (t-kind after-type))
+                              (= "(" (t-value after-type))))))))
+
+      :else false)))
 
 ;; ---------------------------------------------------------------------------
 ;; Field declarations, function/method declarations
@@ -612,7 +932,7 @@
                    [[] p])]
     [{:msg name :args args} p]))
 
-(declare parse-statement parse-for-statement)
+(declare parse-statement)
 
 (defn- parse-while-statement
   "F17 L1 (spec §3.8.3, §4.20.3) — statement-position `while` loop.
@@ -686,15 +1006,80 @@
     (parse-let-statement tokens pos)
 
     (at? tokens pos :glyph ":>")
+    ;; `:>` is always self-broadcast — no receiver. Keep the bespoke
+    ;; parse-emit-message shape (bare-prefix `:> msg[(args)]`).
     (let [[m p] (parse-emit-message tokens (inc pos))]
       [{:node :emit :async? true :target nil :msg (:msg m) :args (:args m)} p])
 
     (at? tokens pos :glyph "|>")
-    (let [[m p] (parse-emit-message tokens (inc pos))]
-      [{:node :emit :async? false :target nil :msg (:msg m) :args (:args m)} p])
+    ;; F70 I6: prefix `|>` accepts a call-expression RHS.
+    ;;   New form: |> receiver.method(args)     — I6 canonical
+    ;;   Legacy:   |> msg(args)                 — Stage 1 accepts (Stage 3 retires)
+    ;;   Legacy:   |> msg                       — Stage 1 accepts (Stage 3 retires)
+    (let [[e p] (parse-expr tokens (inc pos))]
+      (cond
+        (and (= :call (:node e))
+             (= :dot (:node (:callee e))))
+        [{:node :emit
+          :async? false
+          :target (:target (:callee e))
+          :msg    (:field  (:callee e))
+          :args   (:args e)} p]
 
+        (and (= :call (:node e))
+             (= :ident (:node (:callee e))))
+        [{:node :emit
+          :async? false
+          :target nil
+          :msg    (:name (:callee e))
+          :args   (:args e)} p]
+
+        (= :ident (:node e))
+        [{:node :emit
+          :async? false
+          :target nil
+          :msg    (:name e)
+          :args   []} p]
+
+        :else
+        (fail! tokens pos
+               (str "prefix `|>` expected a call expression on the right-hand side "
+                    "(F70 I6: `|> receiver.method(args)`), or legacy bare form "
+                    "(`|> msg(args)` — retired in Stage 3)"))))
+
+    ;; F20 REJECTED 2026-08-18 — `for e in xs: body` sugar retires.
+    ;; Spec §3.7.1 line 3885 rationale for no-destructuring:
+    ;; "Iteration is method dispatch, not language pattern." The
+    ;; `for` sugar was the C-family surface syntax over the same
+    ;; dispatch; retiring it aligns with F17 L2 (loop:) and F45
+    ;; (escaping closures) — retire mechanisms that duplicate the
+    ;; substrate. `for` / `in` remain reserved as diagnostic anchors.
     (at? tokens pos :kw "for")
-    (parse-for-statement tokens pos)
+    (fail! tokens pos
+           (str "F20 REJECTED: `for e in xs: body` is not supported — "
+                "iteration is method dispatch, not language sugar "
+                "(spec §3.7.1 rationale 3). Write "
+                "`xs.for_each(e => body)` instead. For fold / map / "
+                "filter / sorted, use the corresponding method with "
+                "an inline lambda. See plans/f20-for-as-alias.md."))
+
+    ;; F69 L5 — `switch <expr>:` is retired at v1.0 (spec §3.7,
+    ;; F69 atom unification 2026-08-18). Pattern-matched dispatch is
+    ;; expression-position `<:` receive-glyph blocks. `switch` is
+    ;; no longer a reserved lexer keyword, so it now surfaces as an
+    ;; ident; check it early with a targeted rewrite hint before
+    ;; falling through to the generic expression parser (which would
+    ;; produce a confusing follow-on error).
+    (and (at? tokens pos :ident)
+         (= "switch" (t-value (peek-tok tokens pos))))
+    (fail! tokens pos
+           (str "F69 L5: `switch <expr>: <case ...>` is retired at v1.0. "
+                "Pattern-matched dispatch is expression-position `<:` "
+                "receive-glyph blocks (spec §3.7 rewrite). Write:\n\n"
+                "    <expr>:\n"
+                "        <: pattern: <body>\n"
+                "        <: _: <body>\n\n"
+                "See plans/f69-atom-unification.md."))
 
     ;; F17 L1 — statement-position `while <cond>: <body>`. `loop` is L2.
     (at? tokens pos :kw "while")
@@ -726,50 +1111,14 @@
 
     :else
     (let [[e p] (parse-expr tokens pos)]
-      (if (= :emit (:node e))
-        [e p]                              ; targeted send parsed as postfix — already a statement
-        [{:node :expr-stmt :expr e} p]))))
-
-(defn- parse-for-statement
-  "Sugar: `for <var> in <expr>: <body>` desugars at parse time to
-   `<expr>.for_each(<var> => <body>)`. Body forms:
-     - inline:  `for e in xs: <single-stmt>`
-     - block:   `for e in xs:\\n    <stmts...>` (indented)
-   Multi-stmt bodies wrap as `{:node :block :stmts [...]}`. Grammar
-   production `for_expr` per spec §1.11 note; downstream lowering
-   treats the result as an ordinary method call whose sole positional
-   arg is a lambda literal. Runtime support for the lambda arg lands
-   in Step 5 (List.for_each + ObjC blocks); Step 2 lands the parse
-   rewrite only, verified via parse_test.clj."
-  [tokens pos]
-  (let [[_ p]     (expect tokens pos :kw "for")
-        [var-name p] (expect tokens p :ident)
-        [_ p]     (expect tokens p :kw "in")
-        [coll p]  (parse-expr tokens p)
-        [_ p]     (expect tokens p :punct ":")
-        [body p]  (if (at? tokens p :newline)
-                    ;; block form
-                    (let [[_ p]  (expect tokens p :newline)
-                          [_ p]  (expect tokens p :indent)]
-                      (loop [stmts [] p p]
-                        (cond
-                          (at? tokens p :dedent)
-                          [{:node :block :stmts stmts} (inc p)]
-                          (at? tokens p :newline)
-                          (recur stmts (inc p))
-                          :else
-                          (let [[s p2] (parse-statement tokens p)
-                                p3     (skip-newlines tokens p2)]
-                            (recur (conj stmts s) p3)))))
-                    ;; inline form — single statement is the body
-                    (parse-statement tokens p))
-        lambda    {:node :lambda
-                   :params [{:name var-name}]
-                   :body body}
-        call      {:node :call
-                   :callee {:node :dot :target coll :field "for_each"}
-                   :args [{:kind :positional :value lambda}]}]
-    [{:node :expr-stmt :expr call} p]))
+      (cond
+        ;; targeted send parsed as postfix — already a statement
+        (= :emit (:node e))     [e p]
+        ;; F69 L4 — `<:` dispatch parsed at expression position is
+        ;; also its own statement kind; hand off directly rather than
+        ;; wrap in :expr-stmt (lower-stmt has a `:dispatch` branch).
+        (= :dispatch (:node e)) [e p]
+        :else                   [{:node :expr-stmt :expr e} p]))))
 
 (defn- parse-block
   "Parse an indented block: :indent (stmt :newline)+ :dedent."
@@ -921,15 +1270,22 @@
         method entry (spec §1265 semantics) — see lower-def-atom."
   [tokens pos]
   (cond
-    ;; F67 L3 — typed-params form: `<ident>(<params>)`
+    ;; F67 L3 — typed-params form: `<ident>(<params>)`.
+    ;; F70 I5 — also populate `:payload` so non-handler-shape
+    ;; transitions (which read `:payload` for message-shape
+    ;; collection) see the fields. Handler-shape transitions
+    ;; (wildcard source + target) continue to read `:params`.
+    ;; The two names are semantic aliases: same list, different
+    ;; downstream consumers.
     (and (at? tokens pos :ident)
          (at? tokens (inc pos) :punct "(")
          (looks-like-typed-params? tokens (inc pos)))
-    (let [[name p]   (expect tokens pos :ident)
-          [params p] (parse-param-list-parens tokens p)]
-      [{:source {:node :ident :name name}
-        :params params
-        :payload []}
+    (let [[name p]     (expect tokens pos :ident)
+          [params p]   (parse-param-list-parens tokens p)
+          as-payload   (mapv #(select-keys % [:name :type]) params)]
+      [{:source  {:node :ident :name name}
+        :params  params
+        :payload as-payload}
        p])
 
     :else
@@ -972,31 +1328,60 @@
         :else [source nil p]))))
 
 (defn- parse-then-clause-inline
-  "then: <field> => <expr>   — single field update on one line"
+  "then: <entry>  — one field update (`<field> => <expr>`) OR one
+   statement (F70 I3 extension — was field-update-only). The AST
+   carries both `:updates` and `:stmts` bags so downstream (F33
+   commit + post-commit fan-out) can treat them independently."
   [tokens pos]
   (let [[_ p]   (expect tokens pos :kw "then")
-        [_ p]   (expect tokens p :punct ":")
-        [name p] (expect tokens p :ident)
-        [_ p]    (expect tokens p :glyph "=>")
-        [rhs p]  (parse-expr tokens p)]
-    [{:node :then-clause :updates [{:field name :expr rhs}]} p]))
+        [_ p]   (expect tokens p :punct ":")]
+    (cond
+      ;; field update: `<ident> => <expr>`
+      (and (at? tokens p :ident)
+           (at? tokens (inc p) :glyph "=>"))
+      (let [[name p2] (expect tokens p :ident)
+            [_ p3]    (expect tokens p2 :glyph "=>")
+            [rhs p4]  (parse-expr tokens p3)]
+        [{:node :then-clause :updates [{:field name :expr rhs}] :stmts []} p4])
+
+      ;; I3 — statement entry (send, print, method call, etc.)
+      :else
+      (let [[stmt p2] (parse-statement tokens p)]
+        [{:node :then-clause :updates [] :stmts [stmt]} p2]))))
 
 (defn- parse-then-clause-block
-  "then:  (indented block of `<field> => <expr>` lines)"
+  "then:  (indented block of entries). Each entry is a field
+   update (`<field> => <expr>`) OR an arbitrary statement (I3).
+   Split at parse time into `:updates` and `:stmts` bags:
+     - :updates commit atomically at transition end (F33)
+     - :stmts fire in source order after commit, all reading
+       the F33 snapshot (same discipline as retired `do:`)."
   [tokens pos]
   (let [[_ p] (expect tokens pos :kw "then")
         [_ p] (expect tokens p :punct ":")
         [_ p] (expect tokens p :newline)
         [_ p] (expect tokens p :indent)]
-    (loop [ups [] p p]
+    (loop [ups [] stmts [] p p]
       (cond
-        (at? tokens p :dedent) [{:node :then-clause :updates ups} (inc p)]
-        (at? tokens p :newline) (recur ups (inc p))
-        :else (let [[name p2] (expect tokens p :ident)
-                    [_ p3]    (expect tokens p2 :glyph "=>")
-                    [rhs p4]  (parse-expr tokens p3)
-                    p5        (skip-newlines tokens p4)]
-                (recur (conj ups {:field name :expr rhs}) p5))))))
+        (at? tokens p :dedent)
+        [{:node :then-clause :updates ups :stmts stmts} (inc p)]
+
+        (at? tokens p :newline) (recur ups stmts (inc p))
+
+        ;; field update: `<ident> => <expr>`
+        (and (at? tokens p :ident)
+             (at? tokens (inc p) :glyph "=>"))
+        (let [[name p2] (expect tokens p :ident)
+              [_ p3]    (expect tokens p2 :glyph "=>")
+              [rhs p4]  (parse-expr tokens p3)
+              p5        (skip-newlines tokens p4)]
+          (recur (conj ups {:field name :expr rhs}) stmts p5))
+
+        ;; I3 — statement entry
+        :else
+        (let [[stmt p2] (parse-statement tokens p)
+              p3        (skip-newlines tokens p2)]
+          (recur ups (conj stmts stmt) p3))))))
 
 (defn- parse-then-clause [tokens pos]
   ;; peek past `then:` — if next is :newline, it's a block form; else inline.
@@ -1097,7 +1482,10 @@
     [{:node :when-clause :expr e} p]))
 
 (defn- body-clause-head?
-  "True if pos is at `then:` | `do:` | `let:` | `when:`."
+  "True if pos is at `then:` | `do:` | `let:` | `when:`. `do:` is
+   retired at v1.0 (F70 I3) but still recognized here so
+   parse-transition-body can dispatch to a targeted retirement
+   diagnostic instead of a generic parse error."
   [tokens pos]
   (and (at? tokens pos :kw)
        (#{"then" "do" "let" "when"} (t-value (peek-tok tokens pos)))
@@ -1115,17 +1503,23 @@
 
 (defn- enforce-clause-order-and-multiplicity!
   "Audit F22: reject repeated clauses and out-of-order clauses in a
-   transition body. Message spec: `when, let, then, do`."
+   transition body. Message spec: `when, let, then, do`.
+
+   F70 I3 exception — `:then-clause` may appear more than once
+   because the `do:` → `then:` migration produces bodies with
+   multiple then-blocks; lowering merges them. `when:`, `let:`,
+   `do:` remain once-only until fully retired."
   [clauses tokens pos]
   (loop [seen #{} prev-idx -1 [c & rest] clauses]
     (when c
       (let [kw  (:node c)
             idx (clause-order kw)]
-        (when (contains? seen kw)
+        (when (and (contains? seen kw) (not= kw :then-clause))
           (fail! tokens pos
                  (str "duplicate `" (clause-kw->src kw)
-                      ":` clause in transition body (each of when/let/then/do "
-                      "may appear at most once — spec §10)")))
+                      ":` clause in transition body (each of when/let/do "
+                      "may appear at most once — spec §10; F70 I3 relaxes "
+                      "`then:` to allow multiple occurrences)")))
         (when (< idx prev-idx)
           (fail! tokens pos
                  (str "`" (clause-kw->src kw) ":` clause out of order — "
@@ -1149,7 +1543,7 @@
     (let [[clause p]
           (case (t-value (peek-tok tokens pos))
             "then" (parse-then-clause tokens pos)
-            "do"   (parse-do-clause tokens pos)
+            "do"   (parse-do-clause tokens pos)     ; F70 I3 legacy — Stage 3 retirement deferred
             "let"  (parse-let-clause tokens pos)
             "when" (parse-when-clause tokens pos)
             (fail! tokens pos "unexpected clause"))]
@@ -1167,7 +1561,7 @@
           (let [[clause p2]
                 (case (t-value (peek-tok tokens p))
                   "then" (parse-then-clause tokens p)
-                  "do"   (parse-do-clause tokens p)
+                  "do"   (parse-do-clause tokens p)   ; F70 I3 legacy — Stage 3 retirement deferred
                   "let"  (parse-let-clause tokens p)
                   "when" (parse-when-clause tokens p)
                   (fail! tokens p "unexpected clause"))]
@@ -1385,7 +1779,10 @@
                     (def-atom-body-has-use? folded)
                     (def-atom-body-has-atom-ctor-field-default? folded)
                     (seq ctor))
-                raw-def
+                ;; F69 L2 — agent-shape def (transitions / use: / ctor
+                ;; params / atom-ctor default). Stamp the inferred kind
+                ;; so downstream consumers can query uniformly.
+                (assoc raw-def :inferred-kind :agent)
 
                 :else
                 (def-atom->record raw-def tokens pos))]
@@ -1584,7 +1981,11 @@
   "Reshape a parsed :def-atom into a :record node. Rejects at parse if
    the `def` header carried ctor params — records use field-derived
    auto-ctors, no explicit ctor-param list. Body-item shape matches
-   what `parse-record` produces (sections stay as-is)."
+   what `parse-record` produces (sections stay as-is).
+
+   F69 L2 (2026-08-18): stamps `:inferred-kind :structural` for the
+   unified body-shape lookup — reader-consumers use kind-of/def-kind
+   instead of ad-hoc env membership."
   [def-atom tokens pos-for-diag]
   (when (seq (:ctor-params def-atom))
     (fail! tokens pos-for-diag
@@ -1595,9 +1996,10 @@
                 "add a transition (to promote to a class), remove the "
                 "ctor params (to keep as a record), or list fields "
                 "with defaults inside the body.")))
-  {:node     :record
-   :name     (:name def-atom)
-   :sections (:body def-atom)})
+  {:node          :record
+   :name          (:name def-atom)
+   :sections      (:body def-atom)
+   :inferred-kind :structural})
 
 (defn- def-atom->protocol
   "Reshape a parsed :def-atom into a :class :kind :protocol node. Flattens
@@ -1616,12 +2018,13 @@
         accepts-secs   (filter #(= :accepts-section (:node %)) body)
         other-sections (remove #(= :accepts-section (:node %)) body)
         accepts-entries (vec (mapcat :entries accepts-secs))]
-    {:node     :class
-     :name     (:name def-atom)
-     :kind     :protocol
-     :conforms []
-     :accepts  accepts-entries
-     :body     (vec other-sections)}))
+    {:node          :class
+     :name          (:name def-atom)
+     :kind          :protocol
+     :conforms      []
+     :accepts       accepts-entries
+     :body          (vec other-sections)
+     :inferred-kind :protocol}))
 
 (defn- def-atom->enum
   "F68 L2 — reshape a parsed :def-atom into a :enum node when the body
@@ -1648,9 +2051,10 @@
                   "set of cases with no per-instance state. Move the "
                   "non-case items to a separate declaration, or drop "
                   "the `case` markers if this was intended as a class.")))
-    {:node  :enum
-     :name  (:name def-atom)
-     :cases (mapv :case-name cases)}))
+    {:node          :enum
+     :name          (:name def-atom)
+     :cases         (mapv :case-name cases)
+     :inferred-kind :tagged-variant}))
 
 ;; ---------------------------------------------------------------------------
 ;; F9 protocol/accepts + F9 L3 extend surfaces. Post F68 L6b (Proposal H):
@@ -1962,6 +2366,27 @@
              (str "`extern` as a top-level section keyword is retired at v1.0. "
                   "FFI moves to prelude `foreign library` blocks + the "
                   "`Extern` capability atom. See spec §1.12 and §1.14."))
+
+      ;; F69 L3 — `record` / `enum` / `class` as declaration-position
+      ;; sugar retired at v1.0 (spec §3.3, F69 atom unification 2026-08-18).
+      ;; All classes declare via `def X:`; the compiler infers the
+      ;; body-shape (structural / tagged-variant / agent) from the body
+      ;; contents. The lexer stopped reserving these names as keywords
+      ;; at F68 L6b (Proposal H); this diagnostic gives a targeted
+      ;; rewrite hint before the parser falls through to the generic
+      ;; "unexpected identifier" error.
+      (and (at? tokens p :ident)
+           (#{"record" "enum" "class"} (t-value (peek-tok tokens p)))
+           (at? tokens (inc p) :ident))
+      (let [keyword-form (t-value (peek-tok tokens p))
+            name-form    (t-value (peek-tok tokens (inc p)))]
+        (fail! tokens p
+               (str "F69 L3: `" keyword-form " " name-form ":` sugar retired at v1.0. "
+                    "Write `def " name-form ":` — the body-shape (fields / cases / "
+                    "transitions) tells the compiler what kind of def it is (spec §3.3, "
+                    "F69 atom unification 2026-08-18). See "
+                    "plans/f69-atom-unification.md.")))
+
       :else (fail! tokens p "expected top-level form"))))
 
 (defn parse

@@ -8,14 +8,14 @@ def Gauge:
         raw_value <= max
 
     -> alive
-        do:
-            self |> bump
-            self |> bump
-            self |> bump
+        then:
+            |> self.bump()
+            |> self.bump()
+            |> self.bump()
 
     alive <: bump -> alive
         then: raw_value => raw_value + 1
 
 def main:
     -> running
-        do: print(Gauge().value)
+        then: print(Gauge().value)

@@ -6,7 +6,7 @@ def main:
     -> running
 
     -> end
-        do: print(count)
+        then: print(count)
 
     running <: clock.tick -> running
         then: count => count + 1

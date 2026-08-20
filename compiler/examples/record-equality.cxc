@@ -8,7 +8,7 @@ def Line:
 
 def main:
     -> running
-        do:
+        then:
             print(Vec2(x: 1, y: 2) == Vec2(x: 1, y: 2))
             print(Vec2(x: 1, y: 2) == Vec2(x: 1, y: 3))
             print(Line(start: Vec2(x: 1, y: 2), stop: Vec2(x: 3, y: 4))

@@ -48,7 +48,17 @@
     "then" "do" "when" "let"
     "self" "nil" "true" "false"
     "and" "or" "not" "is" "in" "of"
-    "if" "else" "return" "match" "case" "switch"
+    ;; `match` retired 2026-08-18 — never dispatched by parser and
+    ;; not on spec §2.7 committed keyword list (line 2400). Spec
+    ;; §3.7 line 702 originally said cxc uses `switch`, not `match`.
+    ;; F69 L5 (2026-08-19) — `switch` retires from the reserved-word
+    ;; set: pattern-matched dispatch is expression-position `<:`
+    ;; receive-glyph blocks (spec §3.7 rewrite). `switch` remains as
+    ;; a diagnostic anchor in parse-top / parse-statement, which fire
+    ;; a targeted rewrite hint when a user still writes `switch`.
+    ;; `case` STAYS reserved — it's still valid inside enum bodies
+    ;; (F68 L2 tagged-variant defs).
+    "if" "else" "return" "case"
     "function"
     "for"
     ;; F13 L1 (2026-08-18) — reference modifiers on `data:` field

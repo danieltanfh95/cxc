@@ -2,7 +2,7 @@ def main:
     m: Map of (String, Int)
 
     -> running
-        do:
+        then:
             m.add("apples", 3)
             m.add("pears", 7)
             m.remove("apples")

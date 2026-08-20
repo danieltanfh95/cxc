@@ -3,6 +3,6 @@ def main:
 
     -> running
         then: cb => () => print(42)
-        do: cb()
+        then: cb()
 
     -> end

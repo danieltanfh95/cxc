@@ -2,4 +2,4 @@ from std.time import Duration, Instant
 
 def main:
     -> running
-        do: print(Instant(millis: 500).plus(Duration(millis: 250)).millis)
+        then: print(Instant(millis: 500).plus(Duration(millis: 250)).millis)

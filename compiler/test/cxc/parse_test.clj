@@ -111,13 +111,14 @@
 (deftest emit-statements
   (let [n (first-node "def A:
     -> alive
-        do:
+        then:
             :> died
             other :> tick(dt: rate)
 ")
-        do-clause (-> n :body first :body first)
-        stmts (:stmts do-clause)]
-    (is (= :do-clause (:node do-clause)))
+        clause (-> n :body first :body first)
+        stmts  (:stmts clause)]
+    ;; F70 I3 — the migrated form uses `then:`; entries land in `:stmts`.
+    (is (= :then-clause (:node clause)))
     (is (= 2 (count stmts)))
     (is (= :emit (:node (first stmts))))
     (is (nil? (:target (first stmts))))
@@ -170,48 +171,27 @@
           "diagnostic mentions preserving args on the RHS"))))
 
 (deftest game-toys-parses
-  (testing "the full game-toys.cxc example parses end-to-end — entry point is `def main`"
+  (testing "the full game-toys.cxc example parses end-to-end — entry point is `def main`. The `module` declaration was retired 2026-08-19 (file-path-authoritative); nodes start with the `from-import`."
     (let [src (slurp "../design/examples/game-toys.cxc")
           nodes (p/parse src)]
-      (is (= 10 (count nodes)))
-      (is (= [:module :from-import :record
+      (is (= 9 (count nodes)))
+      (is (= [:from-import :record
               :def-atom :def-atom :def-atom :def-atom :def-atom :def-atom :def-atom]
              (mapv :node nodes)))
       (is (= ["Vector2"] (mapv :name (filter #(= :record (:node %)) nodes))))
       (is (= ["Paddle" "ActionMachine" "Player" "Enemy" "EnemySpawner" "Game" "main"]
              (mapv :name (filter #(= :def-atom (:node %)) nodes)))))))
 
-(defn- for-call
-  "Helper: extract the `xs.for_each(e => body)` :call node from a
-   `def main` with a single `-> running` transition whose body's
-   first do-clause statement is the for-sugar rewrite."
-  [nodes]
-  (let [main   (first (filter #(= :def-atom (:node %)) nodes))
-        txn    (first (filter #(= :transition (:node %)) (:body main)))
-        do-cl  (first (filter #(= :do-clause  (:node %)) (:body txn)))]
-    (get-in do-cl [:stmts 0 :expr])))
-
-(deftest for-sugar-inline
-  (testing "`for e in xs: <stmt>` desugars at parse time to `xs.for_each(e => <stmt>)`; Step 2 parse-time rewrite only, runtime support arrives at Step 5"
-    (let [nodes (p/parse "def main:\n    -> running\n        do:\n            for e in xs: e :> tick\n")
-          call  (for-call nodes)]
-      (is (= :call (:node call)))
-      (is (= :dot (get-in call [:callee :node])))
-      (is (= "for_each" (get-in call [:callee :field])))
-      (is (= "xs"       (get-in call [:callee :target :name])))
-      (let [lambda (get-in call [:args 0 :value])]
-        (is (= :lambda (:node lambda)))
-        (is (= "e"     (get-in lambda [:params 0 :name])))
-        (is (= :emit   (get-in lambda [:body :node])))))))
-
-(deftest for-sugar-block
-  (testing "`for e in xs:` newline indented body wraps as `{:node :block :stmts [...]}` inside the lambda; multi-statement bodies preserved"
-    (let [nodes (p/parse "def main:\n    -> running\n        do:\n            for e in xs:\n                e :> tick\n                e :> ping\n")
-          call  (for-call nodes)
-          body  (get-in call [:args 0 :value :body])]
-      (is (= :block (:node body)))
-      (is (= 2 (count (:stmts body))))
-      (is (every? #(= :emit (:node %)) (:stmts body))))))
+(deftest f20-for-sugar-rejected
+  (testing "F20 REJECTED 2026-08-18 — `for e in xs: body` sugar retires; iteration is method dispatch per spec §3.7.1 rationale 3. Parser emits a targeted diagnostic pointing at `.for_each` rather than a generic parse error."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"F20 REJECTED: `for e in xs: body` is not supported"
+         (p/parse "def main:\n    -> running\n        do:\n            for e in xs: e :> tick\n")))
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"xs\.for_each\(e => body\)"
+         (p/parse "def main:\n    -> running\n        do:\n            for e in xs:\n                e :> tick\n                e :> ping\n")))))
 
 (deftest extern-section-retired
   (testing "`extern <Name>:` as a top-level section is retired at v1.0 (spec §1.12, §2335). Parser emits a targeted diagnostic pointing at the migration path (prelude `foreign library` blocks + `Extern` capability atom, §1.14) rather than a generic `expected top-level form` error."
@@ -219,6 +199,62 @@
          clojure.lang.ExceptionInfo
          #"`extern` as a top-level section keyword is retired at v1.0"
          (p/parse "extern C_stdio:\n    function puts(s: String) -> Int\n")))))
+
+(deftest f69-l3-record-sugar-retired
+  (testing "F69 L3 — `record Foo:` as a top-level declaration keyword is retired at v1.0 (spec §3.3, F69 atom unification). Parser emits a targeted rewrite hint pointing at `def Foo:` rather than a generic `unexpected` error."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"F69 L3: `record Point:` sugar retired"
+         (p/parse "record Point:\n    x: Int\n    y: Int\n")))))
+
+(deftest f69-l3-enum-sugar-retired
+  (testing "F69 L3 — `enum Foo:` as a top-level declaration keyword is retired at v1.0."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"F69 L3: `enum Color:` sugar retired"
+         (p/parse "enum Color:\n    case red\n    case green\n")))))
+
+(deftest f69-l3-class-sugar-retired
+  (testing "F69 L3 — `class Foo:` as a top-level declaration keyword is retired at v1.0."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"F69 L3: `class Counter:` sugar retired"
+         (p/parse "class Counter:\n    n: Int = 0\n")))))
+
+(deftest f69-l5-switch-statement-retired
+  (testing "F69 L5 — statement-position `switch <expr>: case ...` is retired at v1.0 (spec §3.7 rewrite: expression-position `<:` receive-glyph replaces). Parser emits a targeted rewrite hint pointing at the `<:` block form."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"F69 L5: `switch <expr>: <case \.\.\.>` is retired at v1\.0"
+         (p/parse "def main:\n    -> running\n        do:\n            switch x:\n                case a: print(1)\n")))))
+
+(deftest f69-l4-dispatch-parses-cases-and-wildcard
+  (testing "F69 L4 — `<:` receive-glyph dispatch block at statement position parses to a `:dispatch` node with a scrutinee and an arms vector. Case arms carry `:kind :case` patterns; the wildcard arm carries `:kind :wildcard`."
+    (let [ast (p/parse "def Signal:\n    case red\n    case green\n\ndef main:\n    -> running\n        do:\n            let s: Signal = Signal.red\n            s:\n                <: red: print(1)\n                <: green: print(2)\n                <: _: print(9)\n")
+          main-atom  (first (filter #(and (= :def-atom (:node %))
+                                          (= "main" (:name %))) ast))
+          transition (first (filter #(= :transition (:node %))
+                                    (:body main-atom)))
+          do-clause  (first (filter #(= :do-clause (:node %))
+                                    (:body transition)))
+          dispatch   (first (filter #(= :dispatch (:node %))
+                                    (:stmts do-clause)))]
+      (is (some? dispatch) "dispatch node appears in the `do:` clause stmts")
+      (is (= "s" (get-in dispatch [:scrutinee :name])) "scrutinee is `s`")
+      (let [arms (:arms dispatch)]
+        (is (= 3 (count arms)) "three arms parsed")
+        (is (= :case (get-in arms [0 :pattern :kind])))
+        (is (= "red" (get-in arms [0 :pattern :name])))
+        (is (= :case (get-in arms [1 :pattern :kind])))
+        (is (= "green" (get-in arms [1 :pattern :name])))
+        (is (= :wildcard (get-in arms [2 :pattern :kind])))))))
+
+(deftest f69-l4-dispatch-payload-binding-rejected-at-parse-only-when-illegal-shape
+  (testing "F69 L4a — payload-binding syntax parses (`<: name(let x):`) even though L4b rejects at lower-time. This keeps parse-side surface stable; the migration diagnostic surfaces during compile."
+    ;; Just verifies parse doesn't throw; deeper coverage lives in the
+    ;; lower-time rejection test.
+    (let [ast (p/parse "def Outcome:\n    case ok\n    case err\n\ndef main:\n    -> running\n        do:\n            let o: Outcome = Outcome.ok\n            o:\n                <: ok(let x): print(1)\n                <: _: print(0)\n")]
+      (is (some? ast)))))
 
 (deftest state-section-retired-in-def-atom
   (testing "`state:` section in a def-atom body is retired at v1.0 (spec §1.11). Parser emits a targeted migration diagnostic pointing at `data:` instead of a generic fall-through error."
@@ -312,11 +348,9 @@ def main:
 ")))))
 
 (deftest transition-clause-multiplicity-enforced
-  (testing "Audit F22: spec §10 — each of when/let/then/do may appear at most once per transition body. Duplicates parse-error with a specific diagnostic."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"duplicate `then:` clause"
-         (p/parse "def main:
+  (testing "Audit F22 + F70 I3: spec §10 — each of when/let/do may appear at most once per transition body. `then:` is exempt (I3 relaxation) so the `do:` → `then:` migration produces bodies with multiple `then:` blocks that merge at lowering. Duplicate `when:` / `let:` / `do:` still parse-error."
+    ;; F70 I3: multiple then: no longer parse-errors.
+    (is (some? (p/parse "def main:
     n: Int = 0
 
     -> running
@@ -324,6 +358,20 @@ def main:
     running <: bump -> self
         then: n => n + 1
         then: n => n + 2
+")))
+    ;; let: still one-per-body.
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"duplicate `let:` clause"
+         (p/parse "def main:
+    n: Int = 0
+
+    -> running
+
+    running <: bump -> self
+        let: k: 1
+        let: j: 2
+        then: n => n + k + j
 ")))))
 
 ;; f67-l4-methods-section-retired-with-migration deleted at F68 L6b — `methods`
@@ -886,3 +934,93 @@ def main:
           lc   (first (filter #(= :let-clause (:node %)) (:body bump)))]
       (is (some? lc) "transition sub-block still parses as :let-clause")
       (is (= [{:name "k" :expr {:node :lit-int :value 5}}] (:bindings lc))))))
+
+;; ============================================================================
+;; F70 Surface Facelift — I3 / I5 / I6 regression tests
+;; ============================================================================
+
+(deftest f70-i5-parens-payload-parses-as-msg-shape
+  (testing "F70 I5 — `(name: Type)` in postfix position (following a dotted source) parses as :msg-shape (payload destructure), not :call. Distinguished from a call by content: first arg value is a bare uppercase ident (a Type) not followed by `(`."
+    (let [n (first-node "def A:\n    -> alive\n\n    alive <: input.pressed(key: Int) -> alive\n")
+          t (first (filter #(and (= :transition (:node %))
+                                 (some? (:receive %))) (:body n)))
+          msg (get-in t [:receive :msg])]
+      (is (= [{:name "key" :type {:node :type-ref :name "Int"}}]
+             (:payload msg))
+          "payload extracted from parens form"))))
+
+(deftest f70-i5-parens-call-still-parses-as-call
+  (testing "F70 I5 — `(name: value)` in postfix position still parses as :call with kwargs (value is not an uppercase-starting ident, so heuristic doesn't fire)."
+    (let [n (first-node "def A:\n    -> alive\n        then: |> self.bump(by: 1)\n")
+          t (first (filter #(= :transition (:node %)) (:body n)))
+          then-c (first (:body t))
+          emit-stmt (first (:stmts then-c))]
+      (is (= :emit (:node emit-stmt)))
+      (is (= "bump" (:msg emit-stmt))))))
+
+(deftest f70-i5-brace-payload-legacy-still-parses
+  (testing "F70 I5 — legacy brace-payload `{name: Type}` still parses during the transition period (Stage 3 hard-retirement deferred until test-embedded cxc-source migrates)."
+    (let [n (first-node "def A:\n    -> alive\n\n    alive <: input.pressed{key: Int} -> alive\n")
+          t (first (filter #(and (= :transition (:node %))
+                                 (some? (:receive %))) (:body n)))
+          msg (get-in t [:receive :msg])]
+      (is (= [{:name "key" :type {:node :type-ref :name "Int"}}]
+             (:payload msg))))))
+
+(deftest f70-i6-prefix-send-parses
+  (testing "F70 I6 — prefix `|> receiver.method(args)` parses as :emit with target=receiver, msg=method, args=args."
+    (let [n (first-node "def main:\n    n: Int = 0\n    -> running\n        then: |> self.bump(by: 1)\n")
+          t (first (filter #(= :transition (:node %)) (:body n)))
+          then-c (first (:body t))
+          emit-stmt (first (:stmts then-c))]
+      (is (= :emit (:node emit-stmt)))
+      (is (false? (:async? emit-stmt)))
+      (is (= :self (get-in emit-stmt [:target :node])))
+      (is (= "bump" (:msg emit-stmt)))
+      (is (= [{:kind :named :name "by" :value {:node :lit-int :value 1}}]
+             (:args emit-stmt))))))
+
+(deftest f70-i6-prefix-send-no-args-empty-parens
+  (testing "F70 I6 — prefix `|> receiver.method()` with empty parens parses correctly."
+    (let [n (first-node "def main:\n    -> running\n        then: |> self.finish()\n")
+          t (first (filter #(= :transition (:node %)) (:body n)))
+          then-c (first (:body t))
+          emit-stmt (first (:stmts then-c))]
+      (is (= :emit (:node emit-stmt)))
+      (is (= :self (get-in emit-stmt [:target :node])))
+      (is (= "finish" (:msg emit-stmt)))
+      (is (empty? (:args emit-stmt))))))
+
+(deftest f70-i6-binary-send-legacy-still-parses
+  (testing "F70 I6 — legacy binary `<expr> |> <msg>(args)` still parses during the transition period (Stage 3 deferred)."
+    (let [n (first-node "def main:\n    -> running\n        do: self |> bump(by: 1)\n")
+          t (first (filter #(= :transition (:node %)) (:body n)))
+          do-c (first (:body t))
+          emit-stmt (first (:stmts do-c))]
+      (is (= :emit (:node emit-stmt)))
+      (is (= :self (get-in emit-stmt [:target :node])))
+      (is (= "bump" (:msg emit-stmt))))))
+
+(deftest f70-i3-then-accepts-sends-and-updates-mixed
+  (testing "F70 I3 — `then:` accepts both `<field> => <expr>` updates and arbitrary statements (sends, prints). AST splits into `:updates` and `:stmts` bags."
+    (let [n (first-node "def A:\n    n: Int = 0\n\n    -> alive\n\n    alive <: bump -> alive\n        then:\n            n => n + 1\n            :> notified\n")
+          t (first (filter #(and (= :transition (:node %))
+                                 (= "alive" (get-in % [:source :name])))
+                            (:body n)))
+          then-c (first (:body t))]
+      (is (= :then-clause (:node then-c)))
+      (is (= [{:field "n" :expr {:node :binop :op "+"
+                                 :left {:node :ident :name "n"}
+                                 :right {:node :lit-int :value 1}}}]
+             (:updates then-c)))
+      (is (= 1 (count (:stmts then-c))))
+      (is (= :emit (:node (first (:stmts then-c))))))))
+
+(deftest f70-i3-multi-then-clauses-allowed
+  (testing "F70 I3 — multiple `then:` clauses per transition body are allowed (the do: → then: migration produces bodies with multiple then-blocks that merge at lowering)."
+    (let [n (first-node "def A:\n    n: Int = 0\n\n    -> alive\n\n    alive <: bump -> alive\n        then: n => n + 1\n        then: :> notified\n")
+          t (first (filter #(and (= :transition (:node %))
+                                 (= "alive" (get-in % [:source :name])))
+                            (:body n)))
+          then-cs (filter #(= :then-clause (:node %)) (:body t))]
+      (is (= 2 (count then-cs))))))

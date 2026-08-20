@@ -117,6 +117,36 @@
       (is (zero? exit))
       (is (= "1\n" stdout)))))
 
+(deftest end-to-end-dispatch-basic
+  (testing "dispatch-basic.cxc — F69 L4b `<:` receive-glyph dispatch on a tagged-variant scrutinee. Binds `s = Signal.yellow`, dispatches with case + wildcard arms; the `yellow` branch fires and prints 200."
+    (let [{:keys [exit stdout]} (compile-and-run "dispatch-basic")]
+      (is (zero? exit))
+      (is (= "200\n" stdout)))))
+
+(deftest end-to-end-dispatch-multi-pattern
+  (testing "dispatch-multi-pattern.cxc — F69 L4c2 comma-separated multi-pattern arms per spec §3.7. `c = Warmth.orange` matches the `red, orange, yellow` arm; prints 1."
+    (let [{:keys [exit stdout]} (compile-and-run "dispatch-multi-pattern")]
+      (is (zero? exit))
+      (is (= "1\n" stdout)))))
+
+(deftest end-to-end-dispatch-guard
+  (testing "dispatch-guard.cxc — F69 L4c3 guards (`<: pattern when: <cond>:`). Reuses the class-body-transition `when:` guard keyword. `l = Level.medium`, `strict = true`; the `medium when: strict` arm fires and prints 5."
+    (let [{:keys [exit stdout]} (compile-and-run "dispatch-guard")]
+      (is (zero? exit))
+      (is (= "5\n" stdout)))))
+
+(deftest end-to-end-dispatch-literal
+  (testing "dispatch-literal.cxc — F69 L4c4 integer-literal patterns. Scrutinee `n = 42` matches the `<: 42:` arm; prints 2."
+    (let [{:keys [exit stdout]} (compile-and-run "dispatch-literal")]
+      (is (zero? exit))
+      (is (= "2\n" stdout)))))
+
+(deftest end-to-end-dispatch-leading-dot
+  (testing "dispatch-leading-dot.cxc — F69 L4c5 leading-dot shorthand per spec §3.7.2. `<: .ok:` resolves to `<: Outcome.ok:` via the scrutinee's inferred type. Prints 1."
+    (let [{:keys [exit stdout]} (compile-and-run "dispatch-leading-dot")]
+      (is (zero? exit))
+      (is (= "1\n" stdout)))))
+
 (deftest end-to-end-bool-and-is
   (testing "bool-and-is.cxc — and/or/is lower to C boolean ops; identity check on nil"
     (let [{:keys [exit stdout]} (compile-and-run "bool-and-is")]
@@ -322,7 +352,7 @@
       (is (= "2\n" stdout)))))
 
 (deftest end-to-end-list-for-each
-  (testing "list-for-each.cxc — Layer 5 Step 5. Step 2's parse-time `for e in xs: print(e)` sugar produces `xs.for_each(e => print(e))`; lower special-cases for_each on a List container with a lambda arg, emitting `[xs cxc_for_each:^(id _cxc_e) { int e = [_cxc_e intValue]; ... }]`. Element unboxed per element-type (Int→intValue). Prints 7 11 13."
+  (testing "list-for-each.cxc — Layer 5 Step 5. `xs.for_each(e => print(e))` lowers to `[xs cxc_for_each:^(id _cxc_e) { int e = [_cxc_e intValue]; ... }]` on a List container. Element unboxed per element-type (Int→intValue). Prints 7 11 13. (F20 REJECTED 2026-08-18 — the `for e in xs:` sugar retired; iteration is method dispatch.)"
     (let [{:keys [exit stdout]} (compile-and-run "list-for-each")]
       (is (zero? exit))
       (is (= "7\n11\n13\n" stdout)))))

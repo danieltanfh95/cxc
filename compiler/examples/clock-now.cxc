@@ -4,13 +4,13 @@ def main:
     alive: Int = 1
 
     -> running
-        do: self :> stop
+        then: self :> stop
 
     -> end
-        do: print(alive)
+        then: print(alive)
 
     running <: stop -> snapshot
         then: alive => clock.now > 0
-        do: self :> finish
+        then: self :> finish
 
     snapshot <: finish -> end

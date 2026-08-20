@@ -209,6 +209,44 @@
     :c-break    "break;"
     :c-continue "continue;"
 
+    ;; F69 L4 — nested scope emit `{ stmt; stmt; }`. Used by `:dispatch`
+    ;; lowering to bind the scrutinee to a temporary local without leaking
+    ;; the name into the enclosing scope. Flat vector of already-lowered
+    ;; stmts, one per line, brace-wrapped.
+    :c-scope
+    (let [body-lines (mapv emit-stmt (:stmts node))]
+      (str "{\n"
+           (str/join "\n" (map #(str "    " %) body-lines))
+           "\n}"))
+
+    ;; F69 L4 — chained if / else-if / else. Branches whose `:cond` is
+    ;; nil emit as bare `else` (the wildcard tail). Non-nil `:cond` is
+    ;; an already-lowered expression. `:body` is a flat vector of stmts.
+    ;; Local uses `:cond-expr` to avoid shadowing the `cond` special
+    ;; form inside `render-branch`.
+    :c-if-chain
+    (let [render-branch (fn [branch first?]
+                          (let [cond-expr  (:cond branch)
+                                body       (:body branch)
+                                body-lines (mapv emit-stmt body)
+                                brace-body (str "{\n"
+                                                (str/join "\n"
+                                                          (map #(str "    " %) body-lines))
+                                                "\n}")]
+                            (cond
+                              (and first? cond-expr)
+                              (str "if (" (emit-expr cond-expr) ") " brace-body)
+
+                              cond-expr
+                              (str " else if (" (emit-expr cond-expr) ") " brace-body)
+
+                              :else
+                              (str " else " brace-body))))
+          branches (:branches node)]
+      (apply str
+             (map-indexed (fn [i b] (render-branch b (zero? i)))
+                          branches)))
+
     :raw-c    (:text node)
     :raw-stream-subscribe
     ;; Layer 5c Step 8: method-returned Stream subscribe. Emits as a

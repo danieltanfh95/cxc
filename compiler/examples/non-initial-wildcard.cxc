@@ -4,9 +4,9 @@ def Machine:
     n :< raw_n
 
     -> ready
-        do:
-            self |> arm
-            self |> fire
+        then:
+            |> self.arm()
+            |> self.fire()
 
     # Wildcard on `armed`: sets n to 100 on entry.
     # Fires when `arm` transitions us in — not on init (init lands us in `ready`).
@@ -19,4 +19,4 @@ def Machine:
 
 def main:
     -> running
-        do: print(Machine().n)
+        then: print(Machine().n)

@@ -6,11 +6,11 @@ def main:
     -> running
 
     -> end
-        do: print(got_millis > 0)
+        then: print(got_millis > 0)
 
-    running <: clock.every(rate_ms: 5){t: Instant} -> running
+    running <: clock.every(rate_ms: 5)(t: Instant) -> running
         when: got_millis == 0
         then: got_millis => t.millis
 
-    running <: clock.every(rate_ms: 5){t: Instant} -> end
+    running <: clock.every(rate_ms: 5)(t: Instant) -> end
         when: got_millis > 0
