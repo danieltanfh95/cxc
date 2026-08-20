@@ -47,7 +47,7 @@
            clojure.lang.ExceptionInfo
            #"collides with a protected prelude name"
            (build/compile-source-to-file
-            "def Duration:\n    n: Int\n\ndef main:\n    -> running\n        do: print(1)\n"
+            "def Duration:\n    n: Int\n\ndef main:\n    -> running\n        then: print(1)\n"
             "collision-check"
             (.getPath out-dir)))))))
 
@@ -304,7 +304,7 @@
       (is (= "9\n" stdout)))))
 
 (deftest end-to-end-stream-typed-payload
-  (testing "stream-typed-payload.cxc — `:> value(n: 42)` on Emitter carries a typed payload; main subscribes with `source.value{n: Int}`, binds `n` locally, stashes it in `last_n` via `then:`, self-sends `done` to advance to `end`, and `-> end do: print(last_n)` prints 42. Exercises cross-emit-site type inference on Emitter, typed method signature on `-cxc_emit_value_Withn:`, block-capture of typed args on fan-out, and cross-atom type check at the subscribe site."
+  (testing "stream-typed-payload.cxc — `:> value(n: 42)` on Emitter carries a typed payload; main subscribes with `source.value{n: Int}`, binds `n` locally, stashes it in `last_n` via `then:`, self-sends `done` to advance to `end`, and `-> end then: print(last_n)` prints 42. Exercises cross-emit-site type inference on Emitter, typed method signature on `-cxc_emit_value_Withn:`, block-capture of typed args on fan-out, and cross-atom type check at the subscribe site."
     (let [{:keys [exit stdout]} (compile-and-run "stream-typed-payload")]
       (is (zero? exit))
       (is (= "42\n" stdout)))))
@@ -322,7 +322,7 @@
       (is (= "1500\n" stdout)))))
 
 (deftest end-to-end-sync-receive
-  (testing "sync-receive.cxc — `running <| bump{by: Int}` sync-receive under Layer 4 single-thread compiles identically to `<:` (serial-queue semantics already provide `<|`'s no-interleave guarantee); two `|>` sync-sends followed by `|> stop` cleanly walks main to end printing 15"
+  (testing "sync-receive.cxc — `running <| bump(by: Int)` sync-receive under Layer 4 single-thread compiles identically to `<:` (serial-queue semantics already provide `<|`'s no-interleave guarantee); two `|>` sync-sends followed by `|> stop` cleanly walks main to end printing 15"
     (let [{:keys [exit stdout]} (compile-and-run "sync-receive")]
       (is (zero? exit))
       (is (= "15\n" stdout)))))
@@ -340,13 +340,13 @@
       (is (= "4\n" stdout)))))
 
 (deftest end-to-end-list-add
-  (testing "list-add.cxc — audit F44 landing: `do: xs.add(e)` on a List-typed field dispatches through the container's method-index (name `add` → selector `addWithe:`), lowering to `[_xs addWithe:@(e)]` with call-site NSNumber boxing for primitive elements. Retires the former `then: xs => xs + e` pattern-match (which violated spec §3.9 arithmetic-only + / - and spec §1.11 pure-then: rule). Initial [1,2].add(3) → count=3."
+  (testing "list-add.cxc — audit F44 landing: `then: xs.add(e)` on a List-typed field dispatches through the container's method-index (name `add` → selector `addWithe:`), lowering to `[_xs addWithe:@(e)]` with call-site NSNumber boxing for primitive elements. Retires the former `then: xs => xs + e` pattern-match (which violated spec §3.9 arithmetic-only + / - and spec §1.11 pure-then: rule). Initial [1,2].add(3) → count=3."
     (let [{:keys [exit stdout]} (compile-and-run "list-add")]
       (is (zero? exit))
       (is (= "3\n" stdout)))))
 
 (deftest end-to-end-list-remove
-  (testing "list-remove.cxc — mirror of list-add under audit F44: `do: xs.remove(e)` routes to `-removeWithe:` → `[_elements removeObject:@(e)]`. NSMutableArray isEqual: matches boxed NSNumber, so removing 20 from [10,20,30] leaves count=2."
+  (testing "list-remove.cxc — mirror of list-add under audit F44: `then: xs.remove(e)` routes to `-removeWithe:` → `[_elements removeObject:@(e)]`. NSMutableArray isEqual: matches boxed NSNumber, so removing 20 from [10,20,30] leaves count=2."
     (let [{:keys [exit stdout]} (compile-and-run "list-remove")]
       (is (zero? exit))
       (is (= "2\n" stdout)))))
@@ -376,7 +376,7 @@
       (is (= "0\n" stdout)))))
 
 (deftest end-to-end-test-keyboard
-  (testing "test-keyboard.cxc — Layer 5b Step 12. Prelude ships `TestKeyboardInput(events: Int)` — an async self-send loop emitting `pressed(key: Int)` `events` times followed by `done`, mirroring the Clock stub shape. Main subscribes to both, counts presses in a `then:` update, transitions on `done`, prints 3. Also confirms the collect-message-shapes fix: dot-sourced receives (`<: input.pressed{key: Int}`) route through the subscription-map path, not the internal message-index (which would collide on nil msg-name for two dot-sourced streams). Prelude enum `Key` is emitted but unused by this program — game-toys is Step 14."
+  (testing "test-keyboard.cxc — Layer 5b Step 12. Prelude ships `TestKeyboardInput(events: Int)` — an async self-send loop emitting `pressed(key: Int)` `events` times followed by `done`, mirroring the Clock stub shape. Main subscribes to both, counts presses in a `then:` update, transitions on `done`, prints 3. Also confirms the collect-message-shapes fix: dot-sourced receives (`<: input.pressed(key: Int)`) route through the subscription-map path, not the internal message-index (which would collide on nil msg-name for two dot-sourced streams). Prelude enum `Key` is emitted but unused by this program — game-toys is Step 14."
     (let [{:keys [exit stdout]} (compile-and-run "test-keyboard")]
       (is (zero? exit))
       (is (= "3\n" stdout)))))
@@ -400,7 +400,7 @@
       (is (= "7\n" stdout)))))
 
 (deftest end-to-end-event-callback
-  (testing "event-callback.cxc — Layer 6 Step 12 MVP. `data: cb: Block` on main (bare `Block` type = zero-arg void-return escaping block, `void (^)(void)` at C). `then: cb => () => print(42)` installs the block via a new zero-arg-lambda grammar path — parser recognizes `()` `=>` as `{:node :lambda :params [] :body <expr>}`, lowered to `{:node :objc-block-literal :params [] :stmts [<body-expr>]}` when the containing type context is Block. `do: cb()` invokes the stored block — bare-ident-callee resolution recognizes Block-typed self-fields and emits `_cb()`. Block field promotes `def main` to a real atom class so ivar storage + ctx-with-self are available. ARC-wise, block property is `nonatomic copy` so stack blocks migrate to heap on assignment (standard ObjC block-property pattern). Prints `42`."
+  (testing "event-callback.cxc — Layer 6 Step 12 MVP. `data: cb: Block` on main (bare `Block` type = zero-arg void-return escaping block, `void (^)(void)` at C). `then: cb => () => print(42)` installs the block via a new zero-arg-lambda grammar path — parser recognizes `()` `=>` as `{:node :lambda :params [] :body <expr>}`, lowered to `{:node :objc-block-literal :params [] :stmts [<body-expr>]}` when the containing type context is Block. `then: cb()` invokes the stored block — bare-ident-callee resolution recognizes Block-typed self-fields and emits `_cb()`. Block field promotes `def main` to a real atom class so ivar storage + ctx-with-self are available. ARC-wise, block property is `nonatomic copy` so stack blocks migrate to heap on assignment (standard ObjC block-property pattern). Prints `42`."
     (let [{:keys [exit stdout]} (compile-and-run "event-callback")]
       (is (zero? exit))
       (is (= "42\n" stdout)))))
@@ -430,7 +430,7 @@
       (is (= "42\n" stdout)))))
 
 (deftest end-to-end-list-atom-fan-in
-  (testing "list-atom-fan-in.cxc — F62-migrated. `List of AtomType` fan-in with element identity. Container holds a `List of Emitter` populated by a literal `[Emitter(seed: 10), Emitter(seed: 20)]`. Each Emitter emits `beep(v: val)` on its `-> running do:`. Main subscribes via `<: xs.beep{e: Emitter, v: Int}` and accumulates `v` into total; a Clock.every(50) receive-side count bound (single tick) fires `-> end` after both beeps arrive. Verifies three landing pieces: (1) atom-typed elements accepted in list literals (previously fail-nyi as `not boxable`); (2) container auto-subscribes to each element's fan-in stream at `-initWithElements:` for literal-loaded elements (runtime `cxc_add:` path already did this; init-load path was silently unhooked); (3) untargeted `:>` in transition do: blocks defers via `cxc_send_async(self, ...)` so subscribers registered in later init phases (container init, main runtimeBinding) are hooked up when the fanout runs on dispatch_main. Total = 10 + 20 = 30."
+  (testing "list-atom-fan-in.cxc — F62-migrated. `List of AtomType` fan-in with element identity. Container holds a `List of Emitter` populated by a literal `[Emitter(seed: 10), Emitter(seed: 20)]`. Each Emitter emits `beep(v: val)` on its `-> running do:`. Main subscribes via `<: xs.beep(e: Emitter, v: Int)` and accumulates `v` into total; a Clock.every(50) receive-side count bound (single tick) fires `-> end` after both beeps arrive. Verifies three landing pieces: (1) atom-typed elements accepted in list literals (previously fail-nyi as `not boxable`); (2) container auto-subscribes to each element's fan-in stream at `-initWithElements:` for literal-loaded elements (runtime `cxc_add:` path already did this; init-load path was silently unhooked); (3) untargeted `:>` in transition then: blocks defers via `cxc_send_async(self, ...)` so subscribers registered in later init phases (container init, main runtimeBinding) are hooked up when the fanout runs on dispatch_main. Total = 10 + 20 = 30."
     (let [{:keys [exit stdout]} (compile-and-run "list-atom-fan-in")]
       (is (zero? exit))
       (is (= "30\n" stdout)))))
@@ -523,7 +523,7 @@
     (let [src-dir (tmp-dir)
           out-dir (tmp-dir)
           _       (write-file! src-dir "hello.cxc"
-                               "module com.example.hello\n\ndef main:\n    -> running\n        do: print(1)\n")
+                               "module com.example.hello\n\ndef main:\n    -> running\n        then: print(1)\n")
           ex      (try
                     (build/compile-directory-to-file (.getPath src-dir)
                                                      "hello" (.getPath out-dir))
@@ -540,7 +540,7 @@
     (let [src-dir (tmp-dir)
           out-dir (tmp-dir)
           _       (write-file! src-dir "root.cxc"
-                               "def main:\n    -> running\n        do: print(1)\n")
+                               "def main:\n    -> running\n        then: print(1)\n")
           _       (write-file! src-dir "main/other.cxc"
                                "def X:\n    n: Int\n")
           ex      (try
@@ -559,7 +559,7 @@
           _       (write-file! src-dir "a.cxc"
                                "def V:\n    n: Int\n")
           _       (write-file! src-dir "b.cxc"
-                               "def V:\n    n: Int\n\ndef main:\n    -> running\n        do: print(1)\n")
+                               "def V:\n    n: Int\n\ndef main:\n    -> running\n        then: print(1)\n")
           ex      (try
                     (build/compile-directory-to-file (.getPath src-dir)
                                                      "prog" (.getPath out-dir))

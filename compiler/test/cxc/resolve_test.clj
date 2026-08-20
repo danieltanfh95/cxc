@@ -29,7 +29,7 @@
 
 (deftest table-carries-prelude-provenance
   (testing "F51 — each prelude declaration is attributed to its owning std.* module"
-    (let [table (table-from "def main:\n    -> running\n        do: print(\"hi\")\n")]
+    (let [table (table-from "def main:\n    -> running\n        then: print(\"hi\")\n")]
       ;; Post-rename, prelude Duration is _Cxc_Duration in the AST;
       ;; provenance lookup handles both forms.
       (is (= :std.time (get-in table ["_Cxc_Duration" :module])))

@@ -9,7 +9,7 @@
 
 (defn- main-work-body
   "Return the body of CxcMain's cxc_stateInit — the effective site of
-   `def main: -> running do: <stmts>` under main-as-atom (Steps 16/17).
+   `def main: -> running then: <stmts>` under main-as-atom (Steps 16/17).
    Falls back to the raw main body for programs without ObjC classes."
   [prog]
   (if-let [cxc-main (first (filter #(= "CxcMain" (:name %)) (:classes prog)))]
@@ -17,7 +17,7 @@
     (get-in prog [:main :body])))
 
 (deftest hello-world-program-lowers
-  (testing "def main: -> running do: print(\"hello, world\") lowers cleanly. F65 — Foundation is always included because String is NSString *; the string literal lowers as :objc-str (`@\"...\"`) rather than :str (`\"...\"`)."
+  (testing "def main: -> running then: print(\"hello, world\") lowers cleanly. F65 — Foundation is always included because String is NSString *; the string literal lowers as :objc-str (`@\"...\"`) rather than :str (`\"...\"`)."
     (let [prog (lower-src "def main:
     -> running
         then: print(\"hello, world\")
@@ -46,14 +46,14 @@
 (deftest unsupported-call-fails-nyi
   (testing "any call other than print raises :not-yet-implemented"
     (try
-      (lower-src "def main:\n    -> running\n        do: unknown_fn(1)\n")
+      (lower-src "def main:\n    -> running\n        then: unknown_fn(1)\n")
       (is false "expected NYI throw")
       (catch clojure.lang.ExceptionInfo e
         (is (= :not-yet-implemented (:kind (ex-data e))))))))
 
 (deftest arithmetic-in-print-int
   (testing "int + int uses %lld format (Phase D F36a — Int aliased to Int64; printf format widens accordingly); binop lowers with left/right"
-    (let [prog (lower-src "def main:\n    -> running\n        do: print(3 + 4 * 2)\n")
+    (let [prog (lower-src "def main:\n    -> running\n        then: print(3 + 4 * 2)\n")
           call (first (get-in prog [:main :body]))]
       (is (= "printf" (:fn call)))
       (is (= "%lld\n" (get-in call [:args 0 :value])))
@@ -66,13 +66,13 @@
 
 (deftest arithmetic-in-print-float-wins
   (testing "float ∘ int promotes to float; %f is chosen"
-    (let [prog (lower-src "def main:\n    -> running\n        do: print(1.5 + 2)\n")
+    (let [prog (lower-src "def main:\n    -> running\n        then: print(1.5 + 2)\n")
           call (first (get-in prog [:main :body]))]
       (is (= "%f\n" (get-in call [:args 0 :value]))))))
 
 (deftest record-lowered-to-c-struct
   (testing "top-level record → :c-struct with resolved C types per field"
-    (let [prog (lower-src "def V:\n    x: Int\n    y: Float\n\ndef main:\n    -> running\n        do: print(1)\n")
+    (let [prog (lower-src "def V:\n    x: Int\n    y: Float\n\ndef main:\n    -> running\n        then: print(1)\n")
           s    (first (:structs prog))]
       (is (= :c-struct (:node s)))
       (is (= "V" (:name s)))
@@ -82,7 +82,7 @@
 
 (deftest record-construction-with-named-args
   (testing "V(x: 3, y: 4) lowers to :struct-lit with named fields"
-    (let [prog (lower-src "def V:\n    x: Int\n    y: Int\n\ndef main:\n    -> running\n        do: print(V(x: 3, y: 4).x)\n")
+    (let [prog (lower-src "def V:\n    x: Int\n    y: Int\n\ndef main:\n    -> running\n        then: print(V(x: 3, y: 4).x)\n")
           call (first (get-in prog [:main :body]))
           field-access (get-in call [:args 1])]
       (is (= :field (:node field-access)))
@@ -96,21 +96,21 @@
 
 (deftest nested-record-field-typing
   (testing "field access chained through a record field propagates the inner record's field type"
-    (let [prog (lower-src "def Point:\n    x: Float\n    y: Float\n\ndef Line:\n    start: Point\n    stop:  Point\n\ndef main:\n    -> running\n        do: print(Line(start: Point(x: 1.0, y: 2.0), stop: Point(x: 3.0, y: 4.0)).start.x)\n")
+    (let [prog (lower-src "def Point:\n    x: Float\n    y: Float\n\ndef Line:\n    start: Point\n    stop:  Point\n\ndef main:\n    -> running\n        then: print(Line(start: Point(x: 1.0, y: 2.0), stop: Point(x: 3.0, y: 4.0)).start.x)\n")
           call (first (get-in prog [:main :body]))]
       (is (= "%f\n" (get-in call [:args 0 :value]))))))
 
 (deftest missing-field-in-ctor-fails-nyi
   (testing "V(x: 1) when V requires x + y (no default on y) — fail-nyi"
     (try
-      (lower-src "def V:\n    x: Int\n    y: Int\n\ndef main:\n    -> running\n        do: print(V(x: 1).x)\n")
+      (lower-src "def V:\n    x: Int\n    y: Int\n\ndef main:\n    -> running\n        then: print(V(x: 1).x)\n")
       (is false "expected NYI throw")
       (catch clojure.lang.ExceptionInfo e
         (is (= :not-yet-implemented (:kind (ex-data e))))))))
 
 (deftest record-defaults-fill-omitted-fields
   (testing "omitted field with a declared default is filled from the default"
-    (let [prog (lower-src "def V:\n    x: Int = 1\n    y: Int = 2\n\ndef main:\n    -> running\n        do: print(V(x: 10).y)\n")
+    (let [prog (lower-src "def V:\n    x: Int = 1\n    y: Int = 2\n\ndef main:\n    -> running\n        then: print(V(x: 10).y)\n")
           call (first (get-in prog [:main :body]))
           ctor (get-in call [:args 1 :target])]
       (is (= :struct-lit (:node ctor)))
@@ -123,7 +123,7 @@
 (deftest f40-record-ctor-duplicate-named-arg-rejected
   (testing "V(x: 1, x: 2) — duplicate named arg fails, not silently collapsed"
     (let [ex (try
-               (lower-src "def V:\n    x: Int\n    y: Int\n\ndef main:\n    -> running\n        do: print(V(x: 1, x: 2, y: 3).x)\n")
+               (lower-src "def V:\n    x: Int\n    y: Int\n\ndef main:\n    -> running\n        then: print(V(x: 1, x: 2, y: 3).x)\n")
                nil
                (catch clojure.lang.ExceptionInfo e e))]
       (is ex "expected exception")
@@ -133,7 +133,7 @@
 (deftest f40-record-ctor-unknown-named-arg-rejected
   (testing "V(bogus: 1) — unknown named arg fails, not silently ignored"
     (let [ex (try
-               (lower-src "def V:\n    x: Int\n    y: Int\n\ndef main:\n    -> running\n        do: print(V(x: 1, y: 2, bogus: 3).x)\n")
+               (lower-src "def V:\n    x: Int\n    y: Int\n\ndef main:\n    -> running\n        then: print(V(x: 1, y: 2, bogus: 3).x)\n")
                nil
                (catch clojure.lang.ExceptionInfo e e))]
       (is ex "expected exception")
@@ -144,7 +144,7 @@
 (deftest f40-record-ctor-surplus-positional-rejected
   (testing "V(1, 2, 3) when V has 2 fields — surplus positional fails"
     (let [ex (try
-               (lower-src "def V:\n    x: Int\n    y: Int\n\ndef main:\n    -> running\n        do: print(V(1, 2, 3).x)\n")
+               (lower-src "def V:\n    x: Int\n    y: Int\n\ndef main:\n    -> running\n        then: print(V(1, 2, 3).x)\n")
                nil
                (catch clojure.lang.ExceptionInfo e e))]
       (is ex "expected exception")
@@ -154,7 +154,7 @@
 (deftest f40-record-ctor-positional-and-named-collision-rejected
   (testing "V(1, x: 2) — same param supplied positionally AND by name fails"
     (let [ex (try
-               (lower-src "def V:\n    x: Int\n    y: Int\n\ndef main:\n    -> running\n        do: print(V(1, x: 2, y: 3).x)\n")
+               (lower-src "def V:\n    x: Int\n    y: Int\n\ndef main:\n    -> running\n        then: print(V(1, x: 2, y: 3).x)\n")
                nil
                (catch clojure.lang.ExceptionInfo e e))]
       (is ex "expected exception")
@@ -164,7 +164,7 @@
 (deftest f40-record-fields-defaults-must-follow-required
   (testing "record V { x: Int = 1, y: Int } — defaulted before required is a compile error"
     (let [ex (try
-               (lower-src "def V:\n    x: Int = 1\n    y: Int\n\ndef main:\n    -> running\n        do: print(V(x: 10, y: 20).x)\n")
+               (lower-src "def V:\n    x: Int = 1\n    y: Int\n\ndef main:\n    -> running\n        then: print(V(x: 10, y: 20).x)\n")
                nil
                (catch clojure.lang.ExceptionInfo e e))]
       (is ex "expected exception")
@@ -174,7 +174,7 @@
 (deftest f40-atom-ctor-duplicate-named-arg-rejected
   (testing "duplicate named arg on atom ctor fails"
     (let [ex (try
-               (lower-src "def Widget(a: Int, b: Int):\n    n: Int = a\n\ndef main:\n    w: Widget = Widget(a: 1, a: 2, b: 3)\n\n    -> running\n        do: print(0)\n")
+               (lower-src "def Widget(a: Int, b: Int):\n    n: Int = a\n\ndef main:\n    w: Widget = Widget(a: 1, a: 2, b: 3)\n\n    -> running\n        then: print(0)\n")
                nil
                (catch clojure.lang.ExceptionInfo e e))]
       (is ex "expected exception")
@@ -184,7 +184,7 @@
 (deftest f40-atom-ctor-unknown-named-arg-rejected
   (testing "unknown named arg on atom ctor fails"
     (let [ex (try
-               (lower-src "def Widget(a: Int):\n    n: Int = a\n\ndef main:\n    w: Widget = Widget(a: 1, ghost: 2)\n\n    -> running\n        do: print(0)\n")
+               (lower-src "def Widget(a: Int):\n    n: Int = a\n\ndef main:\n    w: Widget = Widget(a: 1, ghost: 2)\n\n    -> running\n        then: print(0)\n")
                nil
                (catch clojure.lang.ExceptionInfo e e))]
       (is ex "expected exception")
@@ -193,7 +193,7 @@
 
 (deftest def-atom-lowers-to-objc-class
   (testing "def-atom with data:-only → :objc-class with @property ivars + -init defaults"
-    (let [prog (lower-src "def Counter:\n    n: Int = 42\n\n    -> running\n\n    -> end\n\ndef main:\n    c: Counter = Counter()\n\n    -> running\n        do: print(0)\n")
+    (let [prog (lower-src "def Counter:\n    n: Int = 42\n\n    -> running\n\n    -> end\n\ndef main:\n    c: Counter = Counter()\n\n    -> running\n        then: print(0)\n")
           cls  (first (:classes prog))]
       (is (= :objc-class (:node cls)))
       (is (= "Counter" (:name cls)))
@@ -231,7 +231,7 @@
 
 (deftest def-atom-ctor-lowers-to-alloc-init
   (testing "Counter in def-slot position → :objc-alloc-init"
-    (let [prog (lower-src "def Counter:\n    n: Int = 42\n\n    -> running\n\n    -> end\n\ndef main:\n    c: Counter = Counter()\n\n    -> running\n        do: print(0)\n")
+    (let [prog (lower-src "def Counter:\n    n: Int = 42\n\n    -> running\n\n    -> end\n\ndef main:\n    c: Counter = Counter()\n\n    -> running\n        then: print(0)\n")
           main-cls (first (filter #(= "CxcMain" (:name %)) (:classes prog)))
           state-body (:body (first (filter #(clojure.string/starts-with?
                                              (:selector %) "cxc_stateInit")
@@ -246,7 +246,7 @@
 
 (deftest def-atom-triggers-foundation-and-autoreleasepool
   (testing "presence of an ObjC class flips includes to Foundation and wraps main in @autoreleasepool"
-    (let [prog (lower-src "def Counter:\n    n: Int = 42\n\n    -> running\n\n    -> end\n\ndef main:\n    c: Counter = Counter()\n\n    -> running\n        do: print(0)\n")]
+    (let [prog (lower-src "def Counter:\n    n: Int = 42\n\n    -> running\n\n    -> end\n\ndef main:\n    c: Counter = Counter()\n\n    -> running\n        then: print(0)\n")]
       ;; Foundation for ObjC; stdlib for cxc_shutdown() (needed by every
       ;; atom class's transitionToEnd cascade infrastructure).
       (is (some #{"<Foundation/Foundation.h>"} (:includes prog)))
@@ -255,15 +255,15 @@
 
 (deftest hello-world-includes-foundation
   (testing "F65 — every program includes Foundation because string literals are NSString; autoreleasepool wraps main"
-    (let [prog (lower-src "def main:\n    -> running\n        do: print(\"hi\")\n")]
+    (let [prog (lower-src "def main:\n    -> running\n        then: print(\"hi\")\n")]
       (is (some #{"<Foundation/Foundation.h>"} (:includes prog))
           "F65 — Foundation always included; NSString literal requires it")
       (is (true? (get-in prog [:main :autorelease?]))
           "F65 — autoreleasepool wraps main since NSString literals allocate"))))
 
 (deftest wildcard-on-enter-inlined-into-init
-  (testing "initial-phase wildcard on-enter → its then:/do: append to :init-body after data defaults"
-    (let [prog (lower-src "def Ticker:\n    n: Int = 0\n\n    -> incremented\n        then: n => n + 1\n\ndef main:\n    t: Ticker = Ticker()\n\n    -> running\n        do: print(0)\n")
+  (testing "initial-phase wildcard on-enter → its then:/then: append to :init-body after data defaults"
+    (let [prog (lower-src "def Ticker:\n    n: Int = 0\n\n    -> incremented\n        then: n => n + 1\n\ndef main:\n    t: Ticker = Ticker()\n\n    -> running\n        then: print(0)\n")
           cls  (first (:classes prog))]
       ;; State-init runs data defaults then the initial-phase on-enter body.
       ;; Structural setup owns queue + phase = initial constant.
@@ -279,7 +279,7 @@
                (:body state)))))))
 
 (deftest non-initial-wildcard-inlines-into-transitions-that-enter-that-phase
-  (testing "`-> dead do: print(0)` inlines into `alive <: die -> dead` branch body (phase change, not self-loop)"
+  (testing "`-> dead then: print(0)` inlines into `alive <: die -> dead` branch body (phase change, not self-loop)"
     (let [prog (lower-src "def Enemy:
     hp: Int = 3
 
@@ -313,7 +313,7 @@ def main:
 
 (deftest atom-emits-transitionToEnd-nilSlot-and-installParent
   (testing "every atom class synthesizes the Step 11 lifecycle methods"
-    (let [prog (lower-src "def Counter:\n    n: Int = 0\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        do: print(1)\n")
+    (let [prog (lower-src "def Counter:\n    n: Int = 0\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        then: print(1)\n")
           cls  (first (:classes prog))
           sels (set (map :selector (:methods cls)))]
       (is (contains? sels "cxc_installParent:inSlot:"))
@@ -342,7 +342,7 @@ def main:
 
 (deftest parent-installs-back-ref-on-nested-slot-child
   (testing "parent's cxc_stateInit calls -cxc_installParent:inSlot: on each nested slot after construction"
-    (let [prog (lower-src "def Cell:\n    n: Int = 0\n\n    -> running\n\n    -> end\n\ndef Container:\n    cell: Cell = Cell()\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        do: print(1)\n")
+    (let [prog (lower-src "def Cell:\n    n: Int = 0\n\n    -> running\n\n    -> end\n\ndef Container:\n    cell: Cell = Cell()\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        then: print(1)\n")
           container (first (filter #(= "Container" (:name %)) (:classes prog)))
           state (first (filter #(= "cxc_stateInit" (:selector %)) (:methods container)))
           install-msg (second (:body state))]     ; [_cell = Cell(), install-parent-msg]
@@ -352,7 +352,7 @@ def main:
 
 (deftest f31-f35-l4-atom-typed-data-field-becomes-slot
   (testing "F31/F35 Landing 4 — an atom-typed `data:` field with a default (eager Foo() or nil) participates in the slot machinery: parent installs back-ref at ctor time and cascades on -transitionToEnd. Retires the pre-L4 gap where only invented `def slot: Type` nested-atoms received back-refs. Spec-canonical `data:` form now matches (§1.11)."
-    (let [prog (lower-src "def Helper:\n    -> alive\n\ndef X:\n    h: Helper = Helper()\n\n    -> running\n\n    -> end\n\ndef main:\n    x: X = X()\n    -> running\n        do: print(0)\n")
+    (let [prog (lower-src "def Helper:\n    -> alive\n\ndef X:\n    h: Helper = Helper()\n\n    -> running\n\n    -> end\n\ndef main:\n    x: X = X()\n    -> running\n        then: print(0)\n")
           x-cls (first (filter #(= "X" (:name %)) (:classes prog)))
           state (first (filter #(= "cxc_stateInit" (:selector %)) (:methods x-cls)))
           install-msg (second (:body state))
@@ -372,7 +372,7 @@ def main:
 
 (deftest f31-f35-l4-nil-default-data-field-cascades-nil-safe
   (testing "F31/F35 Landing 4 — `data: h: Helper = nil` still gets the install/cascade wiring; the runtime calls on nil are no-ops (ObjC nil-messaging). Verifies the broadened filter doesn't break nullable atom-typed fields."
-    (let [prog (lower-src "def Helper:\n    -> alive\n\ndef X:\n    h: Helper = nil\n\n    -> running\n\n    -> end\n\ndef main:\n    x: X = X()\n    -> running\n        do: print(0)\n")
+    (let [prog (lower-src "def Helper:\n    -> alive\n\ndef X:\n    h: Helper = nil\n\n    -> running\n\n    -> end\n\ndef main:\n    x: X = X()\n    -> running\n        then: print(0)\n")
           x-cls (first (filter #(= "X" (:name %)) (:classes prog)))
           state (first (filter #(= "cxc_stateInit" (:selector %)) (:methods x-cls)))
           install-msg (second (:body state))]
@@ -383,7 +383,7 @@ def main:
 
 (deftest f31-f35-l4-f41-synthesized-field-not-a-slot
   (testing "F31/F35 Landing 4 — a no-default atom-typed data field is F41-sugared to a required ctor param (caller-provided reference). Since ownership is ambiguous, it is NOT treated as an owned slot — no back-ref, no cascade. Preserves the caller-supplies-shared-reference semantics."
-    (let [prog (lower-src "def Helper:\n    -> alive\n\ndef X:\n    h: Helper\n\n    -> running\n\n    -> end\n\ndef main:\n    hh: Helper = Helper()\n    x: X = X(h: hh)\n    -> running\n        do: print(0)\n")
+    (let [prog (lower-src "def Helper:\n    -> alive\n\ndef X:\n    h: Helper\n\n    -> running\n\n    -> end\n\ndef main:\n    hh: Helper = Helper()\n    x: X = X(h: hh)\n    -> running\n        then: print(0)\n")
           x-cls (first (filter #(= "X" (:name %)) (:classes prog)))
           state (first (filter #(and (:selector %)
                                      (str/starts-with? (:selector %) "cxc_stateInit"))
@@ -424,7 +424,7 @@ def main:
 
 (deftest record-observable-lowers-to-c-function
   (testing "F67 L4 — record parametric observable → :c-function under :functions with mangled name and self as first param (replaces reader methods per Proposal G class-body collapse)."
-    (let [prog (lower-src "def V:\n    x: Float\n    y: Float\n\n    plus(other: V) :< V(x: self.x + other.x, y: self.y + other.y)\n\ndef main:\n    -> running\n        do: print(V(x: 1.0, y: 2.0).plus(V(x: 3.0, y: 4.0)).x)\n")
+    (let [prog (lower-src "def V:\n    x: Float\n    y: Float\n\n    plus(other: V) :< V(x: self.x + other.x, y: self.y + other.y)\n\ndef main:\n    -> running\n        then: print(V(x: 1.0, y: 2.0).plus(V(x: 3.0, y: 4.0)).x)\n")
           f    (first (:functions prog))]
       (is (= :c-function (:node f)))
       (is (= "V_plus" (:name f)))
@@ -435,7 +435,7 @@ def main:
 
 (deftest atom-ctor-params-lower-to-init-with
   (testing "def-atom with ctor params → :init-params on class + :objc-init-with at call site"
-    (let [prog (lower-src "def Counter(initial: Int = 0):\n    n: Int = initial\n\ndef main:\n    c: Counter = Counter(initial: 42)\n\n    -> running\n        do: print(0)\n")
+    (let [prog (lower-src "def Counter(initial: Int = 0):\n    n: Int = initial\n\ndef main:\n    c: Counter = Counter(initial: 42)\n\n    -> running\n        then: print(0)\n")
           cls  (first (filter #(= "Counter" (:name %)) (:classes prog)))
           ;; ctor call is inside main's :init-body — the def-slot form
           ;; lowers to an assign to _c whose rhs is the alloc/init.
@@ -472,7 +472,7 @@ def main:
 
 (deftest atom-typed-field-defaults-to-nil-and-lowers-as-pointer
   (testing "F39 L1 — reference-typed atom fields are already nil-allowed (spec §3.6.1) — no `?` needed. `other: Counter = nil` lowers to `Counter *` (ARC strong)."
-    (let [prog (lower-src "def Counter:\n    n: Int = 5\n    other: Counter = nil\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        do: print(1)\n")
+    (let [prog (lower-src "def Counter:\n    n: Int = 5\n    other: Counter = nil\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        then: print(1)\n")
           cls  (first (:classes prog))]
       (is (= [{:name "phase"            :c-type "NSString *"       :attrs ["nonatomic" "copy"]}
               {:name "own_queue"        :c-type "dispatch_queue_t" :attrs ["nonatomic" "strong"]}
@@ -491,7 +491,7 @@ def main:
 
 (deftest atom-observable-lowers-to-objc-method
   (testing "F67 L4 — def-atom parametric observable → :objc-method under class :methods (replaces reader methods per Proposal G)."
-    (let [prog (lower-src "def Counter:\n    n: Int = 10\n\n    bump() :< n + 1\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        do: print(Counter().bump())\n")
+    (let [prog (lower-src "def Counter:\n    n: Int = 10\n\n    bump() :< n + 1\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        then: print(Counter().bump())\n")
           cls  (first (:classes prog))
           m    (first (filter #(= "bump" (:selector %)) (:methods cls)))]
       (is (= :objc-method (:node m)))
@@ -501,7 +501,7 @@ def main:
 
 (deftest atom-observable-call-lowers-to-objc-msg
   (testing "counter.bump() → :objc-msg with the receiver as :recv and bare selector (observable call site, F67 L4)."
-    (let [prog (lower-src "def Counter:\n    n: Int = 10\n\n    bump() :< n + 1\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        do: print(Counter().bump())\n")
+    (let [prog (lower-src "def Counter:\n    n: Int = 10\n\n    bump() :< n + 1\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        then: print(Counter().bump())\n")
           call (first (main-work-body prog))
           msg  (get-in call [:args 1])]
       (is (= :objc-msg (:node msg)))
@@ -511,7 +511,7 @@ def main:
 
 (deftest atom-observable-multiarg-selector
   (testing "plus(other: Int) → selector `plusWithother:` and matching call (parametric observable selector construction, F67 L2/L4)."
-    (let [prog (lower-src "def Counter:\n    n: Int = 10\n\n    plus(other: Int) :< n + other\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        do: print(Counter().plus(5))\n")
+    (let [prog (lower-src "def Counter:\n    n: Int = 10\n\n    plus(other: Int) :< n + other\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        then: print(Counter().plus(5))\n")
           m    (first (filter #(= "plusWithother:" (:selector %))
                               (:methods (first (filter #(= "Counter" (:name %)) (:classes prog))))))
           call (first (main-work-body prog))
@@ -526,7 +526,7 @@ def main:
 (deftest f40-record-field-default-computed-rejected
   (testing "record V { x: Int = 1 + 1 } — arithmetic expr as default fails"
     (let [ex (try
-               (lower-src "def V:\n    x: Int = 1 + 1\n\ndef main:\n    -> running\n        do: print(V(x: 10).x)\n")
+               (lower-src "def V:\n    x: Int = 1 + 1\n\ndef main:\n    -> running\n        then: print(V(x: 10).x)\n")
                nil
                (catch clojure.lang.ExceptionInfo e e))]
       (is ex "expected exception")
@@ -536,7 +536,7 @@ def main:
 (deftest f40-record-field-default-call-rejected
   (testing "record V { x: Int = foo() } — call as default fails"
     (let [ex (try
-               (lower-src "def V:\n    x: Int = foo()\n\ndef main:\n    -> running\n        do: print(V(x: 10).x)\n")
+               (lower-src "def V:\n    x: Int = foo()\n\ndef main:\n    -> running\n        then: print(V(x: 10).x)\n")
                nil
                (catch clojure.lang.ExceptionInfo e e))]
       (is ex "expected exception")
@@ -546,7 +546,7 @@ def main:
 (deftest f40-atom-ctor-default-computed-rejected
   (testing "def Widget(x: Int = 1 + 1) — arithmetic expr as ctor default fails"
     (let [ex (try
-               (lower-src "def Widget(x: Int = 1 + 1):\n    n: Int = x\n\ndef main:\n    -> running\n        do: print(Widget().n)\n")
+               (lower-src "def Widget(x: Int = 1 + 1):\n    n: Int = x\n\ndef main:\n    -> running\n        then: print(Widget().n)\n")
                nil
                (catch clojure.lang.ExceptionInfo e e))]
       (is ex "expected exception")
@@ -556,7 +556,7 @@ def main:
 (deftest f40-observable-default-computed-rejected
   (testing "parametric observable with `factor: Int = 2 * 2` default fails — non-const check runs on observable params too."
     (let [ex (try
-               (lower-src "def V:\n    x: Int\n\n    scaled(factor: Int = 2 * 2) :< x * factor\n\ndef main:\n    -> running\n        do: print(V(x: 5).scaled())\n")
+               (lower-src "def V:\n    x: Int\n\n    scaled(factor: Int = 2 * 2) :< x * factor\n\ndef main:\n    -> running\n        then: print(V(x: 5).scaled())\n")
                nil
                (catch clojure.lang.ExceptionInfo e e))]
       (is ex "expected exception")
@@ -565,7 +565,7 @@ def main:
 
 (deftest f40-neg-literal-default-accepted
   (testing "record V { x: Int = -5 } — unary neg on literal is const"
-    (let [prog (lower-src "def V:\n    x: Int = -5\n\ndef main:\n    -> running\n        do: print(V().x)\n")
+    (let [prog (lower-src "def V:\n    x: Int = -5\n\ndef main:\n    -> running\n        then: print(V().x)\n")
           call (first (main-work-body prog))
           ctor (get-in call [:args 1 :target])]
       (is (= :struct-lit (:node ctor)))
@@ -581,7 +581,7 @@ def main:
 
 (deftest f40-atom-observable-accepts-named-args
   (testing "counter.plus(other: 7) — named arg on atom observable resolves (F67 L4 parametric observable arg dispatch)."
-    (let [prog (lower-src "def Counter:\n    n: Int = 10\n\n    plus(other: Int) :< n + other\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        do: print(Counter().plus(other: 7))\n")
+    (let [prog (lower-src "def Counter:\n    n: Int = 10\n\n    plus(other: Int) :< n + other\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        then: print(Counter().plus(other: 7))\n")
           call (first (main-work-body prog))
           msg  (get-in call [:args 1])]
       (is (= "plusWithother:" (:selector msg)))
@@ -590,7 +590,7 @@ def main:
 
 (deftest f40-atom-observable-defaults-fill-when-omitted
   (testing "counter.plus() with other defaulted uses default (F67 L4)."
-    (let [prog (lower-src "def Counter:\n    n: Int = 10\n\n    plus(other: Int = 3) :< n + other\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        do: print(Counter().plus())\n")
+    (let [prog (lower-src "def Counter:\n    n: Int = 10\n\n    plus(other: Int = 3) :< n + other\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        then: print(Counter().plus())\n")
           call (first (main-work-body prog))
           msg  (get-in call [:args 1])]
       (is (= "plusWithother:" (:selector msg)))
@@ -599,7 +599,7 @@ def main:
 
 (deftest f40-atom-observable-named-out-of-order-reorders
   (testing "counter.plus3(c: 3, a: 1, b: 2) — reordered to decl order (F67 L4 parametric observable)."
-    (let [prog (lower-src "def Counter:\n    n: Int = 0\n\n    plus3(a: Int, b: Int, c: Int) :< n + a + b + c\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        do: print(Counter().plus3(c: 3, a: 1, b: 2))\n")
+    (let [prog (lower-src "def Counter:\n    n: Int = 0\n\n    plus3(a: Int, b: Int, c: Int) :< n + a + b + c\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        then: print(Counter().plus3(c: 3, a: 1, b: 2))\n")
           call (first (main-work-body prog))
           msg  (get-in call [:args 1])
           arg-values (mapv :value (:args msg))]
@@ -607,7 +607,7 @@ def main:
 
 (deftest f40-record-observable-defaults-fill-when-omitted
   (testing "record parametric observable with param default inserts default at call site (F67 L4)."
-    (let [prog (lower-src "def V:\n    x: Int\n\n    scaled(factor: Int = 4) :< x * factor\n\ndef main:\n    -> running\n        do: print(V(x: 5).scaled())\n")
+    (let [prog (lower-src "def V:\n    x: Int\n\n    scaled(factor: Int = 4) :< x * factor\n\ndef main:\n    -> running\n        then: print(V(x: 5).scaled())\n")
           call (first (main-work-body prog))
           inner (get-in call [:args 1])]
       (is (= :call (:node inner)))
@@ -619,7 +619,7 @@ def main:
 (deftest f40-observable-unknown-named-arg-rejected
   (testing "atom observable with unknown named arg fails (F67 L4)."
     (let [ex (try
-               (lower-src "def Counter:\n    n: Int = 10\n\n    plus(other: Int) :< n + other\n\ndef main:\n    -> running\n        do: print(Counter().plus(bogus: 5))\n")
+               (lower-src "def Counter:\n    n: Int = 10\n\n    plus(other: Int) :< n + other\n\ndef main:\n    -> running\n        then: print(Counter().plus(bogus: 5))\n")
                nil
                (catch clojure.lang.ExceptionInfo e e))]
       (is ex "expected exception")
@@ -647,7 +647,7 @@ def main:
 
 (deftest f46-clamp-emits-typeof-bindings
   (testing "clamp(x, 0, 100) emit-c uses `__typeof__` + `__cxc_cv` so x fires once at runtime"
-    (let [prog (lower-src "def main:\n    -> running\n        do: print(clamp(15, 0, 100))\n")
+    (let [prog (lower-src "def main:\n    -> running\n        then: print(clamp(15, 0, 100))\n")
           call (first (main-work-body prog))
           ffi  (get-in call [:args 1])
           rendered ((:emit-c-fn ffi) ["counter_next()" "0" "100"])]
@@ -667,7 +667,7 @@ def main:
 
 (deftest and-or-is-lower-to-c-ops
   (testing "and → &&, or → ||, is → ==; all infer :bool"
-    (let [prog (lower-src "def main:\n    -> running\n        do: print(1 == 2 and 3 == 3 or 4 == 4)\n")
+    (let [prog (lower-src "def main:\n    -> running\n        then: print(1 == 2 and 3 == 3 or 4 == 4)\n")
           call (first (get-in prog [:main :body]))
           expr (get-in call [:args 1])]
       ;; Left-assoc: (((1==2) && (3==3)) || (4==4))
@@ -676,7 +676,7 @@ def main:
 
 (deftest is-nil-emits-pointer-eq
   (testing "`x is nil` → `x == nil` at emit layer (pointer identity in ObjC)"
-    (let [prog (lower-src "def Counter:\n    raw_other: Counter = nil\n\n    other :< raw_other\n\ndef main:\n    -> running\n        do: print(Counter().other is nil)\n")
+    (let [prog (lower-src "def Counter:\n    raw_other: Counter = nil\n\n    other :< raw_other\n\ndef main:\n    -> running\n        then: print(Counter().other is nil)\n")
           call (first (main-work-body prog))
           expr (get-in call [:args 1])]
       (is (= :binop (:node expr)))
@@ -685,7 +685,7 @@ def main:
 
 (deftest enum-lowers-to-c-enum-with-mangled-cases
   (testing "enum decl → :c-enum under :enums; Key.arrow_down → C constant `Key_arrow_down`"
-    (let [prog (lower-src "def Key:\n    case arrow_up\n    case arrow_down\n\ndef main:\n    -> running\n        do: print(Key.arrow_down)\n")
+    (let [prog (lower-src "def Key:\n    case arrow_up\n    case arrow_down\n\ndef main:\n    -> running\n        then: print(Key.arrow_down)\n")
           e    (first (:enums prog))
           call (first (get-in prog [:main :body]))]
       (is (= :c-enum (:node e)))
@@ -697,14 +697,14 @@ def main:
 (deftest nullable-non-atom-fails-nyi
   (testing "T? on a primitive or record has no lowering path yet — fail-nyi"
     (try
-      (lower-src "def X:\n    n: Int? = nil\n\ndef main:\n    -> running\n        do: print(1)\n")
+      (lower-src "def X:\n    n: Int? = nil\n\ndef main:\n    -> running\n        then: print(1)\n")
       (is false "expected NYI throw")
       (catch clojure.lang.ExceptionInfo e
         (is (= :not-yet-implemented (:kind (ex-data e))))))))
 
 (deftest atom-ctor-params-default-fills-when-omitted
   (testing "Counter() with no args uses ctor-param defaults"
-    (let [prog (lower-src "def Counter(initial: Int = 5):\n    n: Int = initial\n\ndef main:\n    c: Counter = Counter()\n\n    -> running\n        do: print(0)\n")
+    (let [prog (lower-src "def Counter(initial: Int = 5):\n    n: Int = initial\n\ndef main:\n    c: Counter = Counter()\n\n    -> running\n        then: print(0)\n")
           main-cls (first (filter #(= "CxcMain" (:name %)) (:classes prog)))
           state-body (:body (first (filter #(clojure.string/starts-with?
                                              (:selector %) "cxc_stateInit")
@@ -719,7 +719,7 @@ def main:
 
 (deftest method-call-lowers-to-c-function-call
   (testing "v.plus(other) → :call {:fn V_plus :args [v other]} — F67 L4 parametric observable dispatch"
-    (let [prog (lower-src "def V:\n    x: Float\n    y: Float\n\n    plus(other: V) :< V(x: self.x + other.x, y: self.y + other.y)\n\ndef main:\n    -> running\n        do: print(V(x: 1.0, y: 2.0).plus(V(x: 3.0, y: 4.0)).x)\n")
+    (let [prog (lower-src "def V:\n    x: Float\n    y: Float\n\n    plus(other: V) :< V(x: self.x + other.x, y: self.y + other.y)\n\ndef main:\n    -> running\n        then: print(V(x: 1.0, y: 2.0).plus(V(x: 3.0, y: 4.0)).x)\n")
           print-call (first (get-in prog [:main :body]))
           field-node (get-in print-call [:args 1])
           plus-call  (:target field-node)]
@@ -907,7 +907,7 @@ def main:
                                "\n"
                                "def main(w: Widget):\n"
                                "    -> running\n"
-                               "        do: print(0)\n"))
+                               "        then: print(0)\n"))
           bootstrap (first (filter #(= :main-bootstrap (:node %))
                                    (get-in prog [:main :body])))]
       (is (some? bootstrap) "main-bootstrap node present")
@@ -932,7 +932,7 @@ def main:
                          "\n"
                          "def main(x: Int):\n"
                          "    -> running\n"
-                         "        do: print(0)\n"))))))
+                         "        then: print(0)\n"))))))
 
 (deftest width-variants-preserve-c-type-across-observable-return
   (testing "Phase D F36a Landing 1b — width variants (`[:int 32]`/`[:uint 8]`/`[:float 32]`) carry their C type in metadata so `type-kw->c-type` picks the correct width for observable return types. Prior to 1b, all integer widths collapsed to `int64_t` at observable boundary regardless of the source width."
@@ -1390,7 +1390,7 @@ def main:
   (testing "F37 — `==` between two same-record-type operands lowers to a call to the synthesized equals fn instead of an illegal raw-C struct comparison. `!=` wraps the call in a `!`."
     ;; Feed lower a record + == inside an atom method body so we can
     ;; inspect the lowered call node.
-    (let [src "def V:\n    x: Int\n\ndef main:\n    -> running\n        do: print(V(x: 1) == V(x: 2))\n"
+    (let [src "def V:\n    x: Int\n\ndef main:\n    -> running\n        then: print(V(x: 1) == V(x: 2))\n"
           prog (lower-src src)
           m    (some #(when (= :main (:node %)) %) (:classes prog))
           ;; Not present in this shape — main isn't a class here.
@@ -1452,7 +1452,7 @@ def main:
       (is (= "k"    (:name (second (:params f))))))))
 
 (deftest f67-l3-wildcard-handler-transition-lowers-as-method
-  (testing "F67 L3: `* <: name(args) -> * do: ...` (the handler-collapse form that subsumes the retired F14 `-> handler(args):` sugar) lowers as a void ObjC method on the atom's class. Same semantics as spec §1265/§2160 handler-decl; different surface syntax."
+  (testing "F67 L3: `* <: name(args) -> * then: ...` (the handler-collapse form that subsumes the retired F14 `-> handler(args):` sugar) lowers as a void ObjC method on the atom's class. Same semantics as spec §1265/§2160 handler-decl; different surface syntax."
     (let [prog (lower-src "def A:
     n: Int = 0
 
@@ -1474,7 +1474,7 @@ def main:
       (is (= "void" (:return-type tick)) "handler methods return void"))))
 
 (deftest f67-l3-zero-arg-wildcard-handler-lowers
-  (testing "F67 L3: zero-arg `* <: tick() -> * do: ...` lowers with a plain selector (no colon) and no user params."
+  (testing "F67 L3: zero-arg `* <: tick() -> * then: ...` lowers with a plain selector (no colon) and no user params."
     (let [prog (lower-src "def A:
     n: Int = 0
 
@@ -1544,7 +1544,7 @@ def main:
 
 (deftest f31-f35-l2-panic-lowers-to-inline-trap
   (testing "F31/F35 Landing 2 — `panic(\"msg\")` lowers to an inline expr that prints `panic: <msg>` + backtrace and calls `__builtin_trap()`. Uncatchable (bypasses `@try/@catch`); BEAM-style transition isolation is preserved separately."
-    (let [prog (lower-src "def main:\n    -> running\n        do: panic(\"boom\")\n")
+    (let [prog (lower-src "def main:\n    -> running\n        then: panic(\"boom\")\n")
           call (first (get-in prog [:main :body]))]
       (is (= :ffi-call (:node call)))
       (is (= "panic" (:name call)))
@@ -1561,19 +1561,19 @@ def main:
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
          #"panic\(\) arg must be a string literal"
-         (lower-src "def main:\n    -> running\n        do: panic(42)\n")))))
+         (lower-src "def main:\n    -> running\n        then: panic(42)\n")))))
 
 (deftest f31-f35-l2-panic-wrong-arity-rejected
   (testing "F31/F35 Landing 2 — panic expects exactly one arg."
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
          #"panic\(\) expects exactly one"
-         (lower-src "def main:\n    -> running\n        do: panic(\"a\", \"b\")\n")))))
+         (lower-src "def main:\n    -> running\n        then: panic(\"a\", \"b\")\n")))))
 
 (deftest f31-f35-l2-panic-pulls-execinfo-include
   (testing "F31/F35 Landing 2 — programs using panic get `<execinfo.h>` in includes (for the inlined backtrace() call). Programs without panic don't."
-    (let [with-panic    (lower-src "def main:\n    -> running\n        do: panic(\"x\")\n")
-          without-panic (lower-src "def main:\n    -> running\n        do: print(1)\n")]
+    (let [with-panic    (lower-src "def main:\n    -> running\n        then: panic(\"x\")\n")
+          without-panic (lower-src "def main:\n    -> running\n        then: print(1)\n")]
       (is (some #{"<execinfo.h>"} (:includes with-panic))
           "panic program includes <execinfo.h>")
       (is (not (some #{"<execinfo.h>"} (:includes without-panic)))
@@ -1594,7 +1594,7 @@ def main:
                                "\n"
                                "def main:\n"
                                "    -> running\n"
-                               "        do: print(0)\n"))
+                               "        then: print(0)\n"))
           proto (get-in prog [:protocols "P"])]
       (is (some? proto) "protocol P registered on the lowered program")
       (is (= 2 (count (:accepts proto))))
@@ -1614,7 +1614,7 @@ def main:
                                "\n"
                                "def main:\n"
                                "    -> running\n"
-                               "        do: print(0)\n"))
+                               "        then: print(0)\n"))
           proto (get-in prog [:protocols "P"])]
       (is (some? proto))
       (is (= 1 (count (:defaults proto))))
@@ -1632,7 +1632,7 @@ def main:
                          "\n"
                          "def main:\n"
                          "    -> running\n"
-                         "        do: print(0)\n"))))))
+                         "        then: print(0)\n"))))))
 
 (deftest f9-l3-extension-env-keyed-by-target
   (testing "F9 Landing 3 — `extend Foo:` blocks land in the program's `:extensions` map keyed by target name. Multiple extensions per target stack in a vector. Post F67 L4: extension methods declare as observables."
@@ -1647,7 +1647,7 @@ def main:
                                "\n"
                                "def main:\n"
                                "    -> running\n"
-                               "        do: print(0)\n"))
+                               "        then: print(0)\n"))
           exts (get-in prog [:extensions "Widget"])]
       (is (= 2 (count exts))
           "both `extend Widget:` blocks register under target `Widget`")
@@ -1663,7 +1663,7 @@ def main:
                          "\n"
                          "def main:\n"
                          "    -> running\n"
-                         "        do: print(0)\n"))))))
+                         "        then: print(0)\n"))))))
 
 (deftest f9-l3-extension-may-target-protocol
   (testing "F9 Landing 3 — `extend P:` where P is a protocol is legal at L3: extension-env just records; L6 handles default-method inheritance from extension observables (F67 L4)."
@@ -1676,7 +1676,7 @@ def main:
                                "\n"
                                "def main:\n"
                                "    -> running\n"
-                               "        do: print(0)\n"))]
+                               "        then: print(0)\n"))]
       (is (= 1 (count (get-in prog [:extensions "P"])))))))
 
 ;; ---------------------------------------------------------------------------
@@ -1711,7 +1711,7 @@ def main:
                                          "\n"
                                          "def main:\n"
                                          "    -> running\n"
-                                         "        do: print(0)\n")))
+                                         "        then: print(0)\n")))
           widget-fns (filter #(str/starts-with? (or (:name %) "") "Widget_")
                              (:functions prog))]
       (is (= "" stderr) "no warnings for a clean add-an-observable extension")
@@ -1731,7 +1731,7 @@ def main:
                                          "\n"
                                          "def main:\n"
                                          "    -> running\n"
-                                         "        do: print(0)\n")))
+                                         "        then: print(0)\n")))
           fn         (first (filter #(= "Widget_own_m" (:name %))
                                     (:functions prog)))
           return-stmt (first (filter #(= :return (:node %)) (:body fn)))]
@@ -1759,7 +1759,7 @@ def main:
                                          "\n"
                                          "def main:\n"
                                          "    -> running\n"
-                                         "        do: print(0)\n")))
+                                         "        then: print(0)\n")))
           fn         (first (filter #(= "Widget_m" (:name %))
                                     (:functions prog)))
           return-stmt (first (filter #(= :return (:node %)) (:body fn)))]
@@ -1781,7 +1781,7 @@ def main:
                                "\n"
                                "def main:\n"
                                "    -> running\n"
-                               "        do: print(0)\n"))]
+                               "        then: print(0)\n"))]
       ;; L4 stores conforms on record-env; not directly surfaced on the
       ;; program shape, but the compose path must not throw and the
       ;; extension observable must land.
@@ -1801,7 +1801,7 @@ def main:
                          "\n"
                          "def main:\n"
                          "    -> running\n"
-                         "        do: print(0)\n"))))))
+                         "        then: print(0)\n"))))))
 
 ;; ---------------------------------------------------------------------------
 ;; F9 Landing 5 — explicit conformance validation.
@@ -1825,7 +1825,7 @@ def main:
                                "\n"
                                "def main:\n"
                                "    -> running\n"
-                               "        do: print(0)\n"))]
+                               "        then: print(0)\n"))]
       (is (some #(= "Widget_m" (:name %)) (:functions prog))))))
 
 (deftest f67-l4c-extension-replace-shadows-own-suppresses-warning
@@ -1842,7 +1842,7 @@ def main:
                                  "\n"
                                  "def main:\n"
                                  "    -> running\n"
-                                 "        do: print(0)\n")))
+                                 "        then: print(0)\n")))
           bar-fn (first (filter #(= "Widget_bar" (:name %))
                                 (:functions prog)))
           return-stmt (first (filter #(= :return (:node %)) (:body bar-fn)))]
@@ -1866,7 +1866,7 @@ def main:
                                   "\n"
                                   "def main:\n"
                                   "    -> running\n"
-                                  "        do: print(0)\n")))]
+                                  "        then: print(0)\n")))]
       (is (str/includes? (str sw) "bar")
           "shadow warning fires when extension shadows without `replace`"))))
 
@@ -1882,7 +1882,7 @@ def main:
                                   "\n"
                                   "def main:\n"
                                   "    -> running\n"
-                                  "        do: print(0)\n")))]
+                                  "        then: print(0)\n")))]
       (is (str/includes? (str sw) "replace-without-target")
           "warn when replace is used but no shadow target exists"))))
 
@@ -1899,7 +1899,7 @@ def main:
                          "\n"
                          "def main:\n"
                          "    -> running\n"
-                         "        do: print(0)\n"))))))
+                         "        then: print(0)\n"))))))
 
 (deftest f9-l5-missing-method-rejected
   (testing "F9 Landing 5 — class conforms to protocol but doesn't implement one of its accepts entries and no default is provided → fail-compile."
@@ -1918,7 +1918,7 @@ def main:
                          "\n"
                          "def main:\n"
                          "    -> running\n"
-                         "        do: print(0)\n"))))))
+                         "        then: print(0)\n"))))))
 
 (deftest f9-l5-signature-mismatch-return-type-rejected
   (testing "F9 L5 + F67 L4b — extension observable whose inferred body type does not match the protocol's accepts return type fails conformance with a specific detail line. `observable-methods-view` sources the observable's return type from post-inference `:type-kw`; `signature-mismatch-detail` compares it against the accepts entry's declared return type."
@@ -1937,7 +1937,7 @@ def main:
                          "\n"
                          "def main:\n"
                          "    -> running\n"
-                         "        do: print(0)\n"))))))
+                         "        then: print(0)\n"))))))
 
 (deftest f9-l5-signature-mismatch-param-name-rejected
   (testing "F9 Landing 5 — Cxc supports named-arg calls (§3.4.5 rule 2), so protocol conformance requires param names to match. Post F67 L4: observable form."
@@ -1956,7 +1956,7 @@ def main:
                          "\n"
                          "def main:\n"
                          "    -> running\n"
-                         "        do: print(0)\n"))))))
+                         "        then: print(0)\n"))))))
 
 (deftest f9-l5-signature-mismatch-param-type-rejected
   (testing "F9 Landing 5 — param type must match. Post F67 L4: observable form carries typed params."
@@ -1975,7 +1975,7 @@ def main:
                          "\n"
                          "def main:\n"
                          "    -> running\n"
-                         "        do: print(0)\n"))))))
+                         "        then: print(0)\n"))))))
 
 (deftest f9-l5-protocol-default-satisfies-conformance
   (testing "F9 Landing 5 + F67 L4 — protocol carries a default observable body for `m`; class declares `conforms: P` and doesn't implement `m` itself. L5 accepts the default's presence as structural satisfaction."
@@ -1993,7 +1993,7 @@ def main:
                                "\n"
                                "def main:\n"
                                "    -> running\n"
-                               "        do: print(0)\n"))]
+                               "        then: print(0)\n"))]
       (is (some? prog) "compiles cleanly — default satisfies the accepts"))))
 
 ;; ---------------------------------------------------------------------------
@@ -2019,7 +2019,7 @@ def main:
                                "\n"
                                "def main:\n"
                                "    -> running\n"
-                               "        do: print(0)\n"))
+                               "        then: print(0)\n"))
           fn         (first (filter #(= "Widget_m" (:name %))
                                     (:functions prog)))
           return-stmt (first (filter #(= :return (:node %)) (:body fn)))]
@@ -2044,7 +2044,7 @@ def main:
                                "\n"
                                "def main:\n"
                                "    -> running\n"
-                               "        do: print(0)\n"))
+                               "        then: print(0)\n"))
           fn         (first (filter #(= "Widget_m" (:name %))
                                     (:functions prog)))
           return-stmt (first (filter #(= :return (:node %)) (:body fn)))]
@@ -2076,7 +2076,7 @@ def main:
                          "\n"
                          "def main:\n"
                          "    -> running\n"
-                         "        do: print(0)\n"))))))
+                         "        then: print(0)\n"))))))
 
 (deftest f9-l6b-structural-conformance-inherits-default
   (testing "F9 Landing 6b + F67 L4b — class does NOT declare `conforms: P` but structurally satisfies P's accepts surface AND P provides helper defaults not covered by accepts → class inherits those defaults implicitly. Helper defaults carry no explicit return type on the observable; downstream C emission derives the return type from the accepts entry when present, and helpers with trivial literal bodies emit via the observable-inference path."
@@ -2093,7 +2093,7 @@ def main:
                                "\n"
                                "def main:\n"
                                "    -> running\n"
-                               "        do: print(0)\n"))
+                               "        then: print(0)\n"))
           fn         (first (filter #(= "Widget_count_helper" (:name %))
                                     (:functions prog)))
           return-stmt (first (filter #(= :return (:node %)) (:body fn)))]
@@ -2114,7 +2114,7 @@ def main:
                                "\n"
                                "def main:\n"
                                "    -> running\n"
-                               "        do: print(0)\n"))
+                               "        then: print(0)\n"))
           ;; F37 auto-synthesizes Widget_cxc_equals + Widget_cxc_hash for every
           ;; record — filter those out; assert only Widget_iter (own observable)
           ;; remains from user-facing sites.
@@ -2150,7 +2150,7 @@ def main:
                          "\n"
                          "def main:\n"
                          "    -> running\n"
-                         "        do: print(0)\n"))))))
+                         "        then: print(0)\n"))))))
 
 (deftest f9-l6b-explicit-and-structural-together-still-flat
   (testing "F9 L6b + F67 L4 — a class that explicitly conforms to P AND structurally conforms to Q, both providing the same default, still fires diamond."
@@ -2177,7 +2177,7 @@ def main:
                          "\n"
                          "def main:\n"
                          "    -> running\n"
-                         "        do: print(0)\n"))))))
+                         "        then: print(0)\n"))))))
 
 (deftest f9-l6-diamond-resolved-by-own-method
   (testing "F9 Landing 6 + F67 L4 — same P/Q diamond setup + class defines its own `m` → own shadows all defaults per §3.4.4; no diamond error."
@@ -2201,7 +2201,7 @@ def main:
                                "\n"
                                "def main:\n"
                                "    -> running\n"
-                               "        do: print(0)\n"))
+                               "        then: print(0)\n"))
           fn         (first (filter #(= "Widget_m" (:name %))
                                     (:functions prog)))
           return-stmt (first (filter #(= :return (:node %)) (:body fn)))]
@@ -2217,7 +2217,7 @@ def main:
                                "\n"
                                "def main:\n"
                                "    -> running\n"
-                               "        do: print(0)\n"))
+                               "        then: print(0)\n"))
           fn-body (some (fn [f]
                           (when (= "Msg_size" (:name f))
                             (:body f)))
@@ -2241,7 +2241,7 @@ def main:
                                "\n"
                                "def main:\n"
                                "    -> running\n"
-                               "        do: print(0)\n"))
+                               "        then: print(0)\n"))
           fn-body (fn [nm]
                     (some (fn [f] (when (= nm (:name f)) (:body f)))
                           (:functions prog)))
@@ -2269,7 +2269,7 @@ def main:
                    "    -> alive\n"
                    "\n"
                    "    alive <: ping -> alive\n"
-                   "        do: b |> pong\n"
+                   "        then: |> b.pong()\n"
                    "\n"
                    "def B:\n"
                    "    use:\n"
@@ -2278,12 +2278,12 @@ def main:
                    "    -> alive\n"
                    "\n"
                    "    alive <: pong -> alive\n"
-                   "        do: a |> ping\n"
+                   "        then: |> a.ping()\n"
                    "\n"
                    "def main:\n"
                    "    a: A = A(b: B(a: a))\n"
                    "    -> running\n"
-                   "        do: print(0)\n")
+                   "        then: print(0)\n")
           warnings (with-out-str
                      (binding [*err* *out*]
                        (try (lower-src src) (catch Exception _))))]
@@ -2310,13 +2310,13 @@ def main:
                    "    -> alive\n"
                    "\n"
                    "    alive <: ping -> alive\n"
-                   "        do: b |> pong\n"
+                   "        then: |> b.pong()\n"
                    "\n"
                    "def main:\n"
                    "    b: B = B()\n"
                    "    a: A = A(b: b)\n"
                    "    -> running\n"
-                   "        do: print(0)\n")
+                   "        then: print(0)\n")
           warnings (with-out-str
                      (binding [*err* *out*]
                        (try (lower-src src) (catch Exception _))))]
@@ -2325,7 +2325,7 @@ def main:
 
 (deftest f31-f35-l1-sync-send-lowers-to-wait-for-processing
   (testing "F31/F35 Landing 1 — `|>` sync send lowers to `cxc_wait_for_processing` (spec framing: `|>` is a processing barrier). Retires the old `cxc_send_sync` name; under Layer 4 CXC_SINGLE_MAIN_QUEUE the helper is a nil-guarded direct call, under F32 it upgrades to dispatch_sync — the emit site is the sole substitution point."
-    (let [prog (lower-src "def Sink:\n    n: Int = 0\n\n    -> alive\n\n    alive <: absorb -> alive\n        then: n => n + 1\n\ndef main(sink: Sink):\n    -> running\n        do:\n            sink |> absorb\n")
+    (let [prog (lower-src "def Sink:\n    n: Int = 0\n\n    -> alive\n\n    alive <: absorb -> alive\n        then: n => n + 1\n\ndef main(sink: Sink):\n    -> running\n        then:\n            |> sink.absorb()\n")
           main-cls (first (filter #(= "CxcMain" (:name %)) (:classes prog)))
           state-body (:body (first (filter #(clojure.string/starts-with?
                                              (:selector %) "cxc_stateInit")
@@ -2342,13 +2342,13 @@ def main:
 
 (deftest f39-l2-nonnil-on-atom-accepted
   (testing "F39 Landing 2 — `T!` on a reference type (atom) is legal. C-level representation identical to bare `T` (still a pointer); the contract is enforced at observation points in F39 L3 (not this landing)."
-    (let [prog (lower-src "def Widget:\n    bus: Widget! = Widget()\n\n    -> running\n\n    -> end\n\ndef main:\n    w: Widget = Widget()\n\n    -> running\n        do: print(0)\n")]
+    (let [prog (lower-src "def Widget:\n    bus: Widget! = Widget()\n\n    -> running\n\n    -> end\n\ndef main:\n    w: Widget = Widget()\n\n    -> running\n        then: print(0)\n")]
       (is (= :objc-program (:node prog))
           "T! on atom lowers cleanly"))))
 
 (deftest f39-l2-nonnil-on-string-accepted
   (testing "F39 Landing 2 — `String!` is legal (String is reference-shaped)."
-    (let [prog (lower-src "def X:\n    name: String! = \"anon\"\n\n    -> running\n\n    -> end\n\ndef main:\n    x: X = X()\n\n    -> running\n        do: print(0)\n")]
+    (let [prog (lower-src "def X:\n    name: String! = \"anon\"\n\n    -> running\n\n    -> end\n\ndef main:\n    x: X = X()\n\n    -> running\n        then: print(0)\n")]
       (is (= :objc-program (:node prog))))))
 
 (deftest f39-l2-nonnil-on-value-primitive-rejected
@@ -2356,21 +2356,21 @@ def main:
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
          #"`Int!` is trivially true.*§3\.6\.1.*drop the `!`"
-         (lower-src "def X:\n    n: Int! = 5\n\ndef main:\n    -> running\n        do: print(0)\n")))))
+         (lower-src "def X:\n    n: Int! = 5\n\ndef main:\n    -> running\n        then: print(0)\n")))))
 
 (deftest f39-l2-nonnil-on-record-rejected
   (testing "F39 Landing 2 — `T!` on a record (value type) is trivially true."
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
          #"`P!` is trivially true.*value type.*§3\.6\.1"
-         (lower-src "def P:\n    x: Int\n\ndef X:\n    p: P! = P(x: 0)\n\ndef main:\n    -> running\n        do: print(0)\n")))))
+         (lower-src "def P:\n    x: Int\n\ndef X:\n    p: P! = P(x: 0)\n\ndef main:\n    -> running\n        then: print(0)\n")))))
 
 (deftest f39-l2-nonnil-and-nullable-cannot-stack
   (testing "F39 Landing 2 — `T!?` / `T?!` are grammar errors — the two suffixes are mutually exclusive per spec §3.6.1."
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
          #"cannot stack"
-         (lower-src "def X:\n    bus: Widget!? = nil\n\ndef main:\n    -> running\n        do: print(0)\n")))))
+         (lower-src "def X:\n    bus: Widget!? = nil\n\ndef main:\n    -> running\n        then: print(0)\n")))))
 
 (deftest f39-l3-nonnil-ctor-param-check-inserted
   (testing "F39 Landing 3 — a `T!` ctor param gets an inline `if (p == nil) cxc_nonnil_violation(...)` guard at the top of cxc_stateInit. Warning-grade per spec §3.6.1 line 3686."
@@ -2388,7 +2388,7 @@ def main:
                                "    b: EventBus = EventBus()\n"
                                "    w: Widget = Widget(bus: b)\n"
                                "    -> running\n"
-                               "        do: print(0)\n"))
+                               "        then: print(0)\n"))
           widget (first (filter #(= "Widget" (:name %)) (:classes prog)))
           state  (first (filter #(str/starts-with? (:selector %) "cxc_stateInit")
                                 (:methods widget)))
@@ -2410,7 +2410,7 @@ def main:
                                "    peer: Widget! = Widget()\n"
                                "\n"
                                "    -> boot\n"
-                               "        do: self |> bump\n"
+                               "        then: |> self.bump()\n"
                                "\n"
                                "    boot <: bump -> on\n"
                                "        then: peer => Widget()\n"
@@ -2418,7 +2418,7 @@ def main:
                                "def main:\n"
                                "    w: Widget = Widget()\n"
                                "    -> running\n"
-                               "        do: print(0)\n"))
+                               "        then: print(0)\n"))
           widget (first (filter #(= "Widget" (:name %)) (:classes prog)))
           bump-mth (first (filter #(= "bump" (:selector %))
                                   (:methods widget)))
@@ -2449,7 +2449,7 @@ def main:
                                "    peer: Widget = Widget()\n"
                                "\n"
                                "    -> boot\n"
-                               "        do: self |> bump\n"
+                               "        then: |> self.bump()\n"
                                "\n"
                                "    boot <: bump -> on\n"
                                "        then: peer => Widget()\n"
@@ -2457,7 +2457,7 @@ def main:
                                "def main:\n"
                                "    w: Widget = Widget()\n"
                                "    -> running\n"
-                               "        do: print(0)\n"))
+                               "        then: print(0)\n"))
           widget (first (filter #(= "Widget" (:name %)) (:classes prog)))
           bump-mth (first (filter #(= "bump" (:selector %))
                                   (:methods widget)))
@@ -2486,43 +2486,43 @@ def main:
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
          #"redundant nullable on reference type `Counter\?`.*§3\.6\.1.*drop the `\?`"
-         (lower-src "def Counter:\n    other: Counter? = nil\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        do: print(0)\n")))))
+         (lower-src "def Counter:\n    other: Counter? = nil\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        then: print(0)\n")))))
 
 (deftest f39-l1-nullable-on-string-rejected
   (testing "F39 Landing 1 — `String?` is also redundant: String is reference-shaped (NSString *)."
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
          #"redundant nullable on reference type `String\?`.*§3\.6\.1"
-         (lower-src "def X:\n    name: String? = nil\n\ndef main:\n    -> running\n        do: print(0)\n")))))
+         (lower-src "def X:\n    name: String? = nil\n\ndef main:\n    -> running\n        then: print(0)\n")))))
 
 (deftest f39-l1-nullable-on-value-primitive-still-nyi
   (testing "F39 Landing 1 keeps value-typed nullables in fail-nyi land — the Optional<T> value rep waits on F39 Landing 5. Distinct diagnostic from the reference-type reject so users see the migration path."
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
          #"nullable value type `Int\?`.*F39 Landing 5"
-         (lower-src "def X:\n    n: Int? = nil\n\ndef main:\n    -> running\n        do: print(0)\n")))))
+         (lower-src "def X:\n    n: Int? = nil\n\ndef main:\n    -> running\n        then: print(0)\n")))))
 
 (deftest f33-cross-atom-data-field-read-allowed
   (testing "F33 (Proposal C+C1, 2026-08-17 rewrite): external `.field` reads on any atom are spec-legal. Reading is observation, not mutation; the previous cross-atom-read diagnostic was retracted. External mutation is impossible by grammar (parse has no `:assign`), so the encapsulation firewall is structural without needing a read-blocking guard."
-    (let [prog (lower-src "def Counter:\n    n: Int = 42\n\ndef main:\n    -> running\n        do: print(Counter().n)\n")]
+    (let [prog (lower-src "def Counter:\n    n: Int = 42\n\ndef main:\n    -> running\n        then: print(Counter().n)\n")]
       (is (= :objc-program (:node prog))
           "external `Counter().n` read compiles cleanly under Proposal C+C1"))))
 
 (deftest f33-observable-read-still-allowed
   (testing "Observable reads compile — the observable-wrapped shape is one of two valid patterns for exposing computed views (the other being direct `.field` reads under Proposal C+C1)."
-    (let [prog (lower-src "def Counter:\n    raw_n: Int = 42\n\n    n :< raw_n\n\ndef main:\n    -> running\n        do: print(Counter().n)\n")]
+    (let [prog (lower-src "def Counter:\n    raw_n: Int = 42\n\n    n :< raw_n\n\ndef main:\n    -> running\n        then: print(Counter().n)\n")]
       (is (= :objc-program (:node prog))
           "observable read is spec-legal"))))
 
 (deftest f33-self-field-read-still-allowed
   (testing "Self-field reads inside the atom's own observable / invariant / transition body compile — `self.n` (or bare `n`) reads the data field directly. Post F67 L4: observables replace the reader-method surface."
-    (let [prog (lower-src "def Counter:\n    n: Int = 10\n\n    bump() :< n + 1\n\n    -> running\n\n    -> end\n\ndef main:\n    c: Counter = Counter()\n\n    -> running\n        do: print(0)\n")]
+    (let [prog (lower-src "def Counter:\n    n: Int = 10\n\n    bump() :< n + 1\n\n    -> running\n\n    -> end\n\ndef main:\n    c: Counter = Counter()\n\n    -> running\n        then: print(0)\n")]
       (is (= :objc-program (:node prog))
           "self.n inside Counter's own observable compiles cleanly"))))
 
 (deftest f67-l2-parametric-observable-lowers-with-args
   (testing "F67 L2 (Proposal G): parametric observables `<name>(args) :< <expr>` emit as ObjC methods with declared params. The observable body may reference both self-fields and its own args; both resolve during type inference. Under Proposal G this shape replaces reader methods — `function healed_by(self, amt) -> Int: return self.hp + amt` migrates to `healed_by(amt: Int) :< hp + amt`."
-    (let [prog (lower-src "def Player:\n    hp: Int = 100\n    max_hp: Int = 100\n\n    healed_by(amt: Int) :< hp + amt\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        do: print(0)\n")
+    (let [prog (lower-src "def Player:\n    hp: Int = 100\n    max_hp: Int = 100\n\n    healed_by(amt: Int) :< hp + amt\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        then: print(0)\n")
           cls  (first (filter #(= "Player" (:name %)) (:classes prog)))
           obs  (first (filter #(re-matches #"healed_by.*" (or (:selector %) "")) (:methods cls)))]
       (is (some? obs) "parametric observable emits as :objc-method")
@@ -2535,7 +2535,7 @@ def main:
 
 (deftest f67-l2-zero-arg-observable-still-lowers
   (testing "F67 L2: zero-arg observable shape is preserved — `<name> :< <expr>` (no parens) still parses and lowers exactly as before. The parametric extension does not require parens on zero-arg observables."
-    (let [prog (lower-src "def Counter:\n    n: Int = 0\n\n    doubled :< n + n\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        do: print(0)\n")
+    (let [prog (lower-src "def Counter:\n    n: Int = 0\n\n    doubled :< n + n\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        then: print(0)\n")
           cls  (first (filter #(= "Counter" (:name %)) (:classes prog)))
           obs  (first (filter #(= "doubled" (:selector %)) (:methods cls)))]
       (is (some? obs) "zero-arg observable still emits with bare selector")
@@ -2544,7 +2544,7 @@ def main:
 
 (deftest f67-l2-parametric-observable-multi-arg
   (testing "F67 L2: parametric observables with multiple args. Each arg becomes an ObjC method param; the body expression sees all args + self-fields in scope."
-    (let [prog (lower-src "def Box:\n    w: Int = 0\n    h: Int = 0\n\n    scaled_area(sx: Int, sy: Int) :< (w * sx) * (h * sy)\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        do: print(0)\n")
+    (let [prog (lower-src "def Box:\n    w: Int = 0\n    h: Int = 0\n\n    scaled_area(sx: Int, sy: Int) :< (w * sx) * (h * sy)\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        then: print(0)\n")
           cls  (first (filter #(= "Box" (:name %)) (:classes prog)))
           obs  (first (filter #(re-matches #"scaled_area.*" (or (:selector %) "")) (:methods cls)))]
       (is (some? obs) "multi-arg parametric observable emits")
@@ -2559,7 +2559,7 @@ def main:
 
 (deftest f13-l1-weak-on-atom-accepted
   (testing "F13 L1 — `weak <AtomName>` on an atom-typed data field passes env-time validation; the modifier flows through to the lowered field entry so L2 can pick the ObjC property attrs."
-    (let [prog (lower-src "def Parent:\n    -> alive\n\ndef Child:\n    parent: weak Parent\n\n    -> alive\n\ndef main:\n    -> running\n        do: print(0)\n")
+    (let [prog (lower-src "def Parent:\n    -> alive\n\ndef Child:\n    parent: weak Parent\n\n    -> alive\n\ndef main:\n    -> running\n        then: print(0)\n")
           child (first (filter #(= "Child" (:name %)) (:classes prog)))
           f     (first (filter #(= "parent" (:name %)) (:properties child)))]
       (is (some? f) "Child.parent lowered as an ObjC property")
@@ -2572,18 +2572,18 @@ def main:
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
          #"F13 L1: `weak V` on field `p` .* record"
-         (lower-src "def V:\n    x: Int\n\ndef X:\n    p: weak V\n\n    -> alive\n\ndef main:\n    -> running\n        do: print(0)\n")))))
+         (lower-src "def V:\n    x: Int\n\ndef X:\n    p: weak V\n\n    -> alive\n\ndef main:\n    -> running\n        then: print(0)\n")))))
 
 (deftest f13-l1-weak-on-enum-rejected
   (testing "F13 L1 — `weak <Enum>` fails env-time validation. Enums are value types."
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
          #"F13 L1: `weak Color` on field `c` .* enum"
-         (lower-src "def Color:\n    case red\n    case green\n\ndef X:\n    c: weak Color\n\n    -> alive\n\ndef main:\n    -> running\n        do: print(0)\n")))))
+         (lower-src "def Color:\n    case red\n    case green\n\ndef X:\n    c: weak Color\n\n    -> alive\n\ndef main:\n    -> running\n        then: print(0)\n")))))
 
 (deftest f13-l1-unowned-on-atom-accepted
   (testing "F13 L1 — `unowned <AtomName>` on an atom-typed data field passes env-time validation."
-    (let [prog (lower-src "def Parent:\n    -> alive\n\ndef Child:\n    parent: unowned Parent\n\n    -> alive\n\ndef main:\n    -> running\n        do: print(0)\n")]
+    (let [prog (lower-src "def Parent:\n    -> alive\n\ndef Child:\n    parent: unowned Parent\n\n    -> alive\n\ndef main:\n    -> running\n        then: print(0)\n")]
       (is (= :objc-program (:node prog))))))
 
 ;; ---------------------------------------------------------------------------
@@ -2592,7 +2592,7 @@ def main:
 
 (deftest f13-l2-weak-emits-nonatomic-weak-attrs
   (testing "F13 L2 — `weak <AtomName>` field lowers to `@property (nonatomic, weak)` on the ObjC class definition. ARC handles the nil-out on target dealloc; no additional runtime scaffolding needed. Field name deliberately distinct from the compiler-synthesized `parent` back-ref ivar."
-    (let [prog (lower-src "def Owner:\n    -> alive\n\ndef Child:\n    owner: weak Owner\n\n    -> alive\n\ndef main:\n    -> running\n        do: print(0)\n")
+    (let [prog (lower-src "def Owner:\n    -> alive\n\ndef Child:\n    owner: weak Owner\n\n    -> alive\n\ndef main:\n    -> running\n        then: print(0)\n")
           child (first (filter #(= "Child" (:name %)) (:classes prog)))
           f     (first (filter #(= "owner" (:name %)) (:properties child)))]
       (is (= ["nonatomic" "weak"] (:attrs f))
@@ -2600,7 +2600,7 @@ def main:
 
 (deftest f13-l2-unowned-emits-nonatomic-unsafe-unretained-attrs
   (testing "F13 L2 — `unowned <AtomName>` field lowers to `@property (nonatomic, unsafe_unretained)`. Non-owning, non-zeroing pointer; access after target dealloc is UB per spec §6.14."
-    (let [prog (lower-src "def Owner:\n    -> alive\n\ndef Child:\n    owner: unowned Owner\n\n    -> alive\n\ndef main:\n    -> running\n        do: print(0)\n")
+    (let [prog (lower-src "def Owner:\n    -> alive\n\ndef Child:\n    owner: unowned Owner\n\n    -> alive\n\ndef main:\n    -> running\n        then: print(0)\n")
           child (first (filter #(= "Child" (:name %)) (:classes prog)))
           f     (first (filter #(= "owner" (:name %)) (:properties child)))]
       (is (= ["nonatomic" "unsafe_unretained"] (:attrs f))
@@ -2613,7 +2613,7 @@ def main:
 
 (deftest f18-l1-let-stmt-emits-var-decl
   (testing "F18 L1 — `let x = 5` inside a `do:` block lowers to a `:var-decl` with inferred type. Uses the plain-main path (main body inlined into `main()`)."
-    (let [prog  (lower-src "def main:\n    -> running\n        do:\n            let x = 5\n            print(x)\n")
+    (let [prog  (lower-src "def main:\n    -> running\n        then:\n            let x = 5\n            print(x)\n")
           stmts (get-in prog [:main :body])
           decl  (first (filter #(= :var-decl (:node %)) stmts))]
       (is (some? decl) ":var-decl emitted for the let-stmt")
@@ -2623,7 +2623,7 @@ def main:
 
 (deftest f18-l1-let-stmt-with-annotation-uses-declared-type
   (testing "F18 L1 — `let x: Int = 5` uses the annotation authoritatively; annotation-based typing is exercised even when it aligns with inference."
-    (let [prog  (lower-src "def main:\n    -> running\n        do:\n            let x: Int = 5\n            print(x)\n")
+    (let [prog  (lower-src "def main:\n    -> running\n        then:\n            let x: Int = 5\n            print(x)\n")
           stmts (get-in prog [:main :body])
           decl  (first (filter #(= :var-decl (:node %)) stmts))]
       (is (= "int64_t" (:c-type decl))
@@ -2631,13 +2631,13 @@ def main:
 
 (deftest f18-l1-let-stmt-visible-to-subsequent-stmts
   (testing "F18 L1 — a `let x = 5; print(x)` sequence resolves `x` in the second stmt via the ctx that lower-body-stmts threads through the reduce. Failure mode pre-L1: `print(x)` would fail ident-lookup because x wasn't in `:locals`."
-    (let [prog (lower-src "def main:\n    -> running\n        do:\n            let x = 5\n            print(x)\n")]
+    (let [prog (lower-src "def main:\n    -> running\n        then:\n            let x = 5\n            print(x)\n")]
       (is (= :objc-program (:node prog))
           "no lowering error → subsequent stmt saw the let"))))
 
 (deftest f18-l1-let-in-do-clause-of-transition
   (testing "F18 L1 — `let` also works inside a receive-glyph transition's `do:` clause on a real atom (main-as-atom path)."
-    (let [prog  (lower-src "def Counter:\n    n: Int = 0\n\n    -> running\n\n    -> end\n\n    running <: bump -> running\n        do:\n            let doubled = n + n\n            print(doubled)\n\ndef main:\n    c: Counter = Counter()\n\n    -> running\n        do: print(0)\n")
+    (let [prog  (lower-src "def Counter:\n    n: Int = 0\n\n    -> running\n\n    -> end\n\n    running <: bump -> running\n        then:\n            let doubled = n + n\n            print(doubled)\n\ndef main:\n    c: Counter = Counter()\n\n    -> running\n        then: print(0)\n")
           c-cls (first (filter #(= "Counter" (:name %)) (:classes prog)))
           bump  (first (filter #(= "bump" (:selector %)) (:methods c-cls)))]
       (is (some? bump))
@@ -2649,7 +2649,7 @@ def main:
 
 (deftest f17-l1-while-lowers-to-c-while
   (testing "F17 L1 — a statement-position `while <cond>: <body>` lowers to `:c-while` with `:cond` + `:body` (already-lowered stmts). `let` inside the body threads through `lower-body-stmts` so the loop is a proper sub-scope."
-    (let [prog (lower-src "def main:\n    -> running\n        do:\n            while true:\n                let n = 0\n                print(n)\n")
+    (let [prog (lower-src "def main:\n    -> running\n        then:\n            while true:\n                let n = 0\n                print(n)\n")
           stmts (get-in prog [:main :body])
           w     (first (filter #(= :c-while (:node %)) stmts))]
       (is (some? w) ":c-while emitted")
@@ -2659,7 +2659,7 @@ def main:
 
 (deftest f17-l1-break-continue-lower
   (testing "F17 L1 — `break` and `continue` inside a while body lower to `:c-break` / `:c-continue` stmts, which emit as `break;`/`continue;`."
-    (let [prog (lower-src "def main:\n    -> running\n        do:\n            while true:\n                break\n                continue\n")
+    (let [prog (lower-src "def main:\n    -> running\n        then:\n            while true:\n                break\n                continue\n")
           w    (first (filter #(= :c-while (:node %)) (get-in prog [:main :body])))]
       (is (= :c-break    (:node (nth (:body w) 0))))
       (is (= :c-continue (:node (nth (:body w) 1)))))))
@@ -2669,18 +2669,18 @@ def main:
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
          #"F17 L1: `break` outside a `while` body"
-         (lower-src "def main:\n    -> running\n        do:\n            break\n")))))
+         (lower-src "def main:\n    -> running\n        then:\n            break\n")))))
 
 (deftest f17-l1-continue-outside-loop-rejected
   (testing "F17 L1 — `continue` at statement position outside any enclosing while → error."
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
          #"F17 L1: `continue` outside a `while` body"
-         (lower-src "def main:\n    -> running\n        do:\n            continue\n")))))
+         (lower-src "def main:\n    -> running\n        then:\n            continue\n")))))
 
 (deftest f13-l2-weak-field-excluded-from-owned-slot-cascade
   (testing "F13 L2 — a `weak` atom-typed field is a non-owning reference; parent must NOT install a back-ref on the child or cascade end into it. Verifies that install-parent + end-cascade wiring skips weak/unowned fields."
-    (let [prog (lower-src "def Owner:\n    -> alive\n\n    -> end\n\ndef Child:\n    owner: weak Owner\n\n    -> alive\n\n    -> end\n\ndef main:\n    -> running\n        do: print(0)\n")
+    (let [prog (lower-src "def Owner:\n    -> alive\n\n    -> end\n\ndef Child:\n    owner: weak Owner\n\n    -> alive\n\n    -> end\n\ndef main:\n    -> running\n        then: print(0)\n")
           child (first (filter #(= "Child" (:name %)) (:classes prog)))
           state (first (filter #(= "cxc_stateInit" (:selector %)) (:methods child)))
           install-msgs (filter #(and (= :objc-msg (:node %))
@@ -2697,7 +2697,7 @@ def main:
 
 (deftest f13-l2-no-modifier-keeps-default-strong-for-atoms
   (testing "F13 L2 — an atom-typed data field WITHOUT a modifier still emits `(strong)` — the pre-L2 default is preserved for the no-modifier case."
-    (let [prog (lower-src "def Owner:\n    -> alive\n\ndef Child:\n    owner: Owner = Owner()\n\n    -> alive\n\ndef main:\n    -> running\n        do: print(0)\n")
+    (let [prog (lower-src "def Owner:\n    -> alive\n\ndef Child:\n    owner: Owner = Owner()\n\n    -> alive\n\ndef main:\n    -> running\n        then: print(0)\n")
           child (first (filter #(= "Child" (:name %)) (:classes prog)))
           f     (first (filter #(= "owner" (:name %)) (:properties child)))]
       (is (= ["strong"] (:attrs f))
@@ -2753,7 +2753,7 @@ def main:
 
 (deftest f69-l4b-dispatch-lowers-to-scoped-if-chain
   (testing "F69 L4b — a `<:` dispatch on an enum-typed scrutinee lowers to a `:c-scope` wrapping (a) a `:var-decl` binding the scrutinee to `_cxc_scrut` and (b) a `:c-if-chain` whose branches carry tag-equality conditions in declaration order, followed by the wildcard `else` branch."
-    (let [prog  (lower-src "def Signal:\n    case red\n    case green\n\ndef main:\n    -> running\n        do:\n            let s: Signal = Signal.red\n            s:\n                <: red: print(1)\n                <: green: print(2)\n                <: _: print(9)\n")
+    (let [prog  (lower-src "def Signal:\n    case red\n    case green\n\ndef main:\n    -> running\n        then:\n            let s: Signal = Signal.red\n            s:\n                <: red: print(1)\n                <: green: print(2)\n                <: _: print(9)\n")
           body  (main-work-body prog)
           scope (first (filter #(= :c-scope (:node %)) body))]
       (is (some? scope) "dispatch stmt lowered to :c-scope")
@@ -2779,11 +2779,11 @@ def main:
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
          #"F69 L4b:.*payload bindings need F16"
-         (lower-src "def Outcome:\n    case ok\n    case err\n\ndef main:\n    -> running\n        do:\n            let o: Outcome = Outcome.ok\n            o:\n                <: ok(let x): print(1)\n                <: _: print(0)\n")))))
+         (lower-src "def Outcome:\n    case ok\n    case err\n\ndef main:\n    -> running\n        then:\n            let o: Outcome = Outcome.ok\n            o:\n                <: ok(let x): print(1)\n                <: _: print(0)\n")))))
 
 (deftest f69-l4b-dispatch-non-enum-scrutinee-int-accepted-with-wildcard
   (testing "F69 L4c4 — Int scrutinees are accepted (for literal patterns) as long as a `<: _:` wildcard tail is present (open type, exhaustiveness by wildcard). This supersedes the L4b-only rejection."
-    (let [prog (lower-src "def main:\n    -> running\n        do:\n            let n: Int = 3\n            n:\n                <: 3: print(1)\n                <: _: print(0)\n")]
+    (let [prog (lower-src "def main:\n    -> running\n        then:\n            let n: Int = 3\n            n:\n                <: 3: print(1)\n                <: _: print(0)\n")]
       (is (some? prog)))))
 
 (deftest f69-l4c4-dispatch-primitive-without-wildcard-rejected
@@ -2791,28 +2791,28 @@ def main:
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
          #"F69 L4c4: non-exhaustive.*primitive"
-         (lower-src "def main:\n    -> running\n        do:\n            let n: Int = 3\n            n:\n                <: 0: print(0)\n")))))
+         (lower-src "def main:\n    -> running\n        then:\n            let n: Int = 3\n            n:\n                <: 0: print(0)\n")))))
 
 (deftest f69-l4b-dispatch-unknown-case-rejected
   (testing "F69 L4b — a `<:` arm naming a case not declared on the scrutinee's enum rejects at lower-time with a message listing the actual cases."
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
          #"F69 L4b: unknown case `purple`"
-         (lower-src "def Signal:\n    case red\n    case green\n\ndef main:\n    -> running\n        do:\n            let s: Signal = Signal.red\n            s:\n                <: purple: print(1)\n                <: _: print(0)\n")))))
+         (lower-src "def Signal:\n    case red\n    case green\n\ndef main:\n    -> running\n        then:\n            let s: Signal = Signal.red\n            s:\n                <: purple: print(1)\n                <: _: print(0)\n")))))
 
 (deftest f69-l4c1-dispatch-exhaustiveness-enforced
   (testing "F69 L4c1 — spec §3.7: a `<:` dispatch on a tagged-variant scrutinee must cover every declared case OR include a `<: _:` wildcard. Missing coverage without a wildcard rejects at lower-time listing the unhandled cases."
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
          #"non-exhaustive `<:` dispatch on `Signal`.*yellow"
-         (lower-src "def Signal:\n    case red\n    case yellow\n    case green\n\ndef main:\n    -> running\n        do:\n            let s: Signal = Signal.red\n            s:\n                <: red: print(1)\n                <: green: print(2)\n")))))
+         (lower-src "def Signal:\n    case red\n    case yellow\n    case green\n\ndef main:\n    -> running\n        then:\n            let s: Signal = Signal.red\n            s:\n                <: red: print(1)\n                <: green: print(2)\n")))))
 
 (deftest f69-l4c1-dispatch-exhaustive-with-all-cases-covered
   (testing "F69 L4c1 — every case handled and no wildcard is legal; no exhaustiveness diagnostic fires."
-    (let [prog (lower-src "def Signal:\n    case red\n    case green\n\ndef main:\n    -> running\n        do:\n            let s: Signal = Signal.red\n            s:\n                <: red: print(1)\n                <: green: print(2)\n")]
+    (let [prog (lower-src "def Signal:\n    case red\n    case green\n\ndef main:\n    -> running\n        then:\n            let s: Signal = Signal.red\n            s:\n                <: red: print(1)\n                <: green: print(2)\n")]
       (is (some? prog)))))
 
 (deftest f69-l4c1-dispatch-exhaustive-via-wildcard
   (testing "F69 L4c1 — wildcard-tail satisfies exhaustiveness regardless of covered cases."
-    (let [prog (lower-src "def Signal:\n    case red\n    case yellow\n    case green\n\ndef main:\n    -> running\n        do:\n            let s: Signal = Signal.red\n            s:\n                <: red: print(1)\n                <: _: print(0)\n")]
+    (let [prog (lower-src "def Signal:\n    case red\n    case yellow\n    case green\n\ndef main:\n    -> running\n        then:\n            let s: Signal = Signal.red\n            s:\n                <: red: print(1)\n                <: _: print(0)\n")]
       (is (some? prog)))))

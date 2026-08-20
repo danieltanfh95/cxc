@@ -92,7 +92,7 @@
 
 (deftest transition-receive-with-when-and-body
   (let [n (first-node "def A:
-    alive <: attack{amount: Int}
+    alive <: attack(amount: Int)
     -> alive
         when: hp > amount
         then: hp => hp - amount
@@ -187,11 +187,11 @@
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
          #"F20 REJECTED: `for e in xs: body` is not supported"
-         (p/parse "def main:\n    -> running\n        do:\n            for e in xs: e :> tick\n")))
+         (p/parse "def main:\n    -> running\n        then:\n            for e in xs: e :> tick\n")))
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
          #"xs\.for_each\(e => body\)"
-         (p/parse "def main:\n    -> running\n        do:\n            for e in xs:\n                e :> tick\n                e :> ping\n")))))
+         (p/parse "def main:\n    -> running\n        then:\n            for e in xs:\n                e :> tick\n                e :> ping\n")))))
 
 (deftest extern-section-retired
   (testing "`extern <Name>:` as a top-level section is retired at v1.0 (spec §1.12, §2335). Parser emits a targeted diagnostic pointing at the migration path (prelude `foreign library` blocks + `Extern` capability atom, §1.14) rather than a generic `expected top-level form` error."
@@ -226,20 +226,20 @@
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
          #"F69 L5: `switch <expr>: <case \.\.\.>` is retired at v1\.0"
-         (p/parse "def main:\n    -> running\n        do:\n            switch x:\n                case a: print(1)\n")))))
+         (p/parse "def main:\n    -> running\n        then:\n            switch x:\n                case a: print(1)\n")))))
 
 (deftest f69-l4-dispatch-parses-cases-and-wildcard
   (testing "F69 L4 — `<:` receive-glyph dispatch block at statement position parses to a `:dispatch` node with a scrutinee and an arms vector. Case arms carry `:kind :case` patterns; the wildcard arm carries `:kind :wildcard`."
-    (let [ast (p/parse "def Signal:\n    case red\n    case green\n\ndef main:\n    -> running\n        do:\n            let s: Signal = Signal.red\n            s:\n                <: red: print(1)\n                <: green: print(2)\n                <: _: print(9)\n")
+    (let [ast (p/parse "def Signal:\n    case red\n    case green\n\ndef main:\n    -> running\n        then:\n            let s: Signal = Signal.red\n            s:\n                <: red: print(1)\n                <: green: print(2)\n                <: _: print(9)\n")
           main-atom  (first (filter #(and (= :def-atom (:node %))
                                           (= "main" (:name %))) ast))
           transition (first (filter #(= :transition (:node %))
                                     (:body main-atom)))
-          do-clause  (first (filter #(= :do-clause (:node %))
-                                    (:body transition)))
+          then-clause (first (filter #(= :then-clause (:node %))
+                                     (:body transition)))
           dispatch   (first (filter #(= :dispatch (:node %))
-                                    (:stmts do-clause)))]
-      (is (some? dispatch) "dispatch node appears in the `do:` clause stmts")
+                                    (:stmts then-clause)))]
+      (is (some? dispatch) "dispatch node appears in the `then:` clause stmts")
       (is (= "s" (get-in dispatch [:scrutinee :name])) "scrutinee is `s`")
       (let [arms (:arms dispatch)]
         (is (= 3 (count arms)) "three arms parsed")
@@ -253,7 +253,7 @@
   (testing "F69 L4a — payload-binding syntax parses (`<: name(let x):`) even though L4b rejects at lower-time. This keeps parse-side surface stable; the migration diagnostic surfaces during compile."
     ;; Just verifies parse doesn't throw; deeper coverage lives in the
     ;; lower-time rejection test.
-    (let [ast (p/parse "def Outcome:\n    case ok\n    case err\n\ndef main:\n    -> running\n        do:\n            let o: Outcome = Outcome.ok\n            o:\n                <: ok(let x): print(1)\n                <: _: print(0)\n")]
+    (let [ast (p/parse "def Outcome:\n    case ok\n    case err\n\ndef main:\n    -> running\n        then:\n            let o: Outcome = Outcome.ok\n            o:\n                <: ok(let x): print(1)\n                <: _: print(0)\n")]
       (is (some? ast)))))
 
 (deftest state-section-retired-in-def-atom
@@ -470,7 +470,7 @@ def main:
              (:fields dsec))))))
 
 (deftest f67-l3-handler-decl-sugar-retired-with-migration
-  (testing "F67 L3 — the legacy `-> foo(args):` handler-decl sugar is retired at parse time. Users get a diagnostic naming the retired form and pointing at the explicit handler-shape transition `* <: foo(args) -> * do: ...` (spec §1265 semantics preserved)."
+  (testing "F67 L3 — the legacy `-> foo(args):` handler-decl sugar is retired at parse time. Users get a diagnostic naming the retired form and pointing at the explicit handler-shape transition `* <: foo(args) -> * then: ...` (spec §1265 semantics preserved)."
     (let [src "def A:\n    n: Int = 0\n\n    -> running\n\n    -> tick(msg: Int):\n        return n\n"]
       (is (thrown-with-msg?
            clojure.lang.ExceptionInfo
@@ -478,8 +478,8 @@ def main:
            (first-node src))))))
 
 (deftest f67-l3-wildcard-handler-transition-parses
-  (testing "F67 L3 — the migration target `* <: name(args) -> * do: ...` parses as a :transition with wildcard source, wildcard target, and typed :params on the receive-msg (distinguishing it from the payload-destructure `msg{payload}` form)."
-    (let [src "def A:\n    n: Int = 0\n\n    -> running\n\n    * <: tick(msg: Int) -> *\n        do: return n\n"
+  (testing "F67 L3 — the migration target `* <: name(args) -> * then: ...` parses as a :transition with wildcard source, wildcard target, and typed :params on the receive-msg (distinguishing it from the payload-destructure `msg{payload}` form)."
+    (let [src "def A:\n    n: Int = 0\n\n    -> running\n\n    * <: tick(msg: Int) -> *\n        then: return n\n"
           atom-node (first-node src)
           t (last (filter #(= :transition (:node %)) (:body atom-node)))]
       (is (= :def-atom (:node atom-node)))
@@ -493,7 +493,7 @@ def main:
 
 (deftest f67-l3-wildcard-handler-zero-args-parses
   (testing "F67 L3 — zero-arg handler-shape `* <: tick() -> *` parses with empty :params (still distinguished from a payload-shape receive)."
-    (let [src "def A:\n    n: Int = 0\n\n    -> running\n\n    * <: tick() -> *\n        do: return n\n"
+    (let [src "def A:\n    n: Int = 0\n\n    -> running\n\n    * <: tick() -> *\n        then: return n\n"
           atom-node (first-node src)
           t (last (filter #(= :transition (:node %)) (:body atom-node)))]
       (is (some? t))
@@ -700,7 +700,7 @@ def main:
   (testing "F67 L4c — `replace` prefix also legal on a wildcard self-transition inside an extension body (parses; composition wiring for transitions is a separate landing)."
     (let [n (first-node
              (str "extend Foo:\n"
-                  "    replace * <: reset() -> * do: print(0)\n"))]
+                  "    replace * <: reset() -> * then: print(0)\n"))]
       (is (= :extend-class (:node n)))
       (let [t (first (:body n))]
         (is (= :transition (:node t)))
@@ -857,17 +857,19 @@ def main:
 ;; ---------------------------------------------------------------------------
 
 (defn- do-stmts-from
-  "Extract the do-clause statement sequence from `def main`'s
-   `-> running do:` transition body for F18 L1 tests."
+  "Extract the side-effect statement sequence from `def main`'s
+   `-> running then:` transition body for F18 L1 tests. Post-F70 I3
+   (2026-08-19) the effect clause is `then:` with `:stmts` holding
+   the side-effect entries; earlier `do:` clauses folded into it."
   [source]
-  (let [main (first (filter #(= :def-atom (:node %)) (p/parse source)))
-        txn  (first (filter #(= :transition (:node %)) (:body main)))
-        do-c (first (filter #(= :do-clause (:node %)) (:body txn)))]
-    (:stmts do-c)))
+  (let [main    (first (filter #(= :def-atom (:node %)) (p/parse source)))
+        txn     (first (filter #(= :transition (:node %)) (:body main)))
+        then-c  (first (filter #(= :then-clause (:node %)) (:body txn)))]
+    (:stmts then-c)))
 
 (deftest f18-l1-let-binding-no-annotation
   (testing "F18 L1 — `let x = 5` in a do-block parses as `:let-stmt` with no `:type`."
-    (let [[s] (do-stmts-from "def main:\n    -> running\n        do:\n            let x = 5\n            print(x)\n")]
+    (let [[s] (do-stmts-from "def main:\n    -> running\n        then:\n            let x = 5\n            print(x)\n")]
       (is (= :let-stmt (:node s)))
       (is (= "x" (:name s)))
       (is (nil? (:type s)))
@@ -875,14 +877,14 @@ def main:
 
 (deftest f18-l1-let-binding-with-annotation
   (testing "F18 L1 — `let x: Int = 5` parses with the type annotation on `:type`."
-    (let [[s] (do-stmts-from "def main:\n    -> running\n        do:\n            let x: Int = 5\n            print(x)\n")]
+    (let [[s] (do-stmts-from "def main:\n    -> running\n        then:\n            let x: Int = 5\n            print(x)\n")]
       (is (= :let-stmt (:node s)))
       (is (= "x" (:name s)))
       (is (= "Int" (get-in s [:type :name]))))))
 
 (deftest f18-l1-multiple-lets-in-sequence
   (testing "F18 L1 — multiple let-bindings in a do-block parse as separate `:let-stmt`s, in source order."
-    (let [stmts (do-stmts-from "def main:\n    -> running\n        do:\n            let a = 1\n            let b = 2\n            print(a)\n")]
+    (let [stmts (do-stmts-from "def main:\n    -> running\n        then:\n            let a = 1\n            let b = 2\n            print(a)\n")]
       (is (= :let-stmt (:node (nth stmts 0))))
       (is (= "a"       (:name  (nth stmts 0))))
       (is (= :let-stmt (:node (nth stmts 1))))
@@ -894,7 +896,7 @@ def main:
 
 (deftest f17-l1-while-inline-body
   (testing "F17 L1 — `while <cond>: <single-stmt>` parses to `:while-stmt` whose body is a single-stmt block."
-    (let [[s] (do-stmts-from "def main:\n    -> running\n        do:\n            while true: print(1)\n")]
+    (let [[s] (do-stmts-from "def main:\n    -> running\n        then:\n            while true: print(1)\n")]
       (is (= :while-stmt (:node s)))
       (is (= true (:value (:cond s))))
       (is (= :block (:node (:body s))))
@@ -902,13 +904,13 @@ def main:
 
 (deftest f17-l1-while-block-body
   (testing "F17 L1 — `while <cond>:\\n    <stmts...>` parses to a `:while-stmt` whose body is an indented block of multiple stmts."
-    (let [[s] (do-stmts-from "def main:\n    -> running\n        do:\n            while true:\n                print(1)\n                print(2)\n")]
+    (let [[s] (do-stmts-from "def main:\n    -> running\n        then:\n            while true:\n                print(1)\n                print(2)\n")]
       (is (= :while-stmt (:node s)))
       (is (= 2 (count (:stmts (:body s))))))))
 
 (deftest f17-l1-break-and-continue-inside-while
   (testing "F17 L1 — `break` and `continue` as bare statements inside a while body parse to `:break-stmt` and `:continue-stmt`."
-    (let [[s] (do-stmts-from "def main:\n    -> running\n        do:\n            while true:\n                break\n                continue\n")]
+    (let [[s] (do-stmts-from "def main:\n    -> running\n        then:\n            while true:\n                break\n                continue\n")]
       (is (= :while-stmt (:node s)))
       (let [inner (:stmts (:body s))]
         (is (= :break-stmt    (:node (nth inner 0))))
@@ -917,7 +919,7 @@ def main:
 (deftest f17-l1-break-with-value-rejected
   (testing "F17 L1 — `break <expr>` is rejected. Value-yielding loops (F17 L2) were rejected 2026-08-18 as redundant with actor state transitions; the diagnostic steers users at the self-transition + `when:` guard pattern instead."
     (let [ex (try
-               (do-stmts-from "def main:\n    -> running\n        do:\n            while true:\n                break 42\n")
+               (do-stmts-from "def main:\n    -> running\n        then:\n            while true:\n                break 42\n")
                nil
                (catch clojure.lang.ExceptionInfo e e))]
       (is ex "expected fail!")
@@ -960,7 +962,7 @@ def main:
 
 (deftest f70-i5-brace-payload-legacy-still-parses
   (testing "F70 I5 — legacy brace-payload `{name: Type}` still parses during the transition period (Stage 3 hard-retirement deferred until test-embedded cxc-source migrates)."
-    (let [n (first-node "def A:\n    -> alive\n\n    alive <: input.pressed{key: Int} -> alive\n")
+    (let [n (first-node "def A:\n    -> alive\n\n    alive <: input.pressed(key: Int) -> alive\n")
           t (first (filter #(and (= :transition (:node %))
                                  (some? (:receive %))) (:body n)))
           msg (get-in t [:receive :msg])]
@@ -993,7 +995,7 @@ def main:
 
 (deftest f70-i6-binary-send-legacy-still-parses
   (testing "F70 I6 — legacy binary `<expr> |> <msg>(args)` still parses during the transition period (Stage 3 deferred)."
-    (let [n (first-node "def main:\n    -> running\n        do: self |> bump(by: 1)\n")
+    (let [n (first-node "def main:\n    -> running\n        then: |> self.bump(by: 1)\n")
           t (first (filter #(= :transition (:node %)) (:body n)))
           do-c (first (:body t))
           emit-stmt (first (:stmts do-c))]
@@ -1017,10 +1019,31 @@ def main:
       (is (= :emit (:node (first (:stmts then-c))))))))
 
 (deftest f70-i3-multi-then-clauses-allowed
-  (testing "F70 I3 — multiple `then:` clauses per transition body are allowed (the do: → then: migration produces bodies with multiple then-blocks that merge at lowering)."
+  (testing "F70 I3 — multiple `then:` clauses per transition body are allowed (the then: → then: migration produces bodies with multiple then-blocks that merge at lowering)."
     (let [n (first-node "def A:\n    n: Int = 0\n\n    -> alive\n\n    alive <: bump -> alive\n        then: n => n + 1\n        then: :> notified\n")
           t (first (filter #(and (= :transition (:node %))
                                  (= "alive" (get-in % [:source :name])))
                             (:body n)))
           then-cs (filter #(= :then-clause (:node %)) (:body t))]
       (is (= 2 (count then-cs))))))
+
+(deftest f70-i3-stage3-do-clause-rejected
+  (testing "F70 I3 Stage 3 (2026-08-19) — the `do:` transition sub-block is retired. Parser emits a targeted diagnostic pointing at the `then:` migration; the diagnostic explains that `then:` accepts side-effect statements alongside field updates."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"`do:` transition sub-block is retired"
+         (p/parse "def A:\n    n: Int = 0\n\n    -> alive\n\n    alive <: bump -> alive\n        do: :> notified\n")))))
+
+(deftest f70-i5-stage3-brace-payload-rejected
+  (testing "F70 I5 Stage 3 (2026-08-19) — message-payload braces `{name: Type}` are retired. Parser emits a targeted diagnostic pointing at the parens form; content-dispatch keeps payload-parens distinguishable from call-parens by first-token shape."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"message-payload braces .* are retired"
+         (p/parse "def A:\n    -> alive\n\n    alive <: bump{by: Int} -> alive\n        then: n => n + by\n")))))
+
+(deftest f70-i6-stage3-postfix-pipe-rejected
+  (testing "F70 I6 Stage 3 (2026-08-19) — the binary postfix `receiver |> msg(args)` is retired. Parser emits a targeted diagnostic pointing at the prefix form `|> receiver.msg(args)`."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"binary postfix `receiver \|> msg\(args\)` is retired"
+         (p/parse "def A:\n    -> running\n        then: self |> bump(by: 1)\n")))))

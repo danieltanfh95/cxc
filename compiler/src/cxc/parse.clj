@@ -295,24 +295,37 @@
             [_ p3]   (expect tokens p2 :punct "]")]
         (recur p3 {:node :subscript :target node :index idx}))
 
-      ;; F70 I5 legacy — brace-payload still parses (Stage 3
-      ;; hard-retirement deferred; test suite has ~200 inline
-      ;; cxc-source snippets using the legacy shape). New user
-      ;; code should use parens `(name: Type)`.
+      ;; F70 I5 Stage 3 (2026-08-19) — brace-payload is retired.
+      ;; Use parens `(name: Type)` instead of `{name: Type}` — the
+      ;; parser content-dispatches: parens containing typed params
+      ;; parse as :msg-shape payload, parens containing value args
+      ;; parse as :call. See spec §1.11 and plans/f70-surface-facelift.md.
       (at? tokens p :punct "{")
-      (let [[margs p2] (parse-msg-args-braces tokens p)]
-        (recur p2 {:node :msg-shape :target node :fields margs}))
+      (fail! tokens p
+             (str "message-payload braces `{name: Type, ...}` are "
+                  "retired (F70 I5, 2026-08-19). Use parens "
+                  "`(name: Type, ...)` instead — the parser "
+                  "distinguishes payload-parens (contents start "
+                  "with `name: Type`) from call-parens (contents "
+                  "start with a value expression) by content, so "
+                  "there is no ambiguity at the receive site."))
 
       (at? tokens p :glyph ":>")
       (let [[m p2] (parse-emit-message tokens (inc p))]
         [{:node :emit :async? true :target node :msg (:msg m) :args (:args m)} p2])
 
-      ;; F70 I6 legacy — binary `<expr> |> <msg>(args)` still
-      ;; parses (Stage 3 hard-retirement deferred). New user code
-      ;; should use prefix `|> <expr>.<msg>(args)`.
+      ;; F70 I6 Stage 3 (2026-08-19) — binary postfix `<expr> |>
+      ;; <msg>(args)` is retired. Use prefix form `|> <expr>.<msg>(args)`
+      ;; at statement position (parse-statement handles the prefix
+      ;; form; expression-position sync send is not a supported use).
       (at? tokens p :glyph "|>")
-      (let [[m p2] (parse-emit-message tokens (inc p))]
-        [{:node :emit :async? false :target node :msg (:msg m) :args (:args m)} p2])
+      (fail! tokens p
+             (str "binary postfix `receiver |> msg(args)` is retired "
+                  "(F70 I6, 2026-08-19). Use prefix form "
+                  "`|> receiver.msg(args)` as a statement — the "
+                  "receiver dots into the message, matching call "
+                  "notation. Prefix normalizes send-site scans and "
+                  "removes the source/receiver-order ambiguity."))
 
       :else [node p])))
 
@@ -1389,33 +1402,23 @@
     (parse-then-clause-block tokens pos)
     (parse-then-clause-inline tokens pos)))
 
-(defn- parse-do-clause-inline
-  "do: <statement>"
+(defn- reject-do-clause!
+  "F70 I3 Stage 3 (2026-08-19) — the `do:` transition sub-block is
+   retired. Side-effect statements fold into `then:` alongside field
+   updates; the unified `then:` clause accepts both `field => expr`
+   updates (F33 atomic commit) and side-effect statements (`:>`,
+   prefix `|>`, calls) in source order. Multiple `then:` clauses per
+   body are legal and merge at lowering (F22 exemption)."
   [tokens pos]
-  (let [[_ p] (expect tokens pos :kw "do")
-        [_ p] (expect tokens p :punct ":")
-        [stmt p] (parse-statement tokens p)]
-    [{:node :do-clause :stmts [stmt]} p]))
-
-(defn- parse-do-clause-block
-  "do:  (indented block of statements)"
-  [tokens pos]
-  (let [[_ p] (expect tokens pos :kw "do")
-        [_ p] (expect tokens p :punct ":")
-        [_ p] (expect tokens p :newline)
-        [_ p] (expect tokens p :indent)]
-    (loop [stmts [] p p]
-      (cond
-        (at? tokens p :dedent) [{:node :do-clause :stmts stmts} (inc p)]
-        (at? tokens p :newline) (recur stmts (inc p))
-        :else (let [[stmt p2] (parse-statement tokens p)
-                    p3 (skip-newlines tokens p2)]
-                (recur (conj stmts stmt) p3))))))
-
-(defn- parse-do-clause [tokens pos]
-  (if (at? tokens (+ pos 2) :newline)
-    (parse-do-clause-block tokens pos)
-    (parse-do-clause-inline tokens pos)))
+  (fail! tokens pos
+         (str "`do:` transition sub-block is retired (F70 I3, "
+              "2026-08-19). Rename the clause header from `do:` to "
+              "`then:` — the unified `then:` clause accepts both "
+              "field updates (`field => expr`) and side-effect "
+              "statements (`:>`, prefix `|> receiver.msg(args)`, "
+              "calls, prints) in source order. Multiple `then:` "
+              "blocks per transition body are legal (F22 exemption "
+              "for `then:`). See spec §1.11 and plans/f70-surface-facelift.md.")))
 
 (defn- reject-legacy-let-type-annotation!
   "F23 — the pre-spec `let: k: Int = 2` shape (with `<Type> = <expr>`
@@ -1543,7 +1546,7 @@
     (let [[clause p]
           (case (t-value (peek-tok tokens pos))
             "then" (parse-then-clause tokens pos)
-            "do"   (parse-do-clause tokens pos)     ; F70 I3 legacy — Stage 3 retirement deferred
+            "do"   (reject-do-clause! tokens pos)   ; F70 I3 Stage 3 — hard retirement (2026-08-19)
             "let"  (parse-let-clause tokens pos)
             "when" (parse-when-clause tokens pos)
             (fail! tokens pos "unexpected clause"))]
@@ -1561,7 +1564,7 @@
           (let [[clause p2]
                 (case (t-value (peek-tok tokens p))
                   "then" (parse-then-clause tokens p)
-                  "do"   (parse-do-clause tokens p)   ; F70 I3 legacy — Stage 3 retirement deferred
+                  "do"   (reject-do-clause! tokens p) ; F70 I3 Stage 3 — hard retirement (2026-08-19)
                   "let"  (parse-let-clause tokens p)
                   "when" (parse-when-clause tokens p)
                   (fail! tokens p "unexpected clause"))]
