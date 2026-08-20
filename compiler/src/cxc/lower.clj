@@ -408,94 +408,64 @@
    `<name> *` (pointer, already nullable in ObjC); enums → own typedef
    name (int-backed).
 
-   Nullability (spec §3.6.1, unified rule 2026-08-20): bare `T` is
-   nil-allowed at every position; `T!` is the non-nil contract; `T?`
-   is BANNED for all shapes. Today L1 rejects `T?` on references via
-   `:cxc-f39-nullable-on-reference`; value-typed `T?` still fires a
-   distinct `fail-nyi!` pointing at L5 (which will fold both into a
-   unified `:cxc-f39-nullable-suffix-banned` diagnostic when it lands
-   and simultaneously flip bare value-typed `T` to Optional-boxed)."
+   Nullability (spec §3.6.1, unified rule 2026-08-20; L5a landed
+   same day): bare `T` is nil-allowed at every position; `T!` is the
+   non-nil contract on every shape; `T?` is BANNED for all shapes,
+   fires `:cxc-f39-nullable-suffix-banned`. `T!` accepts on every
+   shape and emits raw `T` (value types opt out of the Optional
+   envelope; L3 runtime nonnil-check fires regardless). L5b lands
+   the bare-`T` value-typed → Optional-boxed C-level flip."
   [ty-node record-env atom-env enum-env]
   (case (:node ty-node)
     :type-nullable
-    ;; F39 Landing 1 — `T?` on reference types is spec-refused as
-    ;; redundant (spec §3.6.1: reference types are already nil-allowed
-    ;; by default; the `?` adds nothing). `T?` on value types (primitive
-    ;; scalar / record / enum) needs an Optional<T> representation
-    ;; (F39 Landing 5) — reject with a distinct diagnostic pointing at
-    ;; that follow-on landing.
-    (let [inner (:inner ty-node)]
-      (case (:node inner)
-        :type-ref
-        (let [nm (:name inner)]
-          (cond
-            (contains? atom-env nm)
-            (fail-compile! :cxc-f39-nullable-on-reference
-                           (str "redundant nullable on reference type `"
-                                nm "?` — reference types are already "
-                                "nil-allowed by default (spec §3.6.1). "
-                                "Fix: drop the `?` and write `" nm "`.")
-                           ty-node)
-            (= "String" nm)
-            (fail-compile! :cxc-f39-nullable-on-reference
-                           (str "redundant nullable on reference type `String?` "
-                                "— String is reference-shaped (NSString *) and "
-                                "already nil-allowed (spec §3.6.1). Fix: drop "
-                                "the `?` and write `String`.")
-                           ty-node)
-            :else
-            (fail-nyi! (str "nullable value type `" nm "?` — Optional<T> "
-                            "value representation waits on F39 Landing 5 "
-                            "(spec §3.6.1)")
-                       ty-node)))
-        (fail-nyi! (str "cxc-type->c: nullable of unknown inner " (:node inner))
-                   ty-node)))
+    ;; F39 Landing 5a (2026-08-20) — unified rule: `T?` is BANNED at
+    ;; every position (reference, value, container, tuple). Bare `T`
+    ;; is nil-allowed universally; `T!` is the non-nil contract.
+    ;; Single diagnostic `:cxc-f39-nullable-suffix-banned` fires for
+    ;; every inner shape (subsumes L1's `:cxc-f39-nullable-on-
+    ;; reference` and the value-typed `fail-nyi!` that pointed at L5).
+    (let [inner    (:inner ty-node)
+          inner-nm (case (:node inner)
+                     :type-ref (:name inner)
+                     :type-of  (str (:outer inner) " of ...")
+                     :type-tuple "(...)"
+                     :type-named-tuple "(name: T, ...)"
+                     (str "<" (name (:node inner)) ">"))]
+      (fail-compile!
+       :cxc-f39-nullable-suffix-banned
+       (str "`" inner-nm "?` — the `?` suffix is banned universally "
+            "(spec §3.6.1 unified rule 2026-08-20). Fix: use bare `"
+            inner-nm "` for the nullable form (nil-allowed by default) "
+            "or `" inner-nm "!` for the non-nil contract.")
+       ty-node))
     :type-nonnil
-    ;; F39 Landing 2 — `T!` non-nil contract. Legal only on reference
-    ;; types (spec §3.6.1: `!` on value types is trivially true —
-    ;; primitives/records/enums have no nil rep). C-level representation
-    ;; identical to bare `T`; the contract fires at observation points
-    ;; (param bind, field write, method return) via F39 L3.
+    ;; F39 Landing 5a (2026-08-20) — `T!` is the non-nil contract on
+    ;; every shape. Under the unified rule, bare `T` is nil-allowed
+    ;; (references: nil pointer; values: Optional-boxed at C level
+    ;; post-L5b), so `T!` is meaningful for value types too: it opts
+    ;; OUT of the Optional envelope and lowers to raw `T`. Runtime
+    ;; enforcement at the three observation points (ctor bind, then:
+    ;; write, method return) fires via F39 L3 regardless of shape.
+    ;; Pre-L5a diagnostic `:cxc-f39-nonnil-on-value` retired — see
+    ;; plans/f39-nullability.md L5 companion changes.
     (let [inner (:inner ty-node)]
       (case (:node inner)
         :type-ref
         (let [nm (:name inner)]
           (cond
-            (contains? atom-env nm) (str nm " *")
-            (= "String" nm)         "NSString *"
-            (contains? primitive-c-type nm)
-            (fail-compile! :cxc-f39-nonnil-on-value
-                           (str "`" nm "!` is trivially true — `" nm
-                                "` is a value type with no nil "
-                                "representation (spec §3.6.1). Fix: "
-                                "drop the `!` and write `" nm "`.")
-                           ty-node)
-            (contains? record-env nm)
-            (fail-compile! :cxc-f39-nonnil-on-value
-                           (str "`" nm "!` is trivially true — records "
-                                "are value types with no nil representation "
-                                "(spec §3.6.1). Fix: drop the `!`.")
-                           ty-node)
-            (contains? enum-env nm)
-            (fail-compile! :cxc-f39-nonnil-on-value
-                           (str "`" nm "!` is trivially true — enums are "
-                                "value types with no nil representation "
-                                "(spec §3.6.1). Fix: drop the `!`.")
-                           ty-node)
+            (contains? atom-env nm)         (str nm " *")
+            (= "String" nm)                 "NSString *"
+            (contains? primitive-c-type nm) (primitive-c-type nm)
+            (contains? record-env nm)       nm
+            (contains? enum-env nm)         nm
             :else
-            ;; Bootstrap: build-atom-env resolves ctor-param / data-field
-            ;; types with record-env={} because records haven't been built
-            ;; yet. If T isn't in any known reference-type family
-            ;; (atom-env/String), it must be a value-shaped user type
-            ;; (record/enum) — `!` is trivially true either way. Diagnose
-            ;; as such; a genuine typo will surface as "unknown type" once
-            ;; the user drops the `!`.
-            (fail-compile! :cxc-f39-nonnil-on-value
-                           (str "`" nm "!` is trivially true — `" nm
-                                "` is a value type (record/enum) with no "
-                                "nil representation (spec §3.6.1). Fix: "
-                                "drop the `!` and write `" nm "`.")
-                           ty-node)))
+            ;; Bootstrap: build-atom-env resolves ctor-param / data-
+            ;; field types with record-env={} because records haven't
+            ;; been built yet. If T isn't yet resolvable, treat as a
+            ;; value-shaped user type — same as bare `T` fallback.
+            ;; A genuine typo surfaces later at the bare `T` :type-ref
+            ;; site as "unknown type".
+            nm))
         (fail-nyi! (str "cxc-type->c: `!` on unknown inner " (:node inner))
                    ty-node)))
     :type-ref

@@ -211,15 +211,17 @@
                             :else
                             [{:node :type-ref :name name} p])]
             [inner p]))
-        ;; Nullability suffixes (spec §3.6.1, unified rule 2026-08-20):
-        ;;   bare `T` — nil-allowed (default at every position)
-        ;;   `T!`     — non-nil contract (runtime enforced at three
-        ;;              observation points per F39 L3)
-        ;;   `T?`     — BANNED for all shapes. Parser still produces
-        ;;              `:type-nullable` so L1 can reject at lower-time
-        ;;              with a targeted diagnostic
-        ;;              (`:cxc-f39-nullable-on-reference` today; folds
-        ;;              into `:cxc-f39-nullable-suffix-banned` at L5).
+        ;; Nullability suffixes (spec §3.6.1, unified rule 2026-08-20;
+        ;; L5a landed same day):
+        ;;   bare `T` — nil-allowed (default at every position; value-
+        ;;              typed bare `T` becomes Optional-boxed at C
+        ;;              level in F39 L5b)
+        ;;   `T!`     — non-nil contract on every shape (runtime
+        ;;              enforced at three observation points per F39 L3)
+        ;;   `T?`     — BANNED universally. Parser still produces
+        ;;              `:type-nullable` so lower-time can reject with
+        ;;              a targeted `:cxc-f39-nullable-suffix-banned`
+        ;;              diagnostic that fires on every inner shape.
         ;; Nesting like `T?!` / `T!?` is a grammar error.
         [wrapped p] (cond
                       (at? tokens p :punct "?")
@@ -786,14 +788,16 @@
         [ty p]        (parse-type tokens p)
         _             (when modifier
                         (cond
-                          (= :type-nullable (:node ty))
-                          (fail! tokens modifier-pos
-                                 (str "F13 L1: `" modifier-nm " "
-                                      (or (:name (:inner ty)) "T") "?` is invalid — "
-                                      "reference types are nil-allowed by default "
-                                      "(§3.6.1) and `weak`/`unowned` don't add or "
-                                      "require the `?` suffix. Drop the `?` "
-                                      "(spec §6.14)."))
+                          ;; F39 Landing 5a (2026-08-20) — the pre-L5a
+                          ;; `weak T?` / `unowned T?` intercept fired
+                          ;; before the unified `:cxc-f39-nullable-
+                          ;; suffix-banned` diagnostic could reach the
+                          ;; user. Retired: the unified diagnostic
+                          ;; fires at lower-time for any `T?` position,
+                          ;; carrying the current `?`-banned message.
+                          ;; The `weak`/`unowned` invalidity is subsumed
+                          ;; (dropping `?` yields the modifier + bare
+                          ;; `T`, which is the correct form).
 
                           (= :type-nonnil (:node ty))
                           (fail! tokens modifier-pos

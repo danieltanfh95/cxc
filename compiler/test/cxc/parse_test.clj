@@ -532,8 +532,8 @@ def main:
       (is (= :type-ref (:node ty)))
       (is (= "Int" (:name ty))))))
 
-(deftest f15-l1-nullable-named-tuple
-  (testing "F15 Landing 1 — `(x: Int, y: Int)?` — nullable suffix wraps the whole tuple type."
+(deftest f15-l1-nullable-named-tuple-parses
+  (testing "F15 Landing 1 + F39 L5a (2026-08-20) — `(x: Int, y: Int)?` parses; the parser produces `:type-nullable` wrapping `:type-named-tuple` faithfully. Under the unified rule (§3.6.1), tuple positions are covered by the universal `T?` ban — `:cxc-f39-nullable-suffix-banned` fires at lower-time. This test locks in the parse AST shape so the lower-time diagnostic has a stable target."
     (let [src "def R:\n    config: (host: String, port: UInt16)?\n"
           rec (first-node src)
           ty  (-> rec :sections first :fields first :type)]
@@ -806,15 +806,13 @@ def main:
                                      (:body n))))]
       (is (= :unowned (:modifier (first fs)))))))
 
-(deftest f13-l1-weak-on-nullable-rejected
-  (testing "F13 L1 — `weak T?` is rejected — reference types are nil-allowed by default (§3.6.1); `weak` doesn't require `?`."
-    (let [ex (try
-               (first-node "def X:\n    parent: weak X?\n\n    -> alive\n")
-               nil
-               (catch clojure.lang.ExceptionInfo e e))]
-      (is ex "expected fail!")
-      (is (re-find #"F13 L1" (.getMessage ex)))
-      (is (re-find #"Drop the `\?`" (.getMessage ex))))))
+(deftest f13-l1-weak-on-nullable-parses
+  (testing "F13 L1 + F39 L5a (2026-08-20) — `weak T?` parses successfully (the pre-L5a parse intercept retired). The `?` reject fires at lower-time via `:cxc-f39-nullable-suffix-banned`; parse just captures the shape faithfully. The `weak` modifier stays attached; dropping the `?` per the unified diagnostic yields `weak X` which is legal."
+    (let [n  (first-node "def X:\n    parent: weak X?\n\n    -> alive\n")
+          fs (:fields (first (filter #(= :data-section (:node %))
+                                     (:body n))))]
+      (is (= :weak (:modifier (first fs))))
+      (is (= :type-nullable (get-in (first fs) [:type :node]))))))
 
 (deftest f13-l1-weak-on-nonnil-rejected
   (testing "F13 L1 — `weak T!` is rejected — the `!` contract is incompatible with `weak`'s nils-on-dealloc semantics."

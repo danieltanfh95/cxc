@@ -694,13 +694,13 @@ def main:
       (is (= "%d\n" (get-in call [:args 0 :value])))
       (is (= {:node :name :sym "Key_arrow_down"} (get-in call [:args 1]))))))
 
-(deftest nullable-non-atom-fails-nyi
-  (testing "T? on a primitive or record has no lowering path yet — fail-nyi"
+(deftest nullable-non-atom-suffix-banned
+  (testing "F39 L5a (2026-08-20) — `T?` on a value primitive fires the unified `:cxc-f39-nullable-suffix-banned` diagnostic (was `fail-nyi!` pre-L5a). Bare `Int` is the nullable form under the unified rule; `Int!` is the non-nil contract."
     (try
       (lower-src "def X:\n    n: Int? = nil\n\ndef main:\n    -> running\n        then: print(1)\n")
-      (is false "expected NYI throw")
+      (is false "expected suffix-banned throw")
       (catch clojure.lang.ExceptionInfo e
-        (is (= :not-yet-implemented (:kind (ex-data e))))))))
+        (is (= :cxc-f39-nullable-suffix-banned (:kind (ex-data e))))))))
 
 (deftest atom-ctor-params-default-fills-when-omitted
   (testing "Counter() with no args uses ctor-param defaults"
@@ -2351,19 +2351,17 @@ def main:
     (let [prog (lower-src "def X:\n    name: String! = \"anon\"\n\n    -> running\n\n    -> end\n\ndef main:\n    x: X = X()\n\n    -> running\n        then: print(0)\n")]
       (is (= :objc-program (:node prog))))))
 
-(deftest f39-l2-nonnil-on-value-primitive-rejected
-  (testing "F39 Landing 2 — `T!` on a value primitive is trivially true (spec §3.6.1)."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"`Int!` is trivially true.*§3\.6\.1.*drop the `!`"
-         (lower-src "def X:\n    n: Int! = 5\n\ndef main:\n    -> running\n        then: print(0)\n")))))
+(deftest f39-l5a-nonnil-on-value-primitive-accepted
+  (testing "F39 Landing 5a (2026-08-20) — `T!` on a value primitive (Int!, Float!, etc.) is ACCEPTED under the unified rule. Bare `T` on a value type is nil-allowed (Optional-boxed at C level post-L5b); `T!` opts OUT of the envelope and lowers to raw `T`. Under L5a alone (no rep flip yet), both `Int!` and `Int` still emit `int64_t` — the semantic distinction only becomes visible when L5b flips bare-`T` to Optional-boxed. This test locks in the accept side; the pre-L5a `:cxc-f39-nonnil-on-value` reject is retired."
+    (let [prog (lower-src "def X:\n    n: Int! = 5\n\ndef main:\n    x: X = X()\n\n    -> running\n        then: print(0)\n")]
+      (is (= :objc-program (:node prog))
+          "T! on Int lowers cleanly under L5a"))))
 
-(deftest f39-l2-nonnil-on-record-rejected
-  (testing "F39 Landing 2 — `T!` on a record (value type) is trivially true."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"`P!` is trivially true.*value type.*§3\.6\.1"
-         (lower-src "def P:\n    x: Int\n\ndef X:\n    p: P! = P(x: 0)\n\ndef main:\n    -> running\n        then: print(0)\n")))))
+(deftest f39-l5a-nonnil-on-record-accepted
+  (testing "F39 Landing 5a (2026-08-20) — `T!` on a record (value shape) is accepted. Same rationale as the primitive case: `T!` opts out of Optional-boxing (L5b) and emits the raw record C struct."
+    (let [prog (lower-src "def P:\n    x: Int\n\ndef X:\n    p: P! = P(x: 0)\n\ndef main:\n    -> running\n        then: print(0)\n")]
+      (is (= :objc-program (:node prog))
+          "T! on record lowers cleanly under L5a"))))
 
 (deftest f39-l2-nonnil-and-nullable-cannot-stack
   (testing "F39 Landing 2 — `T!?` / `T?!` are grammar errors — the two suffixes are mutually exclusive per spec §3.6.1."
@@ -2481,25 +2479,25 @@ def main:
 ;; method body's return) — separate follow-on landing, distinct from the
 ;; observable-header annotation reverted in L4b.
 
-(deftest f39-l1-nullable-on-atom-rejected
-  (testing "F39 Landing 1 — `T?` where T is a reference type (atom) is spec-refused as redundant (§3.6.1: reference types are already nil-allowed). Diagnostic names the type and points at the drop-the-`?` fix."
+(deftest f39-l5a-nullable-suffix-banned-on-atom
+  (testing "F39 Landing 5a (2026-08-20) — `T?` on a reference type (atom) is banned under the unified rule. Pre-L5a `:cxc-f39-nullable-on-reference` retired; unified `:cxc-f39-nullable-suffix-banned` fires with the same fix-it shape (use bare `T` for nullable, `T!` for non-nil)."
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
-         #"redundant nullable on reference type `Counter\?`.*§3\.6\.1.*drop the `\?`"
+         #"`Counter\?` — the `\?` suffix is banned universally.*§3\.6\.1.*bare `Counter`.*`Counter!`"
          (lower-src "def Counter:\n    other: Counter? = nil\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        then: print(0)\n")))))
 
-(deftest f39-l1-nullable-on-string-rejected
-  (testing "F39 Landing 1 — `String?` is also redundant: String is reference-shaped (NSString *)."
+(deftest f39-l5a-nullable-suffix-banned-on-string
+  (testing "F39 Landing 5a — `String?` fires the unified `banned universally` diagnostic (String is reference-shaped; same code path as any other reference)."
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
-         #"redundant nullable on reference type `String\?`.*§3\.6\.1"
+         #"`String\?` — the `\?` suffix is banned universally.*§3\.6\.1"
          (lower-src "def X:\n    name: String? = nil\n\ndef main:\n    -> running\n        then: print(0)\n")))))
 
-(deftest f39-l1-nullable-on-value-primitive-still-nyi
-  (testing "F39 Landing 1 keeps value-typed nullables in fail-nyi land — the Optional<T> value rep waits on F39 Landing 5. Distinct diagnostic from the reference-type reject so users see the migration path."
+(deftest f39-l5a-nullable-suffix-banned-on-value-primitive
+  (testing "F39 Landing 5a — `T?` on a value primitive fires the SAME unified diagnostic as on references (pre-L5a this was a distinct `fail-nyi!` pointing at L5; L5a folds both branches). Under L5b, bare `Int` becomes Optional-boxed; the `?` suffix stays banned."
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
-         #"nullable value type `Int\?`.*F39 Landing 5"
+         #"`Int\?` — the `\?` suffix is banned universally.*§3\.6\.1.*bare `Int`.*`Int!`"
          (lower-src "def X:\n    n: Int? = nil\n\ndef main:\n    -> running\n        then: print(0)\n")))))
 
 (deftest f33-cross-atom-data-field-read-allowed
