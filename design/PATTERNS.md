@@ -73,7 +73,7 @@ See §3.5.4 (failure handling model), §4.10.4.5 (`with:` for cleanup).
 cxc does not ship `Result<T, E>` in the prelude. Use a domain-specific enum with a case per failure mode. Names read better; associated data per case is more expressive; metadata (§4.18) makes the shape inspectable.
 
 ```
-enum FileOpenOutcome:
+def FileOpenOutcome:
     case handle(File)
     case not_found(path: String)
     case permission_denied(path: String)
@@ -596,10 +596,10 @@ Not spec'd. Explicit `switch` on domain enums at each layer. Trade-off is the sa
 
 ### "I need algebraic data types"
 
-`kind: enum` classes with `cases:` section and named associated values. Exhaustive `switch`, structural equality, discriminated storage.
+Tagged-variant defs — `def X:` with `case` alternatives at class-body top level. F69 body-shape inference picks the tagged-variant runtime treatment (retired the `kind: enum` / `enum` sugar keyword / `cases:` wrapper section — 2026-08-18). Discrimination via expression-position `<:` receive-glyph dispatch (F69 retired `switch` for `<:`), structural equality, tag + payload storage.
 
 ```
-enum Shape:
+def Shape:
     case circle(radius: Float)
     case rectangle(width: Float, height: Float)
     case triangle(sides: [Float])

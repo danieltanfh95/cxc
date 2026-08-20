@@ -263,19 +263,21 @@
       (or (and (= k :glyph) (glyph-precedence v))
           (and (= k :kw) (glyph-precedence v))))))
 
-(declare parse-primary parse-args-parens parse-msg-args-braces parse-msg-args-parens parse-list-literal parse-emit-message looks-like-msg-payload-parens?)
+(declare parse-primary parse-args-parens parse-msg-args-parens parse-list-literal parse-emit-message looks-like-msg-payload-parens?)
 
 (defn- parse-postfix
-  "Chain of .field, (args)/(msg-args), {msg-args}, :> send, |> send
-   suffixes on a primary expression. The `(...)` branch is
-   content-dispatched: parens holding typed-params
-   (`(name: Type, ...)`) parse as I5 msg-shape payload; parens
-   holding value args parse as a call. The legacy `{...}` payload
-   form still parses (retired in F70 Stage 3 with a targeted
-   diagnostic). `:>` / `|>` produce :emit expression nodes so
-   sends can appear in lambda bodies and other expression
-   positions (I6 retires the binary `|>` postfix in Stage 3;
-   Stage 1 keeps it parseable)."
+  "Chain of .field, (args)/(msg-args), :> send suffixes on a primary
+   expression. The `(...)` branch is content-dispatched: parens
+   holding typed-params (`(name: Type, ...)`) parse as I5 msg-shape
+   payload; parens holding value args parse as a call. `:>` produces
+   an :emit expression node so async sends can appear in lambda
+   bodies and other expression positions.
+
+   Retired postfix branches (F70 Stage 3 hard-rejects, 2026-08-20):
+   - `{...}` payload braces → parens-payload with a migration
+     diagnostic naming the content-dispatch rule (I5).
+   - Binary postfix `expr |> msg(args)` → prefix form
+     `|> expr.msg(args)` with a migration diagnostic (I6)."
   [tokens pos base]
   (loop [p pos node base]
     (cond
@@ -675,31 +677,16 @@
 
             :else (fail! tokens p2 "expected `,` or `)` in arg list")))))))
 
-(defn- parse-msg-args-braces
-  "Parse {name: Type, name2: Type} — message payload shape (legacy;
-   retired by F70 I5 Stage 3 in favor of parse-msg-args-parens)."
-  [tokens pos]
-  (let [[_ p] (expect tokens pos :punct "{")]
-    (if (at? tokens p :punct "}")
-      [[] (inc p)]
-      (loop [args [] p p]
-        (let [[name p2] (expect tokens p :ident)
-              [_ p3]    (expect tokens p2 :punct ":")
-              [ty p4]   (parse-type tokens p3)]
-          (cond
-            (at? tokens p4 :punct ",")
-            (recur (conj args {:name name :type ty}) (inc p4))
-
-            (at? tokens p4 :punct "}")
-            [(conj args {:name name :type ty}) (inc p4)]
-
-            :else (fail! tokens p4 "expected `,` or `}` in message shape")))))))
+;; `parse-msg-args-braces` retired 2026-08-20 (F70 I5 Stage 3 hard
+;; retirement). The `{...}` postfix branch in `parse-postfix` now
+;; hard-rejects; callers migrated to `parse-msg-args-parens`.
 
 (defn- parse-msg-args-parens
   "Parse (name: Type, name2: Type) — I5 message payload shape.
-   Semantically identical to parse-msg-args-braces; distinguished
-   from a value-args call by parse-postfix's content-dispatch
-   (see `looks-like-msg-payload-parens?`)."
+   Distinguished from a value-args call by parse-postfix's
+   content-dispatch (see `looks-like-msg-payload-parens?`).
+   Replaces the retired brace-payload form (F70 I5 Stage 3,
+   2026-08-20)."
   [tokens pos]
   (let [[_ p] (expect tokens pos :punct "(")]
     (if (at? tokens p :punct ")")
@@ -1495,23 +1482,26 @@
        (at? tokens (inc pos) :punct ":")))
 
 ;; Audit F22: spec §10 requires transition sub-blocks in the order
-;; `when, let, then, do`, each at most once. `clause-order` is the
-;; canonical index used to detect out-of-order and duplicate clauses.
+;; `when, let, then`, each at most once (`then:` exempt post-F70 I3).
+;; `clause-order` is the canonical index used to detect out-of-order
+;; and duplicate clauses. The `:do-clause` slot retired 2026-08-20
+;; when F70 I3 Stage 3 hard-rejected `do:` at parse time; the parser
+;; can no longer produce a `:do-clause` AST node.
 (def ^:private clause-order
-  {:when-clause 0 :let-clause 1 :then-clause 2 :do-clause 3})
+  {:when-clause 0 :let-clause 1 :then-clause 2})
 
 (defn- clause-kw->src [kw]
   ({:when-clause "when" :let-clause "let"
-    :then-clause "then" :do-clause "do"} kw))
+    :then-clause "then"} kw))
 
 (defn- enforce-clause-order-and-multiplicity!
   "Audit F22: reject repeated clauses and out-of-order clauses in a
-   transition body. Message spec: `when, let, then, do`.
+   transition body. Message spec: `when, let, then`.
 
-   F70 I3 exception — `:then-clause` may appear more than once
-   because the `do:` → `then:` migration produces bodies with
-   multiple then-blocks; lowering merges them. `when:`, `let:`,
-   `do:` remain once-only until fully retired."
+   F70 I3 exception — `:then-clause` may appear more than once because
+   the unified `then:` merges field updates and side-effect statements
+   in source order; multiple then-blocks fold at lowering. `when:` and
+   `let:` remain once-only."
   [clauses tokens pos]
   (loop [seen #{} prev-idx -1 [c & rest] clauses]
     (when c
@@ -1520,7 +1510,7 @@
         (when (and (contains? seen kw) (not= kw :then-clause))
           (fail! tokens pos
                  (str "duplicate `" (clause-kw->src kw)
-                      ":` clause in transition body (each of when/let/do "
+                      ":` clause in transition body (each of when/let "
                       "may appear at most once — spec §10; F70 I3 relaxes "
                       "`then:` to allow multiple occurrences)")))
         (when (< idx prev-idx)
