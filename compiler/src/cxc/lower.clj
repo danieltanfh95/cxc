@@ -6521,30 +6521,109 @@
   (and (not (:optional? f))
        (contains? record-env (:cxc-ty f))))
 
+(defn- f37-optional-primitive-field?
+  "F39 Landing 9 — a bare-T value-typed field (Optional-boxed under
+   F39 L5b-ii-c Sub-P) whose inner type is primitive-byte-eligible.
+   Encoded as `UInt8` presence byte (0/1) + T bytes when present per
+   §3.10.10 Optional row. `T!` fields skip the envelope (already
+   handled by L2)."
+  [f]
+  (and (:optional? f)
+       (contains? f37-primitive-byte-widths (:cxc-ty f))))
+
+(defn- f37-optional-nested-record-field?
+  "F39 Landing 9 — a bare-T value-typed field where T is a nested
+   record. Encoded as presence byte + T's canonical bytes when
+   present."
+  [f record-env]
+  (and (:optional? f)
+       (contains? record-env (:cxc-ty f))))
+
 (defn- f37-bytes-encodable-field?
-  "F37 Landings 2+3+4 — union of the shipped eligibility checks.
-   Any field for which the encoder function has a synthesis path.
-   Nested-record fields require record-env to check whether the
+  "F37 Landings 2+3+4 + F39 L9 — union of the shipped eligibility
+   checks. Any field for which the encoder function has a synthesis
+   path. Nested-record fields require record-env to check whether the
    field's cxc-ty is a known record."
   ([f]
-   (or (f37-primitive-byte-field? f) (f37-string-byte-field? f)))
+   (or (f37-primitive-byte-field? f)
+       (f37-string-byte-field? f)
+       (f37-optional-primitive-field? f)))
   ([f record-env]
    (or (f37-primitive-byte-field? f)
        (f37-string-byte-field? f)
-       (f37-nested-record-field? f record-env))))
+       (f37-nested-record-field? f record-env)
+       (f37-optional-primitive-field? f)
+       (f37-optional-nested-record-field? f record-env))))
+
+(defn- f37-primitive-value-encode-src
+  "Return the C-statement string encoding a primitive value bound at
+   variable name `val` into `__d`. Shared between direct (non-Optional)
+   emission and the Optional-envelope inner path."
+  [cxc-ty val]
+  (case cxc-ty
+    "Bool"
+    (str "uint8_t __v = " val " ? 0x01 : 0x00;"
+         " [__d appendBytes:&__v length:1];")
+
+    ("UInt8" "Int8")
+    (str "uint8_t __v = (uint8_t)" val ";"
+         " [__d appendBytes:&__v length:1];")
+
+    ("UInt16" "Int16")
+    (str "uint16_t __v = OSSwapHostToBigInt16((uint16_t)" val ");"
+         " [__d appendBytes:&__v length:2];")
+
+    ("UInt32" "Int32")
+    (str "uint32_t __v = OSSwapHostToBigInt32((uint32_t)" val ");"
+         " [__d appendBytes:&__v length:4];")
+
+    ("UInt64" "Int64" "Int")
+    (str "uint64_t __v = OSSwapHostToBigInt64((uint64_t)" val ");"
+         " [__d appendBytes:&__v length:8];")
+
+    "Float"
+    (str "uint32_t __v; memcpy(&__v, &" val ", 4);"
+         " __v = OSSwapHostToBigInt32(__v);"
+         " [__d appendBytes:&__v length:4];")
+
+    "Double"
+    (str "uint64_t __v; memcpy(&__v, &" val ", 8);"
+         " __v = OSSwapHostToBigInt64(__v);"
+         " [__d appendBytes:&__v length:8];")))
 
 (defn- f37-field-encoding-c-src
   "Emit a C compound statement that appends field `f`'s big-endian
    encoding to `__d` (the NSMutableData accumulator). Assumes the
    record var is bound as `a`. Landings 2 (primitive) + 3 (String) +
-   4 (nested record) only — other field types raise the caller's
-   fail-nyi guard first. record-env is consulted for the L4 dispatch
-   to nested records' synthesized `<Nested>_cxc_as_bytes`."
+   4 (nested record) + F39 L9 (Optional envelope) — other field types
+   raise the caller's fail-nyi guard first. record-env is consulted
+   for the L4/L9 dispatch to nested records' synthesized fns."
   [f record-env]
   (let [fname (:name f)
         cxc-ty (:cxc-ty f)
         fld    (str "a." fname)]
     (cond
+      (:optional? f)
+      ;; F39 L9 — Optional envelope: presence byte (0/1) + payload
+      ;; when present. Storage rep is `_Cxc_Optional_<T>` with
+      ;; `.present` (uint8) + `.value` (raw T). Per §3.10.10:
+      ;;   0x00 → absent, no payload bytes
+      ;;   0x01 → present, followed by T's canonical bytes
+      (let [pres-src (str "uint8_t __p = " fld ".present ? 0x01 : 0x00;"
+                          " [__d appendBytes:&__p length:1];")
+            val-src  (cond
+                       (contains? record-env cxc-ty)
+                       (str "NSData *__nd = " cxc-ty "_cxc_as_bytes("
+                            fld ".value); [__d appendData:__nd];")
+
+                       (contains? f37-primitive-byte-widths cxc-ty)
+                       (f37-primitive-value-encode-src cxc-ty
+                                                       (str fld ".value")))]
+        (str "    {\n"
+             "        " pres-src "\n"
+             "        if (" fld ".present) { " val-src " }\n"
+             "    }"))
+
       (contains? record-env cxc-ty)
       ;; F37 Landing 4 — nested record dispatches to its own
       ;; synthesized fn. No length prefix per §3.10.10 record row

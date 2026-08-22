@@ -69,6 +69,12 @@
       (is (zero? exit))
       (is (= "7\n" stdout)))))
 
+(deftest end-to-end-f39-optional-bytes
+  (testing "F39 L9 — mixed bare `Int32` (Optional-boxed) + `Int32!` (non-nil) fields. Bare field emits 1-byte presence + 4-byte payload (when present); `Int32!` emits 4 bytes flat. `Opt(x:1, y:2)` yields 1+4+4 = 9 bytes."
+    (let [{:keys [exit stdout]} (compile-and-run "f39-optional-bytes")]
+      (is (zero? exit))
+      (is (= "9\n" stdout)))))
+
 (deftest end-to-end-f37-nested-record-bytes
   (testing "F37 L4 — nested record `Outer{ i: Inner!, k: Int32! }` where Inner is `{ n: Int32! }`. Encoding recurses into Inner's synthesized fn via `appendData:`. Inner emits 4 bytes; Outer contributes those 4 + k's 4 = 8 total (no length prefix per §3.10.10 record row)."
     (let [{:keys [exit stdout]} (compile-and-run "f37-nested-record-bytes")]

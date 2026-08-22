@@ -1503,6 +1503,19 @@ def main:
       (is (re-find #"dataUsingEncoding:NSUTF8StringEncoding" body-text))
       (is (re-find #"OSSwapHostToBigInt32.*\[__sd length\]" body-text)))))
 
+(deftest f39-l9-bytes-optional-primitive-field-envelope
+  (testing "F39 L9 — bare `T` value-typed primitive field (Optional-boxed under F39 L5b-ii-c Sub-P) encodes as `UInt8` presence byte + T bytes when present, per §3.10.10 Optional row. Body inspected for the presence-guarded conditional over the field's `.present` / `.value` accessors."
+    (let [prog (lower-src "def Opt:\n    x: Int32\n\ndef main:\n    -> running\n")
+          f    (first (filter #(= "Opt_cxc_as_bytes" (:name %)) (:functions prog)))
+          body-text (get-in f [:body 0 :text])]
+      (is (some? f))
+      (is (re-find #"a\.x\.present" body-text)
+          "presence byte written from Optional storage's .present field")
+      (is (re-find #"if \(a\.x\.present\)" body-text)
+          "payload write guarded by .present check")
+      (is (re-find #"a\.x\.value" body-text)
+          "payload reads from Optional storage's .value field"))))
+
 (deftest f37-l4-bytes-nested-record-field-recurses
   (testing "F37 L4 — a record with a nested-record field synthesizes an encoder that dispatches to the nested record's `<Nested>_cxc_as_bytes` via `appendData:`. No length prefix per §3.10.10 record row (fixed-shape concatenation). Both records get their own synthesized fn."
     (let [prog (lower-src "def Inner:\n    n: Int32!\n\ndef Outer:\n    i: Inner!\n    k: Int32!\n\ndef main:\n    -> running\n")
