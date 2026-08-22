@@ -1488,11 +1488,33 @@ def main:
           "expected V_cxc_as_bytes call in main body"))))
 
 (deftest f37-l2-bytes-non-primitive-field-fails-nyi
-  (testing "F37 L2 — a record with a String field can't be synthesized at L2. Calling `.as()` raises a targeted fail-nyi naming the field, its type, and pointing at the follow-on landing (L3 for String)."
+  (testing "F37 L2+3 — a record with a bare (nullable) `String` field falls outside L3's `String!`-only path. Raises a targeted fail-nyi naming the field and pointing at F39 L9 Optional plumbing as the unblocker."
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
-         #"F37 Landing 2.*W\.name.*String.*Landing 3"
+         #"F37 Landings 2 \+ 3.*W\.name.*String"
          (lower-src "def W:\n    name: String\n\ndef main:\n    -> running\n        then:\n            let b: Bytes = W(name: \"hi\").as()\n            print(b.length)\n")))))
+
+(deftest f37-l3-bytes-string-field-encodes-utf8-with-uint32-prefix
+  (testing "F37 L3 — a record with a `String!` field synthesizes an encoder that emits `UInt32` big-endian length prefix + raw UTF-8 bytes per §3.10.10 String row. Body inspected for `dataUsingEncoding:NSUTF8StringEncoding` + `OSSwapHostToBigInt32` at the prefix site."
+    (let [prog (lower-src "def Msg:\n    text: String!\n\ndef main:\n    -> running\n")
+          f    (first (filter #(= "Msg_cxc_as_bytes" (:name %)) (:functions prog)))
+          body-text (get-in f [:body 0 :text])]
+      (is (some? f))
+      (is (re-find #"dataUsingEncoding:NSUTF8StringEncoding" body-text))
+      (is (re-find #"OSSwapHostToBigInt32.*\[__sd length\]" body-text)))))
+
+(deftest f37-l3-bytes-mixed-string-and-primitive-fields
+  (testing "F37 L3 — a record mixing `Int!` and `String!` synthesizes both encoders in declaration order (§3.10.10 record row: fields concatenated in declaration order)."
+    (let [prog (lower-src "def Named:\n    n: Int!\n    text: String!\n\ndef main:\n    -> running\n")
+          f    (first (filter #(= "Named_cxc_as_bytes" (:name %)) (:functions prog)))
+          body-text (get-in f [:body 0 :text])
+          int-pos (.indexOf body-text "OSSwapHostToBigInt64")
+          str-pos (.indexOf body-text "NSUTF8StringEncoding")]
+      (is (some? f))
+      (is (and (pos? int-pos) (pos? str-pos))
+          "both encoders present")
+      (is (< int-pos str-pos)
+          "Int64 encoder precedes String encoder per declaration order"))))
 
 (deftest f67-l4a-zero-arg-record-observable-lowers-as-c-function
   (testing "F67 L4a: `name :< expr` on a record lowers as a `Record_name(self)` C function. Return type inferred from the expression (int here); bare field refs (`x`, `y`) auto-rewrite to `self.x`, `self.y`."

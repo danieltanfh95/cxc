@@ -69,6 +69,12 @@
       (is (zero? exit))
       (is (= "7\n" stdout)))))
 
+(deftest end-to-end-f37-string-bytes
+  (testing "F37 L3 — record with mixed Int32! + String! fields. `n` encodes as 4-byte big-endian Int32; `text` encodes as 4-byte UInt32 length prefix + UTF-8 bytes. `\"hi\"` is 2 UTF-8 bytes; total = 4 + 4 + 2 = 10."
+    (let [{:keys [exit stdout]} (compile-and-run "f37-string-bytes")]
+      (is (zero? exit))
+      (is (= "10\n" stdout)))))
+
 (deftest end-to-end-f37-primitive-bytes
   (testing "F37 L2 — end-to-end canonical bytes for a record with primitive Int32! fields. `Vec(x:1, y:2).as()` synthesizes `Vec_cxc_as_bytes` which returns an NSMutableData * of exactly 8 bytes (2 × 4-byte Int32, big-endian). `b.length` prints 8."
     (let [{:keys [exit stdout]} (compile-and-run "f37-primitive-bytes")]

@@ -3401,12 +3401,13 @@
 
 (declare lower-expr lower-stmt lower-body-stmts record-synth-equals-name
          resolve-args-against-params
-         ;; F37 Landing 2 forward refs — synthesis functions live below
+         ;; F37 Landings 2 + 3 forward refs — synthesis functions live below
          ;; the equals/hash block but the intercept in lower-method-call
          ;; needs them earlier.
          record-synth-as-bytes-name
          record-has-user-as-method?
-         f37-primitive-byte-field?)
+         f37-primitive-byte-field?
+         f37-bytes-encodable-field?)
 
 (defn- lower-record-ctor
   [record-name args ctx]
@@ -3693,22 +3694,23 @@
              :fn   (c-method-name rec-name "as")
              :args [target-lo]}
 
-            (every? f37-primitive-byte-field? (:fields info))
+            (every? f37-bytes-encodable-field? (:fields info))
             {:node :call
              :fn   (record-synth-as-bytes-name rec-name)
              :args [target-lo]}
 
             :else
-            (let [bad (first (remove f37-primitive-byte-field? (:fields info)))]
+            (let [bad (first (remove f37-bytes-encodable-field? (:fields info)))]
               (fail-nyi!
-               (str "F37 Landing 2: cannot synthesize `.as() -> Bytes` for "
+               (str "F37 Landings 2 + 3: cannot synthesize `.as() -> Bytes` for "
                     "record `" rec-name "." (:name bad) "` (type `"
                     (:cxc-ty bad) "`" (when (:optional? bad) " Optional-boxed")
-                    "). Primitive-only fields are supported at this landing "
-                    "(Bool / sized-int / Int / Float / Double). String lands "
-                    "in F37 Landing 3, nested records in Landing 4, enums in "
-                    "Landing 5, Optional in F39 Landing 9. Write "
-                    "`function as(self) -> Bytes:` on the record to override.")
+                    "). Primitive fields (Bool / sized-int / Int / Float / "
+                    "Double) and `String!` fields ship at Landings 2 + 3; "
+                    "nested records land in Landing 4, enums in Landing 5, "
+                    "Optional in F39 Landing 9, atoms require user-written "
+                    "`.as()` (spec §3.4.6). Write `function as(self) -> "
+                    "Bytes:` on the record to override.")
                call-node))))
         (let [arg-exprs (mapv #(lower-expr (:value %) ctx) ordered-args)
             ;; Audit F44 — List container's `add`/`remove` take the
@@ -6496,11 +6498,26 @@
   (and (not (:optional? f))
        (contains? f37-primitive-byte-widths (:cxc-ty f))))
 
+(defn- f37-string-byte-field?
+  "F37 Landing 3 — a `String!` field. Encoded as `UInt32` big-endian
+   length prefix + UTF-8 bytes per §3.10.10 String row. Reference-
+   type, non-Optional (bare `String` is nullable per §3.6.1; L3
+   handles the `String!` non-nil case; bare-`String` waits on F39 L9
+   Optional plumbing for the presence-byte envelope)."
+  [f]
+  (and (:nonnil? f) (= "String" (:cxc-ty f))))
+
+(defn- f37-bytes-encodable-field?
+  "F37 Landings 2+3 — union of the two shipped eligibility checks.
+   Any field for which the encoder function has a synthesis path."
+  [f]
+  (or (f37-primitive-byte-field? f) (f37-string-byte-field? f)))
+
 (defn- f37-field-encoding-c-src
   "Emit a C compound statement that appends field `f`'s big-endian
    encoding to `__d` (the NSMutableData accumulator). Assumes the
-   record var is bound as `a`. Primitive-only in this landing —
-   non-primitive fields raise the caller's fail-nyi guard first."
+   record var is bound as `a`. Landings 2 (primitive) + 3 (String)
+   only — other field types raise the caller's fail-nyi guard first."
   [f]
   (let [fname (:name f)
         cxc-ty (:cxc-ty f)
@@ -6536,7 +6553,20 @@
       "Double"
       (str "    { uint64_t __v; memcpy(&__v, &" fld ", 8);"
            " __v = OSSwapHostToBigInt64(__v);"
-           " [__d appendBytes:&__v length:8]; }"))))
+           " [__d appendBytes:&__v length:8]; }")
+
+      "String"
+      ;; F37 Landing 3 — String canonical bytes: `UInt32` big-endian
+      ;; length prefix + raw UTF-8 bytes per §3.10.10 String row.
+      ;; NSString round-trips to valid UTF-8 (Unicode bijection at the
+      ;; Unicode-scalar level); no encode-side invalidity to guard
+      ;; against. Decode-side invalidity is F37 Landing 6.
+      (str "    {\n"
+           "        NSData *__sd = [" fld " dataUsingEncoding:NSUTF8StringEncoding];\n"
+           "        uint32_t __len = OSSwapHostToBigInt32((uint32_t)[__sd length]);\n"
+           "        [__d appendBytes:&__len length:4];\n"
+           "        [__d appendData:__sd];\n"
+           "    }"))))
 
 (defn- record-has-user-as-method?
   "True when the record explicitly declares a method named `as` in its
@@ -6548,16 +6578,23 @@
 (defn- record-eligible-for-as-bytes-synthesis?
   [info]
   (and (not (record-has-user-as-method? info))
-       (every? f37-primitive-byte-field? (:fields info))))
+       (every? f37-bytes-encodable-field? (:fields info))))
 
 (defn- synthesize-record-as-bytes-fn
-  "F37 Landing 2 — produce a `:c-function` node implementing
+  "F37 Landings 2 + 3 — produce a `:c-function` node implementing
    `<Record>_cxc_as_bytes(<Record> a) -> NSMutableData *`. Precondition:
-   `record-eligible-for-as-bytes-synthesis?` returned true."
+   `record-eligible-for-as-bytes-synthesis?` returned true.
+
+   Capacity hint sums the compile-time-known widths of primitive
+   fields; String fields are variable-length so any record containing
+   one drops the hint (passes 0)."
   [record-name info]
   (let [fields    (:fields info)
-        total     (reduce + 0 (map #(get f37-primitive-byte-widths (:cxc-ty %))
-                                   fields))
+        all-fixed? (every? f37-primitive-byte-field? fields)
+        total     (if all-fixed?
+                    (reduce + 0 (map #(get f37-primitive-byte-widths (:cxc-ty %))
+                                     fields))
+                    0)
         head      (str "    NSMutableData *__d = [NSMutableData dataWithCapacity:"
                        total "];")
         blocks    (map f37-field-encoding-c-src fields)
@@ -8230,7 +8267,7 @@
         needs-byteorder?  (boolean (some (fn [[_ info]]
                                            (and (not (record-has-user-as-method? info))
                                                 (seq (:fields info))
-                                                (every? f37-primitive-byte-field?
+                                                (every? f37-bytes-encodable-field?
                                                         (:fields info))))
                                          record-env))
         includes          (cond-> base-includes
