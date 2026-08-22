@@ -257,6 +257,20 @@
            "? (" opt-c "){.present = 1, .value = (" chain ")} "
            ": (" opt-c "){0}; })"))
 
+    ;; F18 L2 — `do:` at expression position lowers to :c-stmt-expr. Emit
+    ;; as GNU statement-expression `({ stmts; })`. Each lowered stmt is
+    ;; either a stmt-node (:var-decl, :c-while, …) that emit-stmt renders
+    ;; with a trailing `;` or an expression node from lower-expr on an
+    ;; :expr-stmt (emit-stmt appends `;` in the :call / :objc-msg / …
+    ;; branches). GNU stmt-expr yields the value of the last expression-
+    ;; statement it contains (else void). Empty body renders `((void)0)`
+    ;; per open-Q3 ratified decision (decisions-frozen §F18).
+    :c-stmt-expr
+    (let [lines (mapv emit-stmt (:stmts node))]
+      (if (empty? lines)
+        "((void)0)"
+        (str "({ " (str/join " " lines) " })")))
+
     :chained-cmp
     ;; F27 semantic once-only: render `-max <= counter.next() <= max`
     ;; as a GNU statement-expression that binds each *interior*
@@ -425,6 +439,10 @@
     :return   (str "return " (emit-expr (:value node)) ";")
     :assign   (str (emit-expr (:lhs node)) " = " (emit-expr (:rhs node)) ";")
     :var-decl (str (:c-type node) " " (:name node) " = " (emit-expr (:rhs node)) ";")
+    ;; F18 L2 — expression-position value wrapped as statement inside a
+    ;; :c-stmt-expr (GNU `({ … })`). Rendered as `<expr>;`; when it's
+    ;; the last stmt in the wrapper, its value is the block value.
+    :c-expr-stmt (str (emit-expr (:expr node)) ";")
 
     ;; F17 L1 — statement-position while / break / continue. Loop body
     ;; is a flat vector of already-lowered stmts; each terminates itself

@@ -3346,6 +3346,32 @@
                                     "(from_literal) + F43 (container-as-"
                                     "atom); use `.get`/`.contains` for now.")
                                node)))
+    ;; F18 L2 — `do:` at expression position. Value = last statement's
+    ;; expression value; if the final statement is not an :expr-stmt
+    ;; (bare let, void call), block has type :void (Unit). Empty body
+    ;; is also :void per open-Q3 ratified decision. `let`-bindings
+    ;; introduced earlier in the block are visible when inferring the
+    ;; final expression's type — thread ctx through the stmts.
+    :do-block-expr
+    (let [stmts   (:stmts node)
+          [final-ctx final-stmt]
+          (reduce (fn [[c _last] s]
+                    (case (:node s)
+                      :let-stmt
+                      (let [ann     (:type s)
+                            ann-kw  (when ann (cxc-type->type-kw
+                                               (base-type-name ann)
+                                               (:record-env c)
+                                               (:atom-env c)
+                                               (:enum-env c) ann))
+                            tk      (or ann-kw (infer-type (:expr s) c))]
+                        [(update c :locals assoc (:name s) tk) s])
+                      [c s]))
+                  [ctx nil] stmts)]
+      (cond
+        (nil? final-stmt)              :void
+        (= :expr-stmt (:node final-stmt)) (infer-type (:expr final-stmt) final-ctx)
+        :else                           :void))
     (fail-nyi! (str "infer-type " (:node node)) node)))
 
 ;; ---------------------------------------------------------------------------
@@ -4295,6 +4321,25 @@
           "statement position for now (top-level in a `do:` / method "
           "body / branch body).")
      node)
+
+    ;; F18 L2 — `do:` at expression position. Lower statements uniformly
+    ;; via lower-body-stmts (already threads `let`-binding ctx). Wrap any
+    ;; naked expression node (from lower-expr on an :expr-stmt) as
+    ;; :c-expr-stmt so emit-stmt's dispatch is total. GNU stmt-expr
+    ;; treats the last :c-expr-stmt as the block's value; empty body or
+    ;; last-is-decl yields void per open-Q3 ratified decision.
+    :do-block-expr
+    (let [lowered (lower-body-stmts (:stmts node) ctx)
+          stmt-kinds #{:var-decl :c-while :c-break :c-continue :c-scope
+                       :c-if-chain :return :assign :call :objc-msg
+                       :ffi-call :c-print-optional :c-on-nil-dispatch
+                       :c-expr-stmt}
+          wrapped (mapv (fn [n]
+                          (if (stmt-kinds (:node n))
+                            n
+                            {:node :c-expr-stmt :expr n}))
+                        lowered)]
+      {:node :c-stmt-expr :stmts wrapped})
 
     (fail-nyi! (str "expression " (:node node)) node)))
 

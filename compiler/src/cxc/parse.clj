@@ -275,7 +275,7 @@
       (or (and (= k :glyph) (glyph-precedence v))
           (and (= k :kw) (glyph-precedence v))))))
 
-(declare parse-primary parse-args-parens parse-msg-args-parens parse-list-literal parse-emit-message looks-like-msg-payload-parens?)
+(declare parse-primary parse-args-parens parse-msg-args-parens parse-list-literal parse-emit-message looks-like-msg-payload-parens? parse-do-block-expr)
 
 (defn- parse-postfix
   "Chain of .field, (args)/(msg-args), :> send suffixes on a primary
@@ -622,6 +622,17 @@
                 "nil"   [{:node :lit-nil} (inc pos)]
                 "true"  [{:node :lit-bool :value true}  (inc pos)]
                 "false" [{:node :lit-bool :value false} (inc pos)]
+                ;; F18 L2 — `do:` at expression position produces a
+                ;; value-yielding block (spec §3.8.2). Two shapes:
+                ;;   Inline:    do: <expr-or-stmt>
+                ;;   Indented:  do:\n    <stmts>\n
+                ;; Value = value of the final expression; if the final
+                ;; statement is not an :expr-stmt (e.g. bare let), the
+                ;; block has type Unit and emits `((void)0)` per the
+                ;; open-Q3 ratified decision (decisions-frozen §F18).
+                ;; Distinct from the retired transition `do:` sub-block
+                ;; (F70 I3 Stage 3, 2026-08-19).
+                "do"    (parse-do-block-expr tokens pos)
                 (fail! tokens pos (str "unexpected keyword " (t-value t) " in expression")))
       :ident  ;; ident, maybe followed by lambda arrow => in parse-lambda-or-ident
       (let [ident-node {:node :ident :name (t-value t)}]
@@ -649,6 +660,47 @@
                       [items p])
                 (fail! tokens pos "unexpected punctuation in expression"))
       (fail! tokens pos "expected an expression"))))
+
+(declare parse-statement)
+
+(defn- parse-do-block-expr
+  "F18 L2 — `do:` at expression position. Called from parse-primary
+   when it sees the `do` keyword. Consumes the `:` and either:
+     (a) an inline single statement (same line), or
+     (b) a NEWLINE INDENT stmt* DEDENT block.
+   Emits `{:node :do-block-expr :stmts [...]}`. Semantics:
+     - the final `:expr-stmt`'s expr is the block's value
+     - if the final statement is not an :expr-stmt (bare let, void
+       call, etc.), the block has type Unit
+     - empty body is legal (Unit) per open-Q3 ratified decision.
+   `return`/`break`/`continue` in body escape the enclosing function/
+   loop as usual (spec §3.8.2, ratified open-Q2)."
+  [tokens pos]
+  (let [[_ p]  (expect tokens pos :kw "do")
+        [_ p]  (expect tokens p :punct ":")]
+    (cond
+      ;; Indented body: NEWLINE INDENT stmt* DEDENT
+      (and (at? tokens p :newline)
+           (at? tokens (inc p) :indent))
+      (let [[_ p]  (expect tokens p :newline)
+            [_ p]  (expect tokens p :indent)]
+        (loop [stmts [] p p]
+          (cond
+            (at? tokens p :dedent)
+            [{:node :do-block-expr :stmts stmts} (inc p)]
+
+            (at? tokens p :newline)
+            (recur stmts (inc p))
+
+            :else
+            (let [[s p2] (parse-statement tokens p)
+                  p3     (skip-newlines tokens p2)]
+              (recur (conj stmts s) p3)))))
+
+      ;; Inline single-stmt body: `do: <stmt>`.
+      :else
+      (let [[s p] (parse-statement tokens p)]
+        [{:node :do-block-expr :stmts [s]} p]))))
 
 (defn- parse-list-literal [tokens pos]
   ;; assumes at "["

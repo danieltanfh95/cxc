@@ -928,6 +928,31 @@ def main:
       (is (re-find #"state transitions" (.getMessage ex))
           "diagnostic points at the actor-substrate replacement"))))
 
+;; ---------------------------------------------------------------------------
+;; F18 L2 — `do:` at expression position (spec §3.8.2)
+;; ---------------------------------------------------------------------------
+
+(deftest f18-l2-inline-do-parses-as-do-block-expr
+  (testing "F18 L2 — `let x = do: 5` — the RHS parses as `:do-block-expr` carrying a single `:expr-stmt` (the lit-int)."
+    (let [[s] (do-stmts-from "def main:\n    -> running\n        then:\n            let x = do: 5\n            print(x)\n")]
+      (is (= :let-stmt (:node s)))
+      (is (= :do-block-expr (:node (:expr s))))
+      (is (= 1 (count (:stmts (:expr s)))))
+      (is (= :expr-stmt (:node (first (:stmts (:expr s))))))
+      (is (= 5 (:value (:expr (first (:stmts (:expr s))))))))))
+
+(deftest f18-l2-indented-do-parses-multiple-stmts
+  (testing "F18 L2 — indented `do:` block parses all statements as the body of `:do-block-expr`. Bindings within compose left-to-right; the final `:expr-stmt` is the block's value."
+    (let [[s] (do-stmts-from "def main:\n    -> running\n        then:\n            let r = do:\n                let a = 3\n                let b = 4\n                a + b\n            print(r)\n")
+          body (:stmts (:expr s))]
+      (is (= :do-block-expr (:node (:expr s))))
+      (is (= 3 (count body)))
+      (is (= :let-stmt (:node (nth body 0))))
+      (is (= :let-stmt (:node (nth body 1))))
+      (is (= :expr-stmt (:node (nth body 2))))
+      (is (= :binop (:node (:expr (nth body 2)))))
+      (is (= "+" (:op (:expr (nth body 2))))))))
+
 (deftest f18-l1-transition-let-clause-still-works
   (testing "F18 L1 — the pre-existing transition `let:` sub-block (F23, `let: <name>: <expr>`) still parses as a `:let-clause` — L1 didn't disturb the disambiguation. Distinguisher: `:` after `let` vs `<ident>` after `let`."
     (let [n (first-node "def X:\n    n: Int = 0\n\n    -> alive\n\n    alive <: bump -> alive\n        let: k: 5\n        then: n => n + k\n")
