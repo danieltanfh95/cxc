@@ -18,7 +18,16 @@
   (let [n (first-node "from com.cxc.stdlib import Clock, Random\n")]
     (is (= :from-import (node-kind n)))
     (is (= "com.cxc.stdlib" (:from n)))
-    (is (= ["Clock" "Random"] (:names n)))))
+    ;; F52 L2 — `:names` is a vector of `{:name :as}` maps post-parse.
+    ;; Unaliased entries carry `:as nil`; aliased ones carry the alias.
+    (is (= [{:name "Clock" :as nil} {:name "Random" :as nil}] (:names n)))))
+
+(deftest f52-l2-from-import-with-alias
+  (let [n (first-node
+           "from com.cxc.stdlib import Clock as C, Random\n")]
+    (is (= :from-import (node-kind n)))
+    (is (= [{:name "Clock" :as "C"} {:name "Random" :as nil}]
+           (:names n)))))
 
 (deftest empty-record
   (testing "record with just data: section, one field"

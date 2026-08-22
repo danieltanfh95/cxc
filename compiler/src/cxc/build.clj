@@ -137,7 +137,11 @@
    (doseq [n top-nodes
            :when (contains? #{:from-import :import} (:node n))]
      (let [from     (:from n)
-           names    (when (= :from-import (:node n)) (:names n))
+           ;; F52 L2 — `:names` entries are `{:name :as}` maps post-parse.
+           ;; The source-side name (what the exporter provides) is `:name`;
+           ;; the local binding is `:as` when present, else `:name`.
+           names    (when (= :from-import (:node n))
+                      (mapv :name (:names n)))
            exported (get stdlib-manifest from)
            user?    (contains? user-modules (keyword from))
            surface  (if (= :from-import (:node n))

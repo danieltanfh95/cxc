@@ -781,6 +781,28 @@
       (is (some? ex) "expected unknown-module rejection")
       (is (re-find #"unknown module `nowhere`" (ex-message ex))))))
 
+(deftest f52-l2-from-import-with-alias-parses
+  (testing "F52 L2 — `from X import a as b, c` produces `:names [{:name \"a\" :as \"b\"} {:name \"c\" :as nil}]`. Aliased and plain entries mix on one import line."
+    (let [n (first (cxc.parse/parse "from std.time import Duration as D, Instant\n"))]
+      (is (= :from-import (:node n)))
+      (is (= "std.time" (:from n)))
+      (is (= [{:name "Duration" :as "D"} {:name "Instant" :as nil}]
+             (:names n))))))
+
+(deftest f52-l2-from-import-alias-of-nonexistent-name-rejected
+  (testing "F52 L2 — `from std.time import Nope as N` rejects because `Nope` is not exported by `std.time`. Alias doesn't change export-check semantics."
+    (let [src-dir (tmp-dir)
+          out-dir (tmp-dir)
+          _       (write-file! src-dir "main.cxc"
+                               "from std.time import Nope as N\n\ndef main:\n    -> running\n        then: print(1)\n")
+          ex      (try
+                    (build/compile-directory-to-file (.getPath src-dir)
+                                                     "prog" (.getPath out-dir))
+                    nil
+                    (catch clojure.lang.ExceptionInfo e e))]
+      (is (some? ex) "expected unknown-import rejection")
+      (is (re-find #"does not export `Nope`" (ex-message ex))))))
+
 (deftest f52-l1-import-self-rejected
   (testing "F52 L1 — a module `import`ing itself (via a file in the same module directory) hits the same self-import rejection as `from foo import ...`."
     (let [src-dir (tmp-dir)

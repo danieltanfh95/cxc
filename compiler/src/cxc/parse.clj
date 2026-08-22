@@ -2774,18 +2774,34 @@
               "the file path instead (e.g. `from com.example.foo import "
               "X` where `com/example/foo.cxc` is the file).")))
 
-(defn- parse-from-import [tokens pos]
+(defn- parse-from-import
+  "`from X import a[, b, c[ as d]]` at top level.
+
+   F52 L2 (2026-08-23) — each name may be aliased with `as <ident>`:
+     from foo import a           → {:name \"a\" :as nil}
+     from foo import a as b      → {:name \"a\" :as \"b\"}
+     from foo import a, b as c   → mixed alias/plain
+
+   `:names` is a vector of `{:name :as}` maps post-L2. Pre-L2 the
+   shape was `[string...]`; downstream readers migrate to the new
+   shape via a `name-of` helper (or accept both)."
+  [tokens pos]
   (let [[_ p]      (expect tokens pos :kw "from")
         [dotted p] (parse-dotted tokens p)
         [_ p]      (expect tokens p :kw "import")]
     (loop [names [] p p]
-      (let [[n p2] (expect tokens p :ident)]
+      (let [[n p2]    (expect tokens p :ident)
+            [alias p3] (if (at? tokens p2 :kw "as")
+                         (let [[a p4] (expect tokens (inc p2) :ident)]
+                           [a p4])
+                         [nil p2])
+            entry      {:name n :as alias}]
         (cond
-          (at? tokens p2 :punct ",")
-          (recur (conj names n) (inc p2))
-          (at? tokens p2 :newline)
-          [{:node :from-import :from dotted :names (conj names n)} (inc p2)]
-          :else (fail! tokens p2 "expected `,` or newline in from-import"))))))
+          (at? tokens p3 :punct ",")
+          (recur (conj names entry) (inc p3))
+          (at? tokens p3 :newline)
+          [{:node :from-import :from dotted :names (conj names entry)} (inc p3)]
+          :else (fail! tokens p3 "expected `,` or newline in from-import"))))))
 
 (defn- parse-import
   "F52 L1 — `import X` and `import X as Y` at top level.
