@@ -6,9 +6,12 @@
    matching `:type-ref` nodes in the rest of the AST. Duplicate
    declarations error-on-tie; cycles + runaway depth fire named
    diagnostics."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [clojure.test :refer [deftest is testing use-fixtures]]
             [cxc.parse :as parse]
-            [cxc.alias :as alias]))
+            [cxc.alias :as alias]
+            [cxc.section :as section]))
+
+(use-fixtures :each (fn [f] (section/clear-registry!) (f)))
 
 (defn- parse-nodes [src] (parse/parse src))
 
@@ -224,3 +227,75 @@
           (parse-nodes (str "alias UserID: Int\n"
                             "def U:\n"
                             "    id: UserID of Int\n")))))))
+
+;; ---------------------------------------------------------------------------
+;; L1-b — Section-header aliases (spec §4.10.2)
+;; ---------------------------------------------------------------------------
+
+(deftest section-header-alias-decl-parses
+  (testing "F7 L1-b — `alias data: runtime immutable identity` recognized"
+    (let [n (first (parse-nodes "alias data: runtime immutable identity\n"))]
+      (is (= :alias (:node n)))
+      (is (= "data" (:name n)))
+      (is (= :section-header (:position n)))
+      (is (= [:runtime :immutable :identity] (:primitives n))))))
+
+(deftest section-header-alias-registers-composed-spec
+  (testing "F7 L1-b — build-registry populates cxc.section/registry"
+    (alias/expand
+     (parse-nodes (str "alias data: runtime immutable identity\n")))
+    (let [entry (section/lookup :data)]
+      (is (some? entry))
+      (is (= :alias-expanded (:kind entry)))
+      (is (= [:runtime :immutable :identity]
+             (get-in entry [:spec :primitives])))
+      (is (= :runtime
+             (get-in entry [:spec :contributes :default-existence])))
+      (is (= true
+             (get-in entry [:spec :contributes
+                            :contributes-to-equality]))))))
+
+(deftest section-header-alias-canonical-spec-4-10-2
+  (testing "F7 L1-b — the three canonical §4.10.2 aliases register"
+    (alias/expand
+     (parse-nodes (str "alias data: runtime immutable identity\n"
+                       "alias state: runtime mutable coordination\n"
+                       "alias static: compile_time immutable\n")))
+    (is (some? (section/lookup :data)))
+    (is (some? (section/lookup :state)))
+    (is (some? (section/lookup :static)))
+    (is (= :mutable
+           (get-in (section/lookup :state)
+                   [:spec :contributes :default-mutability])))
+    (is (= :compile-time
+           (get-in (section/lookup :static)
+                   [:spec :contributes :default-existence])))))
+
+(deftest section-header-alias-unknown-primitive-rejected
+  (testing "F7 L1-b — the parser rejects unknown primitives up front"
+    ;; `sealed` isn't a primitive, so the alias body doesn't classify as
+    ;; a section-header body — the parser falls through to type-expr
+    ;; parsing and fails there (`sealed identity` isn't a valid type).
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"parse error"
+         (parse-nodes (str "alias broken: sealed identity\n"))))))
+
+(deftest section-header-alias-contradiction-surfaces-name
+  (testing "F7 L1-b — compose-time contradictions carry the alias name"
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"alias `broken`.*conflict on axis"
+         (alias/expand
+          (parse-nodes (str "alias broken: immutable mutable\n")))))))
+
+(deftest section-header-alias-does-not-substitute-in-ast
+  (testing "F7 L1-b — section-header aliases don't rewrite the tree"
+    (let [src      (str "alias data: runtime immutable identity\n"
+                        "def U:\n"
+                        "    id: Int\n")
+          expanded (alias/expand (parse-nodes src))
+          record   (first (filter #(= :record (:node %)) expanded))
+          field    (first (:fields (first (:sections record))))]
+      ;; The `data` name should not have leaked into the record body.
+      (is (= "Int" (get-in field [:type :name]))))))

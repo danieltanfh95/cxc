@@ -12,7 +12,8 @@
    and bodies (partial — expressions still limited)."
   (:require [clojure.string :as str]
             [clojure.walk :as walk]
-            [cxc.lex :as lex]))
+            [cxc.lex :as lex]
+            [cxc.section :as section]))
 
 ;; ---------------------------------------------------------------------------
 ;; Chained-comparison desugaring
@@ -2557,14 +2558,58 @@
         (fail! tokens p
                "expected parameter identifier or `(` after `of` in alias declaration")))))
 
+(defn- section-primitive-body?
+  "F7 L1-b — peek at the alias body to distinguish section-header form
+   (spec §4.10.2: `alias data: runtime immutable identity`) from
+   type-expression form (L1-a/L1-c). Returns true iff every non-newline
+   token from `pos` to newline is an `:ident` whose value is a known
+   section primitive (via `cxc.section/primitive`)."
+  [tokens pos]
+  (loop [p pos, saw-any? false]
+    (let [t (peek-tok tokens p)]
+      (cond
+        (nil? t) false
+        (= :newline (t-kind t)) saw-any?
+        (and (= :ident (t-kind t)) (section/primitive (t-value t)))
+        (recur (inc p) true)
+        :else false))))
+
+(defn- parse-section-header-alias-body
+  "F7 L1-b — consume a run of `:ident` tokens (each a known primitive)
+   up to newline. Returns [primitive-keywords next-pos]."
+  [tokens pos]
+  (loop [p pos, prims []]
+    (let [t (peek-tok tokens p)]
+      (cond
+        (= :newline (t-kind t))
+        [prims p]
+
+        (and (= :ident (t-kind t)) (section/primitive (t-value t)))
+        (recur (inc p) (conj prims (keyword (str/lower-case (t-value t)))))
+
+        :else
+        (fail! tokens p
+               (str "F7 L1-b: section-header alias body must be a space-"
+                    "separated list of known primitives (spec §4.10.2). "
+                    "Got unexpected token in body."))))))
+
 (defn- parse-alias-decl [tokens pos]
   (let [[_ p]         (expect tokens pos :kw "alias")
         [nm p]        (expect tokens p :ident)
         [params p]    (parse-alias-param-list tokens p)
-        [_ p]         (expect tokens p :punct ":")
-        [body p]      (parse-type tokens p)
-        [_ p]         (expect tokens p :newline)]
-    [{:node :alias :name nm :position :type :params params :body body} p]))
+        [_ p]         (expect tokens p :punct ":")]
+    (if (and (empty? params) (section-primitive-body? tokens p))
+      ;; L1-b section-header form — `alias name: runtime immutable identity`
+      (let [[prims p] (parse-section-header-alias-body tokens p)
+            [_ p]     (expect tokens p :newline)]
+        [{:node :alias :name nm :position :section-header
+          :primitives prims} p])
+      ;; L1-a/L1-c type-position form — `alias name: <type-expr>` or
+      ;; `alias name of P: <type-expr>`
+      (let [[body p]  (parse-type tokens p)
+            [_ p]     (expect tokens p :newline)]
+        [{:node :alias :name nm :position :type
+          :params params :body body} p]))))
 
 ;; ---------------------------------------------------------------------------
 ;; Top-level dispatch

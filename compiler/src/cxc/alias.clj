@@ -20,15 +20,20 @@
    - L1-c (2026-08-23) — parametric aliases via `of` qualifier
      (`alias StringDict of V: Map of (String, V)`; spec §26 retired
      `<T>` at v1.0).
+   - L1-b (2026-08-23) — section-header aliases per spec §4.10.2
+     (`alias data: runtime immutable identity`). Validated via
+     `cxc.section/compose` at registry-build time; composed spec
+     lands in `cxc.section/registry`. Parser hook that consumes the
+     registry is deferred.
 
    Follow-on within L1:
-   - L1-b — section-header position hook (blocked on F8 primitive vocab).
    - L1-d — delimited-pattern position (needs F42).
 
    Downstream landings (L2a-e) populate the registry from prelude
    sources. L3 retires the compiler-baked sugar paths that alias
    expansion supersedes."
-  (:require [clojure.walk :as walk]))
+  (:require [clojure.walk :as walk]
+            [cxc.section :as section]))
 
 ;; ---------------------------------------------------------------------------
 ;; Registry construction
@@ -63,20 +68,54 @@
               {:kind :cxc-f7-duplicate-alias
                :name nm :position position :count (count entries)})))))
 
+(defn- register-section-header-alias!
+  "F7 L1-b — validate a section-header alias's primitive list via
+   `cxc.section/compose` and register the composed spec in
+   `cxc.section/registry` under the alias name. Compose-time errors
+   (unknown primitives, axis contradictions) surface with the alias
+   name attached for source-attribution."
+  [{:keys [name primitives]}]
+  (try
+    (let [composed (section/compose primitives)]
+      (section/register! name
+                         {:kind :alias-expanded
+                          :spec composed}))
+    (catch clojure.lang.ExceptionInfo e
+      (throw (ex-info
+              (str "F7 L1-b: section-header alias `" name
+                   "` failed compose validation: " (.getMessage e))
+              (assoc (ex-data e) :alias name))))))
+
 (defn build-registry
   "Walk `top-nodes`, extract every `:alias` declaration, and produce a
-   position-keyed registry
+   position-keyed registry for TYPE-POSITION aliases
    `{position → {name → {:params [...] :body body-AST}}}`. Rejects
    duplicate (position, name) pairs.
 
-   Empty registry (no aliases in source) returns `{}` — expansion
-   becomes a no-op."
+   Section-header aliases (L1-b, `:position :section-header`) are
+   validated + registered as a side effect in `cxc.section/registry`
+   during this call — they don't appear in the returned type-alias
+   registry because expansion doesn't substitute them into the AST.
+
+   Empty type-alias registry (no type-position aliases in source)
+   returns `{}` — expansion becomes a no-op."
   [top-nodes]
   (let [aliases (alias-nodes top-nodes)]
     (reject-duplicate-aliases! aliases)
-    (reduce (fn [acc {:keys [name position params body]}]
-              (assoc-in acc [position name]
-                        {:params (or params []) :body body}))
+    (reduce (fn [acc {:keys [name position params body] :as node}]
+              (case position
+                :section-header
+                (do (register-section-header-alias! node) acc)
+
+                :type
+                (assoc-in acc [position name]
+                          {:params (or params []) :body body})
+
+                (throw (ex-info
+                        (str "F7: unknown alias position `"
+                             (pr-str position) "` on alias `" name "`")
+                        {:kind :cxc-f7-unknown-alias-position
+                         :name name :position position}))))
             {}
             aliases)))
 
