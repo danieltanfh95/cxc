@@ -122,26 +122,33 @@
    "std.collections" #{"List" "Map" "Set"}})
 
 (defn- validate-imports
-  "Walk parsed top-nodes, check every `:from-import` entry: (a) the
-   from-module exists in stdlib-manifest, (b) each imported name is
-   exported by it. Returns nil on success, throws with a specific
-   diagnostic on the first bad import."
-  [top-nodes]
-  (doseq [n top-nodes
-          :when (= :from-import (:node n))]
-    (let [from  (:from n)
-          names (:names n)
-          exported (get stdlib-manifest from)]
-      (when-not exported
-        (throw (ex-info (str "unknown module `" from "` in `from " from
-                             " import ...` — check `stdlib-manifest` in "
-                             "cxc.build for registered modules")
-                        {:kind :unknown-module :module from})))
-      (doseq [nm names]
-        (when-not (contains? exported nm)
-          (throw (ex-info (str "module `" from "` does not export `" nm
-                               "`; available: " (sort exported))
-                          {:kind :unknown-import :module from :name nm})))))))
+  "Walk parsed top-nodes, check every `:from-import` entry against the
+   known-module set (prelude modules from `stdlib-manifest` plus the
+   `user-modules` set for multi-file builds). Prelude imports also
+   check per-name exports; user-module imports only check the module
+   target — per-name export validation lands with F51 L3 resolution."
+  ([top-nodes] (validate-imports top-nodes #{}))
+  ([top-nodes user-modules]
+   (doseq [n top-nodes
+           :when (= :from-import (:node n))]
+     (let [from     (:from n)
+           names    (:names n)
+           exported (get stdlib-manifest from)
+           user?    (contains? user-modules (keyword from))]
+       (cond
+         user?    nil
+         exported (doseq [nm names]
+                    (when-not (contains? exported nm)
+                      (throw (ex-info
+                              (str "module `" from "` does not export `" nm
+                                   "`; available: " (sort exported))
+                              {:kind :unknown-import
+                               :module from :name nm}))))
+         :else    (throw (ex-info
+                          (str "unknown module `" from "` in `from " from
+                               " import ...` — must be a prelude module or "
+                               "another user module in src-dir")
+                          {:kind :unknown-module :module from})))))))
 
 (defn compile-source-to-file
   "Compile cxc source text through parse → lower → emit → clang.
@@ -330,6 +337,136 @@
                :module module :name nm
                :files (mapv #(.getPath ^java.io.File %) files)})))))
 
+;; ---------------------------------------------------------------------------
+;; F51 L2 — Module import dependency graph + topological order + cycle detection.
+;; ---------------------------------------------------------------------------
+
+(def ^:private prelude-module-kws
+  "Prelude modules pre-seeded as `already resolved` in the dep graph;
+   user modules never wait on them and cycles across them are impossible."
+  (into #{} (map keyword) (keys stdlib-manifest)))
+
+(defn- file-imports
+  "F51 L2 — return a set of imported module keywords for a parsed file."
+  [nodes]
+  (into #{}
+        (comp (filter #(= :from-import (:node %)))
+              (map #(keyword (:from %))))
+        nodes))
+
+(defn- module-dependency-graph
+  "F51 L2 — `{module-kw → #{imported-module-kws}}` from per-file parsed
+   nodes tagged with their derived module. Files in the same module
+   contribute additively; prelude edges stay in the graph and are
+   filtered out at cycle/topsort time."
+  [files-with-nodes]
+  (reduce (fn [acc {:keys [module nodes]}]
+            (update acc module (fnil into #{}) (file-imports nodes)))
+          {} files-with-nodes))
+
+(defn- reject-self-imports!
+  "F51 L2 — a module importing itself is trivially wrong."
+  [graph]
+  (doseq [[m deps] graph
+          :when (contains? deps m)]
+    (throw (ex-info
+            (str "F51 L2: module `" (name m) "` imports itself "
+                 "(`from " (name m) " import ...`) — remove the self-import")
+            {:kind :cxc-f51-self-import :module m}))))
+
+(defn- reject-unknown-imports!
+  "F51 L2 — every imported module must be a known user module or prelude."
+  [graph user-modules]
+  (let [known (into prelude-module-kws user-modules)]
+    (doseq [[m deps] graph
+            d deps
+            :when (not (contains? known d))]
+      (throw (ex-info
+              (str "F51 L2: module `" (name m) "` imports unknown module `"
+                   (name d) "` — must be another user module in src-dir "
+                   "or a prelude module")
+              {:kind :cxc-f51-unknown-module :module m :imported d})))))
+
+(defn- find-cycle
+  "F51 L2 — DFS with in-path / fully-done marking. Returns a vector of
+   module keywords `[m1 m2 ... mN m1]` forming a cycle, or nil if
+   `user-graph` (user-module edges only) is acyclic. Deterministic —
+   nodes and children visited in sorted-name order."
+  [user-graph]
+  (let [in-path    (atom #{})
+        fully-done (atom #{})
+        cycle      (atom nil)]
+    (letfn [(dfs [node path]
+              (when-not @cycle
+                (cond
+                  (contains? @in-path node)
+                  (let [idx (.indexOf ^clojure.lang.PersistentVector
+                                      path node)]
+                    (reset! cycle (conj (subvec path idx) node)))
+
+                  (contains? @fully-done node) nil
+
+                  :else
+                  (do
+                    (swap! in-path conj node)
+                    (doseq [child (sort (get user-graph node #{}))
+                            :while (not @cycle)]
+                      (dfs child (conj path node)))
+                    (swap! in-path disj node)
+                    (swap! fully-done conj node)))))]
+      (doseq [n (sort (keys user-graph))
+              :while (not @cycle)]
+        (dfs n []))
+      @cycle)))
+
+(defn- topological-sort
+  "F51 L2 — Kahn's algorithm on user modules (prelude edges pruned).
+   Returns a vector of module keywords in dependency order (imports
+   first). Throws `:cxc-f51-module-cycle` with the offending cycle path
+   if the graph is cyclic. Deterministic tie-break by sorted module
+   name."
+  [graph user-modules]
+  (let [user-graph (into {} (map (fn [m]
+                                   [m (into #{} (filter user-modules)
+                                            (get graph m #{}))]))
+                        user-modules)]
+    (when-let [c (find-cycle user-graph)]
+      (throw (ex-info
+              (str "F51 L2: module import cycle: "
+                   (clojure.string/join " → " (map name c)))
+              {:kind :cxc-f51-module-cycle :cycle c})))
+    (let [in-degree (into {} (map (fn [[m deps]] [m (count deps)])) user-graph)
+          consumers (reduce (fn [acc [m deps]]
+                              (reduce (fn [a d]
+                                        (update a d (fnil conj #{}) m))
+                                      acc deps))
+                            {} user-graph)]
+      (loop [in-deg in-degree
+             sorted []
+             ready  (into (sorted-set)
+                          (keep (fn [[m d]] (when (zero? d) m)) in-deg))]
+        (if (empty? ready)
+          sorted
+          (let [m (first ready)
+                cs (get consumers m #{})
+                in-deg' (reduce (fn [acc c] (update acc c dec))
+                                in-deg cs)
+                new-ready (keep (fn [c] (when (zero? (get in-deg' c 1)) c))
+                                cs)]
+            (recur in-deg' (conj sorted m)
+                   (into (disj ready m) new-ready))))))))
+
+(defn- sort-files-by-module-order
+  "F51 L2 — reorder `files-with-nodes` so that a module's files appear
+   after every module they import. Within a module, files keep their
+   incoming sorted-path order for determinism."
+  [files-with-nodes sorted-modules]
+  (let [module-rank (zipmap sorted-modules (range))]
+    (sort-by (fn [{:keys [module file]}]
+               [(get module-rank module Long/MAX_VALUE)
+                (.getPath ^java.io.File file)])
+             files-with-nodes)))
+
 (defn compile-directory-to-file
   "Compile every `*.cxc` file under `src-dir` as one program. Files
    are read in sorted order (stable across runs), imports are
@@ -361,9 +498,11 @@
                                    (.endsWith (.getName ^java.io.File %) ".cxc")))
                      (sort-by #(.getPath ^java.io.File %)))
         srcs    (mapv slurp files)
+        ;; F51 L2 — enumerate user modules up-front so per-file import
+        ;; validation can accept `from <user-module> import ...`.
+        user-modules (into #{} (map #(derive-module-name dir %)) files)
         ;; F51 L1 — parse each file separately, tag with derived
-        ;; module, reject user-authored `module` headers, and check
-        ;; import validity.
+        ;; module, and check import validity against prelude + user modules.
         files-with-nodes
         (mapv (fn [[^java.io.File f src]]
                 (let [module (derive-module-name dir f)
@@ -376,7 +515,7 @@
                                                         :file (.getPath f))
                                                  e))))]
                   (try
-                    (validate-imports parsed)
+                    (validate-imports parsed user-modules)
                     (catch clojure.lang.ExceptionInfo e
                       (throw (ex-info (str "in " (.getName f)
                                            ": " (.getMessage e))
@@ -386,6 +525,17 @@
                   {:file f :module module :nodes parsed}))
               (map vector files srcs))
         _       (reject-duplicate-declarations-per-module! files-with-nodes)
+        ;; F51 L2 — build the module import dep graph, reject self-imports
+        ;; and unknown-module imports, then topologically sort user modules.
+        ;; Files re-ordered so imported modules concatenate before their
+        ;; consumers (deterministic tie-break by sorted file path within a
+        ;; module).
+        dep-graph        (module-dependency-graph files-with-nodes)
+        _                (reject-self-imports! dep-graph)
+        _                (reject-unknown-imports! dep-graph user-modules)
+        sorted-modules   (topological-sort dep-graph user-modules)
+        files-with-nodes (sort-files-by-module-order files-with-nodes
+                                                     sorted-modules)
         ;; F51 L1 — prepend a synthetic `module <derived>` line to
         ;; each source string before concatenation. The parser sees
         ;; it as a normal `:module` node; `resolve/build-symbol-table`
@@ -394,10 +544,10 @@
         ;; to blank `from ...` (the flat-namespace concatenation shim
         ;; stays until F51 L3 lands scoped resolution).
         with-module-headers
-        (mapv (fn [[{:keys [module]} src]]
+        (mapv (fn [{:keys [file module]}]
                 (str "module " (clojure.core/name module) "\n\n"
-                     (strip-module-and-import-lines src)))
-              (map vector files-with-nodes srcs))
+                     (strip-module-and-import-lines (slurp file))))
+              files-with-nodes)
         combined (clojure.string/join "\n\n" with-module-headers)]
     ;; F73 note: user `module` headers are rejected at parse-time; the
     ;; build injects synthetic ones here for per-file provenance and

@@ -578,3 +578,98 @@
     (let [{:keys [exit stdout]} (compile-dir-and-run "multi-file-demo")]
       (is (zero? exit) "runs successfully after header removal")
       (is (= "42\n" stdout) "prints Counter(seed: 41).bump = 42"))))
+
+;; ---------------------------------------------------------------------------
+;; F51 L2 — module dep graph + cycle detection + topological order.
+;; ---------------------------------------------------------------------------
+
+(deftest f51-l2-topological-order-basic
+  (testing "F51 L2 — a module that imports another user module compiles cleanly with dep-order concatenation (imported module's decls come first)."
+    (let [src-dir (tmp-dir)
+          out-dir (tmp-dir)
+          _       (write-file! src-dir "lib/util.cxc"
+                               "def Helper:\n    x: Int\n")
+          _       (write-file! src-dir "app.cxc"
+                               "from lib import Helper\n\ndef main:\n    -> running\n        then: print(1)\n")
+          {:keys [status stderr]}
+          (build/compile-directory-to-file (.getPath src-dir)
+                                           "prog" (.getPath out-dir))]
+      (is (zero? status) (str "clang failed: " stderr)))))
+
+(deftest f51-l2-cycle-two-modules-rejected
+  (testing "F51 L2 — module `a` imports `b` and `b` imports `a` — cycle rejected with a diagnostic naming both modules in the cycle path."
+    (let [src-dir (tmp-dir)
+          out-dir (tmp-dir)
+          _       (write-file! src-dir "a/x.cxc"
+                               "from b import Y\n\ndef X:\n    n: Int\n")
+          _       (write-file! src-dir "b/y.cxc"
+                               "from a import X\n\ndef Y:\n    n: Int\n")
+          _       (write-file! src-dir "main.cxc"
+                               "from a import X\n\ndef main:\n    -> running\n        then: print(1)\n")
+          ex      (try
+                    (build/compile-directory-to-file (.getPath src-dir)
+                                                     "prog" (.getPath out-dir))
+                    nil
+                    (catch clojure.lang.ExceptionInfo e e))]
+      (is (some? ex) "expected cycle rejection")
+      (is (re-find #"F51 L2: module import cycle" (ex-message ex)))
+      (is (re-find #"\ba\b" (ex-message ex)) "diagnostic names module `a`")
+      (is (re-find #"\bb\b" (ex-message ex)) "diagnostic names module `b`")
+      (is (= :cxc-f51-module-cycle (:kind (ex-data ex)))))))
+
+(deftest f51-l2-cycle-three-modules-rejected
+  (testing "F51 L2 — a 3-module cycle `a → b → c → a` is rejected and the full cycle path is in the diagnostic."
+    (let [src-dir (tmp-dir)
+          out-dir (tmp-dir)
+          _       (write-file! src-dir "a/x.cxc"
+                               "from b import B\n\ndef A:\n    n: Int\n")
+          _       (write-file! src-dir "b/x.cxc"
+                               "from c import C\n\ndef B:\n    n: Int\n")
+          _       (write-file! src-dir "c/x.cxc"
+                               "from a import A\n\ndef C:\n    n: Int\n")
+          _       (write-file! src-dir "main.cxc"
+                               "from a import A\n\ndef main:\n    -> running\n        then: print(1)\n")
+          ex      (try
+                    (build/compile-directory-to-file (.getPath src-dir)
+                                                     "prog" (.getPath out-dir))
+                    nil
+                    (catch clojure.lang.ExceptionInfo e e))]
+      (is (some? ex))
+      (is (re-find #"F51 L2: module import cycle" (ex-message ex)))
+      (is (re-find #"\ba\b" (ex-message ex)))
+      (is (re-find #"\bb\b" (ex-message ex)))
+      (is (re-find #"\bc\b" (ex-message ex))))))
+
+(deftest f51-l2-unknown-module-import-rejected
+  (testing "F51 L2 — `from unknown_mod import X` in a user file is rejected: the module is not another user module in src-dir and not a prelude module."
+    (let [src-dir (tmp-dir)
+          out-dir (tmp-dir)
+          _       (write-file! src-dir "main.cxc"
+                               "from unknown_mod import X\n\ndef main:\n    -> running\n        then: print(1)\n")
+          ex      (try
+                    (build/compile-directory-to-file (.getPath src-dir)
+                                                     "prog" (.getPath out-dir))
+                    nil
+                    (catch clojure.lang.ExceptionInfo e e))]
+      (is (some? ex) "expected unknown-module rejection")
+      (is (re-find #"unknown module `unknown_mod`" (ex-message ex))
+          "diagnostic names the unknown module"))))
+
+(deftest f51-l2-self-import-rejected
+  (testing "F51 L2 — a module importing itself (e.g. `from foo import X` inside a file in module `foo`) is trivially wrong; rejected explicitly with a per-module diagnostic."
+    (let [src-dir (tmp-dir)
+          out-dir (tmp-dir)
+          _       (write-file! src-dir "foo/a.cxc"
+                               "from foo import Y\n\ndef X:\n    n: Int\n")
+          _       (write-file! src-dir "foo/b.cxc"
+                               "def Y:\n    n: Int\n")
+          _       (write-file! src-dir "main.cxc"
+                               "from foo import X\n\ndef main:\n    -> running\n        then: print(1)\n")
+          ex      (try
+                    (build/compile-directory-to-file (.getPath src-dir)
+                                                     "prog" (.getPath out-dir))
+                    nil
+                    (catch clojure.lang.ExceptionInfo e e))]
+      (is (some? ex))
+      (is (re-find #"F51 L2: module `foo` imports itself" (ex-message ex)))
+      (is (= :cxc-f51-self-import (:kind (ex-data ex)))))))
