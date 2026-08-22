@@ -69,6 +69,12 @@
       (is (zero? exit))
       (is (= "7\n" stdout)))))
 
+(deftest end-to-end-f37-nested-record-bytes
+  (testing "F37 L4 — nested record `Outer{ i: Inner!, k: Int32! }` where Inner is `{ n: Int32! }`. Encoding recurses into Inner's synthesized fn via `appendData:`. Inner emits 4 bytes; Outer contributes those 4 + k's 4 = 8 total (no length prefix per §3.10.10 record row)."
+    (let [{:keys [exit stdout]} (compile-and-run "f37-nested-record-bytes")]
+      (is (zero? exit))
+      (is (= "8\n" stdout)))))
+
 (deftest end-to-end-f37-string-bytes
   (testing "F37 L3 — record with mixed Int32! + String! fields. `n` encodes as 4-byte big-endian Int32; `text` encodes as 4-byte UInt32 length prefix + UTF-8 bytes. `\"hi\"` is 2 UTF-8 bytes; total = 4 + 4 + 2 = 10."
     (let [{:keys [exit stdout]} (compile-and-run "f37-string-bytes")]

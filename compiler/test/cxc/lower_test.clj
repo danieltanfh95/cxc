@@ -1503,6 +1503,17 @@ def main:
       (is (re-find #"dataUsingEncoding:NSUTF8StringEncoding" body-text))
       (is (re-find #"OSSwapHostToBigInt32.*\[__sd length\]" body-text)))))
 
+(deftest f37-l4-bytes-nested-record-field-recurses
+  (testing "F37 L4 — a record with a nested-record field synthesizes an encoder that dispatches to the nested record's `<Nested>_cxc_as_bytes` via `appendData:`. No length prefix per §3.10.10 record row (fixed-shape concatenation). Both records get their own synthesized fn."
+    (let [prog (lower-src "def Inner:\n    n: Int32!\n\ndef Outer:\n    i: Inner!\n    k: Int32!\n\ndef main:\n    -> running\n")
+          fn-names (set (map :name (:functions prog)))
+          outer-fn (first (filter #(= "Outer_cxc_as_bytes" (:name %)) (:functions prog)))
+          body-text (get-in outer-fn [:body 0 :text])]
+      (is (contains? fn-names "Inner_cxc_as_bytes"))
+      (is (contains? fn-names "Outer_cxc_as_bytes"))
+      (is (re-find #"Inner_cxc_as_bytes\(a\.i\)" body-text)
+          "outer encoder dispatches to nested via synthesized fn"))))
+
 (deftest f37-l3-bytes-mixed-string-and-primitive-fields
   (testing "F37 L3 — a record mixing `Int!` and `String!` synthesizes both encoders in declaration order (§3.10.10 record row: fields concatenated in declaration order)."
     (let [prog (lower-src "def Named:\n    n: Int!\n    text: String!\n\ndef main:\n    -> running\n")

@@ -3694,13 +3694,15 @@
              :fn   (c-method-name rec-name "as")
              :args [target-lo]}
 
-            (every? f37-bytes-encodable-field? (:fields info))
+            (every? #(f37-bytes-encodable-field? % (:record-env ctx))
+                    (:fields info))
             {:node :call
              :fn   (record-synth-as-bytes-name rec-name)
              :args [target-lo]}
 
             :else
-            (let [bad (first (remove f37-bytes-encodable-field? (:fields info)))]
+            (let [bad (first (remove #(f37-bytes-encodable-field? % (:record-env ctx))
+                                     (:fields info)))]
               (fail-nyi!
                (str "F37 Landings 2 + 3: cannot synthesize `.as() -> Bytes` for "
                     "record `" rec-name "." (:name bad) "` (type `"
@@ -6507,22 +6509,52 @@
   [f]
   (and (:nonnil? f) (= "String" (:cxc-ty f))))
 
+(defn- f37-nested-record-field?
+  "F37 Landing 4 — a nested record field (value-typed, non-Optional).
+   Recursively encoded via the nested record's own synthesized
+   `<Nested>_cxc_as_bytes`. Fields concatenated in declaration order
+   without a length prefix (record encoding is fixed-shape per
+   §3.10.10 record row). The nested record itself must be eligible
+   at the enclosing record's synthesis time; the field-type-validity
+   check surfaces at fail-nyi otherwise."
+  [f record-env]
+  (and (not (:optional? f))
+       (contains? record-env (:cxc-ty f))))
+
 (defn- f37-bytes-encodable-field?
-  "F37 Landings 2+3 — union of the two shipped eligibility checks.
-   Any field for which the encoder function has a synthesis path."
-  [f]
-  (or (f37-primitive-byte-field? f) (f37-string-byte-field? f)))
+  "F37 Landings 2+3+4 — union of the shipped eligibility checks.
+   Any field for which the encoder function has a synthesis path.
+   Nested-record fields require record-env to check whether the
+   field's cxc-ty is a known record."
+  ([f]
+   (or (f37-primitive-byte-field? f) (f37-string-byte-field? f)))
+  ([f record-env]
+   (or (f37-primitive-byte-field? f)
+       (f37-string-byte-field? f)
+       (f37-nested-record-field? f record-env))))
 
 (defn- f37-field-encoding-c-src
   "Emit a C compound statement that appends field `f`'s big-endian
    encoding to `__d` (the NSMutableData accumulator). Assumes the
-   record var is bound as `a`. Landings 2 (primitive) + 3 (String)
-   only — other field types raise the caller's fail-nyi guard first."
-  [f]
+   record var is bound as `a`. Landings 2 (primitive) + 3 (String) +
+   4 (nested record) only — other field types raise the caller's
+   fail-nyi guard first. record-env is consulted for the L4 dispatch
+   to nested records' synthesized `<Nested>_cxc_as_bytes`."
+  [f record-env]
   (let [fname (:name f)
         cxc-ty (:cxc-ty f)
         fld    (str "a." fname)]
-    (case cxc-ty
+    (cond
+      (contains? record-env cxc-ty)
+      ;; F37 Landing 4 — nested record dispatches to its own
+      ;; synthesized fn. No length prefix per §3.10.10 record row
+      ;; (fixed-shape concatenation). Forward declarations at emit
+      ;; time make dispatch order irrelevant.
+      (str "    { NSData *__nd = " cxc-ty "_cxc_as_bytes(" fld ");"
+           " [__d appendData:__nd]; }")
+
+      :else
+      (case cxc-ty
       "Bool"
       (str "    { uint8_t __v = " fld " ? 0x01 : 0x00;"
            " [__d appendBytes:&__v length:1]; }")
@@ -6566,7 +6598,7 @@
            "        uint32_t __len = OSSwapHostToBigInt32((uint32_t)[__sd length]);\n"
            "        [__d appendBytes:&__len length:4];\n"
            "        [__d appendData:__sd];\n"
-           "    }"))))
+           "    }")))))
 
 (defn- record-has-user-as-method?
   "True when the record explicitly declares a method named `as` in its
@@ -6576,19 +6608,22 @@
   (contains? (get-in info [:method-index]) "as"))
 
 (defn- record-eligible-for-as-bytes-synthesis?
-  [info]
-  (and (not (record-has-user-as-method? info))
-       (every? f37-bytes-encodable-field? (:fields info))))
+  ([info]
+   (and (not (record-has-user-as-method? info))
+        (every? f37-bytes-encodable-field? (:fields info))))
+  ([info record-env]
+   (and (not (record-has-user-as-method? info))
+        (every? #(f37-bytes-encodable-field? % record-env) (:fields info)))))
 
 (defn- synthesize-record-as-bytes-fn
-  "F37 Landings 2 + 3 — produce a `:c-function` node implementing
+  "F37 Landings 2 + 3 + 4 — produce a `:c-function` node implementing
    `<Record>_cxc_as_bytes(<Record> a) -> NSMutableData *`. Precondition:
    `record-eligible-for-as-bytes-synthesis?` returned true.
 
    Capacity hint sums the compile-time-known widths of primitive
-   fields; String fields are variable-length so any record containing
-   one drops the hint (passes 0)."
-  [record-name info]
+   fields; String / nested-record fields are variable-length so any
+   record containing one drops the hint (passes 0)."
+  [record-name info record-env]
   (let [fields    (:fields info)
         all-fixed? (every? f37-primitive-byte-field? fields)
         total     (if all-fixed?
@@ -6597,7 +6632,7 @@
                     0)
         head      (str "    NSMutableData *__d = [NSMutableData dataWithCapacity:"
                        total "];")
-        blocks    (map f37-field-encoding-c-src fields)
+        blocks    (map #(f37-field-encoding-c-src % record-env) fields)
         body-src  (str/join "\n" (concat [head] blocks ["    return __d;"]))]
     {:node        :c-function
      :name        (record-synth-as-bytes-name record-name)
@@ -6607,19 +6642,22 @@
 
 (defn- synthesized-record-functions
   "Emit the synthesized equals + hash function pair for every record,
-   plus F37 Landing 2 canonical-bytes synthesis when the record's
-   fields are all primitive-byte-eligible AND the user hasn't
-   declared their own `.as(self) -> Bytes` (§3.3.2 rule 6 override)."
+   plus F37 Landings 2 + 3 + 4 canonical-bytes synthesis when the
+   record's fields are all bytes-encodable (primitive / String! /
+   nested-record) AND the user hasn't declared their own
+   `.as(self) -> Bytes` (§3.3.2 rule 6 override). Forward decls at
+   emit time make nested-record dispatch order irrelevant."
   [ctx]
-  (vec (for [[rec-name info] (:record-env ctx)
-             f-fn            [synthesize-record-equals-fn
-                              synthesize-record-hash-fn
-                              (fn [rn ri _]
-                                (when (record-eligible-for-as-bytes-synthesis? ri)
-                                  (synthesize-record-as-bytes-fn rn ri)))]
-             :let            [emitted (f-fn rec-name info ctx)]
-             :when           emitted]
-         emitted)))
+  (let [record-env (:record-env ctx)]
+    (vec (for [[rec-name info] record-env
+               f-fn            [synthesize-record-equals-fn
+                                synthesize-record-hash-fn
+                                (fn [rn ri _]
+                                  (when (record-eligible-for-as-bytes-synthesis? ri record-env)
+                                    (synthesize-record-as-bytes-fn rn ri record-env)))]
+               :let            [emitted (f-fn rec-name info ctx)]
+               :when           emitted]
+           emitted))))
 
 (defn- lower-list-literal-init
   "Lower `xs: List of T = [e1, e2, ...]` in a data-field default.
@@ -8267,7 +8305,7 @@
         needs-byteorder?  (boolean (some (fn [[_ info]]
                                            (and (not (record-has-user-as-method? info))
                                                 (seq (:fields info))
-                                                (every? f37-bytes-encodable-field?
+                                                (every? #(f37-bytes-encodable-field? % record-env)
                                                         (:fields info))))
                                          record-env))
         includes          (cond-> base-includes

@@ -779,6 +779,15 @@
 (defn- emit-param [p]
   (str (:c-type p) " " (:name p)))
 
+(defn- emit-function-prototype
+  "Emit a C prototype `<ret> <name>(<params>);` — no body. Used to
+   forward-declare synthesized functions so nested-record encoding
+   in F37 Landing 4 (and any future mutually-recursive synthesized
+   fns) can dispatch across declaration order."
+  [f]
+  (let [params (str/join ", " (map emit-param (:params f)))]
+    (str (:return-type f) " " (:name f) "(" params ");")))
+
 (defn- emit-function [f]
   (let [params (str/join ", " (map emit-param (:params f)))
         body   (emit-body 4 (:body f))]
@@ -1194,6 +1203,15 @@
         helpers     (when (:needs-runtime? prog) cxc-runtime-helpers)
         enums       (str/join "\n\n" (map emit-c-enum   (:enums prog)))
         structs     (str/join "\n\n" (map emit-struct   (:structs prog)))
+        ;; F37 Landing 4 — emit all synthesized-function prototypes
+        ;; before any bodies so nested-record encoders can reference
+        ;; each other regardless of declaration order in `:functions`.
+        ;; Zero-cost for non-mutual cases (prototype + body pair) and
+        ;; keeps the emit pipeline unaware of dependency ordering.
+        fn-prototypes (when (seq (:functions prog))
+                        (str "// forward function declarations\n"
+                             (str/join "\n"
+                                       (map emit-function-prototype (:functions prog)))))
         functions   (str/join "\n\n" (map emit-function (:functions prog)))
         ;; Forward @class declarations for every user/synthesized class
         ;; so cross-references in @interface method signatures (e.g. a
@@ -1215,7 +1233,8 @@
         main        (emit-main (:main prog) (:needs-dispatch-loop? prog))]
     (str/join "\n\n"
               (remove str/blank? [includes
-                                  helpers enums structs functions
+                                  helpers enums structs
+                                  fn-prototypes functions
                                   forward-classes
                                   interfaces fanout-cat impls
                                   main-static main]))))
