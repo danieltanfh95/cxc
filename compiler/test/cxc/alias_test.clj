@@ -309,25 +309,28 @@
 ;; ---------------------------------------------------------------------------
 
 (deftest custom-section-header-parses-after-alias-decl
-  (testing "F8 L1-b — user-declared section header dispatches through registry"
-    (let [src   (str "alias my_data: runtime immutable identity\n"
-                     "def U:\n"
-                     "    my_data:\n"
-                     "        x: Int\n"
-                     "        y: Int\n")
-          nodes (parse-nodes src)
+  (testing "F8 L1-b + L1-c — user-declared section header lands as data-section fields with spec annotation"
+    (let [src    (str "alias my_data: runtime immutable identity\n"
+                      "def U:\n"
+                      "    my_data:\n"
+                      "        x: Int\n"
+                      "        y: Int\n")
+          nodes  (parse-nodes src)
           record (first (filter #(= :record (:node %)) nodes))
-          section (first (filter #(= :custom-section (:node %))
-                                 (:sections record)))]
-      (is (some? section))
-      (is (= "my_data" (:name section)))
-      (is (= 2 (count (:fields section))))
-      (is (= "x" (:name (first (:fields section)))))
-      (is (= "y" (:name (second (:fields section)))))
-      ;; The composed spec travels with the AST node.
-      (is (= :alias-expanded (get-in section [:spec :kind])))
+          data   (first (filter #(= :data-section (:node %))
+                                (:sections record)))
+          specs  (:section-classes data)]
+      ;; F8 L1-c fold hoists custom-section fields into :data-section.
+      (is (some? data))
+      (is (= 2 (count (:fields data))))
+      (is (= "x" (:name (first (:fields data)))))
+      (is (= "y" (:name (second (:fields data)))))
+      ;; The composed spec travels along on :section-classes.
+      (is (= 1 (count specs)))
+      (is (= "my_data" (:name (first specs))))
+      (is (= :alias-expanded (get-in (first specs) [:spec :kind])))
       (is (= [:runtime :immutable :identity]
-             (get-in section [:spec :spec :primitives]))))))
+             (get-in (first specs) [:spec :spec :primitives]))))))
 
 (deftest unknown-section-header-still-fails
   (testing "F8 L1-b — section header not in registry falls through"

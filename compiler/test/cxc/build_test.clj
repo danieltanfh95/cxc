@@ -57,6 +57,12 @@
       (is (zero? exit))
       (is (= "hello, world\n" stdout)))))
 
+(deftest end-to-end-custom-section
+  (testing "F8 L1-c — custom-section.cxc — user-declared section header (`alias my_data: runtime immutable identity`) used as a field-carrying section inside a class body, fields hoisted to :data-section at fold time, compiles + runs end-to-end"
+    (let [{:keys [exit stdout]} (compile-and-run "custom-section")]
+      (is (zero? exit))
+      (is (= "42\n" stdout)))))
+
 (deftest end-to-end-different-message
   (testing "greet.cxc — different string round-trips through the pipeline"
     (let [{:keys [exit stdout]} (compile-and-run "greet")]

@@ -1850,17 +1850,38 @@
    section-first, top-level-fields-second convention).
 
    Body positions of individual `:field` nodes are removed; the
-   synthesized/merged section takes their combined position slot."
+   synthesized/merged section takes their combined position slot.
+
+   F8 L1-c (2026-08-23): `:custom-section` nodes carrying primitive-
+   composition specs (from user `alias ...: <primitives>` decls) are
+   flattened here too — their fields lift up to top-level fields
+   before the fold. The composed spec is preserved on the surviving
+   `:data-section` via the `:section-classes` slot for downstream
+   consumers that care about origin. Behavioral-section treatment
+   (Computed, Invariants generators) is F8 L3."
   [body]
-  (let [fields   (filterv #(= :field (:node %)) body)
+  (let [;; F8 L1-c — hoist :custom-section fields to top-level :field
+        ;; nodes; collect the composed specs separately for annotation.
+        custom-sections (filterv #(= :custom-section (:node %)) body)
+        hoisted-fields  (mapcat :fields custom-sections)
+        section-specs   (mapv (fn [s] {:name (:name s) :spec (:spec s)})
+                              custom-sections)
+        body            (into [] (concat (remove #(= :custom-section (:node %))
+                                                 body)
+                                          hoisted-fields))
+        fields   (filterv #(= :field (:node %)) body)
         legacy   (first (filter #(= :data-section (:node %)) body))]
     (cond
       (empty? fields)
       body
 
       legacy
-      (let [merged  (assoc legacy :fields
-                          (into (or (:fields legacy) []) fields))
+      (let [merged  (-> legacy
+                        (assoc :fields
+                               (into (or (:fields legacy) []) fields))
+                        (cond-> (seq section-specs)
+                          (update :section-classes
+                                  (fnil into []) section-specs)))
             without-fields (remove #(= :field (:node %)) body)]
         (mapv (fn [n] (if (= :data-section (:node n)) merged n))
               without-fields))
@@ -1870,7 +1891,9 @@
                                     (when (= :field (:node n)) i))
                                   (map-indexed vector body))
             without-fields (remove #(= :field (:node %)) body)
-            synthetic       {:node :data-section :fields fields}]
+            synthetic       (cond-> {:node :data-section :fields fields}
+                              (seq section-specs)
+                              (assoc :section-classes section-specs))]
         (into (subvec (vec without-fields) 0 first-field-idx)
               (into [synthetic]
                     (subvec (vec without-fields) first-field-idx)))))))
