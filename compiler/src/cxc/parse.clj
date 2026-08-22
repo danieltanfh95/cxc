@@ -2787,6 +2787,25 @@
           [{:node :from-import :from dotted :names (conj names n)} (inc p2)]
           :else (fail! tokens p2 "expected `,` or newline in from-import"))))))
 
+(defn- parse-import
+  "F52 L1 — `import X` and `import X as Y` at top level.
+     import foo.bar          → {:node :import :from \"foo.bar\" :as nil}
+     import foo.bar as baz   → {:node :import :from \"foo.bar\" :as \"baz\"}
+
+   Cross-references the F51 L2 dep-graph builder — `import X` counts
+   as a dependency on `X` from the current module, same as `from X
+   import ...`. Namespace-scoped binding (`X.member` resolution) waits
+   on F51 L3."
+  [tokens pos]
+  (let [[_ p]       (expect tokens pos :kw "import")
+        [dotted p]  (parse-dotted tokens p)
+        [alias p]   (if (at? tokens p :kw "as")
+                      (let [[nm p2] (expect tokens (inc p) :ident)]
+                        [nm p2])
+                      [nil p])
+        [_ p]       (expect tokens p :newline)]
+    [{:node :import :from dotted :as alias} p]))
+
 ;; ---------------------------------------------------------------------------
 ;; F7 L1 — Alias declaration
 ;;
@@ -2905,6 +2924,7 @@
       (at? tokens p :eof)          [nil p]
       (at? tokens p :kw "module")  (reject-module-decl! tokens p)
       (at? tokens p :kw "from")    (parse-from-import tokens p)
+      (at? tokens p :kw "import")  (parse-import tokens p)
       (at? tokens p :kw "alias")   (parse-alias-decl tokens p)
       (at? tokens p :kw "def")     (parse-def-atom tokens p)
 

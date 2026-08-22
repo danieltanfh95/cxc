@@ -6,7 +6,8 @@
    outside the test harness. See `examples/README.md` for the current
    coverage table and how to add a new one."
   (:require [clojure.test :refer [deftest is testing]]
-            [cxc.build :as build]))
+            [cxc.build :as build]
+            [cxc.parse]))
 
 (defn- tmp-dir []
   (let [d (java.nio.file.Files/createTempDirectory
@@ -733,6 +734,59 @@
           out-dir (tmp-dir)
           _       (write-file! src-dir "foo/a.cxc"
                                "from foo import Y\n\ndef X:\n    n: Int\n")
+          _       (write-file! src-dir "foo/b.cxc"
+                               "def Y:\n    n: Int\n")
+          _       (write-file! src-dir "main.cxc"
+                               "from foo import X\n\ndef main:\n    -> running\n        then: print(1)\n")
+          ex      (try
+                    (build/compile-directory-to-file (.getPath src-dir)
+                                                     "prog" (.getPath out-dir))
+                    nil
+                    (catch clojure.lang.ExceptionInfo e e))]
+      (is (some? ex))
+      (is (re-find #"F51 L2: module `foo` imports itself" (ex-message ex)))
+      (is (= :cxc-f51-self-import (:kind (ex-data ex)))))))
+
+(deftest f52-l1-import-x-parses-and-adds-dep-edge
+  (testing "F52 L1 — `import X` parses to a `:import` top node and contributes an edge to module `X` in the dep graph (same as `from X import ...`). The prog compiles cleanly because `lib` is a known user module and its decls concatenate before the consumer under topological order."
+    (let [src-dir (tmp-dir)
+          out-dir (tmp-dir)
+          _       (write-file! src-dir "lib/util.cxc"
+                               "def Helper:\n    x: Int\n")
+          _       (write-file! src-dir "app.cxc"
+                               "import lib\n\ndef main:\n    -> running\n        then: print(1)\n")
+          {:keys [status stderr]}
+          (build/compile-directory-to-file (.getPath src-dir)
+                                           "prog" (.getPath out-dir))]
+      (is (zero? status) (str "clang failed: " stderr)))))
+
+(deftest f52-l1-import-with-alias-parses
+  (testing "F52 L1 — `import X as Y` parses cleanly; the `as` alias name is preserved on the AST node for downstream binding at F51 L3."
+    (let [imp (first (cxc.parse/parse "import foo.bar as baz\n"))]
+      (is (= :import (:node imp)))
+      (is (= "foo.bar" (:from imp)))
+      (is (= "baz" (:as imp))))))
+
+(deftest f52-l1-import-unknown-module-rejected
+  (testing "F52 L1 — `import unknown_mod` in a user file is rejected at build with the same diagnostic that `from unknown_mod import ...` would produce."
+    (let [src-dir (tmp-dir)
+          out-dir (tmp-dir)
+          _       (write-file! src-dir "main.cxc"
+                               "import nowhere\n\ndef main:\n    -> running\n        then: print(1)\n")
+          ex      (try
+                    (build/compile-directory-to-file (.getPath src-dir)
+                                                     "prog" (.getPath out-dir))
+                    nil
+                    (catch clojure.lang.ExceptionInfo e e))]
+      (is (some? ex) "expected unknown-module rejection")
+      (is (re-find #"unknown module `nowhere`" (ex-message ex))))))
+
+(deftest f52-l1-import-self-rejected
+  (testing "F52 L1 — a module `import`ing itself (via a file in the same module directory) hits the same self-import rejection as `from foo import ...`."
+    (let [src-dir (tmp-dir)
+          out-dir (tmp-dir)
+          _       (write-file! src-dir "foo/a.cxc"
+                               "import foo\n\ndef X:\n    n: Int\n")
           _       (write-file! src-dir "foo/b.cxc"
                                "def Y:\n    n: Int\n")
           _       (write-file! src-dir "main.cxc"

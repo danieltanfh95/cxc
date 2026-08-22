@@ -123,19 +123,27 @@
    "std.collections" #{"List" "Map" "Set"}})
 
 (defn- validate-imports
-  "Walk parsed top-nodes, check every `:from-import` entry against the
-   known-module set (prelude modules from `stdlib-manifest` plus the
-   `user-modules` set for multi-file builds). Prelude imports also
-   check per-name exports; user-module imports only check the module
-   target — per-name export validation lands with F51 L3 resolution."
+  "Walk parsed top-nodes, check every `:from-import` and `:import`
+   entry against the known-module set (prelude modules from
+   `stdlib-manifest` plus the `user-modules` set for multi-file
+   builds). Prelude `from`-imports also check per-name exports;
+   user-module imports only check the module target — per-name export
+   validation lands with F51 L3 resolution.
+
+   F52 L1 — `import X` and `import X as Y` validate the module target
+   only (no per-name list to check)."
   ([top-nodes] (validate-imports top-nodes #{}))
   ([top-nodes user-modules]
    (doseq [n top-nodes
-           :when (= :from-import (:node n))]
+           :when (contains? #{:from-import :import} (:node n))]
      (let [from     (:from n)
-           names    (:names n)
+           names    (when (= :from-import (:node n)) (:names n))
            exported (get stdlib-manifest from)
-           user?    (contains? user-modules (keyword from))]
+           user?    (contains? user-modules (keyword from))
+           surface  (if (= :from-import (:node n))
+                      (str "from " from " import ...")
+                      (str "import " from
+                           (when (:as n) (str " as " (:as n)))))]
        (cond
          user?    nil
          exported (doseq [nm names]
@@ -146,9 +154,9 @@
                               {:kind :unknown-import
                                :module from :name nm}))))
          :else    (throw (ex-info
-                          (str "unknown module `" from "` in `from " from
-                               " import ...` — must be a prelude module or "
-                               "another user module in src-dir")
+                          (str "unknown module `" from "` in `" surface
+                               "` — must be a prelude module or another "
+                               "user module in src-dir")
                           {:kind :unknown-module :module from})))))))
 
 (defn compile-source-to-file
@@ -253,9 +261,13 @@
    program without redundant/conflicting module headers.
 
    F73 (2026-08-20) — `module` headers are hard-rejected at parse-time.
-   The strip here only sees `from` lines in practice; the module-line
-   branch is dead but kept for defensive tolerance until L3 removes
-   the flat-namespace concatenation shim entirely."
+   The strip here only sees `from` and `import` lines in practice;
+   the module-line branch is dead but kept for defensive tolerance
+   until F51 L3 removes the flat-namespace concatenation shim entirely.
+
+   F52 L1 (2026-08-23) — `import X` and `import X as Y` also strip
+   here, matching the `from`-line treatment. Namespace-scoped binding
+   waits on F51 L3."
   [src]
   (->> (clojure.string/split-lines src)
        (map (fn [line]
@@ -263,6 +275,7 @@
                 (cond
                   (clojure.string/starts-with? trimmed "module ") ""
                   (clojure.string/starts-with? trimmed "from ")   ""
+                  (clojure.string/starts-with? trimmed "import ") ""
                   :else line))))
        (clojure.string/join "\n")))
 
@@ -349,10 +362,12 @@
   (into #{} (map keyword) (keys stdlib-manifest)))
 
 (defn- file-imports
-  "F51 L2 — return a set of imported module keywords for a parsed file."
+  "F51 L2 + F52 L1 — return a set of imported module keywords for a
+   parsed file. Both `:from-import` (`from X import a`) and `:import`
+   (`import X` / `import X as Y`) contribute an edge to module `X`."
   [nodes]
   (into #{}
-        (comp (filter #(= :from-import (:node %)))
+        (comp (filter #(contains? #{:from-import :import} (:node %)))
               (map #(keyword (:from %))))
         nodes))
 
