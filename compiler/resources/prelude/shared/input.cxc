@@ -7,8 +7,8 @@ def Key:
     case escape
     case f
 
-def TestKeyboardInput(events: Int = 0):
-    remaining: Int = events
+def TestKeyboardInput(events: Int! = 0):
+    remaining: Int! = events
 
     -> running
         then: self :> beat

@@ -75,7 +75,14 @@
     "while" "loop" "break" "continue"})
 
 (def multi-char-glyphs
-  ["<:" "<|" "|>" ":>" ":<" "->" "=>" "==" "!=" "<=" ">=" "//" "**"])
+  ;; F39 L6 (2026-08-21) — `??` coalesce operator. Landed ahead of
+  ;; L5b-ii-b (Optional storage flip) because L5b-ii's boundary-unwrap
+  ;; discipline requires `??` as the sole user-facing surface for
+  ;; terminating nil-propagation into a raw sink. Multi-char match
+  ;; happens before single-char `?` :punct fallback so `??` tokenises
+  ;; as one :glyph; postfix `T?` at the type-annotation site still
+  ;; lands as :punct `?` and trips the L5a suffix-banned diagnostic.
+  ["<:" "<|" "|>" ":>" ":<" "->" "=>" "==" "!=" "<=" ">=" "//" "**" "??"])
 
 (def single-char-glyphs
   #{\+ \- \* \/ \% \= \< \> \! \& \|})

@@ -1,5 +1,5 @@
-def Clock(ticks: Int = 3):
-    remaining: Int = ticks
+def Clock(ticks: Int! = 3):
+    remaining: Int! = ticks
 
     now :< native_millis_now()
 

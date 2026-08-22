@@ -73,30 +73,38 @@
 (deftest record-lowered-to-c-struct
   (testing "top-level record → :c-struct with resolved C types per field"
     (let [prog (lower-src "def V:\n    x: Int\n    y: Float\n\ndef main:\n    -> running\n        then: print(1)\n")
-          s    (first (:structs prog))]
+          s    (first (filter #(= "V" (:name %)) (:structs prog)))]
       (is (= :c-struct (:node s)))
       (is (= "V" (:name s)))
-      (is (= [{:name "x" :c-type "int64_t"}
-              {:name "y" :c-type "float"}]
+      (is (= [{:name "x" :c-type "_Cxc_Optional_Int64"}
+              {:name "y" :c-type "_Cxc_Optional_Float"}]
              (:fields s))))))
 
 (deftest record-construction-with-named-args
   (testing "V(x: 3, y: 4) lowers to :struct-lit with named fields"
     (let [prog (lower-src "def V:\n    x: Int\n    y: Int\n\ndef main:\n    -> running\n        then: print(V(x: 3, y: 4).x)\n")
           call (first (get-in prog [:main :body]))
-          field-access (get-in call [:args 1])]
+          field-access (:arg call)]
       (is (= :field (:node field-access)))
       (is (= "x" (:field field-access)))
       (let [ctor (:target field-access)]
         (is (= :struct-lit (:node ctor)))
         (is (= "V" (:type ctor)))
-        (is (= [{:name "x" :value {:node :int :value 3}}
-                {:name "y" :value {:node :int :value 4}}]
+        (is (= [{:name "x"
+                 :value {:node :struct-lit
+                         :type "_Cxc_Optional_Int64"
+                         :fields [{:name "present" :value {:node :int :value 1}}
+                                  {:name "value" :value {:node :int :value 3}}]}}
+                {:name "y"
+                 :value {:node :struct-lit
+                         :type "_Cxc_Optional_Int64"
+                         :fields [{:name "present" :value {:node :int :value 1}}
+                                  {:name "value" :value {:node :int :value 4}}]}}]
                (:fields ctor)))))))
 
 (deftest nested-record-field-typing
   (testing "field access chained through a record field propagates the inner record's field type"
-    (let [prog (lower-src "def Point:\n    x: Float\n    y: Float\n\ndef Line:\n    start: Point\n    stop:  Point\n\ndef main:\n    -> running\n        then: print(Line(start: Point(x: 1.0, y: 2.0), stop: Point(x: 3.0, y: 4.0)).start.x)\n")
+    (let [prog (lower-src "def Point:\n    x: Float!\n    y: Float!\n\ndef Line:\n    start: Point!\n    stop:  Point!\n\ndef main:\n    -> running\n        then: print(Line(start: Point(x: 1.0, y: 2.0), stop: Point(x: 3.0, y: 4.0)).start.x)\n")
           call (first (get-in prog [:main :body]))]
       (is (= "%f\n" (get-in call [:args 0 :value]))))))
 
@@ -112,10 +120,18 @@
   (testing "omitted field with a declared default is filled from the default"
     (let [prog (lower-src "def V:\n    x: Int = 1\n    y: Int = 2\n\ndef main:\n    -> running\n        then: print(V(x: 10).y)\n")
           call (first (get-in prog [:main :body]))
-          ctor (get-in call [:args 1 :target])]
+          ctor (get-in call [:arg :target])]
       (is (= :struct-lit (:node ctor)))
-      (is (= [{:name "x" :value {:node :int :value 10}}    ; overridden
-              {:name "y" :value {:node :int :value 2}}]    ; default kicked in
+      (is (= [{:name "x"
+               :value {:node :struct-lit
+                       :type "_Cxc_Optional_Int64"
+                       :fields [{:name "present" :value {:node :int :value 1}}
+                                {:name "value" :value {:node :int :value 10}}]}}
+              {:name "y"
+               :value {:node :struct-lit
+                       :type "_Cxc_Optional_Int64"
+                       :fields [{:name "present" :value {:node :int :value 1}}
+                                {:name "value" :value {:node :int :value 2}}]}}]
              (:fields ctor))))))
 
 ;; F40 Landing 1 — call-site + decl-site validation (spec §3.8.5)
@@ -203,7 +219,7 @@
               {:name "cxc_owned_resources" :c-type "NSMutableArray *" :attrs ["nonatomic" "strong"]}
               {:name "parent"           :c-type "id"               :attrs ["nonatomic" "weak"]}
               {:name "parent_slot_name" :c-type "NSString *"       :attrs ["nonatomic" "copy"]}
-              {:name "n"                :c-type "int64_t"          :attrs ["assign"]}]
+              {:name "n"                :c-type "_Cxc_Optional_Int64" :attrs ["assign"]}]
              (:properties cls)))
       (is (= [{:name "kCounter_phase_init"    :value "init"}
               {:name "kCounter_phase_running" :value "running"}
@@ -226,7 +242,10 @@
                (:body setup)))
         (is (= [{:node :assign
                  :lhs  {:node :name :sym "_n"}
-                 :rhs  {:node :int :value 42}}]
+                 :rhs  {:node :struct-lit
+                        :type "_Cxc_Optional_Int64"
+                        :fields [{:name "present" :value {:node :int :value 1}}
+                                 {:name "value" :value {:node :int :value 42}}]}}]
                (:body state)))))))
 
 (deftest def-atom-ctor-lowers-to-alloc-init
@@ -263,7 +282,7 @@
 
 (deftest wildcard-on-enter-inlined-into-init
   (testing "initial-phase wildcard on-enter → its then:/then: append to :init-body after data defaults"
-    (let [prog (lower-src "def Ticker:\n    n: Int = 0\n\n    -> incremented\n        then: n => n + 1\n\ndef main:\n    t: Ticker = Ticker()\n\n    -> running\n        then: print(0)\n")
+    (let [prog (lower-src "def Ticker:\n    n: Int! = 0\n\n    -> incremented\n        then: n => n + 1\n\ndef main:\n    t: Ticker = Ticker()\n\n    -> running\n        then: print(0)\n")
           cls  (first (:classes prog))]
       ;; State-init runs data defaults then the initial-phase on-enter body.
       ;; Structural setup owns queue + phase = initial constant.
@@ -275,7 +294,9 @@
                  :lhs  {:node :name :sym "_n"}
                  :rhs  {:node :binop :op "+"
                         :left  {:node :name :sym "_n"}
-                        :right {:node :int  :value 1}}}]
+                        :right {:node :int  :value 1}}}
+                {:node :raw-c
+                 :text "if ((_n) == nil) cxc_nonnil_violation(\"def-atom `Ticker` field write\", \"n\");"}]
                (:body state)))))))
 
 (deftest non-initial-wildcard-inlines-into-transitions-that-enter-that-phase
@@ -462,9 +483,15 @@ def main:
       (let [state (first (filter #(= "cxc_stateInitWithinitial:" (:selector %))
                                  (:methods cls)))]
         (is (= [{:name "initial" :c-type "int64_t"}] (:params state)))
+        ;; F39 L5b-ii-c — `n: Int` field storage is Optional-boxed; the
+        ;; scalar ctor-param `initial` gets auto-wrapped at the assign
+        ;; boundary (Sub-J).
         (is (= [{:node :assign
                  :lhs  {:node :name :sym "_n"}
-                 :rhs  {:node :name :sym "initial"}}]
+                 :rhs  {:node :struct-lit
+                        :type "_Cxc_Optional_Int64"
+                        :fields [{:name "present" :value {:node :int :value 1}}
+                                 {:name "value"   :value {:node :name :sym "initial"}}]}}]
                (:body state))))
       (is (= :objc-init-with (:node ctor)))
       (is (= "Counter" (:class ctor)))
@@ -479,7 +506,7 @@ def main:
               {:name "cxc_owned_resources" :c-type "NSMutableArray *" :attrs ["nonatomic" "strong"]}
               {:name "parent"           :c-type "id"               :attrs ["nonatomic" "weak"]}
               {:name "parent_slot_name" :c-type "NSString *"       :attrs ["nonatomic" "copy"]}
-              {:name "n"                :c-type "int64_t"          :attrs ["assign"]}
+              {:name "n"                :c-type "_Cxc_Optional_Int64" :attrs ["assign"]}
               {:name "other"            :c-type "Counter *"        :attrs ["strong"]}]
              (:properties cls)))
       (let [state-init (first (filter #(= "cxc_stateInit" (:selector %)) (:methods cls)))]
@@ -491,7 +518,7 @@ def main:
 
 (deftest atom-observable-lowers-to-objc-method
   (testing "F67 L4 — def-atom parametric observable → :objc-method under class :methods (replaces reader methods per Proposal G)."
-    (let [prog (lower-src "def Counter:\n    n: Int = 10\n\n    bump() :< n + 1\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        then: print(Counter().bump())\n")
+    (let [prog (lower-src "def Counter:\n    n: Int! = 10\n\n    bump() :< n + 1\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        then: print(Counter().bump())\n")
           cls  (first (:classes prog))
           m    (first (filter #(= "bump" (:selector %)) (:methods cls)))]
       (is (= :objc-method (:node m)))
@@ -501,7 +528,7 @@ def main:
 
 (deftest atom-observable-call-lowers-to-objc-msg
   (testing "counter.bump() → :objc-msg with the receiver as :recv and bare selector (observable call site, F67 L4)."
-    (let [prog (lower-src "def Counter:\n    n: Int = 10\n\n    bump() :< n + 1\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        then: print(Counter().bump())\n")
+    (let [prog (lower-src "def Counter:\n    n: Int! = 10\n\n    bump() :< n + 1\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        then: print(Counter().bump())\n")
           call (first (main-work-body prog))
           msg  (get-in call [:args 1])]
       (is (= :objc-msg (:node msg)))
@@ -511,7 +538,7 @@ def main:
 
 (deftest atom-observable-multiarg-selector
   (testing "plus(other: Int) → selector `plusWithother:` and matching call (parametric observable selector construction, F67 L2/L4)."
-    (let [prog (lower-src "def Counter:\n    n: Int = 10\n\n    plus(other: Int) :< n + other\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        then: print(Counter().plus(5))\n")
+    (let [prog (lower-src "def Counter:\n    n: Int! = 10\n\n    plus(other: Int) :< n + other\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        then: print(Counter().plus(5))\n")
           m    (first (filter #(= "plusWithother:" (:selector %))
                               (:methods (first (filter #(= "Counter" (:name %)) (:classes prog))))))
           call (first (main-work-body prog))
@@ -567,13 +594,16 @@ def main:
   (testing "record V { x: Int = -5 } — unary neg on literal is const"
     (let [prog (lower-src "def V:\n    x: Int = -5\n\ndef main:\n    -> running\n        then: print(V().x)\n")
           call (first (main-work-body prog))
-          ctor (get-in call [:args 1 :target])]
+          ctor (get-in call [:arg :target])]
       (is (= :struct-lit (:node ctor)))
       (is (= 1 (count (:fields ctor))))
       (is (= "x" (get-in ctor [:fields 0 :name])))
       ;; Lower rewrites the parser's :neg wrapper to :unary op "-"; the
       ;; const-check happens on the parser AST and accepts :neg.
-      (let [v (get-in ctor [:fields 0 :value])]
+      (let [wrapped (get-in ctor [:fields 0 :value])
+            v       (get-in wrapped [:fields 1 :value])]
+        (is (= :struct-lit (:node wrapped)))
+        (is (= "_Cxc_Optional_Int64" (:type wrapped)))
         (is (contains? #{:neg :unary} (:node v)))
         (is (= 5 (get-in v [:expr :value])))))))
 
@@ -581,7 +611,7 @@ def main:
 
 (deftest f40-atom-observable-accepts-named-args
   (testing "counter.plus(other: 7) — named arg on atom observable resolves (F67 L4 parametric observable arg dispatch)."
-    (let [prog (lower-src "def Counter:\n    n: Int = 10\n\n    plus(other: Int) :< n + other\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        then: print(Counter().plus(other: 7))\n")
+    (let [prog (lower-src "def Counter:\n    n: Int! = 10\n\n    plus(other: Int) :< n + other\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        then: print(Counter().plus(other: 7))\n")
           call (first (main-work-body prog))
           msg  (get-in call [:args 1])]
       (is (= "plusWithother:" (:selector msg)))
@@ -590,7 +620,7 @@ def main:
 
 (deftest f40-atom-observable-defaults-fill-when-omitted
   (testing "counter.plus() with other defaulted uses default (F67 L4)."
-    (let [prog (lower-src "def Counter:\n    n: Int = 10\n\n    plus(other: Int = 3) :< n + other\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        then: print(Counter().plus())\n")
+    (let [prog (lower-src "def Counter:\n    n: Int! = 10\n\n    plus(other: Int = 3) :< n + other\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        then: print(Counter().plus())\n")
           call (first (main-work-body prog))
           msg  (get-in call [:args 1])]
       (is (= "plusWithother:" (:selector msg)))
@@ -599,7 +629,7 @@ def main:
 
 (deftest f40-atom-observable-named-out-of-order-reorders
   (testing "counter.plus3(c: 3, a: 1, b: 2) — reordered to decl order (F67 L4 parametric observable)."
-    (let [prog (lower-src "def Counter:\n    n: Int = 0\n\n    plus3(a: Int, b: Int, c: Int) :< n + a + b + c\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        then: print(Counter().plus3(c: 3, a: 1, b: 2))\n")
+    (let [prog (lower-src "def Counter:\n    n: Int! = 0\n\n    plus3(a: Int, b: Int, c: Int) :< n + a + b + c\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        then: print(Counter().plus3(c: 3, a: 1, b: 2))\n")
           call (first (main-work-body prog))
           msg  (get-in call [:args 1])
           arg-values (mapv :value (:args msg))]
@@ -607,7 +637,7 @@ def main:
 
 (deftest f40-record-observable-defaults-fill-when-omitted
   (testing "record parametric observable with param default inserts default at call site (F67 L4)."
-    (let [prog (lower-src "def V:\n    x: Int\n\n    scaled(factor: Int = 4) :< x * factor\n\ndef main:\n    -> running\n        then: print(V(x: 5).scaled())\n")
+    (let [prog (lower-src "def V:\n    x: Int!\n\n    scaled(factor: Int = 4) :< x * factor\n\ndef main:\n    -> running\n        then: print(V(x: 5).scaled())\n")
           call (first (main-work-body prog))
           inner (get-in call [:args 1])]
       (is (= :call (:node inner)))
@@ -631,7 +661,7 @@ def main:
 
 (deftest f27-emit-renders-gnu-stmt-expr
   (testing "when: -10 <= val <= 10 emits a GNU stmt-expr binding _val once"
-    (let [prog (lower-src "def main:\n    val: Int = 5\n\n    -> running\n\n    running <: bump -> self\n        when: -10 <= val <= 10\n        then: val => val + 1\n")
+    (let [prog (lower-src "def main:\n    val: Int! = 5\n\n    -> running\n\n    running <: bump -> self\n        when: -10 <= val <= 10\n        then: val => val + 1\n")
           c-src (emit/emit prog)]
       ;; The interior operand is bound to __cxc_cc_1 via __typeof__.
       (is (str/includes? c-src "__typeof__(_val) __cxc_cc_1 = (_val);"))
@@ -676,7 +706,7 @@ def main:
 
 (deftest is-nil-emits-pointer-eq
   (testing "`x is nil` → `x == nil` at emit layer (pointer identity in ObjC)"
-    (let [prog (lower-src "def Counter:\n    raw_other: Counter = nil\n\n    other :< raw_other\n\ndef main:\n    -> running\n        then: print(Counter().other is nil)\n")
+    (let [prog (lower-src "def Counter:\n    raw_other: Counter = nil\n\n    other :< raw_other\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        then: print(Counter().other is nil)\n")
           call (first (main-work-body prog))
           expr (get-in call [:args 1])]
       (is (= :binop (:node expr)))
@@ -719,7 +749,7 @@ def main:
 
 (deftest method-call-lowers-to-c-function-call
   (testing "v.plus(other) → :call {:fn V_plus :args [v other]} — F67 L4 parametric observable dispatch"
-    (let [prog (lower-src "def V:\n    x: Float\n    y: Float\n\n    plus(other: V) :< V(x: self.x + other.x, y: self.y + other.y)\n\ndef main:\n    -> running\n        then: print(V(x: 1.0, y: 2.0).plus(V(x: 3.0, y: 4.0)).x)\n")
+    (let [prog (lower-src "def V:\n    x: Float!\n    y: Float!\n\n    plus(other: V) :< V(x: self.x + other.x, y: self.y + other.y)\n\ndef main:\n    -> running\n        then: print(V(x: 1.0, y: 2.0).plus(V(x: 3.0, y: 4.0)).x)\n")
           print-call (first (get-in prog [:main :body]))
           field-node (get-in print-call [:args 1])
           plus-call  (:target field-node)]
@@ -734,7 +764,7 @@ def main:
 (deftest message-triggered-transition-lowers-to-objc-method
   (testing "`alive <: bump -> alive then: n => n + 1` → :objc-method with one transition-branch"
     (let [prog (lower-src "def Counter:
-    n: Int = 0
+    n: Int! = 0
 
     -> alive
 
@@ -764,6 +794,8 @@ def main:
                  :rhs  {:node :binop :op "+"
                         :left  {:node :name :sym "_n"}
                         :right {:node :int  :value 1}}}
+                {:node :raw-c
+                 :text "if ((_n) == nil) cxc_nonnil_violation(\"def-atom `Counter` field write\", \"n\");"}
                 {:node :objc-msg
                  :recv {:node :name :sym "self"}
                  :selector "checkInvariants"
@@ -822,7 +854,7 @@ def main:
 (deftest header-and-body-when-guards-and-fold-into-single-branch-guard
   (testing "`when: by > 0` and body `when: hp > 0` AND together on the branch"
     (let [prog (lower-src "def Enemy:
-    hp: Int = 10
+    hp: Int! = 10
 
     -> alive
 
@@ -937,7 +969,7 @@ def main:
 (deftest width-variants-preserve-c-type-across-observable-return
   (testing "Phase D F36a Landing 1b — width variants (`[:int 32]`/`[:uint 8]`/`[:float 32]`) carry their C type in metadata so `type-kw->c-type` picks the correct width for observable return types. Prior to 1b, all integer widths collapsed to `int64_t` at observable boundary regardless of the source width."
     (let [prog (lower-src "def Counter:
-    n: UInt8 = 0
+    n: UInt8! = 0
     small_next :< n
 
     -> running
@@ -952,7 +984,7 @@ def main:
           obs  (first (filter #(= "small_next" (:selector %)) (:methods cls)))]
       (is (some? obs) "observable emitted as an :objc-method under :methods")
       (is (= "uint8_t" (:return-type obs))
-          "observable that reads a UInt8 field returns uint8_t, not int64_t"))))
+          "observable that reads a non-Optional UInt8! field returns uint8_t, not int64_t"))))
 
 (deftest sized-numeric-atoms-lower-to-correct-c-types
   (testing "Phase D F36a Landing 1a — spec §3.1 primitive substrate. Sized atoms UInt8/16/32/64, Int8/16/32/64, Double flow through primitive-c-type to their exact C widths. Int aliased to Int64. Float is 32-bit (fixes v0.11 lowering bug — was double)."
@@ -978,18 +1010,18 @@ def main:
           field-c-type (fn [n] (-> (filter #(= n (:name %)) (:fields widths))
                                    first :c-type))]
       (is (some? widths) "Widths struct emitted")
-      (is (= "uint8_t"  (field-c-type "u8")))
-      (is (= "uint16_t" (field-c-type "u16")))
-      (is (= "uint32_t" (field-c-type "u32")))
-      (is (= "uint64_t" (field-c-type "u64")))
-      (is (= "int8_t"   (field-c-type "i8")))
-      (is (= "int16_t"  (field-c-type "i16")))
-      (is (= "int32_t"  (field-c-type "i32")))
-      (is (= "int64_t"  (field-c-type "i64")))
-      (is (= "int64_t"  (field-c-type "n"))  "Int alias for Int64")
-      (is (= "float"    (field-c-type "f"))  "Float is 32-bit IEEE 754 (fix)")
-      (is (= "double"   (field-c-type "d"))  "Double is 64-bit IEEE 754")
-      (is (= "int"      (field-c-type "b"))  "Bool unchanged — future work"))))
+      (is (= "_Cxc_Optional_UInt8"  (field-c-type "u8")))
+      (is (= "_Cxc_Optional_UInt16" (field-c-type "u16")))
+      (is (= "_Cxc_Optional_UInt32" (field-c-type "u32")))
+      (is (= "_Cxc_Optional_UInt64" (field-c-type "u64")))
+      (is (= "_Cxc_Optional_Int8"   (field-c-type "i8")))
+      (is (= "_Cxc_Optional_Int16"  (field-c-type "i16")))
+      (is (= "_Cxc_Optional_Int32"  (field-c-type "i32")))
+      (is (= "_Cxc_Optional_Int64"  (field-c-type "i64")))
+      (is (= "_Cxc_Optional_Int64"  (field-c-type "n"))  "Int aliases Int64 inside Optional storage")
+      (is (= "_Cxc_Optional_Float"  (field-c-type "f"))  "Float remains 32-bit inside Optional storage")
+      (is (= "_Cxc_Optional_Double" (field-c-type "d"))  "Double remains 64-bit inside Optional storage")
+      (is (= "_Cxc_Optional_Bool"   (field-c-type "b"))  "Bool uses Optional value storage"))))
 
 (deftest non-numeric-substrate-lowers-to-correct-c-types
   (testing "Phase D F36a Landing 3a — spec §3.1 non-numeric substrate (Any/Bytes). Bytes and Any resolve as reference-typed field storage. Unit/Never return-type mapping to `void` is not testable under F67 L4 observables (no explicit return type annotation); tracked as a follow-on for a `name(args) -> T :< expr` observable-return-type surface."
@@ -1200,13 +1232,13 @@ def main:
             (:c-type (first (filter #(= "value" (:name %))
                                     (:properties (first (filter #(= nm (:name %))
                                                                 (:classes prog))))))))]
-      (is (= "uint8_t"  (value-c-type "Age"))       "[0..150] → UInt8")
-      (is (= "uint16_t" (value-c-type "Port"))      "[1..65535] → UInt16")
-      (is (= "int8_t"   (value-c-type "Temp"))      "[-128..127] → Int8")
-      (is (= "int16_t"  (value-c-type "Signed16")) "[-1000..1000] → Int16")
-      (is (= "int64_t"  (value-c-type "OneBound"))
+      (is (= "_Cxc_Optional_UInt8"  (value-c-type "Age"))       "[0..150] → Optional UInt8")
+      (is (= "_Cxc_Optional_UInt16" (value-c-type "Port"))      "[1..65535] → Optional UInt16")
+      (is (= "_Cxc_Optional_Int8"   (value-c-type "Temp"))      "[-128..127] → Optional Int8")
+      (is (= "_Cxc_Optional_Int16"  (value-c-type "Signed16")) "[-1000..1000] → Optional Int16")
+      (is (= "_Cxc_Optional_Int64"  (value-c-type "OneBound"))
           "only lower bound → no narrowing (MVP requires both bounds)")
-      (is (= "int64_t"  (value-c-type "Unbounded"))
+      (is (= "_Cxc_Optional_Int64"  (value-c-type "Unbounded"))
           "no invariants → no narrowing"))))
 
 (deftest picker-narrowed-field-still-fires-pre-store-invariant-check
@@ -1237,8 +1269,8 @@ def main:
           first-assign-idx (first (keep-indexed
                                     #(when (= :assign (:node %2)) %1)
                                     body))]
-      (is (= "uint8_t" (:c-type value-prop))
-          "picker narrowed value to uint8_t")
+      (is (= "_Cxc_Optional_UInt8" (:c-type value-prop))
+          "picker narrowed value to UInt8 inside Optional storage")
       (is (= 2 (count checks))
           "one pre-store check per invariant predicate")
       (is (< last-check-idx first-assign-idx)
@@ -1318,8 +1350,8 @@ def main:
                                (:methods cls)))
           body (:body state)
           pre-checks (filter #(= :invariant-check (:node %)) body)]
-      (is (= "uint8_t" (:c-type value-prop))
-          "picker narrows Age.value storage to uint8_t")
+      (is (= "_Cxc_Optional_UInt8" (:c-type value-prop))
+          "picker narrows Age.value to UInt8 inside Optional storage")
       (is (= "int64_t" (:c-type (first init-params)))
           "ctor param stays int64_t — the wide source that the pre-check runs against")
       (is (= 2 (count pre-checks))
@@ -1348,7 +1380,7 @@ def main:
          clojure.lang.ExceptionInfo
          #"subscript `expr\[i\]` on target of type :int"
          (lower-src "def R:
-    n: Int
+    n: Int!
 
     first() :< self.n[0]
 
@@ -2500,6 +2532,68 @@ def main:
          #"`Int\?` — the `\?` suffix is banned universally.*§3\.6\.1.*bare `Int`.*`Int!`"
          (lower-src "def X:\n    n: Int? = nil\n\ndef main:\n    -> running\n        then: print(0)\n")))))
 
+(deftest f39-l5b-ii-c-value-typed-nil-default-accepted
+  (testing "F39 Landing 5b-ii-c (2026-08-22) — the L5b-i fence is retired: bare value-typed `T = nil` now lowers to Optional storage with a `{present:0}` init. Covers primitive (Int) on the atom-declaration path where the default is inlined into `cxc_stateInit`."
+    (let [prog (lower-src "def X:\n    n: Int = nil\n\n    -> running\n\n    -> end\n\ndef main:\n    x: X = X()\n\n    -> end\n        then: print(0)\n")]
+      (is (= :objc-program (:node prog))
+          "value-typed `Int = nil` lowers cleanly under Optional storage"))))
+
+(deftest f39-l5b-i-value-typed-nonnil-nil-default-still-rejected
+  (testing "F39 Landing 5b-ii-c — `T!` opts out of Optional storage, so `Int! = nil` is still a fence-worthy contract violation: the storage is scalar `int64_t` and `_n = nil` is uncompilable. The L5b-i fence retirement in Sub-P was gated on `:optional?`, so `T!` fields (never Optional) keep the fence active."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"F39 L5b-i: value-typed field `n: Int!`"
+         (lower-src "def X:\n    n: Int! = nil\n\n    -> running\n\n    -> end\n\ndef main:\n    x: X = X()\n\n    -> end\n        then: print(0)\n")))))
+
+(deftest f39-l5b-ii-c-record-typed-nil-default-accepted
+  (testing "F39 Landing 5b-ii-c — record-typed fields (value-shaped structs) now accept `= nil` via Optional-boxed storage. The exact game-toys.cxc shape (`ActionMachine.fireball_target: Position = nil`) is unblocked."
+    (let [prog (lower-src "def Position:\n    x: Int = 0\n    y: Int = 0\n\ndef X:\n    p: Position = nil\n\n    -> running\n\n    -> end\n\ndef main:\n    x: X = X()\n\n    -> end\n        then: print(0)\n")]
+      (is (= :objc-program (:node prog))
+          "record-typed `Position = nil` lowers cleanly under Optional storage"))))
+
+(deftest f39-l5b-ii-d-then-update-value-nonnil-inserts-runtime-check
+  (testing "F39 Landing 5b-ii-d — assigning an Optional-typed RHS into a value-typed `T!` field emits a runtime presence check via `:c-value-nonnil-unwrap`. On absent the same warning-grade `cxc_nonnil_violation` L3 uses for reference `T!` fires; the underlying `.value` is taken either way (warning-grade, no abort). Site + name labels name the atom + field."
+    (let [prog   (lower-src "def X:\n    strict: Int! = 0\n    loose: Int = 5\n\n    -> running\n\n    running <: bump -> running\n        then: strict => loose\n\ndef main:\n    -> running\n        then: print(0)\n")
+          cls    (first (filter #(= "X" (:name %)) (:classes prog)))
+          bump   (first (filter #(= "bump" (:selector %)) (:methods cls)))
+          assign (first (filter #(and (map? %)
+                                      (= :assign (:node %))
+                                      (= "_strict" (get-in % [:lhs :sym])))
+                                (tree-seq coll? seq bump)))]
+      (is (some? assign) "assign to `_strict` present somewhere in bump method body (inside :transition-branch → :end-catch-wrap)")
+      (is (= :c-value-nonnil-unwrap (get-in assign [:rhs :node]))
+          "RHS wraps the loose (Optional) value in a runtime presence check")
+      (is (re-find #"value-typed T!"
+                   (get-in assign [:rhs :site]))
+          "site label mentions value-typed T!")
+      (is (= "strict" (get-in assign [:rhs :name]))
+          "name label is the field name"))))
+
+(deftest f39-l5b-ii-d-method-return-value-nonnil-inserts-runtime-check
+  (testing "F39 Landing 5b-ii-d — a def-atom method whose `:cxc-return-ty-node` is `:type-nonnil` (`-> T!`) and whose body reads a bare Optional field emits the runtime presence check on the return path. Reuses the L3 `_Cxc_ret` var-decl + return triple; the check node is `:c-value-nonnil-unwrap` on the return-value binding, replacing L3's pointer nonnil-check for value-typed returns. Only protocol-inherited defaults (Proposal G collapse leaves observables without a return-type annotation surface) carry `:type-nonnil` on `:cxc-return-ty-node`, so the test shape is `extend X(P):` inheriting `strict_read() -> Int!` from P."
+    (let [prog     (lower-src "def P:\n    accepts:\n        strict_read() -> Int!\n\n    strict_read() :< n\n\ndef X:\n    n: Int = 0\n\n    -> running\n\nextend X(P):\n    _dummy() :< 1\n\ndef main:\n    -> running\n        then: print(0)\n")
+          cls      (first (filter #(= "X" (:name %)) (:classes prog)))
+          m        (first (filter #(= "strict_read" (:selector %)) (:methods cls)))
+          ret-decl (first (filter #(and (map? %)
+                                        (= :var-decl (:node %))
+                                        (= "_Cxc_ret" (:name %)))
+                                  (tree-seq coll? seq m)))]
+      (is (some? m) "strict_read method is emitted on X (inherited from P)")
+      (is (= "int64_t" (:return-type m))
+          "return type lowers to int64_t (value-typed Int!)")
+      (is (some? ret-decl) "return-value var-decl present")
+      (is (= :c-value-nonnil-unwrap (get-in ret-decl [:rhs :node]))
+          "return binding wraps the Optional read in a runtime presence check")
+      (is (re-find #"strict_read.*value-typed T!"
+                   (get-in ret-decl [:rhs :site]))
+          "site label mentions method name + value-typed T!"))))
+
+(deftest f39-l5b-i-reference-typed-nil-default-still-accepted
+  (testing "F39 Landing 5b-i — reference-typed fields (atoms, String) are UNAFFECTED. `_x = nil` is valid ObjC for pointer/id storage, so the fence deliberately excludes them. Guards against a regression where the fence overreaches into the reference-typed path already covered by F31/F35 install/cascade wiring. Counter needs `-> alive` here to parse as an atom (F68: def with no transitions is a record — a records-typed field would trip the fence, which is spec-correct)."
+    (let [prog (lower-src "def Counter:\n    n: Int = 0\n\n    -> alive\n\n    -> end\n\ndef X:\n    c: Counter = nil\n    s: String = nil\n\n    -> running\n\n    -> end\n\ndef main:\n    x: X = X()\n\n    -> end\n        then: print(0)\n")]
+      (is (= :objc-program (:node prog))
+          "reference-typed `= nil` defaults still lower cleanly"))))
+
 (deftest f33-cross-atom-data-field-read-allowed
   (testing "F33 (Proposal C+C1, 2026-08-17 rewrite): external `.field` reads on any atom are spec-legal. Reading is observation, not mutation; the previous cross-atom-read diagnostic was retracted. External mutation is impossible by grammar (parse has no `:assign`), so the encapsulation firewall is structural without needing a read-blocking guard."
     (let [prog (lower-src "def Counter:\n    n: Int = 42\n\ndef main:\n    -> running\n        then: print(Counter().n)\n")]
@@ -2520,7 +2614,7 @@ def main:
 
 (deftest f67-l2-parametric-observable-lowers-with-args
   (testing "F67 L2 (Proposal G): parametric observables `<name>(args) :< <expr>` emit as ObjC methods with declared params. The observable body may reference both self-fields and its own args; both resolve during type inference. Under Proposal G this shape replaces reader methods — `function healed_by(self, amt) -> Int: return self.hp + amt` migrates to `healed_by(amt: Int) :< hp + amt`."
-    (let [prog (lower-src "def Player:\n    hp: Int = 100\n    max_hp: Int = 100\n\n    healed_by(amt: Int) :< hp + amt\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        then: print(0)\n")
+    (let [prog (lower-src "def Player:\n    hp: Int! = 100\n    max_hp: Int! = 100\n\n    healed_by(amt: Int) :< hp + amt\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        then: print(0)\n")
           cls  (first (filter #(= "Player" (:name %)) (:classes prog)))
           obs  (first (filter #(re-matches #"healed_by.*" (or (:selector %) "")) (:methods cls)))]
       (is (some? obs) "parametric observable emits as :objc-method")
@@ -2841,3 +2935,322 @@ def main:
   (testing "F38 — `List of Int` on a record is not rejected by this diagnostic; the field's `:cxc-ty` is the synthesized container class name (`_Cxc_ListOfInt`), which is explicitly excluded from the agent check via `:kind :list-container`."
     (let [prog (lower-src "def X:\n    xs: List of Int\n\ndef main:\n    -> running\n        then: print(0)\n")]
       (is (= :objc-program (:node prog))))))
+
+(deftest f39-l5b-ii-a-optional-type-name-mangling
+  (testing "F39 Landing 5b-ii-a (2026-08-21) — `optional-type-name` mangles a value-type name into the Optional-boxed C typedef name. `Int` canonicalizes to `Int64` per §3.1 (prelude alias). Other primitives, records, and enums pass through unchanged."
+    (is (= "_Cxc_Optional_Int64"    (lower/optional-type-name "Int")))
+    (is (= "_Cxc_Optional_Int32"    (lower/optional-type-name "Int32")))
+    (is (= "_Cxc_Optional_Bool"     (lower/optional-type-name "Bool")))
+    (is (= "_Cxc_Optional_Double"   (lower/optional-type-name "Double")))
+    (is (= "_Cxc_Optional_Position" (lower/optional-type-name "Position")))))
+
+(deftest f39-l5b-ii-c-collect-emits-optional-typedefs-for-bare-value-fields
+  (testing "F39 Landing 5b-ii-c (2026-08-22) — flip landed: `collect-optional-types` scans record/atom envs for value-typed bare-`T` fields and emits the corresponding `_Cxc_Optional_<T>` typedefs (`_Cxc_Optional_Int64` for Int, plus `_Cxc_Optional_Bool` always when any Optional exists so ord binops have somewhere to land)."
+    (let [prog (lower-src "def X:\n    n: Int = 5\n\n    -> running\n\n    -> end\n\ndef main:\n    x: X = X()\n\n    -> end\n        then: print(0)\n")
+          opt-names (set (keep #(when (str/starts-with? (:name %) "_Cxc_Optional_")
+                                  (:name %))
+                               (:structs prog)))]
+      (is (= :objc-program (:node prog)))
+      (is (contains? opt-names "_Cxc_Optional_Int64")
+          "Int field flip produces `_Cxc_Optional_Int64`")
+      (is (contains? opt-names "_Cxc_Optional_Bool")
+          "Bool typedef always included when any Optional field exists (ord-binop result target)"))))
+
+(deftest f39-l6-coalesce-parses-and-lowers-reference-nullable
+  (testing "F39 Landing 6 (2026-08-21) — `??` coalesce parses as a low-precedence binary op (same as `or`) and lowers to `:c-coalesce {:mode :reference}` for a nullable-reference LHS. Reference case: `Counter().other ?? Counter()` — .other is Counter-typed and nullable-by-default. Lowered form binds LHS once via a GNU statement-expression, then ternaries on `!= nil`."
+    (let [prog (lower-src (str "def Counter:\n"
+                               "    other: Counter = nil\n\n"
+                               "    -> alive\n\n"
+                               "    -> end\n\n"
+                               "def main:\n"
+                               "    fallback: Counter = Counter()\n"
+                               "    picked: Counter = Counter().other ?? fallback\n\n"
+                               "    -> end\n"
+                               "        then: print(0)\n"))
+          state-init (main-work-body prog)
+          picked-assign (first (filter #(and (= :assign (:node %))
+                                             (= "_picked" (get-in % [:lhs :sym])))
+                                       state-init))]
+      (is (some? picked-assign) "picked assignment landed in cxc_stateInit")
+      (is (= :c-coalesce (get-in picked-assign [:rhs :node]))
+          "RHS is a :c-coalesce node")
+      (is (= :reference (get-in picked-assign [:rhs :mode]))
+          ":mode is :reference (LHS is nullable Counter pointer, not Optional-boxed)"))))
+
+(deftest f39-l6-coalesce-emits-single-eval-ternary
+  (testing "F39 Landing 6 — emit renders `:c-coalesce :reference` as a GNU statement-expression that binds LHS to `__cxc_coal` once (avoiding double-eval of side-effecting LHS like a method call) and ternaries on `!= nil`."
+    (let [prog (lower-src (str "def Counter:\n"
+                               "    other: Counter = nil\n\n"
+                               "    -> alive\n\n"
+                               "    -> end\n\n"
+                               "def main:\n"
+                               "    fallback: Counter = Counter()\n"
+                               "    picked: Counter = Counter().other ?? fallback\n\n"
+                               "    -> end\n"
+                               "        then: print(0)\n"))
+          c-src (emit/emit prog)]
+      (is (str/includes? c-src "__cxc_coal")
+          "emitted C contains the single-eval binding name")
+      (is (str/includes? c-src "!= nil")
+          "emitted C contains reference-mode nil check"))))
+
+(deftest f39-l6-coalesce-right-hand-side-required
+  (testing "F39 Landing 6 — `??` is a binary infix op; a missing RHS is a parse error. This is what makes `??` the ergonomic \"force unwrap\": the user MUST provide a fallback, they can't accidentally get a raw T without saying what nil should become. Guards the design property from a future parser refactor accidentally making RHS optional."
+    (is (thrown? clojure.lang.ExceptionInfo
+                 (lower-src "def main:\n    x: Int = nil ??\n\n    -> end\n        then: print(0)\n")))))
+
+;; ---------------------------------------------------------------------------
+;; F39 Landing 7 — `if let x = maybe:` scoped unwrap (statement form).
+;; ---------------------------------------------------------------------------
+
+(deftest f39-l7-if-let-parses-into-if-let-ast
+  (testing "F39 Landing 7 — `if let <ident> [: T] = <expr>: <block> [else: <block>]` parses to `{:node :if-let :bindings [...] :then <block> :else <block-or-nil>}`. Single-binding form with an else-block. `let` is dispatched from `if` — bare `if <cond>:` (without `let`) fires a targeted `parse-if-let-statement` reject pointing at K5 deferral."
+    (let [prog (lower-src (str "def Slot:\n    n: Int! = 5\n\n    -> alive\n\n"
+                               "def X:\n"
+                               "    other: Slot\n\n"
+                               "    -> running\n\n"
+                               "    running <: bump -> running\n"
+                               "        then:\n"
+                               "            if let s = other:\n"
+                               "                print(1)\n"
+                               "            else:\n"
+                               "                print(0)\n\n"
+                               "def main:\n"
+                               "    -> running\n        then: print(0)\n"))]
+      (is (= :objc-program (:node prog))
+          "if-let statement inside a then: block lowers cleanly to an objc-program"))))
+
+(deftest f39-l7-if-let-reference-nullable-emits-nested-if-with-nil-guard
+  (testing "F39 Landing 7 — reference-typed RHS (nullable atom) lowers to a `:c-scope` wrapping [{:node :var-decl} for the tmp, {:node :c-if-chain} for the guard]. The guard branch's first stmt is the unwrapped binding (`Slot * s = __cxc_ifl_0`), followed by the user then-body. The else-block is present when supplied."
+    (let [prog (lower-src (str "def Slot:\n    n: Int! = 5\n\n    -> alive\n\n"
+                               "def X:\n"
+                               "    other: Slot\n\n"
+                               "    -> running\n\n"
+                               "    running <: bump -> running\n"
+                               "        then:\n"
+                               "            if let s = other:\n"
+                               "                print(1)\n"
+                               "            else:\n"
+                               "                print(0)\n\n"
+                               "def main:\n"
+                               "    -> running\n        then: print(0)\n"))
+          c-src (emit/emit prog)]
+      (is (str/includes? c-src "__cxc_ifl_0") "scoped tmp is present in emit")
+      (is (str/includes? c-src "!= nil") "reference-nullable guard is `!= nil`")
+      (is (str/includes? c-src "Slot * s = __cxc_ifl_0")
+          "unwrapped binding shadows the tmp inside the true-branch"))))
+
+(deftest f39-l7-if-let-optional-value-emits-presence-check-and-value-extract
+  (testing "F39 Landing 7 — Optional-boxed value RHS (bare `T` where `T` is a value type) lowers to a presence-check guard `__cxc_ifl_0.present` and a `.value` extract into the unwrapped local. The user local's C type is the inner raw `T`, not the Optional envelope, so subsequent uses work with the scalar."
+    (let [prog (lower-src (str "def X:\n"
+                               "    n: Int = 5\n\n"
+                               "    -> running\n\n"
+                               "    running <: bump -> running\n"
+                               "        then:\n"
+                               "            if let x = n:\n"
+                               "                print(x + 1)\n\n"
+                               "def main:\n"
+                               "    -> running\n        then: print(0)\n"))
+          c-src (emit/emit prog)]
+      (is (str/includes? c-src "_Cxc_Optional_Int64 __cxc_ifl_0")
+          "tmp is typed as the Optional envelope")
+      (is (str/includes? c-src "__cxc_ifl_0.present")
+          "guard reads the presence byte")
+      (is (str/includes? c-src "int64_t x = __cxc_ifl_0.value")
+          "unwrapped local is the inner raw type via `.value`"))))
+
+(deftest f39-l7-if-let-no-else-branch-is-legal
+  (testing "F39 Landing 7 — the else-block is optional; when omitted, guard-fail falls through with no-op. Common shape for `if let x = maybe: emit(x)` style dispatch. Emit has no `else { ... }` clause on the `:c-if-chain`."
+    (let [prog (lower-src (str "def Slot:\n    n: Int! = 5\n\n    -> alive\n\n"
+                               "def X:\n"
+                               "    other: Slot\n\n"
+                               "    -> running\n\n"
+                               "    running <: bump -> running\n"
+                               "        then:\n"
+                               "            if let s = other:\n"
+                               "                print(1)\n\n"
+                               "def main:\n"
+                               "    -> running\n        then: print(0)\n"))
+          c-src (emit/emit prog)]
+      (is (str/includes? c-src "__cxc_ifl_0")
+          "if-let compiles cleanly without else")
+      ;; No else clause on the if-let branch — check the tmp-decl is not
+      ;; followed by an `else` keyword. This is a coarse check; the
+      ;; structural form is verified by "compiles cleanly + no-else emit
+      ;; pattern".
+      (let [ifl-idx (str/index-of c-src "__cxc_ifl_0")
+            slice    (subs c-src ifl-idx (min (count c-src) (+ ifl-idx 300)))]
+        (is (not (str/includes? slice " else "))
+            "no else branch in the emitted if-chain when source omits it")))))
+
+(deftest f39-l7-if-let-multi-binding-nests-and-short-circuits
+  (testing "F39 Landing 7 — `if let a = ma, let b = mb:` nests each binding's temp-decl inside the previous guard's true-branch so later RHS aren't evaluated when an earlier guard fails. Emit shows `_b` read only inside the `.present` guard of `_a`. Else-block is textually duplicated once per binding depth (semantic impact nil — one fail-path runs per invocation)."
+    (let [prog (lower-src (str "def X:\n"
+                               "    a: Int = 5\n"
+                               "    b: Int = 10\n\n"
+                               "    -> running\n\n"
+                               "    running <: bump -> running\n"
+                               "        then:\n"
+                               "            if let x = a, let y = b:\n"
+                               "                print(x + y)\n"
+                               "            else:\n"
+                               "                print(0)\n\n"
+                               "def main:\n"
+                               "    -> running\n        then: print(0)\n"))
+          c-src (emit/emit prog)
+          ifl0-idx  (str/index-of c-src "__cxc_ifl_0")
+          ifl1-idx  (str/index-of c-src "__cxc_ifl_1")
+          guard0-idx (str/index-of c-src "__cxc_ifl_0.present")
+          decl1-idx  (when ifl1-idx
+                       (str/index-of c-src "_Cxc_Optional_Int64 __cxc_ifl_1"))]
+      (is (some? ifl0-idx) "first tmp declared")
+      (is (some? ifl1-idx) "second tmp declared")
+      (is (some? guard0-idx) "first guard reads .present on __cxc_ifl_0")
+      (is (< guard0-idx decl1-idx)
+          "second tmp's declaration is inside (below) the first guard — short-circuit"))))
+
+(deftest f39-l7-if-let-non-nullable-rhs-rejected
+  (testing "F39 Landing 7 — a non-nullable RHS (scalar `T!` value or already-unwrapped value) has no nil case to unwrap, so `if let x = <scalar>` is a category error. Diagnostic key `:cxc-f39-if-let-non-nullable-rhs`; message points at `let` (plain binding) or `??` (fallback) as alternatives."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"F39 L7.*requires a nullable RHS"
+         (lower-src (str "def X:\n"
+                         "    n: Int! = 5\n\n"
+                         "    -> running\n\n"
+                         "    running <: bump -> running\n"
+                         "        then:\n"
+                         "            if let x = n:\n"
+                         "                print(x)\n\n"
+                         "def main:\n"
+                         "    -> running\n        then: print(0)\n"))))))
+
+(deftest f39-l7-bare-if-without-let-rejected-with-k5-pointer
+  (testing "F39 Landing 7 — bare `if <cond>: <block>` (statement-form K5) is deferred; the parser emits a targeted reject pointing at `if let`, `when:` guards, and expression-position `<:` dispatch as alternatives. Guards against silent parse failure that would look like a generic 'expected ...' error."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"F39 L7.*only `if let"
+         (lower-src (str "def X:\n"
+                         "    n: Int = 5\n\n"
+                         "    -> running\n\n"
+                         "    running <: bump -> running\n"
+                         "        then:\n"
+                         "            if n:\n"
+                         "                print(0)\n\n"
+                         "def main:\n"
+                         "    -> running\n        then: print(0)\n"))))))
+
+;; ---------------------------------------------------------------------------
+;; F39 Landing 8 — `on_nil:` section + nil-receiver dispatch (spec §4.10.9).
+;; ---------------------------------------------------------------------------
+
+(deftest f39-l8-on-nil-section-collects-into-atom-env
+  (testing "F39 Landing 8 — `on_nil:` inside a def-atom body parses to `:on-nil-section` and folds into atom-env as `:on-nil-entries` map (method-name → raw const-value expr). Multiple entries stack; each maps to its declared value. Method-existence + const-shape validation runs at env-build time."
+    (let [prog (lower-src (str "def UserList:\n"
+                               "    n: Int! = 5\n\n"
+                               "    -> alive\n\n"
+                               "    count() :< 42\n\n"
+                               "    on_nil:\n"
+                               "        count: 7\n\n"
+                               "def X:\n"
+                               "    ul: UserList\n\n"
+                               "    -> running\n\n"
+                               "def main:\n"
+                               "    -> running\n        then: print(0)\n"))
+          ul   (first (filter #(= "UserList" (:name %)) (:classes prog)))]
+      ;; Presence check via emit: on_nil-guarded reads render as
+      ;; `_Cxc_recv = ...; (__cxc_recv != nil) ? ... : 7` inside a
+      ;; GNU stmt-expr. Env-fold shape is verified indirectly by the
+      ;; guarded emit fire; a direct :on-nil-entries assertion would
+      ;; require exporting the atom-env, which lower doesn't do today.
+      (is (some? ul)
+          "UserList lowers cleanly with the `on_nil:` section"))))
+
+(deftest f39-l8-on-nil-wraps-atom-method-call-in-nil-guarded-ternary
+  (testing "F39 Landing 8 — a `.method()` call on an atom that declares `on_nil: method: <const>` emits a GNU statement-expression binding the receiver once and ternary'ing on `!= nil`: non-nil dispatches the ObjC message; nil returns the declared constant. Eval-once matches L6-ref `??` / L5b-ii-d unwrap patterns for side-effecting receivers."
+    (let [prog  (lower-src (str "def UserList:\n"
+                                "    n: Int! = 5\n\n"
+                                "    -> alive\n\n"
+                                "    count() :< 42\n\n"
+                                "    on_nil:\n"
+                                "        count: 7\n\n"
+                                "def X:\n"
+                                "    ul: UserList\n\n"
+                                "    -> running\n\n"
+                                "    running <: bump -> running\n"
+                                "        then:\n"
+                                "            print(ul.count)\n\n"
+                                "def main:\n"
+                                "    -> running\n        then: print(0)\n"))
+          c-src (emit/emit prog)]
+      (is (str/includes? c-src "__cxc_recv")
+          "emit binds the receiver to a single-eval temp `__cxc_recv`")
+      (is (str/includes? c-src "(__cxc_recv != nil)")
+          "guard is `!= nil` on the temp")
+      (is (str/includes? c-src ": (7)")
+          "fallback constant is emitted in the else branch"))))
+
+(deftest f39-l8-on-nil-rejects-unknown-method
+  (testing "F39 Landing 8 — an `on_nil:` entry for a name that isn't a method or observable on the atom fires `:cxc-f39-on-nil-unknown-method` with a fix-it. Guards typos and stale entries. Protocol-inherited entries are validated by a follow-on pass and don't fire this reject today."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"declares `on_nil:` entry for `bogus`"
+         (lower-src (str "def UserList:\n"
+                         "    n: Int! = 5\n\n"
+                         "    -> alive\n\n"
+                         "    count() :< 42\n\n"
+                         "    on_nil:\n"
+                         "        bogus: 0\n\n"
+                         "def main:\n"
+                         "    -> running\n        then: print(0)\n"))))))
+
+(deftest f39-l8-on-nil-duplicate-entry-rejected
+  (testing "F39 Landing 8 — two entries for the same method name fire `:cxc-f39-on-nil-duplicate-entry`. Guards against ambiguous fallback selection (which const would win?). Diagnostic names the offending method."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"declares `on_nil:` entry `count` more than once"
+         (lower-src (str "def UserList:\n"
+                         "    n: Int! = 5\n\n"
+                         "    -> alive\n\n"
+                         "    count() :< 42\n\n"
+                         "    on_nil:\n"
+                         "        count: 7\n"
+                         "        count: 9\n\n"
+                         "def main:\n"
+                         "    -> running\n        then: print(0)\n"))))))
+
+(deftest f39-l8-on-nil-non-const-value-rejected
+  (testing "F39 Landing 8 — the fallback value must satisfy `default-expr-const-shape?` (spec §3.8.5): primitive literals / nil / unary `-`/`not` on those, plus ident (value-alias). A binop or method call as the fallback is rejected. Value must be constructible at compile time."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"on_nil entry `count`.*must be a compile-time constant"
+         (lower-src (str "def UserList:\n"
+                         "    n: Int! = 5\n\n"
+                         "    -> alive\n\n"
+                         "    count() :< 42\n\n"
+                         "    on_nil:\n"
+                         "        count: 1 + 2\n\n"
+                         "def main:\n"
+                         "    -> running\n        then: print(0)\n"))))))
+
+(deftest f39-l8-on-nil-not-applied-when-method-has-no-entry
+  (testing "F39 Landing 8 — methods without an `on_nil:` entry are unaffected: emit is the raw `.method` property access (ObjC nil-messaging returns 0 for scalar returns). No `__cxc_recv` wrapping for un-declared methods. Guards against overreach — `on_nil` fires only for methods explicitly listed."
+    (let [prog  (lower-src (str "def UserList:\n"
+                                "    n: Int! = 5\n\n"
+                                "    -> alive\n\n"
+                                "    count() :< 42\n"
+                                "    other() :< 99\n\n"
+                                "    on_nil:\n"
+                                "        count: 7\n\n"
+                                "def X:\n"
+                                "    ul: UserList\n\n"
+                                "    -> running\n\n"
+                                "    running <: bump -> running\n"
+                                "        then:\n"
+                                "            print(ul.other)\n\n"
+                                "def main:\n"
+                                "    -> running\n        then: print(0)\n"))
+          c-src (emit/emit prog)]
+      (is (str/includes? c-src "_ul.other")
+          "bare property access for the un-declared method")
+      (is (not (str/includes? c-src ": (7)"))
+          "no `on_nil` fallback in the emitted call site"))))

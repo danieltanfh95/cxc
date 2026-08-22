@@ -259,7 +259,11 @@
 ;; ---------------------------------------------------------------------------
 
 (def ^:private glyph-precedence
-  {"or" 1 "and" 2
+  ;; F39 L6 (2026-08-21) — `??` shares precedence with `or` (both
+  ;; produce a value from a "left or fallback" shape). Users who mix
+  ;; `??` with arithmetic/comparison parenthesize; same-precedence
+  ;; siblings are unusual in practice.
+  {"or" 1 "??" 1 "and" 2
    "==" 3 "!=" 3 "<=" 3 ">=" 3 "<" 3 ">" 3 "is" 3 "in" 3
    "+" 4 "-" 4
    "*" 5 "/" 5 "%" 5})
@@ -308,7 +312,7 @@
       ;; Use parens `(name: Type)` instead of `{name: Type}` — the
       ;; parser content-dispatches: parens containing typed params
       ;; parse as :msg-shape payload, parens containing value args
-      ;; parse as :call. See spec §1.11 and plans/f70-surface-facelift.md.
+      ;; parse as :call. See spec §1.11 and plans/archive/f70-surface-facelift.md.
       (at? tokens p :punct "{")
       (fail! tokens p
              (str "message-payload braces `{name: Type, ...}` are "
@@ -990,10 +994,90 @@
         [rhs p]  (parse-expr tokens p)]
     [{:node :let-stmt :name nm :type ty :expr rhs} p]))
 
+(defn- parse-if-let-statement
+  "F39 L7 (spec §3.6.1 lines 3693-3705) — scoped unwrap statement.
+     if let <ident> [: <type>] = <expr>[, let <ident> [: <type>] = <expr>]* :
+         <block>
+     [else:
+         <block>]
+   Body forms:
+     - block: `if let x = maybe:\\n    <stmts>` (indented)
+     - inline: `if let x = maybe: <single-stmt>` (same line)
+   Each binding wraps the true-branch scope with a nil-guard on the RHS
+   and binds the unwrapped local (raw `T` for value-Optional, non-nil
+   pointer for reference). Guards short-circuit left-to-right: later
+   bindings' RHS aren't evaluated when an earlier one is nil.
+
+   Expression form (`if let` yielding a value) is deferred to K5. L7
+   ships statement form only; K5 promotion is free — the AST already
+   holds the true / else blocks."
+  [tokens pos]
+  (let [[_ p]    (expect tokens pos :kw "if")
+        parse-one-binding
+        (fn [p]
+          (let [[_ p]  (expect tokens p :kw "let")
+                [nm p] (expect tokens p :ident)
+                [ty p] (if (and (at? tokens p :punct ":")
+                                (not (at? tokens (inc p) :newline))
+                                (not (at? tokens (inc p) :glyph "=")))
+                         (parse-type tokens (inc p))
+                         [nil p])
+                [_ p]  (expect tokens p :glyph "=")
+                [rhs p] (parse-expr tokens p)]
+            [{:name nm :type ty :expr rhs} p]))
+        [bindings p]
+        (loop [bindings [] p p]
+          (let [[b p2] (parse-one-binding p)
+                bs     (conj bindings b)]
+            (if (at? tokens p2 :punct ",")
+              (recur bs (inc p2))
+              [bs p2])))
+        [_ p]    (expect tokens p :punct ":")
+        [then p] (if (at? tokens p :newline)
+                   (let [[_ p] (expect tokens p :newline)
+                         [_ p] (expect tokens p :indent)]
+                     (loop [stmts [] p p]
+                       (cond
+                         (at? tokens p :dedent)
+                         [{:node :block :stmts stmts} (inc p)]
+                         (at? tokens p :newline)
+                         (recur stmts (inc p))
+                         :else
+                         (let [[s p2] (parse-statement tokens p)
+                               p3     (skip-newlines tokens p2)]
+                           (recur (conj stmts s) p3)))))
+                   (let [[s p2] (parse-statement tokens p)]
+                     [{:node :block :stmts [s]} p2]))
+        p        (skip-newlines tokens p)
+        [else-blk p]
+        (if (and (at? tokens p :kw "else")
+                 (at? tokens (inc p) :punct ":"))
+          (let [p (+ p 2)]
+            (if (at? tokens p :newline)
+              (let [[_ p] (expect tokens p :newline)
+                    [_ p] (expect tokens p :indent)]
+                (loop [stmts [] p p]
+                  (cond
+                    (at? tokens p :dedent)
+                    [{:node :block :stmts stmts} (inc p)]
+                    (at? tokens p :newline)
+                    (recur stmts (inc p))
+                    :else
+                    (let [[s p2] (parse-statement tokens p)
+                          p3     (skip-newlines tokens p2)]
+                      (recur (conj stmts s) p3)))))
+              (let [[s p2] (parse-statement tokens p)]
+                [{:node :block :stmts [s]} p2])))
+          [nil p])]
+    [{:node :if-let :bindings bindings :then then :else else-blk} p]))
+
 (defn- parse-statement
   "One statement:
      return <expr>
      let <name> [: <type>] = <expr>           — F18 L1 local binding
+     if let <name> [: <type>] = <expr>[, ...] :
+         <block>
+     [else: <block>]                          — F39 L7 scoped unwrap
      :> <msg>[(args)]                        — untargeted async emit
      |> <msg>[(args)]                        — untargeted sync emit
      <expr> :> <msg>[(args)]                 — targeted async send
@@ -1005,6 +1089,22 @@
     (at? tokens pos :kw "return")
     (let [[e p] (parse-expr tokens (inc pos))]
       [{:node :return :expr e} p])
+
+    ;; F39 L7 — `if let <ident> [: T] = <expr> [, ...]:  <block> [else: <block>]`
+    ;; scoped unwrap statement. Bare `if <expr>: <block>` (without `let`)
+    ;; is deferred to K5 (`if` as expression) — at L7 the parser accepts
+    ;; ONLY the `if let` shape, giving a targeted diagnostic for other
+    ;; `if` shapes (kept as a single reject site rather than proliferated
+    ;; through the dispatch).
+    (at? tokens pos :kw "if")
+    (if (at? tokens (inc pos) :kw "let")
+      (parse-if-let-statement tokens pos)
+      (fail! tokens pos
+             (str "F39 L7: only `if let <ident> = <expr>: <block>` is supported at "
+                  "statement position today. Bare `if <cond>: <block>` (K5 statement "
+                  "form) is not yet landed. Rewrite via `if let` (nil-guarded unwrap), "
+                  "a `when:` guard on a transition, or an expression-position `<:` "
+                  "dispatch block for pattern-matched branching.")))
 
     ;; F18 L1 — a `let` at statement position followed by `<ident> [: T] =`
     ;; is the local-binding form. Distinct from the transition `let:` sub-
@@ -1070,7 +1170,7 @@
                 "(spec §3.7.1 rationale 3). Write "
                 "`xs.for_each(e => body)` instead. For fold / map / "
                 "filter / sorted, use the corresponding method with "
-                "an inline lambda. See plans/f20-for-as-alias.md."))
+                "an inline lambda. See plans/archive/f20-for-as-alias.md."))
 
     ;; F69 L5 — `switch <expr>:` is retired at v1.0 (spec §3.7,
     ;; F69 atom unification 2026-08-18). Pattern-matched dispatch is
@@ -1088,7 +1188,7 @@
                 "    <expr>:\n"
                 "        <: pattern: <body>\n"
                 "        <: _: <body>\n\n"
-                "See plans/f69-atom-unification.md."))
+                "See plans/archive/f69-atom-unification.md."))
 
     ;; F17 L1 — statement-position `while <cond>: <body>`. `loop` is L2.
     (at? tokens pos :kw "while")
@@ -1113,7 +1213,7 @@
                     "=> ...`, the exit condition becomes `when: <cond>` "
                     "on a transition to the done phase, and the final "
                     "value is read via an observable. See "
-                    "plans/f17-loop-primitives.md §\"Why not `loop:`\"."))))
+                    "plans/archive/f17-loop-primitives.md §\"Why not `loop:`\"."))))
 
     (at? tokens pos :kw "continue")
     [{:node :continue-stmt} (inc pos)]
@@ -1414,7 +1514,7 @@
               "statements (`:>`, prefix `|> receiver.msg(args)`, "
               "calls, prints) in source order. Multiple `then:` "
               "blocks per transition body are legal (F22 exemption "
-              "for `then:`). See spec §1.11 and plans/f70-surface-facelift.md.")))
+              "for `then:`). See spec §1.11 and plans/archive/f70-surface-facelift.md.")))
 
 (defn- reject-legacy-let-type-annotation!
   "F23 — the pre-spec `let: k: Int = 2` shape (with `<Type> = <expr>`
@@ -1743,6 +1843,43 @@
          def-atom-body-has-atom-ctor-field-default?
          parse-accepts-section parse-accepts-signature)
 
+(defn- parse-on-nil-section
+  "F39 L8 (spec §4.10.9) — `on_nil:` section body:
+     on_nil:
+         method_a: <const-expr>
+         method_b: <const-expr>
+   Each entry names a method and a constant value returned at call sites
+   whose receiver is nil. Const-shape validation and method-existence
+   checks happen at lower-time (`build-atom-env` collects `:on-nil-entries`
+   and validates against the composed method table). Parser accepts any
+   expression on the RHS — invalid shapes fail with the standard
+   `validate-default-is-const!` diagnostic downstream."
+  [tokens pos]
+  (let [[_ p]  (expect tokens pos :ident)     ; "on_nil"
+        [_ p]  (expect tokens p :punct ":")
+        [_ p]  (expect tokens p :newline)
+        [_ p]  (expect tokens p :indent)]
+    (loop [entries [] p p]
+      (cond
+        (at? tokens p :dedent)
+        [{:node :on-nil-section :entries entries} (inc p)]
+
+        (at? tokens p :newline)
+        (recur entries (inc p))
+
+        (and (at? tokens p :ident)
+             (at? tokens (inc p) :punct ":"))
+        (let [[nm p] (expect tokens p :ident)
+              [_ p]  (expect tokens p :punct ":")
+              [v p]  (parse-expr tokens p)]
+          (recur (conj entries {:method nm :value v})
+                 (skip-newlines tokens p)))
+
+        :else
+        (fail! tokens p
+               (str "expected `<method_name>: <const-expr>` inside `on_nil:` "
+                    "section, or dedent to close the section"))))))
+
 (defn- parse-def-atom [tokens pos]
   (let [[_ p]      (expect tokens pos :kw "def")
         [name p]   (expect tokens p :ident)
@@ -1762,7 +1899,7 @@
               ;; Order matters: protocol (accepts:) > enum (case) > class
               ;; (transition, use:, or ctor params) > record (fields +
               ;; observables only, no ctor params). See
-              ;; compiler/design/plans/proposal-h-full-unification-under-
+              ;; compiler/design/plans/archive/proposal-h-full-unification-under-
               ;; def.md § "Structural detection".
               ;;
               ;; Ctor params are a class indicator: records auto-derive
@@ -1914,6 +2051,21 @@
         (let [[h p2] (parse-handler-decl tokens p)]
           (recur (conj body h) (skip-newlines tokens p2)))
 
+        ;; F39 L8 (spec §4.10.9) — `on_nil:` section carries per-method
+        ;; nil-receiver fallback constants:
+        ;;   on_nil:
+        ;;       method_a: <const-expr>
+        ;;       method_b: <const-expr>
+        ;; Each `method_name: value` pair binds the fallback returned at
+        ;; a call site when the receiver of `method_name` is nil.
+        ;; Validation (target existence, value type-check, const-shape)
+        ;; happens at lower-time in atom-env build.
+        (and (at? tokens p :ident)
+             (= "on_nil" (t-value (peek-tok tokens p)))
+             (at? tokens (inc p) :punct ":"))
+        (let [[s p2] (parse-on-nil-section tokens p)]
+          (recur (conj body s) (skip-newlines tokens p2)))
+
         ;; F67 L5 — top-level field declaration (replaces `data:` section
         ;; per Proposal D). Must precede `looks-like-transition?` because
         ;; a bare ident matches both; the `:punct ":"` guard picks fields
@@ -1928,7 +2080,7 @@
           (recur (conj body t) (skip-newlines tokens p2)))
 
         :else
-        (fail! tokens p "expected use:, field decl (`name: Type [= default]`), invariants:, deprecated:, observable (`name[(args)] :< expr`), accepts:, or transition inside def-atom body")))))
+        (fail! tokens p "expected use:, field decl (`name: Type [= default]`), invariants:, deprecated:, on_nil:, observable (`name[(args)] :< expr`), accepts:, or transition inside def-atom body")))))
 
 ;; ---------------------------------------------------------------------------
 ;; F68 L1 (Proposal H) — structural detection helpers for `def` reshape.
@@ -2409,7 +2561,7 @@
                     "Write `def " name-form ":` — the body-shape (fields / cases / "
                     "transitions) tells the compiler what kind of def it is (spec §3.3, "
                     "F69 atom unification 2026-08-18). See "
-                    "plans/f69-atom-unification.md.")))
+                    "plans/archive/f69-atom-unification.md.")))
 
       :else (fail! tokens p "expected top-level form"))))
 

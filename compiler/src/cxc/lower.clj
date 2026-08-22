@@ -129,6 +129,45 @@
    :text (str "if ((" expr-c ") == nil) cxc_nonnil_violation("
               (c-string-lit site) ", " (c-string-lit name) ");")})
 
+(defn- optional-ret-value?
+  "F39 L5b-ii-d — true iff a LOWERED expression node yields an Optional
+   (`_Cxc_Optional_<T>`) at C-level. Recognizes the emit-side
+   `:c-optional-*` shapes (already committed to Optional) and a `:field`
+   read of an ivar backed by an Optional-storage self-field. Used at
+   method-return check-insertion time; the raw-AST `infer-type` doesn't
+   run on lowered forms."
+  [node ctx]
+  (cond
+    (not (map? node)) false
+    (contains? #{:c-optional-binop :c-optional-unary :c-optional-dot
+                 :c-optional-chained-cmp :c-optional-nil-check
+                 :c-value-nonnil-unwrap :c-print-optional
+                 :c-optional-cond}
+               (:node node))
+    true
+
+    ;; `_field` direct ivar read on the enclosing atom.
+    (and (= :name (:node node))
+         (string? (:sym node))
+         (.startsWith ^String (:sym node) "_"))
+    (let [nm (subs (:sym node) 1)
+          f  (get (:self-fields ctx) nm)]
+      (boolean (:optional? f)))
+
+    :else false))
+
+(defn- optional-present-check-stmt
+  "F39 L5b-ii-d — runtime presence check on an Optional operand feeding
+   a `T!` value-typed observation point. `expr-c` is the rendered C
+   expression whose `.present` bit is inspected. On absent (present=0)
+   fires `cxc_nonnil_violation(site, name)` — the same warning-grade
+   runtime helper L3 uses for reference `T!` sites (spec §3.6.1 line
+   3686)."
+  [expr-c site name]
+  {:node :raw-c
+   :text (str "if (!(" expr-c ").present) cxc_nonnil_violation("
+              (c-string-lit site) ", " (c-string-lit name) ");")})
+
 (defn- validate-defaults-after-required!
   "Spec §3.8.5 rule 3: in any parameter list, all defaulted params must
    follow all non-defaulted (required) params. `f(x: Int = 0, y: Int)`
@@ -401,7 +440,8 @@
    ;; `Block[(params) -> R]` grammar with full signature support.
    "Block"   "void (^)(void)"})
 
-(declare base-type-name)
+(declare base-type-name optional-type-name type-kw->cxc-name-str
+         optional-tk? unwrap-tk)
 
 (defn- cxc-type->c
   "Primitives → C type name; records → own struct name (value); atoms →
@@ -469,6 +509,17 @@
         (fail-nyi! (str "cxc-type->c: `!` on unknown inner " (:node inner))
                    ty-node)))
     :type-ref
+    ;; F39 L5b-ii-b (2026-08-21) — `cxc-type->c` intentionally stays
+    ;; raw for `:type-ref` at this landing. The Optional-boxed flip
+    ;; applies to FIELD STORAGE only, done in `fields-from-data-
+    ;; section` where the field's `:nonnil?` flag is in scope and the
+    ;; POSITION (field vs param vs return) is unambiguous. Applying
+    ;; the flip here would cascade into ctor params + method params +
+    ;; return types, requiring call-site adaptation for every value-
+    ;; typed argument — a much larger surface than the field-storage
+    ;; landing. Params + returns get Optional-boxed in a follow-on
+    ;; sub-landing that pairs with call-site wrapping (L5b-ii-b* /
+    ;; L5b-ii-c).
     (let [nm (:name ty-node)]
       (cond
         (contains? primitive-c-type nm) (primitive-c-type nm)
@@ -655,6 +706,10 @@
     (= :block  tk) "void (^)(void)"
     ;; Width variants carry their C type in metadata (Landing 1b).
     (and (vector? tk) (:cxc-c-type (meta tk))) (:cxc-c-type (meta tk))
+    ;; F39 L5b-ii-c — Optional propagation. `[:optional inner]` renders
+    ;; as the synthesized `_Cxc_Optional_<inner-name>` typedef.
+    (and (vector? tk) (= :optional (first tk)))
+    (optional-type-name (type-kw->cxc-name-str (second tk)))
     (and (map? tk) (:record tk)) (:record tk)
     (and (map? tk) (:atom   tk)) (str (:atom tk) " *")
     (and (map? tk) (:enum   tk)) (:enum tk)
@@ -718,20 +773,44 @@
   [data-section record-env atom-env enum-env]
   (mapv (fn [f]
           (validate-reference-modifier-type! f record-env atom-env enum-env)
-          (merge {:name      (:name f)
-                  :cxc-ty    (base-type-name (:type f))
-                  :nullable? (= :type-nullable (get-in f [:type :node]))
-                  ;; F39 L2 — record `T!` intent on the field; enforcement
-                  ;; wires in L3 (observation-point runtime checks).
-                  :nonnil?   (= :type-nonnil (get-in f [:type :node]))
-                  :c-type    (cxc-type->c (:type f) record-env atom-env enum-env)
-                  :default   (:default f)}
-                 (map-key-val-of (:type f))
-                 ;; F13 L1 — preserve the modifier on the lowered field
-                 ;; entry so L2's property emitter can pick `weak` /
-                 ;; `unsafe_unretained` attrs off the same shape used
-                 ;; for `strong` (default).
-                 (when-let [m (:modifier f)] {:modifier m})))
+          (let [ty-node (:type f)
+                nonnil? (= :type-nonnil (:node ty-node))
+                nullable? (= :type-nullable (:node ty-node))
+                base    (base-type-name ty-node)
+                scalar-c (cxc-type->c ty-node record-env atom-env enum-env)
+                ;; F39 L5b-ii — value-typed bare-T fields (no `!`) box
+                ;; to `_Cxc_Optional_<T>` storage. Predicate is inlined
+                ;; here because `field-storage-value-typed?` operates on
+                ;; a fully-built field record, and we're building it.
+                value-typed? (and (string? scalar-c)
+                                  (not (str/ends-with? scalar-c "*"))
+                                  (not= "id" scalar-c)
+                                  (not (.contains ^String scalar-c "^"))
+                                  (not= "Block" base)
+                                  (not= "String" base)
+                                  (not= "Bytes" base)
+                                  (not= "Any" base)
+                                  (or (contains? primitive-c-type base)
+                                      (contains? record-env base)
+                                      (contains? enum-env base)))
+                ;; F39 L5b-ii-c FLIPPED 2026-08-22 (Sub-P). Value-typed
+                ;; bare-T fields box to `_Cxc_Optional_<T>` storage; `T!`
+                ;; stays scalar. Fan-out (Sub-A through Sub-N) landed
+                ;; guarded on this flag; Sub-Q iterates failures from
+                ;; here (observable/method return unwrap, F49 invariant
+                ;; substitution, atom-ctor param plumbing).
+                optional? (and value-typed? (not nonnil?))
+                c-type    (if optional? (optional-type-name base) scalar-c)]
+            (merge {:name       (:name f)
+                    :cxc-ty     base
+                    :nullable?  nullable?
+                    :nonnil?    nonnil?
+                    :optional?  optional?
+                    :scalar-c   scalar-c
+                    :c-type     c-type
+                    :default    (:default f)}
+                   (map-key-val-of ty-node)
+                   (when-let [m (:modifier f)] {:modifier m}))))
         (:fields data-section)))
 
 (defn- normalize-method-param
@@ -1736,6 +1815,17 @@
   (or (:caps (first (filter #(= :use-section (:node %)) (:body atom-node))))
       []))
 
+(defn- def-atom-on-nil-entries
+  "F39 L8 (spec §4.10.9) — return the on_nil entry list from the atom's
+   `on_nil:` section (empty if absent). Each entry is `{:method :value}`
+   where `:value` is a parser-produced expression subject to const-check
+   at env-build time. Section is unique per atom; extras beyond the first
+   are ignored (matches invariants/use-section discipline)."
+  [atom-node]
+  (or (:entries (first (filter #(= :on-nil-section (:node %))
+                               (:body atom-node))))
+      []))
+
 (defn- payload-signature
   "Compact comparable representation of a payload shape — vector of
    `[name cxc-type]` pairs in declaration order. Used to catch
@@ -1920,6 +2010,7 @@
   [atom-node]
   (remove #(#{:data-section :methods-section :transition :observable
               :invariants-section :use-section
+              :on-nil-section
               :handler-decl :deprecated :field} (:node %))
           (:body atom-node)))
 
@@ -2072,11 +2163,22 @@
              {:keys [lo hi]} bounds
              picked  (pick-sized-atom lo hi)]
          (if picked
-           (assoc f
-                  :c-type (:c-type picked)
-                  :cxc-ty (:cxc-ty picked)
-                  :picker-narrowed-from "Int"
-                  :picker-bounds [lo hi])
+           ;; F39 L5b-ii-c — preserve Optional-boxing after narrowing.
+           ;; A bare-T value-typed field kept `:optional?` from the
+           ;; storage flip; picker narrows the INNER cxc-type (Int64 →
+           ;; UInt8 etc.), and the c-type re-wraps as
+           ;; `_Cxc_Optional_<narrowed>`. `:scalar-c` stays the picker's
+           ;; scalar for callers that pull the underlying rep.
+           (let [narrowed-cxc (:cxc-ty picked)
+                 narrowed-c   (:c-type picked)
+                 opt?         (:optional? f)]
+             (assoc f
+                    :cxc-ty  narrowed-cxc
+                    :c-type  (if opt? (optional-type-name narrowed-cxc)
+                                 narrowed-c)
+                    :scalar-c narrowed-c
+                    :picker-narrowed-from "Int"
+                    :picker-bounds [lo hi]))
            f))))
    fields))
 
@@ -2191,6 +2293,7 @@
              observables   (def-atom-observables a)
              invariants    (def-atom-invariants a)
              use-caps      (def-atom-use-caps a)
+             on-nil-raw    (def-atom-on-nil-entries a)
              extras        (def-atom-body-extras a)
              ;; use: caps are sugar for a required ctor-param plus a
              ;; same-named data-field defaulted to that ctor-param.
@@ -2341,6 +2444,55 @@
                                 hd)))
              handler-methods (mapv #(handler-decl->method-entry name %) handler-decls)
              methods       (into base-methods handler-methods)
+             ;; F39 L8 (spec §4.10.9) — collect on_nil entries. Store as a
+             ;; method-name → raw-value-expr map so call-site lowering
+             ;; picks up the fallback with full ctx (record-env / atom-env
+             ;; not fully constructed here). Validation:
+             ;;   (a) method name must resolve to an own method or observable
+             ;;       (protocol-inherited entries validated post-L4 folding
+             ;;       via a separate pass — deferred; the L8 MVP checks
+             ;;       against local surface only).
+             ;;   (b) value expression must be compile-time const per
+             ;;       `default-expr-const-shape?`.
+             ;; Duplicate entries collide with a targeted diagnostic.
+             obs-names     (set (map :name observables))
+             method-names* (set (map :name methods))
+             _             (let [dups (->> on-nil-raw
+                                           (map :method)
+                                           frequencies
+                                           (filter (fn [[_ n]] (> n 1)))
+                                           (map first))]
+                             (when (seq dups)
+                               (fail-compile!
+                                :cxc-f39-on-nil-duplicate-entry
+                                (str "atom `" name "` declares `on_nil:` entry "
+                                     "`" (first dups) "` more than once — each "
+                                     "method name appears at most once per "
+                                     "section (spec §4.10.9).")
+                                {:atom name :dupes (mapv identity dups)})))
+             _             (doseq [{m :method v :value} on-nil-raw]
+                             (when-not (or (contains? method-names* m)
+                                           (contains? obs-names m))
+                               (fail-compile!
+                                :cxc-f39-on-nil-unknown-method
+                                (str "atom `" name "` declares `on_nil:` entry "
+                                     "for `" m "` but the atom has no method "
+                                     "or observable by that name. Add the "
+                                     "declaration, drop the entry, or fix a "
+                                     "typo. (Protocol-inherited entries via "
+                                     "`extend " name "(P):` are validated by "
+                                     "a follow-on pass; this L8 MVP checks "
+                                     "only own-surface names.) See spec §4.10.9.")
+                                {:atom name :method m}))
+                             (when-not (default-expr-const-shape? v)
+                               (fail-nyi!
+                                (str "on_nil entry `" m "` on atom `" name
+                                     "` — value must be a compile-time "
+                                     "constant (spec §3.8.5 permits primitive "
+                                     "literals, `nil`, unary `-`/`not` on "
+                                     "those); got `" (:node v) "` node.")
+                                {:atom name :method m :value v})))
+             on-nil-entries (into {} (map (juxt :method :value) on-nil-raw))
              message-index (collect-message-shapes name transitions)
              ;; Streams this atom EMITS (untargeted `:>` in any transition
              ;; body). Indexed by stream name; the ordered list preserves
@@ -2415,6 +2567,7 @@
                           :stream-order  stream-order
                           :subscription-map subscription-map
                           :slot-names    slot-names
+                          :on-nil-entries on-nil-entries
                           :extras        extras})))
      skeleton
      atoms)))
@@ -2665,22 +2818,36 @@
 
 (declare infer-type)
 
+(defn- optional-tk?
+  "True when a type-kw is [:optional inner] shape."
+  [tk]
+  (and (vector? tk) (= :optional (first tk))))
+
+(defn- unwrap-tk
+  "Return the inner type-kw if `tk` is [:optional inner]; else `tk` unchanged."
+  [tk]
+  (if (optional-tk? tk) (second tk) tk))
+
 (defn- infer-binop-type
   [{:keys [op left right]} ctx]
   (let [lt (infer-type left  ctx)
-        rt (infer-type right ctx)]
+        rt (infer-type right ctx)
+        ;; F39 L5b-ii-c (Sub-B) — Optional propagation on binops.
+        ;; Dead until Sub-P flips the storage flag (no expression can
+        ;; infer as Optional today because no field is `:optional?`).
+        ;; Rules per plan: arith → [:optional inner-result]; ord →
+        ;; [:optional :bool]; eq/neq → :bool (nil-aware, two nils are
+        ;; equal). Logical and/or/is stay :bool. `??` returns RHS type.
+        any-opt? (or (optional-tk? lt) (optional-tk? rt))
+        lt*      (unwrap-tk lt)
+        rt*      (unwrap-tk rt)]
     (cond
-      ;; Comparison ops always return bool regardless of operand types
-      ;; (parser accepts nonsense combos; we let clang catch those).
-      (#{"==" "!=" "<" "<=" ">" ">="} op) :bool
-
-      ;; Boolean connectives: both sides must be bool (or int since we
-      ;; don't have a distinct bool type at the C level yet).
+      (#{"==" "!="} op) :bool
+      (and (#{"<" "<=" ">" ">="} op) any-opt?) [:optional :bool]
+      (#{"<" "<=" ">" ">="} op) :bool
       (#{"and" "or"} op) :bool
-
-      ;; `is` is identity/equality: pointer-equal for atoms, value-equal
-      ;; for enums/ints/nil. Returns bool.
       (= "is" op) :bool
+      (= "??" op) rt
 
       ;; Audit F47: `in` is a membership predicate (spec §1.3). Full
       ;; lowering — dispatching to a container's contains method — is
@@ -2703,26 +2870,34 @@
       ;;
       ;; Bare `:int` and `:float` are the defaults (Int64 and Double,
       ;; treated as widest-in-family for widening arithmetic).
-      (and (float-family? lt) (float-family? rt))
-      (if (>= (or (and (vector? lt) (second lt)) 64)
-              (or (and (vector? rt) (second rt)) 64))
-        lt rt)
+      ;; F39 L5b-ii-c — arithmetic branches operate on the unwrapped
+      ;; families (`lt*` / `rt*`); the result rewraps if either side
+      ;; was Optional. Dead today (no expression infers Optional).
+      (and (float-family? lt*) (float-family? rt*))
+      (let [r (if (>= (or (and (vector? lt*) (second lt*)) 64)
+                      (or (and (vector? rt*) (second rt*)) 64))
+                lt* rt*)]
+        (if any-opt? [:optional r] r))
 
-      (and (float-family? lt) (int-family? rt))  lt
-      (and (int-family? lt)   (float-family? rt)) rt
+      (and (float-family? lt*) (int-family? rt*))
+      (if any-opt? [:optional lt*] lt*)
 
-      (and (int-family? lt) (int-family? rt))
-      (let [l-fam (or (and (vector? lt) (first lt)) :int)
-            r-fam (or (and (vector? rt) (first rt)) :int)]
+      (and (int-family? lt*) (float-family? rt*))
+      (if any-opt? [:optional rt*] rt*)
+
+      (and (int-family? lt*) (int-family? rt*))
+      (let [l-fam (or (and (vector? lt*) (first lt*)) :int)
+            r-fam (or (and (vector? rt*) (first rt*)) :int)]
         (cond
           (not= l-fam r-fam)
-          (fail-nyi! (str "binop " op " mixes signed " lt " with unsigned " rt
+          (fail-nyi! (str "binop " op " mixes signed " lt* " with unsigned " rt*
                           " — spec §3.11 requires an explicit conversion")
                      {:left lt :right rt})
           :else
-          (let [lw (int-bit-width lt)
-                rw (int-bit-width rt)]
-            (if (>= lw rw) lt rt))))
+          (let [lw (int-bit-width lt*)
+                rw (int-bit-width rt*)
+                r  (if (>= lw rw) lt* rt*)]
+            (if any-opt? [:optional r] r))))
 
       :else (fail-nyi! (str "binop " op " between " lt " and " rt)
                        {:left lt :right rt}))))
@@ -2956,8 +3131,45 @@
     :dot   (infer-method-call-type node ctx)
     (fail-nyi! (str "call with non-ident/non-dot callee " (:node callee)) node)))
 
+(defn- assert-not-optional-guard!
+  "F39 L5b-ii-c (Sub-I) — reject an Optional-typed expression in a
+   boolean guard position (`when:`, dispatch `if`, `while` cond, etc).
+   Nil-punning stops at control-flow: the user must terminate the
+   Optional with `?? default` or `!= nil`. Dead until Sub-P flips
+   storage — no expression infers Optional today."
+  [guard-expr guard-tk site node]
+  (when (optional-tk? guard-tk)
+    (fail-compile!
+     :cxc-f39-optional-in-control-flow
+     (str "F39 L5b-ii-c: " site " expects a Bool but got an Optional value. "
+          "Nil-punning stops at control-flow — terminate the Optional first: "
+          "either `<expr> ?? <default>` to coalesce or `<expr> != nil` to test "
+          "presence. See spec §3.6.1.")
+     (or node guard-expr))))
+
+(defn- wrap-field-tk
+  "F39 L5b-ii-c — when the field's storage is Optional-boxed
+   (`:optional? true`), wrap the raw inner type-kw in
+   `[:optional inner]` so downstream inference/lowering knows the
+   read yields an Optional value. Dead until Sub-P flips
+   `fields-from-data-section` to set the flag; currently `:optional?`
+   is always false and this returns `tk` unchanged."
+  [field tk]
+  (if (:optional? field) [:optional tk] tk))
+
 (defn- field-type-for-owner [owner-ty ctx field-name node]
   (cond
+    ;; F39 L5b-ii-c — dot on Optional<Record>. Inner field type wraps
+    ;; in Optional (nil-punning propagation). Recurse with the inner
+    ;; record type; outer wrap always yields Optional regardless of
+    ;; whether the inner field was itself Optional (nil-flow).
+    (and (vector? owner-ty) (= :optional (first owner-ty))
+         (let [inner (second owner-ty)]
+           (and (map? inner) (:record inner))))
+    (let [inner-ty (second owner-ty)
+          inner-tk (field-type-for-owner inner-ty ctx field-name node)]
+      [:optional (unwrap-tk inner-tk)])
+
     ;; F37b L1 — `Bytes` inspection surface. `.length` returns Int
     ;; (grapheme/element-count convention, matches List/String;
     ;; §3.10.10 uses UInt32 for the wire-length prefix but user-
@@ -2976,12 +3188,11 @@
     (and (map? owner-ty) (:record owner-ty))
     (let [owner (:record owner-ty)
           f     (get-in (:record-env ctx) [owner :field-index field-name])
-          ;; F67 L4a — zero-arg observables read as fields (no parens).
-          ;; Type came from inference at env build.
           o     (get-in (:record-env ctx) [owner :observable-index field-name])]
       (cond
-        f (cxc-type->type-kw (:cxc-ty f)
-                             (:record-env ctx) (:atom-env ctx) (:enum-env ctx) node)
+        f (wrap-field-tk f
+                         (cxc-type->type-kw (:cxc-ty f)
+                                            (:record-env ctx) (:atom-env ctx) (:enum-env ctx) node))
         o (:type-kw o)
         :else
         (fail-nyi! (str "field/observable `" field-name "` on record `" owner "`") node)))
@@ -3007,8 +3218,9 @@
         ;; reads) provide the correctness story. The previous L1
         ;; diagnostic that rejected cross-atom reads was retracted.
         ;; See plans/f33-encapsulation.md L1.
-        f (cxc-type->type-kw (:cxc-ty f)
-                             (:record-env ctx) (:atom-env ctx) (:enum-env ctx) node)
+        f (wrap-field-tk f
+                         (cxc-type->type-kw (:cxc-ty f)
+                                            (:record-env ctx) (:atom-env ctx) (:enum-env ctx) node))
         ;; Observables read like fields — dot syntax on an ObjC object
         ;; dispatches to our synthesized zero-arg method.
         o (:type-kw o)
@@ -3043,6 +3255,7 @@
     :lit-string :string
     :lit-int    :int
     :lit-float  :float
+    :lit-bool   :bool
     :lit-nil    :nil
     :lambda     (if (empty? (:params node))
                   ;; Layer 6 Step 12 — zero-arg lambda's type is :block.
@@ -3058,24 +3271,57 @@
                              node))
     :self       (or (get (:locals ctx) "self")
                     (fail-nyi! "type-of `self` outside a method body" node))
-    :ident      (or (get (:locals ctx) (:name node))
-                    (when-let [f (get (:self-fields ctx) (:name node))]
-                      (or (:type-kw f)
-                          (cxc-type->type-kw (:cxc-ty f)
-                                             (:record-env ctx) (:atom-env ctx)
-                                             (:enum-env ctx) node)))
-                    (fail-nyi! (str "type-of identifier `" (:name node)
-                                    "` (no local-binding env yet)")
-                               node))
+    :ident      (or
+                 ;; F49 pre-store invariant substitution — when
+                 ;; `:field-substitutions` maps this ident to a
+                 ;; pre-lowered scalar (a ctor-param or default expr),
+                 ;; the observable type is the SCALAR's inner type, NOT
+                 ;; the field's Optional storage. Otherwise binop
+                 ;; dispatch (Sub-C) sees Optional and emits `.value`
+                 ;; access on a scalar temp. Ctor-param substitutions
+                 ;; map to `{:node :name :sym p}` — look up param type
+                 ;; in `:locals`.  Default substitutions are pre-lowered
+                 ;; expressions — recursive infer produces the same
+                 ;; scalar type since the default is scalar-source.
+                 (when-let [sub (get (:field-substitutions ctx) (:name node))]
+                   (cond
+                     (= :name (:node sub))
+                     (get (:locals ctx) (:sym sub))
+                     (= :int (:node sub))    :int
+                     (= :float (:node sub))  :float
+                     :else                    nil))
+                 (get (:locals ctx) (:name node))
+                 (when-let [f (get (:self-fields ctx) (:name node))]
+                   ;; F39 L5b-ii-c — self-field ident reads Optional
+                   ;; storage as `[:optional inner]`. Observables carry
+                   ;; :type-kw directly (already Optional-aware if
+                   ;; their body reads an Optional field via Sub-A).
+                   (or (:type-kw f)
+                       (wrap-field-tk
+                        f
+                        (cxc-type->type-kw (:cxc-ty f)
+                                           (:record-env ctx) (:atom-env ctx)
+                                           (:enum-env ctx) node))))
+                 (fail-nyi! (str "type-of identifier `" (:name node)
+                                 "` (no local-binding env yet)")
+                            node))
     :binop      (infer-binop-type node ctx)
-    :chained-cmp :bool
-    :neg        (let [t (infer-type (:expr node) ctx)]
-                  (if (numeric-family? t)
-                    t
+    ;; F39 L5b-ii-c — chained-cmp propagates Optional when any operand
+    ;; is Optional (Sub-B/F rule mirrored on the type-side).
+    :chained-cmp (let [op-tks (mapv #(infer-type % ctx) (:operands node))]
+                   (if (some optional-tk? op-tks) [:optional :bool] :bool))
+    :neg        (let [t     (infer-type (:expr node) ctx)
+                      opt?  (optional-tk? t)
+                      inner (unwrap-tk t)]
+                  (cond
+                    (numeric-family? inner)
+                    (if opt? [:optional inner] inner)
+                    :else
                     (fail-nyi! (str "unary minus on non-numeric type "
                                     (pr-str t))
                                node)))
-    :not        :bool
+    :not        (let [t (infer-type (:expr node) ctx)]
+                  (if (optional-tk? t) [:optional :bool] :bool))
     :call       (infer-call-type node ctx)
     :dot        (if (enum-case-access? node ctx)
                   {:enum (get-in node [:target :name])}
@@ -3111,14 +3357,37 @@
 
 (defn- lower-record-ctor
   [record-name args ctx]
-  (let [rec      (get-in ctx [:record-env record-name])
-        params   (mapv (fn [f] {:name (:name f) :default (:default f)})
-                       (:fields rec))
-        resolved (resolve-args-against-params
-                  (str "record `" record-name "` constructor")
-                  params args)
+  (let [rec        (get-in ctx [:record-env record-name])
+        field-recs (:fields rec)
+        field-idx  (into {} (map (juxt :name identity)) field-recs)
+        params     (mapv (fn [f] {:name (:name f) :default (:default f)})
+                         field-recs)
+        resolved   (resolve-args-against-params
+                    (str "record `" record-name "` constructor")
+                    params args)
+        ;; F39 L5b-ii-c (Sub-L) — auto-wrap ctor arg when the target
+        ;; field's storage is Optional-boxed. Symmetric with Sub-K's
+        ;; then-update wrap. Dead until Sub-P flips `:optional?`.
+        wrap-value (fn [nm v]
+                     (let [f-info (get field-idx nm)
+                           lo     (lower-expr v ctx)]
+                       (if (:optional? f-info)
+                         (let [tk       (infer-type v ctx)
+                               opt-c    (:c-type f-info)
+                               already? (optional-tk? tk)
+                               nil?*    (= :nil tk)]
+                           (cond
+                             already? lo
+                             nil?*    {:node :struct-lit :type opt-c
+                                       :fields [{:name "present"
+                                                 :value {:node :int :value 0}}]}
+                             :else    {:node :struct-lit :type opt-c
+                                       :fields [{:name "present"
+                                                 :value {:node :int :value 1}}
+                                                {:name "value" :value lo}]}))
+                         lo)))
         fields   (mapv (fn [{:keys [name value]}]
-                         {:name name :value (lower-expr value ctx)})
+                         {:name name :value (wrap-value name value)})
                        resolved)]
     {:node :struct-lit :type record-name :fields fields}))
 
@@ -3394,11 +3663,26 @@
                 param-names (cond
                               m (mapv :name (rest (:params m)))
                               (and o (seq (:params o))) (mapv :name (:params o))
-                              :else [])]
-            {:node     :objc-msg
-             :recv     target-lo
-             :selector (objc-method-selector method-name param-names)
-             :args     arg-exprs})
+                              :else [])
+                msg-send    {:node     :objc-msg
+                             :recv     target-lo
+                             :selector (objc-method-selector method-name param-names)
+                             :args     arg-exprs}
+                ;; F39 L8 (spec §4.10.9) — nil-receiver fallback dispatch.
+                ;; If the callee atom declares an `on_nil:` entry for this
+                ;; method, wrap the message send in a guarded ternary:
+                ;;   (recv != nil) ? [recv msg...] : <fallback>
+                ;; Eval-once discipline on `recv` via a GNU stmt-expr in
+                ;; the emit shape (:c-on-nil-dispatch), matching L6-ref
+                ;; and L5b-ii-d's single-eval patterns for side-effecting
+                ;; receivers (`Counter().other.method()` chains).
+                on-nil-expr (get-in ctx [:atom-env atom-name :on-nil-entries method-name])]
+            (if on-nil-expr
+              {:node     :c-on-nil-dispatch
+               :recv     target-lo
+               :send     msg-send
+               :fallback (lower-expr on-nil-expr ctx)}
+              msg-send))
 
           :else
           (fail-nyi! "method call on non-record/non-atom target" call-node))))))
@@ -3524,17 +3808,19 @@
 (defn- lower-print [call ctx]
   (let [arg-expr (:value (first (:args call)))
         arg-ty   (infer-type arg-expr ctx)]
-    {:node :call
-     :fn   "printf"
-     ;; :printf-arg-type carries the picker's type-kw through to emit
-     ;; so the printf emit path can cast varargs to a width that
-     ;; matches the format specifier (long long for :int; double for
-     ;; :float). Kept out of the AST proper (as metadata on the call
-     ;; node, not a wrapper on the arg) so existing tests that inspect
-     ;; :args continue to see the raw lowered expression.
-     :printf-arg-type arg-ty
-     :args [{:node :str :value (print-format-string arg-ty)}
-            (lower-expr arg-expr ctx)]}))
+    (if (optional-tk? arg-ty)
+      ;; F39 L5b-ii-c (Sub-G) — Optional print. Present → format
+      ;; inner; nil → "nil\n". Dead until Sub-P flips storage.
+      (let [inner (unwrap-tk arg-ty)]
+        {:node          :c-print-optional
+         :arg           (lower-expr arg-expr ctx)
+         :inner-arg-type inner
+         :inner-fmt     (print-format-string inner)})
+      {:node :call
+       :fn   "printf"
+       :printf-arg-type arg-ty
+       :args [{:node :str :value (print-format-string arg-ty)}
+              (lower-expr arg-expr ctx)]})))
 
 (defn- lower-expr [node ctx]
   (case (:node node)
@@ -3599,20 +3885,84 @@
                     :else
                     {:node :name :sym n}))
     :self       {:node :name  :sym "self"}
-    :binop      (do
-                  ;; Audit F47: `in` parses as a binop but its semantic
-                  ;; lowering — dispatch to a container's contains
-                  ;; method — is Phase D work (needs the container
-                  ;; contains method design). Reject with a targeted
-                  ;; diagnostic instead of silently emitting literal
-                  ;; `in` into C, which clang would then reject as
-                  ;; an unknown operator far from the source.
-                  (when (= "in" (:op node))
-                    (fail-nyi! "`in` membership operator" node))
+    :binop      (cond
+                  (= "in" (:op node))
+                  (fail-nyi! "`in` membership operator" node)
+
+                  ;; F39 L6 — `??` coalesce (reference-nullable case).
+                  (= "??" (:op node))
+                  {:node  :c-coalesce
+                   :mode  :reference
+                   :left  (lower-expr (:left node)  ctx)
+                   :right (lower-expr (:right node) ctx)}
+
+                  ;; F39 L5b-ii-c (Sub-H) — presence check on Optional.
+                  ;; `x is nil` / `x == nil` / `x != nil` (or symmetric)
+                  ;; where x is Optional → :c-optional-nil-check. Returns
+                  ;; pure Bool (presence is a terminating query, not a
+                  ;; propagating operation). Dead until Sub-P.
+                  (let [op (:op node)
+                        lt (infer-type (:left node)  ctx)
+                        rt (infer-type (:right node) ctx)
+                        left-nil?  (= :nil lt)
+                        right-nil? (= :nil rt)]
+                    (and (contains? #{"is" "==" "!="} op)
+                         (or (and (optional-tk? lt) right-nil?)
+                             (and (optional-tk? rt) left-nil?))))
+                  (let [op (:op node)
+                        lt (infer-type (:left node) ctx)
+                        rt (infer-type (:right node) ctx)
+                        opt-side (if (optional-tk? lt) (:left node) (:right node))
+                        negate?  (= "!=" op)]
+                    {:node    :c-optional-nil-check
+                     :inner   (lower-expr opt-side ctx)
+                     :negate? negate?})
+
+                  ;; F39 L5b-ii-c (Sub-C) — Optional-binop dispatch.
+                  ;; If either operand's inferred type is [:optional _],
+                  ;; route to :c-optional-binop. Kinds:
+                  ;;   :arith → propagates Optional value with widened
+                  ;;            inner arithmetic
+                  ;;   :ord   → propagates Optional<Bool>
+                  ;;   :eq/:neq → collapses to Bool (nil-aware eq)
+                  ;; Dead until Sub-P flips the storage flag — no
+                  ;; expression today infers as Optional.
+                  (let [lt (infer-type (:left node) ctx)
+                        rt (infer-type (:right node) ctx)
+                        op (:op node)
+                        any-opt? (or (optional-tk? lt) (optional-tk? rt))]
+                    (and any-opt?
+                         (contains? #{"+" "-" "*" "/" "%"
+                                      "<" "<=" ">" ">="
+                                      "==" "!="} op)))
+                  (let [lt (infer-type (:left node) ctx)
+                        rt (infer-type (:right node) ctx)
+                        op (:op node)
+                        result-tk    (infer-binop-type node ctx)
+                        result-inner (when (optional-tk? result-tk)
+                                       (unwrap-tk result-tk))
+                        result-opt-c (when result-inner
+                                       (optional-type-name
+                                        (type-kw->cxc-name-str result-inner)))
+                        kind (cond
+                               (contains? #{"+" "-" "*" "/" "%"} op) :arith
+                               (contains? #{"<" "<=" ">" ">="} op)   :ord
+                               (= "==" op)                            :eq
+                               (= "!=" op)                            :neq)]
+                    {:node               :c-optional-binop
+                     :op                 (if (= "%" op) "%" op)
+                     :left               (lower-expr (:left node) ctx)
+                     :right              (lower-expr (:right node) ctx)
+                     :left-opt?          (optional-tk? lt)
+                     :right-opt?         (optional-tk? rt)
+                     :result-kind        kind
+                     :result-opt-c-type  result-opt-c})
+
                   ;; F37: record-typed `==` / `!=` reroutes through the
                   ;; synthesized `<Record>_cxc_equals` free function.
                   ;; Raw C `struct1 == struct2` is not valid C — this
                   ;; is a correctness fix, not an optimization.
+                  :else
                   (let [cmp?     (contains? #{"==" "!="} (:op node))
                         lt       (when cmp? (infer-type (:left node)  ctx))
                         rt       (when cmp? (infer-type (:right node) ctx))
@@ -3653,20 +4003,51 @@
                                 (:op node))
                        :left  (lower-expr (:left node)  ctx)
                        :right (lower-expr (:right node) ctx)})))
-    :neg        {:node :unary :op "-"
-                 :expr (lower-expr (:expr node) ctx)}
-    :not        {:node :unary :op "!"
-                 :expr (lower-expr (:expr node) ctx)}
+    :neg        (let [inner-tk (infer-type (:expr node) ctx)]
+                  (if (optional-tk? inner-tk)
+                    ;; F39 L5b-ii-c (Sub-D) — Optional propagation.
+                    ;; Dead until Sub-P flips storage.
+                    {:node :c-optional-unary
+                     :op   "-"
+                     :inner (lower-expr (:expr node) ctx)
+                     :result-opt-c-type
+                     (optional-type-name (type-kw->cxc-name-str (unwrap-tk inner-tk)))}
+                    {:node :unary :op "-"
+                     :expr (lower-expr (:expr node) ctx)}))
+    :not        (let [inner-tk (infer-type (:expr node) ctx)]
+                  (if (optional-tk? inner-tk)
+                    ;; F39 L5b-ii-c (Sub-D) — Optional propagation.
+                    ;; Dead until Sub-P flips storage.
+                    {:node :c-optional-unary
+                     :op   "!"
+                     :inner (lower-expr (:expr node) ctx)
+                     :result-opt-c-type
+                     (optional-type-name (type-kw->cxc-name-str (unwrap-tk inner-tk)))}
+                    {:node :unary :op "!"
+                     :expr (lower-expr (:expr node) ctx)}))
     ;; F27 semantic once-only: bind each interior operand to a
     ;; `__typeof__` local via GNU statement-expression, then chain
     ;; comparisons over the bound locals. Emit renders the
     ;; statement-expression from the operand + op vectors.
-    :chained-cmp {:node :chained-cmp
-                  :operands (mapv #(lower-expr % ctx) (:operands node))
-                  :ops      (mapv (fn [op]
-                                    (case op
-                                      "<" "<" "<=" "<=" ">" ">" ">=" ">="))
-                                  (:ops node))}
+    :chained-cmp
+    (let [op-tks    (mapv #(infer-type % ctx) (:operands node))
+          opts?     (mapv optional-tk? op-tks)
+          any-opt?  (some true? opts?)
+          lowered   (mapv #(lower-expr % ctx) (:operands node))
+          ops       (mapv (fn [op]
+                            (case op "<" "<" "<=" "<=" ">" ">" ">=" ">="))
+                          (:ops node))]
+      (if any-opt?
+        ;; F39 L5b-ii-c (Sub-F) — Optional-propagating chained-cmp
+        ;; returns Optional<Bool>. Dead until Sub-P flips storage.
+        {:node :c-optional-chained-cmp
+         :operands          lowered
+         :operand-opts?     opts?
+         :ops               ops
+         :result-opt-c-type (optional-type-name "Bool")}
+        {:node :chained-cmp
+         :operands lowered
+         :ops      ops}))
     :dot        (cond
                   (enum-case-access? node ctx)
                   {:node :name
@@ -3690,17 +4071,72 @@
                    :args [(lower-expr (:target node) ctx)]}
 
                   :else
-                  (do
+                  (let [target-ty (infer-type (:target node) ctx)]
                     ;; F33 Landing 1 — reject cross-atom `data:` field
                     ;; reads. infer-type triggers field-type-for-owner
                     ;; which owns the diagnostic; call it here so a bare
                     ;; `.field` in a stmt context (where lower-expr
                     ;; doesn't otherwise type-check) still catches it.
-                    (field-type-for-owner (infer-type (:target node) ctx)
-                                          ctx (:field node) node)
-                    {:node   :field
-                     :target (lower-expr (:target node) ctx)
-                     :field  (:field node)}))
+                    (field-type-for-owner target-ty ctx (:field node) node)
+                    (cond
+                      ;; F39 L5b-ii-c (Sub-E) — dot on Optional record.
+                      ;; `x.field` where x is [:optional {:record R}]
+                      ;; propagates Optional. Two shapes:
+                      ;;   inner-field scalar   → wrap `.value.field`
+                      ;;                          into `_Cxc_Optional_<T>`
+                      ;;   inner-field Optional → the inner `.value.field`
+                      ;;                          is ALREADY Optional; the
+                      ;;                          outer just gates presence
+                      ;;                          → propagate the inner
+                      ;;                          Optional as-is when
+                      ;;                          present, nil otherwise
+                      (and (optional-tk? target-ty)
+                           (let [inner (unwrap-tk target-ty)]
+                             (and (map? inner) (:record inner))))
+                      (let [inner-rec (:record (unwrap-tk target-ty))
+                            f-info    (get-in (:record-env ctx)
+                                              [inner-rec :field-index (:field node)])
+                            inner-opt? (:optional? f-info)
+                            field-tk  (when f-info
+                                        (cxc-type->type-kw (:cxc-ty f-info)
+                                                           (:record-env ctx)
+                                                           (:atom-env ctx)
+                                                           (:enum-env ctx) node))
+                            opt-c     (when field-tk
+                                        (optional-type-name
+                                         (type-kw->cxc-name-str field-tk)))]
+                        {:node               :c-optional-dot
+                         :target             (lower-expr (:target node) ctx)
+                         :field              (:field node)
+                         :inner-already-opt? inner-opt?
+                         :result-opt-c-type  opt-c})
+
+                      :else
+                      (let [target-lo (lower-expr (:target node) ctx)
+                            atom-nm   (when (and (map? target-ty) (:atom target-ty))
+                                        (:atom target-ty))
+                            on-nil-expr (when atom-nm
+                                          (get-in ctx
+                                                  [:atom-env atom-nm
+                                                   :on-nil-entries (:field node)]))]
+                        (if on-nil-expr
+                          ;; F39 L8 — nil-receiver fallback dispatch on
+                          ;; a zero-arg observable read (bare `.count`).
+                          ;; The plain `:field` access lowers to ObjC
+                          ;; property syntax which nil-messages naturally,
+                          ;; but the runtime return would be raw zero /
+                          ;; nil, not the declared fallback. Wrap in
+                          ;; :c-on-nil-dispatch so the ternary picks the
+                          ;; explicit fallback when receiver is nil.
+                          {:node     :c-on-nil-dispatch
+                           :recv     target-lo
+                           :send     {:node   :field
+                                      :target target-lo
+                                      :field  (:field node)}
+                           :fallback (lower-expr on-nil-expr ctx)}
+                          {:node   :field
+                           :target target-lo
+                           :field  (:field node)})))))
     ;; F19 L2 — String[i] lowers to `(int64_t)[str characterAtIndex:i]`.
     ;; Other container types still fail-nyi (see infer-type site for the
     ;; F42/F43 dependency rationale).
@@ -4084,6 +4520,9 @@
           (reduce (fn [acc c] {:node :binop :op "||" :left c :right acc})
                   (last conds)
                   (reverse (butlast conds))))
+        _           (when guard
+                       (assert-not-optional-guard! guard (infer-type guard ctx)
+                                                   "dispatch guard `if`" guard))
         guard-lo    (when guard (lower-expr guard ctx))
         final-cond
         (cond
@@ -4193,12 +4632,144 @@
       {:node :c-scope
        :stmts [scrut-decl if-chain]})))
 
+(defn- reference-tk?
+  "F39 L7 — true iff a type-kw denotes a reference-shaped type
+   (nil-carrying at the pointer level). Atoms, `String`, `Bytes`,
+   `Any`, `Block`. Optional-boxed value types (`[:optional ...]`)
+   are handled separately by [[optional-tk?]]."
+  [tk]
+  (or (contains? #{:string :bytes :any :block} tk)
+      (and (map? tk) (:atom tk))))
+
+(declare lower-body-stmts)
+
+(defn- lower-if-let-stmt
+  "F39 L7 (spec §3.6.1 lines 3693-3705) — lower `if let x = expr : then
+   [else: else]` to a scoped C block. Each binding's RHS lowers to a
+   fresh temporary; the temporary's presence gates a nested `if`; when
+   present, the user-visible local binds the unwrapped value inside the
+   true-branch scope. Multi-binding nests left-to-right; because C's `if`
+   already short-circuits, later bindings' RHS aren't evaluated until
+   earlier ones pass their guard. The else-block is textually
+   duplicated once per binding depth — semantic impact is nil (only ONE
+   fail-path fires per invocation), code-size impact scales as N * |else|.
+
+   Two source shapes per binding, dispatched on the RHS's inferred
+   type-kw:
+     - reference-nullable (`Foo`, `String`, `Bytes`, `Any`, `Block`) →
+       guard is `(tmp != nil)`; unwrapped local is a same-typed pointer.
+     - Optional-boxed value (`[:optional inner]`) → guard is `tmp.present`;
+       unwrapped local is the inner raw `T`.
+
+   Reject at lower-time when the RHS isn't nullable — a straight scalar
+   or `T!` reference has no nil case to unwrap, so `if let` is a
+   category error. Diagnostic points at `??` or a plain conditional."
+  [node ctx]
+  (let [bindings (:bindings node)
+        _        (when (empty? bindings)
+                   (fail-compile! :cxc-f39-if-let-no-bindings
+                                  "F39 L7: `if let` requires at least one binding."
+                                  node))
+        else-blk (:else node)
+        ;; Lower each binding: [{name type-annot expr}] →
+        ;;   {name tmp-name tk c-inner-type guard-src bind-src}
+        prepare
+        (fn [i b]
+          (let [expr    (:expr b)
+                ann     (:type b)
+                ann-kw  (when ann
+                          (cxc-type->type-kw (base-type-name ann)
+                                             (:record-env ctx)
+                                             (:atom-env ctx)
+                                             (:enum-env ctx) ann))
+                inferred (infer-type expr ctx)
+                tk      (or ann-kw inferred)
+                ref?    (reference-tk? tk)
+                opt?    (optional-tk? tk)]
+            (when-not (or ref? opt?)
+              (fail-compile!
+               :cxc-f39-if-let-non-nullable-rhs
+               (str "F39 L7: `if let " (:name b) " = <expr>` requires a nullable "
+                    "RHS (reference type — atom, String, Bytes, Any, Block — or "
+                    "an Optional-boxed value type via bare `T`). Got `"
+                    (pr-str tk) "`. Fix: for a scalar `T!` value use `let " (:name b)
+                    " = <expr>` (plain binding, no guard); to force a fallback on a "
+                    "nullable, use `<expr> ?? <default>`. See spec §3.6.1 lines 3693-3705.")
+               b))
+            (let [tmp     (str "__cxc_ifl_" i)
+                  tmp-c   (type-kw->c-type tk expr)
+                  inner-c (if opt?
+                            (type-kw->c-type (unwrap-tk tk) expr)
+                            tmp-c)
+                  local-tk (if opt? (unwrap-tk tk) tk)]
+              {:name    (:name b)
+               :tmp     tmp
+               :tk      tk
+               :tmp-c   tmp-c
+               :inner-c inner-c
+               :opt?    opt?
+               :ref?    ref?
+               :local-tk local-tk
+               :rhs-lo  (lower-expr expr ctx)})))
+        prepped  (map-indexed prepare bindings)
+        ;; Bind the unwrapped locals into ctx for the then-block lowering.
+        then-ctx (reduce (fn [c p]
+                           (assoc-in c [:locals (:name p)] (:local-tk p)))
+                         ctx prepped)
+        then-lo  (lower-body-stmts (:stmts (:then node)) then-ctx)
+        else-lo  (when else-blk
+                   (lower-body-stmts (:stmts else-blk) ctx))
+        ;; Build the nested-if structure bottom-up. Innermost then-body
+        ;; is the lowered user-then; each layer wraps with `if (guard) {
+        ;; bind; INNER } else { <else-lo> }`. When there is no else, we
+        ;; omit the else branch (no else-block at all — falls through
+        ;; silently, per plan L7 test "positive no-else").
+        make-guard
+        (fn [p]
+          (if (:opt? p)
+            {:node :field
+             :target {:node :name :sym (:tmp p)}
+             :field  "present"}
+            {:node :binop
+             :op    "!="
+             :left  {:node :name :sym (:tmp p)}
+             :right {:node :nil}}))
+        make-bind
+        (fn [p]
+          {:node   :var-decl
+           :name   (:name p)
+           :c-type (:inner-c p)
+           :rhs    (if (:opt? p)
+                     {:node :field
+                      :target {:node :name :sym (:tmp p)}
+                      :field  "value"}
+                     {:node :name :sym (:tmp p)})})
+        ;; Layer each binding's temp-decl inside the previous guard so
+        ;; later RHS aren't evaluated when an earlier binding is nil
+        ;; (short-circuit — plan L7 "Positive short-circuit" test).
+        wrap-layer
+        (fn [inner-body p]
+          (let [branches (cond-> [{:cond (make-guard p)
+                                   :body (into [(make-bind p)] inner-body)}]
+                           else-lo (conj {:cond nil :body else-lo}))
+                if-stmt  {:node :c-if-chain :branches branches}
+                tmp-decl {:node :var-decl
+                          :name (:tmp p) :c-type (:tmp-c p) :rhs (:rhs-lo p)}]
+            ;; Wrap tmp-decl + if in a fresh scope so the temp is
+            ;; hidden from sibling stmts.
+            [{:node :c-scope :stmts [tmp-decl if-stmt]}]))
+        nested-stmts (reduce wrap-layer then-lo (reverse prepped))]
+    ;; nested-stmts is a one-element vector holding the outermost :c-scope.
+    (first nested-stmts)))
+
 (defn- lower-stmt [node ctx]
   (case (:node node)
     :expr-stmt (lower-expr (:expr node) ctx)
     :emit      (lower-send node ctx)
     :return    {:node :return :value (lower-expr (:expr node) ctx)}
     :dispatch  (lower-dispatch-stmt node ctx)
+
+    :if-let    (lower-if-let-stmt node ctx)
 
     ;; F17 L1 — statement-position `while <cond>: <body>`. Body lowers
     ;; as a stmt sequence via `lower-body-stmts` so nested `let`
@@ -4207,6 +4778,9 @@
     ;; break/continue can validate they're inside a loop.
     :while-stmt
     (let [body-ctx (assoc ctx :in-loop? true)
+          _        (assert-not-optional-guard!
+                    (:cond node) (infer-type (:cond node) ctx)
+                    "`while` cond" (:cond node))
           body-stmts (lower-body-stmts (:stmts (:body node)) body-ctx)]
       {:node :c-while
        :cond (lower-expr (:cond node) ctx)
@@ -4339,6 +4913,17 @@
         f         (get-in info [:field-index field-name])]
     (boolean (:nonnil? f))))
 
+(defn- self-field-info
+  "F39 L5b-ii-c helper — look up a field record on the enclosing atom
+   in ctx. Returns nil when self isn't an atom in scope (e.g. record
+   method context or free position). Callers use this to check
+   `:optional?` / `:c-type` for Optional wrap/unwrap decisions."
+  [field-name ctx]
+  (let [self-info (get-in ctx [:locals "self"])
+        atom-name (and (map? self-info) (:atom self-info))
+        info      (get-in ctx [:atom-env atom-name])]
+    (get-in info [:field-index field-name])))
+
 (defn- lower-then-update
   "`then: field => expr` → `_field = <expr>;` for the common case.
    For atom-typed subscription-root fields (Layer 4b nullable-slot
@@ -4358,14 +4943,61 @@
    and sidesteps eval-once discipline on the RHS expression. Returns
    a vector of stmts so callers `mapcat` naturally over each update."
   [update ctx]
-  (let [primary (if (field-needs-slot-setter? (:field update) ctx)
+  (let [;; F39 L5b-ii-c (Sub-K) — when the target field's storage is
+        ;; Optional-boxed, wrap a scalar RHS in `{present:1, .value:x}`.
+        ;; If RHS is already Optional-typed, pass through unchanged
+        ;; (Optional-to-Optional assign is a struct copy). If RHS is a
+        ;; nil literal, emit `{present:0}` instead. Dead until Sub-P.
+        f-info    (self-field-info (:field update) ctx)
+        wrap?     (:optional? f-info)
+        rhs-expr  (:expr update)
+        ;; F39 L5b-ii-d — inspect RHS type unconditionally so we can
+        ;; also fire runtime unwrap-check when the field is `T!` value-
+        ;; typed (`nonnil?` true, `:optional?` false) but the RHS is
+        ;; Optional. The check runs pre-store since the field storage
+        ;; is scalar and can't hold the Optional envelope.
+        rhs-tk        (infer-type rhs-expr ctx)
+        rhs-nil?      (= :nil rhs-tk)
+        rhs-opt?      (optional-tk? rhs-tk)
+        lowered       (lower-expr rhs-expr ctx)
+        value-nonnil? (and (:nonnil? f-info)
+                           (not (:optional? f-info))
+                           rhs-opt?)
+        self-info     (get-in ctx [:locals "self"])
+        atom-name     (or (and (map? self-info) (:atom self-info)) "?")
+        ;; F39 L5b-ii-d — when RHS is Optional feeding a T! value field,
+        ;; unwrap with a runtime presence check via GNU stmt-expr. Same
+        ;; warning-grade nonnil-violation as the reference `T!` path;
+        ;; runtime helper writes to stderr and returns (does NOT abort),
+        ;; matching L3's post-store discipline.
+        unwrap-src    (when value-nonnil?
+                        {:node :c-value-nonnil-unwrap
+                         :inner lowered
+                         :site  (str "def-atom `" atom-name
+                                     "` field write (value-typed T!)")
+                         :name  (:field update)})
+        rhs-final (cond
+                    value-nonnil? unwrap-src
+                    (not wrap?)   lowered
+                    rhs-opt?      lowered
+                    rhs-nil?      {:node :struct-lit
+                                   :type (:c-type f-info)
+                                   :fields [{:name "present"
+                                             :value {:node :int :value 0}}]}
+                    :else         {:node :struct-lit
+                                   :type (:c-type f-info)
+                                   :fields [{:name "present"
+                                             :value {:node :int :value 1}}
+                                            {:name "value"
+                                             :value lowered}]})
+        primary (if (field-needs-slot-setter? (:field update) ctx)
                   {:node :objc-msg
                    :recv {:node :name :sym "self"}
                    :selector (str "set" (capitalize-first (:field update)) ":")
-                   :args [(lower-expr (:expr update) ctx)]}
+                   :args [rhs-final]}
                   {:node :assign
                    :lhs  {:node :name :sym (str "_" (:field update))}
-                   :rhs  (lower-expr (:expr update) ctx)})]
+                   :rhs  rhs-final})]
     (if (field-nonnil? (:field update) ctx)
       (let [self-info (get-in ctx [:locals "self"])
             atom-name (or (and (map? self-info) (:atom self-info)) "?")]
@@ -4647,6 +5279,9 @@
         guard-exprs  (cond-> []
                        header-when      (conj header-when)
                        (seq body-whens) (into body-whens))
+        _            (doseq [g guard-exprs]
+                       (assert-not-optional-guard! g (infer-type g ctx')
+                                                   "transition `when:`" g))
         guard-lo     (when (seq guard-exprs)
                        ;; AND-fold all guards into one expression.
                        (reduce (fn [acc e]
@@ -4814,6 +5449,10 @@
                                        expected-keys)
                                   t))
         ;; Type check: subscriber's declared types vs source's inferred.
+        ;; F39 L5b-ii-c — subscriber-declared bare `T` matches source
+        ;; that emits `[:optional T]`: bare T is nullable by design, and
+        ;; Optional<T> is bare T's post-flip storage. Compare inner shape
+        ;; after normalizing away Optional-wrapping on either side.
         source-typed (get-in source-info [:stream-payload-index stream-name])
         _            (when (seq payload)
                        (doseq [[sub-p src-p] (map vector payload source-typed)]
@@ -4822,7 +5461,9 @@
                                        (:record-env ctx) (:atom-env ctx)
                                        (:enum-env ctx) sub-p)
                                src-ty (:type-kw src-p)]
-                           (when (not= sub-ty src-ty)
+                           (when (and (not= sub-ty src-ty)
+                                      (not= (unwrap-tk sub-ty)
+                                            (unwrap-tk src-ty)))
                              (fail-nyi!
                               (str "receive-glyph payload key `" (:name sub-p)
                                    "` on atom `" atom-name "` subscribing to `"
@@ -5358,6 +5999,86 @@
      :name   (:name record-node)
      :fields (mapv (fn [f] {:name (:name f) :c-type (:c-type f)}) (:fields rec))}))
 
+;; F39 Landing 5b-ii-a (2026-08-21) — Optional-boxed value-type
+;; infrastructure. Under the unified rule (spec §3.6.1, design premise
+;; 1 of plans/f39-nullability.md) bare `T` on a value type is nullable
+;; at every position. The C representation carrying nil is a
+;; `_Cxc_Optional_<T> { uint8_t present; T value; }` struct.
+;;
+;; L5b-ii-a lands the collection + synthesis + name-mangling
+;; machinery as DEAD CODE — no field yet triggers Optional storage.
+;; L5b-ii-b flips `cxc-type->c :type-ref` to consult this machinery.
+;; Isolated here so the flip is a one-place change rather than a
+;; scattered rewrite.
+
+(defn optional-type-name
+  "Mangle a value-type name into its Optional-boxed C typedef name.
+   `Int` → `_Cxc_Optional_Int64` (Int aliases Int64 per §3.1). Other
+   primitives pass through unchanged (`Int32` → `_Cxc_Optional_Int32`).
+   Records / enums pass through (`Position` → `_Cxc_Optional_Position`).
+
+   For parametric types (`List of T`) L5b-ii-a stays scalar-only —
+   containers are reference-shaped and already nil-carrying; they
+   never Optional-box. This helper only runs on names that reached
+   the value-type branch of `cxc-type->c`."
+  [cxc-ty-name]
+  (let [canonical (if (= "Int" cxc-ty-name) "Int64" cxc-ty-name)]
+    (str "_Cxc_Optional_" canonical)))
+
+(defn- collect-optional-types
+  "L5b-ii-b (2026-08-22): scan record + atom envs for fields whose
+   storage was flipped to `_Cxc_Optional_<T>` (i.e. `:optional? true`)
+   and return the set of inner T names that need a typedef.
+   `fields-from-data-section` sets the flag when a bare-T value-typed
+   field lands storage. Returned names feed `synth-optional-typedefs`.
+
+   Atom envs share the same fields shape when the atom has a
+   data-section — those get their fields via the same helper."
+  [record-env atom-env _enum-env]
+  (let [rec-fields  (mapcat :fields (vals record-env))
+        atom-fields (mapcat (fn [info]
+                              (or (:fields info) []))
+                            (vals atom-env))
+        field-set   (into #{}
+                          (comp (filter :optional?)
+                                (map :cxc-ty))
+                          (concat rec-fields atom-fields))]
+    ;; F39 L5b-ii-c — ord binops (`x.n > 0`) on Optional operands produce
+    ;; Optional<Bool>, which needs the `_Cxc_Optional_Bool` typedef even
+    ;; when no field is declared Bool. Cheap to include unconditionally
+    ;; whenever any Optional field exists.
+    (if (seq field-set)
+      (conj field-set "Bool")
+      field-set)))
+
+(defn- synth-optional-typedef
+  "Produce a `:c-struct` for `_Cxc_Optional_<T>`. Layout is presence-
+   byte-first per §3.10.10 wire encoding — the `.present` field IS
+   the first canonical byte, avoiding a conversion pass for
+   `.as() to Bytes` (L9). C99 designated initializers construct
+   instances at wrap sites via the existing `:struct-lit` emit path
+   (no new emitter code needed).
+
+   `t` is the source cxc type name (e.g. `\"Int\"`, `\"Position\"`);
+   ctx supplies the envs needed to resolve `t`'s raw C type."
+  [t ctx]
+  (let [c-value-type (cxc-type->c {:node :type-ref :name t}
+                                  (:record-env ctx)
+                                  (:atom-env   ctx)
+                                  (:enum-env   ctx))]
+    {:node   :c-struct
+     :name   (optional-type-name t)
+     :fields [{:name "present" :c-type "uint8_t"}
+              {:name "value"   :c-type c-value-type}]}))
+
+(defn- synth-optional-typedefs
+  "Emit one `_Cxc_Optional_<T>` typedef per T in `optional-types`.
+   Called from `lower` after record/enum/atom envs are built so
+   `cxc-type->c` can resolve the inner T. Under L5b-ii-a `optional-
+   types` is always empty; under L5b-ii-b it becomes non-empty."
+  [optional-types ctx]
+  (mapv #(synth-optional-typedef % ctx) (sort optional-types)))
+
 (defn- lower-method-fn
   "A record method becomes a free C function. `self` and each typed
    param join the locals env before the body is lowered."
@@ -5507,50 +6228,85 @@
    `a` and `b`. Dispatched on field type: primitives + enums use `==`;
    NSString uses `-isEqualToString:`; nested records recurse into their
    synthesized equals; atoms and NSObject containers use pointer / NSObject
-   equality."
+   equality.
+
+   F39 L5b-ii-c (Sub-N) — when the field's storage is Optional-boxed,
+   compare presence + value: two `nil` are equal; `nil` vs `present`
+   are not; both `present` compare `.value`s with the underlying
+   equality rule. Dead until Sub-P flips `:optional?`."
   [f a-name b-name ctx]
   (let [fname   (:name f)
-        cxc-ty  (:cxc-ty f)]
+        cxc-ty  (:cxc-ty f)
+        a-fld   (str a-name "." fname)
+        b-fld   (str b-name "." fname)]
     (cond
+      (:optional? f)
+      (let [a-val (str a-fld ".value")
+            b-val (str b-fld ".value")
+            a-pres (str a-fld ".present")
+            b-pres (str b-fld ".present")
+            inner-eq (cond
+                       (= "String" cxc-ty)
+                       (str "((" a-val " == " b-val ") || "
+                            "[" a-val " isEqualToString:" b-val "])")
+                       (contains? (:record-env ctx) cxc-ty)
+                       (str (record-synth-equals-name cxc-ty)
+                            "(" a-val ", " b-val ")")
+                       :else
+                       (str "(" a-val " == " b-val ")"))]
+        (str "((" a-pres " == " b-pres ") && (!" a-pres " || " inner-eq "))"))
+
       (= "String" cxc-ty)
-      (str "((" a-name "." fname " == " b-name "." fname ") || "
-           "[" a-name "." fname " isEqualToString:" b-name "." fname "])")
+      (str "((" a-fld " == " b-fld ") || "
+           "[" a-fld " isEqualToString:" b-fld "])")
 
       (contains? (:record-env ctx) cxc-ty)
       (str (record-synth-equals-name cxc-ty)
-           "(" a-name "." fname ", " b-name "." fname ")")
+           "(" a-fld ", " b-fld ")")
 
       (contains? (:atom-env ctx) cxc-ty)
-      (str "(" a-name "." fname " == " b-name "." fname ")")
+      (str "(" a-fld " == " b-fld ")")
 
       (primitive-eq-op? cxc-ty ctx)
-      (str "(" a-name "." fname " == " b-name "." fname ")")
+      (str "(" a-fld " == " b-fld ")")
 
       :else
-      (str "[" a-name "." fname " isEqual:" b-name "." fname "]"))))
+      (str "[" a-fld " isEqual:" b-fld "]"))))
 
 (defn- field-hash-c-src
   "Emit a C expression producing a `long` hash contribution for one
-   field. Combined with 31-multiply accumulator."
+   field. Combined with 31-multiply accumulator.
+
+   F39 L5b-ii-c (Sub-N) — Optional field hashes to 0 when nil, else
+   the underlying value's hash. Dead until Sub-P."
   [f var-name ctx]
   (let [fname   (:name f)
-        cxc-ty  (:cxc-ty f)]
+        cxc-ty  (:cxc-ty f)
+        fld     (str var-name "." fname)]
     (cond
+      (:optional? f)
+      (let [val (str fld ".value")
+            inner (cond
+                    (= "String" cxc-ty)  (str "(long)[" val " hash]")
+                    (contains? (:record-env ctx) cxc-ty)
+                    (str (record-synth-hash-name cxc-ty) "(" val ")")
+                    :else                 (str "(long)" val))]
+        (str "(" fld ".present ? " inner " : 0)"))
+
       (= "String" cxc-ty)
-      (str "(long)[" var-name "." fname " hash]")
+      (str "(long)[" fld " hash]")
 
       (contains? (:record-env ctx) cxc-ty)
-      (str (record-synth-hash-name cxc-ty)
-           "(" var-name "." fname ")")
+      (str (record-synth-hash-name cxc-ty) "(" fld ")")
 
       (contains? (:atom-env ctx) cxc-ty)
-      (str "(long)(intptr_t)" var-name "." fname)
+      (str "(long)(intptr_t)" fld)
 
       (primitive-eq-op? cxc-ty ctx)
-      (str "(long)" var-name "." fname)
+      (str "(long)" fld)
 
       :else
-      (str "(long)[" var-name "." fname " hash]"))))
+      (str "(long)[" fld " hash]"))))
 
 (defn- synthesize-record-equals-fn
   "Produce a `:c-function` node implementing structural equality for
@@ -5649,8 +6405,34 @@
   (and (string? (:cxc-ty field))
        (.startsWith ^String (:cxc-ty field) "_Cxc_SetOf")))
 
+(defn- field-storage-value-typed?
+  [field ctx]
+  (let [c-ty (:c-type field)
+        nm   (:cxc-ty field)]
+    (and (string? c-ty)
+         (not (str/ends-with? c-ty "*"))
+         (not= "id" c-ty)
+         (or (contains? primitive-c-type nm)
+             (contains? (:record-env ctx) nm)
+             (contains? (:enum-env   ctx) nm)))))
+
 (defn- default-init-stmt-for [field ctx]
   (let [d (:default field)]
+    ;; F39 L5b-i fence — only fires on value-typed fields whose storage
+    ;; is still scalar (NOT `:optional?`). Once Sub-P flips the flag,
+    ;; the same shape becomes legal via the Optional wrap below.
+    (when (and (map? d)
+               (= :lit-nil (:node d))
+               (field-storage-value-typed? field ctx)
+               (not (:optional? field)))
+      (let [ty-nm  (:cxc-ty field)
+            suffix (if (:nonnil? field) "!" "")]
+        (fail-nyi!
+         (str "F39 L5b-i: value-typed field `" (:name field) ": " ty-nm suffix
+              "` cannot take `= nil` default until L5b-ii lands the "
+              "Optional-boxed representation (spec §3.6.1 unified rule "
+              "2026-08-20). See compiler/design/plans/f39-nullability.md.")
+         field)))
     (cond
       ;; List of T with a list literal default: synthesize a
       ;; -initWithElements: call instead of dropping through to
@@ -5690,6 +6472,33 @@
         {:node :assign
          :lhs  {:node :name :sym (str "_" (:name field))}
          :rhs  {:node :objc-alloc-init :class (:cxc-ty field)}})
+
+      ;; F39 L5b-ii-c (Sub-J) — Optional field default-init.
+      ;; `= nil` OR no-default → `{present:0}`;
+      ;; already-Optional default (e.g. `= Counter(...).bump` where
+      ;; `.bump` returns Optional) → pass-through struct-copy;
+      ;; scalar default → wrap `{present:1, .value:<lowered>}`.
+      (:optional? field)
+      (let [opt-c (:c-type field)
+            nil-default? (or (nil? d)
+                             (and (map? d) (= :lit-nil (:node d))))
+            rhs-tk (when d (infer-type d ctx))
+            already-opt? (and rhs-tk (optional-tk? rhs-tk))
+            rhs (cond
+                  nil-default?
+                  {:node :struct-lit
+                   :type opt-c
+                   :fields [{:name "present" :value {:node :int :value 0}}]}
+                  already-opt?
+                  (lower-expr d ctx)
+                  :else
+                  {:node :struct-lit
+                   :type opt-c
+                   :fields [{:name "present" :value {:node :int :value 1}}
+                            {:name "value"   :value (lower-expr d ctx)}]})]
+        {:node :assign
+         :lhs  {:node :name :sym (str "_" (:name field))}
+         :rhs  rhs})
 
       :else
       (let [rhs (if d (lower-expr d ctx) {:node :int :value 0})]
@@ -5745,23 +6554,54 @@
                      :recv {:node :name :sym "self"}
                      :selector "checkInvariants"
                      :args []}
-        ;; F39 L3 — method-return check for `-> T!`. Rewrite the
-        ;; trailing `return <expr>` into a `_Cxc_ret = <expr>; guard;
-        ;; return _Cxc_ret;` triple so the returned value is bound
-        ;; once, checked, then returned. Only fires when the return
-        ;; type node is `:type-nonnil`; other returns pass through.
-        nonnil-ret? (= :type-nonnil (get-in method [:cxc-return-ty-node :node]))
+        ;; F39 L3 + L5b-ii-d — method-return check for `-> T!`. Rewrite
+        ;; the trailing `return <expr>` into a `_Cxc_ret = <expr>; guard;
+        ;; return _Cxc_ret;` triple so the returned value is bound once,
+        ;; checked, then returned. Two shapes:
+        ;;   reference `T!` → pointer-nil check (existing L3 path)
+        ;;   value `T!` fed an Optional expression → `.present` check
+        ;;     with unwrap via `:c-value-nonnil-unwrap` (L5b-ii-d).
+        ;; For value `T!` fed a scalar expression, no check needed —
+        ;; the type is already non-nil by construction.
+        nonnil-ret?  (= :type-nonnil (get-in method [:cxc-return-ty-node :node]))
+        return-ty-kw (when nonnil-ret?
+                       (cxc-type->type-kw (:cxc-return-ty method)
+                                          (:record-env ctx) (:atom-env ctx)
+                                          (:enum-env ctx) method))
+        ret-c-value?  (and (string? ret-c)
+                           (not (str/ends-with? ret-c "*"))
+                           (not= "id" ret-c)
+                           (not (.contains ^String ret-c "^")))
         ret-check-stmts
         (fn [ret-stmt]
-          (if nonnil-ret?
+          (cond
+            (not nonnil-ret?)
+            [ret-stmt]
+
+            ;; Value-typed `T!` with an Optional return-expression:
+            ;; unwrap + presence check inline. Detected on the lowered
+            ;; form (already-emitted `:c-optional-*` node, or a `:field`
+            ;; read of an Optional-storage self-field). Raw-AST
+            ;; `infer-type` doesn't run here — the lowered pipeline has
+            ;; already converted user idents into ivars.
+            (and ret-c-value?
+                 (optional-ret-value? (:value ret-stmt) ctx))
+            [{:node :var-decl :name "_Cxc_ret" :c-type ret-c
+              :rhs  {:node :c-value-nonnil-unwrap
+                     :inner (:value ret-stmt)
+                     :site  (str "def-atom `" atom-name "` method `"
+                                 (:name method) "` return (value-typed T!)")
+                     :name  "return value"}}
+             {:node :return :value {:node :name :sym "_Cxc_ret"}}]
+
+            :else
             [{:node :var-decl :name "_Cxc_ret" :c-type ret-c
               :rhs  (:value ret-stmt)}
              (nonnil-check-stmt "_Cxc_ret"
                                 (str "def-atom `" atom-name "` method `"
                                      (:name method) "` return")
                                 "return value")
-             {:node :return :value {:node :name :sym "_Cxc_ret"}}]
-            [ret-stmt]))
+             {:node :return :value {:node :name :sym "_Cxc_ret"}}]))
         wrapped     (cond
                       ;; Trailing `return <expr>` — insert exit check
                       ;; before it so state is verified before the
@@ -5839,12 +6679,23 @@
    Chained comparisons (`a <= b <= c`) are desugared to
    `(a <= b) and (b <= c)` at the parser layer's
    `desugar-chained-comparisons` pass before lower ever sees them —
-   no special handling here."
+   no special handling here.
+
+   F39 L5b-ii-c — when the invariant predicate infers as Optional<Bool>
+   (because it reads an Optional field via nil-punning arithmetic /
+   ordering), reinterpret the check as \"skip if any operand is nil;
+   fail only when present and false\". Wrapped in a `:c-optional-cond`
+   marker so emit can produce `(cond.present && !cond.value)` instead
+   of `!cond` on a struct."
   [atom-name idx pred ctx]
-  {:node  :invariant-check
-   :cond  (lower-expr pred ctx)
-   ;; Fires from init AND post-transition (Step 14); label stays generic.
-   :label (str atom-name " invariant #" idx " failed")})
+  (let [pred-tk (infer-type pred ctx)
+        cond-lo (lower-expr pred ctx)]
+    {:node  :invariant-check
+     :cond  (if (optional-tk? pred-tk)
+              {:node :c-optional-cond :inner cond-lo}
+              cond-lo)
+     ;; Fires from init AND post-transition (Step 14); label stays generic.
+     :label (str atom-name " invariant #" idx " failed")}))
 
 (defn- collect-self-field-refs
   "Walk `pred` bottom-up, returning the set of unqualified :ident names
@@ -5880,10 +6731,15 @@
   (let [refs (collect-self-field-refs pred ctx)
         all-substituted? (every? #(contains? field-subs %) refs)]
     (when all-substituted?
-      {:node  :invariant-check
-       :cond  (lower-expr pred (assoc ctx :field-substitutions field-subs))
-       :label (str atom-name " invariant #" idx
-                   " failed at construction (source value violates)")})))
+      (let [sub-ctx (assoc ctx :field-substitutions field-subs)
+            pred-tk (infer-type pred sub-ctx)
+            cond-lo (lower-expr pred sub-ctx)]
+        {:node  :invariant-check
+         :cond  (if (optional-tk? pred-tk)
+                  {:node :c-optional-cond :inner cond-lo}
+                  cond-lo)
+         :label (str atom-name " invariant #" idx
+                     " failed at construction (source value violates)")}))))
 
 (defn- class-name-for-atom
   "Emitted ObjC class name. Regular atoms use their cxc name verbatim.
@@ -6975,7 +7831,40 @@
         records    (filter #(= :record (:node %)) top-nodes)
         enums      (filter #(= :enum   (:node %)) top-nodes)
         c-enums    (mapv lower-enum enums)
-        structs    (mapv #(lower-record-struct % ctx) records)
+        ;; F39 L5b-ii-a — collect + synthesize Optional-boxed value-type
+        ;; typedefs. Under L5b-ii-a `collect-optional-types` returns the
+        ;; empty set unconditionally (dead code); the pipeline is in
+        ;; place so L5b-ii-b's flip is a single change to the collection
+        ;; function. Optional typedefs precede record structs so their
+        ;; `.value` field type is always in scope when a record contains
+        ;; a bare-value-typed field lowered as `_Cxc_Optional_<T>`.
+        optional-types (collect-optional-types record-env atom-env enum-env)
+        ;; F39 L5b-ii-c — Optional typedefs whose inner is a record
+        ;; must appear AFTER that record's struct definition (C requires
+        ;; complete-type for a struct field). Split the set: primitive/
+        ;; enum-inner typedefs precede records (they don't reference
+        ;; record types); record-inner typedefs are emitted per-record
+        ;; immediately after the record's own struct definition. This
+        ;; assumes records don't cycle by name (spec §3.4 — value-type
+        ;; records are trees).
+        record-name-set (into #{} (map :name) records)
+        {rec-inner-opts true prim-inner-opts false}
+        (group-by #(contains? record-name-set %) optional-types)
+        prim-inner-structs (synth-optional-typedefs (or prim-inner-opts []) ctx)
+        rec-inner-set      (into #{} rec-inner-opts)
+        ;; Emit each record struct followed by its own Optional-typedef
+        ;; (when present in the set), so a downstream record whose field
+        ;; is `_Cxc_Optional_<PrevRec>` sees the typedef declared.
+        record-blocks
+        (mapv (fn [r]
+                (let [rec-struct (lower-record-struct r ctx)
+                      opt-struct (when (contains? rec-inner-set (:name r))
+                                   (synth-optional-typedef (:name r) ctx))]
+                  (cond-> [rec-struct]
+                    opt-struct (conj opt-struct))))
+              records)
+        structs    (into (vec prim-inner-structs)
+                         (mapcat identity record-blocks))
         functions  (-> (record-method-functions ctx)
                        ;; F67 L4a — record observables (Proposal G
                        ;; class-body collapse: pure-data readers land

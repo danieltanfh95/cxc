@@ -33,7 +33,230 @@
     :binop           (str "(" (emit-expr (:left node))
                           " " (:op node) " "
                           (emit-expr (:right node)) ")")
+    ;; F39 L6 (2026-08-21) — C ternary. Emitted only by the `??`
+    ;; coalesce lowering today; a general-purpose expression form
+    ;; also usable by any future landing needing conditional-value
+    ;; semantics without a full `:c-if-chain` block.
+    :c-ternary       (str "(" (emit-expr (:cond node))
+                          " ? " (emit-expr (:then node))
+                          " : " (emit-expr (:else node)) ")")
+
+    ;; F39 L6 (2026-08-21) — `??` coalesce. Emits a GNU
+    ;; statement-expression that binds the LHS to a temporary
+    ;; (`__typeof__(x) t = (x)`) so a side-effecting LHS fires
+    ;; exactly once, then ternaries on presence.
+    ;;
+    ;; :mode :reference — LHS is a nullable pointer / id / class
+    ;; instance / container. Check is `t != nil`.
+    ;;
+    ;; :mode :optional (L5b-ii-b onward) — LHS is `_Cxc_Optional_<T>`.
+    ;; Check is `t.present`; unwrapped value is `t.value`.
+    :c-coalesce
+    (let [left-c  (emit-expr (:left node))
+          right-c (emit-expr (:right node))]
+      (case (:mode node)
+        :reference
+        (str "({ __typeof__(" left-c ") __cxc_coal = (" left-c "); "
+             "(__cxc_coal != nil) ? __cxc_coal : (" right-c "); })")
+        :optional
+        (str "({ __typeof__(" left-c ") __cxc_coal = (" left-c "); "
+             "(__cxc_coal.present) ? __cxc_coal.value : (" right-c "); })")))
+
+    ;; F39 L8 (spec §4.10.9) — nil-receiver dispatch fallback. When the
+    ;; callee atom declares an `on_nil:` entry for the selector, the
+    ;; method call site is wrapped in a guarded ternary: on non-nil
+    ;; receiver the ObjC message fires, on nil the declared constant
+    ;; falls through. GNU stmt-expr binds `recv` once (side-effecting
+    ;; receivers like `Counter().other.method()` fire exactly once —
+    ;; matches L6-ref `??` and L5b-ii-d unwrap patterns).
+    ;;
+    ;; The `:send` sub-node is a `:objc-msg` whose `:recv` is `target-lo`
+    ;; (the raw receiver expression); we override to reference the
+    ;; single-eval temp so the wire read of `_other` fires once, not
+    ;; twice.
+    :c-on-nil-dispatch
+    (let [recv-c     (emit-expr (:recv node))
+          send-node  (:send node)
+          ;; Rebind the receiver-slot on the send-node to the single-eval
+          ;; temp. Two shapes: `:objc-msg` (arg-form method call) carries
+          ;; `:recv`; `:field` (bare `.name` observable read) carries
+          ;; `:target`. Both surfaces need to reference the same temp so
+          ;; the receiver-expression fires exactly once.
+          rebound    (case (:node send-node)
+                       :objc-msg (assoc send-node :recv
+                                        {:node :name :sym "__cxc_recv"})
+                       :field    (assoc send-node :target
+                                        {:node :name :sym "__cxc_recv"})
+                       send-node)
+          send-c     (emit-expr rebound)
+          fallback-c (emit-expr (:fallback node))]
+      (str "({ __typeof__(" recv-c ") __cxc_recv = (" recv-c "); "
+           "(__cxc_recv != nil) ? " send-c " : (" fallback-c "); })"))
+
+    ;; F39 L5b-ii-d — Optional operand feeding a `T!` value-typed
+    ;; observation point (field write, ctor bind, method return). GNU
+    ;; stmt-expr binds once, fires cxc_nonnil_violation on absent (same
+    ;; warning-grade helper L3 uses for reference `T!` sites — writes to
+    ;; stderr, returns), then yields `.value`. Warning-grade: on absent
+    ;; the assign proceeds with the zero-inited `.value` (matches L3's
+    ;; non-abort discipline; caller sees garbage rather than panic).
+    :c-value-nonnil-unwrap
+    (let [inner-c (emit-expr (:inner node))]
+      (str "({ __typeof__(" inner-c ") __cxc_uv = (" inner-c "); "
+           "if (!__cxc_uv.present) cxc_nonnil_violation("
+           "\"" (escape-c-string (:site node)) "\", "
+           "\"" (escape-c-string (:name node)) "\"); "
+           "__cxc_uv.value; })"))
+
+    ;; F39 L5b-ii-c — invariant-position Optional<Bool>. Emits as
+    ;; `(present && value)` with single-eval binding, so `if (!cond)`
+    ;; in the enclosing invariant-check fires iff the Optional yielded
+    ;; a *present false*. Nil operands skip the invariant (nil-punning
+    ;; makes the whole predicate nil; skipping matches the "if data is
+    ;; present, invariant must hold" reading).
+    :c-optional-cond
+    (let [inner-c (emit-expr (:inner node))]
+      (str "({ __typeof__(" inner-c ") __cxc_oc = (" inner-c "); "
+           "(__cxc_oc.present && __cxc_oc.value); })"))
+
+    ;; F39 L5b-ii-c (2026-08-21) — presence check on Optional.
+    ;; `x is nil` / `x == nil` / `x != nil` lower here when x is Optional.
+    ;; Single-eval binding so a side-effecting operand fires once.
+    :c-optional-nil-check
+    (let [inner-c (emit-expr (:inner node))
+          op      (if (:negate? node) "!=" "==")]
+      (str "({ __typeof__(" inner-c ") __cxc_pc = (" inner-c "); "
+           "(__cxc_pc.present " op " 0); })"))
+
+    ;; F39 L5b-ii-c (2026-08-21) — nil-punning binop. Arithmetic /
+    ;; ordering propagate (return Optional); equality reduces to Bool.
+    :c-optional-binop
+    (let [left-c  (emit-expr (:left  node))
+          right-c (emit-expr (:right node))
+          op      (:op node)
+          l-opt?  (:left-opt?  node)
+          r-opt?  (:right-opt? node)
+          l-val   (if l-opt? "__cxc_ol.value"   "__cxc_ol")
+          r-val   (if r-opt? "__cxc_or.value"   "__cxc_or")
+          l-pres  (if l-opt? "__cxc_ol.present" "1")
+          r-pres  (if r-opt? "__cxc_or.present" "1")
+          opt-c   (:result-opt-c-type node)]
+      (case (:result-kind node)
+        :arith
+        (str "({ __typeof__(" left-c ") __cxc_ol = (" left-c "); "
+             "__typeof__(" right-c ") __cxc_or = (" right-c "); "
+             "(" l-pres " && " r-pres ") "
+             "? (" opt-c "){.present = 1, .value = " l-val " " op " " r-val "} "
+             ": (" opt-c "){0}; })")
+        :ord
+        (str "({ __typeof__(" left-c ") __cxc_ol = (" left-c "); "
+             "__typeof__(" right-c ") __cxc_or = (" right-c "); "
+             "(" l-pres " && " r-pres ") "
+             "? (" opt-c "){.present = 1, .value = (" l-val " " op " " r-val ")} "
+             ": (" opt-c "){0}; })")
+        :eq
+        (str "({ __typeof__(" left-c ") __cxc_ol = (" left-c "); "
+             "__typeof__(" right-c ") __cxc_or = (" right-c "); "
+             "((" l-pres " == " r-pres ") "
+             "&& (!" l-pres " || " l-val " == " r-val ")); })")
+        :neq
+        (str "({ __typeof__(" left-c ") __cxc_ol = (" left-c "); "
+             "__typeof__(" right-c ") __cxc_or = (" right-c "); "
+             "(!((" l-pres " == " r-pres ") "
+             "&& (!" l-pres " || " l-val " == " r-val "))); })")))
+
+    ;; F39 L5b-ii-c — Optional-propagating unary op (`-`, `!`).
+    :c-optional-unary
+    (let [inner-c (emit-expr (:inner node))
+          opt-c   (:result-opt-c-type node)
+          op      (:op node)]
+      (str "({ __typeof__(" inner-c ") __cxc_ou = (" inner-c "); "
+           "__cxc_ou.present "
+           "? (" opt-c "){.present = 1, .value = " op "__cxc_ou.value} "
+           ": (" opt-c "){0}; })"))
+
+    ;; F39 L5b-ii-c — Optional-propagating dot access: `x.field` where
+    ;; x is Optional-Record. Two shapes:
+    ;;   inner-scalar   → wrap `.value.field` into an Optional
+    ;;   inner-Optional → the inner `.value.field` IS the Optional; pass
+    ;;                    through when outer present, else nil-of-inner
+    :c-optional-dot
+    (let [target-c (emit-expr (:target node))
+          fname    (:field node)
+          opt-c    (:result-opt-c-type node)]
+      (if (:inner-already-opt? node)
+        (str "({ __typeof__(" target-c ") __cxc_od = (" target-c "); "
+             "__cxc_od.present "
+             "? __cxc_od.value." fname " "
+             ": (" opt-c "){0}; })")
+        (str "({ __typeof__(" target-c ") __cxc_od = (" target-c "); "
+             "__cxc_od.present "
+             "? (" opt-c "){.present = 1, .value = __cxc_od.value." fname "} "
+             ": (" opt-c "){0}; })")))
+
+    ;; F39 L5b-ii-c — print of Optional arg. Present → format inner;
+    ;; nil → "nil\n". Matches ObjC's reference-nil `print(nil)` convention.
+    :c-print-optional
+    (let [arg-c    (emit-expr (:arg node))
+          inner-tk (:inner-arg-type node)
+          inner-fmt (:inner-fmt node)
+          fmt-esc  (escape-c-string inner-fmt)
+          family (cond
+                   (= :int inner-tk)   :int
+                   (= :float inner-tk) :float
+                   (= :bool inner-tk)  :int
+                   (vector? inner-tk)  (first inner-tk)
+                   :else               :int)
+          cast     (case family
+                     :int   "(long long)"
+                     :uint  "(unsigned long long)"
+                     :float "(double)"
+                     "")]
+      (str "({ __typeof__(" arg-c ") __cxc_po = (" arg-c "); "
+           "__cxc_po.present "
+           "? printf(\"" fmt-esc "\", " cast "(__cxc_po.value)) "
+           ": printf(\"nil\\n\"); })"))
+
     :unary           (str "(" (:op node) (emit-expr (:expr node)) ")")
+
+    ;; F39 L5b-ii-c — Optional-aware chained-cmp. Single-eval each
+    ;; operand into a `__typeof__` local, compute all-present flag
+    ;; from operand-Optional markers, then either return
+    ;; Optional<Bool>{present:1, value:chain-of-`.value`-comparisons}
+    ;; or Optional<Bool>{0}. Dead until Sub-P flips storage.
+    :c-optional-chained-cmp
+    (let [operands   (:operands node)
+          opts?      (:operand-opts? node)
+          ops        (:ops node)
+          n          (count operands)
+          rendered   (mapv emit-expr operands)
+          binding-of (fn [i] (str "__cxc_occ_" i))
+          prelude    (->> (range n)
+                          (map (fn [i]
+                                 (str "__typeof__(" (nth rendered i) ") "
+                                      (binding-of i) " = ("
+                                      (nth rendered i) "); ")))
+                          (apply str))
+          present-parts (->> (range n)
+                             (map (fn [i]
+                                    (if (nth opts? i)
+                                      (str (binding-of i) ".present")
+                                      "1")))
+                             (str/join " && "))
+          value-of  (fn [i]
+                      (if (nth opts? i)
+                        (str (binding-of i) ".value")
+                        (binding-of i)))
+          chain     (->> (range (dec n))
+                         (map (fn [i]
+                                (str (value-of i) " " (nth ops i) " " (value-of (inc i)))))
+                         (str/join " && "))
+          opt-c     (:result-opt-c-type node)]
+      (str "({ " prelude
+           "(" present-parts ") "
+           "? (" opt-c "){.present = 1, .value = (" chain ")} "
+           ": (" opt-c "){0}; })"))
+
     :chained-cmp
     ;; F27 semantic once-only: render `-max <= counter.next() <= max`
     ;; as a GNU statement-expression that binds each *interior*
@@ -193,6 +416,12 @@
     :call     (str (emit-expr node) ";")
     :objc-msg (str (emit-expr node) ";")
     :ffi-call (str (emit-expr node) ";")
+    ;; F39 L5b-ii-c — Optional-aware print in statement position.
+    :c-print-optional (str (emit-expr node) ";")
+    ;; F39 L8 — nil-receiver dispatch at statement position (the ternary
+    ;; discards its value; the fallback is still evaluated but its result
+    ;; is dropped — matches ObjC nil-message-return semantics).
+    :c-on-nil-dispatch (str (emit-expr node) ";")
     :return   (str "return " (emit-expr (:value node)) ";")
     :assign   (str (emit-expr (:lhs node)) " = " (emit-expr (:rhs node)) ";")
     :var-decl (str (:c-type node) " " (:name node) " = " (emit-expr (:rhs node)) ";")

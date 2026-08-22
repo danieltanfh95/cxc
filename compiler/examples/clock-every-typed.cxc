@@ -1,7 +1,7 @@
 def main:
     clock: Clock = Clock()
 
-    got_millis: Int = 0
+    got_millis: Int! = 0
 
     -> running
 

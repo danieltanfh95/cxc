@@ -1,5 +1,5 @@
 def Position:
-    x: Float
-    y: Float
+    x: Float!
+    y: Float!
 
     plus(other: Position) :< Position(x: self.x + other.x, y: self.y + other.y)

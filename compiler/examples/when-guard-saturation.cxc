@@ -1,6 +1,6 @@
 def Counter:
-    raw_n: Int = 0
-    max:   Int = 3
+    raw_n: Int! = 0
+    max:   Int! = 3
 
     n :< raw_n
 

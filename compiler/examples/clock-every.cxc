@@ -1,7 +1,7 @@
 def main:
     clock: Clock = Clock()
 
-    beats: Int = 0
+    beats: Int! = 0
 
     -> running
 
