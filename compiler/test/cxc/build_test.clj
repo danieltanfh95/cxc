@@ -69,6 +69,12 @@
       (is (zero? exit))
       (is (= "7\n" stdout)))))
 
+(deftest end-to-end-f37-primitive-bytes
+  (testing "F37 L2 — end-to-end canonical bytes for a record with primitive Int32! fields. `Vec(x:1, y:2).as()` synthesizes `Vec_cxc_as_bytes` which returns an NSMutableData * of exactly 8 bytes (2 × 4-byte Int32, big-endian). `b.length` prints 8."
+    (let [{:keys [exit stdout]} (compile-and-run "f37-primitive-bytes")]
+      (is (zero? exit))
+      (is (= "8\n" stdout)))))
+
 (deftest end-to-end-k5-if-expression
   (testing "K5 L1 — `if` at expression position (spec §3.8.1). Uses both simple `if...else` and `if...else if...else` chain. Result flows through `let` bindings. Lowered as C ternary; prints the selected branch value."
     (let [{:keys [exit stdout]} (compile-and-run "k5-if-expression")]

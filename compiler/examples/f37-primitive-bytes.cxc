@@ -1,0 +1,13 @@
+def Vec:
+    x: Int32!
+    y: Int32!
+
+def main:
+    -> running
+        # F37 L2 — record with primitive-byte-eligible fields gets a
+        # synthesized `Vec_cxc_as_bytes`. `.as()` at call site
+        # dispatches to the synthesized fn; `.length` on the returned
+        # NSMutableData * gives byte count. 4 + 4 = 8 bytes big-endian.
+        then:
+            let b: Bytes = Vec(x: 1, y: 2).as()
+            print(b.length)

@@ -2912,6 +2912,19 @@
         target-ty   (infer-type (:target dot) ctx)
         method-name (:field dot)]
     (cond
+      ;; F37 Landing 2 — `.as() -> Bytes` on a record with primitive-only
+      ;; fields. Method isn't user-declared (there'd be an entry in
+      ;; :method-index otherwise, which is checked further down); the
+      ;; call intercept in lower-method-call dispatches to the
+      ;; synthesized function. Type is :bytes so downstream annotations
+      ;; (`let b: Bytes = p.as()`) unify cleanly.
+      (and (map? target-ty) (:record target-ty)
+           (= "as" method-name)
+           (empty? (:args call-node))
+           (nil? (get-in (:record-env ctx)
+                         [(:record target-ty) :method-index "as"])))
+      :bytes
+
       (and (map? target-ty) (:record target-ty))
       (let [rn (:record target-ty)
             m  (get-in (:record-env ctx) [rn :method-index method-name])
@@ -3387,7 +3400,13 @@
 ;; ---------------------------------------------------------------------------
 
 (declare lower-expr lower-stmt lower-body-stmts record-synth-equals-name
-         resolve-args-against-params)
+         resolve-args-against-params
+         ;; F37 Landing 2 forward refs — synthesis functions live below
+         ;; the equals/hash block but the intercept in lower-method-call
+         ;; needs them earlier.
+         record-synth-as-bytes-name
+         record-has-user-as-method?
+         f37-primitive-byte-field?)
 
 (defn- lower-record-ctor
   [record-name args ctx]
@@ -3655,7 +3674,43 @@
           :else args)]
     (if for-each-with-lambda?
       (lower-for-each-call target-lo target-ty (get-in args [0 :value]) ctx)
-      (let [arg-exprs (mapv #(lower-expr (:value %) ctx) ordered-args)
+      ;; F37 Landing 2 — `.as()` on a record with primitive-byte-eligible
+      ;; fields dispatches to `<Record>_cxc_as_bytes(target)`. Fires
+      ;; only when the user hasn't declared their own `as` method
+      ;; (§3.3.2 rule 6 override). Non-primitive fields raise a
+      ;; targeted fail-nyi naming the offending field and pointing at
+      ;; the follow-on landing (Landing 3+) that unblocks it. Ignores
+      ;; args (an `.as(order: ...)` overload would resolve through the
+      ;; ordinary user-method path via :method-index, distinct
+      ;; signature per §3.11.4).
+      (if (and (map? target-ty) (:record target-ty)
+               (= "as" method-name) (empty? args))
+        (let [rec-name (:record target-ty)
+              info     (get-in ctx [:record-env rec-name])]
+          (cond
+            (record-has-user-as-method? info)
+            {:node :call
+             :fn   (c-method-name rec-name "as")
+             :args [target-lo]}
+
+            (every? f37-primitive-byte-field? (:fields info))
+            {:node :call
+             :fn   (record-synth-as-bytes-name rec-name)
+             :args [target-lo]}
+
+            :else
+            (let [bad (first (remove f37-primitive-byte-field? (:fields info)))]
+              (fail-nyi!
+               (str "F37 Landing 2: cannot synthesize `.as() -> Bytes` for "
+                    "record `" rec-name "." (:name bad) "` (type `"
+                    (:cxc-ty bad) "`" (when (:optional? bad) " Optional-boxed")
+                    "). Primitive-only fields are supported at this landing "
+                    "(Bool / sized-int / Int / Float / Double). String lands "
+                    "in F37 Landing 3, nested records in Landing 4, enums in "
+                    "Landing 5, Optional in F39 Landing 9. Write "
+                    "`function as(self) -> Bytes:` on the record to override.")
+               call-node))))
+        (let [arg-exprs (mapv #(lower-expr (:value %) ctx) ordered-args)
             ;; Audit F44 — List container's `add`/`remove` take the
             ;; element as `id`, so primitive callers need boxing at
             ;; the call site. Element type comes from the container's
@@ -3719,7 +3774,7 @@
               msg-send))
 
           :else
-          (fail-nyi! "method call on non-record/non-atom target" call-node))))))
+          (fail-nyi! "method call on non-record/non-atom target" call-node)))))))
 
 (def ^:private statement-node-kinds
   #{:expr-stmt :emit :break-stmt :continue-stmt :while-stmt
@@ -6405,13 +6460,129 @@
      :params      [{:name "a" :c-type record-name}]
      :body        [{:node :raw-c :text body-src}]}))
 
+;; ---------------------------------------------------------------------------
+;; F37 Landing 2 — canonical bytes synthesis for primitive-field records
+;; (spec §3.4.6 / §3.10.10). Emits `<Record>_cxc_as_bytes(<Record>) -> NSMutableData *`
+;; producing big-endian encoding of all fields concatenated in declaration
+;; order. Records with any non-primitive field skip synthesis at this
+;; landing; calling `.as()` on them raises a targeted `fail-nyi!` naming
+;; the offending field type and pointing at the follow-on landing that
+;; unblocks it (Landing 3 String/Char, Landing 4 nested record, Landing 5
+;; enum, Landing 6 DecodeOutcome, Landing 8 user-override).
+;;
+;; User override (§3.3.2 rule 6) — a user-declared `.as(self) -> Bytes`
+;; on the record shadows synthesis at both the eligibility check (skip
+;; synth) and the intercept (fall through to normal record method
+;; dispatch which routes to `<Record>_as`).
+;; ---------------------------------------------------------------------------
+
+(defn- record-synth-as-bytes-name [record-name]
+  (str record-name "_cxc_as_bytes"))
+
+(def ^:private f37-primitive-byte-widths
+  ;; C fixed widths per §3.10.10. Bool is one byte (0/1).
+  {"Bool"   1
+   "UInt8"  1  "Int8"   1
+   "UInt16" 2  "Int16"  2
+   "UInt32" 4  "Int32"  4
+   "UInt64" 8  "Int64"  8  "Int" 8
+   "Float"  4  "Double" 8})
+
+(defn- f37-primitive-byte-field?
+  "F37 Landing 2 eligibility: field type is a Bool / sized integer /
+   Int / Float / Double, non-Optional. Nested records, String, Char,
+   Bytes, enum, atom, and Optional-boxed variants land later."
+  [f]
+  (and (not (:optional? f))
+       (contains? f37-primitive-byte-widths (:cxc-ty f))))
+
+(defn- f37-field-encoding-c-src
+  "Emit a C compound statement that appends field `f`'s big-endian
+   encoding to `__d` (the NSMutableData accumulator). Assumes the
+   record var is bound as `a`. Primitive-only in this landing —
+   non-primitive fields raise the caller's fail-nyi guard first."
+  [f]
+  (let [fname (:name f)
+        cxc-ty (:cxc-ty f)
+        fld    (str "a." fname)]
+    (case cxc-ty
+      "Bool"
+      (str "    { uint8_t __v = " fld " ? 0x01 : 0x00;"
+           " [__d appendBytes:&__v length:1]; }")
+
+      ("UInt8" "Int8")
+      (str "    { uint8_t __v = (uint8_t)" fld ";"
+           " [__d appendBytes:&__v length:1]; }")
+
+      ("UInt16" "Int16")
+      (str "    { uint16_t __v = OSSwapHostToBigInt16((uint16_t)" fld ");"
+           " [__d appendBytes:&__v length:2]; }")
+
+      ("UInt32" "Int32")
+      (str "    { uint32_t __v = OSSwapHostToBigInt32((uint32_t)" fld ");"
+           " [__d appendBytes:&__v length:4]; }")
+
+      ("UInt64" "Int64" "Int")
+      (str "    { uint64_t __v = OSSwapHostToBigInt64((uint64_t)" fld ");"
+           " [__d appendBytes:&__v length:8]; }")
+
+      "Float"
+      ;; Type-pun through uint32_t to byteswap IEEE 754 bits without
+      ;; touching the float value's representation.
+      (str "    { uint32_t __v; memcpy(&__v, &" fld ", 4);"
+           " __v = OSSwapHostToBigInt32(__v);"
+           " [__d appendBytes:&__v length:4]; }")
+
+      "Double"
+      (str "    { uint64_t __v; memcpy(&__v, &" fld ", 8);"
+           " __v = OSSwapHostToBigInt64(__v);"
+           " [__d appendBytes:&__v length:8]; }"))))
+
+(defn- record-has-user-as-method?
+  "True when the record explicitly declares a method named `as` in its
+   :method-index. Used to shadow the synthesized default per spec
+   §3.3.2 rule 6."
+  [info]
+  (contains? (get-in info [:method-index]) "as"))
+
+(defn- record-eligible-for-as-bytes-synthesis?
+  [info]
+  (and (not (record-has-user-as-method? info))
+       (every? f37-primitive-byte-field? (:fields info))))
+
+(defn- synthesize-record-as-bytes-fn
+  "F37 Landing 2 — produce a `:c-function` node implementing
+   `<Record>_cxc_as_bytes(<Record> a) -> NSMutableData *`. Precondition:
+   `record-eligible-for-as-bytes-synthesis?` returned true."
+  [record-name info]
+  (let [fields    (:fields info)
+        total     (reduce + 0 (map #(get f37-primitive-byte-widths (:cxc-ty %))
+                                   fields))
+        head      (str "    NSMutableData *__d = [NSMutableData dataWithCapacity:"
+                       total "];")
+        blocks    (map f37-field-encoding-c-src fields)
+        body-src  (str/join "\n" (concat [head] blocks ["    return __d;"]))]
+    {:node        :c-function
+     :name        (record-synth-as-bytes-name record-name)
+     :return-type "NSMutableData *"
+     :params      [{:name "a" :c-type record-name}]
+     :body        [{:node :raw-c :text body-src}]}))
+
 (defn- synthesized-record-functions
-  "Emit the synthesized equals + hash function pair for every record."
+  "Emit the synthesized equals + hash function pair for every record,
+   plus F37 Landing 2 canonical-bytes synthesis when the record's
+   fields are all primitive-byte-eligible AND the user hasn't
+   declared their own `.as(self) -> Bytes` (§3.3.2 rule 6 override)."
   [ctx]
   (vec (for [[rec-name info] (:record-env ctx)
              f-fn            [synthesize-record-equals-fn
-                              synthesize-record-hash-fn]]
-         (f-fn rec-name info ctx))))
+                              synthesize-record-hash-fn
+                              (fn [rn ri _]
+                                (when (record-eligible-for-as-bytes-synthesis? ri)
+                                  (synthesize-record-as-bytes-fn rn ri)))]
+             :let            [emitted (f-fn rec-name info ctx)]
+             :when           emitted]
+         emitted)))
 
 (defn- lower-list-literal-init
   "Lower `xs: List of T = [e1, e2, ...]` in a data-field default.
@@ -8051,9 +8222,22 @@
                              ;; Clock.every's typed-payload dispatch).
                              "<objc/message.h>"]
                             ["<stdio.h>"])
+        ;; F37 Landing 2 — synthesized `<Record>_cxc_as_bytes` uses
+        ;; OSSwapHostToBigInt16/32/64. Declared in <libkern/OSByteOrder.h>;
+        ;; Foundation transitively pulls it in on macOS SDKs today, but
+        ;; add the explicit include so a non-macOS backend (F54) or a
+        ;; future SDK change doesn't silently break the encode path.
+        needs-byteorder?  (boolean (some (fn [[_ info]]
+                                           (and (not (record-has-user-as-method? info))
+                                                (seq (:fields info))
+                                                (every? f37-primitive-byte-field?
+                                                        (:fields info))))
+                                         record-env))
         includes          (cond-> base-includes
-                            needs-abort?   (conj "<stdlib.h>")
-                            needs-runtime? (conj "<stdlib.h>")
+                            needs-abort?     (conj "<stdlib.h>")
+                            needs-runtime?   (conj "<stdlib.h>")
+                            needs-byteorder? (conj "<libkern/OSByteOrder.h>"
+                                                    "<string.h>")
                             ;; F31/F35 L2 — panic()'s inline backtrace
                             ;; pulls in execinfo.h + stdlib.h (free()).
                             needs-panic?   (conj "<stdlib.h>" "<execinfo.h>"))

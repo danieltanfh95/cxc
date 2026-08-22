@@ -1447,6 +1447,53 @@ def main:
         (is (some? (walker main-body))
             "expected V_cxc_equals call in main body")))))
 
+;; ---------------------------------------------------------------------------
+;; F37 Landing 2 — primitive-field canonical bytes (spec §3.4.6 / §3.10.10)
+;; ---------------------------------------------------------------------------
+
+(deftest f37-l2-bytes-synthesizes-record-as-bytes-fn
+  (testing "F37 L2 — a record with only primitive-byte-eligible fields gets a synthesized `<Record>_cxc_as_bytes` free C function alongside the F37 equals/hash pair. Fields must be `T!` (non-nil) — bare `T` value-type is Optional-boxed under F39 Sub-P and defers to F39 L9. Non-primitive fields skip synthesis at L2."
+    (let [prog     (lower-src "def V:\n    x: Int!\n    y: Int!\n\ndef main:\n    -> running\n")
+          fn-names (set (map :name (:functions prog)))]
+      (is (contains? fn-names "V_cxc_as_bytes"))
+      (is (contains? fn-names "V_cxc_equals") "sibling equals still emitted")
+      (is (contains? fn-names "V_cxc_hash")   "sibling hash still emitted"))))
+
+(deftest f37-l2-bytes-primitive-record-encodes-big-endian
+  (testing "F37 L2 — synthesized body uses `OSSwapHostToBigInt64` for Int (Int64) fields per §3.10.10 big-endian encoding. Body text is inspected to verify the byte-order call is present per field."
+    (let [prog (lower-src "def V:\n    x: Int!\n    y: Int!\n\ndef main:\n    -> running\n")
+          f    (first (filter #(= "V_cxc_as_bytes" (:name %)) (:functions prog)))
+          body-text (get-in f [:body 0 :text])]
+      (is (some? f))
+      (is (= "NSMutableData *" (:return-type f)))
+      (is (re-find #"OSSwapHostToBigInt64" body-text)
+          "Int (int64_t) fields use OSSwap big-endian")
+      (is (re-find #"NSMutableData dataWithCapacity:16" body-text)
+          "capacity hint = 8 + 8 bytes for two Int fields"))))
+
+(deftest f37-l2-bytes-rewrites-record-as-call-to-synthesized-fn
+  (testing "F37 L2 — `p.as()` on a record local lowers to a `:call` whose `:fn` is `V_cxc_as_bytes` (analogous to F37 equals rewrite). Downstream annotations `let b: Bytes = p.as()` unify against :bytes inferred at the intercept. `.as()` at method-name position requires the parser's dot-branch to accept the `as` keyword (spec-committed reserved word used as method surface)."
+    (let [src "def V:\n    x: Int!\n\ndef main:\n    -> running\n        then:\n            let b: Bytes = V(x: 1).as()\n            print(b.length)\n"
+          prog (lower-src src)
+          main-body (get-in prog [:main :body])
+          walker (fn walker [x]
+                   (cond
+                     (map? x)
+                     (or (when (and (= :call (:node x))
+                                    (= "V_cxc_as_bytes" (:fn x)))
+                           x)
+                         (some walker (vals x)))
+                     (sequential? x) (some walker x)))]
+      (is (some? (walker main-body))
+          "expected V_cxc_as_bytes call in main body"))))
+
+(deftest f37-l2-bytes-non-primitive-field-fails-nyi
+  (testing "F37 L2 — a record with a String field can't be synthesized at L2. Calling `.as()` raises a targeted fail-nyi naming the field, its type, and pointing at the follow-on landing (L3 for String)."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"F37 Landing 2.*W\.name.*String.*Landing 3"
+         (lower-src "def W:\n    name: String\n\ndef main:\n    -> running\n        then:\n            let b: Bytes = W(name: \"hi\").as()\n            print(b.length)\n")))))
+
 (deftest f67-l4a-zero-arg-record-observable-lowers-as-c-function
   (testing "F67 L4a: `name :< expr` on a record lowers as a `Record_name(self)` C function. Return type inferred from the expression (int here); bare field refs (`x`, `y`) auto-rewrite to `self.x`, `self.y`."
     (let [prog (lower-src "def V:

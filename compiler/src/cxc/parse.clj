@@ -294,7 +294,18 @@
   (loop [p pos node base]
     (cond
       (at? tokens p :punct ".")
-      (let [[fname p2] (expect tokens (inc p) :ident)]
+      ;; F37 Landing 2 — spec-committed method names like `as` / `from`
+      ;; are reserved words (for module `import X as Y` / `from X import`
+      ;; syntax). Accept either `:ident` or `:kw` after `.` so method
+      ;; calls like `p.as()` / `Point.from(bytes)` reach lower/emit.
+      ;; Ambiguity with statement-position reserved words doesn't arise
+      ;; here: we're mid-expression, `.` demanded a name-token.
+      (let [tk-after (peek-tok tokens (inc p))
+            k        (t-kind tk-after)
+            _        (when-not (or (= k :ident) (= k :kw))
+                       (fail! tokens (inc p) "expected an identifier or method name after `.`"))
+            fname    (t-value tk-after)
+            p2       (+ p 2)]
         (recur p2 {:node :dot :target node :field fname}))
 
       (at? tokens p :punct "(")
