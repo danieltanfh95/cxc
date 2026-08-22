@@ -198,3 +198,28 @@
   "Test helper — wipes the registry. Not for production use."
   []
   (reset! registry {}))
+
+;; ---------------------------------------------------------------------------
+;; Section-header alias registration (F7 L1-b + F8 L1-b bridge)
+;; ---------------------------------------------------------------------------
+
+(defn register-section-header-alias!
+  "F7 L1-b + F8 L1-b — validate a section-header alias's primitive list
+   via `compose` and register the composed spec in `registry` under the
+   alias name. Called by the parser when a `:section-header` alias
+   declaration is parsed so subsequent section headers in the same
+   source can consult the registry via `lookup`.
+
+   Compose-time errors (unknown primitives, axis contradictions) surface
+   with the alias name attached for source-attribution."
+  [{:keys [name primitives]}]
+  (try
+    (let [composed (compose primitives)]
+      (register! name
+                 {:kind :alias-expanded
+                  :spec composed}))
+    (catch clojure.lang.ExceptionInfo e
+      (throw (ex-info
+              (str "F7 L1-b: section-header alias `" name
+                   "` failed compose validation: " (.getMessage e))
+              (assoc (ex-data e) :alias name))))))

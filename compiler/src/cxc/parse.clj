@@ -1791,6 +1791,55 @@
        (at? tokens (inc pos) :punct ":")
        (not (at? tokens (+ pos 2) :newline))))
 
+(defn- looks-like-custom-section?
+  "F8 L1-b — `<ident>: <newline>` where `<ident>` is registered in
+   `cxc.section/registry` (via a prior `:section-header` alias
+   declaration). Consulted after the closed switch of built-in section
+   headers has failed to match, before the generic body-item dispatch."
+  [tokens pos]
+  (and (at? tokens pos :ident)
+       (at? tokens (inc pos) :punct ":")
+       (at? tokens (+ pos 2) :newline)
+       (some? (section/lookup (t-value (peek-tok tokens pos))))))
+
+(defn- parse-custom-section
+  "F8 L1-b — parse a body of field declarations under a registered
+   custom section header. MVP scope: primitive-composition aliases
+   imply `contains: fields`, so we consume a run of field decls to
+   `:dedent` and emit a `:custom-section` AST node carrying the
+   registered spec.
+
+   Behavioral sections with different `contains:` (methods, statements)
+   will need dispatch on the spec's contains: field at a later landing;
+   L1-b covers only the field-shape case."
+  [tokens pos]
+  (let [[nm p]  (expect tokens pos :ident)
+        [_ p]   (expect tokens p :punct ":")
+        [_ p]   (expect tokens p :newline)
+        [_ p]   (expect tokens p :indent)
+        spec    (section/lookup nm)]
+    (loop [fields [] p p]
+      (cond
+        (at? tokens p :dedent)
+        [{:node :custom-section
+          :name nm
+          :spec spec
+          :fields fields}
+         (inc p)]
+
+        (at? tokens p :newline)
+        (recur fields (inc p))
+
+        (looks-like-field-decl? tokens p)
+        (let [[f p2] (parse-field tokens p)]
+          (recur (conj fields f) (skip-newlines tokens p2)))
+
+        :else
+        (fail! tokens p
+               (str "F8 L1-b: custom section `" nm "` body accepts "
+                    "field declarations only (MVP scope). Got "
+                    "unexpected token."))))))
+
 (defn- fold-top-level-fields
   "F67 L5 — after parsing an atom/record body containing individual
    `:field` nodes (Proposal D top-level surface), gather them into a
@@ -2075,6 +2124,17 @@
         (looks-like-field-decl? tokens p)
         (let [[f p2] (parse-field tokens p)]
           (recur (conj body f) (skip-newlines tokens p2)))
+
+        ;; F8 L1-b — custom section-header dispatch. Consults
+        ;; `cxc.section/registry` (populated at parse time by
+        ;; `:section-header` alias declarations) so users can define
+        ;; new section-header words like `alias exposed_data: runtime
+        ;; immutable identity expose` and then use `exposed_data:` in
+        ;; a class body. Must precede `looks-like-transition?` because
+        ;; the transition detector greedy-matches any bare `:ident`.
+        (looks-like-custom-section? tokens p)
+        (let [[s p2] (parse-custom-section tokens p)]
+          (recur (conj body s) (skip-newlines tokens p2)))
 
         (looks-like-transition? tokens p)
         (let [[t p2] (parse-transition tokens p)]
@@ -2599,11 +2659,16 @@
         [params p]    (parse-alias-param-list tokens p)
         [_ p]         (expect tokens p :punct ":")]
     (if (and (empty? params) (section-primitive-body? tokens p))
-      ;; L1-b section-header form — `alias name: runtime immutable identity`
+      ;; L1-b section-header form — `alias name: runtime immutable identity`.
+      ;; Register into cxc.section/registry immediately so subsequent
+      ;; section headers within the same source can consult the registry
+      ;; (F8 L1-b parser hook).
       (let [[prims p] (parse-section-header-alias-body tokens p)
-            [_ p]     (expect tokens p :newline)]
-        [{:node :alias :name nm :position :section-header
-          :primitives prims} p])
+            [_ p]     (expect tokens p :newline)
+            node      {:node :alias :name nm :position :section-header
+                       :primitives prims}]
+        (section/register-section-header-alias! node)
+        [node p])
       ;; L1-a/L1-c type-position form — `alias name: <type-expr>` or
       ;; `alias name of P: <type-expr>`
       (let [[body p]  (parse-type tokens p)

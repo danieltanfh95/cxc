@@ -299,3 +299,58 @@
           field    (first (:fields (first (:sections record))))]
       ;; The `data` name should not have leaked into the record body.
       (is (= "Int" (get-in field [:type :name]))))))
+
+;; ---------------------------------------------------------------------------
+;; F8 L1-b — Parser hook consulting cxc.section/registry
+;;
+;; Registration happens at PARSE time (parse-alias-decl → register!)
+;; so a `<name>:` section header later in the same source can dispatch
+;; through the registry.
+;; ---------------------------------------------------------------------------
+
+(deftest custom-section-header-parses-after-alias-decl
+  (testing "F8 L1-b — user-declared section header dispatches through registry"
+    (let [src   (str "alias my_data: runtime immutable identity\n"
+                     "def U:\n"
+                     "    my_data:\n"
+                     "        x: Int\n"
+                     "        y: Int\n")
+          nodes (parse-nodes src)
+          record (first (filter #(= :record (:node %)) nodes))
+          section (first (filter #(= :custom-section (:node %))
+                                 (:sections record)))]
+      (is (some? section))
+      (is (= "my_data" (:name section)))
+      (is (= 2 (count (:fields section))))
+      (is (= "x" (:name (first (:fields section)))))
+      (is (= "y" (:name (second (:fields section)))))
+      ;; The composed spec travels with the AST node.
+      (is (= :alias-expanded (get-in section [:spec :kind])))
+      (is (= [:runtime :immutable :identity]
+             (get-in section [:spec :spec :primitives]))))))
+
+(deftest unknown-section-header-still-fails
+  (testing "F8 L1-b — section header not in registry falls through"
+    ;; With no alias declared, `unknown_section:` isn't a custom
+    ;; section — it's handed to `looks-like-transition?` which
+    ;; consumes the ident and expects `->` after; parse fails there.
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"parse error"
+         (parse-nodes
+          (str "def U:\n"
+               "    unknown_section:\n"
+               "        x: Int\n"))))))
+
+(deftest custom-section-registry-cleared-between-tests
+  (testing "F8 L1-b — registry state is per-test via clear-registry! fixture"
+    ;; Without declaring `my_data` in THIS test, using `my_data:` fails
+    ;; — proving the registry was cleared after the earlier test that
+    ;; declared it.
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"parse error"
+         (parse-nodes
+          (str "def U:\n"
+               "    my_data:\n"
+               "        x: Int\n"))))))

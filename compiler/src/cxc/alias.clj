@@ -68,44 +68,26 @@
               {:kind :cxc-f7-duplicate-alias
                :name nm :position position :count (count entries)})))))
 
-(defn- register-section-header-alias!
-  "F7 L1-b — validate a section-header alias's primitive list via
-   `cxc.section/compose` and register the composed spec in
-   `cxc.section/registry` under the alias name. Compose-time errors
-   (unknown primitives, axis contradictions) surface with the alias
-   name attached for source-attribution."
-  [{:keys [name primitives]}]
-  (try
-    (let [composed (section/compose primitives)]
-      (section/register! name
-                         {:kind :alias-expanded
-                          :spec composed}))
-    (catch clojure.lang.ExceptionInfo e
-      (throw (ex-info
-              (str "F7 L1-b: section-header alias `" name
-                   "` failed compose validation: " (.getMessage e))
-              (assoc (ex-data e) :alias name))))))
-
 (defn build-registry
-  "Walk `top-nodes`, extract every `:alias` declaration, and produce a
-   position-keyed registry for TYPE-POSITION aliases
+  "Walk `top-nodes`, extract every TYPE-POSITION `:alias` declaration,
+   and produce a position-keyed registry
    `{position → {name → {:params [...] :body body-AST}}}`. Rejects
    duplicate (position, name) pairs.
 
    Section-header aliases (L1-b, `:position :section-header`) are
-   validated + registered as a side effect in `cxc.section/registry`
-   during this call — they don't appear in the returned type-alias
-   registry because expansion doesn't substitute them into the AST.
+   registered into `cxc.section/registry` at PARSE time by
+   `cxc.section/register-section-header-alias!` — they don't participate
+   in AST substitution, so this function skips them entirely.
 
    Empty type-alias registry (no type-position aliases in source)
    returns `{}` — expansion becomes a no-op."
   [top-nodes]
   (let [aliases (alias-nodes top-nodes)]
     (reject-duplicate-aliases! aliases)
-    (reduce (fn [acc {:keys [name position params body] :as node}]
+    (reduce (fn [acc {:keys [name position params body]}]
               (case position
                 :section-header
-                (do (register-section-header-alias! node) acc)
+                acc  ; already registered at parse time
 
                 :type
                 (assoc-in acc [position name]
