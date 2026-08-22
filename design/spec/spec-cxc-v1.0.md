@@ -46,7 +46,7 @@ See `../working-notes.md` for the design-decision journal that led to the curren
 
 **Change log to v1.0 — F69 atom unification (2026-08-18):**
 
-Retire the value/reference substrate divide. All user types declare via `def`; the runtime treatment is inferred from the body's shape rather than declared via `metadata: kind:` selector. See [plans/f69-atom-unification.md](../../compiler/design/plans/f69-atom-unification.md) for the retirement argument and [spec-drift-audit.md](../../compiler/design/spec-drift-audit.md#forward-plans-not-drift--design-retirements-proposed-2026-08-18) for the design-forward context.
+Retire the value/reference substrate divide. All user types declare via `def`; the runtime treatment is inferred from the body's shape rather than declared via `metadata: kind:` selector. See [plans/archive/f69-atom-unification.md](../../compiler/design/plans/archive/f69-atom-unification.md) for the retirement argument and [spec-drift-audit.md](../../compiler/design/spec-drift-audit.md#forward-plans-not-drift--design-retirements-proposed-2026-08-18) for the design-forward context.
 
 - **§3.3 rewritten.** Body-shape → runtime-treatment inference table replaces `kind: regular / record / enum` selector. Structural-shape defs (fields-only body), tagged-variant defs (cases-only body), agent defs (transitions-present body). Sum types + structural + agent example blocks migrated to `def X:` shape.
 - **§3.4 opening rewritten.** `protocol` remains a distinct declaration keyword (protocols are contract-only, not instantiated; body-shape inference doesn't apply). §3.4.1 closed-sum-types example migrated to `def X: case ...:` shape.
@@ -65,7 +65,7 @@ Retire the value/reference substrate divide. All user types declare via `def`; t
 Four small surface unifications land as one bundle. Design in
 [design/improvements.md](../../design/improvements.md) I3/I5/I6;
 landing plan at
-[plans/f70-surface-facelift.md](../../compiler/design/plans/f70-surface-facelift.md).
+[plans/archive/f70-surface-facelift.md](../../compiler/design/plans/archive/f70-surface-facelift.md).
 
 - **I5 payload brackets (§3.7 + §4).** Payload destructure on `<:` /
   `<|` receive-source position uses parens: `<: input.pressed(key: Int)`.
@@ -1699,7 +1699,7 @@ protocol Healable:
     accepts heal(amt: Int)          # transition accept (void)
 ```
 
-**Cross-refs.** F67 audit entry + `compiler/design/plans/proposal-g-class-body-collapse.md` for the five-landing execution sequence (L1 design → L2 parametric observable syntax → L3 retire `-> handler:` → L4 retire `methods:` **[landed 2026-08-17, revised L4b same day]** → L5 retire `data:` header). F14 handler-decl (landed 2026-08-16) retires at F67 L3. F33 rewrite (Proposal C+C1, landed 2026-08-17) is compatible — atomic-transition contract spans the entire class body uniformly. Observables carry no return-type annotation; return type is inferred from the body expression (F67 L4b) — the receive-glyph method-stream resolver sources the parametric `Stream of T` shape from the wrapped ffi-builtin's declared return-type node.
+**Cross-refs.** F67 audit entry + `compiler/design/plans/archive/proposal-g-class-body-collapse.md` for the five-landing execution sequence (L1 design → L2 parametric observable syntax → L3 retire `-> handler:` → L4 retire `methods:` **[landed 2026-08-17, revised L4b same day]** → L5 retire `data:` header). F14 handler-decl (landed 2026-08-16) retires at F67 L3. F33 rewrite (Proposal C+C1, landed 2026-08-17) is compatible — atomic-transition contract spans the entire class body uniformly. Observables carry no return-type annotation; return type is inferred from the body expression (F67 L4b) — the receive-glyph method-stream resolver sources the parametric `Stream of T` shape from the wrapped ffi-builtin's declared return-type node.
 
 **Capabilities and OS boundary.**
 
@@ -3079,7 +3079,7 @@ extend NSString:
     replace shout() :< self.upper_case + "!"     # explicit intent: shadow the prior shout
 ```
 
-**Post-collapse form (F67 L4c).** `replace` is a *prefix keyword* on the observable or wildcard self-transition it modifies. It is legal *only* inside an `extend class` body — a plain class body has no shadow target and rejects `replace` at parse time (§3.3.2 rule 4 requires an extension context). The examples earlier in this section using pre-collapse `methods:` / `function` bodies remain semantically accurate but are being migrated to the post-collapse form during the F67 landing sequence (see `compiler/design/plans/proposal-g-class-body-collapse.md`).
+**Post-collapse form (F67 L4c).** `replace` is a *prefix keyword* on the observable or wildcard self-transition it modifies. It is legal *only* inside an `extend class` body — a plain class body has no shadow target and rejects `replace` at parse time (§3.3.2 rule 4 requires an extension context). The examples earlier in this section using pre-collapse `methods:` / `function` bodies remain semantically accurate but are being migrated to the post-collapse form during the F67 landing sequence (see `compiler/design/plans/archive/proposal-g-class-body-collapse.md`).
 
 `replace` is *optional* — without it the composition still succeeds (with a warning), and the deterministic resolution rule picks the winner. With `replace` present, the warning is suppressed for that site (author signaled intent) and `replace` further enforces that *some* method is actually being shadowed (see rule 3 below).
 
@@ -3889,7 +3889,7 @@ Users needing richer nil-related contracts (e.g., "not nil AND not empty") write
 
 Pattern matching is expression-position **receive-glyph dispatch** — the same `<:` mechanism used for message-receive on agent-shape defs (§4), applied inline at any expression position. The scrutinee's shape (tagged-variant def / agent def / primitive / string) determines the emit: tagged-variant scrutinees inline to a tag-switch (zero allocation, sync); agent scrutinees compile to actual subscription (queued).
 
-**F69 unification (2026-08-18).** Previous drafts (v0.7 through v0.11) shipped `switch` as a distinct pattern-matching construct with `case` sub-clauses. F69 retired `switch` — pattern-matched dispatch is one primitive with two substrates (value shape / agent shape), and the surface spells the primitive once. See [plans/f69-atom-unification.md](../../compiler/design/plans/f69-atom-unification.md).
+**F69 unification (2026-08-18).** Previous drafts (v0.7 through v0.11) shipped `switch` as a distinct pattern-matching construct with `case` sub-clauses. F69 retired `switch` — pattern-matched dispatch is one primitive with two substrates (value shape / agent shape), and the surface spells the primitive once. See [plans/archive/f69-atom-unification.md](../../compiler/design/plans/archive/f69-atom-unification.md).
 
 **Expression form:**
 
@@ -6038,7 +6038,7 @@ section class Platform:
 >
 > `protocol` and `section` remain distinct declaration keywords — protocols are contract-only (never instantiated; body-shape inference doesn't apply), sections are compile-time metaprogramming machinery.
 >
-> Sugar keywords `record` / `enum` retire in the same pass. Write `def X:` for every class; the body tells the compiler what the class IS. See §3.3 and [plans/f69-atom-unification.md](../../compiler/design/plans/f69-atom-unification.md).
+> Sugar keywords `record` / `enum` retire in the same pass. Write `def X:` for every class; the body tells the compiler what the class IS. See §3.3 and [plans/archive/f69-atom-unification.md](../../compiler/design/plans/archive/f69-atom-unification.md).
 
 **`Protocol`** — named contracts, no instantiation.
 
@@ -7343,7 +7343,7 @@ Rationale: optimization policy is a deployment decision, not a semantic property
 
 A **closure** in cxc is an anonymous class with a single `call` method. Closures are first-class values; they can be passed as arguments, returned from functions, stored in fields, and dispatched dynamically like any other class instance. The runtime representation at the ObjC interop boundary is an ObjC block; the compiler generates the block wrapper automatically.
 
-Semantically, closures are not a separate construct — they inherit all the properties of the class-as-universal design (§6.1). Runtime treatment defaults to agent-shape for closures that need to escape their construction site; the compiler is free to specialize to structural-shape or eliminate the class entirely when analysis proves the closure does not escape. Note: F45 (retiring escaping closures in favor of actor subscriptions) narrows this — most escape cases become receive-glyph transitions on named atoms. See [plans/f45-closure-scope.md](../../compiler/design/plans/f45-closure-scope.md).
+Semantically, closures are not a separate construct — they inherit all the properties of the class-as-universal design (§6.1). Runtime treatment defaults to agent-shape for closures that need to escape their construction site; the compiler is free to specialize to structural-shape or eliminate the class entirely when analysis proves the closure does not escape. Note: F45 (retiring escaping closures in favor of actor subscriptions) narrows this — most escape cases become receive-glyph transitions on named atoms. See [plans/g4-actor-integrity/f45-closure-scope.md](../../compiler/design/plans/g4-actor-integrity/f45-closure-scope.md).
 
 #### 5.6.1 Type Expression — `Callable of (Args, Return)`
 

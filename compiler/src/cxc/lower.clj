@@ -487,7 +487,7 @@
     ;; enforcement at the three observation points (ctor bind, then:
     ;; write, method return) fires via F39 L3 regardless of shape.
     ;; Pre-L5a diagnostic `:cxc-f39-nonnil-on-value` retired — see
-    ;; plans/f39-nullability.md L5 companion changes.
+    ;; plans/g3-structural-canonical/f39-nullability.md L5 companion changes.
     (let [inner (:inner ty-node)]
       (case (:node inner)
         :type-ref
@@ -3217,7 +3217,7 @@
         ;; snapshot/commit) + F32 L4 (atomic-pointer-swap on cross-atom
         ;; reads) provide the correctness story. The previous L1
         ;; diagnostic that rejected cross-atom reads was retracted.
-        ;; See plans/f33-encapsulation.md L1.
+        ;; See plans/g4-actor-integrity/f33-encapsulation.md L1.
         f (wrap-field-tk f
                          (cxc-type->type-kw (:cxc-ty f)
                                             (:record-env ctx) (:atom-env ctx) (:enum-env ctx) node))
@@ -4177,7 +4177,7 @@
             ;; to stderr and traps. Uncatchable: bypasses `@try/@catch`
             ;; wrappers (which stay for BEAM-style transition isolation
             ;; on ObjC-level faults). MVP accepts a single string arg.
-            ;; See plans/f31-f35-concurrency.md L2.
+            ;; See plans/g4-actor-integrity/f31-f35-concurrency.md L2.
             (= "panic" callee-name)
             (let [args (:args node)
                   _    (when-not (= 1 (count args))
@@ -4371,7 +4371,7 @@
    Under Layer 4 single-main-queue, the helper is a nil-guarded direct
    call with a debug-build queue-invariant assertion. F32 flips it to
    `dispatch_sync` onto the target's queue — the emit site is the sole
-   substitution point. See plans/f31-f35-concurrency.md L1."
+   substitution point. See plans/g4-actor-integrity/f31-f35-concurrency.md L1."
   [node ctx]
   (if (nil? (:target node))
     (lower-stream-emit node ctx)
@@ -6001,7 +6001,7 @@
 
 ;; F39 Landing 5b-ii-a (2026-08-21) — Optional-boxed value-type
 ;; infrastructure. Under the unified rule (spec §3.6.1, design premise
-;; 1 of plans/f39-nullability.md) bare `T` on a value type is nullable
+;; 1 of plans/g3-structural-canonical/f39-nullability.md) bare `T` on a value type is nullable
 ;; at every position. The C representation carrying nil is a
 ;; `_Cxc_Optional_<T> { uint8_t present; T value; }` struct.
 ;;
@@ -6431,7 +6431,7 @@
          (str "F39 L5b-i: value-typed field `" (:name field) ": " ty-nm suffix
               "` cannot take `= nil` default until L5b-ii lands the "
               "Optional-boxed representation (spec §3.6.1 unified rule "
-              "2026-08-20). See compiler/design/plans/f39-nullability.md.")
+              "2026-08-20). See compiler/design/plans/g3-structural-canonical/f39-nullability.md.")
          field)))
     (cond
       ;; List of T with a list literal default: synthesize a
@@ -7697,7 +7697,7 @@
                                      "regular/record/enum classes via "
                                      "`class`/`metadata: kind:` land with "
                                      "F9 L4 (single-module composition). "
-                                     "See plans/f9-class-protocol-extension.md.")
+                                     "See plans/g3-structural-canonical/f9-class-protocol-extension.md.")
                                 c))
         protocol-env (build-protocol-env top-nodes)
         ;; F31/F35 L3 — walk the |> send graph and warn on cross-atom

@@ -944,7 +944,7 @@
   ;; queues) it upgrades to `dispatch_sync` onto the target's queue plus
   ;; cycle-detection scaffolding — the emit site is the single hook that
   ;; substitutes when the runtime toggle flips. See
-  ;; plans/f31-f35-concurrency.md L1.
+  ;; plans/g4-actor-integrity/f31-f35-concurrency.md L1.
   (str "@protocol CXCAtom\n"
        "@property (nonatomic, strong) dispatch_queue_t own_queue;\n"
        ;; Layer 5c lifecycle cleanup — atoms carry an NSMutableArray of

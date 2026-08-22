@@ -2088,7 +2088,7 @@
 ;; A `def Foo:` body is inspected after parse. If it structurally matches
 ;; a record or protocol shape, the parsed :def-atom node is reshaped into
 ;; the appropriate existing AST kind so downstream env builders keep
-;; working unchanged. See compiler/design/plans/proposal-h-full-unification-
+;; working unchanged. See compiler/design/plans/archive/proposal-h-full-unification-
 ;; under-def.md.
 ;; ---------------------------------------------------------------------------
 
@@ -2250,7 +2250,7 @@
                                  "entries are not yet implemented. F9 L2 ships the "
                                  "signature surface; contract inheritance lands "
                                  "with F49 protocol-inherited-contracts. See "
-                                 "plans/f9-class-protocol-extension.md L2.")))]
+                                 "plans/g3-structural-canonical/f9-class-protocol-extension.md L2.")))]
     [{:node :accepts-entry :name name :params params :return-type ret} p]))
 
 (defn- parse-accepts-section
@@ -2596,4 +2596,3 @@
    user-authored `module` line."
   [source]
   (parse* source true))
-
