@@ -2508,6 +2508,35 @@
           :else (fail! tokens p2 "expected `,` or newline in from-import"))))))
 
 ;; ---------------------------------------------------------------------------
+;; F7 L1 — Alias declaration
+;;
+;; MVP surface: `alias <name>: <type-expr>` at top level. Registers a
+;; type-position substitution: any `:type-ref {:name "<name>" ...}` in
+;; the post-parse AST gets replaced with the aliased type expression.
+;;
+;; Grammar-shape expansion (section-header aliases, delimited-pattern
+;; aliases, operator aliases) comes in follow-on sub-landings of L1
+;; and L2. Bootstrap grammar per §4.16.1 stays hard-coded.
+;;
+;; AST shape:
+;;   {:node :alias
+;;    :name "<user-visible-name>"
+;;    :position :type          ;; MVP: only :type positions
+;;    :body    <type-expr AST>}
+;;
+;; Registry lives in `cxc.alias`; population + expansion runs post-parse
+;; before lower.
+;; ---------------------------------------------------------------------------
+
+(defn- parse-alias-decl [tokens pos]
+  (let [[_ p]         (expect tokens pos :kw "alias")
+        [nm p]        (expect tokens p :ident)
+        [_ p]         (expect tokens p :punct ":")
+        [body p]      (parse-type tokens p)
+        [_ p]         (expect tokens p :newline)]
+    [{:node :alias :name nm :position :type :body body} p]))
+
+;; ---------------------------------------------------------------------------
 ;; Top-level dispatch
 ;; ---------------------------------------------------------------------------
 
@@ -2517,6 +2546,7 @@
       (at? tokens p :eof)          [nil p]
       (at? tokens p :kw "module")  (reject-module-decl! tokens p)
       (at? tokens p :kw "from")    (parse-from-import tokens p)
+      (at? tokens p :kw "alias")   (parse-alias-decl tokens p)
       (at? tokens p :kw "def")     (parse-def-atom tokens p)
 
       ;; F9 L3 — `extend Foo:` at top level. Extension body is

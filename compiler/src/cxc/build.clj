@@ -4,6 +4,7 @@
   (:require [clojure.java.io :as io]
             [clojure.java.shell :as shell]
             [cxc.parse   :as parse]
+            [cxc.alias   :as alias]
             [cxc.lower   :as lower]
             [cxc.emit    :as emit]
             [cxc.prelude :as prelude]))
@@ -188,6 +189,7 @@
         deprecations (collect-deprecations full-parsed)
         _        (warn-deprecated-uses parsed deprecations)
         m-src    (-> full-parsed
+                     alias/expand
                      prelude/rewrite-prelude-names
                      lower/lower
                      emit/emit)

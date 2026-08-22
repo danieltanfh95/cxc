@@ -41,6 +41,7 @@
   ;; -> T:` migration (K8).
   #{"module" "from" "import" "as"
     "def"
+    "alias"
     "use" "invariants"
     "accepts"
     "extend" "replace"
