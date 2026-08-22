@@ -15,14 +15,15 @@
    - **Recursive expansion cap**: hard N=32. Diagnostic names the
      expansion chain (§4.16 open Q4).
 
-   MVP scope (L1-a):
-   - Type-position aliases only (`alias UserID: UInt64`).
-   - Non-parametric — bare identifier substitution.
+   Landed sub-scope:
+   - L1-a (2026-08-23) — type-position aliases, bare identifier body.
+   - L1-c (2026-08-23) — parametric aliases via `of` qualifier
+     (`alias StringDict of V: Map of (String, V)`; spec §26 retired
+     `<T>` at v1.0).
 
-   Follow-on within L1 (L1-b, L1-c ...):
-   - Section-header position hook.
-   - Parametric aliases (`alias StringDict<V>: Map<String, V>`).
-   - Delimited-pattern position (needs F42).
+   Follow-on within L1:
+   - L1-b — section-header position hook (blocked on F8 primitive vocab).
+   - L1-d — delimited-pattern position (needs F42).
 
    Downstream landings (L2a-e) populate the registry from prelude
    sources. L3 retires the compiler-baked sugar paths that alias
@@ -64,7 +65,8 @@
 
 (defn build-registry
   "Walk `top-nodes`, extract every `:alias` declaration, and produce a
-   position-keyed registry `{position → {name → body-AST}}`. Rejects
+   position-keyed registry
+   `{position → {name → {:params [...] :body body-AST}}}`. Rejects
    duplicate (position, name) pairs.
 
    Empty registry (no aliases in source) returns `{}` — expansion
@@ -72,8 +74,9 @@
   [top-nodes]
   (let [aliases (alias-nodes top-nodes)]
     (reject-duplicate-aliases! aliases)
-    (reduce (fn [acc {:keys [name position body]}]
-              (assoc-in acc [position name] body))
+    (reduce (fn [acc {:keys [name position params body]}]
+              (assoc-in acc [position name]
+                        {:params (or params []) :body body}))
             {}
             aliases)))
 
@@ -83,17 +86,107 @@
 
 (declare walk-and-expand)
 
-(defn- expand-type-ref
-  "Type-position substitution. If `type-ref` names a registered
-   type-alias, return the alias body; otherwise return the node
-   unchanged. Recursion is guarded by `path` (the alias-chain we've
-   walked through to get here) and capped at `max-expansion-depth`."
-  [type-ref registry path]
-  (let [nm (:name type-ref)
-        body (get-in registry [:type nm])]
+(defn- substitute-params
+  "Walk `body`, replacing every `:type-ref` whose `:name` matches a
+   parameter with the corresponding argument AST. Non-parameter
+   `:type-ref`s pass through untouched — later alias-lookup passes handle
+   them via the registry."
+  [body param->arg]
+  (if (empty? param->arg)
+    body
+    (walk/postwalk
+     (fn [x]
+       (if (and (map? x) (= :type-ref (:node x)))
+         (get param->arg (:name x) x)
+         x))
+     body)))
+
+(defn- args-vector
+  "F7 L1-c — normalize a `:type-of :inner` slot to a flat vector of
+   argument type-expr ASTs. `Foo of Bar` puts a single node in :inner;
+   `Foo of (A, B)` puts a `:type-tuple`. Returns arg vector."
+  [inner]
+  (if (and (map? inner) (= :type-tuple (:node inner)))
+    (:types inner)
+    [inner]))
+
+(defn- expand-parametric
+  "L1-c — parametric application `<name> of <arg(s)>`. Looks up the
+   alias, checks arity, binds params→args, substitutes inside body,
+   then continues with normal recursive expansion so chained aliases
+   still resolve. Returns the expanded AST fragment."
+  [type-of registry path]
+  (let [nm     (:outer type-of)
+        entry  (get-in registry [:type nm])]
     (cond
-      (nil? body)
+      (nil? entry)
+      ;; Not an alias — leave `:type-of` untouched but still recurse into
+      ;; :inner so any nested aliases expand.
+      (update type-of :inner walk-and-expand registry path)
+
+      (empty? (:params entry))
+      (throw (ex-info
+              (str "F7 L1: alias `" nm "` is not parametric — "
+                   "referenced as `" nm " of ...` but declared with no "
+                   "parameter list. Drop the `of` clause or add "
+                   "parameters to the alias declaration.")
+              {:kind :cxc-f7-non-parametric-alias-with-args :name nm}))
+
+      :else
+      (let [args (args-vector (:inner type-of))]
+        (when-not (= (count (:params entry)) (count args))
+          (throw (ex-info
+                  (str "F7 L1: alias `" nm "` arity mismatch — "
+                       "declared with " (count (:params entry))
+                       " parameter(s) " (pr-str (:params entry))
+                       " but applied to " (count args) " argument(s).")
+                  {:kind :cxc-f7-alias-arity-mismatch
+                   :name nm
+                   :expected (count (:params entry))
+                   :actual (count args)})))
+        (when (contains? path nm)
+          (throw (ex-info
+                  (str "F7 L1: alias expansion cycle detected on `" nm
+                       "` — chain: "
+                       (clojure.string/join " → " (conj (vec path) nm)))
+                  {:kind :cxc-f7-alias-cycle
+                   :name nm :chain (conj (vec path) nm)})))
+        (when (>= (count path) max-expansion-depth)
+          (throw (ex-info
+                  (str "F7 L1: alias expansion depth exceeded ("
+                       max-expansion-depth ") on `" nm "` — chain: "
+                       (clojure.string/join " → " (conj (vec path) nm)))
+                  {:kind :cxc-f7-alias-depth-exceeded
+                   :name nm :chain (conj (vec path) nm)})))
+        (let [;; Expand any nested aliases inside the argument types
+              ;; BEFORE substituting them into the body. Otherwise a
+              ;; chain like `alias Wrap of T: Box of T` used as
+              ;; `Wrap of Alias` would leave Alias unexpanded inside Box.
+              args         (mapv #(walk-and-expand % registry path) args)
+              param->arg   (zipmap (:params entry) args)
+              substituted  (substitute-params (:body entry) param->arg)]
+          (walk-and-expand substituted registry (conj path nm)))))))
+
+(defn- expand-type-ref
+  "Type-position substitution for a non-parametric alias reference. If
+   `type-ref` names a registered zero-arity type-alias, return the alias
+   body; otherwise return the node unchanged. Recursion is guarded by
+   `path` (the alias-chain) and capped at `max-expansion-depth`."
+  [type-ref registry path]
+  (let [nm    (:name type-ref)
+        entry (get-in registry [:type nm])]
+    (cond
+      (nil? entry)
       type-ref
+
+      (seq (:params entry))
+      (throw (ex-info
+              (str "F7 L1: alias `" nm "` is parametric — "
+                   "declared with " (count (:params entry))
+                   " parameter(s) " (pr-str (:params entry))
+                   " but referenced as bare `" nm "` with no arguments. "
+                   "Apply with `of` (e.g. `" nm " of ...`).")
+              {:kind :cxc-f7-parametric-alias-without-args :name nm}))
 
       (contains? path nm)
       (throw (ex-info
@@ -112,22 +205,37 @@
                :name nm :chain (conj (vec path) nm)}))
 
       :else
-      ;; The body may itself contain :type-ref nodes that need expansion.
-      ;; Walk it with the current node's name added to the path so a
-      ;; cycle through this alias fires the guard.
-      (walk-and-expand body registry (conj path nm)))))
+      (walk-and-expand (:body entry) registry (conj path nm)))))
 
 (defn- walk-and-expand
-  "Recursively walk `node`, substituting every `:type-ref` that names
-   a registered type-alias. `path` tracks the alias chain for
-   cycle-detection + depth-cap purposes."
+  "Recursively walk `node`, substituting alias references with alias
+   bodies. Handles two forms:
+   - `:type-ref` — bare-name references (zero-arity aliases).
+   - `:type-of` — parametric applications `Name of args` (L1-c).
+
+   Uses a manual pre-order walk so parametric applications can control
+   how their `:inner` sub-tree is processed (arg expansion has to
+   precede substitution to avoid missing nested aliases inside args).
+   `path` tracks the alias chain for cycle-detection + depth-cap."
   [node registry path]
-  (walk/postwalk
-   (fn [x]
-     (if (and (map? x) (= :type-ref (:node x)))
-       (expand-type-ref x registry path)
-       x))
-   node))
+  (cond
+    (map? node)
+    (let [kind (:node node)]
+      (cond
+        (= kind :type-of)   (expand-parametric node registry path)
+        (= kind :type-ref)  (expand-type-ref node registry path)
+        :else
+        (reduce-kv (fn [m k v] (assoc m k (walk-and-expand v registry path)))
+                   node
+                   node)))
+
+    (vector? node)
+    (mapv #(walk-and-expand % registry path) node)
+
+    (seq? node)
+    (map #(walk-and-expand % registry path) node)
+
+    :else node))
 
 (defn expand
   "Public entry — take parsed `top-nodes` (may include `:alias` decls),

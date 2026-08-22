@@ -48,12 +48,14 @@
       (is (= nodes expanded)))))
 
 (deftest registry-keyed-by-position-and-name
-  (testing "single alias registers under (:type, name)"
+  (testing "single alias registers under (:type, name) with params + body"
     (let [nodes (parse-nodes "alias UserID: Int\n")
-          reg   (alias/build-registry nodes)]
+          reg   (alias/build-registry nodes)
+          entry (get-in reg [:type "UserID"])]
       (is (contains? reg :type))
       (is (contains? (:type reg) "UserID"))
-      (is (= "Int" (get-in reg [:type "UserID" :name]))))))
+      (is (= [] (:params entry)))
+      (is (= "Int" (get-in entry [:body :name]))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Expansion — the core L1 behavior
@@ -134,3 +136,91 @@
                             "alias C: A\n"
                             "def U:\n"
                             "    id: A\n")))))))
+
+;; ---------------------------------------------------------------------------
+;; L1-c — Parametric aliases via `of` qualifier
+;; ---------------------------------------------------------------------------
+
+(deftest parametric-alias-decl-parses-single-param
+  (testing "F7 L1-c — `alias Name of P: <body>` produces :params [\"P\"]"
+    (let [n (first (parse-nodes "alias Box of T: T\n"))]
+      (is (= :alias (:node n)))
+      (is (= "Box"  (:name n)))
+      (is (= ["T"]  (:params n))))))
+
+(deftest parametric-alias-decl-parses-tuple-params
+  (testing "F7 L1-c — `alias Name of (P1, P2): <body>` produces :params in order"
+    (let [n (first (parse-nodes "alias Pair of (A, B): (A, B)\n"))]
+      (is (= :alias (:node n)))
+      (is (= ["A" "B"] (:params n))))))
+
+(deftest parametric-substitution-single-param
+  (testing "F7 L1-c — `Box of Int` expands `T` inside body to `Int`"
+    (let [src      (str "alias Box of T: T\n"
+                        "def U:\n"
+                        "    b: Box of Int\n")
+          expanded (expand src)
+          record   (first (filter #(= :record (:node %)) expanded))
+          field    (first (:fields (first (:sections record))))]
+      ;; After expansion, the field type is `T` substituted with `Int` — a
+      ;; bare :type-ref for Int.
+      (is (= :type-ref (get-in field [:type :node])))
+      (is (= "Int"     (get-in field [:type :name]))))))
+
+(deftest parametric-substitution-into-parametric-body
+  (testing "F7 L1-c — `StringDict of V: Map of (String, V)` — V→Int inside :type-of"
+    (let [src      (str "alias StringDict of V: Map of (String, V)\n"
+                        "def U:\n"
+                        "    d: StringDict of Int\n")
+          expanded (expand src)
+          record   (first (filter #(= :record (:node %)) expanded))
+          field    (first (:fields (first (:sections record))))
+          ty       (:type field)]
+      (is (= :type-of (:node ty)))
+      (is (= "Map"    (:outer ty)))
+      (is (= :type-tuple (get-in ty [:inner :node])))
+      (let [[k v] (get-in ty [:inner :types])]
+        (is (= "String" (:name k)))
+        (is (= "Int"    (:name v)))))))
+
+(deftest parametric-alias-args-are-expanded
+  (testing "F7 L1-c — nested alias inside arg gets expanded before substitution"
+    (let [src (str "alias UserID: Int\n"
+                   "alias Box of T: T\n"
+                   "def U:\n"
+                   "    b: Box of UserID\n")
+          expanded (expand src)
+          record   (first (filter #(= :record (:node %)) expanded))
+          field    (first (:fields (first (:sections record))))]
+      ;; UserID expands to Int inside the arg; then Box of Int → Int.
+      (is (= "Int" (get-in field [:type :name]))))))
+
+(deftest parametric-arity-mismatch-rejected
+  (testing "F7 L1-c — arg count vs param count differ → error"
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"arity mismatch"
+         (alias/expand
+          (parse-nodes (str "alias Pair of (A, B): (A, B)\n"
+                            "def U:\n"
+                            "    p: Pair of Int\n")))))))
+
+(deftest bare-reference-to-parametric-alias-rejected
+  (testing "F7 L1-c — parametric alias referenced without `of` → error"
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"parametric.*without.*args|referenced as bare"
+         (alias/expand
+          (parse-nodes (str "alias Box of T: T\n"
+                            "def U:\n"
+                            "    b: Box\n")))))))
+
+(deftest of-application-to-non-parametric-alias-rejected
+  (testing "F7 L1-c — non-parametric alias referenced with `of` → error"
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"is not parametric"
+         (alias/expand
+          (parse-nodes (str "alias UserID: Int\n"
+                            "def U:\n"
+                            "    id: UserID of Int\n")))))))

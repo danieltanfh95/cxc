@@ -2528,13 +2528,43 @@
 ;; before lower.
 ;; ---------------------------------------------------------------------------
 
+(defn- parse-alias-param-list
+  "F7 L1-c — parametric alias parameter list. After the alias name,
+   optional `of P` or `of (P1, P2, ...)` before the `:` separator.
+   Uses the `of` qualifier per spec §26 (retires `<T>`). Returns
+   `[params next-pos]`; params is the vector of parameter-name strings
+   (empty when the alias is not parametric)."
+  [tokens pos]
+  (if-not (at? tokens pos :kw "of")
+    [[] pos]
+    (let [p (inc pos)]
+      (cond
+        ;; `of (P1, P2, ...)`
+        (at? tokens p :punct "(")
+        (loop [params [] p (inc p)]
+          (let [[nm p1] (expect tokens p :ident)
+                params  (conj params nm)]
+            (cond
+              (at? tokens p1 :punct ",") (recur params (inc p1))
+              (at? tokens p1 :punct ")") [params (inc p1)]
+              :else (fail! tokens p1
+                           "expected `,` or `)` in alias parameter list"))))
+        ;; `of P` — single parameter, bare identifier
+        (at? tokens p :ident)
+        (let [[nm p1] (expect tokens p :ident)]
+          [[nm] p1])
+        :else
+        (fail! tokens p
+               "expected parameter identifier or `(` after `of` in alias declaration")))))
+
 (defn- parse-alias-decl [tokens pos]
   (let [[_ p]         (expect tokens pos :kw "alias")
         [nm p]        (expect tokens p :ident)
+        [params p]    (parse-alias-param-list tokens p)
         [_ p]         (expect tokens p :punct ":")
         [body p]      (parse-type tokens p)
         [_ p]         (expect tokens p :newline)]
-    [{:node :alias :name nm :position :type :body body} p]))
+    [{:node :alias :name nm :position :type :params params :body body} p]))
 
 ;; ---------------------------------------------------------------------------
 ;; Top-level dispatch
