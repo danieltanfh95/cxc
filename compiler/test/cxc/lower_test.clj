@@ -1577,6 +1577,50 @@ def main:
       (is (re-find #"dataUsingEncoding:NSUTF8StringEncoding" body-text))
       (is (re-find #"OSSwapHostToBigInt32.*\[__sd length\]" body-text)))))
 
+(deftest f37-l5-bytes-value-only-enum-discriminator-only
+  (testing "F37 L5 — value-only enum (no payload cases) synthesizes `<Enum>_cxc_as_bytes` that emits a single discriminator byte. Discriminator width per §3.10.10: ≤256 cases → 1 byte. The switch/case block for payload dispatch is omitted (no tagged rep — the enum's C type is a plain integer)."
+    (let [prog (lower-src "def Signal:\n    case red\n    case green\n\ndef main:\n    -> running\n")
+          f    (first (filter #(= "Signal_cxc_as_bytes" (:name %)) (:functions prog)))
+          body-text (get-in f [:body 0 :text])]
+      (is (some? f) "value-only enum still gets a synthesized as-bytes fn")
+      (is (re-find #"\(uint8_t\)\(a\)" body-text)
+          "discriminator reads from `a` directly (no `.tag` on value-only enums)")
+      (is (nil? (re-find #"switch \(a\.tag\)" body-text))
+          "no switch dispatch for value-only enums (no payloads to encode)"))))
+
+(deftest f37-l5-bytes-tagged-enum-switch-on-tag
+  (testing "F37 L5 — tagged enum (mixed / payload cases) synthesizes `<Enum>_cxc_as_bytes` that writes the discriminator via `a.tag` and switches on `a.tag` to encode per-case payloads. Bare cases emit an empty block; payload cases emit each field's encoding reading from `a.data.<case>.<field>`."
+    (let [prog (lower-src "def Msg:\n    case ping\n    case pong(seq: Int32!)\n\ndef main:\n    -> running\n")
+          f    (first (filter #(= "Msg_cxc_as_bytes" (:name %)) (:functions prog)))
+          body-text (get-in f [:body 0 :text])]
+      (is (some? f))
+      (is (re-find #"\(uint8_t\)\(a\.tag\)" body-text)
+          "tagged enums read discriminator from `.tag`")
+      (is (re-find #"switch \(a\.tag\)" body-text)
+          "switch dispatches per-case payload encode")
+      (is (re-find #"case Msg_Tag_ping" body-text)
+          "bare case still appears (empty block, just `break`)")
+      (is (re-find #"case Msg_Tag_pong" body-text)
+          "payload case appears with encode block")
+      (is (re-find #"a\.data\.pong\.seq" body-text)
+          "payload field access via `.data.<case>.<field>`")
+      (is (re-find #"OSSwapHostToBigInt32" body-text)
+          "Int32 payload uses 32-bit big-endian byte swap"))))
+
+(deftest f37-l5-bytes-large-enum-uses-wider-discriminator
+  (testing "F37 L5 — discriminator width scales with case count per §3.10.10. ≤256 → UInt8 (1 byte), ≤65536 → UInt16 (2 bytes, big-endian). Boundary at 256 exactly stays UInt8 (0..255 fits); 257 forces UInt16."
+    (let [;; Build a 257-case enum programmatically via the case names
+          cases (str/join "\n" (for [i (range 257)] (str "    case c" i)))
+          src   (str "def Big:\n" cases "\n\ndef main:\n    -> running\n")
+          prog (lower-src src)
+          f    (first (filter #(= "Big_cxc_as_bytes" (:name %)) (:functions prog)))
+          body-text (get-in f [:body 0 :text])]
+      (is (some? f))
+      (is (re-find #"uint16_t" body-text)
+          "≥257 cases uses uint16_t discriminator")
+      (is (re-find #"OSSwapHostToBigInt16" body-text)
+          "multi-byte discriminator emits big-endian byte swap"))))
+
 (deftest f39-l9-bytes-optional-primitive-field-envelope
   (testing "F39 L9 — bare `T` value-typed primitive field (Optional-boxed under F39 L5b-ii-c Sub-P) encodes as `UInt8` presence byte + T bytes when present, per §3.10.10 Optional row. Body inspected for the presence-guarded conditional over the field's `.present` / `.value` accessors."
     (let [prog (lower-src "def Opt:\n    x: Int32\n\ndef main:\n    -> running\n")

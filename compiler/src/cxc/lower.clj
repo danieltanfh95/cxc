@@ -2947,6 +2947,15 @@
                          [(:record target-ty) :method-index "as"])))
       :bytes
 
+      ;; F37 Landing 5 — `.as() -> Bytes` on an enum. Discriminator
+      ;; width picked by case count per §3.10.10 (≤256 → UInt8,
+      ;; ≤65536 → UInt16, otherwise UInt32). Payload cases append
+      ;; per-field encoding after the discriminator.
+      (and (map? target-ty) (:enum target-ty)
+           (= "as" method-name)
+           (empty? (:args call-node)))
+      :bytes
+
       (and (map? target-ty) (:record target-ty))
       (let [rn (:record target-ty)
             m  (get-in (:record-env ctx) [rn :method-index method-name])
@@ -3446,7 +3455,10 @@
          record-synth-as-bytes-name
          record-has-user-as-method?
          f37-primitive-byte-field?
-         f37-bytes-encodable-field?)
+         f37-bytes-encodable-field?
+         ;; F37 Landing 5 — enum canonical bytes.
+         enum-synth-as-bytes-name
+         enum-eligible-for-as-bytes-synthesis?)
 
 (defn- lower-record-ctor
   [record-name args ctx]
@@ -3777,6 +3789,26 @@
                     "`.as()` (spec §3.4.6). Write `function as(self) -> "
                     "Bytes:` on the record to override.")
                call-node))))
+      (if (and (map? target-ty) (:enum target-ty)
+               (= "as" method-name) (empty? args))
+        ;; F37 Landing 5 — enum canonical bytes. Value-only enums are
+        ;; always eligible (single discriminator byte). Payload cases
+        ;; must have all-encodable fields; a targeted fail-nyi names
+        ;; the offending case + field type otherwise.
+        (let [en-name (:enum target-ty)
+              info    (get-in ctx [:enum-env en-name])]
+          (if (enum-eligible-for-as-bytes-synthesis? info (:record-env ctx))
+            {:node :call
+             :fn   (enum-synth-as-bytes-name en-name)
+             :args [target-lo]}
+            (fail-nyi!
+             (str "F37 Landing 5: cannot synthesize `.as() -> Bytes` for "
+                  "enum `" en-name "` — at least one payload field is not "
+                  "yet bytes-encodable. Primitive (`Bool` / sized-int / "
+                  "`Float` / `Double`) and `String!` payload fields encode; "
+                  "nested records / atoms / containers land in later "
+                  "landings.")
+             call-node)))
         (let [arg-exprs (mapv #(lower-expr (:value %) ctx) ordered-args)
             ;; Audit F44 — List container's `add`/`remove` take the
             ;; element as `id`, so primitive callers need boxing at
@@ -3841,7 +3873,7 @@
               msg-send))
 
           :else
-          (fail-nyi! "method call on non-record/non-atom target" call-node)))))))
+          (fail-nyi! "method call on non-record/non-atom target" call-node))))))))
 
 (def ^:private statement-node-kinds
   #{:expr-stmt :emit :break-stmt :continue-stmt :while-stmt
@@ -6885,24 +6917,158 @@
      :params      [{:name "a" :c-type record-name}]
      :body        [{:node :raw-c :text body-src}]}))
 
+(defn- enum-synth-as-bytes-name [enum-name]
+  (str enum-name "_cxc_as_bytes"))
+
+(defn- f37-enum-discriminator-width
+  "F37 L5 — discriminator width in bytes per §3.10.10: ≤256 → 1, ≤65536
+   → 2, otherwise 4. Case count is total, not tag-value range — a
+   256-case enum uses `UInt8` because tag values are 0..255."
+  [case-count]
+  (cond
+    (<= case-count 256)    1
+    (<= case-count 65536)  2
+    :else                  4))
+
+(defn- f37-enum-discriminator-c
+  "F37 L5 — emit a C statement appending the discriminator to `__d`.
+   `disc-expr` is the source expression for the tag (`a` for value-
+   only enums, `a.tag` for tagged enums). Big-endian for widths > 1."
+  [disc-expr width]
+  (case width
+    1 (str "uint8_t __disc = (uint8_t)(" disc-expr ");"
+           " [__d appendBytes:&__disc length:1];")
+    2 (str "uint16_t __disc = OSSwapHostToBigInt16((uint16_t)(" disc-expr "));"
+           " [__d appendBytes:&__disc length:2];")
+    4 (str "uint32_t __disc = OSSwapHostToBigInt32((uint32_t)(" disc-expr "));"
+           " [__d appendBytes:&__disc length:4];")))
+
+(defn- f37-enum-payload-field-for-encoding
+  "F37 L5 — normalize an enum payload param into the field shape
+   `f37-field-encoding-c-src` expects: `{:name :cxc-ty :nonnil?
+   :optional?}`. Payload params carry their `:type` node with a
+   `:type-nonnil` wrapper when the user wrote `T!`."
+  [param]
+  (let [ty-node (:type param)
+        nonnil? (= :type-nonnil (:node ty-node))
+        inner   (if nonnil? (:inner ty-node) ty-node)
+        cxc-ty  (:name inner)]
+    {:name      (:name param)
+     :cxc-ty    cxc-ty
+     :nonnil?   nonnil?
+     :optional? false}))
+
+(defn- f37-enum-payload-field-encoding-c-src
+  "F37 L5 — encode one payload field inside a case block. Reads from
+   `a.data.<case>.<field>` rather than `a.<field>` (record) — uses
+   the same primitive/String encoding helpers by rewriting the
+   accessor prefix."
+  [case-nm payload-field record-env]
+  (let [f       (f37-enum-payload-field-for-encoding payload-field)
+        cxc-ty  (:cxc-ty f)
+        fname   (:name f)
+        fld     (str "a.data." case-nm "." fname)]
+    (cond
+      (contains? record-env cxc-ty)
+      (str "        { NSData *__nd = " cxc-ty "_cxc_as_bytes(" fld ");"
+           " [__d appendData:__nd]; }")
+
+      (= "String" cxc-ty)
+      (str "        {\n"
+           "            NSData *__sd = [" fld " dataUsingEncoding:NSUTF8StringEncoding];\n"
+           "            uint32_t __len = OSSwapHostToBigInt32((uint32_t)[__sd length]);\n"
+           "            [__d appendBytes:&__len length:4];\n"
+           "            [__d appendData:__sd];\n"
+           "        }")
+
+      (contains? f37-primitive-byte-widths cxc-ty)
+      (str "        { " (f37-primitive-value-encode-src cxc-ty fld) " }"))))
+
+(defn- synthesize-enum-as-bytes-fn
+  "F37 Landing 5 — produce a `:c-function` node implementing
+   `<Enum>_cxc_as_bytes(<Enum> a) -> NSMutableData *`. Discriminator
+   width per §3.10.10 case count. Payload cases append per-field
+   encoding after the discriminator via a switch on the tag.
+
+   Value-only enums (no case carries payload) skip the switch — the
+   discriminator alone is the full encoding. Tagged enums emit a
+   `switch (a.tag) { case E_Tag_<case>: {...encode fields...} break; ... }`."
+  [enum-name info record-env]
+  (let [entries    (:case-entries info)
+        tagged?    (:tagged? info)
+        disc-width (f37-enum-discriminator-width (count entries))
+        disc-expr  (if tagged? "a.tag" "a")
+        head       (str "    NSMutableData *__d = "
+                        "[NSMutableData dataWithCapacity:" disc-width "];")
+        disc-src   (str "    " (f37-enum-discriminator-c disc-expr disc-width))
+        switch-src
+        (when tagged?
+          (let [arms
+                (for [ce entries]
+                  (let [case-nm (:name ce)
+                        fields  (:payload ce)
+                        blocks  (if (seq fields)
+                                  (str/join "\n"
+                                            (map #(f37-enum-payload-field-encoding-c-src
+                                                   case-nm % record-env)
+                                                 fields))
+                                  "")]
+                    (str "    case " enum-name "_Tag_" case-nm ": {\n"
+                         (when (seq blocks) (str blocks "\n"))
+                         "        break;\n"
+                         "    }")))]
+            (str "    switch (a.tag) {\n"
+                 (str/join "\n" arms)
+                 "\n    }")))
+        body-src   (str/join "\n"
+                             (remove nil?
+                                     [head disc-src switch-src "    return __d;"]))]
+    {:node        :c-function
+     :name        (enum-synth-as-bytes-name enum-name)
+     :return-type "NSMutableData *"
+     :params      [{:name "a" :c-type enum-name}]
+     :body        [{:node :raw-c :text body-src}]}))
+
+(defn- enum-eligible-for-as-bytes-synthesis?
+  "F37 L5 — every payload field on every case must be bytes-encodable.
+   Value-only enums (no payload cases) are always eligible."
+  [info record-env]
+  (every? (fn [ce]
+            (every? #(f37-bytes-encodable-field?
+                       (f37-enum-payload-field-for-encoding %)
+                       record-env)
+                    (:payload ce)))
+          (:case-entries info)))
+
 (defn- synthesized-record-functions
   "Emit the synthesized equals + hash function pair for every record,
    plus F37 Landings 2 + 3 + 4 canonical-bytes synthesis when the
    record's fields are all bytes-encodable (primitive / String! /
    nested-record) AND the user hasn't declared their own
    `.as(self) -> Bytes` (§3.3.2 rule 6 override). Forward decls at
-   emit time make nested-record dispatch order irrelevant."
+   emit time make nested-record dispatch order irrelevant.
+
+   F37 L5 folds enum canonical-bytes into the same pipeline — enums
+   whose payload cases are all bytes-encodable synth
+   `<Enum>_cxc_as_bytes`."
   [ctx]
-  (let [record-env (:record-env ctx)]
-    (vec (for [[rec-name info] record-env
-               f-fn            [synthesize-record-equals-fn
-                                synthesize-record-hash-fn
-                                (fn [rn ri _]
-                                  (when (record-eligible-for-as-bytes-synthesis? ri record-env)
-                                    (synthesize-record-as-bytes-fn rn ri record-env)))]
-               :let            [emitted (f-fn rec-name info ctx)]
-               :when           emitted]
-           emitted))))
+  (let [record-env (:record-env ctx)
+        enum-env   (:enum-env ctx)
+        record-fns
+        (vec (for [[rec-name info] record-env
+                   f-fn            [synthesize-record-equals-fn
+                                    synthesize-record-hash-fn
+                                    (fn [rn ri _]
+                                      (when (record-eligible-for-as-bytes-synthesis? ri record-env)
+                                        (synthesize-record-as-bytes-fn rn ri record-env)))]
+                   :let            [emitted (f-fn rec-name info ctx)]
+                   :when           emitted]
+               emitted))
+        enum-fns
+        (vec (for [[en-name info] enum-env
+                   :when          (enum-eligible-for-as-bytes-synthesis? info record-env)]
+               (synthesize-enum-as-bytes-fn en-name info record-env)))]
+    (into record-fns enum-fns)))
 
 (defn- lower-list-literal-init
   "Lower `xs: List of T = [e1, e2, ...]` in a data-field default.
@@ -8563,17 +8729,23 @@
                              ;; Clock.every's typed-payload dispatch).
                              "<objc/message.h>"]
                             ["<stdio.h>"])
-        ;; F37 Landing 2 — synthesized `<Record>_cxc_as_bytes` uses
-        ;; OSSwapHostToBigInt16/32/64. Declared in <libkern/OSByteOrder.h>;
-        ;; Foundation transitively pulls it in on macOS SDKs today, but
-        ;; add the explicit include so a non-macOS backend (F54) or a
-        ;; future SDK change doesn't silently break the encode path.
-        needs-byteorder?  (boolean (some (fn [[_ info]]
-                                           (and (not (record-has-user-as-method? info))
-                                                (seq (:fields info))
-                                                (every? #(f37-bytes-encodable-field? % record-env)
-                                                        (:fields info))))
-                                         record-env))
+        ;; F37 Landings 2 + 5 — synthesized `<Record>_cxc_as_bytes` /
+        ;; `<Enum>_cxc_as_bytes` use OSSwapHostToBigInt16/32/64.
+        ;; Declared in <libkern/OSByteOrder.h>; Foundation transitively
+        ;; pulls it in on macOS SDKs today, but add the explicit
+        ;; include so a non-macOS backend (F54) or a future SDK change
+        ;; doesn't silently break the encode path.
+        needs-byteorder?
+        (boolean
+         (or (some (fn [[_ info]]
+                     (and (not (record-has-user-as-method? info))
+                          (seq (:fields info))
+                          (every? #(f37-bytes-encodable-field? % record-env)
+                                  (:fields info))))
+                   record-env)
+             (some (fn [[_ info]]
+                     (enum-eligible-for-as-bytes-synthesis? info record-env))
+                   enum-env)))
         includes          (cond-> base-includes
                             needs-abort?     (conj "<stdlib.h>")
                             needs-runtime?   (conj "<stdlib.h>")

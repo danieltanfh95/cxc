@@ -180,6 +180,12 @@
       (is (zero? exit))
       (is (= "49\n" stdout)))))
 
+(deftest end-to-end-f37-enum-bytes
+  (testing "F37 L5 — enum canonical bytes. Discriminator is 1 byte (≤256 cases per §3.10.10). `Msg.pong(seq: 42).as()` yields 1 tag byte + 4 payload bytes = 5."
+    (let [{:keys [exit stdout]} (compile-and-run "f37-enum-bytes")]
+      (is (zero? exit))
+      (is (= "5\n" stdout)))))
+
 (deftest end-to-end-dispatch-basic
   (testing "dispatch-basic.cxc — F69 L4b `<:` receive-glyph dispatch on a tagged-variant scrutinee. Binds `s = Signal.yellow`, dispatches with case + wildcard arms; the `yellow` branch fires and prints 200."
     (let [{:keys [exit stdout]} (compile-and-run "dispatch-basic")]
