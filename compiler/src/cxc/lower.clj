@@ -2816,7 +2816,11 @@
 
    Pre-F16 the parser produced only `:cases`. Post-F16 the parser
    always populates `:case-entries`; the fallback keeps a value-only
-   shape for any legacy caller that constructs the AST by hand."
+   shape for any legacy caller that constructs the AST by hand.
+
+   F16 L2 — raw-value enums carry `:raw-values` (parallel to `:cases`)
+   and `:raw-type` (smallest fitting unsigned int name, per spec §3.3)
+   on the enum node. Env exposes both for downstream emit + synthesis."
   [top-nodes]
   (into {}
         (for [e (filter #(= :enum (:node %)) top-nodes)]
@@ -2825,14 +2829,18 @@
                                           (:cases e)))
                 payload-index  (into {}
                                      (map (juxt :name :payload) entries))
-                tagged?        (some #(seq (:payload %)) entries)]
-            [(:name e) {:cases         (:cases e)
-                        :case-index    (into {}
-                                             (map-indexed (fn [i c] [c i])
-                                                          (:cases e)))
-                        :case-entries  entries
-                        :payload-index payload-index
-                        :tagged?       (boolean tagged?)}]))))
+                tagged?        (some #(seq (:payload %)) entries)
+                raw-values     (:raw-values e)
+                raw-type       (:raw-type e)]
+            [(:name e) (cond-> {:cases         (:cases e)
+                                :case-index    (into {}
+                                                     (map-indexed (fn [i c] [c i])
+                                                                  (:cases e)))
+                                :case-entries  entries
+                                :payload-index payload-index
+                                :tagged?       (boolean tagged?)}
+                         raw-values (assoc :raw-values raw-values)
+                         raw-type   (assoc :raw-type   raw-type))]))))
 
 ;; ---------------------------------------------------------------------------
 ;; Type inference (ctx-threaded)
@@ -7954,10 +7962,18 @@
    struct: `typedef struct { <Foo>_Tag tag; union { struct { … } case1;
    … } data; } Foo;` with an accompanying `<Foo>_Tag` enum for the
    discriminator. Emit resolves per-field C types via record-env /
-   atom-env / enum-env."
+   atom-env / enum-env.
+
+   F16 L2 — raw-value enums (all cases have `= <int>`) preserve their
+   raw values on the `:c-enum` node so emit can render explicit
+   `<Enum>_<case> = <value>` initializers with a typed underlying
+   integer (`typedef enum : <raw-type> { … }`, per §3.3)."
   [enum-node record-env atom-env enum-env]
-  (let [tagged?  (some #(seq (:payload %)) (:case-entries enum-node))]
-    (if tagged?
+  (let [tagged?    (some #(seq (:payload %)) (:case-entries enum-node))
+        raw-values (:raw-values enum-node)
+        raw-type   (:raw-type   enum-node)]
+    (cond
+      tagged?
       {:node    :c-tagged-enum
        :name    (:name enum-node)
        :entries (mapv (fn [ce]
@@ -7970,6 +7986,17 @@
                                                                 enum-env)})
                                         (:payload ce))})
                       (:case-entries enum-node))}
+
+      raw-values
+      {:node       :c-enum
+       :name       (:name enum-node)
+       :cases      (:cases enum-node)
+       :raw-values raw-values
+       :raw-c-type (get {"UInt8" "uint8_t" "UInt16" "uint16_t"
+                          "UInt32" "uint32_t" "UInt64" "uint64_t"}
+                         raw-type)}
+
+      :else
       {:node  :c-enum
        :name  (:name enum-node)
        :cases (:cases enum-node)})))

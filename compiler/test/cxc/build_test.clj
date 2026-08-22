@@ -186,6 +186,12 @@
       (is (zero? exit))
       (is (= "5\n" stdout)))))
 
+(deftest end-to-end-f16-raw-value-enum
+  (testing "F16 L2 — raw-value enum. `case not_found = 404` lowers to `HTTP_not_found = 404` in a typed C enum `typedef enum : uint16_t { … } HTTP;`. Print prints the integer value directly."
+    (let [{:keys [exit stdout]} (compile-and-run "f16-raw-value-enum")]
+      (is (zero? exit))
+      (is (= "404\n" stdout)))))
+
 (deftest end-to-end-dispatch-basic
   (testing "dispatch-basic.cxc — F69 L4b `<:` receive-glyph dispatch on a tagged-variant scrutinee. Binds `s = Signal.yellow`, dispatches with case + wildcard arms; the `yellow` branch fires and prints 200."
     (let [{:keys [exit stdout]} (compile-and-run "dispatch-basic")]

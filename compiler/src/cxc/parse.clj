@@ -2227,6 +2227,12 @@
         ;; Named-only per §3.7.1 (no positional destructuring). Defaults
         ;; on payload params are rejected — the case *value* is the
         ;; payload; a default would confuse construction semantics.
+        ;;
+        ;; F16 L2 (2026-08-23) — optional `= <int-literal>` suffix marks
+        ;; a raw-value case (spec §3.3). Raw values and payloads are
+        ;; mutually exclusive on a single case (mixing them is a shape
+        ;; conflict). Enum-level reshape validates all-or-none raw
+        ;; values across cases.
         (at? tokens p :kw "case")
         (let [[_ p2]     (expect tokens p :kw "case")
               [nm p3]    (expect tokens p2 :ident)
@@ -2241,9 +2247,28 @@
                                          "` — payload fields don't carry defaults "
                                          "(the case *value* is the payload; a default "
                                          "would confuse construction semantics). "
-                                         "Drop the `= <default>`."))))]
-          (recur (conj body {:node :enum-case :case-name nm :payload payload})
-                 (skip-newlines tokens p4)))
+                                         "Drop the `= <default>`."))))
+              [raw-val p5] (if (at? tokens p4 :glyph "=")
+                             (let [after-eq (inc p4)]
+                               (when (seq payload)
+                                 (fail! tokens after-eq
+                                        (str "F16 L2: case `" nm "` has both a "
+                                             "payload `(...)` and a raw value `= ...` "
+                                             "— these are mutually exclusive shapes "
+                                             "per §3.3. Payload enums carry associated "
+                                             "values; raw-value enums attach fixed "
+                                             "integer values to bare cases. Pick one.")))
+                               (when-not (at? tokens after-eq :int)
+                                 (fail! tokens after-eq
+                                        (str "F16 L2: raw value on case `" nm
+                                             "` must be an integer literal (v1.0 "
+                                             "scope — string/float raw values are "
+                                             "deferred to a follow-on landing).")))
+                               [(t-value (peek-tok tokens after-eq)) (inc after-eq)])
+                             [nil p4])]
+          (recur (conj body (cond-> {:node :enum-case :case-name nm :payload payload}
+                              raw-val (assoc :raw-value raw-val)))
+                 (skip-newlines tokens p5)))
 
         (looks-like-observable? tokens p)
         (let [[o p2] (parse-observable tokens p)]
@@ -2422,13 +2447,48 @@
     ;; Every case entry: {:name string :payload [{:name :type} ...]}.
     ;; `:cases` (vector of names) retained for legacy readers; new
     ;; readers (lower env builder) should consult `:case-entries`.
-    {:node          :enum
-     :name          (:name def-atom)
-     :cases         (mapv :case-name cases)
-     :case-entries  (mapv (fn [c] {:name    (:case-name c)
-                                    :payload (or (:payload c) [])})
-                          cases)
-     :inferred-kind :tagged-variant}))
+    ;;
+    ;; F16 L2 — if any case carries `:raw-value`, all cases must.
+    ;; The raw-type is the smallest fitting unsigned integer type.
+    ;; Overriding via `metadata: raw_type:` is a follow-on landing.
+    (let [with-raw    (filterv :raw-value cases)
+          without-raw (remove :raw-value cases)]
+      (when (and (seq with-raw) (seq without-raw))
+        (fail! tokens pos-for-diag
+               (str "F16 L2: enum `" (:name def-atom) "` mixes cases with "
+                    "explicit raw values (`case " (:case-name (first with-raw))
+                    " = " (:raw-value (first with-raw)) "`) and cases without "
+                    "(`case " (:case-name (first without-raw)) "`). Either "
+                    "assign raw values to every case or drop them from all "
+                    "cases (spec §3.3 raw-value enums are all-or-none)."))))
+    (when (some :raw-value cases)
+      (when (some (comp seq :payload) cases)
+        (fail! tokens pos-for-diag
+               (str "F16 L2: enum `" (:name def-atom) "` combines raw-value "
+                    "cases with payload cases. These shapes are distinct per "
+                    "§3.3 — raw-value enums attach fixed integer values; "
+                    "payload enums carry associated values. Pick one shape."))))
+    (let [raw-values (when (some :raw-value cases)
+                       (mapv :raw-value cases))
+          raw-type   (when raw-values
+                       (let [mn (apply min raw-values)
+                             mx (apply max raw-values)]
+                         (cond
+                           (and (<= 0 mn) (<= mx 255))         "UInt8"
+                           (and (<= 0 mn) (<= mx 65535))       "UInt16"
+                           (and (<= 0 mn) (<= mx 4294967295))  "UInt32"
+                           :else                                "UInt64")))]
+      (cond-> {:node          :enum
+               :name          (:name def-atom)
+               :cases         (mapv :case-name cases)
+               :case-entries  (mapv (fn [c]
+                                      (cond-> {:name    (:case-name c)
+                                                :payload (or (:payload c) [])}
+                                        (:raw-value c) (assoc :raw-value (:raw-value c))))
+                                    cases)
+               :inferred-kind :tagged-variant}
+        raw-values (assoc :raw-values raw-values)
+        raw-type   (assoc :raw-type   raw-type)))))
 
 ;; ---------------------------------------------------------------------------
 ;; F9 protocol/accepts + F9 L3 extend surfaces. Post F68 L6b (Proposal H):

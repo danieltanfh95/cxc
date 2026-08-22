@@ -774,6 +774,44 @@ def main:
       (is (= :c-enum (:node e)))
       (is (= ["red" "green"] (:cases e))))))
 
+(deftest f16-l2-raw-value-enum-preserves-values-and-picks-narrowest-type
+  (testing "F16 L2 — a raw-value enum keeps `:c-enum` shape but adds `:raw-values` (parallel to `:cases`) and `:raw-c-type`. Type is the smallest fitting unsigned int per §3.3: UInt8 for [0,255], UInt16 for [0,65535], etc. Both are consumed by emit to render `typedef enum : <c-type> { E_a = v, E_b = v } E;`."
+    (let [prog (lower-src "def HTTP:\n    case ok = 200\n    case not_found = 404\n\ndef main:\n    -> running\n")
+          e    (first (:enums prog))]
+      (is (= :c-enum (:node e)))
+      (is (= ["ok" "not_found"] (:cases e)))
+      (is (= [200 404] (:raw-values e)))
+      (is (= "uint16_t" (:raw-c-type e))
+          "404 > 255 forces UInt16; smallest fitting is uint16_t"))))
+
+(deftest f16-l2-raw-value-uint8-narrowest-type
+  (testing "F16 L2 — all raw values within [0,255] pick UInt8 (uint8_t)."
+    (let [prog (lower-src "def Small:\n    case a = 0\n    case b = 100\n    case c = 255\n\ndef main:\n    -> running\n")
+          e    (first (:enums prog))]
+      (is (= [0 100 255] (:raw-values e)))
+      (is (= "uint8_t" (:raw-c-type e))))))
+
+(deftest f16-l2-mixed-raw-and-bare-cases-rejected
+  (testing "F16 L2 — mixing raw-value cases and bare cases on the same enum rejects at parse. All-or-none per spec §3.3."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"F16 L2: enum `Mixed` mixes cases with explicit raw values"
+         (lower-src "def Mixed:\n    case a = 1\n    case b\n\ndef main:\n    -> running\n")))))
+
+(deftest f16-l2-raw-value-plus-payload-rejected
+  (testing "F16 L2 — a single case can't have both a raw value and a payload. Distinct shapes per §3.3."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"F16 L2: case `bad` has both a payload"
+         (lower-src "def Weird:\n    case bad(n: Int!) = 1\n\ndef main:\n    -> running\n")))))
+
+(deftest f16-l2-raw-value-non-int-literal-rejected
+  (testing "F16 L2 — raw value must be an integer literal at v1.0. String/float raw values deferred."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"F16 L2: raw value on case `a` must be an integer literal"
+         (lower-src "def E:\n    case a = \"hello\"\n\ndef main:\n    -> running\n")))))
+
 (deftest f16-l1-payload-default-rejected
   (testing "F16 L1 — a default on an enum payload field rejects at parse time. Payload fields don't carry defaults — the case *value* is the payload."
     (is (thrown-with-msg?

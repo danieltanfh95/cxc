@@ -782,11 +782,26 @@
                    (str/join "\n"))]
     (str "typedef struct {\n" decls "\n} " (:name s) ";")))
 
-(defn- emit-c-enum [e]
-  (let [members (->> (:cases e)
-                     (map (fn [c] (str "    " (:name e) "_" c)))
-                     (str/join ",\n"))]
-    (str "typedef enum {\n" members "\n} " (:name e) ";")))
+(defn- emit-c-enum
+  "Value-only enum → C typedef enum. Pre-F16: bare `typedef enum { E_a,
+   E_b } E;` with declaration-order integer tags. F16 L2: raw-value
+   enums render `typedef enum : <raw-c-type> { E_a = <v>, E_b = <v> } E;`
+   using the clang typed-enum extension. Underlying type is the
+   smallest fitting unsigned integer from the parsed raw values."
+  [e]
+  (let [raw-vals   (:raw-values e)
+        raw-c-type (:raw-c-type e)
+        members    (if raw-vals
+                     (->> (map vector (:cases e) raw-vals)
+                          (map (fn [[c v]] (str "    " (:name e) "_" c " = " v)))
+                          (str/join ",\n"))
+                     (->> (:cases e)
+                          (map (fn [c] (str "    " (:name e) "_" c)))
+                          (str/join ",\n")))
+        header     (if raw-vals
+                     (str "typedef enum : " raw-c-type " {\n")
+                     "typedef enum {\n")]
+    (str header members "\n} " (:name e) ";")))
 
 (defn- emit-c-tagged-enum
   "F16 L1 — tagged-union representation for an enum with payload cases.
