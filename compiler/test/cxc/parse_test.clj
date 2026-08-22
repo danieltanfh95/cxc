@@ -953,6 +953,50 @@ def main:
       (is (= :binop (:node (:expr (nth body 2)))))
       (is (= "+" (:op (:expr (nth body 2))))))))
 
+;; ---------------------------------------------------------------------------
+;; K5 L1 — `if` at expression position (spec §3.8.1)
+;; ---------------------------------------------------------------------------
+
+(deftest k5-l1-inline-if-else-parses-as-if-expr
+  (testing "K5 L1 — `let x = if 1 > 0: 10 else: 20` parses the RHS as `:if-expr` with cond/then/else branches."
+    (let [[s] (do-stmts-from "def main:\n    -> running\n        then:\n            let x = if 1 > 0: 10 else: 20\n            print(x)\n")]
+      (is (= :let-stmt (:node s)))
+      (is (= :if-expr (:node (:expr s))))
+      (is (= :binop (:node (:cond (:expr s)))))
+      (is (= 10 (:value (:then (:expr s)))))
+      (is (= 20 (:value (:else (:expr s))))))))
+
+(deftest k5-l1-else-if-chain-parses-right-associative
+  (testing "K5 L1 — `if a: 1 else if b: 2 else: 3` desugars into a nested :if-expr in the else branch (right-associative). Constructed with actual conds since the parser needs boolean-producing test exprs."
+    (let [[s] (do-stmts-from "def main:\n    -> running\n        then:\n            let x = if 1 > 2: 1 else if 3 > 4: 2 else: 3\n            print(x)\n")
+          ife (:expr s)]
+      (is (= :if-expr (:node ife)))
+      (is (= 1 (:value (:then ife))))
+      (is (= :if-expr (:node (:else ife)))
+          "nested :if-expr in outer's else branch")
+      (is (= 2 (:value (:then (:else ife)))))
+      (is (= 3 (:value (:else (:else ife))))))))
+
+(deftest k5-l1-missing-else-is-compile-error
+  (testing "K5 L1 open-Q1 ratified — missing `else` at expression position is a compile error. Parser diagnostic names K5 L1 so users find the ratified decision."
+    (let [ex (try
+               (do-stmts-from "def main:\n    -> running\n        then:\n            let x = if 1 > 0: 10\n            print(x)\n")
+               nil
+               (catch clojure.lang.ExceptionInfo e e))]
+      (is ex "expected fail!")
+      (is (re-find #"K5 L1" (.getMessage ex)))
+      (is (re-find #"`else`" (.getMessage ex))))))
+
+(deftest k5-l1-if-let-at-expression-position-rejected
+  (testing "K5 L1 — `if let` at expression position is not yet supported. Reject with a targeted diagnostic pointing at F39 L7 (statement-form `if let`)."
+    (let [ex (try
+               (do-stmts-from "def main:\n    -> running\n        then:\n            let x = if let y = 1: 10 else: 20\n            print(x)\n")
+               nil
+               (catch clojure.lang.ExceptionInfo e e))]
+      (is ex)
+      (is (re-find #"K5 L1" (.getMessage ex)))
+      (is (re-find #"F39 L7" (.getMessage ex))))))
+
 (deftest f18-l1-transition-let-clause-still-works
   (testing "F18 L1 — the pre-existing transition `let:` sub-block (F23, `let: <name>: <expr>`) still parses as a `:let-clause` — L1 didn't disturb the disambiguation. Distinguisher: `:` after `let` vs `<ident>` after `let`."
     (let [n (first-node "def X:\n    n: Int = 0\n\n    -> alive\n\n    alive <: bump -> alive\n        let: k: 5\n        then: n => n + k\n")

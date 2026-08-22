@@ -69,6 +69,12 @@
       (is (zero? exit))
       (is (= "7\n" stdout)))))
 
+(deftest end-to-end-k5-if-expression
+  (testing "K5 L1 — `if` at expression position (spec §3.8.1). Uses both simple `if...else` and `if...else if...else` chain. Result flows through `let` bindings. Lowered as C ternary; prints the selected branch value."
+    (let [{:keys [exit stdout]} (compile-and-run "k5-if-expression")]
+      (is (zero? exit))
+      (is (= "2\n" stdout)))))
+
 (deftest end-to-end-f18-do-expression
   (testing "F18 L2 — `do:` at expression position (spec §3.8.2). Indented `do:` block with two `let` bindings; the final expression `a + b` is the block's value. Lowered as GNU statement-expression `({ ... })`; the enclosing `let r = ...` binds `r` to that value; `print(r)` yields 7."
     (let [{:keys [exit stdout]} (compile-and-run "f18-do-expression")]

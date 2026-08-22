@@ -2764,6 +2764,35 @@ def main:
       (is (= :objc-program (:node prog))
           "sanity — enclosing program still compiles"))))
 
+;; ---------------------------------------------------------------------------
+;; K5 L1 — `if` at expression position (spec §3.8.1)
+;; ---------------------------------------------------------------------------
+
+(deftest k5-l1-if-expression-lowers-to-c-ternary
+  (testing "K5 L1 — `let x = if 1 > 0: 10 else: 20` lowers the RHS as :c-ternary. Cond/then/else all lowered as expressions."
+    (let [prog  (lower-src "def main:\n    -> running\n        then:\n            let x = if 1 > 0: 10 else: 20\n            print(x)\n")
+          stmts (get-in prog [:main :body])
+          decl  (first (filter #(and (= :var-decl (:node %)) (= "x" (:name %))) stmts))]
+      (is (some? decl))
+      (is (= :c-ternary (:node (:rhs decl))))
+      (is (= 10 (:value (:then (:rhs decl)))))
+      (is (= 20 (:value (:else (:rhs decl)))))
+      (is (= "int64_t" (:c-type decl))
+          "then-branch type flows out as block type"))))
+
+(deftest k5-l1-else-if-chain-lowers-to-nested-ternary
+  (testing "K5 L1 — `else if` chain desugars right-associatively: outer :c-ternary whose else is another :c-ternary."
+    (let [prog  (lower-src "def main:\n    -> running\n        then:\n            let x = if 1 > 2: 1 else if 3 > 4: 2 else: 3\n            print(x)\n")
+          stmts (get-in prog [:main :body])
+          decl  (first (filter #(and (= :var-decl (:node %)) (= "x" (:name %))) stmts))
+          rhs   (:rhs decl)]
+      (is (= :c-ternary (:node rhs)))
+      (is (= 1 (:value (:then rhs))))
+      (is (= :c-ternary (:node (:else rhs)))
+          "nested :c-ternary in outer's else branch")
+      (is (= 2 (:value (:then (:else rhs)))))
+      (is (= 3 (:value (:else (:else rhs))))))))
+
 (deftest f18-l1-let-in-do-clause-of-transition
   (testing "F18 L1 — `let` also works inside a receive-glyph transition's `do:` clause on a real atom (main-as-atom path)."
     (let [prog  (lower-src "def Counter:\n    n: Int = 0\n\n    -> running\n\n    -> end\n\n    running <: bump -> running\n        then:\n            let doubled = n + n\n            print(doubled)\n\ndef main:\n    c: Counter = Counter()\n\n    -> running\n        then: print(0)\n")

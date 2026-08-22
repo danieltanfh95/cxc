@@ -3346,6 +3346,14 @@
                                     "(from_literal) + F43 (container-as-"
                                     "atom); use `.get`/`.contains` for now.")
                                node)))
+    ;; K5 L1 — `if` at expression position. Both branches unify to a
+    ;; common type; L1 takes the then-branch's type as the block type
+    ;; (assume caller-side annotation drives outer typing; a proper
+    ;; unify pass is a follow-on). Optional-lift on branch mismatch
+    ;; is left to F15 L3 (bidirectional inference).
+    :if-expr
+    (infer-type (:then node) ctx)
+
     ;; F18 L2 — `do:` at expression position. Value = last statement's
     ;; expression value; if the final statement is not an :expr-stmt
     ;; (bare let, void call), block has type :void (Unit). Empty body
@@ -4321,6 +4329,18 @@
           "statement position for now (top-level in a `do:` / method "
           "body / branch body).")
      node)
+
+    ;; K5 L1 — `if` at expression position (spec §3.8.1). Lowers to a
+    ;; C ternary `(cond ? then : else)` for the single-expression
+    ;; branch form. `else if` chains lowered as nested :c-ternary via
+    ;; the recursive parse-side desugar. Both branches lowered as
+    ;; expressions; wrap in :c-ternary node (already emitted by F39
+    ;; L6 for coalesce).
+    :if-expr
+    {:node :c-ternary
+     :cond (lower-expr (:cond node) ctx)
+     :then (lower-expr (:then node) ctx)
+     :else (lower-expr (:else node) ctx)}
 
     ;; F18 L2 — `do:` at expression position. Lower statements uniformly
     ;; via lower-body-stmts (already threads `let`-binding ctx). Wrap any

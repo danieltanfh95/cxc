@@ -1,0 +1,10 @@
+def main:
+    -> running
+        # K5 L1 — `if` at expression position (spec §3.8.1). Both
+        # branches required (open-Q1 ratified: missing-else at
+        # expression position is a compile error). Lowers to a C
+        # ternary. else-if chain desugars right-associatively.
+        then:
+            let x = if 1 > 0: 10 else: 20
+            let grade = if x > 15: 3 else if x > 5: 2 else: 1
+            print(grade)
