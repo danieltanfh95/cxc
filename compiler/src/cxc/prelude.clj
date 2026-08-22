@@ -112,7 +112,12 @@
    :names — user-visible declarations in the module. Used by F51/F56
             to build the resolver's name→module index without
             re-parsing the .cxc source."
-  [{:name :time    :kind :shared :names ["Duration" "Instant"]}
+  ;; F7 L2c (2026-08-23) — `aliases` module ships prelude alias decls
+  ;; (spec §4.10.2 canonical section-composition aliases: data, static).
+  ;; MUST load first so subsequent prelude modules + user code can use
+  ;; `data:` / `static:` section headers via the F8 L1-b parser hook.
+  [{:name :aliases :kind :shared :names []}
+   {:name :time    :kind :shared :names ["Duration" "Instant"]}
    {:name :geom    :kind :shared :names ["Position"]}
    {:name :input   :kind :shared :names ["Key" "TestKeyboardInput"]}
    {:name :random  :kind :target :names ["Random"]}

@@ -1,0 +1,20 @@
+# F7 L2c — Prelude section-composition aliases per spec §4.10.2.
+#
+# `data:`  primitive-composed as: runtime immutable identity.
+#          Fields inside `data:` are per-instance, immutable after init,
+#          participate in structural equality / hash / copy — the record
+#          canonical shape.
+#
+# `static:` primitive-composed as: compile_time immutable.
+#           Fields inside `static:` are per-type, allocated once, immutable.
+#
+# Not shipped here:
+# - `state:` — retired at v1.0 per §1.11 (all fields are `data:`; mutation
+#             flows through transitions). The parser hard-rejects `state:`
+#             with a targeted diagnostic; adding it as an alias would
+#             contradict the retirement.
+# - `methods:` — retired at v1.0 per F67 L4 (Proposal G class-body
+#                collapse; top-level callables are the spec-canonical form).
+
+alias data: runtime immutable identity
+alias static: compile_time immutable

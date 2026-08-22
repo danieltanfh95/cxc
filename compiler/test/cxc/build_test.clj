@@ -63,6 +63,12 @@
       (is (zero? exit))
       (is (= "42\n" stdout)))))
 
+(deftest end-to-end-prelude-data-alias
+  (testing "F7 L2c — `data:` is a prelude alias (spec §4.10.2). No user alias declaration needed; the prelude's `alias data: runtime immutable identity` populates the section-class registry before user source parses."
+    (let [{:keys [exit stdout]} (compile-and-run "prelude-data-alias")]
+      (is (zero? exit))
+      (is (= "7\n" stdout)))))
+
 (deftest end-to-end-different-message
   (testing "greet.cxc — different string round-trips through the pipeline"
     (let [{:keys [exit stdout]} (compile-and-run "greet")]

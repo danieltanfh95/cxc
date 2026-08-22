@@ -1,0 +1,11 @@
+# F7 L2c — `data:` is a prelude alias per spec §4.10.2. User does
+# NOT declare it; it's shipped in resources/prelude/shared/aliases.cxc.
+def Counter:
+    data:
+        raw_n: Int = 7
+
+    n :< raw_n
+
+def main:
+    -> running
+        then: print(Counter().n)
