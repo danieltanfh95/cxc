@@ -69,6 +69,12 @@
       (is (zero? exit))
       (is (= "7\n" stdout)))))
 
+(deftest end-to-end-f13-weak-nils-out
+  (testing "F13 L3 — `weak <AtomType>` field on `Parent` nils out when the target Child's last strong ref goes away. Parent stores `ref: weak Child`; the Child() passed to Parent's ctor is a temporary with no other __strong owner, so ARC releases at end-of-full-expression and zeroes the weak ivar. Reading `p.ref.value` observes the nilled weak → auto-lift produces Optional-nil for `Int` (F39 L5b-ii-c) → print renders `nil\\n`. Failure mode this catches: ARC unexpectedly keeps Child alive (autorelease-pool or accidental __strong storage) → print would render `42`."
+    (let [{:keys [exit stdout]} (compile-and-run "f13-weak-nils-out")]
+      (is (zero? exit))
+      (is (= "nil\n" stdout)))))
+
 (deftest end-to-end-different-message
   (testing "greet.cxc — different string round-trips through the pipeline"
     (let [{:keys [exit stdout]} (compile-and-run "greet")]

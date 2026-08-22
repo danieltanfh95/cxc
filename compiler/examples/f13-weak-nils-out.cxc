@@ -1,0 +1,22 @@
+def Child:
+    raw_value: Int = 42
+    value :< raw_value
+
+    -> alive
+
+def Parent:
+    ref: weak Child
+
+    -> alive
+
+def main:
+    p: Parent = Parent(ref: Child())
+
+    -> running
+        # Child() is a temporary — no other __strong reference retains
+        # it, so ARC releases it at end-of-full-expression. The `weak`
+        # slot in Parent nils out; reading `p.ref.value` becomes a nil
+        # message and returns 0 per Cocoa nil-messaging semantics.
+        # If ARC held onto Child (e.g. autorelease-pool retention), this
+        # would print 42 — that's the failure mode L3 protects against.
+        then: print(p.ref.value)
