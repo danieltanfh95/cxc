@@ -596,6 +596,30 @@ def main:
       (is (= "Color" (:name n)))
       (is (= ["red" "green" "blue"] (:cases n))))))
 
+(deftest f16-l1-case-with-payload-param-list-parses
+  (testing "F16 L1 — a `case <ident>(<param-list>)` marker parses to `:enum-case` with a `:payload` vector of `:field` maps. `:case-entries` on the reshaped enum preserves the payload per case; `:cases` (names) stays available for legacy readers."
+    (let [n (first-node (str "def Msg:\n"
+                             "    case ping\n"
+                             "    case pong(reply_to: Int, seq: Int)\n"))]
+      (is (= :enum (:node n)))
+      (is (= ["ping" "pong"] (:cases n)))
+      (is (= "ping" (get-in n [:case-entries 0 :name])))
+      (is (= []     (get-in n [:case-entries 0 :payload])))
+      (is (= "pong" (get-in n [:case-entries 1 :name])))
+      (let [pl (get-in n [:case-entries 1 :payload])]
+        (is (= 2 (count pl)))
+        (is (= "reply_to" (:name (first pl))))
+        (is (= "Int" (:name (:type (first pl)))))
+        (is (= "seq" (:name (second pl))))))))
+
+(deftest f16-l1-case-payload-default-rejected
+  (testing "F16 L1 — a default `= <expr>` on an enum payload field rejects at parse time. Payload fields don't carry defaults: the case *value* is the payload; a default would confuse construction semantics."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"F16 L1: default on enum payload"
+         (first-node (str "def Msg:\n"
+                          "    case ok(n: Int = 0)\n"))))))
+
 (deftest f68-l2-def-enum-with-ctor-params-rejected
   (testing "F68 L2 — `def Foo(x: Int)` body with `case` markers is rejected — enums are a closed case set with no ctor state."
     (is (thrown-with-msg?

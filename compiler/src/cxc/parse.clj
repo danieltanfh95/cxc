@@ -2220,14 +2220,30 @@
 
         ;; F68 L2 (Proposal H) — `case <ident>` prefix marks an enum
         ;; case. Presence of any `:enum-case` node in the body triggers
-        ;; the enum reshape at end-of-body-loop. Payload-carrying
-        ;; cases (`case ok(value: Int)`) deferred; current `parse-enum`
-        ;; only supports bare cases and this landing matches its scope.
+        ;; the enum reshape at end-of-body-loop.
+        ;;
+        ;; F16 L1 (2026-08-23) — optional parenthesized parameter list
+        ;; carries payload fields (`case completed(receipt: Receipt)`).
+        ;; Named-only per §3.7.1 (no positional destructuring). Defaults
+        ;; on payload params are rejected — the case *value* is the
+        ;; payload; a default would confuse construction semantics.
         (at? tokens p :kw "case")
-        (let [[_ p2]   (expect tokens p :kw "case")
-              [nm p3]  (expect tokens p2 :ident)]
-          (recur (conj body {:node :enum-case :case-name nm})
-                 (skip-newlines tokens p3)))
+        (let [[_ p2]     (expect tokens p :kw "case")
+              [nm p3]    (expect tokens p2 :ident)
+              [payload p4] (if (at? tokens p3 :punct "(")
+                             (parse-param-list-parens tokens p3)
+                             [[] p3])
+              _          (doseq [pp payload]
+                           (when (:default pp)
+                             (fail! tokens p3
+                                    (str "F16 L1: default on enum payload field `"
+                                         (:name pp) "` in case `" nm
+                                         "` — payload fields don't carry defaults "
+                                         "(the case *value* is the payload; a default "
+                                         "would confuse construction semantics). "
+                                         "Drop the `= <default>`."))))]
+          (recur (conj body {:node :enum-case :case-name nm :payload payload})
+                 (skip-newlines tokens p4)))
 
         (looks-like-observable? tokens p)
         (let [[o p2] (parse-observable tokens p)]
@@ -2402,9 +2418,16 @@
                   "set of cases with no per-instance state. Move the "
                   "non-case items to a separate declaration, or drop "
                   "the `case` markers if this was intended as a class.")))
+    ;; F16 L1 — preserve payload per case. Bare cases carry `[]`.
+    ;; Every case entry: {:name string :payload [{:name :type} ...]}.
+    ;; `:cases` (vector of names) retained for legacy readers; new
+    ;; readers (lower env builder) should consult `:case-entries`.
     {:node          :enum
      :name          (:name def-atom)
      :cases         (mapv :case-name cases)
+     :case-entries  (mapv (fn [c] {:name    (:case-name c)
+                                    :payload (or (:payload c) [])})
+                          cases)
      :inferred-kind :tagged-variant}))
 
 ;; ---------------------------------------------------------------------------

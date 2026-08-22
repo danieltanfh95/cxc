@@ -174,6 +174,12 @@
       (is (zero? exit))
       (is (= "1\n" stdout)))))
 
+(deftest end-to-end-f16-payload-enum
+  (testing "F16 L1 — payload-carrying enum case. `Msg.pong(reply_to: 7, seq: 42)` lowers to a tagged-union compound literal `((Msg){.tag = Msg_Tag_pong, .data.pong = {.reply_to = 7, .seq = 42}})`. Dispatch on `m` binds `r` and `s` via `<field>: let name` in the matched arm; `r + s = 49`."
+    (let [{:keys [exit stdout]} (compile-and-run "f16-payload-enum")]
+      (is (zero? exit))
+      (is (= "49\n" stdout)))))
+
 (deftest end-to-end-dispatch-basic
   (testing "dispatch-basic.cxc — F69 L4b `<:` receive-glyph dispatch on a tagged-variant scrutinee. Binds `s = Signal.yellow`, dispatches with case + wildcard arms; the `yellow` branch fires and prints 200."
     (let [{:keys [exit stdout]} (compile-and-run "dispatch-basic")]

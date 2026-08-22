@@ -2801,16 +2801,38 @@
              instantiations)))
 
 (defn- build-enum-env
-  "Top-level `enum Foo: a, b, c` decls. Env is keyed by enum name;
-   value has :cases (vector of case names in decl order) and
-   :case-index (name → declaration-order index; used for the C
-   integer value in the emitted `Foo_<case>` constants)."
+  "Top-level `def Foo:` with case markers. Env keyed by enum name:
+     :cases          — vector of case names in decl order (bare and
+                       payload cases both listed; identity-only reads
+                       still consult this — pre-F16-L1 behavior).
+     :case-index     — name → decl-order index (used as the C integer
+                       tag value in the value-only rep and as the
+                       `<Enum>_Tag_<case>` value in the tagged rep).
+     :case-entries   — vector of `{:name :payload}` maps, decl order.
+     :payload-index  — name → payload vector (empty for bare cases).
+     :tagged?        — true when at least one case has payload;
+                       determines whether the enum lowers to a
+                       tagged-union struct or a plain C enum (F16 L1).
+
+   Pre-F16 the parser produced only `:cases`. Post-F16 the parser
+   always populates `:case-entries`; the fallback keeps a value-only
+   shape for any legacy caller that constructs the AST by hand."
   [top-nodes]
   (into {}
         (for [e (filter #(= :enum (:node %)) top-nodes)]
-          [(:name e) {:cases      (:cases e)
-                      :case-index (into {} (map-indexed (fn [i c] [c i])
-                                                        (:cases e)))}])))
+          (let [entries        (or (:case-entries e)
+                                    (mapv (fn [c] {:name c :payload []})
+                                          (:cases e)))
+                payload-index  (into {}
+                                     (map (juxt :name :payload) entries))
+                tagged?        (some #(seq (:payload %)) entries)]
+            [(:name e) {:cases         (:cases e)
+                        :case-index    (into {}
+                                             (map-indexed (fn [i c] [c i])
+                                                          (:cases e)))
+                        :case-entries  entries
+                        :payload-index payload-index
+                        :tagged?       (boolean tagged?)}]))))
 
 ;; ---------------------------------------------------------------------------
 ;; Type inference (ctx-threaded)
@@ -3108,6 +3130,21 @@
 ;; inline in `lower-receive-glyph-transitions`' `:method-stream` branch
 ;; via `:cxc-return-ty-node`.
 
+(defn- enum-payload-call?
+  "F16 L1 — a `:call` whose callee is `<Enum>.<case>` where `<Enum>`
+   is a known enum and `<case>` is one of its payload-carrying cases.
+   Returns the enum-name string when matched, nil otherwise."
+  [call-node ctx]
+  (let [callee (:callee call-node)]
+    (when (and (= :dot (:node callee))
+               (= :ident (:node (:target callee))))
+      (let [en (:name (:target callee))
+            case-nm (:field callee)
+            info (get-in ctx [:enum-env en])
+            payload (get-in info [:payload-index case-nm])]
+        (when (and info payload (seq payload))
+          en)))))
+
 (defn- infer-call-type
   [{:keys [callee] :as node} ctx]
   (case (:node callee)
@@ -3141,7 +3178,9 @@
              (= "Block" (:cxc-ty (get-in ctx [:self-fields nm]))))
         :void
         :else (fail-nyi! (str "call to `" nm "`") node)))
-    :dot   (infer-method-call-type node ctx)
+    :dot   (if-let [en (enum-payload-call? node ctx)]
+             {:enum en}
+             (infer-method-call-type node ctx))
     (fail-nyi! (str "call with non-ident/non-dot callee " (:node callee)) node)))
 
 (defn- assert-not-optional-guard!
@@ -3444,6 +3483,30 @@
                          {:name name :value (wrap-value name value)})
                        resolved)]
     {:node :struct-lit :type record-name :fields fields}))
+
+(defn- lower-enum-payload-ctor
+  "F16 L1 — lower `E.case(named args)` where `case` carries a payload.
+   Emits a `:c-tagged-init` node the emitter renders as a designated-
+   initializer compound literal:
+     ((E){ .tag = E_Tag_case, .data.case = { .field = val, ... } })
+   Named-only args per §3.7.1 (positional destructuring rejected in
+   the payload declaration; call-site still accepts positional via
+   `resolve-args-against-params`, matching record ctor discipline)."
+  [enum-name call-node ctx]
+  (let [case-nm  (:field (:callee call-node))
+        payload  (get-in ctx [:enum-env enum-name :payload-index case-nm])
+        params   (mapv (fn [f] {:name (:name f) :default (:default f)})
+                       payload)
+        resolved (resolve-args-against-params
+                  (str "enum `" enum-name "." case-nm "` payload constructor")
+                  params (:args call-node))
+        fields   (mapv (fn [{:keys [name value]}]
+                         {:name name :value (lower-expr value ctx)})
+                       resolved)]
+    {:node      :c-tagged-init
+     :enum-name enum-name
+     :case-name case-nm
+     :fields    fields}))
 
 (defn- resolve-args-against-params
   "Match named/positional call args against declared params in decl
@@ -4143,8 +4206,16 @@
          :ops      ops}))
     :dot        (cond
                   (enum-case-access? node ctx)
-                  {:node :name
-                   :sym  (str (get-in node [:target :name]) "_" (:field node))}
+                  ;; F16 L1 — tagged enums require a compound literal
+                  ;; even for bare cases (the C type is a struct, not
+                  ;; an integer). Value-only enums keep the pre-F16
+                  ;; `E_case` C constant.
+                  (let [en (get-in node [:target :name])
+                        cs (:field node)]
+                    (if (get-in ctx [:enum-env en :tagged?])
+                      {:node :c-tagged-init :enum-name en :case-name cs
+                       :fields []}
+                      {:node :name :sym (str en "_" cs)}))
 
                   ;; F67 L4a — zero-arg observable on a record. `V(...).mag`
                   ;; is really `V_mag(V(...))` — a C function call, not
@@ -4371,7 +4442,9 @@
             :else
             (fail-nyi! (str "call to `" callee-name "`") node)))
 
-        :dot   (lower-method-call node ctx)
+        :dot   (if-let [en (enum-payload-call? node ctx)]
+                 (lower-enum-payload-ctor en node ctx)
+                 (lower-method-call node ctx))
 
         (fail-nyi! (str "call with " (:node callee) " callee") node)))
 
@@ -4583,24 +4656,58 @@
          (str "F69 L4b: case pattern `<: " (:name pattern) ":` requires "
               "a tagged-variant (enum) scrutinee — got " (pr-str scrut-ty) ".")
          pattern))
-      (when (seq (:bindings pattern))
-        (fail-nyi!
-         (str "F69 L4b: `<: " (:name pattern) "(let ...):` payload bindings "
-              "need F16 (enum payloads) — not yet landed. Bare `<: "
-              (:name pattern) ":` case arms work today.")
-         pattern))
       (let [enum-name (:enum scrut-ty)
             case-nm   (:name pattern)
-            cases     (get-in ctx [:enum-env enum-name :case-index])]
+            info      (get-in ctx [:enum-env enum-name])
+            cases     (:case-index info)
+            tagged?   (:tagged? info)
+            payload   (get-in info [:payload-index case-nm])]
         (when-not (contains? cases case-nm)
           (fail-nyi!
            (str "F69 L4b: unknown case `" case-nm "` in `<:` dispatch on "
                 "enum `" enum-name "` — declared cases are "
                 (pr-str (vec (keys cases))) ".")
            pattern))
-        {:node :binop :op "=="
-         :left  {:node :name :sym scrut-tmp}
-         :right {:node :name :sym (str enum-name "_" case-nm)}}))))
+        (when (and (seq (:bindings pattern)) (not tagged?))
+          (fail-nyi!
+           (str "F69 L4b: `<: " case-nm "(let ...):` payload bindings on "
+                "value-only enum `" enum-name "` — the case declares no "
+                "payload (add `case " case-nm "(field: Type)` to the enum "
+                "declaration, or drop the bindings).")
+           pattern))
+        (when (and (seq (:bindings pattern)) (empty? payload))
+          (fail-nyi!
+           (str "F69 L4b: `<: " case-nm "(let ...):` payload bindings — "
+                "case `" case-nm "` on enum `" enum-name "` is bare (no "
+                "payload). Drop the bindings.")
+           pattern))
+        (when (seq (:bindings pattern))
+          ;; F16 L1 — reject positional bindings and unknown field names;
+          ;; enum payloads are named-only per §3.7.1. `parse-dispatch-
+          ;; payload-binding` marks positional bindings with `:field nil`.
+          (doseq [b (:bindings pattern)]
+            (cond
+              (nil? (:field b))
+              (fail-nyi!
+               (str "F16 L1: positional payload binding `let " (:as b)
+                    "` in `<: " case-nm "(...)` — enum payloads are named-"
+                    "only per §3.7.1. Use `<field>: let " (:as b) "`.")
+               pattern)
+
+              (not (some #(= (:field b) (:name %)) payload))
+              (fail-nyi!
+               (str "F16 L1: unknown payload field `" (:field b) "` on "
+                    "case `" case-nm "` of enum `" enum-name "` — declared "
+                    "fields are "
+                    (pr-str (mapv :name payload)) ".")
+               pattern))))
+        (if tagged?
+          {:node :binop :op "=="
+           :left  {:node :field :target {:node :name :sym scrut-tmp} :field "tag"}
+           :right {:node :name  :sym    (str enum-name "_Tag_" case-nm)}}
+          {:node :binop :op "=="
+           :left  {:node :name :sym scrut-tmp}
+           :right {:node :name :sym (str enum-name "_" case-nm)}})))))
 
 (defn- lower-dispatch-arm
   "Lower one dispatch arm into a `:c-if-chain` branch.
@@ -4620,13 +4727,72 @@
   (let [{:keys [body guard]} arm
         ;; fall back to :pattern for arms that pre-date L4c2
         patterns   (or (:patterns arm) [(:pattern arm)])
+        ;; F16 L1 — collect payload bindings on this arm's pattern.
+        ;; Multi-pattern arms (L4c2) with bindings would need bindings
+        ;; that overlap across patterns; disallowed here — bindings
+        ;; only make sense on single-pattern arms. Bindings apply to
+        ;; the arm body only, wrapped in :c-scope with generated var-
+        ;; decls.
+        payload-bindings
+        (when (and (= 1 (count patterns))
+                   (= :case (:kind (first patterns)))
+                   (seq (:bindings (first patterns)))
+                   (map? scrut-ty) (:enum scrut-ty)
+                   (seq (get-in ctx [:enum-env (:enum scrut-ty)
+                                     :payload-index (:name (first patterns))])))
+          (let [pat        (first patterns)
+                enum-name  (:enum scrut-ty)
+                case-nm    (:name pat)
+                info       (get-in ctx [:enum-env enum-name])
+                payload    (get-in info [:payload-index case-nm])
+                field-idx  (into {} (map (juxt :name identity)) payload)]
+            (mapv (fn [b]
+                    (let [f       (get field-idx (:field b))
+                          ty-node (:type f)
+                          inner   (if (= :type-nonnil (:node ty-node))
+                                    (:inner ty-node) ty-node)
+                          nm      (:name inner)
+                          tk      (cxc-type->type-kw nm
+                                                     (:record-env ctx)
+                                                     (:atom-env ctx)
+                                                     (:enum-env ctx)
+                                                     ty-node)
+                          c-ty    (cxc-type->c ty-node
+                                               (:record-env ctx)
+                                               (:atom-env ctx)
+                                               (:enum-env ctx))]
+                      {:name (:as b) :type-kw tk :c-type c-ty
+                       :init {:node :field
+                              :target {:node :field
+                                       :target {:node :field
+                                                :target {:node :name :sym scrut-tmp}
+                                                :field "data"}
+                                       :field case-nm}
+                              :field (:field b)}}))
+                  (:bindings pat))))
+        arm-ctx    (if payload-bindings
+                     (update ctx :locals into
+                             (map (juxt :name :type-kw) payload-bindings))
+                     ctx)
         body-stmts
         (cond
           (= :block (:node body))
-          (lower-body-stmts (:stmts body) ctx)
+          (lower-body-stmts (:stmts body) arm-ctx)
 
           :else
-          [(lower-expr body ctx)])
+          [(lower-expr body arm-ctx)])
+        ;; Prepend var-decls for payload bindings inside the arm body.
+        ;; Emit as :var-decl nodes so the scope of the binding matches
+        ;; the arm branch (each `if`/`else if` block gets its own
+        ;; scope, so bindings from one case can't leak into another).
+        body-stmts
+        (if payload-bindings
+          (into (mapv (fn [b]
+                        {:node :var-decl :name (:name b)
+                         :c-type (:c-type b) :rhs (:init b)})
+                      payload-bindings)
+                body-stmts)
+          body-stmts)
         conds      (mapv #(lower-dispatch-pattern-cond scrut-ty scrut-tmp % ctx)
                          patterns)
         pattern-cond
@@ -7614,12 +7780,33 @@
   (and (= :def-atom (:node node)) (= "main" (:name node))))
 
 (defn- lower-enum
-  "Top-level `enum Foo: a, b, c` → C typedef enum with `Foo_a`, `Foo_b`,
-   ... as members. Case ordering fixes each case's integer value."
-  [enum-node]
-  {:node  :c-enum
-   :name  (:name enum-node)
-   :cases (:cases enum-node)})
+  "Top-level `def Foo:` with case markers.
+   Value-only enums (all cases bare) lower to a C typedef enum with
+   `Foo_a`, `Foo_b`, ... as members — pre-F16 behavior preserved.
+
+   F16 L1 — if any case carries a payload, lower to a tagged-union
+   struct: `typedef struct { <Foo>_Tag tag; union { struct { … } case1;
+   … } data; } Foo;` with an accompanying `<Foo>_Tag` enum for the
+   discriminator. Emit resolves per-field C types via record-env /
+   atom-env / enum-env."
+  [enum-node record-env atom-env enum-env]
+  (let [tagged?  (some #(seq (:payload %)) (:case-entries enum-node))]
+    (if tagged?
+      {:node    :c-tagged-enum
+       :name    (:name enum-node)
+       :entries (mapv (fn [ce]
+                        {:name    (:name ce)
+                         :payload (mapv (fn [p]
+                                          {:name   (:name p)
+                                           :c-type (cxc-type->c (:type p)
+                                                                record-env
+                                                                atom-env
+                                                                enum-env)})
+                                        (:payload ce))})
+                      (:case-entries enum-node))}
+      {:node  :c-enum
+       :name  (:name enum-node)
+       :cases (:cases enum-node)})))
 
 (defn- infer-observables-in-record-env
   "F67 L4a — mirror of `infer-observables-in-atom-env` for records.
@@ -8220,7 +8407,7 @@
                     :locals {}}
         records    (filter #(= :record (:node %)) top-nodes)
         enums      (filter #(= :enum   (:node %)) top-nodes)
-        c-enums    (mapv lower-enum enums)
+        c-enums    (mapv #(lower-enum % record-env atom-env enum-env) enums)
         ;; F39 L5b-ii-a — collect + synthesize Optional-boxed value-type
         ;; typedefs. Under L5b-ii-a `collect-optional-types` returns the
         ;; empty set unconditionally (dead code); the pipeline is in

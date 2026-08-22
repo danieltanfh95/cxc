@@ -310,6 +310,22 @@
                                                 (emit-expr (:value f))))
                                          (:fields node)))
                           "})")
+    :c-tagged-init   (let [en   (:enum-name node)
+                           cs   (:case-name node)
+                           fs   (:fields node)
+                           data (when (seq fs)
+                                  (str ", .data." cs " = {"
+                                       (str/join ", "
+                                                 (map (fn [f]
+                                                        (str "." (:name f) " = "
+                                                             (emit-expr (:value f))))
+                                                      fs))
+                                       "}"))]
+                       ;; F16 L1 — designated-initializer compound literal
+                       ;; for a tagged-union enum value. Bare cases in a
+                       ;; tagged enum omit the `.data.<case>` part.
+                       (str "((" en "){.tag = " en "_Tag_" cs
+                            (or data "") "})"))
     :objc-alloc-init (str "[[" (:class node) " alloc] init]")
     :objc-init-with  (let [parts (:args node)
                            first-part (str "initWith" (:name (first parts)) ":"
@@ -772,6 +788,70 @@
                      (str/join ",\n"))]
     (str "typedef enum {\n" members "\n} " (:name e) ";")))
 
+(defn- emit-c-tagged-enum
+  "F16 L1 — tagged-union representation for an enum with payload cases.
+
+   Emits three coupled declarations:
+     1. `<Enum>_Tag` enum for the discriminator (one member per case
+        named `<Enum>_Tag_<case>`; index-order tag values match the
+        pre-F16 `<Enum>_<case>` scheme so cross-enum diagnostics stay
+        stable).
+     2. Per payload-carrying case, an inner struct
+        `<Enum>_Payload_<case>` naming the payload fields. Named-only
+        per §3.7.1 — the field names come from the parsed payload
+        param list.
+     3. The outer `<Enum>` struct: tag field + anonymous union
+        containing one member per case (bare cases contribute nothing;
+        payload cases contribute their `<Enum>_Payload_<case>` inner
+        struct at member name `<case>`).
+
+   Empty-union-member sanity: an enum with only bare cases wouldn't
+   reach this path — `lower-enum` picks the plain `:c-enum` rep for
+   value-only enums. When a mixed enum has at least one payload case,
+   bare cases occupy the union without members (no data to store);
+   they exist only as tag values."
+  [e]
+  (let [ename    (:name e)
+        entries  (:entries e)
+        tag-name (str ename "_Tag")
+        tag-members (->> entries
+                         (map (fn [ce] (str "    " tag-name "_" (:name ce))))
+                         (str/join ",\n"))
+        tag-typedef (str "typedef enum {\n" tag-members "\n} " tag-name ";")
+        inner-structs
+        (->> entries
+             (filter #(seq (:payload %)))
+             (map (fn [ce]
+                    (let [fields (->> (:payload ce)
+                                      (map (fn [f]
+                                             (str "    " (:c-type f) " "
+                                                  (:name f) ";")))
+                                      (str/join "\n"))]
+                      (str "typedef struct {\n" fields "\n} "
+                           ename "_Payload_" (:name ce) ";"))))
+             (str/join "\n\n"))
+        union-members
+        (->> entries
+             (filter #(seq (:payload %)))
+             (map (fn [ce]
+                    (str "        " ename "_Payload_" (:name ce)
+                         " " (:name ce) ";")))
+             (str/join "\n"))
+        outer (str "typedef struct {\n"
+                   "    " tag-name " tag;\n"
+                   "    union {\n" union-members "\n    } data;\n"
+                   "} " ename ";")]
+    (str/join "\n\n"
+              (remove str/blank? [tag-typedef inner-structs outer]))))
+
+(defn- emit-any-enum
+  "Dispatch on the enum node kind (value-only `:c-enum` vs tagged
+   `:c-tagged-enum`, F16 L1)."
+  [e]
+  (case (:node e)
+    :c-enum        (emit-c-enum e)
+    :c-tagged-enum (emit-c-tagged-enum e)))
+
 ;; ---------------------------------------------------------------------------
 ;; C function emission (record methods → free functions)
 ;; ---------------------------------------------------------------------------
@@ -1201,7 +1281,7 @@
   (let [includes    (str/join "\n"   (map #(str "#import " %) (:includes prog)))
         fanout-cat  (emit-fanout-selector-category prog)
         helpers     (when (:needs-runtime? prog) cxc-runtime-helpers)
-        enums       (str/join "\n\n" (map emit-c-enum   (:enums prog)))
+        enums       (str/join "\n\n" (map emit-any-enum (:enums prog)))
         structs     (str/join "\n\n" (map emit-struct   (:structs prog)))
         ;; F37 Landing 4 — emit all synthesized-function prototypes
         ;; before any bodies so nested-record encoders can reference

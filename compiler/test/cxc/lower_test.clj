@@ -724,6 +724,80 @@ def main:
       (is (= "%d\n" (get-in call [:args 0 :value])))
       (is (= {:node :name :sym "Key_arrow_down"} (get-in call [:args 1]))))))
 
+(deftest f16-l1-payload-enum-lowers-to-tagged-union
+  (testing "F16 L1 — an enum with any payload-carrying case lowers to a `:c-tagged-enum` (tagged-union struct at emit) rather than a plain `:c-enum`. Bare cases in the mixed enum still contribute a tag but no union member; payload cases carry their param list resolved to C types."
+    (let [prog (lower-src "def Msg:\n    case ping\n    case pong(reply_to: Int!, seq: Int!)\n\ndef main:\n    -> running\n")
+          e    (first (:enums prog))]
+      (is (= :c-tagged-enum (:node e))
+          "enum with any payload case → :c-tagged-enum, not :c-enum")
+      (is (= "Msg" (:name e)))
+      (is (= 2 (count (:entries e))))
+      (is (= "ping"    (get-in e [:entries 0 :name])))
+      (is (= []        (get-in e [:entries 0 :payload])) "bare case → empty payload")
+      (is (= "pong"    (get-in e [:entries 1 :name])))
+      (is (= [{:name "reply_to" :c-type "int64_t"}
+              {:name "seq"      :c-type "int64_t"}]
+             (get-in e [:entries 1 :payload]))
+          "payload params resolved to C types via cxc-type->c"))))
+
+(deftest f16-l1-payload-enum-construction-c-tagged-init
+  (testing "F16 L1 — `Msg.pong(reply_to: 7, seq: 42)` intercepts at :call lowering and produces a `:c-tagged-init` node carrying the enum name, case name, and named field values. Emit renders this as a designated-initializer compound literal `((Msg){.tag = Msg_Tag_pong, .data.pong = { .reply_to = 7, .seq = 42 }})`."
+    (let [prog (lower-src "def Msg:\n    case ping\n    case pong(reply_to: Int!, seq: Int!)\n\ndef main:\n    -> running\n        then:\n            let m: Msg = Msg.pong(reply_to: 7, seq: 42)\n            print(0)\n")
+          main-body (get-in prog [:main :body])
+          m-decl (first (filter #(= "m" (:name %)) main-body))]
+      (is (= :var-decl (:node m-decl)))
+      (is (= :c-tagged-init (get-in m-decl [:rhs :node])))
+      (is (= "Msg"  (get-in m-decl [:rhs :enum-name])))
+      (is (= "pong" (get-in m-decl [:rhs :case-name])))
+      (is (= "reply_to" (get-in m-decl [:rhs :fields 0 :name])))
+      (is (= 7 (get-in m-decl [:rhs :fields 0 :value :value])))
+      (is (= "seq" (get-in m-decl [:rhs :fields 1 :name])))
+      (is (= 42 (get-in m-decl [:rhs :fields 1 :value :value]))))))
+
+(deftest f16-l1-bare-case-access-in-tagged-enum-emits-tagged-init
+  (testing "F16 L1 — bare case access `Msg.ping` on a tagged enum can't lower to a plain C constant (`Msg_ping`) because the C type of `Msg` is a struct. Emit a zero-field `:c-tagged-init` instead: `((Msg){.tag = Msg_Tag_ping})`. Value-only enums keep the pre-F16 `Enum_case` constant."
+    (let [prog (lower-src "def Msg:\n    case ping\n    case pong(reply_to: Int!)\n\ndef main:\n    -> running\n        then:\n            let m: Msg = Msg.ping\n            print(0)\n")
+          main-body (get-in prog [:main :body])
+          m-decl (first (filter #(= "m" (:name %)) main-body))
+          rhs (:rhs m-decl)]
+      (is (= :c-tagged-init (:node rhs))
+          "bare-case access in a tagged enum lowers to :c-tagged-init")
+      (is (= "Msg" (:enum-name rhs)))
+      (is (= "ping" (:case-name rhs)))
+      (is (= [] (:fields rhs))
+          "no field inits for a bare case"))))
+
+(deftest f16-l1-value-only-enum-still-lowers-to-c-enum
+  (testing "F16 L1 — enum with all cases bare keeps the pre-F16 value-only `:c-enum` representation (backwards compatibility). Only mixed / payload-only enums flip to `:c-tagged-enum`."
+    (let [prog (lower-src "def Signal:\n    case red\n    case green\n\ndef main:\n    -> running\n")
+          e    (first (:enums prog))]
+      (is (= :c-enum (:node e)))
+      (is (= ["red" "green"] (:cases e))))))
+
+(deftest f16-l1-payload-default-rejected
+  (testing "F16 L1 — a default on an enum payload field rejects at parse time. Payload fields don't carry defaults — the case *value* is the payload."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"F16 L1: default on enum payload"
+         (lower-src "def Msg:\n    case ok(n: Int = 0)\n\ndef main:\n    -> running\n")))))
+
+(deftest f16-l1-dispatch-payload-binding-scoped-to-arm
+  (testing "F16 L1 — `<: pong(reply_to: let r):` binds `r` as a local scoped to the arm body only. Lower generates a `:var-decl` for each binding at the head of the arm body reading from `.data.<case>.<field>` on the scrutinee temp."
+    (let [prog (lower-src "def Msg:\n    case ping\n    case pong(reply_to: Int!)\n\ndef main:\n    -> running\n        then:\n            let m: Msg = Msg.pong(reply_to: 7)\n            m:\n                <: ping: print(0)\n                <: pong(reply_to: let r): print(r)\n")
+          main-body (get-in prog [:main :body])
+          scope    (first (filter #(= :c-scope (:node %)) main-body))
+          if-chain (first (filter #(= :c-if-chain (:node %)) (:stmts scope)))
+          pong-arm (second (:branches if-chain))
+          decl    (first (:body pong-arm))]
+      (is (= :var-decl (:node decl)))
+      (is (= "r" (:name decl)))
+      (is (= "int64_t" (:c-type decl)))
+      (is (= :field (get-in decl [:rhs :node])))
+      (is (= "reply_to" (get-in decl [:rhs :field])))
+      (is (= "pong" (get-in decl [:rhs :target :field])))
+      (is (= "data" (get-in decl [:rhs :target :target :field])))
+      (is (= "_cxc_scrut" (get-in decl [:rhs :target :target :target :sym]))))))
+
 (deftest nullable-non-atom-suffix-banned
   (testing "F39 L5a (2026-08-20) — `T?` on a value primitive fires the unified `:cxc-f39-nullable-suffix-banned` diagnostic (was `fail-nyi!` pre-L5a). Bare `Int` is the nullable form under the unified rule; `Int!` is the non-nil contract."
     (try
@@ -3025,11 +3099,11 @@ def main:
         (is (nil? (:cond (nth branches 2)))
             "wildcard branch has no condition — emits as bare `else`")))))
 
-(deftest f69-l4b-dispatch-payload-binding-rejects-until-f16
-  (testing "F69 L4b — `<: name(let x):` payload binding parses but rejects at lower-time with a targeted diagnostic pointing at F16 (enum payloads) as the missing prerequisite."
+(deftest f69-l4b-dispatch-payload-binding-on-bare-case-rejected
+  (testing "F16 L1 — `<: name(let x):` payload binding on a bare (no-payload) case rejects at lower-time with a message pointing at the case's payload declaration. Post-F16 the rejection is not about F16 being missing (it landed 2026-08-23) but about the case itself having no payload to bind."
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
-         #"F69 L4b:.*payload bindings need F16"
+         #"F69 L4b:.*payload bindings on value-only enum"
          (lower-src "def Outcome:\n    case ok\n    case err\n\ndef main:\n    -> running\n        then:\n            let o: Outcome = Outcome.ok\n            o:\n                <: ok(let x): print(1)\n                <: _: print(0)\n")))))
 
 (deftest f69-l4b-dispatch-non-enum-scrutinee-int-accepted-with-wildcard
