@@ -3650,8 +3650,10 @@ def main:
       (is (some? bump))
       (is (some? (:prelude bump))
           "receive-glyph method carries :prelude when atom has data-fields")
-      (is (= 1 (count (:prelude bump)))
-          "exactly one prelude node (the snapshot-init)")
+      ;; L3.a added a second prelude node (`:next-state-init`) alongside
+      ;; the snapshot-init. Prelude is [snapshot-init, next-state-init].
+      (is (= 2 (count (:prelude bump)))
+          "prelude has snapshot-init + next-state-init (L3.a)")
       (let [snap (first (:prelude bump))]
         (is (= :state-snapshot-init (:node snap)))
         (is (= "Counter" (:atom-name snap)))
@@ -3735,6 +3737,59 @@ def main:
           c-src (emit/emit prog)]
       (is (str/includes? c-src "__cxc_snap._hp > 0")
           "guard reads through snapshot"))))
+
+;; ---------------------------------------------------------------------------
+;; F33 L3.a — `__cxc_next` bag init (dead code). Extends the receive-glyph
+;; prelude with `<Atom>_State __cxc_next = __cxc_snap;` after the snapshot.
+;; ---------------------------------------------------------------------------
+
+(deftest f33-l3a-prelude-carries-next-state-init-after-snapshot
+  (testing "F33 L3.a — receive-glyph :prelude carries [snapshot-init, next-state-init]. Snapshot must precede — the next-state bag is initialized as a copy of the snapshot, so the snapshot must exist first."
+    (let [prog (lower-src (str "def Counter:\n"
+                               "    n: Int! = 0\n\n"
+                               "    -> running\n\n"
+                               "    running <: bump -> running\n"
+                               "        then: n => n + 1\n\n"
+                               "def main:\n"
+                               "    -> running\n        then: print(0)\n"))
+          cls  (first (filter #(= "Counter" (:name %)) (:classes prog)))
+          bump (first (filter #(= "bump" (:selector %)) (:methods cls)))
+          [p0 p1] (:prelude bump)]
+      (is (= :state-snapshot-init (:node p0)) "snapshot first")
+      (is (= :next-state-init (:node p1)) "next-state-init second")
+      (is (= "Counter" (:class-name p1))
+          "next-state-init names the class for the emitted type"))))
+
+(deftest f33-l3a-atom-without-data-fields-emits-no-next-state-init
+  (testing "F33 L3.a — no next-state-init when the atom has no user data-fields (mirrors L2.b: the state-struct type doesn't exist, so a bag can't be declared)."
+    (let [prog (lower-src (str "def Trivial:\n"
+                               "    -> alive\n\n"
+                               "    alive <: bump -> alive\n\n"
+                               "def main:\n"
+                               "    -> running\n        then: print(0)\n"))
+          cls  (first (filter #(= "Trivial" (:name %)) (:classes prog)))
+          bump (first (filter #(= "bump" (:selector %)) (:methods cls)))]
+      (is (nil? (:prelude bump))))))
+
+(deftest f33-l3a-emit-inlines-next-state-init-after-snapshot-decl
+  (testing "F33 L3.a — emit produces `<Atom>_State __cxc_next = __cxc_snap;` immediately after the snapshot decl, before any branch dispatch. The bag is unused at L3.a — clang folds it out at -O — so behavior is unchanged."
+    (let [prog  (lower-src (str "def Counter:\n"
+                                "    n: Int! = 0\n\n"
+                                "    -> running\n\n"
+                                "    running <: bump -> running\n"
+                                "        then: n => n + 1\n\n"
+                                "def main:\n"
+                                "    -> running\n        then: print(0)\n"))
+          c-src (emit/emit prog)]
+      (is (str/includes? c-src "Counter_State __cxc_next = __cxc_snap;")
+          "next-state-init emitted verbatim")
+      ;; Sanity: snapshot appears BEFORE next-state-init in the emitted
+      ;; text (order is load-bearing — bag inits from snapshot).
+      (let [snap-idx (str/index-of c-src "Counter_State __cxc_snap")
+            next-idx (str/index-of c-src "Counter_State __cxc_next")]
+        (is (some? snap-idx))
+        (is (some? next-idx))
+        (is (< snap-idx next-idx) "snapshot comes before next-state-init")))))
 
 ;; ---------------------------------------------------------------------------
 ;; F33 L2.d — snapshot reroute already covers on-enter bodies:

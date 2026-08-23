@@ -681,9 +681,8 @@
     :state-snapshot-init
     ;; F33 L2.b — atomic snapshot of `data:` fields at method entry.
     ;; Emits `<Atom>_State __cxc_snap = { ._f1 = _f1, ._f2 = _f2, ... };`.
-    ;; At L2.b the variable is unused — reads still route to raw ivars.
     ;; L2.c toggles the `:ident` sf-branch to read through `__cxc_snap._<f>`
-    ;; via a ctx `:snapshot-name` entry; the same emit output stays put.
+    ;; via a ctx `:snapshot-name` entry.
     (let [cn     (:class-name node)
           fields (:data-fields node)
           inits  (->> fields
@@ -691,6 +690,14 @@
                              (str "._" (:name f) " = _" (:name f))))
                       (str/join ", "))]
       (str cn "_State __cxc_snap = { " inits " };"))
+    :next-state-init
+    ;; F33 L3.a — next-state bag init as copy of the entry snapshot.
+    ;; Emits `<Atom>_State __cxc_next = __cxc_snap;`. At L3.a the bag
+    ;; is unused — writes still land on raw ivars. L3.b redirects
+    ;; `then:` writes to `__cxc_next._<f>` and inserts a commit
+    ;; sequence; L3.c reads invariants against the bag pre-commit.
+    (let [cn (:class-name node)]
+      (str cn "_State __cxc_next = __cxc_snap;"))
     :queue-init
     ;; Layer 4: per-atom serial queue targeting the main queue. All work
     ;; stays single-threaded; the primitive matches what Layer 4c will

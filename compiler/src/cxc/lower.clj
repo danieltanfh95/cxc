@@ -6113,6 +6113,16 @@
                                           :atom-name   atom-name
                                           :class-name  (class-name-for-atom atom-name)
                                           :data-fields data-fields})
+                           ;; F33 L3.a — next-state bag init (dead code
+                           ;; at L3.a). Lives alongside the snapshot in
+                           ;; the prelude; L3.b flips `then:` writes to
+                           ;; target `__cxc_next._<field>` and inserts
+                           ;; a commit sequence, and L3.c/d layer on
+                           ;; the invariant + do-clause changes.
+                           next-stmt   (when (seq data-fields)
+                                         {:node       :next-state-init
+                                          :atom-name  atom-name
+                                          :class-name (class-name-for-atom atom-name)})
                            branch-ctx  (cond-> ctx
                                          snap-stmt (assoc :snapshot-name "__cxc_snap"))
                            branches    (mapv #(lower-transition-branch
@@ -6124,7 +6134,9 @@
                                 :return-type "void"
                                 :params      method-params
                                 :body        branches}
-                         snap-stmt (assoc :prelude [snap-stmt]))))
+                         snap-stmt (assoc :prelude
+                                          (cond-> [snap-stmt]
+                                            next-stmt (conj next-stmt))))))
                    key-order)
         ;; Dedup stream subscriptions by (source-field, stream-name):
         ;; multiple receive-glyphs on the same source.stream on THIS
