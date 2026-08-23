@@ -836,16 +836,19 @@
 
    Heuristic: (1) first arg has `<name>:` prefix, (2) value
    after `:` is a bare uppercase-starting ident, and (3) the
-   token after that Type ident is NOT `(` (which would mean a
-   constructor call like `Box(x: 1)` — a value, not a Type
-   annotation).
+   token after that Type ident is NOT `(` or `.` — either
+   would mean the uppercase ident is the head of a value
+   expression, not a Type annotation (`OldBox(x: 1)` is a
+   constructor call; `Direction.down` is an enum-case access
+   per F16 L3, `Foo.bar()` is a static method call).
 
    Types in cxc conventionally use PascalCase (`Int`, `String`,
    `Player`, `Duration`); values use camelCase or literals.
    Empty parens `()` are treated as a call. Constructor calls
    with uppercase names (`Box(item: OldBox(x: 1))`) correctly
    fall through to the call branch because the inner uppercase
-   ident is followed by `(`.
+   ident is followed by `(`; enum-case values fall through
+   because the uppercase ident is followed by `.`.
 
    Note: this is only invoked from the general postfix parser —
    receive-position parsing (`parse-msg-pattern`) has its own
@@ -865,11 +868,14 @@
                    after-type   (peek-tok tokens (inc after-colon))]
                (and (not (empty? v))
                     (Character/isUpperCase (first v))
-                    ;; NOT followed by `(` — else it's a
-                    ;; constructor call being passed as a value.
+                    ;; F16 L3 — NOT followed by `(` (constructor
+                    ;; call being passed as a value) or `.`
+                    ;; (dotted access on the ident, e.g. enum
+                    ;; case `Direction.down` or static member
+                    ;; `Foo.bar()` — all value expressions).
                     (not (and after-type
                               (= :punct (t-kind after-type))
-                              (= "(" (t-value after-type))))))))
+                              (contains? #{"(" "."} (t-value after-type))))))))
 
       :else false)))
 

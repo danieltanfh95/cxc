@@ -590,6 +590,21 @@ def main:
       (is (= :not-yet-implemented (:kind (ex-data ex))))
       (is (re-find #"not a compile-time constant" (.getMessage ex))))))
 
+(deftest f16-l3-enum-case-default-accepted
+  (testing "F16 L3 — bare enum-case access `d: Direction = Direction.up` accepted as a compile-time constant default per §3.8.5. `default-expr-const-shape?` reaches into enum-env to verify: target is a bare `:ident` naming an enum, field is one of that enum's bare (payload-less) cases. Payload-carrying cases would need compound-literal defaults — deferred; those still reject."
+    ;; Should not throw.
+    (let [prog (lower-src "def Direction:\n    case up\n    case down\n\ndef Box:\n    d: Direction = Direction.up\n\ndef main:\n    -> running\n        then: print(Box().d)\n")]
+      (is (some? prog) "compile succeeds"))))
+
+(deftest f16-l3-enum-payload-case-default-still-rejected
+  (testing "F16 L3 — payload-carrying enum-case defaults (`.ok(v: 1)`) are NOT accepted at v1.0. Compound-literal defaults would require a separate lowering path; treat as follow-up work."
+    (let [ex (try
+               (lower-src "def Outcome:\n    case ok(value: Int)\n    case failed(reason: Int)\n\ndef Box:\n    o: Outcome = Outcome.ok(value: 1)\n\ndef main:\n    -> running\n        then: print(1)\n")
+               nil
+               (catch clojure.lang.ExceptionInfo e e))]
+      (is ex "expected exception on payload-case default")
+      (is (re-find #"not a compile-time constant" (.getMessage ex))))))
+
 (deftest f40-neg-literal-default-accepted
   (testing "record V { x: Int = -5 } — unary neg on literal is const"
     (let [prog (lower-src "def V:\n    x: Int = -5\n\ndef main:\n    -> running\n        then: print(V().x)\n")

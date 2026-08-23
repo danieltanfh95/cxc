@@ -1073,6 +1073,28 @@ def main:
       (is (= :emit (:node emit-stmt)))
       (is (= "bump" (:msg emit-stmt))))))
 
+(deftest f16-l3-parens-with-dotted-value-parses-as-call
+  (testing "F16 L3 — `Box(d: Direction.down)` in expression position parses as :call with a keyword arg, NOT as a :msg-shape payload. The `looks-like-msg-payload-parens?` heuristic must exclude `.` after the type ident (parallel to its existing `(` exclusion for constructor calls like `Box(item: OldBox(x: 1))`) — otherwise the parser sees `d: Direction` and greedily commits to a :msg-shape payload, then fails on the trailing `.down`. Regression coverage for the enum-value first-class flow."
+    (let [ns (p/parse "def Direction:\n    case up\n    case down\n\ndef Box:\n    d: Direction\n\ndef main:\n    -> running\n        then: print(Box(d: Direction.down).d)\n")
+          main-atom (last ns)
+          txn (first (:body main-atom))
+          then-c (first (:body txn))
+          print-call (get-in (first (:stmts then-c)) [:expr])
+          ;; print( ((Box(d: Direction.down)).d) )
+          box-dot (get-in print-call [:args 0 :value])
+          box-call (:target box-dot)]
+      (is (= :call (:node print-call)))
+      (is (= "print" (get-in print-call [:callee :name])))
+      (is (= :dot (:node box-dot)) "outer is dot access on the Box(...) result")
+      (is (= "d" (:field box-dot)))
+      (is (= :call (:node box-call)) "Box(d: Direction.down) is :call, not :msg-shape")
+      (is (= "Box" (get-in box-call [:callee :name])))
+      (let [box-arg (first (:args box-call))]
+        (is (= :named (:kind box-arg)) "keyword arg kind")
+        (is (= "d" (:name box-arg)))
+        (is (= :dot (get-in box-arg [:value :node])) "arg value is a :dot on Direction")
+        (is (= "down" (get-in box-arg [:value :field])))))))
+
 (deftest f70-i5-parens-payload-parses-typed-payload
   (testing "F70 I5 (Stage 3, 2026-08-20) — canonical parens payload `(name: Type)` on a receive-side transition parses to `{:name :type}` maps under `:payload`. (Renamed from `f70-i5-brace-payload-legacy-still-parses` 2026-08-20: Stage 3 rejects the brace form; the test's input was already migrated to parens; the old name lied about what it tested. Rejection of the brace form is covered by a distinct Stage-3 diagnostic test.)"
     (let [n (first-node "def A:\n    -> alive\n\n    alive <: input.pressed(key: Int) -> alive\n")

@@ -445,6 +445,12 @@
       (is (zero? exit))
       (is (= "1\n" stdout)))))
 
+(deftest end-to-end-f16-l3-enum-first-class
+  (testing "f16-l3-enum-first-class.cxc — F16 L3 verify: enum values flow as first-class expressions in ctor calls (`Box(d: Direction.down)`) and as field defaults (`d: Direction = Direction.up`). Two coupled fixes: (1) parser — `looks-like-msg-payload-parens?` now excludes `.` after the type ident (previously the heuristic misparsed `Box(d: Direction.down)` as a `:msg-shape` payload declaration because it only excluded `(`); (2) lower — `default-expr-const-shape?` now accepts `:dot` when target is a bare `:ident` naming an enum in enum-env AND field is a bare (no-payload) case, satisfying spec §3.8.5 rule 1 for enum-typed defaults. Payload-case defaults (`.ok(v: 1)`) remain rejected (compound-literal defaults deferred). Prints 0/1/2 on three lines."
+    (let [{:keys [exit stdout]} (compile-and-run "f16-l3-enum-first-class")]
+      (is (zero? exit))
+      (is (= "0\n1\n2\n" stdout)))))
+
 (deftest end-to-end-auto-nil-visible-to-next-parent-guard
   (testing "auto-nil-visible-to-next-parent-guard.cxc — F35 L7 pins spec §1.11 line 1284: sub-atom slot auto-nils atomically at the end of the sub-atom's `end`-transition, BEFORE any other transition on the parent evaluates its `when:` guard. Child emits `:> finished` in its die-transition, then transitionToEnd runs sync (L5 cascade + L6 [home nilSlot:@\"child\"] direct call) → `home._child = nil`. Home's `alive <: child.finished` receive dispatches later, guard `when: child is nil` MUST see nil (proof of L7 guarantee). Guard-passes path emits `:> ok` back to main. Main waits on `home.ok` before ending — so if the guard were false, no ok emit fires, dispatch_main idles forever (test hangs, not prints 0). Prints 1."
     (let [{:keys [exit stdout]} (compile-and-run "auto-nil-visible-to-next-parent-guard")]

@@ -206,20 +206,40 @@
    value-typed records/enums, which have no runtime state to justify
    a ctor call).
 
-   Explicitly rejected: dots, subscripts, binops, collection
+   F16 L3 (2026-08-23): when `enum-env` is provided, also accept
+   `:dot` nodes whose target is a bare `:ident` naming an enum and
+   whose field is one of that enum's bare (no-payload) cases —
+   `Direction.up` etc. Payload-carrying case defaults (`.ok(v: 1)`)
+   would be a compound-literal constant; not accepted here yet.
+
+   Explicitly rejected otherwise: subscripts, binops, collection
    literals, message-shapes, emit sites, blocks, ifs, switches."
-  ([expr] (default-expr-const-shape? expr nil))
-  ([expr atom-env]
+  ([expr] (default-expr-const-shape? expr nil nil))
+  ([expr atom-env] (default-expr-const-shape? expr atom-env nil))
+  ([expr atom-env enum-env]
    (case (:node expr)
      (:lit-int :lit-float :lit-string :lit-char
       :lit-nil :lit-bool)             true
      :ident                           true
-     (:neg :not)                      (default-expr-const-shape? (:expr expr) atom-env)
+     (:neg :not)                      (default-expr-const-shape? (:expr expr) atom-env enum-env)
      :call                            (let [callee (:callee expr)]
                                         (and (some? atom-env)
                                              (map? callee)
                                              (= :ident (:node callee))
                                              (contains? atom-env (:name callee))))
+     :dot                             (let [target (:target expr)
+                                            fname  (:field expr)]
+                                        (and (some? enum-env)
+                                             (map? target)
+                                             (= :ident (:node target))
+                                             (let [en   (:name target)
+                                                   info (get enum-env en)]
+                                               (and info
+                                                    (contains? (set (:cases info)) fname)
+                                                    ;; bare case only — payload-case
+                                                    ;; defaults lower as compound literals
+                                                    ;; and aren't accepted at v1.0.
+                                                    (empty? (get-in info [:payload-index fname]))))))
      false)))
 
 (defn- validate-default-is-const!
@@ -230,19 +250,22 @@
    nested slots / use-caps aren't user surface).
 
    Optional `atom-env` unlocks the F34 L1 exemption for atom-type
-   ctor calls in field/param defaults (see `default-expr-const-shape?`)."
-  ([site params] (validate-default-is-const! site params nil))
-  ([site params atom-env]
+   ctor calls; optional `enum-env` unlocks the F16 L3 exemption for
+   bare enum-case access (see `default-expr-const-shape?`)."
+  ([site params] (validate-default-is-const! site params nil nil))
+  ([site params atom-env] (validate-default-is-const! site params atom-env nil))
+  ([site params atom-env enum-env]
    (doseq [p params
            :let [d (:default p)]
            :when (and (some? d)
                       (not (:cxc-f41-synthesized p))
                       (not (:cxc-compiler-synthesized p)))]
-     (when-not (default-expr-const-shape? d atom-env)
+     (when-not (default-expr-const-shape? d atom-env enum-env)
        (fail-nyi! (str "default for `" (:name p) "` on " site
                        " is not a compile-time constant (spec §3.8.5 "
                        "permits primitive literals, `nil`, unary `-`/"
-                       "`not` on those, or a value-alias identifier); "
+                       "`not` on those, a value-alias identifier, or a"
+                       " bare enum-case access `Enum.case`); "
                        "got `" (:node d) "` node")
                   {:site site :param (:name p) :default-node (:node d)})))))
 
@@ -949,7 +972,7 @@
              fields  (fields-from-data-section dsec env atom-env enum-env)
              site    (str "record `" name "` fields (auto-ctor)")
              _       (validate-defaults-after-required! site fields)
-             _       (validate-default-is-const!       site fields atom-env)
+             _       (validate-default-is-const!       site fields atom-env enum-env)
              ;; F38 auto-detect: any observable → :class variant, else
              ;; :struct. Structural trigger, no user syntax. Base
              ;; :methods is empty; ext-composed methods bump variant
@@ -2390,7 +2413,7 @@
                                (narrow-fields-by-invariants invariants))
              _             (let [site (str "def-atom `" name "` ctor-params")]
                              (validate-defaults-after-required! site merged-ctor)
-                             (validate-default-is-const!       site merged-ctor env))
+                             (validate-default-is-const!       site merged-ctor env enum-env))
              ;; NOTE: atom `data:` field defaults are field
              ;; INITIALIZERS, not ctor-param defaults — the auto-ctor
              ;; produced by F41 uses ctor-params (which get const-
