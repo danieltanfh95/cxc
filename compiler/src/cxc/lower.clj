@@ -7766,13 +7766,24 @@
                                         is-string?   (= "String" (:cxc-ty f))]  ; F65
                                     {:name (:name f)
                                      :c-type (:c-type f)
+                                     ;; F33 L5 — data-field @properties
+                                     ;; are readonly. External code can
+                                     ;; still READ (spec §1.11: reads
+                                     ;; are always OK), but no `-set<F>:`
+                                     ;; selector is synthesized — the
+                                     ;; ObjC bridge can no longer write
+                                     ;; to atom state. Internal writes
+                                     ;; go through the ivar directly
+                                     ;; (`_field = ...`); ObjC allows
+                                     ;; that even when the @property
+                                     ;; is marked readonly.
                                      :attrs (cond
-                                              (= :weak modifier)    ["nonatomic" "weak"]
-                                              (= :unowned modifier) ["nonatomic" "unsafe_unretained"]
-                                              is-block?    ["nonatomic" "copy"]
-                                              is-string?   ["nonatomic" "copy"]  ; F65
-                                              is-atom-ptr? ["strong"]
-                                              :else        ["assign"])}))
+                                              (= :weak modifier)    ["nonatomic" "readonly" "weak"]
+                                              (= :unowned modifier) ["nonatomic" "readonly" "unsafe_unretained"]
+                                              is-block?    ["nonatomic" "readonly" "copy"]
+                                              is-string?   ["nonatomic" "readonly" "copy"]  ; F65
+                                              is-atom-ptr? ["readonly" "strong"]
+                                              :else        ["readonly" "assign"])}))
                                 (:fields rec))
           phase-prop      {:name "phase" :c-type "NSString *"
                            :attrs ["nonatomic" "copy"]}

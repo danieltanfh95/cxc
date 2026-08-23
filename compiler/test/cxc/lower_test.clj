@@ -219,7 +219,10 @@
               {:name "cxc_owned_resources" :c-type "NSMutableArray *" :attrs ["nonatomic" "strong"]}
               {:name "parent"           :c-type "id"               :attrs ["nonatomic" "weak"]}
               {:name "parent_slot_name" :c-type "NSString *"       :attrs ["nonatomic" "copy"]}
-              {:name "n"                :c-type "_Cxc_Optional_Int64" :attrs ["assign"]}]
+              ;; F33 L5 — data-field @properties are readonly (no
+              ;; external setter). Internal writes still go through
+              ;; the ivar directly.
+              {:name "n"                :c-type "_Cxc_Optional_Int64" :attrs ["readonly" "assign"]}]
              (:properties cls)))
       (is (= [{:name "kCounter_phase_init"    :value "init"}
               {:name "kCounter_phase_running" :value "running"}
@@ -511,8 +514,9 @@ def main:
               {:name "cxc_owned_resources" :c-type "NSMutableArray *" :attrs ["nonatomic" "strong"]}
               {:name "parent"           :c-type "id"               :attrs ["nonatomic" "weak"]}
               {:name "parent_slot_name" :c-type "NSString *"       :attrs ["nonatomic" "copy"]}
-              {:name "n"                :c-type "_Cxc_Optional_Int64" :attrs ["assign"]}
-              {:name "other"            :c-type "Counter *"        :attrs ["strong"]}]
+              ;; F33 L5 — data-field @properties are readonly.
+              {:name "n"                :c-type "_Cxc_Optional_Int64" :attrs ["readonly" "assign"]}
+              {:name "other"            :c-type "Counter *"        :attrs ["readonly" "strong"]}]
              (:properties cls)))
       (let [state-init (first (filter #(= "cxc_stateInit" (:selector %)) (:methods cls)))]
         (is (= {:node :assign
@@ -3022,16 +3026,19 @@ def main:
     (let [prog (lower-src "def Owner:\n    -> alive\n\ndef Child:\n    owner: weak Owner\n\n    -> alive\n\ndef main:\n    -> running\n        then: print(0)\n")
           child (first (filter #(= "Child" (:name %)) (:classes prog)))
           f     (first (filter #(= "owner" (:name %)) (:properties child)))]
-      (is (= ["nonatomic" "weak"] (:attrs f))
-          "weak modifier picks (nonatomic, weak) attrs, overriding the default (strong) for atom pointers"))))
+      ;; F33 L5 — data-field @properties are readonly (external code
+      ;; can't write via -set<F>:). The ownership attr still layers on.
+      (is (= ["nonatomic" "readonly" "weak"] (:attrs f))
+          "weak modifier picks (nonatomic, readonly, weak) attrs, overriding the default (strong) for atom pointers"))))
 
 (deftest f13-l2-unowned-emits-nonatomic-unsafe-unretained-attrs
   (testing "F13 L2 — `unowned <AtomName>` field lowers to `@property (nonatomic, unsafe_unretained)`. Non-owning, non-zeroing pointer; access after target dealloc is UB per spec §6.14."
     (let [prog (lower-src "def Owner:\n    -> alive\n\ndef Child:\n    owner: unowned Owner\n\n    -> alive\n\ndef main:\n    -> running\n        then: print(0)\n")
           child (first (filter #(= "Child" (:name %)) (:classes prog)))
           f     (first (filter #(= "owner" (:name %)) (:properties child)))]
-      (is (= ["nonatomic" "unsafe_unretained"] (:attrs f))
-          "unowned modifier picks (nonatomic, unsafe_unretained) attrs"))))
+      ;; F33 L5 — readonly attr precedes the ownership qualifier.
+      (is (= ["nonatomic" "readonly" "unsafe_unretained"] (:attrs f))
+          "unowned modifier picks (nonatomic, readonly, unsafe_unretained) attrs"))))
 
 ;; ---------------------------------------------------------------------------
 ;; F18 L1 — local `let` statement lowers to C var-decl; ctx threads so
@@ -3193,8 +3200,10 @@ def main:
     (let [prog (lower-src "def Owner:\n    -> alive\n\ndef Child:\n    owner: Owner = Owner()\n\n    -> alive\n\ndef main:\n    -> running\n        then: print(0)\n")
           child (first (filter #(= "Child" (:name %)) (:classes prog)))
           f     (first (filter #(= "owner" (:name %)) (:properties child)))]
-      (is (= ["strong"] (:attrs f))
-          "unmodified atom-typed field still gets the pre-L2 default (strong)"))))
+      ;; F33 L5 — data-field @properties are readonly. The strong
+      ;; ownership qualifier still applies for atom-typed fields.
+      (is (= ["readonly" "strong"] (:attrs f))
+          "unmodified atom-typed field: readonly + pre-L2 default (strong)"))))
 
 ;; ---------------------------------------------------------------------------
 ;; F69 L2 — Unified body-shape lookup (def-kind)
@@ -3871,6 +3880,28 @@ def main:
       (is (str/includes? c-src "(__cxc_next._peer) == nil")
           "nonnil check reads bag field (the just-written value)"))))
 
+;; ---------------------------------------------------------------------------
+;; F33 L5 — data-field @properties are readonly. External code can still
+;; READ (getter is synthesized), but no `-set<F>:` setter is emitted.
+;; ObjC-bridge external writes are structurally impossible; internal
+;; writes still go through `_field = ...` directly (which ObjC allows
+;; even when the @property is marked readonly).
+;; ---------------------------------------------------------------------------
+
+(deftest f33-l5-data-field-property-emits-readonly-attr
+  (testing "F33 L5 — a plain data-field @property emits `@property (readonly, assign) int64_t n;`. External code doing `[counter setN:5]` gets an unrecognized-selector runtime error; `counter.n` READ still works via the getter (which the readonly declaration synthesizes)."
+    (let [prog  (lower-src (str "def Counter:\n"
+                                "    n: Int! = 0\n\n"
+                                "    -> running\n\n"
+                                "def main:\n"
+                                "    -> running\n        then: print(0)\n"))
+          c-src (emit/emit prog)]
+      (is (str/includes? c-src "@property (readonly, assign) int64_t n;")
+          "user data-field property lowers to readonly, assign int64_t")
+      (is (str/includes? c-src "@property (nonatomic, copy) NSString * phase;")
+          "protocol-injected `phase` property stays readwrite (no readonly)")
+      (is (str/includes? c-src "@property (nonatomic, strong) dispatch_queue_t own_queue;")
+          "protocol-injected `own_queue` stays readwrite (runtime writes to it)"))))
 ;; ---------------------------------------------------------------------------
 ;; F33 L3.d — `do:` clauses run post-commit; their ident reads should route
 ;; to live ivars, not the pre-transition snapshot, since the commit has
