@@ -4099,9 +4099,25 @@
                      :field  n}
 
                     sf
-                    ;; Real data-field — direct ivar access; matches how we
-                    ;; write self-fields (`_field = value;`).
-                    {:node :name :sym (str "_" n)}
+                    ;; Real data-field. F33 L2.c: inside a receive-glyph
+                    ;; branch body (ctx `:snapshot-name` set), reroute
+                    ;; to the transition-entry snapshot so cross-field
+                    ;; reads see a consistent pre-transition state and
+                    ;; a `then:` update to field A can't leak into a
+                    ;; subsequent read of field A in the same body.
+                    ;; Absent the ctx entry (init bodies, invariant
+                    ;; sites, etc.), fall back to raw ivar access —
+                    ;; matches how writes go via `_field = value;` in
+                    ;; `lower-then-update`.
+                    (if-let [snap (:snapshot-name ctx)]
+                      ;; Snapshot struct fields carry the same underscore-
+                      ;; prefixed names as the ivars they mirror (see
+                      ;; `state-struct-field-line` in emit.clj), so the
+                      ;; field selector is `_<n>`, not `<n>`.
+                      {:node :field
+                       :target {:node :name :sym snap}
+                       :field  (str "_" n)}
+                      {:node :name :sym (str "_" n)})
 
                     :else
                     {:node :name :sym n}))
@@ -6080,24 +6096,29 @@
                                            (into [{:name "sender" :c-type "id"}]
                                                  user-params)
                                            user-params)
-                           branches (mapv #(lower-transition-branch
-                                            atom-name (:txn %) ctx
-                                            wildcards-by-phase)
-                                          group)
-                           ;; F33 L2.b — snapshot init at method entry.
-                           ;; Emits `<Atom>_State __cxc_snap = { ._f1 =
-                           ;; _f1, ... };` before any branch dispatch if
-                           ;; the atom carries user data-fields. Kept
-                           ;; out of `:body` (which is the branch list
-                           ;; the AST tests assert on) and instead lives
-                           ;; on `:prelude` — emit-method-impl inlines
-                           ;; it as the first statement of the C body.
+                           ;; F33 L2.b/c — snapshot init at method entry
+                           ;; + reroute of data-field reads through the
+                           ;; snapshot. L2.b emits the init prelude;
+                           ;; L2.c flips `_field` reads to `__cxc_snap
+                           ;; ._field` inside branch bodies by threading
+                           ;; `:snapshot-name` in the ctx passed to
+                           ;; `lower-transition-branch`. Writes still go
+                           ;; through raw `_field` (unchanged path in
+                           ;; `lower-then-update`). No snapshot ctx when
+                           ;; the atom has no user data-fields — the
+                           ;; struct type doesn't exist to reference.
                            data-fields (get-in ctx [:atom-env atom-name :fields])
                            snap-stmt   (when (seq data-fields)
                                          {:node        :state-snapshot-init
                                           :atom-name   atom-name
                                           :class-name  (class-name-for-atom atom-name)
-                                          :data-fields data-fields})]
+                                          :data-fields data-fields})
+                           branch-ctx  (cond-> ctx
+                                         snap-stmt (assoc :snapshot-name "__cxc_snap"))
+                           branches    (mapv #(lower-transition-branch
+                                               atom-name (:txn %) branch-ctx
+                                               wildcards-by-phase)
+                                             group)]
                        (cond-> {:node        :objc-method
                                 :selector    (:selector first-d)
                                 :return-type "void"

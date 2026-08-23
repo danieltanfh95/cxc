@@ -675,17 +675,18 @@ def main:
 ;; emit renders as GNU stmt-expr binding each interior operand once.
 
 (deftest f27-emit-renders-gnu-stmt-expr
-  (testing "when: -10 <= val <= 10 emits a GNU stmt-expr binding _val once"
+  (testing "when: -10 <= val <= 10 emits a GNU stmt-expr binding val (now via `__cxc_snap._val` under F33 L2.c) once"
     (let [prog (lower-src "def main:\n    val: Int! = 5\n\n    -> running\n\n    running <: bump -> self\n        when: -10 <= val <= 10\n        then: val => val + 1\n")
           c-src (emit/emit prog)]
       ;; The interior operand is bound to __cxc_cc_1 via __typeof__.
-      (is (str/includes? c-src "__typeof__(_val) __cxc_cc_1 = (_val);"))
-      ;; Comparisons reference the bound local, not the raw _val.
+      ;; F33 L2.c: receive-glyph body reads route through the snapshot.
+      (is (str/includes? c-src "__typeof__(__cxc_snap._val) __cxc_cc_1 = (__cxc_snap._val);"))
+      ;; Comparisons reference the bound local, not the raw snapshot access.
       (is (str/includes? c-src "(-10) <= __cxc_cc_1 && __cxc_cc_1 <= 10"))
       ;; Wrapped in a GNU statement-expression.
       (is (str/includes?
            c-src
-           "({ __typeof__(_val) __cxc_cc_1 = (_val); (-10) <= __cxc_cc_1 && __cxc_cc_1 <= 10; })")))))
+           "({ __typeof__(__cxc_snap._val) __cxc_cc_1 = (__cxc_snap._val); (-10) <= __cxc_cc_1 && __cxc_cc_1 <= 10; })")))))
 
 ;; F46 — clamp single-evaluation: emit-c-fn binds each arg to a
 ;; typeof-declared local so a side-effectful arg fires once.
@@ -915,11 +916,16 @@ def main:
         (is (= :transition-branch (:node branch)))
         (is (= "kCounter_phase_alive" (:source-phase-const branch)))
         (is (= :end-catch-wrap (:node wrap)))
-        ;; Inside the try body: then-update, checkInvariants
+        ;; Inside the try body: then-update, checkInvariants.
+        ;; F33 L2.c: the read of `n` on the RHS routes through the
+        ;; transition-entry snapshot (`__cxc_snap._n`), not the raw
+        ;; ivar; the write still lands on the raw ivar (`_n = …`).
         (is (= [{:node :assign
                  :lhs  {:node :name :sym "_n"}
                  :rhs  {:node :binop :op "+"
-                        :left  {:node :name :sym "_n"}
+                        :left  {:node :field
+                                :target {:node :name :sym "__cxc_snap"}
+                                :field  "_n"}
                         :right {:node :int  :value 1}}}
                 {:node :raw-c
                  :text "if ((_n) == nil) cxc_nonnil_violation(\"def-atom `Counter` field write\", \"n\");"}
@@ -3679,3 +3685,66 @@ def main:
           c-src (emit/emit prog)]
       (is (str/includes? c-src "Counter_State __cxc_snap = { ._n = _n, ._max = _max };")
           "snapshot-init emitted as designated-initializer decl"))))
+
+;; ---------------------------------------------------------------------------
+;; F33 L2.c — reroute data-field reads inside receive-glyph bodies through
+;; the transition-entry snapshot. The write path is unchanged (still `_field
+;; = value;`); only reads flip. Under Layer 4 single-thread this is
+;; observably identical when a body has at most one write per field, but
+;; guards subsequent reads from a same-body prior write.
+;; ---------------------------------------------------------------------------
+
+(deftest f33-l2c-receive-glyph-body-reads-route-through-snapshot
+  (testing "F33 L2.c — inside a receive-glyph transition body, a bare data-field ident (e.g. `n` in `n => n + 1`) lowers its READ occurrences to `__cxc_snap._n`. The WRITE lhs stays raw ivar (`_n`). This enforces the F33 §1.11 atomic-transition contract: reads see the entry snapshot, writes commit to the atom's state at end of body."
+    (let [prog  (lower-src (str "def Counter:\n"
+                                "    n: Int! = 0\n\n"
+                                "    -> running\n\n"
+                                "    running <: bump -> running\n"
+                                "        then: n => n + 1\n\n"
+                                "def main:\n"
+                                "    -> running\n        then: print(0)\n"))
+          c-src (emit/emit prog)]
+      (is (str/includes? c-src "_n = (__cxc_snap._n + 1);")
+          "write assigns to raw ivar; RHS reads via snapshot")
+      (is (not (str/includes? c-src "_n = (_n + 1)"))
+          "no raw-ivar read remains in the receive-glyph body"))))
+
+(deftest f33-l2c-multi-field-reads-both-flip-to-snapshot
+  (testing "F33 L2.c — when a receive-glyph body references two data-fields (e.g. `hp` and `max`), both flip to snapshot reads. Guarantees the body sees a consistent pre-transition view: an intermediate write to `hp` cannot leak into a subsequent read of `max`, and vice versa."
+    (let [prog  (lower-src (str "def Counter:\n"
+                                "    hp:  Int! = 10\n"
+                                "    max: Int! = 100\n\n"
+                                "    -> running\n\n"
+                                "    running <: heal -> running\n"
+                                "        then: hp => hp + max\n\n"
+                                "def main:\n"
+                                "    -> running\n        then: print(0)\n"))
+          c-src (emit/emit prog)]
+      (is (str/includes? c-src "_hp = (__cxc_snap._hp + __cxc_snap._max);")
+          "both reads flip to snapshot; write still lands on raw ivar"))))
+
+(deftest f33-l2c-guard-header-read-also-flips
+  (testing "F33 L2.c — `when:` header clauses on receive-glyph transitions read through the snapshot too. Guard evaluation is part of the branch dispatch, still inside the method body; a pre-check via `when: hp > 0` needs the pre-transition value."
+    (let [prog  (lower-src (str "def Counter:\n"
+                                "    hp: Int! = 10\n\n"
+                                "    -> alive\n\n"
+                                "    alive <: hit when: hp > 0 -> alive\n"
+                                "        then: hp => hp - 1\n\n"
+                                "def main:\n"
+                                "    -> running\n        then: print(0)\n"))
+          c-src (emit/emit prog)]
+      (is (str/includes? c-src "__cxc_snap._hp > 0")
+          "guard reads through snapshot"))))
+
+(deftest f33-l2c-init-body-still-uses-raw-ivar
+  (testing "F33 L2.c — init-body (`cxc_stateInit`) is NOT a receive-glyph body and MUST NOT read through the snapshot: the snapshot doesn't exist during construction, and default-expression init runs against the raw ivars being assigned. Guards against overreach into non-transition entry sites."
+    (let [prog  (lower-src (str "def Counter:\n"
+                                "    n: Int! = 5\n\n"
+                                "    -> running\n\n"
+                                "def main:\n"
+                                "    -> running\n        then: print(0)\n"))
+          c-src (emit/emit prog)]
+      (is (str/includes? c-src "_n = 5;")
+          "init assigns raw ivar with the default literal")
+      (is (not (str/includes? c-src "__cxc_snap = { ._n = _n };"))
+          "no snapshot init prelude on Counter (no receive-glyph methods declared)"))))
