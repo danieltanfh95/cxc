@@ -5236,21 +5236,10 @@
                    (into (mapcat #(lower-then-update % c) (:updates clause)))
                    (into (lower-body-stmts (:stmts clause) c))) c]
 
-              ;; F23 — let: bindings emit local variable decls and enter
-              ;; the ctx as they land; subsequent then/do references
-              ;; resolve to them.
-              :let-clause
-              (let [[decls c']
-                    (reduce (fn [[ds cc] b]
-                              (let [tk     (infer-type (:expr b) cc)
-                                    ct     (type-kw->c-type tk (:expr b))
-                                    rhs-lo (lower-expr (:expr b) cc)]
-                                [(conj ds {:node :var-decl :name (:name b)
-                                           :c-type ct :rhs rhs-lo})
-                                 (update cc :locals assoc (:name b) tk)]))
-                            [[] c]
-                            (:bindings clause))]
-                [(into out decls) c'])
+              ;; `:let-clause` retired (F18 L1' Landing 2, 2026-08-24).
+              ;; The parser can no longer produce it — statement-form
+              ;; `let x = expr` inside a `then:` clause's `:stmts` is
+              ;; the successor and lowers via `lower-body-stmts`.
 
               (fail-nyi! (str "transition body clause " (:node clause)) clause)))
           [[] ctx]
@@ -5410,39 +5399,21 @@
       [primary])))
 
 (defn- lower-on-enter-body
-  "Body of a wildcard on-enter transition when inlined into init. Same
-   as a general transition body but with `then:` support — regular
-   `do:` stmts pass through unchanged.
-
-   F23 — `let:` bindings emit local variable declarations at the top
-   of the block and enter the ctx as they land, so subsequent
-   then/do clauses reference them."
+  "Body of a wildcard on-enter transition when inlined into init.
+   Same shape as a general transition body: `:then-clause` carries
+   both `:updates` (field commits) and `:stmts` (side effects); the
+   `:let-clause` sub-block retired at F18 L1' Landing 2 (2026-08-24),
+   `:do-clause` retired at F70 I3."
   [clauses ctx]
   (let [[stmts _]
         (reduce
           (fn [[out c] clause]
             (case (:node clause)
-              :let-clause
-              (let [[decls c']
-                    (reduce (fn [[ds cc] b]
-                              (let [tk     (infer-type (:expr b) cc)
-                                    ct     (type-kw->c-type tk (:expr b))
-                                    rhs-lo (lower-expr (:expr b) cc)]
-                                [(conj ds {:node :var-decl :name (:name b)
-                                           :c-type ct :rhs rhs-lo})
-                                 (update cc :locals assoc (:name b) tk)]))
-                            [[] c]
-                            (:bindings clause))]
-                [(into out decls) c'])
-
               ;; F70 I3 — see lower-transition-body comment for split.
               :then-clause
               [(-> out
                    (into (mapcat #(lower-then-update % c) (:updates clause)))
                    (into (lower-body-stmts (:stmts clause) c))) c]
-
-              :do-clause
-              [(into out (lower-do-clause clause c)) c]
 
               (fail-nyi! (str "on-enter body clause " (:node clause)) clause)))
           [[] ctx]
@@ -5658,25 +5629,14 @@
         body-clauses (:body t)
         then-clauses (filter #(= :then-clause (:node %)) body-clauses)
         do-clauses   (filter #(= :do-clause   (:node %)) body-clauses)
-        let-clauses  (filter #(= :let-clause  (:node %)) body-clauses)
         when-clauses (filter #(= :when-clause (:node %)) body-clauses)
-        ;; F23 — let: bindings lower to local variable declarations that
-        ;; sit at the top of the transition body. Each binding's RHS
-        ;; expression is type-inferred (spec §1.11 — bare `name: expr`,
-        ;; no user type annotation); the inferred type-kw maps to a C
-        ;; type via `type-kw->c-type` for the declaration. Bindings
-        ;; enter `ctx' :locals` as they land, so later bindings + the
-        ;; when/then/do clauses reference them directly.
-        [let-decls ctx']
-        (reduce (fn [[decls c] b]
-                  (let [tk       (infer-type (:expr b) c)
-                        c-type   (type-kw->c-type tk (:expr b))
-                        rhs-lo   (lower-expr (:expr b) c)]
-                    [(conj decls {:node :var-decl :name (:name b)
-                                  :c-type c-type :rhs rhs-lo})
-                     (update c :locals assoc (:name b) tk)]))
-                [[] ctx']
-                (mapcat :bindings let-clauses))
+        ;; F18 L1' Landing 2 (2026-08-24) — the transition `let:`
+        ;; sub-block retired; statement-form `let x = expr` inside a
+        ;; `then:` clause's `:stmts` is the successor. No pre-body
+        ;; local-decls anymore — let-statements lower via
+        ;; `lower-body-stmts` at the position they appear.
+        let-decls    []
+        ctx'         ctx'
         body-whens   (mapv :expr when-clauses)
         guard-exprs  (cond-> []
                        header-when      (conj header-when)

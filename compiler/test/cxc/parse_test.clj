@@ -380,10 +380,10 @@ def main:
       (is (= ["<=" "<=" "<="] (:ops when-expr))))))
 
 (deftest transition-clause-order-enforced
-  (testing "Audit F22: spec §10 — transition sub-blocks must appear in the order `when, let, then, do`. Out-of-order clauses (e.g. `then:` before `let:`) parse-error with a specific diagnostic. F23-form let: binding used here."
+  (testing "Audit F22: spec §10 — transition sub-blocks must appear in the order `when, then`. Out-of-order clauses (e.g. `then:` before `when:`) parse-error with a specific diagnostic. Post F18 L1' Landing 2 (2026-08-24) the `let:` sub-block retired, so clause-order only involves when/then."
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
-         #"`let:` clause out of order"
+         #"`when:` clause out of order"
          (p/parse "def main:
     n: Int = 0
 
@@ -391,12 +391,11 @@ def main:
 
     running <: bump -> self
         then: n => n + 1
-        let:
-            k: 2
+        when: n < 10
 ")))))
 
 (deftest transition-clause-multiplicity-enforced
-  (testing "Audit F22 + F70 I3: spec §10 — each of when/let/do may appear at most once per transition body. `then:` is exempt (I3 relaxation) so the `do:` → `then:` migration produces bodies with multiple `then:` blocks that merge at lowering. Duplicate `when:` / `let:` / `do:` still parse-error."
+  (testing "Audit F22 + F70 I3: spec §10 — `when:` may appear at most once per transition body. `then:` is exempt (I3 relaxation) so the `do:` → `then:` migration produces bodies with multiple `then:` blocks that merge at lowering. Post F18 L1' Landing 2 (2026-08-24) the `let:` sub-block retired — `let` bindings are now statement-form inside a `then:` clause, so no clause-level duplicate detection applies."
     ;; F70 I3: multiple then: no longer parse-errors.
     (is (some? (p/parse "def main:
     n: Int = 0
@@ -407,19 +406,19 @@ def main:
         then: n => n + 1
         then: n => n + 2
 ")))
-    ;; let: still one-per-body.
+    ;; Duplicate when: still rejects.
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
-         #"duplicate `let:` clause"
+         #"duplicate `when:` clause"
          (p/parse "def main:
     n: Int = 0
 
     -> running
 
     running <: bump -> self
-        let: k: 1
-        let: j: 2
-        then: n => n + k + j
+        when: n < 10
+        when: n < 20
+        then: n => n + 1
 ")))))
 
 ;; f67-l4-methods-section-retired-with-migration deleted at F68 L6b — `methods`
@@ -463,35 +462,11 @@ def main:
       (is (= "bar" (get-in call [:callee :field])))
       (is (= :subscript (get-in call [:callee :target :node]))))))
 
-(deftest f23-let-clause-uses-name-colon-expr-spec-form
-  (testing "F23 / spec §1.11 — `let: k: expr` (bare, no type annotation, no `=`); binding shape is {:name :expr}"
-    (let [src "def main:\n    n: Int = 0\n\n    -> running\n\n    running <: bump -> self\n        let:\n            k: n + 1\n        then: n => k\n"
-          nodes (p/parse src)
-          body  (:body (first nodes))
-          txn   (some #(when (and (= :transition (:node %))
-                                  (get-in % [:receive :glyph]))
-                         %) body)
-          let-c (first (filter #(= :let-clause (:node %)) (:body txn)))
-          b     (first (:bindings let-c))]
-      (is (= "k" (:name b)))
-      (is (= :binop (get-in b [:expr :node]))
-          "bare expression parses; no :type wrapper on the binding"))))
-
-(deftest f23-let-clause-legacy-type-form-rejected
-  (testing "F23 — legacy `let: k: Int = 2` form (with type annotation + `=`) rejects with a targeted migration diagnostic pointing at the spec form."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"`let:` binding uses `name: expression`"
-         (p/parse "def main:
-    n: Int = 0
-
-    -> running
-
-    running <: bump -> self
-        let:
-            k: Int = 2
-        then: n => k
-")))))
+;; F23 tests for the transition `let:` sub-block retired 2026-08-24
+;; when F18 L1' Landing 2 hard-rejected the sub-block form. Coverage
+;; moved to `f18-l1prime-landing-2-transition-let-clause-hard-rejected`
+;; (rejection diagnostic) and the F18 L1 statement-form suite (which
+;; already exercises `let x = expr` inside `then:`).
 
 ;; f67-l5-data-header-retired-with-migration deleted at F68 L6c — `data` is
 ;; no longer a reserved word (the retirement is the reservation removal itself).
@@ -1066,25 +1041,46 @@ def main:
       (is (re-find #"K5 L1" (.getMessage ex)))
       (is (re-find #"F39 L7" (.getMessage ex))))))
 
-(deftest f18-l1-transition-let-clause-still-works
-  (testing "F18 L1 — the pre-existing transition `let:` sub-block (F23, `let: <name>: <expr>`) still parses as a `:let-clause` — L1 didn't disturb the disambiguation. Distinguisher: `:` after `let` vs `<ident>` after `let`."
-    (let [n (first-node "def X:\n    n: Int = 0\n\n    -> alive\n\n    alive <: bump -> alive\n        let: k: 5\n        then: n => n + k\n")
-          txns (filter #(= :transition (:node %)) (:body n))
-          bump (first (filter #(some (fn [c] (= :let-clause (:node c))) (:body %))
-                              txns))
-          lc   (first (filter #(= :let-clause (:node %)) (:body bump)))]
-      (is (some? lc) "transition sub-block still parses as :let-clause")
-      (is (= [{:name "k" :expr {:node :lit-int :value 5}}] (:bindings lc))))))
+(deftest f18-l1prime-landing-2-transition-let-clause-hard-rejected
+  (testing "F18 L1' Landing 2 (2026-08-24) — the transition `let:` sub-block is hard-retired. Attempting to parse it fires a targeted rejection naming the successor (statement-form `let <name> = <expr>` inside `then:`) and the spec anchor (§2.5). Mirrors F70 I3's `reject-do-clause!` shape."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"`let:` transition sub-block is retired"
+         (p/parse "def X:\n    n: Int = 0\n\n    -> alive\n\n    alive <: bump -> alive\n        let: k: 5\n        then: n => n + k\n")))
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"let <name> = <expr>"
+         (p/parse "def X:\n    n: Int = 0\n\n    -> alive\n\n    alive <: bump -> alive\n        let: k: 5\n        then: n => n + k\n")))))
 
-(deftest f18-l1prime-transition-let-clause-emits-deprecation-warning
-  (testing "F18 L1' Landing 1 (grace-period deprecation) — parsing a transition `let:` sub-block still succeeds (statement-form `let x = expr` in `then:` is the successor), but prints a targeted stderr warning pointing at the statement-form migration. The sub-block hard-retirement lands in a follow-up (`parse-let-clause` → `reject-let-clause!` + `:let-clause` lower branches deleted + examples migrated)."
-    (let [err (java.io.StringWriter.)
-          _   (binding [*err* err]
-                (p/parse "def X:\n    n: Int = 0\n\n    -> alive\n\n    alive <: bump -> alive\n        let: k: 5\n        then: n => n + k\n"))
-          s   (str err)]
-      (is (re-find #"transition `let:` sub-block is deprecated" s))
-      (is (re-find #"let <name> = <expr>" s))
-      (is (re-find #"F18 L1'" s)))))
+(deftest f18-l1prime-landing-2-statement-form-let-in-then-clause-lands
+  (testing "F18 L1' Landing 2 — the successor shape (statement-form `let x = expr` inside a `then:` clause) parses cleanly. Same visibility scope (bindings visible to subsequent `then:` stmts and field updates); no separate clause-order concern (let-stmt is a statement inside `then:` `:stmts`, not a distinct clause)."
+    (let [n (first-node "def X:\n    n: Int = 0\n\n    -> alive\n\n    alive <: bump -> alive\n        then:\n            let k = 5\n            n => n + k\n")
+          txns (filter #(= :transition (:node %)) (:body n))
+          bump (first (filter #(get-in % [:receive :glyph]) txns))
+          then-c (first (filter #(= :then-clause (:node %)) (:body bump)))
+          let-stmt (first (filter #(= :let-stmt (:node %)) (:stmts then-c)))]
+      (is (some? let-stmt) "let statement lands inside then: clause :stmts")
+      (is (= "k" (:name let-stmt)))
+      (is (= 5 (get-in let-stmt [:expr :value]))))))
+
+(deftest f18-l1prime-landing-2-statement-form-let-with-type-annotation
+  (testing "F18 L1' Landing 2 — statement-form `let name: Type = expr` (with explicit type) is legal alongside the type-inferred `let name = expr`. Both surfaces route through `parse-let-statement` (F18 L1). Verifies the migration path preserves both flavors; the retired sub-block only supported the bare form (`let: k: expr`)."
+    (let [n (first-node "def X:\n    n: Int = 0\n\n    -> alive\n\n    alive <: bump -> alive\n        then:\n            let k: Int = 5\n            n => n + k\n")
+          txns (filter #(= :transition (:node %)) (:body n))
+          bump (first (filter #(get-in % [:receive :glyph]) txns))
+          then-c (first (filter #(= :then-clause (:node %)) (:body bump)))
+          let-stmt (first (filter #(= :let-stmt (:node %)) (:stmts then-c)))]
+      (is (some? let-stmt))
+      (is (= "k" (:name let-stmt)))
+      (is (= "Int" (get-in let-stmt [:type :name])))
+      (is (= 5 (get-in let-stmt [:expr :value]))))))
+
+(deftest f18-l1prime-landing-2-inline-transition-let-clause-hard-rejected
+  (testing "F18 L1' Landing 2 — the inline (single-line) shape `let: k: 5` also hard-rejects. Coverage for the second dispatch site in `parse-transition-body` (inline branch); pairs with the indented-body branch coverage above."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"`let:` transition sub-block is retired"
+         (p/parse "def X:\n    n: Int = 0\n\n    -> alive\n\n    alive <: bump -> alive\n        let: k: 5\n")))))
 
 ;; ============================================================================
 ;; F70 Surface Facelift — I3 / I5 / I6 regression tests

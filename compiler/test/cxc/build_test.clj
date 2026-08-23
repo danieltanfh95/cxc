@@ -574,7 +574,7 @@
           (is (= "hello, world\n" stdout)))))))
 
 (deftest end-to-end-let-binding
-  (testing "let-binding.cxc — F23 landing. `let:` uses spec form `name: expr` (no type, no `=`); bindings emit as local variable declarations at the top of the transition body; sequential bindings reference each other. Program: `let: doubled: 10*2; plus_one: doubled+1` prints 20, then 21."
+  (testing "let-binding.cxc — F18 L1 statement-form `let x = expr` inside a `then:` clause. Post F18 L1' Landing 2 (2026-08-24) the transition `let:` sub-block is retired; the example migrated to statement-form. Bindings emit as C var-decls at the point they appear; sequential bindings reference each other. Program: `let doubled = 10 * 2; let plus_one = doubled + 1; print(doubled); print(plus_one)` prints 20, then 21."
     (let [{:keys [exit stdout]} (compile-and-run "let-binding")]
       (is (zero? exit))
       (is (= "20\n21\n" stdout)))))

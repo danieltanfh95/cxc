@@ -1655,72 +1655,23 @@
               "blocks per transition body are legal (F22 exemption "
               "for `then:`). See spec §1.11 and plans/archive/f70-surface-facelift.md.")))
 
-(defn- reject-legacy-let-type-annotation!
-  "F23 — the pre-spec `let: k: Int = 2` shape (with `<Type> = <expr>`
-   after the binding-name colon) is retired. Spec §1.11 form is
-   `let: k: <expr>` with the type inferred from the expression."
+(defn- reject-let-clause!
+  "F18 L1' Landing 2 (2026-08-24) — the transition `let:` sub-block is
+   retired. The statement-form `let <name> = <expr>` (F18 L1) subsumes
+   it: usable anywhere inside a `then:` clause, same visibility scope,
+   no separate grammar to maintain. L1' Landing 1 (2026-08-23) shipped
+   a grace-period deprecation warning; L1' Landing 2 hard-rejects.
+   Mirrors `reject-do-clause!` shape (F70 I3)."
   [tokens pos]
   (fail! tokens pos
-         (str "`let:` binding uses `name: expression` (spec §1.11) — the "
-              "type is inferred from the RHS. Remove the `Type = ` between "
-              "the binding-name colon and the expression: `let: k: 2` "
-              "instead of `let: k: Int = 2`.")))
-
-(defn- parse-let-binding-rhs
-  "After `<name> :`, parse the binding's RHS. Spec form is a bare
-   expression; reject the legacy `<Type> = <expr>` shape with a
-   targeted migration diagnostic."
-  [tokens pos]
-  (let [[rhs p] (parse-expr tokens pos)]
-    ;; If parse-expr stopped short of `=`, it means the user gave us
-    ;; a legacy `Type = expr` form (parse-expr grabbed `Type` as an
-    ;; ident, then couldn't consume `=`). Detect and reject.
-    (if (at? tokens p :glyph "=")
-      (reject-legacy-let-type-annotation! tokens pos)
-      [rhs p])))
-
-(defn- parse-let-clause-inline
-  "let: <name>: <expr>       (spec §1.11 — type inferred from RHS)"
-  [tokens pos]
-  (let [[_ p]     (expect tokens pos :kw "let")
-        [_ p]     (expect tokens p :punct ":")
-        [name p]  (expect tokens p :ident)
-        [_ p]     (expect tokens p :punct ":")
-        [rhs p]   (parse-let-binding-rhs tokens p)]
-    [{:node :let-clause :bindings [{:name name :expr rhs}]} p]))
-
-(defn- parse-let-clause-block
-  "let:  (indented block of `<name>: <expr>` lines)"
-  [tokens pos]
-  (let [[_ p] (expect tokens pos :kw "let")
-        [_ p] (expect tokens p :punct ":")
-        [_ p] (expect tokens p :newline)
-        [_ p] (expect tokens p :indent)]
-    (loop [bindings [] p p]
-      (cond
-        (at? tokens p :dedent) [{:node :let-clause :bindings bindings} (inc p)]
-        (at? tokens p :newline) (recur bindings (inc p))
-        :else (let [[name p2] (expect tokens p :ident)
-                    [_ p3]    (expect tokens p2 :punct ":")
-                    [rhs p4]  (parse-let-binding-rhs tokens p3)
-                    p5        (skip-newlines tokens p4)]
-                (recur (conj bindings {:name name :expr rhs}) p5))))))
-
-(defn- parse-let-clause [tokens pos]
-  ;; F18 L1' Landing 1 (2026-08-23) — grace-period deprecation warning
-  ;; for the transition `let:` sub-block. The statement-form `let
-  ;; <name> = <expr>` (F18 L1) subsumes the sub-block: usable inside
-  ;; any `then:` clause with the same visibility scope, no separate
-  ;; grammar to maintain. Follow-up landing hard-retires the sub-block
-  ;; (parse-let-clause → reject-let-clause!, lower.clj `:let-clause`
-  ;; branches deleted, examples migrated).
-  (binding [*out* *err*]
-    (println (str "warning: transition `let:` sub-block is deprecated —"
-                  " use statement-form `let <name> = <expr>` inside the"
-                  " `then:` clause instead (F18 L1'; spec §2.5).")))
-  (if (at? tokens (+ pos 2) :newline)
-    (parse-let-clause-block tokens pos)
-    (parse-let-clause-inline tokens pos)))
+         (str "`let:` transition sub-block is retired (F18 L1' Landing 2, "
+              "2026-08-24). Use statement-form `let <name> = <expr>` "
+              "inside the `then:` clause instead — the unified `then:` "
+              "clause accepts field updates, side-effect statements, and "
+              "`let` bindings in source order. Migration: rewrite "
+              "`let: k: 5\\n        then: n => n + k` as "
+              "`then:\\n            let k = 5\\n            n => n + k`. "
+              "See spec §2.5 and plans/g2-expression-flow/f18-block-as-expression.md.")))
 
 (defn- parse-when-clause
   "when: <expr>   — additional guard when appearing in transition body."
@@ -1731,36 +1682,36 @@
     [{:node :when-clause :expr e} p]))
 
 (defn- body-clause-head?
-  "True if pos is at `then:` | `do:` | `let:` | `when:`. `do:` is
-   retired at v1.0 (F70 I3) but still recognized here so
-   parse-transition-body can dispatch to a targeted retirement
-   diagnostic instead of a generic parse error."
+  "True if pos is at `then:` | `do:` | `let:` | `when:`. `do:` (F70
+   I3) and `let:` (F18 L1' Landing 2) are retired at v1.0 but still
+   recognized here so `parse-transition-body` can dispatch to
+   targeted retirement diagnostics instead of a generic parse error."
   [tokens pos]
   (and (at? tokens pos :kw)
        (#{"then" "do" "let" "when"} (t-value (peek-tok tokens pos)))
        (at? tokens (inc pos) :punct ":")))
 
 ;; Audit F22: spec §10 requires transition sub-blocks in the order
-;; `when, let, then`, each at most once (`then:` exempt post-F70 I3).
+;; `when, then`, each at most once (`then:` exempt post-F70 I3).
 ;; `clause-order` is the canonical index used to detect out-of-order
 ;; and duplicate clauses. The `:do-clause` slot retired 2026-08-20
-;; when F70 I3 Stage 3 hard-rejected `do:` at parse time; the parser
-;; can no longer produce a `:do-clause` AST node.
+;; (F70 I3 Stage 3); the `:let-clause` slot retired 2026-08-24
+;; (F18 L1' Landing 2). The parser can no longer produce either
+;; node — dispatch fires a targeted rejection instead.
 (def ^:private clause-order
-  {:when-clause 0 :let-clause 1 :then-clause 2})
+  {:when-clause 0 :then-clause 1})
 
 (defn- clause-kw->src [kw]
-  ({:when-clause "when" :let-clause "let"
-    :then-clause "then"} kw))
+  ({:when-clause "when" :then-clause "then"} kw))
 
 (defn- enforce-clause-order-and-multiplicity!
   "Audit F22: reject repeated clauses and out-of-order clauses in a
-   transition body. Message spec: `when, let, then`.
+   transition body. Message spec: `when, then`.
 
    F70 I3 exception — `:then-clause` may appear more than once because
    the unified `then:` merges field updates and side-effect statements
-   in source order; multiple then-blocks fold at lowering. `when:` and
-   `let:` remain once-only."
+   in source order; multiple then-blocks fold at lowering. `when:`
+   remains once-only."
   [clauses tokens pos]
   (loop [seen #{} prev-idx -1 [c & rest] clauses]
     (when c
@@ -1769,14 +1720,14 @@
         (when (and (contains? seen kw) (not= kw :then-clause))
           (fail! tokens pos
                  (str "duplicate `" (clause-kw->src kw)
-                      ":` clause in transition body (each of when/let "
-                      "may appear at most once — spec §10; F70 I3 relaxes "
+                      ":` clause in transition body (`when:` may "
+                      "appear at most once — spec §10; F70 I3 relaxes "
                       "`then:` to allow multiple occurrences)")))
         (when (< idx prev-idx)
           (fail! tokens pos
                  (str "`" (clause-kw->src kw) ":` clause out of order — "
                       "spec §10 requires transition sub-blocks in the order "
-                      "`when, let, then, do`")))
+                      "`when, then`")))
         (recur (conj seen kw) idx rest)))))
 
 (defn- parse-transition-body
@@ -1796,7 +1747,7 @@
           (case (t-value (peek-tok tokens pos))
             "then" (parse-then-clause tokens pos)
             "do"   (reject-do-clause! tokens pos)   ; F70 I3 Stage 3 — hard retirement (2026-08-19)
-            "let"  (parse-let-clause tokens pos)
+            "let"  (reject-let-clause! tokens pos)  ; F18 L1' Landing 2 — hard retirement (2026-08-24)
             "when" (parse-when-clause tokens pos)
             (fail! tokens pos "unexpected clause"))]
       [[clause] p])
@@ -1814,7 +1765,7 @@
                 (case (t-value (peek-tok tokens p))
                   "then" (parse-then-clause tokens p)
                   "do"   (reject-do-clause! tokens p) ; F70 I3 Stage 3 — hard retirement (2026-08-19)
-                  "let"  (parse-let-clause tokens p)
+                  "let"  (reject-let-clause! tokens p)  ; F18 L1' Landing 2 — hard retirement (2026-08-24)
                   "when" (parse-when-clause tokens p)
                   (fail! tokens p "unexpected clause"))]
             (recur (conj clauses clause) (skip-newlines tokens p2)))

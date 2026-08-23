@@ -68,10 +68,10 @@
 #   <source> <:|<| <msg>[(args)]                    # or `<source> when: <cond>` for guard-only triggers
 #   -> <target>
 #       when: <additional guard>                    # optional
-#       let:  <name>: <expr>+                       # optional; type inferred (spec §1.11)
 #       then: <entries>+                            # unified effect clause (F70 I3):
 #                                                   #   field updates (<field> => <expr>)
 #                                                   #   side-effect stmts (:> emit, |> sync send, print, ...)
+#                                                   #   let-bindings (let <name> = <expr>; F18 L1' Landing 2)
 #                                                   # Multiple `then:` blocks allowed; merge at lowering.
 #
 #   Header may be written on one or two lines (user's choice). Body always
@@ -415,11 +415,10 @@ def EnemySpawner:
     # ---- Periodic spawn — receive-glyph on the clock's periodic stream ----
     self <: clock.every(spawn_rate)(_: Instant)
     -> self
-        let:
-            random_y:  random.range_int(spawn_y_min, spawn_y_max).to_float()
-            new_enemy: Enemy(start: Vector2(x: spawn_x, y: random_y),
-                             hp:    base_hp)
         then:
+            let random_y = random.range_int(spawn_y_min, spawn_y_max).to_float()
+            let new_enemy = Enemy(start: Vector2(x: spawn_x, y: random_y),
+                                  hp:    base_hp)
             active_enemies => active_enemies + new_enemy
 
 

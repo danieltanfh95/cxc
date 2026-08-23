@@ -1,8 +1,7 @@
 def main:
     -> running
-        let:
-            doubled:  10 * 2
-            plus_one: doubled + 1
         then:
+            let doubled = 10 * 2
+            let plus_one = doubled + 1
             print(doubled)
             print(plus_one)
