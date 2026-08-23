@@ -7947,6 +7947,14 @@
        :superclass      "NSObject"
        :phase-constants (mapv (fn [p] {:name (phase-constant-name atom-name p)
                                        :value p}) phase-names)
+       ;; F33 L2.a — snapshot-struct source. Only the user's `data:` fields
+       ;; (data-props) — never compiler-injected slots (_phase, _own_queue,
+       ;; _parent, stream subscribers, owned-resources). Emitted as
+       ;; `typedef struct <Atom>_State { <c-type> _<name>; ... } <Atom>_State;`
+       ;; alongside `@interface`; dead code at L2.a (no reads route through
+       ;; it yet). L2.b–e progressively wire in the snapshot init + read
+       ;; reroute.
+       :data-fields     data-props
        :properties      (-> [phase-prop own-queue-prop owned-res-prop
                              parent-prop parent-slot-prop]
                             (into data-props)

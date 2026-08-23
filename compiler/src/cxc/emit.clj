@@ -1022,16 +1022,48 @@
                      " = @\"" (escape-c-string (:value pc)) "\";")))
          (str/join "\n"))))
 
-(defn- emit-class-interface-block
-  "Phase constants + @interface for one class. Emitted in the interface
-   pass at the top of the file so every class's selectors are visible
-   before any @implementation body runs — matters for stream-fanout
-   sites that message `id`-typed subscribers with the receiver-side
-   `cxc_stream_<name>_from_<Source>` selector, which needs a visible
-   declaration to pick a type signature."
+(defn- state-struct-field-line
+  "F33 L2.a — one field's declaration inside `<Atom>_State`. Block-typed
+   fields (`void (^)(void)`) need the field name spliced inside the
+   `(^…)` — mirrors `emit-property`'s ObjC-block handling."
+  [f]
+  (let [c-type (:c-type f)
+        nm     (:name f)]
+    (if (and (string? c-type) (.contains ^String c-type "(^)"))
+      (str "    " (.replace ^String c-type "(^)" (str "(^_" nm ")")) ";")
+      (str "    " c-type " _" nm ";"))))
+
+(defn- emit-state-struct
+  "F33 L2.a — companion `typedef struct <Atom>_State { <c-type> _<name>; … } <Atom>_State;`
+   for each atom's user `data:` fields. Reads/writes still target live
+   ivars at L2.a; the type exists but nothing uses it yet — subsequent
+   sub-landings (L2.b snapshot init, L2.c reads reroute) build on it.
+   Emitted alongside phase constants + @interface at the top of the file.
+   Returns nil when the atom has no data-fields — the trivial atoms
+   (e.g. `def main` when it declares no fields) skip the emission."
   [cls]
-  (let [phase-consts (emit-phase-constants cls)
-        parts        (remove str/blank? [phase-consts
+  (when (seq (:data-fields cls))
+    (let [fields (:data-fields cls)
+          lines  (->> fields (map state-struct-field-line) (str/join "\n"))
+          nm     (:name cls)]
+      (str "typedef struct {\n" lines "\n} " nm "_State;"))))
+
+(defn- emit-class-interface-block
+  "State-struct typedef + phase constants + @interface for one class.
+   Emitted in the interface pass at the top of the file so every
+   class's selectors are visible before any @implementation body runs —
+   matters for stream-fanout sites that message `id`-typed subscribers
+   with the receiver-side `cxc_stream_<name>_from_<Source>` selector,
+   which needs a visible declaration to pick a type signature.
+
+   F33 L2.a (2026-08-23) — the `<Atom>_State` typedef precedes the
+   phase constants + @interface. Dead code at L2.a; wiring lands in
+   L2.b onward."
+  [cls]
+  (let [state-struct (emit-state-struct cls)
+        phase-consts (emit-phase-constants cls)
+        parts        (remove str/blank? [state-struct
+                                         phase-consts
                                          (emit-interface cls)])]
     (str/join "\n\n" parts)))
 

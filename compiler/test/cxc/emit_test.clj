@@ -149,3 +149,79 @@
           "no async parent-notify dispatch")
       (is (str/includes? s "__strong id p = _parent;")
           "parent still snapshotted to a strong local (weak race)"))))
+
+;; ---------------------------------------------------------------------------
+;; F33 L2.a — `<Atom>_State` typedef emission (dead-code phase).
+;; ---------------------------------------------------------------------------
+
+(deftest f33-l2a-atom-state-typedef-emitted-for-data-fields
+  (testing "F33 L2.a — every atom with user `data:` fields gets a companion `typedef struct <Atom>_State { <c-type> _<name>; ... } <Atom>_State;` alongside its @interface. Dead-code phase: nothing reads through it yet, but downstream sub-landings (L2.b snapshot init, L2.c read reroute) need the type to exist. Includes ONLY user data fields — never compiler-injected slots (`_phase`, `_own_queue`, `_parent`, stream subscribers, owned-resources array)."
+    (let [ast {:node :objc-program
+               :includes []
+               :structs []
+               :classes [{:node :objc-class
+                          :name "Counter"
+                          :superclass "NSObject"
+                          :phase-constants []
+                          :data-fields [{:name "n" :c-type "long long"}
+                                        {:name "max" :c-type "long long"}]
+                          :properties [{:name "phase" :c-type "NSString *" :attrs []}
+                                       {:name "n" :c-type "long long" :attrs []}
+                                       {:name "max" :c-type "long long" :attrs []}]
+                          :init-params []
+                          :init-body []
+                          :methods []}]
+               :main {:body []}}
+          s   (emit/emit ast)]
+      (is (str/includes? s "typedef struct {")
+          "state-struct typedef opens")
+      (is (str/includes? s "long long _n;")
+          "field n present with underscore prefix")
+      (is (str/includes? s "long long _max;")
+          "field max present")
+      (is (str/includes? s "} Counter_State;")
+          "typedef closes with <Atom>_State name")
+      (is (not (str/includes? s "NSString * _phase"))
+          "phase (compiler-injected) is NOT in the state struct")
+      (is (not (str/includes? s "dispatch_queue_t _own_queue"))
+          "own_queue is NOT in the state struct"))))
+
+(deftest f33-l2a-atom-state-typedef-omitted-when-no-data-fields
+  (testing "F33 L2.a — an atom with zero user `data:` fields gets no `<Atom>_State` typedef (empty struct would still be legal C but is pointless). Guards against noise in the emitted output for trivial atoms."
+    (let [ast {:node :objc-program
+               :includes []
+               :structs []
+               :classes [{:node :objc-class
+                          :name "Trivial"
+                          :superclass "NSObject"
+                          :phase-constants []
+                          :data-fields []
+                          :properties [{:name "phase" :c-type "NSString *" :attrs []}]
+                          :init-params []
+                          :init-body []
+                          :methods []}]
+               :main {:body []}}
+          s   (emit/emit ast)]
+      (is (not (str/includes? s "Trivial_State"))
+          "no state typedef for a data-less atom"))))
+
+(deftest f33-l2a-atom-state-typedef-splices-block-name-inside-carat
+  (testing "F33 L2.a — ObjC block-typed data fields (`Block` in cxc source lowers to `void (^)(void)` c-type) need the field name spliced INSIDE the `(^…)`, mirroring `@property`'s handling. Otherwise the struct field would be malformed: `void (^)(void) _cb;` is a C syntax error, `void (^_cb)(void);` is legal."
+    (let [ast {:node :objc-program
+               :includes []
+               :structs []
+               :classes [{:node :objc-class
+                          :name "CxcMain"
+                          :superclass "NSObject"
+                          :phase-constants []
+                          :data-fields [{:name "cb" :c-type "void (^)(void)"}]
+                          :properties [{:name "cb" :c-type "void (^)(void)" :attrs []}]
+                          :init-params []
+                          :init-body []
+                          :methods []}]
+               :main {:body []}}
+          s   (emit/emit ast)]
+      (is (str/includes? s "void (^_cb)(void);")
+          "block-typed field: name spliced inside (^…), semicolon at end")
+      (is (not (str/includes? s "void (^)(void) _cb"))
+          "malformed C shape (name after the closing paren) NOT emitted"))))
