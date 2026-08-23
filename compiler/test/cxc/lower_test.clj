@@ -3795,6 +3795,30 @@ def main:
       (is (not (str/includes? init-body "__cxc_snap"))
           "no snapshot machinery in cxc_stateInit body"))))
 
+;; ---------------------------------------------------------------------------
+;; F33 L2.e — auto-transition entries. Audit finding: the only call site
+;; of `lower-transition-body` (lower.clj:5219) is `main-atom-body`
+;; (lower.clj:8011-8026), which runs the plain-main path — `def main: ->
+;; phase then: ...` inlined directly into C `main()` with no phase
+;; machinery and no ivars. There are no data-fields to snapshot from, no
+;; message transitions to fire, and the whole body is a single straight-
+;; line entry. No snapshot needed. Full-fat main-as-atom takes the
+;; receive-glyph path (L2.b/c) instead.
+;; ---------------------------------------------------------------------------
+
+(deftest f33-l2e-plain-main-transition-body-has-no-snapshot
+  (testing "F33 L2.e — plain-main (a `def main: -> running then: ...` with no fields, no other atoms, no message transitions) lowers to a straight-line C main() body with NO snapshot machinery. There are no data-fields to snapshot from and no atomic-transition contract to enforce — main() runs once and exits. Verifies the audit finding."
+    (let [prog  (lower-src (str "def main:\n"
+                                "    -> running\n"
+                                "        then: print(42)\n"))
+          c-src (emit/emit prog)]
+      (is (str/includes? c-src "int main(int argc")
+          "plain-main compiles to a C main()")
+      (is (not (str/includes? c-src "__cxc_snap"))
+          "no snapshot in plain-main path")
+      (is (not (str/includes? c-src "_State __cxc_snap"))
+          "no snapshot struct init anywhere"))))
+
 (deftest f33-l2c-init-body-still-uses-raw-ivar
   (testing "F33 L2.c — init-body (`cxc_stateInit`) is NOT a receive-glyph body and MUST NOT read through the snapshot: the snapshot doesn't exist during construction, and default-expression init runs against the raw ivars being assigned. Guards against overreach into non-transition entry sites."
     (let [prog  (lower-src (str "def Counter:\n"
