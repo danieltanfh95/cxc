@@ -5361,19 +5361,50 @@
                                              :value {:node :int :value 1}}
                                             {:name "value"
                                              :value lowered}]})
-        primary (if (field-needs-slot-setter? (:field update) ctx)
+        ;; F33 L3.b — when `:snapshot-name` is in ctx (i.e. we're
+        ;; inside a receive-glyph transition body) AND the atom has
+        ;; the bag prelude, redirect ivar writes to `__cxc_next
+        ;; ._<field>`. A trailing commit sequence (added by
+        ;; `lower-transition-branch` for non-slot-setter fields)
+        ;; copies the bag back to ivars at the end of the body,
+        ;; producing the same observable ivar state atomically at
+        ;; commit rather than field-by-field during the body.
+        ;; Slot-setter path is unchanged: subscription lifecycle
+        ;; needs the ivar written NOW, and it manages its own atomic
+        ;; swap on the affected ivar.
+        bag-write? (and (:snapshot-name ctx)
+                        (not (field-needs-slot-setter? (:field update) ctx)))
+        primary (cond
+                  (field-needs-slot-setter? (:field update) ctx)
                   {:node :objc-msg
                    :recv {:node :name :sym "self"}
                    :selector (str "set" (capitalize-first (:field update)) ":")
                    :args [rhs-final]}
+
+                  bag-write?
+                  {:node :assign
+                   :lhs  {:node :field
+                          :target {:node :name :sym "__cxc_next"}
+                          :field  (str "_" (:field update))}
+                   :rhs  rhs-final}
+
+                  :else
                   {:node :assign
                    :lhs  {:node :name :sym (str "_" (:field update))}
                    :rhs  rhs-final})]
     (if (field-nonnil? (:field update) ctx)
       (let [self-info (get-in ctx [:locals "self"])
-            atom-name (or (and (map? self-info) (:atom self-info)) "?")]
+            atom-name (or (and (map? self-info) (:atom self-info)) "?")
+            ;; The nonnil check needs to see the value we just wrote.
+            ;; Under L3.b bag-writes, the ivar is stale until commit —
+            ;; read the bag field so the check reflects the intended
+            ;; new value. Slot-setter and legacy raw-ivar writes read
+            ;; the ivar (its value is the just-written one).
+            checked-expr (if bag-write?
+                           (str "__cxc_next._" (:field update))
+                           (str "_" (:field update)))]
         [primary
-         (nonnil-check-stmt (str "_" (:field update))
+         (nonnil-check-stmt checked-expr
                             (str "def-atom `" atom-name "` field write")
                             (:field update))])
       [primary])))
@@ -5727,12 +5758,31 @@
                                :recv {:node :name :sym "self"}
                                :selector "checkInvariants"
                                :args []}
+        ;; F33 L3.b — commit the next-state bag to ivars atomically
+        ;; after all `then:` writes, before phase update and side
+        ;; effects. Slot-setter fields are excluded (they wrote
+        ;; through the setter directly in `lower-then-update` and
+        ;; would be clobbered here). Emitted only when the branch is
+        ;; inside a snapshotted transition (ctx `:snapshot-name`
+        ;; set — same predicate as the prelude emission) AND the
+        ;; atom has data-fields to commit.
+        data-fields    (get-in ctx [:atom-env atom-name :fields])
+        commit-fields  (when (:snapshot-name ctx)
+                         (filterv (fn [f]
+                                    (not (field-needs-slot-setter?
+                                           (:name f) ctx')))
+                                  data-fields))
+        commit-stmt    (when (seq commit-fields)
+                         {:node         :commit-next-state
+                          :atom-name    atom-name
+                          :data-fields  commit-fields})
         raw-body     (cond-> []
                        ;; F23 — let: bindings sit at the top of the
                        ;; body so they're in scope for guards+then+do.
                        (seq let-decls)    (into let-decls)
                        (seq w-then-stmts) (into w-then-stmts)
                        (seq then-stmts)   (into then-stmts)
+                       commit-stmt        (conj commit-stmt)
                        phase-update       (conj phase-update)
                        (seq w-do-stmts)   (into w-do-stmts)
                        (seq do-stmts)     (into do-stmts)

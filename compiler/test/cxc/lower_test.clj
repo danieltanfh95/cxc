@@ -323,14 +323,18 @@ def main:
       (let [wrap (first (:body branch))
             b    (:body wrap)]
         (is (= :end-catch-wrap (:node wrap)))
-        ;; Inside try: [phase-update, wildcard-do-stmt, checkInvariants-call]
-        (is (= 3 (count b)))
-        (is (= :assign (:node (first b))))
-        (is (= "_phase" (get-in (first b) [:lhs :sym])))
+        ;; Inside try: [commit-next-state (F33 L3.b), phase-update,
+        ;; wildcard-do-stmt (print), checkInvariants-call]. The commit
+        ;; runs first (empty then here — nothing was written, so commit
+        ;; is a no-op copy of unchanged fields; kept for uniformity).
+        (is (= 4 (count b)))
+        (is (= :commit-next-state (:node (first b))))
+        (is (= :assign (:node (second b))))
+        (is (= "_phase" (get-in (second b) [:lhs :sym])))
         ;; Wildcard's print(0)
-        (is (= :call (:node (second b))))
+        (is (= :call (:node (nth b 2))))
         ;; Trailing invariant check
-        (is (= "checkInvariants" (get-in (nth b 2) [:selector])))))))
+        (is (= "checkInvariants" (get-in (nth b 3) [:selector])))))))
 
 (deftest atom-emits-transitionToEnd-nilSlot-and-installParent
   (testing "every atom class synthesizes the Step 11 lifecycle methods"
@@ -433,15 +437,16 @@ def main:
           cls  (first (:classes prog))
           bump (first (filter #(= "bump" (:selector %)) (:methods cls)))
           branch (first (:body bump))]
-      ;; Branch body wrapped in :end-catch-wrap. Inside: the specific
-      ;; then: (no wildcard do inlined — self-loop isn't phase change),
-      ;; followed by the post-transition invariant check.
+      ;; Branch body wrapped in :end-catch-wrap. Inside (post F33 L3.b):
+      ;; [bag-write, commit-next-state, checkInvariants-call]. Wildcard
+      ;; do isn't inlined (self-loop isn't a phase change).
       (let [wrap (first (:body branch))
             b    (:body wrap)]
         (is (= :end-catch-wrap (:node wrap)))
-        (is (= 2 (count b)))
+        (is (= 3 (count b)))
         (is (= :assign (:node (first b))))
-        (is (= "checkInvariants" (get-in (second b) [:selector])))))))
+        (is (= :commit-next-state (:node (second b))))
+        (is (= "checkInvariants" (get-in (nth b 2) [:selector])))))))
 
 (deftest record-observable-lowers-to-c-function
   (testing "F67 L4 — record parametric observable → :c-function under :functions with mangled name and self as first param (replaces reader methods per Proposal G class-body collapse)."
@@ -916,19 +921,28 @@ def main:
         (is (= :transition-branch (:node branch)))
         (is (= "kCounter_phase_alive" (:source-phase-const branch)))
         (is (= :end-catch-wrap (:node wrap)))
-        ;; Inside the try body: then-update, checkInvariants.
-        ;; F33 L2.c: the read of `n` on the RHS routes through the
-        ;; transition-entry snapshot (`__cxc_snap._n`), not the raw
-        ;; ivar; the write still lands on the raw ivar (`_n = …`).
+        ;; Inside the try body (post F33 L3.b):
+        ;;   1. write to `__cxc_next._n` (bag write; RHS reads snapshot via L2.c)
+        ;;   2. nonnil check against the just-written bag field
+        ;;   3. commit-next-state (bag → live ivars)
+        ;;   4. checkInvariants call (reads committed live ivars)
         (is (= [{:node :assign
-                 :lhs  {:node :name :sym "_n"}
+                 :lhs  {:node :field
+                        :target {:node :name :sym "__cxc_next"}
+                        :field  "_n"}
                  :rhs  {:node :binop :op "+"
                         :left  {:node :field
                                 :target {:node :name :sym "__cxc_snap"}
                                 :field  "_n"}
                         :right {:node :int  :value 1}}}
                 {:node :raw-c
-                 :text "if ((_n) == nil) cxc_nonnil_violation(\"def-atom `Counter` field write\", \"n\");"}
+                 :text "if ((__cxc_next._n) == nil) cxc_nonnil_violation(\"def-atom `Counter` field write\", \"n\");"}
+                {:node        :commit-next-state
+                 :atom-name   "Counter"
+                 :data-fields [{:name "n" :cxc-ty "Int" :nullable? false
+                                :nonnil? true :optional? false
+                                :scalar-c "int64_t" :c-type "int64_t"
+                                :default {:node :lit-int :value 0}}]}
                 {:node :objc-msg
                  :recv {:node :name :sym "self"}
                  :selector "checkInvariants"
@@ -955,12 +969,16 @@ def main:
       (is (some? die))
       (is (= "kEnemy_phase_alive" (:source-phase-const branch)))
       ;; Branch body is wrapped in :end-catch-wrap (Step 15).
-      (let [wrap (first (:body branch))]
+      ;; F33 L3.b: commit-next-state fires first (no writes in this
+      ;; transition, so commit is a no-op copy), then the phase assign.
+      (let [wrap (first (:body branch))
+            body (:body wrap)]
         (is (= :end-catch-wrap (:node wrap)))
+        (is (= :commit-next-state (:node (first body))))
         (is (= {:node :assign
                 :lhs  {:node :name :sym "_phase"}
                 :rhs  {:node :name :sym "kEnemy_phase_dead"}}
-               (first (:body wrap))))))))
+               (second body)))))))
 
 (deftest multiple-transitions-same-selector-different-phases-group-into-one-method
   (testing "`alive <: die` and `dying <: die` share selector `die` → one method, two branches in source order"
@@ -2769,18 +2787,21 @@ def main:
           branch (first (:body bump-mth))
           catch-wrap (first (:body branch))
           body (:body catch-wrap)
+          ;; F33 L3.b — write targets `__cxc_next._peer`; the nonnil
+          ;; check now reads that same bag field so it validates the
+          ;; value about to commit, not the stale ivar.
           assign-idx (first (keep-indexed
                              (fn [i s]
                                (when (and (= :assign (:node s))
-                                          (= "_peer" (get-in s [:lhs :sym])))
+                                          (= "_peer" (get-in s [:lhs :field])))
                                  i))
                              body))
           check-stmt (get body (inc assign-idx))]
-      (is assign-idx "peer ivar is written in the bump transition body")
+      (is assign-idx "peer bag-field is written in the bump transition body")
       (is (= :raw-c (:node check-stmt))
           "F39 L3 — the stmt directly after the peer write is the nonnil-check")
-      (is (str/includes? (:text check-stmt) "(_peer) == nil")
-          "check reads the just-stored ivar")
+      (is (str/includes? (:text check-stmt) "(__cxc_next._peer) == nil")
+          "check reads the just-stored bag field")
       (is (str/includes? (:text check-stmt) "field write")
           "site label names the observation point"))))
 
@@ -2867,11 +2888,14 @@ def main:
     (let [prog   (lower-src "def X:\n    strict: Int! = 0\n    loose: Int = 5\n\n    -> running\n\n    running <: bump -> running\n        then: strict => loose\n\ndef main:\n    -> running\n        then: print(0)\n")
           cls    (first (filter #(= "X" (:name %)) (:classes prog)))
           bump   (first (filter #(= "bump" (:selector %)) (:methods cls)))
+          ;; F33 L3.b: `strict` write now targets `__cxc_next._strict`
+          ;; instead of `_strict`. Look for the assign to the bag field.
           assign (first (filter #(and (map? %)
                                       (= :assign (:node %))
-                                      (= "_strict" (get-in % [:lhs :sym])))
+                                      (= "_strict"
+                                         (get-in % [:lhs :field])))
                                 (tree-seq coll? seq bump)))]
-      (is (some? assign) "assign to `_strict` present somewhere in bump method body (inside :transition-branch → :end-catch-wrap)")
+      (is (some? assign) "assign to `__cxc_next._strict` present somewhere in bump method body (inside :transition-branch → :end-catch-wrap)")
       (is (= :c-value-nonnil-unwrap (get-in assign [:rhs :node]))
           "RHS wraps the loose (Optional) value in a runtime presence check")
       (is (re-find #"value-typed T!"
@@ -3790,6 +3814,62 @@ def main:
         (is (some? snap-idx))
         (is (some? next-idx))
         (is (< snap-idx next-idx) "snapshot comes before next-state-init")))))
+
+;; ---------------------------------------------------------------------------
+;; F33 L3.b — writes redirect to `__cxc_next` bag; a commit sequence copies
+;; the bag back to live ivars after all `then:`s, before phase-update.
+;; ---------------------------------------------------------------------------
+
+(deftest f33-l3b-then-update-writes-to-bag-not-ivar
+  (testing "F33 L3.b — `then: n => n + 1` now lowers its write LHS to `__cxc_next._n` (bag field), not `_n` (raw ivar). Read on the RHS still flows through the snapshot per L2.c. Slot-setter fields (subscription roots) keep the old ivar-write path — the bag is skipped for them."
+    (let [prog  (lower-src (str "def Counter:\n"
+                                "    n: Int! = 0\n\n"
+                                "    -> running\n\n"
+                                "    running <: bump -> running\n"
+                                "        then: n => n + 1\n\n"
+                                "def main:\n"
+                                "    -> running\n        then: print(0)\n"))
+          c-src (emit/emit prog)]
+      (is (str/includes? c-src "__cxc_next._n = (__cxc_snap._n + 1);")
+          "write goes to `__cxc_next._n`; RHS reads snapshot")
+      ;; The only occurrence of `_n = <snapshot ...>` should be the bag
+      ;; write (which starts with `__cxc_next._n`). Check for token
+      ;; boundary — no line begins with ` _n = (__cxc_snap...`.
+      (is (nil? (str/index-of c-src " _n = (__cxc_snap._n + 1);"))
+          "no direct ivar write (space-boundaried) at the bag-eligible RHS")
+      (is (str/includes? c-src "_n = __cxc_next._n;")
+          "commit sequence copies bag back to ivar"))))
+
+(deftest f33-l3b-commit-sequence-covers-all-non-slot-setter-fields
+  (testing "F33 L3.b — the commit sequence copies EVERY non-slot-setter data-field (even ones not written in this transition). Cheap under -O (clang folds no-op copies of unchanged snapshot values), and simpler codegen than tracking per-branch mutation sets."
+    (let [prog  (lower-src (str "def Counter:\n"
+                                "    hp:  Int! = 10\n"
+                                "    max: Int! = 100\n\n"
+                                "    -> running\n\n"
+                                "    running <: hit -> running\n"
+                                "        then: hp => hp - 1\n\n"
+                                "def main:\n"
+                                "    -> running\n        then: print(0)\n"))
+          c-src (emit/emit prog)]
+      (is (str/includes? c-src "_hp = __cxc_next._hp;")
+          "written field commits")
+      (is (str/includes? c-src "_max = __cxc_next._max;")
+          "un-written field ALSO commits (no-op copy at -O)"))))
+
+(deftest f33-l3b-nonnil-check-reads-bag-not-ivar
+  (testing "F33 L3.b — post-store nonnil check on a `T!` bag write reads `__cxc_next._<field>`, not `_<field>`. The ivar is stale until commit, so a check against `_<field>` would see the OLD value and miss a nil written by the RHS."
+    (let [prog  (lower-src (str "def Widget:\n"
+                                "    peer: Widget! = Widget()\n\n"
+                                "    -> boot\n"
+                                "        then: |> self.bump()\n\n"
+                                "    boot <: bump -> on\n"
+                                "        then: peer => Widget()\n\n"
+                                "def main:\n"
+                                "    w: Widget = Widget()\n"
+                                "    -> running\n        then: print(0)\n"))
+          c-src (emit/emit prog)]
+      (is (str/includes? c-src "(__cxc_next._peer) == nil")
+          "nonnil check reads bag field (the just-written value)"))))
 
 ;; ---------------------------------------------------------------------------
 ;; F33 L2.d — snapshot reroute already covers on-enter bodies:

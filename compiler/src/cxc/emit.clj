@@ -692,12 +692,22 @@
       (str cn "_State __cxc_snap = { " inits " };"))
     :next-state-init
     ;; F33 L3.a — next-state bag init as copy of the entry snapshot.
-    ;; Emits `<Atom>_State __cxc_next = __cxc_snap;`. At L3.a the bag
-    ;; is unused — writes still land on raw ivars. L3.b redirects
+    ;; Emits `<Atom>_State __cxc_next = __cxc_snap;`. L3.b redirects
     ;; `then:` writes to `__cxc_next._<f>` and inserts a commit
     ;; sequence; L3.c reads invariants against the bag pre-commit.
     (let [cn (:class-name node)]
       (str cn "_State __cxc_next = __cxc_snap;"))
+    :commit-next-state
+    ;; F33 L3.b — atomic commit of the next-state bag to live ivars.
+    ;; Emits `_<f1> = __cxc_next._<f1>; _<f2> = __cxc_next._<f2>; ...`
+    ;; for every non-slot-setter data-field. All assignments in one
+    ;; sequence with no message-boundaries between; under F32 this
+    ;; single site is where the memory fence goes.
+    (let [fields (:data-fields node)]
+      (->> fields
+           (map (fn [f]
+                  (str "_" (:name f) " = __cxc_next._" (:name f) ";")))
+           (str/join "\n")))
     :queue-init
     ;; Layer 4: per-atom serial queue targeting the main queue. All work
     ;; stays single-threaded; the primitive matches what Layer 4c will
