@@ -557,12 +557,19 @@
     ;; Used by -transitionToEnd to make the cascade one-shot.
     (str "if (_phase == " (:phase-const node) ") " (:ret node))
     :end-cascade-child
-    ;; Cascade end to a nested-slot child: async send onto child's
-    ;; own_queue with a block that runs the child's own -transitionToEnd.
-    ;; Uses the CXCAtom protocol cast so `id`-typed calls compile
-    ;; without needing the concrete child type at this call site.
+    ;; F35 L5 (2026-08-23) — synchronous, post-order teardown per
+    ;; spec §1.11 line 1283. Each child fully tears down (recursively
+    ;; through its own children) before the next child begins.
+    ;; Direct call under Layer 4 single-main-queue; F32 upgrades to
+    ;; `cxc_wait_for_processing` (dispatch_sync onto child's queue).
+    ;; Pre-L5 this was `cxc_send_async(slot, ^{ ...transitionToEnd... })`,
+    ;; which returned before the child finished — programs racing on
+    ;; child-finish-before-parent-continues were undefined. Nil-guard
+    ;; is explicit because ObjC nil-messaging swallows the send
+    ;; silently on nil, but the cast + protocol conformance check
+    ;; would still touch `slot`.
     (let [slot (str "_" (:slot-name node))]
-      (str "cxc_send_async(" slot ", ^{ [(id<CXCAtom>)" slot " transitionToEnd]; });"))
+      (str "if (" slot " != nil) { [(id<CXCAtom>)" slot " transitionToEnd]; }"))
     :owned-resources-clear
     ;; Layer 5c lifecycle: at -transitionToEnd, release everything the
     ;; atom acquired via cxc_own_resource (dispatch timers, method-

@@ -1239,6 +1239,47 @@ def main:
       (is (< check-idx parent-idx)
           "invariant check precedes parent notification"))))
 
+(deftest f35-l5-owned-resources-clear-runs-after-child-cascade
+  (testing "F35 L5 (2026-08-23) — post-order sync teardown ordering: cascade to children FIRST (each child fully tears down), THEN clear self's owned resources, THEN notify parent. Pre-L5 the resources-clear ran BEFORE cascade under async semantics; under sync cascade a child may still observe self-owned shared resources during its own teardown, so the reorder is load-bearing."
+    (let [prog (lower-src "def Helper:
+    n: Int
+
+    -> running
+
+    -> end
+
+def Bounded:
+    h: Helper = Helper(n: 1)
+
+    -> running
+
+    -> end
+
+def main:
+    -> running
+        then: print(1)
+")
+          cls  (first (filter #(= "Bounded" (:name %)) (:classes prog)))
+          end-method (first (filter #(= "transitionToEnd" (:selector %))
+                                    (:methods cls)))
+          end-body   (:body (second (:body end-method)))
+          cascade-idx (first (keep-indexed
+                              #(when (= :end-cascade-child (:node %2)) %1)
+                              end-body))
+          clear-idx  (first (keep-indexed
+                             #(when (= :owned-resources-clear (:node %2)) %1)
+                             end-body))
+          parent-idx (first (keep-indexed
+                             #(when (= :end-cascade-parent (:node %2)) %1)
+                             end-body))]
+      (is (some? cascade-idx) "cascade-child present (Helper slot)")
+      (is (some? clear-idx) "owned-resources-clear present")
+      (is (some? parent-idx) "end-cascade-parent present")
+      (is (< cascade-idx clear-idx)
+          "child cascade precedes self's resource clear (F35 L5)")
+      (is (< clear-idx parent-idx)
+          "resource clear precedes parent notification"))))
+
 (deftest user-observable-body-wrapped-with-entry-exit-invariant-checks
   (testing "Phase D F49 Landing C — spec §3.4.2 requires invariants to hold before/after each observable read. Observable bodies wrap with `[self checkInvariants]` calls at entry and exit; return synthesized around the observable expression body. Post F67 L4: observables are the reader surface (methods retire)."
     (let [prog (lower-src "def Bounded:

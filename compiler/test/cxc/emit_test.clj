@@ -117,3 +117,20 @@
         s   (emit/emit ast)]
     (is (str/includes? s "V V_plus(V self, V other) {"))
     (is (str/includes? s "return ((V){.x = 1, .y = 2});"))))
+
+;; ---------------------------------------------------------------------------
+;; F35 L5 — synchronous end-cascade-child emission.
+;; ---------------------------------------------------------------------------
+
+(deftest f35-l5-end-cascade-child-emits-sync-direct-call
+  (testing "F35 L5 — `:end-cascade-child` emits a synchronous direct call to the child's `-transitionToEnd`, not `cxc_send_async`. Post-order sync teardown per spec §1.11 line 1283."
+    (let [ast {:node :objc-program
+               :includes []
+               :structs []
+               :classes []
+               :main {:body [{:node :end-cascade-child :slot-name "helper"}]}}
+          s   (emit/emit ast)]
+      (is (str/includes? s "if (_helper != nil) { [(id<CXCAtom>)_helper transitionToEnd]; }")
+          "sync direct call with nil-guard")
+      (is (not (str/includes? s "cxc_send_async(_helper"))
+          "no async cascade dispatch"))))

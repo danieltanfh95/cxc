@@ -7872,16 +7872,22 @@
                                      :recv {:node :name :sym "self"}
                                      :selector "checkInvariants"
                                      :args []})
-                              ;; Release owned dispatch/stream resources
-                              ;; before cascading to children so timers
-                              ;; that would otherwise fire once more mid-
-                              ;; cascade stop first. Order: user do:
-                              ;; blocks (may still need timers) → invariant
-                              ;; check (§3.4.2 pre-destruction) → clear
-                              ;; resources → cascade to children → notify
-                              ;; parent.
-                              (conj {:node :owned-resources-clear})
+                              ;; F35 L5 (2026-08-23) — post-order sync
+                              ;; cascade. Order: user do: blocks (may
+                              ;; still need timers) → invariant check
+                              ;; (§3.4.2 pre-destruction) → cascade to
+                              ;; children (each fully tears down before
+                              ;; the next begins) → clear self's owned
+                              ;; resources → notify parent. Pre-L5 the
+                              ;; resources-clear ran BEFORE the cascade
+                              ;; and the cascade was `cxc_send_async`;
+                              ;; under sync cascade the child may still
+                              ;; observe self-owned shared resources
+                              ;; during its own teardown, so self's
+                              ;; resources release AFTER all children
+                              ;; are fully torn down.
                               (into cascade-stmts)
+                              (conj {:node :owned-resources-clear})
                               (conj {:node :end-cascade-parent})
                               ;; Main atom's end shuts down the process
                               ;; (design §19). exit(0) after cascade so
