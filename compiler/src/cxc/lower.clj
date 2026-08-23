@@ -3478,6 +3478,8 @@
 ;; Expression lowering (ctx-threaded)
 ;; ---------------------------------------------------------------------------
 
+(declare class-name-for-atom)
+
 (declare lower-expr lower-stmt lower-body-stmts record-synth-equals-name
          resolve-args-against-params
          ;; F37 Landings 2 + 3 forward refs — synthesis functions live below
@@ -6081,12 +6083,27 @@
                            branches (mapv #(lower-transition-branch
                                             atom-name (:txn %) ctx
                                             wildcards-by-phase)
-                                          group)]
-                       {:node        :objc-method
-                        :selector    (:selector first-d)
-                        :return-type "void"
-                        :params      method-params
-                        :body        branches}))
+                                          group)
+                           ;; F33 L2.b — snapshot init at method entry.
+                           ;; Emits `<Atom>_State __cxc_snap = { ._f1 =
+                           ;; _f1, ... };` before any branch dispatch if
+                           ;; the atom carries user data-fields. Kept
+                           ;; out of `:body` (which is the branch list
+                           ;; the AST tests assert on) and instead lives
+                           ;; on `:prelude` — emit-method-impl inlines
+                           ;; it as the first statement of the C body.
+                           data-fields (get-in ctx [:atom-env atom-name :fields])
+                           snap-stmt   (when (seq data-fields)
+                                         {:node        :state-snapshot-init
+                                          :atom-name   atom-name
+                                          :class-name  (class-name-for-atom atom-name)
+                                          :data-fields data-fields})]
+                       (cond-> {:node        :objc-method
+                                :selector    (:selector first-d)
+                                :return-type "void"
+                                :params      method-params
+                                :body        branches}
+                         snap-stmt (assoc :prelude [snap-stmt]))))
                    key-order)
         ;; Dedup stream subscriptions by (source-field, stream-name):
         ;; multiple receive-glyphs on the same source.stream on THIS

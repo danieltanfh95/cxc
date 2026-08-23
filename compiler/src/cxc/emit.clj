@@ -678,6 +678,19 @@
           block    (indent-lines 4 (if (str/blank? body) "return;"
                                      (str body "\nreturn;")))]
       (str "if (" guard ") {\n" block "\n}"))
+    :state-snapshot-init
+    ;; F33 L2.b — atomic snapshot of `data:` fields at method entry.
+    ;; Emits `<Atom>_State __cxc_snap = { ._f1 = _f1, ._f2 = _f2, ... };`.
+    ;; At L2.b the variable is unused — reads still route to raw ivars.
+    ;; L2.c toggles the `:ident` sf-branch to read through `__cxc_snap._<f>`
+    ;; via a ctx `:snapshot-name` entry; the same emit output stays put.
+    (let [cn     (:class-name node)
+          fields (:data-fields node)
+          inits  (->> fields
+                      (map (fn [f]
+                             (str "._" (:name f) " = _" (:name f))))
+                      (str/join ", "))]
+      (str cn "_State __cxc_snap = { " inits " };"))
     :queue-init
     ;; Layer 4: per-atom serial queue targeting the main queue. All work
     ;; stays single-threaded; the primitive matches what Layer 4c will
@@ -986,9 +999,14 @@
            (when-not (str/blank? rest-parts) (str " " rest-parts))))))
 
 (defn- emit-method-impl [m]
-  (str (method-signature m) " {\n"
-       (emit-body 4 (:body m))
-       "\n}"))
+  (let [prelude (:prelude m)
+        body    (:body m)
+        parts   (cond-> []
+                  (seq prelude) (conj (emit-body 4 prelude))
+                  (seq body)    (conj (emit-body 4 body)))]
+    (str (method-signature m) " {\n"
+         (str/join "\n" parts)
+         "\n}")))
 
 (defn- emit-implementation [cls]
   (let [init-body     (:init-body cls)

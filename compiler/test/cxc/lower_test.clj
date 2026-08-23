@@ -3625,3 +3625,57 @@ def main:
           "bare property access for the un-declared method")
       (is (not (str/includes? c-src ": (7)"))
           "no `on_nil` fallback in the emitted call site"))))
+
+;; ---------------------------------------------------------------------------
+;; F33 L2.b — snapshot-init prelude on receive-glyph transition methods.
+;; ---------------------------------------------------------------------------
+
+(deftest f33-l2b-receive-glyph-method-carries-snapshot-init-prelude
+  (testing "F33 L2.b — a receive-glyph method on an atom with user data-fields carries a `:prelude` slot with one `:state-snapshot-init` node naming the atom's user data-fields. L2.b is dead-code: reads still route to raw ivars, but the snapshot binding exists at method entry so L2.c can flip the reroute."
+    (let [prog (lower-src (str "def Counter:\n"
+                               "    n: Int! = 0\n\n"
+                               "    -> running\n\n"
+                               "    running <: bump -> running\n"
+                               "        then: n => n + 1\n\n"
+                               "def main:\n"
+                               "    -> running\n        then: print(0)\n"))
+          cls  (first (filter #(= "Counter" (:name %)) (:classes prog)))
+          bump (first (filter #(= "bump" (:selector %)) (:methods cls)))]
+      (is (some? bump))
+      (is (some? (:prelude bump))
+          "receive-glyph method carries :prelude when atom has data-fields")
+      (is (= 1 (count (:prelude bump)))
+          "exactly one prelude node (the snapshot-init)")
+      (let [snap (first (:prelude bump))]
+        (is (= :state-snapshot-init (:node snap)))
+        (is (= "Counter" (:atom-name snap)))
+        (is (= "Counter" (:class-name snap)))
+        (is (= ["n"] (mapv :name (:data-fields snap)))
+            "prelude names ONLY user data-fields")))))
+
+(deftest f33-l2b-atom-without-data-fields-emits-no-snapshot-prelude
+  (testing "F33 L2.b — an atom with zero user `data:` fields (only compiler-injected `_phase`) gets NO `:prelude` slot on its receive-glyph methods. The `<Atom>_State` typedef also doesn't exist for such atoms (L2.a), so a snapshot would reference a non-existent type."
+    (let [prog (lower-src (str "def Trivial:\n"
+                               "    -> alive\n\n"
+                               "    alive <: bump -> alive\n\n"
+                               "def main:\n"
+                               "    -> running\n        then: print(0)\n"))
+          cls  (first (filter #(= "Trivial" (:name %)) (:classes prog)))
+          bump (first (filter #(= "bump" (:selector %)) (:methods cls)))]
+      (is (some? bump))
+      (is (nil? (:prelude bump))
+          "no prelude for a data-less atom"))))
+
+(deftest f33-l2b-emit-inlines-snapshot-init-as-c-declaration-at-method-entry
+  (testing "F33 L2.b — emit produces `<Atom>_State __cxc_snap = { ._<field> = _<field>, ... };` as the first statement of the ObjC method body, ahead of any branch dispatch. Uses designated initializers with underscore-prefixed field names (matching the ivar names)."
+    (let [prog  (lower-src (str "def Counter:\n"
+                                "    n: Int! = 0\n"
+                                "    max: Int! = 10\n\n"
+                                "    -> running\n\n"
+                                "    running <: bump -> running\n"
+                                "        then: n => n + 1\n\n"
+                                "def main:\n"
+                                "    -> running\n        then: print(0)\n"))
+          c-src (emit/emit prog)]
+      (is (str/includes? c-src "Counter_State __cxc_snap = { ._n = _n, ._max = _max };")
+          "snapshot-init emitted as designated-initializer decl"))))
