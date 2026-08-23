@@ -1682,6 +1682,17 @@
                 (recur (conj bindings {:name name :expr rhs}) p5))))))
 
 (defn- parse-let-clause [tokens pos]
+  ;; F18 L1' Landing 1 (2026-08-23) — grace-period deprecation warning
+  ;; for the transition `let:` sub-block. The statement-form `let
+  ;; <name> = <expr>` (F18 L1) subsumes the sub-block: usable inside
+  ;; any `then:` clause with the same visibility scope, no separate
+  ;; grammar to maintain. Follow-up landing hard-retires the sub-block
+  ;; (parse-let-clause → reject-let-clause!, lower.clj `:let-clause`
+  ;; branches deleted, examples migrated).
+  (binding [*out* *err*]
+    (println (str "warning: transition `let:` sub-block is deprecated —"
+                  " use statement-form `let <name> = <expr>` inside the"
+                  " `then:` clause instead (F18 L1'; spec §2.5).")))
   (if (at? tokens (+ pos 2) :newline)
     (parse-let-clause-block tokens pos)
     (parse-let-clause-inline tokens pos)))

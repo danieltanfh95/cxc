@@ -1040,6 +1040,16 @@ def main:
       (is (some? lc) "transition sub-block still parses as :let-clause")
       (is (= [{:name "k" :expr {:node :lit-int :value 5}}] (:bindings lc))))))
 
+(deftest f18-l1prime-transition-let-clause-emits-deprecation-warning
+  (testing "F18 L1' Landing 1 (grace-period deprecation) — parsing a transition `let:` sub-block still succeeds (statement-form `let x = expr` in `then:` is the successor), but prints a targeted stderr warning pointing at the statement-form migration. The sub-block hard-retirement lands in a follow-up (`parse-let-clause` → `reject-let-clause!` + `:let-clause` lower branches deleted + examples migrated)."
+    (let [err (java.io.StringWriter.)
+          _   (binding [*err* err]
+                (p/parse "def X:\n    n: Int = 0\n\n    -> alive\n\n    alive <: bump -> alive\n        let: k: 5\n        then: n => n + k\n"))
+          s   (str err)]
+      (is (re-find #"transition `let:` sub-block is deprecated" s))
+      (is (re-find #"let <name> = <expr>" s))
+      (is (re-find #"F18 L1'" s)))))
+
 ;; ============================================================================
 ;; F70 Surface Facelift — I3 / I5 / I6 regression tests
 ;; ============================================================================
