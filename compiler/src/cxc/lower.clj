@@ -7021,11 +7021,16 @@
            "    }")))))
 
 (defn- record-has-user-as-method?
-  "True when the record explicitly declares a method named `as` in its
-   :method-index. Used to shadow the synthesized default per spec
-   §3.3.2 rule 6."
+  "True when the record explicitly declares an `as` callable — either
+   as an extension method landed in `:method-index` or as an own
+   observable landed in `:observable-index`. Either surface shadows
+   the synthesized `.as() -> Bytes` default per spec §3.3.2 rule 6.
+   Post F67 L4 records carry their own callable readers as
+   observables, so checking `:method-index` alone (the pre-collapse
+   surface) missed same-record overrides."
   [info]
-  (contains? (get-in info [:method-index]) "as"))
+  (or (contains? (get-in info [:method-index])     "as")
+      (contains? (get-in info [:observable-index]) "as")))
 
 (defn- record-eligible-for-as-bytes-synthesis?
   ([info]

@@ -1699,6 +1699,60 @@ def main:
       (is (re-find #"dataUsingEncoding:NSUTF8StringEncoding" body-text))
       (is (re-find #"OSSwapHostToBigInt32.*\[__sd length\]" body-text)))))
 
+;; ---------------------------------------------------------------------------
+;; F37 L8 — user override rule (spec §3.3.2 rule 6).
+;;
+;; The synthesized `<Record>_cxc_as_bytes` default fires ONLY when the
+;; record hasn't declared an `as` callable itself. Post-F67 collapse,
+;; records carry their user-callable readers as observables (own) or
+;; extension methods (via `extend`), so the shadow check consults BOTH
+;; `:observable-index` and `:method-index`.
+;;
+;; The parser also gained `as`/`from` as whitelisted observable-name
+;; tokens — `as` is a reserved word for `import X as Y` so the pre-L8
+;; parser rejected it at declaration position; L8 accepts it.
+;; ---------------------------------------------------------------------------
+
+(deftest f37-l8-user-observable-as-shadows-synthesized-fn
+  (testing "F37 L8 — a record with an own observable named `as` shadows the synthesized `<Record>_cxc_as_bytes`. Observable body evaluates to Bytes by delegating to a nested record's `.as()`. Verifies: (a) the parser accepts `as` at observable-name position (previously rejected as a reserved word), (b) no `<Outer>_cxc_as_bytes` function is emitted, (c) the observable's C function IS emitted, (d) `.as()` at a call site dispatches to the observable path."
+    (let [prog (lower-src (str "def Inner:\n"
+                               "    x: Int!\n\n"
+                               "def Outer:\n"
+                               "    i: Inner!\n\n"
+                               "    as() :< i.as()\n\n"
+                               "def main:\n"
+                               "    -> running\n        then: print(0)\n"))
+          fn-names (into #{} (map :name (:functions prog)))]
+      (is (contains? fn-names "Inner_cxc_as_bytes")
+          "Inner (no user override) still gets the synthesized fn")
+      (is (not (contains? fn-names "Outer_cxc_as_bytes"))
+          "Outer's synthesized as-bytes is SUPPRESSED by the user observable")
+      (is (contains? fn-names "Outer_as")
+          "Outer's user observable is emitted as `Outer_as`"))))
+
+(deftest f37-l8-parser-accepts-as-at-observable-declaration-position
+  (testing "F37 L8 — the parser accepts `as` as an observable name on a record. Pre-L8 the lexer tokenizes `as` as `:kw` (reserved for `import X as Y`), and `parse-observable` demanded `:ident`, so `as() :< …` was a syntax error. L8 threads a whitelist (`as`, `from`) through both `looks-like-observable?` and `parse-observable`."
+    (let [prog (lower-src (str "def V:\n"
+                               "    n: Int!\n\n"
+                               "    as() :< n\n\n"
+                               "def main:\n"
+                               "    -> running\n        then: print(0)\n"))
+          v-fn (first (filter #(= "V_as" (:name %)) (:functions prog)))]
+      (is (some? v-fn) "user's `as` observable lowers to `V_as`")
+      (is (= "int64_t" (:return-type v-fn))
+          "return type inferred from body (`n` is Int)"))))
+
+(deftest f37-l8-user-as-with-non-bytes-return-still-suppresses-synthesis
+  (testing "F37 L8 — a user `as()` observable whose inferred return is NOT Bytes still suppresses synthesis (name-based shadow). Return-type-differentiated dispatch (§3.10.3 trait-qualified) is a deeper landing; the L8 shadow rule keys on name to match how §3.3.2 rule 6 is worded (\"if the class defines `as` …\"). If a user wants BOTH a Bytes-typed `as()` and an Int-typed one, they can name them differently or wait for the trait-qualified follow-on."
+    (let [prog (lower-src (str "def V:\n"
+                               "    n: Int!\n\n"
+                               "    as() :< n\n\n"
+                               "def main:\n"
+                               "    -> running\n        then: print(0)\n"))
+          fn-names (into #{} (map :name (:functions prog)))]
+      (is (not (contains? fn-names "V_cxc_as_bytes"))
+          "user-declared `as` (any return type) suppresses the Bytes synthesis"))))
+
 (deftest f37-l5-bytes-value-only-enum-discriminator-only
   (testing "F37 L5 — value-only enum (no payload cases) synthesizes `<Enum>_cxc_as_bytes` that emits a single discriminator byte. Discriminator width per §3.10.10: ≤256 cases → 1 byte. The switch/case block for payload dispatch is omitted (no tagged rep — the enum's C type is a plain integer)."
     (let [prog (lower-src "def Signal:\n    case red\n    case green\n\ndef main:\n    -> running\n")

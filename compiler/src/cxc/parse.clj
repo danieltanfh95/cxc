@@ -1444,8 +1444,27 @@
 ;;   than in a `methods:` section.
 ;; ---------------------------------------------------------------------------
 
+(def ^:private observable-name-kw-whitelist
+  ;; F37 L8 — spec-committed method names that tokenize as reserved
+  ;; words (`import X as Y` / `from X import`) also participate in the
+  ;; user-callable surface. Accept them at observable declaration
+  ;; position so a user's `as() :< bytes-expr` on a record shadows the
+  ;; synthesized F37 `.as() -> Bytes` default per spec §3.3.2 rule 6.
+  ;; Mirrors the dot-branch's `:ident` / `:kw` acceptance for method
+  ;; calls (`p.as()`).
+  #{"as" "from"})
+
 (defn- parse-observable [tokens pos]
-  (let [[name p]   (expect tokens pos :ident)
+  (let [tk         (peek-tok tokens pos)
+        k          (t-kind tk)
+        ;; F37 L8 — accept whitelisted reserved words (`as`, `from`) as
+        ;; observable names to support user overrides of spec-committed
+        ;; method surfaces. Reject other :kw tokens with the pre-L8
+        ;; diagnostic shape via `expect`.
+        [name p]   (if (and (= :kw k)
+                            (contains? observable-name-kw-whitelist (t-value tk)))
+                     [(t-value tk) (inc pos)]
+                     (expect tokens pos :ident))
         [params p] (if (at? tokens p :punct "(")
                      (parse-param-list-parens tokens p)
                      [[] p])
@@ -1864,8 +1883,13 @@
       (at? tokens p :punct ")") (if (= depth 1) (inc p) (recur (inc p) (dec depth)))
       :else                     (recur (inc p) depth))))
 
+(defn- observable-name-token? [tokens pos]
+  (or (at? tokens pos :ident)
+      (and (= :kw (t-kind (peek-tok tokens pos)))
+           (contains? observable-name-kw-whitelist (t-value (peek-tok tokens pos))))))
+
 (defn- looks-like-observable? [tokens pos]
-  (and (at? tokens pos :ident)
+  (and (observable-name-token? tokens pos)
        (or (at? tokens (inc pos) :glyph ":<")
            ;; F67 L2 — parametric observable: `<name>(params) :<`
            (and (at? tokens (inc pos) :punct "(")
