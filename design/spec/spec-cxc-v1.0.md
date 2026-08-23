@@ -7339,159 +7339,114 @@ Rationale: optimization policy is a deployment decision, not a semantic property
 | Compiled code is safe from author-declared "sealing" | N/A — no such annotation exists |
 | Members marked non-exposed are unreachable | No — external access generates warnings, not errors |
 
-### 5.6 Closures and Callable Values
+### 5.6 Closures (Narrow, Non-Escaping)
 
-A **closure** in cxc is an anonymous class with a single `call` method. Closures are first-class values; they can be passed as arguments, returned from functions, stored in fields, and dispatched dynamically like any other class instance. The runtime representation at the ObjC interop boundary is an ObjC block; the compiler generates the block wrapper automatically.
+Corvid supports inline arrow-lambda literals for higher-order collection operations and a narrow zero-arg `Block` type for local deferred work. **Escaping closures — closures stored in fields, returned from functions, or handed to callees that outlive the caller's frame — are not part of the language surface.** Callback patterns that use escaping closures in mainstream languages use actor subscriptions (§1.11 receive-glyph transitions) in Corvid. See [plans/g4-actor-integrity/f45-closure-scope.md](../../compiler/design/plans/g4-actor-integrity/f45-closure-scope.md) for the retirement rationale and per-case actor-substrate mappings.
 
-Semantically, closures are not a separate construct — they inherit all the properties of the class-as-universal design (§6.1). Runtime treatment defaults to agent-shape for closures that need to escape their construction site; the compiler is free to specialize to structural-shape or eliminate the class entirely when analysis proves the closure does not escape. Note: F45 (retiring escaping closures in favor of actor subscriptions) narrows this — most escape cases become receive-glyph transitions on named atoms. See [plans/g4-actor-integrity/f45-closure-scope.md](../../compiler/design/plans/g4-actor-integrity/f45-closure-scope.md).
-
-#### 5.6.1 Type Expression — `Callable of (Args, Return)`
-
-Function types (§3.2) desugar to the wrapper type `Callable of (Args, Return)`:
-
-```
-handler: (Bytes) -> Int                 # sugar
-handler: Callable of ((Bytes,), Int)    # expanded
-
-comparator: (String, String) -> Int     # sugar
-comparator: Callable of ((String, String), Int)   # expanded
-```
-
-`Callable of (Args, Return)` is a standard-library type; `(...) -> R` is spec-committed sugar. The pre-v0.12 generic-bracket form `Callable<Args, Return>` is retired at v1.0 in favor of the `of` qualifier (see §1.11 shape variables / §3.2); grace period through v0.15.
-
-Failure is expressed via the return type — a callable that may fail returns a domain enum like `(Order) -> ProcessOutcome`. See §3.5.4. Effects on the callable are the transitive `use:` closure of the target atom's transitions, not a separate `with E` clause on the type (see §3.5 supersession + §1.12).
-
-#### 5.6.2 Sugar Hierarchy for Closure Literals
-
-**Explicit function-literal form** — full types, unambiguous.
-
-```
-array.map(function(x: Int) -> Int:
-    return x + 1
-)
-```
-
-**Arrow form** — inferred parameter and return types, single-line body.
+#### 5.6.1 Arrow Lambda Literals
 
 ```
 array.map(x => x + 1)
+array.filter(x => x > 0)
 array.sorted((a, b) => a.count > b.count)
-first_upper = names.first(where: n => n.starts_with_uppercase())
+array.for_each(x => process(x))
 ```
 
-Multi-parameter form uses parentheses on the left of `=>`. Zero-parameter form: `() => value`. Ignored parameter: `_ => 42`.
+- Single-parameter: `x => body`.
+- Multi-parameter: `(a, b) => body`.
+- Zero-parameter: `() => value`.
+- Ignored parameter: `_ => 42`.
+- Body is a single expression. For multi-statement bodies use `do:` blocks (§3.8).
+- Parameter and return types are inferred from the higher-order callee's declared signature.
 
-**Method reference** — pass an existing method by name.
+Non-escape is structural: arrow lambdas are legal only as argument expressions to higher-order methods on collections (and other inlinable higher-order sites the compiler recognizes). They cannot be assigned to a variable, stored in a field, or returned from a function. The compiler rejects escape sites with a diagnostic pointing at actor subscriptions.
 
-```
-def Processor:
-    methods:
-        function transform(self, x: Int) -> Int: return x * 2
-        function transform_all(self):
-            self.numbers.map(self.transform)   # method reference
-```
+#### 5.6.2 Zero-Arg `Block` for Deferred Local Work
 
-Method references bind `self` at the reference site — `self.transform` is a `Callable<(Int,), Int>` with `self` already captured.
-
-**Trailing-block form is not supported.** Swift's `array.map { $0 + 1 }` is not part of the sugar layer. Rationale: the arrow form is as terse without the parsing complexity of "closure body outside parens." If a hard-line preference emerges, it can be added later as additive sugar.
-
-#### 5.6.3 Desugaring — Closure Literals to Anonymous Classes
-
-Every closure literal desugars, at compile time, to an anonymous class whose only method is `call`. The compiler generates one class per unique closure body at a source location; different literals at different sites are different classes.
-
-Sugar:
-```
-array.map(x => x + 1)
-```
-
-Desugared (illustrative; the anonymous class name is compiler-generated):
+`Block` is a compiler-provided type wrapping ObjC's `void (^)(void)`, used for a narrow deferred-work pattern where a stored zero-arg callback is invoked by transitions on the enclosing atom:
 
 ```
-class __closure_at_L47:
-    methods:
-        function call(self, x: Int) -> Int:
-            return x + 1
+def Handler:
+    on_ready: Block = () => print("ready")
 
-array.map(__closure_at_L47())
+    ready <: fire() -> ready
+        do: self.on_ready()
 ```
 
-Closures with captured environments carry those captures as `data:` fields on the anonymous class:
+- `Block` fields carry zero-argument, void-return blocks only.
+- Invocation via `field()` inside transitions on the enclosing atom.
+- The block's lifetime is bounded by the enclosing atom's lifetime — no retain cycle is structurally possible.
+- `Block` is not a general callable type. For arity > 0 or non-void return, model the pattern as an actor subscription instead.
+
+#### 5.6.3 Escape Cases Use Actor Subscriptions
+
+The patterns below cover every use case escaping closures serve in mainstream languages. In Corvid they are named atoms with receive-glyph transitions.
+
+**Delegate / event callback.** Escaping-closure form (retired):
 
 ```
-# Source:
-threshold = 5
-filtered = array.filter(x => x > threshold)
-
-# Desugared:
-class __closure_at_L52:
-    threshold: Int
-    methods:
-        function call(self, x: Int) -> Bool:
-            return x > self.threshold
-
-filtered = array.filter(__closure_at_L52(threshold: threshold))
-```
-
-Stateful closures (rare) use `state:` on the anonymous class:
-
-```
-# Source — counter closure:
-counter = do:
-    n: Int = 0
-    () => do:
-        n = n + 1
-        n
-
-# Desugared:
-class __closure_at_L60:
-    state:
-        n: Int = 0
-    methods:
-        function call(self) -> Int:
-            self.n = self.n + 1
-            return self.n
-
-counter = __closure_at_L60()
-```
-
-#### 5.6.4 Capture Rules
-
-**Strong capture by default.** A closure captures any free variable it references, with a strong reference. This is the common case — the closure keeps its captured environment alive.
-
-```
-config = load_config()
-handler = event => process(event, config)   # config captured strongly
-# handler holds config alive as long as handler exists
-```
-
-**Explicit capture list for non-default capture modes.** Prefix the closure literal with `[weak name, unowned name, name: mode]` when a variable should be captured differently:
-
-```
-# Weak self capture — closure does not keep self alive:
 subscription = channel.subscribe([weak self] event => self.handle(event))
-# When self has been deallocated (weak → nil), the message send is a no-op (§3.6.1).
 ```
 
-Multiple entries are comma-separated. Legal modes: `weak`, `unowned`, `copy` (for value types).
+Actor-substrate form:
 
-**Rules:**
+```
+def Listener:
+    use:
+        channel: Channel
 
-1. **Non-escaping closures never need `[weak]`.** A closure passed to `map`/`filter`/`sorted`/etc. and consumed synchronously by the callee cannot outlive the current frame. The compiler recognizes non-escaping closures and elides the capture-list requirement.
-2. **Escaping closures may.** A closure stored in a field, returned from a function, or passed to a callee that stores it (e.g., channel subscribers, delegates) can outlive its construction context. `[weak self]` is required to avoid retain cycles when the closure captures `self` and is stored on `self` transitively.
-3. **The compiler warns on likely retain cycles.** If a closure captures `self` strongly AND is stored in a `state:` field of `self` (directly or through a channel subscription), the compiler emits a warning. Not an error — sometimes intentional — but flagged.
+    channel |> subscribe
 
-#### 5.6.5 Compilation and Runtime Cost
+    -> alive
 
-The compiler is free to specialize closure representations under the "as if" rule — semantic behavior is preserved, runtime shape is optimized:
+    alive <: event(payload: EventPayload) -> alive
+        do: self.handle(payload)
+```
 
-| Situation | Runtime cost |
-|---|---|
-| Closure passed to an inlinable function (map/filter/sorted/etc.), no capture | Zero — inlined at call site |
-| Closure with capture, inlinable call site | Captures unpacked into local vars; closure object elided |
-| Escaping closure (stored, returned, passed to opaque callee) | One anonymous-class allocation + virtual `call` dispatch |
-| Closure passed across ObjC boundary | Wrapped as an ObjC block; standard block calling convention |
+The subscription's lifetime IS the Listener atom's lifetime. The `-> end` cascade auto-drops the subscription via the runtime's owned-resource bookkeeping (F35 L5–L6). No `[weak self]`, no retain-cycle risk, message payload shape checked against the channel's `accepts:`.
 
-Users write the sugar; the compiler chooses the representation. The `Callable<Args, Return>` wrapper type is what appears in type signatures; the concrete anonymous class is a compiler artifact.
+**Delayed / scheduled dispatch.** Escaping-closure form (retired):
+
+```
+schedule_later(function(): self.tick())
+```
+
+Actor-substrate form (spec-canonical, §1.11 Clock capability):
+
+```
+waiting when: clock.after(deadline) -> fired
+
+fired <: enter() -> fired
+    do: self.tick()
+```
+
+The transition fires when the clock capability's `after` observable becomes true. No callback registration, no closure lifetime to manage.
+
+**Method as callable value.** Method references (`self.foo` as a first-class value) are retired. When a method needs to be handed off as a callback, model it as a subscription on an atom whose transition IS the method.
+
+**Event callbacks on data.** `xs.on_change(cb)` and similar patterns become receive-glyph transitions on an atom that observes the collection.
+
+#### 5.6.4 Retired From Pre-v1.0 Spec
+
+The following mechanisms were previously spec-committed and are retired at v1.0. No user code depends on them — the compiler impl never landed them ([spec-drift-audit-landed.md#F45](../../compiler/design/spec-drift-audit-landed.md#f45-block-invented-type-closure-support-narrow--re-framed-2026-08-18-spec-56-overreaches-narrow-impl-is-correct-scope)).
+
+- **First-class `Callable of (Args, Return)` type** for user signatures. The compiler retains `Callable` internally as a type hint for inlinable higher-order call sites; users do not write it in field or parameter types. The prelude alias `(Args) -> R = Callable<(Args,), R>` remains defined but has no supported user-facing use — declaring a data field of that shape is rejected with a diagnostic pointing at actor subscriptions.
+- **Explicit `function(x: T) -> R:` closure literals** as expressions. The arrow form (§5.6.1) covers the same ground without the ceremony.
+- **Method references** (`self.foo` / `MyType.bar` as callable values).
+- **Anonymous-class desugaring** for closures (previous §5.6.3 machinery). Non-escaping arrow lambdas compile via inline substitution at the call site; no anonymous class is synthesized.
+- **Capture lists** (`[weak name, unowned name, name: mode]`) on closure literals. Non-escaping arrow lambdas do not capture in a way that requires ownership annotation.
+- **Retain-cycle diagnostics** for self-capturing closures stored on `self`. The failure mode dissolves once escaping self-capture is not part of the language.
+
+Data-field reference modifiers (`weak`, `unowned` in §6.14) are unaffected — they apply to atom-to-atom field references, not to closures.
+
+#### 5.6.5 Compilation Cost
+
+| Situation                                                        | Cost                                                                                          |
+|------------------------------------------------------------------|-----------------------------------------------------------------------------------------------|
+| Arrow lambda on an inlinable higher-order call (map/filter/etc.) | Zero — compiler substitutes the body into a loop at the call site.                            |
+| Zero-arg `Block` field                                           | One ObjC block allocation on assignment; standard block-calling convention on invocation.     |
+
+The escaping-closure row from the pre-v1.0 spec (anonymous-class allocation + virtual `call` dispatch) retires with the escape mechanism.
 
 ### 5.7 Nil-Receiver Dispatch
 
@@ -8006,12 +7961,12 @@ def Child:
 Applied to locals (rare). Under nil-punning semantics (§3.6.1), `if let` is used only when the unwrapped value must be bound for repeated use in the following scope; single-call cases just dispatch through:
 
 ```
-function callback():
-    weak self_ref = self
-    schedule_later(function():
-        self_ref.do_thing()    # no-op if self was deallocated (weak → nil)
-    )
+function inspect_parent(child: Child):
+    weak p = child.parent      # local weak alias; drops to nil if parent deallocates before use
+    p.summary()                # nil-safe dispatch via §3.6.1
 ```
+
+The pre-v1.0 use case for `weak` locals — capturing `self` for an escaping closure — no longer applies; delayed dispatch and event callbacks are actor subscriptions under §5.6.3, not closures.
 
 ### 6.15 Mutability
 
@@ -9419,22 +9374,16 @@ if_let_expr    := 'if' let_binding_list ':' expr_body ('else' ':' expr_body)?
 guard_let_stmt := 'guard' let_binding_list 'else' ':' INDENT statement* DEDENT
                 # else branch must exit (return / break / continue / panic)
 
-# Closures (§5.6). All desugar to anonymous classes with a `call` method.
-closure_literal := capture_list? function_literal
-                 | capture_list? arrow_literal
-                 | method_reference
-
-capture_list := '[' capture_entry (',' capture_entry)* ']'
-capture_entry := ('weak' | 'unowned')? identifier
-               | identifier ':' capture_mode              # e.g. `x: copy`
-
-function_literal := 'function' '(' parameter_list ')' ('->' type)?
-                    effect_clause? ':' expr_body
+# Closures (§5.6). Narrow scope at v1.0: arrow lambdas only, non-escaping.
+# Escaping closure machinery (capture lists, function literals, method
+# references, anonymous-class desugaring) retired — see §5.6.4.
+closure_literal := arrow_literal
 
 arrow_literal := ( identifier | '(' identifier (',' identifier)* ')' | '_' )
                  '=>' expr
-
-method_reference := identifier ('.' identifier)+   # e.g. `self.foo`, `MyType.bar`
+              # Legal only at argument positions of inlinable higher-order
+              # calls (§5.6.1). Escape sites (assignment, field storage,
+              # return value) reject with a diagnostic pointing at §5.6.3.
 
 quote_expr := 'quote' ':' INDENT ast_content DEDENT
 
