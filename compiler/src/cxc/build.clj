@@ -662,6 +662,14 @@
    F53 L1: on successful compile, emits `<module>.cxc-manifest.json`
    for every user module under `out-dir`.
 
+   F52 L3: `opts :source-overrides {module → path}` replaces the
+   on-disk source for the named module with `(slurp path)`. The
+   file's provenance (path, derived module) stays unchanged — only
+   the source string is substituted. Overrides for modules that
+   aren't discovered under `src-dir` are silently ignored with a
+   stderr warning (they don't add new modules; that's a follow-up).
+   Useful for tests, mocks, or platform-specific implementations.
+
    Same return shape as compile-source-to-file."
   ([src-dir name out-dir]
    (compile-directory-to-file src-dir name out-dir {}))
@@ -677,7 +685,28 @@
                      (filter #(and (.isFile ^java.io.File %)
                                    (.endsWith (.getName ^java.io.File %) ".cxc")))
                      (sort-by #(.getPath ^java.io.File %)))
-        srcs    (mapv slurp files)
+        ;; F52 L3 — resolve source overrides against discovered modules.
+        ;; Keys accept string or keyword; normalize to keyword to match
+        ;; `derive-module-name`'s return type. CLI callers pass strings;
+        ;; Clojure callers may pass keywords directly.
+        source-overrides (reduce-kv (fn [m k v]
+                                      (assoc m (keyword (clojure.core/name k)) v))
+                                    {}
+                                    (:source-overrides opts {}))
+        discovered-modules (into #{} (map #(derive-module-name dir %)) files)
+        _        (doseq [[m _] source-overrides
+                         :when (not (contains? discovered-modules m))]
+                   (binding [*out* *err*]
+                     (println (str "warning: source override for `"
+                                   (clojure.core/name m)
+                                   "` targets a module not discovered under "
+                                   src-dir " — ignored (F52 L3)."))))
+        srcs    (mapv (fn [^java.io.File f]
+                        (let [m (derive-module-name dir f)]
+                          (if-let [override-path (get source-overrides m)]
+                            (slurp override-path)
+                            (slurp f))))
+                      files)
         ;; F51 L2 — enumerate user modules up-front so per-file import
         ;; validation can accept `from <user-module> import ...`.
         user-modules (into #{} (map #(derive-module-name dir %)) files)
@@ -702,7 +731,10 @@
                                       (assoc (ex-data e)
                                              :file (.getPath f))
                                       e))))
-                  {:file f :module module :nodes parsed}))
+                  ;; F52 L3 — carry the (possibly overridden) source string
+                  ;; forward so the downstream concatenation doesn't re-slurp
+                  ;; the on-disk file and lose the override.
+                  {:file f :module module :nodes parsed :src src}))
               (map vector files srcs))
         _       (reject-duplicate-declarations-per-module! files-with-nodes)
         ;; F51 L2 — build the module import dep graph, reject self-imports
@@ -728,9 +760,9 @@
         ;; to blank `from ...` (the flat-namespace concatenation shim
         ;; stays until F51 L3 lands scoped resolution).
         with-module-headers
-        (mapv (fn [{:keys [file module]}]
+        (mapv (fn [{:keys [module src]}]
                 (str "module " (clojure.core/name module) "\n\n"
-                     (strip-module-and-import-lines (slurp file))))
+                     (strip-module-and-import-lines src)))
               files-with-nodes)
         combined (clojure.string/join "\n\n" with-module-headers)
         ;; F73 note: user `module` headers are rejected at parse-time; the

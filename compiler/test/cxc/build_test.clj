@@ -1091,3 +1091,55 @@
       (is (some? lib-block) "lib module block present")
       (is (re-find #"\"depended-by\":\s*\[\s*\"main\"\s*\]" lib-block)
           "lib is depended-by main"))))
+
+;; ---------------------------------------------------------------------------
+;; F52 L3 — source overrides (`:source-overrides {module → path}`).
+;; ---------------------------------------------------------------------------
+
+(deftest f52-l3-source-override-replaces-module-contents
+  (testing "F52 L3 — `:source-overrides {\"lib\" path}` substitutes the on-disk source for module `lib` with the contents of `path`. The original file's path + derived module stay intact; only the source string swaps. Verifies the swap took effect by having the on-disk `lib` fail-nyi (references an unknown ident) while the override provides a real declaration — a successful compile proves the override won."
+    (let [src-dir      (tmp-dir)
+          out-dir      (tmp-dir)
+          override-dir (tmp-dir)
+          _            (write-file! src-dir "lib/util.cxc"
+                                    "def Helper:\n    x: PRODUCTION_MISSING_TYPE\n")
+          override-f   (write-file! override-dir "override.cxc"
+                                    "def Helper:\n    x: Int\n")
+          _            (write-file! src-dir "app.cxc"
+                                    "from lib import Helper\n\ndef main:\n    -> running\n        then: print(1)\n")
+          result       (build/compile-directory-to-file
+                        (.getPath src-dir) "prog" (.getPath out-dir)
+                        {:source-overrides {"lib" (.getPath override-f)}})]
+      (is (zero? (:status result))
+          (str "override should let compile succeed even though on-disk lib is broken; stderr: "
+               (:stderr result))))))
+
+(deftest f52-l3-source-override-unknown-module-warns
+  (testing "F52 L3 — an override targeting a module not discovered under `src-dir` is silently ignored with a stderr warning. Prevents footguns from typoed override keys silently succeeding while producing the on-disk source."
+    (let [src-dir (tmp-dir)
+          out-dir (tmp-dir)
+          err     (java.io.StringWriter.)
+          _       (write-file! src-dir "app.cxc"
+                               "def main:\n    -> running\n        then: print(1)\n")
+          result  (binding [*err* err]
+                    (build/compile-directory-to-file
+                     (.getPath src-dir) "prog" (.getPath out-dir)
+                     {:source-overrides {"nonexistent" "/tmp/does-not-matter.cxc"}}))]
+      (is (zero? (:status result)) "compile still succeeds despite unused override")
+      (is (re-find #"source override for `nonexistent`" (str err))
+          "stderr warning fires for the unmatched override")
+      (is (re-find #"F52 L3" (str err))
+          "diagnostic cites the responsible landing"))))
+
+(deftest f52-l3-source-override-defaults-to-none-when-opts-omit
+  (testing "F52 L3 — opts without :source-overrides is a no-op (default `{}`); on-disk sources are used as before. Regression guard for the 3-arity + 4-arity dispatch: existing callers pass no opts (line 613 pattern) or opts without the key (line 615 pattern)."
+    (let [src-dir (tmp-dir)
+          out-dir (tmp-dir)
+          _       (write-file! src-dir "app.cxc"
+                               "def main:\n    -> running\n        then: print(9)\n")
+          result  (build/compile-directory-to-file
+                   (.getPath src-dir) "prog" (.getPath out-dir))
+          {:keys [exit stdout]} (build/run-binary (:bin-path result))]
+      (is (zero? (:status result)))
+      (is (zero? exit))
+      (is (= "9\n" stdout) "on-disk source used when no override provided"))))
