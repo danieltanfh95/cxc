@@ -1020,3 +1020,62 @@
       (is (some? h1) "hash extractable from first manifest")
       (is (some? h2) "hash extractable from second manifest")
       (is (not= h1 h2) "different sources → different source-hash"))))
+
+;; ---------------------------------------------------------------------------
+;; F53 L2 — program-wide cxc-deps.json emission.
+;; ---------------------------------------------------------------------------
+
+(defn- deps-path [^java.io.File out-dir]
+  (java.io.File. out-dir "cxc-deps.json"))
+
+(deftest f53-l2-dep-graph-basic
+  (testing "F53 L2 — a user module `app` importing user module `lib` produces `cxc-deps.json` at out-dir root, with `lib` declared and `app` listing lib in its depends-on."
+    (let [src-dir (tmp-dir)
+          out-dir (tmp-dir)
+          _       (write-file! src-dir "lib/util.cxc"
+                               "def Helper:\n    x: Int\n")
+          _       (write-file! src-dir "app.cxc"
+                               "from lib import Helper\n\ndef main:\n    -> running\n        then: print(1)\n")
+          _       (build/compile-directory-to-file (.getPath src-dir)
+                                                    "prog" (.getPath out-dir))
+          deps-file (deps-path out-dir)
+          deps-json (slurp deps-file)]
+      (is (.exists deps-file) "cxc-deps.json written at out-dir root")
+      (is (re-find #"\"\$schema\": \"cxc-deps/v1\"" deps-json))
+      (is (re-find #"\"topological-order\":" deps-json))
+      (is (re-find #"\"modules\":" deps-json))
+      (is (re-find #"\"lib\":" deps-json) "lib module present in graph")
+      (is (re-find #"\"main\":" deps-json) "main module present in graph")
+      (is (re-find #"\"depends-on\":\s*\[\s*\"lib\"\s*\]" deps-json)
+          "main's depends-on lists lib"))))
+
+(deftest f53-l2-dep-graph-includes-prelude-deps
+  (testing "F53 L2 — when a user module imports a prelude module (e.g. std.time), the prelude module appears in the graph with reverse depended-by pointing at the user."
+    (let [src-dir (tmp-dir)
+          out-dir (tmp-dir)
+          _       (write-file! src-dir "app.cxc"
+                               "from std.time import Duration\n\ndef main:\n    -> running\n        then: print(1)\n")
+          _       (build/compile-directory-to-file (.getPath src-dir)
+                                                    "prog" (.getPath out-dir))
+          deps-json (slurp (deps-path out-dir))]
+      (is (re-find #"\"std\.time\":" deps-json) "prelude module appears")
+      (is (re-find #"\"main\":" deps-json))
+      (is (re-find #"\"depends-on\":\s*\[\s*\"std\.time\"\s*\]" deps-json)
+          "main depends on std.time"))))
+
+(deftest f53-l2-dep-graph-reverse-edges-correct
+  (testing "F53 L2 — the depended-by list is the correct reverse of depends-on: when app imports lib, lib.depended-by contains app."
+    (let [src-dir (tmp-dir)
+          out-dir (tmp-dir)
+          _       (write-file! src-dir "lib/util.cxc"
+                               "def Helper:\n    x: Int\n")
+          _       (write-file! src-dir "app.cxc"
+                               "from lib import Helper\n\ndef main:\n    -> running\n        then: print(1)\n")
+          _       (build/compile-directory-to-file (.getPath src-dir)
+                                                    "prog" (.getPath out-dir))
+          deps-json (slurp (deps-path out-dir))
+          ;; Extract lib's block so we can assert on its depended-by
+          lib-block (re-find #"\"lib\":\s*\{[^}]*\}" deps-json)]
+      (is (some? lib-block) "lib module block present")
+      (is (re-find #"\"depended-by\":\s*\[\s*\"main\"\s*\]" lib-block)
+          "lib is depended-by main"))))

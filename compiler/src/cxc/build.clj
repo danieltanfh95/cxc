@@ -740,8 +740,17 @@
         result   (compile-source-to-file combined name out-dir
                                           (assoc opts :allow-build-modules? true))]
     ;; F53 L1 — emit one `<module>.cxc-manifest.json` per user module.
+    ;; F53 L2 — emit `cxc-deps.json` at out-dir root capturing the
+    ;; program-wide module dependency graph.
     ;; Only fires on successful compile so a clang failure doesn't
-    ;; leave behind a manifest for code that didn't build.
+    ;; leave behind manifests for code that didn't build.
     (when (zero? (:status result))
-      (emit-module-manifests! out-dir files-with-nodes))
+      (emit-module-manifests! out-dir files-with-nodes)
+      (manifest/emit-dep-graph!
+        (io/file out-dir)
+        (manifest/build-dep-graph
+          {:graph          dep-graph
+           :user-modules   user-modules
+           :sorted-modules sorted-modules
+           :compiled-at    (iso-utc-now)})))
     result)))

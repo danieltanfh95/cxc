@@ -195,3 +195,69 @@
     (io/make-parents f)
     (spit f (write-json manifest))
     f))
+
+;; ---------------------------------------------------------------------------
+;; F53 L2 — program-wide dependency graph artifact (cxc-deps.json).
+;;
+;; Consumed by doc generators (who imports Duration?), impact-analysis
+;; tooling (which modules rebuild when foo.util changes?), and F53 L3
+;; incremental compile cache keying.
+;; ---------------------------------------------------------------------------
+
+(def dep-graph-schema-tag "cxc-deps/v1")
+
+(defn- reverse-edges
+  "Given `{module → #{deps}}`, produce `{module → #{depended-by}}`."
+  [graph]
+  (reduce (fn [acc [m deps]]
+            (reduce (fn [a d] (update a d (fnil conj #{}) m))
+                    acc deps))
+          {} graph))
+
+(defn build-dep-graph
+  "Pure fn — produce the Clojure map for the program-wide dep graph.
+
+   Inputs:
+   - `:graph`             — `{module-kw → #{imported-module-kws}}`
+                            (as produced by `build/module-dependency-graph`)
+   - `:user-modules`      — set of user module keywords
+   - `:sorted-modules`    — user modules in dep order (topological-sort output)
+   - `:compiled-at`       — ISO-8601 timestamp string
+
+   The `modules` map covers every user module plus every prelude module
+   that appears as a target of some import. Prelude modules carry an
+   empty `depends-on` (prelude has no cross-prelude edges we track);
+   their `depended-by` lists the user modules that consume them.
+
+   The `topological-order` puts prelude modules first (sorted by name)
+   then user modules in dep order — matches the compilation order the
+   build uses."
+  [{:keys [graph user-modules sorted-modules compiled-at]}]
+  (let [reversed        (reverse-edges graph)
+        prelude-targets (into (sorted-set)
+                              (remove user-modules
+                                      (mapcat val graph)))
+        all-modules     (into (sorted-set)
+                              (concat user-modules prelude-targets))
+        module-entry    (fn [m]
+                          [(clojure.core/name m)
+                           {:depends-on  (mapv clojure.core/name
+                                               (sort (get graph m #{})))
+                            :depended-by (mapv clojure.core/name
+                                               (sort (get reversed m #{})))}])
+        modules-map     (into (sorted-map)
+                              (map module-entry) all-modules)]
+    {:$schema           dep-graph-schema-tag
+     :compiled-at       compiled-at
+     :topological-order (into (mapv clojure.core/name prelude-targets)
+                              (mapv clojure.core/name sorted-modules))
+     :modules           modules-map}))
+
+(defn emit-dep-graph!
+  "Serialize a dep-graph map to JSON and write to
+   `<out-dir>/cxc-deps.json`. Returns the written File."
+  [^java.io.File out-dir dep-graph]
+  (let [f (io/file out-dir "cxc-deps.json")]
+    (io/make-parents f)
+    (spit f (write-json dep-graph))
+    f))
