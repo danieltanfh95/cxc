@@ -356,6 +356,84 @@
                :module module :name nm
                :files (mapv #(.getPath ^java.io.File %) files)})))))
 
+;; F51 L3a (2026-08-23) — user declarations must not collide with a
+;; locally-bound imported name in the same module. Local binding of
+;; `from X import Foo` is `Foo`; `from X import Foo as Bar` binds
+;; `Bar` (so `def Foo:` alongside the aliased import is fine, but
+;; `def Bar:` collides). `import X` binds `X`; `import X as Y` binds
+;; `Y`. Fix-it: drop one, or add `as` to the import.
+;;
+;; Full namespace-scoped resolution (L3b) will retire the flat-
+;; namespace concatenation and add unresolved-name / ambiguous-import
+;; diagnostics on top of this collision guard.
+
+(defn- import-local-bindings
+  "Return [{:name <local-binding> :source <surface>} ...] for a parsed
+   file — the names the import statements bind into local scope. Used
+   by `reject-import-collides-with-decl!` for collision detection."
+  [nodes]
+  (into []
+        (mapcat
+          (fn [n]
+            (case (:node n)
+              :from-import
+              (map (fn [entry]
+                     {:name   (or (:as entry) (:name entry))
+                      :source (str "from " (:from n) " import "
+                                   (:name entry)
+                                   (when (:as entry)
+                                     (str " as " (:as entry))))})
+                   (:names n))
+              :import
+              [{:name   (or (:as n) (:from n))
+                :source (str "import " (:from n)
+                             (when (:as n) (str " as " (:as n))))}]
+              nil)))
+        nodes))
+
+(defn- reject-import-collides-with-decl!
+  "F51 L3a — a user declaration and an imported name that bind the
+   same identifier in the same module cannot coexist. Fires with the
+   colliding name, the module, both file positions, and the import
+   surface so the user can either drop one or add `as`."
+  [files-with-nodes]
+  (let [decls-by-module   (reduce
+                            (fn [acc {:keys [module nodes file]}]
+                              (reduce (fn [acc n]
+                                        (if (contains? #{:record :def-atom :enum}
+                                                       (:node n))
+                                          (update-in acc [module (:name n)]
+                                                     (fnil conj []) file)
+                                          acc))
+                                      acc nodes))
+                            {} files-with-nodes)
+        imports-by-module (reduce
+                            (fn [acc {:keys [module nodes file]}]
+                              (reduce (fn [acc {:keys [name source]}]
+                                        (update-in acc [module name]
+                                                   (fnil conj [])
+                                                   {:file file :source source}))
+                                      acc (import-local-bindings nodes)))
+                            {} files-with-nodes)]
+    (doseq [[module by-name] imports-by-module
+            [nm entries]     by-name
+            :let [decl-files (get-in decls-by-module [module nm])]
+            :when (seq decl-files)]
+      (throw (ex-info
+              (str "F51 L3a: `" nm "` in module `" (name module)
+                   "` is both declared (in "
+                   (mapv #(.getName ^java.io.File %) decl-files)
+                   ") and imported (via `"
+                   (:source (first entries)) "` in "
+                   (mapv #(.getName ^java.io.File (:file %)) entries)
+                   "). Rename the declaration, drop the import, or "
+                   "add `as <alias>` to the import.")
+              {:kind          :cxc-f51-import-collides-with-decl
+               :module        module :name nm
+               :decl-files    (mapv #(.getPath ^java.io.File %) decl-files)
+               :import-files  (mapv #(.getPath ^java.io.File (:file %)) entries)
+               :import-source (:source (first entries))})))))
+
 ;; ---------------------------------------------------------------------------
 ;; F51 L2 — Module import dependency graph + topological order + cycle detection.
 ;; ---------------------------------------------------------------------------
@@ -554,6 +632,10 @@
         dep-graph        (module-dependency-graph files-with-nodes)
         _                (reject-self-imports! dep-graph)
         _                (reject-unknown-imports! dep-graph user-modules)
+        ;; F51 L3a — collision check runs after structural import validity
+        ;; so more specific diagnostics (self-import, unknown-module) fire
+        ;; first when both would apply.
+        _                (reject-import-collides-with-decl! files-with-nodes)
         sorted-modules   (topological-sort dep-graph user-modules)
         files-with-nodes (sort-files-by-module-order files-with-nodes
                                                      sorted-modules)

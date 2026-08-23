@@ -821,3 +821,102 @@
       (is (some? ex))
       (is (re-find #"F51 L2: module `foo` imports itself" (ex-message ex)))
       (is (= :cxc-f51-self-import (:kind (ex-data ex)))))))
+
+;; ---------------------------------------------------------------------------
+;; F51 L3a — user declaration + imported name collision (per-module).
+;; ---------------------------------------------------------------------------
+
+(deftest f51-l3a-from-import-name-collides-with-decl-rejected
+  (testing "F51 L3a — `from lib import Helper` alongside `def Helper:` in the same module is a hard collision: the imported name and the declared name bind the same local identifier."
+    (let [src-dir (tmp-dir)
+          out-dir (tmp-dir)
+          _       (write-file! src-dir "lib/util.cxc"
+                               "def Helper:\n    x: Int\n")
+          _       (write-file! src-dir "app.cxc"
+                               "from lib import Helper\n\ndef Helper:\n    n: Int\n\ndef main:\n    -> running\n        then: print(1)\n")
+          ex      (try
+                    (build/compile-directory-to-file (.getPath src-dir)
+                                                     "prog" (.getPath out-dir))
+                    nil
+                    (catch clojure.lang.ExceptionInfo e e))]
+      (is (some? ex) "expected collision rejection")
+      (is (re-find #"F51 L3a: `Helper` in module `main`" (ex-message ex)))
+      (is (re-find #"both declared" (ex-message ex)))
+      (is (re-find #"and imported" (ex-message ex)))
+      (is (re-find #"add `as <alias>`" (ex-message ex)))
+      (is (= :cxc-f51-import-collides-with-decl (:kind (ex-data ex)))))))
+
+(deftest f51-l3a-aliased-from-import-avoids-collision
+  (testing "F51 L3a — `from lib import Helper as H` alongside `def Helper:` does NOT fire the L3a collision diagnostic: the alias makes the import's local binding `H`, disjoint from the declared `Helper`. Downstream flat-namespace concatenation collision is a separate concern that F51 L3b (full resolver) resolves."
+    (let [src-dir (tmp-dir)
+          out-dir (tmp-dir)
+          _       (write-file! src-dir "lib/util.cxc"
+                               "def Helper:\n    x: Int\n")
+          _       (write-file! src-dir "app.cxc"
+                               "from lib import Helper as H\n\ndef Helper:\n    n: Int\n\ndef main:\n    -> running\n        then: print(1)\n")
+          ex      (try
+                    (build/compile-directory-to-file (.getPath src-dir)
+                                                     "prog" (.getPath out-dir))
+                    nil
+                    (catch clojure.lang.ExceptionInfo e e))]
+      (is (not= :cxc-f51-import-collides-with-decl
+                (some-> ex ex-data :kind))
+          "aliased import must not trip L3a collision"))))
+
+(deftest f51-l3a-aliased-import-target-collides-with-decl-rejected
+  (testing "F51 L3a — `from lib import Foo as Helper` alongside `def Helper:` collides: the alias binds to `Helper` locally, and the declaration also uses `Helper`. The alias'd name is the surface for collision, not the source-side name."
+    (let [src-dir (tmp-dir)
+          out-dir (tmp-dir)
+          _       (write-file! src-dir "lib/util.cxc"
+                               "def Foo:\n    x: Int\n")
+          _       (write-file! src-dir "app.cxc"
+                               "from lib import Foo as Helper\n\ndef Helper:\n    n: Int\n\ndef main:\n    -> running\n        then: print(1)\n")
+          ex      (try
+                    (build/compile-directory-to-file (.getPath src-dir)
+                                                     "prog" (.getPath out-dir))
+                    nil
+                    (catch clojure.lang.ExceptionInfo e e))]
+      (is (some? ex) "expected collision on the aliased local binding")
+      (is (re-find #"F51 L3a: `Helper` in module `main`" (ex-message ex)))
+      (is (= :cxc-f51-import-collides-with-decl (:kind (ex-data ex)))))))
+
+(deftest f51-l3a-import-x-collides-with-decl-rejected
+  (testing "F51 L3a — `import lib` alongside `def lib:` collides: the whole-module import binds the module name `lib` into the current scope, and the user's declaration also names `lib`. Fix-it: `import lib as L`."
+    (let [src-dir (tmp-dir)
+          out-dir (tmp-dir)
+          _       (write-file! src-dir "lib/util.cxc"
+                               "def Helper:\n    x: Int\n")
+          _       (write-file! src-dir "app.cxc"
+                               "import lib\n\ndef lib:\n    n: Int\n\ndef main:\n    -> running\n        then: print(1)\n")
+          ex      (try
+                    (build/compile-directory-to-file (.getPath src-dir)
+                                                     "prog" (.getPath out-dir))
+                    nil
+                    (catch clojure.lang.ExceptionInfo e e))]
+      (is (some? ex) "expected collision on the module-name binding")
+      (is (re-find #"F51 L3a: `lib` in module `main`" (ex-message ex)))
+      (is (= :cxc-f51-import-collides-with-decl (:kind (ex-data ex)))))))
+
+(deftest f51-l3a-collision-across-files-in-same-module
+  (testing "F51 L3a — the collision surface is the module, not the file: `def Helper:` in file a.cxc + `from lib import Helper` in file b.cxc (both under module `foo`) collides on `Helper`. The diagnostic names both files."
+    (let [src-dir (tmp-dir)
+          out-dir (tmp-dir)
+          _       (write-file! src-dir "lib/util.cxc"
+                               "def Helper:\n    x: Int\n")
+          _       (write-file! src-dir "foo/a.cxc"
+                               "def Helper:\n    n: Int\n")
+          _       (write-file! src-dir "foo/b.cxc"
+                               "from lib import Helper\n")
+          _       (write-file! src-dir "main.cxc"
+                               "from foo import Helper\n\ndef main:\n    -> running\n        then: print(1)\n")
+          ex      (try
+                    (build/compile-directory-to-file (.getPath src-dir)
+                                                     "prog" (.getPath out-dir))
+                    nil
+                    (catch clojure.lang.ExceptionInfo e e))]
+      (is (some? ex) "expected cross-file collision within the module")
+      (is (re-find #"F51 L3a: `Helper` in module `foo`" (ex-message ex)))
+      (is (re-find #"a\.cxc" (ex-message ex))
+          "diagnostic names the declaration file")
+      (is (re-find #"b\.cxc" (ex-message ex))
+          "diagnostic names the import file"))))
