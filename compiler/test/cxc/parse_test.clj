@@ -29,6 +29,42 @@
     (is (= [{:name "Clock" :as "C"} {:name "Random" :as nil}]
            (:names n)))))
 
+(deftest f52-l5-import-objc-parses
+  (testing "F52 L5 — `import objc \"Foundation/NSString.h\"` parses as `{:node :foreign-import :lang :objc :header \"...\"}`. Grammar + provenance only; header-path existence is F54's job. Disambiguating from regular `import X`: the token after `objc` is a string literal (regular imports have `.` or newline)."
+    (let [n (first-node "import objc \"Foundation/NSString.h\"\n")]
+      (is (= :foreign-import (node-kind n)))
+      (is (= :objc (:lang n)))
+      (is (= "Foundation/NSString.h" (:header n))))))
+
+(deftest f52-l5-import-c-parses
+  (testing "F52 L5 — `import c \"stdio.h\"` produces `{:node :foreign-import :lang :c :header \"stdio.h\"}`. Same disambiguation as objc — `c` followed by a string literal is the foreign-import head."
+    (let [n (first-node "import c \"stdio.h\"\n")]
+      (is (= :foreign-import (node-kind n)))
+      (is (= :c (:lang n)))
+      (is (= "stdio.h" (:header n))))))
+
+(deftest f52-l5-from-foreign-import-parses
+  (testing "F52 L5 — `from objc \"Foundation/NSString.h\" import NSString, NSData` produces `{:node :from-foreign-import :lang :objc :header \"...\" :names [{:name \"NSString\" :as nil} ...]}`. Same name-list shape as regular from-import (supports `as` aliasing per L2 semantics); disambiguating token vs regular from-import is the string literal after the lang ident."
+    (let [n (first-node "from objc \"Foundation/NSString.h\" import NSString, NSData as Data\n")]
+      (is (= :from-foreign-import (node-kind n)))
+      (is (= :objc (:lang n)))
+      (is (= "Foundation/NSString.h" (:header n)))
+      (is (= [{:name "NSString" :as nil} {:name "NSData" :as "Data"}]
+             (:names n))))))
+
+(deftest f52-l5-regular-import-still-parses-as-import
+  (testing "F52 L5 regression guard — the foreign-import branch must not fire for regular `import foo.bar` (bare ident followed by `.` or newline, not a string literal). Preserves F52 L1's `:import` node shape."
+    (let [n1 (first-node "import foo.bar\n")
+          n2 (first-node "import foo.bar as fb\n")
+          n3 (first-node "from foo import a, b as c\n")]
+      (is (= :import (node-kind n1)))
+      (is (= "foo.bar" (:from n1)))
+      (is (= :import (node-kind n2)))
+      (is (= "fb" (:as n2)))
+      (is (= :from-import (node-kind n3)))
+      (is (= "foo" (:from n3)))
+      (is (= [{:name "a" :as nil} {:name "b" :as "c"}] (:names n3))))))
+
 (deftest empty-record
   (testing "record with just data: section, one field"
     (let [n (first-node "def V:\n    x: Float\n")]

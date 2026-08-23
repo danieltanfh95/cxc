@@ -2791,6 +2791,18 @@
               "the file path instead (e.g. `from com.example.foo import "
               "X` where `com/example/foo.cxc` is the file).")))
 
+(defn- foreign-lang-head?
+  "F52 L5 — recognize `import <lang> \"header\"` / `from <lang>
+   \"header\" import ...` head. `<lang>` is a bare ident whose value
+   is `objc` or `c`, followed by a string literal (the header path).
+   Distinguishing feature vs regular imports: regular import is
+   `<lang>` followed by `.` (dotted) or `as`/newline (bare module
+   name); foreign import is `<lang>` followed by a string literal."
+  [tokens pos]
+  (and (at? tokens pos :ident)
+       (contains? #{"objc" "c"} (t-value (peek-tok tokens pos)))
+       (at? tokens (inc pos) :string)))
+
 (defn- parse-from-import
   "`from X import a[, b, c[ as d]]` at top level.
 
@@ -2801,24 +2813,52 @@
 
    `:names` is a vector of `{:name :as}` maps post-L2. Pre-L2 the
    shape was `[string...]`; downstream readers migrate to the new
-   shape via a `name-of` helper (or accept both)."
+   shape via a `name-of` helper (or accept both).
+
+   F52 L5 (2026-08-23) — foreign-import variant:
+     from objc \"Foundation/NSString.h\" import NSString, NSData
+     from c    \"stdio.h\"               import printf
+   Names in a foreign-import list register as opaque external
+   symbols (per spec §7 note on external interop); real header
+   validation is F54's job. Distinguishing token: string literal
+   after the lang ident (regular imports would have `.` or `import`
+   there)."
   [tokens pos]
-  (let [[_ p]      (expect tokens pos :kw "from")
-        [dotted p] (parse-dotted tokens p)
-        [_ p]      (expect tokens p :kw "import")]
-    (loop [names [] p p]
-      (let [[n p2]    (expect tokens p :ident)
-            [alias p3] (if (at? tokens p2 :kw "as")
-                         (let [[a p4] (expect tokens (inc p2) :ident)]
-                           [a p4])
-                         [nil p2])
-            entry      {:name n :as alias}]
-        (cond
-          (at? tokens p3 :punct ",")
-          (recur (conj names entry) (inc p3))
-          (at? tokens p3 :newline)
-          [{:node :from-import :from dotted :names (conj names entry)} (inc p3)]
-          :else (fail! tokens p3 "expected `,` or newline in from-import"))))))
+  (let [[_ p]      (expect tokens pos :kw "from")]
+    (if (foreign-lang-head? tokens p)
+      (let [lang        (keyword (t-value (peek-tok tokens p)))
+            header      (t-value (peek-tok tokens (inc p)))
+            p           (+ p 2)
+            [_ p]       (expect tokens p :kw "import")]
+        (loop [names [] p p]
+          (let [[n p2]     (expect tokens p :ident)
+                [alias p3] (if (at? tokens p2 :kw "as")
+                             (let [[a p4] (expect tokens (inc p2) :ident)]
+                               [a p4])
+                             [nil p2])
+                entry      {:name n :as alias}]
+            (cond
+              (at? tokens p3 :punct ",")
+              (recur (conj names entry) (inc p3))
+              (at? tokens p3 :newline)
+              [{:node :from-foreign-import :lang lang :header header
+                :names (conj names entry)} (inc p3)]
+              :else (fail! tokens p3 "expected `,` or newline in from-import")))))
+      (let [[dotted p] (parse-dotted tokens p)
+            [_ p]      (expect tokens p :kw "import")]
+        (loop [names [] p p]
+          (let [[n p2]     (expect tokens p :ident)
+                [alias p3] (if (at? tokens p2 :kw "as")
+                             (let [[a p4] (expect tokens (inc p2) :ident)]
+                               [a p4])
+                             [nil p2])
+                entry      {:name n :as alias}]
+            (cond
+              (at? tokens p3 :punct ",")
+              (recur (conj names entry) (inc p3))
+              (at? tokens p3 :newline)
+              [{:node :from-import :from dotted :names (conj names entry)} (inc p3)]
+              :else (fail! tokens p3 "expected `,` or newline in from-import"))))))))
 
 (defn- parse-import
   "F52 L1 — `import X` and `import X as Y` at top level.
@@ -2828,16 +2868,29 @@
    Cross-references the F51 L2 dep-graph builder — `import X` counts
    as a dependency on `X` from the current module, same as `from X
    import ...`. Namespace-scoped binding (`X.member` resolution) waits
-   on F51 L3."
+   on F51 L3.
+
+   F52 L5 (2026-08-23) — foreign-import variant:
+     import objc \"Foundation/NSString.h\"
+     import c    \"stdio.h\"
+   Produces `{:node :foreign-import :lang :objc|:c :header \"...\"}`.
+   Header validity is F54's job — L5 is parse-only. No dep-graph
+   entry (foreign modules aren't part of the user's module set)."
   [tokens pos]
-  (let [[_ p]       (expect tokens pos :kw "import")
-        [dotted p]  (parse-dotted tokens p)
-        [alias p]   (if (at? tokens p :kw "as")
-                      (let [[nm p2] (expect tokens (inc p) :ident)]
-                        [nm p2])
-                      [nil p])
-        [_ p]       (expect tokens p :newline)]
-    [{:node :import :from dotted :as alias} p]))
+  (let [[_ p]  (expect tokens pos :kw "import")]
+    (if (foreign-lang-head? tokens p)
+      (let [lang   (keyword (t-value (peek-tok tokens p)))
+            header (t-value (peek-tok tokens (inc p)))
+            p      (+ p 2)
+            [_ p]  (expect tokens p :newline)]
+        [{:node :foreign-import :lang lang :header header} p])
+      (let [[dotted p] (parse-dotted tokens p)
+            [alias p]  (if (at? tokens p :kw "as")
+                         (let [[nm p2] (expect tokens (inc p) :ident)]
+                           [nm p2])
+                         [nil p])
+            [_ p]      (expect tokens p :newline)]
+        [{:node :import :from dotted :as alias} p]))))
 
 ;; ---------------------------------------------------------------------------
 ;; F7 L1 — Alias declaration
