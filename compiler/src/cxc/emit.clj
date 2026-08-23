@@ -582,14 +582,25 @@
     "[_cxc_owned_resources removeAllObjects];"
     :end-cascade-parent
     ;; Notify parent (weak back-ref) to nil the slot holding self.
-    ;; Snapshot _parent + _parent_slot_name to strong locals so the
-    ;; block captures stable references (weak _parent could nil at any
-    ;; time; the runtime nil-guard in cxc_send_async covers that too).
+    ;; Snapshot _parent to a strong local so `weak _parent` doesn't
+    ;; race between the nil-check and the message send.
+    ;;
+    ;; F35 L6 (2026-08-23) — direct call, was `cxc_send_async(p, ^{
+    ;; [(id<CXCAtom>)p nilSlot:sn]; })`. Teardown path no longer has
+    ;; any "cleanup runs later" primitive: cleanup is on the caller's
+    ;; stack. Under Layer 4 parent + self both live on main, so the
+    ;; direct call is safe; F32 upgrades to `cxc_wait_for_processing
+    ;; (p, ^{ [(id<CXCAtom>)p nilSlot:sn]; })`. L7's spec §1.11 line
+    ;; 1284 auto-nil-visible-before-next-parent-guard guarantee falls
+    ;; out: the direct call completes before `-transitionToEnd`
+    ;; returns, so any queued-but-not-yet-dispatched message on
+    ;; parent's queue sees the nil ivar when its `when:` guard
+    ;; evaluates.
     (str "{\n"
          "    __strong id p = _parent;\n"
          "    NSString *sn = _parent_slot_name;\n"
          "    if (p != nil && sn != nil) {\n"
-         "        cxc_send_async(p, ^{ [(id<CXCAtom>)p nilSlot:sn]; });\n"
+         "        [(id<CXCAtom>)p nilSlot:sn];\n"
          "    }\n"
          "}")
     :main-bootstrap

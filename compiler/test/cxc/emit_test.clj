@@ -134,3 +134,18 @@
           "sync direct call with nil-guard")
       (is (not (str/includes? s "cxc_send_async(_helper"))
           "no async cascade dispatch"))))
+
+(deftest f35-l6-end-cascade-parent-emits-sync-direct-call
+  (testing "F35 L6 — `:end-cascade-parent` emits a synchronous direct call to the parent's `-nilSlot:`, not `cxc_send_async(p, ...)`. Teardown path no longer has any 'cleanup runs later' primitive; L7's spec §1.11 line 1284 auto-nil-visible-before-next-parent-guard guarantee falls out of the sync call."
+    (let [ast {:node :objc-program
+               :includes []
+               :structs []
+               :classes []
+               :main {:body [{:node :end-cascade-parent}]}}
+          s   (emit/emit ast)]
+      (is (str/includes? s "[(id<CXCAtom>)p nilSlot:sn];")
+          "sync direct call to parent's nilSlot:")
+      (is (not (str/includes? s "cxc_send_async(p"))
+          "no async parent-notify dispatch")
+      (is (str/includes? s "__strong id p = _parent;")
+          "parent still snapshotted to a strong local (weak race)"))))
