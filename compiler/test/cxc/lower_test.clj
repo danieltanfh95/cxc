@@ -3736,6 +3736,65 @@ def main:
       (is (str/includes? c-src "__cxc_snap._hp > 0")
           "guard reads through snapshot"))))
 
+;; ---------------------------------------------------------------------------
+;; F33 L2.d — snapshot reroute already covers on-enter bodies:
+;;   1. Non-initial-phase on-enter (`-> other_phase then: ...`) is inlined
+;;      by `inline-wildcard-then-stmts` via `lower-transition-branch`'s
+;;      ctx' — which L2.c already tagged with `:snapshot-name`. So reads in
+;;      such on-enter bodies automatically flip.
+;;   2. Initial-phase on-enter (`-> initial_phase then: ...`) inlines into
+;;      `cxc_stateInit`; snapshot is neither present nor semantically
+;;      meaningful (state is being constructed, no pre-transition value to
+;;      protect). Must stay raw.
+;;   3. `-> end` wildcards: field updates are a compile error (spec §1.11),
+;;      so snapshot semantics would be a no-op. Reads still use raw ivars —
+;;      no coherence issue since the atom is single-threaded and terminal.
+;; L2.d is an AUDIT landing: verify the above three shapes are consistent
+;; with the atomic-transition contract, no code change.
+;; ---------------------------------------------------------------------------
+
+(deftest f33-l2d-non-initial-on-enter-reads-route-through-snapshot
+  (testing "F33 L2.d — a `-> phaseX then: ...` wildcard whose target phase is NOT the initial phase (i.e., it fires when some message-transition sends us to phaseX) inherits snapshot semantics from the enclosing transition ctx (L2.c). Verifies the audit finding: L2.c's ctx-threading already covers on-enter bodies inlined via `inline-wildcard-then-stmts`."
+    (let [prog  (lower-src (str "def Enemy:\n"
+                                "    hp:  Int! = 3\n"
+                                "    log: Int! = 0\n\n"
+                                "    -> alive\n\n"
+                                "    -> dying\n"
+                                "        then: log => hp\n\n"
+                                "    alive <: die -> dying\n"
+                                "        then: hp => 0\n\n"
+                                "def main:\n"
+                                "    -> running\n        then: print(0)\n"))
+          c-src (emit/emit prog)]
+      ;; The `-> dying then: log => hp` wildcard inlines into the `die`
+      ;; branch (target=dying). Its read of `hp` MUST route through the
+      ;; snapshot — reading the pre-transition `hp` (3, before the
+      ;; `hp => 0` commit), not the just-written 0.
+      (is (str/includes? c-src "_log = __cxc_snap._hp;")
+          "on-enter body's `hp` read goes through snapshot, not raw ivar"))))
+
+(deftest f33-l2d-initial-on-enter-stays-raw-in-cxc-state-init
+  (testing "F33 L2.d — initial-phase on-enter inlines into `cxc_stateInit`, which is construction context. Snapshot must NOT be introduced there: the ivars are being INITIALIZED, so reading through a snapshot would read pre-init zero/nil, and the whole point of init is to assign the raw ivars. Verifies no snapshot appears in cxc_stateInit."
+    (let [prog  (lower-src (str "def Counter:\n"
+                                "    n: Int! = 0\n\n"
+                                "    -> alive\n"
+                                "        then: n => 42\n\n"
+                                "def main:\n"
+                                "    c: Counter = Counter()\n"
+                                "    -> running\n        then: print(0)\n"))
+          c-src (emit/emit prog)
+          ;; Isolate the method body: everything between the `-
+          ;; (void)cxc_stateInit {` opening of Counter's stateInit and
+          ;; the next `- (void)` method start.
+          [_ after-open] (str/split c-src #"- \(void\)cxc_stateInit \{" 2)
+          init-body      (when after-open
+                           (first (str/split after-open #"\n- \(void\)" 2)))]
+      (is (some? init-body) "expected a cxc_stateInit method body")
+      (is (str/includes? init-body "_n = 42;")
+          "on-enter update lands on raw ivar in stateInit")
+      (is (not (str/includes? init-body "__cxc_snap"))
+          "no snapshot machinery in cxc_stateInit body"))))
+
 (deftest f33-l2c-init-body-still-uses-raw-ivar
   (testing "F33 L2.c — init-body (`cxc_stateInit`) is NOT a receive-glyph body and MUST NOT read through the snapshot: the snapshot doesn't exist during construction, and default-expression init runs against the raw ivars being assigned. Guards against overreach into non-transition entry sites."
     (let [prog  (lower-src (str "def Counter:\n"
