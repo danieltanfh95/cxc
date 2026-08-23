@@ -920,3 +920,103 @@
           "diagnostic names the declaration file")
       (is (re-find #"b\.cxc" (ex-message ex))
           "diagnostic names the import file"))))
+
+;; ---------------------------------------------------------------------------
+;; F53 L1 — per-module cxc-manifest.json emission.
+;; ---------------------------------------------------------------------------
+
+(defn- manifest-path [^java.io.File out-dir module]
+  (java.io.File. out-dir (str module ".cxc-manifest.json")))
+
+(deftest f53-l1-manifest-emitted-for-single-file
+  (testing "F53 L1 — a src-dir with a single file at the root produces module `:main` and writes `main.cxc-manifest.json` alongside the compiled binary."
+    (let [src-dir (tmp-dir)
+          out-dir (tmp-dir)
+          _       (write-file! src-dir "app.cxc"
+                               "def Foo:\n    n: Int\n\ndef main:\n    -> running\n        then: print(1)\n")
+          {:keys [status stderr]}
+          (build/compile-directory-to-file (.getPath src-dir)
+                                           "prog" (.getPath out-dir))
+          m-file  (manifest-path out-dir "main")]
+      (is (zero? status) (str "clang failed: " stderr))
+      (is (.exists m-file) "main.cxc-manifest.json written to out-dir")
+      (is (pos? (.length m-file)) "manifest is non-empty"))))
+
+(deftest f53-l1-manifest-includes-all-declarations
+  (testing "F53 L1 — every user declaration in the module (records, atoms, enums) appears in the manifest's exports array with its kind."
+    (let [src-dir (tmp-dir)
+          out-dir (tmp-dir)
+          _       (write-file! src-dir "app.cxc"
+                               (str "def Widget:\n    n: Int\n\n"
+                                    "def Kind:\n    case red\n    case blue\n\n"
+                                    "def main:\n    -> running\n        then: print(1)\n"))
+          {:keys [status]}
+          (build/compile-directory-to-file (.getPath src-dir)
+                                           "prog" (.getPath out-dir))
+          m-json  (slurp (manifest-path out-dir "main"))]
+      (is (zero? status))
+      (is (re-find #"\"name\": \"Widget\"" m-json) "Widget export present")
+      (is (re-find #"\"kind\": \"record\"" m-json) "record kind serialised")
+      (is (re-find #"\"name\": \"Kind\"" m-json) "Kind export present")
+      (is (re-find #"\"kind\": \"enum\"" m-json) "enum kind serialised")
+      (is (re-find #"\"name\": \"main\"" m-json) "main atom export present")
+      (is (re-find #"\"kind\": \"def-atom\"" m-json) "def-atom kind serialised"))))
+
+(deftest f53-l1-manifest-shape-matches-schema
+  (testing "F53 L1 — the manifest carries the top-level shape keys the v1 schema requires: $schema, module, compiler-version, compiled-at, source-hash, source-files, exports, imports."
+    (let [src-dir (tmp-dir)
+          out-dir (tmp-dir)
+          _       (write-file! src-dir "app.cxc"
+                               "def main:\n    -> running\n        then: print(1)\n")
+          _       (build/compile-directory-to-file (.getPath src-dir)
+                                                    "prog" (.getPath out-dir))
+          m-json  (slurp (manifest-path out-dir "main"))]
+      (is (re-find #"\"\$schema\": \"cxc-manifest/v1\"" m-json))
+      (is (re-find #"\"module\": \"main\"" m-json))
+      (is (re-find #"\"compiler-version\":" m-json))
+      (is (re-find #"\"compiled-at\":" m-json))
+      (is (re-find #"\"source-hash\":" m-json))
+      (is (re-find #"\"source-files\":" m-json))
+      (is (re-find #"\"exports\":" m-json))
+      (is (re-find #"\"imports\":" m-json)))))
+
+(deftest f53-l1-manifest-emitted-per-module-in-multi-file
+  (testing "F53 L1 — in multi-file mode with modules `lib` and `main`, one manifest is written per user module and each manifest lists only that module's declarations."
+    (let [src-dir (tmp-dir)
+          out-dir (tmp-dir)
+          _       (write-file! src-dir "lib/util.cxc"
+                               "def Helper:\n    x: Int\n")
+          _       (write-file! src-dir "app.cxc"
+                               "from lib import Helper\n\ndef main:\n    -> running\n        then: print(1)\n")
+          _       (build/compile-directory-to-file (.getPath src-dir)
+                                                    "prog" (.getPath out-dir))
+          lib-json  (slurp (manifest-path out-dir "lib"))
+          main-json (slurp (manifest-path out-dir "main"))
+          main-exports (first (clojure.string/split main-json #"\"imports\":"))]
+      (is (re-find #"\"module\": \"lib\"" lib-json) "lib manifest names lib")
+      (is (re-find #"\"name\": \"Helper\"" lib-json) "lib manifest lists Helper")
+      (is (not (re-find #"\"name\": \"Helper\"" main-exports))
+          "main manifest's exports do NOT list Helper (that's lib's export)")
+      (is (re-find #"\"module\": \"main\"" main-json) "main manifest names main")
+      (is (re-find #"\"name\": \"main\"" main-exports) "main manifest exports the main atom")
+      (is (re-find #"\"kind\": \"from-import\"" main-json)
+          "main manifest records its from-import of Helper"))))
+
+(deftest f53-l1-manifest-source-hash-changes-on-source-change
+  (testing "F53 L1 — the manifest's source-hash reflects the module's source contents; two different sources produce two different hashes (sha256)."
+    (let [compile-once
+          (fn [src-content]
+            (let [src-dir (tmp-dir)
+                  out-dir (tmp-dir)
+                  _       (write-file! src-dir "app.cxc" src-content)
+                  _       (build/compile-directory-to-file (.getPath src-dir)
+                                                            "prog" (.getPath out-dir))
+                  json    (slurp (manifest-path out-dir "main"))]
+              (second (re-find #"\"source-hash\": \"([^\"]+)\"" json))))
+          h1 (compile-once
+              "def Foo:\n    n: Int\n\ndef main:\n    -> running\n        then: print(1)\n")
+          h2 (compile-once
+              "def Foo:\n    n: Int\n    m: Int\n\ndef main:\n    -> running\n        then: print(1)\n")]
+      (is (some? h1) "hash extractable from first manifest")
+      (is (some? h2) "hash extractable from second manifest")
+      (is (not= h1 h2) "different sources → different source-hash"))))

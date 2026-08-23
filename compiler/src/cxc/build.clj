@@ -3,11 +3,13 @@
    the resulting binary's path. Assumes clang is on PATH."
   (:require [clojure.java.io :as io]
             [clojure.java.shell :as shell]
-            [cxc.parse   :as parse]
-            [cxc.alias   :as alias]
-            [cxc.lower   :as lower]
-            [cxc.emit    :as emit]
-            [cxc.prelude :as prelude]))
+            [cxc.parse    :as parse]
+            [cxc.alias    :as alias]
+            [cxc.lower    :as lower]
+            [cxc.emit     :as emit]
+            [cxc.manifest :as manifest]
+            [cxc.prelude  :as prelude]
+            [cxc.resolve  :as resolve]))
 
 ;; ---------------------------------------------------------------------------
 ;; Build cache (tier 1: .m → binary)
@@ -566,6 +568,82 @@
                 (.getPath ^java.io.File file)])
              files-with-nodes)))
 
+;; ---------------------------------------------------------------------------
+;; F53 L1 — per-module manifest emission (post-successful-compile).
+;;
+;; For every user module, group its files, compute a source hash across
+;; the sorted file contents, gather its import nodes, and hand the
+;; per-module descriptor to `manifest/emit-manifest!`. The symbol
+;; table is derived from the concatenated file nodes so entries carry
+;; correct `:module` provenance for filtering downstream.
+;; ---------------------------------------------------------------------------
+
+(defn- iso-utc-now
+  "Return the current UTC instant formatted as an ISO-8601 string
+   without sub-second precision (`2026-08-23T12:34:56Z`). Kept in one
+   place so future manifest changes can shift to a fixed clock for
+   deterministic tests."
+  []
+  (let [inst (java.time.Instant/now)]
+    (-> inst
+        (.truncatedTo java.time.temporal.ChronoUnit/SECONDS)
+        (.toString))))
+
+(defn- symbol-table-across-modules
+  "Build a unified symbol table across every file in every user
+   module. Prepends a synthetic `:module <name>` node before each
+   file's parsed nodes so `resolve/build-symbol-table` attributes
+   each declaration to its owning module. Prelude decls aren't part
+   of these files, so per-module filtering later yields only
+   user-declared entries."
+  [files-with-nodes]
+  (let [tagged (mapcat (fn [{:keys [module nodes]}]
+                         (cons {:node :module :name (clojure.core/name module)}
+                               nodes))
+                       files-with-nodes)]
+    (resolve/build-symbol-table (vec tagged))))
+
+(defn- import-nodes-for-module [files-with-nodes module]
+  (into []
+        (comp (filter #(= module (:module %)))
+              (mapcat :nodes)
+              (filter #(contains? #{:from-import :import} (:node %))))
+        files-with-nodes))
+
+(defn- source-hash-for-module [files-with-nodes module]
+  (let [sources (into []
+                      (comp (filter #(= module (:module %)))
+                            (map #(slurp (:file %))))
+                      files-with-nodes)]
+    (sha256-hex (clojure.string/join "\n" sources))))
+
+(defn- source-files-for-module [files-with-nodes module]
+  (into []
+        (comp (filter #(= module (:module %)))
+              (map #(.getPath ^java.io.File (:file %)))
+              (map str))
+        files-with-nodes))
+
+(defn- emit-module-manifests!
+  "F53 L1 — write `<out-dir>/<module>.cxc-manifest.json` for every
+   user module present in `files-with-nodes`. Deterministic order:
+   modules sorted by name for reproducible builds."
+  [out-dir files-with-nodes]
+  (let [symbol-table (symbol-table-across-modules files-with-nodes)
+        compiled-at  (iso-utc-now)
+        modules      (into (sorted-set) (map :module) files-with-nodes)]
+    (doseq [module modules]
+      (manifest/emit-manifest!
+        (io/file out-dir)
+        module
+        (manifest/build-manifest
+          {:module        module
+           :source-files  (source-files-for-module files-with-nodes module)
+           :source-hash   (source-hash-for-module files-with-nodes module)
+           :symbol-table  symbol-table
+           :imports       (import-nodes-for-module files-with-nodes module)
+           :compiled-at   compiled-at})))))
+
 (defn compile-directory-to-file
   "Compile every `*.cxc` file under `src-dir` as one program. Files
    are read in sorted order (stable across runs), imports are
@@ -580,6 +658,9 @@
 
    F55 Landing 3: `opts` map with `:target` selects the platform
    prelude; passed through to `compile-source-to-file`.
+
+   F53 L1: on successful compile, emits `<module>.cxc-manifest.json`
+   for every user module under `out-dir`.
 
    Same return shape as compile-source-to-file."
   ([src-dir name out-dir]
@@ -651,10 +732,16 @@
                 (str "module " (clojure.core/name module) "\n\n"
                      (strip-module-and-import-lines (slurp file))))
               files-with-nodes)
-        combined (clojure.string/join "\n\n" with-module-headers)]
-    ;; F73 note: user `module` headers are rejected at parse-time; the
-    ;; build injects synthetic ones here for per-file provenance and
-    ;; passes `:allow-build-modules?` so the re-parse in
-    ;; `compile-source-to-file` accepts them via `parse-with-build-modules`.
-    (compile-source-to-file combined name out-dir
-                            (assoc opts :allow-build-modules? true)))))
+        combined (clojure.string/join "\n\n" with-module-headers)
+        ;; F73 note: user `module` headers are rejected at parse-time; the
+        ;; build injects synthetic ones here for per-file provenance and
+        ;; passes `:allow-build-modules?` so the re-parse in
+        ;; `compile-source-to-file` accepts them via `parse-with-build-modules`.
+        result   (compile-source-to-file combined name out-dir
+                                          (assoc opts :allow-build-modules? true))]
+    ;; F53 L1 — emit one `<module>.cxc-manifest.json` per user module.
+    ;; Only fires on successful compile so a clang failure doesn't
+    ;; leave behind a manifest for code that didn't build.
+    (when (zero? (:status result))
+      (emit-module-manifests! out-dir files-with-nodes))
+    result)))
