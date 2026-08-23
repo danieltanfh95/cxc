@@ -1,0 +1,48 @@
+def Child:
+    -> alive
+
+    alive <: die -> end
+        then: :> finished
+
+def Parent:
+    child:    Child = Child()
+    raw_hits: Int   = 0
+
+    hits :< raw_hits
+
+    -> alive
+
+    alive <: child.finished -> alive
+        when: child is nil
+        then:
+            raw_hits => raw_hits + 1
+            :> ok
+
+def main:
+    home: Parent = Parent()
+
+    -> running
+        then: |> home.child.die()
+
+    running <: home.ok -> end
+        then: print(home.hits)
+
+# F35 L7 — pins spec §1.11 line 1284 auto-nil guarantee.
+#
+# Under L5 (sync post-order teardown) + L6 (sync parent-notify), the
+# parent's `[p nilSlot:sn]` runs synchronously inside the child's
+# `-transitionToEnd`. child's `:> finished` emit enqueues its
+# fan-out blocks onto child's own queue (drains later); nilSlot:
+# fires synchronously INSIDE the sync die-transition on the C main
+# thread before dispatch_main() even starts. By the time the queued
+# finished-block eventually dispatches to home, `home._child` has
+# been nil for a while.
+#
+# Home's transition `alive <: child.finished -> alive when: child
+# is nil` MUST see the guard as true; then it bumps raw_hits AND
+# emits `:> ok`. Main waits on `home.ok` before ending — so main
+# doesn't cxc_shutdown() until home's stream-receive has actually
+# run. If the guard were false, no ok emit fires, and dispatch_main
+# would idle forever (test would time out, not print 0).
+#
+# Prints 1.

@@ -445,6 +445,12 @@
       (is (zero? exit))
       (is (= "1\n" stdout)))))
 
+(deftest end-to-end-auto-nil-visible-to-next-parent-guard
+  (testing "auto-nil-visible-to-next-parent-guard.cxc — F35 L7 pins spec §1.11 line 1284: sub-atom slot auto-nils atomically at the end of the sub-atom's `end`-transition, BEFORE any other transition on the parent evaluates its `when:` guard. Child emits `:> finished` in its die-transition, then transitionToEnd runs sync (L5 cascade + L6 [home nilSlot:@\"child\"] direct call) → `home._child = nil`. Home's `alive <: child.finished` receive dispatches later, guard `when: child is nil` MUST see nil (proof of L7 guarantee). Guard-passes path emits `:> ok` back to main. Main waits on `home.ok` before ending — so if the guard were false, no ok emit fires, dispatch_main idles forever (test hangs, not prints 0). Prints 1."
+    (let [{:keys [exit stdout]} (compile-and-run "auto-nil-visible-to-next-parent-guard")]
+      (is (zero? exit))
+      (is (= "1\n" stdout)))))
+
 (deftest end-to-end-random-below
   (testing "random-below.cxc — Layer 5b Step 11. Prelude ships `Random` with `next_u32 :< native_random_u32()` observable and `below(n)` method wrapping `native_random_below(n)` — both hatched through the FFI-builtin registry to `arc4random`/`arc4random_uniform`. Deterministic assertion: `rng.below(1)` always returns 0."
     (let [{:keys [exit stdout]} (compile-and-run "random-below")]
