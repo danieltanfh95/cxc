@@ -5698,10 +5698,19 @@
         ;; `:do-clause` bodies (legacy) and `:then-clause` `:stmts`
         ;; (I3 unified). Walk body-clauses in source order so
         ;; ordering across the two kinds is preserved.
+        ;;
+        ;; F33 L3.d — `do:` runs after the commit. Its reads should
+        ;; observe the just-committed live ivars, not the pre-
+        ;; transition snapshot. Drop `:snapshot-name` from the ctx
+        ;; passed to `lower-do-clause` / `lower-body-stmts` for
+        ;; :then-clause `:stmts` so bare-ident reads fall back to
+        ;; raw ivars. `then:` `:updates` above still use ctx' (with
+        ;; snapshot) since they compute against pre-transition state.
+        ctx-post-commit (dissoc ctx' :snapshot-name)
         do-stmts     (vec (mapcat (fn [c]
                                     (case (:node c)
-                                      :do-clause   (lower-do-clause c ctx')
-                                      :then-clause (lower-body-stmts (:stmts c) ctx')
+                                      :do-clause   (lower-do-clause c ctx-post-commit)
+                                      :then-clause (lower-body-stmts (:stmts c) ctx-post-commit)
                                       nil))
                                   body-clauses))
         ;; Audit F24: `-> self` means self-transition, no phase change
@@ -5729,7 +5738,10 @@
                            []
                            (get wildcards-by-phase target []))
         w-then-stmts (inline-wildcard-then-stmts target-wildcards ctx')
-        w-do-stmts   (inline-wildcard-do-stmts   target-wildcards ctx')
+        ;; F33 L3.d — wildcard do: (inlined here) runs post-commit
+        ;; alongside the specific do: stmts; reads should see live
+        ;; ivars (drop `:snapshot-name`).
+        w-do-stmts   (inline-wildcard-do-stmts   target-wildcards ctx-post-commit)
         ;; target=end routes through -transitionToEnd (design §7.3);
         ;; that method owns phase-set, `-> end` wildcard, cascade,
         ;; parent notify. Audit F26: spec §1.11 line 1281 —

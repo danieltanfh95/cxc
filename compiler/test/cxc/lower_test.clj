@@ -3872,6 +3872,35 @@ def main:
           "nonnil check reads bag field (the just-written value)"))))
 
 ;; ---------------------------------------------------------------------------
+;; F33 L3.d — `do:` clauses run post-commit; their ident reads should route
+;; to live ivars, not the pre-transition snapshot, since the commit has
+;; already landed by the time `do:` fires. Semantic flip achieved by
+;; dropping `:snapshot-name` from the ctx passed to `lower-do-clause` /
+;; `lower-body-stmts` (for :then-clause :stmts under F70 I3).
+;; ---------------------------------------------------------------------------
+
+(deftest f33-l3d-do-clause-reads-live-ivar-not-snapshot
+  (testing "F33 L3.d — a `then:` `:stmts` block on a receive-glyph transition (post-F70 unified surface — side-effect stmts after field updates) reads live ivars (post-commit), not the pre-transition snapshot. Under `then: n => n + 1  print(n)`, the commit sequence lands the bag write onto `_n` BEFORE the print stmt fires; the read must see the new value."
+    (let [prog  (lower-src (str "def Counter:\n"
+                                "    n: Int! = 0\n\n"
+                                "    -> running\n\n"
+                                "    running <: bump -> running\n"
+                                "        then:\n"
+                                "            n => n + 1\n"
+                                "            print(n)\n\n"
+                                "def main:\n"
+                                "    -> running\n        then: print(0)\n"))
+          c-src (emit/emit prog)]
+      ;; Side-effect print reads `n` as a bare ident — L3.d makes this
+      ;; route to `_n` (live ivar), NOT `__cxc_snap._n`. Commit runs
+      ;; earlier so `_n` holds the new value at print time. The print
+      ;; lowers via `printf("%lld\n", (long long)(_n));`.
+      (is (str/includes? c-src "(long long)(_n)")
+          "post-commit stmt reads live ivar (_n)")
+      (is (not (str/includes? c-src "(long long)(__cxc_snap._n)"))
+          "post-commit stmt does NOT route through the pre-transition snapshot"))))
+
+;; ---------------------------------------------------------------------------
 ;; F33 L2.d — snapshot reroute already covers on-enter bodies:
 ;;   1. Non-initial-phase on-enter (`-> other_phase then: ...`) is inlined
 ;;      by `inline-wildcard-then-stmts` via `lower-transition-branch`'s
