@@ -3012,14 +3012,20 @@
           :else (fail-nyi! (str "method/observable `" method-name "` on atom `" an "`")
                            call-node)))
 
-      ;; F37 L6a — primitive-method dispatch on `:bytes` values. `.at`
-      ;; is the only method shipped in the initial landing; `.slice`
-      ;; and `.bytes` follow when a use case forces them. Returns Int
-      ;; (a byte widened to 64-bit) so downstream numeric code doesn't
-      ;; require an explicit widen.
+      ;; F37 L6a — primitive-method dispatch on `:bytes` values.
+      ;; `.at(offset) -> Int` returns a widened byte; `.slice(start,
+      ;; length) -> Bytes` returns a fresh NSMutableData covering the
+      ;; requested range (Range grammar hasn't landed yet, so the
+      ;; two-positional-arg shape is the interim MVP surface). `.bytes`
+      ;; (raw pointer) has no cxc-type representation and stays
+      ;; compiler-internal until F37 L6 wires it into decode synthesis.
       (and (keyword? target-ty) (= :bytes target-ty)
            (= "at" method-name))
       :int
+
+      (and (keyword? target-ty) (= :bytes target-ty)
+           (= "slice" method-name))
+      :bytes
 
       :else
       (fail-nyi! "method call on non-record/non-atom target" call-node))))
@@ -3894,6 +3900,26 @@
                :emit-c-fn (fn [[b o]]
                             (str "((int64_t)((const uint8_t *)["
                                  b " bytes])[" o "])"))})
+
+          ;; F37 L6a — `Bytes.slice(start: Int, length: Int) -> Bytes`.
+          ;; Emits `[(NSMutableData *)[bytes subdataWithRange:NSMakeRange(start, length)] mutableCopy]`
+          ;; — Foundation's -subdataWithRange returns an immutable
+          ;; NSData; -mutableCopy up-converts to NSMutableData so the
+          ;; result keeps the same C-level type as Bytes elsewhere.
+          ;; One allocation per call. Two-positional-arg shape is the
+          ;; interim MVP surface — Range grammar hasn't landed yet.
+          (and (keyword? target-ty) (= :bytes target-ty)
+               (= "slice" method-name))
+          (do (when-not (= 2 (count arg-exprs))
+                (fail-nyi! (str "F37 L6a: `Bytes.slice` expects exactly two "
+                                "args (start, length), got " (count arg-exprs))
+                           call-node))
+              {:node      :ffi-call
+               :name      "cxc_bytes_slice"
+               :args      (into [target-lo] arg-exprs)
+               :emit-c-fn (fn [[b s l]]
+                            (str "[[" b " subdataWithRange:NSMakeRange("
+                                 s ", " l ")] mutableCopy]"))})
 
           (and (map? target-ty) (:atom target-ty))
           (let [atom-name   (:atom target-ty)

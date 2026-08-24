@@ -4202,3 +4202,33 @@ def main:
                          "        then:\n"
                          "            let b: Bytes = Vec(x: 1).as()\n"
                          "            print(b.at())\n"))))))
+
+(deftest f37-l6a-bytes-slice-emits-subdata-with-range
+  (testing "F37 L6a — `bytes.slice(start, length)` lowers to `[[bytes subdataWithRange:NSMakeRange(start, length)] mutableCopy]`. The `-mutableCopy` up-converts the Foundation-returned NSData to NSMutableData so the result keeps Bytes's C-level type. One allocation per call."
+    (let [prog (lower-src (str "def Vec:\n"
+                               "    x: Int32!\n"
+                               "    y: Int32!\n\n"
+                               "def main:\n"
+                               "    -> running\n"
+                               "        then:\n"
+                               "            let b: Bytes = Vec(x: 1, y: 2).as()\n"
+                               "            let s: Bytes = b.slice(4, 4)\n"
+                               "            print(s.length)\n"))
+          c-src (emit/emit prog)]
+      (is (str/includes? c-src " subdataWithRange:NSMakeRange(")
+          "Foundation's -subdataWithRange call is emitted")
+      (is (str/includes? c-src " mutableCopy]")
+          "-mutableCopy converts NSData → NSMutableData"))))
+
+(deftest f37-l6a-bytes-slice-wrong-arity-rejected
+  (testing "F37 L6a — `.slice()`, `.slice(a)`, and `.slice(a, b, c)` are hard errors at lower time."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"F37 L6a: `Bytes.slice` expects exactly two args"
+         (lower-src (str "def Vec:\n"
+                         "    x: Int32!\n\n"
+                         "def main:\n"
+                         "    -> running\n"
+                         "        then:\n"
+                         "            let b: Bytes = Vec(x: 1).as()\n"
+                         "            print(b.slice(0).length)\n"))))))
