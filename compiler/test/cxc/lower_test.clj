@@ -16,6 +16,14 @@
     (:body (first (filter #(= "cxc_stateInit" (:selector %)) (:methods cxc-main))))
     (get-in prog [:main :body])))
 
+(deftest f15-l2c-iii-b-lowered-program-carries-empty-typedefs-field
+  (testing "F15 L2.c.iii.b — the lowered program AST now carries a `:named-tuple-typedefs` string. Today no source program lowers to an AST containing `:type-named-tuple` (lower fails-nyi on any occurrence), so `collect-shapes` finds nothing and the field is an empty string. Backward-compat: existing programs produce byte-identical .m output because the emit hook (L2.c.iii.a) omits empty strings from its join. When L2.c.iii.c teaches lower to preserve named-tuple type info, this field populates automatically."
+    (let [prog (lower-src "def main:\n    -> running\n        then: print(1)\n")]
+      (is (contains? prog :named-tuple-typedefs)
+          "the wire-in surfaces the field on every lowered program")
+      (is (= "" (:named-tuple-typedefs prog))
+          "no named-tuple shapes reach lower today → empty string"))))
+
 (deftest hello-world-program-lowers
   (testing "def main: -> running then: print(\"hello, world\") lowers cleanly. F65 — Foundation is always included because String is NSString *; the string literal lowers as :objc-str (`@\"...\"`) rather than :str (`\"...\"`)."
     (let [prog (lower-src "def main:

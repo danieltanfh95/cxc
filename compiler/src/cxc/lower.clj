@@ -62,6 +62,7 @@
       :locals     <name -> ty>       ; local scope for method bodies etc."
   (:require [clojure.string :as str]
             [clojure.walk :as walk]
+            [cxc.named-tuple :as named-tuple]
             [cxc.prelude :as prelude]
             [cxc.resolve :as resolve]))
 
@@ -9095,6 +9096,23 @@
      :structs             structs
      :functions           functions
      :classes             classes
+     ;; F15 L2.c.iii.b — named-tuple typedef block populated by walking
+     ;; the LOWERED program AST via `collect-shapes`. Today every
+     ;; `:type-named-tuple` node in a source program crashes lower with
+     ;; a fail-nyi (no lowering rule handles it), so lowered ASTs never
+     ;; contain named-tuple type nodes and this collection is always
+     ;; empty. When L2.c.iii.c teaches lower to preserve named-tuple
+     ;; type info in the lowered AST, this call surfaces the shapes
+     ;; automatically and the emit hook (L2.c.iii.a) renders them into
+     ;; the .m file. Zero-cost forward-compat wiring per the storage-
+     ;; flip discipline (fan-out sites as guarded dead code before the
+     ;; flip).
+     :named-tuple-typedefs (named-tuple/emit-typedefs
+                             (named-tuple/collect-shapes
+                              {:structs   structs
+                               :classes   classes
+                               :functions functions})
+                             primitive-c-type)
      ;; F9 L2 — registration-only for now (no consumer yet). Surfaced
      ;; on the lowered program so tests can assert protocol-env shape
      ;; and downstream L4+ landings can wire dispatch off a single
