@@ -155,17 +155,17 @@
     (is (not (sec/protected? :my_custom_section)))))
 
 (deftest registry-seeded-with-protected-reservations
-  (testing "F8 D5 + L3b.i — the registry is seeded with a protected entry for every protected name. Names still awaiting backend wire-in carry `:kind :reserved` + `:spec nil`; names whose backend has landed (L3b.i: `invariants` → F49 machinery) carry `:kind :behavioral` + a spec pointer. The seed guarantees `alias X:` sees a collision regardless of wire-in state."
+  (testing "F8 D5 + L3b.i + L3d.i — the registry is seeded with a protected entry for every protected name. Names still awaiting backend wire-in carry `:kind :reserved` + `:spec nil`; names whose backend has landed carry `:kind :behavioral` + a spec pointer (L3b.i: `invariants` → F49 machinery; L3d.i: `deprecated` → K3 walker). The seed guarantees `alias X:` sees a collision regardless of wire-in state."
     ;; Reserved-shape entries: backend not yet claimed via the registry.
     (let [e (sec/lookup :computed)]
       (is (some? e))
       (is (= :computed (:name e)))
       (is (= :reserved (:kind e))))
     (is (= :reserved (:kind (sec/lookup :metadata))))
-    (is (= :reserved (:kind (sec/lookup :deprecated))))
     (is (= :reserved (:kind (sec/lookup :use))))
-    ;; L3b.i behavioral-shape entry.
-    (is (= :behavioral (:kind (sec/lookup :invariants))))))
+    ;; Behavioral-shape entries.
+    (is (= :behavioral (:kind (sec/lookup :invariants))))
+    (is (= :behavioral (:kind (sec/lookup :deprecated))))))
 
 (deftest invariants-seed-records-f49-backend
   (testing "F8 L3b.i — the `:invariants` seed carries a spec pointer describing where the compiler already handles the section: F49 invariant-check machinery on the lower side, `parse-invariants-section` on the parse side. Downstream (L3b.ii) can consult this to route parser dispatch through the registry without re-hardcoding the section-name keyword. Case-insensitive lookup preserved via `normalize-name` in `lookup`."
@@ -178,6 +178,19 @@
     ;; Same shape survives the case-insensitive lookup path.
     (is (= :behavioral (:kind (sec/lookup "Invariants"))))
     (is (= :behavioral (:kind (sec/lookup :Invariants))))))
+
+(deftest deprecated-seed-records-k3-backend
+  (testing "F8 L3d.i — the `:deprecated` seed carries the same shape as `:invariants` (L3b.i): impl / backend / parser-sym, plus a `:walker-sym` pointing at build.clj's `warn-deprecated-uses` (K3 Layer 6 Step 11). L3d.ii will consult this to route both parse dispatch and post-parse walker dispatch through the registry. Case-insensitive lookup preserved."
+    (let [e (sec/lookup :deprecated)]
+      (is (= :behavioral (:kind e)))
+      (is (= :compiler-baked (get-in e [:spec :impl])))
+      (is (= :k3-deprecation-walker (get-in e [:spec :backend])))
+      (is (= 'cxc.parse/parse-deprecated-section
+             (get-in e [:spec :parser-sym])))
+      (is (= 'cxc.build/warn-deprecated-uses
+             (get-in e [:spec :walker-sym]))))
+    (is (= :behavioral (:kind (sec/lookup "Deprecated"))))
+    (is (= :behavioral (:kind (sec/lookup :Deprecated))))))
 
 (deftest register-rejects-protected-name-shadow
   (testing "F8 D5 — `register!` hard-errors when the caller passes a protected section-header name. This is the guard behind `alias computed: runtime immutable identity` at parse time (via register-section-header-alias!) and behind the future L4 `section class Computed:` user syntax. Diagnostic names the reserved header and lists the full protected set."
@@ -221,4 +234,6 @@
     (is (= :reserved (:kind (sec/lookup :computed)))
         ":reserved protected entries still present after clear")
     (is (= :behavioral (:kind (sec/lookup :invariants)))
-        "L3b.i behavioral seed still present after clear")))
+        "L3b.i behavioral seed still present after clear")
+    (is (= :behavioral (:kind (sec/lookup :deprecated)))
+        "L3d.i behavioral seed still present after clear")))

@@ -211,27 +211,44 @@
    invariants through `def-atom-invariants` / extend-class merging.
    This seed makes that ownership explicit.
 
+   `:deprecated` — K3 deprecation walker (build.clj Layer 6 Step 11
+   `warn-deprecated-uses`) walks each parsed program for `:type-ref` /
+   `:call` references to definitions carrying a `:deprecated` node
+   and emits stderr warnings. The parser handles `deprecated:` via
+   `parse-deprecated-section`. Same shape as `:invariants` — backend
+   landed, registry ownership not yet wired.
+
    `:computed` intentionally stays `:reserved` even though L3a
    shipped: L3a chose parse-time sugar (rewrite to zero-arg
    observables before lower sees the AST) rather than a
    generator-carrying spec, so there's no `:spec` shape to record
    without inventing new metadata schema. Promoting `:computed`
    waits on a followup that decides the metadata schema for
-   parse-sugar sections."
+   parse-sugar sections.
+
+   `:metadata` / `:use` remain `:reserved` — no compiler backend has
+   claimed them yet (metadata artifact emission is F53-adjacent but
+   goes through `.cxc-manifest.json`, not a `metadata:` section;
+   `use:` capability requests wait on K6)."
   {:invariants {:impl        :compiler-baked
                 :backend     :f49-invariant-machinery
                 :parser-sym  'cxc.parse/parse-invariants-section
-                :notes       "L3b.i metadata-only; L3b.ii will wire dispatch."}})
+                :notes       "L3b.i metadata-only; L3b.ii will wire dispatch."}
+   :deprecated {:impl        :compiler-baked
+                :backend     :k3-deprecation-walker
+                :parser-sym  'cxc.parse/parse-deprecated-section
+                :walker-sym  'cxc.build/warn-deprecated-uses
+                :notes       "L3d.i metadata-only; L3d.ii will wire dispatch."}})
 
 (def registry
   "Section-class registry — `{section-name-keyword → spec}`. Seeded
    with F8 D5 protected reservations. Names with a landed backend
-   carry `:kind :behavioral` + a spec pointer (F8 L3b.i: `invariants`
-   → F49 machinery); names still awaiting behavioral wire-in carry
-   `:kind :reserved` + `:spec nil`. L4 (`section class Name:` user
-   syntax) adds entries for unprotected names. Kept as a var so the
-   parser hook and future L4 declaration handler consult a single
-   canonical location.
+   carry `:kind :behavioral` + a spec pointer (L3b.i: `invariants`
+   → F49 machinery; L3d.i: `deprecated` → K3 walker); names still
+   awaiting behavioral wire-in carry `:kind :reserved` + `:spec
+   nil`. L4 (`section class Name:` user syntax) adds entries for
+   unprotected names. Kept as a var so the parser hook and future
+   L4 declaration handler consult a single canonical location.
 
    Registry entries have shape:
      {:name    :foo
