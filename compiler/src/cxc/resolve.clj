@@ -383,38 +383,75 @@
           {}
           files-with-nodes))
 
-(defn- type-ref-names
-  "Walk `nodes` and return the distinct set of names appearing as
-   `{:node :type-ref :name X}`. Type refs appear in field types, method
-   params, return types, handler contracts, and extension targets — the
-   surface where cross-module resolution matters. Bare `:ident`
-   occurrences (locals, method params, method-call names) are NOT
-   included: they'd generate massive false-positive noise, and their
-   L3b resolution is scope-local not module-scope."
+(defn- capitalized?
+  "True for strings starting with an uppercase ASCII letter — the
+   convention for user-defined types (records / atoms / enums) and
+   type-shaped names in cxc. Used to filter bare :ident references
+   at ctor-call positions so we surface cross-module ctor uses
+   (`Foo(x: 1)`) without noise from lowercase locals / params /
+   method names."
+  [s]
+  (and (string? s)
+       (pos? (count s))
+       (let [c (.charAt ^String s 0)]
+         (and (>= (int c) (int \A)) (<= (int c) (int \Z))))))
+
+(defn- module-scoped-ref-names
+  "Walk `nodes` and return the distinct set of names that participate
+   in module-scope resolution:
+   - Every `{:node :type-ref :name X}` — field types, method params,
+     return types, handler contracts, extension targets.
+   - Every capitalized bare `:ident` at a `:call :callee` position —
+     the ctor-call surface (`Foo(x: 1)` where `Foo` names a record
+     / atom / enum). Lowercase :idents in the same position are
+     lowercase functions (spec convention) and stay out of scope
+     for L3b (a) — F52 module-level `let` bindings handle those
+     when it lands.
+   Bare :ident occurrences at other positions (locals, method
+   params, receiver of `.field`) are NOT included: L3b's resolution
+   there is scope-local, not module-scope."
   [nodes]
   (let [acc (volatile! (transient #{}))]
     (walk/postwalk
       (fn [x]
-        (when (and (map? x)
-                   (= :type-ref (:node x))
-                   (string? (:name x)))
-          (vswap! acc conj! (:name x)))
+        (cond
+          (not (map? x)) nil
+          (and (= :type-ref (:node x)) (string? (:name x)))
+          (vswap! acc conj! (:name x))
+          ;; `Foo(x: 1)` — callee is a bare :ident with a capitalized
+          ;; name. Only fire at :call :callee position; other :ident
+          ;; occurrences (e.g. bare-`Foo` as a value) are rare and
+          ;; safe to leave for a follow-on landing.
+          (and (= :call (:node x))
+               (let [c (:callee x)]
+                 (and (map? c)
+                      (= :ident (:node c))
+                      (capitalized? (:name c)))))
+          (vswap! acc conj! (:name (:callee x))))
         x)
       nodes)
     (persistent! @acc)))
 
 (defn find-unscoped-type-refs
   "Return the sequence of `{:module :file :name}` entries for every
-   type-ref in `files-with-nodes` whose name does NOT resolve in its
-   module's scope (per `build-module-scope-index`).
+   module-scope reference in `files-with-nodes` whose name does NOT
+   resolve in its module's scope (per `build-module-scope-index`).
 
-   Currently a compat-scan tool: sub-landing (a)'s `build` wiring turns
-   each entry into a WARN diagnostic so users can add the missing import
-   before sub-landing (b) makes the check a hard error. Empty result
-   means every type-ref would still resolve after the shim retires."
+   Coverage: every `:type-ref :name X`, plus every capitalized bare
+   `:ident` at a `:call :callee` position (ctor calls). See
+   `module-scoped-ref-names` for the walker's inclusion rules.
+
+   Sub-landing (a)'s `build` wiring turns each entry into a WARN
+   diagnostic so users can add the missing import before sub-landing
+   (b) makes the check a hard error. Empty result means every module-
+   scope reference would still resolve after the shim retires.
+
+   The name is retained for backward compatibility with the initial
+   sub-landing (a) tests; the walker's scope now includes ctor calls
+   as well as pure type-refs."
   [files-with-nodes]
   (let [scope-index (build-module-scope-index files-with-nodes)]
     (for [{:keys [module nodes file]} files-with-nodes
-          nm                         (type-ref-names nodes)
+          nm                         (module-scoped-ref-names nodes)
           :when                      (not (contains? (get scope-index module #{}) nm))]
       {:module module :file file :name nm})))

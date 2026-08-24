@@ -200,3 +200,20 @@
           "explicitly imported name silences the WARN")
       (is (not (some #(= "Duration" (:name %)) unscoped))
           "prelude name silences the WARN"))))
+
+(deftest f51-l3b-find-unscoped-flags-cross-module-ctor-calls
+  (testing "F51 L3b (a) — capitalized bare :ident at a :call :callee position (ctor call — `Foo(x: 1)`) is a module-scope reference. Cross-module ctor calls without an explicit import are flagged."
+    (let [files    [(parse-file :geom "def Point:\n    x: Int\n")
+                    (parse-file :viz  "def main:\n    -> running\n        then: print(Point(x: 7).x)\n")]
+          unscoped (resolve/find-unscoped-type-refs files)]
+      (is (some (fn [{:keys [module name]}]
+                  (and (= :viz module) (= "Point" name)))
+                unscoped)
+          "`Point(...)` ctor call in :viz isn't declared, imported, or in prelude"))))
+
+(deftest f51-l3b-find-unscoped-silent-on-lowercase-call-targets
+  (testing "F51 L3b (a) — lowercase bare :ident at :call :callee (e.g. `print(...)`) is a function call, not a ctor. Not flagged as a module-scope reference — spec convention reserves TitleCase for types."
+    (let [files    [(parse-file :geom "def main:\n    -> running\n        then: print(1)\n")]
+          unscoped (resolve/find-unscoped-type-refs files)]
+      (is (empty? unscoped)
+          "`print(1)` shouldn't fire the walker"))))
