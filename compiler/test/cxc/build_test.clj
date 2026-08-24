@@ -28,6 +28,26 @@
     (when (zero? status)
       (build/run-binary bin-path))))
 
+(defn- compile-and-run-concurrent
+  "F32 L1b — compile the named example under concurrent mode
+   (`:single-queue? false`), run the binary, return {:status :stdout}.
+   Exercises the F32 concurrent runtime end-to-end (L1 emit-guarded
+   queue target selection, L2 shutdown drain, L3 runtime cycle
+   detector, L5 stream queue). Only safe pre-L4 for programs whose
+   cross-atom reads all go through observables/methods (which hop
+   via cxc_send_async / cxc_wait_for_processing) rather than direct
+   `.field` reads (which would need atomic-pointer-swap)."
+  [example-name]
+  (let [src     (example example-name)
+        out-dir (tmp-dir)
+        {:keys [status stderr bin-path]}
+        (build/compile-source-to-file src example-name (.getPath out-dir)
+                                      {:single-queue? false})]
+    (is (zero? status)
+        (str "concurrent-mode clang failed for " example-name ":\n" stderr))
+    (when (zero? status)
+      (build/run-binary bin-path))))
+
 (defn- compile-dir-and-run
   "Compile every `*.cxc` file under `examples/<dir-name>` as one
    program (Layer 6 Step 2/3 multi-file compile), run the binary,
@@ -596,6 +616,20 @@
     (let [{:keys [exit stdout]} (compile-and-run "record-equality")]
       (is (zero? exit))
       (is (= "1\n0\n1\n" stdout)))))
+
+(deftest f32-l1b-concurrent-mode-main-transitions-and-shutdown-drain
+  (testing "F32 L1b (integration) — a main-only program with explicit transitions (`self :> stop` → running-consumes-stop → `-> end`) runs to completion under concurrent mode (`:single-queue? false`). Exercises: L1's runtime class-name check keeps CxcMain on main-target; L2's shutdown drain fires under `!CXC_SINGLE_MAIN_QUEUE` before `exit(0)` (harmless here since main runs synchronously, but the barrier is emitted); L3's runtime cycle detector is active (no cycle to trip). Output must match single-queue mode."
+    (let [r-conc (compile-and-run-concurrent "main-shutdown-on-end")]
+      (is (zero? (:exit r-conc)))
+      (is (= "7\n" (:stdout r-conc))
+          "concurrent-mode stdout matches the expected sequence for main-shutdown-on-end"))))
+
+(deftest f32-l1b-concurrent-mode-cross-atom-message-send
+  (testing "F32 L1b (integration) — console-hello dispatches a method-send (`console.write(\"hi\\n\")`) to a non-main prelude atom. Under concurrent mode, `console`'s own_queue targets the global pool (L1's runtime class-name check picks non-main branch); message delivery goes via `cxc_send_async` onto that queue. The write must complete before the process drains via L2's barrier and `exit(0)`. Proves async cross-atom sends survive the concurrent runtime end-to-end."
+    (let [r-conc (compile-and-run-concurrent "console-hello")]
+      (is (zero? (:exit r-conc)))
+      (is (= "hi\n" (:stdout r-conc))
+          "cross-atom async send completes under concurrent mode"))))
 
 (deftest f32-l6-single-queue-flag-default-preserves-layer4-behavior
   (testing "F32 L6 — default `:single-queue?` (unset) matches `:single-queue? true` and produces a working binary. Layer 4 backward-compat: existing callers that don't know about the flag see zero change."
