@@ -4303,3 +4303,17 @@ def main:
              (#'cxc.lower/base-type-name
               {:node :type-nullable :inner ty}))
           "nullable wrapping is orthogonal — base-type-name recurses"))))
+
+(deftest f15-l2c-iii-c-beta2-ctor-params-preserve-raw-type
+  (testing "F15 L2.c.iii.c.β.2 — `ctor-params-normalized` preserves the raw parsed `:type` node on each lowered ctor-param. Verifies the additive field is present (dead metadata today — no downstream reader; L2.c.iii.c.γ+ will teach `cxc-type->type-kw` to recognize mangled named-tuple names so `infer-streams-in-atom-env` and similar sites don't fail-nyi on them). Byte-identical .m output for existing programs — the extra map key isn't emitted."
+    (let [ctor-params [{:node    :field
+                        :name    "x"
+                        :type    {:node :type-ref :name "Int"}
+                        :default nil}]
+          lowered     (#'cxc.lower/ctor-params-normalized
+                       ctor-params {} {} {})]
+      (is (= 1 (count lowered)))
+      (is (= {:node :type-ref :name "Int"} (:type (first lowered)))
+          "raw :type node preserved on the lowered ctor-param")
+      (is (= "Int" (:cxc-ty (first lowered)))
+          "existing :cxc-ty key still present + correct"))))
