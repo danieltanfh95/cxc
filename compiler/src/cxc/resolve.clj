@@ -400,13 +400,16 @@
   "Walk `nodes` and return the distinct set of names that participate
    in module-scope resolution:
    - Every `{:node :type-ref :name X}` — field types, method params,
-     return types, handler contracts, extension targets.
+     return types, handler contracts.
    - Every capitalized bare `:ident` at a `:call :callee` position —
      the ctor-call surface (`Foo(x: 1)` where `Foo` names a record
      / atom / enum). Lowercase :idents in the same position are
      lowercase functions (spec convention) and stay out of scope
      for L3b (a) — F52 module-level `let` bindings handle those
      when it lands.
+   - Every `:extend-class :target X` — F9 extension targets
+     (`extend Foo:`). Extension of a cross-module type without an
+     explicit import is a module-scope concern.
    Bare :ident occurrences at other positions (locals, method
    params, receiver of `.field`) are NOT included: L3b's resolution
    there is scope-local, not module-scope."
@@ -427,7 +430,12 @@
                  (and (map? c)
                       (= :ident (:node c))
                       (capitalized? (:name c)))))
-          (vswap! acc conj! (:name (:callee x))))
+          (vswap! acc conj! (:name (:callee x)))
+          ;; `extend Foo:` — target is a plain string, not a :type-ref.
+          ;; Extension of a cross-module type without an import surfaces
+          ;; here.
+          (and (= :extend-class (:node x)) (string? (:target x)))
+          (vswap! acc conj! (:target x)))
         x)
       nodes)
     (persistent! @acc)))

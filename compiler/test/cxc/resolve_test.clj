@@ -217,3 +217,13 @@
           unscoped (resolve/find-unscoped-type-refs files)]
       (is (empty? unscoped)
           "`print(1)` shouldn't fire the walker"))))
+
+(deftest f51-l3b-find-unscoped-flags-cross-module-extend-target
+  (testing "F51 L3b (a) — `extend Foo:` targets a top-level type. Extension of a type declared in another user module without an explicit import is a module-scope concern; the walker flags the extend target."
+    (let [files    [(parse-file :geom "def Point:\n    x: Int\n")
+                    (parse-file :viz  "extend Point:\n    bumped :< 1\n\ndef main:\n    -> running\n")]
+          unscoped (resolve/find-unscoped-type-refs files)]
+      (is (some (fn [{:keys [module name]}]
+                  (and (= :viz module) (= "Point" name)))
+                unscoped)
+          "`extend Point:` in :viz should flag Point as an unscoped extend target"))))
