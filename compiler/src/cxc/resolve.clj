@@ -464,25 +464,42 @@
     (persistent! @acc)))
 
 (defn find-unscoped-type-refs
-  "Return the sequence of `{:module :file :name}` entries for every
-   module-scope reference in `files-with-nodes` whose name does NOT
-   resolve in its module's scope (per `build-module-scope-index`).
+  "Return the sequence of `{:module :file :name :declared-in}` entries
+   for every module-scope reference in `files-with-nodes` whose name
+   does NOT resolve in its module's scope (per `build-module-scope-index`).
 
    Coverage: every `:type-ref :name X`, plus every capitalized bare
    `:ident` at a `:call :callee` position (ctor calls). See
    `module-scoped-ref-names` for the walker's inclusion rules.
 
    Sub-landing (a)'s `build` wiring turns each entry into a WARN
-   diagnostic so users can add the missing import before sub-landing
-   (b) makes the check a hard error. Empty result means every module-
-   scope reference would still resolve after the shim retires.
+   diagnostic so users can add the missing import before the L3b
+   flip makes the check a hard error. Empty result means every
+   module-scope reference would still resolve after the shim retires.
 
-   The name is retained for backward compatibility with the initial
-   sub-landing (a) tests; the walker's scope now includes ctor calls
-   as well as pure type-refs."
+   `:declared-in` (added in sub-landing (b.i) per D2 ratification) is
+   a vector of module keywords where the unscoped name IS declared
+   somewhere in the program — the shadow-mode information users need
+   to add a `from <module> import <name>` (single-source) or qualify
+   the reference (multi-source). Empty vector means the name isn't
+   declared anywhere in the program; the diagnostic surfaces as
+   \"undefined\" rather than \"needs import\"."
   [files-with-nodes]
-  (let [scope-index (build-module-scope-index files-with-nodes)]
+  (let [scope-index    (build-module-scope-index files-with-nodes)
+        ;; Reverse index: {name → sorted-vec-of-modules-declaring-it}.
+        ;; Only user-declared names participate (prelude names are
+        ;; always in scope so they never surface as unscoped).
+        declared-index (reduce (fn [acc {:keys [module nodes]}]
+                                 (reduce (fn [a nm]
+                                           (update a nm (fnil conj []) module))
+                                         acc
+                                         (decls-in-file nodes)))
+                               {}
+                               files-with-nodes)]
     (for [{:keys [module nodes file]} files-with-nodes
-          nm                         (module-scoped-ref-names nodes)
-          :when                      (not (contains? (get scope-index module #{}) nm))]
-      {:module module :file file :name nm})))
+          nm                          (module-scoped-ref-names nodes)
+          :when                       (not (contains? (get scope-index module #{}) nm))]
+      {:module      module
+       :file        file
+       :name        nm
+       :declared-in (vec (sort (get declared-index nm [])))})))

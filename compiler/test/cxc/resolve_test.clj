@@ -267,3 +267,41 @@
           unscoped (resolve/find-unscoped-type-refs files)]
       (is (empty? unscoped)
           "builtin container outers shouldn't fire the walker"))))
+
+;; ---------------------------------------------------------------------------
+;; F51 L3b (b.i) — declaring-module hint on unscoped-ref entries. Per D2
+;; ratification (decisions-frozen §10) the shadow-mode migration needs
+;; users to see WHERE an unscoped name is actually declared in the
+;; program so they can add the right import. `find-unscoped-type-refs`
+;; now enriches each entry with `:declared-in` — a sorted vec of module
+;; keywords where the name is defined.
+;; ---------------------------------------------------------------------------
+
+(deftest f51-l3b-bi-declared-in-points-at-single-source-module
+  (testing "F51 L3b (b.i) — when an unscoped name is declared in exactly one other user module, `:declared-in` names it. Users get a concrete `from <module> import <name>` to write."
+    (let [files    [(parse-file :geom "def Point:\n    x: Int\n")
+                    (parse-file :viz  "def Scene:\n    origin: Point\n")]
+          entries  (resolve/find-unscoped-type-refs files)
+          point    (first (filter #(= "Point" (:name %)) entries))]
+      (is (= [:geom] (:declared-in point))
+          "Point is declared in :geom; the WARN hint should point at that module"))))
+
+(deftest f51-l3b-bi-declared-in-empty-when-name-is-undefined
+  (testing "F51 L3b (b.i) — when an unscoped name isn't declared anywhere in the program, `:declared-in` is empty. Users see \"undefined\" rather than a bogus \"add import\" suggestion."
+    (let [files    [(parse-file :main "def Scene:\n    origin: Nonexistent\n")]
+          entries  (resolve/find-unscoped-type-refs files)
+          entry    (first (filter #(= "Nonexistent" (:name %)) entries))]
+      (is (= [] (:declared-in entry))
+          "Nonexistent is defined in no module; declared-in is empty"))))
+
+(deftest f51-l3b-bi-declared-in-lists-all-modules-on-ambiguous-name
+  (testing "F51 L3b (b.i) — when a name is declared in multiple user modules, `:declared-in` lists all of them (sorted). Users must qualify or alias to disambiguate."
+    (let [files    [(parse-file :a       "def Config:\n    x: Int\n")
+                    (parse-file :b       "def Config:\n    y: Int\n")
+                    (parse-file :consumer "def R:\n    cfg: Config\n")]
+          entries  (resolve/find-unscoped-type-refs files)
+          entry    (first (filter #(and (= :consumer (:module %))
+                                        (= "Config" (:name %)))
+                                  entries))]
+      (is (= [:a :b] (:declared-in entry))
+          "Config is declared in both :a and :b; declared-in lists both sorted"))))

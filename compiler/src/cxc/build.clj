@@ -3,6 +3,7 @@
    the resulting binary's path. Assumes clang is on PATH."
   (:require [clojure.java.io :as io]
             [clojure.java.shell :as shell]
+            [clojure.string :as str]
             [cxc.parse    :as parse]
             [cxc.alias    :as alias]
             [cxc.lower    :as lower]
@@ -469,18 +470,39 @@
   "Emit a stderr warning per type-ref whose name doesn't resolve inside
    its module's scope (own decls + imports + prelude). Fires from
    `compile-directory-to-file` after collision + cycle checks so users
-   see the harder-error diagnostics first."
+   see the harder-error diagnostics first.
+
+   L3b (b.i) enhancement: when the unscoped name IS declared somewhere
+   in the program, the warning names the declaring module(s) so users
+   have a concrete import to add. Three shapes:
+   - Declared in exactly one module → point at that module.
+   - Declared in multiple modules → list them; user must qualify to
+     disambiguate.
+   - Not declared anywhere → surfaces as `undefined`; user needs to
+     define the type or fix a typo."
   [files-with-nodes]
   (binding [*out* *err*]
-    (doseq [{:keys [module file name]}
+    (doseq [{:keys [module file name declared-in]}
             (resolve/find-unscoped-type-refs files-with-nodes)]
-      (println
-        (str "warning: F51 L3b: type-ref `" name
-             "` in module `" (clojure.core/name module)
-             "` (" (.getName ^java.io.File file)
-             ") isn't declared here, imported, or in the prelude — add "
-             "`from <owning-module> import " name
-             "` before F51 L3b retires the flat-namespace shim.")))))
+      (let [where (str "type-ref `" name
+                       "` in module `" (clojure.core/name module)
+                       "` (" (.getName ^java.io.File file) ")")]
+        (println
+         (str "warning: F51 L3b: " where
+              (case (count declared-in)
+                0 (str " is undefined — no module in this program declares `"
+                       name "`. Check for a typo or add the declaration.")
+                1 (str " isn't imported here — `" name "` is declared in module `"
+                       (clojure.core/name (first declared-in))
+                       "`. Add `from " (clojure.core/name (first declared-in))
+                       " import " name "` before F51 L3b retires the "
+                       "flat-namespace shim.")
+                (str " is ambiguous — `" name "` is declared in "
+                     (count declared-in) " modules ("
+                     (str/join ", " (map clojure.core/name declared-in))
+                     "). Qualify the reference (`<module>." name "`) or "
+                     "add a `from <module> import " name " as <alias>` "
+                     "before F51 L3b retires the flat-namespace shim."))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; F51 L2 — Module import dependency graph + topological order + cycle detection.
