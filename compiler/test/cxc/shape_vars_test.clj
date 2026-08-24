@@ -94,3 +94,53 @@
               {:node :type-ref :name "a"}
               {:node :type-ref :name "m"}])]
       (is (= ["a" "m" "z"] (vec (keys m)))))))
+
+(deftest count-shape-var-mentions-counts-every-occurrence
+  (testing "F15 L3.α — `count-shape-var-mentions` returns `{name → count}` including the first-mention binding site. `def foo(a: t, b: t) -> Pair of t` has three mentions of `t`."
+    (let [ast [{:node :type-ref :name "t"}
+               {:node :type-ref :name "t"}
+               {:node :type-of :outer "Pair"
+                :inner {:node :type-ref :name "t"}}]
+          m   (sv/count-shape-var-mentions ast)]
+      (is (= {"t" 3} m)))))
+
+(deftest count-shape-var-mentions-distinguishes-multiple-vars
+  (testing "F15 L3.α — each distinct shape variable gets an independent count. `Map of (k, v) -> v` gives k=1, v=2."
+    (let [ast [{:node :type-of :outer "Map"
+                :inner {:node :type-tuple
+                        :types [{:node :type-ref :name "k"}
+                                {:node :type-ref :name "v"}]}}
+               {:node :type-ref :name "v"}]
+          m   (sv/count-shape-var-mentions ast)]
+      (is (= {"k" 1 "v" 2} m)))))
+
+(deftest count-shape-var-mentions-skips-titlecase
+  (testing "F15 L3.α — TitleCase `:type-ref` names don't participate in the count. Only lowercase shape variables."
+    (let [ast [{:node :type-ref :name "Int"}
+               {:node :type-ref :name "Int"}
+               {:node :type-ref :name "a"}]
+          m   (sv/count-shape-var-mentions ast)]
+      (is (= {"a" 1} m))
+      (is (not (contains? m "Int"))))))
+
+(deftest unused-shape-vars-flags-single-mention
+  (testing "F15 L3 §1.11 discipline — a shape variable mentioned exactly once is unused (bound but never referenced). `unused-shape-vars` returns the sorted-set of such names. Callers emit warning-grade diagnostics per Q3.1."
+    (let [ast [{:node :type-ref :name "a"}    ; a — unused
+               {:node :type-ref :name "b"}    ; b — used (2 mentions)
+               {:node :type-ref :name "b"}]]
+      (is (= #{"a"} (sv/unused-shape-vars ast))))))
+
+(deftest unused-shape-vars-empty-when-all-referenced
+  (testing "F15 L3 §1.11 — a signature where every shape variable appears at least twice yields no unused vars. `identity(x: t) -> t` — `t` used twice, no warning."
+    (let [ast [{:node :field :name "x"
+                :type {:node :type-ref :name "t"}}
+               {:node :return-type
+                :type {:node :type-ref :name "t"}}]]
+      (is (= #{} (sv/unused-shape-vars ast))))))
+
+(deftest unused-shape-vars-returns-sorted-set
+  (testing "F15 L3 §1.11 — return value is a sorted-set so warning-order is deterministic across runs."
+    (let [ast [{:node :type-ref :name "z"}
+               {:node :type-ref :name "a"}
+               {:node :type-ref :name "m"}]]
+      (is (= ["a" "m" "z"] (vec (sv/unused-shape-vars ast)))))))

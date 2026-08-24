@@ -60,3 +60,43 @@
        x)
      signature-ast)
     (into (sorted-map) (persistent! @acc))))
+
+(defn count-shape-var-mentions
+  "Walk `signature-ast` and return `{shape-var-name → mention-count}`
+   (sorted-map) for every lowercase `:type-ref` name encountered.
+   Counts every occurrence, including the first-mention binding site
+   — a variable mentioned once has count 1 (unused per §1.11 warning
+   discipline); mentioned twice has count 2 (bound + one reference);
+   and so on.
+
+   Consumers derive the reference set as `count - 1` (subtract the
+   binding site) and the unused set as `(filter #(= 1 (val %)) ...)`.
+
+   Same postwalk shape as `collect-shape-vars`; kept as a separate fn
+   rather than folded into one walk because callers usually want one
+   or the other, and the fn-name expresses intent."
+  [signature-ast]
+  (let [acc (volatile! [])]
+    (walk/postwalk
+     (fn [x]
+       (when (and (map? x)
+                  (= :type-ref (:node x))
+                  (starts-with-lowercase? (:name x)))
+         (vswap! acc conj (:name x)))
+       x)
+     signature-ast)
+    (into (sorted-map) (frequencies @acc))))
+
+(defn unused-shape-vars
+  "F15 L3 §1.11 warning discipline — return the sorted-set of shape
+   variable names mentioned exactly once (bound but never referenced).
+   Per Q3.1 ratification: warning-grade, not error.
+
+   Callers turn each entry into a stderr warning at atom/method
+   registration time, pointing at the binding node from
+   `collect-shape-vars` for the source-position span."
+  [signature-ast]
+  (let [counts (count-shape-var-mentions signature-ast)]
+    (into (sorted-set)
+          (keep (fn [[nm c]] (when (= 1 c) nm)))
+          counts)))
