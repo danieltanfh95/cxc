@@ -4653,13 +4653,35 @@
                           ;; explicit fallback when receiver is nil.
                           {:node     :c-on-nil-dispatch
                            :recv     target-lo
-                           :send     {:node   :field
-                                      :target target-lo
-                                      :field  (:field node)}
+                           :send     (cond-> {:node   :field
+                                              :target target-lo
+                                              :field  (:field node)}
+                                       ;; F32 L4.d.β.β — see below.
+                                       (and atom-nm
+                                            (not= :self (:node (:target node))))
+                                       (assoc :cross-atom-cls-name
+                                              (class-name-for-atom atom-nm)))
                            :fallback (lower-expr on-nil-expr ctx)}
-                          {:node   :field
-                           :target target-lo
-                           :field  (:field node)})))))
+                          ;; F32 L4.d.β.β (2026-08-24) — cross-atom
+                          ;; `.field` reads carry a `:cross-atom-cls-name`
+                          ;; marker so the emit-side routes them through
+                          ;; `_cxc_atom_state_ptr(&target->_state)` under
+                          ;; `!CXC_SINGLE_MAIN_QUEUE`. Self-reads
+                          ;; (`self.field` from a source `:self` node)
+                          ;; stay on the ivar path — F33 L2 snapshot
+                          ;; discipline already covers intra-transition
+                          ;; consistency for self, and self writes go
+                          ;; directly to ivars during commit. Under the
+                          ;; default preprocessor flag the marker is
+                          ;; harmless: emit-side falls back to plain
+                          ;; property access.
+                          (cond-> {:node   :field
+                                   :target target-lo
+                                   :field  (:field node)}
+                            (and atom-nm
+                                 (not= :self (:node (:target node))))
+                            (assoc :cross-atom-cls-name
+                                   (class-name-for-atom atom-nm))))))))
     ;; F19 L2 — String[i] lowers to `(int64_t)[str characterAtIndex:i]`.
     ;; Other container types still fail-nyi (see infer-type site for the
     ;; F42/F43 dependency rationale).

@@ -398,6 +398,33 @@
       (is (str/includes? block "if (_state) { free(_state); _state = NULL; }")
           "dealloc frees underlying buffer and nils the pointer"))))
 
+(deftest f32-l4d-beta-beta-cross-atom-field-read-routes-through-state
+  (testing "F32 L4.d.β.β — a `:field` node carrying `:cross-atom-cls-name` emits guarded C: under `!CXC_SINGLE_MAIN_QUEUE` it routes through `_cxc_atom_state_ptr` for an acquire-ordered atomic load + pointer projection; under the default preprocessor flag it stays on the ObjC property access path (byte-identical to pre-L4.d.β.β). L4.d.β.α's initial-state-commit guarantees `_state` is populated on the first read."
+    (let [node {:node :field
+                :target {:node :name :sym "counter"}
+                :field "n"
+                :cross-atom-cls-name "Counter"}
+          s (#'cxc.emit/emit-expr node)]
+      (is (str/includes? s "#if !CXC_SINGLE_MAIN_QUEUE")
+          "guarded region opens")
+      (is (str/includes? s "((Counter_State *)_cxc_atom_state_ptr(&counter->_state))->_n")
+          "under concurrent mode routes through _cxc_atom_state_ptr")
+      (is (str/includes? s "#else\ncounter.n")
+          "under default flag stays on ObjC property access path")
+      (is (str/includes? s "#endif")
+          "guarded region closes"))))
+
+(deftest f32-l4d-beta-beta-self-field-read-stays-on-ivar-path
+  (testing "F32 L4.d.β.β — `self.field` reads (source `:self` node) do NOT get the `:cross-atom-cls-name` marker; they stay on the ObjC property access path even at emit time. Rationale: F33 L2 snapshot discipline handles intra-transition consistency for self, and self writes go directly to ivars during commit."
+    (let [node {:node :field
+                :target {:node :name :sym "self"}
+                :field "n"}
+          s (#'cxc.emit/emit-expr node)]
+      (is (= "self.n" s)
+          "self-field access emits as plain ObjC property syntax")
+      (is (not (str/includes? s "CXC_SINGLE_MAIN_QUEUE"))
+          "no guarded routing for self-reads"))))
+
 (deftest f32-l4d-beta-alpha-initial-state-commit-emits-guarded
   (testing "F32 L4.d.β.α — `:initial-state-commit` emits a `!CXC_SINGLE_MAIN_QUEUE`-guarded compound-literal + `_cxc_state_commit` to seed the concurrent-mode `_state` slot from freshly-populated ivars at the end of `cxc_stateInit`. Under the default preprocessor flag the whole block guards out (byte-identical modulo the `#if …#endif` markers). Under concurrent mode this seed guarantees the first cross-atom reader sees a populated `_state` — L4.d.β.β's guarded read path depends on this."
     (let [node {:node :initial-state-commit

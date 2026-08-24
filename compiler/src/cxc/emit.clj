@@ -302,7 +302,28 @@
                                  (str (eff i) " " (nth ops i) " " (eff (inc i)))))
                           (str/join " && "))]
       (str "({ " prelude chain "; })"))
-    :field           (str (emit-expr (:target node)) "." (:field node))
+    :field
+    ;; F32 L4.d.β.β (2026-08-24) — cross-atom `.field` reads carrying
+    ;; `:cross-atom-cls-name` route through the atom's committed state
+    ;; buffer under `!CXC_SINGLE_MAIN_QUEUE` (acquire-ordered atomic
+    ;; load + pointer projection via `_cxc_atom_state_ptr`). Under
+    ;; the default preprocessor flag the ObjC property access path
+    ;; stays — byte-identical to pre-L4.d.β.β for the emitted binary.
+    ;; L4.d.β.α's initial-state-commit guarantees `_state` is
+    ;; populated before any observer can reach it, so the acquire
+    ;; load is well-defined on the first read.
+    (let [target (emit-expr (:target node))
+          field  (:field node)
+          cls    (:cross-atom-cls-name node)]
+      (if cls
+        (str "("
+             "\n#if !CXC_SINGLE_MAIN_QUEUE\n"
+             "((" cls "_State *)_cxc_atom_state_ptr(&" target "->_state))->_" field
+             "\n#else\n"
+             target "." field
+             "\n#endif\n"
+             ")")
+        (str target "." field)))
     :struct-lit      (str "((" (:type node) "){"
                           (str/join ", "
                                     (map (fn [f]
