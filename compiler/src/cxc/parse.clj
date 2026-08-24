@@ -2216,6 +2216,21 @@
         (at? tokens p :newline)
         (recur body (inc p))
 
+        ;; F8 L3b.ii.β — behavioral section dispatch via the registry.
+        ;; For `:kw` tokens whose value maps to a `:kind :behavioral`
+        ;; registry entry, invoke the registered parser directly
+        ;; instead of falling through to a hardcoded arm. Behavior-
+        ;; equivalent for `:invariants`/`:deprecated`/`:use` (same
+        ;; parser fn resolved via `requiring-resolve`); enables future
+        ;; L4 `section class Name:` user syntax to dispatch here too.
+        ;; Hardcoded arms below stay as a safety fallback until L3b.iii
+        ;; retires them once both parse sites go registry-first.
+        (and (at? tokens p :kw)
+             (section/behavioral-parser (t-value (peek-tok tokens p))))
+        (let [parser (section/behavioral-parser (t-value (peek-tok tokens p)))
+              [s p2] (parser tokens p)]
+          (recur (conj body s) (skip-newlines tokens p2)))
+
         (at? tokens p :kw "use")
         (let [[s p2] (parse-use-section tokens p)]
           (recur (conj body s) (skip-newlines tokens p2)))
