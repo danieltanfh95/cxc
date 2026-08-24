@@ -354,16 +354,18 @@
                   "} _Cxc_NT_x_Nn_Int;")
              out)))))
 
-(deftest emit-typedefs-nested-field-throws-nyi
-  (testing "F15 L2.c.ii MVP — nested named-tuple field types throw NYI. The nested typedef itself is still emitted (collect-shapes surfaces it as a separate entry), but the outer's field-type translation fails because we haven't settled the inline-vs-reference decision. Extended in a follow-on sub-landing."
+(deftest emit-typedefs-nested-field-emits-mangled-reference
+  (testing "F15 L2.c.ii-b (2026-08-24) — nested named-tuple fields reference the nested struct by its canonical mangled name (per D4's `structural equivalence at the type level maps to identity at the C level`). The nested typedef appears BEFORE its container so the reference resolves at the C level."
     (let [inner (nt-node "inner" "Int")
           outer (nt-node-with-fields [{:name "outer" :type inner}])
           shapes (nt/collect-shapes
-                   {:node :method :params [{:name "p" :type outer}]})]
-      (is (thrown-with-msg?
-            clojure.lang.ExceptionInfo
-            #"nested named-tuple field types not supported"
-            (nt/emit-typedefs shapes mvp-c-type))))))
+                   {:node :method :params [{:name "p" :type outer}]})
+          out    (nt/emit-typedefs shapes mvp-c-type)]
+      ;; Inner appears first (topological order).
+      (is (< (.indexOf out "} _Cxc_NT_inner_Int;")
+             (.indexOf out "} _Cxc_NT_outer_Nt1_inner_Int;")))
+      ;; Outer references inner by mangled name (not inlined).
+      (is (.contains out "_Cxc_NT_inner_Int outer;")))))
 
 (deftest emit-typedefs-parametric-field-throws-nyi
   (testing "F15 L2.c.ii MVP — parametric field types (`items: Array of Int`) throw NYI at typedef emit. Deferred to a follow-on sub-landing."
@@ -543,3 +545,79 @@
              (nt/structural-conforms? v-ok reqd)))
       (is (= :wrong-type
              (:reason (nt/structural-conforms? v-bad reqd)))))))
+
+;; ---------------------------------------------------------------------------
+;; F15 L2.c.ii-b — nested named-tuple typedef references. Reference by
+;; mangled name (D4 derivation: inlining would create multiple
+;; non-equivalent C types for one structural type). Ordering:
+;; topological sort by containment so nested typedefs appear before
+;; their containers. Ties broken by lexicographic mangled name.
+;; ---------------------------------------------------------------------------
+
+(deftest emit-typedefs-topological-order-beats-lex-order
+  (testing "F15 L2.c.ii-b — when lexicographic order would place the container BEFORE its nested dep, topological sort takes precedence. Constructed case: outer field name `abc` gives mangled `_Cxc_NT_abc_Nt1_inner_Int_...` (starts with `a`) while inner `_Cxc_NT_inner_Int` starts with `i`. Lex would put outer first; topological must put inner first."
+    (let [inner (nt-node "inner" "Int")
+          outer (nt-node-with-fields [{:name "abc" :type inner}])
+          shapes (nt/collect-shapes
+                   {:node :method :params [{:name "p" :type outer}]})
+          out    (nt/emit-typedefs shapes mvp-c-type)
+          inner-pos (.indexOf out "_Cxc_NT_inner_Int;")
+          outer-pos (.indexOf out "_Cxc_NT_abc_Nt1_inner_Int;")]
+      ;; Both present.
+      (is (pos? inner-pos))
+      (is (pos? outer-pos))
+      ;; Inner declared before outer (containment order).
+      (is (< inner-pos outer-pos)))))
+
+(deftest emit-typedefs-multi-level-nesting
+  (testing "F15 L2.c.ii-b — three-level nesting (A ⊃ B ⊃ C) emits C, then B, then A. Each level references the one below by mangled name. Mangling: nested tuple in a field uses `Nt<count>_<segments>` — recursive form for multi-level nesting."
+    (let [c-inner (nt-node "c" "Int")
+          b-mid   (nt-node-with-fields [{:name "b" :type c-inner}])
+          a-outer (nt-node-with-fields [{:name "a" :type b-mid}])
+          shapes  (nt/collect-shapes
+                    {:node :method :params [{:name "p" :type a-outer}]})
+          out     (nt/emit-typedefs shapes mvp-c-type)
+          c-pos   (.indexOf out "} _Cxc_NT_c_Int;")
+          b-pos   (.indexOf out "} _Cxc_NT_b_Nt1_c_Int;")
+          a-pos   (.indexOf out "} _Cxc_NT_a_Nt1_b_Nt1_c_Int;")]
+      (is (pos? c-pos))
+      (is (pos? b-pos))
+      (is (pos? a-pos))
+      (is (< c-pos b-pos))
+      (is (< b-pos a-pos))
+      ;; Reference chains: B contains "_Cxc_NT_c_Int b;", A contains "_Cxc_NT_b_Nt1_c_Int a;"
+      (is (.contains out "_Cxc_NT_c_Int b;"))
+      (is (.contains out "_Cxc_NT_b_Nt1_c_Int a;")))))
+
+(deftest emit-typedefs-peer-shapes-stay-lex-ordered
+  (testing "F15 L2.c.ii-b — shapes with no containment relationship (peer independent) tie-break by lexicographic mangled name, preserving the pre-topological-sort output shape for flat-only programs. Regression guard: shouldn't change L2.c.ii's `multiple-shapes-separated-by-blank-line` behavior for programs that don't use nested tuples."
+    (let [shape-a (nt-node "a" "Int")
+          shape-z (nt-node "z" "Int")
+          shape-m (nt-node "m" "Int")
+          shapes  (nt/collect-shapes
+                    [{:node :method :params [{:name "p" :type shape-z}]}
+                     {:node :method :params [{:name "q" :type shape-a}]}
+                     {:node :method :params [{:name "r" :type shape-m}]}])
+          out     (nt/emit-typedefs shapes mvp-c-type)]
+      (is (< (.indexOf out "_Cxc_NT_a_Int;")
+             (.indexOf out "_Cxc_NT_m_Int;")))
+      (is (< (.indexOf out "_Cxc_NT_m_Int;")
+             (.indexOf out "_Cxc_NT_z_Int;"))))))
+
+(deftest emit-typedefs-nested-non-nil-field
+  (testing "F15 L2.c.ii-b — nested tuple wrapped in `T!` (non-nil) still references the underlying mangled name. `Nn_` prefix participates in the mangling scheme (via `canonical-named-tuple-name` on the wrapper) so an `Nn_`-wrapped nested tuple has a distinct mangled name from its bare form — collect-shapes finds both, and the reference resolves to the wrapper form."
+    (let [inner   (nt-node "inner" "Int")
+          nn-inner (nonnil inner)
+          outer   (nt-node-with-fields [{:name "outer" :type nn-inner}])
+          shapes  (nt/collect-shapes
+                    {:node :method :params [{:name "p" :type outer}]})
+          out     (nt/emit-typedefs shapes mvp-c-type)]
+      ;; The inner shape (bare, no `Nn_`) is what surfaces in the shapes
+      ;; map — `canonical-named-tuple-name` on the :type-named-tuple
+      ;; node itself doesn't propagate the outer :type-nonnil wrapper.
+      (is (.contains out "} _Cxc_NT_inner_Int;"))
+      ;; Outer references it with the `Nn_` prefix in the field type
+      ;; because `field-c-type` for :type-nonnil recurses; the nested
+      ;; type-name is the bare form. Runtime nil-check fires separately
+      ;; at param binding.
+      (is (.contains out "_Cxc_NT_inner_Int outer;")))))

@@ -252,9 +252,25 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- field-c-type
-  "Translate a field's type node to a C-type string. MVP: primitives
-   and non-nil primitives only. `primitive->c-type` maps a type name
-   like \"Int\" to the C type (e.g., `int64_t`)."
+  "Translate a field's type node to a C-type string.
+
+   Coverage:
+   - `:type-ref` — primitive (must have a C-type mapping via
+     `primitive->c-type`).
+   - `:type-nonnil` — recurse on `:inner`. Non-nil is orthogonal to
+     C representation at the struct-field level (the runtime nil-check
+     fires at param-binding / method-return sites, not on read of a
+     value-typed field).
+   - `:type-named-tuple` — F15 L2.c.ii-b (2026-08-24) — nested
+     named-tuple fields REFERENCE the nested struct by its canonical
+     mangled name (per D4's `structural equivalence at the type level
+     maps to identity at the C level` — inlining would create
+     multiple non-equivalent C types for one structural type). The
+     caller must ensure the nested shape appears in the typedef
+     stream before its containers; `emit-typedefs` handles the
+     ordering via topological sort.
+   - `:type-of` — parametric field types not yet supported; extend
+     when the parametric container ABI decision lands."
   [primitive->c-type type-node]
   (case (:node type-node)
     :type-ref
@@ -270,11 +286,7 @@
     (field-c-type primitive->c-type (:inner type-node))
 
     :type-named-tuple
-    (fail-nyi! (str "nested named-tuple field types not supported in "
-                    "F15 L2.c.ii typedef emit — extend when the "
-                    "inline-vs-reference decision for nested "
-                    "typedefs is settled")
-               type-node)
+    (canonical-named-tuple-name type-node)
 
     :type-of
     (fail-nyi! (str "parametric field types (`" (:outer type-node)
@@ -296,6 +308,55 @@
          (str/join "\n" lines)
          "\n} " mangled-name ";")))
 
+(defn- shape-dependencies-in-map
+  "Return the set of mangled names in `shapes` that appear as nested
+   `:type-named-tuple` field types in `shape-node`. External refs
+   (not in `shapes`) filtered out — `collect-shapes` should have
+   included them, but defensive filtering prevents infinite waits on
+   unresolvable deps."
+  [shapes shape-node]
+  (let [deps (volatile! (transient #{}))]
+    (walk/postwalk
+     (fn [x]
+       (when (and (map? x) (= :type-named-tuple (:node x)))
+         (let [nm (canonical-named-tuple-name x)]
+           (when (and (not= nm (canonical-named-tuple-name shape-node))
+                      (contains? shapes nm))
+             (vswap! deps conj! nm))))
+       x)
+     (:fields shape-node))
+    (persistent! @deps)))
+
+(defn- topologically-sorted-shape-keys
+  "Return the shapes' mangled names in an order where each shape
+   appears AFTER every shape it contains (nested `:type-named-tuple`
+   field type). Ties broken by lexicographic mangled name — matches
+   `collect-shapes`'s sorted-map default for shapes with no
+   containment relationship. Cycles are impossible under the mangling
+   scheme (containment is antisymmetric: a shape's name encodes its
+   nested structure, so `A ⊃ B` forces `name(A) ≠ name(B)` and
+   `B ⊃ A` would need `name(B)` to encode `A` which encodes `B` ad
+   infinitum)."
+  [shapes]
+  (let [names   (into (sorted-set) (keys shapes))
+        deps-of (into {}
+                      (map (fn [nm] [nm (shape-dependencies-in-map shapes (get shapes nm))]))
+                      names)]
+    (loop [placed     []
+           placed-set #{}
+           remaining  names]
+      (if (empty? remaining)
+        placed
+        (if-let [next-nm (first (filter (fn [nm]
+                                          (every? placed-set (get deps-of nm)))
+                                        remaining))]
+          (recur (conj placed next-nm)
+                 (conj placed-set next-nm)
+                 (disj remaining next-nm))
+          (throw (ex-info "F15 L2.c.ii-b: cyclic named-tuple containment (should be impossible)"
+                          {:remaining  remaining
+                           :deps-of    deps-of})))))))
+
 (defn emit-typedefs
   "F15 L2.c.ii — return a C source string of typedef declarations
    for every shape in `shapes` (as produced by `collect-shapes`).
@@ -306,21 +367,24 @@
    the caller (typically lower.clj / emit.clj) supplies it.
 
    Empty input → empty string. Multiple typedefs separate by blank
-   lines. Iteration follows the sorted-map order so output is
-   deterministic across runs.
+   lines. Iteration follows a topological sort by containment
+   (nested typedefs appear before their containers), with
+   lexicographic mangled name as the deterministic tie-break — so
+   output is stable across runs.
 
-   Field-type coverage (MVP): primitives + non-nil primitives.
-   Nested named-tuples and parametric field types throw NYI —
-   follow-on sub-landings extend."
+   Field-type coverage: primitives, non-nil primitives, nested
+   named-tuples (referenced by mangled name — F15 L2.c.ii-b).
+   Parametric field types (`Array of T` etc.) throw NYI — follow-on
+   sub-landings extend."
   ^String [shapes primitive->c-type]
   (if (empty? shapes)
     ""
     (str/join "\n\n"
-              (map (fn [[mangled-name shape-node]]
+              (map (fn [mangled-name]
                      (shape->typedef-string primitive->c-type
                                             mangled-name
-                                            shape-node))
-                   shapes))))
+                                            (get shapes mangled-name)))
+                   (topologically-sorted-shape-keys shapes)))))
 
 ;; ---------------------------------------------------------------------------
 ;; F15 L2.d.i — structural conformance predicate (pure).
