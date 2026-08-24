@@ -345,6 +345,31 @@
       (is (str/includes? s "#endif")
           "guard closes"))))
 
+(deftest f32-l4a-cxcatomstate-wrapper-emits-guarded
+  (testing "F32 L4.a — the `_CxcAtomState` ARC wrapper class is emitted in the runtime helpers under a `#if !CXC_SINGLE_MAIN_QUEUE` guard. Under Layer 4 default the whole block preprocessor-guards out (zero cost); under concurrent mode the class is available for L4.b's per-atom `_state` ivar to reference. Wrapper carries a raw `void *state` pointer and a `size_t size`; `-dealloc` frees the underlying malloc'd struct so ARC handles cross-reader lifetime (old wrapper releases when no in-flight reader retains). Dead code today: nothing references `_CxcAtomState` yet."
+    (let [ast {:node :objc-program
+               :needs-runtime? true
+               :includes []
+               :structs []
+               :classes []
+               :main {:body []}}
+          s   (emit/emit ast)
+          i   (str/index-of s "@interface _CxcAtomState")
+          end (str/index-of s "@end\n#endif" i)
+          block (subs s i (+ end (count "@end\n#endif")))]
+      (is (str/includes? s "#if !CXC_SINGLE_MAIN_QUEUE\n@interface _CxcAtomState")
+          "wrapper class opens under !CXC_SINGLE_MAIN_QUEUE guard")
+      (is (str/includes? block "@property (nonatomic, assign) void *state;")
+          "wrapper carries the raw state pointer")
+      (is (str/includes? block "@property (nonatomic, assign) size_t size;")
+          "wrapper carries the struct size (for L4.c commit memcpy)")
+      (is (str/includes? block "- (void)dealloc {")
+          "dealloc is implemented so ARC frees the malloc'd buffer")
+      (is (str/includes? block "if (_state) { free(_state); _state = NULL; }")
+          "dealloc frees underlying buffer and nils the pointer")
+      (is (str/ends-with? block "@end\n#endif")
+          "block closes with @end followed by the #endif for the guard"))))
+
 (deftest f32-l5-cxcstream-init-emits-guarded-main-target
   (testing "F32 L5 — CxcStream's -init retargets its own_queue to main only under CXC_SINGLE_MAIN_QUEUE. Under concurrent mode the stream inherits libdispatch's default target (default-QoS global pool) so fan-out doesn't bottleneck through main. Queue stays SERIAL either way; subscriber delivery via cxc_send_async still respects each subscriber's own_queue."
     (let [ast {:node :objc-program

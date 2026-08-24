@@ -1269,6 +1269,39 @@
        "#endif\n"
        "    exit(0);\n"
        "}\n\n"
+       ;; F32 L4.a (2026-08-24) — atomic-pointer-swap storage-flip
+       ;; infrastructure, sub-landing 1 of N per the storage-flip
+       ;; discipline (land fan-out sites as guarded dead code before
+       ;; flipping storage reps). Introduces `_CxcAtomState` — an
+       ;; ARC-managed wrapper carrying a heap-allocated
+       ;; `<Atom>_State` struct pointer. Every commit under concurrent
+       ;; mode (F32 L4.c) will allocate a fresh wrapper, populate it
+       ;; from the transition's next-state bag, and atomically swap
+       ;; the atom's `_state` slot; readers (L4.d) will atomic-load
+       ;; the slot and dereference the wrapper's `state` pointer.
+       ;; The wrapper's `-dealloc` frees the underlying malloc'd
+       ;; buffer, so ARC handles cross-reader lifetime — the old
+       ;; wrapper releases when no in-flight reader retains it.
+       ;;
+       ;; Guarded on `!CXC_SINGLE_MAIN_QUEUE` because Layer 4 single-
+       ;; queue mode (current default) uses F33 L3's per-field ivar
+       ;; commit, which is correct under main-serialized reads/writes.
+       ;; Under default flag this whole block is preprocessor-guarded
+       ;; out — zero runtime cost. Nothing references `_CxcAtomState`
+       ;; yet; L4.b adds the per-atom `_state` ivar, L4.c wires
+       ;; commits to populate it, L4.d flips cross-atom reads to
+       ;; route through it.
+       "#if !CXC_SINGLE_MAIN_QUEUE\n"
+       "@interface _CxcAtomState : NSObject\n"
+       "@property (nonatomic, assign) void *state;\n"
+       "@property (nonatomic, assign) size_t size;\n"
+       "@end\n\n"
+       "@implementation _CxcAtomState\n"
+       "- (void)dealloc {\n"
+       "    if (_state) { free(_state); _state = NULL; }\n"
+       "}\n"
+       "@end\n"
+       "#endif\n\n"
        ;; F39 L3 — `T!` runtime enforcement. Warning-grade per spec §3.6.1
        ;; line 3686: "logs a warning in development, configurable action
        ;; in release." The check itself is inlined at each observation
