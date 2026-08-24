@@ -701,13 +701,29 @@
     ;; F33 L3.b — atomic commit of the next-state bag to live ivars.
     ;; Emits `_<f1> = __cxc_next._<f1>; _<f2> = __cxc_next._<f2>; ...`
     ;; for every non-slot-setter data-field. All assignments in one
-    ;; sequence with no message-boundaries between; under F32 this
-    ;; single site is where the memory fence goes.
-    (let [fields (:data-fields node)]
-      (->> fields
-           (map (fn [f]
-                  (str "_" (:name f) " = __cxc_next._" (:name f) ";")))
-           (str/join "\n")))
+    ;; sequence with no message-boundaries between.
+    ;;
+    ;; F32 L4.c (2026-08-24) — dual-write commit. After the per-field
+    ;; ivar writes, `!CXC_SINGLE_MAIN_QUEUE` builds also swap a fresh
+    ;; `_CxcAtomState` wrapper into `_state` via `_cxc_state_commit`
+    ;; (release-ordered atomic exchange). Readers (`_state`) don't
+    ;; land until L4.d, so the dual-write is currently dead on the
+    ;; reader side — but keeps `_state` in sync with the ivars so
+    ;; L4.d's flip is a one-site change. Under default flag the
+    ;; extra call preprocessor-guards out and existing behavior is
+    ;; byte-identical. L4.e will retire the per-field ivar sequence
+    ;; once readers no longer touch ivars.
+    (let [fields (:data-fields node)
+          atom-name (:atom-name node)
+          ivar-commits (->> fields
+                            (map (fn [f]
+                                   (str "_" (:name f) " = __cxc_next._" (:name f) ";")))
+                            (str/join "\n"))
+          state-commit (str "#if !CXC_SINGLE_MAIN_QUEUE\n"
+                            "_cxc_state_commit(&_state, &__cxc_next, sizeof("
+                            atom-name "_State));\n"
+                            "#endif")]
+      (str ivar-commits "\n" state-commit))
     :queue-init
     ;; F32 L1 (2026-08-24) — per-atom serial queue. Target selection is
     ;; preprocessor-guarded on CXC_SINGLE_MAIN_QUEUE (default 1, defined

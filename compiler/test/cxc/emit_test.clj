@@ -398,6 +398,20 @@
       (is (str/includes? block "if (_state) { free(_state); _state = NULL; }")
           "dealloc frees underlying buffer and nils the pointer"))))
 
+(deftest f32-l4c-commit-next-state-emits-guarded-state-commit
+  (testing "F32 L4.c — `:commit-next-state` now emits a guarded `_cxc_state_commit(&_state, &__cxc_next, sizeof(<Atom>_State))` call after the existing per-field ivar assignments (dual-write pattern). Under the default preprocessor flag the state-commit call guards out and per-field ivar assignments are byte-identical to F33 L3.b. Under concurrent mode both fire — readers still hit ivars (L4.d flips them to `_state`), so the state-commit keeps `_state` in sync with the ivars ready for L4.d's read-side flip. L4.e retires the per-field sequence once readers no longer touch ivars."
+    (let [commit-node {:node :commit-next-state
+                       :atom-name "Counter"
+                       :data-fields [{:name "n"}]}
+          s (#'cxc.emit/emit-stmt commit-node)]
+      (is (str/includes? s "_n = __cxc_next._n;")
+          "per-field ivar assignment preserved (F33 L3.b — unchanged under default flag)")
+      (is (str/includes? s "#if !CXC_SINGLE_MAIN_QUEUE\n_cxc_state_commit(&_state, &__cxc_next, sizeof(Counter_State));\n#endif")
+          "state-commit fires under the concurrent-mode guard with the atom's state-struct size")
+      (is (< (str/index-of s "_n = __cxc_next._n;")
+             (str/index-of s "_cxc_state_commit"))
+          "ivar assignments precede the state-commit (dual-write order)"))))
+
 (deftest f32-l4b-beta-atom-class-emits-guarded-state-ivar
   (testing "F32 L4.b.β — every class emitted through `emit-interface` carries a `_Atomic id _state` ivar in an ivars block guarded on `!CXC_SINGLE_MAIN_QUEUE`. Under the default preprocessor flag the block resolves to `{ }` (empty ivars — identical shape to pre-L4.b.β classes, since ObjC auto-synthesizes ivars for @properties). Under concurrent mode, the ivar is present so L4.c can `_cxc_state_commit(&_state, ...)` and L4.d can `_cxc_state_load(&_state)`. The block is dead code today — no reader or writer references it."
     (let [ast {:node :objc-program
