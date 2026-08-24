@@ -100,6 +100,12 @@
       (is (zero? exit))
       (is (= "8\n" stdout)))))
 
+(deftest end-to-end-f37-l6a-bytes-at
+  (testing "F37 L6a — `Bytes.at(offset)` reads a single byte and widens to Int. `Vec(x:1, y:2).as()` produces big-endian bytes `00 00 00 01 00 00 00 02`; `b.at(3)` reads the low byte of x = 1."
+    (let [{:keys [exit stdout]} (compile-and-run "f37-l6a-bytes-at")]
+      (is (zero? exit))
+      (is (= "1\n" stdout)))))
+
 (deftest end-to-end-k5-if-expression
   (testing "K5 L1 — `if` at expression position (spec §3.8.1). Uses both simple `if...else` and `if...else if...else` chain. Result flows through `let` bindings. Lowered as C ternary; prints the selected branch value."
     (let [{:keys [exit stdout]} (compile-and-run "k5-if-expression")]

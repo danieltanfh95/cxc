@@ -4167,3 +4167,38 @@ def main:
           "init assigns raw ivar with the default literal")
       (is (not (str/includes? c-src "__cxc_snap = { ._n = _n };"))
           "no snapshot init prelude on Counter (no receive-glyph methods declared)"))))
+
+;; ---------------------------------------------------------------------------
+;; F37 L6a — `Bytes.at(offset)` primitive-method dispatch. Reads one byte
+;; from an NSMutableData * and widens to Int64. First primitive-target
+;; method-call arm in lower-method-call; earlier only record + atom
+;; targets dispatched (list-container was a sub-case of atom).
+;; ---------------------------------------------------------------------------
+
+(deftest f37-l6a-bytes-at-emits-widened-pointer-index
+  (testing "F37 L6a — `bytes.at(i)` lowers to `((int64_t)((const uint8_t *)[bytes bytes])[i])` — one Objective-C property access + one pointer index + a widen. No allocation, no message send in the hot path."
+    (let [prog (lower-src (str "def Vec:\n"
+                               "    x: Int32!\n\n"
+                               "def main:\n"
+                               "    -> running\n"
+                               "        then:\n"
+                               "            let b: Bytes = Vec(x: 1).as()\n"
+                               "            print(b.at(2))\n"))
+          c-src (emit/emit prog)]
+      (is (str/includes? c-src "((int64_t)((const uint8_t *)[")
+          "cast + pointer index shape emitted verbatim")
+      (is (str/includes? c-src " bytes])[")
+          "reads the raw byte pointer via ObjC `-bytes` property"))))
+
+(deftest f37-l6a-bytes-at-wrong-arity-rejected
+  (testing "F37 L6a — `.at()` and `.at(a, b)` are hard errors at lower time; the diagnostic names the arity mismatch."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"F37 L6a: `Bytes.at` expects exactly one arg"
+         (lower-src (str "def Vec:\n"
+                         "    x: Int32!\n\n"
+                         "def main:\n"
+                         "    -> running\n"
+                         "        then:\n"
+                         "            let b: Bytes = Vec(x: 1).as()\n"
+                         "            print(b.at())\n"))))))

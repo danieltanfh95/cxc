@@ -3012,6 +3012,15 @@
           :else (fail-nyi! (str "method/observable `" method-name "` on atom `" an "`")
                            call-node)))
 
+      ;; F37 L6a — primitive-method dispatch on `:bytes` values. `.at`
+      ;; is the only method shipped in the initial landing; `.slice`
+      ;; and `.bytes` follow when a use case forces them. Returns Int
+      ;; (a byte widened to 64-bit) so downstream numeric code doesn't
+      ;; require an explicit widen.
+      (and (keyword? target-ty) (= :bytes target-ty)
+           (= "at" method-name))
+      :int
+
       :else
       (fail-nyi! "method call on non-record/non-atom target" call-node))))
 
@@ -3865,6 +3874,26 @@
           {:node :call
            :fn   (c-method-name (:record target-ty) method-name)
            :args (into [target-lo] arg-exprs)}
+
+          ;; F37 L6a — `Bytes.at(offset) -> Int`. Reads the byte at
+          ;; `offset` and widens to Int64 so downstream numeric code
+          ;; doesn't require an explicit cast. Bounds are the caller's
+          ;; responsibility — pair with `bytes.length` when
+          ;; iterating. Emits `((int64_t)((const uint8_t *)[bytes bytes])[offset])`
+          ;; — one Objective-C property access + one pointer index +
+          ;; a widen. No allocation, no message send in the hot path.
+          (and (keyword? target-ty) (= :bytes target-ty)
+               (= "at" method-name))
+          (do (when-not (= 1 (count arg-exprs))
+                (fail-nyi! (str "F37 L6a: `Bytes.at` expects exactly one "
+                                "arg (offset), got " (count arg-exprs))
+                           call-node))
+              {:node      :ffi-call
+               :name      "cxc_bytes_at"
+               :args      [target-lo (first arg-exprs)]
+               :emit-c-fn (fn [[b o]]
+                            (str "((int64_t)((const uint8_t *)["
+                                 b " bytes])[" o "])"))})
 
           (and (map? target-ty) (:atom target-ty))
           (let [atom-name   (:atom target-ty)
