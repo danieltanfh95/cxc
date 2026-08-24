@@ -279,6 +279,46 @@
   [nm]
   (get @registry (normalize-name nm)))
 
+(defn behavioral-parser
+  "F8 L3b.ii.α — resolve the parser fn for a behavioral section-header
+   name via the registry. Returns a var (invocable as a fn) or nil.
+
+   Returns nil when: (a) `nm` has no registry entry, (b) the entry is
+   not `:kind :behavioral`, (c) the entry's spec carries no
+   `:parser-sym`. Otherwise returns `(requiring-resolve parser-sym)` —
+   the target namespace is loaded on demand, and subsequent calls
+   hit the resolved var directly.
+
+   Case-insensitive via `lookup`. Callers invoke the returned var as
+   `[tokens pos] → [node next-pos]` matching the shape of
+   `parse-invariants-section` / `parse-deprecated-section` /
+   `parse-use-section`.
+
+   No parser wire-through yet — this fn is the substrate. L3b.ii.β
+   (def-atom-body dispatch) and L3b.iii (class-body dispatch) will
+   call this from parse.clj's cond arms."
+  [nm]
+  (let [e (lookup nm)]
+    (when (= :behavioral (:kind e))
+      (when-let [sym (get-in e [:spec :parser-sym])]
+        (requiring-resolve sym)))))
+
+(defn behavioral-walker
+  "F8 L3d.ii.α — resolve the post-parse walker fn for a behavioral
+   section-header name via the registry. Returns a var or nil. Same
+   nil-return conditions as `behavioral-parser`, plus nil when the
+   entry's spec carries no `:walker-sym` (e.g. `:invariants` and
+   `:use` — their lower-time processing happens inline, not as a
+   post-parse walker).
+
+   Callers invoke the returned var per the walker's own signature
+   (currently only `warn-deprecated-uses [parsed deprecations]`)."
+  [nm]
+  (let [e (lookup nm)]
+    (when (= :behavioral (:kind e))
+      (when-let [sym (get-in e [:spec :walker-sym])]
+        (requiring-resolve sym)))))
+
 (defn- seed-protected-reservations! []
   (into {}
         (map (fn [nm]

@@ -204,6 +204,44 @@
     (is (= :behavioral (:kind (sec/lookup "Use"))))
     (is (= :behavioral (:kind (sec/lookup :Use))))))
 
+(deftest behavioral-parser-resolves-invariants
+  (testing "F8 L3b.ii.α — `behavioral-parser :invariants` returns the resolved `parse-invariants-section` var via `requiring-resolve`. Verifies both the metadata pointer (parser-sym in the seed) and the resolution path work end-to-end. Case-insensitive lookup preserved."
+    (let [v (sec/behavioral-parser :invariants)]
+      (is (var? v))
+      (is (= (requiring-resolve 'cxc.parse/parse-invariants-section) v)))
+    (is (var? (sec/behavioral-parser "Invariants")))
+    (is (var? (sec/behavioral-parser :Invariants)))))
+
+(deftest behavioral-parser-resolves-deprecated-and-use
+  (testing "F8 L3b.ii.α — same substrate resolves parser vars for the other L3d.i / L3-use.i seeds. All three behavioral sections dispatch through one uniform mechanism."
+    (is (= (requiring-resolve 'cxc.parse/parse-deprecated-section)
+           (sec/behavioral-parser :deprecated)))
+    (is (= (requiring-resolve 'cxc.parse/parse-use-section)
+           (sec/behavioral-parser :use)))))
+
+(deftest behavioral-parser-nil-for-reserved-entries
+  (testing "F8 L3b.ii.α — a `:reserved` entry (no backend wired yet) resolves to nil. Caller uses nil to fall through to the direct hardcoded parser arm (until L3b.ii.β retires the hardcoded arms)."
+    (is (nil? (sec/behavioral-parser :computed)))
+    (is (nil? (sec/behavioral-parser :metadata)))))
+
+(deftest behavioral-parser-nil-for-unregistered-name
+  (testing "F8 L3b.ii.α — names not in the registry resolve to nil. Caller doesn't have to pre-check `lookup` — passes any tokenized keyword through and gets nil for user-picked names too. Enables the parse-time dispatch to be a single arm regardless of whether a name is protected or user-declared."
+    (is (nil? (sec/behavioral-parser :madeupthing)))
+    (is (nil? (sec/behavioral-parser :nothingregistered)))))
+
+(deftest behavioral-walker-resolves-deprecated
+  (testing "F8 L3d.ii.α — `behavioral-walker :deprecated` resolves to the K3 walker var. Complements `behavioral-parser` for sections that need post-parse processing in addition to parse dispatch — currently only `:deprecated`."
+    (let [v (sec/behavioral-walker :deprecated)]
+      (is (var? v))
+      (is (= (requiring-resolve 'cxc.build/warn-deprecated-uses) v)))))
+
+(deftest behavioral-walker-nil-when-no-walker-sym
+  (testing "F8 L3d.ii.α — `:invariants` and `:use` seeds carry no `:walker-sym` (their lower-time processing is inline, not walker-based). `behavioral-walker` returns nil so callers iterate the registry safely without a walker-vs-no-walker branch."
+    (is (nil? (sec/behavioral-walker :invariants)))
+    (is (nil? (sec/behavioral-walker :use)))
+    (is (nil? (sec/behavioral-walker :computed)))
+    (is (nil? (sec/behavioral-walker :madeupthing)))))
+
 (deftest register-rejects-protected-name-shadow
   (testing "F8 D5 — `register!` hard-errors when the caller passes a protected section-header name. This is the guard behind `alias computed: runtime immutable identity` at parse time (via register-section-header-alias!) and behind the future L4 `section class Computed:` user syntax. Diagnostic names the reserved header and lists the full protected set."
     (is (thrown-with-msg?
