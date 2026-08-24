@@ -4401,6 +4401,54 @@ def main:
                 {:name "y" :type {:node :type-ref :name "Int"}}]
                (:fields shape)))))))
 
+(deftest f15-l2d-ii-beta-record-conforms-to-named-tuple-param
+  (testing "F15 L2.d.ii.β — passing a record whose fields structurally match a named-tuple ctor-param succeeds. The check runs after `resolve-args-against-params` in `lower-atom-ctor` and consults `named-tuple/structural-conforms?` — the record's raw field `:type` nodes (preserved by L2.d.ii.α) compare Clojure-structurally against the required tuple's `:fields`, so `V(x: Int, y: Int)` satisfies `(x: Int, y: Int)`."
+    ;; End-to-end: V has fields {x: Int, y: Int}; Foo declares p as
+    ;; a named-tuple (x: Int, y: Int); passing V() at the ctor site
+    ;; should lower cleanly. Regression on the check would fail-nyi.
+    (let [prog (lower-src (str "def V:\n    x: Int\n    y: Int\n\n"
+                               "def Foo(p: (x: Int, y: Int)):\n"
+                               "    running <: nop -> self\n\n"
+                               "def main:\n"
+                               "    f: Foo = Foo(p: V(x: 1, y: 2))\n"
+                               "    -> running\n"))]
+      (is (some? prog))
+      (is (contains? (:named-tuple-env prog) "_Cxc_NT_x_Int_y_Int")))))
+
+(deftest f15-l2d-ii-beta-record-missing-field-rejected
+  (testing "F15 L2.d.ii.β — passing a record that lacks a required named-tuple field fails-nyi with an actionable diagnostic naming the missing field and the record's available fields. Spec §3.4 structural conformance discipline: value must supply every field the required shape names."
+    (let [ex (try
+               (lower-src (str "def V:\n    x: Int\n\n"
+                               "def Foo(p: (x: Int, y: Int)):\n"
+                               "    running <: nop -> self\n\n"
+                               "def main:\n"
+                               "    f: Foo = Foo(p: V(x: 1))\n"
+                               "    -> running\n"))
+               nil
+               (catch clojure.lang.ExceptionInfo e e))]
+      (is ex "expected exception")
+      (is (= :not-yet-implemented (:kind (ex-data ex))))
+      (is (re-find #"does not structurally conform" (.getMessage ex)))
+      (is (re-find #"missing field `y`" (.getMessage ex)))
+      (is (re-find #"record has: x" (.getMessage ex))))))
+
+(deftest f15-l2d-ii-beta-record-wrong-field-type-rejected
+  (testing "F15 L2.d.ii.β — passing a record whose field type differs from the required named tuple's field type fails-nyi with a targeted diagnostic naming the mismatched field, expected type, and got type. Nullability sensitivity holds automatically since the type comparison is Clojure structural on the raw `:type` nodes (via L2.d.ii.α preservation)."
+    (let [ex (try
+               ;; V's `x` is Float; Foo requires x: Int → type mismatch
+               (lower-src (str "def V:\n    x: Float\n    y: Int\n\n"
+                               "def Foo(p: (x: Int, y: Int)):\n"
+                               "    running <: nop -> self\n\n"
+                               "def main:\n"
+                               "    f: Foo = Foo(p: V(x: 1.0, y: 2))\n"
+                               "    -> running\n"))
+               nil
+               (catch clojure.lang.ExceptionInfo e e))]
+      (is ex "expected exception")
+      (is (= :not-yet-implemented (:kind (ex-data ex))))
+      (is (re-find #"does not structurally conform" (.getMessage ex)))
+      (is (re-find #"field `x` type mismatch" (.getMessage ex))))))
+
 (deftest f15-l2c-iii-c-epsilon-beta-gamma-field-type-for-owner-named-tuple-primitive
   (testing "F15 L2.c.iii.c.ε.β.γ — `field-type-for-owner` resolves `.field` access on a `:named-tuple` owner by consulting `:named-tuple-env` on ctx and translating the looked-up field type through `cxc-type->type-kw`. Primitive field returns the primitive type-kw (`Int` → `:int`)."
     (let [shape {:node   :type-named-tuple

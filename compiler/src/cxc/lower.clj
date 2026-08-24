@@ -3790,6 +3790,80 @@
           params)))
 
 
+(defn- check-named-tuple-ctor-conformance!
+  "F15 L2.d.ii.β (2026-08-24) — for each ctor param whose declared
+   type is `:type-named-tuple`, check that the caller-supplied arg's
+   value structurally conforms to the required shape per spec §3.4.
+   Runs after `resolve-args-against-params` so defaults are folded in.
+
+   Two accepted arg shapes today:
+   - Record instance (`{:record N}` type-kw): look up the record's
+     lowered fields (each carrying a raw `:type` node preserved by
+     L2.d.ii.α) and run `structural-conforms?` against the required
+     named tuple's `:fields`.
+   - Same-shape named tuple (`{:named-tuple <mangled>}` type-kw):
+     equivalence is C-level identity per D4 — same mangled name ⇒
+     conforms; different ⇒ fails with a targeted diagnostic naming
+     both mangled shapes.
+
+   Skips params where the arg's type doesn't yet infer (nil type-kw)
+   or is something other than a record / named-tuple — those either
+   fail elsewhere (primitives at cxc-type->c) or are legal shapes not
+   yet in L2.d.ii.β scope (atoms, enums). Extend as call-site
+   patterns emerge."
+  [atom-name ctor-params resolved ctx]
+  (doseq [p ctor-params
+          :when (= :type-named-tuple (get-in p [:type :node]))]
+    (let [param-name (:name p)
+          required   (:type p)
+          arg-value  (some #(when (= param-name (:name %)) (:value %)) resolved)
+          arg-tk     (when arg-value (infer-type arg-value ctx))]
+      (cond
+        (nil? arg-tk) nil
+
+        (and (map? arg-tk) (:record arg-tk))
+        (let [record-name  (:record arg-tk)
+              value-fields (get-in ctx [:record-env record-name :fields])
+              result       (named-tuple/structural-conforms?
+                            value-fields (:fields required))]
+          (when-not (:conforms result)
+            (let [required-mangled (named-tuple/canonical-named-tuple-name required)
+                  reason-msg (case (:reason result)
+                               :missing-field
+                               (str " missing field `" (:field result)
+                                    "` (record has: "
+                                    (str/join ", " (:available result)) ")")
+                               :wrong-type
+                               (str " field `" (:field result)
+                                    "` type mismatch (expected "
+                                    (pr-str (:expected result))
+                                    ", got " (pr-str (:got result)) ")")
+                               "")]
+              (fail-nyi! (str "atom ctor `" atom-name "` param `"
+                              param-name "`: record `" record-name
+                              "` does not structurally conform to named tuple `"
+                              required-mangled "` —" reason-msg
+                              " (spec §3.4 structural conformance)")
+                         {:atom atom-name :param param-name
+                          :record record-name
+                          :required required-mangled
+                          :reason (:reason result)}))))
+
+        (and (map? arg-tk) (:named-tuple arg-tk))
+        (let [arg-mangled      (:named-tuple arg-tk)
+              required-mangled (named-tuple/canonical-named-tuple-name required)]
+          (when-not (= arg-mangled required-mangled)
+            (fail-nyi! (str "atom ctor `" atom-name "` param `"
+                            param-name "`: named tuple `"
+                            arg-mangled "` does not match required `"
+                            required-mangled
+                            "` (spec §3.4 structural conformance —"
+                            " named-tuple shapes must be C-level identical)")
+                       {:atom atom-name :param param-name
+                        :got arg-mangled :required required-mangled})))
+
+        :else nil))))
+
 (defn- lower-atom-ctor
   "`X(a: 1, b: 2)` → ObjC init call. With no ctor params, emits plain
    `[[X alloc] init]`. With ctor params, emits an :objc-init-with node
@@ -3808,6 +3882,12 @@
       (let [resolved (resolve-args-against-params
                       (str "`" atom-name "` constructor")
                       ctor-params args)]
+        ;; F15 L2.d.ii.β — structural conformance check runs on
+        ;; resolved args before lower-expr so a mismatch surfaces with
+        ;; the raw source-level type node in the diagnostic rather
+        ;; than a lowered form (better user-facing error).
+        (check-named-tuple-ctor-conformance! atom-name ctor-params
+                                             resolved ctx)
         {:node :objc-init-with
          :class atom-name
          :args  (mapv (fn [{:keys [name value]}]
