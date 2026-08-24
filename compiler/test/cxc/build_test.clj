@@ -597,6 +597,65 @@
       (is (zero? exit))
       (is (= "1\n0\n1\n" stdout)))))
 
+(deftest f32-l6-single-queue-flag-default-preserves-layer4-behavior
+  (testing "F32 L6 — default `:single-queue?` (unset) matches `:single-queue? true` and produces a working binary. Layer 4 backward-compat: existing callers that don't know about the flag see zero change."
+    (let [src     (example "hello")
+          out-dir (tmp-dir)
+          r-default (build/compile-source-to-file
+                     src "hello" (.getPath out-dir))
+          r-explicit (build/compile-source-to-file
+                      src "hello-sq" (.getPath out-dir) {:single-queue? true})]
+      (is (zero? (:status r-default))
+          (str "default-flag compile failed:\n" (:stderr r-default)))
+      (is (zero? (:status r-explicit))
+          (str "explicit :single-queue? true compile failed:\n" (:stderr r-explicit)))
+      (let [{exit1 :exit out1 :stdout} (build/run-binary (:bin-path r-default))
+            {exit2 :exit out2 :stdout} (build/run-binary (:bin-path r-explicit))]
+        (is (zero? exit1))
+        (is (zero? exit2))
+        (is (= out1 out2) "single-queue default and explicit=true produce byte-identical stdout")
+        (is (= "hello, world\n" out1))))))
+
+(deftest f32-l6-concurrent-mode-flag-threads-to-clang
+  (testing "F32 L6 — `:single-queue? false` opts into F32 concurrent mode. `-DCXC_SINGLE_MAIN_QUEUE=0` reaches clang, the L1 concurrent-mode branch selects the global pool for non-main atoms, L2's shutdown drain fires, L5 keeps the stream queue off main. A trivial `hello` program (no atoms beyond main, no observables) still prints correctly — its main atom stays main-targeted per L1's runtime class-name check."
+    (let [src     (example "hello")
+          out-dir (tmp-dir)
+          r       (build/compile-source-to-file
+                   src "hello-concurrent" (.getPath out-dir)
+                   {:single-queue? false})]
+      (is (zero? (:status r))
+          (str "concurrent-mode compile failed:\n" (:stderr r)))
+      (when (zero? (:status r))
+        (let [{:keys [exit stdout]} (build/run-binary (:bin-path r))]
+          (is (zero? exit))
+          (is (= "hello, world\n" stdout)))))))
+
+(deftest f32-l6-flag-participates-in-cache-key
+  (testing "F32 L6 — the queue-mode flag is folded into the cache SHA so a single-queue build and a concurrent build of the same source don't collide. Emit itself is preprocessor-guarded (m-src is identical), but the clang command line and thus the binary differ; sharing the cache would silently return the wrong binary. Two compiles of the same source, one per flag value, must produce two distinct cache-bin entries. Confirmed by: first call with each flag is a miss (unique-per-test source ensures cache doesn't leak across test runs); a second call with the SAME flag is a hit (proves normal cache works); a call with the OTHER flag is a miss (proves the flag key participates)."
+    ;; Unique-per-run source (nonce baked into a print) guarantees the
+    ;; SHA input is fresh, so the repo-scoped `.cxc-cache` doesn't leak
+    ;; from prior test runs.
+    (let [nonce   (str (System/nanoTime))
+          src     (str "def main:\n"
+                       "    -> running\n"
+                       "        then: print(\"f32-l6 " nonce "\")\n")
+          out-dir (tmp-dir)
+          ;; Prime with single-queue mode (miss — fresh SHA).
+          r-sq-1  (build/compile-source-to-file
+                   src "hello-cache-sq1" (.getPath out-dir) {:single-queue? true})
+          ;; Re-run same mode → hit.
+          r-sq-2  (build/compile-source-to-file
+                   src "hello-cache-sq2" (.getPath out-dir) {:single-queue? true})
+          ;; Switch mode → miss (flag folded into key).
+          r-conc  (build/compile-source-to-file
+                   src "hello-cache-cn" (.getPath out-dir) {:single-queue? false})]
+      (is (false? (:cache-hit? r-sq-1))
+          "first compile of fresh source is a miss")
+      (is (true? (:cache-hit? r-sq-2))
+          "second compile with same flag hits the cache")
+      (is (false? (:cache-hit? r-conc))
+          "flipping the flag misses the cache (proves the flag is part of the key)"))))
+
 (deftest explicit-target-unknown-rejected
   (testing "F55 Landing 3 — an unknown target name raises a targeted diagnostic naming the missing resource path"
     (let [src     (example "hello")

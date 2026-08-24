@@ -184,13 +184,25 @@
    (`prelude/target/<target>/*.cxc`). Defaults to `prelude/default-target`
    (:macos) so existing callers are backward-compatible.
 
+   F32 L6: optional `:single-queue?` key controls the
+   `CXC_SINGLE_MAIN_QUEUE` preprocessor value passed to clang.
+   Default `true` (Layer 4 single-main-queue mode — every atom's
+   own_queue targets main; deterministic scheduling for existing
+   tests). Set to `false` to opt into F32 concurrent mode
+   (`-DCXC_SINGLE_MAIN_QUEUE=0` — atom queues target the global
+   pool per L1's runtime check, stream queues drop main-target per
+   L5, shutdown drain fires per L2). The flag value participates
+   in the cache key so single-queue and concurrent builds of the
+   same source don't share a binary.
+
    Returns {:m-path <path> :bin-path <path> :status <clang-exit-code>
             :stdout <clang-stdout> :stderr <clang-stderr>
             :cache-hit? <bool>}."
   ([source name out-dir]
    (compile-source-to-file source name out-dir {}))
-  ([source name out-dir {:keys [target allow-build-modules?]
-                         :or {target prelude/default-target}}]
+  ([source name out-dir {:keys [target allow-build-modules? single-queue?]
+                         :or {target prelude/default-target
+                              single-queue? true}}]
   (let [parse-fn (if allow-build-modules?
                    parse/parse-with-build-modules
                    parse/parse)
@@ -212,7 +224,12 @@
         _        (spit m-file m-src)
         ;; Browse-cache: always keep the last emitted .m for each name.
         _        (copy-file m-file (io/file cache-last-dir (str name ".m")))
-        sha      (sha256-hex m-src)
+        ;; F32 L6 — the queue-mode flag doesn't change m-src (emit is
+        ;; preprocessor-guarded, not mode-branched) but it does change
+        ;; the compiled binary's runtime behavior. Fold it into the SHA
+        ;; input so single-queue and concurrent builds don't collide.
+        cxc-mq   (if single-queue? "1" "0")
+        sha      (sha256-hex (str m-src "\n;; CXC_SINGLE_MAIN_QUEUE=" cxc-mq))
         cache-bin (io/file cache-bin-dir sha)]
     (if (.exists cache-bin)
       (do (copy-file cache-bin bin-file)
@@ -226,6 +243,7 @@
       (let [{:keys [exit out err]}
             (shell/sh "clang" "-fobjc-arc"
                       "-framework" "Foundation"
+                      (str "-DCXC_SINGLE_MAIN_QUEUE=" cxc-mq)
                       "-o" (.getPath bin-file) (.getPath m-file))]
         (when (zero? exit)
           (copy-file bin-file cache-bin))
