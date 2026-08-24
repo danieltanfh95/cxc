@@ -3853,6 +3853,41 @@ def main:
       (is (str/includes? c-src "Counter_State __cxc_snap = { ._n = _n, ._max = _max };")
           "snapshot-init emitted as designated-initializer decl (default single-queue path)"))))
 
+(deftest f32-l4e-beta-1-self-field-read-inside-receive-glyph-reroutes-via-snapshot
+  (testing "F32 L4.e.β.1 — `self.field` reads inside a receive-glyph transition body reroute to `__cxc_snap._field`, parallel to L2.c's bare-ident reroute. Semantics-equivalent under the default flag (F33 L3.b's writes stay in `__cxc_next` until commit fires at end of body, so the ivar during-body carries the same pre-transition value as the snapshot). Under concurrent mode with L4.e.α's snapshot-from-`_state` seed, self reads now route through committed state — closes the self-side of the ivar-reader gap so L4.e.β can retire per-field ivar writes."
+    (let [prog  (lower-src (str "def Counter:\n"
+                                "    n: Int! = 0\n\n"
+                                "    -> running\n\n"
+                                "    running <: bump -> running\n"
+                                "        then: n => self.n + 1\n\n"
+                                "def main:\n"
+                                "    -> running\n        then: print(0)\n"))
+          c-src (emit/emit prog)]
+      (is (str/includes? c-src "__cxc_next._n = (__cxc_snap._n + 1);")
+          "self.n RHS read reroutes to __cxc_snap._n inside receive-glyph body")
+      (is (nil? (str/index-of c-src "self.n + 1"))
+          "no direct ObjC self.n property access on the RHS"))))
+
+(deftest f32-l4e-beta-1-self-field-outside-receive-glyph-stays-on-ivar-path
+  (testing "F32 L4.e.β.1 — `self.field` reads OUTSIDE a receive-glyph body (init bodies, invariant sites, observable bodies) do NOT have `:snapshot-name` in ctx and stay on the ObjC property path unchanged. Regression guard: the reroute is scoped strictly to snapshotted contexts."
+    ;; A record with a self-referring observable: `doubled :< self.n * 2`.
+    ;; The observable body has no snapshot ctx, so `self.n` stays as
+    ;; direct property access (`self.n * 2` in emitted C).
+    (let [prog  (lower-src (str "def V:\n"
+                                "    n: Int = 0\n\n"
+                                "    doubled :< n * 2\n\n"
+                                "def main:\n"
+                                "    -> running\n        then: print(0)\n"))
+          c-src (emit/emit prog)]
+      ;; V's `doubled` observable reads `n` (which lowers to `self.n`
+      ;; via the record-method convention) and multiplies. The emitted
+      ;; V_doubled C fn should NOT reference __cxc_snap (no snapshot
+      ;; context on record observables).
+      (is (some? (str/index-of c-src "V_doubled"))
+          "sanity: V_doubled observable exists")
+      (is (nil? (str/index-of c-src "__cxc_snap._n"))
+          "record observable body does not route through snapshot"))))
+
 (deftest f32-l4e-alpha-snapshot-init-sources-from-state-under-concurrent-mode
   (testing "F32 L4.e.α — snapshot-init emits a `!CXC_SINGLE_MAIN_QUEUE` branch that sources from `_state` via `_cxc_atom_state_ptr`; falls back to a zero-init struct if `_state` is nil. Default single-queue branch preserved (byte-identical). Substrate for L4.e.β retiring per-field ivar writes."
     (let [prog       (lower-src (str "def Counter:\n"

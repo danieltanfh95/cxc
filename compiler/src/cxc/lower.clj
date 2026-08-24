@@ -4699,22 +4699,45 @@
                           ;; `.field` reads carry a `:cross-atom-cls-name`
                           ;; marker so the emit-side routes them through
                           ;; `_cxc_atom_state_ptr(&target->_state)` under
-                          ;; `!CXC_SINGLE_MAIN_QUEUE`. Self-reads
+                          ;; `!CXC_SINGLE_MAIN_QUEUE`. Under the default
+                          ;; preprocessor flag the marker is harmless:
+                          ;; emit-side falls back to plain property access.
+                          ;;
+                          ;; F32 L4.e.β.1 (2026-08-24) — self-reads
                           ;; (`self.field` from a source `:self` node)
-                          ;; stay on the ivar path — F33 L2 snapshot
-                          ;; discipline already covers intra-transition
-                          ;; consistency for self, and self writes go
-                          ;; directly to ivars during commit. Under the
-                          ;; default preprocessor flag the marker is
-                          ;; harmless: emit-side falls back to plain
-                          ;; property access.
-                          (cond-> {:node   :field
-                                   :target target-lo
-                                   :field  (:field node)}
-                            (and atom-nm
-                                 (not= :self (:node (:target node))))
-                            (assoc :cross-atom-cls-name
-                                   (class-name-for-atom atom-nm))))))))
+                          ;; inside a receive-glyph body (ctx
+                          ;; `:snapshot-name` set) reroute to the
+                          ;; transition-entry snapshot bag, parallel to
+                          ;; L2.c's bare-ident reroute (line 4423).
+                          ;; Semantics-equivalent under the default flag
+                          ;; per F33 L3.b (self writes stay in
+                          ;; `__cxc_next` until commit-next-state fires
+                          ;; at end of body, so the ivar during-body has
+                          ;; the same pre-transition value the snapshot
+                          ;; carries). Substrate for L4.e.β proper —
+                          ;; under concurrent mode with L4.e.α's snapshot-
+                          ;; from-`_state` seed, self reads route through
+                          ;; committed state, closing the self-side of
+                          ;; the ivar-reader gap so per-field ivar writes
+                          ;; can safely retire at commit-next-state.
+                          ;; Absent `:snapshot-name` (init bodies,
+                          ;; invariant sites, observable bodies) self-
+                          ;; reads stay on the ivar path unchanged.
+                          (cond
+                            (and (= :self (:node (:target node)))
+                                 (:snapshot-name ctx))
+                            {:node   :field
+                             :target {:node :name :sym (:snapshot-name ctx)}
+                             :field  (str "_" (:field node))}
+
+                            :else
+                            (cond-> {:node   :field
+                                     :target target-lo
+                                     :field  (:field node)}
+                              (and atom-nm
+                                   (not= :self (:node (:target node))))
+                              (assoc :cross-atom-cls-name
+                                     (class-name-for-atom atom-nm)))))))))
     ;; F19 L2 — String[i] lowers to `(int64_t)[str characterAtIndex:i]`.
     ;; Other container types still fail-nyi (see infer-type site for the
     ;; F42/F43 dependency rationale).
