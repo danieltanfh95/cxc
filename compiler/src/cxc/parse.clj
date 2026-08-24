@@ -2363,6 +2363,32 @@
                     "`data:` (per-instance, updated only through "
                     "transitions). See spec §1.11."))
 
+        ;; F8 L3c stub (2026-08-24) — `metadata:` in def-body is a
+        ;; protected section-header (F8 D5) whose seed is `:reserved`
+        ;; because F53 metadata emission goes through `.cxc-manifest.
+        ;; json`, not through a body section (see F8 L3-use.i landing
+        ;; note). Without this targeted arm, `metadata:` falls through
+        ;; to the generic custom-section dispatch (which matches any
+        ;; registered header including `:reserved` seeds) and body
+        ;; items silently misparse — `kind: class` becomes a data
+        ;; field named `kind` of type `class`. Reject at parse time
+        ;; with a pointer at F10 (full metadata surface) as the
+        ;; landing that will enable this shape.
+        (and (at? tokens p :ident)
+             (= "metadata" (t-value (peek-tok tokens p)))
+             (at? tokens (inc p) :punct ":")
+             (at? tokens (+ p 2) :newline))
+        (fail! tokens p
+               (str "F8 L3c: `metadata:` inside `def " name "` body is "
+                    "reserved at v1.0 but has no compiler backend yet "
+                    "(F53 metadata emission goes through `.cxc-manifest."
+                    "json`, not a body section). Without this rejection "
+                    "the section body would silently misparse as data "
+                    "fields. Track: F10 (`metadata:` section, threading/"
+                    "QoS/dispatch keys) at "
+                    "compiler/design/plans/g1-alias-section/"
+                    "k3-f10-f11-f12-section-classes.md."))
+
         ;; F68 L1 (Proposal H) — `accepts:` section / per-entry sugar
         ;; inside a `def` body marks the declaration as a protocol at
         ;; structural-detect time (see reshape at end of body loop).

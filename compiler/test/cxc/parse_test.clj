@@ -318,6 +318,17 @@
          #"`state:` section is retired at v1.0"
          (p/parse "def V:\n    state:\n        x: Float\n")))))
 
+(deftest f8-l3c-stub-metadata-section-in-def-body-rejected-with-f10-pointer
+  (testing "F8 L3c stub — `metadata:` inside a def-body has no compiler backend at v1.0 (F53 metadata emission goes through `.cxc-manifest.json`, not the section). Without a targeted rejection the body items silently misparse as data fields via the generic custom-section dispatch (`kind: class` → field `kind` of type `class`). Reject at parse time with an F10 pointer."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"F8 L3c.*metadata:.*F10"
+         (p/parse (str "def Counter:\n"
+                       "    n: Int = 0\n\n"
+                       "    metadata:\n"
+                       "        kind: class\n\n"
+                       "    -> running\n"))))))
+
 (deftest chained-comparison-desugars-to-chained-cmp
   (testing "F27 semantic once-only: `a <= b <= c` becomes a `:chained-cmp` node carrying flat operands + ops vectors. Emit renders it as a GNU statement-expression that binds each interior operand once (via `__typeof__`) so an effectful middle like a call fires exactly once at runtime."
     ;; Middle is an ident — desugars to :chained-cmp with 3 operands.
