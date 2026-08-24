@@ -551,6 +551,17 @@
         (contains? atom-env nm)         (str nm " *")
         (contains? enum-env nm)         nm
         :else                            (fail-nyi! (str "type " nm) ty-node)))
+    :type-named-tuple
+    ;; F15 L2.c.iii.c.α (2026-08-24) — a named-tuple param type lowers
+    ;; to a reference to its canonical mangled struct name, consistent
+    ;; with L2.c.ii-b's field-side convention. Dead code today because
+    ;; `base-type-name` still fails-nyi on `:type-named-tuple` upstream
+    ;; (in ctor-params + method-params lowering paths); reaching this
+    ;; branch requires L2.c.iii.c.β to teach base-type-name too AND to
+    ;; preserve the raw `:type` node on lowered params so collect-shapes
+    ;; finds the shape and emit-typedefs synthesizes the typedef.
+    (named-tuple/canonical-named-tuple-name ty-node)
+
     :type-of
     (cond
       (= "List" (:outer ty-node))

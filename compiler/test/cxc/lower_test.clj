@@ -4276,3 +4276,18 @@ def main:
                          "def main:\n"
                          "    v: V = V()\n"
                          "    -> running\n"))))))
+
+(deftest f15-l2c-iii-c-alpha-cxc-type-to-c-emits-mangled-for-named-tuple
+  (testing "F15 L2.c.iii.c.α — `cxc-type->c` returns the canonical mangled name for `:type-named-tuple` nodes (D4-consistent reference-by-name, matching L2.c.ii-b's field-side convention). Dead code today: upstream `base-type-name` fails-nyi on `:type-named-tuple` in the ctor-params / method-params lowering paths, so this branch isn't reached from any real program. Direct-invocation test locks in the intended behavior; L2.c.iii.c.β teaches `base-type-name` and preserves `:type` on lowered params so `collect-shapes` finds the shape and emit-typedefs synthesizes the typedef."
+    (let [ty {:node   :type-named-tuple
+              :fields [{:name "x" :type {:node :type-ref :name "Int"}}
+                       {:name "y" :type {:node :type-ref :name "Int"}}]}]
+      (is (= "_Cxc_NT_x_Int_y_Int"
+             (#'cxc.lower/cxc-type->c ty {} {} {})))
+      (is (= "_Cxc_NT_x_Int_y_Int"
+             (#'cxc.lower/cxc-type->c
+              {:node :type-named-tuple
+               :fields [{:name "y" :type {:node :type-ref :name "Int"}}
+                        {:name "x" :type {:node :type-ref :name "Int"}}]}
+              {} {} {}))
+          "field order at call site doesn't affect the emitted C name (canonical mangling)"))))
