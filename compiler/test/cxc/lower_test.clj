@@ -1430,8 +1430,13 @@ def main:
                               body))]
       (is (= 2 (count check-idxs))
           "entry AND exit checks emitted")
-      (is (= 0 (first check-idxs))
-          "entry check is the first statement in the body")
+      ;; F32 L4.e.β.2.α (2026-08-24) — observable bodies now prepend a
+      ;; `:state-snapshot-init` (mirrors receive-glyph body), so entry
+      ;; check-stmt is at index 1 (snapshot at 0), not 0.
+      (is (= :state-snapshot-init (:node (first body)))
+          "snapshot-init prepended before invariant checks")
+      (is (= 1 (first check-idxs))
+          "entry check follows the snapshot init")
       (is (< (second check-idxs) return-idx)
           "exit check runs before the return statement (verifies final state before returning)"))))
 
@@ -3867,6 +3872,40 @@ def main:
           "self.n RHS read reroutes to __cxc_snap._n inside receive-glyph body")
       (is (nil? (str/index-of c-src "self.n + 1"))
           "no direct ObjC self.n property access on the RHS"))))
+
+(deftest f32-l4e-beta-2-alpha-observable-body-prepends-snapshot-init-and-routes-reads
+  (testing "F32 L4.e.β.2.α — atom observable bodies now prepend a `:state-snapshot-init` and thread `:snapshot-name` into the body ctx so field reads route via `__cxc_snap._field` (parallel to receive-glyph body). Under the default flag the snapshot copies from ivars — same values, small stack alloc overhead; under concurrent mode L4.e.α's guarded shape sources from `_state` so observable reads see committed state. Closes the observable side of the ivar-reader gap so L4.e.β proper can retire per-field ivar writes."
+    (let [prog  (lower-src (str "def Counter:\n"
+                                "    n: Int! = 10\n\n"
+                                "    bump :< n + 1\n\n"
+                                "    -> running\n\n"
+                                "    -> end\n\n"
+                                "def main:\n"
+                                "    -> running\n        then: print(Counter().bump)\n"))
+          cls   (first (filter #(= "Counter" (:name %)) (:classes prog)))
+          bump  (first (filter #(= "bump" (:selector %)) (:methods cls)))
+          body  (:body bump)
+          c-src (emit/emit prog)]
+      (is (= :state-snapshot-init (:node (first body)))
+          "snapshot-init is the first stmt in the observable body")
+      (is (= "Counter" (:class-name (first body)))
+          "snapshot-init carries the atom's class name for the state struct")
+      (is (str/includes? c-src "return (__cxc_snap._n + 1);")
+          "bare-field read inside observable body routes via __cxc_snap._n"))))
+
+(deftest f32-l4e-beta-2-alpha-observable-on-zero-data-atom-skips-snapshot
+  (testing "F32 L4.e.β.2.α — an observable on an atom with no data fields skips the snapshot init (state struct would be empty; snapshot would be a pointless no-op)."
+    (let [prog  (lower-src (str "def Ticker:\n"
+                                "    always_true :< true\n\n"
+                                "    -> running\n\n"
+                                "    -> end\n\n"
+                                "def main:\n"
+                                "    -> running\n        then: print(1)\n"))
+          cls   (first (filter #(= "Ticker" (:name %)) (:classes prog)))
+          obs   (first (filter #(= "always_true" (:selector %)) (:methods cls)))
+          body  (:body obs)]
+      (is (not-any? #(= :state-snapshot-init (:node %)) body)
+          "no snapshot-init when the atom has no data fields"))))
 
 (deftest f32-l4e-beta-1-self-field-outside-receive-glyph-stays-on-ivar-path
   (testing "F32 L4.e.β.1 — `self.field` reads OUTSIDE a receive-glyph body (init bodies, invariant sites, observable bodies) do NOT have `:snapshot-name` in ctx and stay on the ObjC property path unchanged. Regression guard: the reroute is scoped strictly to snapshotted contexts."

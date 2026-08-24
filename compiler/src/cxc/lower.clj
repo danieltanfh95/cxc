@@ -7907,7 +7907,15 @@
                                                       (:enum-env ctx)
                                                       p)])
                                 (:params o)))
-        body-ctx     (update ctx :locals #(merge (or % {}) param-locals))
+        ;; F32 L4.e.β.2.α (2026-08-24) — thread `:snapshot-name` into
+        ;; the observable body ctx so field reads route via the
+        ;; snapshot bag (parallel to receive-glyph body ctx). Under
+        ;; the default flag the snapshot copies from ivars — same
+        ;; values; under concurrent mode L4.e.α's guarded shape
+        ;; sources from `_state` so observables read committed state.
+        body-ctx     (-> ctx
+                         (update :locals #(merge (or % {}) param-locals))
+                         (assoc :snapshot-name "__cxc_snap"))
         objc-params  (mapv (fn [p]
                              {:name   (:name p)
                               :c-type (cxc-type->c (:type p)
@@ -7933,9 +7941,22 @@
                       :selector "checkInvariants"
                       :args []}
         return-stmt  {:node :return :value (lower-expr (:expr o) body-ctx)}
-        body-stmts   (if has-invariants?
+        core-stmts   (if has-invariants?
                        [check-stmt check-stmt return-stmt]
-                       [return-stmt])]
+                       [return-stmt])
+        ;; F32 L4.e.β.2.α — prepend `<Atom>_State __cxc_snap = { ... };`
+        ;; when the atom has data-fields. Skipped for zero-data atoms
+        ;; (state struct would be empty, snapshot would be a no-op).
+        ;; L4.e.α's guarded emit handles the concurrent-mode source
+        ;; flip; observable snapshot mirrors receive-glyph snapshot.
+        data-fields  (get-in ctx [:atom-env atom-name :fields])
+        snap-stmt    (when (seq data-fields)
+                       {:node        :state-snapshot-init
+                        :class-name  (class-name-for-atom atom-name)
+                        :data-fields data-fields})
+        body-stmts   (if snap-stmt
+                       (into [snap-stmt] core-stmts)
+                       core-stmts)]
     {:node        :objc-method
      :selector    (if (seq objc-params)
                     (objc-method-selector (:name o) (mapv :name objc-params))
