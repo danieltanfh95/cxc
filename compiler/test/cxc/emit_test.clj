@@ -225,3 +225,29 @@
           "block-typed field: name spliced inside (^…), semicolon at end")
       (is (not (str/includes? s "void (^)(void) _cb"))
           "malformed C shape (name after the closing paren) NOT emitted"))))
+
+;; ---------------------------------------------------------------------------
+;; F32 L2 — shutdown drain. Under future concurrent mode (F32 L1 flips
+;; atom queues to the global pool), exit(0) can race with pool blocks
+;; that a departing atom's `-> end do:` fired via cxc_send_async. The
+;; barrier drain fires only when !CXC_SINGLE_MAIN_QUEUE; under Layer 4
+;; single-queue mode (default) it's guarded out — the sync-cascade F31/
+;; F35 L5-L7 already covers the ordering, and no blocks live on the
+;; global pool to drain.
+;; ---------------------------------------------------------------------------
+
+(deftest f32-l2-shutdown-drain-emits-guarded-barrier
+  (testing "F32 L2 — cxc_shutdown carries a dispatch_barrier_sync on the global concurrent queue, guarded on !CXC_SINGLE_MAIN_QUEUE so it's a no-op under Layer 4 single-queue mode but fires the drain when F32 L1 flips atom queues to global."
+    (let [ast {:node :objc-program
+               :includes []
+               :needs-runtime? true
+               :structs []
+               :classes []
+               :main {:body []}}
+          s   (emit/emit ast)]
+      (is (str/includes? s "static inline void cxc_shutdown(void) {")
+          "cxc_shutdown fn emitted from runtime helpers block")
+      (is (str/includes? s "#if !CXC_SINGLE_MAIN_QUEUE")
+          "guard opens before the barrier drain")
+      (is (str/includes? s "dispatch_barrier_sync(dispatch_get_global_queue(QOS_CLASS_DEFAULT, 0), ^{});")
+          "barrier drain on the global concurrent queue"))))

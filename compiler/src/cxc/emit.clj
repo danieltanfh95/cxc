@@ -1204,7 +1204,23 @@
        "    dispatch_sync([(id<CXCAtom>)target own_queue], block);\n"
        "#endif\n"
        "}\n\n"
+       ;; F32 L2 (2026-08-24) — shutdown drain. Under future concurrent
+       ;; mode (F32 L1 flips atom queues from main-target to the global
+       ;; pool), `exit(0)` can race with in-flight blocks that a
+       ;; departing atom's `-> end do:` fired via `cxc_send_async`. The
+       ;; barrier waits for all currently-executing pool blocks to
+       ;; complete before we let the process die. Guarded on
+       ;; `!CXC_SINGLE_MAIN_QUEUE` because under Layer 4 single-queue
+       ;; mode (current default) atoms live on their own serial queues
+       ;; target-set to main — there's nothing on the global pool to
+       ;; drain, and the barrier would be a no-op with cost. F31/F35
+       ;; L5-L7 sync cascade already guarantees children complete
+       ;; before main's -transitionToEnd returns, so single-queue mode
+       ;; has no gap to close.
        "static inline void cxc_shutdown(void) {\n"
+       "#if !CXC_SINGLE_MAIN_QUEUE\n"
+       "    dispatch_barrier_sync(dispatch_get_global_queue(QOS_CLASS_DEFAULT, 0), ^{});\n"
+       "#endif\n"
        "    exit(0);\n"
        "}\n\n"
        ;; F39 L3 — `T!` runtime enforcement. Warning-grade per spec §3.6.1
