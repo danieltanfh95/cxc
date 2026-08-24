@@ -398,6 +398,27 @@
       (is (str/includes? block "if (_state) { free(_state); _state = NULL; }")
           "dealloc frees underlying buffer and nils the pointer"))))
 
+(deftest f32-l4b-beta-atom-class-emits-guarded-state-ivar
+  (testing "F32 L4.b.β — every class emitted through `emit-interface` carries a `_Atomic id _state` ivar in an ivars block guarded on `!CXC_SINGLE_MAIN_QUEUE`. Under the default preprocessor flag the block resolves to `{ }` (empty ivars — identical shape to pre-L4.b.β classes, since ObjC auto-synthesizes ivars for @properties). Under concurrent mode, the ivar is present so L4.c can `_cxc_state_commit(&_state, ...)` and L4.d can `_cxc_state_load(&_state)`. The block is dead code today — no reader or writer references it."
+    (let [ast {:node :objc-program
+               :needs-runtime? true
+               :includes []
+               :structs []
+               :classes [{:name "Foo"
+                          :superclass "NSObject <CXCAtom>"
+                          :properties []
+                          :init-params []
+                          :methods []}]
+               :main {:body []}}
+          s   (emit/emit ast)
+          i   (str/index-of s "@interface Foo")
+          e   (str/index-of s "@end" i)
+          block (subs s i e)]
+      (is (str/includes? block "{\n#if !CXC_SINGLE_MAIN_QUEUE\n    _Atomic id _state;\n#endif\n}")
+          "ivars block declares _state under the concurrent-mode guard")
+      (is (str/includes? block "@interface Foo : NSObject <CXCAtom>\n{")
+          "the ivars block appears immediately after the class declaration"))))
+
 (deftest f32-l4b-alpha-state-load-commit-helpers-emit-guarded
   (testing "F32 L4.b.α — `_cxc_state_load` and `_cxc_state_commit` runtime helpers ship in the same `!CXC_SINGLE_MAIN_QUEUE` region as the L4.a wrapper. Load does an acquire-ordered atomic load; commit wraps a fresh copy of the caller-owned bag (memcpy'd into a malloc'd buffer so ARC's dealloc reclaims it) and release-ordered atomic-exchanges it into the slot, so the previous wrapper's refcount drops when no reader retains. `stdatomic.h` pulls in under the same guard so default builds don't need the C11 atomic header. Dead code today — L4.c wires the commit and L4.d wires the load."
     (let [ast {:node :objc-program

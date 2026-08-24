@@ -1012,8 +1012,18 @@
                           (map #(str "  " (method-signature %) ";"))
                           (str/join "\n"))
         body-parts (remove str/blank? [props init-decl method-decls])
-        body       (if (empty? body-parts) "" (str "\n" (str/join "\n" body-parts) "\n"))]
-    (str "@interface " (:name cls) " : " (:superclass cls) body "@end")))
+        body       (if (empty? body-parts) "" (str "\n" (str/join "\n" body-parts) "\n"))
+        ;; F32 L4.b.β (2026-08-24) — per-atom `_Atomic id _state` ivar
+        ;; declared under `!CXC_SINGLE_MAIN_QUEUE` so L4.c can wire
+        ;; commits and L4.d can wire cross-atom reads without a
+        ;; separate flip on the class shape. Ivars block is emitted
+        ;; between the superclass and the @property/method
+        ;; declarations (canonical ObjC placement). Under the default
+        ;; preprocessor flag the whole block guards out; classes
+        ;; declare zero extra ivars and existing emit is byte-
+        ;; identical.
+        ivars-block "\n{\n#if !CXC_SINGLE_MAIN_QUEUE\n    _Atomic id _state;\n#endif\n}"]
+    (str "@interface " (:name cls) " : " (:superclass cls) ivars-block body "@end")))
 
 (defn- init-signature
   "Build the ObjC init method signature. No params → `- (instancetype)init`.
