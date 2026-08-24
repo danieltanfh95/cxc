@@ -4372,3 +4372,25 @@ def main:
           "typedef struct for the named-tuple shape is emitted")
       (is (.contains typedefs "int64_t x;"))
       (is (.contains typedefs "int64_t y;")))))
+
+(deftest f15-l2c-iii-c-epsilon-alpha-named-tuple-env-empty-when-unused
+  (testing "F15 L2.c.iii.c.ε.α — lowered programs carry `:named-tuple-env`, a `{mangled → shape-node}` map surfaced from `collect-shapes`. Empty for programs that don't use named tuples (byte-identical behavior — no consumer today besides tests). Same collect-shapes call feeds `:named-tuple-typedefs`; sharing the computation means the env and the typedef block are always in sync."
+    (let [prog (lower-src "def main:\n    -> running\n")
+          env  (:named-tuple-env prog)]
+      (is (some? env))
+      (is (empty? env)))))
+
+(deftest f15-l2c-iii-c-epsilon-alpha-named-tuple-env-populated-from-ctor-param
+  (testing "F15 L2.c.iii.c.ε.α — a program with a named-tuple ctor-param position surfaces its shape on `:named-tuple-env`. The env's key is the canonical mangled name (matches `:named-tuple-typedefs`); the value is the raw `:type-named-tuple` node so downstream field-lookup (ε.β) can walk `:fields`."
+    (let [prog (lower-src (str "def Foo(p: (x: Int, y: Int)):\n"
+                               "    running <: nop -> self\n\n"
+                               "def main:\n"
+                               "    -> running\n"))
+          env  (:named-tuple-env prog)]
+      (is (some? env))
+      (is (contains? env "_Cxc_NT_x_Int_y_Int"))
+      (let [shape (get env "_Cxc_NT_x_Int_y_Int")]
+        (is (= :type-named-tuple (:node shape)))
+        (is (= [{:name "x" :type {:node :type-ref :name "Int"}}
+                {:name "y" :type {:node :type-ref :name "Int"}}]
+               (:fields shape)))))))

@@ -9165,7 +9165,14 @@
                                                      :cap-init (lower-atom-ctor
                                                                 (:cxc-ty p) [] ctx)})
                                                   main-ctor))}])
-                            (main-atom-body main-atom ctx))]
+                            (main-atom-body main-atom ctx))
+        ;; F15 L2.c.iii.c.ε.α — shared collect-shapes computation so
+        ;; the typedef emit + the new :named-tuple-env consumer read
+        ;; from the same source of truth.
+        nt-shapes             (named-tuple/collect-shapes
+                               {:structs   structs
+                                :classes   classes
+                                :functions functions})]
     {:node                :objc-program
      :includes            includes
      :needs-runtime?      needs-runtime?
@@ -9185,12 +9192,15 @@
      ;; the .m file. Zero-cost forward-compat wiring per the storage-
      ;; flip discipline (fan-out sites as guarded dead code before the
      ;; flip).
-     :named-tuple-typedefs (named-tuple/emit-typedefs
-                             (named-tuple/collect-shapes
-                              {:structs   structs
-                               :classes   classes
-                               :functions functions})
-                             primitive-c-type)
+     :named-tuple-typedefs (named-tuple/emit-typedefs nt-shapes primitive-c-type)
+     ;; F15 L2.c.iii.c.ε.α (2026-08-24) — the collected named-tuple
+     ;; shape map, keyed by canonical mangled name. Downstream (ε.β+)
+     ;; consults this to resolve field types on `.field` access
+     ;; against a value with `:named-tuple` type-kw. Empty today for
+     ;; every existing program (nothing exercises named-tuple ctor
+     ;; params in the suite); populated automatically once a real
+     ;; program uses one.
+     :named-tuple-env      nt-shapes
      ;; F9 L2 — registration-only for now (no consumer yet). Surfaced
      ;; on the lowered program so tests can assert protocol-env shape
      ;; and downstream L4+ landings can wire dispatch off a single
