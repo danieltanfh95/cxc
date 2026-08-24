@@ -5214,7 +5214,7 @@
 (defn- lower-do-clause [clause ctx]
   (lower-body-stmts (:stmts clause) ctx))
 
-(declare lower-then-update)
+(declare lower-then-update lower-invariant-check)
 
 (defn- lower-transition-body [clauses ctx]
   (let [[stmts _]
@@ -5725,7 +5725,11 @@
                                {:kind :compile-error :node t})))
         ;; Post-transition invariant check (design §14). Skipped for
         ;; target=end — the transitionToEnd path owns invariant checks
-        ;; on its own trajectory.
+        ;; on its own trajectory. Under F33 L3.c, this call is
+        ;; suppressed when the branch runs the pre-commit inline
+        ;; checks below (snapshot active); the atom's `checkInvariants`
+        ;; method still exists and is still called from
+        ;; `cxc_runtimeBinding` (construction) + F49 method wrappers.
         check-invariants-stmt {:node :objc-msg
                                :recv {:node :name :sym "self"}
                                :selector "checkInvariants"
@@ -5748,17 +5752,49 @@
                          {:node         :commit-next-state
                           :atom-name    atom-name
                           :data-fields  commit-fields})
+        ;; F33 L3.c — pre-commit invariant check on the `__cxc_next`
+        ;; bag (decisions-frozen §8). Re-lower the atom's invariants
+        ;; with `:snapshot-name` bound to `"__cxc_next"` so bare
+        ;; field-name reads route to the bag (`__cxc_next._<field>`)
+        ;; rather than the pre-transition snapshot (`__cxc_snap.…`) or
+        ;; live ivars. Placed BEFORE the commit sequence so a failing
+        ;; invariant aborts before any ivar write is visible —
+        ;; matches F49 pre-store abort semantics: atom stays in the
+        ;; pre-transition state on invariant failure. The post-commit
+        ;; `[self checkInvariants]` call is suppressed for
+        ;; snapshotted branches because the inline pre-commit check
+        ;; covers the same contract with correct rollback semantics.
+        ;; Only fires when the branch is snapshotted (data-fields
+        ;; exist) AND the atom has invariants; atoms without
+        ;; snapshots keep the old post-commit `checkInvariants` call.
+        pre-commit-invariants
+        (when (and (:snapshot-name ctx)
+                   (seq (get-in ctx [:atom-env atom-name :invariants])))
+          (let [invs    (get-in ctx [:atom-env atom-name :invariants])
+                bag-ctx (assoc ctx :snapshot-name "__cxc_next")]
+            (vec (map-indexed
+                  (fn [i p]
+                    (lower-invariant-check atom-name i p bag-ctx))
+                  invs))))
         raw-body     (cond-> []
                        ;; F23 — let: bindings sit at the top of the
                        ;; body so they're in scope for guards+then+do.
                        (seq let-decls)    (into let-decls)
                        (seq w-then-stmts) (into w-then-stmts)
                        (seq then-stmts)   (into then-stmts)
+                       ;; F33 L3.c: invariant check on bag before commit.
+                       (seq pre-commit-invariants) (into pre-commit-invariants)
                        commit-stmt        (conj commit-stmt)
                        phase-update       (conj phase-update)
                        (seq w-do-stmts)   (into w-do-stmts)
                        (seq do-stmts)     (into do-stmts)
-                       :always            (conj check-invariants-stmt))
+                       ;; F33 L3.c: post-commit `[self checkInvariants]`
+                       ;; only when no snapshot (atoms without
+                       ;; data-fields fall back to the old path; the
+                       ;; call is a no-op there when no invariants
+                       ;; exist, and a safety net when they do).
+                       (not (:snapshot-name ctx))
+                       (conj check-invariants-stmt))
         ;; BEAM-style @try/@catch (design §20 / Step 15). Wraps the
         ;; body so any runtime exception routes the atom into
         ;; -transitionToEnd, leaving the parent slot to nil and the

@@ -326,18 +326,18 @@ def main:
       (let [wrap (first (:body branch))
             b    (:body wrap)]
         (is (= :end-catch-wrap (:node wrap)))
-        ;; Inside try: [commit-next-state (F33 L3.b), phase-update,
-        ;; wildcard-do-stmt (print), checkInvariants-call]. The commit
-        ;; runs first (empty then here — nothing was written, so commit
+        ;; Inside try (post F33 L3.c): [commit-next-state (F33 L3.b),
+        ;; phase-update, wildcard-do-stmt (print)]. The commit runs
+        ;; first (empty then here — nothing was written, so commit
         ;; is a no-op copy of unchanged fields; kept for uniformity).
-        (is (= 4 (count b)))
+        ;; Post-commit `[self checkInvariants]` suppressed when
+        ;; snapshot is active (F33 L3.c).
+        (is (= 3 (count b)))
         (is (= :commit-next-state (:node (first b))))
         (is (= :assign (:node (second b))))
         (is (= "_phase" (get-in (second b) [:lhs :sym])))
         ;; Wildcard's print(0)
-        (is (= :call (:node (nth b 2))))
-        ;; Trailing invariant check
-        (is (= "checkInvariants" (get-in (nth b 3) [:selector])))))))
+        (is (= :call (:node (nth b 2))))))))
 
 (deftest atom-emits-transitionToEnd-nilSlot-and-installParent
   (testing "every atom class synthesizes the Step 11 lifecycle methods"
@@ -440,16 +440,19 @@ def main:
           cls  (first (:classes prog))
           bump (first (filter #(= "bump" (:selector %)) (:methods cls)))
           branch (first (:body bump))]
-      ;; Branch body wrapped in :end-catch-wrap. Inside (post F33 L3.b):
-      ;; [bag-write, commit-next-state, checkInvariants-call]. Wildcard
-      ;; do isn't inlined (self-loop isn't a phase change).
+      ;; Branch body wrapped in :end-catch-wrap. Inside (post F33 L3.c):
+      ;; [bag-write, commit-next-state]. Wildcard do isn't inlined
+      ;; (self-loop isn't a phase change). Post-commit
+      ;; `[self checkInvariants]` is suppressed when the branch is
+      ;; snapshotted — invariants for this atom would run pre-commit
+      ;; inline if any existed, but this atom (`Counter`) has no
+      ;; invariants so the pre-commit block is empty.
       (let [wrap (first (:body branch))
             b    (:body wrap)]
         (is (= :end-catch-wrap (:node wrap)))
-        (is (= 3 (count b)))
+        (is (= 2 (count b)))
         (is (= :assign (:node (first b))))
-        (is (= :commit-next-state (:node (second b))))
-        (is (= "checkInvariants" (get-in (nth b 2) [:selector])))))))
+        (is (= :commit-next-state (:node (second b))))))))
 
 (deftest record-observable-lowers-to-c-function
   (testing "F67 L4 — record parametric observable → :c-function under :functions with mangled name and self as first param (replaces reader methods per Proposal G class-body collapse)."
@@ -925,11 +928,14 @@ def main:
         (is (= :transition-branch (:node branch)))
         (is (= "kCounter_phase_alive" (:source-phase-const branch)))
         (is (= :end-catch-wrap (:node wrap)))
-        ;; Inside the try body (post F33 L3.b):
+        ;; Inside the try body (post F33 L3.c):
         ;;   1. write to `__cxc_next._n` (bag write; RHS reads snapshot via L2.c)
         ;;   2. nonnil check against the just-written bag field
         ;;   3. commit-next-state (bag → live ivars)
-        ;;   4. checkInvariants call (reads committed live ivars)
+        ;; Post-commit `[self checkInvariants]` is suppressed under
+        ;; F33 L3.c when snapshot is active — pre-commit inline
+        ;; checks would take its place if any invariants existed,
+        ;; but Counter has none so the pre-commit block is empty.
         (is (= [{:node :assign
                  :lhs  {:node :field
                         :target {:node :name :sym "__cxc_next"}
@@ -946,11 +952,7 @@ def main:
                  :data-fields [{:name "n" :cxc-ty "Int" :nullable? false
                                 :nonnil? true :optional? false
                                 :scalar-c "int64_t" :c-type "int64_t"
-                                :default {:node :lit-int :value 0}}]}
-                {:node :objc-msg
-                 :recv {:node :name :sym "self"}
-                 :selector "checkInvariants"
-                 :args []}]
+                                :default {:node :lit-int :value 0}}]}]
                (:body wrap)))))))
 
 (deftest message-triggered-transition-with-phase-change-emits-phase-assign
@@ -3933,6 +3935,91 @@ def main:
           c-src (emit/emit prog)]
       (is (str/includes? c-src "(__cxc_next._peer) == nil")
           "nonnil check reads bag field (the just-written value)"))))
+
+;; ---------------------------------------------------------------------------
+;; F33 L3.c — invariant check runs pre-commit against `__cxc_next` bag.
+;; On invariant failure abort() fires BEFORE any live-ivar write, so the
+;; atom stays in its pre-transition state (matches F49 pre-store abort
+;; semantics per decisions-frozen §8). The post-commit `[self checkInvariants]`
+;; call is suppressed on snapshotted branches; the `-checkInvariants` method
+;; itself still exists and is still called from `cxc_runtimeBinding` (init)
+;; and F49 method wrappers (both of which lack a bag).
+;; ---------------------------------------------------------------------------
+
+(deftest f33-l3c-invariant-reads-bag-not-ivar
+  (testing "F33 L3.c — pre-commit invariant check reads `__cxc_next._<field>`, not `_<field>` or `__cxc_snap._<field>`. Routing via `:snapshot-name \"__cxc_next\"` at re-lower time picks up the pending write so the check observes the state that WILL commit."
+    (let [prog  (lower-src (str "def Gauge:\n"
+                                "    value: Int! = 3\n"
+                                "    max:   Int! = 5\n\n"
+                                "    invariants:\n"
+                                "        value <= max\n\n"
+                                "    -> alive\n\n"
+                                "    alive <: bump -> alive\n"
+                                "        then: value => value + 1\n\n"
+                                "def main:\n"
+                                "    -> running\n        then: print(0)\n"))
+          c-src (emit/emit prog)]
+      (is (str/includes? c-src "if (!((__cxc_next._value <= __cxc_next._max)))")
+          "invariant reads bag fields via `__cxc_next._<field>` in transition body")
+      ;; The live-ivar check `if (!((_value <= _max)))` still appears
+      ;; ONCE inside the synthesized -checkInvariants method (which
+      ;; -cxc_runtimeBinding calls at init). That's correct — the
+      ;; method-body check reads live ivars because there's no bag at
+      ;; construction time. F33 L3.c only replaces the TRANSITION-BODY
+      ;; call, not the method itself.
+      (is (str/includes? c-src "- (void)checkInvariants")
+          "checkInvariants method still emitted (called from cxc_runtimeBinding)"))))
+
+(deftest f33-l3c-pre-commit-invariant-precedes-commit-stmt
+  (testing "F33 L3.c — pre-commit invariant stmts sit AFTER `then:` bag writes and BEFORE `commit-next-state`. On invariant failure abort() fires before commit copies bag → live ivars."
+    (let [prog   (lower-src (str "def Gauge:\n"
+                                 "    value: Int! = 3\n"
+                                 "    max:   Int! = 5\n\n"
+                                 "    invariants:\n"
+                                 "        value <= max\n\n"
+                                 "    -> alive\n\n"
+                                 "    alive <: bump -> alive\n"
+                                 "        then: value => value + 1\n\n"
+                                 "def main:\n"
+                                 "    -> running\n        then: print(0)\n"))
+          bump   (first (filter #(= "bump" (:selector %))
+                                (:methods (first (:classes prog)))))
+          branch (first (:body bump))
+          wrap   (first (:body branch))
+          body   (:body wrap)
+          nodes  (mapv :node body)]
+      ;; Expected shape: [:assign (bag write) :raw-c (nonnil) :invariant-check
+      ;;                  :commit-next-state] — invariant sits between the
+      ;; bag write's nonnil check and the commit.
+      (is (some #{:invariant-check} nodes)
+          "invariant-check node present in branch body")
+      (let [inv-idx    (.indexOf nodes :invariant-check)
+            commit-idx (.indexOf nodes :commit-next-state)]
+        (is (< -1 inv-idx commit-idx)
+            "invariant appears BEFORE commit-next-state")))))
+
+(deftest f33-l3c-post-commit-check-suppressed-on-snapshotted-branch
+  (testing "F33 L3.c — snapshotted branches drop the trailing `[self checkInvariants]` message send. Pre-commit inline checks cover the same contract with correct rollback semantics."
+    (let [prog   (lower-src (str "def Gauge:\n"
+                                 "    value: Int! = 3\n"
+                                 "    max:   Int! = 5\n\n"
+                                 "    invariants:\n"
+                                 "        value <= max\n\n"
+                                 "    -> alive\n\n"
+                                 "    alive <: bump -> alive\n"
+                                 "        then: value => value + 1\n\n"
+                                 "def main:\n"
+                                 "    -> running\n        then: print(0)\n"))
+          bump   (first (filter #(= "bump" (:selector %))
+                                (:methods (first (:classes prog)))))
+          branch (first (:body bump))
+          wrap   (first (:body branch))
+          body   (:body wrap)]
+      (is (not (some (fn [n]
+                       (and (= :objc-msg (:node n))
+                            (= "checkInvariants" (:selector n))))
+                     body))
+          "no trailing [self checkInvariants] on snapshotted branch"))))
 
 ;; ---------------------------------------------------------------------------
 ;; F33 L5 — data-field @properties are readonly. External code can still
