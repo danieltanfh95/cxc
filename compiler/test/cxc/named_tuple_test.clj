@@ -534,6 +534,53 @@
       (is (= "x" (:field r)))
       (is (= [] (:available r))))))
 
+;; ---------------------------------------------------------------------------
+;; F15 L2.c.iii.c.ε.β.α — field-type helper: resolve a field's declared
+;; type in a named tuple via the shape env.
+;; ---------------------------------------------------------------------------
+
+(deftest field-type-resolves-primitive-field
+  (testing "F15 L2.c.iii.c.ε.β.α — `field-type` reads the shape env at the mangled key and returns the requested field's raw type node. Primitives round-trip as `:type-ref`."
+    (let [shape  (nt-node "x" "Int" "y" "Int")
+          env    (nt/collect-shapes {:node :method :params [{:name "p" :type shape}]})
+          mangle "_Cxc_NT_x_Int_y_Int"]
+      (is (= (ref "Int") (nt/field-type env mangle "x")))
+      (is (= (ref "Int") (nt/field-type env mangle "y"))))))
+
+(deftest field-type-preserves-non-nil-wrapping
+  (testing "F15 L2.c.iii.c.ε.β.α — non-nil (`T!`) wrapping surfaces in the returned type node so callers can honor the non-nil contract on the field."
+    (let [shape  (nt-node-with-fields
+                   [{:name "x" :type (nonnil (ref "Int"))}])
+          env    (nt/collect-shapes {:node :method :params [{:name "p" :type shape}]})
+          mangle "_Cxc_NT_x_Nn_Int"]
+      (is (= (nonnil (ref "Int")) (nt/field-type env mangle "x"))))))
+
+(deftest field-type-returns-nested-tuple-node
+  (testing "F15 L2.c.iii.c.ε.β.α — a nested-tuple field returns its raw `:type-named-tuple` node; callers can recurse (via `canonical-named-tuple-name` + another `field-type` lookup) to resolve inner fields."
+    (let [inner  (nt-node "n" "Int")
+          shape  (nt-node-with-fields [{:name "inner" :type inner}])
+          env    (nt/collect-shapes {:node :method :params [{:name "p" :type shape}]})
+          mangle "_Cxc_NT_inner_Nt1_n_Int"
+          field  (nt/field-type env mangle "inner")]
+      (is (= :type-named-tuple (:node field)))
+      (is (= [{:name "n" :type (ref "Int")}] (:fields field))))))
+
+(deftest field-type-nil-for-unknown-mangle
+  (testing "F15 L2.c.iii.c.ε.β.α — mangled name not in the env → nil. Caller decides how to surface (typically an internal-error diagnostic since collect-shapes should have found any shape the caller references)."
+    (let [shape  (nt-node "x" "Int")
+          env    (nt/collect-shapes {:node :method :params [{:name "p" :type shape}]})]
+      (is (nil? (nt/field-type env "_Cxc_NT_nonexistent" "x")))
+      (is (nil? (nt/field-type {} "_Cxc_NT_x_Int" "x"))))))
+
+(deftest field-type-nil-for-unknown-field
+  (testing "F15 L2.c.iii.c.ε.β.α — mangled name found but field name absent → nil. Caller turns this into an actionable `:cxc-f15-unknown-field` diagnostic naming the mangled shape + the missing field."
+    (let [shape  (nt-node "x" "Int" "y" "Int")
+          env    (nt/collect-shapes {:node :method :params [{:name "p" :type shape}]})
+          mangle "_Cxc_NT_x_Int_y_Int"]
+      (is (nil? (nt/field-type env mangle "z")))
+      (is (nil? (nt/field-type env mangle "X"))
+          "field lookup is case-sensitive per L2.d.i's structural-conforms? discipline"))))
+
 (deftest structural-conforms-nested-named-tuple-field-type
   (testing "F15 L2.d.i — a nested `:type-named-tuple` field participates via structural equality on the type node. Two identical nested-tuple type nodes match; a differing nested shape reports `:wrong-type`. No recursion into the nested shape happens at this landing — that's future Landing 6-style base-property pipeline, or a covariance-relaxation follow-on."
     (let [inner-xy (nt-node "x" "Int" "y" "Int")

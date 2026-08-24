@@ -413,6 +413,28 @@
 ;; automatically (`Nn_<T>` and bare `<T>` differ in the `:node` tag).
 ;; ---------------------------------------------------------------------------
 
+(defn field-type
+  "F15 L2.c.iii.c.ε.β.α — resolve a field's declared type in a named
+   tuple, given the shape env (as produced by `collect-shapes`) and
+   the shape's canonical mangled name.
+
+   Returns the raw parsed type node (`{:node :type-ref :name ...}`,
+   `{:node :type-nonnil ...}`, or `{:node :type-named-tuple ...}` for
+   nested shapes) so callers can feed it back through their own
+   type-lowering path. Returns nil when the mangled name isn't in
+   the env OR the field name isn't in the shape (caller decides
+   whether to error or fall through).
+
+   Consumers: ε.β wires this into lower's `infer-type` /
+   `infer-method-call-type` / `.field` access dispatch — when the
+   target has `:named-tuple` type-kw, look up the field's type
+   here instead of the record-env path."
+  [shape-env mangled-name field-name]
+  (when-let [shape (get shape-env mangled-name)]
+    (some (fn [{:keys [name type]}]
+            (when (= field-name name) type))
+          (:fields shape))))
+
 (defn structural-conforms?
   "F15 L2.d predicate — does a value's field list structurally conform
    to a required named-tuple's field list?
