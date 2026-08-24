@@ -234,20 +234,31 @@
 
    `:metadata` remains `:reserved` — metadata artifact emission is
    F53-adjacent but goes through `.cxc-manifest.json`, not a
-   `metadata:` section."
-  {:invariants {:impl        :compiler-baked
-                :backend     :f49-invariant-machinery
-                :parser-sym  'cxc.parse/parse-invariants-section
-                :notes       "L3b.i metadata-only; L3b.ii will wire dispatch."}
-   :deprecated {:impl        :compiler-baked
-                :backend     :k3-deprecation-walker
-                :parser-sym  'cxc.parse/parse-deprecated-section
-                :walker-sym  'cxc.build/warn-deprecated-uses
-                :notes       "L3d.i metadata-only; L3d.ii will wire dispatch."}
-   :use        {:impl        :compiler-baked
-                :backend     :k6-capability-extraction
-                :parser-sym  'cxc.parse/parse-use-section
-                :notes       "L3-use.i metadata-only; wire-through waits on the full K6 landing."}})
+   `metadata:` section.
+
+   Seed flags:
+   - `:allowed-in-extend?` — F8 L3b.iii — is the section permitted
+     inside `extend Foo:` bodies? Default false (spec §3.3.2 restricts
+     extensions from adding state, capabilities, or deprecation).
+     `:invariants` is true since invariants compose additively across
+     extensions per F49's extension-invariant merging. `:use` and
+     `:deprecated` stay false — extend rejects them by design."
+  {:invariants {:impl               :compiler-baked
+                :backend            :f49-invariant-machinery
+                :parser-sym         'cxc.parse/parse-invariants-section
+                :allowed-in-extend? true
+                :notes              "L3b.i metadata-only; L3b.ii wires dispatch."}
+   :deprecated {:impl               :compiler-baked
+                :backend            :k3-deprecation-walker
+                :parser-sym         'cxc.parse/parse-deprecated-section
+                :walker-sym         'cxc.build/warn-deprecated-uses
+                :allowed-in-extend? false
+                :notes              "L3d.i metadata-only; L3d.ii wires dispatch."}
+   :use        {:impl               :compiler-baked
+                :backend            :k6-capability-extraction
+                :parser-sym         'cxc.parse/parse-use-section
+                :allowed-in-extend? false
+                :notes              "L3-use.i metadata-only; wire-through waits on the full K6 landing."}})
 
 (def registry
   "Section-class registry — `{section-name-keyword → spec}`. Seeded
@@ -302,6 +313,22 @@
     (when (= :behavioral (:kind e))
       (when-let [sym (get-in e [:spec :parser-sym])]
         (requiring-resolve sym)))))
+
+(defn allowed-in-extend?
+  "F8 L3b.iii — is the behavioral section-header allowed inside
+   `extend Foo:` bodies? Reads `:allowed-in-extend?` on the seed's
+   spec; default false (spec §3.3.2 restricts extensions from adding
+   state, capabilities, or deprecation). True today only for
+   `:invariants` — invariants compose additively across extensions
+   per F49's extension-invariant merging.
+
+   Callers combine this with `behavioral-parser` to gate the
+   extend-class body registry-arm: skip the arm when
+   `allowed-in-extend?` returns false, so `use:` and `deprecated:`
+   still fall through to their hardcoded rejection arms."
+  [nm]
+  (let [e (lookup nm)]
+    (boolean (get-in e [:spec :allowed-in-extend?]))))
 
 (defn behavioral-walker
   "F8 L3d.ii.α — resolve the post-parse walker fn for a behavioral

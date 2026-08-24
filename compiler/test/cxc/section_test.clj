@@ -242,6 +242,16 @@
     (is (nil? (sec/behavioral-walker :computed)))
     (is (nil? (sec/behavioral-walker :madeupthing)))))
 
+(deftest allowed-in-extend-only-invariants
+  (testing "F8 L3b.iii — only `:invariants` is permitted inside `extend Foo:` bodies (invariants compose additively per F49's extension-invariant merging). `:use` and `:deprecated` are false — extend rejects them per §3.3.2 (extensions cannot add capabilities or deprecation). Reserved and unregistered names default to false."
+    (is (true? (sec/allowed-in-extend? :invariants)))
+    (is (true? (sec/allowed-in-extend? "Invariants")))
+    (is (false? (sec/allowed-in-extend? :deprecated)))
+    (is (false? (sec/allowed-in-extend? :use)))
+    (is (false? (sec/allowed-in-extend? :computed)))
+    (is (false? (sec/allowed-in-extend? :metadata)))
+    (is (false? (sec/allowed-in-extend? :madeupthing)))))
+
 (deftest register-rejects-protected-name-shadow
   (testing "F8 D5 — `register!` hard-errors when the caller passes a protected section-header name. This is the guard behind `alias computed: runtime immutable identity` at parse time (via register-section-header-alias!) and behind the future L4 `section class Computed:` user syntax. Diagnostic names the reserved header and lists the full protected set."
     (is (thrown-with-msg?

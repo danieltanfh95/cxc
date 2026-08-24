@@ -2772,6 +2772,16 @@
                     "or a wildcard self-transition (`replace * <: msg(args) "
                     "-> * then: <body>`). See §3.3.2 rule 4."))))
 
+    ;; F8 L3b.iii — behavioral section dispatch via registry, gated
+    ;; by `:allowed-in-extend?` per §3.3.2 (only invariants: allowed
+    ;; here; use: and deprecated: still fall through to hardcoded
+    ;; rejection arms below).
+    (and (at? tokens pos :kw)
+         (section/allowed-in-extend? (t-value (peek-tok tokens pos)))
+         (section/behavioral-parser (t-value (peek-tok tokens pos))))
+    (let [parser (section/behavioral-parser (t-value (peek-tok tokens pos)))]
+      (parser tokens pos))
+
     (at? tokens pos :kw "invariants") (parse-invariants-section tokens pos)
 
     (and (at? tokens pos :ident) (= "conforms" (t-value (peek-tok tokens pos)))
