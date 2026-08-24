@@ -8139,7 +8139,20 @@
           ;; collision the default. Post-store lowering uses ctx WITHOUT
           ;; init-locals so bare `value` resolves to `_value` in the
           ;; emitted checkInvariants body.
-          ctx-post-store  ctx-with-self
+          ;;
+          ;; F32 L4.e.β.3 (2026-08-24) — thread `:snapshot-name` into
+          ;; the -checkInvariants lowering ctx so invariant predicates
+          ;; read fields via `__cxc_snap._field` instead of raw `_field`
+          ;; ivars. Under default flag: semantics-equivalent (snapshot
+          ;; copies from ivars — same values). Under concurrent mode:
+          ;; L4.e.α's guarded emit sources snapshot from `_state`, so
+          ;; -checkInvariants observes committed state. Composes with
+          ;; the snapshot-init stmt injected into the method body below.
+          ;; Without this, L4.e.β proper (retire per-field ivar writes)
+          ;; would leave -checkInvariants observing stale initial-ivar
+          ;; values on every observable entry/exit + transitionToEnd
+          ;; call.
+          ctx-post-store  (assoc ctx-with-self :snapshot-name "__cxc_snap")
           invariant-stmts (vec (map-indexed
                                 (fn [i p]
                                   (lower-invariant-check atom-name i p ctx-post-store))
@@ -8356,10 +8369,28 @@
           ;; init AND every message-triggered transition can call it —
           ;; duplication-free, single source of truth. cxc_runtimeBinding
           ;; forwards to it so the check runs at end-of-construction.
+          ;;
+          ;; F32 L4.e.β.3 (2026-08-24) — prepend a `:state-snapshot-init`
+          ;; when the atom has data-fields; combined with `:snapshot-
+          ;; name "__cxc_snap"` in ctx-post-store (above), invariant
+          ;; predicates read via `__cxc_snap._field` rather than the
+          ;; raw `_field` ivar. L4.e.α's guarded snapshot emit sources
+          ;; from `_state` under concurrent mode — closes the invariant
+          ;; side of the ivar-reader gap. Atoms without data-fields
+          ;; skip the snapshot (state struct empty; predicates can
+          ;; only reference observables/literals in that case).
+          check-invariants-snap (when (and (seq (:fields rec))
+                                            (seq (:invariants rec)))
+                                  {:node        :state-snapshot-init
+                                   :class-name  (class-name-for-atom atom-name)
+                                   :data-fields (:fields rec)})
+          check-invariants-body (if check-invariants-snap
+                                  (into [check-invariants-snap] invariant-stmts)
+                                  invariant-stmts)
           check-invariants-method {:node :objc-method
                                    :selector "checkInvariants"
                                    :return-type "void" :params []
-                                   :body invariant-stmts}
+                                   :body check-invariants-body}
           txn-result      (lower-receive-glyph-transitions
                            atom-name transitions ctx-with-self)
           txn-methods     (:methods txn-result)

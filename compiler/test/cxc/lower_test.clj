@@ -3893,6 +3893,44 @@ def main:
       (is (str/includes? c-src "return (__cxc_snap._n + 1);")
           "bare-field read inside observable body routes via __cxc_snap._n"))))
 
+(deftest f32-l4e-beta-3-check-invariants-body-uses-snapshot-when-invariants-present
+  (testing "F32 L4.e.β.3 — `-checkInvariants` body now prepends a `:state-snapshot-init` and lowers invariant predicates via `:snapshot-name \"__cxc_snap\"` so field reads route via `__cxc_snap._field` instead of raw `_field` ivars. Under default flag: semantics-equivalent (snapshot copies from ivars). Under concurrent mode: L4.e.α's guarded emit sources snapshot from `_state`, so invariants observe committed state. Prevents stale-ivar invariant checks after L4.e.β retires per-field ivar writes."
+    (let [prog  (lower-src (str "def Bounded:\n"
+                                "    v: Int = 42\n"
+                                "    invariants:\n"
+                                "        0 <= v\n"
+                                "        v <= 150\n\n"
+                                "    -> running\n\n"
+                                "    -> end\n\n"
+                                "def main:\n"
+                                "    -> running\n        then: print(1)\n"))
+          cls   (first (filter #(= "Bounded" (:name %)) (:classes prog)))
+          check (first (filter #(= "checkInvariants" (:selector %)) (:methods cls)))
+          body  (:body check)
+          c-src (emit/emit prog)]
+      (is (= :state-snapshot-init (:node (first body)))
+          "snapshot-init prepended to -checkInvariants body")
+      (is (= "Bounded" (:class-name (first body)))
+          "snapshot carries the atom's class name")
+      ;; The invariant `0 <= v` (via chained-comparison desugar) reads v.
+      ;; Under L4.e.β.3 the read routes through __cxc_snap._v.
+      (is (str/includes? c-src "__cxc_snap._v")
+          "invariant predicates read fields via __cxc_snap._v under -checkInvariants"))))
+
+(deftest f32-l4e-beta-3-check-invariants-without-invariants-skips-snapshot
+  (testing "F32 L4.e.β.3 — an atom with data-fields but NO declared invariants skips the snapshot init in -checkInvariants (empty invariant-stmts body — snapshot would be a pointless no-op AND would trip other tests that assert non-receive-glyph classes don't emit snapshot preludes)."
+    (let [prog  (lower-src (str "def Counter:\n"
+                                "    n: Int = 0\n\n"
+                                "    -> running\n\n"
+                                "    -> end\n\n"
+                                "def main:\n"
+                                "    -> running\n        then: print(1)\n"))
+          cls   (first (filter #(= "Counter" (:name %)) (:classes prog)))
+          check (first (filter #(= "checkInvariants" (:selector %)) (:methods cls)))
+          body  (:body check)]
+      (is (not-any? #(= :state-snapshot-init (:node %)) body)
+          "no snapshot init when no invariants are declared"))))
+
 (deftest f32-l4e-beta-2-alpha-observable-on-zero-data-atom-skips-snapshot
   (testing "F32 L4.e.β.2.α — an observable on an atom with no data fields skips the snapshot init (state struct would be empty; snapshot would be a pointless no-op)."
     (let [prog  (lower-src (str "def Ticker:\n"
