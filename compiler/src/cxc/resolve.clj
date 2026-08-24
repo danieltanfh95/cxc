@@ -57,6 +57,7 @@
    rewriting.
    "
   (:require [clojure.set]
+            [clojure.walk :as walk]
             [cxc.prelude :as prelude]))
 
 ;; ---------------------------------------------------------------------------
@@ -288,3 +289,132 @@
   [ctx decl-name member-kind member-name]
   (some #(when (= member-name (:name %)) %)
         (get-in (lookup ctx decl-name) [:members member-kind])))
+
+;; ---------------------------------------------------------------------------
+;; F51 L3b sub-landing (a) — per-module scope index + unscoped type-ref
+;; discovery.
+;;
+;; The flat-namespace concatenation shim (see `build/strip-module-and-
+;; import-lines`) resolves every user reference against one global name
+;; pool. Under L3b's strict-scoping rules a name only resolves via:
+;;   1. Declarations in the same module.
+;;   2. Names imported into the module via `from X import a` / `import X`.
+;;   3. Prelude names (always visible; no import required — spec §7.6
+;;      resolution precedence).
+;; A reference outside all three would fail under L3b even though the
+;; shim currently accepts it via flat concatenation.
+;;
+;; This sub-landing (a) ships the scope index + a walker that surfaces
+;; those references. The shim stays in place; the walker's output is
+;; consumed as a WARN diagnostic in `build/compile-directory-to-file` so
+;; users can migrate proactively before sub-landing (b) retires the shim.
+;; Nothing else consumes the index yet — sub-landing (b) is where the
+;; resolver rewrites bare identifiers to qualified form and lower's env
+;; lookups migrate to the resolved names.
+;; ---------------------------------------------------------------------------
+
+(def builtin-type-names
+  "Type names built into the language grammar — always in scope, no
+   import required. Includes numeric widths (spec §3.1), non-numeric
+   substrate (§3.1.3 Any/Never/Unit), reference-shaped primitives
+   (String/Bytes/Block), and the parametric containers (List/Map/Set/
+   Array/Optional). Mirrors the primitive maps in `lower/cxc-type->c`
+   and `parse/known-primitive-value-type-names`; if either grows a new
+   type here should follow."
+  #{"Int" "Int8" "Int16" "Int32" "Int64"
+    "UInt" "UInt8" "UInt16" "UInt32" "UInt64"
+    "Float" "Double" "Bool" "Char" "Byte"
+    "String" "Bytes" "Block"
+    "Any" "Unit" "Never"
+    "List" "Map" "Set" "Array" "Optional"})
+
+(def prelude-name-set
+  "Every user-visible name declared in the prelude plus every builtin
+   type name — the fixed \"always in scope\" set that every module
+   sees regardless of imports. Assembled from `prelude/prelude-modules`
+   (source of truth for prelude declarations) plus `builtin-type-names`
+   (source of truth for language primitives)."
+  (clojure.set/union
+    builtin-type-names
+    (into #{} (mapcat :names) prelude/prelude-modules)))
+
+(defn- decls-in-file
+  "Names of top-level user declarations (`:record` / `:def-atom` /
+   `:enum`) in a parsed file's node vector."
+  [nodes]
+  (into #{}
+        (comp (filter #(contains? #{:record :def-atom :enum} (:node %)))
+              (map :name))
+        nodes))
+
+(defn- imports-in-file
+  "Local-binding names introduced by a parsed file's import statements.
+   `from X import a` binds `a`; `from X import a as b` binds `b`.
+   `import X` binds `X`; `import X as Y` binds `Y`. Mirrors
+   `build/import-local-bindings` shape; kept here as a private helper
+   so `resolve` doesn't depend on `build`."
+  [nodes]
+  (into #{}
+        (mapcat (fn [n]
+                  (case (:node n)
+                    :from-import (map #(or (:as %) (:name %)) (:names n))
+                    :import      [(or (:as n) (:from n))]
+                    nil)))
+        nodes))
+
+(defn build-module-scope-index
+  "Given `files-with-nodes` (each entry `{:module :nodes ...}` — the
+   shape `build/compile-directory-to-file` produces after parse + module
+   header injection), return `{module-kw → #{name-string ...}}` — the
+   set of names each user module resolves under L3b's strict scoping.
+
+   In-scope = own module's decls (aggregated across every file in the
+   module) + names imported into the module + prelude names.
+
+   Sub-landing (a) callers use this to detect references that would
+   break under L3b; sub-landing (b) will consume it during the resolver
+   rewrite."
+  [files-with-nodes]
+  (reduce (fn [acc {:keys [module nodes]}]
+            (update acc module
+                    (fnil clojure.set/union prelude-name-set)
+                    (clojure.set/union (decls-in-file nodes)
+                                       (imports-in-file nodes))))
+          {}
+          files-with-nodes))
+
+(defn- type-ref-names
+  "Walk `nodes` and return the distinct set of names appearing as
+   `{:node :type-ref :name X}`. Type refs appear in field types, method
+   params, return types, handler contracts, and extension targets — the
+   surface where cross-module resolution matters. Bare `:ident`
+   occurrences (locals, method params, method-call names) are NOT
+   included: they'd generate massive false-positive noise, and their
+   L3b resolution is scope-local not module-scope."
+  [nodes]
+  (let [acc (volatile! (transient #{}))]
+    (walk/postwalk
+      (fn [x]
+        (when (and (map? x)
+                   (= :type-ref (:node x))
+                   (string? (:name x)))
+          (vswap! acc conj! (:name x)))
+        x)
+      nodes)
+    (persistent! @acc)))
+
+(defn find-unscoped-type-refs
+  "Return the sequence of `{:module :file :name}` entries for every
+   type-ref in `files-with-nodes` whose name does NOT resolve in its
+   module's scope (per `build-module-scope-index`).
+
+   Currently a compat-scan tool: sub-landing (a)'s `build` wiring turns
+   each entry into a WARN diagnostic so users can add the missing import
+   before sub-landing (b) makes the check a hard error. Empty result
+   means every type-ref would still resolve after the shim retires."
+  [files-with-nodes]
+  (let [scope-index (build-module-scope-index files-with-nodes)]
+    (for [{:keys [module nodes file]} files-with-nodes
+          nm                         (type-ref-names nodes)
+          :when                      (not (contains? (get scope-index module #{}) nm))]
+      {:module module :file file :name nm})))

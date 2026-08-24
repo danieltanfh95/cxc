@@ -137,3 +137,66 @@
       (is (= :foo (get-in table ["V"    :module])))
       (is (= :bar (get-in table ["W"    :module])))
       (is (= :bar (get-in table ["main" :module]))))))
+
+;; ---------------------------------------------------------------------------
+;; F51 L3b (a) — module scope index + unscoped type-ref discovery. The
+;; walker's output feeds the WARN pass in build/compile-directory-to-file
+;; so users can migrate before L3b (b) retires the flat-namespace shim.
+;; ---------------------------------------------------------------------------
+
+(defn- parse-file
+  "Test helper: parse a single file's source under the multi-file build's
+   entrypoint (accepts synthetic `module` headers). Returns a
+   `files-with-nodes` entry shaped like `build/compile-directory-to-file`
+   produces after topsort."
+  [module src]
+  {:module module
+   :file   (java.io.File. (str (clojure.core/name module) ".cxc"))
+   :nodes  (parse/parse-with-build-modules
+             (str "module " (clojure.core/name module) "\n\n" src))})
+
+(deftest f51-l3b-scope-index-includes-own-decls-imports-and-prelude
+  (testing "F51 L3b (a) — a module's scope-set is own decls ∪ imports ∪ prelude. `import X as Y` binds `Y` (not `X`); `from X import a as b` binds `b`."
+    (let [files [(parse-file :geom "def Point:\n    x: Int\n    y: Int\n")
+                 (parse-file :viz  "from geom import Point\nimport std.time as T\n\ndef main:\n    -> running\n")]
+          idx   (resolve/build-module-scope-index files)]
+      (is (contains? (:geom idx) "Point")
+          "own module's decl in scope")
+      (is (contains? (:viz idx) "Point")
+          "imported name in scope")
+      (is (contains? (:viz idx) "T")
+          "aliased import binds the alias, not the module name")
+      (is (not (contains? (:viz idx) "std.time"))
+          "un-aliased module name isn't in scope when :as is set")
+      (is (contains? (:viz idx) "Duration")
+          "prelude names always in scope")
+      (is (contains? (:geom idx) "Duration")
+          "prelude visibility isn't module-specific"))))
+
+(deftest f51-l3b-find-unscoped-flags-cross-module-refs-without-import
+  (testing "F51 L3b (a) — a type-ref to a name declared in another user module but not imported is unscoped. It compiles today via the flat-namespace shim; L3b (b) will reject it."
+    (let [files   [(parse-file :geom "def Point:\n    x: Int\n")
+                   (parse-file :viz  "def Scene:\n    origin: Point\n")]
+          unscoped (resolve/find-unscoped-type-refs files)]
+      (is (some (fn [{:keys [module name]}]
+                  (and (= :viz module) (= "Point" name)))
+                unscoped)
+          "`Point` in :viz isn't declared, imported, or in prelude"))))
+
+(deftest f51-l3b-find-unscoped-silent-on-same-module-refs
+  (testing "F51 L3b (a) — a type-ref that resolves inside its own module (declared in the same or a sibling file of the same module) isn't flagged."
+    (let [files   [(parse-file :geom "def Point:\n    x: Int\n")
+                   (parse-file :geom "def Scene:\n    origin: Point\n")]
+          unscoped (resolve/find-unscoped-type-refs files)]
+      (is (not (some #(= "Point" (:name %)) unscoped))
+          "same-module refs are silent — the scope-set aggregates decls across every file in the module"))))
+
+(deftest f51-l3b-find-unscoped-silent-on-imported-and-prelude-refs
+  (testing "F51 L3b (a) — explicit imports and prelude names both silence the walker."
+    (let [files   [(parse-file :geom "def Point:\n    x: Int\n")
+                   (parse-file :viz  "from geom import Point\n\ndef Scene:\n    origin: Point\n    elapsed: Duration\n")]
+          unscoped (resolve/find-unscoped-type-refs files)]
+      (is (not (some #(= "Point" (:name %)) unscoped))
+          "explicitly imported name silences the WARN")
+      (is (not (some #(= "Duration" (:name %)) unscoped))
+          "prelude name silences the WARN"))))

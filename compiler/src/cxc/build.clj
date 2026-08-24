@@ -437,6 +437,34 @@
                :import-source (:source (first entries))})))))
 
 ;; ---------------------------------------------------------------------------
+;; F51 L3b (a) — compat-scan for unscoped type references.
+;;
+;; Before L3b (b) retires the flat-namespace concatenation shim, warn
+;; users about cross-module type references that would fail under
+;; strict per-module scoping. The check is advisory — it doesn't block
+;; the build; downstream lower still resolves via the shim's flat
+;; namespace. Users see one line per unresolved ref pointing at the
+;; file and the module the ref would need to import.
+;; ---------------------------------------------------------------------------
+
+(defn- warn-unscoped-type-refs!
+  "Emit a stderr warning per type-ref whose name doesn't resolve inside
+   its module's scope (own decls + imports + prelude). Fires from
+   `compile-directory-to-file` after collision + cycle checks so users
+   see the harder-error diagnostics first."
+  [files-with-nodes]
+  (binding [*out* *err*]
+    (doseq [{:keys [module file name]}
+            (resolve/find-unscoped-type-refs files-with-nodes)]
+      (println
+        (str "warning: F51 L3b: type-ref `" name
+             "` in module `" (clojure.core/name module)
+             "` (" (.getName ^java.io.File file)
+             ") isn't declared here, imported, or in the prelude — add "
+             "`from <owning-module> import " name
+             "` before F51 L3b retires the flat-namespace shim.")))))
+
+;; ---------------------------------------------------------------------------
 ;; F51 L2 — Module import dependency graph + topological order + cycle detection.
 ;; ---------------------------------------------------------------------------
 
@@ -749,6 +777,14 @@
         ;; so more specific diagnostics (self-import, unknown-module) fire
         ;; first when both would apply.
         _                (reject-import-collides-with-decl! files-with-nodes)
+        ;; F51 L3b (a) — compat scan: emit a WARN for every type-ref that
+        ;; wouldn't resolve under strict per-module scoping (own decls +
+        ;; imports + prelude). The flat-namespace concatenation shim still
+        ;; accepts these references today; L3b (b) will retire the shim
+        ;; and turn each unresolved ref into a hard error. Fires only for
+        ;; cross-module implicit references — same-module and prelude
+        ;; refs stay silent.
+        _                (warn-unscoped-type-refs! files-with-nodes)
         sorted-modules   (topological-sort dep-graph user-modules)
         files-with-nodes (sort-files-by-module-order files-with-nodes
                                                      sorted-modules)
