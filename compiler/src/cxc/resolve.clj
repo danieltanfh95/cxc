@@ -448,7 +448,17 @@
           ;; Extension of a cross-module type without an import surfaces
           ;; here.
           (and (= :extend-class (:node x)) (string? (:target x)))
-          (vswap! acc conj! (:target x)))
+          (vswap! acc conj! (:target x))
+          ;; `MyContainer of Int` — parametric type reference with an
+          ;; :outer name held as a plain string (not a :type-ref).
+          ;; Builtin containers (`List`, `Map`, `Set`, `Array`,
+          ;; `Optional`) live in `builtin-type-names` and pass; a
+          ;; capitalized user-declared parametric type at :outer
+          ;; position (`MyContainer of Int`) surfaces here.
+          (and (= :type-of (:node x))
+               (string? (:outer x))
+               (capitalized? (:outer x)))
+          (vswap! acc conj! (:outer x)))
         x)
       nodes)
     (persistent! @acc)))

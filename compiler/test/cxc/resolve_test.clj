@@ -250,3 +250,20 @@
           unscoped (resolve/find-unscoped-type-refs files)]
       (is (empty? unscoped)
           "`p.x` (lowercase local dot) shouldn't fire the walker"))))
+
+(deftest f51-l3b-find-unscoped-flags-cross-module-parametric-outer
+  (testing "F51 L3b (a) — `MyContainer of Int` at a field type position has :outer held as a plain string (not a :type-ref). Cross-module use of a user-declared parametric type without an import surfaces under the walker. Builtin containers (List / Map / Set / Array / Optional) stay silent — they're in prelude-name-set."
+    (let [files    [(parse-file :containers "def MyBox:\n    x: Int\n")
+                    (parse-file :main       "def R:\n    xs: MyBox of Int\n")]
+          unscoped (resolve/find-unscoped-type-refs files)]
+      (is (some (fn [{:keys [module name]}]
+                  (and (= :main module) (= "MyBox" name)))
+                unscoped)
+          "`MyBox of Int` in :main should flag MyBox as an unscoped parametric outer"))))
+
+(deftest f51-l3b-find-unscoped-silent-on-builtin-parametric-outer
+  (testing "F51 L3b (a) — `List of Int`, `Map of (K, V)`, `Set of T` — builtin containers stay silent because their :outer names live in `builtin-type-names`."
+    (let [files    [(parse-file :main "def R:\n    xs: List of Int\n    m: Map of (String, Int)\n")]
+          unscoped (resolve/find-unscoped-type-refs files)]
+      (is (empty? unscoped)
+          "builtin container outers shouldn't fire the walker"))))
