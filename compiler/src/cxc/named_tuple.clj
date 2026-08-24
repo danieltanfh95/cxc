@@ -229,3 +229,95 @@
        x)
      ast)
     (into (sorted-map) (persistent! @acc))))
+
+;; ---------------------------------------------------------------------------
+;; F15 L2.c.ii — emit C typedef declarations for collected shapes.
+;;
+;; Consumes a `{mangled-name → shape-node}` map (as produced by
+;; `collect-shapes`) and a caller-supplied `primitive->c-type` fn so
+;; this ns stays free of lower.clj's primitive-mapping logic. Emits
+;; one `typedef struct { ... } <mangled>;` per shape, sorted by
+;; mangled name (deterministic diffs).
+;;
+;; MVP scope (this sub-landing): fields whose type is a primitive
+;; (`:type-ref`) or non-nil primitive (`:type-nonnil` wrapping a
+;; primitive). Nested named-tuples and parametric types as FIELDS
+;; throw NYI — extend in follow-on sub-landings once the "inline vs
+;; reference" decision for nested typedefs is settled.
+;;
+;; No wiring into emit.clj yet. Downstream L2.c.iii wires the
+;; typedef block into the ObjC program prologue and updates
+;; lower/emit to translate `:type-named-tuple` param types to the
+;; mangled name.
+;; ---------------------------------------------------------------------------
+
+(defn- field-c-type
+  "Translate a field's type node to a C-type string. MVP: primitives
+   and non-nil primitives only. `primitive->c-type` maps a type name
+   like \"Int\" to the C type (e.g., `int64_t`)."
+  [primitive->c-type type-node]
+  (case (:node type-node)
+    :type-ref
+    (let [nm (:name type-node)
+          c  (primitive->c-type nm)]
+      (when-not c
+        (fail-nyi! (str "primitive type `" nm "` has no C-type mapping "
+                        "(caller must supply it via `primitive->c-type`)")
+                   type-node))
+      c)
+
+    :type-nonnil
+    (field-c-type primitive->c-type (:inner type-node))
+
+    :type-named-tuple
+    (fail-nyi! (str "nested named-tuple field types not supported in "
+                    "F15 L2.c.ii typedef emit — extend when the "
+                    "inline-vs-reference decision for nested "
+                    "typedefs is settled")
+               type-node)
+
+    :type-of
+    (fail-nyi! (str "parametric field types (`" (:outer type-node)
+                    " of ...`) not supported in F15 L2.c.ii typedef "
+                    "emit — extend in a follow-on sub-landing")
+               type-node)
+
+    (fail-nyi! (str "unsupported field type node kind `"
+                    (:node type-node) "` in F15 L2.c.ii typedef emit")
+               type-node)))
+
+(defn- shape->typedef-string [primitive->c-type mangled-name shape-node]
+  (let [fields (sort-by :name (:fields shape-node))
+        lines  (map (fn [{:keys [name type]}]
+                      (str "    " (field-c-type primitive->c-type type)
+                           " " name ";"))
+                    fields)]
+    (str "typedef struct {\n"
+         (str/join "\n" lines)
+         "\n} " mangled-name ";")))
+
+(defn emit-typedefs
+  "F15 L2.c.ii — return a C source string of typedef declarations
+   for every shape in `shapes` (as produced by `collect-shapes`).
+
+   `primitive->c-type` is a function `String → String` mapping cxc
+   primitive type names (\"Int\", \"String\", \"Bool\", ...) to their
+   C-type strings. This ns doesn't know cxc's primitive mapping —
+   the caller (typically lower.clj / emit.clj) supplies it.
+
+   Empty input → empty string. Multiple typedefs separate by blank
+   lines. Iteration follows the sorted-map order so output is
+   deterministic across runs.
+
+   Field-type coverage (MVP): primitives + non-nil primitives.
+   Nested named-tuples and parametric field types throw NYI —
+   follow-on sub-landings extend."
+  ^String [shapes primitive->c-type]
+  (if (empty? shapes)
+    ""
+    (str/join "\n\n"
+              (map (fn [[mangled-name shape-node]]
+                     (shape->typedef-string primitive->c-type
+                                            mangled-name
+                                            shape-node))
+                   shapes))))

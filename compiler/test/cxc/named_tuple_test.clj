@@ -293,6 +293,104 @@
           (nt/collect-shapes {:node :method
                               :params [{:name "p" :type (nt-node "x" "Nn_Int")}]})))))
 
+;; ---------------------------------------------------------------------------
+;; F15 L2.c.ii — emit typedefs for collected shapes. Pure fn; caller
+;; supplies a primitive-name → C-type mapping so this ns stays free of
+;; lower.clj's mapping logic. MVP: primitives + non-nil primitives as
+;; field types.
+;; ---------------------------------------------------------------------------
+
+(def ^:private mvp-c-type
+  ;; Minimal primitive→C-type table for tests. Real callers pass
+  ;; lower.clj's `cxc-type->c` (or equivalent) at wire-in time.
+  {"Int"     "int64_t"
+   "Int32"   "int32_t"
+   "Int64"   "int64_t"
+   "String"  "NSString *"
+   "Bool"    "bool"
+   "Float"   "float"
+   "Double"  "double"})
+
+(deftest emit-typedefs-empty-map-produces-empty-string
+  (testing "F15 L2.c.ii — no collected shapes → no typedefs emitted. Programs that don't use named tuples pay no cost in the emitted output."
+    (is (= "" (nt/emit-typedefs {} mvp-c-type)))))
+
+(deftest emit-typedefs-single-flat-shape
+  (testing "F15 L2.c.ii — a single flat named-tuple shape emits one typedef with fields sorted alphabetically. Uses the caller-supplied primitive→c-type mapping to translate field types."
+    (let [shapes (nt/collect-shapes {:node :method
+                                     :params [{:name "p"
+                                               :type (nt-node "x" "Int" "y" "Int")}]})
+          out    (nt/emit-typedefs shapes mvp-c-type)]
+      (is (= (str "typedef struct {\n"
+                  "    int64_t x;\n"
+                  "    int64_t y;\n"
+                  "} _Cxc_NT_x_Int_y_Int;")
+             out)))))
+
+(deftest emit-typedefs-multiple-shapes-separated-by-blank-line
+  (testing "F15 L2.c.ii — multiple shapes emit as separate typedefs joined by blank lines. Iteration follows sorted-map order (mangled name ascending) so diffs are stable across runs."
+    (let [shapes (nt/collect-shapes
+                   [{:node :method :params [{:name "p" :type (nt-node "b" "Int")}]}
+                    {:node :method :params [{:name "q" :type (nt-node "a" "String")}]}])
+          out    (nt/emit-typedefs shapes mvp-c-type)]
+      (is (= (str "typedef struct {\n"
+                  "    NSString * a;\n"
+                  "} _Cxc_NT_a_String;\n\n"
+                  "typedef struct {\n"
+                  "    int64_t b;\n"
+                  "} _Cxc_NT_b_Int;")
+             out)))))
+
+(deftest emit-typedefs-non-nil-primitive-field
+  (testing "F15 L2.c.ii — non-nil primitive fields (`x: Int!`) treat as their inner primitive at the C level. F39 nullability semantics live at the observation points (ctor, field write, method return), not in the underlying storage type."
+    (let [shapes (nt/collect-shapes
+                   {:node :method
+                    :params [{:name "p"
+                              :type (nt-node-with-fields
+                                      [{:name "x" :type (nonnil (ref "Int"))}])}]})
+          out    (nt/emit-typedefs shapes mvp-c-type)]
+      (is (= (str "typedef struct {\n"
+                  "    int64_t x;\n"
+                  "} _Cxc_NT_x_Nn_Int;")
+             out)))))
+
+(deftest emit-typedefs-nested-field-throws-nyi
+  (testing "F15 L2.c.ii MVP — nested named-tuple field types throw NYI. The nested typedef itself is still emitted (collect-shapes surfaces it as a separate entry), but the outer's field-type translation fails because we haven't settled the inline-vs-reference decision. Extended in a follow-on sub-landing."
+    (let [inner (nt-node "inner" "Int")
+          outer (nt-node-with-fields [{:name "outer" :type inner}])
+          shapes (nt/collect-shapes
+                   {:node :method :params [{:name "p" :type outer}]})]
+      (is (thrown-with-msg?
+            clojure.lang.ExceptionInfo
+            #"nested named-tuple field types not supported"
+            (nt/emit-typedefs shapes mvp-c-type))))))
+
+(deftest emit-typedefs-parametric-field-throws-nyi
+  (testing "F15 L2.c.ii MVP — parametric field types (`items: Array of Int`) throw NYI at typedef emit. Deferred to a follow-on sub-landing."
+    (let [shapes (nt/collect-shapes
+                   {:node :method
+                    :params [{:name "p"
+                              :type (nt-node-with-fields
+                                      [{:name "items"
+                                        :type {:node :type-of
+                                               :outer "Array"
+                                               :inner (ref "Int")}}])}]})]
+      (is (thrown-with-msg?
+            clojure.lang.ExceptionInfo
+            #"parametric field types.*not supported"
+            (nt/emit-typedefs shapes mvp-c-type))))))
+
+(deftest emit-typedefs-unknown-primitive-throws
+  (testing "F15 L2.c.ii — a field's primitive type that the caller's `primitive->c-type` doesn't map throws with a targeted diagnostic. The caller is responsible for supplying every primitive that could appear in a collected shape."
+    (let [shapes (nt/collect-shapes
+                   {:node :method
+                    :params [{:name "p"
+                              :type (nt-node "x" "Char")}]})]
+      (is (thrown-with-msg?
+            clojure.lang.ExceptionInfo
+            #"primitive type `Char` has no C-type mapping"
+            (nt/emit-typedefs shapes mvp-c-type))))))
+
 (deftest parametric-empty-tuple-inner-throws
   (testing "F15 L2.b.iii — a parametric with an empty type-tuple inner (`Foo of ()`) is degenerate; throw so the caller emits a diagnostic rather than producing an `Of0_Foo` mangling with zero type args."
     (is (thrown-with-msg?
