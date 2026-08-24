@@ -227,3 +227,26 @@
                   (and (= :viz module) (= "Point" name)))
                 unscoped)
           "`extend Point:` in :viz should flag Point as an unscoped extend target"))))
+
+(deftest f51-l3b-find-unscoped-flags-cross-module-dot-target
+  (testing "F51 L3b (a) — a `:dot` whose target is a capitalized bare :ident refers to a top-level type (receive-glyph source, static access, etc.). Cross-module use without an import surfaces under the walker."
+    (let [files    [(parse-file :sources "def SomeSource:\n    msg :< 1\n")
+                    (parse-file :sink    "def Sink:\n    running <: SomeSource.msg -> next\n")]
+          unscoped (resolve/find-unscoped-type-refs files)]
+      (is (some (fn [{:keys [module name]}]
+                  (and (= :sink module) (= "SomeSource" name)))
+                unscoped)
+          "`SomeSource.msg` receive-glyph source in :sink should flag SomeSource"))))
+
+(deftest f51-l3b-find-unscoped-silent-on-lowercase-dot-targets
+  (testing "F51 L3b (a) — `:dot` whose target is a lowercase :ident (e.g. `x.field`, `local.name`) is a local access. Not flagged — L3b's resolution there is scope-local, not module-scope."
+    (let [files    [(parse-file :geom (str "def Point:\n"
+                                           "    x: Int\n\n"
+                                           "def main:\n"
+                                           "    -> running\n"
+                                           "        then:\n"
+                                           "            let p: Point = Point(x: 1)\n"
+                                           "            print(p.x)\n"))]
+          unscoped (resolve/find-unscoped-type-refs files)]
+      (is (empty? unscoped)
+          "`p.x` (lowercase local dot) shouldn't fire the walker"))))

@@ -431,6 +431,19 @@
                       (= :ident (:node c))
                       (capitalized? (:name c)))))
           (vswap! acc conj! (:name (:callee x)))
+          ;; `SomeSource.msg` — receive-glyph source, `Foo.bar` static
+          ;; access, or any dot expr whose target is a capitalized
+          ;; bare :ident. Under spec convention, capitalized bare
+          ;; :ident at a :dot :target position refers to a top-level
+          ;; type (record / atom / enum). Lowercase :dot targets
+          ;; (`x.field`, `foo.bar`) are locals or function results
+          ;; and stay out of scope.
+          (and (= :dot (:node x))
+               (let [t (:target x)]
+                 (and (map? t)
+                      (= :ident (:node t))
+                      (capitalized? (:name t)))))
+          (vswap! acc conj! (:name (:target x)))
           ;; `extend Foo:` — target is a plain string, not a :type-ref.
           ;; Extension of a cross-module type without an import surfaces
           ;; here.
