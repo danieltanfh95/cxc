@@ -1025,6 +1025,24 @@
              ;; (extension observables convert to method-shape entries
              ;; in extension-methods-for).
              observables (filterv #(= :observable (:node %)) (:sections r))
+             ;; F37 L6b (2026-08-24) — records may carry `class function`
+             ;; decls (spec §3.4.6 static-fn shape; canonical use is
+             ;; `class function from(source: Bytes) -> DecodeOutcome<Self>`).
+             ;; Parses at v1.0 but lower/emit consumption lands with
+             ;; F37 L6 — fail-nyi with a targeted pointer so the shape
+             ;; isn't silently ignored on a record body.
+             _ (when-let [cfs (seq (filterv #(= :class-function (:node %))
+                                             (:sections r)))]
+                 (fail-nyi!
+                  (str "record `" name "` has `class function` decls "
+                       "(" (mapv :name cfs) ") — spec §3.4.6 static-fn "
+                       "shape parses at v1.0 but lower/emit consumption "
+                       "lands with F37 L6 (`class function from(source: "
+                       "Bytes) -> DecodeOutcome<Self>` synthesis + "
+                       "`Type.name(args)` call-site dispatch). Track: "
+                       "F37 L6 in compiler/design/plans/g3-structural-"
+                       "canonical/f37-canonical-bytes.md.")
+                  {:record name :class-functions cfs}))
              fields  (fields-from-data-section dsec env atom-env enum-env)
              site    (str "record `" name "` fields (auto-ctor)")
              _       (validate-defaults-after-required! site fields)
@@ -2115,13 +2133,26 @@
    handled at the build/compile step (cxc.build/warn-deprecated-uses)
    and doesn't reach lower, so it's filtered here too. Handler-decls
    are consumed separately by F14. F67 L5 top-level `:field` nodes
-   are consumed by `def-atom-effective-data-section`."
+   are consumed by `def-atom-effective-data-section`. F37 L6b
+   `:class-function` is filtered separately by `def-atom-class-
+   functions` (fail-nyi'd with an F37 L6 pointer until synthesis
+   lands)."
   [atom-node]
   (remove #(#{:data-section :methods-section :transition :observable
               :invariants-section :use-section
               :on-nil-section
-              :handler-decl :deprecated :field} (:node %))
+              :handler-decl :deprecated :field
+              :class-function} (:node %))
           (:body atom-node)))
+
+(defn- def-atom-class-functions
+  "F37 L6b (2026-08-24) — collect `:class-function` nodes from the
+   def-atom body. Filtered out of `def-atom-body-extras` so the
+   generic extras fail-nyi doesn't mis-diagnose them; a dedicated
+   fail-nyi fires at lower-time pointing at F37 L6 (from(Bytes)
+   synthesis) as the landing that will consume them."
+  [atom-node]
+  (filterv #(= :class-function (:node %)) (:body atom-node)))
 
 ;; ---------------------------------------------------------------------------
 ;; F36 Landing 2a — invariant-driven representation picker (§3.1.2 rule 3).
@@ -2404,6 +2435,7 @@
              use-caps      (def-atom-use-caps a)
              on-nil-raw    (def-atom-on-nil-entries a)
              extras        (def-atom-body-extras a)
+             class-fns     (def-atom-class-functions a)
              ;; use: caps are sugar for a required ctor-param plus a
              ;; same-named data-field defaulted to that ctor-param.
              ;; Type must be an atom (capability atoms are the intended
@@ -2696,7 +2728,8 @@
                           :subscription-map subscription-map
                           :slot-names    slot-names
                           :on-nil-entries on-nil-entries
-                          :extras        extras})))
+                          :extras        extras
+                          :class-fns     class-fns})))
      skeleton
      atoms)))
 
@@ -7997,6 +8030,21 @@
                       "/observable/wildcard on-enter transition "
                       "(" (mapv :node extras) ") — use:/invariants/receive-glyphs next up")
                  {:atom atom-name :extras extras}))
+    ;; F37 L6b (2026-08-24) — `class function name(...)` bodies parse
+    ;; cleanly but F37 L6 (`from(Bytes)` synthesis + call-site
+    ;; dispatch) hasn't landed yet, so lower can't consume them. Fire
+    ;; a targeted fail-nyi naming the class + function so users know
+    ;; the landing that would enable this shape.
+    (when-let [cfs (seq (:class-fns rec))]
+      (fail-nyi! (str "def-atom `" atom-name "` has `class function` decls "
+                      "(" (mapv :name cfs) ") — spec §3.4.6 static-fn shape "
+                      "parses at v1.0 but lower/emit consumption lands with "
+                      "F37 L6 (`class function from(source: Bytes) -> "
+                      "DecodeOutcome<Self>` synthesis + `Type.name(args)` "
+                      "call-site dispatch). Track: F37 L6 in "
+                      "compiler/design/plans/g3-structural-canonical/"
+                      "f37-canonical-bytes.md.")
+                 {:atom atom-name :class-functions cfs}))
     ;; Message-triggered transitions become instance methods (Step 4/7).
     ;; Wildcard on-enter (implicit source): initial-phase wildcards inline
     ;; into cxc_stateInit; non-initial-phase wildcards inline at each

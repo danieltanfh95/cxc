@@ -1036,6 +1036,36 @@
         [body p]   (parse-block tokens p)]
     [{:node :function :name name :params params :return-type ret :body body} p]))
 
+(defn- parse-class-function-decl
+  "F37 L6b (2026-08-24) — spec §3.4.6 static-fn shape:
+     class function name(params) -> RetType: <block>
+
+   Distinguished from instance methods (`name :< expr`) by the
+   `class function` prefix. Return type is required per spec (§3.4.6
+   `class function from(source: Bytes) -> DecodeOutcome<Self>`) but
+   parsed as optional here to match `parse-function-decl`'s
+   convention — enforcement lands at lower-time.
+
+   `class` is an :ident (not reserved word — F68 L6b freed the token
+   for identifier use); `function` remains reserved. Parser detects
+   the pair at atom-body dispatch."
+  [tokens pos]
+  (let [[cls-val p] (expect tokens pos :ident)
+        _           (when-not (= "class" cls-val)
+                      (fail! tokens pos
+                             "expected `class` at start of class-function decl"))
+        [_ p]      (expect tokens p :kw "function")
+        [name p]   (expect tokens p :ident)
+        [params p] (parse-param-list-parens tokens p)
+        [ret p]    (if (at? tokens p :glyph "->")
+                     (parse-type tokens (inc p))
+                     [nil p])
+        [_ p]      (expect tokens p :punct ":")
+        [_ p]      (expect tokens p :newline)
+        [body p]   (parse-block tokens p)]
+    [{:node :class-function :name name :params params
+      :return-type ret :body body} p]))
+
 (defn- at-def-method?
   "Look-ahead for the spec-canonical `def name(...)` method form
    inside a def-body or methods: section — distinguishes from the
@@ -2254,6 +2284,19 @@
                     "Drop the `replace` prefix, or move the declaration "
                     "into an `extend` block if the intent was to "
                     "shadow another declaration."))
+
+        ;; F37 L6b (2026-08-24) — `class function name(...): body` is
+        ;; the spec §3.4.6 static-fn shape (used by `Duration.seconds`,
+        ;; F37 L6's `class function from(source: Bytes) -> ...`, etc.).
+        ;; Parsed as `:class-function`; lower fail-nyi's with an F37
+        ;; L6 pointer until the synthesis + dispatch lands. Must
+        ;; precede the F67 L4 `function` rejection arm below so the
+        ;; `class` prefix disambiguates before `function` is seen.
+        (and (at? tokens p :ident)
+             (= "class" (t-value (peek-tok tokens p)))
+             (at? tokens (inc p) :kw "function"))
+        (let [[cf p2] (parse-class-function-decl tokens p)]
+          (recur (conj body cf) (skip-newlines tokens p2)))
 
         ;; F67 L4 — `function` keyword inside atom body retires with the
         ;; `methods:` section (Proposal G class-body collapse). Free

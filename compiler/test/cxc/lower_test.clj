@@ -7,6 +7,32 @@
 
 (defn- lower-src [src] (lower/lower (p/parse src)))
 
+(deftest f37-l6b-class-function-on-atom-fails-nyi-with-f37-l6-pointer
+  (testing "F37 L6b — a `class function` decl inside a def-atom body parses cleanly but lower fires a targeted fail-nyi naming the atom, the function names, and pointing at F37 L6 as the landing that will consume them. No silent no-op."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"class function.*F37 L6"
+         (lower-src (str "def Counter:\n"
+                         "    n: Int = 0\n\n"
+                         "    -> running\n\n"
+                         "    class function empty() -> Counter:\n"
+                         "        return Counter(n: 0)\n\n"
+                         "def main:\n"
+                         "    -> running\n        then: print(0)\n"))))))
+
+(deftest f37-l6b-class-function-on-record-fails-nyi-with-f37-l6-pointer
+  (testing "F37 L6b — a `class function` decl inside a record body (no transitions, no ctor params → reshaped to :record at parse time) fires a targeted fail-nyi at build-record-env, mirroring the atom-side diagnostic. Prevents silent-drop in the record path."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"class function.*F37 L6"
+         (lower-src (str "def Duration:\n"
+                         "    ms: Int = 0\n\n"
+                         "    class function seconds(n: Int) -> Duration:\n"
+                         "        return Duration(ms: n * 1000)\n\n"
+                         "def main:\n"
+                         "    -> running\n        then: print(0)\n"))))))
+
+
 (defn- main-work-body
   "Return the body of CxcMain's cxc_stateInit — the effective site of
    `def main: -> running then: <stmts>` under main-as-atom (Steps 16/17).

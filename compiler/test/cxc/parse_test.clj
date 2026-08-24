@@ -441,6 +441,44 @@ def main:
          #"F67 L4.*method form"
          (p/parse "def M:\n    n: Int = 0\n    def bumped(self) -> Int:\n        return n\n")))))
 
+(deftest f37-l6b-class-function-parses-to-class-function-node-inside-def-body
+  (testing "F37 L6b — `class function name(params) -> RetType: body` inside a def body parses to `:class-function` (spec §3.4.6 static-fn shape). Params, return type, body preserved. `class` is an :ident (not reserved) followed by `:kw \"function\"` — the parser detects the pair BEFORE the F67 L4 `function` rejection arm so class-functions don't trip that diagnostic."
+    (let [ast     (p/parse (str "def Duration:\n"
+                                "    ms: Int = 0\n\n"
+                                "    class function seconds(n: Int) -> Duration:\n"
+                                "        return Duration(ms: n * 1000)\n"))
+          rec     (first ast)
+          cfn     (first (filter #(= :class-function (:node %))
+                                 (or (:sections rec) (:body rec))))]
+      (is (some? cfn)
+          "class-function node present in body/sections")
+      (is (= "seconds" (:name cfn)))
+      (is (= 1 (count (:params cfn))))
+      (is (= "n" (:name (first (:params cfn)))))
+      (is (= "Duration" (get-in cfn [:return-type :name]))
+          "return type preserved as :type-ref node"))))
+
+(deftest f37-l6b-class-function-without-return-type-still-parses
+  (testing "F37 L6b — return type is optional at parse time (matches parse-function-decl convention). Enforcement of the spec §3.4.6 required-return-type contract lands at lower-time with F37 L6."
+    (let [ast (p/parse (str "def Duration:\n"
+                            "    ms: Int = 0\n\n"
+                            "    class function noop():\n"
+                            "        return 0\n"))
+          rec (first ast)
+          cfn (first (filter #(= :class-function (:node %))
+                             (or (:sections rec) (:body rec))))]
+      (is (some? cfn))
+      (is (nil? (:return-type cfn))
+          "absent return type surfaces as nil"))))
+
+(deftest f37-l6b-class-function-does-not-trip-f67-l4-function-rejection
+  (testing "F37 L6b — the atom-body dispatch arm for `class function` fires BEFORE the F67 L4 `function` rejection arm, so a class-function decl doesn't get a misleading migration diagnostic. Position matters — regression test locks in the order."
+    ;; Should NOT throw the F67 L4 diagnostic.
+    (is (some? (p/parse (str "def Foo:\n"
+                             "    x: Int = 0\n\n"
+                             "    class function make() -> Foo:\n"
+                             "        return Foo(x: 0)\n"))))))
+
 (deftest subscript-postfix-parses
   (testing "F19 / §3.9 — `expr[i]` parses as a :subscript node (index is any expression). Post F67 L4: observable body is a bare expression, no `return`."
     (let [src "def R:\n    xs: List of Int\n\n    head() :< xs[0]\n"
