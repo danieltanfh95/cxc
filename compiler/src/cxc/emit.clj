@@ -1334,7 +1334,18 @@
        "    self = [super init];\n"
        "    if (self) {\n"
        "        _own_queue = dispatch_queue_create(\"cxc.stream\", DISPATCH_QUEUE_SERIAL);\n"
+       ;; F32 L5 (2026-08-24) — align stream own_queue with the L1 atom
+       ;; own_queue guard. Under Layer 4 single-queue mode (default) the
+       ;; stream's fan-out serializes on main, matching every atom's
+       ;; behavior. Under future concurrent mode (CXC_SINGLE_MAIN_QUEUE=0)
+       ;; the stream inherits libdispatch's default target (the default-
+       ;; QoS global pool) — fan-out still serializes per-stream (queue
+       ;; stays SERIAL) but no longer bottlenecks through main. Subscriber
+       ;; delivery uses cxc_send_async into each subscriber's own_queue,
+       ;; so this change only affects where the emit itself runs.
+       "#if CXC_SINGLE_MAIN_QUEUE\n"
        "        dispatch_set_target_queue(_own_queue, dispatch_get_main_queue());\n"
+       "#endif\n"
        "        _subscribers = [NSHashTable weakObjectsHashTable];\n"
        "    }\n"
        "    return self;\n"

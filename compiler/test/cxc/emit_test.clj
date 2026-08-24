@@ -344,3 +344,24 @@
           "concurrent branch retargets to the runtime-selected queue")
       (is (str/includes? s "#endif")
           "guard closes"))))
+
+(deftest f32-l5-cxcstream-init-emits-guarded-main-target
+  (testing "F32 L5 — CxcStream's -init retargets its own_queue to main only under CXC_SINGLE_MAIN_QUEUE. Under concurrent mode the stream inherits libdispatch's default target (default-QoS global pool) so fan-out doesn't bottleneck through main. Queue stays SERIAL either way; subscriber delivery via cxc_send_async still respects each subscriber's own_queue."
+    (let [ast {:node :objc-program
+               :needs-runtime? true
+               :includes []
+               :structs []
+               :classes []
+               :main {:body []}}
+          s   (emit/emit ast)
+          i   (str/index-of s "@implementation CxcStream")
+          end (str/index-of s "@end" i)
+          impl (subs s i end)]
+      (is (str/includes? impl "_own_queue = dispatch_queue_create(\"cxc.stream\", DISPATCH_QUEUE_SERIAL);")
+          "stream queue is always created serial")
+      (is (str/includes? impl "#if CXC_SINGLE_MAIN_QUEUE")
+          "main-target retarget is guarded")
+      (is (str/includes? impl "dispatch_set_target_queue(_own_queue, dispatch_get_main_queue());")
+          "single-queue branch keeps Layer 4 main-target behavior")
+      (is (str/includes? impl "#endif")
+          "guard closes"))))
