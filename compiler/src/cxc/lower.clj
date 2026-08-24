@@ -6054,7 +6054,16 @@
                                   data-fields))
         commit-stmt    (when (seq commit-fields)
                          {:node         :commit-next-state
+                          ;; F32 L4.c uses this for `sizeof(<Cls>_State)`
+                          ;; under `!CXC_SINGLE_MAIN_QUEUE`; the state
+                          ;; struct is named after the emitted ObjC class,
+                          ;; which is `CxcMain` for `def main` (not
+                          ;; `main`, which would collide with C's main()).
+                          ;; Pass the class name explicitly so main atom's
+                          ;; concurrent-mode commit references the correct
+                          ;; typedef.
                           :atom-name    atom-name
+                          :class-name   (class-name-for-atom atom-name)
                           :data-fields  commit-fields})
         ;; F33 L3.c — pre-commit invariant check on the `__cxc_next`
         ;; bag (decisions-frozen §8). Re-lower the atom's invariants
@@ -8198,6 +8207,22 @@
                           (str "def-atom `" atom-name "` ctor param")
                           (:name p))))
                      ctor-params))
+          ;; F32 L4.d.β.α (2026-08-24) — post-init seed of the
+          ;; concurrent-mode `_state` slot from the freshly-populated
+          ;; ivars. Only appended when the atom carries data-fields
+          ;; (otherwise there's no `<Cls>_State` typedef to sizeof).
+          ;; Emits a guarded compound-literal + `_cxc_state_commit`;
+          ;; under the default preprocessor flag the whole stmt
+          ;; guards out (byte-identical .m modulo the extra
+          ;; `#if …#endif` block). L4.d.β.β wires cross-atom reads
+          ;; to route through the seeded slot — safe because this
+          ;; seed guarantees `_state` is populated before any
+          ;; observer can reach it.
+          initial-state-commit-stmt
+          (when (seq data-props)
+            {:node        :initial-state-commit
+             :class-name  (class-name-for-atom atom-name)
+             :data-fields data-props})
           state-method    {:node :objc-method :selector state-selector
                            :return-type "void"
                            :params (mapv (fn [p] {:name (:name p) :c-type (:c-type p)})
@@ -8206,11 +8231,13 @@
                            ;; run first so ctor-param / default values
                            ;; failing the invariant abort before any
                            ;; narrowing store loses information.
-                           :body (-> []
-                                     (into nonnil-ctor-check-stmts)
-                                     (into pre-store-invariant-stmts)
-                                     (into default-stmts)
-                                     (into on-enter-stmts))}
+                           :body (cond-> (-> []
+                                             (into nonnil-ctor-check-stmts)
+                                             (into pre-store-invariant-stmts)
+                                             (into default-stmts)
+                                             (into on-enter-stmts))
+                                   initial-state-commit-stmt
+                                   (conj initial-state-commit-stmt))}
           ;; Factor invariants into -checkInvariants (design §14) so
           ;; init AND every message-triggered transition can call it —
           ;; duplication-free, single source of truth. cxc_runtimeBinding

@@ -398,6 +398,41 @@
       (is (str/includes? block "if (_state) { free(_state); _state = NULL; }")
           "dealloc frees underlying buffer and nils the pointer"))))
 
+(deftest f32-l4d-beta-alpha-initial-state-commit-emits-guarded
+  (testing "F32 L4.d.β.α — `:initial-state-commit` emits a `!CXC_SINGLE_MAIN_QUEUE`-guarded compound-literal + `_cxc_state_commit` to seed the concurrent-mode `_state` slot from freshly-populated ivars at the end of `cxc_stateInit`. Under the default preprocessor flag the whole block guards out (byte-identical modulo the `#if …#endif` markers). Under concurrent mode this seed guarantees the first cross-atom reader sees a populated `_state` — L4.d.β.β's guarded read path depends on this."
+    (let [node {:node :initial-state-commit
+                :class-name "Counter"
+                :data-fields [{:name "n"} {:name "phase"}]}
+          s (#'cxc.emit/emit-stmt node)]
+      (is (str/includes? s "#if !CXC_SINGLE_MAIN_QUEUE")
+          "commit is preprocessor-guarded to concurrent mode")
+      (is (str/includes? s "Counter_State __cxc_init = { ._n = _n, ._phase = _phase };")
+          "compound literal populates every data-field from its ivar")
+      (is (str/includes? s "_cxc_state_commit(&_state, &__cxc_init, sizeof(Counter_State));")
+          "commit references the atom's `<Cls>_State` typedef")
+      (is (str/includes? s "#endif")
+          "guard closes"))))
+
+(deftest f32-l4d-beta-alpha-initial-state-commit-uses-class-name-not-atom-name
+  (testing "F32 L4.d.β.α + L4.c fix — the state-struct typedef name is the ObjC class name (`CxcMain` for `def main`), not the raw atom name. Both `:initial-state-commit` and `:commit-next-state` prefer `:class-name` on the node, falling back to `:atom-name` for older shapes. Verifies the fix for `sizeof(main_State)` bug that would surface only under concurrent mode."
+    (let [initial-node {:node :initial-state-commit
+                        :atom-name "main"
+                        :class-name "CxcMain"
+                        :data-fields [{:name "console"}]}
+          commit-node  {:node :commit-next-state
+                        :atom-name "main"
+                        :class-name "CxcMain"
+                        :data-fields [{:name "console"}]}]
+      (is (str/includes? (#'cxc.emit/emit-stmt initial-node)
+                         "CxcMain_State __cxc_init")
+          "initial-state-commit uses class name for main atom")
+      (is (str/includes? (#'cxc.emit/emit-stmt initial-node)
+                         "sizeof(CxcMain_State)")
+          "initial-state-commit sizes against class-name state struct")
+      (is (str/includes? (#'cxc.emit/emit-stmt commit-node)
+                         "sizeof(CxcMain_State)")
+          "commit-next-state sizes against class-name state struct too"))))
+
 (deftest f32-l4d-alpha-atom-state-ptr-helper-emits-guarded
   (testing "F32 L4.d.α — `_cxc_atom_state_ptr(_Atomic id *slot)` runtime helper is emitted inside the same `!CXC_SINGLE_MAIN_QUEUE` region as the L4.a wrapper + L4.b.α helpers. It projects the ARC wrapper returned by `_cxc_state_load` down to the underlying `<Atom>_State *` buffer with a nil-safe guard: pre-first-commit reads return NULL rather than dereferencing a nil-messaged wrapper. Callers cast the `void *` result to the atom's own `<Atom>_State *`. Dead code today — L4.d.β wires cross-atom `.field` reads to route through this helper."
     (let [ast {:node :objc-program

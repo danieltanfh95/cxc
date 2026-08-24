@@ -256,7 +256,13 @@
                  :rhs  {:node :struct-lit
                         :type "_Cxc_Optional_Int64"
                         :fields [{:name "present" :value {:node :int :value 1}}
-                                 {:name "value" :value {:node :int :value 42}}]}}]
+                                 {:name "value" :value {:node :int :value 42}}]}}
+                ;; F32 L4.d.β.α — post-init seed of concurrent-mode
+                ;; `_state` slot from freshly-populated ivars.
+                {:node        :initial-state-commit
+                 :class-name  "Counter"
+                 :data-fields [{:name "n" :c-type "_Cxc_Optional_Int64"
+                                :attrs ["readonly" "assign"]}]}]
                (:body state)))))))
 
 (deftest def-atom-ctor-lowers-to-alloc-init
@@ -307,7 +313,12 @@
                         :left  {:node :name :sym "_n"}
                         :right {:node :int  :value 1}}}
                 {:node :raw-c
-                 :text "if ((_n) == nil) cxc_nonnil_violation(\"def-atom `Ticker` field write\", \"n\");"}]
+                 :text "if ((_n) == nil) cxc_nonnil_violation(\"def-atom `Ticker` field write\", \"n\");"}
+                ;; F32 L4.d.β.α — concurrent-mode `_state` seed.
+                {:node        :initial-state-commit
+                 :class-name  "Ticker"
+                 :data-fields [{:name "n" :c-type "int64_t"
+                                :attrs ["readonly" "assign"]}]}]
                (:body state)))))))
 
 (deftest non-initial-wildcard-inlines-into-transitions-that-enter-that-phase
@@ -518,7 +529,12 @@ def main:
                  :rhs  {:node :struct-lit
                         :type "_Cxc_Optional_Int64"
                         :fields [{:name "present" :value {:node :int :value 1}}
-                                 {:name "value"   :value {:node :name :sym "initial"}}]}}]
+                                 {:name "value"   :value {:node :name :sym "initial"}}]}}
+                ;; F32 L4.d.β.α — concurrent-mode `_state` seed.
+                {:node        :initial-state-commit
+                 :class-name  "Counter"
+                 :data-fields [{:name "n" :c-type "_Cxc_Optional_Int64"
+                                :attrs ["readonly" "assign"]}]}]
                (:body state))))
       (is (= :objc-init-with (:node ctor)))
       (is (= "Counter" (:class ctor)))
@@ -969,6 +985,12 @@ def main:
                  :text "if ((__cxc_next._n) == nil) cxc_nonnil_violation(\"def-atom `Counter` field write\", \"n\");"}
                 {:node        :commit-next-state
                  :atom-name   "Counter"
+                 ;; F32 L4.c fix — `:class-name` on the commit node so
+                 ;; concurrent-mode `sizeof(<Cls>_State)` uses the
+                 ;; emitted ObjC class name (matters only for main:
+                 ;; `class-name-for-atom "main"` = `"CxcMain"`; regular
+                 ;; atoms are name-equivalent).
+                 :class-name  "Counter"
                  :data-fields [{:name "n" :cxc-ty "Int" :nullable? false
                                 :nonnil? true :optional? false
                                 :scalar-c "int64_t" :c-type "int64_t"

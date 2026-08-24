@@ -697,6 +697,32 @@
     ;; sequence; L3.c reads invariants against the bag pre-commit.
     (let [cn (:class-name node)]
       (str cn "_State __cxc_next = __cxc_snap;"))
+    :initial-state-commit
+    ;; F32 L4.d.β.α (2026-08-24) — post-init seed of the concurrent-
+    ;; mode `_state` slot from the freshly-populated ivars. Runs at
+    ;; the end of `cxc_stateInit` after all defaults + on-enter
+    ;; effects have landed on the raw ivars. Without this seed, the
+    ;; first cross-atom reader under concurrent mode would see a nil
+    ;; `_state` (never committed) and `_cxc_atom_state_ptr` would
+    ;; return NULL — L4.d.β's guarded read path needs a populated
+    ;; slot to be safe on the first observation. Redundant when a
+    ;; transition fires during init (L4.c's dual-write already
+    ;; committed `_state`); the reseed is idempotent and only
+    ;; allocates one extra wrapper. Under the default preprocessor
+    ;; flag the whole block guards out; zero cost.
+    (let [cls-name (or (:class-name node) (:atom-name node))
+          fields    (:data-fields node)
+          inits     (->> fields
+                         (map (fn [f]
+                                (str "._" (:name f) " = _" (:name f))))
+                         (str/join ", "))]
+      (str "#if !CXC_SINGLE_MAIN_QUEUE\n"
+           "{\n"
+           "    " cls-name "_State __cxc_init = { " inits " };\n"
+           "    _cxc_state_commit(&_state, &__cxc_init, sizeof("
+           cls-name "_State));\n"
+           "}\n"
+           "#endif"))
     :commit-next-state
     ;; F33 L3.b — atomic commit of the next-state bag to live ivars.
     ;; Emits `_<f1> = __cxc_next._<f1>; _<f2> = __cxc_next._<f2>; ...`
@@ -714,14 +740,21 @@
     ;; byte-identical. L4.e will retire the per-field ivar sequence
     ;; once readers no longer touch ivars.
     (let [fields (:data-fields node)
-          atom-name (:atom-name node)
+          ;; F32 L4.c originally read :atom-name here; that emits
+          ;; `sizeof(main_State)` for the main atom's transitions —
+          ;; wrong, since main's state struct is `CxcMain_State`.
+          ;; Prefer :class-name (added by the lower site alongside
+          ;; :atom-name), fall back to :atom-name for programs whose
+          ;; transitions still surface only the atom name (all
+          ;; non-main atoms have class-name == atom-name).
+          cls-name  (or (:class-name node) (:atom-name node))
           ivar-commits (->> fields
                             (map (fn [f]
                                    (str "_" (:name f) " = __cxc_next._" (:name f) ";")))
                             (str/join "\n"))
           state-commit (str "#if !CXC_SINGLE_MAIN_QUEUE\n"
                             "_cxc_state_commit(&_state, &__cxc_next, sizeof("
-                            atom-name "_State));\n"
+                            cls-name "_State));\n"
                             "#endif")]
       (str ivar-commits "\n" state-commit))
     :queue-init
