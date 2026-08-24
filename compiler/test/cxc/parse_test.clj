@@ -1258,3 +1258,14 @@ def main:
     (let [n   (first-node "def V:\n    n: Int\n\n    computed:\n        d: Int = n * 2\n        t: Int = n * 3\n")
           obs (filterv #(= :observable (:node %)) (:sections n))]
       (is (= ["d" "t"] (mapv :name obs))))))
+
+(deftest f8-l3a-computed-parametric-observable-shape-passes-through
+  (testing "F8 L3a — parametric computed fields via the observable-shape (`name(params) :< expr`) pass through unchanged. The plan's MVP-scope note on 'parametric computed fields excluded' applies only to the field-shape sugar (`name(args): T = expr`) — not to the observable-shape which parse-observable already handles."
+    (let [n   (first-node "def V:\n    n: Int\n\n    computed:\n        scaled(k: Int) :< n * k\n")
+          obs (first (filter #(and (= :observable (:node %))
+                                   (= "scaled" (:name %)))
+                             (:sections n)))]
+      (is (some? obs) "parametric observable-shape survives inside `computed:`")
+      (is (= 1 (count (:params obs)))
+          "parametric params flow through — one user param `k`")
+      (is (= "k" (get-in obs [:params 0 :name]))))))
