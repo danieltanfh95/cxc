@@ -1896,6 +1896,102 @@
        (at? tokens (inc pos) :punct ":")
        (not (at? tokens (+ pos 2) :newline))))
 
+;; ---------------------------------------------------------------------------
+;; F8 L3a — `computed:` behavioral section (MVP). Read-only derived fields.
+;;
+;; A `computed:` section body accepts field-shaped decls `name: T = expr`
+;; (or a bare `name = expr` — type inferred). Each entry is rewritten to a
+;; zero-arg observable `name() :< expr` at parse time — the field_getter
+;; generator described in the F8 plan §Landing 3a. Users get field-style
+;; ergonomics (declarative + typed) but the compiler treats it as a getter
+;; so cross-atom reads always recompute from the current state (spec
+;; §4.10.4.1 Computed contract).
+;;
+;; MVP scope: only zero-param computed fields. Parametric readers keep
+;; using the top-level `name(args) :< expr` observable form. Setter
+;; generation (`@compile_error_setter`) is naturally covered by the
+;; existing "no setter on observable" behavior — a user write to a
+;; computed field lowers as an assignment to an observable name, which
+;; the ordinary observable-name resolver already rejects.
+;; ---------------------------------------------------------------------------
+
+(defn- looks-like-computed-section?
+  "F8 L3a — `computed:` at class body position. Header is a bare `ident`
+   spelled exactly `computed` followed by `:` and newline. Distinct from
+   the generic custom-section path (which consults the registry) so
+   `computed` doesn't need to be pre-registered as an alias — it's a
+   compiler-baked behavioral section at v1.0 per F8 plan §Landing 3a."
+  [tokens pos]
+  (and (at? tokens pos :ident)
+       (= "computed" (t-value (peek-tok tokens pos)))
+       (at? tokens (inc pos) :punct ":")
+       (at? tokens (+ pos 2) :newline)))
+
+(defn- computed-entry->observable
+  "F8 L3a — rewrite one `computed:` body entry to a zero-arg observable
+   node. Accepts either the field-shape `{:node :field :name X :type T
+   :default E}` (with mandatory default — a computed field must specify
+   the derivation expression) or a pre-parsed observable node (allows
+   users to write `x :< expr` inside computed for parity with top-level
+   observables). Field-shape without a default is a hard error — the
+   expression IS the computed's semantics."
+  [entry]
+  (case (:node entry)
+    :field
+    (do (when (nil? (:default entry))
+          (throw (ex-info
+                  (str "F8 L3a: computed field `" (:name entry)
+                       "` must have a `= <expression>` — the expression "
+                       "IS the computed's derivation (spec §4.10.4.1).")
+                  {:kind :cxc-f8-l3a-computed-field-missing-default
+                   :name (:name entry)})))
+      {:node :observable :name (:name entry) :params []
+       :expr (:default entry)})
+    :observable
+    entry
+    (throw (ex-info
+            (str "F8 L3a: computed section accepts field decls "
+                 "(`name: T = expr`) or observable decls "
+                 "(`name :< expr`); got `" (:node entry) "`.")
+            {:kind :cxc-f8-l3a-computed-bad-body-item
+             :entry entry}))))
+
+(defn- parse-computed-section
+  "F8 L3a — parse a `computed:` section body and return
+   `{:node :computed-section :observables [...]}`. Each body entry is a
+   field-shape decl (`name: T = expr`) or an observable-shape decl
+   (`name :< expr`); both flatten to observable nodes at fold-time.
+   The wrapping :computed-section node is transient — `fold-top-level-
+   fields` splices its :observables to top-level."
+  [tokens pos]
+  (let [[_ p]   (expect tokens pos :ident)  ; consumed "computed"
+        [_ p]   (expect tokens p :punct ":")
+        [_ p]   (expect tokens p :newline)
+        [_ p]   (expect tokens p :indent)]
+    (loop [entries [] p p]
+      (cond
+        (at? tokens p :dedent)
+        [{:node :computed-section
+          :observables (mapv computed-entry->observable entries)}
+         (inc p)]
+
+        (at? tokens p :newline)
+        (recur entries (inc p))
+
+        (looks-like-observable? tokens p)
+        (let [[o p2] (parse-observable tokens p)]
+          (recur (conj entries o) (skip-newlines tokens p2)))
+
+        (looks-like-field-decl? tokens p)
+        (let [[f p2] (parse-field tokens p)]
+          (recur (conj entries f) (skip-newlines tokens p2)))
+
+        :else
+        (fail! tokens p
+               (str "F8 L3a: `computed:` body accepts field decls "
+                    "(`name: T = expr`) or observable decls "
+                    "(`name :< expr`) only."))))))
+
 (defn- looks-like-custom-section?
   "F8 L1-b — `<ident>: <newline>` where `<ident>` is registered in
    `cxc.section/registry` (via a prior `:section-header` alias
@@ -1965,7 +2061,19 @@
    consumers that care about origin. Behavioral-section treatment
    (Computed, Invariants generators) is F8 L3."
   [body]
-  (let [;; F8 L1-c — hoist :custom-section fields to top-level :field
+  (let [;; F8 L3a — hoist :computed-section observables to top-level
+        ;; :observable nodes. Splice at the section's position so
+        ;; declaration order is preserved for the reader. The
+        ;; :computed-section wrapper is transient — no downstream
+        ;; consumer expects it.
+        body
+        (into []
+              (mapcat (fn [n]
+                        (if (= :computed-section (:node n))
+                          (:observables n)
+                          [n])))
+              body)
+        ;; F8 L1-c — hoist :custom-section fields to top-level :field
         ;; nodes; collect the composed specs separately for annotation.
         custom-sections (filterv #(= :custom-section (:node %)) body)
         hoisted-fields  (mapcat :fields custom-sections)
@@ -2293,6 +2401,16 @@
         (looks-like-field-decl? tokens p)
         (let [[f p2] (parse-field tokens p)]
           (recur (conj body f) (skip-newlines tokens p2)))
+
+        ;; F8 L3a — `computed:` behavioral section. Compiler-baked
+        ;; (not registry-driven) at v1.0 per F8 plan §Landing 3a.
+        ;; Body items are field-shape or observable-shape; fold-time
+        ;; splices them out as top-level observables. Must precede
+        ;; the generic custom-section dispatch so a user can't
+        ;; accidentally shadow it via `alias computed: ...`.
+        (looks-like-computed-section? tokens p)
+        (let [[s p2] (parse-computed-section tokens p)]
+          (recur (conj body s) (skip-newlines tokens p2)))
 
         ;; F8 L1-b — custom section-header dispatch. Consults
         ;; `cxc.section/registry` (populated at parse time by

@@ -64,6 +64,12 @@
       (is (zero? exit))
       (is (= "42\n" stdout)))))
 
+(deftest end-to-end-f8-computed
+  (testing "F8 L3a — `computed:` behavioral section MVP. `V { n: Int = 21 }` declares a `computed: doubled: Int = n * 2`; parse-time rewrite converts the field-shape decl to an observable `doubled() :< n * 2` before lower sees the AST. `V().doubled` dispatches through the observable path and prints 42."
+    (let [{:keys [exit stdout]} (compile-and-run "f8-computed")]
+      (is (zero? exit))
+      (is (= "42\n" stdout)))))
+
 (deftest end-to-end-prelude-data-alias
   (testing "F7 L2c — `data:` is a prelude alias (spec §4.10.2). No user alias declaration needed; the prelude's `alias data: runtime immutable identity` populates the section-class registry before user source parses."
     (let [{:keys [exit stdout]} (compile-and-run "prelude-data-alias")]
