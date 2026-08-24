@@ -4394,3 +4394,56 @@ def main:
         (is (= [{:name "x" :type {:node :type-ref :name "Int"}}
                 {:name "y" :type {:node :type-ref :name "Int"}}]
                (:fields shape)))))))
+
+(deftest f15-l2c-iii-c-epsilon-beta-gamma-field-type-for-owner-named-tuple-primitive
+  (testing "F15 L2.c.iii.c.ε.β.γ — `field-type-for-owner` resolves `.field` access on a `:named-tuple` owner by consulting `:named-tuple-env` on ctx and translating the looked-up field type through `cxc-type->type-kw`. Primitive field returns the primitive type-kw (`Int` → `:int`)."
+    (let [shape {:node   :type-named-tuple
+                 :fields [{:name "x" :type {:node :type-ref :name "Int"}}
+                          {:name "y" :type {:node :type-ref :name "Int"}}]}
+          ctx   {:record-env      {}
+                 :atom-env        {}
+                 :enum-env        {}
+                 :named-tuple-env {"_Cxc_NT_x_Int_y_Int" shape}}
+          tk    (#'cxc.lower/field-type-for-owner
+                 {:named-tuple "_Cxc_NT_x_Int_y_Int"}
+                 ctx "x" {:node :dot :field "x"})]
+      (is (= :int tk)))))
+
+(deftest f15-l2c-iii-c-epsilon-beta-gamma-field-type-for-owner-named-tuple-nested
+  (testing "F15 L2.c.iii.c.ε.β.γ — nested named-tuple field type resolves to `{:named-tuple <nested-mangled>}` via cxc-type->type-kw's γ.α prefix branch. Confirms the recursion story: `.outer.inner` chained access can walk from an outer tuple through a nested one without extra machinery — the same `:named-tuple` type-kw participates on every level."
+    (let [inner-shape {:node   :type-named-tuple
+                       :fields [{:name "c" :type {:node :type-ref :name "Int"}}]}
+          outer-shape {:node   :type-named-tuple
+                       :fields [{:name "inner"
+                                 :type inner-shape}]}
+          outer-mangled "_Cxc_NT_inner_Nt1_c_Int"
+          inner-mangled "_Cxc_NT_c_Int"
+          ctx   {:record-env      {}
+                 :atom-env        {}
+                 :enum-env        {}
+                 :named-tuple-env {outer-mangled outer-shape
+                                   inner-mangled inner-shape}}
+          tk    (#'cxc.lower/field-type-for-owner
+                 {:named-tuple outer-mangled}
+                 ctx "inner" {:node :dot :field "inner"})]
+      (is (= {:named-tuple inner-mangled} tk)))))
+
+(deftest f15-l2c-iii-c-epsilon-beta-gamma-field-type-for-owner-unknown-field
+  (testing "F15 L2.c.iii.c.ε.β.γ — accessing a field the named tuple doesn't declare fails with a targeted diagnostic naming the mangled shape and the available fields. Discipline mirrors the record-side unknown-field case."
+    (let [shape {:node   :type-named-tuple
+                 :fields [{:name "x" :type {:node :type-ref :name "Int"}}
+                          {:name "y" :type {:node :type-ref :name "Int"}}]}
+          ctx   {:record-env      {}
+                 :atom-env        {}
+                 :enum-env        {}
+                 :named-tuple-env {"_Cxc_NT_x_Int_y_Int" shape}}
+          ex    (try
+                  (#'cxc.lower/field-type-for-owner
+                   {:named-tuple "_Cxc_NT_x_Int_y_Int"}
+                   ctx "z" {:node :dot :field "z"})
+                  nil
+                  (catch clojure.lang.ExceptionInfo e e))]
+      (is ex "expected exception")
+      (is (= :not-yet-implemented (:kind (ex-data ex))))
+      (is (re-find #"field `z` not present on named" (.getMessage ex)))
+      (is (re-find #"available: x, y" (.getMessage ex))))))

@@ -3384,6 +3384,44 @@
                       "methods follow when a use case forces them.")
                  node))
 
+    ;; F15 L2.c.iii.c.ε.β.γ (2026-08-24) — `.field` access on a value
+    ;; whose type-kw is `{:named-tuple <mangled>}`. Consult the
+    ;; `:named-tuple-env` threaded into ctx (ε.β.β), look up the field's
+    ;; declared type via `named-tuple/field-type`, then translate to the
+    ;; ambient type-kw vocabulary via `cxc-type->type-kw`. Nullability
+    ;; is expressed at the mangling level (`Nn_` prefix on non-nil
+    ;; primitives), so wrap-field-tk isn't needed — the type-kw
+    ;; already carries the family. Nested named-tuple field types
+    ;; recurse: the nested shape's mangled name maps to
+    ;; `{:named-tuple <nested-mangled>}` via cxc-type->type-kw's γ.α
+    ;; prefix-recognition branch. Missing shape (mangled not in env)
+    ;; or missing field (field not on shape) both fail with a targeted
+    ;; diagnostic pointing at the mangled name — same discipline as
+    ;; the record-side "unknown field" case below.
+    (and (map? owner-ty) (:named-tuple owner-ty))
+    (let [mangled (:named-tuple owner-ty)
+          shape   (get (:named-tuple-env ctx) mangled)
+          type-node (when shape
+                      (named-tuple/field-type (:named-tuple-env ctx)
+                                              mangled field-name))]
+      (cond
+        (nil? shape)
+        (fail-nyi! (str "named-tuple shape `" mangled "` not found in "
+                        ":named-tuple-env — should have been registered "
+                        "during lowering via collect-shapes")
+                   node)
+
+        (nil? type-node)
+        (fail-nyi! (str "field `" field-name "` not present on named "
+                        "tuple `" mangled "` (available: "
+                        (str/join ", " (map :name (:fields shape))) ")")
+                   node)
+
+        :else
+        (cxc-type->type-kw (base-type-name type-node)
+                           (:record-env ctx) (:atom-env ctx)
+                           (:enum-env ctx) node)))
+
     (and (map? owner-ty) (:record owner-ty))
     (let [owner (:record owner-ty)
           f     (get-in (:record-env ctx) [owner :field-index field-name])
@@ -8953,8 +8991,19 @@
         ;; :conforms target resolves.
         record-env (inherit-defaults-into-env record-env protocol-env)
         atom-env   (inherit-defaults-into-env atom-env   protocol-env)
+        ;; F15 L2.c.iii.c.ε.β.β (2026-08-24) — a shape env computed from
+        ;; the RAW source AST is threaded into ctx so class/atom
+        ;; lowering can consult it during `.field` access inference
+        ;; (`field-type-for-owner` — ε.β.γ adds the consuming branch).
+        ;; Kept separate from the tail-end lowered-AST walk (below)
+        ;; that populates `:named-tuple-env` on the program AST — that
+        ;; walk stays byte-identical to ε.α semantics. Duplication is
+        ;; cheap and eliminates any risk of surfacing shapes on the
+        ;; program AST that the ε.α tests didn't already expect.
+        ctx-nt-shapes (named-tuple/collect-shapes top-nodes)
         ctx        {:record-env record-env :atom-env atom-env :enum-env enum-env
                     :symbol-table symbol-table
+                    :named-tuple-env ctx-nt-shapes
                     :locals {}}
         records    (filter #(= :record (:node %)) top-nodes)
         enums      (filter #(= :enum   (:node %)) top-nodes)
@@ -9167,8 +9216,11 @@
                                                   main-ctor))}])
                             (main-atom-body main-atom ctx))
         ;; F15 L2.c.iii.c.ε.α — shared collect-shapes computation so
-        ;; the typedef emit + the new :named-tuple-env consumer read
-        ;; from the same source of truth.
+        ;; the typedef emit + the :named-tuple-env consumer read
+        ;; from the same source of truth. Walks the LOWERED AST
+        ;; (structs/classes/functions); ε.β.β (2026-08-24) added a
+        ;; separate raw-AST walk earlier (`ctx-nt-shapes`) for the
+        ;; lowering-phase ctx.
         nt-shapes             (named-tuple/collect-shapes
                                {:structs   structs
                                 :classes   classes
