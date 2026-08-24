@@ -709,16 +709,34 @@
                   (str "_" (:name f) " = __cxc_next._" (:name f) ";")))
            (str/join "\n")))
     :queue-init
-    ;; Layer 4: per-atom serial queue targeting the main queue. All work
-    ;; stays single-threaded; the primitive matches what Layer 4c will
-    ;; need — retargeting queues off-main is a one-line change per atom.
+    ;; F32 L1 (2026-08-24) — per-atom serial queue. Target selection is
+    ;; preprocessor-guarded on CXC_SINGLE_MAIN_QUEUE (default 1, defined
+    ;; in cxc-runtime-helpers). Under single-queue mode every atom's
+    ;; queue targets main — Layer 4 behavior, deterministic single-
+    ;; threaded execution. Under concurrent mode the CxcMain atom stays
+    ;; main-targeted (dispatch_main() drives its blocks) while every
+    ;; other atom targets the global concurrent pool at QOS_CLASS_DEFAULT.
+    ;; Uses NSStringFromClass rather than referencing CxcMain directly
+    ;; because CxcMain is only emitted when the program declares a main
+    ;; atom; string compare is safe for programs that don't. The queue
+    ;; itself is always DISPATCH_QUEUE_SERIAL — target changes affect
+    ;; *where* blocks run, not whether they serialize (spec §1.11
+    ;; per-atom serial invariant).
     (str "{\n"
          "    NSString *cxc_qlabel = [NSString stringWithFormat:@\"cxc.%@.%p\","
          " NSStringFromClass([self class]), self];\n"
          "    " (:ivar node)
          " = dispatch_queue_create([cxc_qlabel UTF8String], DISPATCH_QUEUE_SERIAL);\n"
+         "#if CXC_SINGLE_MAIN_QUEUE\n"
          "    dispatch_set_target_queue(" (:ivar node)
          ", dispatch_get_main_queue());\n"
+         "#else\n"
+         "    dispatch_queue_t __cxc_qtarget = [NSStringFromClass([self class]) isEqualToString:@\"CxcMain\"]\n"
+         "        ? dispatch_get_main_queue()\n"
+         "        : dispatch_get_global_queue(QOS_CLASS_DEFAULT, 0);\n"
+         "    dispatch_set_target_queue(" (:ivar node)
+         ", __cxc_qtarget);\n"
+         "#endif\n"
          "}")
     :hashtable-init
     ;; NSHashTable with weak-object membership: subscribers can dealloc

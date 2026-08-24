@@ -301,3 +301,46 @@
           "single-queue direct block invocation preserved")
       (is (str/includes? s "dispatch_sync([(id<CXCAtom>)target own_queue], block);")
           "concurrent-mode dispatch_sync preserved"))))
+
+;; ---------------------------------------------------------------------------
+;; F32 L1 — atom own_queue target selection. Under CXC_SINGLE_MAIN_QUEUE=1
+;; (Layer 4 default) every atom's queue targets main — deterministic single-
+;; threaded behavior, unchanged from Layer 4. Under CXC_SINGLE_MAIN_QUEUE=0
+;; (F32 concurrent mode) non-main atoms target the global concurrent pool at
+;; QOS_CLASS_DEFAULT; the CxcMain atom stays main-targeted so dispatch_main()
+;; still drives its blocks. Landing is forward-compatible; concurrent target
+;; selection activates only when the runtime flag is redefined.
+;; ---------------------------------------------------------------------------
+
+(deftest f32-l1-queue-init-emits-guarded-target-selection
+  (testing "F32 L1 — :queue-init emits the queue creation + preprocessor-guarded target selection. Single-queue branch keeps the existing main retarget; concurrent branch runtime-checks the class name and picks main-queue for CxcMain vs global concurrent pool for everyone else."
+    (let [ast {:node :objc-program
+               :includes []
+               :structs []
+               :classes [{:node :objc-class
+                          :name "Counter"
+                          :superclass "NSObject"
+                          :phase-constants []
+                          :data-fields []
+                          :properties [{:name "own_queue" :c-type "dispatch_queue_t" :attrs ["strong"]}]
+                          :init-params []
+                          :init-body [{:node :queue-init :ivar "_own_queue"}]
+                          :methods []}]
+               :main {:body []}}
+          s   (emit/emit ast)]
+      (is (str/includes? s "_own_queue = dispatch_queue_create([cxc_qlabel UTF8String], DISPATCH_QUEUE_SERIAL);")
+          "queue is always created serial (spec §1.11 per-atom serial invariant)")
+      (is (str/includes? s "#if CXC_SINGLE_MAIN_QUEUE")
+          "single-queue guard opens the target-selection block")
+      (is (str/includes? s "dispatch_set_target_queue(_own_queue, dispatch_get_main_queue());")
+          "single-queue branch retargets to main — Layer 4 behavior preserved")
+      (is (str/includes? s "#else")
+          "concurrent branch present")
+      (is (str/includes? s "[NSStringFromClass([self class]) isEqualToString:@\"CxcMain\"]")
+          "concurrent branch runtime-checks whether this atom is the main atom")
+      (is (str/includes? s "dispatch_get_global_queue(QOS_CLASS_DEFAULT, 0)")
+          "non-main atoms target the global concurrent pool at default QoS")
+      (is (str/includes? s "dispatch_set_target_queue(_own_queue, __cxc_qtarget);")
+          "concurrent branch retargets to the runtime-selected queue")
+      (is (str/includes? s "#endif")
+          "guard closes"))))
