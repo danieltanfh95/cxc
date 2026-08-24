@@ -167,37 +167,106 @@
 ;; Registry — populated by L4 user decls + L2c prelude aliases
 ;; ---------------------------------------------------------------------------
 
+(def protected-section-names
+  "F8 D5 (decisions-frozen §12) — section-header names that neither
+   `alias` declarations nor user `section class Name:` declarations
+   may shadow. These are the behavioral sections shipped by the
+   compiler (L3a `computed`, L3b `invariants`, L3c `metadata`, L3d
+   `deprecated`) plus `use` (K6 capability requests).
+
+   Shipping the registry with protected names avoids the L3a-era
+   concern (\"users can shadow `computed` via `alias computed:`\")
+   without retiring the registry entirely. Users can still declare
+   their own `section class Foo:` for any UNPROTECTED name and it
+   participates in the same dispatch table.
+
+   Extend when new compiler-baked behavioral sections ship. Removing
+   a name from this set is a compat-break (users may have been
+   relying on the reservation)."
+  #{:computed
+    :invariants
+    :metadata
+    :deprecated
+    :use})
+
+(defn protected?
+  "True when `nm` (string or keyword) is a protected section-header
+   name that user code cannot shadow via `alias` or `section class`."
+  [nm]
+  (contains? protected-section-names (normalize-name nm)))
+
 (def registry
-  "Section-class registry — `{section-name-keyword → spec}`. Empty in
-   L1-a; L2c (prelude aliases) + L4 (user `section class Name:` decls)
-   populate it. Kept as a var so the parser hook can consult a
-   single canonical location once wired in.
+  "Section-class registry — `{section-name-keyword → spec}`. Seeded
+   with F8 D5 protected reservations (L3a's `computed` shipped;
+   `invariants`/`metadata`/`deprecated`/`use` reserved but not yet
+   behaviorally implemented — their L3b/c/d landings populate the
+   `:spec` when they ship). L4 (`section class Name:` user syntax)
+   adds entries for unprotected names. Kept as a var so the parser
+   hook and future L4 declaration handler consult a single canonical
+   location.
 
    Registry entries have shape:
      {:name    :foo
-      :kind    :primitive-composition | :behavioral | :alias
-      :spec    <compose-result or generator-carrying spec>}"
-  (atom {}))
+      :kind    :primitive-composition | :behavioral | :alias-expanded
+               | :reserved
+      :spec    <compose-result or generator-carrying spec, or nil for
+                :reserved entries pending L3b/c/d>}"
+  (atom
+   (into {}
+         (map (fn [nm]
+                [nm {:name nm
+                     :kind :reserved
+                     :spec nil}]))
+         protected-section-names)))
 
 (defn lookup
   "Look up a section-header name in the registry. Returns spec or nil."
   [nm]
   (get @registry (normalize-name nm)))
 
+(defn- seed-protected-reservations! []
+  (into {}
+        (map (fn [nm]
+               [nm {:name nm :kind :reserved :spec nil}]))
+        protected-section-names))
+
 (defn register!
   "Add / overwrite a registry entry. Returns the added entry.
    Idempotent under identical spec; conflicting redeclarations are the
    caller's responsibility to detect (L4 will layer duplicate-check on
-   top per F7 L1 Q2 error-on-tie discipline)."
+   top per F7 L1 Q2 error-on-tie discipline).
+
+   Rejects protected section-header names (per F8 D5, decisions-frozen
+   §12): `alias computed: ...` / `section class Computed:` and their
+   siblings hard-error at registration time with a targeted diagnostic
+   naming the reserved header and the reason. The check runs at
+   `register!` so the seed reservations (L3a `computed`, plus reserved
+   `invariants`/`metadata`/`deprecated`/`use`) can't be silently
+   overwritten by user code.
+
+   Internal seeding uses `reset!` directly rather than `register!`, so
+   this check only fires on user-initiated registrations."
   [nm entry]
   (let [k (normalize-name nm)]
+    (when (protected? k)
+      (throw (ex-info
+              (str "F8 D5: `" (name k) "` is a protected section-header "
+                   "name (compiler-baked behavioral section). Users "
+                   "cannot shadow protected names via `alias " (name k)
+                   ": ...` or `section class " (name k) ":`. Pick a "
+                   "different name for your composition.")
+              {:kind :cxc-f8-protected-section-name-shadow
+               :name k
+               :protected-names (vec (sort protected-section-names))})))
     (swap! registry assoc k (assoc entry :name k))
     (lookup k)))
 
 (defn clear-registry!
-  "Test helper — wipes the registry. Not for production use."
+  "Test helper — wipes the registry and re-seeds the F8 D5 protected
+   reservations so subsequent tests see a clean slate that still
+   reflects the compiler-baked reservations. Not for production use."
   []
-  (reset! registry {}))
+  (reset! registry (seed-protected-reservations!)))
 
 ;; ---------------------------------------------------------------------------
 ;; Section-header alias registration (F7 L1-b + F8 L1-b bridge)

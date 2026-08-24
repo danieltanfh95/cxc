@@ -123,3 +123,86 @@
 
   (testing "unknown section names return nil"
     (is (nil? (sec/lookup :nonexistent)))))
+
+;; ---------------------------------------------------------------------------
+;; F8 D5 — protected section-header names. Per decisions-frozen §12 the
+;; compiler-baked behavioral sections (`computed`, `invariants`,
+;; `metadata`, `deprecated`, `use`) share the registry with user-declared
+;; `section class Name:` entries but cannot be shadowed by `alias` or by
+;; user `section class` declarations.
+;; ---------------------------------------------------------------------------
+
+(deftest protected-set-covers-compiler-baked-behavioral-sections
+  (testing "F8 D5 — every compiler-baked behavioral section header (L3a-d + use) is a protected name. Extend when new behavioral sections ship."
+    (is (sec/protected? :computed))
+    (is (sec/protected? :invariants))
+    (is (sec/protected? :metadata))
+    (is (sec/protected? :deprecated))
+    (is (sec/protected? :use))))
+
+(deftest protected-check-is-case-insensitive
+  (testing "F8 D5 — protected? normalizes the input so `Computed`, `COMPUTED`, `\"computed\"` all resolve to the same protected slot. Prevents case-sensitivity accidents from bypassing the reservation."
+    (is (sec/protected? "Computed"))
+    (is (sec/protected? "COMPUTED"))
+    (is (sec/protected? "computed"))
+    (is (sec/protected? :Computed))))
+
+(deftest protected-check-rejects-unrelated-names
+  (testing "F8 D5 — a name that isn't in the protected set (e.g. `data`, `state`, `static`, or any user-picked name) returns false so it stays available for `alias` and `section class`."
+    (is (not (sec/protected? :data)))
+    (is (not (sec/protected? :state)))
+    (is (not (sec/protected? :static)))
+    (is (not (sec/protected? :my_custom_section)))))
+
+(deftest registry-seeded-with-protected-reservations
+  (testing "F8 D5 — the registry is seeded with `:reserved` entries for every protected name. `lookup :computed` (or any protected name) returns a seed entry with `:kind :reserved` and `:spec nil`. L3a's `computed` will overwrite the seed with its behavioral spec when L3a wires into the registry; L3b/c/d follow. The seed guarantees `alias computed:` sees a collision even before L3a hooks in."
+    (let [e (sec/lookup :computed)]
+      (is (some? e))
+      (is (= :computed (:name e)))
+      (is (= :reserved (:kind e))))
+    (is (some? (sec/lookup :invariants)))
+    (is (some? (sec/lookup :metadata)))
+    (is (some? (sec/lookup :deprecated)))
+    (is (some? (sec/lookup :use)))))
+
+(deftest register-rejects-protected-name-shadow
+  (testing "F8 D5 — `register!` hard-errors when the caller passes a protected section-header name. This is the guard behind `alias computed: runtime immutable identity` at parse time (via register-section-header-alias!) and behind the future L4 `section class Computed:` user syntax. Diagnostic names the reserved header and lists the full protected set."
+    (is (thrown-with-msg?
+          clojure.lang.ExceptionInfo
+          #"F8 D5: `computed` is a protected section-header name"
+          (sec/register! :computed
+                        {:kind :primitive-composition
+                         :spec (sec/compose [:runtime :immutable])})))
+    (is (thrown-with-msg?
+          clojure.lang.ExceptionInfo
+          #"F8 D5: `invariants` is a protected section-header name"
+          (sec/register! "Invariants"
+                        {:kind :primitive-composition
+                         :spec (sec/compose [:runtime])})))))
+
+(deftest register-section-header-alias-rejects-protected-name
+  (testing "F8 D5 — `alias computed: ...` at parse time flows through `register-section-header-alias!` → `register!` → the protected-name guard. User sees a targeted diagnostic instead of silently overwriting the behavioral-section entry."
+    (is (thrown-with-msg?
+          clojure.lang.ExceptionInfo
+          #"F8 D5: `computed` is a protected section-header name"
+          (sec/register-section-header-alias!
+            {:name :computed :primitives [:runtime :immutable]})))))
+
+(deftest register-allows-unprotected-name
+  (testing "F8 D5 — a name outside the protected set registers normally. Ensures the guard only fires on the reserved slots; user-picked names stay available."
+    (is (some? (sec/register! :my_custom
+                              {:kind :primitive-composition
+                               :spec (sec/compose [:runtime :immutable])})))))
+
+(deftest clear-registry-restores-protected-reservations
+  (testing "F8 D5 — the test-helper `clear-registry!` wipes user entries but re-seeds the protected reservations, so tests always start from a state that already reflects the compiler-baked guarantees."
+    ;; Register a user entry.
+    (sec/register! :userthing {:kind :primitive-composition
+                              :spec (sec/compose [:runtime])})
+    (is (some? (sec/lookup :userthing)))
+    ;; Wipe and re-seed.
+    (sec/clear-registry!)
+    (is (nil? (sec/lookup :userthing))
+        "user entries gone after clear")
+    (is (some? (sec/lookup :computed))
+        "protected reservations still present after clear")))
