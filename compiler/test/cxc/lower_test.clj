@@ -469,7 +469,12 @@ def main:
       (is (= :c-function (:node f)))
       (is (= "V_plus" (:name f)))
       (is (= "V" (:return-type f)))
-      (is (= [{:name "self" :c-type "V"} {:name "other" :c-type "V"}] (:params f)))
+      ;; F15 L2.c.iii.c.δ — record-observable params now carry the
+      ;; raw :type node alongside :c-type. `self` is synthesized and
+      ;; has no :type; `other` carries the parsed :type-ref for V.
+      (is (= [{:name "self" :c-type "V"}
+              {:name "other" :c-type "V" :type {:node :type-ref :name "V"}}]
+             (:params f)))
       (is (= 1 (count (:body f))))
       (is (= :return (get-in f [:body 0 :node]))))))
 
@@ -564,7 +569,11 @@ def main:
           call (first (main-work-body prog))
           msg  (get-in call [:args 1])]
       (is (= "plusWithother:" (:selector m)))
-      (is (= [{:name "other" :c-type "int64_t"}] (:params m)))
+      ;; F15 L2.c.iii.c.δ — atom-observable params now carry the raw
+      ;; :type node alongside :c-type.
+      (is (= [{:name "other" :c-type "int64_t"
+               :type {:node :type-ref :name "Int"}}]
+             (:params m)))
       (is (= "plusWithother:" (:selector msg)))
       (is (= 1 (count (:args msg)))))))
 

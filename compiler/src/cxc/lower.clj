@@ -6291,7 +6291,12 @@
                                                     (:type p)
                                                     (:record-env ctx)
                                                     (:atom-env ctx)
-                                                    (:enum-env ctx))})
+                                                    (:enum-env ctx))
+                                           ;; F15 L2.c.iii.c.δ — preserve raw :type
+                                           ;; so `collect-shapes` on the lowered
+                                           ;; :classes discovers any :type-named-tuple
+                                           ;; at a receive-payload param position.
+                                           :type   (:type p)})
                                         payload)
                            ;; Layer 5b Step 6b: stream receives carry a
                            ;; leading sender:(id) param matching the
@@ -6788,7 +6793,12 @@
                                      :c-type (cxc-type->c (:type p)
                                                           (:record-env ctx)
                                                           (:atom-env ctx)
-                                                          (:enum-env ctx))})
+                                                          (:enum-env ctx))
+                                     ;; F15 L2.c.iii.c.δ — preserve raw :type
+                                     ;; so `collect-shapes` on the lowered
+                                     ;; :functions discovers any :type-named-tuple
+                                     ;; at a record-observable param position.
+                                     :type   (:type p)})
                                   (:params obs)))]
     {:node        :c-function
      :name        (c-method-name record-name (:name obs))
@@ -7664,7 +7674,12 @@
                               :c-type (cxc-type->c (:type p)
                                                    (:record-env ctx)
                                                    (:atom-env ctx)
-                                                   (:enum-env ctx))})
+                                                   (:enum-env ctx))
+                              ;; F15 L2.c.iii.c.δ — preserve raw :type
+                              ;; so `collect-shapes` on the lowered
+                              ;; :classes discovers any :type-named-tuple
+                              ;; at an atom-observable param position.
+                              :type   (:type p)})
                            (:params o))
         ;; F67 L4 — under Proposal G class-body collapse, observables
         ;; are the reader-method surface. Spec §3.4.2 requires
