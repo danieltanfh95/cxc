@@ -16,8 +16,12 @@
    L2.b (2026-08-24): nested named-tuple fields via `Nt<count>_...`
    prefix. Count is decimal digits so parsers know exactly how many
    pairs to consume; nesting recurses unboundedly.
-   L2.b.ii (pending): parametric type fields (`Array of T`,
-   `Optional of T`) — deferred to a follow-on sub-landing.
+   L2.b.ii (2026-08-24): single-arg parametric fields via
+   `Of<arity>_<outer>_<inner-mangling>` prefix. Arity is decimal
+   digits equal to the number of type args; parser consumes exactly
+   that many bounded type manglings after the outer name. MVP
+   arity 1 only (Array, Optional, List, Set of T); arity 2+ (Map of
+   (K, V)) deferred to L2.b.iii.
 
    The mangled name is a public ABI symbol (FFI, `nm` output, crash
    traces show it). Do not change the scheme in a compatible-looking
@@ -36,7 +40,8 @@
 (defn- reserved-type-name-prefix? [^String nm]
   (or (str/starts-with? nm "Nn_")
       (str/starts-with? nm "_Cxc_NT")
-      (re-matches #"Nt\d+.*" nm)))
+      (re-matches #"Nt\d+.*" nm)
+      (re-matches #"Of\d+.*" nm)))
 
 (defn- mangle-nested-tuple-body
   "Nested-tuple body: `<count>_<f1>_<T1>_<f2>_<T2>_...` with fields
@@ -88,10 +93,28 @@
       (str "Nt" (mangle-nested-tuple-body fields)))
 
     :type-of
-    (fail-nyi! (str "parametric-type fields (`" (:outer type-node)
-                    " of ...`) not supported in F15 L2.b mangling "
-                    "(deferred to L2.b.ii)")
-               type-node)
+    (let [outer (:outer type-node)
+          inner (:inner type-node)]
+      (when-not (and (string? outer) (pos? (count outer)))
+        (fail-nyi! "parametric type `:outer` must be a non-empty string"
+                   type-node))
+      (when (str/includes? outer "_")
+        (fail-nyi! (str "parametric outer name `" outer "` cannot "
+                        "contain `_` in F15 L2.b.ii mangling (would "
+                        "confuse the segment separator); extend the "
+                        "scheme in a follow-on sub-landing")
+                   type-node))
+      (when (reserved-type-name-prefix? outer)
+        (fail-nyi! (str "parametric outer name `" outer "` collides "
+                        "with a reserved F15 mangling prefix")
+                   type-node))
+      (when-not (map? inner)
+        (fail-nyi! (str "parametric type `" outer "` in F15 L2.b.ii "
+                        "MVP requires a single :inner type node "
+                        "(arity 1); arity 2+ deferred to L2.b.iii")
+                   type-node))
+      ;; Arity-1 marker + outer name + one recursively-mangled inner.
+      (str "Of1_" outer "_" (mangle-type inner)))
 
     (fail-nyi! (str "unsupported field type node kind `"
                     (:node type-node) "` in F15 L2.b mangling")

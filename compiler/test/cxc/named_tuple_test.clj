@@ -105,20 +105,70 @@
               [{:name "outer"
                 :type {:node :type-named-tuple :fields []}}]))))))
 
-(deftest parametric-type-field-throws-nyi
-  (testing "F15 L2.b — parametric-type fields (`items: Array of Int`) throw NYI, deferred to L2.b.ii. Nested named tuples are supported (this landing); parametric types need a separate scheme extension because their outer name (`Array`, `Optional`) participates in the mangling differently."
+(defn- type-of [outer inner]
+  {:node :type-of :outer outer :inner inner})
+
+(deftest parametric-array-of-int-mangles-with-Of1-prefix
+  (testing "F15 L2.b.ii — single-arg parametric field (`items: Array of Int`) mangles as `Of1_<outer>_<inner-mangling>`. Arity marker (`Of1`) tells parsers to consume exactly one bounded type argument after the outer name; outer name follows directly, then the recursively-mangled inner type."
+    (is (= "_Cxc_NT_items_Of1_Array_Int"
+           (nt/canonical-named-tuple-name
+             (nt-node-with-fields
+               [{:name "items" :type (type-of "Array" (ref "Int"))}]))))))
+
+(deftest parametric-optional-mangles-similarly
+  (testing "F15 L2.b.ii — the scheme is uniform across parametric outer names. `Optional of Int` uses the same `Of1_<outer>_<inner>` form as `Array of Int`."
+    (is (= "_Cxc_NT_maybe_Of1_Optional_Int"
+           (nt/canonical-named-tuple-name
+             (nt-node-with-fields
+               [{:name "maybe" :type (type-of "Optional" (ref "Int"))}]))))))
+
+(deftest parametric-with-nonnil-inner
+  (testing "F15 L2.b.ii — the inner type recursively mangles, so a non-nil inner (`Array of Int!`) picks up the `Nn_` prefix. Composes naturally with L2.a's non-nil handling."
+    (is (= "_Cxc_NT_items_Of1_Array_Nn_Int"
+           (nt/canonical-named-tuple-name
+             (nt-node-with-fields
+               [{:name "items"
+                 :type (type-of "Array" (nonnil (ref "Int")))}]))))))
+
+(deftest parametric-inside-nested-named-tuple
+  (testing "F15 L2.b.ii — parametric fields can appear inside nested named tuples. Each layer's bounded markers (Nt<count>, Of<arity>) compose so the full form remains unambiguous."
+    (is (= "_Cxc_NT_wrapper_Nt1_items_Of1_Array_Int"
+           (nt/canonical-named-tuple-name
+             (nt-node-with-fields
+               [{:name "wrapper"
+                 :type (nt-node-with-fields
+                         [{:name "items"
+                           :type (type-of "Array" (ref "Int"))}])}]))))))
+
+(deftest parametric-nested-parametric
+  (testing "F15 L2.b.ii — parametric-of-parametric (`Array of Array of Int`) recurses through the same Of1 shape; each Of1 consumes exactly one inner, which is itself a bounded mangling."
+    (is (= "_Cxc_NT_grid_Of1_Array_Of1_Array_Int"
+           (nt/canonical-named-tuple-name
+             (nt-node-with-fields
+               [{:name "grid"
+                 :type (type-of "Array"
+                                (type-of "Array" (ref "Int")))}]))))))
+
+(deftest parametric-outer-with-underscore-throws
+  (testing "F15 L2.b.ii — parametric outer names containing `_` would confuse the segment separator. Reject at the mangling site until the scheme extension in a follow-on sub-landing."
     (is (thrown-with-msg?
           clojure.lang.ExceptionInfo
-          #"parametric-type fields.*not supported in F15 L2.b"
+          #"parametric outer name `My_Box` cannot contain `_`"
           (nt/canonical-named-tuple-name
             (nt-node-with-fields
-              [{:name "items"
-                :type {:node :type-of
-                       :outer "Array"
-                       :inner (ref "Int")}}]))))))
+              [{:name "b" :type (type-of "My_Box" (ref "Int"))}]))))))
+
+(deftest parametric-reserved-outer-throws
+  (testing "F15 L2.b.ii — a parametric outer name matching a reserved mangling prefix (`Nn_`, `_Cxc_NT`, `Nt<digits>`, `Of<digits>`) collides with the compiler's internal markers. Throw at the mangling site so the collision surfaces loudly."
+    (is (thrown-with-msg?
+          clojure.lang.ExceptionInfo
+          #"parametric outer name `Of1` collides"
+          (nt/canonical-named-tuple-name
+            (nt-node-with-fields
+              [{:name "b" :type (type-of "Of1" (ref "Int"))}]))))))
 
 (deftest reserved-type-name-collision-throws
-  (testing "F15 L2.b — user type names matching a reserved F15 mangling prefix collide with the compiler's internal markers. Reserved prefixes: `Nn_` (non-nil marker), `_Cxc_NT` (top-level and nested-tuple prefix), `Nt<digits>` (nested-tuple length marker introduced in L2.b). Throw at the mangling site so the collision surfaces before C emit produces an invalid struct definition."
+  (testing "F15 L2.b — user type names matching a reserved F15 mangling prefix collide with the compiler's internal markers. Reserved prefixes: `Nn_` (non-nil marker), `_Cxc_NT` (top-level + nested-tuple prefix), `Nt<digits>` (nested-tuple length marker, L2.b), `Of<digits>` (parametric-arity marker, L2.b.ii). Throw at the mangling site so collisions surface before C emit produces an invalid struct definition."
     (is (thrown-with-msg?
           clojure.lang.ExceptionInfo
           #"collides with a reserved F15 mangling prefix"
@@ -128,7 +178,12 @@
           clojure.lang.ExceptionInfo
           #"collides with a reserved F15 mangling prefix"
           (nt/canonical-named-tuple-name
-            (nt-node "x" "Nt3_field_Int"))))))
+            (nt-node "x" "Nt3_field_Int"))))
+    (is (thrown-with-msg?
+          clojure.lang.ExceptionInfo
+          #"collides with a reserved F15 mangling prefix"
+          (nt/canonical-named-tuple-name
+            (nt-node "x" "Of1_Array_Int"))))))
 
 (deftest reserved-field-name-collision-throws
   (testing "F15 L2.a — field names containing `_` or starting with `Nn` would confuse the mangling grammar (which uses `_` as segment separator and `Nn_` as a nonnil marker). Reject at the mangling site until L2.b extends the scheme."
