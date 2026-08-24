@@ -195,15 +195,43 @@
   [nm]
   (contains? protected-section-names (normalize-name nm)))
 
+(def ^:private behavioral-seed-specs
+  "F8 L3b.i (2026-08-24) — protected names whose backend implementation
+   has landed but which aren't yet dispatched through the registry.
+   Each entry carries `:impl` / `:backend` / `:parser-sym` + notes so
+   downstream landings (L3b.ii+) can teach the parser to consult the
+   registry and route through the recorded parser symbol; today the
+   seed is descriptive metadata, forward-compatible with that
+   dispatch wire-through.
+
+   `:invariants` — F49 invariant-check machinery
+   (`checkInvariants` method synthesis, pre-store checks,
+   post-transition checks) has shipped since v0.11. The parser
+   handles `invariants:` via `parse-invariants-section`; lower routes
+   invariants through `def-atom-invariants` / extend-class merging.
+   This seed makes that ownership explicit.
+
+   `:computed` intentionally stays `:reserved` even though L3a
+   shipped: L3a chose parse-time sugar (rewrite to zero-arg
+   observables before lower sees the AST) rather than a
+   generator-carrying spec, so there's no `:spec` shape to record
+   without inventing new metadata schema. Promoting `:computed`
+   waits on a followup that decides the metadata schema for
+   parse-sugar sections."
+  {:invariants {:impl        :compiler-baked
+                :backend     :f49-invariant-machinery
+                :parser-sym  'cxc.parse/parse-invariants-section
+                :notes       "L3b.i metadata-only; L3b.ii will wire dispatch."}})
+
 (def registry
   "Section-class registry — `{section-name-keyword → spec}`. Seeded
-   with F8 D5 protected reservations (L3a's `computed` shipped;
-   `invariants`/`metadata`/`deprecated`/`use` reserved but not yet
-   behaviorally implemented — their L3b/c/d landings populate the
-   `:spec` when they ship). L4 (`section class Name:` user syntax)
-   adds entries for unprotected names. Kept as a var so the parser
-   hook and future L4 declaration handler consult a single canonical
-   location.
+   with F8 D5 protected reservations. Names with a landed backend
+   carry `:kind :behavioral` + a spec pointer (F8 L3b.i: `invariants`
+   → F49 machinery); names still awaiting behavioral wire-in carry
+   `:kind :reserved` + `:spec nil`. L4 (`section class Name:` user
+   syntax) adds entries for unprotected names. Kept as a var so the
+   parser hook and future L4 declaration handler consult a single
+   canonical location.
 
    Registry entries have shape:
      {:name    :foo
@@ -214,9 +242,9 @@
   (atom
    (into {}
          (map (fn [nm]
-                [nm {:name nm
-                     :kind :reserved
-                     :spec nil}]))
+                (if-let [seed (get behavioral-seed-specs nm)]
+                  [nm {:name nm :kind :behavioral :spec seed}]
+                  [nm {:name nm :kind :reserved   :spec nil}])))
          protected-section-names)))
 
 (defn lookup
@@ -227,7 +255,9 @@
 (defn- seed-protected-reservations! []
   (into {}
         (map (fn [nm]
-               [nm {:name nm :kind :reserved :spec nil}]))
+               (if-let [seed (get behavioral-seed-specs nm)]
+                 [nm {:name nm :kind :behavioral :spec seed}]
+                 [nm {:name nm :kind :reserved   :spec nil}])))
         protected-section-names))
 
 (defn register!
