@@ -2,7 +2,8 @@
   "F53 L3.a — module cache-key derivation. Standalone pure-fn tests;
    no filesystem, no compile pipeline. L3.b/c/d land the I/O + wiring
    layers on top."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [clojure.java.io :as io]
+            [clojure.test :refer [deftest is testing]]
             [cxc.incremental :as incremental]
             [cxc.manifest :as manifest]))
 
@@ -56,3 +57,82 @@
     (let [k (incremental/module-cache-key "src" ["dep1"])]
       (is (= 64 (count k)))
       (is (re-matches #"[0-9a-f]{64}" k)))))
+
+;; ---------------------------------------------------------------------------
+;; F53 L3.b — filesystem I/O for the module cache. Standalone shape:
+;; `try-restore` returns hit/miss + copies artifacts on hit; `store`
+;; persists .m + manifest under the cache-key directory. No wiring
+;; into the compile pipeline in this sub-landing.
+;; ---------------------------------------------------------------------------
+
+(defn- tmp-dir []
+  (.toFile (java.nio.file.Files/createTempDirectory
+            "cxc-incremental-test-"
+            (into-array java.nio.file.attribute.FileAttribute []))))
+
+(deftest try-restore-miss-when-cache-empty
+  (testing "F53 L3.b — `try-restore` returns `{:cache-hit? false}` when no entry exists for the given cache-key. Caller runs the full compile pipeline and then calls `store` on success."
+    (let [cache-root (tmp-dir)
+          out-dir    (tmp-dir)
+          result     (incremental/try-restore
+                       cache-root "nonexistent-key" out-dir "mymod")]
+      (is (= {:cache-hit? false} result)))))
+
+(deftest store-then-try-restore-hits
+  (testing "F53 L3.b — `store` followed by `try-restore` with the same cache-key returns a hit and copies both artifacts (`.m` + `.cxc-manifest.json`) into out-dir. Round-trip proof."
+    (let [cache-root (tmp-dir)
+          out-dir    (tmp-dir)
+          m-content  "// emitted objc for mymod\nvoid foo(void) {}\n"
+          man-content "{\"schema\":\"cxc-manifest/v1\",\"module\":\"mymod\"}\n"
+          _          (incremental/store
+                       cache-root "abc123" "mymod"
+                       m-content man-content)
+          restored   (incremental/try-restore
+                       cache-root "abc123" out-dir "mymod")]
+      (is (true? (:cache-hit? restored)))
+      (is (= m-content   (slurp (:m-path restored))))
+      (is (= man-content (slurp (:manifest-path restored)))))))
+
+(deftest try-restore-different-key-still-miss
+  (testing "F53 L3.b — a store under one cache-key doesn't satisfy a try-restore under a different cache-key. Isolation between distinct compile inputs (post-L3.c wiring, this prevents source-A's cache entry from being served for source-B)."
+    (let [cache-root (tmp-dir)
+          out-dir    (tmp-dir)
+          _          (incremental/store
+                       cache-root "keyA" "mymod" "// A\n" "{}\n")
+          result     (incremental/try-restore
+                       cache-root "keyB" out-dir "mymod")]
+      (is (false? (:cache-hit? result))))))
+
+(deftest try-restore-partial-entry-treated-as-miss
+  (testing "F53 L3.b — if only the `.m` is present but the manifest is missing (crash between the two writes), `try-restore` treats the entry as a miss rather than serving a torn restore. Documents the two-file existence check that guards against half-populated dirs."
+    (let [cache-root (tmp-dir)
+          out-dir    (tmp-dir)
+          dir        (incremental/module-cache-dir cache-root "partial-key")
+          _          (io/make-parents (io/file dir "placeholder"))
+          _          (spit (io/file dir "mymod.m") "// only .m present\n")
+          ;; no manifest written
+          result     (incremental/try-restore
+                       cache-root "partial-key" out-dir "mymod")]
+      (is (false? (:cache-hit? result))))))
+
+(deftest store-overwrites-existing-entry
+  (testing "F53 L3.b — storing to an existing cache-key directory overwrites both artifacts. L3.c only calls store after a successful compile, so replacing a stale entry (e.g. from an interrupted store) is intentional."
+    (let [cache-root (tmp-dir)
+          out-dir    (tmp-dir)
+          _          (incremental/store
+                       cache-root "keyX" "mymod" "// old m\n" "// old manifest\n")
+          _          (incremental/store
+                       cache-root "keyX" "mymod" "// new m\n" "// new manifest\n")
+          restored   (incremental/try-restore
+                       cache-root "keyX" out-dir "mymod")]
+      (is (true? (:cache-hit? restored)))
+      (is (= "// new m\n"        (slurp (:m-path restored))))
+      (is (= "// new manifest\n" (slurp (:manifest-path restored)))))))
+
+(deftest module-cache-dir-is-under-modules-subdir
+  (testing "F53 L3.b — `module-cache-dir` computes the entry path deterministically under `<cache-root>/modules/<cache-key>/`. Pure fn — does not touch the filesystem. Exposed so L3.c's caller can construct paths for logging/telemetry without depending on the private layout constants."
+    (let [cache-root (io/file "/tmp/example-root")
+          d          (incremental/module-cache-dir cache-root "abcd")]
+      (is (= "/tmp/example-root/modules/abcd" (.getPath d)))
+      (is (false? (.exists d))
+          "pure — does not create the directory"))))
