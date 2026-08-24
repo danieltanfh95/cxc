@@ -10,7 +10,8 @@
             [cxc.emit     :as emit]
             [cxc.manifest :as manifest]
             [cxc.prelude  :as prelude]
-            [cxc.resolve  :as resolve]))
+            [cxc.resolve  :as resolve]
+            [cxc.section  :as section]))
 
 ;; ---------------------------------------------------------------------------
 ;; Build cache (tier 1: .m → binary)
@@ -72,40 +73,52 @@
                       [(:name n) (:message dep)]))))
               top-nodes)))
 
-(defn- warn-deprecated-uses
-  "Walk the parsed AST looking for references to any name in the
-   `deprecations` map (built by collect-deprecations). Prints one
-   warning per reference to *err*. Refs checked: `:ident` (name
-   uses), `:type-ref` (type annotations), `:call` (constructor
-   calls via ident callee). Definition sites in the deprecated def
-   itself are skipped — a deprecated Foo referencing its own name
-   in its methods doesn't self-warn."
-  [top-nodes deprecations]
-  (when (seq deprecations)
-    (doseq [n top-nodes]
-      (let [decl-name (:name n)
-            skip-self (and (contains? #{:def-atom :record} (:node n))
-                           (contains? deprecations decl-name))]
-        (clojure.walk/postwalk
-         (fn [x]
-           (when (map? x)
-             ;; Only :ident and :type-ref — a `:call` node with an
-             ;; ident callee has its callee's :ident visited by the
-             ;; postwalk already, so covering :call too would
-             ;; double-warn on `Foo(...)` (once for the callee, once
-             ;; for the call).
-             (let [ref-name (cond
-                              (= :ident (:node x))    (:name x)
-                              (= :type-ref (:node x)) (:name x))]
-               (when (and ref-name
-                          (contains? deprecations ref-name)
-                          (not (and skip-self (= ref-name decl-name))))
-                 (binding [*out* *err*]
-                   (println (str "warning: `" ref-name
-                                 "` is deprecated: "
-                                 (get deprecations ref-name)))))))
-           x)
-         n)))))
+(defn warn-deprecated-uses
+  "F8 L3d walker for `:deprecated`. Standard L3d.ii.β walker signature:
+   `[user-parsed full-parsed]` — the walker owns its own input
+   computation. `user-parsed` is the AST for user source (what we
+   warn against); `full-parsed` is `prelude + user` (what we scan for
+   deprecation annotations, so a deprecated prelude export triggers
+   a warning when user code uses it).
+
+   Prints one warning per reference to *err*. Refs checked:
+   `:ident` (name uses), `:type-ref` (type annotations); `:call`
+   with an ident callee is covered transitively via the callee's
+   `:ident` node, so covering `:call` too would double-warn.
+   Definition sites in the deprecated def itself are skipped — a
+   deprecated Foo referencing its own name in its methods doesn't
+   self-warn.
+
+   Public so `cxc.section/behavioral-walkers` can resolve it via
+   `requiring-resolve` from the `:deprecated` seed's `:walker-sym`
+   without depending on private-var access."
+  [top-nodes full-parsed]
+  (let [deprecations (collect-deprecations full-parsed)]
+    (when (seq deprecations)
+      (doseq [n top-nodes]
+        (let [decl-name (:name n)
+              skip-self (and (contains? #{:def-atom :record} (:node n))
+                             (contains? deprecations decl-name))]
+          (clojure.walk/postwalk
+           (fn [x]
+             (when (map? x)
+               ;; Only :ident and :type-ref — a `:call` node with an
+               ;; ident callee has its callee's :ident visited by the
+               ;; postwalk already, so covering :call too would
+               ;; double-warn on `Foo(...)` (once for the callee, once
+               ;; for the call).
+               (let [ref-name (cond
+                                (= :ident (:node x))    (:name x)
+                                (= :type-ref (:node x)) (:name x))]
+                 (when (and ref-name
+                            (contains? deprecations ref-name)
+                            (not (and skip-self (= ref-name decl-name))))
+                   (binding [*out* *err*]
+                     (println (str "warning: `" ref-name
+                                   "` is deprecated: "
+                                   (get deprecations ref-name)))))))
+             x)
+           n))))))
 
 ;; Layer 6 Step 2/3 — stdlib import manifest + validation. Defined
 ;; here (before compile-source-to-file) so the single-file entrypoint
@@ -213,8 +226,17 @@
         _        (prelude/validate-no-prelude-collisions! parsed)
         prelude-src (prelude/assemble-source target)
         full-parsed (parse-fn (str prelude-src source))
-        deprecations (collect-deprecations full-parsed)
-        _        (warn-deprecated-uses parsed deprecations)
+        ;; F8 L3d.ii.β — iterate behavioral walkers via the registry
+        ;; instead of hardcoding a `warn-deprecated-uses` call. Today
+        ;; only `:deprecated` has a `:walker-sym`; when L4 lands
+        ;; `section class Name:` user syntax with post-parse walkers,
+        ;; they surface here automatically without touching build.clj.
+        ;; Walker calling convention: `[user-parsed full-parsed]` —
+        ;; the walker owns its own input computation (e.g. K3's
+        ;; `warn-deprecated-uses` calls `collect-deprecations` on
+        ;; `full-parsed` internally).
+        _        (doseq [[_ walker-var] (section/behavioral-walkers)]
+                   (walker-var parsed full-parsed))
         m-src    (-> full-parsed
                      alias/expand
                      prelude/rewrite-prelude-names

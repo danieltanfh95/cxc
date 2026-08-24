@@ -513,6 +513,32 @@
       (is (zero? exit))
       (is (= "1\n" stdout)))))
 
+(deftest f8-l3d-ii-beta-walker-uses-standard-signature
+  (testing "F8 L3d.ii.β — `warn-deprecated-uses` accepts the standard `[user-parsed full-parsed]` walker signature: the walker owns its own input computation (calls `collect-deprecations` on `full-parsed` internally). Under the L3d.ii.β wire-through in `compile-source-to-file`, the registry loop invokes every `behavioral-walkers` entry with `(walker-var parsed full-parsed)` — this test pins that contract directly by driving the walker in-process without going through clang. Verifies (a) the 2-arg call succeeds, (b) a deprecated def in `full-parsed` triggers a stderr warning when `user-parsed` references it, (c) definitions in `user-parsed` itself don't self-warn."
+    (let [prelude-src "def OldBox:\n    deprecated: \"use NewBox\"\n    v: Int = 0\n\n"
+          user-src    "def main:\n    -> running\n        then: print(OldBox(v: 3).v)\n\n    -> end\n"
+          user-parsed (cxc.parse/parse user-src)
+          full-parsed (cxc.parse/parse (str prelude-src user-src))
+          err-writer  (java.io.StringWriter.)
+          _           (binding [*err* err-writer]
+                        (build/warn-deprecated-uses user-parsed full-parsed))
+          stderr      (.toString err-writer)]
+      (is (.contains stderr "`OldBox` is deprecated")
+          "warning fires when user code references a def deprecated elsewhere in full-parsed")
+      (is (.contains stderr "use NewBox")
+          "warning carries the deprecation message from the annotation"))))
+
+(deftest f8-l3d-ii-beta-walker-skips-self-references
+  (testing "F8 L3d.ii.β — the walker skips definition-site self-references: a deprecated `Foo` referencing its own name in its methods doesn't self-warn (existing K3 semantics; pinned here so the L3d.ii.β signature-change didn't regress it)."
+    (let [src         "def Foo:\n    deprecated: \"gone\"\n    v: Int = 0\n\ndef main:\n    -> running\n        then: print(0)\n\n    -> end\n"
+          parsed      (cxc.parse/parse src)
+          err-writer  (java.io.StringWriter.)
+          _           (binding [*err* err-writer]
+                        (build/warn-deprecated-uses parsed parsed))
+          stderr      (.toString err-writer)]
+      (is (not (.contains stderr "`Foo` is deprecated"))
+          "no self-warning on the def-site itself even when parsed and full-parsed coincide"))))
+
 (deftest end-to-end-deprecation-warning
   (testing "deprecation-warning.cxc — Layer 6 Step 11. `deprecated: \"<message>\"` section inside a record body attaches a deprecation message; use-site walker in cxc.build emits one warning per external reference to *err*. Verifies: program compiles + runs to `7` (no behavior change), and the warning fires (visible in stderr — test asserts on stdout only since the warning is on stderr, but a real strict-mode build would upgrade to compile-time error)."
     (let [{:keys [exit stdout]} (compile-and-run "deprecation-warning")]
