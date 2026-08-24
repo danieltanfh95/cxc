@@ -30,7 +30,8 @@
    traces show it). Do not change the scheme in a compatible-looking
    way — bump a version prefix (`_Cxc_NT2_...`) if the encoding ever
    needs to change."
-  (:require [clojure.string :as str]))
+  (:require [clojure.string :as str]
+            [clojure.walk :as walk]))
 
 (defn- fail-nyi! [what node]
   (throw (ex-info (str "canonical-named-tuple-name: " what)
@@ -180,3 +181,51 @@
                             (mangle-type type)])
                          sorted)]
       (str "_Cxc_NT_" (str/join "_" parts)))))
+
+;; ---------------------------------------------------------------------------
+;; F15 L2.c.i — collect every distinct named-tuple shape used in an AST.
+;;
+;; Foundation for L2.c.ii (typedef emit) and L2.c.iii (lower-time
+;; wire-in). Pure walk: `clojure.walk/postwalk` reaches every
+;; `:type-named-tuple` node regardless of where it appears (field
+;; type on a record, method-param type, receive-clause payload type,
+;; nested inside another named-tuple's field, nested inside a
+;; parametric's inner, etc.). Each unique mangled name maps to the
+;; representative shape node — later passes use the shape to emit a
+;; struct typedef.
+;;
+;; Nested named-tuples surface as separate collection entries because
+;; the walker visits inner nodes independently of the outer's mangling.
+;; L2.c.ii will decide whether nested typedefs are emitted-and-shared
+;; or inlined into the outer struct — this collector doesn't take a
+;; stance.
+;;
+;; Shapes that fail to mangle (reserved-name collisions, invalid
+;; field names, empty forms) surface as the underlying `fail-nyi!`
+;; exception from `canonical-named-tuple-name`. Better to fail loudly
+;; here than to silently skip a shape the eventual typedef pass would
+;; need.
+;; ---------------------------------------------------------------------------
+
+(defn collect-shapes
+  "Walk `ast` and return `{mangled-name → shape-node}` for every
+   distinct `:type-named-tuple` node encountered. Returned map is a
+   `sorted-map` so consumers (typedef emit, tests) see deterministic
+   ordering across runs.
+
+   Duplicate shapes (same mangled name, different AST occurrences)
+   collapse to a single entry — the first-visited shape node
+   represents the shape; downstream typedef emit uses only the
+   mangled name + field list so the specific representative doesn't
+   matter."
+  [ast]
+  (let [acc (volatile! (transient {}))]
+    (walk/postwalk
+     (fn [x]
+       (when (and (map? x) (= :type-named-tuple (:node x)))
+         (let [nm (canonical-named-tuple-name x)]
+           (when-not (contains? @acc nm)
+             (vswap! acc assoc! nm x))))
+       x)
+     ast)
+    (into (sorted-map) (persistent! @acc))))

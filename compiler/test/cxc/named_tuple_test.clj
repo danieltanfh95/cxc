@@ -220,6 +220,79 @@
       (is (= plain-arity-1 tuple-arity-1)
           "single-element tuple and plain single-inner shape produce the same mangling"))))
 
+;; ---------------------------------------------------------------------------
+;; F15 L2.c.i — collect-shapes walker. Foundation for L2.c.ii typedef
+;; emit; discovers every distinct named-tuple shape used in an AST
+;; regardless of position (record field, method param, receive payload,
+;; nested inside another tuple, nested inside a parametric).
+;; ---------------------------------------------------------------------------
+
+(deftest collect-shapes-empty-ast-returns-empty-map
+  (testing "F15 L2.c.i — an AST with no named-tuple types produces an empty result. The walker doesn't fabricate entries; downstream typedef emit has nothing to do for such programs."
+    (is (= {} (nt/collect-shapes {})))
+    (is (= {} (nt/collect-shapes [])))
+    (is (= {} (nt/collect-shapes {:node :record :name "R" :fields [{:name "n" :type (ref "Int")}]})))))
+
+(deftest collect-shapes-finds-top-level-named-tuple
+  (testing "F15 L2.c.i — a named-tuple at any position in the AST is discovered by the postwalk. Position doesn't matter; discovery is structural."
+    (let [shape (nt-node "x" "Int" "y" "Int")
+          ast   {:node :method :name "midpoint"
+                 :params [{:name "p" :type shape}]
+                 :return-type (ref "Float")}
+          result (nt/collect-shapes ast)]
+      (is (= 1 (count result)))
+      (is (contains? result "_Cxc_NT_x_Int_y_Int"))
+      (is (= shape (get result "_Cxc_NT_x_Int_y_Int"))))))
+
+(deftest collect-shapes-dedupes-by-mangled-name
+  (testing "F15 L2.c.i — two occurrences of the same shape (even at different positions) collapse to a single entry. The mangled name is the identity key; downstream typedef emit produces one struct per distinct name."
+    (let [shape (nt-node "x" "Int" "y" "Int")
+          ast   [{:node :method :name "a" :params [{:name "p" :type shape}]}
+                 {:node :method :name "b" :params [{:name "q" :type shape}]}]
+          result (nt/collect-shapes ast)]
+      (is (= 1 (count result))
+          "same shape at two positions → one entry"))))
+
+(deftest collect-shapes-preserves-order-insensitive-identity
+  (testing "F15 L2.c.i — two occurrences of the same shape with different declared field order share a mangled name (per L2.a alphabetical sort) and thus one entry. Structural equivalence at the type level maps to identity in the collection."
+    (let [shape-xy (nt-node "x" "Int" "y" "Int")
+          shape-yx (nt-node "y" "Int" "x" "Int")
+          ast   [{:node :method :name "a" :params [{:name "p" :type shape-xy}]}
+                 {:node :method :name "b" :params [{:name "q" :type shape-yx}]}]
+          result (nt/collect-shapes ast)]
+      (is (= 1 (count result)))
+      (is (contains? result "_Cxc_NT_x_Int_y_Int")))))
+
+(deftest collect-shapes-finds-nested-tuples-as-separate-entries
+  (testing "F15 L2.c.i — a nested named-tuple field (`{outer: {inner: Int}}`) surfaces BOTH the outer and the inner shape as distinct entries. Postwalk visits inner nodes independently; downstream typedef emit can decide whether to inline the inner or reference its typedef, but the collector doesn't take a stance — it collects everything the emit pass might need."
+    (let [inner (nt-node "inner" "Int")
+          outer (nt-node-with-fields
+                  [{:name "outer" :type inner}])
+          result (nt/collect-shapes {:node :method :name "f"
+                                     :params [{:name "p" :type outer}]})]
+      (is (= 2 (count result)))
+      (is (contains? result "_Cxc_NT_inner_Int"))
+      (is (contains? result "_Cxc_NT_outer_Nt1_inner_Int")))))
+
+(deftest collect-shapes-returns-sorted-map
+  (testing "F15 L2.c.i — the returned map is sorted by mangled name for deterministic iteration order. Matters for typedef emit ordering (stable diffs) and test assertions."
+    (let [shapes [(nt-node "z" "Int")
+                  (nt-node "a" "Int")
+                  (nt-node "m" "Int")]
+          ast    (mapv (fn [s] {:node :method :params [{:name "p" :type s}]}) shapes)
+          result (nt/collect-shapes ast)]
+      (is (sorted? result))
+      (is (= ["_Cxc_NT_a_Int" "_Cxc_NT_m_Int" "_Cxc_NT_z_Int"]
+             (vec (keys result)))))))
+
+(deftest collect-shapes-propagates-mangling-errors
+  (testing "F15 L2.c.i — a shape that fails to mangle (e.g. reserved-name collision) surfaces the underlying `fail-nyi!` exception. Better to fail loudly during collection than to silently skip a shape the typedef pass would need to emit."
+    (is (thrown-with-msg?
+          clojure.lang.ExceptionInfo
+          #"collides with a reserved F15 mangling prefix"
+          (nt/collect-shapes {:node :method
+                              :params [{:name "p" :type (nt-node "x" "Nn_Int")}]})))))
+
 (deftest parametric-empty-tuple-inner-throws
   (testing "F15 L2.b.iii — a parametric with an empty type-tuple inner (`Foo of ()`) is degenerate; throw so the caller emits a diagnostic rather than producing an `Of0_Foo` mangling with zero type args."
     (is (thrown-with-msg?
