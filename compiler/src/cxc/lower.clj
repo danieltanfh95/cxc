@@ -591,12 +591,22 @@
   "Extract the underlying type name from either a :type-ref or a
    :type-nullable wrapper. Used to key the type env regardless of
    nullability, since nullability is orthogonal to which env the type
-   lives in."
+   lives in.
+
+   F15 L2.c.iii.c.β.1 (2026-08-24) — `:type-named-tuple` returns
+   the canonical mangled name (D4-consistent reference), matching
+   `cxc-type->c`'s L2.c.iii.c.α branch. Dead code today: the
+   downstream ctor-params / method-params lowering paths don't yet
+   preserve `:type` on lowered params, so `collect-shapes` doesn't
+   discover the shape and the typedef never emits — reaching this
+   branch would produce a mangled reference to an undefined C type.
+   L2.c.iii.c.β.2 preserves `:type` so the pipeline is end-to-end."
   [ty-node]
   (case (:node ty-node)
     :type-ref      (:name ty-node)
     :type-nullable (base-type-name (:inner ty-node))
     :type-nonnil   (base-type-name (:inner ty-node))
+    :type-named-tuple (named-tuple/canonical-named-tuple-name ty-node)
     :type-of       (cond
                      (= "List" (:outer ty-node))
                      ;; List of T → mangled ObjC class name. Deterministic

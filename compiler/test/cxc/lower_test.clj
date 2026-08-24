@@ -4291,3 +4291,15 @@ def main:
                         {:name "x" :type {:node :type-ref :name "Int"}}]}
               {} {} {}))
           "field order at call site doesn't affect the emitted C name (canonical mangling)"))))
+
+(deftest f15-l2c-iii-c-beta1-base-type-name-emits-mangled-for-named-tuple
+  (testing "F15 L2.c.iii.c.β.1 — `base-type-name` returns the canonical mangled name for `:type-named-tuple` (matches L2.c.iii.c.α's convention). Dead code today: no test program has a named-tuple param position, so this branch isn't reached from any real lowering path. Direct-invocation test locks in the intended behavior. L2.c.iii.c.β.2 preserves the raw `:type` node on lowered ctor-params so `collect-shapes` finds the shape end-to-end."
+    (let [ty {:node   :type-named-tuple
+              :fields [{:name "x" :type {:node :type-ref :name "Int"}}
+                       {:name "y" :type {:node :type-ref :name "Int"}}]}]
+      (is (= "_Cxc_NT_x_Int_y_Int"
+             (#'cxc.lower/base-type-name ty)))
+      (is (= "_Cxc_NT_x_Int_y_Int"
+             (#'cxc.lower/base-type-name
+              {:node :type-nullable :inner ty}))
+          "nullable wrapping is orthogonal — base-type-name recurses"))))
