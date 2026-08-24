@@ -19,9 +19,12 @@
    L2.b.ii (2026-08-24): single-arg parametric fields via
    `Of<arity>_<outer>_<inner-mangling>` prefix. Arity is decimal
    digits equal to the number of type args; parser consumes exactly
-   that many bounded type manglings after the outer name. MVP
-   arity 1 only (Array, Optional, List, Set of T); arity 2+ (Map of
-   (K, V)) deferred to L2.b.iii.
+   that many bounded type manglings after the outer name.
+   L2.b.iii (2026-08-24): arity 2+ parametric fields (`Map of
+   (K, V)`, `Pair of (A, B)`, …) share the same `Of<arity>_<outer>_`
+   prefix but consume N bounded type manglings, one per element of
+   the tuple-shaped inner. Each element recurses through mangle-type
+   independently.
 
    The mangled name is a public ABI symbol (FFI, `nm` output, crash
    traces show it). Do not change the scheme in a compatible-looking
@@ -100,21 +103,31 @@
                    type-node))
       (when (str/includes? outer "_")
         (fail-nyi! (str "parametric outer name `" outer "` cannot "
-                        "contain `_` in F15 L2.b.ii mangling (would "
-                        "confuse the segment separator); extend the "
-                        "scheme in a follow-on sub-landing")
+                        "contain `_` in F15 mangling (would confuse "
+                        "the segment separator); extend the scheme in "
+                        "a follow-on sub-landing")
                    type-node))
       (when (reserved-type-name-prefix? outer)
         (fail-nyi! (str "parametric outer name `" outer "` collides "
                         "with a reserved F15 mangling prefix")
                    type-node))
       (when-not (map? inner)
-        (fail-nyi! (str "parametric type `" outer "` in F15 L2.b.ii "
-                        "MVP requires a single :inner type node "
-                        "(arity 1); arity 2+ deferred to L2.b.iii")
+        (fail-nyi! (str "parametric type `" outer "` requires a "
+                        "single :inner type node or a :type-tuple; "
+                        "got `" (pr-str inner) "`")
                    type-node))
-      ;; Arity-1 marker + outer name + one recursively-mangled inner.
-      (str "Of1_" outer "_" (mangle-type inner)))
+      (if (= :type-tuple (:node inner))
+        ;; Arity 2+ (or 1 written as a tuple) — inner is a :type-tuple
+        ;; whose :types vector holds each argument. Recurse per element.
+        (let [types (:types inner)]
+          (when (empty? types)
+            (fail-nyi! (str "parametric type `" outer "` with empty "
+                            "type-tuple inner is degenerate")
+                       type-node))
+          (str "Of" (count types) "_" outer
+               "_" (str/join "_" (map mangle-type types))))
+        ;; Arity 1 with the plain single-inner shape (L2.b.ii form).
+        (str "Of1_" outer "_" (mangle-type inner))))
 
     (fail-nyi! (str "unsupported field type node kind `"
                     (:node type-node) "` in F15 L2.b mangling")

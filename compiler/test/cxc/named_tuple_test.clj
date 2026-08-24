@@ -167,6 +167,68 @@
             (nt-node-with-fields
               [{:name "b" :type (type-of "Of1" (ref "Int"))}]))))))
 
+(defn- type-tuple [& types]
+  {:node :type-tuple :types (vec types)})
+
+(deftest parametric-map-of-kv-arity-2
+  (testing "F15 L2.b.iii — `Map of (K, V)` mangles as `Of2_Map_<K>_<V>`. Arity marker (2) tells parsers to consume exactly two bounded type arguments after the outer name; each argument recurses through mangle-type independently."
+    (is (= "_Cxc_NT_m_Of2_Map_String_Int"
+           (nt/canonical-named-tuple-name
+             (nt-node-with-fields
+               [{:name "m" :type (type-of "Map"
+                                          (type-tuple (ref "String")
+                                                      (ref "Int")))}]))))))
+
+(deftest parametric-arity-3
+  (testing "F15 L2.b.iii — the arity marker scales beyond 2. `Triple of (A, B, C)` mangles with `Of3_` and three inner segments. Uniform scheme across all arities."
+    (is (= "_Cxc_NT_t_Of3_Triple_Int_String_Bool"
+           (nt/canonical-named-tuple-name
+             (nt-node-with-fields
+               [{:name "t" :type (type-of "Triple"
+                                          (type-tuple (ref "Int")
+                                                      (ref "String")
+                                                      (ref "Bool")))}]))))))
+
+(deftest parametric-arity-2-with-non-nil-inner
+  (testing "F15 L2.b.iii — each element of a multi-arg parametric recurses through mangle-type, so a non-nil element picks up the `Nn_` prefix. `Map of (String, Int!)` composes cleanly."
+    (is (= "_Cxc_NT_m_Of2_Map_String_Nn_Int"
+           (nt/canonical-named-tuple-name
+             (nt-node-with-fields
+               [{:name "m" :type (type-of "Map"
+                                          (type-tuple (ref "String")
+                                                      (nonnil (ref "Int"))))}]))))))
+
+(deftest parametric-arity-2-with-nested-parametric-value
+  (testing "F15 L2.b.iii — nested parametric elements work: `Map of (String, Array of Int)` mangles with the inner Array participating as its own `Of1_Array_Int` element. Recursion composes uniformly."
+    (is (= "_Cxc_NT_m_Of2_Map_String_Of1_Array_Int"
+           (nt/canonical-named-tuple-name
+             (nt-node-with-fields
+               [{:name "m" :type (type-of "Map"
+                                          (type-tuple (ref "String")
+                                                      (type-of "Array" (ref "Int"))))}]))))))
+
+(deftest parametric-arity-1-explicit-tuple-shape
+  (testing "F15 L2.b.iii — a parametric wrapped as a single-element tuple `Wrapper of (T,)` mangles identically to `Wrapper of T` (both `Of1_Wrapper_T`). Retains injectivity — the two AST shapes represent the same type-level meaning."
+    (let [tuple-arity-1 (nt/canonical-named-tuple-name
+                          (nt-node-with-fields
+                            [{:name "w" :type (type-of "Wrapper"
+                                                       (type-tuple (ref "Int")))}]))
+          plain-arity-1 (nt/canonical-named-tuple-name
+                          (nt-node-with-fields
+                            [{:name "w" :type (type-of "Wrapper" (ref "Int"))}]))]
+      (is (= "_Cxc_NT_w_Of1_Wrapper_Int" plain-arity-1))
+      (is (= plain-arity-1 tuple-arity-1)
+          "single-element tuple and plain single-inner shape produce the same mangling"))))
+
+(deftest parametric-empty-tuple-inner-throws
+  (testing "F15 L2.b.iii — a parametric with an empty type-tuple inner (`Foo of ()`) is degenerate; throw so the caller emits a diagnostic rather than producing an `Of0_Foo` mangling with zero type args."
+    (is (thrown-with-msg?
+          clojure.lang.ExceptionInfo
+          #"empty type-tuple inner is degenerate"
+          (nt/canonical-named-tuple-name
+            (nt-node-with-fields
+              [{:name "f" :type (type-of "Foo" (type-tuple))}]))))))
+
 (deftest reserved-type-name-collision-throws
   (testing "F15 L2.b — user type names matching a reserved F15 mangling prefix collide with the compiler's internal markers. Reserved prefixes: `Nn_` (non-nil marker), `_Cxc_NT` (top-level + nested-tuple prefix), `Nt<digits>` (nested-tuple length marker, L2.b), `Of<digits>` (parametric-arity marker, L2.b.ii). Throw at the mangling site so collisions surface before C emit produces an invalid struct definition."
     (is (thrown-with-msg?
