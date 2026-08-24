@@ -765,21 +765,24 @@
            "}\n"
            "#endif"))
     :commit-next-state
-    ;; F33 L3.b — atomic commit of the next-state bag to live ivars.
-    ;; Emits `_<f1> = __cxc_next._<f1>; _<f2> = __cxc_next._<f2>; ...`
-    ;; for every non-slot-setter data-field. All assignments in one
-    ;; sequence with no message-boundaries between.
+    ;; F33 L3.b — atomic commit of the next-state bag.
     ;;
-    ;; F32 L4.c (2026-08-24) — dual-write commit. After the per-field
-    ;; ivar writes, `!CXC_SINGLE_MAIN_QUEUE` builds also swap a fresh
-    ;; `_CxcAtomState` wrapper into `_state` via `_cxc_state_commit`
-    ;; (release-ordered atomic exchange). Readers (`_state`) don't
-    ;; land until L4.d, so the dual-write is currently dead on the
-    ;; reader side — but keeps `_state` in sync with the ivars so
-    ;; L4.d's flip is a one-site change. Under default flag the
-    ;; extra call preprocessor-guards out and existing behavior is
-    ;; byte-identical. L4.e will retire the per-field ivar sequence
-    ;; once readers no longer touch ivars.
+    ;; F32 L4.e.β (2026-08-24) — terminal shape. Per-field ivar
+    ;; writes (`_<f> = __cxc_next._<f>;`) and the state-slot commit
+    ;; (`_cxc_state_commit(&_state, &__cxc_next, ...)`) are now
+    ;; mutually-exclusive branches on `CXC_SINGLE_MAIN_QUEUE`.
+    ;; Under the default preprocessor flag (`CXC_SINGLE_MAIN_QUEUE=1`)
+    ;; only the per-field ivar writes fire — behavior is byte-
+    ;; identical to F33 L3.b modulo the `#if …#endif` markers.
+    ;; Under concurrent mode (`CXC_SINGLE_MAIN_QUEUE=0`) only the
+    ;; state-commit fires; the ivars go stale but no reader touches
+    ;; them (L4.d.β.β retired cross-atom ivar reads; L4.e.β.1/.2.α/.3
+    ;; retired self, observable, and -checkInvariants ivar reads —
+    ;; all now route via `_state` snapshots). Slot-setter fields
+    ;; (subscription lifecycle) are excluded upstream by the lower
+    ;; site's `field-needs-slot-setter?` filter — their writes go
+    ;; through the setter directly and don't participate in the
+    ;; state-bag commit.
     (let [fields (:data-fields node)
           ;; F32 L4.c originally read :atom-name here; that emits
           ;; `sizeof(main_State)` for the main atom's transitions —
@@ -792,12 +795,13 @@
           ivar-commits (->> fields
                             (map (fn [f]
                                    (str "_" (:name f) " = __cxc_next._" (:name f) ";")))
-                            (str/join "\n"))
-          state-commit (str "#if !CXC_SINGLE_MAIN_QUEUE\n"
-                            "_cxc_state_commit(&_state, &__cxc_next, sizeof("
-                            cls-name "_State));\n"
-                            "#endif")]
-      (str ivar-commits "\n" state-commit))
+                            (str/join "\n"))]
+      (str "#if CXC_SINGLE_MAIN_QUEUE\n"
+           ivar-commits "\n"
+           "#else\n"
+           "_cxc_state_commit(&_state, &__cxc_next, sizeof("
+           cls-name "_State));\n"
+           "#endif"))
     :queue-init
     ;; F32 L1 (2026-08-24) — per-atom serial queue. Target selection is
     ;; preprocessor-guarded on CXC_SINGLE_MAIN_QUEUE (default 1, defined

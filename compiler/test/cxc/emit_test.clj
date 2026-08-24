@@ -484,19 +484,21 @@
         (is (< guard-start helper-idx endif-idx)
             "helper sits between the opening guard and its #endif")))))
 
-(deftest f32-l4c-commit-next-state-emits-guarded-state-commit
-  (testing "F32 L4.c — `:commit-next-state` now emits a guarded `_cxc_state_commit(&_state, &__cxc_next, sizeof(<Atom>_State))` call after the existing per-field ivar assignments (dual-write pattern). Under the default preprocessor flag the state-commit call guards out and per-field ivar assignments are byte-identical to F33 L3.b. Under concurrent mode both fire — readers still hit ivars (L4.d flips them to `_state`), so the state-commit keeps `_state` in sync with the ivars ready for L4.d's read-side flip. L4.e retires the per-field sequence once readers no longer touch ivars."
+(deftest f32-l4e-beta-commit-next-state-partitions-ivar-and-state-commit
+  (testing "F32 L4.e.β terminal shape — `:commit-next-state` emits per-field ivar writes and the `_cxc_state_commit` call as MUTUALLY-EXCLUSIVE branches on `CXC_SINGLE_MAIN_QUEUE` (was dual-write under L4.c). Under the default preprocessor flag (`CXC_SINGLE_MAIN_QUEUE=1`) only the per-field ivar writes fire — byte-identical to F33 L3.b modulo the `#if …#endif` markers. Under concurrent mode (`CXC_SINGLE_MAIN_QUEUE=0`) only `_cxc_state_commit(&_state, &__cxc_next, sizeof(<Cls>_State))` fires; the ivars go stale but no reader touches them (L4.d.β.β + L4.e.β.1/.2.α/.3 flipped every read path to route via `_state` snapshots). Slot-setter fields (subscription lifecycle) are excluded upstream by the lower site's `field-needs-slot-setter?` filter."
     (let [commit-node {:node :commit-next-state
                        :atom-name "Counter"
                        :data-fields [{:name "n"}]}
           s (#'cxc.emit/emit-stmt commit-node)]
-      (is (str/includes? s "_n = __cxc_next._n;")
-          "per-field ivar assignment preserved (F33 L3.b — unchanged under default flag)")
-      (is (str/includes? s "#if !CXC_SINGLE_MAIN_QUEUE\n_cxc_state_commit(&_state, &__cxc_next, sizeof(Counter_State));\n#endif")
-          "state-commit fires under the concurrent-mode guard with the atom's state-struct size")
+      (is (str/includes? s "#if CXC_SINGLE_MAIN_QUEUE\n_n = __cxc_next._n;\n#else\n")
+          "per-field ivar assignment guards under CXC_SINGLE_MAIN_QUEUE (single-queue-only path)")
+      (is (str/includes? s "#else\n_cxc_state_commit(&_state, &__cxc_next, sizeof(Counter_State));\n#endif")
+          "state-commit fires in the #else branch under concurrent mode with the atom's state-struct size")
       (is (< (str/index-of s "_n = __cxc_next._n;")
              (str/index-of s "_cxc_state_commit"))
-          "ivar assignments precede the state-commit (dual-write order)"))))
+          "ivar assignments precede the state-commit textually (guard branches are mutually exclusive at preprocess time)")
+      (is (not (str/includes? s "#if !CXC_SINGLE_MAIN_QUEUE\n_cxc_state_commit"))
+          "L4.c dual-write shape (state-commit under !CXC_SINGLE_MAIN_QUEUE AFTER unguarded ivar writes) is retired"))))
 
 (deftest f32-l4b-beta-atom-class-emits-guarded-state-ivar
   (testing "F32 L4.b.β — every class emitted through `emit-interface` carries a `_Atomic id _state` ivar in an ivars block guarded on `!CXC_SINGLE_MAIN_QUEUE`. Under the default preprocessor flag the block resolves to `{ }` (empty ivars — identical shape to pre-L4.b.β classes, since ObjC auto-synthesizes ivars for @properties). Under concurrent mode, the ivar is present so L4.c can `_cxc_state_commit(&_state, ...)` and L4.d can `_cxc_state_load(&_state)`. The block is dead code today — no reader or writer references it."
