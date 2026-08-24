@@ -69,21 +69,47 @@
           (nt/canonical-named-tuple-name
             {:node :type-named-tuple :fields []})))))
 
-(deftest nested-named-tuple-throws-nyi
-  (testing "F15 L2.a — nested named-tuple fields (`(outer: (inner: Int))`) throw NYI. MVP covers flat named tuples of primitives; nesting requires a length-prefixed or bracketed scheme extended in a follow-on sub-landing. Throwing here beats silently producing an ambiguous mangling."
+(deftest nested-named-tuple-mangles-with-Nt-count-prefix
+  (testing "F15 L2.b — a nested named-tuple field (`(outer: (inner: Int))`) mangles as `Nt<count>_<segments>` where count is the nested field count in decimal digits. The count bounds segment consumption unambiguously so a downstream parser knows exactly when the nested type ends and the parent's next field resumes."
+    (is (= "_Cxc_NT_outer_Nt1_inner_Int"
+           (nt/canonical-named-tuple-name
+             (nt-node-with-fields
+               [{:name "outer"
+                 :type (nt-node "inner" "Int")}]))))))
+
+(deftest nested-named-tuple-with-multiple-inner-fields
+  (testing "F15 L2.b — nested named-tuple with multiple inner fields: count reflects the inner-field count, and inner fields sort alphabetically (same discipline as top-level)."
+    (is (= "_Cxc_NT_pt_Nt2_x_Int_y_Int"
+           (nt/canonical-named-tuple-name
+             (nt-node-with-fields
+               [{:name "pt"
+                 :type (nt-node "y" "Int" "x" "Int")}]))))))
+
+(deftest nested-named-tuple-recurses
+  (testing "F15 L2.b — nesting recurses unboundedly. A nested-in-nested shape mangles as `Nt<count>_...Nt<count>_...`; each level's count bounds its own segments so the whole form is unambiguous."
+    (is (= "_Cxc_NT_a_Nt1_b_Nt1_c_Int"
+           (nt/canonical-named-tuple-name
+             (nt-node-with-fields
+               [{:name "a"
+                 :type (nt-node-with-fields
+                         [{:name "b"
+                           :type (nt-node "c" "Int")}])}]))))))
+
+(deftest nested-empty-tuple-throws
+  (testing "F15 L2.b — an empty nested named-tuple has no canonical form (same rationale as the top-level empty rejection): would produce `Nt0_` which is ambiguous with a top-level empty inside a parent. Throw so the caller emits a diagnostic."
     (is (thrown-with-msg?
           clojure.lang.ExceptionInfo
-          #"nested named-tuple fields not supported in F15 L2.a"
+          #"nested empty named-tuple shape"
           (nt/canonical-named-tuple-name
             (nt-node-with-fields
               [{:name "outer"
-                :type (nt-node "inner" "Int")}]))))))
+                :type {:node :type-named-tuple :fields []}}]))))))
 
 (deftest parametric-type-field-throws-nyi
-  (testing "F15 L2.a — parametric-type fields (`items: Array of Int`) throw NYI. Same rationale as nested tuples: needs a scheme extension. Throwing surfaces the gap loudly."
+  (testing "F15 L2.b — parametric-type fields (`items: Array of Int`) throw NYI, deferred to L2.b.ii. Nested named tuples are supported (this landing); parametric types need a separate scheme extension because their outer name (`Array`, `Optional`) participates in the mangling differently."
     (is (thrown-with-msg?
           clojure.lang.ExceptionInfo
-          #"parametric-type fields.*not supported in F15 L2.a"
+          #"parametric-type fields.*not supported in F15 L2.b"
           (nt/canonical-named-tuple-name
             (nt-node-with-fields
               [{:name "items"
@@ -92,12 +118,17 @@
                        :inner (ref "Int")}}]))))))
 
 (deftest reserved-type-name-collision-throws
-  (testing "F15 L2.a — a user type named `Nn_Int` or `_Cxc_NT_...` would collide with the compiler's reserved mangling markers. Throw at the mangling site so we discover the collision before the C emit produces an invalid struct definition. Longer-term the spec should prohibit those name shapes explicitly."
+  (testing "F15 L2.b — user type names matching a reserved F15 mangling prefix collide with the compiler's internal markers. Reserved prefixes: `Nn_` (non-nil marker), `_Cxc_NT` (top-level and nested-tuple prefix), `Nt<digits>` (nested-tuple length marker introduced in L2.b). Throw at the mangling site so the collision surfaces before C emit produces an invalid struct definition."
     (is (thrown-with-msg?
           clojure.lang.ExceptionInfo
-          #"collides with a reserved F15 L2.a mangling prefix"
+          #"collides with a reserved F15 mangling prefix"
           (nt/canonical-named-tuple-name
-            (nt-node "x" "Nn_Int"))))))
+            (nt-node "x" "Nn_Int"))))
+    (is (thrown-with-msg?
+          clojure.lang.ExceptionInfo
+          #"collides with a reserved F15 mangling prefix"
+          (nt/canonical-named-tuple-name
+            (nt-node "x" "Nt3_field_Int"))))))
 
 (deftest reserved-field-name-collision-throws
   (testing "F15 L2.a — field names containing `_` or starting with `Nn` would confuse the mangling grammar (which uses `_` as segment separator and `Nn_` as a nonnil marker). Reject at the mangling site until L2.b extends the scheme."

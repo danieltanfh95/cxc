@@ -12,10 +12,12 @@
      type mangling.
 
    Scope of L2.a: flat named tuples whose fields are primitives (with
-   optional non-nil suffix). Nested named-tuple fields + parametric
-   type fields (`Optional`, `Array of T`) throw `:not-yet-implemented`
-   with a targeted message — subsequent F15 L2 sub-landings extend the
-   mangling to cover those cases.
+   optional non-nil suffix).
+   L2.b (2026-08-24): nested named-tuple fields via `Nt<count>_...`
+   prefix. Count is decimal digits so parsers know exactly how many
+   pairs to consume; nesting recurses unboundedly.
+   L2.b.ii (pending): parametric type fields (`Array of T`,
+   `Optional of T`) — deferred to a follow-on sub-landing.
 
    The mangled name is a public ABI symbol (FFI, `nm` output, crash
    traces show it). Do not change the scheme in a compatible-looking
@@ -29,20 +31,49 @@
                    :what what
                    :node node})))
 
+(declare mangle-type validate-field-name!)
+
+(defn- reserved-type-name-prefix? [^String nm]
+  (or (str/starts-with? nm "Nn_")
+      (str/starts-with? nm "_Cxc_NT")
+      (re-matches #"Nt\d+.*" nm)))
+
+(defn- mangle-nested-tuple-body
+  "Nested-tuple body: `<count>_<f1>_<T1>_<f2>_<T2>_...` with fields
+   sorted alphabetically (same discipline as the top-level fn).
+   Count is decimal digits so a downstream parser knows exactly how
+   many pairs to consume before the surrounding context resumes.
+   Recurses through `mangle-type`."
+  [fields]
+  (let [sorted (sort-by :name fields)
+        parts  (mapcat (fn [{:keys [name type]}]
+                         [(validate-field-name! name type)
+                          (mangle-type type)])
+                       sorted)]
+    (str (count sorted) "_" (str/join "_" parts))))
+
 (defn- mangle-type
   "Mangle a single field's type into the canonical suffix form. Returns
    a C-identifier-safe string. Throws for unsupported shapes so the
-   caller sees a targeted diagnostic rather than a corrupted mangling."
+   caller sees a targeted diagnostic rather than a corrupted mangling.
+
+   Coverage:
+   - Primitive (`:type-ref`): bare type name (`Int`).
+   - Non-nil primitive (`:type-nonnil`): `Nn_<inner>` prefix.
+   - Nested named-tuple (`:type-named-tuple`): `Nt<count>_<segments>`
+     (L2.b extension — `<count>` is decimal digits so nested manglings
+     unambiguously bound their own segments within a parent context).
+
+   NYI: parametric types (`:type-of`) — L2.b.ii extends."
   [type-node]
   (case (:node type-node)
     :type-ref
     (let [nm (:name type-node)]
-      (when (or (str/starts-with? nm "Nn_")
-                (str/starts-with? nm "_Cxc_NT"))
+      (when (reserved-type-name-prefix? nm)
         (fail-nyi! (str "type name `" nm "` collides with a reserved "
-                        "F15 L2.a mangling prefix (`Nn_` / `_Cxc_NT`); "
-                        "rename the type or extend the mangling scheme "
-                        "in a follow-on sub-landing")
+                        "F15 mangling prefix (`Nn_` / `_Cxc_NT` / "
+                        "`Nt<digits>`); rename the type or extend the "
+                        "mangling scheme in a follow-on sub-landing")
                    type-node))
       nm)
 
@@ -50,19 +81,20 @@
     (str "Nn_" (mangle-type (:inner type-node)))
 
     :type-named-tuple
-    (fail-nyi! (str "nested named-tuple fields not supported in F15 "
-                    "L2.a MVP mangling; extend in a follow-on sub-"
-                    "landing")
-               type-node)
+    (let [fields (:fields type-node)]
+      (when (empty? fields)
+        (fail-nyi! "nested empty named-tuple shape has no canonical form"
+                   type-node))
+      (str "Nt" (mangle-nested-tuple-body fields)))
 
     :type-of
     (fail-nyi! (str "parametric-type fields (`" (:outer type-node)
-                    " of ...`) not supported in F15 L2.a MVP "
-                    "mangling; extend in a follow-on sub-landing")
+                    " of ...`) not supported in F15 L2.b mangling "
+                    "(deferred to L2.b.ii)")
                type-node)
 
     (fail-nyi! (str "unsupported field type node kind `"
-                    (:node type-node) "` in F15 L2.a MVP mangling")
+                    (:node type-node) "` in F15 L2.b mangling")
                type-node)))
 
 (defn- validate-field-name! [nm original-node]
