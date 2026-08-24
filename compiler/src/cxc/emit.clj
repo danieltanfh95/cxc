@@ -1292,6 +1292,12 @@
        ;; commits to populate it, L4.d flips cross-atom reads to
        ;; route through it.
        "#if !CXC_SINGLE_MAIN_QUEUE\n"
+       ;; F32 L4.b.α (2026-08-24) — stdatomic pulled in under the
+       ;; same guard so the `_cxc_state_load` / `_cxc_state_commit`
+       ;; helpers below compile when concurrent mode is enabled. Under
+       ;; the default preprocessor flag this whole block guards out;
+       ;; the include only fires when the flip is opted in.
+       "#include <stdatomic.h>\n"
        "@interface _CxcAtomState : NSObject\n"
        "@property (nonatomic, assign) void *state;\n"
        "@property (nonatomic, assign) size_t size;\n"
@@ -1301,6 +1307,35 @@
        "    if (_state) { free(_state); _state = NULL; }\n"
        "}\n"
        "@end\n"
+       ;; F32 L4.b.α (2026-08-24) — reader/writer runtime helpers for
+       ;; the atomic-pointer-swap storage flip. `_cxc_state_load` does
+       ;; an acquire-ordered atomic load and returns the referenced
+       ;; wrapper (nil if never committed); readers dereference
+       ;; `.state` to reach the underlying `<Atom>_State` struct.
+       ;; `_cxc_state_commit` wraps a fresh copy of the caller-owned
+       ;; `next` bag (memcpy'd into a malloc'd buffer so ARC's dealloc
+       ;; can `free()` it) and does a release-ordered atomic store —
+       ;; the old wrapper's refcount drops when no reader still
+       ;; retains it, so ARC handles cross-reader lifetime. Both
+       ;; helpers stay dead until L4.c wires the commit and L4.d
+       ;; routes cross-atom reads. Under the default preprocessor
+       ;; flag the whole block guards out; zero runtime cost.
+       "static inline _CxcAtomState *_cxc_state_load(_Atomic id *slot) {\n"
+       "    return (__bridge _CxcAtomState *)(void *)atomic_load_explicit(\n"
+       "        (_Atomic(intptr_t) *)slot, memory_order_acquire);\n"
+       "}\n\n"
+       "static inline void _cxc_state_commit(_Atomic id *slot, const void *src, size_t size) {\n"
+       "    _CxcAtomState *wrapper = [[_CxcAtomState alloc] init];\n"
+       "    void *buf = malloc(size);\n"
+       "    memcpy(buf, src, size);\n"
+       "    wrapper.state = buf;\n"
+       "    wrapper.size  = size;\n"
+       "    id previous = (__bridge_transfer id)(void *)atomic_exchange_explicit(\n"
+       "        (_Atomic(intptr_t) *)slot,\n"
+       "        (intptr_t)(__bridge_retained void *)wrapper,\n"
+       "        memory_order_release);\n"
+       "    (void)previous; /* ARC releases on scope exit */\n"
+       "}\n"
        "#endif\n\n"
        ;; F39 L3 — `T!` runtime enforcement. Warning-grade per spec §3.6.1
        ;; line 3686: "logs a warning in development, configurable action

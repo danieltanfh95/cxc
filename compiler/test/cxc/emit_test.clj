@@ -380,11 +380,15 @@
                :classes []
                :main {:body []}}
           s   (emit/emit ast)
+          ;; Scope the block to the wrapper class alone — the trailing
+          ;; L4.b.α helpers (`_cxc_state_load` / `_cxc_state_commit`)
+          ;; extend the same guarded region; L4.b's own test covers
+          ;; that half.
           i   (str/index-of s "@interface _CxcAtomState")
-          end (str/index-of s "@end\n#endif" i)
-          block (subs s i (+ end (count "@end\n#endif")))]
-      (is (str/includes? s "#if !CXC_SINGLE_MAIN_QUEUE\n@interface _CxcAtomState")
-          "wrapper class opens under !CXC_SINGLE_MAIN_QUEUE guard")
+          end (str/index-of s "@end" (str/index-of s "@implementation _CxcAtomState" i))
+          block (subs s i (+ end (count "@end")))]
+      (is (str/includes? s "#if !CXC_SINGLE_MAIN_QUEUE")
+          "wrapper region opens under !CXC_SINGLE_MAIN_QUEUE guard")
       (is (str/includes? block "@property (nonatomic, assign) void *state;")
           "wrapper carries the raw state pointer")
       (is (str/includes? block "@property (nonatomic, assign) size_t size;")
@@ -392,9 +396,48 @@
       (is (str/includes? block "- (void)dealloc {")
           "dealloc is implemented so ARC frees the malloc'd buffer")
       (is (str/includes? block "if (_state) { free(_state); _state = NULL; }")
-          "dealloc frees underlying buffer and nils the pointer")
-      (is (str/ends-with? block "@end\n#endif")
-          "block closes with @end followed by the #endif for the guard"))))
+          "dealloc frees underlying buffer and nils the pointer"))))
+
+(deftest f32-l4b-alpha-state-load-commit-helpers-emit-guarded
+  (testing "F32 L4.b.α — `_cxc_state_load` and `_cxc_state_commit` runtime helpers ship in the same `!CXC_SINGLE_MAIN_QUEUE` region as the L4.a wrapper. Load does an acquire-ordered atomic load; commit wraps a fresh copy of the caller-owned bag (memcpy'd into a malloc'd buffer so ARC's dealloc reclaims it) and release-ordered atomic-exchanges it into the slot, so the previous wrapper's refcount drops when no reader retains. `stdatomic.h` pulls in under the same guard so default builds don't need the C11 atomic header. Dead code today — L4.c wires the commit and L4.d wires the load."
+    (let [ast {:node :objc-program
+               :needs-runtime? true
+               :includes []
+               :structs []
+               :classes []
+               :main {:body []}}
+          s   (emit/emit ast)]
+      (is (str/includes? s "#include <stdatomic.h>")
+          "stdatomic.h is pulled in for the atomic primitives")
+      (is (str/includes? s "static inline _CxcAtomState *_cxc_state_load(_Atomic id *slot)")
+          "state-load helper is declared with the expected signature")
+      (is (str/includes? s "atomic_load_explicit(")
+          "load uses acquire-ordered atomic_load_explicit")
+      (is (str/includes? s "memory_order_acquire")
+          "load is acquire-ordered")
+      (is (str/includes? s "static inline void _cxc_state_commit(_Atomic id *slot, const void *src, size_t size)")
+          "state-commit helper is declared with the expected signature")
+      (is (str/includes? s "memcpy(buf, src, size);")
+          "commit memcpy's the caller-owned bag into a heap buffer")
+      (is (str/includes? s "atomic_exchange_explicit(")
+          "commit atomically swaps in the fresh wrapper and returns the previous")
+      (is (str/includes? s "memory_order_release")
+          "commit is release-ordered")
+      (is (str/includes? s "__bridge_transfer")
+          "the exchanged-out previous wrapper is transferred into ARC for release")
+      ;; Guard scope check: helpers appear between #if !CXC_SINGLE_MAIN_QUEUE
+      ;; and its matching #endif — verified by proximity to _CxcAtomState
+      ;; (which the L4.a test already confirms is guard-scoped).
+      (let [guard-start (str/index-of s "#if !CXC_SINGLE_MAIN_QUEUE\n#include <stdatomic.h>")
+            load-idx    (str/index-of s "_cxc_state_load" guard-start)
+            commit-idx  (str/index-of s "_cxc_state_commit" guard-start)
+            endif-idx   (str/index-of s "#endif" commit-idx)]
+        (is (some? guard-start)
+            "the guarded region opens with the stdatomic.h include")
+        (is (< guard-start load-idx endif-idx)
+            "the load helper sits between the opening guard and its #endif")
+        (is (< guard-start commit-idx endif-idx)
+            "the commit helper sits between the opening guard and its #endif")))))
 
 (deftest f32-l5-cxcstream-init-emits-guarded-main-target
   (testing "F32 L5 — CxcStream's -init retargets its own_queue to main only under CXC_SINGLE_MAIN_QUEUE. Under concurrent mode the stream inherits libdispatch's default target (default-QoS global pool) so fan-out doesn't bottleneck through main. Queue stays SERIAL either way; subscriber delivery via cxc_send_async still respects each subscriber's own_queue."
