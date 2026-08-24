@@ -972,7 +972,13 @@ def main:
                  :data-fields [{:name "n" :cxc-ty "Int" :nullable? false
                                 :nonnil? true :optional? false
                                 :scalar-c "int64_t" :c-type "int64_t"
-                                :default {:node :lit-int :value 0}}]}]
+                                :default {:node :lit-int :value 0}
+                                ;; F15 L2.d.ii.α — raw parsed type node
+                                ;; preserved so downstream structural-
+                                ;; conformance checks compare types
+                                ;; against a nullability-preserving form.
+                                :type {:node :type-nonnil
+                                       :inner {:node :type-ref :name "Int"}}}]}]
                (:body wrap)))))))
 
 (deftest message-triggered-transition-with-phase-change-emits-phase-assign

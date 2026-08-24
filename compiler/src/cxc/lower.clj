@@ -874,7 +874,20 @@
                     :optional?  optional?
                     :scalar-c   scalar-c
                     :c-type     c-type
-                    :default    (:default f)}
+                    :default    (:default f)
+                    ;; F15 L2.d.ii.α (2026-08-24) — preserve the raw
+                    ;; parsed `:type` node on lowered record fields so
+                    ;; L2.d.ii.β's structural-conformance check has a
+                    ;; type node it can hand to `structural-conforms?`
+                    ;; (which uses Clojure structural equality on the
+                    ;; raw type nodes to decide field-type match). The
+                    ;; existing `:cxc-ty` is a lossy string projection —
+                    ;; loses nullability distinctions and can't
+                    ;; distinguish `Int` from `Int!` at the same base
+                    ;; name. Parallel to ε.β.β's `:type` preservation
+                    ;; on ctor-params; additive field with no reader
+                    ;; today, so existing tests pass without update.
+                    :type       ty-node}
                    (map-key-val-of ty-node)
                    (when-let [m (:modifier f)] {:modifier m}))))
         (:fields data-section)))
