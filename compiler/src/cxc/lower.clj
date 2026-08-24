@@ -770,6 +770,15 @@
     (and (map? tk) (:record tk)) (:record tk)
     (and (map? tk) (:atom   tk)) (str (:atom tk) " *")
     (and (map? tk) (:enum   tk)) (:enum tk)
+    ;; F15 L2.c.iii.c.γ.β (2026-08-24) — `:named-tuple` type-kw
+    ;; renders as the bare mangled struct name, matching L2.c.ii-b's
+    ;; field-side convention. Value type (no pointer suffix); the
+    ;; typedef itself is emitted via `:named-tuple-typedefs` on the
+    ;; program AST (L2.c.iii.b wire-in). Dead code today since γ.α's
+    ;; recognition branch isn't reached from any real lowering path
+    ;; (upstream lowering doesn't produce lowered `:cxc-ty` starting
+    ;; with `_Cxc_NT` in any test program).
+    (and (map? tk) (:named-tuple tk)) (:named-tuple tk)
     :else (fail-nyi! (str "unrepresentable observable type " (pr-str tk))
                      node)))
 
@@ -8262,7 +8271,16 @@
                              parent-prop parent-slot-prop]
                             (into data-props)
                             (into stream-props))
-       :init-params     (mapv (fn [p] {:name (:name p) :c-type (:c-type p)}) ctor-params)
+       :init-params     (mapv (fn [p]
+                                ;; F15 L2.c.iii.c.δ.2 — preserve raw :type on
+                                ;; class :init-params so `collect-shapes` postwalk
+                                ;; of the lowered :classes discovers named-tuple
+                                ;; shapes at ctor-param positions. Extra field is
+                                ;; ignored by downstream emit (which projects to
+                                ;; :name + :c-type when rendering param lists).
+                                (cond-> {:name (:name p) :c-type (:c-type p)}
+                                  (:type p) (assoc :type (:type p))))
+                              ctor-params)
        :init-body       init-shell
        :methods         (-> [setup-method state-method bind-method
                              check-invariants-method

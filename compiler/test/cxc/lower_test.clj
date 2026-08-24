@@ -493,7 +493,10 @@ def main:
                                   (= "_c" (get-in stmt [:lhs :sym])))
                          (:rhs stmt)))
                      state-body)]
-      (is (= [{:name "initial" :c-type "int64_t"}] (:init-params cls)))
+      ;; F15 L2.c.iii.c.δ.2 — :init-params now carry raw :type alongside :c-type.
+      (is (= [{:name "initial" :c-type "int64_t"
+               :type {:node :type-ref :name "Int"}}]
+             (:init-params cls)))
       ;; -init shell calls cxc_structuralSetup, cxc_stateInitWithinitial:initial,
       ;; cxc_runtimeBinding — ctor-params thread through the state-init selector.
       (is (= [{:node :objc-msg :recv {:node :name :sym "self"}
@@ -1531,7 +1534,9 @@ def main:
                                    (:methods age-cls)))
           cont-cls (first (filter #(= "Container" (:name %)) (:classes prog)))
           cont-init-params (:init-params cont-cls)]
-      (is (= [{:name "value" :c-type "int64_t"}] age-init-params)
+      ;; F15 L2.c.iii.c.δ.2 — :init-params now carry raw :type alongside :c-type.
+      (is (= [{:name "value" :c-type "int64_t"
+               :type {:node :type-ref :name "Int"}}] age-init-params)
           "Age.value field became required ctor param (int64_t — the source-level Int, NOT the picker-narrowed uint8_t)")
       (is (= "cxc_stateInitWithvalue:" (:selector age-state))
           "cxc_stateInit selector reflects the value parameter")
@@ -4345,3 +4350,25 @@ def main:
          #"unresolved type name"
          (#'cxc.lower/cxc-type->type-kw
           "SomeUserType" {} {} {} nil)))))
+
+(deftest f15-l2c-iii-c-gamma-beta-type-kw-to-c-type-named-tuple
+  (testing "F15 L2.c.iii.c.γ.β — `type-kw->c-type` renders `:named-tuple` type-kws as the bare mangled struct name (value type, no pointer suffix, matches L2.c.ii-b's field-side convention + the L2.c.iii.c.α cxc-type->c convention). Dead code today; enables γ-chain end-to-end when combined with the earlier sub-fires."
+    (is (= "_Cxc_NT_x_Int_y_Int"
+           (#'cxc.lower/type-kw->c-type
+            {:named-tuple "_Cxc_NT_x_Int_y_Int"} nil)))
+    (is (= "_Cxc_NT_outer_Nt1_inner_Int"
+           (#'cxc.lower/type-kw->c-type
+            {:named-tuple "_Cxc_NT_outer_Nt1_inner_Int"} nil)))))
+
+(deftest f15-l2c-iii-c-named-tuple-ctor-param-end-to-end-typedef
+  (testing "F15 L2.c.iii.c — end-to-end typedef emission: a program with a named-tuple ctor-param position lowers successfully and the mangled struct typedef appears on `:named-tuple-typedefs`. Verifies α + β.1 + β.2 + γ.α + γ.β compose into a working typedef pipeline for the ctor-param position. Downstream uses of the param (e.g. `.x` field access) remain out of scope — those need a shape-lookup helper against collect-shapes' output, a separate follow-on."
+    (let [prog (lower-src (str "def Foo(p: (x: Int, y: Int)):\n"
+                               "    running <: nop -> self\n\n"
+                               "def main:\n"
+                               "    -> running\n"))
+          typedefs (:named-tuple-typedefs prog)]
+      (is (some? typedefs))
+      (is (.contains typedefs "_Cxc_NT_x_Int_y_Int")
+          "typedef struct for the named-tuple shape is emitted")
+      (is (.contains typedefs "int64_t x;"))
+      (is (.contains typedefs "int64_t y;")))))
