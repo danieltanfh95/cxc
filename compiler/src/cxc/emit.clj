@@ -1362,6 +1362,22 @@
        "        memory_order_release);\n"
        "    (void)previous; /* ARC releases on scope exit */\n"
        "}\n"
+       ;; F32 L4.d.α (2026-08-24) — reader-side convenience wrapper.
+       ;; `_cxc_state_load` returns the ARC-wrapper (or nil if the atom
+       ;; has never committed); readers want the underlying `<Atom>_State
+       ;; *` buffer. This helper does the wrapper→buffer projection with
+       ;; a nil-safe guard so pre-first-commit reads return NULL instead
+       ;; of dereferencing nil.wrapper.state (nil.state would return 0
+       ;; via ObjC's nil-messaging, but expressing the guard explicitly
+       ;; makes the read-path intent auditable at the C level). Callers
+       ;; cast the returned `void *` to the atom's own `<Atom>_State *`.
+       ;; Dead code until L4.d.β wires cross-atom `.field` reads to
+       ;; route through this helper — self-reads stay on the L2
+       ;; snapshot path.
+       "static inline void *_cxc_atom_state_ptr(_Atomic id *slot) {\n"
+       "    _CxcAtomState *w = _cxc_state_load(slot);\n"
+       "    return w ? w.state : NULL;\n"
+       "}\n"
        "#endif\n\n"
        ;; F39 L3 — `T!` runtime enforcement. Warning-grade per spec §3.6.1
        ;; line 3686: "logs a warning in development, configurable action

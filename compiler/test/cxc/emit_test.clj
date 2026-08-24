@@ -398,6 +398,30 @@
       (is (str/includes? block "if (_state) { free(_state); _state = NULL; }")
           "dealloc frees underlying buffer and nils the pointer"))))
 
+(deftest f32-l4d-alpha-atom-state-ptr-helper-emits-guarded
+  (testing "F32 L4.d.α — `_cxc_atom_state_ptr(_Atomic id *slot)` runtime helper is emitted inside the same `!CXC_SINGLE_MAIN_QUEUE` region as the L4.a wrapper + L4.b.α helpers. It projects the ARC wrapper returned by `_cxc_state_load` down to the underlying `<Atom>_State *` buffer with a nil-safe guard: pre-first-commit reads return NULL rather than dereferencing a nil-messaged wrapper. Callers cast the `void *` result to the atom's own `<Atom>_State *`. Dead code today — L4.d.β wires cross-atom `.field` reads to route through this helper."
+    (let [ast {:node :objc-program
+               :needs-runtime? true
+               :includes []
+               :structs []
+               :classes []
+               :main {:body []}}
+          s   (emit/emit ast)]
+      (is (str/includes? s "static inline void *_cxc_atom_state_ptr(_Atomic id *slot)")
+          "helper is declared with the expected signature")
+      (is (str/includes? s "_CxcAtomState *w = _cxc_state_load(slot);")
+          "delegates to _cxc_state_load for the atomic-load step")
+      (is (str/includes? s "return w ? w.state : NULL;")
+          "nil-safe projection so pre-first-commit reads yield NULL")
+      ;; Guard check — helper sits between the L4.b.α helpers and the
+      ;; matching #endif (same guarded region).
+      (let [guard-start (str/index-of s "#if !CXC_SINGLE_MAIN_QUEUE\n#include <stdatomic.h>")
+            helper-idx  (str/index-of s "_cxc_atom_state_ptr" guard-start)
+            endif-idx   (str/index-of s "#endif" helper-idx)]
+        (is (some? guard-start))
+        (is (< guard-start helper-idx endif-idx)
+            "helper sits between the opening guard and its #endif")))))
+
 (deftest f32-l4c-commit-next-state-emits-guarded-state-commit
   (testing "F32 L4.c — `:commit-next-state` now emits a guarded `_cxc_state_commit(&_state, &__cxc_next, sizeof(<Atom>_State))` call after the existing per-field ivar assignments (dual-write pattern). Under the default preprocessor flag the state-commit call guards out and per-field ivar assignments are byte-identical to F33 L3.b. Under concurrent mode both fire — readers still hit ivars (L4.d flips them to `_state`), so the state-commit keeps `_state` in sync with the ivars ready for L4.d's read-side flip. L4.e retires the per-field sequence once readers no longer touch ivars."
     (let [commit-node {:node :commit-next-state
