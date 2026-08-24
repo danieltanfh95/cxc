@@ -4326,3 +4326,22 @@ def main:
           "raw :type node preserved on the lowered ctor-param")
       (is (= "Int" (:cxc-ty (first lowered)))
           "existing :cxc-ty key still present + correct"))))
+
+(deftest f15-l2c-iii-c-gamma-alpha-type-kw-recognizes-named-tuple-prefix
+  (testing "F15 L2.c.iii.c.γ.α — `cxc-type->type-kw` recognizes the D4-reserved `_Cxc_NT` prefix as a named-tuple type-kw, without threading a dedicated env. Downstream pattern matches on type-kw don't yet handle `:named-tuple` — today's programs never reach this branch since upstream lowering paths still fail-nyi on named-tuple ctor params before `infer-streams-in-atom-env` runs. Test locks in the recognition rule so downstream landings can build on it.
+
+  Non-`_Cxc_NT` names still fall through to the existing `:else` fail-nyi, and record/atom/enum-env lookups still take precedence when a name happens to resolve there (nominal registration wins over prefix recognition, matching L2.a's discipline that user-declared names collide with reserved prefixes at parse time — see `reserved-type-name-prefix?`)."
+    ;; Recognition: mangled named-tuple → :named-tuple kw.
+    (is (= {:named-tuple "_Cxc_NT_x_Int_y_Int"}
+           (#'cxc.lower/cxc-type->type-kw
+            "_Cxc_NT_x_Int_y_Int" {} {} {} nil)))
+    ;; Recognition survives across nesting-prefixed manglings.
+    (is (= {:named-tuple "_Cxc_NT_outer_Nt1_inner_Int"}
+           (#'cxc.lower/cxc-type->type-kw
+            "_Cxc_NT_outer_Nt1_inner_Int" {} {} {} nil)))
+    ;; Non-mangled names still fail-nyi (prefix isn't `_Cxc_NT`).
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"unresolved type name"
+         (#'cxc.lower/cxc-type->type-kw
+          "SomeUserType" {} {} {} nil)))))

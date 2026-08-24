@@ -701,6 +701,18 @@
       (contains? record-env cxc-name) {:record cxc-name}
       (contains? atom-env   cxc-name) {:atom   cxc-name}
       (contains? enum-env   cxc-name) {:enum   cxc-name}
+      ;; F15 L2.c.iii.c.γ.α (2026-08-24) — mangled named-tuple names
+      ;; (D4-reserved `_Cxc_NT` prefix, per named-tuple/reserved-type-
+      ;; name-prefix?) resolve to a `:named-tuple` type-kw without a
+      ;; separate env lookup. Downstream pattern matches don't handle
+      ;; `:named-tuple` yet; today's programs never reach this branch
+      ;; (upstream lowering paths still fail-nyi on named-tuple ctor
+      ;; params before this point in the pipeline). Prefix check
+      ;; matches L2.a's reserved-prefix guarantee: the compiler owns
+      ;; every `_Cxc_NT`-prefixed name, so this recognition is safe.
+      (str/starts-with? cxc-name "_Cxc_NT")
+      {:named-tuple cxc-name}
+
       :else (fail-nyi! (str "unresolved type name `" cxc-name "`") node))))
 
 (defn- int-family?
