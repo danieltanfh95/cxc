@@ -242,6 +242,22 @@
     (is (nil? (sec/behavioral-walker :computed)))
     (is (nil? (sec/behavioral-walker :madeupthing)))))
 
+(deftest behavioral-walkers-enumerates-registry-walker-vars
+  (testing "F8 L3d.ii.α — `behavioral-walkers` returns `{section-name → walker-var}` for every seeded behavioral entry whose spec carries `:walker-sym`. Today only `:deprecated` qualifies; the returned map has one entry pointing at `cxc.build/warn-deprecated-uses`. Substrate for `build/compile-source-to-file` to iterate walkers via the registry instead of hardcoding a single call — L3d.ii.β wires that. Returns a `sorted-map` for deterministic iteration order across runs."
+    (let [m (sec/behavioral-walkers)]
+      (is (map? m))
+      (is (contains? m :deprecated))
+      (is (= (requiring-resolve 'cxc.build/warn-deprecated-uses)
+             (get m :deprecated))))))
+
+(deftest behavioral-walkers-omits-entries-without-walker-sym
+  (testing "F8 L3d.ii.α — behavioral entries without a `:walker-sym` on their spec (currently `:invariants` and `:use` — lower-time processing is inline, not walker-based) are omitted from `behavioral-walkers`. Reserved entries (`:computed`, `:metadata`) are also omitted since they're not `:kind :behavioral`. Callers iterate the returned map safely without a walker-vs-no-walker branch."
+    (let [m (sec/behavioral-walkers)]
+      (is (not (contains? m :invariants)))
+      (is (not (contains? m :use)))
+      (is (not (contains? m :computed)))
+      (is (not (contains? m :metadata))))))
+
 (deftest allowed-in-extend-only-invariants
   (testing "F8 L3b.iii — only `:invariants` is permitted inside `extend Foo:` bodies (invariants compose additively per F49's extension-invariant merging). `:use` and `:deprecated` are false — extend rejects them per §3.3.2 (extensions cannot add capabilities or deprecation). Reserved and unregistered names default to false."
     (is (true? (sec/allowed-in-extend? :invariants)))

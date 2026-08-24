@@ -346,6 +346,30 @@
       (when-let [sym (get-in e [:spec :walker-sym])]
         (requiring-resolve sym)))))
 
+(defn behavioral-walkers
+  "F8 L3d.ii.α+ — enumerate every registry entry whose spec carries a
+   `:walker-sym` and return `{section-name → walker-var}` (a sorted-map
+   for deterministic iteration order across runs).
+
+   Substrate for `build/compile-source-to-file` to iterate walkers via
+   the registry instead of hardcoding a `warn-deprecated-uses` call —
+   L3d.ii.β wires that. Today only `:deprecated` carries a walker-sym,
+   so the returned map has one entry. When L4 lands `section class Name:`
+   user syntax with post-parse walkers, they surface here automatically.
+
+   Skips reserved entries + behavioral entries without a `:walker-sym`.
+   Walker resolution is on-demand via `requiring-resolve` — the target
+   namespace loads lazily on first call. Returns nil-valued entries
+   when a spec names a symbol that doesn't resolve (misconfigured seed)
+   so callers can surface a diagnostic instead of silently dropping."
+  []
+  (into (sorted-map)
+        (keep (fn [[nm entry]]
+                (when (= :behavioral (:kind entry))
+                  (when-let [sym (get-in entry [:spec :walker-sym])]
+                    [nm (requiring-resolve sym)]))))
+        @registry))
+
 (defn- seed-protected-reservations! []
   (into {}
         (map (fn [nm]
