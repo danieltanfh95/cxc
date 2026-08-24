@@ -5356,9 +5356,35 @@
    F39 L3 — for a `T!` field, appends a post-store nonnil-check reading
    the just-assigned ivar. Post-store is safe (warning-grade, no abort)
    and sidesteps eval-once discipline on the RHS expression. Returns
-   a vector of stmts so callers `mapcat` naturally over each update."
+   a vector of stmts so callers `mapcat` naturally over each update.
+
+   F8 L3a (setter-error diagnostic) — computed fields (observables
+   introduced via `computed:` or declared at class body top level)
+   are read-only: writes have no storage backing and would emit a
+   dead `__cxc_next._<name>` assignment. Reject with a targeted
+   diagnostic naming the field, its owning atom, and the read-only
+   nature (spec §4.10.4.1)."
   [update ctx]
-  (let [;; F39 L5b-ii-c (Sub-K) — when the target field's storage is
+  (let [;; F8 L3a — reject writes to observable (computed) fields
+        ;; before they emit dead assignments. Check happens first
+        ;; so the diagnostic wins over any downstream nil-friendly
+        ;; behavior.
+        self-info (get-in ctx [:locals "self"])
+        atom-name (and (map? self-info) (:atom self-info))
+        obs-info  (when atom-name
+                    (get-in ctx [:atom-env atom-name :observable-index (:field update)]))
+        field-in-atom-index (when atom-name
+                              (get-in ctx [:atom-env atom-name :field-index (:field update)]))
+        _         (when (and obs-info (not field-in-atom-index))
+                    (fail-nyi!
+                     (str "F8 L3a: `" (:field update) "` is a computed "
+                          "field (observable) on atom `" atom-name
+                          "` — writes not allowed (spec §4.10.4.1 read-"
+                          "only Computed contract). Move the derivation "
+                          "to `data:` if you need a storage-backed field, "
+                          "or remove the assignment.")
+                     update))
+        ;; F39 L5b-ii-c (Sub-K) — when the target field's storage is
         ;; Optional-boxed, wrap a scalar RHS in `{present:1, .value:x}`.
         ;; If RHS is already Optional-typed, pass through unchanged
         ;; (Optional-to-Optional assign is a struct copy). If RHS is a

@@ -4232,3 +4232,18 @@ def main:
                          "        then:\n"
                          "            let b: Bytes = Vec(x: 1).as()\n"
                          "            print(b.slice(0).length)\n"))))))
+
+(deftest f8-l3a-write-to-computed-field-rejected
+  (testing "F8 L3a (setter-error diagnostic) — `then: doubled => 10` where `doubled` is a computed field (observable) is a hard error at lower time. Computed fields are read-only per spec §4.10.4.1; the check runs before the bag-write emit path so users get a targeted diagnostic instead of a broken C compile (dead `__cxc_next._doubled` assignment)."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"F8 L3a: `doubled` is a computed field \(observable\) on atom `V`"
+         (lower-src (str "def V:\n"
+                         "    n: Int = 3\n\n"
+                         "    computed:\n"
+                         "        doubled: Int = n * 2\n\n"
+                         "    running <: bump -> self\n"
+                         "        then: doubled => 10\n\n"
+                         "def main:\n"
+                         "    v: V = V()\n"
+                         "    -> running\n"))))))
