@@ -345,6 +345,32 @@
       (is (str/includes? s "#endif")
           "guard closes"))))
 
+(deftest f15-l2c-iii-a-named-tuple-typedef-block-placement
+  (testing "F15 L2.c.iii.a — the emit renders the program's `:named-tuple-typedefs` string between structs and function prototypes. Programs that don't set the field (today: all programs — L2.c.iii.b wires it up later) leave the block absent, so the emit is byte-identical to pre-L2.c.iii.a. Programs that DO set it see the typedef block inserted at the correct C-level position (after structs, before functions that might reference them)."
+    (let [ast {:node :objc-program
+               :includes []
+               :structs []
+               :classes []
+               :named-tuple-typedefs (str "typedef struct {\n"
+                                          "    int64_t x;\n"
+                                          "    int64_t y;\n"
+                                          "} _Cxc_NT_x_Int_y_Int;")
+               :main {:body []}}
+          s   (emit/emit ast)]
+      (is (str/includes? s "typedef struct {\n    int64_t x;\n    int64_t y;\n} _Cxc_NT_x_Int_y_Int;")
+          "the typedef block appears in the emit"))))
+
+(deftest f15-l2c-iii-a-absent-field-emits-no-block
+  (testing "F15 L2.c.iii.a — when the program AST doesn't set `:named-tuple-typedefs`, the emit produces zero named-tuple output. Backward-compat guarantee: existing programs (which never set the field) see byte-identical emit."
+    (let [ast {:node :objc-program
+               :includes []
+               :structs []
+               :classes []
+               :main {:body []}}
+          s   (emit/emit ast)]
+      (is (not (str/includes? s "_Cxc_NT_"))
+          "no named-tuple typedef surfaces when the field is absent"))))
+
 (deftest f32-l4a-cxcatomstate-wrapper-emits-guarded
   (testing "F32 L4.a — the `_CxcAtomState` ARC wrapper class is emitted in the runtime helpers under a `#if !CXC_SINGLE_MAIN_QUEUE` guard. Under Layer 4 default the whole block preprocessor-guards out (zero cost); under concurrent mode the class is available for L4.b's per-atom `_state` ivar to reference. Wrapper carries a raw `void *state` pointer and a `size_t size`; `-dealloc` frees the underlying malloc'd struct so ARC handles cross-reader lifetime (old wrapper releases when no in-flight reader retains). Dead code today: nothing references `_CxcAtomState` yet."
     (let [ast {:node :objc-program

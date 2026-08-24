@@ -1489,6 +1489,15 @@
         helpers     (when (:needs-runtime? prog) cxc-runtime-helpers)
         enums       (str/join "\n\n" (map emit-any-enum (:enums prog)))
         structs     (str/join "\n\n" (map emit-struct   (:structs prog)))
+        ;; F15 L2.c.iii.a — named-tuple typedef block. Populated by
+        ;; lower/build when the parsed AST contains any :type-named-tuple
+        ;; nodes (L2.c.iii.b will wire this up). Today every program
+        ;; leaves this field unset, so the string is blank and no
+        ;; typedef block appears in the emit — zero-cost forward-compat
+        ;; hook. The typedef block is C-level structural definitions
+        ;; that must precede any type reference; placing it after
+        ;; structs mirrors the pattern.
+        named-tuple-typedefs (or (:named-tuple-typedefs prog) "")
         ;; F37 Landing 4 — emit all synthesized-function prototypes
         ;; before any bodies so nested-record encoders can reference
         ;; each other regardless of declaration order in `:functions`.
@@ -1520,6 +1529,7 @@
     (str/join "\n\n"
               (remove str/blank? [includes
                                   helpers enums structs
+                                  named-tuple-typedefs
                                   fn-prototypes functions
                                   forward-classes
                                   interfaces fanout-cat impls
