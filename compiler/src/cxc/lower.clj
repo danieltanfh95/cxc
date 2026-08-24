@@ -973,6 +973,24 @@
              site    (str "record `" name "` fields (auto-ctor)")
              _       (validate-defaults-after-required! site fields)
              _       (validate-default-is-const!       site fields atom-env enum-env)
+             ;; F8 L3a follow-on — reject data-field / observable name
+             ;; collisions inside one record. Silent collision would
+             ;; make the observable dead code (`.field` on a value
+             ;; dispatches to the field access path, never the observable
+             ;; getter) — confusing for users writing `computed: n: Int
+             ;; = ...` alongside `data: n: Int`. Fires at env build so
+             ;; the diagnostic wins over any downstream emit.
+             _       (let [field-names (set (map :name fields))
+                           collisions (filter #(contains? field-names (:name %)) observables)]
+                       (when-let [c (first collisions)]
+                         (fail-nyi!
+                          (str "F8 L3a: observable `" (:name c) "` on record `"
+                               name "` collides with a data field of the same "
+                               "name. The field would win at `.` dispatch and "
+                               "the observable would be dead code. Rename one "
+                               "or move the derivation to `computed:` under a "
+                               "different name.")
+                          c)))
              ;; F38 auto-detect: any observable → :class variant, else
              ;; :struct. Structural trigger, no user syntax. Base
              ;; :methods is empty; ext-composed methods bump variant
@@ -2480,6 +2498,25 @@
              ;; Duplicate entries collide with a targeted diagnostic.
              obs-names     (set (map :name observables))
              method-names* (set (map :name methods))
+             ;; F8 L3a follow-on — reject data-field / observable name
+             ;; collisions inside one atom. Silent collision would
+             ;; make the observable dead code (`.field` on an atom
+             ;; dispatches to the field/property path before the
+             ;; observable lookup) — confusing for users writing
+             ;; `computed: n: Int = ...` alongside `data: n: Int`.
+             ;; Also blocks `then: n => ...` from firing on the
+             ;; observable and hitting the L3a setter-error path.
+             _             (let [field-names (set (map :name fields))
+                                 collisions (filter #(contains? field-names %) obs-names)]
+                             (when-let [c (first collisions)]
+                               (fail-nyi!
+                                (str "F8 L3a: observable `" c "` on atom `"
+                                     name "` collides with a data field of the "
+                                     "same name. The field would win at `.` "
+                                     "dispatch and the observable would be dead "
+                                     "code. Rename one or move the derivation to "
+                                     "`computed:` under a different name.")
+                                {:atom name :name c})))
              _             (let [dups (->> on-nil-raw
                                            (map :method)
                                            frequencies
