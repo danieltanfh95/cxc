@@ -251,3 +251,53 @@
           "guard opens before the barrier drain")
       (is (str/includes? s "dispatch_barrier_sync(dispatch_get_global_queue(QOS_CLASS_DEFAULT, 0), ^{});")
           "barrier drain on the global concurrent queue"))))
+
+;; ---------------------------------------------------------------------------
+;; F32 L3 — runtime `|>` cycle detector. Per-thread NSMutableSet tracks
+;; atoms currently in the sync-send path on this thread. Re-entry (a
+;; nested `|> A.foo()` while A is already awaiting) panics with a
+;; targeted message before the underlying dispatch_sync would deadlock
+;; (concurrent mode) or the recursion would blow the stack (single-
+;; queue mode). Fires on BOTH modes for uniform behavior; complements
+;; the F31 L3 compile-time cycle warning.
+;; ---------------------------------------------------------------------------
+
+(deftest f32-l3-runtime-cycle-detector-emits-in-cxc-wait-for-processing
+  (testing "F32 L3 — cxc_wait_for_processing carries the per-thread sending-set push/pop with re-entry panic. Detector is unguarded (fires under both single-queue and concurrent modes)."
+    (let [ast {:node :objc-program
+               :includes []
+               :needs-runtime? true
+               :structs []
+               :classes []
+               :main {:body []}}
+          s   (emit/emit ast)]
+      (is (str/includes? s "static inline void cxc_wait_for_processing(id target, void (^block)(void))")
+          "cxc_wait_for_processing signature unchanged")
+      (is (str/includes? s "NSMutableSet *__sending = __td[@\"_cxc_sending_to\"];")
+          "per-thread sending set stored in -threadDictionary under `_cxc_sending_to` key")
+      (is (str/includes? s "if ([__sending containsObject:__key])")
+          "cycle check via containsObject on NSValue-wrapped target pointer")
+      (is (str/includes? s "cxc: `|>` cycle:")
+          "panic diagnostic mentions `|>` cycle")
+      (is (str/includes? s "[__sending addObject:__key];")
+          "push on entry")
+      (is (str/includes? s "[__sending removeObject:__key];")
+          "pop on exit (@finally)")
+      (is (str/includes? s "@try {")
+          "push/pop wrapped in try/finally so panic paths still pop"))))
+
+(deftest f32-l3-runtime-cycle-detector-preserves-mode-dispatch
+  (testing "F32 L3 — the underlying single-queue vs concurrent dispatch is preserved inside the try block. Detector wraps but doesn't replace the mode-dispatch."
+    (let [ast {:node :objc-program
+               :includes []
+               :needs-runtime? true
+               :structs []
+               :classes []
+               :main {:body []}}
+          s   (emit/emit ast)]
+      (is (str/includes? s "#if CXC_SINGLE_MAIN_QUEUE")
+          "single-queue guard still emitted")
+      (is (str/includes? s "block();")
+          "single-queue direct block invocation preserved")
+      (is (str/includes? s "dispatch_sync([(id<CXCAtom>)target own_queue], block);")
+          "concurrent-mode dispatch_sync preserved"))))

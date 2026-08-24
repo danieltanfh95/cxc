@@ -1193,16 +1193,44 @@
        "#ifndef CXC_SINGLE_MAIN_QUEUE\n"
        "#define CXC_SINGLE_MAIN_QUEUE 1\n"
        "#endif\n\n"
+       ;; F32 L3 (2026-08-24) — runtime `|>` cycle detector. Per-thread
+       ;; NSMutableSet tracks the atoms this thread currently has a
+       ;; sync-send outstanding on. Re-entry (`|> A.foo()` called
+       ;; while A is already in the sending set on this thread) is a
+       ;; deadlock under concurrent mode (dispatch_sync on a queue
+       ;; already locked by this thread) and an unbounded recursion
+       ;; under single-queue mode; either way, panic with a clear
+       ;; message. Uses -threadDictionary (thread-local storage) so
+       ;; transient pool worker threads pick up an empty set. Fires
+       ;; on BOTH modes — belt-and-suspenders alongside the F31 L3
+       ;; compile-time cycle warning; catches dynamic-dispatch cycles
+       ;; the compile-time walk can't see.
        "static inline void cxc_wait_for_processing(id target, void (^block)(void)) {\n"
        "    if (target == nil) return;\n"
+       "    NSMutableDictionary *__td = [[NSThread currentThread] threadDictionary];\n"
+       "    NSMutableSet *__sending = __td[@\"_cxc_sending_to\"];\n"
+       "    if (__sending == nil) {\n"
+       "        __sending = [NSMutableSet set];\n"
+       "        __td[@\"_cxc_sending_to\"] = __sending;\n"
+       "    }\n"
+       "    NSValue *__key = [NSValue valueWithNonretainedObject:target];\n"
+       "    if ([__sending containsObject:__key]) {\n"
+       "        fprintf(stderr, \"cxc: `|>` cycle: sync-send to atom `%s` while a prior sync-send to the same atom on this thread is still awaiting reply (spec 1.11)\\n\", [NSStringFromClass([target class]) UTF8String]);\n"
+       "        abort();\n"
+       "    }\n"
+       "    [__sending addObject:__key];\n"
+       "    @try {\n"
        "#if CXC_SINGLE_MAIN_QUEUE\n"
        "#ifdef DEBUG\n"
-       "    dispatch_assert_queue([(id<CXCAtom>)target own_queue]);\n"
+       "        dispatch_assert_queue([(id<CXCAtom>)target own_queue]);\n"
        "#endif\n"
-       "    block();\n"
+       "        block();\n"
        "#else\n"
-       "    dispatch_sync([(id<CXCAtom>)target own_queue], block);\n"
+       "        dispatch_sync([(id<CXCAtom>)target own_queue], block);\n"
        "#endif\n"
+       "    } @finally {\n"
+       "        [__sending removeObject:__key];\n"
+       "    }\n"
        "}\n\n"
        ;; F32 L2 (2026-08-24) — shutdown drain. Under future concurrent
        ;; mode (F32 L1 flips atom queues from main-target to the global
