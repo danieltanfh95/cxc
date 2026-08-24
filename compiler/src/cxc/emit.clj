@@ -704,13 +704,33 @@
     ;; Emits `<Atom>_State __cxc_snap = { ._f1 = _f1, ._f2 = _f2, ... };`.
     ;; L2.c toggles the `:ident` sf-branch to read through `__cxc_snap._<f>`
     ;; via a ctx `:snapshot-name` entry.
+    ;;
+    ;; F32 L4.e.α (2026-08-24) — under `!CXC_SINGLE_MAIN_QUEUE` the
+    ;; snapshot sources from the committed `_state` slot instead of
+    ;; ivars. `_cxc_atom_state_ptr` is nil-safe (returns NULL pre-
+    ;; first-commit); the ternary falls back to a zero-init struct so
+    ;; the first observation on a not-yet-seeded atom sees a well-
+    ;; defined snapshot rather than dereferencing NULL. In practice
+    ;; L4.d.β.α's initial-state-commit seed guarantees `_state` is
+    ;; populated by the end of `cxc_stateInit`, so the NULL fallback
+    ;; is defense-in-depth. Under the default flag the ivar-sourced
+    ;; init stays (byte-identical). Substrate for L4.e.β retiring
+    ;; per-field ivar writes at `:commit-next-state` (self-reads via
+    ;; snapshot no longer depend on ivars).
     (let [cn     (:class-name node)
           fields (:data-fields node)
           inits  (->> fields
                       (map (fn [f]
                              (str "._" (:name f) " = _" (:name f))))
                       (str/join ", "))]
-      (str cn "_State __cxc_snap = { " inits " };"))
+      (str "#if !CXC_SINGLE_MAIN_QUEUE\n"
+           cn "_State *__cxc_snap_src = ("
+           cn "_State *)_cxc_atom_state_ptr(&_state);\n"
+           cn "_State __cxc_snap = __cxc_snap_src ? *__cxc_snap_src : ("
+           cn "_State){0};\n"
+           "#else\n"
+           cn "_State __cxc_snap = { " inits " };\n"
+           "#endif"))
     :next-state-init
     ;; F33 L3.a — next-state bag init as copy of the entry snapshot.
     ;; Emits `<Atom>_State __cxc_next = __cxc_snap;`. L3.b redirects

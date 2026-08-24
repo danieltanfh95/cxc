@@ -3825,7 +3825,26 @@ def main:
                                 "    -> running\n        then: print(0)\n"))
           c-src (emit/emit prog)]
       (is (str/includes? c-src "Counter_State __cxc_snap = { ._n = _n, ._max = _max };")
-          "snapshot-init emitted as designated-initializer decl"))))
+          "snapshot-init emitted as designated-initializer decl (default single-queue path)"))))
+
+(deftest f32-l4e-alpha-snapshot-init-sources-from-state-under-concurrent-mode
+  (testing "F32 L4.e.α — snapshot-init emits a `!CXC_SINGLE_MAIN_QUEUE` branch that sources from `_state` via `_cxc_atom_state_ptr`; falls back to a zero-init struct if `_state` is nil. Default single-queue branch preserved (byte-identical). Substrate for L4.e.β retiring per-field ivar writes."
+    (let [prog       (lower-src (str "def Counter:\n"
+                                     "    n: Int! = 0\n\n"
+                                     "    -> running\n\n"
+                                     "    running <: bump -> running\n"
+                                     "        then: n => n + 1\n\n"
+                                     "def main:\n"
+                                     "    -> running\n        then: print(0)\n"))
+          c-src      (emit/emit prog)
+          norm       (fn [s] (str/join "\n" (map str/triml (str/split-lines s))))
+          normalized (norm c-src)]
+      (is (str/includes? normalized "#if !CXC_SINGLE_MAIN_QUEUE\nCounter_State *__cxc_snap_src = (Counter_State *)_cxc_atom_state_ptr(&_state);")
+          "concurrent-mode branch loads _state pointer via helper")
+      (is (str/includes? normalized "Counter_State __cxc_snap = __cxc_snap_src ? *__cxc_snap_src : (Counter_State){0};")
+          "nil-safe deref falls back to zero-init struct")
+      (is (str/includes? normalized "#else\nCounter_State __cxc_snap = { ._n = _n };\n#endif")
+          "default-flag branch preserves ivar-sourced init byte-identically"))))
 
 ;; ---------------------------------------------------------------------------
 ;; F33 L2.c — reroute data-field reads inside receive-glyph bodies through
