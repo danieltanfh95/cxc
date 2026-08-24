@@ -321,3 +321,82 @@
                                             mangled-name
                                             shape-node))
                    shapes))))
+
+;; ---------------------------------------------------------------------------
+;; F15 L2.d.i — structural conformance predicate (pure).
+;;
+;; Given a value's declared field list and a required named-tuple
+;; shape's field list, decide whether the value structurally conforms
+;; to the required shape per spec §3.4 and F15 plan §Landing 2:
+;;
+;;   1. Every field named on the required side exists on the value side.
+;;   2. For each such field, the value's declared type is identically
+;;      equal to the required's declared type (invariant — no
+;;      covariance at Landing 2).
+;;   3. The value may carry additional fields the required doesn't
+;;      name (width subtyping).
+;;
+;; Pure fn — no coupling to record-env representation or lower state.
+;; Callers extract `{:name :type}` seqs on their side and hand them in.
+;; Follow-on sub-landing wires this into lower's arg-vs-param check at
+;; the sites listed in F15 plan §Landing 2 "Files to touch" (paired
+;; with L2.c.iii.c so lower can survive `:type-named-tuple` params
+;; reaching the C-emit path).
+;;
+;; Type-equality uses Clojure structural equality: two `:type-ref` /
+;; `:type-nonnil` / `:type-named-tuple` / `:type-of` nodes are equal
+;; iff their maps have identical keys and values. Nullability-sensitive
+;; automatically (`Nn_<T>` and bare `<T>` differ in the `:node` tag).
+;; ---------------------------------------------------------------------------
+
+(defn structural-conforms?
+  "F15 L2.d predicate — does a value's field list structurally conform
+   to a required named-tuple's field list?
+
+   Rule (spec §3.4 + F15 plan §Landing 2 — invariant field types,
+   width subtyping allowed):
+   1. Every required field must appear on the value side by name.
+   2. Value's field type equals required's field type (Clojure
+      structural equality on the type node — nullability-sensitive).
+   3. Value may carry additional fields not named by the required
+      shape.
+
+   Args:
+     value-fields    — seq of maps carrying at least `:name` and
+                       `:type` (extra keys like `:default` /
+                       `:modifier` are ignored).
+     required-fields — seq of maps carrying `:name` + `:type`.
+
+   Returns one of:
+     {:conforms true}
+     {:conforms false :reason :missing-field :field <name>
+      :available <sorted-vec-of-value-field-names>}
+     {:conforms false :reason :wrong-type :field <name>
+      :expected <type-node> :got <type-node>}
+
+   Field lookup is by exact name (case-sensitive) — field names live
+   in the source's identifier space, not the header/keyword space, so
+   `x` and `X` are distinct fields (spec §3.2)."
+  [value-fields required-fields]
+  (let [value-by-name (into {} (map (juxt :name identity)) value-fields)]
+    (loop [remaining (seq required-fields)]
+      (if-let [req-field (first remaining)]
+        (let [req-name (:name req-field)
+              req-type (:type req-field)
+              v-field  (get value-by-name req-name)]
+          (cond
+            (nil? v-field)
+            {:conforms  false
+             :reason    :missing-field
+             :field     req-name
+             :available (vec (sort (map :name value-fields)))}
+
+            (not= req-type (:type v-field))
+            {:conforms false
+             :reason   :wrong-type
+             :field    req-name
+             :expected req-type
+             :got      (:type v-field)}
+
+            :else (recur (next remaining))))
+        {:conforms true}))))

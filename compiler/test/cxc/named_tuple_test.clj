@@ -446,3 +446,100 @@
                  {:name "id"    :type (nonnil (ref "String"))}]))]
       (is (re-matches #"[A-Za-z_][A-Za-z0-9_]*" n))
       (is (= "_Cxc_NT_count_Int32_id_Nn_String" n)))))
+
+;; ---------------------------------------------------------------------------
+;; F15 L2.d.i — structural-conforms? predicate. Pure fn; no lower
+;; wiring yet. Follow-on landing pairs with L2.c.iii.c so lower can
+;; safely reach the conformance check on `:type-named-tuple` params.
+;; ---------------------------------------------------------------------------
+
+(defn- fld [n t] {:name n :type t})
+
+(deftest structural-conforms-empty-required-conforms-to-anything
+  (testing "F15 L2.d.i — required shape with zero fields imposes no constraint; every value's field list conforms trivially. Corner case worth pinning so callers don't add extra empty-guard logic on top."
+    (is (= {:conforms true}
+           (nt/structural-conforms? [] [])))
+    (is (= {:conforms true}
+           (nt/structural-conforms? [(fld "x" (ref "Int"))] [])))))
+
+(deftest structural-conforms-identical-shape
+  (testing "F15 L2.d.i — same field-set, same types → conforms."
+    (let [reqd  [(fld "x" (ref "Int")) (fld "y" (ref "Int"))]
+          value [(fld "x" (ref "Int")) (fld "y" (ref "Int"))]]
+      (is (= {:conforms true}
+             (nt/structural-conforms? value reqd))))))
+
+(deftest structural-conforms-width-subtyping-allowed
+  (testing "F15 L2.d.i — value MAY carry additional fields beyond those the required side names (§3.4 width subtyping). Extra field `z` doesn't disqualify the match."
+    (let [reqd  [(fld "x" (ref "Int")) (fld "y" (ref "Int"))]
+          value [(fld "x" (ref "Int")) (fld "y" (ref "Int"))
+                 (fld "z" (ref "Int"))]]
+      (is (= {:conforms true}
+             (nt/structural-conforms? value reqd))))))
+
+(deftest structural-conforms-field-order-independence
+  (testing "F15 L2.d.i — field lookup is by name, not by position. Declared-order on either side is irrelevant to the conformance decision (mirrors the L2.a canonical-mangling discipline)."
+    (let [reqd  [(fld "x" (ref "Int")) (fld "y" (ref "Int"))]
+          value [(fld "y" (ref "Int")) (fld "x" (ref "Int"))]]
+      (is (= {:conforms true}
+             (nt/structural-conforms? value reqd))))))
+
+(deftest structural-conforms-missing-field-rejected
+  (testing "F15 L2.d.i — required field absent from value → :missing-field with the missing name and a sorted list of what the value DID have. Callers turn `:available` into an actionable diagnostic (‘value has fields {x}, expected {x, y}’)."
+    (let [reqd  [(fld "x" (ref "Int")) (fld "y" (ref "Int"))]
+          value [(fld "x" (ref "Int"))]
+          r     (nt/structural-conforms? value reqd)]
+      (is (= false (:conforms r)))
+      (is (= :missing-field (:reason r)))
+      (is (= "y" (:field r)))
+      (is (= ["x"] (:available r))))))
+
+(deftest structural-conforms-wrong-type-rejected
+  (testing "F15 L2.d.i — field present but type differs → :wrong-type carrying both the expected and got type nodes. Type equality is Clojure structural — nullability-sensitive (see next test)."
+    (let [reqd  [(fld "x" (ref "Int32"))]
+          value [(fld "x" (ref "Int64"))]
+          r     (nt/structural-conforms? value reqd)]
+      (is (= false (:conforms r)))
+      (is (= :wrong-type (:reason r)))
+      (is (= "x" (:field r)))
+      (is (= (ref "Int32") (:expected r)))
+      (is (= (ref "Int64") (:got r))))))
+
+(deftest structural-conforms-nullability-sensitive
+  (testing "F15 L2.d.i — invariant nullability per F15 plan §7.4: `Int` and `Int!` are DISTINCT at the structural check. Value with a nullable field can't stand in where the required shape asks for `Int!` (would violate the non-nil contract at the target); value with `Int!` can't stand in for `Int` under Landing 2's invariant rule (covariant relaxation is a follow-on, not landed)."
+    (let [reqd     [(fld "x" (nonnil (ref "Int")))]
+          val-null [(fld "x" (ref "Int"))]
+          val-nn   [(fld "x" (nonnil (ref "Int")))]
+          reqd-null [(fld "x" (ref "Int"))]]
+      (is (= :wrong-type
+             (:reason (nt/structural-conforms? val-null reqd)))
+          "bare `Int` ≠ required `Int!`")
+      (is (= {:conforms true}
+             (nt/structural-conforms? val-nn reqd))
+          "matching `Int!` on both sides conforms")
+      (is (= :wrong-type
+             (:reason (nt/structural-conforms? val-nn reqd-null)))
+          "`Int!` ≠ required `Int` under Landing 2 invariant rule"))))
+
+(deftest structural-conforms-reports-first-missing-field
+  (testing "F15 L2.d.i — when multiple required fields are absent, the loop returns the first observed miss (iteration order = required's declared order). Callers get a single actionable diagnostic per check; a batch report would need a separate helper. Fine for the target callsite (per-arg param check)."
+    (let [reqd  [(fld "x" (ref "Int"))
+                 (fld "y" (ref "Int"))
+                 (fld "z" (ref "Int"))]
+          value []
+          r     (nt/structural-conforms? value reqd)]
+      (is (= :missing-field (:reason r)))
+      (is (= "x" (:field r)))
+      (is (= [] (:available r))))))
+
+(deftest structural-conforms-nested-named-tuple-field-type
+  (testing "F15 L2.d.i — a nested `:type-named-tuple` field participates via structural equality on the type node. Two identical nested-tuple type nodes match; a differing nested shape reports `:wrong-type`. No recursion into the nested shape happens at this landing — that's future Landing 6-style base-property pipeline, or a covariance-relaxation follow-on."
+    (let [inner-xy (nt-node "x" "Int" "y" "Int")
+          inner-yz (nt-node "y" "Int" "z" "Int")
+          reqd  [(fld "point" inner-xy)]
+          v-ok  [(fld "point" inner-xy)]
+          v-bad [(fld "point" inner-yz)]]
+      (is (= {:conforms true}
+             (nt/structural-conforms? v-ok reqd)))
+      (is (= :wrong-type
+             (:reason (nt/structural-conforms? v-bad reqd)))))))
