@@ -2403,6 +2403,49 @@ def main:
     -> running
 ")))))
 
+(deftest l9-or-continuation-parses-and-lowers-to-sync-send-with-recovery
+  (testing "L9 (2026-08-26) — a sync `|>` send followed by an `or:` block parses into an `:emit` node carrying `:or-body`, which lowers to `:sync-send-with-recovery` and emits a Cocoa `@try/@catch` around the send-call. MVP handles bare `or:` with statement bodies; binding (`or e:`) and pattern-matched (`or T:`) variants are a follow-on."
+    (let [emitted (emit/emit (lower-src "def Sink:
+    n: Int! = 0
+
+    alive <: pulse -> alive
+        |: n < 3
+        then: n => n + 1
+
+def Boss:
+    s: Sink = Sink()
+
+    -> running
+        then:
+            |> s.pulse()
+            or:
+                |> s.pulse()
+
+def main:
+    b: Boss = Boss()
+    -> running
+"))]
+      (is (str/includes? emitted "@try {")
+          "sync send with or: emits a @try wrap")
+      (is (str/includes? emitted "cxc_wait_for_processing")
+          "the wrapped body still calls the sync-send helper")
+      (is (str/includes? emitted "@catch (NSException *__cxc_or_e)")
+          "@catch binds the exception for the recovery scope"))))
+
+(deftest l9-or-continuation-only-on-sync-sends
+  (testing "L9 — `or:` continuation is defined only for sync `|>` sends. Async `:>` sends are fire-and-forget with no caller-frame boundary the recovery block could run in; the parser only look-aheads for `or:` at the `|>` position, so `:>`-followed-by-`or:` lands as an unrelated `or` statement token — parse error is the current diagnostic."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"unexpected keyword or in expression"
+         (lower-src "def A:
+    n: Int! = 0
+    * <: bump -> *
+        then:
+            :> ping
+            or:
+                n => n + 1
+")))))
+
 (deftest f31-f35-l2-panic-lowers-to-inline-trap
   (testing "F31/F35 Landing 2 — `panic(\"msg\")` lowers to an inline expr that prints `panic: <msg>` + backtrace and calls `__builtin_trap()`. Uncatchable (bypasses `@try/@catch`); BEAM-style transition isolation is preserved separately."
     (let [prog (lower-src "def main:\n    -> running\n        then: panic(\"boom\")\n")

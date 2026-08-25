@@ -1275,36 +1275,65 @@
     ;;   New form: |> receiver.method(args)     — I6 canonical
     ;;   Legacy:   |> msg(args)                 — Stage 1 accepts (Stage 3 retires)
     ;;   Legacy:   |> msg                       — Stage 1 accepts (Stage 3 retires)
-    (let [[e p] (parse-expr tokens (inc pos))]
-      (cond
-        (and (= :call (:node e))
-             (= :dot (:node (:callee e))))
-        [{:node :emit
-          :async? false
-          :target (:target (:callee e))
-          :msg    (:field  (:callee e))
-          :args   (:args e)} p]
+    ;;
+    ;; L9 (2026-08-26) — optional `or:` continuation attaches a
+    ;; failure-recovery block. Shape:
+    ;;   |> receiver.method(args)
+    ;;   or:
+    ;;       <recovery-body>
+    ;; The recovery body fires when the sync send's block throws (F48
+    ;; @try/@catch catches). MVP is bare `or:`; binding (`or e:`) and
+    ;; pattern-matched (`or InvariantViolation:`) variants are a
+    ;; follow-on landing.
+    (let [[e p] (parse-expr tokens (inc pos))
+          emit-node
+          (cond
+            (and (= :call (:node e))
+                 (= :dot (:node (:callee e))))
+            {:node :emit
+             :async? false
+             :target (:target (:callee e))
+             :msg    (:field  (:callee e))
+             :args   (:args e)}
 
-        (and (= :call (:node e))
-             (= :ident (:node (:callee e))))
-        [{:node :emit
-          :async? false
-          :target nil
-          :msg    (:name (:callee e))
-          :args   (:args e)} p]
+            (and (= :call (:node e))
+                 (= :ident (:node (:callee e))))
+            {:node :emit
+             :async? false
+             :target nil
+             :msg    (:name (:callee e))
+             :args   (:args e)}
 
-        (= :ident (:node e))
-        [{:node :emit
-          :async? false
-          :target nil
-          :msg    (:name e)
-          :args   []} p]
+            (= :ident (:node e))
+            {:node :emit
+             :async? false
+             :target nil
+             :msg    (:name e)
+             :args   []}
 
-        :else
-        (fail! tokens pos
-               (str "prefix `|>` expected a call expression on the right-hand side "
-                    "(F70 I6: `|> receiver.method(args)`), or legacy bare form "
-                    "(`|> msg(args)` — retired in Stage 3)"))))
+            :else
+            (fail! tokens pos
+                   (str "prefix `|>` expected a call expression on the right-hand side "
+                        "(F70 I6: `|> receiver.method(args)`), or legacy bare form "
+                        "(`|> msg(args)` — retired in Stage 3)")))
+          ;; L9 look-ahead: NEWLINE `or` `:` NEWLINE INDENT starts the
+          ;; recovery block. Anything else (dedent / next statement)
+          ;; leaves the emit un-decorated. Colon-then-block always
+          ;; emits NEWLINE INDENT (see other section starts) so both
+          ;; separators are consumed here before parse-block sees INDENT.
+          has-or?
+          (and (at? tokens p :newline)
+               (at? tokens (inc p) :kw "or")
+               (at? tokens (+ p 2) :punct ":")
+               (at? tokens (+ p 3) :newline)
+               (at? tokens (+ p 4) :indent))
+          [decorated p2]
+          (if has-or?
+            (let [p (+ p 4)
+                  [block p3] (parse-block tokens p)]
+              [(assoc emit-node :or-body (:stmts block)) p3])
+            [emit-node p])]
+      [decorated p2])
 
     ;; F20 REJECTED 2026-08-18 — `for e in xs: body` sugar retires.
     ;; Spec §3.7.1 line 3885 rationale for no-destructuring:

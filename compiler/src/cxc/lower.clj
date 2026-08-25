@@ -5254,15 +5254,31 @@
         arg-exprs (mapv (fn [{:keys [value]}] (lower-expr value ctx)) resolved)
         param-names (mapv :name (:payload msg-shape))
         selector  (objc-method-selector msg-name param-names)
-        helper    (if (:async? node) "cxc_send_async" "cxc_wait_for_processing")]
-    {:node :call
-     :fn   helper
-     :args [target-lo
-            {:node :objc-block-literal
-             :stmts [{:node :objc-msg
-                      :recv target-lo
-                      :selector selector
-                      :args arg-exprs}]}]})))
+        helper    (if (:async? node) "cxc_send_async" "cxc_wait_for_processing")
+        send-call {:node :call
+                   :fn   helper
+                   :args [target-lo
+                          {:node :objc-block-literal
+                           :stmts [{:node :objc-msg
+                                    :recv target-lo
+                                    :selector selector
+                                    :args arg-exprs}]}]}
+        ;; L9 (2026-08-26) — `or:` continuation attaches a failure-
+        ;; recovery body. Applies to sync sends only (async is
+        ;; fire-and-forget: no completion the caller can observe).
+        or-body   (:or-body node)
+        _         (when (and or-body (:async? node))
+                    (fail-nyi!
+                     (str "L9: `or:` continuation on an async `:>` send — "
+                          "async is fire-and-forget so recovery has "
+                          "no defined caller frame to run in. Use sync "
+                          "`|>` for recoverable sends.")
+                     node))]
+    (if or-body
+      {:node       :sync-send-with-recovery
+       :send-call  send-call
+       :or-body    (mapv (fn [s] (lower-stmt s ctx)) or-body)}
+      send-call))))
 
 ;; ---------------------------------------------------------------------------
 ;; F69 L4b — Lower `<:` dispatch to inline tag-check chain.

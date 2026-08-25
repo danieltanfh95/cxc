@@ -660,6 +660,27 @@
     (str "if ([slotName isEqualToString:@\""
          (escape-c-string (:slot-name node)) "\"]) { _"
          (:slot-name node) " = nil; return; }")
+    :sync-send-with-recovery
+    ;; L9 (2026-08-26) — sync `|>` send with an `or:` recovery block.
+    ;; Wraps the send-call in an @try; the @catch runs the or-body if
+    ;; the target's transition threw (F48 rollback path).
+    ;;
+    ;; Under Layer 4 single-main-queue, `cxc_wait_for_processing` runs
+    ;; the block synchronously on the caller's frame; exceptions
+    ;; propagate through and land here. F32 concurrent queues will
+    ;; need a dedicated helper (`cxc_wait_for_processing_or_fail`) that
+    ;; captures the failure across the dispatch_sync boundary; MVP
+    ;; assumes Layer 4 semantics.
+    (let [send-c   (emit-stmt (:send-call node))
+          or-body  (str/join "\n" (map emit-stmt (:or-body node)))
+          or-block (indent-lines 4 (if (str/blank? or-body) "(void)0;" or-body))]
+      (str "@try {\n"
+           (indent-lines 4 (if (str/ends-with? send-c ";")
+                             send-c
+                             (str send-c ";")))
+           "\n} @catch (NSException *__cxc_or_e) {\n"
+           or-block
+           "\n}"))
     :end-catch-wrap
     ;; BEAM-style error containment (design §20). Wraps a transition-
     ;; branch body: any exception thrown by then:/do:/invariants
