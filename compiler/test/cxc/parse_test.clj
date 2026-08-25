@@ -293,14 +293,11 @@
                    (.getMessage ex))
           "diagnostic mentions preserving args on the RHS"))))
 
-(deftest game-toys-awaits-p9-surface-migration
-  (testing "L4/D3 — the still-unmigrated game-toys design sample is rejected at its first retired `use:` header. Block P9 owns the full sample migration; L4 must not retain a compatibility parser just to keep this future fixture green."
-    (let [src (slurp "../design/examples/game-toys.cxc")
-          ex  (try (p/parse src)
-                   nil
-                   (catch clojure.lang.ExceptionInfo e e))]
-      (is ex "the old-surface game-toys sample must not parse after hard retirement")
-      (is (re-find #"`use:` section header is retired" (.getMessage ex))))))
+(deftest game-toys-parses-under-v1-surface
+  (testing "L14/P9 completion pin — game-toys design sample has been migrated to the v1.0 consolidated surface (arm-head `|:`, `use <name>: <T>` keyword lines, no retired section headers). The sample must parse cleanly; any regression that reintroduces retired syntax in the fixture fails here."
+    (let [src (slurp "../design/examples/game-toys.cxc")]
+      (is (some? (p/parse src))
+          "the migrated game-toys sample must parse under v1.0 surface"))))
 
 (deftest f20-for-sugar-rejected
   (testing "F20 REJECTED 2026-08-18 — `for e in xs: body` sugar retires; iteration is method dispatch per spec §3.7.1 rationale 3. Parser emits a targeted diagnostic pointing at `.for_each` rather than a generic parse error."

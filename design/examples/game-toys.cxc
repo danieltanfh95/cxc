@@ -56,8 +56,7 @@
 # There is no top-level `|>`. Every subscription is a receive-glyph transition
 # whose source expression may compose transformers via `|>`:
 #
-#   running <: mouse.moves |> Debounce(duration: Duration(millis: 200)) (pos: Position)
-#   -> running
+#   running <: mouse.moves |> Debounce(duration: Duration(millis: 200)) (pos: Position) -> running
 #       then: |> cursor.update(pos: pos)
 #
 # Each anonymous transformer is a sub-atom whose lifecycle is bound to the
@@ -65,18 +64,23 @@
 #
 # ── Transition-line shape ───────────────────────────────────────────────────
 #
-#   <source> <:|<| <msg>[(args)]                    # or `<source> when: <cond>` for guard-only triggers
-#   -> <target>
-#       when: <additional guard>                    # optional
+#   <source> <:|<| <msg>[(args)] -> <target>        # header on one line when it fits
+#       |: <proposition>                            # optional arm-scoped invariant;
+#                                                   #   own line, before `then:`;
+#                                                   #   arm fires iff proposition
+#                                                   #   holds; may repeat
 #       then: <entries>+                            # unified effect clause (F70 I3):
 #                                                   #   field updates (<field> => <expr>)
 #                                                   #   side-effect stmts (:> emit, |> sync send, print, ...)
 #                                                   #   let-bindings (let <name> = <expr>; F18 L1' Landing 2)
 #                                                   # Multiple `then:` blocks allowed; merge at lowering.
 #
-#   Header may be written on one or two lines (user's choice). Body always
-#   indented. `when:` composes with `<:` / `<|` (receive is the trigger;
-#   `when:` narrows further).
+#   Header may be split across lines if long; keep it on one line when
+#   under ~80 chars. Body always indented. `|:` on its own line inside an
+#   arm (before `then:`) is the single spelling for arm-scoped invariants
+#   and per-arm guards — the same marker used at def-body, inside-then,
+#   and observation-body positions (four-position unification per v1.0
+#   consolidation).
 #
 # ── Wildcard-source (on-enter) form ─────────────────────────────────────────
 #
@@ -108,10 +112,18 @@
 # Reserve union types for genuinely-polymorphic disjoint values (message
 # payloads, result types) where the variants have no transition rules.
 #
+# ── Capabilities ────────────────────────────────────────────────────────────
+#
+# `use <name>: <Type>` at atom body level declares a capability slot the
+# parent must satisfy at construction. Multiple `use` lines stack. Children
+# inherit the parent's capability env unless explicitly overridden. The old
+# `use:` section header is retired at v1.0 — the keyword form is the single
+# spelling.
+#
 # ── External inputs ─────────────────────────────────────────────────────────
 #
 # The substrate has no OS primitives (§1.12). Every external stimulus enters
-# through a capability atom in `env`. `clock.every(...)`, `input.pressed`,
+# through a capability atom in the env. `clock.every(...)`, `input.pressed`,
 # etc. are ordinary streams / capability emissions — subscribe via a
 # receive-glyph transition whose source expression addresses them directly.
 #
@@ -145,16 +157,14 @@ def Vector2:
 # =============================================================================
 
 def Paddle:
-    use:
-        input: KeyboardInput
+    use input: KeyboardInput
 
     max_speed:     Float = 500.0
     screen_bounds: Float = 360.0
     y:             Float = 0.0
     velocity:      Float = 0.0
 
-    invariants:
-        -screen_bounds <= y <= screen_bounds
+    |: -screen_bounds <= y <= screen_bounds
 
     position :< y
     moving   :< velocity != 0.0
@@ -168,20 +178,17 @@ def Paddle:
 
     # ---- Phase transitions triggered by key events from the input capability.
     #      The receive-glyph source references `input.pressed` / `input.released`
-    #      directly — no free-standing wire needed to route the stream. ----
-    # Block form: source + receive on the header line, arrow + target on the
-    # same line, `when:` in the indented body. Reads left-to-right: "on this
-    # receive, go to that target, gated by this guard". The compiler AND-folds
-    # header-when and body-when into one guard, so the two spellings are
-    # semantically identical — pick whichever is clearer per site.
+    #      directly — no free-standing wire needed to route the stream.
+    #      Arm-scoped `|:` on its own line narrows the trigger with a per-arm
+    #      guard (before `then:`).
     idle <: input.pressed(key: Key)  -> up
-        when: key == Key.arrow_up
+        |: key == Key.arrow_up
     idle <: input.pressed(key: Key)  -> down
-        when: key == Key.arrow_down
+        |: key == Key.arrow_down
     up   <: input.released(key: Key) -> idle
-        when: key == Key.arrow_up
+        |: key == Key.arrow_up
     down <: input.released(key: Key) -> idle
-        when: key == Key.arrow_down
+        |: key == Key.arrow_down
 
     # ---- Continuous accumulator: tick from parent's clock ----
     self <: tick(dt: Duration) -> self
@@ -216,17 +223,15 @@ def ActionMachine(clock: Clock):
     #      compound-scope defaults cover it. ----
 
     # ---- Start a cast (async command from parent) ----
-    idle <: start_cast(target: Position, cast_time: Duration)
-    -> casting_fireball
+    idle <: start_cast(target: Position, cast_time: Duration) -> casting_fireball
         then:
             fireball_target    => target
             fireball_cast_time => cast_time
             cast_started_at    => clock.now
 
     # ---- Cast completes naturally (time-triggered) ----
-    casting_fireball
-    when: clock.after(cast_started_at + fireball_cast_time)
-    -> idle
+    casting_fireball -> idle
+        |: clock.after(cast_started_at + fireball_cast_time)
         then:
             fireball_target    => nil
             fireball_cast_time => nil
@@ -234,8 +239,7 @@ def ActionMachine(clock: Clock):
             :> cast_completed(target: fireball_target)
 
     # ---- Cast canceled (async command from parent; e.g. on damage) ----
-    casting_fireball <: cancel_cast
-    -> idle
+    casting_fireball <: cancel_cast -> idle
         then:
             fireball_target    => nil
             fireball_cast_time => nil
@@ -259,9 +263,8 @@ def ActionMachine(clock: Clock):
 # =============================================================================
 
 def Player(max_hp: Int = 100, starting_mana: Int = 50):
-    use:
-        clock: Clock
-        input: KeyboardInput
+    use clock: Clock
+    use input: KeyboardInput
 
     max_hp_val:         Int      = max_hp
     starting_mana_val:  Int      = starting_mana
@@ -285,9 +288,8 @@ def Player(max_hp: Int = 100, starting_mana: Int = 50):
         mana => starting_mana_val
 
     # ---- Cast fireball: create the ActionMachine sub-atom in the slot ----
-    alive <: cast_fireball
-    -> alive
-        when: can_cast and mana >= fireball_mana_cost and (action is nil)
+    alive <: cast_fireball -> alive
+        |: can_cast and mana >= fireball_mana_cost and (action is nil)
         then:
             mana         => mana - fireball_mana_cost
             last_cast_at => clock.now
@@ -296,31 +298,28 @@ def Player(max_hp: Int = 100, starting_mana: Int = 50):
             :> fireball_launched
 
     # ---- Take damage: cancel any in-flight cast, then apply damage ----
-    alive <: take_damage(amount: Int)
-    -> alive
-        when: hp > amount and amount >= 0
+    alive <: take_damage(amount: Int) -> alive
+        |: hp > amount and amount >= 0
         then:
             hp => hp - amount
             action :> cancel_cast()   # no-op if action is nil (send-to-nil is nil-punned)
 
     # ---- Lethal damage: transition to dead ----
-    alive <: take_damage(amount: Int)
-    -> dead
-        when: hp <= amount and amount >= 0
+    alive <: take_damage(amount: Int) -> dead
+        |: hp <= amount and amount >= 0
         then:
             action :> cancel_cast()
             :> died
 
     # ---- React to cast completion event from sub-atom ----
-    alive <: action.cast_completed(target: Position)
-    -> alive
+    alive <: action.cast_completed(target: Position) -> alive
         then: :> fireball_flew(target: target)
 
     # ---- OS-driven input: receive-glyph transitions with source-expression
     #      filtering. When cast_key is pressed, self-send cast_fireball to
     #      trigger the cast_fireball transition above. ----
-    alive <: input.pressed(key: Key) when: key == cast_key
-    -> alive
+    alive <: input.pressed(key: Key) -> alive
+        |: key == cast_key
         then: self :> cast_fireball
 
     # Note: `dead` phase has no declared transitions, so all messages
@@ -347,29 +346,25 @@ def Enemy(start: Vector2, hp: Int = 20, velocity: Vector2 = Vector2(x: -100.0, y
     pos:             Vector2 = start
     health:          Int    = hp
 
-    invariants:
-        health >= death_threshold
+    |: health >= death_threshold
 
     position :< pos
 
     # ---- Init transition implicit: init -> alive on construction. ----
 
     # ---- Take non-lethal damage ----
-    alive <: take_damage(amount: Int)
-    -> alive
-        when: health > amount + death_threshold and amount >= 0
+    alive <: take_damage(amount: Int) -> alive
+        |: health > amount + death_threshold and amount >= 0
         then: health => health - amount
 
     # ---- Take lethal damage — emit `died`; parent subscribes via fan-in
     #      on its `active_enemies` List. Enemy stays oblivious to its parent.
-    alive <: take_damage(amount: Int)
-    -> dead
-        when: health <= amount + death_threshold and amount >= 0
+    alive <: take_damage(amount: Int) -> dead
+        |: health <= amount + death_threshold and amount >= 0
         then: :> died
 
     # ---- Continuous accumulator: tick updates position ----
-    alive <: tick(dt: Duration)
-    -> alive
+    alive <: tick(dt: Duration) -> alive
         then: pos => pos.plus(velocity.scaled(dt.to_seconds()))
 
     # ---- Cleanup: transition to `end` after `died` is emitted so the atom
@@ -389,9 +384,8 @@ def Enemy(start: Vector2, hp: Int = 20, velocity: Vector2 = Vector2(x: -100.0, y
 # =============================================================================
 
 def EnemySpawner:
-    use:
-        clock:  Clock
-        random: Random
+    use clock:  Clock
+    use random: Random
 
     spawn_rate:     Duration      = Duration(millis: 2000)
     spawn_x:        Float         =  800.0
@@ -408,13 +402,11 @@ def EnemySpawner:
     # emission; carries the element identity + original event args (none here).
     # After emitting, Enemy transitions to `end`; List's element_removed fires;
     # `active_enemies` auto-shrinks without an explicit filter here.
-    self <: active_enemies.died(e: Enemy)
-    -> self
+    self <: active_enemies.died(e: Enemy) -> self
         then: :> enemy_scored(e: e)          # e.g., score update, sfx trigger
 
     # ---- Periodic spawn — receive-glyph on the clock's periodic stream ----
-    self <: clock.every(spawn_rate)(_: Instant)
-    -> self
+    self <: clock.every(spawn_rate)(_: Instant) -> self
         then:
             let random_y = random.range_int(spawn_y_min, spawn_y_max).to_float()
             let new_enemy = Enemy(start: Vector2(x: spawn_x, y: random_y),
@@ -427,8 +419,7 @@ def EnemySpawner:
 # =============================================================================
 
 def Game:
-    use:
-        clock: Clock
+    use clock: Clock
 
     tick_rate: Duration = Duration(millis: 16)
 
@@ -444,8 +435,7 @@ def Game:
 
     # ---- OS-driven tick fan-out — receive-glyph on the clock's periodic
     #      stream; each tick fans out to paddle and to each active enemy. ----
-    self <: clock.every(tick_rate)(_: Instant)
-    -> self
+    self <: clock.every(tick_rate)(_: Instant) -> self
         then:
             paddle :> tick(dt: tick_rate)
             spawner.active_enemies.for_each(e => e :> tick(dt: tick_rate))
@@ -456,17 +446,16 @@ def Game:
 # =============================================================================
 #
 # The atom named `main` at module top level is the runtime entry point.
-# The OS runtime instantiates it, provides `env` (capability atoms in `use:`),
-# and drives the implicit `init -> running` transition on process start.
-# Same shape as any other def-atom — case convention (`main` lowercase vs
-# other atoms PascalCase) carries the role signal.
+# The OS runtime instantiates it, provides capabilities (declared with the
+# `use` keyword), and drives the implicit `init -> running` transition on
+# process start. Same shape as any other def-atom — case convention (`main`
+# lowercase vs other atoms PascalCase) carries the role signal.
 
 def main:
-    use:
-        clock:   Clock
-        input:   KeyboardInput
-        random:  Random
-        console: Console
+    use clock:   Clock
+    use input:   KeyboardInput
+    use random:  Random
+    use console: Console
 
     game: Game = Game()
 
