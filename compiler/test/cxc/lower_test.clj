@@ -2119,11 +2119,10 @@ def main:
 ;; directly (no fail-nyi wall to enforce).
 
 (deftest f9-l2-protocol-lowers-and-registers
-  (testing "F9 Landing 2 — a `protocol` declaration lowers cleanly and its `accepts:` entries land in the program's :protocols map. Registration-only for now — dispatch wires in L4, conformance validation in L5."
+  (testing "L5 — a signature-only def lowers cleanly and its sync/async declarations populate the unchanged internal :accepts protocol map."
     (let [prog (lower-src (str "def P:\n"
-                               "    accepts:\n"
-                               "        foo(x: Int) -> Int\n"
-                               "        bar(s: String) -> Bool\n"
+                               "    foo(x: Int) :< Int\n"
+                               "    <: bar(s: String)\n"
                                "\n"
                                "def main:\n"
                                "    -> running\n"
@@ -2140,8 +2139,7 @@ def main:
 (deftest f9-l2-protocol-with-default-observables-registered
   (testing "F9 Landing 2 + F67 L4 — protocols may carry default observable bodies; L2 stores them under :defaults for L6 (inheritance) to consume. Under Proposal G class-body collapse, defaults are observables, not `methods:` entries."
     (let [prog (lower-src (str "def P:\n"
-                               "    accepts:\n"
-                               "        greet() -> Int\n"
+                               "    greet() :< Int\n"
                                "\n"
                                "    greet() :< 42\n"
                                "\n"
@@ -2153,15 +2151,14 @@ def main:
       (is (= 1 (count (:defaults proto))))
       (is (= "greet" (:name (first (:defaults proto))))))))
 
-(deftest f9-l2-duplicate-accepts-rejected
-  (testing "F9 Landing 2 — duplicate `accepts` entry names in the same protocol fail at lower: each selector appears at most once in a protocol's surface (§3.4.5)."
+(deftest f9-l2-duplicate-signatures-rejected
+  (testing "L5 — duplicate signature names in the same protocol fail at lower: each selector appears at most once in a protocol's surface (§3.4.5)."
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
-         #"declares `accepts` entry `foo` more than once"
+         #"declares signature `foo` more than once"
          (lower-src (str "def P:\n"
-                         "    accepts:\n"
-                         "        foo(x: Int) -> Int\n"
-                         "        foo(y: String) -> Bool\n"
+                         "    foo(x: Int) :< Int\n"
+                         "    foo(y: String) :< Bool\n"
                          "\n"
                          "def main:\n"
                          "    -> running\n"
@@ -2201,8 +2198,7 @@ def main:
 (deftest f9-l3-extension-may-target-protocol
   (testing "F9 Landing 3 — `extend P:` where P is a protocol is legal at L3: extension-env just records; L6 handles default-method inheritance from extension observables (F67 L4)."
     (let [prog (lower-src (str "def P:\n"
-                               "    accepts:\n"
-                               "        foo(x: Int) -> Int\n"
+                               "    foo(x: Int) :< Int\n"
                                "\n"
                                "extend P:\n"
                                "    bar() :< 1\n"
@@ -2303,8 +2299,7 @@ def main:
 (deftest f9-l4-extension-conforms-union
   (testing "F9 Landing 4 — extension-added conformances union into the target's `:conforms` at composition time."
     (let [prog (lower-src (str "def P:\n"
-                               "    accepts:\n"
-                               "        m(self) -> Int\n"
+                               "    m(self) :< Int\n"
                                "\n"
                                "def Widget:\n"
                                "    n: Int\n"
@@ -2343,11 +2338,10 @@ def main:
 ;; fail-compile with §3.4.5-pointer diagnostics.
 ;; ---------------------------------------------------------------------------
 
-(deftest f9-l5-conformance-satisfied-by-extension-observable
-  (testing "F9 Landing 5 + F67 L4 — `extend Widget(P):` supplying `m` (as an observable) matching P's accepts entry validates cleanly."
+(deftest l5-sync-and-async-signature-conformance
+  (testing "F9 Landing 5 + L5 — `extend Widget(P):` supplying `m` (as an observable) matching P's sync signature validates cleanly."
     (let [prog (lower-src (str "def P:\n"
-                               "    accepts:\n"
-                               "        m() -> Int\n"
+                               "    m() :< Int\n"
                                "\n"
                                "def Widget:\n"
                                "    n: Int\n"
@@ -2358,7 +2352,30 @@ def main:
                                "def main:\n"
                                "    -> running\n"
                                "        then: print(0)\n"))]
-      (is (some #(= "Widget_m" (:name %)) (:functions prog))))))
+      (is (some #(= "Widget_m" (:name %)) (:functions prog)))))
+
+  (testing "L5 — an async receive signature is satisfied by the existing wildcard handler transition shape; return type remains void and witness/conformance matching is unchanged."
+    (let [prog (lower-src (str "def Logger:\n"
+                               "    <: warn(msg: String)\n"
+                               "\n"
+                               "def LoggerImpl:\n"
+                               "    -> running\n"
+                               "\n"
+                               "    * <: warn(msg: String) -> *\n"
+                               "        then: print(msg)\n"
+                               "\n"
+                               "extend LoggerImpl(Logger):\n"
+                               "    helper() :< 0\n"
+                               "\n"
+                               "def main:\n"
+                               "    -> running\n"
+                               "        then: print(0)\n"))
+          logger (get-in prog [:protocols "Logger"])
+          impl   (first (filter #(= "LoggerImpl" (:name %)) (:classes prog)))
+          warn   (first (filter #(re-find #"warn" (str (:selector %)))
+                                (:methods impl)))]
+      (is (nil? (get-in logger [:accepts-index "warn" :return-type])))
+      (is (= "void" (:return-type warn))))))
 
 (deftest f67-l4c-extension-replace-shadows-own-suppresses-warning
   (testing "F67 L4c — extension observable prefixed with `replace` intentionally shadows the target class's own observable (§3.3.2 rule 4). Extension wins in the composed observable list; own is dropped; no shadow warning fires."
@@ -2434,13 +2451,12 @@ def main:
                          "        then: print(0)\n"))))))
 
 (deftest f9-l5-missing-method-rejected
-  (testing "F9 Landing 5 — class conforms to protocol but doesn't implement one of its accepts entries and no default is provided → fail-compile."
+  (testing "F9 Landing 5 + L5 — class conforms to protocol but doesn't implement one of its required signatures and no default is provided → fail-compile."
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
          #"claims conformance to `P` but neither implements nor inherits a default for `m`"
          (lower-src (str "def P:\n"
-                         "    accepts:\n"
-                         "        m() -> Int\n"
+                         "    m() :< Int\n"
                          "\n"
                          "def Widget:\n"
                          "    n: Int\n"
@@ -2453,13 +2469,12 @@ def main:
                          "        then: print(0)\n"))))))
 
 (deftest f9-l5-signature-mismatch-return-type-rejected
-  (testing "F9 L5 + F67 L4b — extension observable whose inferred body type does not match the protocol's accepts return type fails conformance with a specific detail line. `observable-methods-view` sources the observable's return type from post-inference `:type-kw`; `signature-mismatch-detail` compares it against the accepts entry's declared return type."
+  (testing "F9 L5 + L5 — extension observable whose inferred body type does not match the protocol's sync return type fails conformance with a specific detail line."
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
          #"return type mismatch — expected `Int`, got `String`"
          (lower-src (str "def P:\n"
-                         "    accepts:\n"
-                         "        m() -> Int\n"
+                         "    m() :< Int\n"
                          "\n"
                          "def Widget:\n"
                          "    n: Int\n"
@@ -2477,8 +2492,7 @@ def main:
          clojure.lang.ExceptionInfo
          #"param name mismatch — expected `x`, got `y`"
          (lower-src (str "def P:\n"
-                         "    accepts:\n"
-                         "        m(x: Int) -> Int\n"
+                         "    m(x: Int) :< Int\n"
                          "\n"
                          "def Widget:\n"
                          "    n: Int\n"
@@ -2496,8 +2510,7 @@ def main:
          clojure.lang.ExceptionInfo
          #"param `x` type mismatch — expected `Int`, got `String`"
          (lower-src (str "def P:\n"
-                         "    accepts:\n"
-                         "        m(x: Int) -> Int\n"
+                         "    m(x: Int) :< Int\n"
                          "\n"
                          "def Widget:\n"
                          "    n: Int\n"
@@ -2512,8 +2525,7 @@ def main:
 (deftest f9-l5-protocol-default-satisfies-conformance
   (testing "F9 Landing 5 + F67 L4 — protocol carries a default observable body for `m`; class declares `conforms: P` and doesn't implement `m` itself. L5 accepts the default's presence as structural satisfaction."
     (let [prog (lower-src (str "def P:\n"
-                               "    accepts:\n"
-                               "        m() -> Int\n"
+                               "    m() :< Int\n"
                                "\n"
                                "    m() :< 42\n"
                                "\n"
@@ -2526,7 +2538,7 @@ def main:
                                "def main:\n"
                                "    -> running\n"
                                "        then: print(0)\n"))]
-      (is (some? prog) "compiles cleanly — default satisfies the accepts"))))
+      (is (some? prog) "compiles cleanly — default satisfies the signature"))))
 
 ;; ---------------------------------------------------------------------------
 ;; F9 Landing 6 — default-method inheritance (explicit-conformance) +
@@ -2538,8 +2550,7 @@ def main:
 (deftest f9-l6-inherits-default-into-composed-table
   (testing "F9 Landing 6 + F67 L4 — class explicitly conforms to P, P provides default observable `m`, class doesn't define `m` — default folded into class's composed :methods and emitted as a C function keyed by the class name."
     (let [prog (lower-src (str "def P:\n"
-                               "    accepts:\n"
-                               "        m() -> Int\n"
+                               "    m() :< Int\n"
                                "\n"
                                "    m() :< 42\n"
                                "\n"
@@ -2563,8 +2574,7 @@ def main:
 (deftest f9-l6-own-method-shadows-default
   (testing "F9 Landing 6 + F67 L4 — when the class defines `m` itself (own or via extension), the own observable wins over the protocol default with no diamond, no warning."
     (let [prog (lower-src (str "def P:\n"
-                               "    accepts:\n"
-                               "        m() -> Int\n"
+                               "    m() :< Int\n"
                                "\n"
                                "    m() :< 42\n"
                                "\n"
@@ -2589,14 +2599,12 @@ def main:
          clojure.lang.ExceptionInfo
          #"diamond ambiguity.*method `m`.*Widget.*`P`.*`Q`"
          (lower-src (str "def P:\n"
-                         "    accepts:\n"
-                         "        m() -> Int\n"
+                         "    m() :< Int\n"
                          "\n"
                          "    m() :< 1\n"
                          "\n"
                          "def Q:\n"
-                         "    accepts:\n"
-                         "        m() -> Int\n"
+                         "    m() :< Int\n"
                          "\n"
                          "    m() :< 2\n"
                          "\n"
@@ -2611,10 +2619,9 @@ def main:
                          "        then: print(0)\n"))))))
 
 (deftest f9-l6b-structural-conformance-inherits-default
-  (testing "F9 Landing 6b + F67 L4b — class does NOT declare `conforms: P` but structurally satisfies P's accepts surface AND P provides helper defaults not covered by accepts → class inherits those defaults implicitly. Helper defaults carry no explicit return type on the observable; downstream C emission derives the return type from the accepts entry when present, and helpers with trivial literal bodies emit via the observable-inference path."
+  (testing "F9 Landing 6b + L5 — class does NOT declare `conforms: P` but structurally satisfies P's signature surface and inherits P's helper default."
     (let [prog (lower-src (str "def P:\n"
-                               "    accepts:\n"
-                               "        iter(self) -> Int\n"
+                               "    iter(self) :< Int\n"
                                "\n"
                                "    count_helper() :< 99\n"
                                "\n"
@@ -2636,8 +2643,7 @@ def main:
 (deftest f9-l6b-protocol-with-no-defaults-not-inherited
   (testing "F9 Landing 6b — a protocol with no defaults produces no inheritance even under structural conformance. Structural-conformance detection is only for inheriting defaults; conforming-without-defaults is a call-site concern (L7+)."
     (let [prog (lower-src (str "def P:\n"
-                               "    accepts:\n"
-                               "        iter(self) -> Int\n"
+                               "    iter(self) :< Int\n"
                                "\n"
                                "def Widget:\n"
                                "    n: Int\n"
@@ -2664,14 +2670,12 @@ def main:
          clojure.lang.ExceptionInfo
          #"diamond ambiguity.*method `helper`.*Widget"
          (lower-src (str "def P:\n"
-                         "    accepts:\n"
-                         "        iter(self) -> Int\n"
+                         "    iter(self) :< Int\n"
                          "\n"
                          "    helper() :< 1\n"
                          "\n"
                          "def Q:\n"
-                         "    accepts:\n"
-                         "        iter(self) -> Int\n"
+                         "    iter(self) :< Int\n"
                          "\n"
                          "    helper() :< 2\n"
                          "\n"
@@ -2690,14 +2694,12 @@ def main:
          clojure.lang.ExceptionInfo
          #"diamond ambiguity.*method `helper`.*Widget"
          (lower-src (str "def P:\n"
-                         "    accepts:\n"
-                         "        iter(self) -> Int\n"
+                         "    iter(self) :< Int\n"
                          "\n"
                          "    helper() :< 1\n"
                          "\n"
                          "def Q:\n"
-                         "    accepts:\n"
-                         "        iter(self) -> Int\n"
+                         "    iter(self) :< Int\n"
                          "\n"
                          "    helper() :< 2\n"
                          "\n"
@@ -2714,14 +2716,12 @@ def main:
 (deftest f9-l6-diamond-resolved-by-own-method
   (testing "F9 Landing 6 + F67 L4 — same P/Q diamond setup + class defines its own `m` → own shadows all defaults per §3.4.4; no diamond error."
     (let [prog (lower-src (str "def P:\n"
-                               "    accepts:\n"
-                               "        m() -> Int\n"
+                               "    m() :< Int\n"
                                "\n"
                                "    m() :< 1\n"
                                "\n"
                                "def Q:\n"
-                               "    accepts:\n"
-                               "        m() -> Int\n"
+                               "    m() :< Int\n"
                                "\n"
                                "    m() :< 2\n"
                                "\n"
@@ -3007,7 +3007,7 @@ def main:
 ;; surface to declare `-> T!` on a reader. Field-level nonnil enforcement
 ;; (writes into `T!` slots) stays intact via `nonnil-check-stmt`. Restoring
 ;; nonnil enforcement on observable returns requires deriving nonnil from
-;; the protocol accepts entry (accepts declares `-> T!` → wrap the derived
+;; the protocol sync signature (`:< T!` wraps the derived
 ;; method body's return) — separate follow-on landing, distinct from the
 ;; observable-header annotation reverted in L4b.
 
@@ -3073,8 +3073,8 @@ def main:
           "name label is the field name"))))
 
 (deftest f39-l5b-ii-d-method-return-value-nonnil-inserts-runtime-check
-  (testing "F39 Landing 5b-ii-d — a def-atom method whose `:cxc-return-ty-node` is `:type-nonnil` (`-> T!`) and whose body reads a bare Optional field emits the runtime presence check on the return path. Reuses the L3 `_Cxc_ret` var-decl + return triple; the check node is `:c-value-nonnil-unwrap` on the return-value binding, replacing L3's pointer nonnil-check for value-typed returns. Only protocol-inherited defaults (Proposal G collapse leaves observables without a return-type annotation surface) carry `:type-nonnil` on `:cxc-return-ty-node`, so the test shape is `extend X(P):` inheriting `strict_read() -> Int!` from P."
-    (let [prog     (lower-src "def P:\n    accepts:\n        strict_read() -> Int!\n\n    strict_read() :< n\n\ndef X:\n    n: Int = 0\n\n    -> running\n\nextend X(P):\n    _dummy() :< 1\n\ndef main:\n    -> running\n        then: print(0)\n")
+  (testing "F39 Landing 5b-ii-d + L5 — a protocol-inherited default whose sync signature returns `T!` inserts the runtime presence check on the return path."
+    (let [prog     (lower-src "def P:\n    strict_read() :< Int!\n\n    strict_read() :< n\n\ndef X:\n    n: Int = 0\n\n    -> running\n\nextend X(P):\n    _dummy() :< 1\n\ndef main:\n    -> running\n        then: print(0)\n")
           cls      (first (filter #(= "X" (:name %)) (:classes prog)))
           m        (first (filter #(= "strict_read" (:selector %)) (:methods cls)))
           ret-decl (first (filter #(and (map? %)

@@ -706,33 +706,39 @@ def main:
 ;; F68 L1 (Proposal H) — full unification under `def`.
 ;; ---------------------------------------------------------------------------
 
-(deftest f68-l1-def-with-accepts-reshapes-to-protocol
-  (testing "F68 L1 — `def Foo:` body containing `accepts:` entries reshapes into `:class :kind :protocol` at parse. Downstream `build-protocol-env` sees the same AST kind that `protocol Foo:` produces."
+(deftest l5-def-with-sync-signatures-reshapes-to-protocol
+  (testing "L5 — a def containing sync observation signatures reshapes into `:class :kind :protocol`, preserving bodyless signature AST nodes for protocol env-build."
     (let [n (first-node (str "def Iterable:\n"
-                             "    accepts:\n"
-                             "        has_next() -> Bool\n"
-                             "        next() -> Element\n"))]
+                             "    has_next() :< Bool\n"
+                             "    next() :< Element\n"))
+          signatures (:body n)]
       (is (= :class (:node n)))
       (is (= :protocol (:kind n)))
       (is (= "Iterable" (:name n)))
-      (is (= 2 (count (:accepts n)))))))
+      (is (= [:observation-signature :observation-signature]
+             (mapv :node signatures)))
+      (is (= ["has_next" "next"] (mapv :name signatures)))
+      (is (= ["Bool" "Element"]
+             (mapv #(get-in % [:return-type :name]) signatures))))))
 
-(deftest f68-l1-def-with-per-entry-accepts-sugar-reshapes-to-protocol
-  (testing "F68 L1 — `def Foo:` body containing `accepts <sig>` per-entry sugar (not a `:` section) also reshapes to protocol."
-    (let [n (first-node (str "def Comparable:\n"
-                             "    accepts compare(self, other: Self) -> Int\n"))]
+(deftest l5-def-with-async-signature-reshapes-to-protocol
+  (testing "L5 — a leading `<:` declaration with no source phase or arrow is an async receive signature and infers protocol kind."
+    (let [n (first-node (str "def Logger:\n"
+                             "    <: warn(msg: String)\n"))
+          sig (first (:body n))]
       (is (= :class (:node n)))
       (is (= :protocol (:kind n)))
-      (is (= 1 (count (:accepts n)))))))
+      (is (= :receive-signature (:node sig)))
+      (is (= "warn" (:name sig)))
+      (is (= "String" (get-in sig [:params 0 :type :name]))))))
 
 (deftest f68-l1-def-protocol-with-ctor-params-rejected
-  (testing "F68 L1 — `def Foo(...)` body with `accepts:` is rejected at parse — protocols declare signatures only and carry no state."
+  (testing "L5 — `def Foo(...)` with signature-only members is rejected at parse — protocols declare no constructor state."
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
          #"F68 L1.*ctor params.*protocols declare signatures only"
          (first-node (str "def Iterable(x: Int):\n"
-                          "    accepts:\n"
-                          "        has_next() -> Bool\n"))))))
+                          "    has_next() :< Bool\n"))))))
 
 (deftest f68-l1-def-with-transition-stays-def-atom
   (testing "F68 L1 — `def Foo:` with a transition stays `:def-atom` (structural detection classifies as class/atom; not reshaped)."
@@ -814,40 +820,42 @@ def main:
              (:conforms n))))))
 
 ;; ---------------------------------------------------------------------------
-;; F9 Landing 2 — parse `accepts:` (section-form and per-entry sugar);
-;; validate kind-vs-section constraints in fold-class-body.
+;; L5 — signature-only defs are the sole protocol declaration surface.
 ;; ---------------------------------------------------------------------------
 
-(deftest f9-l2-accepts-section-parses
-  (testing "F9 Landing 2 — `accepts:` block on a protocol collects each signature into `:accepts` on the class node. Params follow the standard `name: Type` convention (§2.5)."
+(deftest l5-sync-and-async-protocol-signatures-parse
+  (testing "L5 — sync `op(args) :< T` and async `<: name(args)` declarations coexist in a signature-only protocol body."
     (let [n (first-node
              (str "def P:\n"
-                  "    accepts:\n"
-                  "        foo(x: Int) -> Int\n"
-                  "        bar(s: String) -> Bool\n"))]
+                  "    foo(x: Int) :< Int\n"
+                  "    <: bar(s: String)\n"))
+          [sync-sig async-sig] (:body n)]
       (is (= :class    (:node n)))
       (is (= :protocol (:kind n)))
-      (is (= 2 (count (:accepts n))))
-      (is (= "foo" (:name (first  (:accepts n)))))
-      (is (= "bar" (:name (second (:accepts n))))))))
+      (is (= :observation-signature (:node sync-sig)))
+      (is (= "Int" (get-in sync-sig [:return-type :name])))
+      (is (= :receive-signature (:node async-sig)))
+      (is (nil? (:return-type async-sig)))))
 
-;; f9-l2-accepts-per-entry-sugar / accepts-rejected-on-non-protocol /
-;; data-on-protocol-rejected deleted at F68 L6b — the per-entry `accepts <sig>`
-;; sugar lived in parse-class-section (retired); accepts-on-non-protocol and
-;; data-on-protocol were fold-class-body invariants (also retired). Structural
-;; detection in parse-def-atom handles the accepts→protocol / fields→record
-;; classification; there is no non-protocol accepts landing site anymore.
-
-(deftest f9-l2-accepts-contract-clauses-fail-nyi
-  (testing "F9 Landing 2 — `accepts:` entries reject continuation-indented `requires`/`ensures`/effect annotations, with a pointer at F49 (contract inheritance)."
+  (testing "L5 — protocol signatures cannot be mixed with concrete state."
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
-         #"contract clauses.*not yet implemented|F49"
-         (first-node
-          (str "def P:\n"
-               "    accepts:\n"
-               "        foo(x: Int) -> Int\n"
-               "            requires: true\n"))))))
+         #"signature-only protocol.*mixes protocol declarations"
+         (first-node (str "def Bad:\n"
+                          "    op() :< Int\n"
+                          "    n: Int = 0\n"))))))
+
+(deftest l5-accepts-surface-hard-retired
+  (testing "L5 / D3 — both the `accepts:` header and `accepts name(...)` body dispatch hard-fail with the signature-only migration."
+    (doseq [src [(str "def P:\n"
+                      "    accepts:\n"
+                      "        foo(x: Int) -> Int\n")
+                 (str "def P:\n"
+                      "    accepts foo(x: Int) -> Int\n")]]
+      (is (thrown-with-msg?
+           clojure.lang.ExceptionInfo
+           #"are retired at v1.0"
+           (first-node src))))))
 
 ;; ---------------------------------------------------------------------------
 ;; F9 Landing 3 — `extend Foo:` parsing + strict body dispatch;

@@ -25,7 +25,8 @@
 (def reserved-words
   ;; F68 L6b (Proposal H) — `record` / `class` / `enum` / `protocol` /
   ;; `methods` / `metadata` / `cases` retired. `def` is the sole opener;
-  ;; kind flows from body structural cues (accepts:→protocol, case→enum,
+  ;; kind flows from body structural cues (signature-only members→protocol,
+  ;; case→enum,
   ;; transition/use:/ctor params/nested-slot→class, otherwise→record).
   ;;
   ;; F68 L6c — `data` retired (F67 L5 collapsed the `data:` header).
@@ -45,6 +46,9 @@
     "def"
     "alias"
     "use" "invariants"
+    ;; L5 — `accepts` is hard-retired as user syntax. Keep it reserved
+    ;; solely as a migration-diagnostic anchor so parse can reject both
+    ;; `accepts:` and `accepts name(...)` with the signature-only rewrite.
     "accepts"
     "extend" "replace"
     "deprecated"

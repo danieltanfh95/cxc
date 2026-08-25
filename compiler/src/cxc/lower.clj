@@ -80,7 +80,7 @@
 ;;   :structural     — record-shaped (fields + observables only)
 ;;   :tagged-variant — enum-shaped   (case markers only)
 ;;   :agent          — class-shaped  (transitions / use: / ctor params)
-;;   :protocol       — protocol-shaped (accepts:)
+;;   :protocol       — protocol-shaped (signature-only members)
 ;;
 ;; `def-kind` gives lowering-time consumers a single query into the
 ;; three-env world — instead of ad-hoc `(contains? record-env nm)` /
@@ -916,7 +916,11 @@
    at conformance-check time (see `observable-methods-view`) source
    `:cxc-return-ty` from the post-inference `:type-kw` slot on the
    observable-index entry. The entry produced here carries nil
-   `:cxc-return-ty` — the pre-inference view."
+   `:cxc-return-ty` — the pre-inference view.
+
+   L5 — this converter is intentionally for bodyful `:observable` nodes
+   only. Bodyless `:observation-signature` declarations feed protocol
+   accepts/witness entries through `protocol-signature->accepts-entry`."
   [owner-name obs]
   (let [self-param {:name "self" :type nil :default nil}
         with-self  (into [self-param] (:params obs))
@@ -1083,27 +1087,48 @@
 ;; F9 L2 — protocol-env: name -> {:accepts :accepts-index :conforms :defaults}
 ;;
 ;;   :accepts        vec of {:name :params :return-type} — method signatures
-;;                   the protocol requires (from `accepts:` / `accepts <sig>`)
+;;                   derived from sync/async signature-only body nodes
 ;;   :accepts-index  {name -> entry} for O(1) lookup + dupe detection
 ;;   :conforms       vec of type-nodes this protocol extends (protocol->protocol
 ;;                   subtyping; §3.4.5). Validated in L5.
 ;;   :defaults       raw methods-section entries (default implementations).
 ;;                   Parsed and stored here; inheritance semantics land in L6.
 ;;
-;; Type-resolution against protocol accepts entries is deferred — L2 only
+;; Type-resolution against internal protocol entries is deferred — L2 only
 ;; establishes the registry. L5+ validates conforming atoms cover it.
 ;; ---------------------------------------------------------------------------
 
-(defn- protocol-classes [top-nodes]
-  (filter (fn [n] (and (= :class (:node n)) (= :protocol (:kind n))))
+(defn- protocol-defs [top-nodes]
+  "Return defs inferred as protocols from their signature-only body shape.
+   The class/kind check preserves the parser's downstream-stable reshape;
+   inferred-kind also makes this consumer tolerant of a raw signature def."
+  (filter (fn [n]
+            (or (= :protocol (:inferred-kind n))
+                (and (= :class (:node n)) (= :protocol (:kind n)))))
           top-nodes))
 
-(defn- validate-unique-accepts! [proto-name entries]
+(defn- protocol-signature->accepts-entry [sig]
+  (case (:node sig)
+    :observation-signature
+    {:node :accepts-entry
+     :name (:name sig)
+     :params (:params sig)
+     :return-type (:return-type sig)}
+
+    :receive-signature
+    {:node :accepts-entry
+     :name (:name sig)
+     :params (:params sig)
+     :return-type nil}
+
+    nil))
+
+(defn- validate-unique-protocol-signatures! [proto-name entries]
   (let [names (map :name entries)
         dupes (->> names frequencies (filter #(> (val %) 1)) (map key))]
     (when (seq dupes)
       (fail-compile! :cxc-f9-duplicate-accepts
-                     (str "protocol `" proto-name "` declares `accepts` entry `"
+                     (str "protocol `" proto-name "` declares signature `"
                           (first dupes) "` more than once — each selector "
                           "appears at most once in a protocol's surface. "
                           "See spec §3.4.5.")
@@ -1114,7 +1139,7 @@
 (defn- infer-protocol-defaults
   "F67 L4b — post-pass over protocol-env: for each default observable
    whose `:cxc-return-ty` is still nil (helper default with no matching
-   `accepts:` entry), infer the return type by walking the observable
+   protocol signature), infer the return type by walking the observable
    body expression with `infer-type` and stringify via
    `type-kw->cxc-name-str`. Runs AFTER
    `infer-observables-in-{record,atom}-env` so the ctx has real envs
@@ -1142,25 +1167,25 @@
    protocol-env))
 
 (defn- build-protocol-env
-  "Scan top-level `:class` nodes with `:kind :protocol` and build the
-   protocol-env. L2 is registration-only: no cross-protocol conformance
-   validation (L5), no default-method inheritance (L6), no dispatch
-   wiring (L4).
+  "Scan signature-only defs and build the protocol-env. Parser reshapes
+   them to `:class :kind :protocol`, while their async/sync signature AST
+   nodes remain in `:body` as the source of internal accepts/witness entries.
 
-   F67 L4 — protocol defaults are declared as observables (reader) or
-   wildcard self-transitions (side effect / mutation) inside the
-   protocol body. The `methods:` section retires (Proposal G class-body
-   collapse); observables provide the reader-default surface used by
-   F9 L6 default-method inheritance. Return types on default observables
-   fall back to the matching `accepts:` entry's return type (protocols
-   declare the shared shape once); helper defaults without an accepts
-   entry infer via `infer-protocol-defaults` post-inference."
+   F67 L4 — protocol defaults are bodyful observables inside the protocol
+   body. The `methods:` section retires (Proposal G class-body collapse).
+   Return types on default observables fall back to the matching sync
+   signature's return type; helper defaults without a signature infer via
+   `infer-protocol-defaults` post-inference."
   [top-nodes]
   (reduce
    (fn [env p]
      (let [nm       (:name p)
-           accepts  (vec (:accepts p))
-           _        (validate-unique-accepts! nm accepts)
+           signature-nodes (filterv #(contains? #{:observation-signature
+                                                  :receive-signature}
+                                                (:node %))
+                                    (:body p))
+           accepts  (mapv protocol-signature->accepts-entry signature-nodes)
+           _        (validate-unique-protocol-signatures! nm accepts)
            accepts-by-name (into {} (map (juxt :name identity) accepts))
            obs-defaults (filterv #(= :observable (:node %)) (:body p))
            defaults (mapv
@@ -1186,7 +1211,7 @@
                       :conforms      conforms
                       :defaults      defaults})))
    {}
-   (protocol-classes top-nodes)))
+   (protocol-defs top-nodes)))
 
 ;; ---------------------------------------------------------------------------
 ;; F9 L3 — extension-env: target-name -> [<:extend-class node>, ...].
@@ -1498,12 +1523,12 @@
 ;;
 ;; Rules:
 ;;   1. Protocol name must resolve in protocol-env; unknown → fail-compile.
-;;   2. For every accepts entry P.foo the class must have (a) an own or
+;;   2. For every protocol signature P.foo the class must have (a) an own or
 ;;      extension-provided method named `foo`, or (b) a protocol default
 ;;      for `foo` (default-inheritance is L6 — for L5 we accept the
 ;;      structural presence of the default as satisfaction).
 ;;   3. When present on the class, the method's signature (param names,
-;;      param types, return type) must match the accepts entry.
+;;      param types, return type) must match the protocol signature.
 ;;
 ;; Effect-set matching (`async` / `io`) — deferred until effects are
 ;; first-class in the parser (L2 rejects contract clauses; effects fall
@@ -1527,7 +1552,7 @@
 
 (defn- non-self-params
   "Filter out `self` — it's implicit in both class methods (marked
-   `:is-self? true` by normalize-method-param) and protocol accepts
+   `:is-self? true` by normalize-method-param) and protocol signature
    entries (users may write `foo(self, x: Int)` or the shorter
    `foo(x: Int)` since self is implied)."
   [params]
@@ -1535,7 +1560,7 @@
 
 (defn- signature-mismatch-detail
   "Return a human-readable string describing the first signature
-   mismatch between a composed-table method and a protocol accepts
+   mismatch between a composed-table method and a protocol signature
    entry, or nil if they match.
 
    F67 L4b — observable-derived entries carry `:cxc-return-ty`
@@ -1594,7 +1619,7 @@
               (fail-compile! :cxc-f9-signature-mismatch
                              (str "class `" class-name "." ae-name
                                   "` does not match protocol `" protocol-name
-                                  "`'s accepts declaration — " detail
+                                  "`'s signature declaration — " detail
                                   ". See spec §3.4.5.")
                              {:class class-name :protocol protocol-name
                               :method ae-name}))
@@ -1620,7 +1645,7 @@
   "F67 L4b — reverse mapping from the internal type-kw vocabulary
    (populated by `cxc-type->type-kw` + `infer-type`) back to the
    user-facing cxc type name used by `signature-mismatch-detail`
-   for string-comparison against `accepts:` entry return types.
+   for string-comparison against protocol signature return types.
    Symmetric with the primitives table in `cxc-type->type-kw`. Sized
    numeric variants read the C-type metadata (which is deterministic)
    and map back to the user name (Int8/UInt32/Float etc.)."
@@ -1647,7 +1672,7 @@
 (defn- observable-methods-view
   "F67 L4 — for conformance checks, project a class's observables into
    method-shape entries so `validate-one-conformance!` can match them
-   against protocol `accepts:` entries uniformly with own + extension
+   against protocol signatures uniformly with own + extension
    methods.
 
    F67 L4b — sources `:cxc-return-ty` from the post-inference
@@ -1699,7 +1724,7 @@
 ;;   (b) drop conformance to one of the ambiguous protocols.
 ;;
 ;; L6 MVP does explicit-conformance-only. Structural conformance
-;; detection at call sites (a class that satisfies P.accepts structurally
+;; detection at call sites (a class that satisfies P's signatures structurally
 ;; but doesn't declare `conforms: P` — inheriting P's defaults implicitly)
 ;; is deferred to L6b (per-lookup structural check + cache).
 ;;
@@ -1739,8 +1764,8 @@
                   ps))))
 
 (defn- class-satisfies-protocol-structurally?
-  "L6b — true if every accepts entry in `proto` has a matching method
-   (name + signature) in `class-methods`. Empty accepts → trivially
+  "L6b — true if every required signature in `proto` has a matching method
+   (name + signature) in `class-methods`. Empty signature set → trivially
    true (a protocol with no requirements is satisfied by every class,
    but such a protocol is pointless and this predicate is only called
    under `structural-conformances-with-defaults` which also gates on
@@ -1756,12 +1781,12 @@
 
 (defn- structural-conformances-with-defaults
   "L6b — return the set of protocol names the class structurally
-   conforms to (satisfies all accepts) that also have at least one
+   conforms to (satisfies all required signatures) that also have at least one
    default AND are not already in the class's explicit conformance
    set. Protocols with no defaults are skipped — structural
    conformance without inheritable defaults isn't observable here
    (dispatch-only structural conformance is a call-site concern).
-   O(|protocols| × |accepts| × |methods|) per class — negligible at
+   O(|protocols| × |signatures| × |methods|) per class — negligible at
    compile-scale."
   [class-methods explicit-name-set protocol-env]
   (reduce-kv
@@ -1799,7 +1824,7 @@
   "For one class entry, produce an updated :methods list with any
    applicable protocol defaults inherited. L6 covers explicit
    `:conforms`; L6b widens to include protocols the class satisfies
-   structurally (has all accepts methods with matching signatures).
+   structurally (has all required methods with matching signatures).
    Fires the diamond diagnostic on multi-candidate conflicts —
    whether the candidates came from explicit or structural paths
    doesn't change the ambiguity rule (§3.4.4 call-site error;
@@ -1828,7 +1853,7 @@
                     "conforming protocols ("
                     (str/join ", " (map #(str "`" (:protocol %) "`") cands))
                     "). At least one of these conformances may be "
-                    "structural (F9 L6b) — check `accepts:` signatures. "
+                    "structural (F9 L6b) — check protocol signatures. "
                     "Resolve by (a) defining `" mn "` on `" class-name
                     "` directly (own or via extension — this shadows all "
                     "defaults per §3.4.4), (b) dropping conformance "
@@ -9137,9 +9162,9 @@
         _          (when-not main-atom
                      (throw (ex-info "no `def main` entry point found at top level"
                                      {:top top-nodes})))
-        ;; F9 L2 — `kind: protocol` classes are registered in the
-        ;; protocol-env (surface only; conformance validation is L5,
-        ;; dispatch is L4, default-method inheritance is L6). Other
+        ;; L5 — signature-only defs are registered in the protocol-env;
+        ;; conformance validation, dispatch, default inheritance, and
+        ;; witness semantics remain unchanged. Other
         ;; kinds (`regular`/`record`/`enum`/`section` via `class`) still
         ;; fail-nyi until L4 opens up extension composition.
         _          (when-let [c (first (filter #(and (= :class (:node %))
@@ -9197,7 +9222,7 @@
         atom-env   (infer-observables-in-atom-env atom-env record-env enum-env)
         atom-env   (infer-streams-in-atom-env atom-env record-env enum-env)
         ;; F67 L4b — infer return types on protocol helper defaults
-        ;; (observables with no matching `accepts:` entry) so downstream
+        ;; (observables with no matching signature) so downstream
         ;; C emission has a concrete return type when the default gets
         ;; inherited into a conforming class.
         protocol-env (infer-protocol-defaults protocol-env record-env atom-env

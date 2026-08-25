@@ -1553,6 +1553,16 @@
   ;; calls (`p.as()`).
   #{"as" "from"})
 
+(defn- signature-return-type-start?
+  "True when `pos` begins a user type name. Corvid type names are
+   TitleCase; this disambiguates `op() :< ReturnType` from a bodyful
+   observable whose entire expression is a bare value identifier such as
+   `op() :< cached`."
+  [tokens pos]
+  (when (at? tokens pos :ident)
+    (let [nm (t-value (peek-tok tokens pos))]
+      (and (seq nm) (Character/isUpperCase (first nm))))))
+
 (defn- parse-observable [tokens pos]
   (let [tk         (peek-tok tokens pos)
         k          (t-kind tk)
@@ -1564,7 +1574,8 @@
                             (contains? observable-name-kw-whitelist (t-value tk)))
                      [(t-value tk) (inc pos)]
                      (expect tokens pos :ident))
-        [params p] (if (at? tokens p :punct "(")
+        has-param-list? (at? tokens p :punct "(")
+        [params p] (if has-param-list?
                      (parse-param-list-parens tokens p)
                      [[] p])
         [_ p]      (expect tokens p :glyph ":<")
@@ -1577,11 +1588,18 @@
         ;;       |: predicate
         ;;   = expression
         [candidate-type type-end]
-        (if (at? tokens p :ident)
+        (if (signature-return-type-start? tokens p)
           (parse-type tokens p)
           [nil p])
+        signature-only?
+        (and has-param-list?
+             candidate-type
+             (or (at? tokens type-end :newline)
+                 (at? tokens type-end :dedent)
+                 (at? tokens type-end :eof)))
         proposition-body?
-        (and candidate-type
+        (and (not signature-only?)
+             candidate-type
              (at? tokens type-end :newline)
              (at? tokens (inc type-end) :indent)
              (let [body-start (skip-newlines tokens (+ type-end 2))]
@@ -1590,6 +1608,9 @@
                               (at? tokens type-end :glyph "="))
         [return-type propositions expr p]
         (cond
+          signature-only?
+          [candidate-type [] nil type-end]
+
           proposition-body?
           (let [[_ body-pos] (expect tokens type-end :newline)
                 [_ body-pos] (expect tokens body-pos :indent)
@@ -1619,9 +1640,14 @@
           :else
           (let [[body-expr p] (parse-expr tokens p)]
             [nil [] body-expr p]))
-        node (cond-> {:node :observable :name name :params params :expr expr}
-               return-type (assoc :return-type return-type)
-               (seq propositions) (assoc :propositions propositions))]
+        node (if signature-only?
+               {:node :observation-signature
+                :name name
+                :params params
+                :return-type return-type}
+               (cond-> {:node :observable :name name :params params :expr expr}
+                 return-type (assoc :return-type return-type)
+                 (seq propositions) (assoc :propositions propositions)))]
     [node p]))
 
 ;; ---------------------------------------------------------------------------
@@ -1694,6 +1720,26 @@
       (if (= :msg-shape (:node e))
         [{:source (:target e) :payload (:fields e) :params nil} p]
         [{:source e :payload [] :params nil} p]))))
+
+(defn- parse-receive-signature
+  "Parse a signature-only async receive declaration at def-body position:
+
+       <: name(args)
+
+   It deliberately has neither a source phase nor an `->` target. Concrete
+   implementations continue to use ordinary wildcard/concrete transitions."
+  [tokens pos]
+  (let [[_ p]      (expect tokens pos :glyph "<:")
+        [name p]   (expect tokens p :ident)
+        [params p] (parse-param-list-parens tokens p)]
+    (when-not (or (at? tokens p :newline)
+                  (at? tokens p :dedent)
+                  (at? tokens p :eof))
+      (fail! tokens p
+             (str "signature-only async receive `<: " name "(...)` must "
+                  "end after its parameter list; omit the source phase and "
+                  "`->` target")))
+    [{:node :receive-signature :name name :params params} p]))
 
 (defn- parse-source-and-receive
   "Look at the head of a transition. Returns [source receive p] where:
@@ -2269,11 +2315,10 @@
       (at? tokens pos :kw "self")
       (at? tokens pos :ident)))
 
-(declare def-atom->record def-atom->protocol def-atom->enum
+(declare def-atom->record def-atom-signatures->protocol def-atom->enum
          def-atom-body-has-transition? def-atom-body-has-use?
-         def-atom-body-has-accepts? def-atom-body-has-case?
-         def-atom-body-has-atom-ctor-field-default?
-         parse-accepts-section parse-accepts-signature)
+         def-atom-body-has-signature? def-atom-body-has-case?
+         def-atom-body-has-atom-ctor-field-default?)
 
 (defn- parse-on-nil-section
   "F39 L8 (spec §4.10.9) — `on_nil:` section body:
@@ -2330,7 +2375,8 @@
               raw-def {:node :def-atom :name name :ctor-params ctor
                        :body folded}
               ;; F68 L1/L2/L5 (Proposal H) — structural detection dispatch.
-              ;; Order matters: protocol (accepts:) > enum (case) > class
+              ;; Order matters: protocol (signature-only members) > enum
+              ;; (case) > class
               ;; (transition, direct use, or ctor params) > record (fields +
               ;; observables only, no ctor params). See
               ;; compiler/design/plans/archive/proposal-h-full-unification-under-
@@ -2342,8 +2388,8 @@
               ;; (preserves pre-F68 atom syntax of `def X(a: T):`).
               reshaped
               (cond
-                (def-atom-body-has-accepts? folded)
-                (def-atom->protocol raw-def tokens pos)
+                (def-atom-body-has-signature? folded)
+                (def-atom-signatures->protocol raw-def tokens pos)
 
                 (def-atom-body-has-case? folded)
                 (def-atom->enum raw-def tokens pos)
@@ -2378,6 +2424,13 @@
         (at? tokens p :glyph "|:")
         (let [[prop p2] (parse-proposition tokens p)]
           (recur (conj body prop) (skip-newlines tokens p2)))
+
+        ;; L5 — a leading `<:` with no source phase and no `->` target is
+        ;; an async receive signature. Its presence participates in the
+        ;; body-shape protocol inference at the end of the loop.
+        (at? tokens p :glyph "<:")
+        (let [[sig p2] (parse-receive-signature tokens p)]
+          (recur (conj body sig) (skip-newlines tokens p2)))
 
         ;; F8 L3b.ii.β — behavioral construct dispatch via the registry.
         ;; For `:kw` tokens whose value maps to a `:kind :behavioral`
@@ -2492,18 +2545,14 @@
                     "`data:` (per-instance, updated only through "
                     "transitions). See spec §1.11."))
 
-        ;; F68 L1 (Proposal H) — `accepts:` section / per-entry sugar
-        ;; inside a `def` body marks the declaration as a protocol at
-        ;; structural-detect time (see reshape at end of body loop).
-        (and (at? tokens p :kw "accepts") (at? tokens (inc p) :punct ":"))
-        (let [[s p2] (parse-accepts-section tokens p)]
-          (recur (conj body s) (skip-newlines tokens p2)))
-
-        (and (at? tokens p :kw "accepts") (at? tokens (inc p) :ident))
-        (let [[_ p2]  (expect tokens p :kw "accepts")
-              [e p3]  (parse-accepts-signature tokens p2)]
-          (recur (conj body {:node :accepts-section :entries [e]})
-                 (skip-newlines tokens p3)))
+        ;; L5 / D3 atomic retirement — retain the reserved token solely
+        ;; to give both retired spellings one actionable hard error.
+        (at? tokens p :kw "accepts")
+        (fail! tokens p
+               (str "`accepts:` and `accepts name(...)` are retired at "
+                    "v1.0. Declare protocol members directly in `def " name
+                    "` using `<: name(args)` for async receives or "
+                    "`name(args) :< ReturnType` for sync observations."))
 
         ;; F68 L2 (Proposal H) — `case <ident>` prefix marks an enum
         ;; case. Presence of any `:enum-case` node in the body triggers
@@ -2615,7 +2664,7 @@
           (recur (conj body t) (skip-newlines tokens p2)))
 
         :else
-        (fail! tokens p "expected direct use (`use name: Type`), field decl (`name: Type [= default]`), own-line `|:` proposition, on_nil:, observable (`name[(args)] :< expr`), accepts:, or transition inside def-atom body")))))
+        (fail! tokens p "expected direct use (`use name: Type`), field decl (`name: Type [= default]`), own-line `|:` proposition, on_nil:, observable/signature (`name[(args)] :< expr-or-type`), async signature (`<: name(args)`), or transition inside def-atom body")))))
 
 ;; ---------------------------------------------------------------------------
 ;; F68 L1 (Proposal H) — structural detection helpers for `def` reshape.
@@ -2633,8 +2682,11 @@
 (defn- def-atom-body-has-use? [body]
   (boolean (some #(= :use-section (:node %)) body)))
 
-(defn- def-atom-body-has-accepts? [body]
-  (boolean (some #(= :accepts-section (:node %)) body)))
+(def ^:private protocol-signature-node-kinds
+  #{:observation-signature :receive-signature})
+
+(defn- def-atom-body-has-signature? [body]
+  (boolean (some #(contains? protocol-signature-node-kinds (:node %)) body)))
 
 (defn- def-atom-body-has-case? [body]
   (boolean (some #(= :enum-case (:node %)) body)))
@@ -2690,29 +2742,39 @@
    :sections      (:body def-atom)
    :inferred-kind :structural})
 
-(defn- def-atom->protocol
-  "Reshape a parsed :def-atom into a :class :kind :protocol node. Flattens
-   all :accepts-section entries into a single :accepts vector; other body
-   sections pass through as `:body`. Rejects at parse if the `def` header
-   carried ctor params (protocols declare no state)."
+(defn- def-atom-signatures->protocol
+  "Reshape a def containing signature-only members into the downstream
+   protocol class shape. Signature nodes stay in `:body`; lower.clj derives
+   the internal accepts/witness entries from them. Bodyful observables are
+   retained as optional default implementations. State, transitions, and
+   other class body items cannot mix with protocol signatures."
   [def-atom tokens pos-for-diag]
   (when (seq (:ctor-params def-atom))
     (fail! tokens pos-for-diag
            (str "F68 L1: `def " (:name def-atom) "(...)` with ctor "
-                "params contains `accepts:` entries — protocols declare "
+                "params contains signature-only members — protocols declare "
                 "signatures only and carry no state, so ctor params are "
                 "not permitted. Drop the ctor params to keep as a "
-                "protocol, or remove `accepts:` to promote to a class.")))
-  (let [body           (:body def-atom)
-        accepts-secs   (filter #(= :accepts-section (:node %)) body)
-        other-sections (remove #(= :accepts-section (:node %)) body)
-        accepts-entries (vec (mapcat :entries accepts-secs))]
+                "protocol, or remove the signature-only members to promote "
+                "to a concrete def.")))
+  (let [body    (:body def-atom)
+        invalid (first (remove #(contains? #{:observation-signature
+                                             :receive-signature
+                                             :observable}
+                                           (:node %))
+                               body))]
+    (when invalid
+      (fail! tokens pos-for-diag
+             (str "signature-only protocol `" (:name def-atom) "` mixes "
+                  "protocol declarations with state, transitions, or other "
+                  "concrete body items. A protocol body may contain only "
+                  "`<: name(args)`, `name(args) :< ReturnType`, and "
+                  "bodyful observable defaults.")))
     {:node          :class
      :name          (:name def-atom)
      :kind          :protocol
      :conforms      []
-     :accepts       accepts-entries
-     :body          (vec other-sections)
+     :body          (vec body)
      :inferred-kind :protocol}))
 
 (defn- def-atom->enum
@@ -2736,7 +2798,7 @@
       (fail! tokens pos-for-diag
              (str "F68 L2: `def " (:name def-atom) ":` mixes `case` "
                   "markers with other body items (fields, observables, "
-                  "transitions, direct `use`, `accepts:`). Enums are a closed "
+                  "transitions, direct `use`, protocol signatures). Enums are a closed "
                   "set of cases with no per-instance state. Move the "
                   "non-case items to a separate declaration, or drop "
                   "the `case` markers if this was intended as a class.")))
@@ -2788,72 +2850,17 @@
         raw-type   (assoc :raw-type   raw-type)))))
 
 ;; ---------------------------------------------------------------------------
-;; F9 protocol/accepts + F9 L3 extend surfaces. Post F68 L6b (Proposal H):
+;; F9 protocol signatures + F9 L3 extend surfaces. Post F68 L6b
+;; (Proposal H):
 ;; `class` / `protocol` / `record` / `enum` sugar keywords and their
 ;; supporting parsers (parse-class, parse-record, parse-enum,
 ;; parse-class-section, fold-class-body, parse-metadata-section,
 ;; legal-kinds) are all deleted; the sole class/protocol/record/enum
 ;; surface is `def X:` with structural detection in parse-def-atom.
-;; parse-accepts-section + parse-accepts-signature + parse-conforms-line
-;; + parse-header-parens-conformances remain — accepts:/conforms: are
-;; still valid body constructs, just inside `def` (accepts:) or `extend`
-;; (both) blocks now.
+;; Protocol members now parse directly in `def` bodies as `<: name(args)`
+;; and `name(args) :< ReturnType`. `accepts:` and `accepts name(...)` are
+;; hard-retired; conformance parsing below remains for `extend` blocks.
 ;; ---------------------------------------------------------------------------
-
-(defn- parse-accepts-signature
-  "Parse one `accepts:` entry — a method signature with no body.
-     [def|function] name(params) -> ReturnType
-   L2 MVP: no contract clauses (`requires`/`ensures`) and no effect
-   annotations (`async`/`io`). Continuation-indented lines after the
-   signature fail-nyi with a pointer at a follow-on landing."
-  [tokens pos]
-  (let [[_ p]      (cond
-                     (at? tokens pos :kw "function")
-                     (do (warn-function-deprecated! tokens pos)
-                         (expect tokens pos :kw "function"))
-                     (at? tokens pos :kw "def")      (expect tokens pos :kw "def")
-                     :else                            [nil pos])
-        [name p]   (expect tokens p :ident)
-        [params p] (parse-param-list-parens tokens p)
-        [ret p]    (if (at? tokens p :glyph "->")
-                     (parse-type tokens (inc p))
-                     [nil p])
-        [_ p]      (expect tokens p :newline)
-        ;; Reject continuation lines (requires/ensures/async/io).
-        _          (when (at? tokens p :indent)
-                     (fail! tokens p
-                            (str "contract clauses (`requires`/`ensures`) and "
-                                 "effect annotations (`async`/`io`) on `accepts:` "
-                                 "entries are not yet implemented. F9 L2 ships the "
-                                 "signature surface; contract inheritance lands "
-                                 "with F49 protocol-inherited-contracts. See "
-                                 "plans/g3-structural-canonical/f9-class-protocol-extension.md L2.")))]
-    [{:node :accepts-entry :name name :params params :return-type ret} p]))
-
-(defn- parse-accepts-section
-  "`accepts:` block on `kind: protocol` classes.
-     accepts:
-         foo(Int) -> Int
-         bar(String) -> Bool
-   Also supports the per-entry sugar at class-body level:
-     accepts foo(Int) -> Int
-   handled inside parse-class-section."
-  [tokens pos]
-  (let [[_ p] (expect tokens pos :kw "accepts")
-        [_ p] (expect tokens p :punct ":")
-        [_ p] (expect tokens p :newline)
-        [_ p] (expect tokens p :indent)]
-    (loop [entries [] p p]
-      (cond
-        (at? tokens p :dedent)
-        [{:node :accepts-section :entries entries} (inc p)]
-
-        (at? tokens p :newline)
-        (recur entries (inc p))
-
-        :else
-        (let [[e p2] (parse-accepts-signature tokens p)]
-          (recur (conj entries e) (skip-newlines tokens p2)))))))
 
 (defn- parse-conforms-line
   "Body-form conformance declaration:
