@@ -2142,6 +2142,95 @@
      {}
      msg-txns)))
 
+(defn- collect-companion-demand
+  "L12b — walk every atom's transitions to find companion subscription
+   sites (`<: field.<msg>_failed(reason: T) -> ...`). Returns
+   `{target-atom {companion-name #{{:subscriber X :reason-type T}}}}`.
+   Feeds `augment-atom-env-with-companions` so target atoms only
+   synthesize per-companion emit/subscribe scaffolding on demand,
+   bounding output growth to programs that actually subscribe."
+  [atom-env]
+  (reduce-kv
+   (fn [demand subscriber-name info]
+     (reduce
+      (fn [demand2 t]
+        (let [glyph (get-in t [:receive :glyph])
+              src   (get-in t [:receive :msg :source])]
+          (if (and (contains? #{"<:" "<|"} glyph)
+                   (= :dot (:node src))
+                   (= :ident (get-in src [:target :node])))
+            (let [field-name  (get-in src [:target :name])
+                  field-info  (get-in info [:field-index field-name])
+                  target-atom (some-> field-info :type base-type-name)
+                  msg-name    (:field src)
+                  target-info (get atom-env target-atom)]
+              (if (and target-atom target-info
+                       (contains? (:companion-index target-info) msg-name))
+                (let [payload   (get-in t [:receive :msg :payload])
+                      reason-p  (first payload)
+                      reason-ty (when (and reason-p (= "reason" (:name reason-p)))
+                                  (base-type-name (:type reason-p)))]
+                  (update-in demand2 [target-atom msg-name] (fnil conj #{})
+                             {:subscriber  subscriber-name
+                              :reason-type reason-ty}))
+                demand2))
+            demand2)))
+      demand
+      (:transitions info)))
+   {}
+   atom-env))
+
+(defn- augment-atom-env-with-companions
+  "L12b — for each companion subscription demand, augment the target
+   atom's `:stream-index` + `:stream-order` + `:stream-payload-index`
+   so the existing per-stream synthesis (ivar/hashtable/emit method +
+   subscribe/unsubscribe methods) picks the companion up automatically.
+
+   Reason type comes from subscribers' declared type. All subscribers
+   of a given companion must agree on the reason type; inconsistent
+   declarations fail-nyi. Missing/mis-keyed subscriber payload defers
+   to the receive-side validation for a cleaner diagnostic — augment
+   here still fires so validation sees stream-index populated."
+  [atom-env record-env enum-env]
+  (let [demand (collect-companion-demand atom-env)]
+    (reduce-kv
+     (fn [env target msg-map]
+       (reduce-kv
+        (fn [env2 msg subs]
+          (let [reason-tys (set (keep :reason-type subs))
+                _ (when (> (count reason-tys) 1)
+                    (fail-nyi!
+                     (str "companion `" target "." msg
+                          "` has subscribers declaring inconsistent "
+                          "reason types: " reason-tys
+                          "; all subscribers must agree on the reason type "
+                          "(union reason types land with L12c)")
+                     {:target target :companion msg}))
+                reason-ty  (or (first reason-tys) "Any")
+                type-kw    (cxc-type->type-kw reason-ty record-env env2
+                                              enum-env {})
+                c-type     (type-kw->c-type type-kw {})
+                current    (get env2 target)
+                stream-idx (assoc (or (:stream-index current) {}) msg
+                                  {:payload [{:name "reason"}]})
+                stream-ord (let [ord (or (:stream-order current) [])]
+                             (if (some #(= msg %) ord)
+                               ord
+                               (conj ord msg)))
+                stream-pay (assoc (or (:stream-payload-index current) {}) msg
+                                  [{:name    "reason"
+                                    :type-kw type-kw
+                                    :c-type  c-type}])]
+            (assoc env2 target
+                   (assoc current
+                          :stream-index         stream-idx
+                          :stream-order         stream-ord
+                          :stream-payload-index stream-pay))))
+        env
+        msg-map))
+     atom-env
+     demand)))
+
 (defn- def-atom-handler-decls
   "F14 — `-> name(args):` handler declarations at atom-body top level.
 
@@ -6390,29 +6479,14 @@
                                        stream-name "` on `" atom-name
                                        "` has no source")
                                   t))
-        ;; L12a — sender-side companion validation: payload must be
-        ;; exactly `(reason: T)`. Runtime delivery + typed reason wiring
-        ;; is L12b; a clean "coming next" fail-nyi keeps the diagnostic
-        ;; honest instead of silently accepting a receive-arm that will
-        ;; never fire.
-        _            (when companion
-                       (let [expected [{:name "reason"}]
-                             got      (mapv (fn [p] {:name (:name p)}) payload)]
-                         (when (not= expected got)
-                           (fail-nyi!
-                            (str "companion receive-arm `" source-field "."
-                                 stream-name "` on `" atom-name
-                                 "` must declare payload `(reason: T)`; got "
-                                 got)
-                            t)))
-                       (fail-nyi!
-                        (str "L12b: companion receive-arm `" source-field
-                             "." stream-name "` on `" atom-name
-                             "` validates against `" source-class
-                             "`'s :companion-index, but runtime delivery "
-                             "scaffolding is not yet landed. Track under "
-                             "loop-status-2026-08-25.md L12b.")
-                        t))
+        ;; L12b — companion demand-driven augmentation runs before
+        ;; class synthesis, so subscribed companions appear in
+        ;; :stream-index (`stream` truthy). The companion-index
+        ;; fallthrough above stays for the miss-diagnostic only:
+        ;; unsubscribed companions never land in stream-index, so an
+        ;; isolated `<: field.msg_failed(...)` with no matching
+        ;; declaration on the target still reports "no stream and no
+        ;; companion" cleanly.
         expected-keys (mapv :name (:payload stream))
         got-keys      (mapv :name payload)
         _            (when (not= expected-keys got-keys)
@@ -9422,6 +9496,13 @@
         record-env (infer-observables-in-record-env record-env atom-env enum-env)
         atom-env   (infer-observables-in-atom-env atom-env record-env enum-env)
         atom-env   (infer-streams-in-atom-env atom-env record-env enum-env)
+        ;; L12b — augment atom-env with per-companion stream-index
+        ;; entries where a subscriber demand exists. This lets the
+        ;; existing per-stream synthesis (ivar/hashtable/emit/subscribe
+        ;; methods) pick companions up automatically, bounding output
+        ;; growth to programs that actually subscribe.
+        atom-env   (augment-atom-env-with-companions atom-env record-env
+                                                     enum-env)
         ;; F67 L4b — infer return types on protocol helper defaults
         ;; (observables with no matching signature) so downstream
         ;; C emission has a concrete return type when the default gets

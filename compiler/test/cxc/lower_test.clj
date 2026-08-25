@@ -2291,12 +2291,9 @@ def main:
     -> running
 ")))))
 
-(deftest l12a-companion-receive-arm-valid-fails-nyi-with-l12b-pointer
-  (testing "L12a — a sender-side receive-arm on a VALID companion (`<msg>_failed(reason: T)`) validates against target's `:companion-index` (compile-time metadata from L11) but fails at lower with an explicit `L12b: runtime delivery scaffolding not yet landed` pointer, so users get a clear diagnostic rather than silent acceptance of a never-firing receive-arm."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"L12b: companion receive-arm `player.take_damage_failed`"
-         (lower-src "def Player:
+(deftest l12b-companion-receive-arm-valid-lowers-cleanly
+  (testing "L12b (2026-08-26) — a sender-side receive-arm on a valid companion (`<msg>_failed(reason: T)`) triggers demand-driven augmentation of the target's stream-index/order/payload-index, so lowering succeeds and the target atom gains a companion emit method (`cxc_emit_<msg>_failed:`). Runtime delivery from `|:`-failure path is L12c; the scaffolding lands here as guarded dead code."
+    (let [lowered (lower-src "def Player:
     hp: Int! = 100
 
     alive <: take_damage(amount: Int) -> alive
@@ -2313,13 +2310,53 @@ def Logger:
 def main:
     l: Logger = Logger()
     -> running
-")))))
+")
+          player-cls (first (filter #(= "Player" (:name %)) (:classes lowered)))
+          methods    (:methods player-cls)
+          selectors  (mapv :selector methods)]
+      (is (some? player-cls) "Player class lowered successfully")
+      (is (some #(re-find #"cxc_emit_take_damage_failed" (or % "")) selectors)
+          "Player gained a companion emit method for take_damage_failed")
+      (is (some #(re-find #"cxc_addSubscriberFor_take_damage_failed" (or % "")) selectors)
+          "Player gained a per-companion add-subscriber method"))))
 
-(deftest l12a-companion-receive-arm-wrong-payload-rejected
-  (testing "L12a — a sender-side receive-arm on a valid companion must declare payload `(reason: T)`; any other key set (e.g. `(oops: Int)`) rejects with a clean diagnostic naming the required shape."
+(deftest l12b-companion-inconsistent-reason-types-rejected
+  (testing "L12b — when two subscribers of the same companion declare different reason types, augmentation fails-nyi with a clean diagnostic. Union reason types across subscribers land with L12c."
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
-         #"must declare payload `\(reason: T\)`"
+         #"inconsistent reason types"
+         (lower-src "def Player:
+    hp: Int! = 100
+
+    alive <: take_damage(amount: Int) -> alive
+        |: amount > 0
+        then: hp => hp - amount
+
+def LoggerA:
+    player: Player = Player()
+    n: Int! = 0
+
+    * <: player.take_damage_failed(reason: Int) -> *
+        then: n => n + 1
+
+def LoggerB:
+    player: Player = Player()
+    s: Int! = 0
+
+    * <: player.take_damage_failed(reason: Bool) -> *
+        then: s => s + 1
+
+def main:
+    la: LoggerA = LoggerA()
+    lb: LoggerB = LoggerB()
+    -> running
+")))))
+
+(deftest l12b-companion-receive-arm-wrong-payload-rejected
+  (testing "L12b — a sender-side receive-arm on a valid companion with a wrong payload key (e.g. `(oops: Int)`) rejects with the standard stream-shape mismatch diagnostic (source emits `[reason]`, subscriber declared `[oops]`). The augmentation still fires but the receive-side payload-shape check catches the mismatch."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"payload shape.*differs from source-side emit shape"
          (lower-src "def Player:
     hp: Int! = 100
 
