@@ -2054,10 +2054,10 @@ def main:
 ")))))
 
 (deftest f67-l3-duplicate-handler-shape-rejected
-  (testing "F67 L3: two handler-shape transitions with the same message name on one atom → duplicate-handler diagnostic (spec §1265: name uniqueness)."
+  (testing "F67 L3 + L10 (2026-08-25): two `* <: msg(args) -> *` on one atom are rejected. L10's wildcard-source duplicate check catches this case per the ratified precedence rule (concrete arm wins in its phase; `*` arm fires elsewhere — two `*` arms would be ambiguous)."
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
-         #"declares handler `-> tick.*more than once"
+         #"declares two wildcard-source arms `\* <: tick"
          (lower-src "def A:
     n: Int = 0
 
@@ -2068,6 +2068,28 @@ def main:
 
     * <: tick(msg: Int) -> *
         then: return n
+
+def main:
+    a: A = A()
+
+    -> running
+")))))
+
+(deftest l10-duplicate-wildcard-source-arm-non-handler-shape-rejected
+  (testing "L10 (2026-08-25) — two wildcard-source arms on the same message name with concrete target(s) are rejected. Ambiguous under the ratified precedence rule (concrete-phase arm wins in its own phase; `*` arm fires everywhere else — two `*` arms on the same message have no total order)."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"declares two wildcard-source arms `\* <: tick"
+         (lower-src "def A:
+    n: Int = 0
+
+    -> running
+
+    * <: tick(msg: Int) -> running
+        then: n => msg
+
+    * <: tick(msg: Int) -> running
+        then: n => msg + 1
 
 def main:
     a: A = A()

@@ -2444,6 +2444,30 @@
        (let [name          (:name a)
              dsec          (def-atom-effective-data-section a)
              raw-txns      (def-atom-transitions a)
+             ;; L10 (2026-08-25) — two wildcard-source arms on the same
+             ;; message name is a static error per the ratified precedence
+             ;; rule (01 doc §Transitions). Handler-shape dup is caught
+             ;; later by the handler-decl name-uniqueness check; this
+             ;; catches the remaining case: `* <: msg -> concrete-phase`
+             ;; declared twice (or once alongside a `* <: msg -> *`),
+             ;; where both would fire ambiguously.
+             _             (let [wildcard-txns (filterv #(= :wildcard (get-in % [:source :kind]))
+                                                        raw-txns)
+                                 by-msg (group-by (fn [t]
+                                                    (get-in t [:receive :msg :source :name]))
+                                                  wildcard-txns)
+                                 dup    (some (fn [[msg ts]] (when (and msg (> (count ts) 1)) msg))
+                                              by-msg)]
+                             (when dup
+                               (fail-compile!
+                                :cxc-l10-duplicate-wildcard-source-arm
+                                (str "atom `" name "` declares two wildcard-source "
+                                     "arms `* <: " dup " ... -> ...` on the same "
+                                     "message; the ratified precedence rule "
+                                     "(concrete-phase arm wins in its own phase; "
+                                     "`*` arm fires everywhere else) rejects two "
+                                     "wildcard arms on the same message as ambiguous.")
+                                (first raw-txns))))
              ;; F67 L3 — split handler-shape (`* <: msg(args) -> *`) from
              ;; real phase transitions. Handler-shape lower via the
              ;; handler-decl path (see below); real transitions keep
