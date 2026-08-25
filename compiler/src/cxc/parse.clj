@@ -1410,21 +1410,6 @@
        (section-names (t-value (peek-tok tokens pos)))
        (at? tokens (inc pos) :punct ":")))
 
-(defn- parse-deprecated-section
-  "deprecated: \"<message>\"
-   Layer 6 Step 11 — inline body-form deprecation marker. Emits a
-   `:deprecated` node the compiler attaches to the enclosing def
-   (record or atom). Requires a non-empty string literal — the
-   message that use-site warnings will carry."
-  [tokens pos]
-  (let [[_ p]   (expect tokens pos :kw "deprecated")
-        [_ p]   (expect tokens p :punct ":")
-        [msg p] (expect tokens p :string)
-        _       (when (str/blank? msg)
-                  (fail! tokens p "deprecated: message must be non-empty"))
-        [_ p]   (expect tokens p :newline)]
-    [{:node :deprecated :message msg} p]))
-
 (defn- parse-use-section
   "use:
        cap: SomeCapability
@@ -2367,9 +2352,10 @@
         ;; registry entry, invoke the registered parser directly
         ;; instead of falling through to a hardcoded arm. Behavior-
         ;; equivalent for the remaining header-backed behavioral
-        ;; surfaces (`:deprecated`/`:use`, via `requiring-resolve`);
+        ;; surface (`:use`, via `requiring-resolve`);
         ;; `:invariants` is parser-less in the registry because the
-        ;; own-line `|:` arm above produces propositions directly.
+        ;; own-line `|:` arm above produces propositions directly, while
+        ;; `:deprecated` routes through the top-level annotation parser.
         ;; Enables future
         ;; L4 `section class Name:` user syntax to dispatch here too.
         ;; Hardcoded arms below stay as a safety fallback until L3b.iii
@@ -2382,10 +2368,6 @@
 
         (at? tokens p :kw "use")
         (let [[s p2] (parse-use-section tokens p)]
-          (recur (conj body s) (skip-newlines tokens p2)))
-
-        (at? tokens p :kw "deprecated")
-        (let [[s p2] (parse-deprecated-section tokens p)]
           (recur (conj body s) (skip-newlines tokens p2)))
 
         ;; F67 L4c — `replace` on a plain (non-extension) def-atom body
@@ -2627,7 +2609,7 @@
           (recur (conj body t) (skip-newlines tokens p2)))
 
         :else
-        (fail! tokens p "expected use:, field decl (`name: Type [= default]`), own-line `|:` proposition, deprecated:, on_nil:, observable (`name[(args)] :< expr`), accepts:, or transition inside def-atom body")))))
+        (fail! tokens p "expected use:, field decl (`name: Type [= default]`), own-line `|:` proposition, on_nil:, observable (`name[(args)] :< expr`), accepts:, or transition inside def-atom body")))))
 
 ;; ---------------------------------------------------------------------------
 ;; F68 L1 (Proposal H) — structural detection helpers for `def` reshape.

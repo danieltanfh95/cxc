@@ -54,23 +54,23 @@
   ;; hit "Permission denied".
   (.setExecutable f true false))
 
-;; Layer 6 Step 11 — deprecation walker. `deprecated: "msg"` inside
-;; a def-atom body or record body attaches a message to the enclosing
-;; declaration. Use-site walker below finds every `:ident` /
+;; Layer 6 Step 11 — deprecation walker. `@deprecated("msg")` above
+;; a def attaches a message to the declaration. Use-site walker below
+;; finds every `:ident` /
 ;; `:type-ref` / `:call` reference to a deprecated name and emits a
 ;; warning to stderr with the migration message.
 
 (defn- collect-deprecations
   "Walk top-level nodes; return map of {name → message} for every
-   def-atom or record carrying a `:deprecated` section."
+   def-atom or record carrying a `@deprecated(\"msg\")` annotation."
   [top-nodes]
   (into {}
         (keep (fn [n]
                 (when (contains? #{:def-atom :record} (:node n))
-                  (let [body (or (:body n) (:sections n) [])
-                        dep  (first (filter #(= :deprecated (:node %)) body))]
+                  (let [dep (first (filter #(= "deprecated" (:name %))
+                                           (:annotations n)))]
                     (when dep
-                      [(:name n) (:message dep)]))))
+                      [(:name n) (get-in dep [:args 0 :value :value])]))))
               top-nodes)))
 
 (defn warn-deprecated-uses
@@ -226,11 +226,9 @@
         _        (prelude/validate-no-prelude-collisions! parsed)
         prelude-src (prelude/assemble-source target)
         full-parsed (parse-fn (str prelude-src source))
-        ;; F8 L3d.ii.β — iterate behavioral walkers via the registry
-        ;; instead of hardcoding a `warn-deprecated-uses` call. Today
-        ;; only `:deprecated` has a `:walker-sym`; when L4 lands
-        ;; `section class Name:` user syntax with post-parse walkers,
-        ;; they surface here automatically without touching build.clj.
+        ;; F8 L3d.ii.β / L3b reshape — keep K3 walker dispatch through
+        ;; the behavioral registry. `:deprecated` remains the sole entry;
+        ;; only its input source changed from body sections to annotations.
         ;; Walker calling convention: `[user-parsed full-parsed]` —
         ;; the walker owns its own input computation (e.g. K3's
         ;; `warn-deprecated-uses` calls `collect-deprecations` on

@@ -215,10 +215,9 @@
 
    `:deprecated` — K3 deprecation walker (build.clj Layer 6 Step 11
    `warn-deprecated-uses`) walks each parsed program for `:type-ref` /
-   `:call` references to definitions carrying a `:deprecated` node
-   and emits stderr warnings. The parser handles `deprecated:` via
-   `parse-deprecated-section`. Same shape as `:invariants` — backend
-   landed, registry ownership not yet wired.
+   `:call` references to definitions carrying a `@deprecated(\"msg\")`
+   annotation and emits stderr warnings. The L3a top-level annotation
+   parser owns the sole parse surface; the walker remains registry-routed.
 
    `:computed` intentionally stays `:reserved` even though L3a
    shipped: L3a chose parse-time sugar (rewrite to zero-arg
@@ -252,10 +251,10 @@
                 :notes              "L2b: `|:` propositions parse directly; F49 consumes their normalized records."}
    :deprecated {:impl               :compiler-baked
                 :backend            :k3-deprecation-walker
-                :parser-sym         'cxc.parse/parse-deprecated-section
+                :parser-sym         'cxc.parse/parse-annotation
                 :walker-sym         'cxc.build/warn-deprecated-uses
                 :allowed-in-extend? false
-                :notes              "L3d.i metadata-only; L3d.ii wires dispatch."}
+                :notes              "L3b: `@deprecated(\"msg\")` annotations feed the unchanged K3 walker."}
    :use        {:impl               :compiler-baked
                 :backend            :k6-capability-extraction
                 :parser-sym         'cxc.parse/parse-use-section
@@ -303,10 +302,11 @@
    hit the resolved var directly.
 
    Case-insensitive via `lookup`. Callers invoke the returned var as
-   `[tokens pos] → [node next-pos]` matching the shape of
-   `parse-deprecated-section` / `parse-use-section`. Parser-less
-   behavioral entries such as `:invariants` return nil because their
-   direct syntax has its own positional parser entry point.
+   `[tokens pos] → [node next-pos]`. A parser may own a section header
+   (`parse-use-section`) or a consolidated surface (`parse-annotation`
+   for `@deprecated`). Parser-less behavioral entries such as
+   `:invariants` return nil because their direct syntax has its own
+   positional parser entry point.
 
    No parser wire-through yet — this fn is the substrate. L3b.ii.β
    (def-atom-body dispatch) and L3b.iii (class-body dispatch) will
@@ -337,14 +337,14 @@
 
 (defn behavioral-walker
   "F8 L3d.ii.α — resolve the post-parse walker fn for a behavioral
-   section-header name via the registry. Returns a var or nil. Same
+   registry name. Returns a var or nil. Same
    nil-return conditions as `behavioral-parser`, plus nil when the
    entry's spec carries no `:walker-sym` (e.g. `:invariants` and
    `:use` — their lower-time processing happens inline, not as a
    post-parse walker).
 
    Callers invoke the returned var per the walker's own signature
-   (currently only `warn-deprecated-uses [parsed deprecations]`)."
+   (currently only `warn-deprecated-uses [user-parsed full-parsed]`)."
   [nm]
   (let [e (lookup nm)]
     (when (= :behavioral (:kind e))
@@ -359,8 +359,7 @@
    Substrate for `build/compile-source-to-file` to iterate walkers via
    the registry instead of hardcoding a `warn-deprecated-uses` call —
    L3d.ii.β wires that. Today only `:deprecated` carries a walker-sym,
-   so the returned map has one entry. When L4 lands `section class Name:`
-   user syntax with post-parse walkers, they surface here automatically.
+   so the returned map has one entry for the compiler-baked K3 walker.
 
    Skips reserved entries + behavioral entries without a `:walker-sym`.
    Walker resolution is on-demand via `requiring-resolve` — the target

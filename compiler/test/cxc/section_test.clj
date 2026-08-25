@@ -180,12 +180,12 @@
     (is (= :behavioral (:kind (sec/lookup :Invariants))))))
 
 (deftest deprecated-seed-records-k3-backend
-  (testing "F8 L3d.i — the `:deprecated` seed carries the same shape as `:invariants` (L3b.i): impl / backend / parser-sym, plus a `:walker-sym` pointing at build.clj's `warn-deprecated-uses` (K3 Layer 6 Step 11). L3d.ii will consult this to route both parse dispatch and post-parse walker dispatch through the registry. Case-insensitive lookup preserved."
+  (testing "L3b — the `:deprecated` seed routes parsing through the L3a annotation surface and retains its `:walker-sym` pointer to build.clj's unchanged K3 warning walker. Case-insensitive lookup remains preserved."
     (let [e (sec/lookup :deprecated)]
       (is (= :behavioral (:kind e)))
       (is (= :compiler-baked (get-in e [:spec :impl])))
       (is (= :k3-deprecation-walker (get-in e [:spec :backend])))
-      (is (= 'cxc.parse/parse-deprecated-section
+      (is (= 'cxc.parse/parse-annotation
              (get-in e [:spec :parser-sym])))
       (is (= 'cxc.build/warn-deprecated-uses
              (get-in e [:spec :walker-sym]))))
@@ -211,8 +211,8 @@
     (is (nil? (sec/behavioral-parser :Invariants)))))
 
 (deftest behavioral-parser-resolves-deprecated-and-use
-  (testing "F8 L3b.ii.α — same substrate resolves parser vars for the other L3d.i / L3-use.i seeds. All three behavioral sections dispatch through one uniform mechanism."
-    (is (= (requiring-resolve 'cxc.parse/parse-deprecated-section)
+  (testing "L3b — the registry resolves `:deprecated` to the annotation parser while `:use` retains its section parser."
+    (is (= (requiring-resolve 'cxc.parse/parse-annotation)
            (sec/behavioral-parser :deprecated)))
     (is (= (requiring-resolve 'cxc.parse/parse-use-section)
            (sec/behavioral-parser :use)))))
@@ -228,7 +228,7 @@
     (is (nil? (sec/behavioral-parser :nothingregistered)))))
 
 (deftest behavioral-walker-resolves-deprecated
-  (testing "F8 L3d.ii.α — `behavioral-walker :deprecated` resolves to the K3 walker var. Complements `behavioral-parser` for sections that need post-parse processing in addition to parse dispatch — currently only `:deprecated`."
+  (testing "L3b — `behavioral-walker :deprecated` still resolves to the K3 walker var after the parse surface moves to annotations."
     (let [v (sec/behavioral-walker :deprecated)]
       (is (var? v))
       (is (= (requiring-resolve 'cxc.build/warn-deprecated-uses) v)))))
@@ -241,7 +241,7 @@
     (is (nil? (sec/behavioral-walker :madeupthing)))))
 
 (deftest behavioral-walkers-enumerates-registry-walker-vars
-  (testing "F8 L3d.ii.α — `behavioral-walkers` returns `{section-name → walker-var}` for every seeded behavioral entry whose spec carries `:walker-sym`. Today only `:deprecated` qualifies; the returned map has one entry pointing at `cxc.build/warn-deprecated-uses`. Substrate for `build/compile-source-to-file` to iterate walkers via the registry instead of hardcoding a single call — L3d.ii.β wires that. Returns a `sorted-map` for deterministic iteration order across runs."
+  (testing "L3b — `behavioral-walkers` retains the single compiler-baked `:deprecated` to K3 walker entry after the input reshape. Returns a `sorted-map` for deterministic iteration order across runs."
     (let [m (sec/behavioral-walkers)]
       (is (map? m))
       (is (contains? m :deprecated))
