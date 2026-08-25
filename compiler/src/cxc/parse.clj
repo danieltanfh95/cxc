@@ -2347,6 +2347,14 @@
         (at? tokens p :newline)
         (recur body (inc p))
 
+        ;; L3a — annotations are declaration prefixes, not def-body items.
+        ;; Keep the rejection here targeted so an indented `@name(...)`
+        ;; cannot fall through to the generic body-item diagnostic.
+        (at? tokens p :annotation-prefix)
+        (fail! tokens p
+               (str "annotations are top-level only in L3a. Move `@name(...)` "
+                    "above `def " name ":` so it annotates the declaration."))
+
         ;; L2b — direct def-body proposition (class-level invariant).
         ;; `invariants:` is hard-retired; this is the sole invariant
         ;; parse entry point at def-body position.
@@ -3300,6 +3308,44 @@
           :params params :body body} p]))))
 
 ;; ---------------------------------------------------------------------------
+;; L3a — top-level annotations
+;; ---------------------------------------------------------------------------
+
+(defn- parse-annotation
+  "Parse one own-line `@name(args...)` annotation. Argument syntax and AST
+   shape intentionally match ordinary call arguments: positional entries are
+   `{:kind :positional :value ...}` and keyword entries are
+   `{:kind :named :name ... :value ...}`. Recognition of annotation names is
+   semantic work for later landings; this parser accepts any identifier-like
+   name, including lexer-reserved words such as `deprecated`."
+  [tokens pos]
+  (let [[_ p] (expect tokens pos :annotation-prefix)
+        name-tok (peek-tok tokens p)
+        _ (when-not (#{:ident :kw} (t-kind name-tok))
+            (fail! tokens p "expected an annotation name after `@`"))
+        name (t-value name-tok)
+        [args p] (parse-args-parens tokens (inc p))
+        [_ p] (expect tokens p :newline)]
+    [{:node :annotation :name name :args args} p]))
+
+(defn- parse-annotated-def
+  "Parse one or more annotation lines and attach them, in source order, to
+   the following structurally inferred `def` declaration. In the consolidated
+   surface, record/enum/protocol/agent kinds all enter through `def`, so
+   attaching after `parse-def-atom` preserves one normalized AST location."
+  [tokens pos]
+  (loop [annotations [] p pos]
+    (if (at? tokens p :annotation-prefix)
+      (let [[annotation p2] (parse-annotation tokens p)]
+        (recur (conj annotations annotation) (skip-newlines tokens p2)))
+      (if (at? tokens p :kw "def")
+        (let [[declaration p2] (parse-def-atom tokens p)]
+          [(assoc declaration :annotations annotations) p2])
+        (fail! tokens p
+               (str "top-level annotation must be followed by a `def` "
+                    "declaration; annotations cannot stand alone in L3a"))))))
+
+;; ---------------------------------------------------------------------------
 ;; Top-level dispatch
 ;; ---------------------------------------------------------------------------
 
@@ -3311,6 +3357,7 @@
       (at? tokens p :kw "from")    (parse-from-import tokens p)
       (at? tokens p :kw "import")  (parse-import tokens p)
       (at? tokens p :kw "alias")   (parse-alias-decl tokens p)
+      (at? tokens p :annotation-prefix) (parse-annotated-def tokens p)
       (at? tokens p :kw "def")     (parse-def-atom tokens p)
 
       ;; F9 L3 / L2b — `extend Foo:` at top level. Extension body is

@@ -7,6 +7,64 @@
 
 (defn- node-kind [n] (:node n))
 
+;; ---------------------------------------------------------------------------
+;; L3a — top-level `@name(...)` annotations
+;; ---------------------------------------------------------------------------
+
+(deftest l3a-deprecated-positional-annotation-attaches-to-def
+  (testing "a positional @deprecated argument attaches to the following def"
+    (let [n   (first-node "@deprecated(\"msg\")\ndef X:\n    value: Int\n")
+          ann (first (:annotations n))]
+      (is (= "X" (:name n)))
+      (is (= :annotation (:node ann)))
+      (is (= "deprecated" (:name ann)))
+      (is (= :positional (get-in ann [:args 0 :kind])))
+      (is (= {:node :lit-string :value "msg"}
+             (get-in ann [:args 0 :value]))))))
+
+(deftest l3a-metadata-keyword-annotation-attaches-to-def
+  (testing "a keyword @metadata argument retains its name and value"
+    (let [n   (first-node "@metadata(kind: \"class\")\ndef X:\n    value: Int\n")
+          arg (get-in n [:annotations 0 :args 0])]
+      (is (= "metadata" (get-in n [:annotations 0 :name])))
+      (is (= :named (:kind arg)))
+      (is (= "kind" (:name arg)))
+      (is (= {:node :lit-string :value "class"} (:value arg))))))
+
+(deftest l3a-multiple-annotations-stack-in-source-order
+  (testing "multiple own-line annotations all attach to one declaration"
+    (let [n (first-node (str "@deprecated(\"msg\")\n"
+                             "@metadata(kind: \"class\")\n"
+                             "def X:\n"
+                             "    value: Int\n"))]
+      (is (= ["deprecated" "metadata"]
+             (mapv :name (:annotations n))))
+      (is (= 2 (count (:annotations n)))))))
+
+(deftest l3a-annotation-without-following-def-rejects
+  (testing "an annotation cannot stand alone at end of input"
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"top-level annotation must be followed by a `def` declaration"
+         (p/parse "@orphan(\"value\")\n")))))
+
+(deftest l3a-annotation-inside-def-body-rejects
+  (testing "annotations are top-level-only in this landing"
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"annotations are top-level only in L3a"
+         (p/parse "def X:\n    @metadata(kind: \"class\")\n    value: Int\n")))))
+
+(deftest l3a-unknown-annotation-with-mixed-args-parses
+  (testing "unknown names and mixed positional/keyword args receive no parse-time semantic validation"
+    (let [n    (first-node "@custom_tag(\"tag\", priority: 2)\ndef X:\n    value: Int\n")
+          ann  (first (:annotations n))
+          args (:args ann)]
+      (is (= "custom_tag" (:name ann)))
+      (is (= [:positional :named] (mapv :kind args)))
+      (is (= "priority" (get-in args [1 :name])))
+      (is (= {:node :lit-int :value 2} (get-in args [1 :value]))))))
+
 (deftest module-decl-retired
   (testing "F73 (2026-08-20) — the `module <name>` header is retired. Module identity is the file path relative to the source root; the resolver walks the tree. Parser rejects with a migration diagnostic instead of producing a `:module` node."
     (is (thrown-with-msg?
