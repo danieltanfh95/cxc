@@ -2180,6 +2180,93 @@ def main:
     -> running
 ")))))
 
+(defn- atom-transitions
+  "Test helper — parse `src` and return the transitions on the first
+   def-atom whose name matches `atom-name`."
+  [src atom-name]
+  (let [prog (p/parse src)
+        atom-node (first (filter #(and (= :def-atom (:node %))
+                                       (= atom-name (:name %)))
+                                 prog))]
+    (filterv #(= :transition (:node %)) (:body atom-node))))
+
+(deftest l11-companion-synthesized-for-public-message-transition
+  (testing "L11 (2026-08-25) — `collect-companion-shapes` synthesizes `<msg>_failed(reason:)` for every message-triggered public transition. Bare `|:` contributes `:invariant-violation` to the reason-type union; `|: as ErrorType(...)` contributes a `:typed` entry with the type name. Runtime delivery is deferred to L12; L11 lands metadata only."
+    (let [txns (atom-transitions
+                "def A:
+    n: Int! = 0
+    max: Int! = 3
+
+    alive <: bump -> alive
+        |: n < max
+        then: n => n + 1
+"
+                "A")
+          companions (#'cxc.lower/collect-companion-shapes "A" txns)]
+      (is (contains? companions "bump_failed") "bump gets a companion")
+      (let [entry (get companions "bump_failed")]
+        (is (= "bump" (:of-msg entry)))
+        (is (= [{:name "reason"}] (:payload entry)))
+        (is (some #(= :invariant-violation (:kind %)) (:reason-types entry))
+            "bare `|:` contributes :invariant-violation")))))
+
+(deftest l11-companion-typed-invariant-contributes-typed-reason
+  (testing "L11 — a `|: as OutOfRange(...)` clause on the target's transition contributes a typed reason entry (kind :typed, type-name from the AST) to the companion's reason-type union."
+    (let [txns (atom-transitions
+                "def A:
+    n: Int! = 0
+    max: Int! = 3
+
+    alive <: bump -> alive
+        |: n < max as OutOfRange(field: \"n\")
+        then: n => n + 1
+"
+                "A")
+          companions (#'cxc.lower/collect-companion-shapes "A" txns)
+          entry (get companions "bump_failed")]
+      (is (some #(and (= :typed (:kind %)) (= "OutOfRange" (:type-name %)))
+                (:reason-types entry))
+          "typed `as OutOfRange(...)` contributes a :typed reason entry"))))
+
+(deftest l11-companion-mixed-bare-and-typed-reasons-union
+  (testing "L11 — an atom with multiple message transitions contributes each transition's `|:` reasons to that message's companion; distinct bare + typed reasons appear as separate entries in the union."
+    (let [txns (atom-transitions
+                "def A:
+    n: Int! = 0
+
+    alive <: bump -> alive
+        |: n < 10
+        then: n => n + 1
+
+    alive <: bump -> alive
+        |: n >= 10 as OutOfRange(field: \"n\")
+        then: n => n
+"
+                "A")
+          companions (#'cxc.lower/collect-companion-shapes "A" txns)
+          entry (get companions "bump_failed")
+          kinds (set (map :kind (:reason-types entry)))]
+      (is (contains? kinds :invariant-violation) "bare `|:` union member")
+      (is (contains? kinds :typed) "typed `|: as T` union member"))))
+
+(deftest l11-companion-index-lands-on-atom-env
+  (testing "L11 — the companion-index synthesized by env-build is threaded onto each atom's env entry as `:companion-index`, mirroring `:message-index`. Downstream (L12) reads this to wire runtime delivery."
+    (let [prog (p/parse "def A:
+    n: Int! = 0
+    max: Int! = 3
+
+    alive <: bump -> alive
+        |: n < max
+        then: n => n + 1
+
+def main:
+    a: A = A()
+    -> running
+")
+          env (#'cxc.lower/build-atom-env prog {})]
+      (is (contains? (get-in env ["A" :companion-index]) "bump_failed")
+          "A's atom-env entry exposes companion metadata for `bump_failed`"))))
+
 (deftest f31-f35-l2-panic-lowers-to-inline-trap
   (testing "F31/F35 Landing 2 — `panic(\"msg\")` lowers to an inline expr that prints `panic: <msg>` + backtrace and calls `__builtin_trap()`. Uncatchable (bypasses `@try/@catch`); BEAM-style transition isolation is preserved separately."
     (let [prog (lower-src "def main:\n    -> running\n        then: panic(\"boom\")\n")

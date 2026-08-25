@@ -2091,6 +2091,57 @@
      {}
      msg-txns)))
 
+(defn- proposition-nodes-in-transition
+  "L11 — every `:proposition` node reachable from a transition body's
+   clauses (guard head and then/do bodies). Kept shallow: propositions
+   at the arm head or as their own statements. Deeper walks land with
+   nested-scope work in L12."
+  [t]
+  (->> (:body t)
+       (filter #(= :proposition (:node %)))))
+
+(defn- collect-companion-shapes
+  "L11 — synthesize `<msg>_failed(reason:)` companion declarations for
+   every message-triggered public transition on this atom. Payload is
+   the single `reason` key; `:reason-types` records the union of typed
+   `|: as T` clauses plus a `:invariant-violation` sentinel for any
+   bare `|:`. Runtime delivery is L12; L11 lands metadata only so
+   senders can declaratively subscribe against the companion.
+
+   Returns `{\"<msg>_failed\" {:payload [{:name \"reason\"}]
+                               :reason-types [...]
+                               :of-msg \"<msg>\"}}` per unique msg."
+  [_atom-name transitions]
+  (let [msg-txns (filter #(and (:receive %)
+                               (contains? #{"<:" "<|"}
+                                          (get-in % [:receive :glyph]))
+                               (= :ident (get-in % [:receive :msg :source :node])))
+                         transitions)]
+    (reduce
+     (fn [acc t]
+       (let [msg-name (get-in t [:receive :msg :source :name])
+             failed   (str msg-name "_failed")
+             props    (proposition-nodes-in-transition t)
+             typed    (keep (fn [p]
+                              (when-let [et (:as-error-type p)]
+                                (when (= :type-ref (:node et))
+                                  {:kind :typed :type-name (:name et)})))
+                            props)
+             has-bare? (some #(nil? (:as-error-type %)) props)
+             reasons  (cond-> (vec (distinct typed))
+                        has-bare?
+                        (conj {:kind :invariant-violation}))
+             entry    {:payload      [{:name "reason"}]
+                       :reason-types reasons
+                       :of-msg       msg-name}]
+         (if-let [existing (get acc failed)]
+           (assoc acc failed
+                  (assoc existing :reason-types
+                         (vec (distinct (concat (:reason-types existing) reasons)))))
+           (assoc acc failed entry))))
+     {}
+     msg-txns)))
+
 (defn- def-atom-handler-decls
   "F14 — `-> name(args):` handler declarations at atom-body top level.
 
@@ -2728,6 +2779,7 @@
                                 {:atom name :method m :value v})))
              on-nil-entries (into {} (map (juxt :method :value) on-nil-raw))
              message-index (collect-message-shapes name transitions)
+             companion-index (collect-companion-shapes name transitions)
              ;; Streams this atom EMITS (untargeted `:>` in any transition
              ;; body). Indexed by stream name; the ordered list preserves
              ;; declaration order so the emitted ivars + methods have a
@@ -2797,6 +2849,7 @@
                           :invariants    invariants
                           :transitions   transitions
                           :message-index message-index
+                          :companion-index companion-index
                           :stream-index  stream-index
                           :stream-order  stream-order
                           :subscription-map subscription-map
@@ -2838,6 +2891,7 @@
    :invariants           []
    :transitions          []
    :message-index        {}
+   :companion-index      {}
    :stream-index         {}
    :stream-order         []
    :stream-payload-index {}
