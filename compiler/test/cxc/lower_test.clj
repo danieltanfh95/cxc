@@ -4471,8 +4471,7 @@ def main:
          #"F8 L3a: `doubled` is a computed field \(observable\) on atom `V`"
          (lower-src (str "def V:\n"
                          "    n: Int = 3\n\n"
-                         "    computed:\n"
-                         "        doubled: Int = n * 2\n\n"
+                         "    doubled :< n * 2\n\n"
                          "    running <: bump -> self\n"
                          "        then: doubled => 10\n\n"
                          "def main:\n"
@@ -4480,7 +4479,7 @@ def main:
                          "    -> running\n"))))))
 
 (deftest f8-l3a-record-field-observable-name-collision-rejected
-  (testing "F8 L3a follow-on — a record data field and an observable (top-level or via `computed:`) with the same name is a hard error. Silent collision would make the observable dead code — `.field` on a value dispatches through the field-access path before the observable getter."
+  (testing "F8 L3a follow-on — a record data field and an observable with the same name is a hard error. Silent collision would make the observable dead code — `.field` on a value dispatches through the field-access path before the observable getter."
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
          #"F8 L3a: observable `n` on record `V` collides with a data field"
@@ -4493,8 +4492,7 @@ def main:
          #"F8 L3a: observable `n` on atom `V` collides with a data field"
          (lower-src (str "def V:\n"
                          "    n: Int = 3\n\n"
-                         "    computed:\n"
-                         "        n: Int = 2\n\n"
+                         "    n :< 2\n\n"
                          "    running <: bump -> self\n\n"
                          "def main:\n"
                          "    v: V = V()\n"

@@ -1,8 +1,7 @@
 def V:
     n: Int = 21
 
-    computed:
-        doubled: Int = n * 2
+    doubled :< n * 2
 
 def main:
     -> running

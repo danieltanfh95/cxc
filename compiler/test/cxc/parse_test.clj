@@ -1434,56 +1434,40 @@ def main:
       (is (nil? (:as-error-args prop))))))
 
 ;; ---------------------------------------------------------------------------
-;; F8 L3a — `computed:` behavioral section. Field-shape decls inside
-;; `computed:` rewrite to zero-arg observables at parse time — the
-;; field_getter generator per F8 plan §Landing 3a. Users get field-style
-;; declarative ergonomics; the compiler treats reads as observable
-;; dispatches (cross-atom reads recompute every access, per spec
-;; §4.10.4.1 Computed contract).
+;; L8 (2026-08-25) — `computed:` section header retired. The direct
+;; observable syntax (`name :< expr` at def-body position) is the
+;; terminal shape; the section header was parse-time sugar and has
+;; been removed.
 ;; ---------------------------------------------------------------------------
 
-(deftest f8-l3a-computed-field-shape-rewrites-to-observable
-  (testing "F8 L3a — `computed: doubled: Int = n * 2` inside a class body rewrites to `doubled() :< n * 2` at parse time. The transient :computed-section wrapper is spliced away by fold-top-level-fields."
-    (let [n   (first-node "def V:\n    n: Int\n\n    computed:\n        doubled: Int = n * 2\n")
-          obs (first (filter #(= :observable (:node %)) (:sections n)))]
-      (is (some? obs) "the field-shape decl inside `computed:` surfaces as an observable")
-      (is (= "doubled" (:name obs)))
-      (is (empty? (:params obs))
-          "computed fields are zero-arg — parametric readers use the top-level `name(args) :< expr` form")
-      (is (= :binop (get-in obs [:expr :node])))
-      (is (= "*"    (get-in obs [:expr :op])))
-      (is (not (some #(= :computed-section (:node %)) (:sections n)))
-          "no stray :computed-section survives after fold-top-level-fields"))))
+(deftest l8-computed-section-header-retired
+  (testing "L8 — `computed:` as a body-section header is retired; the parser rejects it via the generic body-item dispatch."
+    (is (thrown? clojure.lang.ExceptionInfo
+                 (p/parse "def V:\n    n: Int\n\n    computed:\n        doubled: Int = n * 2\n")))))
 
-(deftest f8-l3a-computed-observable-shape-passes-through
-  (testing "F8 L3a — `computed:` also accepts observable-shape decls (`name :< expr`) for parity with top-level observables. Distinguishes MVP scope (both shapes accepted, both flatten to observables) from a full section-class generator run."
-    (let [n   (first-node "def V:\n    n: Int\n\n    computed:\n        tripled :< n * 3\n")
+(deftest l8-direct-observable-parses-at-def-body
+  (testing "L8 — the direct observable spelling (`name :< expr`) replaces `computed:` for zero-arg computed fields at def-body position."
+    (let [n   (first-node "def V:\n    n: Int\n\n    doubled :< n * 2\n")
           obs (first (filter #(and (= :observable (:node %))
-                                   (= "tripled" (:name %)))
+                                   (= "doubled" (:name %)))
                              (:sections n)))]
-      (is (some? obs) "observable-shape decl inside `computed:` surfaces unchanged")
-      (is (empty? (:params obs))))))
+      (is (some? obs) "direct observable surfaces at def-body position")
+      (is (empty? (:params obs)))
+      (is (= :binop (get-in obs [:expr :node])))
+      (is (= "*"    (get-in obs [:expr :op]))))))
 
-(deftest f8-l3a-computed-field-missing-default-rejected
-  (testing "F8 L3a — a computed field with no `= <expression>` is a hard error at parse time; the expression IS the field's derivation. Prevents a silently-broken observable body."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"F8 L3a: computed field `broken` must have a `= <expression>`"
-         (p/parse "def V:\n    n: Int\n\n    computed:\n        broken: Int\n")))))
-
-(deftest f8-l3a-computed-splices-in-declaration-order
-  (testing "F8 L3a — multiple computed fields survive as multiple observables in declaration order. The fold splices at the section's position, preserving the visual grouping intent while the AST stays flat for downstream lowering."
-    (let [n   (first-node "def V:\n    n: Int\n\n    computed:\n        d: Int = n * 2\n        t: Int = n * 3\n")
+(deftest l8-multiple-direct-observables-preserve-order
+  (testing "L8 — multiple direct observables at def-body position preserve declaration order."
+    (let [n   (first-node "def V:\n    n: Int\n\n    d :< n * 2\n    t :< n * 3\n")
           obs (filterv #(= :observable (:node %)) (:sections n))]
       (is (= ["d" "t"] (mapv :name obs))))))
 
-(deftest f8-l3a-computed-parametric-observable-shape-passes-through
-  (testing "F8 L3a — parametric computed fields via the observable-shape (`name(params) :< expr`) pass through unchanged. The plan's MVP-scope note on 'parametric computed fields excluded' applies only to the field-shape sugar (`name(args): T = expr`) — not to the observable-shape which parse-observable already handles."
-    (let [n   (first-node "def V:\n    n: Int\n\n    computed:\n        scaled(k: Int) :< n * k\n")
+(deftest l8-parametric-observable-parses-at-def-body
+  (testing "L8 — parametric observables (`name(params) :< expr`) parse at def-body position unchanged from prior support."
+    (let [n   (first-node "def V:\n    n: Int\n\n    scaled(k: Int) :< n * k\n")
           obs (first (filter #(and (= :observable (:node %))
                                    (= "scaled" (:name %)))
                              (:sections n)))]
-      (is (some? obs) "parametric observable-shape survives inside `computed:`")
-      (is (= 1 (count (:params obs)))
-          "parametric params flow through — one user param `k`")
+      (is (some? obs))
+      (is (= 1 (count (:params obs))))
       (is (= "k" (get-in obs [:params 0 :name]))))))
