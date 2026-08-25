@@ -712,12 +712,25 @@
               (map str))
         files-with-nodes))
 
+(defn- user-metadata-from-symbol-table
+  "L3c NEW-INPUT — collect declaration metadata annotations retained by
+   resolve. `build-manifest` accepts this map separately from the compiler-
+   derived symbol-table facts so user fields cannot overwrite name/kind/
+   variant/member output."
+  [symbol-table]
+  (into {}
+        (keep (fn [[name entry]]
+                (when (seq (:metadata-annotations entry))
+                  [name (:metadata-annotations entry)])))
+        symbol-table))
+
 (defn- emit-module-manifests!
   "F53 L1 — write `<out-dir>/<module>.cxc-manifest.json` for every
    user module present in `files-with-nodes`. Deterministic order:
    modules sorted by name for reproducible builds."
   [out-dir files-with-nodes]
   (let [symbol-table (symbol-table-across-modules files-with-nodes)
+        user-metadata (user-metadata-from-symbol-table symbol-table)
         compiled-at  (iso-utc-now)
         modules      (into (sorted-set) (map :module) files-with-nodes)]
     (doseq [module modules]
@@ -729,6 +742,7 @@
            :source-files  (source-files-for-module files-with-nodes module)
            :source-hash   (source-hash-for-module files-with-nodes module)
            :symbol-table  symbol-table
+           :user-metadata user-metadata
            :imports       (import-nodes-for-module files-with-nodes module)
            :compiled-at   compiled-at})))))
 

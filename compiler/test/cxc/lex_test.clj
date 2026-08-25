@@ -45,10 +45,17 @@
            (vals-of (lex/tokenize "@"))))))
 
 (deftest annotation-prefix-in-context
-  (testing "@ prefixes an annotation invocation"
+  (testing "@ prefixes @deprecated with a positional string"
     (is (= [[:annotation-prefix "@"] [:kw "deprecated"] [:punct "("]
             [:string "msg"] [:punct ")"]]
-           (vals-of (lex/tokenize "@deprecated(\"msg\")"))))))
+           (vals-of (lex/tokenize "@deprecated(\"msg\")")))))
+  (testing "@ prefixes @metadata with named literal fields"
+    (is (= [[:annotation-prefix "@"] [:ident "metadata"] [:punct "("]
+            [:ident "docs"] [:punct ":"] [:string "Counter"]
+            [:punct ","] [:ident "stable"] [:punct ":"] [:kw "true"]
+            [:punct ")"]]
+           (vals-of
+            (lex/tokenize "@metadata(docs: \"Counter\", stable: true)"))))))
 
 (deftest string-literals
   (testing "basic string"

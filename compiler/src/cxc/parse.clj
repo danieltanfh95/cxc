@@ -2112,12 +2112,20 @@
   "F8 L1-b — `<ident>: <newline>` where `<ident>` is registered in
    `cxc.section/registry` (via a prior `:section-header` alias
    declaration). Consulted after the closed switch of built-in section
-   headers has failed to match, before the generic body-item dispatch."
+   headers has failed to match, before the generic body-item dispatch.
+
+   Only field-section aliases enter this legacy composition shim.
+   Behavioral/annotation registry entries deliberately do not: their
+   own parser surfaces must route through `behavioral-parser`, and a
+   retired header such as `metadata:` must not silently become fields."
   [tokens pos]
-  (and (at? tokens pos :ident)
-       (at? tokens (inc pos) :punct ":")
-       (at? tokens (+ pos 2) :newline)
-       (some? (section/lookup (t-value (peek-tok tokens pos))))))
+  (let [entry (when (at? tokens pos :ident)
+                (section/lookup (t-value (peek-tok tokens pos))))]
+    (and (at? tokens pos :ident)
+         (at? tokens (inc pos) :punct ":")
+         (at? tokens (+ pos 2) :newline)
+         (contains? #{:primitive-composition :alias-expanded}
+                    (:kind entry)))))
 
 (defn- parse-custom-section
   "F8 L1-b — parse a body of field declarations under a registered
@@ -2460,32 +2468,6 @@
                     "`data:` (per-instance, updated only through "
                     "transitions). See spec §1.11."))
 
-        ;; F8 L3c stub (2026-08-24) — `metadata:` in def-body is a
-        ;; protected section-header (F8 D5) whose seed is `:reserved`
-        ;; because F53 metadata emission goes through `.cxc-manifest.
-        ;; json`, not through a body section (see F8 L3-use.i landing
-        ;; note). Without this targeted arm, `metadata:` falls through
-        ;; to the generic custom-section dispatch (which matches any
-        ;; registered header including `:reserved` seeds) and body
-        ;; items silently misparse — `kind: class` becomes a data
-        ;; field named `kind` of type `class`. Reject at parse time
-        ;; with a pointer at F10 (full metadata surface) as the
-        ;; landing that will enable this shape.
-        (and (at? tokens p :ident)
-             (= "metadata" (t-value (peek-tok tokens p)))
-             (at? tokens (inc p) :punct ":")
-             (at? tokens (+ p 2) :newline))
-        (fail! tokens p
-               (str "F8 L3c: `metadata:` inside `def " name "` body is "
-                    "reserved at v1.0 but has no compiler backend yet "
-                    "(F53 metadata emission goes through `.cxc-manifest."
-                    "json`, not a body section). Without this rejection "
-                    "the section body would silently misparse as data "
-                    "fields. Track: F10 (`metadata:` section, threading/"
-                    "QoS/dispatch keys) at "
-                    "compiler/design/plans/g1-alias-section/"
-                    "k3-f10-f11-f12-section-classes.md."))
-
         ;; F68 L1 (Proposal H) — `accepts:` section / per-entry sugar
         ;; inside a `def` body marks the declaration as a protocol at
         ;; structural-detect time (see reshape at end of body loop).
@@ -2741,7 +2723,7 @@
     ;;
     ;; F16 L2 — if any case carries `:raw-value`, all cases must.
     ;; The raw-type is the smallest fitting unsigned integer type.
-    ;; Overriding via `metadata: raw_type:` is a follow-on landing.
+    ;; Overriding via `@metadata(raw_type: ...)` is a follow-on landing.
     (let [with-raw    (filterv :raw-value cases)
           without-raw (remove :raw-value cases)]
       (when (and (seq with-raw) (seq without-raw))
@@ -2895,9 +2877,11 @@
 ;;
 ;; Per §3.3.2 "What extensions cannot add", extension bodies accept only
 ;; own-line `|:` propositions and conforms:. `data:`, `state:`, `use:`,
-;; `cases:`, `metadata:` (any subkey), and `deprecated:` are rejected
-;; at parse with a targeted §3.3.2 pointer. Method entries carry the
-;; `replace` modifier via `:replace?` (parsed by shared parse-methods-section).
+;; `cases:`, and `deprecated:` are rejected at parse with a targeted
+;; §3.3.2 pointer. The hard-retired `metadata:` header has no registry
+;; section backend and reaches the ordinary extension-body diagnostic.
+;; Method entries carry the `replace` modifier via `:replace?` (parsed by
+;; shared parse-methods-section).
 ;;
 ;; Extension target-name resolution is deferred to lower (L4 composition
 ;; consumes extension-env; unknown-target diagnostics fire there when the

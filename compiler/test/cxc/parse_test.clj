@@ -373,11 +373,18 @@
          #"`state:` section is retired at v1.0"
          (p/parse "def V:\n    state:\n        x: Float\n")))))
 
-(deftest f8-l3c-stub-metadata-section-in-def-body-rejected-with-f10-pointer
-  (testing "F8 L3c stub — `metadata:` inside a def-body has no compiler backend at v1.0 (F53 metadata emission goes through `.cxc-manifest.json`, not the section). Without a targeted rejection the body items silently misparse as data fields via the generic custom-section dispatch (`kind: class` → field `kind` of type `class`). Reject at parse time with an F10 pointer."
-    (is (thrown-with-msg?
+(deftest f8-l3c-metadata-annotation-is-the-sole-user-metadata-surface
+  (testing "L3c NEW-INPUT — @metadata named fields attach above the def"
+    (let [n (first-node (str "@metadata(docs: \"Counter\", stable: true)\n"
+                             "def Counter:\n"
+                             "    n: Int = 0\n\n"
+                             "    -> running\n"))]
+      (is (= "metadata" (get-in n [:annotations 0 :name])))
+      (is (= ["docs" "stable"]
+             (mapv :name (get-in n [:annotations 0 :args]))))))
+  (testing "L3c HARD RETIRE — metadata: has no targeted or generic section shim"
+    (is (thrown?
          clojure.lang.ExceptionInfo
-         #"F8 L3c.*metadata:.*F10"
          (p/parse (str "def Counter:\n"
                        "    n: Int = 0\n\n"
                        "    metadata:\n"
@@ -933,9 +940,9 @@ def main:
                "    state:\n"
                "        x: Int\n"))))))
 
-;; f9-l3-extend-class-rejects-metadata deleted at F68 L6b — `metadata` is no
-;; longer a reserved word; the retirement is the reservation removal itself.
-;; `metadata:` inside an extension body hits a generic parse error now.
+;; L3c — user metadata belongs in `@metadata(...)` above the original def.
+;; A legacy `metadata:` header inside an extension has no section backend and
+;; therefore reaches the ordinary extension-body parse error.
 
 (deftest f9-l3-extend-class-rejects-use
   (testing "F9 Landing 3 — `use:` inside `extend class` fails at parse (extensions cannot add capabilities)."

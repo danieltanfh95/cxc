@@ -116,34 +116,107 @@
    :message (:msg t)
    :target (:target t)})
 
+(defn- metadata-value->export
+  "Convert an annotation argument expression into its JSON-facing value.
+   Literal metadata becomes the corresponding JSON scalar; lists recurse;
+   bare identifiers/type references become names. For expression shapes
+   without a scalar interpretation, retain the AST map as opaque metadata
+   rather than rejecting open-ended user keys."
+  [value]
+  (if-not (map? value)
+    value
+    (case (:node value)
+      :lit-string (:value value)
+      :lit-char   (:value value)
+      :lit-int    (:value value)
+      :lit-float  (:value value)
+      :lit-bool   (:value value)
+      :lit-nil    nil
+      :ident      (:name value)
+      :type-ref   (:name value)
+      :list       (mapv metadata-value->export (:items value))
+      :neg        (let [inner (metadata-value->export (:expr value))]
+                    (if (number? inner) (- inner) value))
+      value)))
+
+(defn- metadata-annotations->export
+  "Fold parsed `@metadata(...)` annotations into one deterministic map.
+   Named arguments become user-facing fields; repeated fields use the
+   later source value. Positional arguments are preserved under `$args`
+   so the generic L3a annotation grammar remains lossless even though the
+   normal metadata surface uses named fields."
+  [annotations]
+  (reduce
+   (fn [metadata annotation]
+     (reduce
+      (fn [m {:keys [kind name value]}]
+        (if (= :named kind)
+          (assoc m (keyword name) (metadata-value->export value))
+          (update m :$args (fnil conj [])
+                  (metadata-value->export value))))
+      metadata
+      (:args annotation)))
+   (sorted-map)
+   annotations))
+
+(defn- normalize-user-metadata
+  "Accept either raw parsed metadata annotations or an already-materialized
+   metadata map. The map form keeps `build-manifest` useful to tooling/tests
+   that construct compiler and user metadata independently of the parser."
+  [metadata]
+  (cond
+    (map? metadata)
+    (into (sorted-map)
+          (map (fn [[k v]] [k (metadata-value->export v)]))
+          metadata)
+
+    (sequential? metadata)
+    (metadata-annotations->export metadata)
+
+    :else
+    (sorted-map)))
+
 (defn entry->export
   "Convert a resolve/build-symbol-table entry to its manifest exports
    shape. Kind-specific member details flatten to arrays of maps that
    downstream JSON consumers can traverse without knowing the parse
-   AST shapes."
-  [{:keys [name kind variant members]}]
-  (cond-> {:name    name
-           :kind    (clojure.core/name kind)}
-    variant
-    (assoc :variant (clojure.core/name variant))
+   AST shapes. User `@metadata(...)` fields are additive and live under
+   `:metadata`, alongside (without overriding) compiler-derived fields."
+  ([entry]
+   (entry->export entry nil))
+  ([{:keys [name kind variant members metadata-annotations] :as entry}
+    user-metadata]
+   (let [metadata-input (cond
+                          (some? user-metadata) user-metadata
+                          (seq metadata-annotations) metadata-annotations
+                          (contains? entry :metadata) (:metadata entry)
+                          :else nil)
+         metadata       (normalize-user-metadata metadata-input)]
+     (cond-> {:name    name
+              :kind    (clojure.core/name kind)}
+       variant
+       (assoc :variant (clojure.core/name variant))
 
-    (= :record kind)
-    (assoc :members
-           {:fields      (mapv field->export (:fields members))
-            :observables (mapv observable->export (:observables members))})
+       (some? metadata-input)
+       (assoc :metadata metadata)
 
-    (= :def-atom kind)
-    (assoc :members
-           {:fields       (mapv field->export (:data-fields members))
-            :observables  (mapv observable->export (:observables members))
-            :transitions  (mapv transition->export (:transitions members))
-            :use-caps     (mapv (fn [c] {:name (:name c) :type (:type c)})
-                                (:use-caps members))})
+       (= :record kind)
+       (assoc :members
+              {:fields      (mapv field->export (:fields members))
+               :observables (mapv observable->export (:observables members))})
 
-    (= :enum kind)
-    (assoc :members
-           {:cases (mapv (fn [c] (if (map? c) (:name c) c))
-                         (:cases members))})))
+       (= :def-atom kind)
+       (assoc :members
+              {:fields       (mapv field->export (:data-fields members))
+               :observables  (mapv observable->export (:observables members))
+               :transitions  (mapv transition->export (:transitions members))
+               :use-caps     (mapv (fn [c] {:name (:name c) :type (:type c)})
+                                   (:use-caps members))})
+
+       (= :enum kind)
+       (assoc :members
+              {:cases (mapv (fn [c] (if (map? c) (:name c) c))
+                            (:cases members))})))))
 
 ;; ---------------------------------------------------------------------------
 ;; Manifest construction
@@ -167,11 +240,14 @@
    - `:source-files`   — vector of source path strings (sorted)
    - `:source-hash`    — sha256 hex of concatenated sources for this module
    - `:symbol-table`   — full symbol table (filtered to this module below)
+   - `:user-metadata`  — optional declaration-name → parsed metadata
+                        annotations/materialized field map. Symbol-table
+                        metadata is used when no explicit entry is supplied
    - `:imports`        — vector of `:from-import` / `:import` AST nodes
                         drawn from every file in this module
    - `:compiled-at`    — ISO-8601 timestamp string
    - `:compiler-version` — optional override (defaults to `compiler-version`)"
-  [{:keys [module source-files source-hash symbol-table imports
+  [{:keys [module source-files source-hash symbol-table user-metadata imports
            compiled-at compiler-version]
     :or {compiler-version compiler-version}}]
   (let [module-entries (->> (vals symbol-table)
@@ -183,7 +259,12 @@
      :compiled-at      compiled-at
      :source-hash      source-hash
      :source-files     (vec source-files)
-     :exports          (mapv entry->export module-entries)
+     :exports          (mapv (fn [entry]
+                               (entry->export
+                                entry
+                                (when (contains? user-metadata (:name entry))
+                                  (get user-metadata (:name entry)))))
+                             module-entries)
      :imports          (mapv import->manifest imports)}))
 
 (defn emit-manifest!

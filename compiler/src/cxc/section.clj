@@ -227,15 +227,17 @@
    waits on a followup that decides the metadata schema for
    parse-sugar sections.
 
+   `:metadata` — F53 sidecar manifest emission. The L3a top-level
+   annotation parser owns the sole parse surface; parsed metadata
+   annotations are retained by resolve and emitted on declaration
+   exports in `<module>.cxc-manifest.json`. There is deliberately no
+   section-header parser.
+
    `:use` — K6 partial capability-request extraction. Parser handles
    `use:` via `parse-use-section`; lower reads the caps set at
    multiple sites (atom-env building, transition-injection eligibility,
    effect-checking dispatch). Same L3b.i shape — backend landed,
    registry ownership not yet wired.
-
-   `:metadata` remains `:reserved` — metadata artifact emission is
-   F53-adjacent but goes through `.cxc-manifest.json`, not a
-   `metadata:` section.
 
    Seed flags:
    - `:allowed-in-extend?` — F8 L3b.iii — is the section permitted
@@ -249,6 +251,11 @@
                 :parser-less?       true
                 :allowed-in-extend? true
                 :notes              "L2b: `|:` propositions parse directly; F49 consumes their normalized records."}
+   :metadata   {:impl               :compiler-baked
+                :backend            :f53-manifest-emission
+                :parser-sym         'cxc.parse/parse-annotation
+                :allowed-in-extend? false
+                :notes              "L3c: `@metadata(...)` annotations feed F53 declaration exports; no section-header backend exists."}
    :deprecated {:impl               :compiler-baked
                 :backend            :k3-deprecation-walker
                 :parser-sym         'cxc.parse/parse-annotation
@@ -265,9 +272,10 @@
   "Section-class registry — `{section-name-keyword → spec}`. Seeded
    with F8 D5 protected reservations. Names with a landed backend
    carry `:kind :behavioral` + a spec pointer (L3b.i: `invariants`
-   → F49 machinery; L3d.i: `deprecated` → K3 walker; L3-use.i:
-   `use` → K6 capability extraction); names still awaiting
-   behavioral wire-in carry `:kind :reserved` + `:spec nil`. L4
+   → F49 machinery; L3c: `metadata` → F53 manifest emission;
+   L3d.i: `deprecated` → K3 walker; L3-use.i: `use` → K6
+   capability extraction); names still awaiting behavioral wire-in
+   carry `:kind :reserved` + `:spec nil`. L4
    (`section class Name:` user syntax) adds entries for unprotected
    names. Kept as a var so the parser hook and future L4
    declaration handler consult a single canonical location.
@@ -277,7 +285,7 @@
       :kind    :primitive-composition | :behavioral | :alias-expanded
                | :reserved
       :spec    <compose-result or generator-carrying spec, or nil for
-                :reserved entries pending L3b/c/d>}"
+                :reserved entries pending a later landing>}"
   (atom
    (into {}
          (map (fn [nm]

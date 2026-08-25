@@ -155,15 +155,15 @@
     (is (not (sec/protected? :my_custom_section)))))
 
 (deftest registry-seeded-with-protected-reservations
-  (testing "F8 D5 + L3b.i + L3d.i + L3-use.i — the registry is seeded with a protected entry for every protected name. Names still awaiting backend wire-in carry `:kind :reserved` + `:spec nil`; names whose backend has landed carry `:kind :behavioral` + a spec pointer (L3b.i: `invariants` → F49 machinery; L3d.i: `deprecated` → K3 walker; L3-use.i: `use` → K6 capability extraction). The seed guarantees `alias X:` sees a collision regardless of wire-in state."
+  (testing "F8 D5 + L3b.i + L3c + L3d.i + L3-use.i — the registry is seeded with a protected entry for every protected name. Names still awaiting backend wire-in carry `:kind :reserved` + `:spec nil`; landed backends carry `:kind :behavioral` + a spec pointer. The seed guarantees `alias X:` sees a collision regardless of wire-in state."
     ;; Reserved-shape entries: backend not yet claimed via the registry.
     (let [e (sec/lookup :computed)]
       (is (some? e))
       (is (= :computed (:name e)))
       (is (= :reserved (:kind e))))
-    (is (= :reserved (:kind (sec/lookup :metadata))))
     ;; Behavioral-shape entries.
     (is (= :behavioral (:kind (sec/lookup :invariants))))
+    (is (= :behavioral (:kind (sec/lookup :metadata))))
     (is (= :behavioral (:kind (sec/lookup :deprecated))))
     (is (= :behavioral (:kind (sec/lookup :use))))))
 
@@ -192,6 +192,19 @@
     (is (= :behavioral (:kind (sec/lookup "Deprecated"))))
     (is (= :behavioral (:kind (sec/lookup :Deprecated))))))
 
+(deftest metadata-seed-records-f53-annotation-backend
+  (testing "L3c — metadata is an annotation-surface registry entry routed to F53, with no section walker or extension permission."
+    (let [e (sec/lookup :metadata)]
+      (is (= :behavioral (:kind e)))
+      (is (= :compiler-baked (get-in e [:spec :impl])))
+      (is (= :f53-manifest-emission (get-in e [:spec :backend])))
+      (is (= 'cxc.parse/parse-annotation
+             (get-in e [:spec :parser-sym])))
+      (is (nil? (get-in e [:spec :walker-sym])))
+      (is (false? (get-in e [:spec :allowed-in-extend?]))))
+    (is (= :behavioral (:kind (sec/lookup "Metadata"))))
+    (is (= :behavioral (:kind (sec/lookup :Metadata))))))
+
 (deftest use-seed-records-k6-backend
   (testing "F8 L3-use.i — the `:use` seed carries the same L3b.i shape (no `:walker-sym` since capability extraction happens inline in lower, not as a post-parse walker). Parser handles `use:` via `parse-use-section`; lower reads `:caps` from the section body at multiple sites (atom-env building, transition injection eligibility). Full L3-use wire-through waits on the K6 landing since capability semantics themselves are only partial."
     (let [e (sec/lookup :use)]
@@ -210,8 +223,10 @@
     (is (nil? (sec/behavioral-parser "Invariants")))
     (is (nil? (sec/behavioral-parser :Invariants)))))
 
-(deftest behavioral-parser-resolves-deprecated-and-use
-  (testing "L3b — the registry resolves `:deprecated` to the annotation parser while `:use` retains its section parser."
+(deftest behavioral-parser-resolves-annotation-surfaces-and-use
+  (testing "L3b/L3c — metadata and deprecated resolve to the annotation parser while use retains its section parser."
+    (is (= (requiring-resolve 'cxc.parse/parse-annotation)
+           (sec/behavioral-parser :metadata)))
     (is (= (requiring-resolve 'cxc.parse/parse-annotation)
            (sec/behavioral-parser :deprecated)))
     (is (= (requiring-resolve 'cxc.parse/parse-use-section)
@@ -219,8 +234,7 @@
 
 (deftest behavioral-parser-nil-for-reserved-entries
   (testing "F8 L3b.ii.α — a `:reserved` entry (no backend wired yet) resolves to nil. Caller uses nil to fall through to the direct hardcoded parser arm (until L3b.ii.β retires the hardcoded arms)."
-    (is (nil? (sec/behavioral-parser :computed)))
-    (is (nil? (sec/behavioral-parser :metadata)))))
+    (is (nil? (sec/behavioral-parser :computed)))))
 
 (deftest behavioral-parser-nil-for-unregistered-name
   (testing "F8 L3b.ii.α — names not in the registry resolve to nil. Caller doesn't have to pre-check `lookup` — passes any tokenized keyword through and gets nil for user-picked names too. Enables the parse-time dispatch to be a single arm regardless of whether a name is protected or user-declared."
@@ -234,7 +248,8 @@
       (is (= (requiring-resolve 'cxc.build/warn-deprecated-uses) v)))))
 
 (deftest behavioral-walker-nil-when-no-walker-sym
-  (testing "F8 L3d.ii.α — `:invariants` and `:use` seeds carry no `:walker-sym` (their lower-time processing is inline, not walker-based). `behavioral-walker` returns nil so callers iterate the registry safely without a walker-vs-no-walker branch."
+  (testing "F8 L3d.ii.α/L3c — metadata, invariants, and use carry no walker; their consumers are direct."
+    (is (nil? (sec/behavioral-walker :metadata)))
     (is (nil? (sec/behavioral-walker :invariants)))
     (is (nil? (sec/behavioral-walker :use)))
     (is (nil? (sec/behavioral-walker :computed)))
@@ -249,7 +264,7 @@
              (get m :deprecated))))))
 
 (deftest behavioral-walkers-omits-entries-without-walker-sym
-  (testing "F8 L3d.ii.α — behavioral entries without a `:walker-sym` on their spec (currently `:invariants` and `:use` — lower-time processing is inline, not walker-based) are omitted from `behavioral-walkers`. Reserved entries (`:computed`, `:metadata`) are also omitted since they're not `:kind :behavioral`. Callers iterate the returned map safely without a walker-vs-no-walker branch."
+  (testing "F8 L3d.ii.α/L3c — behavioral entries without a walker (metadata, invariants, use) and reserved computed are omitted."
     (let [m (sec/behavioral-walkers)]
       (is (not (contains? m :invariants)))
       (is (not (contains? m :use)))
@@ -309,6 +324,8 @@
         ":reserved protected entries still present after clear")
     (is (= :behavioral (:kind (sec/lookup :invariants)))
         "L3b.i behavioral seed still present after clear")
+    (is (= :behavioral (:kind (sec/lookup :metadata)))
+        "L3c F53 annotation seed still present after clear")
     (is (= :behavioral (:kind (sec/lookup :deprecated)))
         "L3d.i behavioral seed still present after clear")
     (is (= :behavioral (:kind (sec/lookup :use)))
