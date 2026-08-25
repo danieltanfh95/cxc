@@ -2352,6 +2352,33 @@ def main:
     -> running
 ")))))
 
+(deftest l12c-end-catch-wrap-emits-companion-dispatch
+  (testing "L12c (2026-08-26) — the `:end-catch-wrap` around every transition branch body now includes runtime companion dispatch (`respondsToSelector:` + `objc_msgSend` on `cxc_emit_<msg>_failedWithreason:`). Silent-by-default: if no subscriber demand-drove the companion emit method into existence (per L12b), the branch is a no-op. Reason payload is `nil` for now; union reason-type wiring is a follow-on."
+    (let [emitted (emit/emit (lower-src "def Player:
+    hp: Int! = 100
+
+    alive <: take_damage(amount: Int) -> alive
+        |: amount > 0
+        then: hp => hp - amount
+
+def Logger:
+    player: Player = Player()
+    n: Int! = 0
+
+    * <: player.take_damage_failed(reason: Int) -> *
+        then: n => n + 1
+
+def main:
+    l: Logger = Logger()
+    -> running
+"))]
+      (is (str/includes? emitted "cxc_emit_%@_failedWithreason:")
+          "@catch fires the companion dispatch")
+      (is (str/includes? emitted "respondsToSelector:__cxc_comp")
+          "silent-by-default: dispatch guarded on respondsToSelector:")
+      (is (str/includes? emitted "((void (*)(id, SEL, id))objc_msgSend)(self, __cxc_comp, nil)")
+          "reason payload is nil at wire (union reason wiring is a follow-on)"))))
+
 (deftest l12b-companion-receive-arm-wrong-payload-rejected
   (testing "L12b — a sender-side receive-arm on a valid companion with a wrong payload key (e.g. `(oops: Int)`) rejects with the standard stream-shape mismatch diagnostic (source emits `[reason]`, subscriber declared `[oops]`). The augmentation still fires but the receive-side payload-shape check catches the mismatch."
     (is (thrown-with-msg?

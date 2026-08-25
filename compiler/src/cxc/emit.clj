@@ -667,6 +667,16 @@
     ;; react). Selector `_cmd` is auto-provided by ObjC — names the
     ;; failing message in the log. Atom-local failure; the process
     ;; stays alive.
+    ;;
+    ;; L12c (2026-08-26) — before teardown, fire the companion
+    ;; `<msg>_failed(reason:)` emit method if present. Runtime uses
+    ;; `respondsToSelector:` so the dispatch is silent-by-default:
+    ;; atoms whose companion has no subscribers never had that emit
+    ;; method synthesized (per L12b's demand-driven augmentation), so
+    ;; the branch is a no-op. Reason payload is `nil` for now (union
+    ;; reason-type wiring is a follow-on landing); subscribers whose
+    ;; declared reason type is nullable/pointer-shaped see nil, int-
+    ;; typed subscribers see 0.
     (let [body (str/join "\n" (map emit-stmt (:body node)))
           block (indent-lines 4 body)]
       (str "@try {\n"
@@ -675,6 +685,18 @@
            "    NSLog(@\"[cxc atom fail] %@[%p] caught %@ during -%@ (phase=%@)\", "
            "NSStringFromClass([self class]), self, e.name, "
            "NSStringFromSelector(_cmd), _phase);\n"
+           "    {\n"
+           "        NSString *__cxc_sel = NSStringFromSelector(_cmd);\n"
+           "        NSRange __cxc_wr = [__cxc_sel rangeOfString:@\"With\"];\n"
+           "        NSString *__cxc_base = (__cxc_wr.location == NSNotFound)\n"
+           "            ? __cxc_sel\n"
+           "            : [__cxc_sel substringToIndex:__cxc_wr.location];\n"
+           "        NSString *__cxc_cs = [NSString stringWithFormat:@\"cxc_emit_%@_failedWithreason:\", __cxc_base];\n"
+           "        SEL __cxc_comp = NSSelectorFromString(__cxc_cs);\n"
+           "        if ([self respondsToSelector:__cxc_comp]) {\n"
+           "            ((void (*)(id, SEL, id))objc_msgSend)(self, __cxc_comp, nil);\n"
+           "        }\n"
+           "    }\n"
            "    [self transitionToEnd];\n"
            "}"))
     :end-catch-log-only
