@@ -1,8 +1,5 @@
-alias my_data: runtime immutable identity
-
 def Counter:
-    my_data:
-        raw_n: Int = 42
+    raw_n: Int = 42
 
     n :< raw_n
 

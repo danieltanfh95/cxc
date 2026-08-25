@@ -3,8 +3,8 @@
 
    Covers the compose function: cross-axis merges work, same-axis
    collisions error, unknown primitives error, meaningless-but-legal
-   pairs warn, canonical `data:` / `state:` / `static:` compositions
-   from spec §4.10.2 produce the expected contribution maps."
+   pairs warn, and representative internal compositions produce the
+   expected contribution maps."
   (:require [clojure.test :refer [deftest is testing use-fixtures]]
             [cxc.section :as sec]))
 
@@ -26,11 +26,11 @@
     (is (= (sec/primitive :runtime) (sec/primitive 'RUNTIME)))))
 
 ;; ---------------------------------------------------------------------------
-;; Composition — spec §4.10.2 canonical aliases
+;; Composition
 ;; ---------------------------------------------------------------------------
 
-(deftest compose-data-alias-matches-spec
-  (testing "`data: = runtime immutable identity` per §4.10.2"
+(deftest compose-runtime-immutable-identity
+  (testing "runtime + immutable + identity compose across three axes"
     (let [{:keys [primitives contributes]}
           (sec/compose [:runtime :immutable :identity])]
       (is (= [:runtime :immutable :identity] primitives))
@@ -38,16 +38,16 @@
       (is (= :immutable (:default-mutability contributes)))
       (is (= true       (:contributes-to-equality contributes))))))
 
-(deftest compose-state-alias-matches-spec
-  (testing "`state: = runtime mutable coordination` per §4.10.2"
+(deftest compose-runtime-mutable-coordination
+  (testing "runtime + mutable + coordination compose across three axes"
     (let [{:keys [contributes]}
           (sec/compose [:runtime :mutable :coordination])]
       (is (= :runtime  (:default-existence contributes)))
       (is (= :mutable  (:default-mutability contributes)))
       (is (= false     (:contributes-to-equality contributes))))))
 
-(deftest compose-static-alias-matches-spec
-  (testing "`static: = compile_time immutable` per §4.10.2"
+(deftest compose-compile-time-immutable
+  (testing "compile_time + immutable compose across two axes"
     (let [{:keys [contributes]}
           (sec/compose [:compile_time :immutable])]
       (is (= :compile-time (:default-existence contributes)))
@@ -128,8 +128,7 @@
 ;; F8 D5 — protected section-header names. Per decisions-frozen §12 the
 ;; compiler-baked behavioral sections (`computed`, `invariants`,
 ;; `metadata`, `deprecated`, `use`) share the registry with user-declared
-;; `section class Name:` entries but cannot be shadowed by `alias` or by
-;; user `section class` declarations.
+;; `section class Name:` entries but cannot be shadowed by user declarations.
 ;; ---------------------------------------------------------------------------
 
 (deftest protected-set-covers-compiler-baked-behavioral-sections
@@ -148,14 +147,14 @@
     (is (sec/protected? :Computed))))
 
 (deftest protected-check-rejects-unrelated-names
-  (testing "F8 D5 — a name that isn't in the protected set (e.g. `data`, `state`, `static`, or any user-picked name) returns false so it stays available for `alias` and `section class`."
+  (testing "F8 D5 — a name that isn't in the protected set (e.g. `data`, `state`, `static`, or any user-picked name) returns false so it stays available for internal composition or `section class`."
     (is (not (sec/protected? :data)))
     (is (not (sec/protected? :state)))
     (is (not (sec/protected? :static)))
     (is (not (sec/protected? :my_custom_section)))))
 
 (deftest registry-seeded-with-protected-reservations
-  (testing "F8 D5 + L3b.i + L3c + L3d.i + L3-use.i — the registry is seeded with a protected entry for every protected name. Names still awaiting backend wire-in carry `:kind :reserved` + `:spec nil`; landed backends carry `:kind :behavioral` + a spec pointer. The seed guarantees `alias X:` sees a collision regardless of wire-in state."
+  (testing "F8 D5 + L3b.i + L3c + L3d.i + L3-use.i — the registry is seeded with a protected entry for every protected name. Names still awaiting backend wire-in carry `:kind :reserved` + `:spec nil`; landed backends carry `:kind :behavioral` + a spec pointer."
     ;; Reserved-shape entries: backend not yet claimed via the registry.
     (let [e (sec/lookup :computed)]
       (is (some? e))
@@ -282,7 +281,7 @@
     (is (false? (sec/allowed-in-extend? :madeupthing)))))
 
 (deftest register-rejects-protected-name-shadow
-  (testing "F8 D5 — `register!` hard-errors when the caller passes a protected section-header name. This is the guard behind `alias computed: runtime immutable identity` at parse time (via register-section-header-alias!) and behind the future L4 `section class Computed:` user syntax. Diagnostic names the reserved header and lists the full protected set."
+  (testing "F8 D5 — `register!` hard-errors when the caller passes a protected section-header name. This guards the future L4 `section class Computed:` user syntax. Diagnostic names the reserved header and lists the full protected set."
     (is (thrown-with-msg?
           clojure.lang.ExceptionInfo
           #"F8 D5: `computed` is a protected section-header name"
@@ -295,14 +294,6 @@
           (sec/register! "Invariants"
                         {:kind :primitive-composition
                          :spec (sec/compose [:runtime])})))))
-
-(deftest register-section-header-alias-rejects-protected-name
-  (testing "F8 D5 — `alias computed: ...` at parse time flows through `register-section-header-alias!` → `register!` → the protected-name guard. User sees a targeted diagnostic instead of silently overwriting the behavioral-section entry."
-    (is (thrown-with-msg?
-          clojure.lang.ExceptionInfo
-          #"F8 D5: `computed` is a protected section-header name"
-          (sec/register-section-header-alias!
-            {:name :computed :primitives [:runtime :immutable]})))))
 
 (deftest register-allows-unprotected-name
   (testing "F8 D5 — a name outside the protected set registers normally. Ensures the guard only fires on the reserved slots; user-picked names stay available."

@@ -112,12 +112,7 @@
    :names — user-visible declarations in the module. Used by F51/F56
             to build the resolver's name→module index without
             re-parsing the .cxc source."
-  ;; F7 L2c (2026-08-23) — `aliases` module ships prelude alias decls
-  ;; (spec §4.10.2 canonical section-composition aliases: data, static).
-  ;; MUST load first so subsequent prelude modules + user code can use
-  ;; `data:` / `static:` section headers via the F8 L1-b parser hook.
-  [{:name :aliases :kind :shared :names []}
-   {:name :time    :kind :shared :names ["Duration" "Instant"]}
+  [{:name :time    :kind :shared :names ["Duration" "Instant"]}
    {:name :geom    :kind :shared :names ["Position"]}
    {:name :input   :kind :shared :names ["Key" "TestKeyboardInput"]}
    {:name :random  :kind :target :names ["Random"]}
@@ -190,7 +185,7 @@
 (defn validate-no-prelude-collisions!
   "Audit F56 — bounded starter for Phase D prelude architecture: raise
    a targeted compile error when a user top-level declaration reuses a
-   protected prelude name (spec §4.20 — prelude aliases protected and
+   protected prelude name (spec §4.20 — prelude declarations are
    unshadowable). Previously `rewrite-prelude-names` would silently
    rename a `def Duration:` to `def _Cxc_Duration:` and merge it into
    the prelude namespace, producing baffling downstream errors.

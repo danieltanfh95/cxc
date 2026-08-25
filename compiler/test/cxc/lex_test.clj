@@ -22,6 +22,11 @@
     (is (= [[:kw "def"] [:ident "foo"] [:punct ":"] [:ident "x"] [:glyph "="] [:int 1]]
            (vals-of (lex/tokenize "def foo:\n    x = 1\n"))))))
 
+(deftest retired-alias-word-is-an-identifier
+  (testing "L6 — the retired F7 declaration opener is no longer reserved"
+    (is (= [[:ident "alias"]]
+           (vals-of (lex/tokenize "alias"))))))
+
 (deftest multi-char-glyphs
   (testing "all cxc wire glyphs recognized as single tokens"
     (doseq [g ["<:" "<|" "|>" ":>" ":<" "->" "=>" "==" "!=" "<=" ">="]]

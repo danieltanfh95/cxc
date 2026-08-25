@@ -2080,9 +2080,9 @@
 (defn- looks-like-computed-section?
   "F8 L3a — `computed:` at class body position. Header is a bare `ident`
    spelled exactly `computed` followed by `:` and newline. Distinct from
-   the generic custom-section path (which consults the registry) so
-   `computed` doesn't need to be pre-registered as an alias — it's a
-   compiler-baked behavioral section at v1.0 per F8 plan §Landing 3a."
+   the generic custom-section path (which consults the registry) because
+   it is a compiler-baked behavioral section at v1.0 per F8 plan
+   §Landing 3a."
   [tokens pos]
   (and (at? tokens pos :ident)
        (= "computed" (t-value (peek-tok tokens pos)))
@@ -2156,11 +2156,11 @@
 
 (defn- looks-like-custom-section?
   "F8 L1-b — `<ident>: <newline>` where `<ident>` is registered in
-   `cxc.section/registry` (via a prior `:section-header` alias
-   declaration). Consulted after the closed switch of built-in section
-   headers has failed to match, before the generic body-item dispatch.
+   `cxc.section/registry`. Consulted after the closed switch of built-in
+   section headers has failed to match, before the generic body-item
+   dispatch.
 
-   Only field-section aliases enter this legacy composition shim.
+   Only compiler-internal primitive compositions enter this legacy shim.
    Behavioral/annotation registry entries deliberately do not: their
    own parser surfaces must route through `behavioral-parser`, and a
    retired header such as `metadata:` must not silently become fields."
@@ -2170,12 +2170,11 @@
     (and (at? tokens pos :ident)
          (at? tokens (inc pos) :punct ":")
          (at? tokens (+ pos 2) :newline)
-         (contains? #{:primitive-composition :alias-expanded}
-                    (:kind entry)))))
+         (= :primitive-composition (:kind entry)))))
 
 (defn- parse-custom-section
   "F8 L1-b — parse a body of field declarations under a registered
-   custom section header. MVP scope: primitive-composition aliases
+   custom section header. MVP scope: primitive compositions
    imply `contains: fields`, so we consume a run of field decls to
    `:dedent` and emit a `:custom-section` AST node carrying the
    registered spec.
@@ -2223,8 +2222,8 @@
    Body positions of individual `:field` nodes are removed; the
    synthesized/merged section takes their combined position slot.
 
-   F8 L1-c (2026-08-23): `:custom-section` nodes carrying primitive-
-   composition specs (from user `alias ...: <primitives>` decls) are
+   F8 L1-c (2026-08-23): `:custom-section` nodes carrying compiler-
+   internal primitive-composition specs are
    flattened here too — their fields lift up to top-level fields
    before the fold. The composed spec is preserved on the surviving
    `:data-section` via the `:section-classes` slot for downstream
@@ -2642,19 +2641,16 @@
         ;; (not registry-driven) at v1.0 per F8 plan §Landing 3a.
         ;; Body items are field-shape or observable-shape; fold-time
         ;; splices them out as top-level observables. Must precede
-        ;; the generic custom-section dispatch so a user can't
-        ;; accidentally shadow it via `alias computed: ...`.
+        ;; the generic custom-section dispatch so the compiler-baked
+        ;; interpretation always takes precedence.
         (looks-like-computed-section? tokens p)
         (let [[s p2] (parse-computed-section tokens p)]
           (recur (conj body s) (skip-newlines tokens p2)))
 
-        ;; F8 L1-b — custom section-header dispatch. Consults
-        ;; `cxc.section/registry` (populated at parse time by
-        ;; `:section-header` alias declarations) so users can define
-        ;; new section-header words like `alias exposed_data: runtime
-        ;; immutable identity expose` and then use `exposed_data:` in
-        ;; a class body. Must precede `looks-like-transition?` because
-        ;; the transition detector greedy-matches any bare `:ident`.
+        ;; F8 L1-b — custom section-header dispatch. Consults compiler-
+        ;; internal primitive-composition entries in `cxc.section/registry`.
+        ;; Must precede `looks-like-transition?` because the transition
+        ;; detector greedy-matches any bare `:ident`.
         (looks-like-custom-section? tokens p)
         (let [[s p2] (parse-custom-section tokens p)]
           (recur (conj body s) (skip-newlines tokens p2)))
@@ -3197,114 +3193,6 @@
         [{:node :import :from dotted :as alias} p]))))
 
 ;; ---------------------------------------------------------------------------
-;; F7 L1 — Alias declaration
-;;
-;; MVP surface: `alias <name>: <type-expr>` at top level. Registers a
-;; type-position substitution: any `:type-ref {:name "<name>" ...}` in
-;; the post-parse AST gets replaced with the aliased type expression.
-;;
-;; Grammar-shape expansion (section-header aliases, delimited-pattern
-;; aliases, operator aliases) comes in follow-on sub-landings of L1
-;; and L2. Bootstrap grammar per §4.16.1 stays hard-coded.
-;;
-;; AST shape:
-;;   {:node :alias
-;;    :name "<user-visible-name>"
-;;    :position :type          ;; MVP: only :type positions
-;;    :body    <type-expr AST>}
-;;
-;; Registry lives in `cxc.alias`; population + expansion runs post-parse
-;; before lower.
-;; ---------------------------------------------------------------------------
-
-(defn- parse-alias-param-list
-  "F7 L1-c — parametric alias parameter list. After the alias name,
-   optional `of P` or `of (P1, P2, ...)` before the `:` separator.
-   Uses the `of` qualifier per spec §26 (retires `<T>`). Returns
-   `[params next-pos]`; params is the vector of parameter-name strings
-   (empty when the alias is not parametric)."
-  [tokens pos]
-  (if-not (at? tokens pos :kw "of")
-    [[] pos]
-    (let [p (inc pos)]
-      (cond
-        ;; `of (P1, P2, ...)`
-        (at? tokens p :punct "(")
-        (loop [params [] p (inc p)]
-          (let [[nm p1] (expect tokens p :ident)
-                params  (conj params nm)]
-            (cond
-              (at? tokens p1 :punct ",") (recur params (inc p1))
-              (at? tokens p1 :punct ")") [params (inc p1)]
-              :else (fail! tokens p1
-                           "expected `,` or `)` in alias parameter list"))))
-        ;; `of P` — single parameter, bare identifier
-        (at? tokens p :ident)
-        (let [[nm p1] (expect tokens p :ident)]
-          [[nm] p1])
-        :else
-        (fail! tokens p
-               "expected parameter identifier or `(` after `of` in alias declaration")))))
-
-(defn- section-primitive-body?
-  "F7 L1-b — peek at the alias body to distinguish section-header form
-   (spec §4.10.2: `alias data: runtime immutable identity`) from
-   type-expression form (L1-a/L1-c). Returns true iff every non-newline
-   token from `pos` to newline is an `:ident` whose value is a known
-   section primitive (via `cxc.section/primitive`)."
-  [tokens pos]
-  (loop [p pos, saw-any? false]
-    (let [t (peek-tok tokens p)]
-      (cond
-        (nil? t) false
-        (= :newline (t-kind t)) saw-any?
-        (and (= :ident (t-kind t)) (section/primitive (t-value t)))
-        (recur (inc p) true)
-        :else false))))
-
-(defn- parse-section-header-alias-body
-  "F7 L1-b — consume a run of `:ident` tokens (each a known primitive)
-   up to newline. Returns [primitive-keywords next-pos]."
-  [tokens pos]
-  (loop [p pos, prims []]
-    (let [t (peek-tok tokens p)]
-      (cond
-        (= :newline (t-kind t))
-        [prims p]
-
-        (and (= :ident (t-kind t)) (section/primitive (t-value t)))
-        (recur (inc p) (conj prims (keyword (str/lower-case (t-value t)))))
-
-        :else
-        (fail! tokens p
-               (str "F7 L1-b: section-header alias body must be a space-"
-                    "separated list of known primitives (spec §4.10.2). "
-                    "Got unexpected token in body."))))))
-
-(defn- parse-alias-decl [tokens pos]
-  (let [[_ p]         (expect tokens pos :kw "alias")
-        [nm p]        (expect tokens p :ident)
-        [params p]    (parse-alias-param-list tokens p)
-        [_ p]         (expect tokens p :punct ":")]
-    (if (and (empty? params) (section-primitive-body? tokens p))
-      ;; L1-b section-header form — `alias name: runtime immutable identity`.
-      ;; Register into cxc.section/registry immediately so subsequent
-      ;; section headers within the same source can consult the registry
-      ;; (F8 L1-b parser hook).
-      (let [[prims p] (parse-section-header-alias-body tokens p)
-            [_ p]     (expect tokens p :newline)
-            node      {:node :alias :name nm :position :section-header
-                       :primitives prims}]
-        (section/register-section-header-alias! node)
-        [node p])
-      ;; L1-a/L1-c type-position form — `alias name: <type-expr>` or
-      ;; `alias name of P: <type-expr>`
-      (let [[body p]  (parse-type tokens p)
-            [_ p]     (expect tokens p :newline)]
-        [{:node :alias :name nm :position :type
-          :params params :body body} p]))))
-
-;; ---------------------------------------------------------------------------
 ;; L3a — top-level annotations
 ;; ---------------------------------------------------------------------------
 
@@ -3353,7 +3241,6 @@
       (at? tokens p :kw "module")  (reject-module-decl! tokens p)
       (at? tokens p :kw "from")    (parse-from-import tokens p)
       (at? tokens p :kw "import")  (parse-import tokens p)
-      (at? tokens p :kw "alias")   (parse-alias-decl tokens p)
       (at? tokens p :annotation-prefix) (parse-annotated-def tokens p)
       (at? tokens p :kw "def")     (parse-def-atom tokens p)
 

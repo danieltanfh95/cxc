@@ -5,7 +5,6 @@
             [clojure.java.shell :as shell]
             [clojure.string :as str]
             [cxc.parse    :as parse]
-            [cxc.alias    :as alias]
             [cxc.lower    :as lower]
             [cxc.emit     :as emit]
             [cxc.manifest :as manifest]
@@ -236,7 +235,6 @@
         _        (doseq [[_ walker-var] (section/behavioral-walkers)]
                    (walker-var parsed full-parsed))
         m-src    (-> full-parsed
-                     alias/expand
                      prelude/rewrite-prelude-names
                      lower/lower
                      emit/emit)

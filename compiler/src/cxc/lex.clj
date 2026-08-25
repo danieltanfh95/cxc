@@ -44,7 +44,6 @@
   ;; -> T:` migration (K8).
   #{"module" "from" "import" "as"
     "def"
-    "alias"
     "use" "invariants"
     ;; L5 — `accepts` is hard-retired as user syntax. Keep it reserved
     ;; solely as a migration-diagnostic anchor so parse can reject both

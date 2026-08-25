@@ -1,22 +1,15 @@
 (ns cxc.section
   "F8 L1-a — Section-class primitive vocabulary + composition semantics.
 
-   Spec ref: §4.10.1 (primitive sections) + §4.10.2 (aliases). This
-   module ships the atomic vocabulary and the composition function
-   that merges multiple primitives into a single section spec, catching
-   contradictions at compose time.
+   This module ships the atomic vocabulary and the compiler-internal
+   composition function that merges multiple primitives into a single
+   section spec, catching contradictions at compose time.
 
-   Landing scope (L1-a):
+   Core scope:
    - Primitive definitions as pure data (`primitives`).
    - `compose` — merge N primitives, reject contradictions.
-   - Registry stub (`registry`) for user-declared / prelude-declared
-     section classes to populate later (L4 / L2c).
-
-   Not shipped in L1-a:
-   - Parser hook consulting the registry (L1-b bundled with L4).
-   - Prelude alias declarations (data, state, static, methods — F7 L2c).
-   - Behavioral sections + generators (L3a-d).
-   - `section class Name:` user syntax (L4).
+   - Registry data for compiler-baked behavioral sections and internal
+     primitive compositions.
 
    Design decisions:
    - **Primitive names are case-insensitive on lookup, canonical
@@ -29,8 +22,7 @@
      value at a time; two primitives disagreeing on an axis produce a
      `:cxc-f8-primitive-contradiction` diagnostic.
    - **Cross-axis compositions are legal.** `runtime immutable identity`
-     is the canonical `data:` alias per §4.10.2 — three primitives on
-     three different axes merge cleanly.
+     combines three primitives on three different axes and merges cleanly.
    - **Semantically-meaningless compositions warn.** Per §4.10.1
      `compile_time weak` and `identity weak` on a class field are
      legal but warned. L1-a ships the classifier; warning emission
@@ -164,21 +156,15 @@
      :warnings    (vec (collect-warnings canonical))}))
 
 ;; ---------------------------------------------------------------------------
-;; Registry — populated by L4 user decls + L2c prelude aliases
+;; Registry — compiler-baked sections and internal primitive compositions
 ;; ---------------------------------------------------------------------------
 
 (def protected-section-names
-  "F8 D5 (decisions-frozen §12) — section-header names that neither
-   `alias` declarations nor user `section class Name:` declarations
-   may shadow. These are the behavioral sections shipped by the
-   compiler (L3a `computed`, L3b `invariants`, L3c `metadata`, L3d
-   `deprecated`) plus `use` (K6 capability requests).
-
-   Shipping the registry with protected names avoids the L3a-era
-   concern (\"users can shadow `computed` via `alias computed:`\")
-   without retiring the registry entirely. Users can still declare
-   their own `section class Foo:` for any UNPROTECTED name and it
-   participates in the same dispatch table.
+  "F8 D5 (decisions-frozen §12) — section-header names that user
+   `section class Name:` declarations may not shadow. These are the
+   behavioral sections shipped by the compiler (L3a `computed`, L3b
+   `invariants`, L3c `metadata`, L3d `deprecated`) plus `use` (K6
+   capability requests).
 
    Extend when new compiler-baked behavioral sections ship. Removing
    a name from this set is a compat-break (users may have been
@@ -191,7 +177,7 @@
 
 (defn protected?
   "True when `nm` (string or keyword) is a protected section-header
-   name that user code cannot shadow via `alias` or `section class`."
+   name that user code cannot shadow via `section class`."
   [nm]
   (contains? protected-section-names (normalize-name nm)))
 
@@ -282,8 +268,7 @@
 
    Registry entries have shape:
      {:name    :foo
-      :kind    :primitive-composition | :behavioral | :alias-expanded
-               | :reserved
+      :kind    :primitive-composition | :behavioral | :reserved
       :spec    <compose-result or generator-carrying spec, or nil for
                 :reserved entries pending a later landing>}"
   (atom
@@ -393,12 +378,11 @@
 (defn register!
   "Add / overwrite a registry entry. Returns the added entry.
    Idempotent under identical spec; conflicting redeclarations are the
-   caller's responsibility to detect (L4 will layer duplicate-check on
-   top per F7 L1 Q2 error-on-tie discipline).
+   caller's responsibility to detect.
 
    Rejects protected section-header names (per F8 D5, decisions-frozen
-   §12): `alias computed: ...` / `section class Computed:` and their
-   siblings hard-error at registration time with a targeted diagnostic
+   §12): `section class Computed:` and its siblings hard-error at
+   registration time with a targeted diagnostic
    naming the reserved header and the reason. The check runs at
    `register!` so the seed reservations (L3a `computed`, plus reserved
    `invariants`/`metadata`/`deprecated`/`use`) can't be silently
@@ -412,8 +396,8 @@
       (throw (ex-info
               (str "F8 D5: `" (name k) "` is a protected section-header "
                    "name (compiler-baked behavioral section). Users "
-                   "cannot shadow protected names via `alias " (name k)
-                   ": ...` or `section class " (name k) ":`. Pick a "
+                   "cannot shadow protected names via `section class "
+                   (name k) ":`. Pick a "
                    "different name for your composition.")
               {:kind :cxc-f8-protected-section-name-shadow
                :name k
@@ -427,28 +411,3 @@
    reflects the compiler-baked reservations. Not for production use."
   []
   (reset! registry (seed-protected-reservations!)))
-
-;; ---------------------------------------------------------------------------
-;; Section-header alias registration (F7 L1-b + F8 L1-b bridge)
-;; ---------------------------------------------------------------------------
-
-(defn register-section-header-alias!
-  "F7 L1-b + F8 L1-b — validate a section-header alias's primitive list
-   via `compose` and register the composed spec in `registry` under the
-   alias name. Called by the parser when a `:section-header` alias
-   declaration is parsed so subsequent section headers in the same
-   source can consult the registry via `lookup`.
-
-   Compose-time errors (unknown primitives, axis contradictions) surface
-   with the alias name attached for source-attribution."
-  [{:keys [name primitives]}]
-  (try
-    (let [composed (compose primitives)]
-      (register! name
-                 {:kind :alias-expanded
-                  :spec composed}))
-    (catch clojure.lang.ExceptionInfo e
-      (throw (ex-info
-              (str "F7 L1-b: section-header alias `" name
-                   "` failed compose validation: " (.getMessage e))
-              (assoc (ex-data e) :alias name))))))

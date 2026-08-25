@@ -78,8 +78,8 @@
       (is (zero? exit))
       (is (= "hello, world\n" stdout)))))
 
-(deftest end-to-end-custom-section
-  (testing "F8 L1-c — custom-section.cxc — user-declared section header (`alias my_data: runtime immutable identity`) used as a field-carrying section inside a class body, fields hoisted to :data-section at fold time, compiles + runs end-to-end"
+(deftest end-to-end-direct-field-syntax
+  (testing "L6 — custom-section.cxc migrated to direct field syntax; the field is folded into :data-section and remains observable end-to-end"
     (let [{:keys [exit stdout]} (compile-and-run "custom-section")]
       (is (zero? exit))
       (is (= "42\n" stdout)))))
@@ -89,12 +89,6 @@
     (let [{:keys [exit stdout]} (compile-and-run "f8-computed")]
       (is (zero? exit))
       (is (= "42\n" stdout)))))
-
-(deftest end-to-end-prelude-data-alias
-  (testing "F7 L2c — `data:` is a prelude alias (spec §4.10.2). No user alias declaration needed; the prelude's `alias data: runtime immutable identity` populates the section-class registry before user source parses."
-    (let [{:keys [exit stdout]} (compile-and-run "prelude-data-alias")]
-      (is (zero? exit))
-      (is (= "7\n" stdout)))))
 
 (deftest end-to-end-f39-optional-bytes
   (testing "F39 L9 — mixed bare `Int32` (Optional-boxed) + `Int32!` (non-nil) fields. Bare field emits 1-byte presence + 4-byte payload (when present); `Int32!` emits 4 bytes flat. `Opt(x:1, y:2)` yields 1+4+4 = 9 bytes."

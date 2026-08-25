@@ -72,6 +72,13 @@
          #"`module <name>` declaration is retired"
          (p/parse "module com.example.foo\n")))))
 
+(deftest f7-alias-declaration-retired
+  (testing "L6 — F7 declarations no longer have a top-level parser entry"
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"expected top-level form"
+         (p/parse "alias UserID: Int\n")))))
+
 (deftest from-import
   (let [n (first-node "from com.cxc.stdlib import Clock, Random\n")]
     (is (= :from-import (node-kind n)))
