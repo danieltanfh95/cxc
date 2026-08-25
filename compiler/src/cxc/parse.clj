@@ -1464,6 +1464,110 @@
                     p3     (skip-newlines tokens p2)]
                 (recur (conj preds e) p3))))))
 
+(defn- proposition-line-start?
+  "True when `pos` starts a logical source line. Layout tokens are the
+   reliable signal here: the lexer normalizes indentation before emitting
+   the first real token on a line, so a valid `|:` follows NEWLINE, INDENT,
+   or the DEDENT that closes a multiline predecessor. This deliberately
+   rejects crammed forms such as
+   `foo :< bar |: pred = expr`."
+  [tokens pos]
+  (or (zero? pos)
+      (when-let [prev (peek-tok tokens (dec pos))]
+        (contains? #{:newline :indent :dedent} (t-kind prev)))))
+
+(defn- parse-proposition-predicate
+  "Parse the predicate portion of a proposition. Most predicates use the
+   ordinary expression grammar. The observation-scoped type-bound spelling
+   (`|: T: Bound`) is normalized as an expression-shaped `:type-bound` node
+   so every proposition still has exactly one `:predicate` value."
+  [tokens pos]
+  (if (and (at? tokens pos :ident)
+           (at? tokens (inc pos) :punct ":"))
+    (let [[parameter p] (expect tokens pos :ident)
+          [_ p]         (expect tokens p :punct ":")
+          [bound p]     (parse-type tokens p)]
+      [{:node :type-bound
+        :parameter {:node :ident :name parameter}
+        :bound bound}
+       p])
+    (parse-expr tokens pos)))
+
+(defn- proposition-error-args->map
+  "Normalize `ErrorType(field: value, ...)` args to the proposition AST's
+   field-name -> expression map. Proposition error constructors require
+   named, non-duplicate fields; positional args would lose the field/value
+   contract promised by the surface syntax."
+  [tokens pos args]
+  (loop [remaining args result (array-map)]
+    (if-let [arg (first remaining)]
+      (do
+        (when-not (= :named (:kind arg))
+          (fail! tokens pos
+                 "proposition error arguments must use `field: value` named form"))
+        (when (contains? result (:name arg))
+          (fail! tokens pos
+                 (str "duplicate proposition error argument `" (:name arg) "`")))
+        (recur (next remaining) (assoc result (:name arg) (:value arg))))
+      result)))
+
+(defn- parse-proposition-as-clause
+  "Parse `as ErrorType(field: value, ...)`, returning the normalized type,
+   arg map, and next position."
+  [tokens pos]
+  (let [[_ p]       (expect tokens pos :kw "as")
+        [err-type p] (parse-type tokens p)
+        args-pos     p
+        [args p]     (parse-args-parens tokens p)]
+    [err-type (proposition-error-args->map tokens args-pos args) p]))
+
+(defn- parse-proposition
+  "Parse one own-line proposition:
+
+       |: <predicate> [as ErrorType(field: value, ...)]
+
+   The `as` clause may remain inline or be placed in one continuation
+   indentation level, matching the multiline examples in the ratified
+   surface spec. Emits one normalized AST shape at every placement."
+  [tokens pos]
+  (when-not (proposition-line-start? tokens pos)
+    (fail! tokens pos
+           "`|:` proposition must occupy its own line; it cannot be crammed onto a signature or statement"))
+  (let [[_ p]         (expect tokens pos :glyph "|:")
+        [predicate p] (parse-proposition-predicate tokens p)
+        continuation-as?
+        (and (at? tokens p :newline)
+             (at? tokens (inc p) :indent)
+             (at? tokens (+ p 2) :kw "as"))
+        as-pos         (cond
+                         (at? tokens p :kw "as") p
+                         continuation-as? (+ p 2)
+                         :else nil)
+        [err-type err-args p]
+        (if as-pos
+          (parse-proposition-as-clause tokens as-pos)
+          [nil nil p])
+        ;; A continuation `as` opens an indentation level solely for that
+        ;; clause. Its closing DEDENT may be preceded by a NEWLINE when the
+        ;; constructor fits on one physical line; multiline parens suppress
+        ;; that NEWLINE in the lexer. Accept both token shapes.
+        p (if continuation-as?
+            (let [p (if (at? tokens p :newline) (inc p) p)
+                  [_ p] (expect tokens p :dedent)]
+              p)
+            p)]
+    (when-not (or continuation-as?
+                  (at? tokens p :newline)
+                  (at? tokens p :dedent)
+                  (at? tokens p :eof))
+      (fail! tokens p
+             "`|:` proposition must occupy its own line; unexpected trailing content"))
+    [{:node :proposition
+      :predicate predicate
+      :as-error-type err-type
+      :as-error-args err-args}
+     p]))
+
 ;; ---------------------------------------------------------------------------
 ;; Observables:
 ;;   Zero-arg:   <name> :< <expr>
@@ -1499,8 +1603,61 @@
                      (parse-param-list-parens tokens p)
                      [[] p])
         [_ p]      (expect tokens p :glyph ":<")
-        [expr p]   (parse-expr tokens p)]
-    [{:node :observable :name name :params params :expr expr} p]))
+        ;; The existing inferred form (`name :< expr`) remains unchanged.
+        ;; The explicit form is `name :< ReturnType = expr`. Observation-
+        ;; scoped propositions occupy an indented body between the declared
+        ;; return type and `= expr`, per §Propositions:
+        ;;
+        ;;   name :< ReturnType
+        ;;       |: predicate
+        ;;   = expression
+        [candidate-type type-end]
+        (if (at? tokens p :ident)
+          (parse-type tokens p)
+          [nil p])
+        proposition-body?
+        (and candidate-type
+             (at? tokens type-end :newline)
+             (at? tokens (inc type-end) :indent)
+             (let [body-start (skip-newlines tokens (+ type-end 2))]
+               (at? tokens body-start :glyph "|:")))
+        explicit-inline? (and candidate-type
+                              (at? tokens type-end :glyph "="))
+        [return-type propositions expr p]
+        (cond
+          proposition-body?
+          (let [[_ body-pos] (expect tokens type-end :newline)
+                [_ body-pos] (expect tokens body-pos :indent)
+                [props after-body]
+                (loop [props [] p body-pos]
+                  (let [p (skip-newlines tokens p)]
+                    (cond
+                      (at? tokens p :dedent)
+                      [props (inc p)]
+
+                      (at? tokens p :glyph "|:")
+                      (let [[prop p2] (parse-proposition tokens p)]
+                        (recur (conj props prop) p2))
+
+                      :else
+                      (fail! tokens p
+                             "expected an own-line `|:` proposition inside observation body"))))
+                [_ after-body] (expect tokens after-body :glyph "=")
+                [body-expr after-body] (parse-expr tokens after-body)]
+            [candidate-type props body-expr after-body])
+
+          explicit-inline?
+          (let [[_ p] (expect tokens type-end :glyph "=")
+                [body-expr p] (parse-expr tokens p)]
+            [candidate-type [] body-expr p])
+
+          :else
+          (let [[body-expr p] (parse-expr tokens p)]
+            [nil [] body-expr p]))
+        node (cond-> {:node :observable :name name :params params :expr expr}
+               return-type (assoc :return-type return-type)
+               (seq propositions) (assoc :propositions propositions))]
+    [node p]))
 
 ;; ---------------------------------------------------------------------------
 ;; Transitions
@@ -1614,6 +1771,12 @@
   (let [[_ p]   (expect tokens pos :kw "then")
         [_ p]   (expect tokens p :punct ":")]
     (cond
+      ;; `|:` is legal in a then body, but never crammed after `then:`.
+      ;; Route this shape through the proposition parser for the own-line
+      ;; diagnostic rather than the generic expression error.
+      (at? tokens p :glyph "|:")
+      (parse-proposition tokens p)
+
       ;; field update: `<ident> => <expr>`
       (and (at? tokens p :ident)
            (at? tokens (inc p) :glyph "=>"))
@@ -1645,6 +1808,13 @@
         [{:node :then-clause :updates ups :stmts stmts} (inc p)]
 
         (at? tokens p :newline) (recur ups stmts (inc p))
+
+        ;; Post-statement assertion. It stays in the ordered statement bag
+        ;; so its eventual L2b lowering can fire exactly where written.
+        (at? tokens p :glyph "|:")
+        (let [[prop p2] (parse-proposition tokens p)
+              p3        (skip-newlines tokens p2)]
+          (recur ups (conj stmts prop) p3))
 
         ;; field update: `<ident> => <expr>`
         (and (at? tokens p :ident)
@@ -1729,35 +1899,36 @@
 ;; (F18 L1' Landing 2). The parser can no longer produce either
 ;; node — dispatch fires a targeted rejection instead.
 (def ^:private clause-order
-  {:when-clause 0 :then-clause 1})
+  {:when-clause 0 :proposition 1 :then-clause 2})
 
 (defn- clause-kw->src [kw]
-  ({:when-clause "when" :then-clause "then"} kw))
+  ({:when-clause "when" :proposition "|" :then-clause "then"} kw))
 
 (defn- enforce-clause-order-and-multiplicity!
   "Audit F22: reject repeated clauses and out-of-order clauses in a
-   transition body. Message spec: `when, then`.
+   transition body. Message spec during L2a: `when, |:, then`.
 
    F70 I3 exception — `:then-clause` may appear more than once because
    the unified `then:` merges field updates and side-effect statements
-   in source order; multiple then-blocks fold at lowering. `when:`
-   remains once-only."
+   in source order; multiple then-blocks fold at lowering. Proposition
+   selectors may also repeat. `when:` remains once-only until L2c."
   [clauses tokens pos]
   (loop [seen #{} prev-idx -1 [c & rest] clauses]
     (when c
       (let [kw  (:node c)
             idx (clause-order kw)]
-        (when (and (contains? seen kw) (not= kw :then-clause))
+        (when (and (contains? seen kw)
+                   (not (contains? #{:then-clause :proposition} kw)))
           (fail! tokens pos
                  (str "duplicate `" (clause-kw->src kw)
                       ":` clause in transition body (`when:` may "
-                      "appear at most once — spec §10; F70 I3 relaxes "
-                      "`then:` to allow multiple occurrences)")))
+                      "appear at most once — spec §10; propositions and "
+                      "`then:` may occur multiple times)")))
         (when (< idx prev-idx)
           (fail! tokens pos
                  (str "`" (clause-kw->src kw) ":` clause out of order — "
-                      "spec §10 requires transition sub-blocks in the order "
-                      "`when, then`")))
+                      "spec §Propositions requires transition sub-blocks in "
+                      "the order `when, |:, then`")))
         (recur (conj seen kw) idx rest)))))
 
 (defn- parse-transition-body
@@ -1766,9 +1937,9 @@
      - if next is :newline :indent → indented body with multiple clauses
      - else → no body (transition ends)
 
-   Audit F22: after collecting clauses, verify they appear in
-   canonical order (`when, let, then, do`) with each kind at most
-   once."
+   Audit F22/L2a: after collecting clauses, verify they appear in
+   canonical order (`when, |:, then`); `when:` remains once-only while
+   proposition and `then:` clauses may repeat."
   [tokens pos]
   (cond
     (body-clause-head? tokens pos)
@@ -1790,6 +1961,9 @@
           (do (enforce-clause-order-and-multiplicity! clauses tokens p)
               [clauses (inc p)])
           (at? tokens p :newline) (recur clauses (inc p))
+          (at? tokens p :glyph "|:")
+          (let [[prop p2] (parse-proposition tokens p)]
+            (recur (conj clauses prop) (skip-newlines tokens p2)))
           (body-clause-head? tokens p)
           (let [[clause p2]
                 (case (t-value (peek-tok tokens p))
@@ -2245,6 +2419,12 @@
 
         (at? tokens p :newline)
         (recur body (inc p))
+
+        ;; L2a — direct def-body proposition (class-level invariant).
+        ;; The legacy `invariants:` section remains accepted until L2b.
+        (at? tokens p :glyph "|:")
+        (let [[prop p2] (parse-proposition tokens p)]
+          (recur (conj body prop) (skip-newlines tokens p2)))
 
         ;; F8 L3b.ii.β — behavioral section dispatch via the registry.
         ;; For `:kw` tokens whose value maps to a `:kind :behavioral`

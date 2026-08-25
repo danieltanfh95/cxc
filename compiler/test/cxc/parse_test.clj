@@ -1265,6 +1265,70 @@ def main:
          (p/parse "def A:\n    -> running\n        then: self |> bump(by: 1)\n")))))
 
 ;; ---------------------------------------------------------------------------
+;; L2a — `|:` proposition parser. Pure parser addition: all four valid
+;; placements normalize to :proposition; legacy invariant/when surfaces stay.
+;; ---------------------------------------------------------------------------
+
+(deftest l2a-def-body-proposition-parses-as-class-level
+  (testing "a def-body `|:` is retained as a class-level proposition in declaration order"
+    (let [n    (first-node "def Counter:\n    n: Int = 0\n\n    |: n >= 0\n\n    -> ready\n")
+          prop (first (filter #(= :proposition (:node %)) (:body n)))]
+      (is (= :def-atom (:node n)))
+      (is (= [:data-section :proposition :transition]
+             (mapv :node (:body n))))
+      (is (= ">=" (get-in prop [:predicate :op]))))))
+
+(deftest l2a-arm-body-proposition-parses-before-then
+  (testing "an arm-body `|:` is an ordered selector before its then clause"
+    (let [n    (first-node "def Counter:\n    n: Int = 0\n\n    ready <: bump(by: Int) -> ready\n        |: by > 0\n        then: n => n + by\n")
+          body (:body (first (filter #(= :transition (:node %)) (:body n))))]
+      (is (= [:proposition :then-clause] (mapv :node body)))
+      (is (= "by" (get-in body [0 :predicate :left :name]))))))
+
+(deftest l2a-then-body-proposition-parses-as-post-statement-assertion
+  (testing "a `|:` inside then stays in the ordered statement bag at its execution position"
+    (let [n      (first-node "def Counter:\n    n: Int = 0\n\n    ready <: bump(by: Int) -> ready\n        then:\n            let checked = by\n            |: checked > 0\n            n => n + checked\n")
+          clause (first (:body (first (filter #(= :transition (:node %))
+                                             (:body n)))))]
+      (is (= :then-clause (:node clause)))
+      (is (= [:let-stmt :proposition] (mapv :node (:stmts clause))))
+      (is (= "checked" (get-in clause [:stmts 1 :predicate :left :name]))))))
+
+(deftest l2a-observation-body-proposition-parses-as-scoped-bound
+  (testing "an observation-body `|: T: Bound` attaches to the explicit-return observable"
+    (let [n    (first-node "def Pipeline:\n    total: Int = 0\n\n    sum :< Out\n        |: Out: Addable\n    = self.total\n")
+          obs  (first (filter #(= :observable (:node %)) (:sections n)))
+          prop (first (:propositions obs))]
+      (is (= "Out" (get-in obs [:return-type :name])))
+      (is (= :proposition (:node prop)))
+      (is (= :type-bound (get-in prop [:predicate :node])))
+      (is (= "Addable" (get-in prop [:predicate :bound :name]))))))
+
+(deftest l2a-proposition-own-line-rule-rejects-crammed-form
+  (testing "`|:` cannot share an observation signature/expression line"
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"`\|:` proposition must occupy its own line"
+         (p/parse "def A:\n    foo :< bar |: pred = expr\n")))))
+
+(deftest l2a-typed-proposition-attaches-error-type-and-args
+  (testing "`as ErrorType(field: value)` normalizes its type and named argument map"
+    (let [n    (first-node "def Counter:\n    n: Int = 0\n\n    |: n >= 0 as OutOfRange(value: n)\n\n    -> ready\n")
+          prop (first (filter #(= :proposition (:node %)) (:body n)))]
+      (is (= {:node :type-ref :name "OutOfRange"} (:as-error-type prop)))
+      (is (= #{"value"} (set (keys (:as-error-args prop)))))
+      (is (= {:node :ident :name "n"}
+             (get-in prop [:as-error-args "value"]))))))
+
+(deftest l2a-bare-proposition-has-nil-typed-error-fields
+  (testing "a bare proposition emits the same normalized shape with nil typed-error slots"
+    (let [n    (first-node "def Counter:\n    |: ready\n    -> ready\n")
+          prop (first (:body n))]
+      (is (= :proposition (:node prop)))
+      (is (nil? (:as-error-type prop)))
+      (is (nil? (:as-error-args prop))))))
+
+;; ---------------------------------------------------------------------------
 ;; F8 L3a — `computed:` behavioral section. Field-shape decls inside
 ;; `computed:` rewrite to zero-arg observables at parse time — the
 ;; field_getter generator per F8 plan §Landing 3a. Users get field-style
