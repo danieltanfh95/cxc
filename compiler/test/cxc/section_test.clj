@@ -168,13 +168,13 @@
     (is (= :behavioral (:kind (sec/lookup :use))))))
 
 (deftest invariants-seed-records-f49-backend
-  (testing "F8 L3b.i — the `:invariants` seed carries a spec pointer describing where the compiler already handles the section: F49 invariant-check machinery on the lower side, `parse-invariants-section` on the parse side. Downstream (L3b.ii) can consult this to route parser dispatch through the registry without re-hardcoding the section-name keyword. Case-insensitive lookup preserved via `normalize-name` in `lookup`."
+  (testing "L2b — the `:invariants` seed retains its F49 backend pointer but is explicitly parser-less. The L2a positional parser produces normalized proposition nodes directly, so registry metadata cannot revive the retired header. Case-insensitive lookup remains preserved."
     (let [e (sec/lookup :invariants)]
       (is (= :behavioral (:kind e)))
       (is (= :compiler-baked (get-in e [:spec :impl])))
       (is (= :f49-invariant-machinery (get-in e [:spec :backend])))
-      (is (= 'cxc.parse/parse-invariants-section
-             (get-in e [:spec :parser-sym]))))
+      (is (true? (get-in e [:spec :parser-less?])))
+      (is (nil? (get-in e [:spec :parser-sym]))))
     ;; Same shape survives the case-insensitive lookup path.
     (is (= :behavioral (:kind (sec/lookup "Invariants"))))
     (is (= :behavioral (:kind (sec/lookup :Invariants))))))
@@ -204,13 +204,11 @@
     (is (= :behavioral (:kind (sec/lookup "Use"))))
     (is (= :behavioral (:kind (sec/lookup :Use))))))
 
-(deftest behavioral-parser-resolves-invariants
-  (testing "F8 L3b.ii.α — `behavioral-parser :invariants` returns the resolved `parse-invariants-section` var via `requiring-resolve`. Verifies both the metadata pointer (parser-sym in the seed) and the resolution path work end-to-end. Case-insensitive lookup preserved."
-    (let [v (sec/behavioral-parser :invariants)]
-      (is (var? v))
-      (is (= (requiring-resolve 'cxc.parse/parse-invariants-section) v)))
-    (is (var? (sec/behavioral-parser "Invariants")))
-    (is (var? (sec/behavioral-parser :Invariants)))))
+(deftest behavioral-parser-skips-parser-less-invariants
+  (testing "L2b — `behavioral-parser :invariants` returns nil at every case-normalized lookup, proving registry dispatch cannot accept the hard-retired section header."
+    (is (nil? (sec/behavioral-parser :invariants)))
+    (is (nil? (sec/behavioral-parser "Invariants")))
+    (is (nil? (sec/behavioral-parser :Invariants)))))
 
 (deftest behavioral-parser-resolves-deprecated-and-use
   (testing "F8 L3b.ii.α — same substrate resolves parser vars for the other L3d.i / L3-use.i seeds. All three behavioral sections dispatch through one uniform mechanism."
@@ -259,7 +257,7 @@
       (is (not (contains? m :metadata))))))
 
 (deftest allowed-in-extend-only-invariants
-  (testing "F8 L3b.iii — only `:invariants` is permitted inside `extend Foo:` bodies (invariants compose additively per F49's extension-invariant merging). `:use` and `:deprecated` are false — extend rejects them per §3.3.2 (extensions cannot add capabilities or deprecation). Reserved and unregistered names default to false."
+  (testing "L2b — the `:invariants` registry marker records that direct `|:` propositions compose additively inside `extend Foo:` bodies. It is not a header-parser permission. `:use` and `:deprecated` remain false; reserved and unregistered names default to false."
     (is (true? (sec/allowed-in-extend? :invariants)))
     (is (true? (sec/allowed-in-extend? "Invariants")))
     (is (false? (sec/allowed-in-extend? :deprecated)))

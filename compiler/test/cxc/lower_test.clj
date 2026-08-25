@@ -1279,9 +1279,8 @@ def main:
   Unblocks F36 Landing 2a (picker) — narrowed storage (e.g. `Age.value` as `uint8_t` when invariant is `0 <= value <= 150`) cannot silently accept `Age(value: 300)` (which would store 44 = 300 & 0xff and then pass a post-store check on 44)."
     (let [prog (lower-src "def Bounded:
     v: Int = 42
-    invariants:
-        0 <= v
-        v <= 150
+    |: 0 <= v
+    |: v <= 150
 
     -> running
 
@@ -1318,13 +1317,53 @@ def main:
              [(:left (:cond (second checks))) (:right (:cond (second checks)))])
           "second check also reads default value — proves substitution fires uniformly"))))
 
+(deftest l2b-typed-proposition-failure-value-reaches-f49-emission
+  (testing "L2b — normalized typed propositions retain and lower their error constructor on both post-store and pre-store F49 checks; emit constructs that value only inside the failure branch before the existing abort."
+    (let [prog (lower-src "def OutOfRange:
+    value: Int = 0
+
+def Gauge:
+    value: Int = 5
+    |: value <= 10 as OutOfRange(value: value)
+
+    -> running
+
+    -> end
+
+def main:
+    -> running
+        then: print(1)
+")
+          cls (first (filter #(= "Gauge" (:name %)) (:classes prog)))
+          state-method (first (filter #(= "cxc_stateInit" (:selector %))
+                                      (:methods cls)))
+          check-method (first (filter #(= "checkInvariants" (:selector %))
+                                      (:methods cls)))
+          pre-check (first (filter #(= :invariant-check (:node %))
+                                   (:body state-method)))
+          post-check (first (filter #(= :invariant-check (:node %))
+                                    (:body check-method)))
+          c-src (emit/emit prog)]
+      (is (= :struct-lit (get-in pre-check [:failure-value :node])))
+      (is (= "OutOfRange" (get-in pre-check [:failure-value :type])))
+      (is (= {:node :int :value 5}
+             (get-in pre-check [:failure-value :fields 0 :value :fields 1 :value]))
+          "pre-store typed error args use the wide source substitution")
+      (is (= "OutOfRange" (get-in post-check [:failure-value :type])))
+      (is (str/includes?
+           c-src
+           "(void)(((OutOfRange){.value = ((_Cxc_Optional_Int64){.present = 1, .value = 5})}));")
+          "typed failure value is emitted on the construction failure path")
+      (is (str/includes? c-src
+                         "(void)(((OutOfRange){.value = __cxc_snap._value}));")
+          "typed failure value is emitted on the post-store failure path"))))
+
 (deftest pre-destruction-invariant-check-runs-before-resource-clear-and-cascade
   (testing "Phase D F49 Landing D — spec §3.4.2 requires invariants to hold BEFORE destruction. Prior to Landing D, `checkInvariants` fired last in transitionToEnd (after resource clear + child cascade + parent notify) — a failure at that site named a state the atom was no longer in. Landing D reorders: user on-end `do:` (may fix up state) → invariant check → resource clear → cascade → notify parent → (main: shutdown)."
     (let [prog (lower-src "def Bounded:
     v: Int = 42
-    invariants:
-        0 <= v
-        v <= 150
+    |: 0 <= v
+    |: v <= 150
 
     -> running
 
@@ -1403,9 +1442,8 @@ def main:
   (testing "Phase D F49 Landing C — spec §3.4.2 requires invariants to hold before/after each observable read. Observable bodies wrap with `[self checkInvariants]` calls at entry and exit; return synthesized around the observable expression body. Post F67 L4: observables are the reader surface (methods retire)."
     (let [prog (lower-src "def Bounded:
     v: Int = 42
-    invariants:
-        0 <= v
-        v <= 150
+    |: 0 <= v
+    |: v <= 150
 
     noop() :< v
 
@@ -1446,9 +1484,8 @@ def main:
   Safety hinges on F49 Landing A's pre-store check running on the wide ctor param / default before the narrowing assignment. Without F49 A this would be a silent-corruption path."
     (let [prog (lower-src "def Age:
     value: Int = 42
-    invariants:
-        0 <= value
-        value <= 150
+    |: 0 <= value
+    |: value <= 150
 
     -> running
 
@@ -1456,9 +1493,8 @@ def main:
 
 def Port:
     value: Int = 8080
-    invariants:
-        1 <= value
-        value <= 65535
+    |: 1 <= value
+    |: value <= 65535
 
     -> running
 
@@ -1466,9 +1502,8 @@ def Port:
 
 def Temp:
     value: Int = 0
-    invariants:
-        -128 <= value
-        value <= 127
+    |: -128 <= value
+    |: value <= 127
 
     -> running
 
@@ -1476,9 +1511,8 @@ def Temp:
 
 def Signed16:
     value: Int = 0
-    invariants:
-        -1000 <= value
-        value <= 1000
+    |: -1000 <= value
+    |: value <= 1000
 
     -> running
 
@@ -1486,8 +1520,7 @@ def Signed16:
 
 def OneBound:
     value: Int = 5
-    invariants:
-        value >= 0
+    |: value >= 0
 
     -> running
 
@@ -1522,9 +1555,8 @@ def main:
   (testing "Phase D F36 Landing 2a × F49 Landing A — a picker-narrowed field's pre-store invariant check still fires on the WIDE source value before the narrowing store. This is the correctness contract that made Landing 2a safe to ship."
     (let [prog (lower-src "def Age:
     value: Int = 42
-    invariants:
-        0 <= value
-        value <= 150
+    |: 0 <= value
+    |: value <= 150
 
     -> running
 
@@ -1566,9 +1598,8 @@ def main:
   Field ordering preserved: explicit `def X(a, b):` ctor params first, then F41-synthesized field params in data-declaration order, then use:-capability params."
     (let [prog (lower-src "def Age:
     value: Int
-    invariants:
-        0 <= value
-        value <= 150
+    |: 0 <= value
+    |: value <= 150
 
     -> running
 
@@ -1603,14 +1634,13 @@ def main:
           "Container fields (List of Int) skipped F41 — auto-init to empty container"))))
 
 (deftest f41-picker-and-f49-a-end-to-end-narrowing-safety
-  (testing "Phase D F41 × F36 Landing 2a × F49 Landing A end-to-end: user writes `data: value: Int; invariants: 0 <= value <= 150`, constructs `Age(value: 42)`, gets uint8_t storage for value, and out-of-range construction aborts on the wide ctor param before the narrowing assignment.
+  (testing "Phase D F41 × F36 Landing 2a × F49 Landing A end-to-end: user writes `value: Int` with own-line `|: 0 <= value` / `|: value <= 150`, constructs `Age(value: 42)`, gets uint8_t storage for value, and out-of-range construction aborts on the wide ctor param before the narrowing assignment.
 
   This is the complete picker safety story — F41 makes ctor params real, picker narrows storage, pre-store check on the wide source aborts if the value doesn't fit. Without any of these three, silent truncation could occur."
     (let [prog (lower-src "def Age:
     value: Int
-    invariants:
-        0 <= value
-        value <= 150
+    |: 0 <= value
+    |: value <= 150
 
     -> running
 
@@ -2290,7 +2320,7 @@ def main:
       (is (some #(= "Widget_m" (:name %)) (:functions prog))))))
 
 (deftest f9-l4-extension-invariant-on-record-fail-nyi
-  (testing "F9 Landing 4 — record targets have no runtime invariant path yet; extension-added `invariants:` on a record fails-nyi with a pointer at the follow-on sub-landing. Atoms already handle invariants natively (no fail-nyi)."
+  (testing "L2b/F9 Landing 4 — record targets have no runtime invariant path yet; an extension-added `|:` proposition on a record fails-nyi with a pointer at the follow-on sub-landing. Atoms already handle invariants natively (no fail-nyi)."
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
          #"record targets have no runtime invariant path"
@@ -2298,8 +2328,7 @@ def main:
                          "    n: Int\n"
                          "\n"
                          "extend Widget:\n"
-                         "    invariants:\n"
-                         "        n > 0\n"
+                         "    |: n > 0\n"
                          "\n"
                          "def main:\n"
                          "    -> running\n"
@@ -3897,9 +3926,8 @@ def main:
   (testing "F32 L4.e.β.3 — `-checkInvariants` body now prepends a `:state-snapshot-init` and lowers invariant predicates via `:snapshot-name \"__cxc_snap\"` so field reads route via `__cxc_snap._field` instead of raw `_field` ivars. Under default flag: semantics-equivalent (snapshot copies from ivars). Under concurrent mode: L4.e.α's guarded emit sources snapshot from `_state`, so invariants observe committed state. Prevents stale-ivar invariant checks after L4.e.β retires per-field ivar writes."
     (let [prog  (lower-src (str "def Bounded:\n"
                                 "    v: Int = 42\n"
-                                "    invariants:\n"
-                                "        0 <= v\n"
-                                "        v <= 150\n\n"
+                                "    |: 0 <= v\n"
+                                "    |: v <= 150\n\n"
                                 "    -> running\n\n"
                                 "    -> end\n\n"
                                 "def main:\n"
@@ -4158,8 +4186,7 @@ def main:
     (let [prog  (lower-src (str "def Gauge:\n"
                                 "    value: Int! = 3\n"
                                 "    max:   Int! = 5\n\n"
-                                "    invariants:\n"
-                                "        value <= max\n\n"
+                                "    |: value <= max\n\n"
                                 "    -> alive\n\n"
                                 "    alive <: bump -> alive\n"
                                 "        then: value => value + 1\n\n"
@@ -4182,8 +4209,7 @@ def main:
     (let [prog   (lower-src (str "def Gauge:\n"
                                  "    value: Int! = 3\n"
                                  "    max:   Int! = 5\n\n"
-                                 "    invariants:\n"
-                                 "        value <= max\n\n"
+                                 "    |: value <= max\n\n"
                                  "    -> alive\n\n"
                                  "    alive <: bump -> alive\n"
                                  "        then: value => value + 1\n\n"
@@ -4210,8 +4236,7 @@ def main:
     (let [prog   (lower-src (str "def Gauge:\n"
                                  "    value: Int! = 3\n"
                                  "    max:   Int! = 5\n\n"
-                                 "    invariants:\n"
-                                 "        value <= max\n\n"
+                                 "    |: value <= max\n\n"
                                  "    -> alive\n\n"
                                  "    alive <: bump -> alive\n"
                                  "        then: value => value + 1\n\n"

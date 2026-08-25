@@ -1397,7 +1397,7 @@
           (recur (conj stmts stmt) p3))))))
 
 ;; ---------------------------------------------------------------------------
-;; Sections (data:, methods:, use:, invariants:, then:, do:, let:, cases:)
+;; Sections (data:, methods:, use:, then:, do:, let:, cases:)
 ;;   Each section header is `<name>:` followed by :newline :indent … :dedent
 ;;   Section body content differs per section — dispatch here.
 ;; ---------------------------------------------------------------------------
@@ -1442,27 +1442,6 @@
                     [ty p4]   (parse-type tokens p3)
                     p5        (skip-newlines tokens p4)]
                 (recur (conj caps {:name name :type ty}) p5))))))
-
-(defn- parse-invariants-section
-  "invariants:
-       <expr>
-       <expr>
-   Each line is a predicate expression (chained comparisons ok — parsed
-   by the general binop path since <, <=, >, >= all have equal precedence
-   and left-associate). Downstream contract-check will interpret chained
-   forms specially."
-  [tokens pos]
-  (let [[_ p] (expect tokens pos :kw "invariants")
-        [_ p] (expect tokens p :punct ":")
-        [_ p] (expect tokens p :newline)
-        [_ p] (expect tokens p :indent)]
-    (loop [preds [] p p]
-      (cond
-        (at? tokens p :dedent) [{:node :invariants-section :predicates preds} (inc p)]
-        (at? tokens p :newline) (recur preds (inc p))
-        :else (let [[e p2] (parse-expr tokens p)
-                    p3     (skip-newlines tokens p2)]
-                (recur (conj preds e) p3))))))
 
 (defn- proposition-line-start?
   "True when `pos` starts a logical source line. Layout tokens are the
@@ -2018,10 +1997,12 @@
 ;; def-atom top-level form
 ;;
 ;;   def <Name>[(ctor-params)]:
-;;       (use: | data: | invariants: | methods: | observable | transition)+
+;;       (use: | field | |: proposition | observable | transition)+
 ;;
 ;;   Determines what to parse by look-ahead:
-;;     - `use:`, `data:`, `invariants:`, `methods:` → section
+;;     - `use:`                                      → section
+;;     - `<ident>: <Type>`                           → direct field
+;;     - `|:`                                        → proposition
 ;;     - `<ident> :<` or `<ident>(...) :<`           → observable (zero-arg or parametric)
 ;;     - `<ident|self> <:|<|` OR `<ident> ->` OR `->` → transition
 ;; ---------------------------------------------------------------------------
@@ -2420,8 +2401,9 @@
         (at? tokens p :newline)
         (recur body (inc p))
 
-        ;; L2a — direct def-body proposition (class-level invariant).
-        ;; The legacy `invariants:` section remains accepted until L2b.
+        ;; L2b — direct def-body proposition (class-level invariant).
+        ;; `invariants:` is hard-retired; this is the sole invariant
+        ;; parse entry point at def-body position.
         (at? tokens p :glyph "|:")
         (let [[prop p2] (parse-proposition tokens p)]
           (recur (conj body prop) (skip-newlines tokens p2)))
@@ -2430,8 +2412,11 @@
         ;; For `:kw` tokens whose value maps to a `:kind :behavioral`
         ;; registry entry, invoke the registered parser directly
         ;; instead of falling through to a hardcoded arm. Behavior-
-        ;; equivalent for `:invariants`/`:deprecated`/`:use` (same
-        ;; parser fn resolved via `requiring-resolve`); enables future
+        ;; equivalent for the remaining header-backed behavioral
+        ;; surfaces (`:deprecated`/`:use`, via `requiring-resolve`);
+        ;; `:invariants` is parser-less in the registry because the
+        ;; own-line `|:` arm above produces propositions directly.
+        ;; Enables future
         ;; L4 `section class Name:` user syntax to dispatch here too.
         ;; Hardcoded arms below stay as a safety fallback until L3b.iii
         ;; retires them once both parse sites go registry-first.
@@ -2447,10 +2432,6 @@
 
         (at? tokens p :kw "deprecated")
         (let [[s p2] (parse-deprecated-section tokens p)]
-          (recur (conj body s) (skip-newlines tokens p2)))
-
-        (at? tokens p :kw "invariants")
-        (let [[s p2] (parse-invariants-section tokens p)]
           (recur (conj body s) (skip-newlines tokens p2)))
 
         ;; F67 L4c — `replace` on a plain (non-extension) def-atom body
@@ -2692,7 +2673,7 @@
           (recur (conj body t) (skip-newlines tokens p2)))
 
         :else
-        (fail! tokens p "expected use:, field decl (`name: Type [= default]`), invariants:, deprecated:, on_nil:, observable (`name[(args)] :< expr`), accepts:, or transition inside def-atom body")))))
+        (fail! tokens p "expected use:, field decl (`name: Type [= default]`), own-line `|:` proposition, deprecated:, on_nil:, observable (`name[(args)] :< expr`), accepts:, or transition inside def-atom body")))))
 
 ;; ---------------------------------------------------------------------------
 ;; F68 L1 (Proposal H) — structural detection helpers for `def` reshape.
@@ -2977,7 +2958,7 @@
 ;;       conforms: NewProtocol            → body-form adds to :conforms
 ;;
 ;; Per §3.3.2 "What extensions cannot add", extension bodies accept only
-;; methods:, invariants:, and conforms:. `data:`, `state:`, `use:`,
+;; own-line `|:` propositions and conforms:. `data:`, `state:`, `use:`,
 ;; `cases:`, `metadata:` (any subkey), and `deprecated:` are rejected
 ;; at parse with a targeted §3.3.2 pointer. Method entries carry the
 ;; `replace` modifier via `:replace?` (parsed by shared parse-methods-section).
@@ -2991,7 +2972,8 @@
   "Dispatch one section inside an `extend Foo:` body. Strict —
    rejects sections spec §3.3.2 forbids (data/state/use/cases/metadata/
    deprecated). Accepts observables (F67 L4), wildcard self-transitions
-   (F67 L4), invariants:, conforms:. `methods:` retires (F67 L4).
+   (F67 L4), own-line `|:` propositions, conforms:. `methods:` retires
+   (F67 L4).
 
    F67 L4c — a `replace` keyword prefix marks the following observable
    or wildcard-transition as intentionally shadowing an existing
@@ -3021,17 +3003,21 @@
                     "or a wildcard self-transition (`replace * <: msg(args) "
                     "-> * then: <body>`). See §3.3.2 rule 4."))))
 
+    ;; L2b — extension-added invariants use the same normalized
+    ;; proposition node as def-body invariants. The legacy section
+    ;; header has no registry or hardcoded fallback.
+    (at? tokens pos :glyph "|:")
+    (parse-proposition tokens pos)
+
     ;; F8 L3b.iii — behavioral section dispatch via registry, gated
-    ;; by `:allowed-in-extend?` per §3.3.2 (only invariants: allowed
-    ;; here; use: and deprecated: still fall through to hardcoded
-    ;; rejection arms below).
+    ;; by `:allowed-in-extend?` per §3.3.2. Header-backed `use:` and
+    ;; `deprecated:` remain forbidden here; `:invariants` is parser-less
+    ;; and enters through the `|:` arm above.
     (and (at? tokens pos :kw)
          (section/allowed-in-extend? (t-value (peek-tok tokens pos)))
          (section/behavioral-parser (t-value (peek-tok tokens pos))))
     (let [parser (section/behavioral-parser (t-value (peek-tok tokens pos)))]
       (parser tokens pos))
-
-    (at? tokens pos :kw "invariants") (parse-invariants-section tokens pos)
 
     (and (at? tokens pos :ident) (= "conforms" (t-value (peek-tok tokens pos)))
          (at? tokens (inc pos) :punct ":"))
@@ -3115,7 +3101,7 @@
           (recur (conj body sec) (skip-newlines tokens p2))
           (fail! tokens p
                  (str "expected observable (`name[(args)] :< expr`), "
-                      "transition (`* <: msg(args) -> * …`), invariants:, "
+                      "transition (`* <: msg(args) -> * …`), own-line `|:`, "
                       "conforms:, or dedent in `extend " target "` body")))))))
 
 ;; ---------------------------------------------------------------------------
@@ -3381,8 +3367,8 @@
       (at? tokens p :kw "alias")   (parse-alias-decl tokens p)
       (at? tokens p :kw "def")     (parse-def-atom tokens p)
 
-      ;; F9 L3 — `extend Foo:` at top level. Extension body is
-      ;; strict per §3.3.2: methods:/invariants:/conforms: only.
+      ;; F9 L3 / L2b — `extend Foo:` at top level. Extension body is
+      ;; strict per §3.3.2: observables/transitions, `|:`, conforms.
       (at? tokens p :kw "extend")   (parse-extend-class tokens p)
 
       ;; F9 L1 — spec §3.4.1 removed `sealed protocol`. Enumerations

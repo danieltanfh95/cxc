@@ -126,8 +126,7 @@
 
     x: Int = 0
 
-    invariants:
-        x >= 0
+    |: x >= 0
 
     obs :< x
 
@@ -136,7 +135,7 @@
     (is (= :def-atom (:node n)))
     (is (= "A" (:name n)))
     (let [kinds (mapv :node (:body n))]
-      (is (= [:use-section :data-section :invariants-section :observable :transition] kinds)))))
+      (is (= [:use-section :data-section :proposition :observable :transition] kinds)))))
 
 (deftest transition-receive-with-when-and-body
   (let [n (first-node "def A:
@@ -218,17 +217,14 @@
                    (.getMessage ex))
           "diagnostic mentions preserving args on the RHS"))))
 
-(deftest game-toys-parses
-  (testing "the full game-toys.cxc example parses end-to-end — entry point is `def main`. The `module` declaration was retired 2026-08-19 (file-path-authoritative); nodes start with the `from-import`."
+(deftest game-toys-awaits-p9-surface-migration
+  (testing "L2b/D3 — the still-unmigrated game-toys design sample is rejected at its first retired `invariants:` header. Block P9 owns the full sample migration; L2b must not retain a compatibility parser just to keep this future fixture green."
     (let [src (slurp "../design/examples/game-toys.cxc")
-          nodes (p/parse src)]
-      (is (= 9 (count nodes)))
-      (is (= [:from-import :record
-              :def-atom :def-atom :def-atom :def-atom :def-atom :def-atom :def-atom]
-             (mapv :node nodes)))
-      (is (= ["Vector2"] (mapv :name (filter #(= :record (:node %)) nodes))))
-      (is (= ["Paddle" "ActionMachine" "Player" "Enemy" "EnemySpawner" "Game" "main"]
-             (mapv :name (filter #(= :def-atom (:node %)) nodes)))))))
+          ex  (try (p/parse src)
+                   nil
+                   (catch clojure.lang.ExceptionInfo e e))]
+      (is ex "the old-surface game-toys sample must not parse after hard retirement")
+      (is (re-find #"own-line `\|:` proposition" (.getMessage ex))))))
 
 (deftest f20-for-sugar-rejected
   (testing "F20 REJECTED 2026-08-18 — `for e in xs: body` sugar retires; iteration is method dispatch per spec §3.7.1 rationale 3. Parser emits a targeted diagnostic pointing at `.for_each` rather than a generic parse error."
@@ -831,12 +827,19 @@ def main:
       (is (= [:observable] (mapv :node (:body n)))))))
 
 (deftest f9-l3-extend-class-with-invariants
-  (testing "F9 Landing 3 — `invariants:` section legal inside `extend class` (extensions may add invariants per §3.3.2)."
+  (testing "L2b — own-line `|:` propositions are legal inside `extend class` (extensions may add invariants per §3.3.2)."
     (let [n (first-node
              (str "extend Foo:\n"
-                  "    invariants:\n"
-                  "        x > 0\n"))]
-      (is (= :invariants-section (:node (first (:body n))))))))
+                  "    |: x > 0\n"))]
+      (is (= :proposition (:node (first (:body n)))))
+      (is (= ">" (get-in n [:body 0 :predicate :op]))))))
+
+(deftest l2b-invariants-section-header-is-hard-retired
+  (testing "L2b/D3 — the legacy `invariants:` header has no parser fallback"
+    (is (thrown? clojure.lang.ExceptionInfo
+                 (p/parse "def A:\n    invariants:\n        ready\n")))
+    (is (thrown? clojure.lang.ExceptionInfo
+                 (p/parse "extend A:\n    invariants:\n        ready\n")))))
 
 (deftest f9-l3-extend-class-rejects-top-level-fields
   (testing "F9 Landing 3 + F67 L5 — a field declaration inside `extend class` fails at parse per §3.3.2 (extensions cannot add state). Post-L5 the surface is top-level fields (no `data:` header)."
@@ -1265,8 +1268,9 @@ def main:
          (p/parse "def A:\n    -> running\n        then: self |> bump(by: 1)\n")))))
 
 ;; ---------------------------------------------------------------------------
-;; L2a — `|:` proposition parser. Pure parser addition: all four valid
-;; placements normalize to :proposition; legacy invariant/when surfaces stay.
+;; L2a/L2b — `|:` proposition parser. All four valid placements normalize
+;; to :proposition; L2b hard-retires the legacy invariant header while
+;; `when:` stays until L2c.
 ;; ---------------------------------------------------------------------------
 
 (deftest l2a-def-body-proposition-parses-as-class-level

@@ -1374,7 +1374,7 @@
     (vec (vals winners))))
 
 (defn- extension-has-invariants? [ext]
-  (some #(= :invariants-section (:node %)) (:body ext)))
+  (some #(= :proposition (:node %)) (:body ext)))
 
 (defn- compose-record-env-with-extensions
   "Post-composition rebuild of record-env: for each record target with
@@ -1395,7 +1395,7 @@
        (let [_          (doseq [e exts]
                           (when (extension-has-invariants? e)
                             (fail-nyi!
-                             (str "`invariants:` inside `extend class "
+                             (str "`|:` proposition inside `extend class "
                                   target "` — record targets have no "
                                   "runtime invariant path yet. F9 L4 "
                                   "composes method tables and conforms; "
@@ -1471,10 +1471,8 @@
              new-conforms (into (vec (:conforms entry))
                                 (extension-conforms-for target extension-env))
              ext-invs    (vec (mapcat (fn [e]
-                                        (:predicates
-                                         (first
-                                          (filter #(= :invariants-section (:node %))
-                                                  (:body e)))))
+                                        (filter #(= :proposition (:node %))
+                                                (:body e)))
                                       exts))
              new-invs    (into (vec (:invariants entry)) ext-invs)]
          (assoc env target
@@ -1928,12 +1926,9 @@
   (filterv #(= :observable (:node %)) (:body atom-node)))
 
 (defn- def-atom-invariants
-  "Return the predicate list from the atom's invariants: section (empty
-   if absent). Section is unique — parser emits at most one."
+  "Return normalized def-body proposition records (empty if absent)."
   [atom-node]
-  (or (:predicates (first (filter #(= :invariants-section (:node %))
-                                  (:body atom-node))))
-      []))
+  (filterv #(= :proposition (:node %)) (:body atom-node)))
 
 (defn- def-atom-use-caps
   "Return the capability list from the atom's use: section (empty if
@@ -2139,7 +2134,7 @@
    lands)."
   [atom-node]
   (remove #(#{:data-section :methods-section :transition :observable
-              :invariants-section :use-section
+              :proposition :use-section
               :on-nil-section
               :handler-decl :deprecated :field
               :class-function} (:node %))
@@ -2299,7 +2294,7 @@
                                             (nil? phi) hi
                                             :else (min hi phi))}))
                              {:lo nil :hi nil}
-                             invariants)
+                             (map :predicate invariants))
              {:keys [lo hi]} bounds
              picked  (pick-sized-atom lo hi)]
          (if picked
@@ -7965,8 +7960,28 @@
      :params      objc-params
      :body        body-stmts}))
 
+(defn- proposition-error-call
+  "Convert a normalized proposition's optional typed failure payload back
+   into the ordinary constructor-call AST consumed by `lower-expr`. L2a
+   keeps the type and named args separate so all proposition placements
+   share one record shape; F49 only needs to reconstruct the expression
+   when it builds a runtime failure branch."
+  [{:keys [as-error-type as-error-args] :as proposition}]
+  (when as-error-type
+    (when-not (= :type-ref (:node as-error-type))
+      (fail-compile!
+       :cxc-l2b-invalid-proposition-error-type
+       (str "typed proposition failure must construct a named error type; got `"
+            (:node as-error-type) "`")
+       proposition))
+    {:node   :call
+     :callee {:node :ident :name (:name as-error-type)}
+     :args   (mapv (fn [[name value]]
+                     {:kind :named :name name :value value})
+                   as-error-args)}))
+
 (defn- lower-invariant-check
-  "One predicate → an :invariant-check init statement. Ctx must carry
+  "One normalized proposition → an :invariant-check init statement. Ctx must carry
    self-fields + init-locals so unqualified names resolve as in init.
 
    Chained comparisons (`a <= b <= c`) are desugared to
@@ -7980,24 +7995,29 @@
    fail only when present and false\". Wrapped in a `:c-optional-cond`
    marker so emit can produce `(cond.present && !cond.value)` instead
    of `!cond` on a struct."
-  [atom-name idx pred ctx]
-  (let [pred-tk (infer-type pred ctx)
-        cond-lo (lower-expr pred ctx)]
-    {:node  :invariant-check
-     :cond  (if (optional-tk? pred-tk)
-              {:node :c-optional-cond :inner cond-lo}
-              cond-lo)
-     ;; Fires from init AND post-transition (Step 14); label stays generic.
-     :label (str atom-name " invariant #" idx " failed")}))
+  [atom-name idx proposition ctx]
+  (let [pred          (:predicate proposition)
+        pred-tk       (infer-type pred ctx)
+        cond-lo       (lower-expr pred ctx)
+        failure-value (some-> (proposition-error-call proposition)
+                              (lower-expr ctx))]
+    (cond->
+     {:node  :invariant-check
+      :cond  (if (optional-tk? pred-tk)
+               {:node :c-optional-cond :inner cond-lo}
+               cond-lo)
+      ;; Fires from init AND post-transition (Step 14); label stays generic.
+      :label (str atom-name " invariant #" idx " failed")}
+      failure-value (assoc :failure-value failure-value))))
 
 (defn- collect-self-field-refs
-  "Walk `pred` bottom-up, returning the set of unqualified :ident names
+  "Walk an AST value bottom-up, returning the set of unqualified :ident names
    that would resolve to a self-field (not to a local, not to a fully-
-   qualified path). Used by F49 Landing A to decide whether a predicate
-   is safe to pre-store-check: if every field ref has a source value in
-   the substitution map, the pre-store check emits before any field
-   assignment truncates."
-  [pred ctx]
+   qualified path). Used by F49 Landing A to decide whether a proposition
+   (predicate plus optional typed failure args) is safe to pre-store-check:
+   if every field ref has a source value in the substitution map, the
+   pre-store check emits before any field assignment truncates."
+  [ast ctx]
   (let [acc (atom #{})]
     (walk/postwalk
      (fn [n]
@@ -8007,11 +8027,12 @@
                   (get (:self-fields ctx) (:name n)))
          (swap! acc conj (:name n)))
        n)
-     pred)
+     ast)
     @acc))
 
 (defn- pre-store-invariant-check
-  "F49 Landing A: emit the pre-store construction check for `pred` when
+  "F49 Landing A: emit the pre-store construction check for a normalized
+   proposition when
    every self-field it references has a source-value entry in
    `field-subs` (ctor-param ident or default expression). Returns nil
    if any field reference lacks a source value — those predicates fall
@@ -8020,19 +8041,24 @@
 
    The label distinguishes pre-store from post-store so a diagnostic on
    a narrowed-field violation names the correct site."
-  [atom-name idx pred ctx field-subs]
-  (let [refs (collect-self-field-refs pred ctx)
+  [atom-name idx proposition ctx field-subs]
+  (let [pred (:predicate proposition)
+        refs (collect-self-field-refs proposition ctx)
         all-substituted? (every? #(contains? field-subs %) refs)]
     (when all-substituted?
       (let [sub-ctx (assoc ctx :field-substitutions field-subs)
             pred-tk (infer-type pred sub-ctx)
-            cond-lo (lower-expr pred sub-ctx)]
-        {:node  :invariant-check
-         :cond  (if (optional-tk? pred-tk)
-                  {:node :c-optional-cond :inner cond-lo}
-                  cond-lo)
-         :label (str atom-name " invariant #" idx
-                     " failed at construction (source value violates)")}))))
+            cond-lo (lower-expr pred sub-ctx)
+            failure-value (some-> (proposition-error-call proposition)
+                                  (lower-expr sub-ctx))]
+        (cond->
+         {:node  :invariant-check
+          :cond  (if (optional-tk? pred-tk)
+                   {:node :c-optional-cond :inner cond-lo}
+                   cond-lo)
+          :label (str atom-name " invariant #" idx
+                      " failed at construction (source value violates)")}
+          failure-value (assoc :failure-value failure-value))))))
 
 (defn- class-name-for-atom
   "Emitted ObjC class name. Regular atoms use their cxc name verbatim.

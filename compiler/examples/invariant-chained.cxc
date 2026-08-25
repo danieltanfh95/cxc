@@ -4,8 +4,7 @@ def Bounded(y: Int = 5, limit: Int = 10):
 
     val :< raw_val
 
-    invariants:
-        -lim <= raw_val <= lim
+    |: -lim <= raw_val <= lim
 
 def main:
     b: Bounded = Bounded(y: 3, limit: 7)

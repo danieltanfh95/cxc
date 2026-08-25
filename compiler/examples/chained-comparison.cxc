@@ -5,8 +5,7 @@ def Bounded:
 
     val :< raw_val
 
-    invariants:
-        lo <= raw_val <= hi
+    |: lo <= raw_val <= hi
 
 def main:
     -> running

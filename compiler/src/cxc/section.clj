@@ -198,7 +198,7 @@
 (def ^:private behavioral-seed-specs
   "F8 L3b.i (2026-08-24) — protected names whose backend implementation
    has landed but which aren't yet dispatched through the registry.
-   Each entry carries `:impl` / `:backend` / `:parser-sym` + notes so
+   Each entry carries `:impl` / `:backend` plus parser/walker metadata so
    downstream landings (L3b.ii+) can teach the parser to consult the
    registry and route through the recorded parser symbol; today the
    seed is descriptive metadata, forward-compatible with that
@@ -206,10 +206,12 @@
 
    `:invariants` — F49 invariant-check machinery
    (`checkInvariants` method synthesis, pre-store checks,
-   post-transition checks) has shipped since v0.11. The parser
-   handles `invariants:` via `parse-invariants-section`; lower routes
-   invariants through `def-atom-invariants` / extend-class merging.
-   This seed makes that ownership explicit.
+   post-transition checks) has shipped since v0.11. The L2a parser
+   produces normalized `:proposition` nodes directly at each legal
+   `|:` position, so this registry entry is intentionally parser-less.
+   Lower routes def-body/extension propositions through
+   `def-atom-invariants` / extend-class merging. This seed makes that
+   ownership explicit without reviving section-header dispatch.
 
    `:deprecated` — K3 deprecation walker (build.clj Layer 6 Step 11
    `warn-deprecated-uses`) walks each parsed program for `:type-ref` /
@@ -245,9 +247,9 @@
      `:deprecated` stay false — extend rejects them by design."
   {:invariants {:impl               :compiler-baked
                 :backend            :f49-invariant-machinery
-                :parser-sym         'cxc.parse/parse-invariants-section
+                :parser-less?       true
                 :allowed-in-extend? true
-                :notes              "L3b.i metadata-only; L3b.ii wires dispatch."}
+                :notes              "L2b: `|:` propositions parse directly; F49 consumes their normalized records."}
    :deprecated {:impl               :compiler-baked
                 :backend            :k3-deprecation-walker
                 :parser-sym         'cxc.parse/parse-deprecated-section
@@ -302,8 +304,9 @@
 
    Case-insensitive via `lookup`. Callers invoke the returned var as
    `[tokens pos] → [node next-pos]` matching the shape of
-   `parse-invariants-section` / `parse-deprecated-section` /
-   `parse-use-section`.
+   `parse-deprecated-section` / `parse-use-section`. Parser-less
+   behavioral entries such as `:invariants` return nil because their
+   direct syntax has its own positional parser entry point.
 
    No parser wire-through yet — this fn is the substrate. L3b.ii.β
    (def-atom-body dispatch) and L3b.iii (class-body dispatch) will
@@ -325,7 +328,9 @@
    Callers combine this with `behavioral-parser` to gate the
    extend-class body registry-arm: skip the arm when
    `allowed-in-extend?` returns false, so `use:` and `deprecated:`
-   still fall through to their hardcoded rejection arms."
+   still fall through to their hardcoded rejection arms. The true
+   `:invariants` flag now records that extension propositions compose;
+   `|:` itself parses through the direct positional entry point."
   [nm]
   (let [e (lookup nm)]
     (boolean (get-in e [:spec :allowed-in-extend?]))))

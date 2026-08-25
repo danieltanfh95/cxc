@@ -563,8 +563,13 @@
            "[__cxc_ms cxc_addSubscriber:self]; }"))
     :invariant-check
     ;; Direct if/abort — NSAssert is compiled out by NS_BLOCK_ASSERTIONS
-    ;; in release builds; invariants must always fire.
+    ;; in release builds; invariants must always fire. A typed proposition
+    ;; constructs its declared failure value on this branch before the
+    ;; existing F49 abort. P7 can later route the same value through the
+    ;; companion-message failure channel without changing this node shape.
     (str "if (!(" (emit-expr (:cond node)) ")) {\n"
+         (when-let [failure-value (:failure-value node)]
+           (str "    (void)(" (emit-expr failure-value) ");\n"))
          "    fprintf(stderr, \"" (escape-c-string (:label node)) "\\n\");\n"
          "    abort();\n"
          "}")

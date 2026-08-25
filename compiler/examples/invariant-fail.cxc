@@ -4,9 +4,8 @@ def Gauge:
 
     value :< raw_value
 
-    invariants:
-        raw_value >= 0
-        raw_value <= max
+    |: raw_value >= 0
+    |: raw_value <= max
 
     -> running
 

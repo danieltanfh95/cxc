@@ -594,13 +594,13 @@
       (is (= "2500\n" stdout)))))
 
 (deftest end-to-end-invariant-chained
-  (testing "invariant-chained.cxc — Layer 1.X / stale-check retirement. `-lim <= val <= lim` in an invariants: block. Chained comparisons desugar to `(A <= B) and (B <= C)` at parse time (parser's `desugar-chained-comparisons` walks the entire AST); the stale fail-nyi in lower's invariant path was dead code and is retired. Unary minus (`-lim`) lands as `:neg` (parser) → `:unary` op `-` in emit — pairs cleanly with lower's new `:neg` inference (numeric-preserving). Program constructs Bounded(y: 3, limit: 7); passing invariant runs through; prints 3."
+  (testing "invariant-chained.cxc — L2b / stale-check retirement. Own-line `|: -lim <= val <= lim` feeds the existing F49 machinery. Chained comparisons desugar to `(A <= B) and (B <= C)` at parse time (parser's `desugar-chained-comparisons` walks the entire AST); the stale fail-nyi in lower's invariant path was dead code and is retired. Unary minus (`-lim`) lands as `:neg` (parser) → `:unary` op `-` in emit — pairs cleanly with lower's new `:neg` inference (numeric-preserving). Program constructs Bounded(y: 3, limit: 7); passing invariant runs through; prints 3."
     (let [{:keys [exit stdout]} (compile-and-run "invariant-chained")]
       (is (zero? exit))
       (is (= "3\n" stdout)))))
 
 (deftest end-to-end-picker-narrowing-with-f41-ctor-params
-  (testing "picker-narrowing-f41.cxc — F41 × F36 Landing 2a × F49 Landing A end-to-end. Age has `data: value: Int` (no default → F41 makes it a required ctor param) + `invariants: 0 <= value <= 150` (picker narrows storage to uint8_t). Program constructs `Age(value: 42)`, reads back the value, prints 42. In-range case runs to completion — storage narrowing is transparent to the user."
+  (testing "picker-narrowing-f41.cxc — L2b × F41 × F36 Landing 2a × F49 Landing A end-to-end. Age has a direct `raw_value: Int` field plus own-line lower/upper-bound propositions (picker narrows storage to uint8_t). Program constructs `Age(value: 42)`, reads back the value, prints 42. In-range case runs to completion — storage narrowing is transparent to the user."
     (let [{:keys [exit stdout]} (compile-and-run "picker-narrowing-f41")]
       (is (zero? exit))
       (is (= "42\n" stdout)))))

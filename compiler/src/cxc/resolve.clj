@@ -149,7 +149,6 @@
   [atom-node]
   (let [body  (:body atom-node)
         dsec  (first (filter #(= :data-section (:node %)) body))
-        invs  (first (filter #(= :invariants-section (:node %)) body))
         uses  (first (filter #(= :use-section (:node %)) body))
         obs   (filterv #(= :observable (:node %)) body)]
     {:data-fields   (vec (:fields dsec))
@@ -157,7 +156,7 @@
      :observables   obs
      :transitions   (filterv #(= :transition (:node %)) body)
      :use-caps      (vec (:caps uses))
-     :invariants    (vec (:predicates invs))
+     :invariants    (filterv #(= :proposition (:node %)) body)
      :handler-decls (filterv #(= :handler-decl (:node %)) body)}))
 
 (defn- enum-members [enum-node]
