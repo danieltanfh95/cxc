@@ -11,7 +11,8 @@ def Counter:
             |> self.bump()
             |> self.bump()
 
-    alive <: bump when: raw_n < max -> alive
+    alive <: bump -> alive
+        |: raw_n < max
         then: raw_n => raw_n + 1
 
 def main:

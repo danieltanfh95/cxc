@@ -137,11 +137,11 @@
     (let [kinds (mapv :node (:body n))]
       (is (= [:use-section :data-section :proposition :observable :transition] kinds)))))
 
-(deftest transition-receive-with-when-and-body
+(deftest transition-receive-with-arm-proposition-and-body
   (let [n (first-node "def A:
     alive <: attack(amount: Int)
     -> alive
-        when: hp > amount
+        |: hp > amount
         then: hp => hp - amount
 ")
         t (-> n :body first)]
@@ -151,8 +151,9 @@
     (is (= "<:" (get-in t [:receive :glyph])))
     (is (= "attack" (get-in t [:receive :msg :source :name])))
     (is (= "alive" (:target t)))
+    (is (not (contains? t :when)))
     (is (= 2 (count (:body t))))
-    (is (= :when-clause (:node (first (:body t)))))
+    (is (= :proposition (:node (first (:body t)))))
     (is (= :then-clause (:node (second (:body t)))))))
 
 (deftest emit-statements
@@ -334,19 +335,19 @@
     -> running
 
     running <: bump -> self
-        when: -10 <= val <= 10
+        |: -10 <= val <= 10
         then: val => val + 1
 ")
-          when-expr (some (fn [n]
+          prop-expr (some (fn [n]
                             (some (fn [t]
-                                    (some (fn [c] (when (= :when-clause (:node c))
-                                                    (:expr c)))
+                                    (some (fn [c] (when (= :proposition (:node c))
+                                                    (:predicate c)))
                                           (:body t)))
                                   (filter #(= :transition (:node %)) (:body n))))
                           tree)]
-      (is (= :chained-cmp (:node when-expr)))
-      (is (= 3 (count (:operands when-expr))))
-      (is (= ["<=" "<="] (:ops when-expr))))
+      (is (= :chained-cmp (:node prop-expr)))
+      (is (= 3 (count (:operands prop-expr))))
+      (is (= ["<=" "<="] (:ops prop-expr))))
     ;; Middle is a call — accepted (semantic once-only makes the
     ;; former double-eval concern moot).
     (is (some? (p/parse "def V:
@@ -360,7 +361,7 @@ def main:
     -> running
 
     running <: check -> self
-        when: 0 <= v.mid() <= 10
+        |: 0 <= v.mid() <= 10
         then: v => v
 ")))
     ;; 4-operand chain: -10 <= a <= b <= 10 → :chained-cmp with
@@ -372,25 +373,49 @@ def main:
     -> running
 
     running <: check -> self
-        when: -10 <= a <= b <= 10
+        |: -10 <= a <= b <= 10
         then: a => a
 ")
-          when-expr (some (fn [n]
+          prop-expr (some (fn [n]
                             (some (fn [t]
-                                    (some (fn [c] (when (= :when-clause (:node c))
-                                                    (:expr c)))
+                                    (some (fn [c] (when (= :proposition (:node c))
+                                                    (:predicate c)))
                                           (:body t)))
                                   (filter #(= :transition (:node %)) (:body n))))
                           tree)]
-      (is (= :chained-cmp (:node when-expr)))
-      (is (= 4 (count (:operands when-expr))))
-      (is (= ["<=" "<=" "<="] (:ops when-expr))))))
+      (is (= :chained-cmp (:node prop-expr)))
+      (is (= 4 (count (:operands prop-expr))))
+      (is (= ["<=" "<=" "<="] (:ops prop-expr))))))
 
-(deftest transition-clause-order-enforced
-  (testing "Audit F22: spec §10 — transition sub-blocks must appear in the order `when, then`. Out-of-order clauses (e.g. `then:` before `when:`) parse-error with a specific diagnostic. Post F18 L1' Landing 2 (2026-08-24) the `let:` sub-block retired, so clause-order only involves when/then."
+(deftest transition-when-guards-hard-retired
+  (testing "D3/L2c — transition `when:` guards are rejected at both legacy positions"
+    (is (thrown?
+         clojure.lang.ExceptionInfo
+         (p/parse "def main:
+    n: Int = 0
+
+    -> running
+
+    running <: bump when: n < 10 -> self
+        then: n => n + 1
+")))
+    (is (thrown?
+         clojure.lang.ExceptionInfo
+         (p/parse "def main:
+    n: Int = 0
+
+    -> running
+
+    running <: bump -> self
+        when: n < 10
+        then: n => n + 1
+")))))
+
+(deftest transition-arm-proposition-placement-and-multiplicity
+  (testing "arm-head propositions must precede `then:`"
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
-         #"`when:` clause out of order"
+         #"arm-head `\|:` proposition must appear before `then:`"
          (p/parse "def main:
     n: Int = 0
 
@@ -398,35 +423,25 @@ def main:
 
     running <: bump -> self
         then: n => n + 1
-        when: n < 10
-")))))
-
-(deftest transition-clause-multiplicity-enforced
-  (testing "Audit F22 + F70 I3: spec §10 — `when:` may appear at most once per transition body. `then:` is exempt (I3 relaxation) so the `do:` → `then:` migration produces bodies with multiple `then:` blocks that merge at lowering. Post F18 L1' Landing 2 (2026-08-24) the `let:` sub-block retired — `let` bindings are now statement-form inside a `then:` clause, so no clause-level duplicate detection applies."
-    ;; F70 I3: multiple then: no longer parse-errors.
-    (is (some? (p/parse "def main:
+        |: n < 10
+"))))
+  (testing "propositions and `then:` clauses may each repeat"
+    (let [n (first-node "def main:
     n: Int = 0
 
     -> running
 
     running <: bump -> self
+        |: n < 10
+        |: n >= 0
         then: n => n + 1
         then: n => n + 2
-")))
-    ;; Duplicate when: still rejects.
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"duplicate `when:` clause"
-         (p/parse "def main:
-    n: Int = 0
-
-    -> running
-
-    running <: bump -> self
-        when: n < 10
-        when: n < 20
-        then: n => n + 1
-")))))
+")
+          body (:body (first (filter #(and (= :transition (:node %))
+                                          (= :phase (get-in % [:source :kind])))
+                                    (:body n))))]
+      (is (= [:proposition :proposition :then-clause :then-clause]
+             (mapv :node body))))))
 
 ;; f67-l4-methods-section-retired-with-migration deleted at F68 L6b — `methods`
 ;; is no longer a reserved word (Proposal H clears the sugar-body vocabulary),
@@ -1014,7 +1029,7 @@ def main:
         (is (= :continue-stmt (:node (nth inner 1))))))))
 
 (deftest f17-l1-break-with-value-rejected
-  (testing "F17 L1 — `break <expr>` is rejected. Value-yielding loops (F17 L2) were rejected 2026-08-18 as redundant with actor state transitions; the diagnostic steers users at the self-transition + `when:` guard pattern instead."
+  (testing "F17 L1 — `break <expr>` is rejected. Value-yielding loops (F17 L2) were rejected 2026-08-18 as redundant with actor state transitions; the diagnostic steers users at the self-transition + arm-head `|:` proposition pattern instead."
     (let [ex (try
                (do-stmts-from "def main:\n    -> running\n        then:\n            while true:\n                break 42\n")
                nil
@@ -1268,9 +1283,9 @@ def main:
          (p/parse "def A:\n    -> running\n        then: self |> bump(by: 1)\n")))))
 
 ;; ---------------------------------------------------------------------------
-;; L2a/L2b — `|:` proposition parser. All four valid placements normalize
-;; to :proposition; L2b hard-retires the legacy invariant header while
-;; `when:` stays until L2c.
+;; L2a/L2b/L2c — `|:` proposition parser. All four valid placements
+;; normalize to :proposition; L2b hard-retires the legacy invariant header
+;; and L2c hard-retires transition `when:` guards.
 ;; ---------------------------------------------------------------------------
 
 (deftest l2a-def-body-proposition-parses-as-class-level

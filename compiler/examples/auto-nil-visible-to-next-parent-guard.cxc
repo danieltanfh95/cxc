@@ -13,7 +13,7 @@ def Parent:
     -> alive
 
     alive <: child.finished -> alive
-        when: child is nil
+        |: child is nil
         then:
             raw_hits => raw_hits + 1
             :> ok
@@ -38,11 +38,11 @@ def main:
 # finished-block eventually dispatches to home, `home._child` has
 # been nil for a while.
 #
-# Home's transition `alive <: child.finished -> alive when: child
-# is nil` MUST see the guard as true; then it bumps raw_hits AND
+# Home's arm-head proposition `|: child is nil` MUST hold; then the
+# transition bumps raw_hits AND
 # emits `:> ok`. Main waits on `home.ok` before ending — so main
 # doesn't cxc_shutdown() until home's stream-receive has actually
-# run. If the guard were false, no ok emit fires, and dispatch_main
+# run. If the proposition did not hold, no ok emit fires, and dispatch_main
 # would idle forever (test would time out, not print 0).
 #
 # Prints 1.

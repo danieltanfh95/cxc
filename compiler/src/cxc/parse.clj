@@ -1253,7 +1253,7 @@
              (str "F39 L7: only `if let <ident> = <expr>: <block>` is supported at "
                   "statement position today. Bare `if <cond>: <block>` (K5 statement "
                   "form) is not yet landed. Rewrite via `if let` (nil-guarded unwrap), "
-                  "a `when:` guard on a transition, or an expression-position `<:` "
+                  "an own-line `|:` proposition on a transition arm, or an expression-position `<:` "
                   "dispatch block for pattern-matched branching.")))
 
     ;; F18 L1 — a `let` at statement position followed by `<ident> [: T] =`
@@ -1358,9 +1358,10 @@
                     "value-yielding loops (`loop:` + `break <value>`) "
                     "were rejected 2026-08-18 as redundant with actor "
                     "state transitions. Model the accumulate-until-done "
-                    "pattern as a self-transition on an atom with a "
-                    "`when:` guard: the loop body becomes `then: field "
-                    "=> ...`, the exit condition becomes `when: <cond>` "
+                    "pattern as a self-transition on an atom with an "
+                    "own-line `|:` proposition: the loop body becomes "
+                    "`then: field => ...`, the exit condition becomes "
+                    "`|: <cond>` at the arm head "
                     "on a transition to the done phase, and the final "
                     "value is read via an observable. See "
                     "plans/archive/f17-loop-primitives.md §\"Why not `loop:`\"."))))
@@ -1642,8 +1643,9 @@
 ;; Transitions
 ;;
 ;;   Full shape:
-;;     [<source-phase>] [<receive-glyph> <msg>[{args}]] [when: <expr>]
+;;     [<source-phase>] [<receive-glyph> <msg>[{args}]]
 ;;         -> <target-phase>
+;;         [|: <arm-proposition>]*
 ;;         [inline-body | indented-body]
 ;;
 ;;   Inline body:  same line as `->`; one of `then: X => Y` / `do: STMT` / `let: NAME: T = E`
@@ -1852,63 +1854,15 @@
               "`then:\\n            let k = 5\\n            n => n + k`. "
               "See spec §2.5 and plans/g2-expression-flow/f18-block-as-expression.md.")))
 
-(defn- parse-when-clause
-  "when: <expr>   — additional guard when appearing in transition body."
-  [tokens pos]
-  (let [[_ p] (expect tokens pos :kw "when")
-        [_ p] (expect tokens p :punct ":")
-        [e p] (parse-expr tokens p)]
-    [{:node :when-clause :expr e} p]))
-
 (defn- body-clause-head?
-  "True if pos is at `then:` | `do:` | `let:` | `when:`. `do:` (F70
-   I3) and `let:` (F18 L1' Landing 2) are retired at v1.0 but still
+  "True if pos is at `then:` | `do:` | `let:`. `do:` (F70 I3) and
+   `let:` (F18 L1' Landing 2) are retired at v1.0 but still
    recognized here so `parse-transition-body` can dispatch to
    targeted retirement diagnostics instead of a generic parse error."
   [tokens pos]
   (and (at? tokens pos :kw)
-       (#{"then" "do" "let" "when"} (t-value (peek-tok tokens pos)))
+       (#{"then" "do" "let"} (t-value (peek-tok tokens pos)))
        (at? tokens (inc pos) :punct ":")))
-
-;; Audit F22: spec §10 requires transition sub-blocks in the order
-;; `when, then`, each at most once (`then:` exempt post-F70 I3).
-;; `clause-order` is the canonical index used to detect out-of-order
-;; and duplicate clauses. The `:do-clause` slot retired 2026-08-20
-;; (F70 I3 Stage 3); the `:let-clause` slot retired 2026-08-24
-;; (F18 L1' Landing 2). The parser can no longer produce either
-;; node — dispatch fires a targeted rejection instead.
-(def ^:private clause-order
-  {:when-clause 0 :proposition 1 :then-clause 2})
-
-(defn- clause-kw->src [kw]
-  ({:when-clause "when" :proposition "|" :then-clause "then"} kw))
-
-(defn- enforce-clause-order-and-multiplicity!
-  "Audit F22: reject repeated clauses and out-of-order clauses in a
-   transition body. Message spec during L2a: `when, |:, then`.
-
-   F70 I3 exception — `:then-clause` may appear more than once because
-   the unified `then:` merges field updates and side-effect statements
-   in source order; multiple then-blocks fold at lowering. Proposition
-   selectors may also repeat. `when:` remains once-only until L2c."
-  [clauses tokens pos]
-  (loop [seen #{} prev-idx -1 [c & rest] clauses]
-    (when c
-      (let [kw  (:node c)
-            idx (clause-order kw)]
-        (when (and (contains? seen kw)
-                   (not (contains? #{:then-clause :proposition} kw)))
-          (fail! tokens pos
-                 (str "duplicate `" (clause-kw->src kw)
-                      ":` clause in transition body (`when:` may "
-                      "appear at most once — spec §10; propositions and "
-                      "`then:` may occur multiple times)")))
-        (when (< idx prev-idx)
-          (fail! tokens pos
-                 (str "`" (clause-kw->src kw) ":` clause out of order — "
-                      "spec §Propositions requires transition sub-blocks in "
-                      "the order `when, |:, then`")))
-        (recur (conj seen kw) idx rest)))))
 
 (defn- parse-transition-body
   "After the `-> target` head, an optional body:
@@ -1916,9 +1870,8 @@
      - if next is :newline :indent → indented body with multiple clauses
      - else → no body (transition ends)
 
-   Audit F22/L2a: after collecting clauses, verify they appear in
-   canonical order (`when, |:, then`); `when:` remains once-only while
-   proposition and `then:` clauses may repeat."
+   Arm-selector propositions are own-line entries at the body head, before
+   any `then:` clause. Both propositions and `then:` clauses may repeat."
   [tokens pos]
   (cond
     (body-clause-head? tokens pos)
@@ -1928,7 +1881,6 @@
             "then" (parse-then-clause tokens pos)
             "do"   (reject-do-clause! tokens pos)   ; F70 I3 Stage 3 — hard retirement (2026-08-19)
             "let"  (reject-let-clause! tokens pos)  ; F18 L1' Landing 2 — hard retirement (2026-08-24)
-            "when" (parse-when-clause tokens pos)
             (fail! tokens pos "unexpected clause"))]
       [[clause] p])
 
@@ -1937,24 +1889,25 @@
       (loop [clauses [] p p]
         (cond
           (at? tokens p :dedent)
-          (do (enforce-clause-order-and-multiplicity! clauses tokens p)
-              [clauses (inc p)])
+          [clauses (inc p)]
           (at? tokens p :newline) (recur clauses (inc p))
           (at? tokens p :glyph "|:")
-          (let [[prop p2] (parse-proposition tokens p)]
-            (recur (conj clauses prop) (skip-newlines tokens p2)))
+          (do
+            (when (some #(= :then-clause (:node %)) clauses)
+              (fail! tokens p
+                     "arm-head `|:` proposition must appear before `then:` in a transition body"))
+            (let [[prop p2] (parse-proposition tokens p)]
+              (recur (conj clauses prop) (skip-newlines tokens p2))))
           (body-clause-head? tokens p)
           (let [[clause p2]
                 (case (t-value (peek-tok tokens p))
                   "then" (parse-then-clause tokens p)
                   "do"   (reject-do-clause! tokens p) ; F70 I3 Stage 3 — hard retirement (2026-08-19)
                   "let"  (reject-let-clause! tokens p)  ; F18 L1' Landing 2 — hard retirement (2026-08-24)
-                  "when" (parse-when-clause tokens p)
                   (fail! tokens p "unexpected clause"))]
             (recur (conj clauses clause) (skip-newlines tokens p2)))
           :else
-          (do (enforce-clause-order-and-multiplicity! clauses tokens p)
-              [clauses p]))))
+          [clauses p])))
 
     :else [[] pos]))
 
@@ -1968,12 +1921,6 @@
    same AST."
   [tokens pos]
   (let [[source receive p] (parse-source-and-receive tokens pos)
-        p (skip-newlines tokens p)              ; allow newline before when:/->
-        [guard p]  (if (and (at? tokens p :kw "when")
-                            (at? tokens (inc p) :punct ":"))
-                     (let [[e p2] (parse-expr tokens (+ p 2))]
-                       [e p2])
-                     [nil p])
         p (skip-newlines tokens p)              ; allow newline before ->
         [_ p]      (expect tokens p :glyph "->")
         [target p] (cond
@@ -1989,7 +1936,6 @@
     [{:node :transition
       :source source
       :receive receive
-      :when guard
       :target target
       :body body} p]))
 

@@ -9,7 +9,8 @@ def Counter:
             |> self.add(by: 10)
             |> self.add(by: 3)
 
-    alive <: add(by: Int) when: by > 0 -> alive
+    alive <: add(by: Int) -> alive
+        |: by > 0
         then: raw_n => raw_n + by
 
 def main:

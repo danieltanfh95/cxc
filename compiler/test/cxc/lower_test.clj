@@ -749,8 +749,8 @@ def main:
 ;; emit renders as GNU stmt-expr binding each interior operand once.
 
 (deftest f27-emit-renders-gnu-stmt-expr
-  (testing "when: -10 <= val <= 10 emits a GNU stmt-expr binding val (now via `__cxc_snap._val` under F33 L2.c) once"
-    (let [prog (lower-src "def main:\n    val: Int! = 5\n\n    -> running\n\n    running <: bump -> self\n        when: -10 <= val <= 10\n        then: val => val + 1\n")
+  (testing "arm-head `|: -10 <= val <= 10` emits a GNU stmt-expr binding val (now via `__cxc_snap._val` under F33 L2.c) once"
+    (let [prog (lower-src "def main:\n    val: Int! = 5\n\n    -> running\n\n    running <: bump -> self\n        |: -10 <= val <= 10\n        then: val => val + 1\n")
           c-src (emit/emit prog)]
       ;; The interior operand is bound to __cxc_cc_1 via __typeof__.
       ;; F33 L2.c: receive-glyph body reads route through the snapshot.
@@ -1082,15 +1082,16 @@ def main:
       (is (= "kEnemy_phase_alive" (get-in (:body die) [0 :source-phase-const])))
       (is (= "kEnemy_phase_dying" (get-in (:body die) [1 :source-phase-const]))))))
 
-(deftest header-and-body-when-guards-and-fold-into-single-branch-guard
-  (testing "`when: by > 0` and body `when: hp > 0` AND together on the branch"
+(deftest arm-propositions-and-fold-into-single-branch-guard
+  (testing "multiple arm-head `|:` propositions AND together on the branch"
     (let [prog (lower-src "def Enemy:
     hp: Int! = 10
 
     -> alive
 
-    alive <: take_damage when: hp > 0 -> alive
-        when: hp > 0
+    alive <: take_damage -> alive
+        |: hp > 0
+        |: hp < 20
         then: hp => hp - 1
 
 def main:
@@ -1101,7 +1102,7 @@ def main:
           td   (first (filter #(= "take_damage" (:selector %)) (:methods cls)))
           branch (first (:body td))]
       (is (some? branch))
-      ;; guard is `(hp > 0) && (hp > 0)` — header AND body
+      ;; guard is `(hp > 0) && (hp < 20)` — both arm propositions
       (is (= "&&" (get-in branch [:guard :op]))))))
 
 (deftest target-self-lowers-as-no-phase-change
@@ -1679,7 +1680,7 @@ def main:
     -> running
 
     running <: check -> self
-        when: n in n
+        |: n in n
         then: n => n
 ")))))
 
@@ -3701,7 +3702,7 @@ def main:
                          "    -> running\n        then: print(0)\n"))))))
 
 (deftest f39-l7-bare-if-without-let-rejected-with-k5-pointer
-  (testing "F39 Landing 7 — bare `if <cond>: <block>` (statement-form K5) is deferred; the parser emits a targeted reject pointing at `if let`, `when:` guards, and expression-position `<:` dispatch as alternatives. Guards against silent parse failure that would look like a generic 'expected ...' error."
+  (testing "F39 Landing 7 — bare `if <cond>: <block>` (statement-form K5) is deferred; the parser emits a targeted reject pointing at `if let`, arm-head `|:` propositions, and expression-position `<:` dispatch as alternatives. Guards against silent parse failure that would look like a generic 'expected ...' error."
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
          #"F39 L7.*only `if let"
@@ -4049,12 +4050,13 @@ def main:
       (is (str/includes? c-src "_hp = (__cxc_snap._hp + __cxc_snap._max);")
           "both reads flip to snapshot; write still lands on raw ivar"))))
 
-(deftest f33-l2c-guard-header-read-also-flips
-  (testing "F33 L2.c — `when:` header clauses on receive-glyph transitions read through the snapshot too. Guard evaluation is part of the branch dispatch, still inside the method body; a pre-check via `when: hp > 0` needs the pre-transition value."
+(deftest f33-l2c-arm-proposition-read-also-flips
+  (testing "F33 L2.c — arm-head `|:` propositions on receive-glyph transitions read through the snapshot too. Proposition evaluation is part of the branch dispatch, still inside the method body; `|: hp > 0` needs the pre-transition value."
     (let [prog  (lower-src (str "def Counter:\n"
                                 "    hp: Int! = 10\n\n"
                                 "    -> alive\n\n"
-                                "    alive <: hit when: hp > 0 -> alive\n"
+                                "    alive <: hit -> alive\n"
+                                "        |: hp > 0\n"
                                 "        then: hp => hp - 1\n\n"
                                 "def main:\n"
                                 "    -> running\n        then: print(0)\n"))

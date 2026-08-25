@@ -9,8 +9,8 @@ def main:
         then: print(beats > 0)
 
     running <: clock.every(rate_ms: 5)(t: Instant) -> running
-        when: beats < 1
+        |: beats < 1
         then: beats => beats + 1
 
     running <: clock.every(rate_ms: 5)(t: Instant) -> end
-        when: beats == 1
+        |: beats == 1

@@ -3373,7 +3373,7 @@
 
 (defn- assert-not-optional-guard!
   "F39 L5b-ii-c (Sub-I) — reject an Optional-typed expression in a
-   boolean guard position (`when:`, dispatch `if`, `while` cond, etc).
+   boolean guard position (arm-head `|:`, dispatch `if`, `while` cond, etc).
    Nil-punning stops at control-flow: the user must terminate the
    Optional with `?? default` or `!= nil`. Dead until Sub-P flips
    storage — no expression infers Optional today."
@@ -5828,12 +5828,11 @@
   (str "k" atom-name "_phase_" phase-name))
 
 (defn- wildcard-on-enter?
-  "A transition with implicit source, no message receipt, no guard —
+  "A transition with implicit source and no message receipt —
    the `-> phase then/do: ...` form that fires on every entry."
   [t]
   (and (= :implicit (get-in t [:source :kind]))
-       (nil? (:receive t))
-       (nil? (:when t))))
+       (nil? (:receive t))))
 
 (defn- message-triggered?
   "A transition with a receive glyph (`<:` async, `<|` sync). Contrasts
@@ -5962,7 +5961,7 @@
 
 (defn- lower-transition-branch
   "Lower one transition into a `:transition-branch` — an `if` block on
-   the source phase (+ combined header/body `when:` guards) that runs
+   the source phase (+ combined arm-head `|:` propositions) that runs
    the transition's body and returns. Multiple transitions on the same
    selector are stacked in first-match order inside one method (design
    §12: first-match dispatch).
@@ -5975,7 +5974,7 @@
      5. specific do:                          }-- side effects
      6. post-transition invariants (Step 14)
 
-   Payload names in `msg{k: T}` bind as locals visible in when:/then:/do:
+   Payload names in `msg{k: T}` bind as locals visible in `|:`/then:/do:
    (design §12). Their type-kws land in the ctx locals so infer-type
    resolves references, and lower-expr emits them as `{:node :name :sym k}`."
   [atom-name t ctx wildcards-by-phase]
@@ -6002,11 +6001,10 @@
                             (merge (:locals ctx)
                                    payload-locals
                                    {"self" {:atom atom-name}}))
-        header-when  (:when t)
         body-clauses (:body t)
         then-clauses (filter #(= :then-clause (:node %)) body-clauses)
         do-clauses   (filter #(= :do-clause   (:node %)) body-clauses)
-        when-clauses (filter #(= :when-clause (:node %)) body-clauses)
+        propositions (filter #(= :proposition (:node %)) body-clauses)
         ;; F18 L1' Landing 2 (2026-08-24) — the transition `let:`
         ;; sub-block retired; statement-form `let x = expr` inside a
         ;; `then:` clause's `:stmts` is the successor. No pre-body
@@ -6014,15 +6012,13 @@
         ;; `lower-body-stmts` at the position they appear.
         let-decls    []
         ctx'         ctx'
-        body-whens   (mapv :expr when-clauses)
-        guard-exprs  (cond-> []
-                       header-when      (conj header-when)
-                       (seq body-whens) (into body-whens))
+        guard-exprs  (mapv :predicate propositions)
         _            (doseq [g guard-exprs]
                        (assert-not-optional-guard! g (infer-type g ctx')
-                                                   "transition `when:`" g))
+                                                   "arm-head `|:` proposition" g))
         guard-lo     (when (seq guard-exprs)
-                       ;; AND-fold all guards into one expression.
+                       ;; Every proposition at the arm head must hold.
+                       ;; Normalize them to the emitter's single guard.
                        (reduce (fn [acc e]
                                  {:node :binop :op "&&"
                                   :left acc :right (lower-expr e ctx')})
@@ -6082,7 +6078,7 @@
         ;; target=end routes through -transitionToEnd (design §7.3);
         ;; that method owns phase-set, `-> end` wildcard, cascade,
         ;; parent notify. Audit F26: spec §1.11 line 1281 —
-        ;; *"`end` transitions may have `when:` and `do:` blocks;
+        ;; *"`end` transitions may have arm propositions and `do:` blocks;
         ;; `then:` in an `end` transition is meaningless (the atom's
         ;; state is being discarded) and is a compile error."* Prior
         ;; behaviour rejected BOTH `then:` and `do:` on target=end;
@@ -6164,7 +6160,7 @@
                   invs))))
         raw-body     (cond-> []
                        ;; F23 — let: bindings sit at the top of the
-                       ;; body so they're in scope for guards+then+do.
+                       ;; body so they're in scope for propositions+then+do.
                        (seq let-decls)    (into let-decls)
                        (seq w-then-stmts) (into w-then-stmts)
                        (seq then-stmts)   (into then-stmts)

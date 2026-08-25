@@ -23,8 +23,8 @@ def main:
             total => total + v
 
     running <: clock.every(rate_ms: 50)(t: Instant) -> running
-        when: bound_ticks == 0
+        |: bound_ticks == 0
         then: bound_ticks => bound_ticks + 1
 
     running <: clock.every(rate_ms: 50)(t: Instant) -> end
-        when: bound_ticks >= 1
+        |: bound_ticks >= 1

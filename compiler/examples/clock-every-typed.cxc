@@ -9,8 +9,8 @@ def main:
         then: print(got_millis > 0)
 
     running <: clock.every(rate_ms: 5)(t: Instant) -> running
-        when: got_millis == 0
+        |: got_millis == 0
         then: got_millis => t.millis
 
     running <: clock.every(rate_ms: 5)(t: Instant) -> end
-        when: got_millis > 0
+        |: got_millis > 0

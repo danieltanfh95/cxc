@@ -363,7 +363,7 @@
       (is (= "2\n" stdout)))))
 
 (deftest end-to-end-when-guard-saturation
-  (testing "when-guard-saturation.cxc — 4 bumps, `when: n < max` blocks the 4th; n saturates at max=3"
+  (testing "when-guard-saturation.cxc — 4 bumps, arm-head `|: n < max` blocks the 4th; n saturates at max=3"
     (let [{:keys [exit stdout]} (compile-and-run "when-guard-saturation")]
       (is (zero? exit))
       (is (= "3\n" stdout)))))
@@ -381,7 +381,7 @@
       (is (= "101\n" stdout)))))
 
 (deftest end-to-end-message-payload
-  (testing "message-payload.cxc — `add{by: Int}` payload binds `by` as local in when: and then:; three sends with 5/10/3 sum to 18"
+  (testing "message-payload.cxc — `add(by: Int)` payload binds `by` as local in the arm-head `|:` proposition and `then:`; three sends with 5/10/3 sum to 18"
     (let [{:keys [exit stdout]} (compile-and-run "message-payload")]
       (is (zero? exit))
       (is (= "18\n" stdout)))))
@@ -484,7 +484,7 @@
       (is (= "0\n1\n2\n" stdout)))))
 
 (deftest end-to-end-auto-nil-visible-to-next-parent-guard
-  (testing "auto-nil-visible-to-next-parent-guard.cxc — F35 L7 pins spec §1.11 line 1284: sub-atom slot auto-nils atomically at the end of the sub-atom's `end`-transition, BEFORE any other transition on the parent evaluates its `when:` guard. Child emits `:> finished` in its die-transition, then transitionToEnd runs sync (L5 cascade + L6 [home nilSlot:@\"child\"] direct call) → `home._child = nil`. Home's `alive <: child.finished` receive dispatches later, guard `when: child is nil` MUST see nil (proof of L7 guarantee). Guard-passes path emits `:> ok` back to main. Main waits on `home.ok` before ending — so if the guard were false, no ok emit fires, dispatch_main idles forever (test hangs, not prints 0). Prints 1."
+  (testing "auto-nil-visible-to-next-parent-guard.cxc — F35 L7 pins spec §1.11 line 1284: sub-atom slot auto-nils atomically at the end of the sub-atom's `end`-transition, BEFORE any other transition on the parent evaluates its arm-head `|:` proposition. Child emits `:> finished` in its die-transition, then transitionToEnd runs sync (L5 cascade + L6 [home nilSlot:@\"child\"] direct call) → `home._child = nil`. Home's `alive <: child.finished` receive dispatches later, proposition `|: child is nil` MUST hold (proof of L7 guarantee). The matching path emits `:> ok` back to main. Main waits on `home.ok` before ending — so if the proposition were false, no ok emit fires, dispatch_main idles forever (test hangs, not prints 0). Prints 1."
     (let [{:keys [exit stdout]} (compile-and-run "auto-nil-visible-to-next-parent-guard")]
       (is (zero? exit))
       (is (= "1\n" stdout)))))
@@ -502,13 +502,13 @@
       (is (= "3\n" stdout)))))
 
 (deftest end-to-end-game-loop
-  (testing "game-loop.cxc — F62-migrated. Composes two prelude capabilities (Clock + TestKeyboardInput) in one main atom. Uses a two-transition `when:` guard pattern on `clock.every(rate_ms: 5){t: Instant}` — one running-guard that increments through 4 ticks, one end-guard that fires when the count reaches 4. Also subscribes to input.pressed (adds 1) and input.done (no-op). Total = 2 presses + 4 ticks = 6. Deterministic across runs since 5ms is well under the input-fire deadline; both sources drain into main's own_queue and serialize."
+  (testing "game-loop.cxc — F62-migrated. Composes two prelude capabilities (Clock + TestKeyboardInput) in one main atom. Uses a two-transition arm-head `|:` proposition pattern on `clock.every(rate_ms: 5){t: Instant}` — one running proposition that increments through 4 ticks, one end proposition that holds when the count reaches 4. Also subscribes to input.pressed (adds 1) and input.done (no-op). Total = 2 presses + 4 ticks = 6. Deterministic across runs since 5ms is well under the input-fire deadline; both sources drain into main's own_queue and serialize."
     (let [{:keys [exit stdout]} (compile-and-run "game-loop")]
       (is (zero? exit))
       (is (= "6\n" stdout)))))
 
 (deftest end-to-end-clock-every
-  (testing "clock-every.cxc — F62-migrated. Method-returned Stream subscribe with receive-side counting bound (no external Ticker). Clock ships `every(rate_ms: Int) -> Stream of Instant` (spec §1913 signature) via `native_clock_every` FFI hatch — creates a CxcStream carrying a per-instance receiver-side selector plus a dispatch_source_t timer. Main subscribes via `<: clock.every(rate_ms: 5){t: Instant}` with a two-transition `when:` guard pair (increment through 1 tick, then exit). `beats > 0` at end verifies the stream fired at least once."
+  (testing "clock-every.cxc — F62-migrated. Method-returned Stream subscribe with receive-side counting bound (no external Ticker). Clock ships `every(rate_ms: Int) -> Stream of Instant` (spec §1913 signature) via `native_clock_every` FFI hatch — creates a CxcStream carrying a per-instance receiver-side selector plus a dispatch_source_t timer. Main subscribes via `<: clock.every(rate_ms: 5){t: Instant}` with a two-transition arm-head `|:` proposition pair (increment through 1 tick, then exit). `beats > 0` at end verifies the stream fired at least once."
     (let [{:keys [exit stdout]} (compile-and-run "clock-every")]
       (is (zero? exit))
       (is (= "1\n" stdout)))))

@@ -620,7 +620,7 @@
     ;; 1284 auto-nil-visible-before-next-parent-guard guarantee falls
     ;; out: the direct call completes before `-transitionToEnd`
     ;; returns, so any queued-but-not-yet-dispatched message on
-    ;; parent's queue sees the nil ivar when its `when:` guard
+    ;; parent's queue sees the nil ivar when its arm-head `|:` proposition
     ;; evaluates.
     (str "{\n"
          "    __strong id p = _parent;\n"
@@ -693,7 +693,7 @@
            "}"))
     :transition-branch
     ;; One arm of a first-match dispatch for a message-selector method.
-    ;; Guard = `_phase == kA_phase_source` && header/body when: expressions
+    ;; Guard = `_phase == kA_phase_source` && arm-head `|:` propositions
     ;; (already AND-folded by lower). Body runs then:/phase-update/do:,
     ;; then early-returns so subsequent branches don't fire.
     (let [phase-eq (str "_phase == " (:source-phase-const node))
