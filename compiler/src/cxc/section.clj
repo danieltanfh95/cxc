@@ -234,7 +234,7 @@
    section-header parser.
 
    `:use` — K6 partial capability-request extraction. Parser handles
-   `use:` via `parse-use-section`; lower reads the caps set at
+   direct `use <name>: <Type>` via `parse-use-line`; lower reads the caps set at
    multiple sites (atom-env building, transition-injection eligibility,
    effect-checking dispatch). Same L3b.i shape — backend landed,
    registry ownership not yet wired.
@@ -264,9 +264,9 @@
                 :notes              "L3b: `@deprecated(\"msg\")` annotations feed the unchanged K3 walker."}
    :use        {:impl               :compiler-baked
                 :backend            :k6-capability-extraction
-                :parser-sym         'cxc.parse/parse-use-section
+                :parser-sym         'cxc.parse/parse-use-line
                 :allowed-in-extend? false
-                :notes              "L3-use.i metadata-only; wire-through waits on the full K6 landing."}})
+                :notes              "L4 direct-line parser preserves the normalized :use-section/:caps shape consumed by K6."}})
 
 (def registry
   "Section-class registry — `{section-name-keyword → spec}`. Seeded
@@ -300,7 +300,7 @@
   (get @registry (normalize-name nm)))
 
 (defn behavioral-parser
-  "F8 L3b.ii.α — resolve the parser fn for a behavioral section-header
+  "F8 L3b.ii.α — resolve the parser fn for a behavioral construct
    name via the registry. Returns a var (invocable as a fn) or nil.
 
    Returns nil when: (a) `nm` has no registry entry, (b) the entry is
@@ -310,8 +310,8 @@
    hit the resolved var directly.
 
    Case-insensitive via `lookup`. Callers invoke the returned var as
-   `[tokens pos] → [node next-pos]`. A parser may own a section header
-   (`parse-use-section`) or a consolidated surface (`parse-annotation`
+   `[tokens pos] → [node next-pos]`. A parser may own a direct line
+   (`parse-use-line`) or a consolidated surface (`parse-annotation`
    for `@deprecated`). Parser-less behavioral entries such as
    `:invariants` return nil because their direct syntax has its own
    positional parser entry point.
@@ -335,7 +335,7 @@
 
    Callers combine this with `behavioral-parser` to gate the
    extend-class body registry-arm: skip the arm when
-   `allowed-in-extend?` returns false, so `use:` and `deprecated:`
+   `allowed-in-extend?` returns false, so direct `use` and `deprecated:`
    still fall through to their hardcoded rejection arms. The true
    `:invariants` flag now records that extension propositions compose;
    `|:` itself parses through the direct positional entry point."

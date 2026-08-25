@@ -1398,7 +1398,7 @@
           (recur (conj stmts stmt) p3))))))
 
 ;; ---------------------------------------------------------------------------
-;; Sections (data:, methods:, use:, then:, do:, let:, cases:)
+;; Sections (data:, methods:, then:, do:, let:, cases:)
 ;;   Each section header is `<name>:` followed by :newline :indent … :dedent
 ;;   Section body content differs per section — dispatch here.
 ;; ---------------------------------------------------------------------------
@@ -1410,24 +1410,24 @@
        (section-names (t-value (peek-tok tokens pos)))
        (at? tokens (inc pos) :punct ":")))
 
-(defn- parse-use-section
-  "use:
-       cap: SomeCapability
-       other_cap: OtherCapability"
+(defn- parse-use-line
+  "Parse one direct capability declaration at def-body position:
+     use cap: SomeCapability
+
+   Each line initially emits the downstream-stable `:use-section` shape
+   with one cap. `fold-direct-use-lines` coalesces repeated declarations
+   into a single node before the completed def AST leaves the parser."
   [tokens pos]
   (let [[_ p] (expect tokens pos :kw "use")
-        [_ p] (expect tokens p :punct ":")
-        [_ p] (expect tokens p :newline)
-        [_ p] (expect tokens p :indent)]
-    (loop [caps [] p p]
-      (cond
-        (at? tokens p :dedent) [{:node :use-section :caps caps} (inc p)]
-        (at? tokens p :newline) (recur caps (inc p))
-        :else (let [[name p2] (expect tokens p :ident)
-                    [_ p3]    (expect tokens p2 :punct ":")
-                    [ty p4]   (parse-type tokens p3)
-                    p5        (skip-newlines tokens p4)]
-                (recur (conj caps {:name name :type ty}) p5))))))
+        _     (when (at? tokens p :punct ":")
+                (fail! tokens p
+                       (str "`use:` section header is retired at v1.0. "
+                            "Declare each capability directly at def-body "
+                            "position: `use <name>: <Type>`.")))
+        [name p] (expect tokens p :ident)
+        [_ p]    (expect tokens p :punct ":")
+        [ty p]   (parse-type tokens p)]
+    [{:node :use-section :caps [{:name name :type ty}]} p]))
 
 (defn- proposition-line-start?
   "True when `pos` starts a logical source line. Layout tokens are the
@@ -1928,10 +1928,10 @@
 ;; def-atom top-level form
 ;;
 ;;   def <Name>[(ctor-params)]:
-;;       (use: | field | |: proposition | observable | transition)+
+;;       (use <name>: <Type> | field | |: proposition | observable | transition)+
 ;;
 ;;   Determines what to parse by look-ahead:
-;;     - `use:`                                      → section
+;;     - `use <name>: <Type>`                        → normalized use section
 ;;     - `<ident>: <Type>`                           → direct field
 ;;     - `|:`                                        → proposition
 ;;     - `<ident> :<` or `<ident>(...) :<`           → observable (zero-arg or parametric)
@@ -2235,6 +2235,28 @@
               (into [synthetic]
                     (subvec (vec without-fields) first-field-idx)))))))
 
+(defn- fold-direct-use-lines
+  "Coalesce repeated direct `use <name>: <Type>` lines into one
+   downstream-stable `:use-section` node at the first declaration's
+   position. Lowering and resolution intentionally continue reading the
+   first section's `:caps` vector, exactly as they did before L4."
+  [body]
+  (let [use-sections (filterv #(= :use-section (:node %)) body)]
+    (if (< (count use-sections) 2)
+      body
+      (let [merged (assoc (first use-sections)
+                          :caps (vec (mapcat :caps use-sections)))]
+        (loop [remaining body
+               folded    []
+               emitted?  false]
+          (if-let [item (first remaining)]
+            (if (= :use-section (:node item))
+              (if emitted?
+                (recur (rest remaining) folded true)
+                (recur (rest remaining) (conj folded merged) true))
+              (recur (rest remaining) (conj folded item) emitted?))
+            folded))))))
+
 (defn- looks-like-transition? [tokens pos]
   ;; Called after observable / field / section checks have failed. At
   ;; atom-body top level, the remaining possibilities are transitions
@@ -2302,12 +2324,14 @@
     (loop [body [] p p]
       (cond
         (at? tokens p :dedent)
-        (let [folded  (fold-top-level-fields body)
+        (let [folded  (-> body
+                          fold-direct-use-lines
+                          fold-top-level-fields)
               raw-def {:node :def-atom :name name :ctor-params ctor
                        :body folded}
               ;; F68 L1/L2/L5 (Proposal H) — structural detection dispatch.
               ;; Order matters: protocol (accepts:) > enum (case) > class
-              ;; (transition, use:, or ctor params) > record (fields +
+              ;; (transition, direct use, or ctor params) > record (fields +
               ;; observables only, no ctor params). See
               ;; compiler/design/plans/archive/proposal-h-full-unification-under-
               ;; def.md § "Structural detection".
@@ -2328,7 +2352,7 @@
                     (def-atom-body-has-use? folded)
                     (def-atom-body-has-atom-ctor-field-default? folded)
                     (seq ctor))
-                ;; F69 L2 — agent-shape def (transitions / use: / ctor
+                ;; F69 L2 — agent-shape def (transitions / direct use / ctor
                 ;; params / atom-ctor default). Stamp the inferred kind
                 ;; so downstream consumers can query uniformly.
                 (assoc raw-def :inferred-kind :agent)
@@ -2355,12 +2379,12 @@
         (let [[prop p2] (parse-proposition tokens p)]
           (recur (conj body prop) (skip-newlines tokens p2)))
 
-        ;; F8 L3b.ii.β — behavioral section dispatch via the registry.
+        ;; F8 L3b.ii.β — behavioral construct dispatch via the registry.
         ;; For `:kw` tokens whose value maps to a `:kind :behavioral`
         ;; registry entry, invoke the registered parser directly
         ;; instead of falling through to a hardcoded arm. Behavior-
-        ;; equivalent for the remaining header-backed behavioral
-        ;; surface (`:use`, via `requiring-resolve`);
+        ;; equivalent for the direct `use <name>: <Type>` surface
+        ;; (via `requiring-resolve`);
         ;; `:invariants` is parser-less in the registry because the
         ;; own-line `|:` arm above produces propositions directly, while
         ;; `:deprecated` routes through the top-level annotation parser.
@@ -2375,7 +2399,7 @@
           (recur (conj body s) (skip-newlines tokens p2)))
 
         (at? tokens p :kw "use")
-        (let [[s p2] (parse-use-section tokens p)]
+        (let [[s p2] (parse-use-line tokens p)]
           (recur (conj body s) (skip-newlines tokens p2)))
 
         ;; F67 L4c — `replace` on a plain (non-extension) def-atom body
@@ -2591,7 +2615,7 @@
           (recur (conj body t) (skip-newlines tokens p2)))
 
         :else
-        (fail! tokens p "expected use:, field decl (`name: Type [= default]`), own-line `|:` proposition, on_nil:, observable (`name[(args)] :< expr`), accepts:, or transition inside def-atom body")))))
+        (fail! tokens p "expected direct use (`use name: Type`), field decl (`name: Type [= default]`), own-line `|:` proposition, on_nil:, observable (`name[(args)] :< expr`), accepts:, or transition inside def-atom body")))))
 
 ;; ---------------------------------------------------------------------------
 ;; F68 L1 (Proposal H) — structural detection helpers for `def` reshape.
@@ -2656,7 +2680,7 @@
     (fail! tokens pos-for-diag
            (str "F68 L1: `def " (:name def-atom) "(...)` with ctor "
                 "params has a record-shaped body (no transitions, no "
-                "`use:`) — records use field-derived auto-ctors and "
+                "direct `use`) — records use field-derived auto-ctors and "
                 "cannot carry an explicit ctor-param list. Either "
                 "add a transition (to promote to a class), remove the "
                 "ctor params (to keep as a record), or list fields "
@@ -2712,7 +2736,7 @@
       (fail! tokens pos-for-diag
              (str "F68 L2: `def " (:name def-atom) ":` mixes `case` "
                   "markers with other body items (fields, observables, "
-                  "transitions, `use:`, `accepts:`). Enums are a closed "
+                  "transitions, direct `use`, `accepts:`). Enums are a closed "
                   "set of cases with no per-instance state. Move the "
                   "non-case items to a separate declaration, or drop "
                   "the `case` markers if this was intended as a class.")))
@@ -2876,7 +2900,7 @@
 ;;       conforms: NewProtocol            → body-form adds to :conforms
 ;;
 ;; Per §3.3.2 "What extensions cannot add", extension bodies accept only
-;; own-line `|:` propositions and conforms:. `data:`, `state:`, `use:`,
+;; own-line `|:` propositions and conforms:. `data:`, `state:`, direct `use`,
 ;; `cases:`, and `deprecated:` are rejected at parse with a targeted
 ;; §3.3.2 pointer. The hard-retired `metadata:` header has no registry
 ;; section backend and reaches the ordinary extension-body diagnostic.
@@ -2890,7 +2914,7 @@
 
 (defn- parse-extend-section
   "Dispatch one section inside an `extend Foo:` body. Strict —
-   rejects sections spec §3.3.2 forbids (data/state/use/cases/metadata/
+   rejects constructs spec §3.3.2 forbids (data/state/use/cases/metadata/
    deprecated). Accepts observables (F67 L4), wildcard self-transitions
    (F67 L4), own-line `|:` propositions, conforms:. `methods:` retires
    (F67 L4).
@@ -2929,8 +2953,8 @@
     (at? tokens pos :glyph "|:")
     (parse-proposition tokens pos)
 
-    ;; F8 L3b.iii — behavioral section dispatch via registry, gated
-    ;; by `:allowed-in-extend?` per §3.3.2. Header-backed `use:` and
+    ;; F8 L3b.iii — behavioral construct dispatch via registry, gated
+    ;; by `:allowed-in-extend?` per §3.3.2. Direct `use` and
     ;; `deprecated:` remain forbidden here; `:invariants` is parser-less
     ;; and enters through the `|:` arm above.
     (and (at? tokens pos :kw)
@@ -2966,9 +2990,9 @@
 
     (at? tokens pos :kw "use")
     (fail! tokens pos
-           (str "`use:` is not permitted inside `extend " target
+           (str "`use <name>: <Type>` is not permitted inside `extend " target
                 "` — extensions cannot add capabilities (§3.3.2). "
-                "Declare `use:` at the original class definition."))
+                "Declare the direct `use` line at the original class definition."))
 
     (at? tokens pos :kw "deprecated")
     (fail! tokens pos
@@ -3340,7 +3364,7 @@
                   "for open protocols (any type may conform), drop `sealed`."))
       ;; `extern <Name>:` section retired at v1.0 (spec §1.12, §2335).
       ;; FFI is a capability atom (Extern) provisioned to stdlib shims
-      ;; via `use: extern: Extern`; foreign symbols are declared in
+      ;; via `use extern: Extern`; foreign symbols are declared in
       ;; per-target prelude `foreign library "..."` blocks (§1.14).
       ;; Both are deferred to Phase D (see compiler/design/spec-drift-audit.md).
       (and (at? tokens p :ident)

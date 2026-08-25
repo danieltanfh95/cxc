@@ -333,7 +333,7 @@
           "nil.get_n() returns Optional-nil via ObjC zero-value messaging"))))
 
 (deftest end-to-end-use-cap
-  (testing "use-cap.cxc — `use: src: OffsetSource` sugars to required ctor-param + data-field; capability accessible via `src.offset` in observables. (Renamed away from the prelude `Clock` collision that F56 diagnostic now rejects — the example's intent is `use:` sugar, not shadowing.)"
+  (testing "use-cap.cxc — direct `use src: OffsetSource` sugars to required ctor-param + data-field; capability accessible via `src.offset` in observables. (Renamed away from the prelude `Clock` collision that F56 diagnostic now rejects — the example's intent is direct `use` sugar, not shadowing.)"
     (let [{:keys [exit stdout]} (compile-and-run "use-cap")]
       (is (zero? exit))
       (is (= "1042\n" stdout)))))

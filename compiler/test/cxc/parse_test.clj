@@ -177,10 +177,11 @@
     (is (= "Int" (get-in f [:type :name])))
     (is (= 42 (get-in f [:default :value])))))
 
-(deftest def-atom-with-use-data-invariants
-  (let [n (first-node "def A:
-    use:
-        cap: Capability
+(deftest def-atom-with-direct-use-data-invariants
+  (testing "multiple direct use lines normalize to one downstream-stable use section"
+    (let [n (first-node "def A:
+    use cap: Capability
+    use other_cap: OtherCapability
 
     x: Int = 0
 
@@ -190,10 +191,19 @@
 
     -> idle then: x => 0
 ")]
-    (is (= :def-atom (:node n)))
-    (is (= "A" (:name n)))
-    (let [kinds (mapv :node (:body n))]
-      (is (= [:use-section :data-section :proposition :observable :transition] kinds)))))
+      (is (= :def-atom (:node n)))
+      (is (= "A" (:name n)))
+      (let [kinds (mapv :node (:body n))
+            caps  (:caps (first (:body n)))]
+        (is (= [:use-section :data-section :proposition :observable :transition] kinds))
+        (is (= ["cap" "other_cap"] (mapv :name caps)))
+        (is (= ["Capability" "OtherCapability"]
+               (mapv #(get-in % [:type :name]) caps))))))
+  (testing "the legacy use section header is hard-retired"
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"`use:` section header is retired"
+         (first-node "def A:\n    use:\n        cap: Capability\n")))))
 
 (deftest transition-receive-with-arm-proposition-and-body
   (let [n (first-node "def A:
@@ -277,13 +287,13 @@
           "diagnostic mentions preserving args on the RHS"))))
 
 (deftest game-toys-awaits-p9-surface-migration
-  (testing "L2b/D3 — the still-unmigrated game-toys design sample is rejected at its first retired `invariants:` header. Block P9 owns the full sample migration; L2b must not retain a compatibility parser just to keep this future fixture green."
+  (testing "L4/D3 — the still-unmigrated game-toys design sample is rejected at its first retired `use:` header. Block P9 owns the full sample migration; L4 must not retain a compatibility parser just to keep this future fixture green."
     (let [src (slurp "../design/examples/game-toys.cxc")
           ex  (try (p/parse src)
                    nil
                    (catch clojure.lang.ExceptionInfo e e))]
       (is ex "the old-surface game-toys sample must not parse after hard retirement")
-      (is (re-find #"own-line `\|:` proposition" (.getMessage ex))))))
+      (is (re-find #"`use:` section header is retired" (.getMessage ex))))))
 
 (deftest f20-for-sugar-rejected
   (testing "F20 REJECTED 2026-08-18 — `for e in xs: body` sugar retires; iteration is method dispatch per spec §3.7.1 rationale 3. Parser emits a targeted diagnostic pointing at `.for_each` rather than a generic parse error."
@@ -945,14 +955,13 @@ def main:
 ;; therefore reaches the ordinary extension-body parse error.
 
 (deftest f9-l3-extend-class-rejects-use
-  (testing "F9 Landing 3 — `use:` inside `extend class` fails at parse (extensions cannot add capabilities)."
+  (testing "L4/F9 Landing 3 — direct `use <name>: <Type>` inside `extend` fails at parse (extensions cannot add capabilities)."
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
-         #"`use:` is not permitted inside `extend"
+         #"`use <name>: <Type>` is not permitted inside `extend"
          (first-node
           (str "extend Foo:\n"
-               "    use:\n"
-               "        clock: Clock\n"))))))
+               "    use clock: Clock\n"))))))
 
 ;; f9-l3-extend-rejects-non-class-target deleted at F68 L6b — `enum` /
 ;; `protocol` are no longer reserved words (both retired under Proposal H),

@@ -8,8 +8,7 @@ def OffsetSource:
     -> end
 
 def Timer:
-    use:
-        src: OffsetSource
+    use src: OffsetSource
 
     base: Int = 42
 

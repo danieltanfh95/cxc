@@ -206,12 +206,12 @@
     (is (= :behavioral (:kind (sec/lookup :Metadata))))))
 
 (deftest use-seed-records-k6-backend
-  (testing "F8 L3-use.i — the `:use` seed carries the same L3b.i shape (no `:walker-sym` since capability extraction happens inline in lower, not as a post-parse walker). Parser handles `use:` via `parse-use-section`; lower reads `:caps` from the section body at multiple sites (atom-env building, transition injection eligibility). Full L3-use wire-through waits on the K6 landing since capability semantics themselves are only partial."
+  (testing "L4 — the `:use` seed points at the direct-line parser (no `:walker-sym` since capability extraction happens inline in lower, not as a post-parse walker). The parser preserves `:use-section`/`:caps`, so lower continues reading the same normalized shape."
     (let [e (sec/lookup :use)]
       (is (= :behavioral (:kind e)))
       (is (= :compiler-baked (get-in e [:spec :impl])))
       (is (= :k6-capability-extraction (get-in e [:spec :backend])))
-      (is (= 'cxc.parse/parse-use-section
+      (is (= 'cxc.parse/parse-use-line
              (get-in e [:spec :parser-sym])))
       (is (nil? (get-in e [:spec :walker-sym]))))
     (is (= :behavioral (:kind (sec/lookup "Use"))))
@@ -224,12 +224,12 @@
     (is (nil? (sec/behavioral-parser :Invariants)))))
 
 (deftest behavioral-parser-resolves-annotation-surfaces-and-use
-  (testing "L3b/L3c — metadata and deprecated resolve to the annotation parser while use retains its section parser."
+  (testing "L3b/L3c/L4 — metadata and deprecated resolve to the annotation parser while use resolves to its direct-line parser."
     (is (= (requiring-resolve 'cxc.parse/parse-annotation)
            (sec/behavioral-parser :metadata)))
     (is (= (requiring-resolve 'cxc.parse/parse-annotation)
            (sec/behavioral-parser :deprecated)))
-    (is (= (requiring-resolve 'cxc.parse/parse-use-section)
+    (is (= (requiring-resolve 'cxc.parse/parse-use-line)
            (sec/behavioral-parser :use)))))
 
 (deftest behavioral-parser-nil-for-reserved-entries

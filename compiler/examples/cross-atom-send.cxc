@@ -9,8 +9,7 @@ def Sink:
         then: raw_total => raw_total + amount
 
 def Source:
-    use:
-        sink: Sink
+    use sink: Sink
 
     -> running
         then:
