@@ -2468,12 +2468,42 @@
                                      "`*` arm fires everywhere else) rejects two "
                                      "wildcard arms on the same message as ambiguous.")
                                 (first raw-txns))))
+             ;; L10.b (2026-08-25) — concrete-over-`*` precedence: when a
+             ;; handler-shape arm (`* <: msg(args) -> *`) shares its
+             ;; message name with a concrete-source arm on the same atom,
+             ;; the wildcard arm is reclassified as a phase-wildcard
+             ;; transition (routed through the transition dispatch method
+             ;; alongside the concrete arms). Concrete arms fire first in
+             ;; their phase; the wildcard arm fires in every other phase.
+             ;; Isolated handler-shape arms (no concrete overlap) still
+             ;; route through the handler-decl path — that shape is a
+             ;; distinct concept for side-effect-only side channels.
+             concrete-msg-names
+             (set (keep #(when (and (:receive %)
+                                    (= "<:" (get-in % [:receive :glyph]))
+                                    (= :phase (get-in % [:source :kind]))
+                                    (= :ident (get-in % [:receive :msg :source :node])))
+                           (get-in % [:receive :msg :source :name]))
+                        raw-txns))
+             overlapping-wildcard?
+             (fn [t]
+               (and (transition-is-handler-shape? t)
+                    (contains? concrete-msg-names
+                               (get-in t [:receive :msg :source :name]))))
              ;; F67 L3 — split handler-shape (`* <: msg(args) -> *`) from
              ;; real phase transitions. Handler-shape lower via the
              ;; handler-decl path (see below); real transitions keep
              ;; their existing phase-machine treatment.
-             handler-txns  (filterv transition-is-handler-shape? raw-txns)
-             transitions   (filterv (complement transition-is-handler-shape?) raw-txns)
+             ;; L10.b — but if the handler-shape arm overlaps a concrete
+             ;; arm's message name, reclassify it as a wildcard-source
+             ;; transition (concrete-wins precedence).
+             handler-txns  (filterv #(and (transition-is-handler-shape? %)
+                                          (not (overlapping-wildcard? %)))
+                                    raw-txns)
+             transitions   (filterv (fn [t]
+                                      (or (not (transition-is-handler-shape? t))
+                                          (overlapping-wildcard? t)))
+                                    raw-txns)
              observables   (def-atom-observables a)
              invariants    (def-atom-invariants a)
              use-caps      (def-atom-use-caps a)
@@ -6027,12 +6057,13 @@
    (design §12). Their type-kws land in the ctx locals so infer-type
    resolves references, and lower-expr emits them as `{:node :name :sym k}`."
   [atom-name t ctx wildcards-by-phase]
-  (when (not= :phase (get-in t [:source :kind]))
+  (when-not (contains? #{:phase :wildcard} (get-in t [:source :kind]))
     (fail-nyi! (str "message-triggered transition on def-atom `" atom-name
-                    "` must have an explicit source phase (got "
-                    (get-in t [:source :kind]) ")")
+                    "` must have an explicit source phase or `*` wildcard "
+                    "(got " (get-in t [:source :kind]) ")")
                t))
-  (let [source-name  (get-in t [:source :name])
+  (let [wildcard-source? (= :wildcard (get-in t [:source :kind]))
+        source-name  (get-in t [:source :name])
         target       (:target t)
         msg          (get-in t [:receive :msg])
         payload      (or (:payload msg) [])
@@ -6244,7 +6275,9 @@
                                :args []}])
                        [{:node :end-catch-wrap :body raw-body}])]
     {:node        :transition-branch
-     :source-phase-const (phase-constant-name atom-name source-name)
+     :source-phase-const (when-not wildcard-source?
+                           (phase-constant-name atom-name source-name))
+     :wildcard-source? wildcard-source?
      :guard       guard-lo
      :body        body}))
 
@@ -6619,10 +6652,21 @@
                                           :class-name (class-name-for-atom atom-name)})
                            branch-ctx  (cond-> ctx
                                          snap-stmt (assoc :snapshot-name "__cxc_snap"))
-                           branches    (mapv #(lower-transition-branch
-                                               atom-name (:txn %) branch-ctx
-                                               wildcards-by-phase)
-                                             group)
+                           raw-branches (mapv #(lower-transition-branch
+                                                atom-name (:txn %) branch-ctx
+                                                wildcards-by-phase)
+                                              group)
+                           ;; L10.b (2026-08-25) — sort branches so
+                           ;; concrete-source arms precede wildcard-source
+                           ;; arms. Preserves declaration order within
+                           ;; each partition (stable sort). First-match
+                           ;; dispatch then honors concrete-over-*
+                           ;; precedence.
+                           branches
+                           (vec (concat
+                                 (filterv (complement :wildcard-source?) raw-branches)
+                                 (filterv :wildcard-source? raw-branches)))
+                           has-wildcard-source? (some :wildcard-source? branches)
                            ;; L13 (2026-08-25) — coverage tail-abort per
                            ;; source-phase. For every phase that has at
                            ;; least one branch AND every branch in that
@@ -6633,21 +6677,46 @@
                            ;; from the retired `when:` guards (L2c). If a
                            ;; phase already has a guardless arm, that arm
                            ;; fires first — no tail-abort needed for it.
+                           ;;
+                           ;; L10.b interaction: when a wildcard-source
+                           ;; arm exists on this dispatch, it fires in
+                           ;; any phase not caught by concrete arms — the
+                           ;; wildcard itself is the coverage floor, so
+                           ;; suppress the per-phase tail-abort. Coverage
+                           ;; on the wildcard arm's own `|:` (if any)
+                           ;; still applies at the tail via a global
+                           ;; abort, added below.
                            coverage-tails
                            (let [by-phase (group-by :source-phase-const branches)
                                  msg-name (get-in first-d [:selector])]
-                             (vec (mapcat
-                                   (fn [[phase-const phase-branches]]
-                                     (when (and phase-const
-                                                (seq phase-branches)
-                                                (every? :guard phase-branches))
-                                       [{:node               :transition-branch
-                                         :source-phase-const phase-const
-                                         :guard              nil
-                                         :body               [{:node        :coverage-abort
-                                                               :msg-selector msg-name
-                                                               :phase-const  phase-const}]}]))
-                                   by-phase)))
+                             (cond
+                               has-wildcard-source?
+                               ;; Wildcard covers concrete-phase gaps; if
+                               ;; the wildcard arm itself has a `|:`, add
+                               ;; ONE final abort to catch the miss.
+                               (let [wild-branches (filterv :wildcard-source? branches)]
+                                 (if (every? :guard wild-branches)
+                                   [{:node               :transition-branch
+                                     :source-phase-const nil
+                                     :wildcard-source?   true
+                                     :guard              nil
+                                     :body               [{:node        :coverage-abort
+                                                           :msg-selector msg-name
+                                                           :phase-const  "any"}]}]
+                                   []))
+                               :else
+                               (vec (mapcat
+                                     (fn [[phase-const phase-branches]]
+                                       (when (and phase-const
+                                                  (seq phase-branches)
+                                                  (every? :guard phase-branches))
+                                         [{:node               :transition-branch
+                                           :source-phase-const phase-const
+                                           :guard              nil
+                                           :body               [{:node        :coverage-abort
+                                                                 :msg-selector msg-name
+                                                                 :phase-const  phase-const}]}]))
+                                     by-phase))))
                            branches (into branches coverage-tails)]
                        (cond-> {:node        :objc-method
                                 :selector    (:selector first-d)

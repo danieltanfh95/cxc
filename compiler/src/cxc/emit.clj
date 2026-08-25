@@ -696,13 +696,25 @@
     ;; Guard = `_phase == kA_phase_source` && arm-head `|:` propositions
     ;; (already AND-folded by lower). Body runs then:/phase-update/do:,
     ;; then early-returns so subsequent branches don't fire.
-    (let [phase-eq (str "_phase == " (:source-phase-const node))
-          guard    (if-let [g (:guard node)]
-                     (str "(" phase-eq ") && (" (emit-expr g) ")")
-                     phase-eq)
-          body     (str/join "\n" (map emit-stmt (:body node)))
-          block    (indent-lines 4 (if (str/blank? body) "return;"
-                                     (str body "\nreturn;")))]
+    ;;
+    ;; L10.b (2026-08-25) — when `:source-phase-const` is nil, this is
+    ;; a wildcard-source arm (`* <: msg -> *` reclassified because a
+    ;; concrete arm on the same message exists). Emit without the
+    ;; phase-eq guard; the arm fires in any phase not caught by an
+    ;; earlier (concrete) branch. Branches are ordered concrete-first
+    ;; per L10.b sort, so first-match dispatch honors the ratified
+    ;; concrete-over-* precedence.
+    (let [phase-const (:source-phase-const node)
+          phase-eq    (when phase-const (str "_phase == " phase-const))
+          guard       (cond
+                        (and phase-eq (:guard node))
+                        (str "(" phase-eq ") && (" (emit-expr (:guard node)) ")")
+                        phase-eq                phase-eq
+                        (:guard node)           (emit-expr (:guard node))
+                        :else                   "1")
+          body        (str/join "\n" (map emit-stmt (:body node)))
+          block       (indent-lines 4 (if (str/blank? body) "return;"
+                                        (str body "\nreturn;")))]
       (str "if (" guard ") {\n" block "\n}"))
     :coverage-abort
     ;; L13 (2026-08-25) — runtime fallback for the transition-arm

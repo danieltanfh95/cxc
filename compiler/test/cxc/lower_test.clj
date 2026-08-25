@@ -2075,6 +2075,40 @@ def main:
     -> running
 ")))))
 
+(deftest l10-b-wildcard-arm-with-concrete-overlap-routes-to-transition
+  (testing "L10.b (2026-08-25) — when `* <: msg(args) -> *` shares its message name with a concrete-source arm, the wildcard arm is reclassified as a phase-wildcard transition (routed through the transition dispatch method) instead of a separate handler method. Concrete arms fire first in their phase; the wildcard fires in any other phase. First-match order is concrete-then-wildcard."
+    (let [lowered (lower-src "def Counter:
+    n: Int! = 0
+
+    alive <: bump(x: Int) -> alive
+        then: n => n + x
+
+    * <: bump(x: Int) -> *
+        then: n => n
+
+def main:
+    c: Counter = Counter()
+    -> running
+        then: |> c.bump(x: 1)
+")
+          counter-cls (first (filter #(= "Counter" (:name %)) (:classes lowered)))
+          bump-method (first (filter #(re-find #"^bump" (or (:selector %) ""))
+                                     (:methods counter-cls)))
+          branches    (:body bump-method)]
+      (is (some? bump-method) "single bump-selector method holds both arms")
+      (is (some :wildcard-source? branches)
+          "wildcard-source arm was reclassified into transition dispatch")
+      (let [concrete-branches (filterv (complement :wildcard-source?) branches)
+            wildcard-branches (filterv :wildcard-source? branches)]
+        (is (seq concrete-branches))
+        (is (seq wildcard-branches))
+        (let [concrete-idx (some (fn [[i b]] (when-not (:wildcard-source? b) i))
+                                 (map-indexed vector branches))
+              wildcard-idx (some (fn [[i b]] (when (:wildcard-source? b) i))
+                                 (map-indexed vector branches))]
+          (is (< concrete-idx wildcard-idx)
+              "concrete-source arm precedes wildcard-source arm (L10.b precedence)"))))))
+
 (deftest l13-coverage-tail-abort-emitted-when-all-arms-guarded
   (testing "L13 (2026-08-25) — when every arm in a phase carries a `|:` guard, lower emits a tail-abort branch after the guarded ones. Replaces the silent-drop behavior inherited from retired `when:` guards; fires a runtime coverage-abort if no guard held."
     (let [lowered (lower-src "def Counter:
