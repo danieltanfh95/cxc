@@ -8,13 +8,15 @@
 
    Token shape: [:kind value line col]
      :kind    keyword — :ident, :int, :float, :string, :char, :kw,
-              :glyph, :punct, :indent, :dedent, :newline, :eof
+              :glyph, :annotation-prefix, :punct, :indent, :dedent,
+              :newline, :eof
      :value   token payload (string / number / keyword)
      :line    1-based line number
      :col     1-based column
 
-   Glyphs recognized (longest-match): <: <| |> :> :< -> => == != <= >=
+   Glyphs recognized (longest-match): <: <| |> |: :> :< -> => == != <= >=
    Single-char operators emit as :glyph with the char as value.
+   Annotation prefix: @
    Punctuation: ( ) [ ] { } , : . ;
 
    Reserved words emit as :kw. Everything else identifier-shaped is :ident."
@@ -83,13 +85,15 @@
   ;; happens before single-char `?` :punct fallback so `??` tokenises
   ;; as one :glyph; postfix `T?` at the type-annotation site still
   ;; lands as :punct `?` and trips the L5a suffix-banned diagnostic.
-  ["<:" "<|" "|>" ":>" ":<" "->" "=>" "==" "!=" "<=" ">=" "//" "**" "??"])
+  ["<:" "<|" "|>" "|:" ":>" ":<" "->" "=>" "==" "!=" "<=" ">=" "//" "**" "??"])
 
 (def single-char-glyphs
   #{\+ \- \* \/ \% \= \< \> \! \& \|})
 
 (def punctuation
   #{\( \) \[ \] \{ \} \, \: \. \; \? \!})
+
+(def annotation-prefix \@)
 
 (defn- classify-word [w]
   (if (reserved-words w) :kw :ident))
@@ -517,6 +521,9 @@
           (recur (+ i (count g)) (conj! out [:glyph g line-no (inc i)]))
           (let [c (.charAt line i)]
             (cond
+              (= annotation-prefix c)
+              (recur (inc i) (conj! out [:annotation-prefix (str c) line-no (inc i)]))
+
               (punctuation c)
               (recur (inc i) (conj! out [:punct (str c) line-no (inc i)]))
 

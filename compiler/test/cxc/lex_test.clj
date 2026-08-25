@@ -29,6 +29,27 @@
         (is (= [:glyph g] (nth toks 1))
             (str "glyph " g " should lex as :glyph"))))))
 
+(deftest proposition-marker-token
+  (testing "|: lexes as one proposition-marker glyph"
+    (is (= [[:glyph "|:"]]
+           (vals-of (lex/tokenize "|:"))))))
+
+(deftest proposition-marker-in-context
+  (testing "|: starts a proposition without splitting into | and :"
+    (is (= [[:glyph "|:"] [:ident "x"] [:glyph ">="] [:int 0]]
+           (vals-of (lex/tokenize "|: x >= 0"))))))
+
+(deftest annotation-prefix-token
+  (testing "@ lexes as a distinct annotation-prefix token"
+    (is (= [[:annotation-prefix "@"]]
+           (vals-of (lex/tokenize "@"))))))
+
+(deftest annotation-prefix-in-context
+  (testing "@ prefixes an annotation invocation"
+    (is (= [[:annotation-prefix "@"] [:kw "deprecated"] [:punct "("]
+            [:string "msg"] [:punct ")"]]
+           (vals-of (lex/tokenize "@deprecated(\"msg\")"))))))
+
 (deftest string-literals
   (testing "basic string"
     (is (= [[:string "hello"]]
