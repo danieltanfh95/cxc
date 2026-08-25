@@ -225,13 +225,13 @@
         _        (prelude/validate-no-prelude-collisions! parsed)
         prelude-src (prelude/assemble-source target)
         full-parsed (parse-fn (str prelude-src source))
-        ;; F8 L3d.ii.β / L3b reshape — keep K3 walker dispatch through
-        ;; the behavioral registry. `:deprecated` remains the sole entry;
-        ;; only its input source changed from body sections to annotations.
-        ;; Walker calling convention: `[user-parsed full-parsed]` —
-        ;; the walker owns its own input computation (e.g. K3's
-        ;; `warn-deprecated-uses` calls `collect-deprecations` on
-        ;; `full-parsed` internally).
+        ;; F8 L3d.ii.β / L3b reshape — K3 walker dispatch flows through
+        ;; the compiler-internal behavioral registry. `:deprecated`
+        ;; remains the sole entry; its input source changed from body
+        ;; sections to annotations. Walker calling convention:
+        ;; `[user-parsed full-parsed]` — the walker owns its own input
+        ;; computation (e.g. K3's `warn-deprecated-uses` calls
+        ;; `collect-deprecations` on `full-parsed` internally).
         _        (doseq [[_ walker-var] (section/behavioral-walkers)]
                    (walker-var parsed full-parsed))
         m-src    (-> full-parsed

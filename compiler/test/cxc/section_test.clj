@@ -110,25 +110,18 @@
     (is (empty? (:warnings (sec/compose [:runtime :immutable :identity]))))))
 
 ;; ---------------------------------------------------------------------------
-;; Registry stub
+;; Registry lookup
 ;; ---------------------------------------------------------------------------
 
-(deftest registry-round-trip
-  (testing "register! + lookup — canonical name storage"
-    (sec/register! :Foo {:kind :primitive-composition
-                        :spec (sec/compose [:runtime :immutable])})
-    (is (some? (sec/lookup :foo)))
-    (is (some? (sec/lookup "FOO")))
-    (is (= :foo (:name (sec/lookup :foo)))))
-
+(deftest registry-lookup
   (testing "unknown section names return nil"
     (is (nil? (sec/lookup :nonexistent)))))
 
 ;; ---------------------------------------------------------------------------
-;; F8 D5 — protected section-header names. Per decisions-frozen §12 the
-;; compiler-baked behavioral sections (`computed`, `invariants`,
-;; `metadata`, `deprecated`, `use`) share the registry with user-declared
-;; `section class Name:` entries but cannot be shadowed by user declarations.
+;; F8 — compiler-baked section-header names. The compiler-baked behavioral
+;; sections (`computed`, `invariants`, `metadata`, `deprecated`, `use`)
+;; live in the internal registry as reserved / behavioral entries; the
+;; user-declaration surface (`section class Name:`) was deleted at v1.0.
 ;; ---------------------------------------------------------------------------
 
 (deftest protected-set-covers-compiler-baked-behavioral-sections
@@ -280,44 +273,16 @@
     (is (false? (sec/allowed-in-extend? :metadata)))
     (is (false? (sec/allowed-in-extend? :madeupthing)))))
 
-(deftest register-rejects-protected-name-shadow
-  (testing "F8 D5 — `register!` hard-errors when the caller passes a protected section-header name. This guards the future L4 `section class Computed:` user syntax. Diagnostic names the reserved header and lists the full protected set."
-    (is (thrown-with-msg?
-          clojure.lang.ExceptionInfo
-          #"F8 D5: `computed` is a protected section-header name"
-          (sec/register! :computed
-                        {:kind :primitive-composition
-                         :spec (sec/compose [:runtime :immutable])})))
-    (is (thrown-with-msg?
-          clojure.lang.ExceptionInfo
-          #"F8 D5: `invariants` is a protected section-header name"
-          (sec/register! "Invariants"
-                        {:kind :primitive-composition
-                         :spec (sec/compose [:runtime])})))))
-
-(deftest register-allows-unprotected-name
-  (testing "F8 D5 — a name outside the protected set registers normally. Ensures the guard only fires on the reserved slots; user-picked names stay available."
-    (is (some? (sec/register! :my_custom
-                              {:kind :primitive-composition
-                               :spec (sec/compose [:runtime :immutable])})))))
-
 (deftest clear-registry-restores-protected-reservations
-  (testing "F8 D5 + L3b.i — the test-helper `clear-registry!` wipes user entries but re-seeds the protected reservations, so tests always start from a state that already reflects the compiler-baked guarantees. The behavioral seed for `:invariants` (L3b.i) is part of that guarantee — clearing must not regress it back to `:reserved`."
-    ;; Register a user entry.
-    (sec/register! :userthing {:kind :primitive-composition
-                              :spec (sec/compose [:runtime])})
-    (is (some? (sec/lookup :userthing)))
-    ;; Wipe and re-seed.
+  (testing "L3b.i — the test-helper `clear-registry!` re-seeds the compiler-baked reservations, so tests always start from a state that reflects the compiler-baked guarantees. The behavioral seed for `:invariants` (L3b.i) is part of that guarantee — clearing must not regress it back to `:reserved`."
     (sec/clear-registry!)
-    (is (nil? (sec/lookup :userthing))
-        "user entries gone after clear")
     (is (= :reserved (:kind (sec/lookup :computed)))
-        ":reserved protected entries still present after clear")
+        ":reserved protected entries present after clear")
     (is (= :behavioral (:kind (sec/lookup :invariants)))
-        "L3b.i behavioral seed still present after clear")
+        "L3b.i behavioral seed present after clear")
     (is (= :behavioral (:kind (sec/lookup :metadata)))
-        "L3c F53 annotation seed still present after clear")
+        "L3c F53 annotation seed present after clear")
     (is (= :behavioral (:kind (sec/lookup :deprecated)))
-        "L3d.i behavioral seed still present after clear")
+        "L3d.i behavioral seed present after clear")
     (is (= :behavioral (:kind (sec/lookup :use)))
-        "L3-use.i behavioral seed still present after clear")))
+        "L3-use.i behavioral seed present after clear")))

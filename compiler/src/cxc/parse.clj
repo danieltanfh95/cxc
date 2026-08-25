@@ -2079,10 +2079,8 @@
 
 (defn- looks-like-computed-section?
   "F8 L3a — `computed:` at class body position. Header is a bare `ident`
-   spelled exactly `computed` followed by `:` and newline. Distinct from
-   the generic custom-section path (which consults the registry) because
-   it is a compiler-baked behavioral section at v1.0 per F8 plan
-   §Landing 3a."
+   spelled exactly `computed` followed by `:` and newline. Compiler-baked
+   behavioral section per F8 plan §Landing 3a."
   [tokens pos]
   (and (at? tokens pos :ident)
        (= "computed" (t-value (peek-tok tokens pos)))
@@ -2154,62 +2152,6 @@
                     "(`name: T = expr`) or observable decls "
                     "(`name :< expr`) only."))))))
 
-(defn- looks-like-custom-section?
-  "F8 L1-b — `<ident>: <newline>` where `<ident>` is registered in
-   `cxc.section/registry`. Consulted after the closed switch of built-in
-   section headers has failed to match, before the generic body-item
-   dispatch.
-
-   Only compiler-internal primitive compositions enter this legacy shim.
-   Behavioral/annotation registry entries deliberately do not: their
-   own parser surfaces must route through `behavioral-parser`, and a
-   retired header such as `metadata:` must not silently become fields."
-  [tokens pos]
-  (let [entry (when (at? tokens pos :ident)
-                (section/lookup (t-value (peek-tok tokens pos))))]
-    (and (at? tokens pos :ident)
-         (at? tokens (inc pos) :punct ":")
-         (at? tokens (+ pos 2) :newline)
-         (= :primitive-composition (:kind entry)))))
-
-(defn- parse-custom-section
-  "F8 L1-b — parse a body of field declarations under a registered
-   custom section header. MVP scope: primitive compositions
-   imply `contains: fields`, so we consume a run of field decls to
-   `:dedent` and emit a `:custom-section` AST node carrying the
-   registered spec.
-
-   Behavioral sections with different `contains:` (methods, statements)
-   will need dispatch on the spec's contains: field at a later landing;
-   L1-b covers only the field-shape case."
-  [tokens pos]
-  (let [[nm p]  (expect tokens pos :ident)
-        [_ p]   (expect tokens p :punct ":")
-        [_ p]   (expect tokens p :newline)
-        [_ p]   (expect tokens p :indent)
-        spec    (section/lookup nm)]
-    (loop [fields [] p p]
-      (cond
-        (at? tokens p :dedent)
-        [{:node :custom-section
-          :name nm
-          :spec spec
-          :fields fields}
-         (inc p)]
-
-        (at? tokens p :newline)
-        (recur fields (inc p))
-
-        (looks-like-field-decl? tokens p)
-        (let [[f p2] (parse-field tokens p)]
-          (recur (conj fields f) (skip-newlines tokens p2)))
-
-        :else
-        (fail! tokens p
-               (str "F8 L1-b: custom section `" nm "` body accepts "
-                    "field declarations only (MVP scope). Got "
-                    "unexpected token."))))))
-
 (defn- fold-top-level-fields
   "F67 L5 — after parsing an atom/record body containing individual
    `:field` nodes (Proposal D top-level surface), gather them into a
@@ -2220,15 +2162,7 @@
    section-first, top-level-fields-second convention).
 
    Body positions of individual `:field` nodes are removed; the
-   synthesized/merged section takes their combined position slot.
-
-   F8 L1-c (2026-08-23): `:custom-section` nodes carrying compiler-
-   internal primitive-composition specs are
-   flattened here too — their fields lift up to top-level fields
-   before the fold. The composed spec is preserved on the surviving
-   `:data-section` via the `:section-classes` slot for downstream
-   consumers that care about origin. Behavioral-section treatment
-   (Computed, Invariants generators) is F8 L3."
+   synthesized/merged section takes their combined position slot."
   [body]
   (let [;; F8 L3a — hoist :computed-section observables to top-level
         ;; :observable nodes. Splice at the section's position so
@@ -2242,15 +2176,6 @@
                           (:observables n)
                           [n])))
               body)
-        ;; F8 L1-c — hoist :custom-section fields to top-level :field
-        ;; nodes; collect the composed specs separately for annotation.
-        custom-sections (filterv #(= :custom-section (:node %)) body)
-        hoisted-fields  (mapcat :fields custom-sections)
-        section-specs   (mapv (fn [s] {:name (:name s) :spec (:spec s)})
-                              custom-sections)
-        body            (into [] (concat (remove #(= :custom-section (:node %))
-                                                 body)
-                                          hoisted-fields))
         fields   (filterv #(= :field (:node %)) body)
         legacy   (first (filter #(= :data-section (:node %)) body))]
     (cond
@@ -2258,12 +2183,9 @@
       body
 
       legacy
-      (let [merged  (-> legacy
-                        (assoc :fields
-                               (into (or (:fields legacy) []) fields))
-                        (cond-> (seq section-specs)
-                          (update :section-classes
-                                  (fnil into []) section-specs)))
+      (let [merged  (assoc legacy
+                           :fields
+                           (into (or (:fields legacy) []) fields))
             without-fields (remove #(= :field (:node %)) body)]
         (mapv (fn [n] (if (= :data-section (:node n)) merged n))
               without-fields))
@@ -2273,9 +2195,7 @@
                                     (when (= :field (:node n)) i))
                                   (map-indexed vector body))
             without-fields (remove #(= :field (:node %)) body)
-            synthetic       (cond-> {:node :data-section :fields fields}
-                              (seq section-specs)
-                              (assoc :section-classes section-specs))]
+            synthetic       {:node :data-section :fields fields}]
         (into (subvec (vec without-fields) 0 first-field-idx)
               (into [synthetic]
                     (subvec (vec without-fields) first-field-idx)))))))
@@ -2440,8 +2360,6 @@
         ;; `:invariants` is parser-less in the registry because the
         ;; own-line `|:` arm above produces propositions directly, while
         ;; `:deprecated` routes through the top-level annotation parser.
-        ;; Enables future
-        ;; L4 `section class Name:` user syntax to dispatch here too.
         ;; Hardcoded arms below stay as a safety fallback until L3b.iii
         ;; retires them once both parse sites go registry-first.
         (and (at? tokens p :kw)
@@ -2640,19 +2558,9 @@
         ;; F8 L3a — `computed:` behavioral section. Compiler-baked
         ;; (not registry-driven) at v1.0 per F8 plan §Landing 3a.
         ;; Body items are field-shape or observable-shape; fold-time
-        ;; splices them out as top-level observables. Must precede
-        ;; the generic custom-section dispatch so the compiler-baked
-        ;; interpretation always takes precedence.
+        ;; splices them out as top-level observables.
         (looks-like-computed-section? tokens p)
         (let [[s p2] (parse-computed-section tokens p)]
-          (recur (conj body s) (skip-newlines tokens p2)))
-
-        ;; F8 L1-b — custom section-header dispatch. Consults compiler-
-        ;; internal primitive-composition entries in `cxc.section/registry`.
-        ;; Must precede `looks-like-transition?` because the transition
-        ;; detector greedy-matches any bare `:ident`.
-        (looks-like-custom-section? tokens p)
-        (let [[s p2] (parse-custom-section tokens p)]
           (recur (conj body s) (skip-newlines tokens p2)))
 
         (looks-like-transition? tokens p)

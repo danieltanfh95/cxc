@@ -160,15 +160,11 @@
 ;; ---------------------------------------------------------------------------
 
 (def protected-section-names
-  "F8 D5 (decisions-frozen §12) — section-header names that user
-   `section class Name:` declarations may not shadow. These are the
-   behavioral sections shipped by the compiler (L3a `computed`, L3b
-   `invariants`, L3c `metadata`, L3d `deprecated`) plus `use` (K6
-   capability requests).
-
-   Extend when new compiler-baked behavioral sections ship. Removing
-   a name from this set is a compat-break (users may have been
-   relying on the reservation)."
+  "Compiler-baked behavioral section-header names. These are the
+   sections shipped by the compiler (L3a `computed`, L3b `invariants`,
+   L3c `metadata`, L3d `deprecated`) plus `use` (K6 capability
+   requests). Kept as an internal reservation set so future compiler-
+   internal registrations don't collide with a baked name."
   #{:computed
     :invariants
     :metadata
@@ -176,8 +172,8 @@
     :use})
 
 (defn protected?
-  "True when `nm` (string or keyword) is a protected section-header
-   name that user code cannot shadow via `section class`."
+  "True when `nm` (string or keyword) is a compiler-baked section-header
+   name."
   [nm]
   (contains? protected-section-names (normalize-name nm)))
 
@@ -255,20 +251,19 @@
                 :notes              "L4 direct-line parser preserves the normalized :use-section/:caps shape consumed by K6."}})
 
 (def registry
-  "Section-class registry — `{section-name-keyword → spec}`. Seeded
-   with F8 D5 protected reservations. Names with a landed backend
-   carry `:kind :behavioral` + a spec pointer (L3b.i: `invariants`
-   → F49 machinery; L3c: `metadata` → F53 manifest emission;
-   L3d.i: `deprecated` → K3 walker; L3-use.i: `use` → K6
-   capability extraction); names still awaiting behavioral wire-in
-   carry `:kind :reserved` + `:spec nil`. L4
-   (`section class Name:` user syntax) adds entries for unprotected
-   names. Kept as a var so the parser hook and future L4
-   declaration handler consult a single canonical location.
+  "Section-class registry — `{section-name-keyword → spec}`. Compiler-
+   internal. Seeded with the compiler-baked reservations. Names with
+   a landed backend carry `:kind :behavioral` + a spec pointer
+   (L3b.i: `invariants` → F49 machinery; L3c: `metadata` → F53
+   manifest emission; L3d.i: `deprecated` → K3 walker; L3-use.i:
+   `use` → K6 capability extraction); names still awaiting behavioral
+   wire-in carry `:kind :reserved` + `:spec nil`. Kept as a var so
+   the parser hook and post-parse walker enumeration consult a single
+   canonical location.
 
    Registry entries have shape:
      {:name    :foo
-      :kind    :primitive-composition | :behavioral | :reserved
+      :kind    :behavioral | :reserved
       :spec    <compose-result or generator-carrying spec, or nil for
                 :reserved entries pending a later landing>}"
   (atom
@@ -350,15 +345,13 @@
    for deterministic iteration order across runs).
 
    Substrate for `build/compile-source-to-file` to iterate walkers via
-   the registry instead of hardcoding a `warn-deprecated-uses` call —
-   L3d.ii.β wires that. Today only `:deprecated` carries a walker-sym,
-   so the returned map has one entry for the compiler-baked K3 walker.
+   the registry instead of hardcoding a `warn-deprecated-uses` call.
+   Today only `:deprecated` carries a walker-sym, so the returned map
+   has one entry for the compiler-baked K3 walker.
 
    Skips reserved entries + behavioral entries without a `:walker-sym`.
    Walker resolution is on-demand via `requiring-resolve` — the target
-   namespace loads lazily on first call. Returns nil-valued entries
-   when a spec names a symbol that doesn't resolve (misconfigured seed)
-   so callers can surface a diagnostic instead of silently dropping."
+   namespace loads lazily on first call."
   []
   (into (sorted-map)
         (keep (fn [[nm entry]]
@@ -374,36 +367,6 @@
                  [nm {:name nm :kind :behavioral :spec seed}]
                  [nm {:name nm :kind :reserved   :spec nil}])))
         protected-section-names))
-
-(defn register!
-  "Add / overwrite a registry entry. Returns the added entry.
-   Idempotent under identical spec; conflicting redeclarations are the
-   caller's responsibility to detect.
-
-   Rejects protected section-header names (per F8 D5, decisions-frozen
-   §12): `section class Computed:` and its siblings hard-error at
-   registration time with a targeted diagnostic
-   naming the reserved header and the reason. The check runs at
-   `register!` so the seed reservations (L3a `computed`, plus reserved
-   `invariants`/`metadata`/`deprecated`/`use`) can't be silently
-   overwritten by user code.
-
-   Internal seeding uses `reset!` directly rather than `register!`, so
-   this check only fires on user-initiated registrations."
-  [nm entry]
-  (let [k (normalize-name nm)]
-    (when (protected? k)
-      (throw (ex-info
-              (str "F8 D5: `" (name k) "` is a protected section-header "
-                   "name (compiler-baked behavioral section). Users "
-                   "cannot shadow protected names via `section class "
-                   (name k) ":`. Pick a "
-                   "different name for your composition.")
-              {:kind :cxc-f8-protected-section-name-shadow
-               :name k
-               :protected-names (vec (sort protected-section-names))})))
-    (swap! registry assoc k (assoc entry :name k))
-    (lookup k)))
 
 (defn clear-registry!
   "Test helper — wipes the registry and re-seeds the F8 D5 protected
