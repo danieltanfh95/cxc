@@ -2267,6 +2267,78 @@ def main:
       (is (contains? (get-in env ["A" :companion-index]) "bump_failed")
           "A's atom-env entry exposes companion metadata for `bump_failed`"))))
 
+(deftest l12a-companion-receive-arm-typo-rejected
+  (testing "L12a (2026-08-26) — sender-side receive-arm on a companion message with a typo'd name (`_faild`) rejects with `no such stream and no companion message on <Target>`. Preserves the diagnostic clarity from the pre-companion stream-subscribe path."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"atom `Player` emits no `:> take_damage_fialed` stream and has no `take_damage_fialed` companion"
+         (lower-src "def Player:
+    hp: Int! = 100
+
+    alive <: take_damage(amount: Int) -> alive
+        |: amount > 0
+        then: hp => hp - amount
+
+def Logger:
+    player: Player = Player()
+    n: Int! = 0
+
+    * <: player.take_damage_fialed(reason: Int) -> *
+        then: n => n + 1
+
+def main:
+    l: Logger = Logger()
+    -> running
+")))))
+
+(deftest l12a-companion-receive-arm-valid-fails-nyi-with-l12b-pointer
+  (testing "L12a — a sender-side receive-arm on a VALID companion (`<msg>_failed(reason: T)`) validates against target's `:companion-index` (compile-time metadata from L11) but fails at lower with an explicit `L12b: runtime delivery scaffolding not yet landed` pointer, so users get a clear diagnostic rather than silent acceptance of a never-firing receive-arm."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"L12b: companion receive-arm `player.take_damage_failed`"
+         (lower-src "def Player:
+    hp: Int! = 100
+
+    alive <: take_damage(amount: Int) -> alive
+        |: amount > 0
+        then: hp => hp - amount
+
+def Logger:
+    player: Player = Player()
+    n: Int! = 0
+
+    * <: player.take_damage_failed(reason: Int) -> *
+        then: n => n + 1
+
+def main:
+    l: Logger = Logger()
+    -> running
+")))))
+
+(deftest l12a-companion-receive-arm-wrong-payload-rejected
+  (testing "L12a — a sender-side receive-arm on a valid companion must declare payload `(reason: T)`; any other key set (e.g. `(oops: Int)`) rejects with a clean diagnostic naming the required shape."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"must declare payload `\(reason: T\)`"
+         (lower-src "def Player:
+    hp: Int! = 100
+
+    alive <: take_damage(amount: Int) -> alive
+        |: amount > 0
+        then: hp => hp - amount
+
+def Logger:
+    player: Player = Player()
+    n: Int! = 0
+
+    * <: player.take_damage_failed(oops: Int) -> *
+        then: n => n + 1
+
+def main:
+    l: Logger = Logger()
+    -> running
+")))))
+
 (deftest f31-f35-l2-panic-lowers-to-inline-trap
   (testing "F31/F35 Landing 2 — `panic(\"msg\")` lowers to an inline expr that prints `panic: <msg>` + backtrace and calls `__builtin_trap()`. Uncatchable (bypasses `@try/@catch`); BEAM-style transition isolation is preserved separately."
     (let [prog (lower-src "def main:\n    -> running\n        then: panic(\"boom\")\n")

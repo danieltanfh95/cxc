@@ -6372,6 +6372,7 @@
   [atom-name t {:keys [source-class]} ctx]
   (let [msg          (get-in t [:receive :msg])
         stream-name  (get-in msg [:source :field])
+        source-field (get-in msg [:source :target :name])
         payload      (or (:payload msg) [])
         source-info  (get-in ctx [:atom-env source-class])
         _            (when-not source-info
@@ -6379,12 +6380,39 @@
                                        "` is not a def-atom in the program")
                                   t))
         stream       (get-in source-info [:stream-index stream-name])
-        _            (when-not stream
+        companion    (when-not stream
+                       (get-in source-info [:companion-index stream-name]))
+        _            (when-not (or stream companion)
                        (fail-nyi! (str "atom `" source-class "` emits no `:> "
-                                       stream-name "` stream — receive-glyph "
-                                       "`" (:source-field t) "." stream-name
-                                       "` on `" atom-name "` has no source")
+                                       stream-name "` stream and has no "
+                                       "`" stream-name "` companion message — "
+                                       "receive-glyph `" source-field "."
+                                       stream-name "` on `" atom-name
+                                       "` has no source")
                                   t))
+        ;; L12a — sender-side companion validation: payload must be
+        ;; exactly `(reason: T)`. Runtime delivery + typed reason wiring
+        ;; is L12b; a clean "coming next" fail-nyi keeps the diagnostic
+        ;; honest instead of silently accepting a receive-arm that will
+        ;; never fire.
+        _            (when companion
+                       (let [expected [{:name "reason"}]
+                             got      (mapv (fn [p] {:name (:name p)}) payload)]
+                         (when (not= expected got)
+                           (fail-nyi!
+                            (str "companion receive-arm `" source-field "."
+                                 stream-name "` on `" atom-name
+                                 "` must declare payload `(reason: T)`; got "
+                                 got)
+                            t)))
+                       (fail-nyi!
+                        (str "L12b: companion receive-arm `" source-field
+                             "." stream-name "` on `" atom-name
+                             "` validates against `" source-class
+                             "`'s :companion-index, but runtime delivery "
+                             "scaffolding is not yet landed. Track under "
+                             "loop-status-2026-08-25.md L12b.")
+                        t))
         expected-keys (mapv :name (:payload stream))
         got-keys      (mapv :name payload)
         _            (when (not= expected-keys got-keys)
