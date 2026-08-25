@@ -2075,6 +2075,55 @@ def main:
     -> running
 ")))))
 
+(deftest l13-coverage-tail-abort-emitted-when-all-arms-guarded
+  (testing "L13 (2026-08-25) — when every arm in a phase carries a `|:` guard, lower emits a tail-abort branch after the guarded ones. Replaces the silent-drop behavior inherited from retired `when:` guards; fires a runtime coverage-abort if no guard held."
+    (let [lowered (lower-src "def Counter:
+    n: Int! = 0
+    max: Int! = 3
+
+    alive <: bump -> alive
+        |: n < max
+        then: n => n + 1
+
+def main:
+    c: Counter = Counter()
+    -> running
+        then: |> c.bump()
+")
+          counter-cls (first (filter #(= "Counter" (:name %)) (:classes lowered)))
+          bump-method (first (filter #(= "bump" (:selector %))
+                                     (:methods counter-cls)))
+          branches    (:body bump-method)]
+      (is (some? bump-method) "bump method exists")
+      (is (some #(= :coverage-abort (get-in % [:body 0 :node])) branches)
+          "one tail branch has a :coverage-abort body"))))
+
+(deftest l13-coverage-tail-abort-skipped-when-unguarded-fallback
+  (testing "L13 — a phase that has at least one unguarded arm needs no tail-abort; the unguarded arm is the coverage fallback (fires when phase matches and no earlier guard held)."
+    (let [lowered (lower-src "def Counter:
+    n: Int! = 0
+    max: Int! = 3
+
+    alive <: bump -> alive
+        |: n < max
+        then: n => n + 1
+
+    alive <: bump -> alive
+        then: n => n
+
+def main:
+    c: Counter = Counter()
+    -> running
+        then: |> c.bump()
+")
+          counter-cls (first (filter #(= "Counter" (:name %)) (:classes lowered)))
+          bump-method (first (filter #(= "bump" (:selector %))
+                                     (:methods counter-cls)))
+          branches    (:body bump-method)]
+      (is (some? bump-method))
+      (is (not-any? #(= :coverage-abort (get-in % [:body 0 :node])) branches)
+          "no coverage-abort tail — unguarded arm covers the phase"))))
+
 (deftest l10-duplicate-wildcard-source-arm-non-handler-shape-rejected
   (testing "L10 (2026-08-25) — two wildcard-source arms on the same message name with concrete target(s) are rejected. Ambiguous under the ratified precedence rule (concrete-phase arm wins in its own phase; `*` arm fires everywhere else — two `*` arms on the same message have no total order)."
     (is (thrown-with-msg?

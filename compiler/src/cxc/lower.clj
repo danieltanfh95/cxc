@@ -6622,7 +6622,33 @@
                            branches    (mapv #(lower-transition-branch
                                                atom-name (:txn %) branch-ctx
                                                wildcards-by-phase)
-                                             group)]
+                                             group)
+                           ;; L13 (2026-08-25) — coverage tail-abort per
+                           ;; source-phase. For every phase that has at
+                           ;; least one branch AND every branch in that
+                           ;; phase carries a `:guard`, append a synthetic
+                           ;; guardless branch that runs after the guarded
+                           ;; ones and panics with a coverage diagnostic.
+                           ;; Prevents the silent-drop behavior inherited
+                           ;; from the retired `when:` guards (L2c). If a
+                           ;; phase already has a guardless arm, that arm
+                           ;; fires first — no tail-abort needed for it.
+                           coverage-tails
+                           (let [by-phase (group-by :source-phase-const branches)
+                                 msg-name (get-in first-d [:selector])]
+                             (vec (mapcat
+                                   (fn [[phase-const phase-branches]]
+                                     (when (and phase-const
+                                                (seq phase-branches)
+                                                (every? :guard phase-branches))
+                                       [{:node               :transition-branch
+                                         :source-phase-const phase-const
+                                         :guard              nil
+                                         :body               [{:node        :coverage-abort
+                                                               :msg-selector msg-name
+                                                               :phase-const  phase-const}]}]))
+                                   by-phase)))
+                           branches (into branches coverage-tails)]
                        (cond-> {:node        :objc-method
                                 :selector    (:selector first-d)
                                 :return-type "void"

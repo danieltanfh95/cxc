@@ -704,6 +704,19 @@
           block    (indent-lines 4 (if (str/blank? body) "return;"
                                      (str body "\nreturn;")))]
       (str "if (" guard ") {\n" block "\n}"))
+    :coverage-abort
+    ;; L13 (2026-08-25) — runtime fallback for the transition-arm
+    ;; coverage requirement (Option B). Fires when the receiver's
+    ;; phase matches this dispatch group but no arm's `|:` guard held.
+    ;; Diagnostic names the message + phase so ops can locate the
+    ;; missing arm without instrumentation.
+    (let [sel   (:msg-selector node)
+          phase (:phase-const node)]
+      (str "fprintf(stderr, \"cxc coverage: no arm's `|:` held for `"
+           (escape-c-string sel) "` in phase " (escape-c-string phase)
+           " on %s\\n\", "
+           "[NSStringFromClass([self class]) UTF8String]);\n"
+           "abort();"))
     :state-snapshot-init
     ;; F33 L2.b — atomic snapshot of `data:` fields at method entry.
     ;; Emits `<Atom>_State __cxc_snap = { ._f1 = _f1, ._f2 = _f2, ... };`.

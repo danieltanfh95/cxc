@@ -15,6 +15,11 @@ def Counter:
         |: raw_n < max
         then: raw_n => raw_n + 1
 
+    # coverage-complete fallback (saturated); required post-L13 so
+    # the compiler doesn't emit a runtime coverage-abort at the tail.
+    alive <: bump -> alive
+        then: raw_n => raw_n
+
 def main:
     -> running
         then: print(Counter().n)
