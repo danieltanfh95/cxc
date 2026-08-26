@@ -1501,3 +1501,86 @@ def main:
       (is (some? obs))
       (is (= 1 (count (:params obs))))
       (is (= "k" (get-in obs [:params 0 :name]))))))
+
+;; ---------------------------------------------------------------------------
+;; Track B/1 (2026-08-26) — `or:` recovery arms grow bind + typed shapes.
+;; The parser produces `:arms` on the `:emit` node: an ordered vector of
+;; `{:pattern p :body stmts}` where `p` is nil (bare), a bind
+;; (`{:kind :bind :name S}`), or a typed case (`{:kind :case :name T
+;; :bindings [...]}`). Downstream lowering only accepts the single-bare-arm
+;; case today; the multi-arm dispatch machinery lands in Track B/2+B/3.
+;; ---------------------------------------------------------------------------
+
+(defn- first-emit-with-arms
+  "Locate the first `:emit` node with an `:arms` vector by walking every
+   `:then-clause`'s `:stmts` under every transition of every top-level
+   def-atom. Enough for these focused parser tests."
+  [source]
+  (let [top (p/parse source)]
+    (some (fn [atom]
+            (some (fn [tr]
+                    (when (= :transition (:node tr))
+                      (some (fn [clause]
+                              (when (= :then-clause (:node clause))
+                                (some #(when (and (= :emit (:node %))
+                                                  (contains? % :arms)) %)
+                                      (:stmts clause))))
+                            (:body tr))))
+                  (:body atom)))
+          (filter #(= :def-atom (:node %)) top))))
+
+(deftest track-b1-bare-or-arm-produces-single-nil-pattern-arm
+  (testing "Track B/1 — bare `or:` after a `|>` sync send produces `:arms` = [{:pattern nil :body [...]}]. Terminal shape from day one; the legacy `:or-body` field is retired at parse output."
+    (let [emit-node (first-emit-with-arms
+                     "def S:\n    -> running\n\ndef B:\n    s: S = S()\n    -> running\n        then:\n            |> s.ping()\n            or:\n                |> s.ping()\n")]
+      (is (some? emit-node) "found an :emit node carrying :arms")
+      (is (= 1 (count (:arms emit-node))))
+      (is (nil? (:pattern (first (:arms emit-node))))
+          "bare `or:` arm carries nil pattern")
+      (is (not (contains? emit-node :or-body))
+          "parse output no longer emits legacy `:or-body` field"))))
+
+(deftest track-b1-or-bind-arm-parses-with-bind-pattern
+  (testing "Track B/1 — `or e:` after a `|>` sync send parses into a single arm whose pattern is `{:kind :bind :name \"e\"}`. Lower rejects this shape today (`Track B/3` fail-nyi); parser must still accept it and record the bound name."
+    (let [emit-node (first-emit-with-arms
+                     "def S:\n    -> running\n\ndef B:\n    s: S = S()\n    -> running\n        then:\n            |> s.ping()\n            or e:\n                |> s.ping()\n")]
+      (is (some? emit-node))
+      (is (= 1 (count (:arms emit-node))))
+      (is (= {:kind :bind :name "e"} (:pattern (first (:arms emit-node))))))))
+
+(deftest track-b1-or-typed-arm-with-empty-parens-parses-as-case
+  (testing "Track B/1 — `or T():` is the no-payload typed match; distinguished from bind by the trailing `(`. Parses into `{:kind :case :name \"T\" :bindings []}` even with empty parens."
+    (let [emit-node (first-emit-with-arms
+                     "def S:\n    -> running\n\ndef B:\n    s: S = S()\n    -> running\n        then:\n            |> s.ping()\n            or MyError():\n                |> s.ping()\n")]
+      (is (some? emit-node))
+      (is (= {:kind :case :name "MyError" :bindings []}
+             (:pattern (first (:arms emit-node))))))))
+
+(deftest track-b1-or-typed-arm-with-destructure-bindings-parses
+  (testing "Track B/1 — `or T(field: let x):` parses the payload bindings using the same shape as `<:` case patterns: `{:field <str> :as <str>}` per binding entry."
+    (let [emit-node (first-emit-with-arms
+                     "def S:\n    -> running\n\ndef B:\n    s: S = S()\n    -> running\n        then:\n            |> s.ping()\n            or MyError(msg: let m):\n                |> s.ping()\n")]
+      (is (some? emit-node))
+      (let [pat (:pattern (first (:arms emit-node)))]
+        (is (= :case (:kind pat)))
+        (is (= "MyError" (:name pat)))
+        (is (= [{:field "msg" :as "m"}] (:bindings pat)))))))
+
+(deftest track-b1-multiple-or-arms-chain-in-source-order
+  (testing "Track B/1 — several sibling `or ...:` blocks chain into a single `:arms` vector preserving source order. Bare, bind, and typed arms may co-exist; dispatch order is exactly the parse order."
+    (let [emit-node (first-emit-with-arms
+                     "def S:\n    -> running\n\ndef B:\n    s: S = S()\n    -> running\n        then:\n            |> s.ping()\n            or MyError(msg: let m):\n                |> s.ping()\n            or e:\n                |> s.ping()\n            or:\n                |> s.ping()\n")]
+      (is (some? emit-node))
+      (is (= 3 (count (:arms emit-node))))
+      (is (= :case (get-in emit-node [:arms 0 :pattern :kind])))
+      (is (= "MyError" (get-in emit-node [:arms 0 :pattern :name])))
+      (is (= :bind (get-in emit-node [:arms 1 :pattern :kind])))
+      (is (= "e"    (get-in emit-node [:arms 1 :pattern :name])))
+      (is (nil? (get-in emit-node [:arms 2 :pattern]))))))
+
+(deftest track-b1-or-arm-without-block-rejected
+  (testing "Track B/1 — inline single-expression bodies are not supported for recovery arms; the arm must open an indented block. Kept strict so future multi-line diagnostics have unambiguous line anchors."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"Track B/1: `or` arm requires an indented block body"
+         (p/parse "def S:\n    -> running\n\ndef B:\n    s: S = S()\n    -> running\n        then:\n            |> s.ping()\n            or: |> s.ping()\n")))))

@@ -1331,6 +1331,78 @@
           [nil p])]
     [{:node :if-let :bindings bindings :then then :else else-blk} p]))
 
+(defn- parse-or-arm-pattern
+  "Parse the pattern portion of one `or ...:` arm — the tokens between
+   the `or` keyword and the trailing `:`. Returns [pattern new-pos].
+   Three shapes:
+     `or:`                bare      → nil
+     `or <ident>:`        bind      → {:kind :bind :name S}
+     `or T(bindings):`    typed     → {:kind :case :name T
+                                        :bindings [{:field <str-or-nil>
+                                                    :as    <str>} ...]}
+   Distinguisher between bind and typed: presence of `(` immediately
+   after the ident. An empty-parens `or T():` is a no-payload type match
+   (matches Track A's `<: T():` shape). Parens-less `or T:` is treated
+   as a bind — the parser does not do capitalization-based dispatch."
+  [tokens pos]
+  (cond
+    ;; bare `or:`
+    (at? tokens pos :punct ":")
+    [nil pos]
+
+    ;; `or <ident>(...):` — typed match, optionally destructuring
+    (and (at? tokens pos :ident)
+         (at? tokens (inc pos) :punct "("))
+    (let [name (t-value (peek-tok tokens pos))]
+      (loop [bindings [] p (+ pos 2)]
+        (cond
+          (at? tokens p :punct ")")
+          [{:kind :case :name name :bindings bindings} (inc p)]
+
+          (at? tokens p :punct ",")
+          (recur bindings (inc p))
+
+          :else
+          (let [[b p2] (parse-dispatch-payload-binding tokens p)]
+            (recur (conj bindings b) p2)))))
+
+    ;; `or <ident>:` — bind
+    (at? tokens pos :ident)
+    (let [name (t-value (peek-tok tokens pos))]
+      [{:kind :bind :name name} (inc pos)])
+
+    :else
+    (fail! tokens pos
+           (str "Track B/1: expected `or:` (bare), `or <ident>:` (bind), "
+                "or `or T(<bindings>):` (typed match) after the `or` keyword "
+                "in a sync-send recovery arm."))))
+
+(defn- parse-or-arms
+  "Chain-parse `or` arms following a `|>` sync send. The first arm
+   follows the sync send's expression, separated by NEWLINE; subsequent
+   arms follow their predecessor's block DEDENT with no leading
+   NEWLINE. Peeks past an optional NEWLINE for `or` — if found, consumes
+   one arm and loops. Returns [arms new-pos] where `arms` is a possibly-
+   empty vector of `{:pattern p :body stmts}`. The returned pos includes
+   any NEWLINEs consumed so downstream parsers see the same shape they
+   did before the chain."
+  [tokens pos]
+  (loop [arms [] p pos]
+    (let [after-newline (if (at? tokens p :newline) (inc p) p)]
+      (if (at? tokens after-newline :kw "or")
+        (let [p            (inc after-newline)
+              [pattern p2] (parse-or-arm-pattern tokens p)
+              [_ p3]       (expect tokens p2 :punct ":")
+              _            (when-not (and (at? tokens p3 :newline)
+                                          (at? tokens (inc p3) :indent))
+                             (fail! tokens p3
+                                    (str "Track B/1: `or` arm requires an indented "
+                                         "block body — inline single-expression bodies "
+                                         "are not supported for recovery arms.")))
+              [block p4]   (parse-block tokens (inc p3))]
+          (recur (conj arms {:pattern pattern :body (:stmts block)}) p4))
+        [arms p]))))
+
 (defn- parse-statement
   "One statement:
      return <expr>
@@ -1392,9 +1464,23 @@
     ;;   or:
     ;;       <recovery-body>
     ;; The recovery body fires when the sync send's block throws (F48
-    ;; @try/@catch catches). MVP is bare `or:`; binding (`or e:`) and
-    ;; pattern-matched (`or InvariantViolation:`) variants are a
-    ;; follow-on landing.
+    ;; @try/@catch catches).
+    ;;
+    ;; Track B/1 (2026-08-26): `or:` now accepts three arm shapes and
+    ;; chains multiple arms in dispatch order:
+    ;;   or:                   bare  → catches any thrown reason
+    ;;   or <ident>:           bind  → binds caught exception object
+    ;;   or T():   or T(fld: let x): typed → matches by reason record
+    ;;                                       type; empty parens are the
+    ;;                                       no-payload marker
+    ;; Distinguisher between bind (`or e:`) and typed (`or T(...):`) is
+    ;; the trailing `(` — a bare ident with no parens is a bind.
+    ;;
+    ;; Parser produces `:arms` on the emit node — an ordered list of
+    ;; `{:pattern p :body stmts}` maps where `p` is nil (bare) /
+    ;; `{:kind :bind :name S}` / `{:kind :case :name T :bindings [...]}`.
+    ;; Lower currently only accepts the single-bare-arm case (MVP);
+    ;; multi-arm and non-bare dispatch is the Track B/2+B/3 landing.
     (let [[e p] (parse-expr tokens (inc pos))
           emit-node
           (cond
@@ -1426,23 +1512,13 @@
                    (str "prefix `|>` expected a call expression on the right-hand side "
                         "(F70 I6: `|> receiver.method(args)`), or legacy bare form "
                         "(`|> msg(args)` — retired in Stage 3)")))
-          ;; L9 look-ahead: NEWLINE `or` `:` NEWLINE INDENT starts the
-          ;; recovery block. Anything else (dedent / next statement)
-          ;; leaves the emit un-decorated. Colon-then-block always
-          ;; emits NEWLINE INDENT (see other section starts) so both
-          ;; separators are consumed here before parse-block sees INDENT.
-          has-or?
-          (and (at? tokens p :newline)
-               (at? tokens (inc p) :kw "or")
-               (at? tokens (+ p 2) :punct ":")
-               (at? tokens (+ p 3) :newline)
-               (at? tokens (+ p 4) :indent))
-          [decorated p2]
-          (if has-or?
-            (let [p (+ p 4)
-                  [block p3] (parse-block tokens p)]
-              [(assoc emit-node :or-body (:stmts block)) p3])
-            [emit-node p])]
+          ;; B/1 chain: greedily collect one or more `or ...:` arms.
+          ;; Each arm starts with NEWLINE `or` followed by an optional
+          ;; pattern spec, then `:` NEWLINE INDENT block DEDENT. Arms
+          ;; are sibling at the emit's indent level; the loop stops when
+          ;; the next token is not `NEWLINE or`.
+          [arms p2] (parse-or-arms tokens p)
+          decorated (if (seq arms) (assoc emit-node :arms arms) emit-node)]
       [decorated p2])
 
     ;; F20 REJECTED 2026-08-18 — `for e in xs: body` sugar retires.

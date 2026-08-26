@@ -5341,13 +5341,30 @@
         ;; L9 (2026-08-26) — `or:` continuation attaches a failure-
         ;; recovery body. Applies to sync sends only (async is
         ;; fire-and-forget: no completion the caller can observe).
-        or-body   (:or-body node)
-        _         (when (and or-body (:async? node))
+        ;;
+        ;; Track B/1 (2026-08-26): parser now delivers `:arms` (ordered
+        ;; recovery arms with optional bind/typed patterns). Lower
+        ;; degrades the single-bare-arm case to the existing MVP
+        ;; `:or-body` shape and hard-rejects anything else with a
+        ;; targeted diagnostic pointing at Track B/2+B/3 where the
+        ;; multi-arm dispatch machinery lands.
+        arms      (:arms node)
+        _         (when (and (seq arms) (:async? node))
                     (fail-nyi!
                      (str "L9: `or:` continuation on an async `:>` send — "
                           "async is fire-and-forget so recovery has "
                           "no defined caller frame to run in. Use sync "
                           "`|>` for recoverable sends.")
+                     node))
+        or-body   (when (and (= 1 (count arms))
+                             (nil? (:pattern (first arms))))
+                    (:body (first arms)))
+        _         (when (and (seq arms) (nil? or-body))
+                    (fail-nyi!
+                     (str "Track B/1: multi-arm and typed `or:` recovery "
+                          "(`or e:` / `or T(...):` / chained arms) is "
+                          "parsed but not yet emitted. Runtime dispatch "
+                          "on the caught exception lands in Track B/3.")
                      node))]
     (if or-body
       {:node       :sync-send-with-recovery

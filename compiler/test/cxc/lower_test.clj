@@ -2673,6 +2673,21 @@ def main:
       (is (str/includes? emitted "@catch (NSException *__cxc_or_e)")
           "@catch binds the exception for the recovery scope"))))
 
+(deftest track-b1-non-mvp-or-arms-rejected-at-lower-with-b3-hint
+  (testing "Track B/1 (2026-08-26) — parser accepts multi-arm and typed `or:` shapes but lower currently rejects anything beyond the single-bare-arm MVP. The diagnostic points at Track B/3 where runtime dispatch machinery lands; users writing `or e:` or chained arms today get a targeted not-yet-implemented error rather than a silent-drop of the recovery block."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"Track B/1: multi-arm and typed `or:` recovery"
+         (lower-src "def S:\n    n: Int! = 0\n    * <: ping -> self\n        then: n => n + 1\n\ndef B:\n    s: S = S()\n    -> running\n        then:\n            |> s.ping()\n            or e:\n                |> s.ping()\n\ndef main:\n    b: B = B()\n    -> running\n")))
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"Track B/1: multi-arm and typed `or:` recovery"
+         (lower-src "def S:\n    n: Int! = 0\n    * <: ping -> self\n        then: n => n + 1\n\ndef B:\n    s: S = S()\n    -> running\n        then:\n            |> s.ping()\n            or MyError():\n                |> s.ping()\n\ndef main:\n    b: B = B()\n    -> running\n")))
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"Track B/1: multi-arm and typed `or:` recovery"
+         (lower-src "def S:\n    n: Int! = 0\n    * <: ping -> self\n        then: n => n + 1\n\ndef B:\n    s: S = S()\n    -> running\n        then:\n            |> s.ping()\n            or:\n                |> s.ping()\n            or:\n                |> s.ping()\n\ndef main:\n    b: B = B()\n    -> running\n")))))
+
 (deftest l9-or-continuation-only-on-sync-sends
   (testing "L9 — `or:` continuation is defined only for sync `|>` sends. Async `:>` sends are fire-and-forget with no caller-frame boundary the recovery block could run in; the parser only look-aheads for `or:` at the `|>` position, so `:>`-followed-by-`or:` lands as an unrelated `or` statement token — parse error is the current diagnostic."
     (is (thrown-with-msg?
