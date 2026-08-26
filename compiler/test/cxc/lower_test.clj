@@ -1351,13 +1351,29 @@ def main:
              (get-in pre-check [:failure-value :fields 0 :value :fields 1 :value]))
           "pre-store typed error args use the wide source substitution")
       (is (= "OutOfRange" (get-in post-check [:failure-value :type])))
+      ;; Track A/4 (2026-08-26) — the emit shape for typed propositions
+      ;; flipped from `(void)(<ctor>);` + abort to box+@throw. The
+      ;; constructed struct is assigned into an `_Cxc_R_<T>` wrapper
+      ;; and thrown via NSException with `userInfo[@"reason"]` = box,
+      ;; so L12c can catch and fan through the companion dispatch.
       (is (str/includes?
            c-src
-           "(void)(((OutOfRange){.value = ((_Cxc_Optional_Int64){.present = 1, .value = 5})}));")
-          "typed failure value is emitted on the construction failure path")
-      (is (str/includes? c-src
-                         "(void)(((OutOfRange){.value = __cxc_snap._value}));")
-          "typed failure value is emitted on the post-store failure path"))))
+           "_Cxc_R_OutOfRange *__cxc_r = [[_Cxc_R_OutOfRange alloc] init];")
+          "typed failure path boxes into _Cxc_R_<T>")
+      (is (str/includes?
+           c-src
+           "__cxc_r->value = ((OutOfRange){.value = ((_Cxc_Optional_Int64){.present = 1, .value = 5})});")
+          "constructed record assigned into the box's @public value ivar (pre-store site)")
+      (is (str/includes?
+           c-src
+           "__cxc_r->value = ((OutOfRange){.value = __cxc_snap._value});")
+          "constructed record assigned into the box (post-store site reads snapshot)")
+      (is (str/includes?
+           c-src
+           "@throw [NSException exceptionWithName:@\"CxcReason\"")
+          "typed failure throws NSException")
+      (is (str/includes? c-src "userInfo:@{@\"reason\": __cxc_r}")
+          "reason box travels via userInfo[@\"reason\"] for L12c to extract"))))
 
 (deftest pre-destruction-invariant-check-runs-before-resource-clear-and-cascade
   (testing "Phase D F49 Landing D — spec §3.4.2 requires invariants to hold BEFORE destruction. Prior to Landing D, `checkInvariants` fired last in transitionToEnd (after resource clear + child cascade + parent notify) — a failure at that site named a state the atom was no longer in. Landing D reorders: user on-end `do:` (may fix up state) → invariant check → resource clear → cascade → notify parent → (main: shutdown)."

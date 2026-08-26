@@ -8624,13 +8624,24 @@
    ordering), reinterpret the check as \"skip if any operand is nil;
    fail only when present and false\". Wrapped in a `:c-optional-cond`
    marker so emit can produce `(cond.present && !cond.value)` instead
-   of `!cond` on a struct."
+   of `!cond` on a struct.
+
+   Track A/4 (2026-08-26) — for typed `|: cond as T(...)` propositions,
+   attach `:reason-box-name` (`_Cxc_R_<T>`) so emit can box the
+   constructed record and `@throw` NSException with userInfo[@\"reason\"]
+   for the L12c catch to fan out through the companion. Bare `|:`
+   (no `as T`) still uses the abort path today; Track A/6 will convert
+   it to throw Uncaught instead."
   [atom-name idx proposition ctx]
   (let [pred          (:predicate proposition)
         pred-tk       (infer-type pred ctx)
         cond-lo       (lower-expr pred ctx)
-        failure-value (some-> (proposition-error-call proposition)
-                              (lower-expr ctx))]
+        error-call    (proposition-error-call proposition)
+        failure-value (some-> error-call (lower-expr ctx))
+        reason-box
+        (when-let [et (:as-error-type proposition)]
+          (when (= :type-ref (:node et))
+            (str "_Cxc_R_" (:name et))))]
     (cond->
      {:node  :invariant-check
       :cond  (if (optional-tk? pred-tk)
@@ -8638,7 +8649,8 @@
                cond-lo)
       ;; Fires from init AND post-transition (Step 14); label stays generic.
       :label (str atom-name " invariant #" idx " failed")}
-      failure-value (assoc :failure-value failure-value))))
+      failure-value  (assoc :failure-value failure-value)
+      reason-box     (assoc :reason-box-name reason-box))))
 
 (defn- collect-self-field-refs
   "Walk an AST value bottom-up, returning the set of unqualified :ident names
@@ -8680,7 +8692,11 @@
             pred-tk (infer-type pred sub-ctx)
             cond-lo (lower-expr pred sub-ctx)
             failure-value (some-> (proposition-error-call proposition)
-                                  (lower-expr sub-ctx))]
+                                  (lower-expr sub-ctx))
+            reason-box
+            (when-let [et (:as-error-type proposition)]
+              (when (= :type-ref (:node et))
+                (str "_Cxc_R_" (:name et))))]
         (cond->
          {:node  :invariant-check
           :cond  (if (optional-tk? pred-tk)
@@ -8688,7 +8704,8 @@
                    cond-lo)
           :label (str atom-name " invariant #" idx
                       " failed at construction (source value violates)")}
-          failure-value (assoc :failure-value failure-value))))))
+          failure-value  (assoc :failure-value failure-value)
+          reason-box     (assoc :reason-box-name reason-box))))))
 
 (defn- class-name-for-atom
   "Emitted ObjC class name. Regular atoms use their cxc name verbatim.

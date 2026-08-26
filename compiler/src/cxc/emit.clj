@@ -569,16 +569,39 @@
            "cxc_own_resource(self, __cxc_ms); "
            "[__cxc_ms cxc_addSubscriber:self]; }"))
     :invariant-check
-    ;; Direct if/abort — NSAssert is compiled out by NS_BLOCK_ASSERTIONS
-    ;; in release builds; invariants must always fire. A typed proposition
-    ;; constructs its declared failure value on this branch before the
-    ;; existing F49 abort. P7 can later route the same value through the
-    ;; companion-message failure channel without changing this node shape.
+    ;; Direct if/(box+throw|abort) — NSAssert is compiled out by
+    ;; NS_BLOCK_ASSERTIONS in release builds; invariants must always
+    ;; fire.
+    ;;
+    ;; Track A/4 (2026-08-26) — for typed propositions
+    ;; (`|: cond as T(...)`), box the constructed record into
+    ;; `_Cxc_R_<T>` and `@throw` NSException with
+    ;; `userInfo[@\"reason\"]` set to the box. The L12c end-catch-wrap
+    ;; catches this and (Track A/5) will fan the box out through the
+    ;; companion dispatch instead of the current nil-reason placeholder.
+    ;;
+    ;; Bare `|:` (no `as T`) still calls abort() — Track A/6 will
+    ;; convert bare failures to throw an Uncaught reason so the L12c
+    ;; catch reaches them too. Init-time invariants still hard-abort
+    ;; even under A/4 because there's no companion catch above them in
+    ;; init (the throw would escape past main); if this matters, a
+    ;; follow-on can add an init-time @try around cxc_runtimeBinding.
     (str "if (!(" (emit-expr (:cond node)) ")) {\n"
-         (when-let [failure-value (:failure-value node)]
-           (str "    (void)(" (emit-expr failure-value) ");\n"))
-         "    fprintf(stderr, \"" (escape-c-string (:label node)) "\\n\");\n"
-         "    abort();\n"
+         (if (and (:failure-value node) (:reason-box-name node))
+           (let [box  (:reason-box-name node)
+                 fail (:failure-value node)]
+             (str "    fprintf(stderr, \""
+                  (escape-c-string (:label node)) "\\n\");\n"
+                  "    " box " *__cxc_r = [[" box " alloc] init];\n"
+                  "    __cxc_r->value = " (emit-expr fail) ";\n"
+                  "    @throw [NSException exceptionWithName:@\"CxcReason\" "
+                  "reason:@\"" (escape-c-string (:label node))
+                  "\" userInfo:@{@\"reason\": __cxc_r}];\n"))
+           (str (when-let [failure-value (:failure-value node)]
+                  (str "    (void)(" (emit-expr failure-value) ");\n"))
+                "    fprintf(stderr, \""
+                (escape-c-string (:label node)) "\\n\");\n"
+                "    abort();\n"))
          "}")
     :phase-guard
     ;; Early-exit if the atom isn't in the transition's source phase.
