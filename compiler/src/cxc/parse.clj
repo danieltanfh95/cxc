@@ -2414,12 +2414,96 @@
                (str "expected `<method_name>: <const-expr>` inside `on_nil:` "
                     "section, or dedent to close the section"))))))
 
+(defn- parse-queue-config
+  "Track C/2 (2026-08-26) — parse a `queue: <discipline>` declaration
+   at the head of a def-atom's ctor-params. Supported disciplines:
+     bounded(N)  → {:kind :bounded :capacity N}
+     unbounded   → {:kind :unbounded}    (explicit form of the default)
+   Returns [config-map new-pos] positioned immediately after the
+   discipline expression, or nil if the tokens don't start `queue:`."
+  [tokens pos]
+  (when (and (at? tokens pos :ident)
+             (= "queue" (t-value (peek-tok tokens pos)))
+             (at? tokens (inc pos) :punct ":"))
+    (let [p (+ pos 2)]
+      (cond
+        (and (at? tokens p :ident)
+             (= "unbounded" (t-value (peek-tok tokens p))))
+        [{:kind :unbounded} (inc p)]
+
+        (and (at? tokens p :ident)
+             (= "bounded" (t-value (peek-tok tokens p)))
+             (at? tokens (inc p) :punct "("))
+        (let [p (+ p 2)]
+          (when-not (at? tokens p :int)
+            (fail! tokens p
+                   (str "Track C/2: `queue: bounded(...)` requires an "
+                        "integer literal capacity, e.g. `bounded(100)`.")))
+          (let [n  (t-value (peek-tok tokens p))
+                _  (when-not (pos? n)
+                     (fail! tokens p
+                            (str "Track C/2: `queue: bounded(" n
+                                 ")` requires a positive capacity.")))
+                [_ p] (expect tokens (inc p) :punct ")")]
+            [{:kind :bounded :capacity n} p]))
+
+        :else
+        (fail! tokens p
+               (str "Track C/2: `queue:` expects `bounded(N)` or "
+                    "`unbounded` (positional discipline expression), "
+                    "got " (pr-str (t-value (peek-tok tokens p)))))))))
+
+(defn- parse-def-atom-ctor-tail
+  "Parse the remainder of a def-atom's `(...)` header after an optional
+   `queue:` prefix has been consumed. Returns [ctor-params new-pos]
+   where ctor-params is a possibly-empty vector matching what
+   `parse-param-list-parens` produced pre-C/2. Callers position `pos`
+   just after the `queue: <discipline>` expression, at either `,` (more
+   params to follow) or `)` (queue is the only entry)."
+  [tokens pos]
+  (cond
+    (at? tokens pos :punct ")")
+    [[] (inc pos)]
+
+    (at? tokens pos :punct ",")
+    (loop [ps [] p (inc pos)]
+      (let [[param p2] (parse-param tokens p)]
+        (cond
+          (at? tokens p2 :punct ",")
+          (recur (conj ps param) (inc p2))
+
+          (at? tokens p2 :punct ")")
+          [(conj ps param) (inc p2)]
+
+          :else (fail! tokens p2 "expected `,` or `)` in param list"))))
+
+    :else
+    (fail! tokens pos
+           (str "Track C/2: after `queue: <discipline>` expected `,` "
+                "(followed by more ctor params) or `)` (queue is the "
+                "only entry)."))))
+
 (defn- parse-def-atom [tokens pos]
   (let [[_ p]      (expect tokens pos :kw "def")
         [name p]   (expect tokens p :ident)
-        [ctor p]   (if (at? tokens p :punct "(")
-                     (parse-param-list-parens tokens p)
-                     [[] p])
+        ;; Track C/2 (2026-08-26) — `(queue: <discipline>[, ...])` at
+        ;; def-header position declares the atom's mailbox transport.
+        ;; `queue:` must be first when present; ordinary ctor params
+        ;; follow after a `,`.
+        [queue-cfg ctor p]
+        (cond
+          (not (at? tokens p :punct "("))
+          [nil [] p]
+
+          :else
+          (let [after-lp    (inc p)
+                queue-parse (parse-queue-config tokens after-lp)]
+            (if queue-parse
+              (let [[cfg qp]   queue-parse
+                    [ctor pp2] (parse-def-atom-ctor-tail tokens qp)]
+                [cfg ctor pp2])
+              (let [[ctor pp2] (parse-param-list-parens tokens p)]
+                [nil ctor pp2]))))
         [_ p]      (expect tokens p :punct ":")
         [_ p]      (expect tokens p :newline)
         [_ p]      (expect tokens p :indent)]
@@ -2429,8 +2513,9 @@
         (let [folded  (-> body
                           fold-direct-use-lines
                           fold-top-level-fields)
-              raw-def {:node :def-atom :name name :ctor-params ctor
-                       :body folded}
+              raw-def (cond-> {:node :def-atom :name name :ctor-params ctor
+                              :body folded}
+                        queue-cfg (assoc :queue-config queue-cfg))
               ;; F68 L1/L2/L5 (Proposal H) — structural detection dispatch.
               ;; Order matters: protocol (signature-only members) > enum
               ;; (case) > class
@@ -2454,14 +2539,28 @@
                 (or (def-atom-body-has-transition? folded)
                     (def-atom-body-has-use? folded)
                     (def-atom-body-has-atom-ctor-field-default? folded)
-                    (seq ctor))
+                    (seq ctor)
+                    ;; Track C/2 (2026-08-26) — presence of a `queue:`
+                    ;; declaration is itself an agent-intent signal
+                    ;; (records / protocols / enums have no mailbox).
+                    queue-cfg)
                 ;; F69 L2 — agent-shape def (transitions / direct use / ctor
                 ;; params / atom-ctor default). Stamp the inferred kind
                 ;; so downstream consumers can query uniformly.
                 (assoc raw-def :inferred-kind :agent)
 
                 :else
-                (def-atom->record raw-def tokens pos))]
+                (def-atom->record raw-def tokens pos))
+              _ (when (and queue-cfg
+                           (not= :agent (:inferred-kind reshaped)))
+                  (fail! tokens pos
+                         (str "Track C/2: `queue: <discipline>` is meaningful "
+                              "only on agent atoms (those with transitions, "
+                              "direct `use:`, or ctor params). `def " name
+                              "` has no mailbox — its inferred kind is "
+                              (pr-str (:inferred-kind reshaped))
+                              ". Remove the `queue:` declaration or promote "
+                              "to an agent shape.")))]
           [reshaped (inc p)])
 
         (at? tokens p :newline)

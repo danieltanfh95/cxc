@@ -1578,6 +1578,55 @@ def main:
       (is (= "e"    (get-in emit-node [:arms 1 :pattern :name])))
       (is (nil? (get-in emit-node [:arms 2 :pattern]))))))
 
+;; ---------------------------------------------------------------------------
+;; Track C/2 (2026-08-26) — `def <Atom>(queue: <discipline>)` opt-in
+;; syntax attaches a mailbox transport declaration to an agent atom.
+;; Two disciplines supported: `bounded(N)` (positive int capacity) and
+;; `unbounded` (explicit form of the default). Parser stores as
+;; `:queue-config` on the def-atom node. Runtime enforcement is a
+;; follow-on landing; the parser + kind-inference machinery ships here.
+;; ---------------------------------------------------------------------------
+
+(deftest track-c2-queue-bounded-parses-and-attaches-to-def-atom
+  (testing "Track C/2 — `def X(queue: bounded(100)):` parses; the def-atom node carries `:queue-config {:kind :bounded :capacity 100}` and is stamped as `:agent` kind even without explicit ctor params (queue: is itself an agent-intent signal)."
+    (let [n (first-node "def R(queue: bounded(100)):\n    n: Int! = 0\n    * <: ping -> self\n        then: n => n + 1\n")]
+      (is (= :def-atom (:node n)))
+      (is (= :agent (:inferred-kind n)))
+      (is (= {:kind :bounded :capacity 100} (:queue-config n))))))
+
+(deftest track-c2-queue-unbounded-parses-explicit-default
+  (testing "Track C/2 — explicit `queue: unbounded` parses to `{:kind :unbounded}`. Useful for readability (making the default explicit) even though it's a no-op behaviorally."
+    (let [n (first-node "def R(queue: unbounded):\n    n: Int! = 0\n    * <: ping -> self\n        then: n => n + 1\n")]
+      (is (= {:kind :unbounded} (:queue-config n))))))
+
+(deftest track-c2-queue-followed-by-ordinary-ctor-params
+  (testing "Track C/2 — `queue:` must be first in the header when present, but ordinary ctor params may follow after `,`. Verifies both `:queue-config` and `:ctor-params` coexist."
+    (let [n (first-node "def R(queue: bounded(8), initial: Int):\n    n: Int! = initial\n    * <: ping -> self\n        then: n => n + 1\n")]
+      (is (= {:kind :bounded :capacity 8} (:queue-config n)))
+      (is (= 1 (count (:ctor-params n))))
+      (is (= "initial" (get-in n [:ctor-params 0 :name]))))))
+
+(deftest track-c2-queue-non-positive-capacity-rejected
+  (testing "Track C/2 — `bounded(0)` and `bounded(-1)` are rejected at parse time. A bounded mailbox with zero or negative capacity is meaningless — user probably meant `unbounded` or a real capacity."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"Track C/2: `queue: bounded\(0\)` requires a positive capacity"
+         (p/parse "def R(queue: bounded(0)):\n    n: Int! = 0\n    * <: ping -> self\n        then: n => n + 1\n")))))
+
+(deftest track-c2-queue-on-non-agent-def-rejected
+  (testing "Track C/2 — `queue:` is agent-only. When the body's structural detection picks a non-agent kind (e.g. protocol via signature-only members) the C/2 check fires with a targeted diagnostic. Protocols / records / enums have no mailbox — `queue:` would be a vestigial attachment."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"Track C/2: `queue: <discipline>` is meaningful only on agent atoms"
+         (p/parse "def R(queue: bounded(10)):\n    has_next() :< Bool\n")))))
+
+(deftest track-c2-queue-unknown-discipline-rejected
+  (testing "Track C/2 — only `bounded(N)` and `unbounded` are recognized disciplines today. `queue: sliding(4)` etc. fail with a targeted diagnostic listing the two accepted forms."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"Track C/2: `queue:` expects `bounded\(N\)` or `unbounded`"
+         (p/parse "def R(queue: sliding(4)):\n    n: Int! = 0\n    * <: ping -> self\n        then: n => n + 1\n")))))
+
 (deftest track-b1-or-arm-without-block-rejected
   (testing "Track B/1 — inline single-expression bodies are not supported for recovery arms; the arm must open an indented block. Kept strict so future multi-line diagnostics have unambiguous line anchors."
     (is (thrown-with-msg?
