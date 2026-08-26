@@ -5727,27 +5727,78 @@
             "in L4d.")
        node))
     (let [enum?     (and (map? scrut-ty) (:enum scrut-ty))
+          ;; Track A/2.c (2026-08-26) — companion-reason exhaustiveness.
+          ;; When the id-typed scrutinee IS the reason binding of a
+          ;; companion receive-arm (per `:companion-receive` in ctx),
+          ;; the sum is closed against the target's declared reason-
+          ;; types. Arms covering every typed T satisfy exhaustiveness
+          ;; without a wildcard. Bare-`|:` (`:invariant-violation`)
+          ;; entries in the union map to Uncaught (Track A/6) — until
+          ;; that lands, we still require a wildcard whenever any
+          ;; bare `|:` failure is possible on the target.
+          companion (:companion-receive ctx)
+          any-scrut-is-companion-reason?
+          (and (= :any scrut-ty) companion
+               (= :ident (get-in node [:scrutinee :node]))
+               (= (:payload-nm companion)
+                  (get-in node [:scrutinee :name])))
           _         (when enum?
                       (let [enum-name  (:enum scrut-ty)
                             enum-cases (get-in ctx [:enum-env enum-name :cases])]
                         (check-dispatch-exhaustiveness! enum-name enum-cases
                                                         (:arms node) node)))
-          _         (when-not enum?
+          _         (when (and (not enum?) any-scrut-is-companion-reason?)
+                      (let [reason-tys   (:reason-types companion)
+                            typed-set    (into #{}
+                                               (comp (filter #(= :typed (:kind %)))
+                                                     (map :type-name))
+                                               reason-tys)
+                            has-invariant? (some #(= :invariant-violation (:kind %))
+                                                 reason-tys)
+                            arm-pats     (mapcat arm-patterns (:arms node))
+                            has-wildcard? (some #(= :wildcard (:kind %)) arm-pats)
+                            covered      (into #{}
+                                               (keep #(when (= :case (:kind %))
+                                                        (:name %)))
+                                               arm-pats)
+                            missing      (clojure.set/difference typed-set covered)]
+                        (cond
+                          has-wildcard? nil
+
+                          (seq missing)
+                          (fail-nyi!
+                           (str "F69 L4c1: non-exhaustive `<:` dispatch on "
+                                "companion reason for `" (:target-atom companion)
+                                "." (:companion companion) "` — missing arm(s) "
+                                "for reason record(s) " (pr-str (sort (vec missing)))
+                                ". Add an arm per missing record, or a `<: *:` "
+                                "wildcard tail. Reason universe declared by "
+                                "`|: as <Record>` clauses on the target atom.")
+                           node)
+
+                          has-invariant?
+                          (fail-nyi!
+                           (str "F69 L4c1: non-exhaustive `<:` dispatch on "
+                                "companion reason for `" (:target-atom companion)
+                                "." (:companion companion) "` — target atom has "
+                                "bare `|:` clause(s) (invariant violations) whose "
+                                "reason maps to Uncaught (Track A/6). Add a `<: *:` "
+                                "wildcard tail until A/6 lands the Uncaught "
+                                "prelude record.")
+                           node))))
+          _         (when (and (not enum?) (not any-scrut-is-companion-reason?))
                       ;; Non-enum scrutinees are open at compile time
-                      ;; (primitives; id-typed values). Spec §3.7 requires
-                      ;; a `<: *:` wildcard tail. Companion-reason
-                      ;; exhaustiveness against a target's
-                      ;; `:companion-index :reason-types` ∪ Uncaught is
-                      ;; Track A/2.c and closes the sum for id-typed
-                      ;; scrutinees inside `<msg>_failed(reason:)` bodies.
+                      ;; (primitives; id-typed values that aren't a
+                      ;; recognized companion reason). Spec §3.7 requires
+                      ;; a `<: *:` wildcard tail.
                       (when-not (some #(= :wildcard (:kind %))
                                       (mapcat arm-patterns (:arms node)))
                         (fail-nyi!
                          (str "F69 L4c4: non-exhaustive `<:` dispatch on "
                               (if (= :any scrut-ty)
-                                (str "id-typed scrutinee — add a `<: *:` "
-                                     "wildcard tail, or wait for Track A/2.c "
-                                     "companion-reason exhaustiveness closure.")
+                                (str "id-typed scrutinee (not a recognized "
+                                     "companion reason) — add a `<: *:` "
+                                     "wildcard tail.")
                                 (str "primitive `" (pr-str scrut-ty) "` — "
                                      "primitive scrutinees require a `<: *:` "
                                      "wildcard tail (spec §3.7 exhaustiveness "
@@ -6406,12 +6457,37 @@
                                                            (:enum-env ctx)
                                                            p)])
                                      payload))
+        ;; Track A/2.c (2026-08-26) — detect companion-reason subscription
+        ;; so id-typed `<:` dispatch on the reason payload can close its
+        ;; sum against the target's `:companion-index :reason-types` ∪
+        ;; Uncaught (closed exhaustiveness, no wildcard required). Detection
+        ;; mirrors `collect-companion-demand`: msg source is `<field>.
+        ;; <msg>_failed`, where <field> is on the enclosing atom and
+        ;; <msg>_failed is in the target's companion-index.
+        src           (:source msg)
+        companion-info
+        (when (and (map? src)
+                   (= :dot (:node src))
+                   (= :ident (get-in src [:target :node])))
+          (let [field-name  (get-in src [:target :name])
+                info        (get-in ctx [:atom-env atom-name])
+                field-info  (get-in info [:field-index field-name])
+                target-atom (some-> field-info :type base-type-name)
+                companion-nm (:field src)
+                target-info (get-in ctx [:atom-env target-atom])
+                comp-entry  (get-in target-info [:companion-index companion-nm])]
+            (when (and target-info comp-entry (= 1 (count payload)))
+              {:target-atom target-atom
+               :companion   companion-nm
+               :payload-nm  (:name (first payload))
+               :reason-types (:reason-types comp-entry)})))
         ;; `self` + payload names in the branch body — infer-type needs
         ;; them for guard/then/do expressions that reference payload.
-        ctx'         (assoc ctx :locals
-                            (merge (:locals ctx)
-                                   payload-locals
-                                   {"self" {:atom atom-name}}))
+        ctx'         (cond-> (assoc ctx :locals
+                                    (merge (:locals ctx)
+                                           payload-locals
+                                           {"self" {:atom atom-name}}))
+                       companion-info (assoc :companion-receive companion-info))
         body-clauses (:body t)
         then-clauses (filter #(= :then-clause (:node %)) body-clauses)
         do-clauses   (filter #(= :do-clause   (:node %)) body-clauses)

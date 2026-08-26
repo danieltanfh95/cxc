@@ -2509,12 +2509,25 @@ def main:
          #"F69 L4b: case pattern `<: NotARecord:` on id-typed scrutinee requires a record name"
          (lower-src "def Player:\n    hp: Int! = 100\n\n    alive <: take_damage(amount: Int) -> alive\n        |: amount > 0\n        then: hp => hp - amount\n\ndef Logger:\n    player: Player = Player()\n    n: Int! = 0\n\n    * <: player.take_damage_failed(reason:) -> self\n        then:\n            reason:\n                <: NotARecord: print(1)\n                <: *: print(2)\n\ndef main:\n    l: Logger = Logger()\n    -> running\n")))))
 
-(deftest track-a2b-any-scrutinee-without-wildcard-rejected-diagnostic-hints-at-a2c
-  (testing "Track A/2.b (2026-08-26) — an id-typed scrutinee dispatch with no wildcard tail fails with the F69 L4c4 diagnostic that specifically hints at Track A/2.c's companion-reason exhaustiveness closure. Until A/2.c wires the target's `:companion-index :reason-types` ∪ Uncaught closure, id-typed dispatches follow the primitive-scrutinee open-type rule (wildcard required)."
+(deftest track-a2c-companion-reason-bare-invariant-requires-wildcard-until-a6
+  (testing "Track A/2.c (2026-08-26) — when the target atom has a bare `|:` clause (invariant violation, no `as T`), the reason universe includes an Uncaught arm whose prelude record lands in A/6. Until then, a receiver-side dispatch on the reason MUST include a `<: *:` wildcard tail or fails-nyi with a diagnostic naming the specific companion (`Player.take_damage_failed`) and pointing at A/6. This is the tighter successor of A/2.b's generic \"open-type wildcard required\" diagnostic — the companion-reason context makes it actionable."
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
-         #"F69 L4c4: non-exhaustive `<:` dispatch on id-typed scrutinee"
+         #"F69 L4c1: non-exhaustive `<:` dispatch on companion reason for `Player\.take_damage_failed`.*Uncaught"
          (lower-src "def MyError:\n    msg: String\n\ndef Player:\n    hp: Int! = 100\n\n    alive <: take_damage(amount: Int) -> alive\n        |: amount > 0\n        then: hp => hp - amount\n\ndef Logger:\n    player: Player = Player()\n    n: Int! = 0\n\n    * <: player.take_damage_failed(reason:) -> self\n        then:\n            reason:\n                <: MyError: print(1)\n\ndef main:\n    l: Logger = Logger()\n    -> running\n")))))
+
+(deftest track-a2c-companion-reason-closed-sum-typed-only-lowers-without-wildcard
+  (testing "Track A/2.c (2026-08-26) — when every `|:` clause on the target atom is typed (`as T(...)`) and the receiver's arm set covers every reason record, the dispatch is exhaustive WITHOUT a wildcard tail. This closes the sum against `:companion-index :reason-types` and makes companion-reason dispatch a closed-sum operation rather than open-with-wildcard."
+    (let [lowered (lower-src "def MyError:\n    msg: String\n\ndef Player:\n    hp: Int! = 100\n\n    alive <: take_damage(amount: Int) -> alive\n        |: amount > 0 as MyError(msg: \"neg\")\n        then: hp => hp - amount\n\ndef Logger:\n    player: Player = Player()\n    n: Int! = 0\n\n    * <: player.take_damage_failed(reason:) -> self\n        then:\n            reason:\n                <: MyError: print(1)\n\ndef main:\n    l: Logger = Logger()\n    -> running\n")]
+      (is (some? lowered)
+          "closed sum: typed-only universe + arms covering every reason → exhaustive without wildcard"))))
+
+(deftest track-a2c-companion-reason-missing-arm-listed
+  (testing "Track A/2.c (2026-08-26) — when the target's `|: as T` clauses declare multiple reason record types and the receiver's arm set misses one, the diagnostic names the specific companion + the missing record(s). Points users at the exact arm to add rather than falling back to the generic \"add a wildcard\" hint."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"F69 L4c1.*missing arm.*\"OtherErr\""
+         (lower-src "def MyError:\n    msg: String\n\ndef OtherErr:\n    code: Int\n\ndef Player:\n    hp: Int! = 100\n\n    alive <: take_damage(amount: Int) -> alive\n        |: amount > 0 as MyError(msg: \"neg\")\n        |: amount < 100 as OtherErr(code: 1)\n        then: hp => hp - amount\n\ndef Logger:\n    player: Player = Player()\n    n: Int! = 0\n\n    * <: player.take_damage_failed(reason:) -> self\n        then:\n            reason:\n                <: MyError: print(1)\n\ndef main:\n    l: Logger = Logger()\n    -> running\n")))))
 
 (deftest l9-or-continuation-parses-and-lowers-to-sync-send-with-recovery
   (testing "L9 (2026-08-26) — a sync `|>` send followed by an `or:` block parses into an `:emit` node carrying `:or-body`, which lowers to `:sync-send-with-recovery` and emits a Cocoa `@try/@catch` around the send-call. MVP handles bare `or:` with statement bodies; binding (`or e:`) and pattern-matched (`or T:`) variants are a follow-on."
