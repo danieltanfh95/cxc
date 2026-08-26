@@ -8640,6 +8640,53 @@
         pred-tk       (infer-type pred ctx)
         cond-lo       (lower-expr pred ctx)
         error-call    (proposition-error-call proposition)
+        ;; Track A/7 (2026-08-26) — a typed proposition
+        ;; (`|: cond as T(...)`) must reference a def'd RECORD
+        ;; (not an enum, atom, or undefined name). Emit a targeted
+        ;; diagnostic here before lower-expr's generic "unknown
+        ;; call" message fires — the `|:` context lets us point
+        ;; users at the correct migration (add `def T:` or fix the
+        ;; type name).
+        _             (when-let [et (:as-error-type proposition)]
+                        (when (= :type-ref (:node et))
+                          (let [ty-nm (:name et)
+                                is-record? (contains? (:record-env ctx) ty-nm)
+                                is-enum?   (contains? (:enum-env ctx) ty-nm)
+                                is-atom?   (contains? (:atom-env ctx) ty-nm)]
+                            (cond
+                              is-record? nil
+
+                              is-enum?
+                              (fail-compile!
+                               :cxc-a7-reason-not-record
+                               (str "Track A/7: `|: ... as " ty-nm "(...)` on "
+                                    "atom `" atom-name "` — reason must be a "
+                                    "record, but `" ty-nm "` is an enum. Reason "
+                                    "records carry per-instance failure data "
+                                    "(box + throw semantics); enums don't fit "
+                                    "that shape. Declare a `def " ty-nm ":` "
+                                    "record with the fields you want to carry.")
+                               proposition)
+
+                              is-atom?
+                              (fail-compile!
+                               :cxc-a7-reason-not-record
+                               (str "Track A/7: `|: ... as " ty-nm "(...)` on "
+                                    "atom `" atom-name "` — reason must be a "
+                                    "record, but `" ty-nm "` is an atom. Atoms "
+                                    "are stateful actors; reasons are value-"
+                                    "typed records boxed for throw semantics.")
+                               proposition)
+
+                              :else
+                              (fail-compile!
+                               :cxc-a7-reason-not-defined
+                               (str "Track A/7: `|: ... as " ty-nm "(...)` on "
+                                    "atom `" atom-name "` — reason record `"
+                                    ty-nm "` is not defined. Declare it via "
+                                    "`def " ty-nm ":` at top level (spec §3.4) "
+                                    "with fields matching the constructor call.")
+                               proposition)))))
         failure-value (some-> error-call (lower-expr ctx))
         reason-box
         (when-let [et (:as-error-type proposition)]

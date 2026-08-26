@@ -2439,6 +2439,33 @@ def main:
       (is (= ["_Cxc_R__Cxc_Uncaught"] box-names)
           "no user records → only the Uncaught wrapper is synthesized"))))
 
+(deftest track-a7-reason-record-not-defined-rejected
+  (testing "Track A/7 (2026-08-26) — `|: ... as UndefinedName(...)` fails at compile time with a targeted diagnostic naming the atom and pointing at `def <Name>:` at top level. Fires before lower-expr's generic \"unknown call\" diagnostic so users get the reason-specific migration hint. Applies to class-level invariants (post-store + pre-store F49); arm-head `|:` typed reasons are a separate pre-existing gap (currently silent-dropped)."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"Track A/7: `\|: \.\.\. as NotDefined\(\.\.\.\)` on atom `A`.*reason record `NotDefined` is not defined"
+         (lower-src "def A:\n    hp: Int = 100\n    |: hp > 0 as NotDefined(x: 1)\n    -> ready\n\ndef main:\n    a: A = A()\n    -> running\n")))))
+
+(deftest track-a7-reason-cannot-be-enum
+  (testing "Track A/7 (2026-08-26) — `|: ... as MyEnum(...)` where MyEnum is an enum fails with a targeted diagnostic. Reasons must be records: enums don't fit box+throw semantics (per-case payload storage differs; wrapper class assumes struct-shaped ivar)."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"Track A/7:.*reason must be a record, but `Color` is an enum"
+         (lower-src "def Color:\n    case red\n    case blue\n\ndef A:\n    hp: Int = 100\n    |: hp > 0 as Color(dummy: 1)\n    -> ready\n\ndef main:\n    a: A = A()\n    -> running\n")))))
+
+(deftest track-a7-reason-cannot-be-atom
+  (testing "Track A/7 (2026-08-26) — `|: ... as OtherAtom(...)` where OtherAtom is an atom fails with a targeted diagnostic. Atoms are stateful actors; reason records are value-typed data carriers boxed for throw semantics — mixing the two categories confuses the runtime shape."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"Track A/7:.*reason must be a record, but `B` is an atom"
+         (lower-src "def B:\n    -> ready\n\ndef A:\n    hp: Int = 100\n    |: hp > 0 as B(dummy: 1)\n    -> ready\n\ndef main:\n    a: A = A()\n    -> running\n")))))
+
+(deftest track-a7-reason-record-valid-lowers-cleanly
+  (testing "Track A/7 (2026-08-26) — a valid `|: ... as <Record>(<fields>)` clause referencing a def'd record lowers cleanly. Positive-path pin so the A/7 validator doesn't over-reject."
+    (let [lowered (lower-src "def OutOfRange:\n    value: Int\n\ndef A:\n    hp: Int = 100\n    |: hp > 0 as OutOfRange(value: hp)\n    -> ready\n\ndef main:\n    a: A = A()\n    -> running\n")]
+      (is (some? lowered)
+          "valid reason record lowers under A/7 validation"))))
+
 (deftest track-a1-bareword-reason-payload-parses-and-lowers
   (testing "Track A/1 (2026-08-26) — bareword `reason:` at receive-payload position (no declared type) is accepted by the parser and lowers cleanly. The existing `Any`-fallback in `augment-atom-env-with-companions` produces an id-typed reason at the wire, so the subscriber body can dispatch on it via a generic `<:` case-pattern block. Retirement of the typed `reason: T` slot is Track A/3."
     (let [lowered (lower-src "def Player:
