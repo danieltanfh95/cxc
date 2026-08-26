@@ -5770,13 +5770,27 @@
                         (check-dispatch-exhaustiveness! enum-name enum-cases
                                                         (:arms node) node)))
           _         (when (and (not enum?) any-scrut-is-companion-reason?)
+                      ;; Track A/2.c (2026-08-26) — the closed sum is the
+                      ;; set of typed reason record types declared on the
+                      ;; target atom's `|: as T` clauses. Subscribers
+                      ;; must cover every declared type OR add a wildcard.
+                      ;;
+                      ;; Track A/6 (2026-08-26) — Uncaught is a possible
+                      ;; runtime reason from any `then:`/`do:` body that
+                      ;; can throw (which is effectively any method call),
+                      ;; but the L12c catch synthesizes it opportunistically
+                      ;; and the receiver's `<:` dispatch is silent-by-
+                      ;; default: subscribers who don't add an
+                      ;; `<: Uncaught(msg: ...):` arm just let those
+                      ;; catches drop through the arm chain. This keeps
+                      ;; companion subscriptions ergonomic when the atom
+                      ;; only cares about declared reasons; Uncaught
+                      ;; handling is opt-in (or wildcard-covered).
                       (let [reason-tys   (:reason-types companion)
                             typed-set    (into #{}
                                                (comp (filter #(= :typed (:kind %)))
                                                      (map :type-name))
                                                reason-tys)
-                            has-invariant? (some #(= :invariant-violation (:kind %))
-                                                 reason-tys)
                             arm-pats     (mapcat arm-patterns (:arms node))
                             has-wildcard? (some #(= :wildcard (:kind %)) arm-pats)
                             covered      (into #{}
@@ -5796,17 +5810,6 @@
                                 ". Add an arm per missing record, or a `<: *:` "
                                 "wildcard tail. Reason universe declared by "
                                 "`|: as <Record>` clauses on the target atom.")
-                           node)
-
-                          has-invariant?
-                          (fail-nyi!
-                           (str "F69 L4c1: non-exhaustive `<:` dispatch on "
-                                "companion reason for `" (:target-atom companion)
-                                "." (:companion companion) "` — target atom has "
-                                "bare `|:` clause(s) (invariant violations) whose "
-                                "reason maps to Uncaught (Track A/6). Add a `<: *:` "
-                                "wildcard tail until A/6 lands the Uncaught "
-                                "prelude record.")
                            node))))
           _         (when (and (not enum?) (not any-scrut-is-companion-reason?))
                       ;; Non-enum scrutinees are open at compile time
@@ -9991,7 +9994,28 @@
         ;; user record. Compiled unconditionally today; later tree-
         ;; shaking can restrict to records referenced by `|: as T`
         ;; (companion reason-types) or by receiver-side `<:` arms.
-        reason-boxes (mapv synth-reason-box records)
+        ;;
+        ;; Track A/6 (2026-08-26) — always synthesize the Uncaught
+        ;; box + struct even when the top-nodes don't carry the
+        ;; prelude record definition (e.g. bare test-driver calls
+        ;; that skip prelude prepending). The L12c end-catch-wrap
+        ;; references `_Cxc_R__Cxc_Uncaught` unconditionally on
+        ;; non-typed catches; guaranteeing the class exists here
+        ;; keeps that reference well-defined without coupling lower
+        ;; to the caller's prelude-prepending discipline.
+        has-uncaught? (some #(= "_Cxc_Uncaught" (:name %)) records)
+        uncaught-struct-node
+        (when-not has-uncaught?
+          {:node   :c-struct
+           :name   "_Cxc_Uncaught"
+           :fields [{:name "msg" :c-type "NSString *"}]})
+        structs    (cond-> structs
+                     uncaught-struct-node (conj uncaught-struct-node))
+        reason-boxes (cond-> (mapv synth-reason-box records)
+                       (not has-uncaught?)
+                       (conj {:node          :reason-box
+                              :name          "_Cxc_R__Cxc_Uncaught"
+                              :struct-c-type "_Cxc_Uncaught"}))
         functions  (-> (record-method-functions ctx)
                        ;; F67 L4a — record observables (Proposal G
                        ;; class-body collapse: pure-data readers land

@@ -746,6 +746,19 @@
            "NSStringFromSelector(_cmd), _phase);\n"
            "    {\n"
            "        id __cxc_reason = e.userInfo[@\"reason\"];\n"
+           ;; Track A/6 (2026-08-26) — non-typed catches (bare `|:`
+           ;; today still aborts, but Cocoa exceptions bubbling up
+           ;; from then:/do: bodies arrive with userInfo[@"reason"]
+           ;; = nil) synthesize an Uncaught reason box from
+           ;; `e.reason ?: e.name` so subscribers see a uniform,
+           ;; always-present object instead of nil. Companion-reason
+           ;; dispatch on `<: Uncaught(msg: let m):` gets the human-
+           ;; readable failure text.
+           "        if (__cxc_reason == nil) {\n"
+           "            _Cxc_R__Cxc_Uncaught *__cxc_u = [[_Cxc_R__Cxc_Uncaught alloc] init];\n"
+           "            __cxc_u->value = (_Cxc_Uncaught){.msg = (e.reason ?: (e.name ?: @\"unknown\"))};\n"
+           "            __cxc_reason = __cxc_u;\n"
+           "        }\n"
            "        NSString *__cxc_sel = NSStringFromSelector(_cmd);\n"
            "        NSRange __cxc_wr = [__cxc_sel rangeOfString:@\"With\"];\n"
            "        NSString *__cxc_base = (__cxc_wr.location == NSNotFound)\n"

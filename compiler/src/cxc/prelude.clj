@@ -42,6 +42,7 @@
    "Position"           "_Cxc_Position"
    "Console"            "_Cxc_Console"
    "SystemPanic"        "_Cxc_SystemPanic"
+   "Uncaught"           "_Cxc_Uncaught"
    ;; Layer 5c Step 8: Stream is the user-visible type for
    ;; method-returned reactive streams. Maps to CxcStream, the
    ;; runtime helper class defined inline in emit's helpers block
@@ -116,7 +117,7 @@
   [{:name :time    :kind :shared :names ["Duration" "Instant"]}
    {:name :geom    :kind :shared :names ["Position"]}
    {:name :input   :kind :shared :names ["Key" "TestKeyboardInput"]}
-   {:name :system  :kind :shared :names ["SystemPanic"]}
+   {:name :system  :kind :shared :names ["SystemPanic" "Uncaught"]}
    {:name :random  :kind :target :names ["Random"]}
    {:name :clock   :kind :target :names ["Clock"]}
    {:name :io      :kind :target :names ["Console"]}])

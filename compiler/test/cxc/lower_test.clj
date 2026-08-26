@@ -2432,11 +2432,12 @@ def main:
              (.indexOf emitted "@interface _Cxc_R_MyError"))
           "wrapper @interface follows the record's struct typedef so the ivar's type is complete"))))
 
-(deftest track-a2a-reason-box-none-when-no-user-records
-  (testing "Track A/2.a (2026-08-26) — a program with zero user records emits zero reason-boxes; the emit slot collapses cleanly. Pinned so a future tree-shaking pass doesn't accidentally emit stubs for prelude records or non-record top-nodes."
-    (let [lowered (lower-src "def main:\n    -> running\n        then: print(1)\n")]
-      (is (empty? (:reason-boxes lowered))
-          "no records → no reason-boxes"))))
+(deftest track-a2a-reason-box-only-uncaught-when-no-user-records
+  (testing "Track A/2.a (2026-08-26) — a program with zero user records still emits ONE reason-box: the Track A/6 Uncaught wrapper (`_Cxc_R__Cxc_Uncaught`). It's compiler-guaranteed regardless of whether prelude was prepended, because the L12c end-catch-wrap references it unconditionally on non-typed catches. User-record wrappers are additive on top."
+    (let [lowered (lower-src "def main:\n    -> running\n        then: print(1)\n")
+          box-names (mapv :name (:reason-boxes lowered))]
+      (is (= ["_Cxc_R__Cxc_Uncaught"] box-names)
+          "no user records → only the Uncaught wrapper is synthesized"))))
 
 (deftest track-a1-bareword-reason-payload-parses-and-lowers
   (testing "Track A/1 (2026-08-26) — bareword `reason:` at receive-payload position (no declared type) is accepted by the parser and lowers cleanly. The existing `Any`-fallback in `augment-atom-env-with-companions` produces an id-typed reason at the wire, so the subscriber body can dispatch on it via a generic `<:` case-pattern block. Retirement of the typed `reason: T` slot is Track A/3."
@@ -2519,12 +2520,27 @@ def main:
          #"F69 L4b: case pattern `<: NotARecord:` on id-typed scrutinee requires a record name"
          (lower-src "def Player:\n    hp: Int! = 100\n\n    alive <: take_damage(amount: Int) -> alive\n        |: amount > 0\n        then: hp => hp - amount\n\ndef Logger:\n    player: Player = Player()\n    n: Int! = 0\n\n    * <: player.take_damage_failed(reason:) -> self\n        then:\n            reason:\n                <: NotARecord: print(1)\n                <: *: print(2)\n\ndef main:\n    l: Logger = Logger()\n    -> running\n")))))
 
-(deftest track-a2c-companion-reason-bare-invariant-requires-wildcard-until-a6
-  (testing "Track A/2.c (2026-08-26) — when the target atom has a bare `|:` clause (invariant violation, no `as T`), the reason universe includes an Uncaught arm whose prelude record lands in A/6. Until then, a receiver-side dispatch on the reason MUST include a `<: *:` wildcard tail or fails-nyi with a diagnostic naming the specific companion (`Player.take_damage_failed`) and pointing at A/6. This is the tighter successor of A/2.b's generic \"open-type wildcard required\" diagnostic — the companion-reason context makes it actionable."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"F69 L4c1: non-exhaustive `<:` dispatch on companion reason for `Player\.take_damage_failed`.*Uncaught"
-         (lower-src "def MyError:\n    msg: String\n\ndef Player:\n    hp: Int! = 100\n\n    alive <: take_damage(amount: Int) -> alive\n        |: amount > 0\n        then: hp => hp - amount\n\ndef Logger:\n    player: Player = Player()\n    n: Int! = 0\n\n    * <: player.take_damage_failed(reason:) -> self\n        then:\n            reason:\n                <: MyError: print(1)\n\ndef main:\n    l: Logger = Logger()\n    -> running\n")))))
+(deftest track-a6-bare-invariant-does-not-force-arm-on-subscriber
+  (testing "Track A/6 (2026-08-26) — bare `|:` clauses (invariant violations, no `as T`) still hard-abort at runtime; they never fire the companion. Cocoa exceptions from then:/do: bodies get boxed as `Uncaught` on the L12c catch side and fan through, but the subscriber can silently drop them (id-typed dispatch is nil-safe / arm-chain no-ops for unhandled kinds). So a target atom with a bare `|:` doesn't force the subscriber to add an Uncaught arm — Uncaught handling is opt-in. This test pins that under A/6 the subscriber pattern from the pre-A/6 diagnostic case now lowers cleanly."
+    (let [lowered (lower-src "def MyError:\n    msg: String\n\ndef Player:\n    hp: Int! = 100\n\n    alive <: take_damage(amount: Int) -> alive\n        |: amount > 0\n        then: hp => hp - amount\n\ndef Logger:\n    player: Player = Player()\n    n: Int! = 0\n\n    * <: player.take_damage_failed(reason:) -> self\n        then:\n            reason:\n                <: MyError: print(1)\n\ndef main:\n    l: Logger = Logger()\n    -> running\n")]
+      (is (some? lowered)
+          "bare-invariant-only target + no Uncaught arm on subscriber → lowers cleanly under A/6"))))
+
+(deftest track-a6-uncaught-prelude-record-and-wrapper-class-synthesized
+  (testing "Track A/6 (2026-08-26) — the prelude ships an `Uncaught(msg: String)` record via `resources/prelude/shared/system.cxc`. It renames to `_Cxc_Uncaught` internally, and the reason-box synthesis (Track A/2.a) picks it up automatically as `_Cxc_R__Cxc_Uncaught`. Emitted whenever the full atom pipeline runs (any program with a def-atom); F30 minimal-main mode short-circuits before reason-boxes and doesn't include it."
+    (let [emitted (emit/emit (lower-src "def A:\n    -> ready\n\ndef main:\n    a: A = A()\n    -> running\n"))]
+      (is (str/includes? emitted "@interface _Cxc_R__Cxc_Uncaught : NSObject")
+          "Uncaught's reason-box wrapper class emitted under the full atom pipeline")
+      (is (str/includes? emitted "@public _Cxc_Uncaught value")
+          "wrapper wraps the mangled Uncaught struct as its @public ivar"))))
+
+(deftest track-a6-non-typed-catch-synthesizes-uncaught-reason
+  (testing "Track A/6 (2026-08-26) — the L12c end-catch-wrap synthesizes an Uncaught reason box when `e.userInfo[@\"reason\"]` is nil (Cocoa exceptions bubbling up from then:/do: bodies, or any @throw NSException without a reason box). The synthesized Uncaught carries `e.reason ?: e.name` as its msg, so subscribers can `<: Uncaught(msg: let m):` and print a human-readable failure text."
+    (let [emitted (emit/emit (lower-src "def Player:\n    hp: Int! = 100\n\n    alive <: take_damage(amount: Int) -> alive\n        |: amount > 0\n        then: hp => hp - amount\n\ndef Logger:\n    player: Player = Player()\n    n: Int! = 0\n\n    * <: player.take_damage_failed(reason:) -> self\n        then: n => n + 1\n\ndef main:\n    l: Logger = Logger()\n    -> running\n"))]
+      (is (str/includes? emitted "_Cxc_R__Cxc_Uncaught *__cxc_u = [[_Cxc_R__Cxc_Uncaught alloc] init]")
+          "catch site alloc's an Uncaught box when reason is nil")
+      (is (str/includes? emitted "(_Cxc_Uncaught){.msg = (e.reason ?: (e.name ?: @\"unknown\"))}")
+          "synthesized Uncaught carries e.reason ?: e.name as msg"))))
 
 (deftest track-a2c-companion-reason-closed-sum-typed-only-lowers-without-wildcard
   (testing "Track A/2.c (2026-08-26) — when every `|:` clause on the target atom is typed (`as T(...)`) and the receiver's arm set covers every reason record, the dispatch is exhaustive WITHOUT a wildcard tail. This closes the sum against `:companion-index :reason-types` and makes companion-reason dispatch a closed-sum operation rather than open-with-wildcard."
