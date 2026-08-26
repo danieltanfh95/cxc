@@ -1457,6 +1457,46 @@
            dispatch-suffix
            "\n}"))))
 
+;; ---------------------------------------------------------------------------
+;; Track C/3 (2026-08-26) — runtime audit against ratified transport
+;; defaults (spec §1.11 "Transport defaults (endpoint-decides)").
+;;
+;; Findings — the runtime primitives below implement the three defaults
+;; ratified by Track C/1 correctly. Each finding is anchored at the
+;; emitted-C line that provides evidence:
+;;
+;; 1. UNBOUNDED MAILBOX — CONFIRMED.
+;;    `dispatch_queue_create(..., DISPATCH_QUEUE_SERIAL)` (:queue-init
+;;    above) has no capacity limit; `dispatch_async` on the queue
+;;    (`cxc_send_async` below) never blocks / drops. Every atom's
+;;    mailbox is genuinely unbounded today.
+;;
+;; 2. SENDER SELF-THROTTLES — CONFIRMED.
+;;    No receiver-driven backpressure primitive exists. Sender's only
+;;    levers are (a) glyph choice — `:>` fire-and-forget vs `|>`
+;;    sync-until-processing (`cxc_wait_for_processing`), and (b)
+;;    upstream transformer atoms (throttle / debounce) in the source
+;;    expression. The receiver has no way to signal "slow down" to the
+;;    sender; matches spec intent.
+;;
+;; 3. PER-MAILBOX FIFO — CONFIRMED.
+;;    `DISPATCH_QUEUE_SERIAL` guarantees FIFO dispatch by construction.
+;;    Cross-atom ordering: under single-queue mode (default today) every
+;;    atom's queue targets main, so blocks incidentally serialize to a
+;;    single global order — stricter than spec, but not user-visible as
+;;    a guarantee (F32 concurrent flip removes it). Under concurrent
+;;    mode blocks from different atoms run on independent workers with
+;;    no cross-atom ordering. Both modes satisfy the spec's "per-atom
+;;    FIFO, no cross-atom" contract.
+;;
+;; C/2 opt-in (`def <Atom>(queue: bounded(N))`) is parsed and carried
+;; on the def-atom node's `:queue-config` slot but NOT yet enforced at
+;; runtime — `cxc_send_async` still calls `dispatch_async` unconditionally.
+;; Enforcement (bounded-mailbox wrapper: per-queue pending counter +
+;; discipline on overflow: block / drop / signal) is the deferred
+;; follow-on landing.
+;; ---------------------------------------------------------------------------
+
 (def ^:private cxc-runtime-helpers
   ;; Header-only runtime (design §22). The CXCAtom protocol declares
   ;; the wire operations every atom class satisfies implicitly:
