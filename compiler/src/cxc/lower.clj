@@ -2178,6 +2178,28 @@
                        (contains? (:companion-index target-info) msg-name))
                 (let [payload   (get-in t [:receive :msg :payload])
                       reason-p  (first payload)
+                      ;; Track A/3 (2026-08-26) — the typed `reason: T`
+                      ;; subscriber form is retired. Companion reason
+                      ;; universe is now decided at the target atom
+                      ;; (from `|: as T` clauses; see A/2.c) rather
+                      ;; than per-subscriber. Bareword `reason:` is
+                      ;; the canonical form; typed form fails-nyi
+                      ;; with a migration pointer.
+                      _ (when (and reason-p
+                                   (= "reason" (:name reason-p))
+                                   (not (:bareword? reason-p)))
+                          (fail-nyi!
+                           (str "Track A/3 (2026-08-26): typed subscriber "
+                                "reason payload `reason: " (or (base-type-name
+                                                                (:type reason-p))
+                                                               "T")
+                                "` on `" subscriber-name "` subscribing to `"
+                                target-atom "." msg-name "` is retired. Rewrite "
+                                "as bareword `reason:` and dispatch on the reason "
+                                "via `<: reason: <: <Record>: ...` inside the "
+                                "receive-arm body — the target atom's `|: as T` "
+                                "clauses declare the reason universe (spec §12).")
+                           t))
                       reason-ty (when (and reason-p (= "reason" (:name reason-p)))
                                   (base-type-name (:type reason-p)))]
                   (update-in demand2 [target-atom msg-name] (fnil conj #{})

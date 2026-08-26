@@ -2304,7 +2304,7 @@ def Logger:
     player: Player = Player()
     n: Int! = 0
 
-    * <: player.take_damage_failed(reason: Int) -> self
+    * <: player.take_damage_failed(reason:) -> self
         then: n => n + 1
 
 def main:
@@ -2320,11 +2320,11 @@ def main:
       (is (some #(re-find #"cxc_addSubscriberFor_take_damage_failed" (or % "")) selectors)
           "Player gained a per-companion add-subscriber method"))))
 
-(deftest l12b-companion-inconsistent-reason-types-rejected
-  (testing "L12b — when two subscribers of the same companion declare different reason types, augmentation fails-nyi with a clean diagnostic. Union reason types across subscribers land with L12c."
+(deftest track-a3-typed-subscriber-reason-form-rejected
+  (testing "Track A/3 (2026-08-26) — the typed subscriber form `reason: T` is retired. L12b's per-subscriber reason-type declaration no longer decides the reason universe; the target atom's `|: as T` clauses do (see A/2.c). Reject the typed form with a migration diagnostic pointing at bareword `reason:` + a `<:` case-pattern body. Replaces the earlier L12b `inconsistent reason types` check — under A/3 that check can never fire (all subscribers are bareword)."
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
-         #"inconsistent reason types"
+         #"Track A/3.*typed subscriber reason payload `reason: Int`.*Rewrite as bareword"
          (lower-src "def Player:
     hp: Int! = 100
 
@@ -2332,23 +2332,15 @@ def main:
         |: amount > 0
         then: hp => hp - amount
 
-def LoggerA:
+def Logger:
     player: Player = Player()
     n: Int! = 0
 
     * <: player.take_damage_failed(reason: Int) -> self
         then: n => n + 1
 
-def LoggerB:
-    player: Player = Player()
-    s: Int! = 0
-
-    * <: player.take_damage_failed(reason: Bool) -> self
-        then: s => s + 1
-
 def main:
-    la: LoggerA = LoggerA()
-    lb: LoggerB = LoggerB()
+    l: Logger = Logger()
     -> running
 ")))))
 
@@ -2365,7 +2357,7 @@ def Logger:
     player: Player = Player()
     n: Int! = 0
 
-    * <: player.take_damage_failed(reason: Int) -> self
+    * <: player.take_damage_failed(reason:) -> self
         then: n => n + 1
 
 def main:

@@ -835,18 +835,21 @@
       (loop [args [] p p]
         (let [[name p2] (expect tokens p :ident)
               [_ p3]    (expect tokens p2 :punct ":")
-              [ty p4]   (if (or (at? tokens p3 :punct ",")
-                                (at? tokens p3 :punct ")"))
+              bareword? (or (at? tokens p3 :punct ",")
+                            (at? tokens p3 :punct ")"))
+              [ty p4]   (if bareword?
                           ;; Track A/1 bareword payload — synthesize
                           ;; `Any` so downstream sees a normal type-ref.
                           [{:node :type-ref :name "Any"} p3]
-                          (parse-type tokens p3))]
+                          (parse-type tokens p3))
+              entry     (cond-> {:name name :type ty}
+                          bareword? (assoc :bareword? true))]
           (cond
             (at? tokens p4 :punct ",")
-            (recur (conj args {:name name :type ty}) (inc p4))
+            (recur (conj args entry) (inc p4))
 
             (at? tokens p4 :punct ")")
-            [(conj args {:name name :type ty}) (inc p4)]
+            [(conj args entry) (inc p4)]
 
             :else (fail! tokens p4 "expected `,` or `)` in message shape")))))))
 
@@ -1041,9 +1044,13 @@
                                 a `{:node :type-ref :name \"Any\"}` type
                                 so downstream consumers see a normal
                                 typed payload; the `Any` string resolves
-                                to `id` at the wire, matching the
-                                `Any`-fallback in `augment-atom-env-
-                                with-companions`."
+                                to `id` at the wire.
+
+   Track A/3 (2026-08-26) — bareword-form params carry `:bareword? true`
+   so downstream (companion-demand collection) can distinguish them
+   from a user who explicitly declared `reason: Any` and reject the
+   typed `reason: T` form on `<msg>_failed` subscribers with a clean
+   migration diagnostic."
   [tokens pos]
   (cond
     ;; Bareword: `name:` followed by `,`/`)` — no type token.
@@ -1052,10 +1059,11 @@
          (or (at? tokens (+ pos 2) :punct ",")
              (at? tokens (+ pos 2) :punct ")")))
     (let [fname (t-value (peek-tok tokens pos))]
-      [{:node :field
-        :name fname
-        :type {:node :type-ref :name "Any"}
-        :default nil}
+      [{:node      :field
+        :name      fname
+        :type      {:node :type-ref :name "Any"}
+        :bareword? true
+        :default   nil}
        (+ pos 2)])
 
     :else (parse-field tokens pos)))
