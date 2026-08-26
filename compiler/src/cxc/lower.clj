@@ -7222,6 +7222,48 @@
      :name   (:name record-node)
      :fields (mapv (fn [f] {:name (:name f) :c-type (:c-type f)}) (:fields rec))}))
 
+;; ---------------------------------------------------------------------------
+;; Track A/2.a (2026-08-26) — reason-box wrapper class per user record.
+;;
+;; Records lower as C structs (value semantics; unchanged). Companion
+;; reason dispatch (`<msg>_failed(reason:) …  <: reason: <: MyError(…): …`)
+;; needs a runtime-identity carrier so `isKindOfClass:` can discriminate.
+;; This lands the minimum machinery: one `_Cxc_R_<Record>` @interface +
+;; @implementation per user-declared record, holding the struct as a
+;; public ivar. Later tracks:
+;;
+;;   A/4 boxes at the `|:`-failure site + throws NSException carrying
+;;       the wrapper in `userInfo[@"reason"]`.
+;;   A/5 flips the L12c emit to pass the wrapper (not nil) through
+;;       `cxc_emit_<msg>_failedWithreason:`.
+;;   A/2.b lifts F69 L4b to accept :any scrutinees and emits
+;;       `isKindOfClass:` checks against these wrappers.
+;;
+;; The wrapper is compile-time synthesis only; users never write it
+;; and can't reference `_Cxc_R_*` names directly (leading underscore
+;; is reserved). Naming uses the post-rename record name so prelude
+;; records get the mangled prefix uniformly (`_Cxc_R__Cxc_Position`).
+;; Later tree-shaking (A/7-adjacent) can restrict synthesis to records
+;; that actually appear in a `|: as T` clause; for A/2.a we emit
+;; unconditionally so the machinery is available whenever a receiver
+;; wants to dispatch against a record type.
+;; ---------------------------------------------------------------------------
+
+(defn- reason-box-name
+  "Wrapper class name for a record. Prefix `_Cxc_R_` is compile-time
+   reserved — leading underscore is off-limits to user identifiers."
+  [record-name]
+  (str "_Cxc_R_" record-name))
+
+(defn- synth-reason-box
+  "Build a `:reason-box` node describing the wrapper class for one
+   record. Emit consumes it as an `@interface X : NSObject { @public
+   T value; } @end / @implementation X @end` pair."
+  [record-node]
+  {:node          :reason-box
+   :name          (reason-box-name (:name record-node))
+   :struct-c-type (:name record-node)})
+
 ;; F39 Landing 5b-ii-a (2026-08-21) — Optional-boxed value-type
 ;; infrastructure. Under the unified rule (spec §3.6.1, design premise
 ;; 1 of plans/g3-structural-canonical/f39-nullability.md) bare `T` on a value type is nullable
@@ -9711,6 +9753,11 @@
               records)
         structs    (into (vec prim-inner-structs)
                          (mapcat identity record-blocks))
+        ;; Track A/2.a (2026-08-26) — reason-box wrapper class per
+        ;; user record. Compiled unconditionally today; later tree-
+        ;; shaking can restrict to records referenced by `|: as T`
+        ;; (companion reason-types) or by receiver-side `<:` arms.
+        reason-boxes (mapv synth-reason-box records)
         functions  (-> (record-method-functions ctx)
                        ;; F67 L4a — record observables (Proposal G
                        ;; class-body collapse: pure-data readers land
@@ -9909,6 +9956,10 @@
      :needs-dispatch-loop? needs-dispatch-loop?
      :enums               c-enums
      :structs             structs
+     ;; Track A/2.a (2026-08-26) — reason-box wrapper classes, one per
+     ;; user record. Emit slots them after `:structs` and before any
+     ;; class @interface that might reference them (see emit/emit).
+     :reason-boxes        reason-boxes
      :functions           functions
      :classes             classes
      ;; F15 L2.c.iii.b — named-tuple typedef block populated by walking

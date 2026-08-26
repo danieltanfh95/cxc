@@ -1009,6 +1009,23 @@
 ;; C struct emission (records → value-typed structs, no methods yet)
 ;; ---------------------------------------------------------------------------
 
+(defn- emit-reason-box
+  "Track A/2.a (2026-08-26) — one reason-box wrapper class per user
+   record. Layout: `@interface _Cxc_R_<T> : NSObject { @public <T> value; }
+   @end / @implementation _Cxc_R_<T> @end`. The `@public` ivar exposes
+   the wrapped struct so receiver-side `<:` dispatch can destructure
+   fields via `((_Cxc_R_<T> *)tmp)->value.<field>` without needing a
+   custom accessor per field.
+
+   The wrapper carries no methods and no init customization; alloc/init
+   yields a zero-initialized `value`, which callers overwrite before
+   throwing. Emitted after `:structs` so the wrapped `<T>` struct type
+   is in scope."
+  [rb]
+  (str "@interface " (:name rb) " : NSObject { @public "
+       (:struct-c-type rb) " value; } @end\n"
+       "@implementation " (:name rb) " @end"))
+
 (defn- emit-struct [s]
   (let [decls (->> (:fields s)
                    (map (fn [f] (str "    " (:c-type f) " " (:name f) ";")))
@@ -1717,6 +1734,12 @@
         helpers     (when (:needs-runtime? prog) cxc-runtime-helpers)
         enums       (str/join "\n\n" (map emit-any-enum (:enums prog)))
         structs     (str/join "\n\n" (map emit-struct   (:structs prog)))
+        ;; Track A/2.a (2026-08-26) — reason-box wrapper classes.
+        ;; Slotted between structs and fn-prototypes so the wrapped
+        ;; struct type is complete when the @interface's @public
+        ;; `value` ivar is declared, and so downstream record
+        ;; synthesized fns / class @interfaces see the wrapper types.
+        reason-boxes (str/join "\n\n" (map emit-reason-box (:reason-boxes prog)))
         ;; F15 L2.c.iii.a — named-tuple typedef block. Populated by
         ;; lower/build when the parsed AST contains any :type-named-tuple
         ;; nodes (L2.c.iii.b will wire this up). Today every program
@@ -1757,6 +1780,7 @@
     (str/join "\n\n"
               (remove str/blank? [includes
                                   helpers enums structs
+                                  reason-boxes
                                   named-tuple-typedefs
                                   fn-prototypes functions
                                   forward-classes

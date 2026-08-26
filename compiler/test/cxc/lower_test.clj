@@ -2403,6 +2403,31 @@ def main:
     -> running
 ")))))
 
+(deftest track-a2a-reason-box-wrapper-class-per-user-record
+  (testing "Track A/2.a (2026-08-26) — every user-declared record gains a `_Cxc_R_<Record>` wrapper class in the lowered program's `:reason-boxes` vector. The wrapper is a minimal `@interface X : NSObject { @public T value; } @end / @implementation X @end`, emitted between `:structs` and `:functions` so the wrapped struct type is complete and downstream fanout code has the wrapper in scope. Compiled unconditionally; later tracks (A/4/A/5) box + throw + fan through it, later tree-shaking prunes to reason-referenced records only."
+    (let [lowered (lower-src "def MyError:\n    msg: String\n    code: Int\n\ndef main:\n    -> running\n        then: print(1)\n")
+          boxes   (:reason-boxes lowered)
+          box     (first (filter #(= "_Cxc_R_MyError" (:name %)) boxes))]
+      (is (some? box) "wrapper class synthesized for user record")
+      (is (= "MyError" (:struct-c-type box))
+          ":struct-c-type points at the wrapped record's C name")
+      (is (= :reason-box (:node box))
+          ":node tag is :reason-box (distinct from :c-struct and :class)"))
+    (let [emitted (emit/emit (lower-src "def MyError:\n    msg: String\n    code: Int\n\ndef main:\n    -> running\n        then: print(1)\n"))]
+      (is (str/includes? emitted "@interface _Cxc_R_MyError : NSObject { @public MyError value; } @end")
+          "wrapper @interface emits with @public struct ivar")
+      (is (str/includes? emitted "@implementation _Cxc_R_MyError @end")
+          "wrapper @implementation emits, no method bodies")
+      (is (< (.indexOf emitted "typedef struct")
+             (.indexOf emitted "@interface _Cxc_R_MyError"))
+          "wrapper @interface follows the record's struct typedef so the ivar's type is complete"))))
+
+(deftest track-a2a-reason-box-none-when-no-user-records
+  (testing "Track A/2.a (2026-08-26) — a program with zero user records emits zero reason-boxes; the emit slot collapses cleanly. Pinned so a future tree-shaking pass doesn't accidentally emit stubs for prelude records or non-record top-nodes."
+    (let [lowered (lower-src "def main:\n    -> running\n        then: print(1)\n")]
+      (is (empty? (:reason-boxes lowered))
+          "no records → no reason-boxes"))))
+
 (deftest track-a1-bareword-reason-payload-parses-and-lowers
   (testing "Track A/1 (2026-08-26) — bareword `reason:` at receive-payload position (no declared type) is accepted by the parser and lowers cleanly. The existing `Any`-fallback in `augment-atom-env-with-companions` produces an id-typed reason at the wire, so the subscriber body can dispatch on it via a generic `<:` case-pattern block. Retirement of the typed `reason: T` slot is Track A/3."
     (let [lowered (lower-src "def Player:
