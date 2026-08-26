@@ -1985,13 +1985,13 @@ def main:
       (is (= "k"    (:name (second (:params f))))))))
 
 (deftest f67-l3-wildcard-handler-transition-lowers-as-method
-  (testing "F67 L3: `* <: name(args) -> * then: ...` (the handler-collapse form that subsumes the retired F14 `-> handler(args):` sugar) lowers as a void ObjC method on the atom's class. Same semantics as spec §1265/§2160 handler-decl; different surface syntax."
+  (testing "F67 L3: `* <: name(args) -> self then: ...` (the handler-collapse form that subsumes the retired F14 `-> handler(args):` sugar) lowers as a void ObjC method on the atom's class. Same semantics as spec §1265/§2160 handler-decl; different surface syntax."
     (let [prog (lower-src "def A:
     n: Int = 0
 
     -> running
 
-    * <: tick(msg: Int) -> *
+    * <: tick(msg: Int) -> self
         then: return n
 
 def main:
@@ -2007,13 +2007,13 @@ def main:
       (is (= "void" (:return-type tick)) "handler methods return void"))))
 
 (deftest f67-l3-zero-arg-wildcard-handler-lowers
-  (testing "F67 L3: zero-arg `* <: tick() -> * then: ...` lowers with a plain selector (no colon) and no user params."
+  (testing "F67 L3: zero-arg `* <: tick() -> self then: ...` lowers with a plain selector (no colon) and no user params."
     (let [prog (lower-src "def A:
     n: Int = 0
 
     -> running
 
-    * <: tick() -> *
+    * <: tick() -> self
         then: return n
 
 def main:
@@ -2035,7 +2035,7 @@ def main:
 ;; observable/handler-name-collision test is a follow-on landing.
 
 (deftest f67-l3-legacy-handler-decl-sugar-retired
-  (testing "F67 L3: the legacy `-> foo(args):` handler-decl sugar (F14) is retired at parse time; users get a migration diagnostic pointing at the explicit `* <: foo(args) -> *` handler-shape transition."
+  (testing "F67 L3: the legacy `-> foo(args):` handler-decl sugar (F14) is retired at parse time; users get a migration diagnostic pointing at the explicit `* <: foo(args) -> self` handler-shape transition."
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
          #"(?s)F67 L3.*handler-decl sugar is retired.*\* <: tick"
@@ -2054,7 +2054,7 @@ def main:
 ")))))
 
 (deftest f67-l3-duplicate-handler-shape-rejected
-  (testing "F67 L3 + L10 (2026-08-25): two `* <: msg(args) -> *` on one atom are rejected. L10's wildcard-source duplicate check catches this case per the ratified precedence rule (concrete arm wins in its phase; `*` arm fires elsewhere — two `*` arms would be ambiguous)."
+  (testing "F67 L3 + L10 (2026-08-25): two `* <: msg(args) -> self` on one atom are rejected. L10's wildcard-source duplicate check catches this case per the ratified precedence rule (concrete arm wins in its phase; `*` arm fires elsewhere — two `*` arms would be ambiguous)."
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
          #"declares two wildcard-source arms `\* <: tick"
@@ -2063,10 +2063,10 @@ def main:
 
     -> running
 
-    * <: tick(msg: Int) -> *
+    * <: tick(msg: Int) -> self
         then: return n
 
-    * <: tick(msg: Int) -> *
+    * <: tick(msg: Int) -> self
         then: return n
 
 def main:
@@ -2076,14 +2076,14 @@ def main:
 ")))))
 
 (deftest l10-b-wildcard-arm-with-concrete-overlap-routes-to-transition
-  (testing "L10.b (2026-08-25) — when `* <: msg(args) -> *` shares its message name with a concrete-source arm, the wildcard arm is reclassified as a phase-wildcard transition (routed through the transition dispatch method) instead of a separate handler method. Concrete arms fire first in their phase; the wildcard fires in any other phase. First-match order is concrete-then-wildcard."
+  (testing "L10.b (2026-08-25) — when `* <: msg(args) -> self` shares its message name with a concrete-source arm, the wildcard arm is reclassified as a phase-wildcard transition (routed through the transition dispatch method) instead of a separate handler method. Concrete arms fire first in their phase; the wildcard fires in any other phase. First-match order is concrete-then-wildcard."
     (let [lowered (lower-src "def Counter:
     n: Int! = 0
 
     alive <: bump(x: Int) -> alive
         then: n => n + x
 
-    * <: bump(x: Int) -> *
+    * <: bump(x: Int) -> self
         then: n => n
 
 def main:
@@ -2283,7 +2283,7 @@ def Logger:
     player: Player = Player()
     n: Int! = 0
 
-    * <: player.take_damage_fialed(reason: Int) -> *
+    * <: player.take_damage_fialed(reason: Int) -> self
         then: n => n + 1
 
 def main:
@@ -2304,7 +2304,7 @@ def Logger:
     player: Player = Player()
     n: Int! = 0
 
-    * <: player.take_damage_failed(reason: Int) -> *
+    * <: player.take_damage_failed(reason: Int) -> self
         then: n => n + 1
 
 def main:
@@ -2336,14 +2336,14 @@ def LoggerA:
     player: Player = Player()
     n: Int! = 0
 
-    * <: player.take_damage_failed(reason: Int) -> *
+    * <: player.take_damage_failed(reason: Int) -> self
         then: n => n + 1
 
 def LoggerB:
     player: Player = Player()
     s: Int! = 0
 
-    * <: player.take_damage_failed(reason: Bool) -> *
+    * <: player.take_damage_failed(reason: Bool) -> self
         then: s => s + 1
 
 def main:
@@ -2365,7 +2365,7 @@ def Logger:
     player: Player = Player()
     n: Int! = 0
 
-    * <: player.take_damage_failed(reason: Int) -> *
+    * <: player.take_damage_failed(reason: Int) -> self
         then: n => n + 1
 
 def main:
@@ -2395,7 +2395,7 @@ def Logger:
     player: Player = Player()
     n: Int! = 0
 
-    * <: player.take_damage_failed(oops: Int) -> *
+    * <: player.take_damage_failed(oops: Int) -> self
         then: n => n + 1
 
 def main:
@@ -2439,7 +2439,7 @@ def main:
          #"unexpected keyword or in expression"
          (lower-src "def A:
     n: Int! = 0
-    * <: bump -> *
+    * <: bump -> self
         then:
             :> ping
             or:
@@ -2732,7 +2732,7 @@ def main:
                                "def LoggerImpl:\n"
                                "    -> running\n"
                                "\n"
-                               "    * <: warn(msg: String) -> *\n"
+                               "    * <: warn(msg: String) -> self\n"
                                "        then: print(msg)\n"
                                "\n"
                                "extend LoggerImpl(Logger):\n"
@@ -3790,7 +3790,7 @@ def main:
 
 (deftest f69-l4b-dispatch-lowers-to-scoped-if-chain
   (testing "F69 L4b — a `<:` dispatch on an enum-typed scrutinee lowers to a `:c-scope` wrapping (a) a `:var-decl` binding the scrutinee to `_cxc_scrut` and (b) a `:c-if-chain` whose branches carry tag-equality conditions in declaration order, followed by the wildcard `else` branch."
-    (let [prog  (lower-src "def Signal:\n    case red\n    case green\n\ndef main:\n    -> running\n        then:\n            let s: Signal = Signal.red\n            s:\n                <: red: print(1)\n                <: green: print(2)\n                <: _: print(9)\n")
+    (let [prog  (lower-src "def Signal:\n    case red\n    case green\n\ndef main:\n    -> running\n        then:\n            let s: Signal = Signal.red\n            s:\n                <: red: print(1)\n                <: green: print(2)\n                <: *: print(9)\n")
           body  (main-work-body prog)
           scope (first (filter #(= :c-scope (:node %)) body))]
       (is (some? scope) "dispatch stmt lowered to :c-scope")
@@ -3816,11 +3816,11 @@ def main:
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
          #"F69 L4b:.*payload bindings on value-only enum"
-         (lower-src "def Outcome:\n    case ok\n    case err\n\ndef main:\n    -> running\n        then:\n            let o: Outcome = Outcome.ok\n            o:\n                <: ok(let x): print(1)\n                <: _: print(0)\n")))))
+         (lower-src "def Outcome:\n    case ok\n    case err\n\ndef main:\n    -> running\n        then:\n            let o: Outcome = Outcome.ok\n            o:\n                <: ok(let x): print(1)\n                <: *: print(0)\n")))))
 
 (deftest f69-l4b-dispatch-non-enum-scrutinee-int-accepted-with-wildcard
-  (testing "F69 L4c4 — Int scrutinees are accepted (for literal patterns) as long as a `<: _:` wildcard tail is present (open type, exhaustiveness by wildcard). This supersedes the L4b-only rejection."
-    (let [prog (lower-src "def main:\n    -> running\n        then:\n            let n: Int = 3\n            n:\n                <: 3: print(1)\n                <: _: print(0)\n")]
+  (testing "F69 L4c4 — Int scrutinees are accepted (for literal patterns) as long as a `<: *:` wildcard tail is present (open type, exhaustiveness by wildcard). This supersedes the L4b-only rejection."
+    (let [prog (lower-src "def main:\n    -> running\n        then:\n            let n: Int = 3\n            n:\n                <: 3: print(1)\n                <: *: print(0)\n")]
       (is (some? prog)))))
 
 (deftest f69-l4c4-dispatch-primitive-without-wildcard-rejected
@@ -3835,10 +3835,10 @@ def main:
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
          #"F69 L4b: unknown case `purple`"
-         (lower-src "def Signal:\n    case red\n    case green\n\ndef main:\n    -> running\n        then:\n            let s: Signal = Signal.red\n            s:\n                <: purple: print(1)\n                <: _: print(0)\n")))))
+         (lower-src "def Signal:\n    case red\n    case green\n\ndef main:\n    -> running\n        then:\n            let s: Signal = Signal.red\n            s:\n                <: purple: print(1)\n                <: *: print(0)\n")))))
 
 (deftest f69-l4c1-dispatch-exhaustiveness-enforced
-  (testing "F69 L4c1 — spec §3.7: a `<:` dispatch on a tagged-variant scrutinee must cover every declared case OR include a `<: _:` wildcard. Missing coverage without a wildcard rejects at lower-time listing the unhandled cases."
+  (testing "F69 L4c1 — spec §3.7: a `<:` dispatch on a tagged-variant scrutinee must cover every declared case OR include a `<: *:` wildcard. Missing coverage without a wildcard rejects at lower-time listing the unhandled cases."
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
          #"non-exhaustive `<:` dispatch on `Signal`.*yellow"
@@ -3851,7 +3851,7 @@ def main:
 
 (deftest f69-l4c1-dispatch-exhaustive-via-wildcard
   (testing "F69 L4c1 — wildcard-tail satisfies exhaustiveness regardless of covered cases."
-    (let [prog (lower-src "def Signal:\n    case red\n    case yellow\n    case green\n\ndef main:\n    -> running\n        then:\n            let s: Signal = Signal.red\n            s:\n                <: red: print(1)\n                <: _: print(0)\n")]
+    (let [prog (lower-src "def Signal:\n    case red\n    case yellow\n    case green\n\ndef main:\n    -> running\n        then:\n            let s: Signal = Signal.red\n            s:\n                <: red: print(1)\n                <: *: print(0)\n")]
       (is (some? prog)))))
 
 ;; ---------------------------------------------------------------------------

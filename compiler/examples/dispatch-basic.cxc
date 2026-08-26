@@ -12,5 +12,5 @@ def main:
                     print(100)
                 <: yellow:
                     print(200)
-                <: _:
+                <: *:
                     print(300)

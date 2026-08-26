@@ -389,7 +389,7 @@
 ;;   <scrutinee_expr>:
 ;;       <: pattern: body_expr
 ;;       <: pattern: body_expr
-;;       <: _: body_expr
+;;       <: *: body_expr
 ;;
 ;; Pattern subset (L4a/b — minimal):
 ;;   name                    → case with no payload
@@ -455,7 +455,7 @@
 
 (defn- parse-dispatch-pattern
   "Parse one L4a/b/c pattern:
-     _                          → wildcard
+     *                          → wildcard (2026-08-26: was `_`)
      name                       → case with no payload
      name(binding, binding...)  → case with payload bindings
      <int-lit>                  → int literal (L4c4)
@@ -465,9 +465,18 @@
    compare), leading-dot `.name(...)` (§3.7.2 target-typing)."
   [tokens pos]
   (cond
-    ;; wildcard `_`
-    (and (at? tokens pos :ident) (= "_" (t-value (peek-tok tokens pos))))
+    ;; wildcard `*` (2026-08-26 unification: retired `_` in pattern
+    ;; position — CXC isn't FP, we don't owe `_` a slot; `*` is the
+    ;; language's uniform wildcard symbol).
+    (at? tokens pos :glyph "*")
     [{:kind :wildcard} (inc pos)]
+
+    ;; Retired form: `_` in case-pattern position. Migration hint.
+    (and (at? tokens pos :ident) (= "_" (t-value (peek-tok tokens pos))))
+    (fail! tokens pos
+           (str "wildcard case-pattern is now `*` (was `_` pre-2026-08-26). "
+                "Rewrite `<: _:` as `<: *:` and constructor `Foo(field: _)` "
+                "as `Foo(field: *)`. `_` retired in pattern position."))
 
     ;; L4c4 — integer literal pattern
     (at? tokens pos :int)
@@ -1366,7 +1375,7 @@
                 "receive-glyph blocks (spec §3.7 rewrite). Write:\n\n"
                 "    <expr>:\n"
                 "        <: pattern: <body>\n"
-                "        <: _: <body>\n\n"
+                "        <: *: <body>\n\n"
                 "See plans/archive/f69-atom-unification.md."))
 
     ;; F17 L1 — statement-position `while <cond>: <body>`. `loop` is L2.
@@ -1984,14 +1993,24 @@
         p (skip-newlines tokens p)              ; allow newline before ->
         [_ p]      (expect tokens p :glyph "->")
         [target p] (cond
-                     ;; F67 L3 — `*` target = wildcard (no state change).
-                     ;; Semantically equivalent to `self` for phase-machine
-                     ;; purposes; kept separate so we can enforce
-                     ;; `* <: msg(args) -> *` = handler-shape at lowering.
-                     (at? tokens p :glyph "*") ["*" (inc p)]
+                     ;; `self` target = no phase change (stay in
+                     ;; whatever phase matched at source). 2026-08-26
+                     ;; wildcard unification retired `-> *` since target
+                     ;; `*` wasn't wildcard-semantics — it was self-
+                     ;; reference. Handler-shape (`* <: msg(args) -> self`)
+                     ;; detection at lower now checks target = "self".
                      (at? tokens p :kw "self") ["self" (inc p)]
+
+                     ;; Retired form: `-> *` target. Migration hint.
+                     (at? tokens p :glyph "*")
+                     (fail! tokens p
+                            (str "transition target `*` is retired 2026-08-26 "
+                                 "(target-`*` meant self-reference, not "
+                                 "wildcard — unifying `*` as wildcard-only). "
+                                 "Rewrite `-> *` as `-> self`."))
+
                      (at? tokens p :ident)     [(t-value (peek-tok tokens p)) (inc p)]
-                     :else (fail! tokens p "expected target phase, `self`, or `*` after `->`"))
+                     :else (fail! tokens p "expected target phase or `self` after `->`"))
         [body p]   (parse-transition-body tokens p)]
     [{:node :transition
       :source source

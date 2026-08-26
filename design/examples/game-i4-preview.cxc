@@ -14,7 +14,7 @@
 #   I2  `then:` captures both field updates AND self-emits.
 #   I3  `do:` retired — `then:` is the sole effect clause.
 #   I4  Compound source patterns on `<:`
-#       (`* <: player.moved(x: Int, y: Int) -> *`).
+#       (`* <: player.moved(x: Int, y: Int) -> self`).
 #   I5  `()` everywhere for payload binding; retire `{}` payload
 #       marker at stream/subscription sites.
 #   I6  `|>` as prefix over a call expression
@@ -95,7 +95,7 @@ def Enemy:
     # Hits register in every phase — an idle Enemy that gets
     # attacked still takes damage. `* <:` for universal reaction.
 
-    * <: player.attacked(damage: Int) -> *
+    * <: player.attacked(damage: Int) -> self
         when: in_range()
         then:
             |> self.take_hit(damage: damage)

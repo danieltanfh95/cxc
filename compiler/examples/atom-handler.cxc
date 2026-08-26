@@ -1,7 +1,7 @@
 def Logger:
     prefix: String = "log: "
 
-    * <: shout(msg: Int) -> *
+    * <: shout(msg: Int) -> self
         then: print(msg)
 
 def main:

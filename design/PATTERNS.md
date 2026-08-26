@@ -685,7 +685,7 @@ def debounce(duration: Duration):
     use: clock: Clock
     state: pending = nil
     
-    * <: input(event: Event) -> *
+    * <: input(event: Event) -> self
         then: pending => event
         do: clock.after(duration) |> fire
 
@@ -754,11 +754,11 @@ on input(event):
     ...
 
 # YES — explicit wildcard handler-shape transition:
-* <: input(event: Event) -> *
+* <: input(event: Event) -> self
     do: ...
 ```
 
-`* <:` reads as "from any phase, receive"; `-> *` reads as "stay in whatever phase we were in" (side-effect handler; no phase change). The typed-params receive form `input(event: Event)` distinguishes a handler from a payload-destructure receive `input{event: Event}` (which reads a stream/observable emission). See §1.11 class-body-collapse addendum.
+`* <:` reads as "from any phase, receive"; `-> self` reads as "stay in whatever phase we were in" (side-effect handler; no phase change). The typed-params receive form `input(event: Event)` distinguishes a handler from a payload-destructure receive `input{event: Event}` (which reads a stream/observable emission). See §1.11 class-body-collapse addendum.
 
 ### "I need `atom Foo:` to declare an atom / stateful class"
 
@@ -810,7 +810,7 @@ def map<A, B>(f: (A) -> B, s: Stream<A>) -> Stream<B>: ...
 # YES:
 def map(f: (a) -> b):
     Stream of a -> Stream of b
-    * <: input(item: a) -> * do: :> f(item)
+    * <: input(item: a) -> self do: :> f(item)
 ```
 
 `a` binds first-mention in `f`'s input type; `b` binds first-mention in `f`'s return type; channel signature references both. No universal-quantifier syntax needed.
@@ -823,7 +823,7 @@ Use the named tuple return type. Return type is authoritative; no separate secti
 def partition(predicate: (a) -> Bool):
     Stream of a -> (matched: Stream of a, unmatched: Stream of a)
 
-    * <: input(item: a) -> *
+    * <: input(item: a) -> self
         do:
             if predicate(item):
                 :> matched(item)
@@ -940,7 +940,7 @@ entrypoints:
     take_damage(amount: Int) |> active.damage(amount)
 
 # YES — wildcard handler-shape transition:
-* <: take_damage(amount: Int) -> *
+* <: take_damage(amount: Int) -> self
     do: self :> damage(amount: amount)
 ```
 

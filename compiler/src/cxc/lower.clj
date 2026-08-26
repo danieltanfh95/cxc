@@ -2251,7 +2251,7 @@
    subsuming the retired `-> name(args):` sugar."
   [txn]
   (and (= :wildcard (get-in txn [:source :kind]))
-       (= "*"       (:target txn))
+       (= "self"    (:target txn))
        (= "<:"      (get-in txn [:receive :glyph]))
        (some?       (get-in txn [:receive :msg :params]))))
 
@@ -5502,7 +5502,7 @@
 
 (defn- check-dispatch-exhaustiveness!
   "F69 L4c1 — spec §3.7 exhaustiveness rule for tagged-variant scrutinees:
-   every declared case must be covered, or a `<: _:` wildcard included.
+   every declared case must be covered, or a `<: *:` wildcard included.
    Rejects at lower-time with a message listing the missing cases when
    coverage is incomplete. Multi-pattern arms (L4c2) contribute every
    pattern in their `:patterns` vector to coverage.
@@ -5553,7 +5553,7 @@
    Structural / agent scrutinees remain L4d.
 
    L4c1 exhaustiveness applies only to tagged-variant scrutinees;
-   primitive scrutinees require a `<: _:` wildcard tail (open type)."
+   primitive scrutinees require a `<: *:` wildcard tail (open type)."
   [node ctx]
   (let [scrut-ty (infer-type (:scrutinee node) ctx)]
     (when-not (dispatch-scrutinee-supported? scrut-ty)
@@ -5577,7 +5577,7 @@
                         (fail-nyi!
                          (str "F69 L4c4: non-exhaustive `<:` dispatch on "
                               "primitive `" (pr-str scrut-ty) "` — primitive "
-                              "scrutinees require a `<: _:` wildcard tail "
+                              "scrutinees require a `<: *:` wildcard tail "
                               "(spec §3.7 exhaustiveness — primitives are "
                               "open types).")
                          node)))

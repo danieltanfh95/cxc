@@ -1266,8 +1266,8 @@ The atom substrate is the design commitment. §1.11–§1.14 document the substr
 - Method call → route message to an atom's transition (see class-body-collapse addendum below).
 - `state:` section → retired; all fields are per-instance immutable, updated only through transitions.
 - `data:` section header → retired (Proposal D, F67 L5). Fields sit at class-body top level: `name: Type [= default]`. Downstream AST folds into a synthetic data-section so tooling stays shape-stable.
-- `methods:` section → retired (Proposal G, F67 L4). Reader methods become parametric observables (`name(args) :< expr`); void-side-effect methods become wildcard handler-shape transitions (`* <: name(args) -> * then:` side-effect statements); state-mutating methods become wildcard self-transitions with `then:` field updates; utility functions move to module scope.
-- `-> handler(args):` prefix → retired (Proposal G, F67 L3). Handlers are wildcard receive-glyph transitions: `* <: handler(args) -> * then: <body>`.
+- `methods:` section → retired (Proposal G, F67 L4). Reader methods become parametric observables (`name(args) :< expr`); void-side-effect methods become wildcard handler-shape transitions (`* <: name(args) -> self then:` side-effect statements); state-mutating methods become wildcard self-transitions with `then:` field updates; utility functions move to module scope.
+- `-> handler(args):` prefix → retired (Proposal G, F67 L3). Handlers are wildcard receive-glyph transitions: `* <: handler(args) -> self then: <body>`.
 - Structural type inference through atom bodies (retires `<T>` generic-parameter syntax; `of` qualifier is the sole form).
 
 **Surface syntax.**
@@ -1329,7 +1329,7 @@ cxc is a close-to-immutable OOP language built on the atom substrate. **Every tr
 - **`name: Type [= default]`** — field declaration (F67 L5, Proposal D). Immutable per-instance state; the atom's storage. `:` between name and type distinguishes from observable `:<` and transition-source `<:`/`->`.
 - **`name[(args)] :< source`** — observable declaration. Zero-arg (`name :< expr`) or parametric (`name(args) :< expr`, F67 L2). Pull channel; subscribers read on demand. `:<` marker unique.
 - **`<from> [receive_trigger] -> <to> [when <guard>]`** — transition line. Declares a phase transition (source phase to target phase), self-transition, or handler-shape (wildcard source AND target — see next entry). The optional receive-glyph trigger (`<: source_expr {args}` or `<| ...`) makes the transition message-driven; without it the transition is guard-only. Compact single-line form is sugar for the block form. See "Transition-line block form" below.
-- **`* <: handler(args) -> * then: <body>`** — externally-invocable message handler (side-effect only, no state change). Wildcard source AND wildcard target with a typed-params receive pattern. Every state-changing handler is a phase-transition line with `then:` field updates. *(F67 L3 migration target for the retired `-> handler(args):` prefix.)*
+- **`* <: handler(args) -> self then: <body>`** — externally-invocable message handler (side-effect only, no state change). Wildcard source AND wildcard target with a typed-params receive pattern. Every state-changing handler is a phase-transition line with `then:` field updates. *(F67 L3 migration target for the retired `-> handler(args):` prefix.)*
 
 **Retired: bare `expr |> target` at atom-body top-level.** Standing wires do NOT exist as top-level statements. Every subscription is a receive-glyph transition (`<:` / `<|`) whose source expression may compose transformers via `|>`. See §1.11 "Stream composition in receive-glyph source expressions."
 
@@ -1664,8 +1664,8 @@ Under Corvid's actor substrate, all external interaction with an atom is one of 
 | `data: hp: Int = 100` (data section header) | `hp: Int = 100` (top-level field) |
 | `hp_display :< format(hp)` (zero-arg observable) | unchanged |
 | `function healed_by(self, amt: Int) -> Int: return min(hp + amt, max_hp)` (reader method) | `healed_by(amt: Int) :< min(hp + amt, max_hp)` (parametric observable) |
-| `-> log(msg: String): print(msg)` (F14 handler decl) | `* <: log(msg: String) -> * then: print(msg)` |
-| `function heal(self, amt: Int): <mutation>` (writer method — currently only possible via transitions) | `* <: heal(amt: Int) -> * then: <update>` |
+| `-> log(msg: String): print(msg)` (F14 handler decl) | `* <: log(msg: String) -> self then: print(msg)` |
+| `function heal(self, amt: Int): <mutation>` (writer method — currently only possible via transitions) | `* <: heal(amt: Int) -> self then: <update>` |
 | `alive <: tick -> alive then: n => n + 1` (self-transition) | unchanged |
 
 **Why the collapse.** Corvid's atom substrate is actor-shaped. In actor languages (Erlang gen_server, Elixir GenServer, Clojure agents, Rust actix), all external interaction is either a state-query or a message; there is no separate "method" concept. Corvid inherited `methods:` from OO habit — the section became a namespace container for functions that happened to take `self`. That's the OO-namespace-abuse pattern the actor model exists to prevent. Under the collapse: if a function operates on `self`'s state via a transition or produces a value from `self`'s state via an observable, it belongs in the class body. Everything else belongs at module scope.
@@ -1679,7 +1679,7 @@ def Player:
     hp_display :< format(hp)                        # observable — zero-arg
     healed_by(amt: Int) :< min(hp + amt, max_hp)    # observable — parametric
 
-    * <: log(msg: String) -> *                      # message handler (side-effect)
+    * <: log(msg: String) -> self                      # message handler (side-effect)
         then: print(msg)
 
     alive <: heal(amt: Int) -> alive                # message → mutate state
@@ -1917,7 +1917,7 @@ User atoms see a `Filesystem` and a `Network`; they can't tell one is sandboxed 
 
 ```
 def PluginHost:
-    * <: launch_plugin(id: PluginId, code: Bytes) -> *
+    * <: launch_plugin(id: PluginId, code: Bytes) -> self
         let: plugin_env = {
                 clock:   env.clock,
                 fs:      SandboxedFs(inner: env.fs, allowed: [id.data_root]),
@@ -2593,8 +2593,8 @@ Because these are prelude aliases, they are inspectable — users can look up wh
 > **What changes (with post-collapse status, 2026-08-17).** `class Foo:` → `def Foo:` with sugar-keyword equivalents documented per shape. Under Proposal G (F67 L3/L4/L5):
 > - `state:` section retires; all fields are per-instance immutable, updated only through transitions.
 > - `data:` section header retires (F67 L5, Proposal D) — fields sit at class-body top level: `name: Type [= default]`.
-> - `methods:` section retires (F67 L4) — readers become parametric observables `name(args) :< expr`; void side-effect methods become `* <: name(args) -> * then:` (wildcard handler-shape transitions with side-effect entries); state-mutating methods become wildcard self-transitions with `then:` field updates; utilities move to module scope.
-> - `-> handler(args):` prefix retires (F67 L3) — handlers are `* <: handler(args) -> * then: <body>`.
+> - `methods:` section retires (F67 L4) — readers become parametric observables `name(args) :< expr`; void side-effect methods become `* <: name(args) -> self then:` (wildcard handler-shape transitions with side-effect entries); state-mutating methods become wildcard self-transitions with `then:` field updates; utilities move to module scope.
+> - `-> handler(args):` prefix retires (F67 L3) — handlers are `* <: handler(args) -> self then: <body>`.
 >
 > **Code examples in §3–§9 still use the retired forms** as historical illustrations of shape and semantics. The retirements are AST-preserving (surface syntax changed; downstream folds into the same AST), so the semantic content of every example carries over. The current class-body vocabulary is authoritative in §1.11 (see the addendum *Class body collapse to two glyphs (Proposal G)*).
 
@@ -2765,7 +2765,7 @@ x:
         process(o)              # o: Order
     <: String(s):
         log(s)                  # s: String
-    <: _:
+    <: *:
         handle_unknown()
 ```
 
@@ -2824,7 +2824,7 @@ All richer type expressions — brackets, braces, arrows, suffix operators — c
 def partition(predicate: (a) -> Bool):
     Stream of a -> (matched: Stream of a, unmatched: Stream of a)
 
-    * <: input(item: a) -> *
+    * <: input(item: a) -> self
         then:
             if predicate(item):
                 :> matched(item)
@@ -3911,12 +3911,12 @@ The block header is `<expression>:` — any expression followed by `:` and an in
 - **Type patterns (for `Any`):** `<: Order(o):`, `<: String(s):`.
 - **Structural patterns (structural-shape defs):** `<: Order(id: some_id, items: []):`.
 - **Guard patterns:** `<: Order(o) when: o.total > 100:` — reuses the class-body-transition `when:` guard keyword (spec §4). One guard keyword across the language, not two. (Earlier drafts spelled this `if <cond>`; consolidated to `when:` on 2026-08-19.)
-- **Wildcard:** `<: _:`.
+- **Wildcard:** `<: *:`.
 - **Leading-dot shorthand:** inside a `<: name(...)` pattern where the scrutinee's type is known, `<: .name(...)` resolves the qualifier automatically (§3.7.2).
 
 **Exhaustiveness:**
 
-- Dispatching on a tagged-variant def (cases-only body): all cases must be handled, or a `<: _:` wildcard included.
+- Dispatching on a tagged-variant def (cases-only body): all cases must be handled, or a `<: *:` wildcard included.
 - Dispatching on a protocol: wildcard required (protocols are open — new conformers may be added).
 - Dispatching on `Any` or an open type: wildcard required.
 - Dispatching on numeric or string types: wildcard required.
@@ -9249,7 +9249,7 @@ class_member := metadata_section | section_usage
               #   - `methods:` section retired; readers are observables,
               #     writers/void-msgs are transitions (F67 L4).
               #   - `-> handler(args):` prefix retired; handlers are wildcard
-              #     receive-glyph transitions `* <: name(args) -> * then:` (F67 L3).
+              #     receive-glyph transitions `* <: name(args) -> self then:` (F67 L3).
               #   - `data:` section header retired; fields are `field_decl`
               #     at class-body top level (F67 L5).
               # These retire the older method_decl / handler-decl productions.

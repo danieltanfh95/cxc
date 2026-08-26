@@ -345,9 +345,39 @@
          #"F69 L5: `switch <expr>: <case \.\.\.>` is retired at v1\.0"
          (p/parse "def main:\n    -> running\n        then:\n            switch x:\n                case a: print(1)\n")))))
 
+(deftest wildcard-unification-underscore-in-case-pattern-retired
+  (testing "2026-08-26 wildcard unification — `_` in `<:` case-pattern position is retired; `*` is now the uniform wildcard symbol. Users get a parse-time migration hint pointing at the rewrite."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"wildcard case-pattern is now `\*`"
+         (p/parse "def Signal:\n    case red\n    case green\n\ndef main:\n    -> running\n        then:\n            let s: Signal = Signal.red\n            s:\n                <: red: print(1)\n                <: _: print(9)\n")))))
+
+(deftest wildcard-unification-star-target-retired
+  (testing "2026-08-26 wildcard unification — `-> *` transition target is retired; `-> self` replaces it. Target-`*` was self-reference (stay in current phase), not wildcard-match; unifying `*` as wildcard-only removes the overload. Users get a parse-time migration hint."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"transition target `\*` is retired"
+         (p/parse "def A:\n    n: Int = 0\n\n    -> running\n\n    * <: tick(msg: Int) -> *\n        then: return n\n")))))
+
+(deftest wildcard-unification-star-in-case-pattern-parses
+  (testing "2026-08-26 wildcard unification — `<: *:` parses as a wildcard case pattern (was `<: _:` pre-unification). Same `:kind :wildcard` AST node; only the surface symbol changed."
+    (let [ast (p/parse "def Signal:\n    case red\n    case green\n\ndef main:\n    -> running\n        then:\n            let s: Signal = Signal.red\n            s:\n                <: red: print(1)\n                <: green: print(2)\n                <: *: print(9)\n")
+          main-atom (first (filter #(and (= :def-atom (:node %))
+                                         (= "main" (:name %))) ast))
+          transition (first (filter #(= :transition (:node %))
+                                    (:body main-atom)))
+          then-clause (first (filter #(= :then-clause (:node %))
+                                     (:body transition)))
+          dispatch (first (filter #(= :dispatch (:node %))
+                                  (:stmts then-clause)))
+          arms (:arms dispatch)
+          wildcard-arm (last arms)]
+      (is (= :dispatch (:node dispatch)))
+      (is (= :wildcard (get-in wildcard-arm [:pattern :kind]))))))
+
 (deftest f69-l4-dispatch-parses-cases-and-wildcard
   (testing "F69 L4 — `<:` receive-glyph dispatch block at statement position parses to a `:dispatch` node with a scrutinee and an arms vector. Case arms carry `:kind :case` patterns; the wildcard arm carries `:kind :wildcard`."
-    (let [ast (p/parse "def Signal:\n    case red\n    case green\n\ndef main:\n    -> running\n        then:\n            let s: Signal = Signal.red\n            s:\n                <: red: print(1)\n                <: green: print(2)\n                <: _: print(9)\n")
+    (let [ast (p/parse "def Signal:\n    case red\n    case green\n\ndef main:\n    -> running\n        then:\n            let s: Signal = Signal.red\n            s:\n                <: red: print(1)\n                <: green: print(2)\n                <: *: print(9)\n")
           main-atom  (first (filter #(and (= :def-atom (:node %))
                                           (= "main" (:name %))) ast))
           transition (first (filter #(= :transition (:node %))
@@ -370,7 +400,7 @@
   (testing "F69 L4a — payload-binding syntax parses (`<: name(let x):`) even though L4b rejects at lower-time. This keeps parse-side surface stable; the migration diagnostic surfaces during compile."
     ;; Just verifies parse doesn't throw; deeper coverage lives in the
     ;; lower-time rejection test.
-    (let [ast (p/parse "def Outcome:\n    case ok\n    case err\n\ndef main:\n    -> running\n        then:\n            let o: Outcome = Outcome.ok\n            o:\n                <: ok(let x): print(1)\n                <: _: print(0)\n")]
+    (let [ast (p/parse "def Outcome:\n    case ok\n    case err\n\ndef main:\n    -> running\n        then:\n            let o: Outcome = Outcome.ok\n            o:\n                <: ok(let x): print(1)\n                <: *: print(0)\n")]
       (is (some? ast)))))
 
 (deftest state-section-retired-in-def-atom
@@ -632,7 +662,7 @@ def main:
              (:fields dsec))))))
 
 (deftest f67-l3-handler-decl-sugar-retired-with-migration
-  (testing "F67 L3 — the legacy `-> foo(args):` handler-decl sugar is retired at parse time. Users get a diagnostic naming the retired form and pointing at the explicit handler-shape transition `* <: foo(args) -> * then: ...` (spec §1265 semantics preserved)."
+  (testing "F67 L3 — the legacy `-> foo(args):` handler-decl sugar is retired at parse time. Users get a diagnostic naming the retired form and pointing at the explicit handler-shape transition `* <: foo(args) -> self then: ...` (spec §1265 semantics preserved)."
     (let [src "def A:\n    n: Int = 0\n\n    -> running\n\n    -> tick(msg: Int):\n        return n\n"]
       (is (thrown-with-msg?
            clojure.lang.ExceptionInfo
@@ -640,13 +670,13 @@ def main:
            (first-node src))))))
 
 (deftest f67-l3-wildcard-handler-transition-parses
-  (testing "F67 L3 — the migration target `* <: name(args) -> * then: ...` parses as a :transition with wildcard source, wildcard target, and typed :params on the receive-msg (distinguishing it from the payload-destructure `msg{payload}` form)."
-    (let [src "def A:\n    n: Int = 0\n\n    -> running\n\n    * <: tick(msg: Int) -> *\n        then: return n\n"
+  (testing "F67 L3 — the migration target `* <: name(args) -> self then: ...` parses as a :transition with wildcard source, wildcard target, and typed :params on the receive-msg (distinguishing it from the payload-destructure `msg{payload}` form)."
+    (let [src "def A:\n    n: Int = 0\n\n    -> running\n\n    * <: tick(msg: Int) -> self\n        then: return n\n"
           atom-node (first-node src)
           t (last (filter #(= :transition (:node %)) (:body atom-node)))]
       (is (= :def-atom (:node atom-node)))
       (is (= :wildcard (get-in t [:source :kind])))
-      (is (= "*" (:target t)))
+      (is (= "self" (:target t)))
       (is (= "<:" (get-in t [:receive :glyph])))
       (is (= "tick" (get-in t [:receive :msg :source :name])))
       (is (= 1 (count (get-in t [:receive :msg :params]))))
@@ -654,13 +684,13 @@ def main:
       (is (= "Int" (get-in t [:receive :msg :params 0 :type :name]))))))
 
 (deftest f67-l3-wildcard-handler-zero-args-parses
-  (testing "F67 L3 — zero-arg handler-shape `* <: tick() -> *` parses with empty :params (still distinguished from a payload-shape receive)."
-    (let [src "def A:\n    n: Int = 0\n\n    -> running\n\n    * <: tick() -> *\n        then: return n\n"
+  (testing "F67 L3 — zero-arg handler-shape `* <: tick() -> self` parses with empty :params (still distinguished from a payload-shape receive)."
+    (let [src "def A:\n    n: Int = 0\n\n    -> running\n\n    * <: tick() -> self\n        then: return n\n"
           atom-node (first-node src)
           t (last (filter #(= :transition (:node %)) (:body atom-node)))]
       (is (some? t))
       (is (= :wildcard (get-in t [:source :kind])))
-      (is (= "*" (:target t)))
+      (is (= "self" (:target t)))
       (is (= "tick" (get-in t [:receive :msg :source :name])))
       (is (empty? (get-in t [:receive :msg :params]))))))
 
@@ -894,7 +924,7 @@ def main:
   (testing "F67 L4c — `replace` prefix also legal on a wildcard self-transition inside an extension body (parses; composition wiring for transitions is a separate landing)."
     (let [n (first-node
              (str "extend Foo:\n"
-                  "    replace * <: reset() -> * then: print(0)\n"))]
+                  "    replace * <: reset() -> self then: print(0)\n"))]
       (is (= :extend-class (:node n)))
       (let [t (first (:body n))]
         (is (= :transition (:node t)))
