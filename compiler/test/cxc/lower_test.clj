@@ -2,10 +2,23 @@
   (:require [clojure.test :refer [deftest is testing]]
             [clojure.string :as str]
             [cxc.parse :as p]
+            [cxc.prelude :as prelude]
             [cxc.lower :as lower]
             [cxc.emit :as emit]))
 
 (defn- lower-src [src] (lower/lower (p/parse src)))
+
+(defn- lower-src+prelude
+  "Test helper that mirrors build.clj's parse pipeline: prepends the
+   prelude source before parse and runs the post-parse rewrite pass
+   that mangles user-visible prelude names (`Uncaught` → `_Cxc_Uncaught`).
+   Use in tests that reference prelude records / atoms by name — plain
+   `lower-src` skips the prelude and rewrite, which is fine for most
+   tests but drops Uncaught / Duration / etc. from the record-env."
+  [src]
+  (-> (p/parse (str prelude/source "\n" src))
+      prelude/rewrite-prelude-names
+      lower/lower))
 
 (deftest f37-l6b-class-function-on-atom-fails-nyi-with-f37-l6-pointer
   (testing "F37 L6b — a `class function` decl inside a def-atom body parses cleanly but lower fires a targeted fail-nyi naming the atom, the function names, and pointing at F37 L6 as the landing that will consume them. No silent no-op."
@@ -2438,6 +2451,55 @@ def main:
           box-names (mapv :name (:reason-boxes lowered))]
       (is (= ["_Cxc_R__Cxc_Uncaught"] box-names)
           "no user records → only the Uncaught wrapper is synthesized"))))
+
+(deftest track-a8-end-to-end-typed-reason-class-invariant-catch-fan-dispatch-bind
+  (testing "Track A/8 (2026-08-26) — full typed-reason pipeline end-to-end. Target atom declares a class-level `|: cond as MyError(msg: String)` invariant that fires on post-transition state; a companion subscriber dispatches on the id-typed reason via `<: reason: <: MyError(msg: let m): body`. The emitted C stitches together every landed track:\n     - A/2.a: `_Cxc_R_MyError` wrapper class exists\n     - A/4: post-store invariant check boxes + throws NSException with userInfo[@\"reason\"]\n     - A/5: L12c catch fans e.userInfo[@\"reason\"] through cxc_emit_<msg>_failedWithreason:\n     - A/2.b: subscriber emits `isKindOfClass:[_Cxc_R_MyError class]` and reads `((_Cxc_R_MyError *)_cxc_scrut)->value.msg`\n     - A/2.c: exhaustiveness with typed-only reason universe → no wildcard needed\n     - A/6: Uncaught wrapper still emitted for non-typed catches\n\n   Uses class-level `|:` (not arm-head) because arm-head typed reasons\n   are silent-dropped in transition lowering today (pre-existing gap;\n   the class-level path is the wired A/4 surface)."
+    (let [emitted (emit/emit (lower-src+prelude "def MyError:\n    msg: String\n\ndef Player:\n    hp: Int! = 100\n    |: hp >= 0 as MyError(msg: \"negative-hp\")\n\n    alive <: take_damage(amount: Int) -> alive\n        then: hp => hp - amount\n\ndef Logger:\n    player: Player = Player()\n    n: Int! = 0\n\n    * <: player.take_damage_failed(reason:) -> self\n        then:\n            reason:\n                <: MyError(msg: let m): print(m)\n\ndef main:\n    l: Logger = Logger()\n    -> running\n"))]
+      ;; A/2.a: wrapper class exists for MyError (and Uncaught for A/6).
+      (is (str/includes? emitted "@interface _Cxc_R_MyError : NSObject { @public MyError value; } @end")
+          "A/2.a: MyError wrapper class synthesized")
+      (is (str/includes? emitted "@interface _Cxc_R__Cxc_Uncaught : NSObject")
+          "A/6: Uncaught wrapper class synthesized")
+      ;; A/4: class-level invariant boxes + throws for MyError.
+      (is (str/includes? emitted "_Cxc_R_MyError *__cxc_r = [[_Cxc_R_MyError alloc] init];")
+          "A/4: post-store invariant site allocs the reason box")
+      (is (str/includes? emitted "@throw [NSException exceptionWithName:@\"CxcReason\"")
+          "A/4: throws NSException on invariant failure")
+      (is (str/includes? emitted "userInfo:@{@\"reason\": __cxc_r}")
+          "A/4: reason box travels via userInfo[@\"reason\"]")
+      ;; A/5: L12c fans reason through companion dispatch.
+      (is (str/includes? emitted "id __cxc_reason = e.userInfo[@\"reason\"]")
+          "A/5: catch extracts reason from userInfo")
+      (is (str/includes? emitted "((void (*)(id, SEL, id))objc_msgSend)(self, __cxc_comp, __cxc_reason)")
+          "A/5: reason (not nil) fanned to companion")
+      ;; A/6: catch synthesizes Uncaught when userInfo[@"reason"] is nil.
+      (is (str/includes? emitted "_Cxc_R__Cxc_Uncaught *__cxc_u = [[_Cxc_R__Cxc_Uncaught alloc] init]")
+          "A/6: non-typed catch synthesizes Uncaught box")
+      ;; A/2.b: subscriber emits isKindOfClass + destructure.
+      (is (str/includes? emitted "isKindOfClass:[_Cxc_R_MyError class]")
+          "A/2.b: subscriber dispatches on isKindOfClass of the wrapper")
+      (is (str/includes? emitted "((_Cxc_R_MyError *)_cxc_scrut)->value.msg")
+          "A/2.b: subscriber binding reads through the @public value ivar"))))
+
+(deftest track-a8-typed-reason-with-multi-record-universe-and-uncaught-arm
+  (testing "Track A/8 (2026-08-26) — multi-typed-reason universe: target atom has two class-level `|:` invariants (declaring MyError and OtherErr as reason records). Subscriber covers both plus an Uncaught arm for exception bubble-ups. Pins that: (a) both reason wrappers synthesize, (b) both throw sites box the correct wrapper, (c) subscriber's three-arm dispatch satisfies A/2.c exhaustiveness without a wildcard."
+    (let [emitted (emit/emit (lower-src+prelude "def MyError:\n    msg: String\n\ndef OtherErr:\n    code: Int\n\ndef Player:\n    hp: Int! = 100\n    tag: Int! = 0\n    |: hp >= 0 as MyError(msg: \"neg\")\n    |: tag >= 0 as OtherErr(code: 42)\n\n    alive <: take_damage(amount: Int) -> alive\n        then: hp => hp - amount\n\ndef Logger:\n    player: Player = Player()\n    n: Int! = 0\n\n    * <: player.take_damage_failed(reason:) -> self\n        then:\n            reason:\n                <: MyError(msg: let m): print(m)\n                <: OtherErr(code: let c): print(c)\n                <: Uncaught(msg: let u): print(u)\n\ndef main:\n    l: Logger = Logger()\n    -> running\n"))]
+      (is (str/includes? emitted "@interface _Cxc_R_MyError")
+          "MyError wrapper class present")
+      (is (str/includes? emitted "@interface _Cxc_R_OtherErr")
+          "OtherErr wrapper class present")
+      (is (str/includes? emitted "_Cxc_R_MyError *__cxc_r = [[_Cxc_R_MyError alloc] init]")
+          "MyError throw site boxes into MyError wrapper")
+      (is (str/includes? emitted "_Cxc_R_OtherErr *__cxc_r = [[_Cxc_R_OtherErr alloc] init]")
+          "OtherErr throw site boxes into OtherErr wrapper")
+      (is (str/includes? emitted "isKindOfClass:[_Cxc_R_MyError class]")
+          "subscriber dispatches on MyError")
+      (is (str/includes? emitted "isKindOfClass:[_Cxc_R_OtherErr class]")
+          "subscriber dispatches on OtherErr")
+      (is (str/includes? emitted "isKindOfClass:[_Cxc_R__Cxc_Uncaught class]")
+          "subscriber's Uncaught arm dispatches on the prelude wrapper")
+      (is (str/includes? emitted "((_Cxc_R__Cxc_Uncaught *)_cxc_scrut)->value.msg")
+          "Uncaught arm binding reads msg through the prelude struct"))))
 
 (deftest track-a7-reason-record-not-defined-rejected
   (testing "Track A/7 (2026-08-26) — `|: ... as UndefinedName(...)` fails at compile time with a targeted diagnostic naming the atom and pointing at `def <Name>:` at top level. Fires before lower-expr's generic \"unknown call\" diagnostic so users get the reason-specific migration hint. Applies to class-level invariants (post-store + pre-store F49); arm-head `|:` typed reasons are a separate pre-existing gap (currently silent-dropped)."
