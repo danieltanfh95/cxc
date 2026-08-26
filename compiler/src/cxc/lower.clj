@@ -5373,12 +5373,56 @@
                 :bool {:node :int :value (if (:value pattern) 1 0)})})
 
     :case
-    (do
-      (when-not (and (map? scrut-ty) (:enum scrut-ty))
-        (fail-nyi!
-         (str "F69 L4b: case pattern `<: " (:name pattern) ":` requires "
-              "a tagged-variant (enum) scrutinee — got " (pr-str scrut-ty) ".")
-         pattern))
+    (cond
+      ;; Track A/2.b (2026-08-26) — id-typed scrutinee dispatch.
+      ;; Pattern name is a record (or Uncaught) name; condition is
+      ;; `[scrut isKindOfClass:[_Cxc_R_<T> class]]`. Payload bindings
+      ;; are validated here + lowered by `lower-dispatch-arm` against
+      ;; the record's field-index.
+      (= :any scrut-ty)
+      (let [case-nm    (:name pattern)
+            record-env (:record-env ctx)
+            rec        (get record-env case-nm)]
+        (when-not rec
+          (fail-nyi!
+           (str "F69 L4b: case pattern `<: " case-nm ":` on id-typed "
+                "scrutinee requires a record name — `" case-nm "` is "
+                "not a declared record. Declare it via `def " case-nm
+                ":` at top level (spec §3.4).")
+           pattern))
+        (when (seq (:bindings pattern))
+          (doseq [b (:bindings pattern)]
+            (cond
+              (nil? (:field b))
+              (fail-nyi!
+               (str "F16 L1: positional payload binding `let " (:as b)
+                    "` in `<: " case-nm "(...)` — record payloads are "
+                    "named-only. Use `<field>: let " (:as b) "`.")
+               pattern)
+
+              (not (some #(= (:field b) (:name %)) (:fields rec)))
+              (fail-nyi!
+               (str "F16 L1: unknown payload field `" (:field b) "` on "
+                    "record `" case-nm "` — declared fields are "
+                    (pr-str (mapv :name (:fields rec))) ".")
+               pattern))))
+        {:node     :objc-msg
+         :recv     {:node :name :sym scrut-tmp}
+         :selector "isKindOfClass:"
+         :args     [{:node     :objc-msg
+                     :recv     {:node :name
+                                :sym  (str "_Cxc_R_" case-nm)}
+                     :selector "class"
+                     :args     []}]})
+
+      (not (and (map? scrut-ty) (:enum scrut-ty)))
+      (fail-nyi!
+       (str "F69 L4b: case pattern `<: " (:name pattern) ":` requires "
+            "a tagged-variant (enum) scrutinee or an id-typed "
+            "(companion-reason) scrutinee — got " (pr-str scrut-ty) ".")
+       pattern)
+
+      :else
       (let [enum-name (:enum scrut-ty)
             case-nm   (:name pattern)
             info      (get-in ctx [:enum-env enum-name])
@@ -5457,12 +5501,15 @@
         ;; the arm body only, wrapped in :c-scope with generated var-
         ;; decls.
         payload-bindings
-        (when (and (= 1 (count patterns))
-                   (= :case (:kind (first patterns)))
-                   (seq (:bindings (first patterns)))
-                   (map? scrut-ty) (:enum scrut-ty)
-                   (seq (get-in ctx [:enum-env (:enum scrut-ty)
-                                     :payload-index (:name (first patterns))])))
+        (cond
+          ;; F16 L1 — enum-scrutinee tagged-payload bindings. Init reads
+          ;; from `<tmp>.data.<case>.<field>` (tagged-union storage).
+          (and (= 1 (count patterns))
+               (= :case (:kind (first patterns)))
+               (seq (:bindings (first patterns)))
+               (map? scrut-ty) (:enum scrut-ty)
+               (seq (get-in ctx [:enum-env (:enum scrut-ty)
+                                 :payload-index (:name (first patterns))])))
           (let [pat        (first patterns)
                 enum-name  (:enum scrut-ty)
                 case-nm    (:name pat)
@@ -5492,6 +5539,58 @@
                                                 :field "data"}
                                        :field case-nm}
                               :field (:field b)}}))
+                  (:bindings pat)))
+
+          ;; Track A/2.b (2026-08-26) — id-typed scrutinee, record
+          ;; pattern with bindings. Init reads from
+          ;; `((_Cxc_R_<T> *)<tmp>)->value.<field>`. Field type comes
+          ;; from the record's declared field list (record-env).
+          (and (= 1 (count patterns))
+               (= :case (:kind (first patterns)))
+               (seq (:bindings (first patterns)))
+               (= :any scrut-ty))
+          (let [pat        (first patterns)
+                case-nm    (:name pat)
+                rec        (get-in ctx [:record-env case-nm])
+                field-idx  (into {} (map (juxt :name identity)) (:fields rec))
+                box-name   (str "_Cxc_R_" case-nm)]
+            (mapv (fn [b]
+                    (let [;; Validate before destructuring; nil-field
+                          ;; would NPE in base-type-name otherwise.
+                          _       (when (nil? (:field b))
+                                    (fail-nyi!
+                                     (str "F16 L1: positional payload binding "
+                                          "`let " (:as b) "` in `<: " case-nm
+                                          "(...)` — record payloads are "
+                                          "named-only. Use `<field>: let "
+                                          (:as b) "`.")
+                                     pat))
+                          f       (get field-idx (:field b))
+                          _       (when-not f
+                                    (fail-nyi!
+                                     (str "F16 L1: unknown payload field `"
+                                          (:field b) "` on record `" case-nm
+                                          "` — declared fields are "
+                                          (pr-str (mapv :name (:fields rec)))
+                                          ".")
+                                     pat))
+                          ty-node (:type f)
+                          inner   (if (= :type-nonnil (:node ty-node))
+                                    (:inner ty-node) ty-node)
+                          nm      (:name inner)
+                          tk      (cxc-type->type-kw nm
+                                                     (:record-env ctx)
+                                                     (:atom-env ctx)
+                                                     (:enum-env ctx)
+                                                     ty-node)
+                          c-ty    (cxc-type->c ty-node
+                                               (:record-env ctx)
+                                               (:atom-env ctx)
+                                               (:enum-env ctx))]
+                      {:name (:as b) :type-kw tk :c-type c-ty
+                       :init {:node :raw-c-expr
+                              :text (str "((" box-name " *)" scrut-tmp
+                                         ")->value." (:field b))}}))
                   (:bindings pat))))
         arm-ctx    (if payload-bindings
                      (update ctx :locals into
@@ -5583,7 +5682,11 @@
 (defn- scrut-ty->c-type
   "Return the C type string for a scrutinee's inferred type. Enum
    scrutinees carry the enum name (C typedef). Primitive scrutinees
-   (Int, Bool) resolve via type-kw->c-type."
+   (Int, Bool) resolve via type-kw->c-type.
+
+   Track A/2.b (2026-08-26) — id-typed (`:any`) scrutinees hit the
+   `type-kw->c-type` fallback which returns `id`; kept explicit so
+   the intent is documented at this call site."
   [scrut-ty scrut-node]
   (cond
     (and (map? scrut-ty) (:enum scrut-ty)) (:enum scrut-ty)
@@ -5592,10 +5695,16 @@
 (defn- dispatch-scrutinee-supported?
   "L4b/c4 — the scrutinee-type gate. Enum (tagged-variant) is the
    L4b substrate; Int and Bool are the L4c4 primitive-literal
-   substrates. Structural / agent scrutinees remain L4d."
+   substrates. Structural / agent scrutinees remain L4d.
+
+   Track A/2.b (2026-08-26) — `:any` (id-typed) scrutinees are the
+   companion-reason substrate: patterns are record names, condition is
+   `[scrut isKindOfClass:[_Cxc_R_<T> class]]`. Enables the receiver-
+   side surface for `<msg>_failed(reason:) ... <: reason: <: MyError(...): ...`
+   (companion reason dispatch)."
   [scrut-ty]
   (or (and (map? scrut-ty) (:enum scrut-ty))
-      (contains? #{:int :bool} scrut-ty)))
+      (contains? #{:int :bool :any} scrut-ty)))
 
 (defn- lower-dispatch-stmt
   "Statement-position `<:` dispatch. Binds the scrutinee to a local
@@ -5612,9 +5721,10 @@
     (when-not (dispatch-scrutinee-supported? scrut-ty)
       (fail-nyi!
        (str "F69 L4b: `<:` dispatch scrutinee must be tagged-variant "
-            "(enum) or a primitive supporting literal patterns (Int / "
-            "Bool) — got " (pr-str scrut-ty) ". Structural + agent "
-            "scrutinees land in L4d.")
+            "(enum), a primitive supporting literal patterns (Int / "
+            "Bool), or an id-typed value (companion reason) — got "
+            (pr-str scrut-ty) ". Structural + agent scrutinees land "
+            "in L4d.")
        node))
     (let [enum?     (and (map? scrut-ty) (:enum scrut-ty))
           _         (when enum?
@@ -5623,16 +5733,25 @@
                         (check-dispatch-exhaustiveness! enum-name enum-cases
                                                         (:arms node) node)))
           _         (when-not enum?
-                      ;; primitive scrutinee — spec §3.7 requires wildcard
-                      ;; for open (non-closed-sum) types.
+                      ;; Non-enum scrutinees are open at compile time
+                      ;; (primitives; id-typed values). Spec §3.7 requires
+                      ;; a `<: *:` wildcard tail. Companion-reason
+                      ;; exhaustiveness against a target's
+                      ;; `:companion-index :reason-types` ∪ Uncaught is
+                      ;; Track A/2.c and closes the sum for id-typed
+                      ;; scrutinees inside `<msg>_failed(reason:)` bodies.
                       (when-not (some #(= :wildcard (:kind %))
                                       (mapcat arm-patterns (:arms node)))
                         (fail-nyi!
                          (str "F69 L4c4: non-exhaustive `<:` dispatch on "
-                              "primitive `" (pr-str scrut-ty) "` — primitive "
-                              "scrutinees require a `<: *:` wildcard tail "
-                              "(spec §3.7 exhaustiveness — primitives are "
-                              "open types).")
+                              (if (= :any scrut-ty)
+                                (str "id-typed scrutinee — add a `<: *:` "
+                                     "wildcard tail, or wait for Track A/2.c "
+                                     "companion-reason exhaustiveness closure.")
+                                (str "primitive `" (pr-str scrut-ty) "` — "
+                                     "primitive scrutinees require a `<: *:` "
+                                     "wildcard tail (spec §3.7 exhaustiveness "
+                                     "— primitives are open types).")))
                          node)))
           scrut-tmp  "_cxc_scrut"
           scrut-lo   (lower-expr (:scrutinee node) ctx)

@@ -30,6 +30,13 @@
     :float           (str (:value node))
     :nil             "nil"
     :name            (:sym node)
+    ;; Track A/2.b (2026-08-26) — expression-position raw-C escape
+    ;; hatch used by lower for shapes that don't fit an existing
+    ;; structured node (e.g. `((_Cxc_R_T *)tmp)->value.field` for
+    ;; reason-box payload bindings). Cousin of the statement-form
+    ;; `:raw-c`; kept narrow — prefer structured nodes wherever the
+    ;; ergonomics allow.
+    :raw-c-expr      (:text node)
     :binop           (str "(" (emit-expr (:left node))
                           " " (:op node) " "
                           (emit-expr (:right node)) ")")

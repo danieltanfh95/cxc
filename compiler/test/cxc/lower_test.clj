@@ -2454,12 +2454,9 @@ def main:
       (is (some #(re-find #"cxc_emit_take_damage_failed" (or % "")) selectors)
           "companion emit method still demand-driven from a bareword subscriber"))))
 
-(deftest track-a1-bareword-reason-case-pattern-block-parses-lower-diag-follows-in-a2
-  (testing "Track A/1 (2026-08-26) — parse-side surface: the payload declaration accepts bareword `reason:` AND the `<:` case-pattern block over that reason parses cleanly (F69 L4 expression-position dispatch is generic in scrutinee shape). Lower-time acceptance of id-typed scrutinees for `<:` dispatch is F69 L4d / Track A/2 — until then, the dispatch pass fails-nyi with a clean L4b diagnostic (guarded dead-code landing per storage-flip discipline). This test pins BOTH: (a) parse doesn't reject the composition, (b) lower fails at the F69 L4b guard, not at some upstream shape check."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"F69 L4b:.*`<:` dispatch scrutinee must be tagged-variant"
-         (lower-src "def Player:
+(deftest track-a2b-bareword-reason-case-pattern-block-with-wildcard-lowers
+  (testing "Track A/2.b (2026-08-26) — the receiver-side composition (bareword reason payload + `<:` dispatch on the id-typed reason binding + wildcard tail) lowers cleanly to a `[reason isKindOfClass:...]`-style branch chain. Wildcard tail satisfies the F69 L4c4 open-type exhaustiveness rule for id-typed scrutinees; companion-reason closure via `:companion-index :reason-types` ∪ Uncaught is Track A/2.c. Pins the earlier A/1 test's follow-on: what was guarded dead code with an L4b diagnostic now compiles end-to-end."
+    (let [lowered (lower-src "def Player:
     hp: Int! = 100
 
     alive <: take_damage(amount: Int) -> alive
@@ -2478,7 +2475,46 @@ def Logger:
 def main:
     l: Logger = Logger()
     -> running
-")))))
+")]
+      (is (some? lowered)
+          "wildcard-tail dispatch on id-typed reason lowers cleanly under A/2.b"))))
+
+(deftest track-a2b-record-pattern-dispatch-emits-iskindofclass-check
+  (testing "Track A/2.b (2026-08-26) — a `<:` case-pattern arm whose pattern is a record name and whose scrutinee is id-typed emits an `[scrut isKindOfClass:[_Cxc_R_<Record> class]]` check. The wildcard tail satisfies open-type exhaustiveness. This is the receiver-side surface for companion reason dispatch; the wrapper class comes from Track A/2.a, the id-typed scrutinee gate from this landing."
+    (let [emitted (emit/emit (lower-src "def MyError:\n    msg: String\n\ndef Player:\n    hp: Int! = 100\n\n    alive <: take_damage(amount: Int) -> alive\n        |: amount > 0\n        then: hp => hp - amount\n\ndef Logger:\n    player: Player = Player()\n    n: Int! = 0\n\n    * <: player.take_damage_failed(reason:) -> self\n        then:\n            reason:\n                <: MyError: print(1)\n                <: *: print(2)\n\ndef main:\n    l: Logger = Logger()\n    -> running\n"))]
+      (is (str/includes? emitted "isKindOfClass:[_Cxc_R_MyError class]")
+          "record pattern lowers to isKindOfClass: against the wrapper class")
+      (is (str/includes? emitted "_Cxc_R_MyError")
+          "wrapper class name is present in the emit"))))
+
+(deftest track-a2b-record-pattern-payload-binding-destructures-via-value-ivar
+  (testing "Track A/2.b (2026-08-26) — a case pattern with named-payload bindings on a record pattern (id-typed scrutinee) initializes each binding from `((_Cxc_R_<T> *)tmp)->value.<field>`. Field type is looked up from the record's declared field list; positional bindings and unknown fields fail with the shared F16 L1 diagnostics."
+    (let [emitted (emit/emit (lower-src "def MyError:\n    msg: String\n    code: Int\n\ndef Player:\n    hp: Int! = 100\n\n    alive <: take_damage(amount: Int) -> alive\n        |: amount > 0\n        then: hp => hp - amount\n\ndef Logger:\n    player: Player = Player()\n    n: Int! = 0\n\n    * <: player.take_damage_failed(reason:) -> self\n        then:\n            reason:\n                <: MyError(msg: let m, code: let c): print(m)\n                <: *: print(9)\n\ndef main:\n    l: Logger = Logger()\n    -> running\n"))]
+      (is (str/includes? emitted "((_Cxc_R_MyError *)_cxc_scrut)->value.msg")
+          "String field binding reads from the boxed struct's msg field")
+      (is (str/includes? emitted "((_Cxc_R_MyError *)_cxc_scrut)->value.code")
+          "Int field binding reads from the boxed struct's code field"))))
+
+(deftest track-a2b-record-pattern-unknown-field-binding-rejected
+  (testing "Track A/2.b (2026-08-26) — an unknown payload field name on a record pattern fails with the shared F16 L1 diagnostic naming the declared fields. Reuses the same policy used for enum-case payload bindings so the two forms share a diagnostic voice."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"F16 L1: unknown payload field `oops` on record `MyError`"
+         (lower-src "def MyError:\n    msg: String\n\ndef Player:\n    hp: Int! = 100\n\n    alive <: take_damage(amount: Int) -> alive\n        |: amount > 0\n        then: hp => hp - amount\n\ndef Logger:\n    player: Player = Player()\n    n: Int! = 0\n\n    * <: player.take_damage_failed(reason:) -> self\n        then:\n            reason:\n                <: MyError(oops: let m): print(1)\n                <: *: print(2)\n\ndef main:\n    l: Logger = Logger()\n    -> running\n")))))
+
+(deftest track-a2b-non-record-pattern-name-on-any-scrutinee-rejected
+  (testing "Track A/2.b (2026-08-26) — a case pattern whose name isn't a declared record fails-nyi with a targeted diagnostic pointing at `def <Name>:`. Prevents accidental typos silently missing at runtime — id-typed dispatch is open, so a stray name would otherwise become an isKindOfClass: check against a non-existent class (compile error deferred to clang, worse UX)."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"F69 L4b: case pattern `<: NotARecord:` on id-typed scrutinee requires a record name"
+         (lower-src "def Player:\n    hp: Int! = 100\n\n    alive <: take_damage(amount: Int) -> alive\n        |: amount > 0\n        then: hp => hp - amount\n\ndef Logger:\n    player: Player = Player()\n    n: Int! = 0\n\n    * <: player.take_damage_failed(reason:) -> self\n        then:\n            reason:\n                <: NotARecord: print(1)\n                <: *: print(2)\n\ndef main:\n    l: Logger = Logger()\n    -> running\n")))))
+
+(deftest track-a2b-any-scrutinee-without-wildcard-rejected-diagnostic-hints-at-a2c
+  (testing "Track A/2.b (2026-08-26) — an id-typed scrutinee dispatch with no wildcard tail fails with the F69 L4c4 diagnostic that specifically hints at Track A/2.c's companion-reason exhaustiveness closure. Until A/2.c wires the target's `:companion-index :reason-types` ∪ Uncaught closure, id-typed dispatches follow the primitive-scrutinee open-type rule (wildcard required)."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"F69 L4c4: non-exhaustive `<:` dispatch on id-typed scrutinee"
+         (lower-src "def MyError:\n    msg: String\n\ndef Player:\n    hp: Int! = 100\n\n    alive <: take_damage(amount: Int) -> alive\n        |: amount > 0\n        then: hp => hp - amount\n\ndef Logger:\n    player: Player = Player()\n    n: Int! = 0\n\n    * <: player.take_damage_failed(reason:) -> self\n        then:\n            reason:\n                <: MyError: print(1)\n\ndef main:\n    l: Logger = Logger()\n    -> running\n")))))
 
 (deftest l9-or-continuation-parses-and-lowers-to-sync-send-with-recovery
   (testing "L9 (2026-08-26) — a sync `|>` send followed by an `or:` block parses into an `:emit` node carrying `:or-body`, which lowers to `:sync-send-with-recovery` and emits a Cocoa `@try/@catch` around the send-call. MVP handles bare `or:` with statement bodies; binding (`or e:`) and pattern-matched (`or T:`) variants are a follow-on."
