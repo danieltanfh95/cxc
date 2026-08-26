@@ -2673,10 +2673,9 @@ def main:
       (is (str/includes? emitted "@catch (NSException *__cxc_or_e)")
           "@catch binds the exception for the recovery scope"))))
 
-(deftest track-b2-sync-send-with-recovery-carries-arms-alongside-or-body
-  (testing "Track B/2 (2026-08-26) — the lowered `:sync-send-with-recovery` node now carries `:arms` (ordered vector of `{:pattern p :body stmts}`) alongside the legacy `:or-body`. Storage-flip discipline: emit still reads `:or-body` for the MVP single-bare-arm case; Track B/3 will flip emit to `:arms` and retire `:or-body`. This test pins the terminal shape by walking the lowered AST for the recovery node and asserting both slots are populated coherently (arm 0's body equals `:or-body`)."
+(deftest track-b2-sync-send-with-recovery-carries-arms-terminal-shape
+  (testing "Track B/2 (2026-08-26) — the lowered `:sync-send-with-recovery` node carries `:arms` as terminal shape. `:or-body` is retired; downstream (emit) reads `:arms` directly. Pins the shape by walking the AST for the recovery node and asserting a single-bare-arm program produces a one-arm list with a nil pattern."
     (let [prog (lower-src "def S:\n    n: Int! = 0\n    * <: ping -> self\n        then: n => n + 1\n\ndef B:\n    s: S = S()\n    -> running\n        then:\n            |> s.ping()\n            or:\n                |> s.ping()\n\ndef main:\n    b: B = B()\n    -> running\n")
-          ;; Walk the lowered program AST for a `:sync-send-with-recovery` node.
           nodes (tree-seq coll? #(if (map? %) (vals %) (seq %)) prog)
           recov (first (filter #(and (map? %)
                                      (= :sync-send-with-recovery (:node %)))
@@ -2685,23 +2684,45 @@ def main:
       (is (vector? (:arms recov)))
       (is (= 1 (count (:arms recov))))
       (is (nil? (:pattern (first (:arms recov)))))
-      (is (= (:body (first (:arms recov))) (:or-body recov))
-          "arm 0's body equals :or-body — single source of truth"))))
+      (is (not (contains? recov :or-body))
+          ":or-body retired — :arms is the terminal shape"))))
 
-(deftest track-b1-non-mvp-or-arms-rejected-at-lower-with-b3-hint
-  (testing "Track B/1 (2026-08-26) — parser accepts multi-arm and typed `or:` shapes but lower currently rejects anything beyond the single-bare-arm MVP. The diagnostic points at Track B/3 where runtime dispatch machinery lands; users writing `or e:` or chained arms today get a targeted not-yet-implemented error rather than a silent-drop of the recovery block."
+(deftest track-b3-typed-arm-emits-iskindofclass-dispatch
+  (testing "Track B/3 (2026-08-26) — a typed `or T(field: let x):` arm emits `if ([__cxc_reason isKindOfClass:[_Cxc_R_T class]]) { <destructure> <body> } else { @throw; }`. The catch prelude extracts `__cxc_reason` from `e.userInfo[@\"reason\"]` and synthesizes `_Cxc_R__Cxc_Uncaught` on nil (mirrors L12c catch-side behavior)."
+    (let [emitted (emit/emit (lower-src+prelude "def MyError:\n    msg: String\n\ndef S:\n    n: Int! = 0\n    |: n >= 0 as MyError(msg: \"neg\")\n    * <: ping -> self\n        then: n => n + 1\n\ndef B:\n    s: S = S()\n    -> running\n        then:\n            |> s.ping()\n            or MyError(msg: let m):\n                |> s.ping()\n\ndef main:\n    b: B = B()\n    -> running\n"))]
+      (is (str/includes? emitted "id __cxc_reason = __cxc_or_e.userInfo[@\"reason\"]")
+          "catch extracts the reason box from userInfo")
+      (is (str/includes? emitted "_Cxc_R__Cxc_Uncaught *__cxc_u = [[_Cxc_R__Cxc_Uncaught alloc] init]")
+          "non-typed catches synthesize an Uncaught box on nil")
+      (is (str/includes? emitted "isKindOfClass:[_Cxc_R_MyError class]")
+          "typed arm gates on isKindOfClass of the wrapper")
+      (is (str/includes? emitted "((_Cxc_R_MyError *)__cxc_reason)->value.msg")
+          "destructure binding reads through the @public value ivar")
+      (is (str/includes? emitted "@throw;")
+          "typed-only arm chain re-throws on fallthrough"))))
+
+(deftest track-b3-bind-arm-terminal-suppresses-rethrow
+  (testing "Track B/3 (2026-08-26) — a bind arm (`or e:`) is a catchall: emits an unconditional `else { id e = __cxc_reason; <body> }` and skips the `@throw;` fallback. When placed at the tail of a typed chain it makes the chain total; when placed alone it degenerates to the MVP catchall."
+    (let [emitted (emit/emit (lower-src+prelude "def MyError:\n    msg: String\n\ndef S:\n    n: Int! = 0\n    |: n >= 0 as MyError(msg: \"neg\")\n    * <: ping -> self\n        then: n => n + 1\n\ndef B:\n    s: S = S()\n    -> running\n        then:\n            |> s.ping()\n            or MyError(msg: let m):\n                |> s.ping()\n            or e:\n                |> s.ping()\n\ndef main:\n    b: B = B()\n    -> running\n"))]
+      (is (str/includes? emitted "isKindOfClass:[_Cxc_R_MyError class]"))
+      (is (str/includes? emitted "id e = __cxc_reason")
+          "bind arm declares a local `id` alias for the reason")
+      (is (not (str/includes? emitted "@throw;"))
+          "chain with a bind catchall is total — no re-throw fallback"))))
+
+(deftest track-b3-unreachable-arm-after-catchall-rejected
+  (testing "Track B/3 (2026-08-26) — a typed arm following a catchall (bare or bind) is unreachable and rejected at lower with a diagnostic telling the user to remove or reorder. Prevents silently-dead-code recovery arms."
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
-         #"Track B/1: multi-arm and typed `or:` recovery"
-         (lower-src "def S:\n    n: Int! = 0\n    * <: ping -> self\n        then: n => n + 1\n\ndef B:\n    s: S = S()\n    -> running\n        then:\n            |> s.ping()\n            or e:\n                |> s.ping()\n\ndef main:\n    b: B = B()\n    -> running\n")))
+         #"Track B/3: unreachable `or:` arm"
+         (lower-src+prelude "def MyError:\n    msg: String\n\ndef S:\n    n: Int! = 0\n    |: n >= 0 as MyError(msg: \"neg\")\n    * <: ping -> self\n        then: n => n + 1\n\ndef B:\n    s: S = S()\n    -> running\n        then:\n            |> s.ping()\n            or:\n                |> s.ping()\n            or MyError(msg: let m):\n                |> s.ping()\n\ndef main:\n    b: B = B()\n    -> running\n")))))
+
+(deftest track-b3-typed-arm-references-undeclared-record-rejected
+  (testing "Track B/3 (2026-08-26) — `or T(...):` where `T` is not a declared record fails at lower with a targeted diagnostic. Prevents silent silent-drop on typos or forgotten `def T:`."
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
-         #"Track B/1: multi-arm and typed `or:` recovery"
-         (lower-src "def S:\n    n: Int! = 0\n    * <: ping -> self\n        then: n => n + 1\n\ndef B:\n    s: S = S()\n    -> running\n        then:\n            |> s.ping()\n            or MyError():\n                |> s.ping()\n\ndef main:\n    b: B = B()\n    -> running\n")))
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"Track B/1: multi-arm and typed `or:` recovery"
-         (lower-src "def S:\n    n: Int! = 0\n    * <: ping -> self\n        then: n => n + 1\n\ndef B:\n    s: S = S()\n    -> running\n        then:\n            |> s.ping()\n            or:\n                |> s.ping()\n            or:\n                |> s.ping()\n\ndef main:\n    b: B = B()\n    -> running\n")))))
+         #"Track B/3: `or NoSuchType\(...\):` arm references type `NoSuchType`"
+         (lower-src+prelude "def S:\n    n: Int! = 0\n    * <: ping -> self\n        then: n => n + 1\n\ndef B:\n    s: S = S()\n    -> running\n        then:\n            |> s.ping()\n            or NoSuchType():\n                |> s.ping()\n\ndef main:\n    b: B = B()\n    -> running\n")))))
 
 (deftest l9-or-continuation-only-on-sync-sends
   (testing "L9 — `or:` continuation is defined only for sync `|>` sends. Async `:>` sends are fire-and-forget with no caller-frame boundary the recovery block could run in; the parser only look-aheads for `or:` at the `|>` position, so `:>`-followed-by-`or:` lands as an unrelated `or` statement token — parse error is the current diagnostic."

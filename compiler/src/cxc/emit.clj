@@ -691,9 +691,10 @@
          (escape-c-string (:slot-name node)) "\"]) { _"
          (:slot-name node) " = nil; return; }")
     :sync-send-with-recovery
-    ;; L9 (2026-08-26) — sync `|>` send with an `or:` recovery block.
-    ;; Wraps the send-call in an @try; the @catch runs the or-body if
-    ;; the target's transition threw (F48 rollback path).
+    ;; L9 (2026-08-26) — sync `|>` send with an `or:` recovery chain.
+    ;; Wraps the send-call in an @try; the @catch runs the first
+    ;; matching arm body if the target's transition threw (F48
+    ;; rollback path).
     ;;
     ;; Under Layer 4 single-main-queue, `cxc_wait_for_processing` runs
     ;; the block synchronously on the caller's frame; exceptions
@@ -701,15 +702,72 @@
     ;; need a dedicated helper (`cxc_wait_for_processing_or_fail`) that
     ;; captures the failure across the dispatch_sync boundary; MVP
     ;; assumes Layer 4 semantics.
-    (let [send-c   (emit-stmt (:send-call node))
-          or-body  (str/join "\n" (map emit-stmt (:or-body node)))
-          or-block (indent-lines 4 (if (str/blank? or-body) "(void)0;" or-body))]
+    ;;
+    ;; Track B/3 (2026-08-26) — compiler-side arm dispatch is complete;
+    ;; end-to-end runtime routing is a separate landing. Today the
+    ;; target's F48 end-catch-wrap (see `:end-catch-wrap` above) absorbs
+    ;; the thrown NSException at the transition-body boundary and
+    ;; transitions the atom to end, so the exception never propagates
+    ;; out through `cxc_wait_for_processing` to the sync-send caller's
+    ;; @try. The emit machinery below is correct given the design
+    ;; intent — a follow-on runtime landing must either (a) re-raise
+    ;; through the F48 wrap when a thread-local "sync-send in flight"
+    ;; flag is set, or (b) route the caught reason to a caller-visible
+    ;; failure slot the sync-send helper reads after the block returns.
+    ;;
+    ;; Track B/3 arm dispatch shape:
+    ;;   1. Extract `__cxc_reason` from `e.userInfo[@"reason"]` (Track
+    ;;      A/4 boxed reasons travel there).
+    ;;   2. Synthesize `_Cxc_R__Cxc_Uncaught` for non-typed catches so
+    ;;      `or Uncaught(msg: let m):` arms see a uniform reason object
+    ;;      (mirrors L12c catch-side behavior).
+    ;;   3. For each arm:
+    ;;        typed  →  if ([__cxc_reason isKindOfClass:[<box-name> class]]) { <body> }
+    ;;        bind   →  { <var-decl> <body> }   (catchall)
+    ;;        bare   →  { <body> }              (catchall)
+    ;;      Emitted as an if / else-if chain in source order.
+    ;;   4. Fallthrough: `@throw;` re-raises the caught NSException so
+    ;;      unmatched failures propagate up to the enclosing F48 catch.
+    ;;      Skipped when the chain contains a catchall (bare / bind).
+    (let [send-c    (emit-stmt (:send-call node))
+          arms      (:arms node)
+          catchall? (some #(let [p (:pattern %)]
+                             (or (nil? p) (= :bind (:kind p))))
+                          arms)
+          arm-blocks
+          (map-indexed
+           (fn [i arm]
+             (let [pat  (:pattern arm)
+                   body (str/join "\n" (map emit-stmt (:body arm)))
+                   blk  (indent-lines 4 (if (str/blank? body) "(void)0;" body))
+                   head (if (zero? i) "if " "else if ")]
+               (cond
+                 ;; catchall: `else { ... }` (or `{ ... }` at head)
+                 (or (nil? pat) (= :bind (:kind pat)))
+                 (if (zero? i)
+                   (str "{\n" blk "\n}")
+                   (str "else {\n" blk "\n}"))
+
+                 ;; typed: gate by isKindOfClass
+                 :else
+                 (str head "([__cxc_reason isKindOfClass:["
+                      (:box-name arm) " class]]) {\n"
+                      blk "\n}"))))
+           arms)
+          chain     (str/join " " arm-blocks)
+          fallthrough (if catchall? "" " else { @throw; }")]
       (str "@try {\n"
            (indent-lines 4 (if (str/ends-with? send-c ";")
                              send-c
                              (str send-c ";")))
            "\n} @catch (NSException *__cxc_or_e) {\n"
-           or-block
+           "    id __cxc_reason = __cxc_or_e.userInfo[@\"reason\"];\n"
+           "    if (__cxc_reason == nil) {\n"
+           "        _Cxc_R__Cxc_Uncaught *__cxc_u = [[_Cxc_R__Cxc_Uncaught alloc] init];\n"
+           "        __cxc_u->value = (_Cxc_Uncaught){.msg = (__cxc_or_e.reason ?: (__cxc_or_e.name ?: @\"unknown\"))};\n"
+           "        __cxc_reason = __cxc_u;\n"
+           "    }\n"
+           (indent-lines 4 (str chain fallthrough))
            "\n}"))
     :end-catch-wrap
     ;; BEAM-style error containment (design §20). Wraps a transition-

@@ -5284,6 +5284,131 @@
       ;; `|> foo` sync emit — direct call, no queue hop.
       direct-send)))
 
+(defn- lower-or-arm
+  "Enrich one parsed `or:` recovery arm with type-resolved bindings so
+   emit can generate the runtime dispatch without re-querying record-env.
+
+   Bare (`:pattern nil`) and bind (`:kind :bind`) arms carry no
+   isKindOfClass check; typed (`:kind :case`) arms carry:
+     :box-name   — `_Cxc_R_<TypeName>` wrapper class (isKindOfClass target)
+     :bindings   — vector of `{:name S :c-type S :init raw-c-expr-node}`
+                    ready to splice as `:var-decl` nodes into the body
+   All arms' `:body` is lowered eagerly under a ctx enriched with the
+   arm's locals so downstream lookups (name → type-kw) resolve inside
+   the body's own scope.
+
+   Rejects unreachable arms: any arm following a catchall (bare or
+   bind) is dead — the earlier arm would always match first. Emitted
+   as a targeted diagnostic pointing at the unreachable arm's pattern
+   shape so the fix is obvious (delete or reorder)."
+  [arm ctx enclosing-node]
+  (let [pat (:pattern arm)
+        body (:body arm)]
+    (cond
+      ;; bare arm — no bindings
+      (nil? pat)
+      {:pattern nil
+       :body    (mapv (fn [s] (lower-stmt s ctx)) body)}
+
+      ;; bind arm — the bound name aliases the id-typed reason
+      (= :bind (:kind pat))
+      (let [nm       (:name pat)
+            arm-ctx  (update ctx :locals conj [nm :any])
+            body-lo  (mapv (fn [s] (lower-stmt s arm-ctx)) body)]
+        {:pattern pat
+         :bind-name nm
+         :body    (into [{:node :var-decl :name nm :c-type "id"
+                          :rhs {:node :raw-c-expr
+                                :text "__cxc_reason"}}]
+                        body-lo)})
+
+      ;; typed case arm — resolve the record and its bindings
+      (= :case (:kind pat))
+      (let [case-nm    (:name pat)
+            rec        (get-in ctx [:record-env case-nm])
+            _          (when-not rec
+                         (fail-nyi!
+                          (str "Track B/3: `or " case-nm "(...):` arm references "
+                               "type `" case-nm "` which is not a declared record. "
+                               "Recovery arms match reason records (declared via `def "
+                               case-nm ": ...` and thrown by `|: cond as "
+                               case-nm "(...)` on the target).")
+                          enclosing-node))
+            field-idx  (into {} (map (juxt :name identity)) (:fields rec))
+            box-name   (str "_Cxc_R_" case-nm)
+            binding-decls
+            (mapv (fn [b]
+                    (let [_       (when (nil? (:field b))
+                                    (fail-nyi!
+                                     (str "Track B/3: positional binding `let "
+                                          (:as b) "` in `or " case-nm
+                                          "(...)` — reason payloads are "
+                                          "named-only. Use `<field>: let "
+                                          (:as b) "`.")
+                                     enclosing-node))
+                          f       (get field-idx (:field b))
+                          _       (when-not f
+                                    (fail-nyi!
+                                     (str "Track B/3: unknown payload field `"
+                                          (:field b) "` on reason record `"
+                                          case-nm "` — declared fields are "
+                                          (pr-str (mapv :name (:fields rec)))
+                                          ".")
+                                     enclosing-node))
+                          ty-node (:type f)
+                          inner   (if (= :type-nonnil (:node ty-node))
+                                    (:inner ty-node) ty-node)
+                          nm      (:name inner)
+                          tk      (cxc-type->type-kw nm
+                                                     (:record-env ctx)
+                                                     (:atom-env ctx)
+                                                     (:enum-env ctx)
+                                                     ty-node)
+                          c-ty    (cxc-type->c ty-node
+                                               (:record-env ctx)
+                                               (:atom-env ctx)
+                                               (:enum-env ctx))]
+                      {:name    (:as b)
+                       :type-kw tk
+                       :c-type  c-ty
+                       :init    {:node :raw-c-expr
+                                 :text (str "((" box-name " *)__cxc_reason)->value."
+                                            (:field b))}}))
+                  (:bindings pat))
+            arm-ctx    (reduce (fn [c bd] (update c :locals conj [(:name bd) (:type-kw bd)]))
+                               ctx binding-decls)
+            body-lo    (mapv (fn [s] (lower-stmt s arm-ctx)) body)
+            var-decls  (mapv (fn [bd]
+                               {:node :var-decl :name (:name bd)
+                                :c-type (:c-type bd) :rhs (:init bd)})
+                             binding-decls)]
+        {:pattern    pat
+         :box-name   box-name
+         :body       (into var-decls body-lo)}))))
+
+(defn- lower-or-arms
+  "Lower a full `or:` arm chain. Rejects unreachable arms: a catchall
+   arm (bare or bind) shadows every subsequent arm. Returns the enriched
+   arms vector for emit consumption."
+  [arms ctx enclosing-node]
+  (loop [out [] remaining arms saw-catchall? false]
+    (if (empty? remaining)
+      out
+      (let [arm (first remaining)
+            pat (:pattern arm)
+            _   (when saw-catchall?
+                  (fail-nyi!
+                   (str "Track B/3: unreachable `or:` arm — a preceding "
+                        "catchall (`or:` bare or `or <ident>:` bind) already "
+                        "matches every thrown reason, so this arm can never "
+                        "fire. Remove it, or move the catchall to the end "
+                        "of the chain.")
+                   enclosing-node))
+            catchall? (or (nil? pat) (= :bind (:kind pat)))]
+        (recur (conj out (lower-or-arm arm ctx enclosing-node))
+               (rest remaining)
+               (or saw-catchall? catchall?))))))
+
 (defn- lower-send
   "Lower a targeted `:emit` node to a `cxc_send_async` /
    `cxc_wait_for_processing` runtime helper call. Untargeted `:>` fans
@@ -5342,12 +5467,14 @@
         ;; recovery body. Applies to sync sends only (async is
         ;; fire-and-forget: no completion the caller can observe).
         ;;
-        ;; Track B/1 (2026-08-26): parser now delivers `:arms` (ordered
-        ;; recovery arms with optional bind/typed patterns). Lower
-        ;; degrades the single-bare-arm case to the existing MVP
-        ;; `:or-body` shape and hard-rejects anything else with a
-        ;; targeted diagnostic pointing at Track B/2+B/3 where the
-        ;; multi-arm dispatch machinery lands.
+        ;; Track B/1-B/3 (2026-08-26): parser delivers `:arms` — an
+        ;; ordered vector of `{:pattern p :body stmts}` maps where `p`
+        ;; is nil (bare), `{:kind :bind :name S}`, or `{:kind :case
+        ;; :name T :bindings [...]}`. Lower enriches each arm with
+        ;; type-resolved binding info (see `lower-or-arm`) so emit can
+        ;; generate the runtime isKindOfClass chain without re-reading
+        ;; record-env. Emit reads `:arms` directly and handles
+        ;; unmatched via `@throw` (re-raises the caught exception).
         arms      (:arms node)
         _         (when (and (seq arms) (:async? node))
                     (fail-nyi!
@@ -5356,30 +5483,10 @@
                           "no defined caller frame to run in. Use sync "
                           "`|>` for recoverable sends.")
                      node))
-        or-body   (when (and (= 1 (count arms))
-                             (nil? (:pattern (first arms))))
-                    (:body (first arms)))
-        _         (when (and (seq arms) (nil? or-body))
-                    (fail-nyi!
-                     (str "Track B/1: multi-arm and typed `or:` recovery "
-                          "(`or e:` / `or T(...):` / chained arms) is "
-                          "parsed but not yet emitted. Runtime dispatch "
-                          "on the caught exception lands in Track B/3.")
-                     node))
-        ;; Track B/2 (2026-08-26) — carry the full arms list into the
-        ;; lowered node alongside the legacy `:or-body`. Emit still
-        ;; reads `:or-body` (MVP unchanged); B/3 flips emit to `:arms`
-        ;; and drives runtime dispatch on the caught exception. Each
-        ;; arm's body is lowered eagerly so `:arms` and `:or-body` hold
-        ;; the same statement nodes (single-source-of-truth: `:or-body`
-        ;; is a view over `arms[0].body`).
-        lowered-arms (when or-body
-                       [{:pattern nil
-                         :body    (mapv (fn [s] (lower-stmt s ctx)) or-body)}])]
-    (if or-body
+        lowered-arms (when (seq arms) (lower-or-arms arms ctx node))]
+    (if (seq lowered-arms)
       {:node       :sync-send-with-recovery
        :send-call  send-call
-       :or-body    (:body (first lowered-arms))
        :arms       lowered-arms}
       send-call))))
 
