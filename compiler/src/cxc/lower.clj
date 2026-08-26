@@ -5365,11 +5365,22 @@
                           "(`or e:` / `or T(...):` / chained arms) is "
                           "parsed but not yet emitted. Runtime dispatch "
                           "on the caught exception lands in Track B/3.")
-                     node))]
+                     node))
+        ;; Track B/2 (2026-08-26) — carry the full arms list into the
+        ;; lowered node alongside the legacy `:or-body`. Emit still
+        ;; reads `:or-body` (MVP unchanged); B/3 flips emit to `:arms`
+        ;; and drives runtime dispatch on the caught exception. Each
+        ;; arm's body is lowered eagerly so `:arms` and `:or-body` hold
+        ;; the same statement nodes (single-source-of-truth: `:or-body`
+        ;; is a view over `arms[0].body`).
+        lowered-arms (when or-body
+                       [{:pattern nil
+                         :body    (mapv (fn [s] (lower-stmt s ctx)) or-body)}])]
     (if or-body
       {:node       :sync-send-with-recovery
        :send-call  send-call
-       :or-body    (mapv (fn [s] (lower-stmt s ctx)) or-body)}
+       :or-body    (:body (first lowered-arms))
+       :arms       lowered-arms}
       send-call))))
 
 ;; ---------------------------------------------------------------------------

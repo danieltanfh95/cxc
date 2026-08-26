@@ -2673,6 +2673,21 @@ def main:
       (is (str/includes? emitted "@catch (NSException *__cxc_or_e)")
           "@catch binds the exception for the recovery scope"))))
 
+(deftest track-b2-sync-send-with-recovery-carries-arms-alongside-or-body
+  (testing "Track B/2 (2026-08-26) — the lowered `:sync-send-with-recovery` node now carries `:arms` (ordered vector of `{:pattern p :body stmts}`) alongside the legacy `:or-body`. Storage-flip discipline: emit still reads `:or-body` for the MVP single-bare-arm case; Track B/3 will flip emit to `:arms` and retire `:or-body`. This test pins the terminal shape by walking the lowered AST for the recovery node and asserting both slots are populated coherently (arm 0's body equals `:or-body`)."
+    (let [prog (lower-src "def S:\n    n: Int! = 0\n    * <: ping -> self\n        then: n => n + 1\n\ndef B:\n    s: S = S()\n    -> running\n        then:\n            |> s.ping()\n            or:\n                |> s.ping()\n\ndef main:\n    b: B = B()\n    -> running\n")
+          ;; Walk the lowered program AST for a `:sync-send-with-recovery` node.
+          nodes (tree-seq coll? #(if (map? %) (vals %) (seq %)) prog)
+          recov (first (filter #(and (map? %)
+                                     (= :sync-send-with-recovery (:node %)))
+                               nodes))]
+      (is (some? recov) "found a lowered sync-send-with-recovery node")
+      (is (vector? (:arms recov)))
+      (is (= 1 (count (:arms recov))))
+      (is (nil? (:pattern (first (:arms recov)))))
+      (is (= (:body (first (:arms recov))) (:or-body recov))
+          "arm 0's body equals :or-body — single source of truth"))))
+
 (deftest track-b1-non-mvp-or-arms-rejected-at-lower-with-b3-hint
   (testing "Track B/1 (2026-08-26) — parser accepts multi-arm and typed `or:` shapes but lower currently rejects anything beyond the single-bare-arm MVP. The diagnostic points at Track B/3 where runtime dispatch machinery lands; users writing `or e:` or chained arms today get a targeted not-yet-implemented error rather than a silent-drop of the recovery block."
     (is (thrown-with-msg?
