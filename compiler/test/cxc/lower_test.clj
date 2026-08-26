@@ -2717,6 +2717,18 @@ def main:
          #"Track B/3: unreachable `or:` arm"
          (lower-src+prelude "def MyError:\n    msg: String\n\ndef S:\n    n: Int! = 0\n    |: n >= 0 as MyError(msg: \"neg\")\n    * <: ping -> self\n        then: n => n + 1\n\ndef B:\n    s: S = S()\n    -> running\n        then:\n            |> s.ping()\n            or:\n                |> s.ping()\n            or MyError(msg: let m):\n                |> s.ping()\n\ndef main:\n    b: B = B()\n    -> running\n")))))
 
+(deftest track-b5-typed-arm-chain-preserves-source-order-and-terminates-with-throw
+  (testing "Track B/5 (2026-08-26) — a multi-typed `or:` chain (no catchall) emits an `if / else if / else if / ... / else { @throw; }` dispatch preserving source order. Verifies: arms in the declared order become the corresponding if / else-if predicates; the final `else { @throw; }` re-raises unmatched reasons so the enclosing F48 wrapper (or an outer sync-send `or:`) still gets a chance."
+    (let [emitted (emit/emit (lower-src+prelude "def ErrA:\n    msg: String\n\ndef ErrB:\n    code: Int\n\ndef T:\n    n: Int! = 0\n    |: n < 3 as ErrA(msg: \"a\")\n    |: n < 3 as ErrB(code: 1)\n\n    -> running\n\n    running <: kick -> running\n        then: n => n + 1\n\ndef Sender:\n    t: T = T()\n\n    -> running\n        then:\n            |> t.kick()\n            or ErrA(msg: let m):\n                |> t.kick()\n            or ErrB(code: let c):\n                |> t.kick()\n\ndef main:\n    s: Sender = Sender()\n    -> running\n"))
+          idx-a  (str/index-of emitted "isKindOfClass:[_Cxc_R_ErrA class]")
+          idx-b  (str/index-of emitted "isKindOfClass:[_Cxc_R_ErrB class]")]
+      (is (some? idx-a) "ErrA arm gates on _Cxc_R_ErrA")
+      (is (some? idx-b) "ErrB arm gates on _Cxc_R_ErrB")
+      (is (< idx-a idx-b)
+          "arm order preserved: ErrA precedes ErrB in emitted dispatch")
+      (is (str/includes? emitted "@throw;")
+          "typed-only chain terminates with @throw fallthrough"))))
+
 (deftest track-b4-cross-atom-reason-record-recognized-verbatim
   (testing "Track B/4 (2026-08-26) — cross-atom reason transparency. Reason records are top-level globals; the wrapper class name is a deterministic function of the record name (`_Cxc_R_<T>`), so a sender's `or T(...):` arm and a receiver's `|: ... as T(...)` invariant see the same box class. No cross-atom wrapping / adapter is needed — the record IS the reason vocabulary, shared verbatim. Test: two atoms (thrower + sender) share a `SharedErr` record; both use the same `_Cxc_R_SharedErr` wrapper class in the emitted C."
     (let [emitted (emit/emit (lower-src+prelude "def SharedErr:\n    code: Int\n\ndef Thrower:\n    n: Int! = 0\n    |: n < 3 as SharedErr(code: 42)\n\n    -> running\n\n    running <: kick -> running\n        then: n => n + 1\n\ndef Sender:\n    t: Thrower = Thrower()\n\n    -> running\n        then:\n            |> t.kick()\n            or SharedErr(code: let c):\n                |> t.kick()\n\ndef main:\n    s: Sender = Sender()\n    -> running\n"))]
