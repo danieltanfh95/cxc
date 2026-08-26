@@ -820,7 +820,14 @@
    Distinguished from a value-args call by parse-postfix's
    content-dispatch (see `looks-like-msg-payload-parens?`).
    Replaces the retired brace-payload form (F70 I5 Stage 3,
-   2026-08-20)."
+   2026-08-20).
+
+   Track A/1 (2026-08-26) — a payload entry may omit its type
+   (`name:` bareword) to leave the binding untyped; downstream
+   defaults such fields to `id`/`Any`. Used for `<msg>_failed
+   (reason:)` companion subscription where the subscriber unpacks
+   the reason via a `<:` case-pattern block instead of declaring
+   a type up front."
   [tokens pos]
   (let [[_ p] (expect tokens pos :punct "(")]
     (if (at? tokens p :punct ")")
@@ -828,7 +835,12 @@
       (loop [args [] p p]
         (let [[name p2] (expect tokens p :ident)
               [_ p3]    (expect tokens p2 :punct ":")
-              [ty p4]   (parse-type tokens p3)]
+              [ty p4]   (if (or (at? tokens p3 :punct ",")
+                                (at? tokens p3 :punct ")"))
+                          ;; Track A/1 bareword payload — synthesize
+                          ;; `Any` so downstream sees a normal type-ref.
+                          [{:node :type-ref :name "Any"} p3]
+                          (parse-type tokens p3))]
           (cond
             (at? tokens p4 :punct ",")
             (recur (conj args {:name name :type ty}) (inc p4))
@@ -869,22 +881,34 @@
 
       (and (at? tokens p :ident)
            (at? tokens (inc p) :punct ":"))
-      (let [after-colon (+ p 2)
-            t           (peek-tok tokens after-colon)]
-        (and t
-             (= :ident (t-kind t))
-             (let [v            (t-value t)
-                   after-type   (peek-tok tokens (inc after-colon))]
-               (and (not (empty? v))
-                    (Character/isUpperCase (first v))
-                    ;; F16 L3 — NOT followed by `(` (constructor
-                    ;; call being passed as a value) or `.`
-                    ;; (dotted access on the ident, e.g. enum
-                    ;; case `Direction.down` or static member
-                    ;; `Foo.bar()` — all value expressions).
-                    (not (and after-type
-                              (= :punct (t-kind after-type))
-                              (contains? #{"(" "."} (t-value after-type))))))))
+      (let [after-colon (+ p 2)]
+        (cond
+          ;; Track A/1 (2026-08-26) — bareword payload entry
+          ;; `(name:)` or `(name:, ...)`: an ident followed by
+          ;; `:` then `,`/`)` cannot be a value-args call (the
+          ;; value would be missing), so route to the typed-
+          ;; params payload path. Downstream defaults such
+          ;; fields to `id`/`Any`.
+          (or (at? tokens after-colon :punct ")")
+              (at? tokens after-colon :punct ","))
+          true
+
+          :else
+          (let [t          (peek-tok tokens after-colon)
+                after-type (peek-tok tokens (inc after-colon))]
+            (and t
+                 (= :ident (t-kind t))
+                 (let [v (t-value t)]
+                   (and (not (empty? v))
+                        (Character/isUpperCase (first v))
+                        ;; F16 L3 — NOT followed by `(` (constructor
+                        ;; call being passed as a value) or `.`
+                        ;; (dotted access on the ident, e.g. enum
+                        ;; case `Direction.down` or static member
+                        ;; `Foo.bar()` — all value expressions).
+                        (not (and after-type
+                                  (= :punct (t-kind after-type))
+                                  (contains? #{"(" "."} (t-value after-type))))))))))
 
       :else false)))
 
@@ -985,6 +1009,75 @@
     [{:node :param :name "self" :type nil :default nil} (inc pos)]
 
     :else (parse-field tokens pos)))
+
+;; ---------------------------------------------------------------------------
+;; Track A/1 (2026-08-26) — receive-payload params accept a bareword form.
+;;
+;; At receive position (F67 L3 typed-params receive; specifically the target
+;; of a `<msg>_failed(reason:)` companion subscription), a payload param may
+;; omit its type declaration entirely:
+;;
+;;   * <: player.take_damage_failed(reason:) -> self
+;;       then:
+;;           <: reason:
+;;               <: MyError(msg: let m): print(m)
+;;               <: *: print("other")
+;;
+;; A bareword `name:` produces `{:node :field :name X :type nil}`. Downstream
+;; (`augment-atom-env-with-companions`) already treats a nil-typed subscriber
+;; reason as `Any`, which resolves to `id` at the wire — so the case-pattern
+;; block in the body dispatches on an id-typed scrutinee. Existing typed form
+;; `reason: T` continues to parse via the ordinary `parse-field` path; Track
+;; A/3 handles the retirement of the subscriber-declared type slot.
+;;
+;; Scope: bareword accepted ONLY at receive position. Atom-constructor and
+;; function params still require `name: Type` via `parse-field`.
+;; ---------------------------------------------------------------------------
+
+(defn- parse-receive-payload-param
+  "Parse one receive-payload param. Accepts:
+     name: Type [= default]   — typed form (routes to parse-field)
+     name:                    — bareword form (Track A/1) — synthesizes
+                                a `{:node :type-ref :name \"Any\"}` type
+                                so downstream consumers see a normal
+                                typed payload; the `Any` string resolves
+                                to `id` at the wire, matching the
+                                `Any`-fallback in `augment-atom-env-
+                                with-companions`."
+  [tokens pos]
+  (cond
+    ;; Bareword: `name:` followed by `,`/`)` — no type token.
+    (and (at? tokens pos :ident)
+         (at? tokens (inc pos) :punct ":")
+         (or (at? tokens (+ pos 2) :punct ",")
+             (at? tokens (+ pos 2) :punct ")")))
+    (let [fname (t-value (peek-tok tokens pos))]
+      [{:node :field
+        :name fname
+        :type {:node :type-ref :name "Any"}
+        :default nil}
+       (+ pos 2)])
+
+    :else (parse-field tokens pos)))
+
+(defn- parse-receive-payload-param-list
+  "Like `parse-param-list-parens`, but each entry may be a bareword
+   `name:` (Track A/1) in addition to the typed `name: Type` form."
+  [tokens pos]
+  (let [[_ p] (expect tokens pos :punct "(")]
+    (if (at? tokens p :punct ")")
+      [[] (inc p)]
+      (loop [ps [] p p]
+        (let [[param p2] (parse-receive-payload-param tokens p)]
+          (cond
+            (at? tokens p2 :punct ",")
+            (recur (conj ps param) (inc p2))
+
+            (at? tokens p2 :punct ")")
+            [(conj ps param) (inc p2)]
+
+            :else (fail! tokens p2
+                         "expected `,` or `)` in receive-payload param list")))))))
 
 (defn- parse-param-list-parens [tokens pos]
   (let [[_ p] (expect tokens pos :punct "(")]
@@ -1746,7 +1839,7 @@
          (at? tokens (inc pos) :punct "(")
          (looks-like-typed-params? tokens (inc pos)))
     (let [[name p]     (expect tokens pos :ident)
-          [params p]   (parse-param-list-parens tokens p)
+          [params p]   (parse-receive-payload-param-list tokens p)
           as-payload   (mapv #(select-keys % [:name :type]) params)]
       [{:source  {:node :ident :name name}
         :params  params

@@ -6979,7 +6979,13 @@
 (defn- transition-payload-locals
   "Locals a receive-glyph transition body sees, keyed by payload name →
    inferred :type-kw. Used to build ctx for stream emit type inference
-   inside receive-glyph bodies (design §9/§12 payload binding)."
+   inside receive-glyph bodies (design §9/§12 payload binding).
+
+   Track A/1 (2026-08-26) — bareword payload entries (`reason:` without
+   a type) are materialized at parse time as `{:type {:node :type-ref
+   :name \"Any\"}}`, which resolves here to id at the wire — no branch
+   needed. Companion subscribers use this to unpack via a `<:` case-
+   pattern block in the body instead of a declared type."
   [t record-env atom-env enum-env]
   (let [payload (or (get-in t [:receive :msg :payload]) [])]
     (into {} (map (fn [p]

@@ -2403,6 +2403,58 @@ def main:
     -> running
 ")))))
 
+(deftest track-a1-bareword-reason-payload-parses-and-lowers
+  (testing "Track A/1 (2026-08-26) — bareword `reason:` at receive-payload position (no declared type) is accepted by the parser and lowers cleanly. The existing `Any`-fallback in `augment-atom-env-with-companions` produces an id-typed reason at the wire, so the subscriber body can dispatch on it via a generic `<:` case-pattern block. Retirement of the typed `reason: T` slot is Track A/3."
+    (let [lowered (lower-src "def Player:
+    hp: Int! = 100
+
+    alive <: take_damage(amount: Int) -> alive
+        |: amount > 0
+        then: hp => hp - amount
+
+def Logger:
+    player: Player = Player()
+    n: Int! = 0
+
+    * <: player.take_damage_failed(reason:) -> self
+        then: n => n + 1
+
+def main:
+    l: Logger = Logger()
+    -> running
+")
+          player-cls (first (filter #(= "Player" (:name %)) (:classes lowered)))
+          selectors  (mapv :selector (:methods player-cls))]
+      (is (some? player-cls) "Player class lowered under bareword subscriber")
+      (is (some #(re-find #"cxc_emit_take_damage_failed" (or % "")) selectors)
+          "companion emit method still demand-driven from a bareword subscriber"))))
+
+(deftest track-a1-bareword-reason-case-pattern-block-parses-lower-diag-follows-in-a2
+  (testing "Track A/1 (2026-08-26) — parse-side surface: the payload declaration accepts bareword `reason:` AND the `<:` case-pattern block over that reason parses cleanly (F69 L4 expression-position dispatch is generic in scrutinee shape). Lower-time acceptance of id-typed scrutinees for `<:` dispatch is F69 L4d / Track A/2 — until then, the dispatch pass fails-nyi with a clean L4b diagnostic (guarded dead-code landing per storage-flip discipline). This test pins BOTH: (a) parse doesn't reject the composition, (b) lower fails at the F69 L4b guard, not at some upstream shape check."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"F69 L4b:.*`<:` dispatch scrutinee must be tagged-variant"
+         (lower-src "def Player:
+    hp: Int! = 100
+
+    alive <: take_damage(amount: Int) -> alive
+        |: amount > 0
+        then: hp => hp - amount
+
+def Logger:
+    player: Player = Player()
+    n: Int! = 0
+
+    * <: player.take_damage_failed(reason:) -> self
+        then:
+            reason:
+                <: *: print(1)
+
+def main:
+    l: Logger = Logger()
+    -> running
+")))))
+
 (deftest l9-or-continuation-parses-and-lowers-to-sync-send-with-recovery
   (testing "L9 (2026-08-26) — a sync `|>` send followed by an `or:` block parses into an `:emit` node carrying `:or-body`, which lowers to `:sync-send-with-recovery` and emits a Cocoa `@try/@catch` around the send-call. MVP handles bare `or:` with statement bodies; binding (`or e:`) and pattern-matched (`or T:`) variants are a follow-on."
     (let [emitted (emit/emit (lower-src "def Sink:
