@@ -5484,10 +5484,24 @@
                           "`|>` for recoverable sends.")
                      node))
         lowered-arms (when (seq arms) (lower-or-arms arms ctx node))]
-    (if (seq lowered-arms)
+    (cond
+      (seq lowered-arms)
       {:node       :sync-send-with-recovery
        :send-call  send-call
        :arms       lowered-arms}
+
+      ;; Q1 (2026-08-26) — bare sync `|>` captures the target's
+      ;; re-raised NSException (post-Q1 the helper returns one) and
+      ;; re-throws it so the sender's own F48 wrap catches. Without
+      ;; the explicit re-throw the target's failure would be silently
+      ;; swallowed at the call site (helper returns non-nil; nobody
+      ;; reads it). Async `:>` returns the raw send-call; cxc_send_async
+      ;; returns void and its swallow-with-log wrapper handles unhandled
+      ;; exceptions on the receiver's queue worker.
+      (not (:async? node))
+      {:node :sync-send-checked :send-call send-call}
+
+      :else
       send-call))))
 
 ;; ---------------------------------------------------------------------------

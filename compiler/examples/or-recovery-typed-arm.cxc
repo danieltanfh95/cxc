@@ -1,0 +1,21 @@
+def MyError:
+    msg: String
+
+def R:
+    n: Int! = 0
+    |: n < 3 as MyError(msg: "boom")
+
+    -> running
+
+    running <: pulse -> running
+        then: n => n + 1
+
+def main:
+    r: R = R()
+    -> running
+        then:
+            |> r.pulse()
+            |> r.pulse()
+            |> r.pulse()
+            or MyError(msg: let m):
+                print(m)

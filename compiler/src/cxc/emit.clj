@@ -690,6 +690,21 @@
     (str "if ([slotName isEqualToString:@\""
          (escape-c-string (:slot-name node)) "\"]) { _"
          (:slot-name node) " = nil; return; }")
+    :sync-send-checked
+    ;; Q1 (2026-08-26) — bare sync `|>` capture-and-rethrow. The
+    ;; sync-send helper now returns the target's re-raised NSException
+    ;; (nil on success). Discarding the return would silently swallow
+    ;; the failure — sender's own F48 wrap would never see it. Emit
+    ;; captures the return, and if non-nil re-throws so the sender's
+    ;; F48 catches (preserving pre-Q1 behavior: bare `|>` failure
+    ;; kills the sender's atom too). Sync sends with `or:` arms go
+    ;; through `:sync-send-with-recovery` (different emit — dispatches
+    ;; arms instead of re-throwing).
+    (let [send-c (emit-expr (:send-call node))]
+      (str "{\n"
+           "    NSException *__cxc_bs = " send-c ";\n"
+           "    if (__cxc_bs) @throw __cxc_bs;\n"
+           "}"))
     :sync-send-with-recovery
     ;; L9 (2026-08-26) — sync `|>` send with an `or:` recovery chain.
     ;; Wraps the send-call in an @try; the @catch runs the first
@@ -703,17 +718,11 @@
     ;; captures the failure across the dispatch_sync boundary; MVP
     ;; assumes Layer 4 semantics.
     ;;
-    ;; Track B/3 (2026-08-26) — compiler-side arm dispatch is complete;
-    ;; end-to-end runtime routing is a separate landing. Today the
-    ;; target's F48 end-catch-wrap (see `:end-catch-wrap` above) absorbs
-    ;; the thrown NSException at the transition-body boundary and
-    ;; transitions the atom to end, so the exception never propagates
-    ;; out through `cxc_wait_for_processing` to the sync-send caller's
-    ;; @try. The emit machinery below is correct given the design
-    ;; intent — a follow-on runtime landing must either (a) re-raise
-    ;; through the F48 wrap when a thread-local "sync-send in flight"
-    ;; flag is set, or (b) route the caught reason to a caller-visible
-    ;; failure slot the sync-send helper reads after the block returns.
+    ;; Q1 (2026-08-26) — runtime routing complete: F48 re-raises after
+    ;; cleanup; `cxc_wait_for_processing` captures on the sender's
+    ;; frame and returns the NSException; this emit reads the return
+    ;; value directly (no outer @try — the exception never crosses
+    ;; a queue boundary under F32 which would be UB).
     ;;
     ;; Track B/3 arm dispatch shape:
     ;;   1. Extract `__cxc_reason` from `e.userInfo[@"reason"]` (Track
@@ -729,7 +738,7 @@
     ;;   4. Fallthrough: `@throw;` re-raises the caught NSException so
     ;;      unmatched failures propagate up to the enclosing F48 catch.
     ;;      Skipped when the chain contains a catchall (bare / bind).
-    (let [send-c    (emit-stmt (:send-call node))
+    (let [send-c    (emit-expr (:send-call node))
           arms      (:arms node)
           catchall? (some #(let [p (:pattern %)]
                              (or (nil? p) (= :bind (:kind p))))
@@ -755,20 +764,19 @@
                       blk "\n}"))))
            arms)
           chain     (str/join " " arm-blocks)
-          fallthrough (if catchall? "" " else { @throw; }")]
-      (str "@try {\n"
-           (indent-lines 4 (if (str/ends-with? send-c ";")
-                             send-c
-                             (str send-c ";")))
-           "\n} @catch (NSException *__cxc_or_e) {\n"
-           "    id __cxc_reason = __cxc_or_e.userInfo[@\"reason\"];\n"
-           "    if (__cxc_reason == nil) {\n"
-           "        _Cxc_R__Cxc_Uncaught *__cxc_u = [[_Cxc_R__Cxc_Uncaught alloc] init];\n"
-           "        __cxc_u->value = (_Cxc_Uncaught){.msg = (__cxc_or_e.reason ?: (__cxc_or_e.name ?: @\"unknown\"))};\n"
-           "        __cxc_reason = __cxc_u;\n"
-           "    }\n"
-           (indent-lines 4 (str chain fallthrough))
-           "\n}"))
+          fallthrough (if catchall? "" " else { @throw __cxc_or_e; }")]
+      (str "{\n"
+           "    NSException *__cxc_or_e = " send-c ";\n"
+           "    if (__cxc_or_e) {\n"
+           "        id __cxc_reason = __cxc_or_e.userInfo[@\"reason\"];\n"
+           "        if (__cxc_reason == nil) {\n"
+           "            _Cxc_R__Cxc_Uncaught *__cxc_u = [[_Cxc_R__Cxc_Uncaught alloc] init];\n"
+           "            __cxc_u->value = (_Cxc_Uncaught){.msg = (__cxc_or_e.reason ?: (__cxc_or_e.name ?: @\"unknown\"))};\n"
+           "            __cxc_reason = __cxc_u;\n"
+           "        }\n"
+           (indent-lines 8 (str chain fallthrough))
+           "\n    }\n"
+           "}"))
     :end-catch-wrap
     ;; BEAM-style error containment (design §20). Wraps a transition-
     ;; branch body: any exception thrown by then:/do:/invariants
@@ -829,6 +837,14 @@
            "        }\n"
            "    }\n"
            "    [self transitionToEnd];\n"
+           ;; Q1 (2026-08-26) — re-throw after cleanup so sync-send
+           ;; callers see the failure. Cleanup (log + companion emit +
+           ;; transitionToEnd) already fired; the re-raise gives the
+           ;; sender's `cxc_wait_for_processing` a chance to capture
+           ;; and dispatch its `or:` arms. Async senders' cxc_send_async
+           ;; wrapper swallows-with-log so the process doesn't crash;
+           ;; sync senders without `or:` re-raise into their own F48.
+           "    @throw;\n"
            "}"))
     :end-catch-log-only
     ;; Same shape but for -transitionToEnd's own body: an exception
@@ -1542,9 +1558,23 @@
        "    _queue = nil;\n"
        "}\n"
        "@end\n\n"
+       ;; Q1 (2026-08-26) — async send swallows target's re-raised
+       ;; NSException with a stderr log. F48's :end-catch-wrap now
+       ;; re-throws after cleanup (companion emit + transitionToEnd
+       ;; already fired); async callers have no frame to receive the
+       ;; exception, so the swallow-with-log here preserves the
+       ;; pre-Q1 "async fire-and-forget never crashes the process"
+       ;; contract. The exception's userInfo[@"reason"] is already
+       ;; delivered to subscribers via the companion emit fired by
+       ;; F48 before the re-throw — the log is for oncall visibility.
        "static inline void cxc_send_async(id target, void (^block)(void)) {\n"
        "    if (target == nil) return;\n"
-       "    dispatch_async([(id<CXCAtom>)target own_queue], block);\n"
+       "    dispatch_async([(id<CXCAtom>)target own_queue], ^{\n"
+       "        @try { block(); }\n"
+       "        @catch (NSException *e) {\n"
+       "            NSLog(@\"[cxc async unhandled] %@[%p] %@ %@\", NSStringFromClass([target class]), target, e.name, e.reason ?: @\"\");\n"
+       "        }\n"
+       "    });\n"
        "}\n\n"
        ;; F31/F35 L1 — sync-send primitive. Under Layer 4 (single main
        ;; queue), direct call is correct because every atom's own_queue
@@ -1567,8 +1597,17 @@
        ;; on BOTH modes — belt-and-suspenders alongside the F31 L3
        ;; compile-time cycle warning; catches dynamic-dispatch cycles
        ;; the compile-time walk can't see.
-       "static inline void cxc_wait_for_processing(id target, void (^block)(void)) {\n"
-       "    if (target == nil) return;\n"
+       ;; Q1 (2026-08-26) — sync-send helper now RETURNS the target's
+       ;; re-raised NSException (nil on success). F48's :end-catch-wrap
+       ;; catches internally in the target, runs cleanup (companion
+       ;; emit + transitionToEnd), then re-throws. The helper's outer
+       ;; @try captures on the sender's frame — no exception crosses
+       ;; the dispatch_sync queue boundary under F32 (which would be
+       ;; undefined behavior). Sender's emit inspects the return: bare
+       ;; `|>` re-throws (its own F48 catches); `|>` with `or:` arms
+       ;; dispatches on `userInfo[@"reason"]`.
+       "static inline NSException *cxc_wait_for_processing(id target, void (^block)(void)) {\n"
+       "    if (target == nil) return nil;\n"
        "    NSMutableDictionary *__td = [[NSThread currentThread] threadDictionary];\n"
        "    NSMutableSet *__sending = __td[@\"_cxc_sending_to\"];\n"
        "    if (__sending == nil) {\n"
@@ -1581,18 +1620,24 @@
        "        abort();\n"
        "    }\n"
        "    [__sending addObject:__key];\n"
+       "    __block NSException *__captured = nil;\n"
+       "    void (^__wrapped)(void) = ^{\n"
+       "        @try { block(); }\n"
+       "        @catch (NSException *e) { __captured = e; }\n"
+       "    };\n"
        "    @try {\n"
        "#if CXC_SINGLE_MAIN_QUEUE\n"
        "#ifdef DEBUG\n"
        "        dispatch_assert_queue([(id<CXCAtom>)target own_queue]);\n"
        "#endif\n"
-       "        block();\n"
+       "        __wrapped();\n"
        "#else\n"
-       "        dispatch_sync([(id<CXCAtom>)target own_queue], block);\n"
+       "        dispatch_sync([(id<CXCAtom>)target own_queue], __wrapped);\n"
        "#endif\n"
        "    } @finally {\n"
        "        [__sending removeObject:__key];\n"
        "    }\n"
+       "    return __captured;\n"
        "}\n\n"
        ;; F32 L2 (2026-08-24) — shutdown drain. Under future concurrent
        ;; mode (F32 L1 flips atom queues from main-target to the global

@@ -1273,6 +1273,12 @@
       (is (re-find #"F52 L3" (str err))
           "diagnostic cites the responsible landing"))))
 
+(deftest end-to-end-q1-or-recovery-typed-arm
+  (testing "Q1 (2026-08-26) — end-to-end runtime routing for sync-send `or:` recovery. Target R declares `\\|: n < 3 as MyError(msg: \"boom\")` (class-level invariant). Sender fires three pulses; third pulse violates the invariant (n reaches 3), F48 boxes MyError + re-throws (Q1 change), sync helper captures on sender's frame, arm chain dispatches on isKindOfClass, destructures msg into m, prints `boom`. Pre-Q1 this test would print nothing — F48 swallowed the exception before the sender's arm chain saw it."
+    (let [{:keys [exit stdout]} (compile-and-run "or-recovery-typed-arm")]
+      (is (zero? exit))
+      (is (= "boom\n" stdout)))))
+
 (deftest f52-l3-source-override-defaults-to-none-when-opts-omit
   (testing "F52 L3 — opts without :source-overrides is a no-op (default `{}`); on-disk sources are used as before. Regression guard for the 3-arity + 4-arity dispatch: existing callers pass no opts (line 613 pattern) or opts without the key (line 615 pattern)."
     (let [src-dir (tmp-dir)

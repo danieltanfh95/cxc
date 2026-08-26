@@ -271,8 +271,8 @@
                :classes []
                :main {:body []}}
           s   (emit/emit ast)]
-      (is (str/includes? s "static inline void cxc_wait_for_processing(id target, void (^block)(void))")
-          "cxc_wait_for_processing signature unchanged")
+      (is (str/includes? s "static inline NSException *cxc_wait_for_processing(id target, void (^block)(void))")
+          "cxc_wait_for_processing signature returns NSException* (Q1 2026-08-26: F48 re-throws; sync helper captures on sender's frame and returns to caller for `or:` arm dispatch)")
       (is (str/includes? s "NSMutableSet *__sending = __td[@\"_cxc_sending_to\"];")
           "per-thread sending set stored in -threadDictionary under `_cxc_sending_to` key")
       (is (str/includes? s "if ([__sending containsObject:__key])")
@@ -297,10 +297,10 @@
           s   (emit/emit ast)]
       (is (str/includes? s "#if CXC_SINGLE_MAIN_QUEUE")
           "single-queue guard still emitted")
-      (is (str/includes? s "block();")
-          "single-queue direct block invocation preserved")
-      (is (str/includes? s "dispatch_sync([(id<CXCAtom>)target own_queue], block);")
-          "concurrent-mode dispatch_sync preserved"))))
+      (is (str/includes? s "__wrapped();")
+          "single-queue direct block invocation preserved (Q1: block wrapped in @try/@catch to capture on sender's frame; `__wrapped` is the capturing wrapper)")
+      (is (str/includes? s "dispatch_sync([(id<CXCAtom>)target own_queue], __wrapped);")
+          "concurrent-mode dispatch_sync preserved (Q1: dispatched wrapper captures across queue boundary — no bare exception ballistics under F32)"))))
 
 ;; ---------------------------------------------------------------------------
 ;; F32 L1 — atom own_queue target selection. Under CXC_SINGLE_MAIN_QUEUE=1

@@ -2666,12 +2666,12 @@ def main:
     b: Boss = Boss()
     -> running
 "))]
-      (is (str/includes? emitted "@try {")
-          "sync send with or: emits a @try wrap")
       (is (str/includes? emitted "cxc_wait_for_processing")
-          "the wrapped body still calls the sync-send helper")
-      (is (str/includes? emitted "@catch (NSException *__cxc_or_e)")
-          "@catch binds the exception for the recovery scope"))))
+          "the recovery site still calls the sync-send helper")
+      (is (str/includes? emitted "NSException *__cxc_or_e = cxc_wait_for_processing")
+          "Q1 (2026-08-26): outer @try wrap retired; sender captures the helper's return value directly")
+      (is (str/includes? emitted "if (__cxc_or_e)")
+          "recovery block runs only on non-nil captured exception"))))
 
 (deftest track-b2-sync-send-with-recovery-carries-arms-terminal-shape
   (testing "Track B/2 (2026-08-26) — the lowered `:sync-send-with-recovery` node carries `:arms` as terminal shape. `:or-body` is retired; downstream (emit) reads `:arms` directly. Pins the shape by walking the AST for the recovery node and asserting a single-bare-arm program produces a one-arm list with a nil pattern."
@@ -2686,6 +2686,44 @@ def main:
       (is (nil? (:pattern (first (:arms recov)))))
       (is (not (contains? recov :or-body))
           ":or-body retired — :arms is the terminal shape"))))
+
+(deftest q1-f48-end-catch-wrap-appends-rethrow-after-cleanup
+  (testing "Q1 (2026-08-26) — F48 :end-catch-wrap now appends `@throw;` after cleanup (log + companion emit + transitionToEnd) so sync-send callers can capture the failure on their own frame. Async callers' `cxc_send_async` wrapper swallows-with-log so the process doesn't crash. Pins the shape: cleanup fires BEFORE the re-throw (order matters — companion subscribers see the failure regardless of who catches upstream)."
+    (let [emitted (emit/emit (lower-src "def A:\n    n: Int! = 0\n    * <: bump -> self\n        then: n => n + 1\n\ndef main:\n    a: A = A()\n    -> running\n        then: |> a.bump()\n"))
+          wrap-idx    (str/index-of emitted "@catch (NSException *e) {")
+          cleanup-idx (str/index-of emitted "[self transitionToEnd];" wrap-idx)
+          throw-idx   (str/index-of emitted "    @throw;\n" cleanup-idx)]
+      (is (some? wrap-idx) "F48 wrap present")
+      (is (some? cleanup-idx) "cleanup (transitionToEnd) present after wrap")
+      (is (some? throw-idx) "re-throw present after cleanup")
+      (is (< cleanup-idx throw-idx)
+          "re-throw appears AFTER cleanup — companion subscribers fire before propagation"))))
+
+(deftest q1-cxc-wait-for-processing-returns-nsexception-captures-on-senders-frame
+  (testing "Q1 (2026-08-26) — `cxc_wait_for_processing` runtime helper now returns `NSException *` (nil on success). Captures via `__block NSException *__captured` + inner `@try/@catch` inside the block, then wraps the whole dispatch in an outer `@try/@finally` so `_cxc_sending_to` is always cleaned up. No exception ever crosses the `dispatch_sync` queue boundary — avoids UB under F32 concurrent mode."
+    (let [emitted (emit/emit (lower-src "def A:\n    n: Int! = 0\n    * <: bump -> self\n        then: n => n + 1\n\ndef main:\n    a: A = A()\n    -> running\n        then: |> a.bump()\n"))]
+      (is (str/includes? emitted "static inline NSException *cxc_wait_for_processing")
+          "helper signature returns NSException*")
+      (is (str/includes? emitted "__block NSException *__captured = nil;")
+          "capture slot allocated as __block so the inner @catch can write it")
+      (is (str/includes? emitted "__captured = e;")
+          "inner @catch captures the target's re-raised exception on the same thread it fires")
+      (is (str/includes? emitted "return __captured;")
+          "helper returns the captured exception (nil if none)"))))
+
+(deftest q1-cxc-send-async-swallows-with-log
+  (testing "Q1 (2026-08-26) — `cxc_send_async` wraps the block in `@try/@catch` and swallows the target's re-raised exception with an `NSLog` for oncall visibility. Preserves the pre-Q1 async fire-and-forget contract: async sends never crash the process. Companion emit already fired inside F48 before the re-throw, so subscribers still receive the failure signal."
+    (let [emitted (emit/emit (lower-src "def A:\n    n: Int! = 0\n    * <: bump -> self\n        then: n => n + 1\n\ndef main:\n    a: A = A()\n    -> running\n        then: |> a.bump()\n"))]
+      (is (str/includes? emitted "cxc async unhandled")
+          "async wrapper swallows with NSLog to stderr"))))
+
+(deftest q1-bare-sync-send-emits-capture-and-rethrow
+  (testing "Q1 (2026-08-26) — bare sync `|>` (no `or:` arms) lowers to `:sync-send-checked` wrapping the raw send-call. Emit renders as `{ NSException *__cxc_bs = cxc_wait_for_processing(...); if (__cxc_bs) @throw __cxc_bs; }` — sender's own F48 catches the re-thrown exception (preserving pre-Q1 behavior where bare `|>` failure killed the sender's atom too). Without explicit capture + rethrow, the helper's non-nil return would be silently discarded."
+    (let [emitted (emit/emit (lower-src "def A:\n    n: Int! = 0\n    * <: bump -> self\n        then: n => n + 1\n\ndef main:\n    a: A = A()\n    -> running\n        then: |> a.bump()\n"))]
+      (is (str/includes? emitted "NSException *__cxc_bs = cxc_wait_for_processing")
+          "bare sync send captures helper's return value")
+      (is (str/includes? emitted "if (__cxc_bs) @throw __cxc_bs;")
+          "sender re-throws on non-nil capture so its own F48 wrap catches"))))
 
 (deftest track-b3-typed-arm-emits-iskindofclass-dispatch
   (testing "Track B/3 (2026-08-26) — a typed `or T(field: let x):` arm emits `if ([__cxc_reason isKindOfClass:[_Cxc_R_T class]]) { <destructure> <body> } else { @throw; }`. The catch prelude extracts `__cxc_reason` from `e.userInfo[@\"reason\"]` and synthesizes `_Cxc_R__Cxc_Uncaught` on nil (mirrors L12c catch-side behavior)."
@@ -2707,8 +2745,8 @@ def main:
       (is (str/includes? emitted "isKindOfClass:[_Cxc_R_MyError class]"))
       (is (str/includes? emitted "id e = __cxc_reason")
           "bind arm declares a local `id` alias for the reason")
-      (is (not (str/includes? emitted "@throw;"))
-          "chain with a bind catchall is total — no re-throw fallback"))))
+      (is (not (str/includes? emitted "else { @throw __cxc_or_e; }"))
+          "chain with a bind catchall is total — no `else @throw` fallback appended (F48's own `@throw;` after cleanup is a different site, unrelated to arm dispatch)"))))
 
 (deftest track-b3-unreachable-arm-after-catchall-rejected
   (testing "Track B/3 (2026-08-26) — a typed arm following a catchall (bare or bind) is unreachable and rejected at lower with a diagnostic telling the user to remove or reorder. Prevents silently-dead-code recovery arms."
@@ -3555,11 +3593,18 @@ def main:
           state-body (:body (first (filter #(clojure.string/starts-with?
                                              (:selector %) "cxc_stateInit")
                                            (:methods main-cls))))
+          ;; Q1 (2026-08-26) — bare sync `|>` now lowers to
+          ;; `:sync-send-checked` wrapping the raw `:call`, so unwrap
+          ;; one level before checking the helper name.
+          unwrap    (fn [stmt]
+                      (if (= :sync-send-checked (:node stmt))
+                        (:send-call stmt) stmt))
           send-call (some (fn [stmt]
-                            (when (and (= :call (:node stmt))
-                                       (clojure.string/includes?
-                                        (or (:fn stmt) "") "cxc_"))
-                              stmt))
+                            (let [s (unwrap stmt)]
+                              (when (and (= :call (:node s))
+                                         (clojure.string/includes?
+                                          (or (:fn s) "") "cxc_"))
+                                s)))
                           state-body)]
       (is (some? send-call) "expected a cxc_* send helper in main's state-init")
       (is (= "cxc_wait_for_processing" (:fn send-call))
