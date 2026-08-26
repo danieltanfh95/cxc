@@ -2446,37 +2446,46 @@ def main:
                 n => n + 1
 ")))))
 
+(deftest panic-requires-use-cap
+  (testing "2026-08-26 panic-cap gate — `panic(...)` called without a `use panic: SystemPanic` declaration on the enclosing atom errors at compile-time with a migration hint. Rationale: panic is the process-terminal escape hatch; the `use:` is the compile-time \"you're on your own\" contract."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"panic\(\.\.\.\) requires the enclosing atom to declare `use panic: SystemPanic`"
+         (lower-src "def main:\n    -> running\n        then: panic(\"boom\")\n")))))
+
+(deftest panic-with-use-cap-lowers-cleanly
+  (testing "2026-08-26 panic-cap gate — `panic(...)` with `use panic: SystemPanic` on the enclosing atom lowers to the F31/F35 L2 inline trap without error. SystemPanic is a phantom capability type (no runtime state); the `use:` slot is a compile-time contract."
+    (let [emitted (emit/emit (lower-src "def main:\n    use panic: SystemPanic\n\n    -> running\n        then: panic(\"boom\")\n"))]
+      (is (clojure.string/includes? emitted "__builtin_trap()")
+          "panic still lowers to inline trap under the cap gate"))))
+
 (deftest f31-f35-l2-panic-lowers-to-inline-trap
-  (testing "F31/F35 Landing 2 — `panic(\"msg\")` lowers to an inline expr that prints `panic: <msg>` + backtrace and calls `__builtin_trap()`. Uncatchable (bypasses `@try/@catch`); BEAM-style transition isolation is preserved separately."
-    (let [prog (lower-src "def main:\n    -> running\n        then: panic(\"boom\")\n")
-          call (first (get-in prog [:main :body]))]
-      (is (= :ffi-call (:node call)))
-      (is (= "panic" (:name call)))
-      (let [rendered ((:emit-c-fn call) ["@\"boom\""])]
-        (is (clojure.string/includes? rendered "panic: %s")
-            "renders the panic-prefixed format string")
-        (is (clojure.string/includes? rendered "backtrace(")
-            "renders the inline backtrace call")
-        (is (clojure.string/includes? rendered "__builtin_trap()")
-            "renders the uncatchable trap")))))
+  (testing "F31/F35 Landing 2 — `panic(\"msg\")` lowers to an inline expr that prints `panic: <msg>` + backtrace and calls `__builtin_trap()`. Uncatchable (bypasses `@try/@catch`); BEAM-style transition isolation is preserved separately. Post 2026-08-26 `use panic:` gate: main becomes main-as-atom (has a `:use-section`); panic call site lives inside its transition method, verified via emitted C."
+    (let [emitted (emit/emit (lower-src "def main:\n    use panic: SystemPanic\n\n    -> running\n        then: panic(\"boom\")\n"))]
+      (is (clojure.string/includes? emitted "panic: %s")
+          "renders the panic-prefixed format string")
+      (is (clojure.string/includes? emitted "backtrace(")
+          "renders the inline backtrace call")
+      (is (clojure.string/includes? emitted "__builtin_trap()")
+          "renders the uncatchable trap"))))
 
 (deftest f31-f35-l2-panic-non-string-arg-rejected
   (testing "F31/F35 Landing 2 — MVP accepts a string-literal arg only (spec §3.5.4). Domain-error payload waits on Result infra."
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
          #"panic\(\) arg must be a string literal"
-         (lower-src "def main:\n    -> running\n        then: panic(42)\n")))))
+         (lower-src "def main:\n    use panic: SystemPanic\n\n    -> running\n        then: panic(42)\n")))))
 
 (deftest f31-f35-l2-panic-wrong-arity-rejected
   (testing "F31/F35 Landing 2 — panic expects exactly one arg."
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
          #"panic\(\) expects exactly one"
-         (lower-src "def main:\n    -> running\n        then: panic(\"a\", \"b\")\n")))))
+         (lower-src "def main:\n    use panic: SystemPanic\n\n    -> running\n        then: panic(\"a\", \"b\")\n")))))
 
 (deftest f31-f35-l2-panic-pulls-execinfo-include
   (testing "F31/F35 Landing 2 — programs using panic get `<execinfo.h>` in includes (for the inlined backtrace() call). Programs without panic don't."
-    (let [with-panic    (lower-src "def main:\n    -> running\n        then: panic(\"x\")\n")
+    (let [with-panic    (lower-src "def main:\n    use panic: SystemPanic\n\n    -> running\n        then: panic(\"x\")\n")
           without-panic (lower-src "def main:\n    -> running\n        then: print(1)\n")]
       (is (some #{"<execinfo.h>"} (:includes with-panic))
           "panic program includes <execinfo.h>")

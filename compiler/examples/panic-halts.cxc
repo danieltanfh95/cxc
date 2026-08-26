@@ -1,4 +1,6 @@
 def main:
+    use panic: SystemPanic
+
     -> running
         then:
             panic("boom")

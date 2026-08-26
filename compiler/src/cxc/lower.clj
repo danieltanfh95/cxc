@@ -550,6 +550,11 @@
         (contains? record-env nm)       nm
         (contains? atom-env nm)         (str nm " *")
         (contains? enum-env nm)         nm
+        ;; L-panic-cap (2026-08-26) — phantom capability atom types
+        ;; render as atom pointers (never actually referenced at
+        ;; runtime; the capability is compile-time only).
+        (contains? #{"SystemPanic" "_Cxc_SystemPanic"} nm)
+        (str nm " *")
         :else                            (fail-nyi! (str "type " nm) ty-node)))
     :type-named-tuple
     ;; F15 L2.c.iii.c.α (2026-08-24) — a named-tuple param type lowers
@@ -701,6 +706,11 @@
       (contains? record-env cxc-name) {:record cxc-name}
       (contains? atom-env   cxc-name) {:atom   cxc-name}
       (contains? enum-env   cxc-name) {:enum   cxc-name}
+      ;; L-panic-cap (2026-08-26) — phantom capability atoms are
+      ;; compiler-known types. Recognized here so type resolution
+      ;; passes even when no user def exists.
+      (contains? #{"SystemPanic" "_Cxc_SystemPanic"} cxc-name)
+      {:atom cxc-name}
       ;; F15 L2.c.iii.c.γ.α (2026-08-24) — mangled named-tuple names
       ;; (D4-reserved `_Cxc_NT` prefix, per named-tuple/reserved-type-
       ;; name-prefix?) resolve to a `:named-tuple` type-kw without a
@@ -2654,13 +2664,21 @@
              ;; same-named data-field defaulted to that ctor-param.
              ;; Type must be an atom (capability atoms are the intended
              ;; kind); user-declared collisions raise below.
+             ;; L-panic-cap (2026-08-26) — phantom capability atoms
+             ;; are compiler-known types with no runtime state; they
+             ;; license their `use:` slot but never resolve to a
+             ;; user-defined atom. Recognized here so validation
+             ;; passes without requiring the user to `def` them.
+             phantom-caps  #{"SystemPanic" "_Cxc_SystemPanic"}
              _             (doseq [c use-caps]
-                             (when-not (contains? atom-names (base-type-name (:type c)))
-                               (fail-nyi!
-                                (str "use: `" (:name c) "` requires an atom type; got `"
-                                     (base-type-name (:type c)) "` (Layer 3.1 only "
-                                     "supports capability atom types in use: for now)")
-                                c)))
+                             (let [ty-nm (base-type-name (:type c))]
+                               (when-not (or (contains? atom-names ty-nm)
+                                             (contains? phantom-caps ty-nm))
+                                 (fail-nyi!
+                                  (str "use: `" (:name c) "` requires an atom type; got `"
+                                       ty-nm "` (Layer 3.1 only "
+                                       "supports capability atom types in use: for now)")
+                                  c))))
              cap-idents     (mapv (fn [c] {:node :ident :name (:name c)}) use-caps)
              cap-as-params  (mapv (fn [c] {:name (:name c) :type (:type c) :default nil})
                                   use-caps)
@@ -2869,6 +2887,14 @@
              on-nil-entries (into {} (map (juxt :method :value) on-nil-raw))
              message-index (collect-message-shapes name transitions)
              companion-index (collect-companion-shapes name transitions)
+             ;; L-panic-cap (2026-08-26) — thread the raw `use:` cap
+             ;; list onto atom-env so `panic(...)` at a call site can
+             ;; check that the enclosing atom declared
+             ;; `use panic: SystemPanic`. Cap type-names are captured
+             ;; post-rename (matches the atom-env keys).
+             raw-use-caps  (mapv (fn [c] {:name (:name c)
+                                          :type-name (base-type-name (:type c))})
+                                 use-caps)
              ;; Streams this atom EMITS (untargeted `:>` in any transition
              ;; body). Indexed by stream name; the ordered list preserves
              ;; declaration order so the emitted ivars + methods have a
@@ -2939,6 +2965,7 @@
                           :transitions   transitions
                           :message-index message-index
                           :companion-index companion-index
+                          :use-caps      raw-use-caps
                           :stream-index  stream-index
                           :stream-order  stream-order
                           :subscription-map subscription-map
@@ -2981,6 +3008,7 @@
    :transitions          []
    :message-index        {}
    :companion-index      {}
+   :use-caps             []
    :stream-index         {}
    :stream-order         []
    :stream-payload-index {}
@@ -5007,7 +5035,32 @@
                          (fail-nyi! (str "panic() arg must be a string literal "
                                          "for MVP (spec §3.5.4). Domain-error "
                                          "payload waits on Result infra.")
-                                    node))]
+                                    node))
+                  ;; L-panic-cap (2026-08-26) — require the enclosing
+                  ;; atom to declare `use panic: SystemPanic`. Panic
+                  ;; is the process-terminal escape hatch; the `use:`
+                  ;; is the compile-time "you're on your own" contract.
+                  self-info (get-in ctx [:locals "self"])
+                  self-atom (and (map? self-info) (:atom self-info))
+                  atom-info (when self-atom (get-in ctx [:atom-env self-atom]))
+                  has-panic-cap?
+                  ;; Accept both the mangled prelude name (real
+                  ;; user-facing shape) and the un-mangled name (used
+                  ;; by unit tests that skip the prelude rewrite pass).
+                  (some #(contains? #{"_Cxc_SystemPanic" "SystemPanic"}
+                                    (:type-name %))
+                        (:use-caps atom-info))
+                  _    (when-not has-panic-cap?
+                         (fail-compile!
+                          :cxc-panic-requires-use-cap
+                          (str "panic(...) requires the enclosing atom to "
+                               "declare `use panic: SystemPanic`. Panic is "
+                               "the process-terminal escape hatch (F31/F35 "
+                               "L2 semantics unchanged); the `use:` is the "
+                               "compile-time \"you're on your own\" contract. "
+                               "Add `use panic: SystemPanic` to atom `"
+                               (or self-atom "<unknown>") "`.")
+                          node))]
               {:node :ffi-call
                :name "panic"
                :args [(lower-expr msg-expr ctx)]
@@ -9673,8 +9726,17 @@
         _              (when main-as-atom?
                          (doseq [p (get-in atom-env ["main" :ctor-params])
                                  :let [ty-name   (:cxc-ty p)
-                                       atom-info (get atom-env ty-name)]]
-                           (when-not atom-info
+                                       atom-info (get atom-env ty-name)
+                                       ;; L-panic-cap (2026-08-26) —
+                                       ;; phantom capability atoms have
+                                       ;; no atom-env entry (no runtime
+                                       ;; state); skip provisioning
+                                       ;; validation for them.
+                                       phantom?  (contains?
+                                                  #{"SystemPanic"
+                                                    "_Cxc_SystemPanic"}
+                                                  ty-name)]]
+                           (when-not (or atom-info phantom?)
                              (fail-compile!
                               :cxc-f50-non-atom-main-param
                               (str "def main param `" (:name p) ": " ty-name

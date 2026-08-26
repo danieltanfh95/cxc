@@ -41,6 +41,7 @@
    "Key"                "_Cxc_Key"
    "Position"           "_Cxc_Position"
    "Console"            "_Cxc_Console"
+   "SystemPanic"        "_Cxc_SystemPanic"
    ;; Layer 5c Step 8: Stream is the user-visible type for
    ;; method-returned reactive streams. Maps to CxcStream, the
    ;; runtime helper class defined inline in emit's helpers block
@@ -65,7 +66,7 @@
    after the rewrite pass runs, so entries here match what the
    lowered AST carries — not what the prelude source spelled."
   #{"_Cxc_Clock" "_Cxc_Random" "_Cxc_TestKeyboardInput"
-    "_Cxc_Console"})
+    "_Cxc_Console" "_Cxc_SystemPanic"})
 
 ;; F55 Landing 2 (2026-08-15) — prelude lives in a real directory tree
 ;; on the classpath: `resources/prelude/shared/*.cxc` (cross-target,
@@ -115,6 +116,7 @@
   [{:name :time    :kind :shared :names ["Duration" "Instant"]}
    {:name :geom    :kind :shared :names ["Position"]}
    {:name :input   :kind :shared :names ["Key" "TestKeyboardInput"]}
+   {:name :system  :kind :shared :names ["SystemPanic"]}
    {:name :random  :kind :target :names ["Random"]}
    {:name :clock   :kind :target :names ["Clock"]}
    {:name :io      :kind :target :names ["Console"]}])

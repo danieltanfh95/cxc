@@ -1,0 +1,14 @@
+# Prelude — system capabilities.
+#
+# Phantom capability atoms — declared here so atoms can `use` them.
+# No runtime state, no methods; presence in a `use:` slot is a
+# compile-time contract about what the enclosing atom is licensed
+# to do.
+
+# `use panic: SystemPanic` licenses the enclosing atom's body to call
+# `panic("...")`. Without the declaration, `panic()` is a compile-
+# time error pointing at this migration. Panic itself remains
+# uncatchable per F31/F35 L2 — this is a compile-time gate, not a
+# runtime dispatch.
+def SystemPanic:
+    -> ready
