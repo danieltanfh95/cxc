@@ -1273,6 +1273,12 @@
       (is (re-find #"F52 L3" (str err))
           "diagnostic cites the responsible landing"))))
 
+(deftest end-to-end-q2-bounded-mailbox-sync-block
+  (testing "Q2 (2026-08-26) — end-to-end sync `|>` to a `queue: bounded(2)` target. Sender fires three sequential `|>` calls; per spec §1.11 the sync-block discipline blocks the sender until the receiver drains — so all three complete in order, then print(1) runs. Zero output would indicate deadlock (bounded blocking mishandled); output `1` confirms the sem was correctly signaled by each dispatched block on the target's queue, allowing subsequent enqueues to proceed."
+    (let [{:keys [exit stdout]} (compile-and-run "bounded-mailbox-sync-block")]
+      (is (zero? exit))
+      (is (= "1\n" stdout)))))
+
 (deftest end-to-end-q1-or-recovery-typed-arm
   (testing "Q1 (2026-08-26) — end-to-end runtime routing for sync-send `or:` recovery. Target R declares `\\|: n < 3 as MyError(msg: \"boom\")` (class-level invariant). Sender fires three pulses; third pulse violates the invariant (n reaches 3), F48 boxes MyError + re-throws (Q1 change), sync helper captures on sender's frame, arm chain dispatches on isKindOfClass, destructures msg into m, prints `boom`. Pre-Q1 this test would print nothing — F48 swallowed the exception before the sender's arm chain saw it."
     (let [{:keys [exit stdout]} (compile-and-run "or-recovery-typed-arm")]

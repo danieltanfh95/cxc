@@ -1031,6 +1031,15 @@
          ", __cxc_qtarget);\n"
          "#endif\n"
          "}")
+    :mailbox-sem-init
+    ;; Q2 (2026-08-26) — bounded(N) mailbox semaphore. Allocated once
+    ;; per atom instance at capacity N in structuralSetup; consumed by
+    ;; the bounded runtime helpers (cxc_send_async_bounded /
+    ;; cxc_wait_for_processing_bounded). Only emitted when the def-atom
+    ;; carries `:queue-config {:kind :bounded :capacity N}`; unbounded
+    ;; atoms never allocate one.
+    (str (:ivar node) " = dispatch_semaphore_create("
+         (:capacity node) ");")
     :hashtable-init
     ;; NSHashTable with weak-object membership: subscribers can dealloc
     ;; freely, entries auto-disappear (design §18). Zero-cost when no
@@ -1638,6 +1647,41 @@
        "        [__sending removeObject:__key];\n"
        "    }\n"
        "    return __captured;\n"
+       "}\n\n"
+       ;; Q2 (2026-08-26) — bounded(N) mailbox variants. Semaphore-based
+       ;; backpressure: sem is created at capacity N in the target's
+       ;; -cxc_structuralSetup; every enqueued message decrements the
+       ;; sem, every dispatched block signals it. Async uses TIME_NOW
+       ;; (drop-newest — spec §1.11: `:>` fire-and-forget preserved,
+       ;; new message silently dropped when mailbox full). Sync uses
+       ;; TIME_FOREVER (block-until-space — spec §1.11: `|>` waits
+       ;; for room, composes with existing sync-await-processing).
+       ;; Callers pass the sem directly (not looked up via protocol
+       ;; dispatch) — the emit site knows the target class statically
+       ;; and threads the sem via direct-ivar access; zero cost for
+       ;; unbounded targets (helper never invoked).
+       "static inline void cxc_send_async_bounded(id target, dispatch_semaphore_t sem, void (^block)(void)) {\n"
+       "    if (target == nil) return;\n"
+       "    if (dispatch_semaphore_wait(sem, DISPATCH_TIME_NOW) != 0) {\n"
+       "#ifdef DEBUG\n"
+       "        NSLog(@\"[cxc bounded drop] %@[%p] mailbox full — dropping :> message\", NSStringFromClass([target class]), target);\n"
+       "#endif\n"
+       "        return;\n"
+       "    }\n"
+       "    dispatch_async([(id<CXCAtom>)target own_queue], ^{\n"
+       "        @try { block(); }\n"
+       "        @catch (NSException *e) {\n"
+       "            NSLog(@\"[cxc async unhandled] %@[%p] %@ %@\", NSStringFromClass([target class]), target, e.name, e.reason ?: @\"\");\n"
+       "        }\n"
+       "        dispatch_semaphore_signal(sem);\n"
+       "    });\n"
+       "}\n\n"
+       "static inline NSException *cxc_wait_for_processing_bounded(id target, dispatch_semaphore_t sem, void (^block)(void)) {\n"
+       "    if (target == nil) return nil;\n"
+       "    dispatch_semaphore_wait(sem, DISPATCH_TIME_FOREVER);\n"
+       "    NSException *__result = cxc_wait_for_processing(target, block);\n"
+       "    dispatch_semaphore_signal(sem);\n"
+       "    return __result;\n"
        "}\n\n"
        ;; F32 L2 (2026-08-24) — shutdown drain. Under future concurrent
        ;; mode (F32 L1 flips atom queues from main-target to the global

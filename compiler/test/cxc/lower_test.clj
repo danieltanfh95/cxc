@@ -2717,6 +2717,52 @@ def main:
       (is (str/includes? emitted "cxc async unhandled")
           "async wrapper swallows with NSLog to stderr"))))
 
+(deftest q2-bounded-target-declares-sem-property-and-init
+  (testing "Q2 (2026-08-26) — `def <Atom>(queue: bounded(N))` triggers three emit-side changes: (1) the atom's @interface synthesizes a `cxc_mailbox_sem` @property backed by an ivar; (2) `-cxc_structuralSetup` allocates it via `dispatch_semaphore_create(N)`; (3) unbounded atoms in the same program are unaffected (no sem property, no init). Pins the isolation — bounded discipline is per-class, opt-in, and doesn't perturb other atoms' shapes."
+    (let [emitted (emit/emit (lower-src "def A(queue: bounded(2)):\n    n: Int! = 0\n    * <: bump -> self\n        then: n => n + 1\n\ndef B:\n    m: Int! = 0\n    * <: tick -> self\n        then: m => m + 1\n\ndef main:\n    a: A = A()\n    b: B = B()\n    -> running\n        then: |> a.bump()\n"))
+          a-iface-start (str/index-of emitted "@interface A ")
+          b-iface-start (str/index-of emitted "@interface B ")]
+      (is (some? a-iface-start) "A @interface present")
+      (is (some? b-iface-start) "B @interface present")
+      (let [a-iface (subs emitted a-iface-start b-iface-start)
+            b-iface (subs emitted b-iface-start (min (+ b-iface-start 2000) (count emitted)))]
+        (is (str/includes? a-iface "cxc_mailbox_sem")
+            "A (bounded) declares cxc_mailbox_sem property")
+        (is (not (str/includes? b-iface "cxc_mailbox_sem"))
+            "B (unbounded) does NOT declare cxc_mailbox_sem — per-class opt-in isolation"))
+      (is (str/includes? emitted "_cxc_mailbox_sem = dispatch_semaphore_create(2);")
+          "sem initialized at declared capacity in structuralSetup"))))
+
+(deftest q2-bounded-target-sync-send-routes-through-bounded-helper
+  (testing "Q2 (2026-08-26) — sync `|>` to a bounded target lowers to `cxc_wait_for_processing_bounded` (not `cxc_wait_for_processing`) with the target's sem accessor prepended. Pre-Q2 emitted `cxc_wait_for_processing(target, ^{ ... })`; post-Q2 with bounded target emits `cxc_wait_for_processing_bounded(target, [target cxc_mailbox_sem], ^{ ... })`. Q1's `:sync-send-checked` capture-and-rethrow shape still wraps — Q2 only swaps the helper name + adds the sem arg."
+    (let [emitted (emit/emit (lower-src "def A(queue: bounded(2)):\n    n: Int! = 0\n    * <: bump -> self\n        then: n => n + 1\n\ndef main:\n    a: A = A()\n    -> running\n        then: |> a.bump()\n"))]
+      (is (str/includes? emitted "cxc_wait_for_processing_bounded(_a, [_a cxc_mailbox_sem]")
+          "sync send to bounded target routes through _bounded helper with sem accessor")
+      (is (str/includes? emitted "NSException *__cxc_bs = cxc_wait_for_processing_bounded")
+          "Q1's :sync-send-checked capture wraps the bounded call (bare `|>` still re-throws)"))))
+
+(deftest q2-unbounded-target-keeps-pre-q2-shape
+  (testing "Q2 (2026-08-26) — sync `|>` to an unbounded (default) target emits the pre-Q2 unchanged `cxc_wait_for_processing` shape. No sem accessor, no bounded helper. Zero-cost for the default case: unbounded atoms carry no extra ivar, no extra helper call, no extra bytes of runtime."
+    (let [emitted (emit/emit (lower-src "def A:\n    n: Int! = 0\n    * <: bump -> self\n        then: n => n + 1\n\ndef main:\n    a: A = A()\n    -> running\n        then: |> a.bump()\n"))]
+      (is (str/includes? emitted "cxc_wait_for_processing(_a, ^")
+          "unbounded target keeps direct cxc_wait_for_processing call")
+      (is (not (str/includes? emitted "cxc_wait_for_processing_bounded(_a"))
+          "no bounded-helper CALL when target is unbounded (helper definition is header-only, always present)")
+      (is (not (str/includes? emitted "cxc_mailbox_sem];"))
+          "no sem ivar accessor at any send call site when no atom in program is bounded"))))
+
+(deftest q2-bounded-runtime-helpers-emit-once
+  (testing "Q2 (2026-08-26) — the `cxc_send_async_bounded` + `cxc_wait_for_processing_bounded` runtime helpers are always emitted as part of `cxc-runtime-helpers` (whenever any atom is emitted, whether or not any target is actually bounded). Header-only helpers; no runtime cost for programs that never call them. Async variant uses `DISPATCH_TIME_NOW` (drop-newest); sync variant uses `DISPATCH_TIME_FOREVER` (block-until-space) per spec §1.11."
+    (let [emitted (emit/emit (lower-src "def A:\n    n: Int! = 0\n    * <: bump -> self\n        then: n => n + 1\n\ndef main:\n    a: A = A()\n    -> running\n        then: |> a.bump()\n"))]
+      (is (str/includes? emitted "static inline void cxc_send_async_bounded(id target, dispatch_semaphore_t sem")
+          "async bounded helper defined")
+      (is (str/includes? emitted "static inline NSException *cxc_wait_for_processing_bounded(id target, dispatch_semaphore_t sem")
+          "sync bounded helper defined")
+      (is (str/includes? emitted "dispatch_semaphore_wait(sem, DISPATCH_TIME_NOW)")
+          "async uses TIME_NOW — drop-newest discipline per spec §1.11")
+      (is (str/includes? emitted "dispatch_semaphore_wait(sem, DISPATCH_TIME_FOREVER)")
+          "sync uses TIME_FOREVER — block-until-space discipline per spec §1.11"))))
+
 (deftest q1-bare-sync-send-emits-capture-and-rethrow
   (testing "Q1 (2026-08-26) — bare sync `|>` (no `or:` arms) lowers to `:sync-send-checked` wrapping the raw send-call. Emit renders as `{ NSException *__cxc_bs = cxc_wait_for_processing(...); if (__cxc_bs) @throw __cxc_bs; }` — sender's own F48 catches the re-thrown exception (preserving pre-Q1 behavior where bare `|>` failure killed the sender's atom too). Without explicit capture + rethrow, the helper's non-nil return would be silently discarded."
     (let [emitted (emit/emit (lower-src "def A:\n    n: Int! = 0\n    * <: bump -> self\n        then: n => n + 1\n\ndef main:\n    a: A = A()\n    -> running\n        then: |> a.bump()\n"))]

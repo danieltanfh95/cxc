@@ -2994,7 +2994,13 @@
                           :slot-names    slot-names
                           :on-nil-entries on-nil-entries
                           :extras        extras
-                          :class-fns     class-fns})))
+                          :class-fns     class-fns
+                          ;; Q2 (2026-08-26) — bounded(N) mailbox
+                          ;; discipline. Carried through so lower-atom
+                          ;; can emit the sem ivar + init, and
+                          ;; lower-send can route to the bounded
+                          ;; runtime helpers. Nil = unbounded (default).
+                          :queue-config  (:queue-config a)})))
      skeleton
      atoms)))
 
@@ -5454,15 +5460,31 @@
         arg-exprs (mapv (fn [{:keys [value]}] (lower-expr value ctx)) resolved)
         param-names (mapv :name (:payload msg-shape))
         selector  (objc-method-selector msg-name param-names)
-        helper    (if (:async? node) "cxc_send_async" "cxc_wait_for_processing")
+        ;; Q2 (2026-08-26) — bounded(N) target routing. When target
+        ;; class carries `:queue-config {:kind :bounded ...}`, switch
+        ;; to the bounded runtime helper variants and prepend the
+        ;; target's `cxc_mailbox_sem` accessor. Unbounded (default)
+        ;; targets keep the pre-Q2 shape — zero cost.
+        bounded-target? (= :bounded (get-in atom-info [:queue-config :kind]))
+        helper    (cond
+                    (and bounded-target? (:async? node)) "cxc_send_async_bounded"
+                    bounded-target?                       "cxc_wait_for_processing_bounded"
+                    (:async? node)                        "cxc_send_async"
+                    :else                                 "cxc_wait_for_processing")
+        sem-arg   (when bounded-target?
+                    {:node :objc-msg
+                     :recv target-lo
+                     :selector "cxc_mailbox_sem"
+                     :args []})
         send-call {:node :call
                    :fn   helper
-                   :args [target-lo
-                          {:node :objc-block-literal
-                           :stmts [{:node :objc-msg
-                                    :recv target-lo
-                                    :selector selector
-                                    :args arg-exprs}]}]}
+                   :args (cond-> [target-lo]
+                           bounded-target? (conj sem-arg)
+                           :always (conj {:node :objc-block-literal
+                                          :stmts [{:node :objc-msg
+                                                   :recv target-lo
+                                                   :selector selector
+                                                   :args arg-exprs}]}))}
         ;; L9 (2026-08-26) — `or:` continuation attaches a failure-
         ;; recovery body. Applies to sync sends only (async is
         ;; fire-and-forget: no completion the caller can observe).
@@ -9188,10 +9210,25 @@
                                     :ivar    (str "_" field-name)
                                     :streams streams}]}))
                 (:subscription-map rec))
+          ;; Q2 (2026-08-26) — bounded(N) mailbox sem init. Allocated
+          ;; in structuralSetup at capacity N; consumed by the bounded
+          ;; runtime helpers (cxc_send_async_bounded /
+          ;; cxc_wait_for_processing_bounded). Only emitted when the
+          ;; def-atom carries `:queue-config {:kind :bounded ...}`;
+          ;; unbounded (nil or :unbounded) atoms skip both the ivar
+          ;; and the init.
+          queue-config    (:queue-config rec)
+          bounded?        (= :bounded (:kind queue-config))
+          mailbox-sem-init-stmt
+          (when bounded?
+            {:node :mailbox-sem-init
+             :ivar "_cxc_mailbox_sem"
+             :capacity (:capacity queue-config)})
           setup-method    {:node :objc-method :selector "cxc_structuralSetup"
                            :return-type "void" :params []
-                           :body (-> [queue-init-stmt phase-init-stmt]
-                                     (into stream-init-stmts))}
+                           :body (cond-> [queue-init-stmt phase-init-stmt]
+                                   bounded? (conj mailbox-sem-init-stmt)
+                                   :always  (into stream-init-stmts))}
           ;; F39 L3 — `T!` ctor-param bind check. One `if (p == nil)
           ;; cxc_nonnil_violation(...)` guard per param declared with
           ;; the non-nil contract. Runs before invariants so a nil
@@ -9444,6 +9481,15 @@
        :data-fields     data-props
        :properties      (-> [phase-prop own-queue-prop owned-res-prop
                              parent-prop parent-slot-prop]
+                            (cond->
+                                ;; Q2 (2026-08-26) — bounded(N) atoms
+                                ;; carry an extra `_cxc_mailbox_sem`
+                                ;; ivar/property backing the semaphore
+                                ;; allocated in structuralSetup.
+                                bounded?
+                              (conj {:name "cxc_mailbox_sem"
+                                     :c-type "dispatch_semaphore_t"
+                                     :attrs ["nonatomic" "strong"]}))
                             (into data-props)
                             (into stream-props))
        :init-params     (mapv (fn [p]
