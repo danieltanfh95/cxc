@@ -2361,7 +2361,7 @@ def main:
 ")))))
 
 (deftest l12c-end-catch-wrap-emits-companion-dispatch
-  (testing "L12c (2026-08-26) — the `:end-catch-wrap` around every transition branch body now includes runtime companion dispatch (`respondsToSelector:` + `objc_msgSend` on `cxc_emit_<msg>_failedWithreason:`). Silent-by-default: if no subscriber demand-drove the companion emit method into existence (per L12b), the branch is a no-op. Reason payload is `nil` for now; union reason-type wiring is a follow-on."
+  (testing "L12c (2026-08-26) — the `:end-catch-wrap` around every transition branch body includes runtime companion dispatch (`respondsToSelector:` + `objc_msgSend` on `cxc_emit_<msg>_failedWithreason:`). Silent-by-default: if no subscriber demand-drove the companion emit method into existence (per L12b), the branch is a no-op. Track A/5 (2026-08-26) flipped the reason payload from a nil placeholder to `e.userInfo[@\"reason\"]` — Track A/4 boxes typed `|:` failures into `_Cxc_R_<T>` and throws with userInfo, and this catch fans the box out through the companion."
     (let [emitted (emit/emit (lower-src "def Player:
     hp: Int! = 100
 
@@ -2384,8 +2384,10 @@ def main:
           "@catch fires the companion dispatch")
       (is (str/includes? emitted "respondsToSelector:__cxc_comp")
           "silent-by-default: dispatch guarded on respondsToSelector:")
-      (is (str/includes? emitted "((void (*)(id, SEL, id))objc_msgSend)(self, __cxc_comp, nil)")
-          "reason payload is nil at wire (union reason wiring is a follow-on)"))))
+      (is (str/includes? emitted "id __cxc_reason = e.userInfo[@\"reason\"]")
+          "Track A/5: reason box extracted from NSException.userInfo")
+      (is (str/includes? emitted "((void (*)(id, SEL, id))objc_msgSend)(self, __cxc_comp, __cxc_reason)")
+          "Track A/5: reason box (not nil) fanned out through companion dispatch"))))
 
 (deftest l12b-companion-receive-arm-wrong-payload-rejected
   (testing "L12b — a sender-side receive-arm on a valid companion with a wrong payload key (e.g. `(oops: Int)`) rejects with the standard stream-shape mismatch diagnostic (source emits `[reason]`, subscriber declared `[oops]`). The augmentation still fires but the receive-side payload-shape check catches the mismatch."

@@ -724,10 +724,18 @@
     ;; `respondsToSelector:` so the dispatch is silent-by-default:
     ;; atoms whose companion has no subscribers never had that emit
     ;; method synthesized (per L12b's demand-driven augmentation), so
-    ;; the branch is a no-op. Reason payload is `nil` for now (union
-    ;; reason-type wiring is a follow-on landing); subscribers whose
-    ;; declared reason type is nullable/pointer-shaped see nil, int-
-    ;; typed subscribers see 0.
+    ;; the branch is a no-op.
+    ;;
+    ;; Track A/5 (2026-08-26) — the reason payload is now the boxed
+    ;; reason record carried on `e.userInfo[@\"reason\"]` (Track A/4
+    ;; boxes typed `|:` failures into `_Cxc_R_<T>` and throws with
+    ;; userInfo). Non-`|:` exceptions (Cocoa exceptions bubbling up
+    ;; from then:/do: bodies) don't carry a reason box yet — Track
+    ;; A/6 will land the Uncaught prelude record and box those on
+    ;; the catch side. Until then, non-typed catches pass nil, which
+    ;; subscribers see as a nil arm scrutinee (id-typed dispatch is
+    ;; nil-safe: every `isKindOfClass:` on nil returns NO, so wildcard
+    ;; fires or the arm chain no-ops).
     (let [body (str/join "\n" (map emit-stmt (:body node)))
           block (indent-lines 4 body)]
       (str "@try {\n"
@@ -737,6 +745,7 @@
            "NSStringFromClass([self class]), self, e.name, "
            "NSStringFromSelector(_cmd), _phase);\n"
            "    {\n"
+           "        id __cxc_reason = e.userInfo[@\"reason\"];\n"
            "        NSString *__cxc_sel = NSStringFromSelector(_cmd);\n"
            "        NSRange __cxc_wr = [__cxc_sel rangeOfString:@\"With\"];\n"
            "        NSString *__cxc_base = (__cxc_wr.location == NSNotFound)\n"
@@ -745,7 +754,7 @@
            "        NSString *__cxc_cs = [NSString stringWithFormat:@\"cxc_emit_%@_failedWithreason:\", __cxc_base];\n"
            "        SEL __cxc_comp = NSSelectorFromString(__cxc_cs);\n"
            "        if ([self respondsToSelector:__cxc_comp]) {\n"
-           "            ((void (*)(id, SEL, id))objc_msgSend)(self, __cxc_comp, nil);\n"
+           "            ((void (*)(id, SEL, id))objc_msgSend)(self, __cxc_comp, __cxc_reason);\n"
            "        }\n"
            "    }\n"
            "    [self transitionToEnd];\n"
