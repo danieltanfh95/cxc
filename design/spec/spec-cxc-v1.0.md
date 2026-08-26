@@ -1054,7 +1054,7 @@ The premises §1.1–§1.10 point at a specific primitive: **the atom**. An atom
 | `\|>` | `<\|` | Rendezvous — sender waits for processing, receiver parked ready. |
 | `\|>` | `<:` | Sender waits for processing, receiver dispatches async within its phase. Most flexible: sender gets ordering, receiver interleaves. |
 
-**Bare-glyph defaults.** Unmodified `<:` = drop-if-no-transition-matches (no buffer). Unmodified `<|` = pure rendezvous. Modifier syntax (`<:fifo(cap: 8)`, `<:priority`, `<:sliding(cap: 1)`) attaches non-default semantics per receive site. See "Channel semantics" below.
+**Bare-glyph defaults.** Unmodified `<:` = dispatch-if-active-receive-site, drop otherwise (no per-site persistent buffer; the atom's own mailbox — which is unbounded — still holds pending messages between transitions). Unmodified `<|` = pure rendezvous. Modifier syntax (`<:fifo(cap: 8)`, `<:priority`, `<:sliding(cap: 1)`) attaches non-default semantics per receive site. See "Channel semantics" and "Transport defaults" below.
 
 **`|>` two positions, disambiguated positionally.**
 
@@ -1594,6 +1594,18 @@ Advanced semantics (priority discipline, sliding-window drop policy) may require
 - Circular sync sends (A `|>` B while B is parked on `|>` back to A) **deadlock**. Same failure mode as CSP everywhere. No language-level cycle detection; user discipline required.
 - No reply value is transported by `|>` (see "Processing sync" above). If the sender needs data back, wire an explicit reply channel: `:>` request, `<:` response.
 - Recommendation: default to `:>` throughout; reach for `|>` only when the sender needs ordering-with-processing before proceeding (e.g., "make sure this cancel was accepted before I continue"). Most game/event/notification flows are async.
+
+**Transport defaults (endpoint-decides).**
+
+Three defaults govern how messages travel between atoms. They are stated here as a single reference so downstream landings (`<:` modifier syntax, per-atom `queue:` overrides) have a shared vocabulary.
+
+1. **Unbounded mailbox — default.** Every atom has exactly one mailbox. It holds messages targeting any receive site on the atom, in arrival order, with no cap. Overflow is not a mailbox concern; it becomes one only when a user opts into a bounded discipline (per-site via `<:fifo(cap: N)` / `<:sliding(cap: N)`, or class-level via `queue: bounded(N)` — Track C/2). This matches Erlang / Elixir / Akka defaults; bounding is a deliberate act, not the baseline.
+
+2. **Sender self-throttles — no receiver-driven backpressure.** The receiver does not signal "slow down" to the sender by default. If a sender needs pacing, it uses `|>` (sync send) to synchronize with processing before firing the next message, or introduces a transformer atom in the source expression (throttle, debounce). Bare `:>` is fire-and-forget by design; if a producer floods a consumer with `:>` and the consumer is bounded, drop / replace / block behavior is entirely determined by the consumer's declared discipline (drop for bare `<:`; per the modifier for capacity-bounded sites) — the sender is not notified.
+
+3. **Per-mailbox FIFO — no cross-atom ordering.** Within one atom's mailbox, messages are dispatched in arrival order. Across atoms, no ordering guarantee: if A sends to B and A sends to C, B and C may process their messages in either relative order. This is the standard actor guarantee; global FIFO would require a single scheduler bottleneck the concurrency model deliberately does not have.
+
+**Endpoint-decides.** Transport is chosen at the endpoint (receive site), not by the sender. A sender addresses a message to an atom; the receiver's declared modifier — or the atom's class-level `queue:` opt-in — determines what happens if the mailbox / per-site buffer is full. The sender has no direct say in transport choice; its only levers are `:>` vs `|>` (asynchrony) and use of transformer atoms (rate-shaping upstream of the send). This matches the atom substrate's "endpoints own their contract" stance: the receiver's declaration is the source of truth for how its channel behaves.
 
 *`|>` positions.* Two positions, distinct semantics:
 
