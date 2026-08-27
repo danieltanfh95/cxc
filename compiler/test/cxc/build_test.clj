@@ -180,6 +180,12 @@
       (is (zero? exit))
       (is (= "7\n" stdout)))))
 
+(deftest end-to-end-f37-l6-varlen-nested-from-bytes
+  (testing "F37 L6 variable-length nested-record (2026-08-27 ABI change) — round-trip on Outer{i: Inner!, k: Int32!} where Inner{text: String!, n: Int32!} is variable-length. Encoding: Inner text (4 length prefix + 2 UTF-8) + Inner n (4) + Outer k (4) = 14 bytes. Decoder calls `Inner_cxc_from_bytes(src, __off, &__consumed)` with the new ABI; Inner reports 10 consumed; Outer advances __off by 10 and reads k. DecodeOutcome discarded; `b.length` prints 14."
+    (let [{:keys [exit stdout]} (compile-and-run "f37-l6-varlen-nested-from-bytes")]
+      (is (zero? exit))
+      (is (= "14\n" stdout)))))
+
 
 (deftest end-to-end-k5-if-expression
   (testing "K5 L1 — `if` at expression position (spec §3.8.1). Uses both simple `if...else` and `if...else if...else` chain. Result flows through `let` bindings. Lowered as C ternary; prints the selected branch value."

@@ -2025,8 +2025,8 @@ def main:
           f    (first (filter #(= "V_cxc_from_bytes" (:name %)) (:functions prog)))
           body-text (get-in f [:body 0 :text])]
       (is (some? f))
-      (is (re-find #"NSUInteger __off = 0" body-text)
-          "offset walk starts at 0")
+      (is (re-find #"NSUInteger __off = \(NSUInteger\)start_off" body-text)
+          "offset walk starts at caller-supplied start_off (variable-length ABI 2026-08-27)")
       (is (re-find #"OSSwapBigToHostInt32" body-text)
           "Int32 field decoded big-endian → host")
       (is (re-find #"expected 4 bytes for field x" body-text)
@@ -2104,14 +2104,14 @@ def main:
           "Int64 decoder precedes String decoder per declaration order"))))
 
 (deftest f37-l6-non-eligible-field-fails-nyi-at-intercept
-  (testing "F37 L6 — a record with a currently-non-eligible field kind fails at the `.from()` intercept with a targeted diagnostic naming the offending field + type and pointing at the follow-on sub-landing. Non-eligible cases per current L6 coverage: variable-length nested records (Inner containing a String!) — the outer decoder can't know how many bytes to slice at Inner's field boundary until a walker-with-out-param ABI ships. Optional / enum land later still. Uses a nested-record field whose Inner contains a variable-length String."
+  (testing "F37 L6 — a record with a currently-non-eligible field kind fails at the `.from()` intercept with a targeted diagnostic naming the offending field + type and pointing at the follow-on sub-landing. Non-eligible cases per current L6 coverage: `Any` fields (heterogeneous reference type with no canonical wire format — spec §3.10.10 doesn't fix a representation). Container fields (`List of T`, `Map of ...`) also defer via F42. Prior test target (variable-length nested records) landed 2026-08-27 as the variable-length ABI change; retargeted to `Any` here."
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
-         #"F37 L6.*inner.*Inner"
-         (lower-src "def Inner:\n    text: String!\n\ndef W:\n    inner: Inner!\n\ndef main:\n    -> running\n        then:\n            let b: Bytes = W(inner: Inner(text: \"hi\")).as()\n            W.from(source: b)\n")))))
+         #"F37 Landings 2 \+ 3.*W\.thing.*Any"
+         (lower-src "def W:\n    thing: Any\n\ndef main:\n    -> running\n        then:\n            let b: Bytes = W(thing: 0).as()\n            W.from(source: b)\n")))))
 
 (deftest f37-l6-optional-nested-record-field-decode-body-presence-envelope
-  (testing "F37 L6 Optional-nested-record extension (2026-08-27) — a record with a bare-T value-typed field where T is a fixed-size nested record synthesizes a decode block that: (1) reads a UInt8 presence byte and validates 0x00/0x01, (2) on absent leaves `.value` bit-zero, (3) on present bounds-checks + slices T's fixed bytes + dispatches to `T_cxc_from_bytes` + unpacks the outcome — invalid propagates with offset carried from nested reason; converted lands into `_Cxc_Optional_<T>.value` — (4) advances __off by T's fixed size."
+  (testing "F37 L6 Optional-nested-record extension (2026-08-27) + variable-length ABI (2026-08-27) — a record with a bare-T value-typed field where T is a decode-eligible nested record synthesizes a decode block that: (1) reads a UInt8 presence byte and validates 0x00/0x01, (2) on absent leaves `.value` bit-zero, (3) on present calls `Inner_cxc_from_bytes(src, __off, &__consumed)` with no pre-slice and no fixed-size bounds check (variable-length ABI change), (4) unpacks the outcome — invalid propagates with offset carried absolute; converted lands into `_Cxc_Optional_<T>.value` — (5) advances __off by the inner's reported consumed count. Variable-length inner (String, Optional, further nested) works transitively."
     (let [prog (lower-src "def Inner:\n    n: Int32!\n\ndef R:\n    i: Inner\n\ndef main:\n    -> running\n")
           f    (first (filter #(= "R_cxc_from_bytes" (:name %)) (:functions prog)))
           body-text (get-in f [:body 0 :text])]
@@ -2124,12 +2124,14 @@ def main:
           "designated-initializer for the Optional storage struct")
       (is (re-find #"if \(__i_val_presence == 0x01\)" body-text)
           "payload decode guarded by presence check")
-      (is (re-find #"subdataWithRange:NSMakeRange\(__off, 4\)" body-text)
-          "slices Inner's fixed 4 bytes on present")
-      (is (re-find #"Inner_cxc_from_bytes\(__i_val_slice\)" body-text)
-          "dispatches to inner decoder")
+      (is (re-find #"int64_t __i_consumed = 0;" body-text)
+          "consumed-out local for the variable-length ABI")
+      (is (re-find #"Inner_cxc_from_bytes\(src, \(int64_t\)__off, &__i_consumed\)" body-text)
+          "dispatches to inner decoder with start_off + consumed_out")
       (is (re-find #"__i_val\.value = __i_res\.data\.converted\.value" body-text)
-          "converted value lands into Optional payload"))))
+          "converted value lands into Optional payload")
+      (is (re-find #"__off \+= \(NSUInteger\)__i_consumed;" body-text)
+          "advance by inner's reported consumed count"))))
 
 (deftest f37-l6-optional-value-only-enum-field-decode-body-presence-envelope
   (testing "F37 L6 Optional-value-only-enum extension (2026-08-27) — a record with a bare-T value-typed field where T is a value-only enum synthesizes a decode block that (1) reads a UInt8 presence byte and validates 0x00/0x01, (2) on absent leaves `.value` bit-zero, (3) on present bounds-checks + reads discriminator at the width dictated by case count, range-checks against case count, and casts into `_Cxc_Optional_<Enum>.value`. Verifies the presence-envelope + inline enum decode via body-text inspection."
@@ -2327,8 +2329,8 @@ def main:
       (is (< a-pos b-pos c-pos)
           "decode blocks in field declaration order"))))
 
-(deftest f37-l6-nested-record-decode-body-slice-and-recurse
-  (testing "F37 L6 nested-record extension — a record with a fixed-size nested Inner field synthesizes a decode block that: (1) bounds-checks Inner's fixed byte count at current __off, (2) slices those bytes via `subdataWithRange:` + `mutableCopy` (mirrors L6a `.slice`), (3) dispatches to the inner's `Inner_cxc_from_bytes`, (4) unpacks the outcome — invalid propagates with offset carried from nested reason; converted extracts `.data.converted.value` — (5) advances __off. Verifies the four-way pattern via body-text inspection."
+(deftest f37-l6-nested-record-decode-body-variable-length-abi
+  (testing "F37 L6 nested-record extension + variable-length ABI (2026-08-27) — a record with a nested Inner field synthesizes a decode block that: (1) calls the inner's `Inner_cxc_from_bytes(src, __off, &__consumed)` directly (no pre-slice, no fixed-size bounds check — inner does its own bounds), (2) unpacks the outcome, invalid propagates with offset already absolute; converted extracts `.data.converted.value`, (3) advances __off by the inner's reported consumed count. Variable-length inner works transitively (Inner may contain String / Optional / further nested)."
     (let [prog (lower-src "def Inner:\n    n: Int32!\n\ndef Outer:\n    i: Inner!\n    k: Int32!\n\ndef main:\n    -> running\n")
           fn-names (set (map :name (:functions prog)))
           f    (first (filter #(= "Outer_cxc_from_bytes" (:name %)) (:functions prog)))
@@ -2336,18 +2338,30 @@ def main:
       (is (contains? fn-names "Inner_cxc_from_bytes"))
       (is (contains? fn-names "Outer_cxc_from_bytes"))
       (is (some? f))
-      (is (re-find #"expected 4 bytes for nested-record field i \(Inner\)" body-text)
-          "outer bounds-check names the nested field + inner type")
-      (is (re-find #"subdataWithRange:NSMakeRange\(__off, 4\)" body-text)
-          "slices exactly Inner's fixed byte count at current offset")
-      (is (re-find #"Inner_cxc_from_bytes\(__i_val_slice\)" body-text)
-          "dispatches to the inner record's synthesized decoder")
+      (is (re-find #"int64_t __i_consumed = 0;" body-text)
+          "declares consumed-out local for the ABI call")
+      (is (re-find #"Inner_cxc_from_bytes\(src, \(int64_t\)__off, &__i_consumed\)" body-text)
+          "dispatches to the inner decoder with start_off + consumed_out")
       (is (re-find #"__i_res\.tag == _CXC_DECODE_INVALID" body-text)
           "checks nested outcome discriminator")
-      (is (re-find #"__i_res\.data\.invalid\.offset" body-text)
-          "propagates nested invalid offset (adjusted by outer offset)")
+      (is (re-find #"_cxc_decode_invalid_Outer\(__i_res\.data\.invalid\.offset" body-text)
+          "propagates nested invalid offset directly (already absolute)")
       (is (re-find #"Inner __i_val = __i_res\.data\.converted\.value" body-text)
-          "extracts converted value from nested outcome"))))
+          "extracts converted value from nested outcome")
+      (is (re-find #"__off \+= \(NSUInteger\)__i_consumed;" body-text)
+          "advances outer __off by the inner's reported consumed count"))))
+
+(deftest f37-l6-variable-length-nested-record-decodes
+  (testing "F37 L6 variable-length nested-record (2026-08-27) — Inner containing a variable-length field (String!) now decodes cleanly under the ABI change. Outer's decoder emits nested-decode block calling Inner with start_off + consumed_out; Inner walks String's length-prefix + payload internally and reports total consumed count back."
+    (let [prog (lower-src "def Inner:\n    text: String!\n    n: Int32!\n\ndef Outer:\n    i: Inner!\n    k: Int32!\n\ndef main:\n    -> running\n")
+          fn-names (set (map :name (:functions prog)))
+          outer-f (first (filter #(= "Outer_cxc_from_bytes" (:name %)) (:functions prog)))
+          outer-body (get-in outer-f [:body 0 :text])]
+      (is (contains? fn-names "Inner_cxc_from_bytes")
+          "inner-with-variable-String is now decode-eligible")
+      (is (contains? fn-names "Outer_cxc_from_bytes"))
+      (is (re-find #"Inner_cxc_from_bytes\(src, \(int64_t\)__off, &__i_consumed\)" outer-body)
+          "outer dispatches with start_off + consumed_out"))))
 
 (deftest f67-l4a-zero-arg-record-observable-lowers-as-c-function
   (testing "F67 L4a: `name :< expr` on a record lowers as a `Record_name(self)` C function. Return type inferred from the expression (int here); bare field refs (`x`, `y`) auto-rewrite to `self.x`, `self.y`."

@@ -5341,9 +5341,17 @@
                                         "for the extension.")
                                    node)))
                          arg-expr (lower-expr (:value (first args)) ctx)]
+                     ;; ABI updated 2026-08-27 for F37 L6 variable-length
+                     ;; nested-record support — pass `start_off = 0`
+                     ;; and `consumed_out = NULL` for the whole-buffer
+                     ;; entry point behavior. Nested-record decode
+                     ;; helpers use non-zero start_off + non-NULL
+                     ;; consumed_out to walk variable-length inner.
                      {:node :call
                       :fn   (record-synth-from-bytes-name rn)
-                      :args [arg-expr]})
+                      :args [arg-expr
+                             {:node :raw-c-expr :text "0"}
+                             {:node :raw-c-expr :text "NULL"}]})
                    (lower-method-call node ctx)))
 
         (fail-nyi! (str "call with " (:node callee) " callee") node)))
@@ -8830,29 +8838,34 @@
                "    __off += 8;"))]
     (str bounds "\n" read-src)))
 
-(defn- record-fixed-encoded-size
-  "Return the total encoded byte count for a record whose fields are
-   ALL primitive (fixed-width). Returns nil when the record is missing
-   from record-env or any field is non-primitive (e.g. String!, nested-
-   record, Optional). Used to gate nested-record decode: a nested Inner
-   field can decode iff Inner's encoding is fixed-length (so the outer
-   decoder knows how many bytes to slice + advance)."
-  [record-name record-env]
-  (when-let [info (get record-env record-name)]
-    (when (every? f37-primitive-byte-field? (:fields info))
-      (reduce + 0 (map #(get f37-primitive-byte-widths (:cxc-ty %))
-                       (:fields info))))))
+(declare f37-decode-eligible-field?)
+
+(defn- record-decode-eligible?
+  "F37 L6 (2026-08-27 variable-length ABI) — a record is decode-
+   eligible when every field is `f37-decode-eligible-field?` at 2-arity
+   or 3-arity coverage. Terminates on any valid program because value-
+   typed field cycles (A→B→A stored inline) would be infinite storage
+   and rejected earlier."
+  ([record-name record-env]
+   (when-let [info (get record-env record-name)]
+     (every? #(f37-decode-eligible-field? % record-env) (:fields info))))
+  ([record-name record-env enum-env]
+   (when-let [info (get record-env record-name)]
+     (every? #(f37-decode-eligible-field? % record-env enum-env)
+             (:fields info)))))
 
 (defn- f37-nested-record-decode-field?
-  "F37 L6 nested-record extension eligibility: nested record (non-
-   Optional) whose Inner record's full encoding is fixed-length (all
-   primitive fields). Variable-length inner records (containing String!)
-   defer to a follow-on sub-landing that adds a walker-with-out-param
-   ABI."
+  "F37 L6 nested-record extension eligibility (variable-length ABI,
+   2026-08-27). Non-Optional field whose type is a record in record-env
+   AND that record is transitively decode-eligible (fixed-size + String
+   + Optional-* + enum fields all fine). Prior fixed-size-only gate
+   retired with the ABI change — Inner is called at the outer's __off
+   with `consumed_out` to report bytes read, so variable-length inner
+   is no longer a size-unknown-at-slice-time problem."
   [f record-env]
   (and (not (:optional? f))
        (contains? record-env (:cxc-ty f))
-       (some? (record-fixed-encoded-size (:cxc-ty f) record-env))))
+       (record-decode-eligible? (:cxc-ty f) record-env)))
 
 (declare f37-value-only-enum-decode-field?
          f37-optional-nested-record-decode-field?
@@ -8976,55 +8989,59 @@
                                 " .reason = reason } };")}]}]))
 
 (defn- f37-nested-record-field-decode-c-src
-  "F37 L6 nested-record extension — decode a nested-record field whose
-   inner encoding is fixed-length. Slice N bytes at current __off, wrap
-   as NSMutableData, dispatch to `Inner_cxc_from_bytes`, unpack the
-   outcome: on invalid propagate with offset already carried by the
-   nested reason; on converted extract `.value` and advance __off by N."
-  [record-name f record-env]
+  "F37 L6 nested-record extension — decode a nested-record field.
+   Since 2026-08-27 (variable-length ABI change): calls the inner's
+   `_cxc_from_bytes(src, __off, &__consumed)` directly, without pre-
+   slicing or a fixed-size bounds check — the inner does its own bounds
+   checks against `src`'s full length at the correct starting offset,
+   and reports bytes consumed via the out-param. On invalid, propagate
+   the offset directly (already absolute since inner started at `__off`).
+   On converted, extract `.value` and advance `__off += __consumed`.
+   Variable-length inner (Inner containing String!, Optional, another
+   variable-length inner) works transitively."
+  [record-name f _record-env]
   (let [fname   (:name f)
         inner   (:cxc-ty f)
-        n       (record-fixed-encoded-size inner record-env)
         bind    (str "__" fname "_val")
         res     (str "__" fname "_res")
-        outcome (decode-outcome-struct-name record-name)
+        cons    (str "__" fname "_consumed")
         invalid (decode-invalid-fn-name record-name)]
-    (str "    if (__len < __off + " n ") return " invalid
-         "((int64_t)__off, @\"expected " n " bytes for nested-record "
-         "field " fname " (" inner "), source has less\");\n"
-         "    NSMutableData *" bind "_slice = "
-         "[[src subdataWithRange:NSMakeRange(__off, " n ")] mutableCopy];\n"
+    (str "    int64_t " cons " = 0;\n"
          "    " (decode-outcome-struct-name inner) " " res
-         " = " (record-synth-from-bytes-name inner) "(" bind "_slice);\n"
+         " = " (record-synth-from-bytes-name inner)
+         "(src, (int64_t)__off, &" cons ");\n"
          "    if (" res ".tag == _CXC_DECODE_INVALID) return " invalid
-         "((int64_t)(__off + " res ".data.invalid.offset), "
-         res ".data.invalid.reason);\n"
+         "(" res ".data.invalid.offset, " res ".data.invalid.reason);\n"
          "    " inner " " bind " = " res ".data.converted.value;\n"
-         "    __off += " n ";")))
+         "    __off += (NSUInteger)" cons ";")))
 
 (defn- f37-optional-nested-record-decode-field?
   "F37 L6 Optional-nested-record extension (2026-08-27) — bare-T
-   value-typed field where T is a nested record with a fixed-size
-   encoding (all-primitive-fields transitively). Wire format per
-   §3.10.10 Optional row: UInt8 presence byte + (when present) T's
-   fixed bytes."
+   value-typed field where T is a decode-eligible nested record.
+   Variable-length inner allowed since the 2026-08-27 ABI change:
+   inner is called at __off with `consumed_out` reporting bytes read.
+   Wire format per §3.10.10 Optional row: UInt8 presence byte +
+   (when present) T's canonical bytes."
   [f record-env]
   (and (:optional? f)
        (contains? record-env (:cxc-ty f))
-       (some? (record-fixed-encoded-size (:cxc-ty f) record-env))))
+       (record-decode-eligible? (:cxc-ty f) record-env)))
 
 (defn- f37-optional-nested-record-field-decode-c-src
   "F37 L6 Optional-nested-record extension — decode a bare-T value-
-   typed field where T is a fixed-size nested record. Presence byte
-   with validity check; on present, slice T's fixed bytes + dispatch
-   to `T_cxc_from_bytes` + propagate invalid or extract converted
-   into `_Cxc_Optional_<T>.value`."
-  [record-name f record-env]
+   typed field where T is a decode-eligible nested record. Presence
+   byte with validity check; on present, dispatch to
+   `T_cxc_from_bytes(src, __off, &__consumed)` with the variable-
+   length ABI (2026-08-27) — no pre-slice, no fixed-size bounds check;
+   inner reads at __off and reports bytes consumed. On invalid,
+   propagate directly (offset already absolute). On converted, land
+   in `_Cxc_Optional_<T>.value` and advance by consumed."
+  [record-name f _record-env]
   (let [fname   (:name f)
         inner   (:cxc-ty f)
-        n       (record-fixed-encoded-size inner record-env)
         bind    (str "__" fname "_val")
         res     (str "__" fname "_res")
+        cons    (str "__" fname "_consumed")
         invalid (decode-invalid-fn-name record-name)
         opt-ty  (optional-type-name inner)]
     (str "    if (__len < __off + 1) return " invalid
@@ -9037,18 +9054,14 @@
          "Optional nested-record field " fname "\");\n"
          "    " opt-ty " " bind " = { .present = " bind "_presence, .value = {0} };\n"
          "    if (" bind "_presence == 0x01) {\n"
-         "        if (__len < __off + " n ") return " invalid
-         "((int64_t)__off, @\"expected " n " bytes for Optional "
-         "nested-record field " fname " payload (" inner "), source has less\");\n"
-         "        NSMutableData *" bind "_slice = "
-         "[[src subdataWithRange:NSMakeRange(__off, " n ")] mutableCopy];\n"
+         "        int64_t " cons " = 0;\n"
          "        " (decode-outcome-struct-name inner) " " res
-         " = " (record-synth-from-bytes-name inner) "(" bind "_slice);\n"
+         " = " (record-synth-from-bytes-name inner)
+         "(src, (int64_t)__off, &" cons ");\n"
          "        if (" res ".tag == _CXC_DECODE_INVALID) return " invalid
-         "((int64_t)(__off + " res ".data.invalid.offset), "
-         res ".data.invalid.reason);\n"
+         "(" res ".data.invalid.offset, " res ".data.invalid.reason);\n"
          "        " bind ".value = " res ".data.converted.value;\n"
-         "        __off += " n ";\n"
+         "        __off += (NSUInteger)" cons ";\n"
          "    }")))
 
 (defn- f37-tagged-enum-payload-field-eligible?
@@ -9580,22 +9593,33 @@
     (f37-nullable-string-field-decode-c-src record-name f)))
 
 (defn- synthesize-record-from-bytes-fn
-  "F37 L6 — emit `<Record>_cxc_from_bytes(NSMutableData *src) ->
+  "F37 L6 — emit `<Record>_cxc_from_bytes(NSMutableData *src,
+   int64_t start_off, int64_t *consumed_out) ->
    _Cxc_DecodeOutcome_<Record>`. Per-field decode blocks in declaration
    order, each with a bounds-check that returns
    `_cxc_decode_invalid_<Record>(offset, reason)` on short input. Success
-   path assembles a designated-initializer constructor and returns
+   path assembles a designated-initializer constructor, writes
+   `*consumed_out = __off - start_off` (guarded), and returns
    `_cxc_decode_converted_<Record>(...)`. Precondition:
    `record-eligible-for-from-bytes-synthesis?` returned true.
 
+   ABI updated 2026-08-27 for variable-length nested-record support:
+   the outer decoder passes its own `__off` as `start_off` so inner
+   can read into `src` at the correct position without slicing, and
+   reads back the inner's `consumed_out` to advance its own `__off`.
+   Callers of the whole-buffer form (`.from(source:)` intercept) pass
+   `(src, 0, NULL)` — identical behavior to the pre-ABI-change form.
+   Invalid-return paths don't touch `consumed_out` (caller doesn't
+   advance on invalid).
+
    `record-env` and `enum-env` are threaded through for the nested-
-   record arm (needs the inner record's fixed encoded size) and the
-   value-only enum arm (needs case count for discriminator width +
-   range check)."
+   record arm (allows variable-length transitively-decode-eligible
+   inner) and the value-only enum arm (needs case count for
+   discriminator width + range check)."
   [record-name info record-env enum-env]
   (let [fields   (:fields info)
         outcome  (decode-outcome-struct-name record-name)
-        head     (str "    NSUInteger __off = 0;\n"
+        head     (str "    NSUInteger __off = (NSUInteger)start_off;\n"
                       "    const uint8_t *__bytes = (const uint8_t *)[src bytes];\n"
                       "    NSUInteger __len = [src length];")
         blocks   (map #(f37-field-decode-c-src record-name % record-env enum-env) fields)
@@ -9603,13 +9627,17 @@
                             (map (fn [f]
                                    (str "." (:name f) " = __" (:name f) "_val"))
                                  fields))
-        tail      (str "    return " (decode-converted-fn-name record-name)
+        tail      (str "    if (consumed_out) *consumed_out = (int64_t)"
+                       "(__off - (NSUInteger)start_off);\n"
+                       "    return " (decode-converted-fn-name record-name)
                        "((" record-name "){ " ctor-args " });")
         body-src  (str/join "\n\n" (concat [head] blocks [tail]))]
     {:node        :c-function
      :name        (record-synth-from-bytes-name record-name)
      :return-type outcome
-     :params      [{:name "src" :c-type "NSMutableData *"}]
+     :params      [{:name "src" :c-type "NSMutableData *"}
+                   {:name "start_off" :c-type "int64_t"}
+                   {:name "consumed_out" :c-type "int64_t *"}]
      :body        [{:node :raw-c :text body-src}]}))
 
 (defn- synthesized-record-functions
