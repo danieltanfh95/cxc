@@ -293,10 +293,21 @@
         parsed   (parse-fn source)
         _        (validate-imports parsed)
         _        (prelude/validate-no-prelude-collisions! parsed)
-        prelude-src (prelude/assemble-source target)
-        full-parsed (parse-fn (str prelude-src source))]
+        ;; F51 L3b(b.ii)-5c (2026-08-27) — enrich user AST with
+        ;; `:resolves-to` provenance before concatenating with prelude.
+        ;; Single-file callers implicitly declare into the `:main`
+        ;; module (F51 L1 convention). Parse prelude separately and
+        ;; concat ASTs so `:resolves-to` survives — no reparse of
+        ;; concatenated source (mirrors b.ii-3 for multi-file).
+        enriched-parsed
+        (-> [{:module :main :nodes parsed}]
+            resolve/resolve-references
+            first
+            :nodes)
+        prelude-nodes (parse/parse (prelude/assemble-source target))
+        full-parsed   (into (vec prelude-nodes) enriched-parsed)]
     (compile-parsed-to-file
-      {:user-parsed parsed :full-parsed full-parsed}
+      {:user-parsed enriched-parsed :full-parsed full-parsed}
       name out-dir opts))))
 
 (defn run-binary

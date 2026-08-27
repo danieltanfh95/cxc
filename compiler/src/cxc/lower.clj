@@ -4388,7 +4388,8 @@
    `resolve-args-against-params`, matching record ctor discipline)."
   [enum-name call-node ctx]
   (let [case-nm  (:field (:callee call-node))
-        payload  (get-in ctx [:enum-env enum-name :payload-index case-nm])
+        en-info  (decl-lookup ctx :enum-env (:target (:callee call-node)))
+        payload  (get-in en-info [:payload-index case-nm])
         params   (mapv (fn [f] {:name (:name f) :default (:default f)})
                        payload)
         resolved (resolve-args-against-params
@@ -5568,7 +5569,7 @@
                    ;; (String / nested-record / enum / Optional fields)
                    ;; get a targeted fail-nyi naming the offending
                    ;; field + type, pointing at the follow-on sub-landings.
-                   (let [info (get-in ctx [:record-env rn])
+                   (let [info (decl-lookup ctx :record-env (:target (:callee node)))
                          args (:args node)
                          _    (when-not (= 1 (count args))
                                 (fail-nyi!
