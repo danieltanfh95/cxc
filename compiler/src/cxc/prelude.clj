@@ -26,49 +26,6 @@
             [clojure.string]
             [clojure.walk :as walk]))
 
-(def rename-table
-  "User-visible → mangled internal name. Applied post-parse to every
-   `:name`, `:type`, `:outer` string in the AST. Table entries are
-   specific enough that a user program that doesn't touch prelude
-   types is a no-op; a user program that redefines a prelude name
-   (e.g. `def Duration:`) gets silently rewritten too, which is a
-   collision the compiler doesn't diagnose in Layer 5 minimum."
-  {"Duration"           "_Cxc_Duration"
-   "Instant"            "_Cxc_Instant"
-   "Clock"              "_Cxc_Clock"
-   "Random"             "_Cxc_Random"
-   "TestKeyboardInput"  "_Cxc_TestKeyboardInput"
-   "Key"                "_Cxc_Key"
-   "Position"           "_Cxc_Position"
-   "Console"            "_Cxc_Console"
-   "SystemPanic"        "_Cxc_SystemPanic"
-   "Uncaught"           "_Cxc_Uncaught"
-   ;; Layer 5c Step 8: Stream is the user-visible type for
-   ;; method-returned reactive streams. Maps to CxcStream, the
-   ;; runtime helper class defined inline in emit's helpers block
-   ;; (see cxc.emit/cxc-runtime-helpers). Registered in atom-env at
-   ;; lower time as a runtime-provided kind so type-refs resolve
-   ;; but no class synthesis runs on it.
-   "Stream"             "CxcStream"})
-
-(defn rename-if
-  "Rename `s` via `rename-table` if `s` is a string that appears in
-   the table; otherwise return `s` unchanged. Non-string inputs pass
-   through so callers can apply this uniformly across AST fields
-   whose values may be strings, maps, or nil."
-  [s]
-  (if (and (string? s) (contains? rename-table s))
-    (get rename-table s)
-    s))
-
-(def atom-names
-  "Names of def-atom entries in the prelude, in their POST-RENAME
-   (mangled) form. Tree-shaking in cxc.lower compares against these
-   after the rewrite pass runs, so entries here match what the
-   lowered AST carries — not what the prelude source spelled."
-  #{"_Cxc_Clock" "_Cxc_Random" "_Cxc_TestKeyboardInput"
-    "_Cxc_Console" "_Cxc_SystemPanic"})
-
 ;; F55 Landing 2 (2026-08-15) — prelude lives in a real directory tree
 ;; on the classpath: `resources/prelude/shared/*.cxc` (cross-target,
 ;; pure cxc) and `resources/prelude/target/<target>/*.cxc` (calls
@@ -141,6 +98,59 @@
    defaults to `default-target` (macos); explicit target selection
    through `assemble-source` waits on Landing 3."
   (assemble-source default-target))
+
+;; F56 L2-α (2026-08-27) — the prelude name → mangled name mapping is
+;; derived from `prelude-modules` (the registry) rather than
+;; hardcoded. Each prelude declaration mangles to `_Cxc_<Name>`, which
+;; matches what the retired hardcoded table encoded byte-for-byte.
+;;
+;; `Stream` remains a manual entry: it's the user-visible name for
+;; method-returned reactive streams, mapped to the RUNTIME-PROVIDED
+;; helper class `CxcStream` — a different naming category per F56
+;; plan §5 Q3 (runtime-provided helpers use `Cxc<Name>` convention,
+;; prelude declarations use `_Cxc_<Name>`).
+;;
+;; Later F56 landings retire this rewrite pass entirely once emit
+;; consumes `resolve/mangled-name` at each identifier site.
+
+(defn- derive-prelude-rename-entries
+  "F56 L2-α — mint `{user-name → mangled-name}` entries for every
+   name declared in `prelude-modules`. `_Cxc_<Name>` per entry —
+   matches the retired hardcoded table."
+  []
+  (into {}
+        (for [{:keys [names]} prelude-modules
+              nm names]
+          [nm (str "_Cxc_" nm)])))
+
+(def rename-table
+  "User-visible → mangled internal name. Applied post-parse to every
+   `:name`, `:type`, `:outer` string in the AST. Entries derive from
+   `prelude-modules` per F56 L2-α (each prelude name → `_Cxc_<Name>`)
+   plus manual overrides for runtime-provided helpers (`Stream` →
+   `CxcStream`)."
+  (assoc (derive-prelude-rename-entries)
+         ;; Runtime-provided helper — different mangling convention
+         ;; (`Cxc<Name>`, not `_Cxc_<Name>`) per F56 plan §5 Q3.
+         "Stream" "CxcStream"))
+
+(defn rename-if
+  "Rename `s` via `rename-table` if `s` is a string that appears in
+   the table; otherwise return `s` unchanged. Non-string inputs pass
+   through so callers can apply this uniformly across AST fields
+   whose values may be strings, maps, or nil."
+  [s]
+  (if (and (string? s) (contains? rename-table s))
+    (get rename-table s)
+    s))
+
+(def atom-names
+  "Names of def-atom entries in the prelude, in their POST-RENAME
+   (mangled) form. Tree-shaking in cxc.lower compares against these
+   after the rewrite pass runs, so entries here match what the
+   lowered AST carries — not what the prelude source spelled."
+  #{"_Cxc_Clock" "_Cxc_Random" "_Cxc_TestKeyboardInput"
+    "_Cxc_Console" "_Cxc_SystemPanic"})
 
 ;; F5 retirement (2026-08-15): unit-suffix desugaring (`100ms`,
 ;; `2s`, `1.5min` → `Duration(millis: N)`) is retired per spec
