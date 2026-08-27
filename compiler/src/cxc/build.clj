@@ -179,10 +179,11 @@
                           {:kind :unknown-module :module from})))))))
 
 (defn- compile-parsed-to-file
-  "Internal — shared tail for the source-in (`compile-source-to-file`,
-   single-file / concat-reparse for prelude) and AST-in
-   (`compile-directory-to-file`, multi-file / per-module AST already
-   assembled) paths. Takes:
+  "Internal — shared tail for the single-file
+   (`compile-source-to-file`) and multi-file
+   (`compile-directory-to-file`) paths. Both callers assemble their
+   full AST by prepending the parsed prelude to the enriched user AST
+   (no source-level concat, no reparse). Takes:
 
      - `:user-parsed` — the user program's AST (single file's parse,
        or the concat of enriched per-file ASTs interleaved with
