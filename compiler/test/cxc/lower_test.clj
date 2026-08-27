@@ -6252,3 +6252,43 @@ def main:
       (is (= tree
              (#'cxc.lower/reject-module-let-shadowing!
               tree {"SEED" {:node :lit-int :value 42}}))))))
+
+(deftest f52-l4-d-c-type-and-literal-primitives
+  (testing "F52 L4-d — primitive literal → `[c-type c-literal]` derivation covers Int / Float / Bool / Char. Whole-number floats get a `.0` suffix so clang doesn't warn on int→double narrowing at the const site. Bool normalizes to `int` with `1`/`0` literal (C has no bool without `<stdbool.h>`; using int keeps the const usable in any expression context)."
+    (is (= ["int"    "42"]  (#'cxc.lower/module-let-c-type-and-literal {:node :lit-int :value 42})))
+    (is (= ["double" "3.14"] (#'cxc.lower/module-let-c-type-and-literal {:node :lit-float :value 3.14})))
+    (is (= ["double" "5.0"] (#'cxc.lower/module-let-c-type-and-literal {:node :lit-float :value 5.0})))
+    (is (= ["char"   "'x'"] (#'cxc.lower/module-let-c-type-and-literal {:node :lit-char :value \x})))
+    (is (= ["int"    "1"]   (#'cxc.lower/module-let-c-type-and-literal {:node :lit-bool :value true})))
+    (is (= ["int"    "0"]   (#'cxc.lower/module-let-c-type-and-literal {:node :lit-bool :value false})))))
+
+(deftest f52-l4-d-c-type-and-literal-unary
+  (testing "F52 L4-d — unary neg / not wrap the recursive derivation. Neg preserves the inner numeric type (Int → int, Float → double). Not always produces int, since C's `!` operator returns int (0/1) regardless of operand type."
+    (is (= ["int"    "-(42)"] (#'cxc.lower/module-let-c-type-and-literal
+                                {:node :neg :expr {:node :lit-int :value 42}})))
+    (is (= ["double" "-(3.14)"] (#'cxc.lower/module-let-c-type-and-literal
+                                  {:node :neg :expr {:node :lit-float :value 3.14}})))
+    (is (= ["int"    "!(1)"]  (#'cxc.lower/module-let-c-type-and-literal
+                                {:node :not :expr {:node :lit-bool :value true}})))))
+
+(deftest f52-l4-d-c-type-and-literal-nil-for-unsupported
+  (testing "F52 L4-d — shapes we don't emit as static const today (`:lit-nil`, `:lit-string`) return nil. Callers of `module-let-emit-entries` `keep` non-nil results; unsupported shapes disappear from the emit-side declarations while still folding at ref sites. Strings would need `static NSString * const` and its own initialization pattern — deferred until a real user program needs it."
+    (is (nil? (#'cxc.lower/module-let-c-type-and-literal {:node :lit-nil})))
+    (is (nil? (#'cxc.lower/module-let-c-type-and-literal {:node :lit-string :value "hi"})))))
+
+(deftest f52-l4-d-emit-entries-normalizes-map
+  (testing "F52 L4-d — `module-let-emit-entries` converts `{name → value-node}` into a vec of `{:name :c-type :c-literal}` entries. Unsupported shapes drop out via `keep`; ordering is unspecified at this layer (emit sorts by name for stable output). All entries carry the three keys emit's declaration builder consumes."
+    (let [entries (#'cxc.lower/module-let-emit-entries
+                    {"SEED"  {:node :lit-int   :value 41}
+                     "PI"    {:node :lit-float :value 3.14}
+                     "GREET" {:node :lit-string :value "hi"}
+                     "OK"    {:node :lit-bool  :value true}})]
+      (is (= 3 (count entries)) "String entry drops out")
+      (is (every? #(and (contains? % :name)
+                        (contains? % :c-type)
+                        (contains? % :c-literal))
+                  entries))
+      (is (contains? (set (map :name entries)) "SEED"))
+      (is (contains? (set (map :name entries)) "PI"))
+      (is (contains? (set (map :name entries)) "OK"))
+      (is (not (contains? (set (map :name entries)) "GREET"))))))

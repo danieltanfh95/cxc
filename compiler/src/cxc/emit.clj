@@ -1978,6 +1978,22 @@
   (let [includes    (str/join "\n"   (map #(str "#import " %) (:includes prog)))
         fanout-cat  (emit-fanout-selector-category prog)
         helpers     (when (:needs-runtime? prog) cxc-runtime-helpers)
+        ;; F52 L4-d — module let-bindings surfaced as file-scope
+        ;; `static const <type> <name> = <literal>;`. Constant folding
+        ;; at ref sites (in `lower`) means most programs won't
+        ;; reference the const symbol; clang DCEs it. The declaration
+        ;; block is emit-only surface for LSP hover / debugging of the
+        ;; generated .m — no semantic effect. Sorted by name for
+        ;; stable output regardless of `extract-module-lets`'s map
+        ;; ordering.
+        module-lets-block
+        (when (seq (:module-lets prog))
+          (str "// module let-bindings (F52 L4-d)\n"
+               (str/join "\n"
+                         (map (fn [{:keys [name c-type c-literal]}]
+                                (str "static const " c-type " " name
+                                     " = " c-literal ";"))
+                              (sort-by :name (:module-lets prog))))))
         enums       (str/join "\n\n" (map emit-any-enum (:enums prog)))
         structs     (str/join "\n\n" (map emit-struct   (:structs prog)))
         ;; Track A/2.a (2026-08-26) — reason-box wrapper classes.
@@ -2025,7 +2041,9 @@
         main        (emit-main (:main prog) (:needs-dispatch-loop? prog))]
     (str/join "\n\n"
               (remove str/blank? [includes
-                                  helpers enums structs
+                                  helpers
+                                  module-lets-block
+                                  enums structs
                                   reason-boxes
                                   named-tuple-typedefs
                                   fn-prototypes functions

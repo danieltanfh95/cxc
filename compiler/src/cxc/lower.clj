@@ -11488,6 +11488,46 @@
           x))
       nodes)))
 
+(defn- module-let-c-type-and-literal
+  "F52 L4-d — derive `[c-type c-literal]` for the emit-side `static
+   const` declaration of a module-let. Handles primitive literals + a
+   single layer of unary neg/not. Returns nil for shapes we don't emit
+   as C consts today (`:lit-nil`, `:lit-string` — strings would need
+   `static NSString * const` and its own initialization pattern; skip
+   for MVP so the emit runs cleanly on numeric + bool + char only).
+
+   Sync any additions here with `module-let-const-shape?` — the accept
+   set on the pre-lower validator gates what reaches this fn."
+  [value-node]
+  (case (:node value-node)
+    :lit-int   ["int"    (str (:value value-node))]
+    :lit-float ["double" (let [s (str (:value value-node))]
+                           ;; ensure trailing `.0` for whole-number
+                           ;; floats so clang doesn't warn on
+                           ;; int→double narrowing at the const site.
+                           (if (re-find #"[.eE]" s) s (str s ".0")))]
+    :lit-char  ["char"   (str \' (:value value-node) \')]
+    :lit-bool  ["int"    (if (:value value-node) "1" "0")]
+    :neg (when-let [[t l] (module-let-c-type-and-literal (:expr value-node))]
+           [t (str "-(" l ")")])
+    :not (when-let [[_ l] (module-let-c-type-and-literal (:expr value-node))]
+           ;; C's `!` produces int (0/1) regardless of inner type;
+           ;; normalize to int for the const.
+           ["int" (str "!(" l ")")])
+    nil))
+
+(defn- module-let-emit-entries
+  "F52 L4-d — normalize the raw `{name → value-node}` map into a vec of
+   `{:name :c-type :c-literal}` entries suitable for `emit/emit`'s
+   `:module-lets` section. Ordering is unspecified (map keys); emit
+   sorts by name for stable output."
+  [ml-map]
+  (into []
+        (keep (fn [[nm v]]
+                (when-let [[c-ty c-lit] (module-let-c-type-and-literal v)]
+                  {:name nm :c-type c-ty :c-literal c-lit})))
+        ml-map))
+
 (defn- reject-module-let-shadowing!
   "F52 L4-b — reject any local binding that would shadow a top-level
    module-let. Walks the tree looking for binding-introducing nodes
@@ -12011,6 +12051,14 @@
      :includes            includes
      :needs-runtime?      needs-runtime?
      :needs-dispatch-loop? needs-dispatch-loop?
+     ;; F52 L4-d — surface each top-level `let NAME = <const>` binding
+     ;; as an emit-side `static const <c-type> <c-name> = <c-literal>;`
+     ;; alongside the constant folding at ref sites. Purely additive:
+     ;; clang DCEs unreferenced statics, so a program that folds every
+     ;; reference sees the const declaration but no runtime cost. The
+     ;; browsable .m surfaces the module-let for LSP hover / debugging
+     ;; without a separate metadata side-channel.
+     :module-lets         (module-let-emit-entries module-lets)
      :enums               c-enums
      :structs             structs
      ;; Track A/2.a (2026-08-26) — reason-box wrapper classes, one per
