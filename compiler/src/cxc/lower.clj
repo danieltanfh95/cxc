@@ -8084,6 +8084,13 @@
                        (contains? (:record-env ctx) cxc-ty)
                        (str (record-synth-equals-name cxc-ty)
                             "(" a-val ", " b-val ")")
+                       (tagged-enum-type? cxc-ty ctx)
+                       ;; F37 L6 Optional-tagged-enum extension (2026-08-27) —
+                       ;; the memcmp/designated-init contract that
+                       ;; makes tagged-enum equals deterministic
+                       ;; extends into the Optional's inner storage.
+                       (str "(memcmp(&" a-val ", &" b-val
+                            ", sizeof(" cxc-ty ")) == 0)")
                        :else
                        (str "(" a-val " == " b-val ")"))]
         (str "((" a-pres " == " b-pres ") && (!" a-pres " || " inner-eq "))"))
@@ -8130,6 +8137,15 @@
                     (= "String" cxc-ty)  (str "(long)[" val " hash]")
                     (contains? (:record-env ctx) cxc-ty)
                     (str (record-synth-hash-name cxc-ty) "(" val ")")
+                    (tagged-enum-type? cxc-ty ctx)
+                    ;; F37 L6 Optional-tagged-enum extension (2026-08-27) —
+                    ;; mirror the direct tagged-enum arm's byte-
+                    ;; accumulated hash over the inner struct storage
+                    ;; so equal Optional<TaggedEnum> values hash equal.
+                    (str "({ long __h = 0; const unsigned char *__b = "
+                         "(const unsigned char *)&" val "; "
+                         "for (size_t __i = 0; __i < sizeof(" cxc-ty
+                         "); __i++) __h = __h * 31 + __b[__i]; __h; })")
                     :else                 (str "(long)" val))]
         (str "(" fld ".present ? " inner " : 0)"))
 
@@ -8291,6 +8307,23 @@
        (contains? enum-env (:cxc-ty f))
        (not (get-in enum-env [(:cxc-ty f) :tagged?]))))
 
+(declare f37-tagged-enum-payload-field-eligible?)
+
+(defn- f37-optional-tagged-enum-field?
+  "F37 L6 Optional-tagged-enum extension (2026-08-27) — a bare-T value-
+   typed field whose inner is a tagged enum with all payload fields
+   primitive or `String!` (same eligibility rule as the direct tagged-
+   enum arm). Encoded as `UInt8` presence byte + (when present)
+   discriminator + per-case payload bytes."
+  [f enum-env]
+  (and (:optional? f)
+       (contains? enum-env (:cxc-ty f))
+       (get-in enum-env [(:cxc-ty f) :tagged?])
+       (every? (fn [ce]
+                 (every? f37-tagged-enum-payload-field-eligible?
+                         (:payload ce)))
+               (:case-entries (get enum-env (:cxc-ty f))))))
+
 (defn- f37-bytes-encodable-field?
   "F37 Landings 2+3+4+5 + F39 L9 — union of the shipped eligibility
    checks. Any field for which the encoder function has a synthesis
@@ -8313,7 +8346,8 @@
        (f37-optional-primitive-field? f)
        (f37-optional-nested-record-field? f record-env)
        (f37-enum-field? f enum-env record-env)
-       (f37-optional-value-only-enum-field? f enum-env))))
+       (f37-optional-value-only-enum-field? f enum-env)
+       (f37-optional-tagged-enum-field? f enum-env))))
 
 (defn- f37-primitive-value-encode-src
   "Return the C-statement string encoding a primitive value bound at
@@ -8388,6 +8422,11 @@
 
                        (and (contains? enum-env cxc-ty)
                             (not (get-in enum-env [cxc-ty :tagged?])))
+                       (str "NSData *__nd = " cxc-ty "_cxc_as_bytes("
+                            fld ".value); [__d appendData:__nd];")
+
+                       (and (contains? enum-env cxc-ty)
+                            (get-in enum-env [cxc-ty :tagged?]))
                        (str "NSData *__nd = " cxc-ty "_cxc_as_bytes("
                             fld ".value); [__d appendData:__nd];"))]
         (str "    {\n"
@@ -8782,7 +8821,8 @@
 (declare f37-value-only-enum-decode-field?
          f37-optional-nested-record-decode-field?
          f37-tagged-enum-decode-field?
-         f37-optional-value-only-enum-decode-field?)
+         f37-optional-value-only-enum-decode-field?
+         f37-optional-tagged-enum-decode-field?)
 
 (defn- f37-decode-eligible-field?
   "F37 L6 field-level eligibility. Primitive (Bool / sized-int / Int /
@@ -8814,7 +8854,8 @@
        (f37-optional-nested-record-decode-field? f record-env)
        (f37-value-only-enum-decode-field? f enum-env)
        (f37-tagged-enum-decode-field? f enum-env)
-       (f37-optional-value-only-enum-decode-field? f enum-env))))
+       (f37-optional-value-only-enum-decode-field? f enum-env)
+       (f37-optional-tagged-enum-decode-field? f enum-env))))
 
 (defn- record-eligible-for-from-bytes-synthesis?
   "F37 L6 eligibility: every field must be decode-eligible. Coverage
@@ -8995,13 +9036,16 @@
 
 (defn- f37-tagged-enum-payload-decode-c-src
   "F37 L6 tagged-enum extension — emit the C for decoding a single
-   payload field into `__<record-field>_val.data.<case>.<pfield-name>`.
+   payload field into `<bind>.data.<case>.<pfield-name>`. `bind` is the
+   caller-supplied storage path: `__<record-field>_val` for the direct
+   tagged-enum field arm, `__<record-field>_val.value` for the Optional-
+   tagged-enum arm (F37 L6 Optional-tagged-enum extension 2026-08-27).
    Shares the primitive + String decode helpers but writes directly
-   into the union member rather than a local binding."
-  [record-name record-field-name case-nm pparam]
+   into the target member rather than a fresh local binding."
+  [record-name record-field-name case-nm pparam bind]
   (let [f (f37-enum-payload-field-for-encoding pparam)
         pname (:name f)
-        target (str "__" record-field-name "_val.data." case-nm "." pname)
+        target (str bind ".data." case-nm "." pname)
         invalid (decode-invalid-fn-name record-name)]
     (cond
       (f37-primitive-byte-field? f)
@@ -9112,7 +9156,7 @@
                 blocks  (if (seq fields)
                           (str/join "\n"
                                     (map #(f37-tagged-enum-payload-decode-c-src
-                                           record-name fname case-nm %)
+                                           record-name fname case-nm % bind)
                                          fields))
                           "")]
             (str "        case " cxc-ty "_Tag_" case-nm ": {\n"
@@ -9202,6 +9246,90 @@
          "((int64_t)(__off - " width "), @\"invalid discriminator for "
          "Optional enum field " fname " (" cxc-ty ")\");\n"
          "        " bind ".value = (" cxc-ty ")" raw ";\n"
+         "    }")))
+
+(defn- f37-optional-tagged-enum-decode-field?
+  "F37 L6 Optional-tagged-enum extension (2026-08-27) — bare-T value-
+   typed field whose inner is a tagged enum with primitive / `String!`
+   payload fields on every case. Wire format: UInt8 presence byte +
+   (when present) discriminator + per-case payload bytes."
+  [f enum-env]
+  (and (:optional? f)
+       (contains? enum-env (:cxc-ty f))
+       (get-in enum-env [(:cxc-ty f) :tagged?])
+       (every? (fn [ce]
+                 (every? f37-tagged-enum-payload-field-eligible?
+                         (:payload ce)))
+               (:case-entries (get enum-env (:cxc-ty f))))))
+
+(defn- f37-optional-tagged-enum-field-decode-c-src
+  "F37 L6 Optional-tagged-enum extension — decode a bare-T value-typed
+   field whose inner is a tagged enum. Presence byte with validity
+   check; on present, discriminator read + range check + per-case
+   payload arms writing directly into `_Cxc_Optional_<Enum>.value.data.
+   <case>.<pfield>` (target-prefix passed to
+   `f37-tagged-enum-payload-decode-c-src`). Same eligibility rule as
+   direct tagged-enum decode; nested-record / enum / Optional payload
+   fields still defer."
+  [record-name f enum-env]
+  (let [fname   (:name f)
+        cxc-ty  (:cxc-ty f)
+        info    (get enum-env cxc-ty)
+        entries (:case-entries info)
+        n       (count entries)
+        width   (f37-enum-discriminator-width n)
+        bind    (str "__" fname "_val")
+        raw     (str "__" fname "_disc")
+        invalid (decode-invalid-fn-name record-name)
+        opt-ty  (optional-type-name cxc-ty)
+        disc-read
+        (case width
+          1 (str "        uint8_t " raw " = __bytes[__off];\n"
+                 "        __off += 1;")
+          2 (str "        uint16_t " raw "_be;\n"
+                 "        memcpy(&" raw "_be, __bytes + __off, 2);\n"
+                 "        uint16_t " raw " = OSSwapBigToHostInt16(" raw "_be);\n"
+                 "        __off += 2;")
+          4 (str "        uint32_t " raw "_be;\n"
+                 "        memcpy(&" raw "_be, __bytes + __off, 4);\n"
+                 "        uint32_t " raw " = OSSwapBigToHostInt32(" raw "_be);\n"
+                 "        __off += 4;"))
+        inner-bind (str bind ".value")
+        arms
+        (for [ce entries]
+          (let [case-nm (:name ce)
+                fields  (:payload ce)
+                blocks  (if (seq fields)
+                          (str/join "\n"
+                                    (map #(f37-tagged-enum-payload-decode-c-src
+                                           record-name fname case-nm % inner-bind)
+                                         fields))
+                          "")]
+            (str "        case " cxc-ty "_Tag_" case-nm ": {\n"
+                 (when (seq blocks) (str blocks "\n"))
+                 "            break;\n"
+                 "        }")))]
+    (str "    if (__len < __off + 1) return " invalid
+         "((int64_t)__off, @\"expected 1 presence byte for Optional "
+         "tagged-enum field " fname ", source has less\");\n"
+         "    uint8_t " bind "_presence = __bytes[__off];\n"
+         "    __off += 1;\n"
+         "    if (" bind "_presence != 0x00 && " bind "_presence != 0x01) return "
+         invalid "((int64_t)(__off - 1), @\"invalid presence byte for "
+         "Optional tagged-enum field " fname "\");\n"
+         "    " opt-ty " " bind " = { .present = " bind "_presence, .value = {0} };\n"
+         "    if (" bind "_presence == 0x01) {\n"
+         "        if (__len < __off + " width ") return " invalid
+         "((int64_t)__off, @\"expected " width " bytes for Optional "
+         "tagged-enum field " fname " (" cxc-ty ") payload, source has less\");\n"
+         disc-read "\n"
+         "        if (" raw " >= " n ") return " invalid
+         "((int64_t)(__off - " width "), @\"invalid discriminator for "
+         "Optional tagged-enum field " fname " (" cxc-ty ")\");\n"
+         "        " inner-bind ".tag = (" cxc-ty "_Tag)" raw ";\n"
+         "        switch (" raw ") {\n"
+         (str/join "\n" arms) "\n"
+         "        }\n"
          "    }")))
 
 (defn- f37-value-only-enum-field-decode-c-src
@@ -9353,7 +9481,9 @@
     (f37-tagged-enum-decode-field? f enum-env)
     (f37-tagged-enum-field-decode-c-src record-name f enum-env)
     (f37-optional-value-only-enum-decode-field? f enum-env)
-    (f37-optional-value-only-enum-field-decode-c-src record-name f enum-env)))
+    (f37-optional-value-only-enum-field-decode-c-src record-name f enum-env)
+    (f37-optional-tagged-enum-decode-field? f enum-env)
+    (f37-optional-tagged-enum-field-decode-c-src record-name f enum-env)))
 
 (defn- synthesize-record-from-bytes-fn
   "F37 L6 — emit `<Record>_cxc_from_bytes(NSMutableData *src) ->

@@ -168,6 +168,12 @@
       (is (zero? exit))
       (is (= "2\n" stdout)))))
 
+(deftest end-to-end-f37-l6-optional-tagged-enum-from-bytes
+  (testing "F37 L6 Optional-tagged-enum extension (2026-08-27) — round-trip on a record with a bare-T value-typed field where T is a tagged enum with primitive payload cases. `R(msg: Msg.pong(seq: 42)).as()` produces 1 presence + 1 discriminator + 4 payload = 6 bytes; `R.from(source: b)` reads presence, on present reads + range-checks the discriminator, writes tag + switches to decode payload into `_Cxc_Optional_Msg.value.data.pong.seq`. DecodeOutcome discarded; `b.length` prints 6."
+    (let [{:keys [exit stdout]} (compile-and-run "f37-l6-optional-tagged-enum-from-bytes")]
+      (is (zero? exit))
+      (is (= "6\n" stdout)))))
+
 
 (deftest end-to-end-k5-if-expression
   (testing "K5 L1 — `if` at expression position (spec §3.8.1). Uses both simple `if...else` and `if...else if...else` chain. Result flows through `let` bindings. Lowered as C ternary; prints the selected branch value."

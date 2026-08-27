@@ -2167,6 +2167,46 @@ def main:
       (is (re-find #"Signal_cxc_as_bytes\(a\.sig\.value\)" body-text)
           "dispatches to the enum encoder on present"))))
 
+(deftest f37-l6-optional-tagged-enum-field-decode-body-presence-plus-switch
+  (testing "F37 L6 Optional-tagged-enum extension (2026-08-27) — a record with a bare-T value-typed field where T is a tagged enum with primitive/`String!` payloads synthesizes a decode block that: (1) reads presence byte + validity check, (2) on present bounds-checks + reads discriminator + range-checks, (3) writes the tag into `_Cxc_Optional_<Enum>.value.tag`, (4) switches on the discriminator with per-case arms writing directly into `.value.data.<case>.<field>`. Reuses `f37-tagged-enum-payload-decode-c-src` with a `<bind>.value`-prefixed target so the payload writers land in the Optional's inner storage."
+    (let [prog (lower-src "def Msg:\n    case ping\n    case pong(seq: Int32!)\n\ndef R:\n    msg: Msg\n\ndef main:\n    -> running\n")
+          f    (first (filter #(= "R_cxc_from_bytes" (:name %)) (:functions prog)))
+          body-text (get-in f [:body 0 :text])]
+      (is (some? f))
+      (is (re-find #"expected 1 presence byte for Optional tagged-enum field msg" body-text)
+          "presence-byte bounds check with per-field diagnostic")
+      (is (re-find #"invalid presence byte for Optional tagged-enum field msg" body-text)
+          "presence-byte validity check (0x00/0x01)")
+      (is (re-find #"_Cxc_Optional_Msg __msg_val = \{ \.present = __msg_val_presence" body-text)
+          "designated-initializer for the Optional storage struct")
+      (is (re-find #"if \(__msg_val_presence == 0x01\)" body-text)
+          "payload decode guarded by presence check")
+      (is (re-find #"expected 1 bytes for Optional tagged-enum field msg \(Msg\) payload" body-text)
+          "discriminator bounds-check picks 1 byte for ≤256 cases")
+      (is (re-find #"if \(__msg_disc >= 2\) return" body-text)
+          "range check against case count 2")
+      (is (re-find #"__msg_val\.value\.tag = \(Msg_Tag\)__msg_disc" body-text)
+          "writes tag into the Optional's inner storage")
+      (is (re-find #"case Msg_Tag_ping:" body-text)
+          "per-case arm for bare case")
+      (is (re-find #"case Msg_Tag_pong:" body-text)
+          "per-case arm for payload case")
+      (is (re-find #"__msg_val\.value\.data\.pong\.seq" body-text)
+          "payload field written into the Optional's inner tagged-union member"))))
+
+(deftest f37-encoder-symmetry-record-with-optional-tagged-enum-field-synthesizes-as-bytes
+  (testing "F37 encoder-symmetry (2026-08-27, Optional-tagged-enum sub) — a record with an Optional-tagged-enum field synthesizes `<R>_cxc_as_bytes`. Field encoding writes a presence byte and dispatches to `<Enum>_cxc_as_bytes(a.<field>.value)` on present. Enables round-trip with the F37 L6 Optional-tagged-enum decode extension."
+    (let [prog (lower-src "def Msg:\n    case ping\n    case pong(seq: Int32!)\n\ndef R:\n    msg: Msg\n\ndef main:\n    -> running\n")
+          fn-names (set (map :name (:functions prog)))
+          f    (first (filter #(= "R_cxc_as_bytes" (:name %)) (:functions prog)))
+          body-text (get-in f [:body 0 :text])]
+      (is (contains? fn-names "R_cxc_as_bytes"))
+      (is (contains? fn-names "Msg_cxc_as_bytes"))
+      (is (re-find #"a\.msg\.present" body-text)
+          "encodes presence from `.present`")
+      (is (re-find #"Msg_cxc_as_bytes\(a\.msg\.value\)" body-text)
+          "dispatches to the enum encoder on present"))))
+
 (deftest f37-encoder-symmetry-record-with-enum-field-synthesizes-as-bytes
   (testing "F37 encoder-symmetry (2026-08-27) — a record with a value-only enum field now synthesizes `<R>_cxc_as_bytes` (previously fail-nyi'd at the intercept). Field encoding dispatches to the enum's synthesized `<Enum>_cxc_as_bytes` mirror of the nested-record arm. Enables round-trip with the F37 L6 value-only enum decode extension."
     (let [prog (lower-src "def Signal:\n    case red\n    case green\n\ndef R:\n    sig: Signal!\n\ndef main:\n    -> running\n")
