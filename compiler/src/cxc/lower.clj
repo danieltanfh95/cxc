@@ -11405,10 +11405,105 @@
                                    :text (str "return [_elements containsObject:"
                                               box-e "] ? 1 : 0;")}]}]}))
 
+;; ---------------------------------------------------------------------------
+;; F52 L4 — module let-bindings (§7.1).
+;;
+;; Top-level `let NAME [: Type] = <const-expr>` binds an immutable
+;; compile-time constant. Handled as pre-lower constant-folding:
+;; extract each `:module-let` node from `top-nodes`, validate its RHS
+;; via `default-expr-const-shape?` (restricted to atom/enum-independent
+;; forms so the check runs before env construction), postwalk-substitute
+;; every `:ident` reference to the binding's name with the RHS value
+;; node. Downstream lowering sees literals in place of ident refs — no
+;; new env slot, no runtime state.
+;;
+;; MVP scope:
+;; - RHS restricted to primitive literals + unary neg/not — no ident
+;;   chaining, no atom/enum refs (both would require the envs to exist
+;;   before the substitution runs; primitives don't).
+;; - Naive substitution across the whole program; a local `let PI = 5`
+;;   inside a method body would be rewritten as `let 5 = 5` which fails
+;;   downstream (`let` LHS expects an ident) — the diagnostic surface
+;;   is coarse today. Landing a shadowing check is a follow-on.
+;; - Cross-module `foo.PI` deferred; today module-lets are flat-
+;;   namespaced like records/atoms so any reference in any module
+;;   resolves.
+;; - Duplicate module-let names across the program are rejected here
+;;   (flat namespace).
+;; ---------------------------------------------------------------------------
+
+(defn- module-let-const-shape?
+  "F52 L4 — pre-lower const check for module-let RHS. Restricted subset
+   of `default-expr-const-shape?`: primitive literals + unary. Rejects
+   ident refs, atom/enum refs, and everything else so the check can
+   run before atom-env / enum-env are built."
+  [expr]
+  (case (:node expr)
+    (:lit-int :lit-float :lit-string :lit-char
+     :lit-nil :lit-bool)     true
+    (:neg :not)              (module-let-const-shape? (:expr expr))
+    false))
+
+(defn- extract-module-lets
+  "F52 L4 — walk `top-nodes` and build `{name → value-node}` over every
+   `:module-let` decl. Rejects non-const RHS (via
+   `module-let-const-shape?`) and duplicate names (flat-namespace at
+   v1.0 — cross-module qualified access is a follow-on)."
+  [top-nodes]
+  (reduce (fn [acc n]
+            (if (not= :module-let (:node n))
+              acc
+              (let [nm (:name n)
+                    v  (:value n)]
+                (when-not (module-let-const-shape? v)
+                  (fail-nyi!
+                   (str "module let-binding `" nm "` — RHS is not a "
+                        "compile-time constant (spec §7.1 + §3.8.5 rule 1). "
+                        "Only primitive literals + unary neg/not are accepted "
+                        "at this landing; got `" (:node v) "` node.")
+                   {:module-let nm :value-node (:node v)}))
+                (when (contains? acc nm)
+                  (fail-nyi!
+                   (str "duplicate module let-binding `" nm "` — v1.0 uses "
+                        "a flat namespace across modules for top-level "
+                        "bindings; rename one of the duplicates.")
+                   {:module-let nm}))
+                (assoc acc nm v))))
+          {}
+          top-nodes))
+
+(defn- substitute-module-let-refs
+  "F52 L4 — postwalk `nodes` replacing every `{:node :ident :name X}`
+   with `(get ml-map X)` when X is a module-let name. Non-matching
+   idents pass through. Non-map / non-`:ident` nodes pass through."
+  [nodes ml-map]
+  (if (empty? ml-map)
+    nodes
+    (walk/postwalk
+      (fn [x]
+        (if (and (map? x)
+                 (= :ident (:node x))
+                 (contains? ml-map (:name x)))
+          (get ml-map (:name x))
+          x))
+      nodes)))
+
 (defn lower
   "Take parsed top-level nodes and produce an ObjC/C program AST."
   [top-nodes]
-  (let [main-atom  (first (filter main-def-atom? top-nodes))
+  (let [;; F52 L4 — pre-lower constant folding of top-level `let NAME =
+        ;; <const-literal>` bindings. Extract every `:module-let` decl
+        ;; into a name→value-node map, drop the decls from `top-nodes`,
+        ;; and postwalk-substitute every matching `:ident` reference
+        ;; with the constant. Everything below sees a canonical AST
+        ;; with literals in place of module-let refs — no new env slot,
+        ;; no runtime state, no per-callsite lookup.
+        module-lets (extract-module-lets top-nodes)
+        top-nodes   (->> top-nodes
+                         (remove #(= :module-let (:node %)))
+                         vec)
+        top-nodes   (substitute-module-let-refs top-nodes module-lets)
+        main-atom  (first (filter main-def-atom? top-nodes))
         _          (when-not main-atom
                      (throw (ex-info "no `def main` entry point found at top level"
                                      {:top top-nodes})))

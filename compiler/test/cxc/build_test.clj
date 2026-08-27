@@ -78,6 +78,12 @@
       (is (zero? exit))
       (is (= "hello, world\n" stdout)))))
 
+(deftest end-to-end-f52-l4-module-let-basic
+  (testing "F52 L4 (2026-08-27) — top-level `let SEED = 41` binds an immutable compile-time constant. Pre-lower `substitute-module-let-refs` postwalks the AST replacing every `SEED` `:ident` node with the `:lit-int` value. `Counter(seed: SEED).bump` constructs with seed=41 and yields 42; program prints `42\\n`."
+    (let [{:keys [exit stdout]} (compile-and-run "f52-l4-module-let-basic")]
+      (is (zero? exit))
+      (is (= "42\n" stdout)))))
+
 (deftest end-to-end-direct-field-syntax
   (testing "L6 — custom-section.cxc migrated to direct field syntax; the field is folded into :data-section and remains observable end-to-end"
     (let [{:keys [exit stdout]} (compile-and-run "custom-section")]

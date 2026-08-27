@@ -3371,6 +3371,24 @@
 ;; Top-level dispatch
 ;; ---------------------------------------------------------------------------
 
+(defn- parse-module-let
+  "F52 L4 (§7.1) — top-level immutable let-binding.
+     let <NAME> [: <Type>] = <const-expr>
+   Produces a `:module-let` node carrying the ident name, optional
+   type annotation, and RHS expression. Value-constness is enforced
+   at lower time (same `default-expr-const-shape?` guard F40 uses on
+   default-expressions per spec §3.8.5)."
+  [tokens pos]
+  (let [[_ p]    (expect tokens pos :kw "let")
+        [nm p]   (expect tokens p :ident)
+        [ty p]   (if (at? tokens p :punct ":")
+                   (parse-type tokens (inc p))
+                   [nil p])
+        [_ p]    (expect tokens p :glyph "=")
+        [rhs p]  (parse-expr tokens p)
+        [_ p]    (expect tokens p :newline)]
+    [{:node :module-let :name nm :type ty :value rhs} p]))
+
 (defn- parse-top [tokens pos]
   (let [p (skip-newlines tokens pos)]
     (cond
@@ -3378,6 +3396,7 @@
       (at? tokens p :kw "module")  (reject-module-decl! tokens p)
       (at? tokens p :kw "from")    (parse-from-import tokens p)
       (at? tokens p :kw "import")  (parse-import tokens p)
+      (at? tokens p :kw "let")     (parse-module-let tokens p)
       (at? tokens p :annotation-prefix) (parse-annotated-def tokens p)
       (at? tokens p :kw "def")     (parse-def-atom tokens p)
 

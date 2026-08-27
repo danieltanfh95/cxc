@@ -1,0 +1,13 @@
+let SEED = 42
+
+def main:
+    -> running
+        # F52 L4 (2026-08-27) module let-bindings — top-level `let
+        # SEED = 42` binds an immutable compile-time constant.
+        # `substitute-module-let-refs` postwalks the AST replacing
+        # every `SEED` `:ident` node with the `:lit-int` value node.
+        # `print(SEED)` sees `print(42)` at lower time. Prints `42\n`.
+        then:
+            print(SEED)
+
+    -> end
