@@ -178,53 +178,28 @@
                                "user module in src-dir")
                           {:kind :unknown-module :module from})))))))
 
-(defn compile-source-to-file
-  "Compile cxc source text through parse → lower → emit → clang.
-   Prepends the compiler-shipped prelude (see cxc.prelude) before
-   parsing so records/atoms defined there are visible to user code
-   without an import statement. Writes .m to `<out-dir>/<name>.m`
-   and produces binary at `<out-dir>/<name>`.
+(defn- compile-parsed-to-file
+  "Internal — shared tail for the source-in (`compile-source-to-file`,
+   single-file / concat-reparse for prelude) and AST-in
+   (`compile-directory-to-file`, multi-file / per-module AST already
+   assembled) paths. Takes:
 
-   Tier-1 cache: content-hashes the emitted .m; on hit, copies the
-   cached binary into place and skips clang entirely. On miss, runs
-   clang as usual and, on success, stores the binary under
-   `.cxc-cache/bin/<sha>`. Regardless of hit or miss, the .m is
-   copied to `.cxc-cache/last/<name>.m` so you can browse the most
-   recently emitted ObjC for any named example without hunting
-   through test tmpdirs.
+     - `:user-parsed` — the user program's AST (single file's parse,
+       or the concat of enriched per-file ASTs interleaved with
+       `:module` marker nodes).
+     - `:full-parsed` — prelude AST prepended to `user-parsed`.
 
-   F55 Landing 3: optional `:target` key selects the platform prelude
-   (`prelude/target/<target>/*.cxc`). Defaults to `prelude/default-target`
-   (:macos) so existing callers are backward-compatible.
+   Runs behavioral walkers (which need both scopes),
+   `prelude/rewrite-prelude-names`, `lower/lower`, `emit/emit`, then
+   writes `.m`, computes cache SHA (including the queue-mode flag
+   per F32 L6), and either restores from the tier-1 binary cache or
+   runs clang.
 
-   F32 L6: optional `:single-queue?` key controls the
-   `CXC_SINGLE_MAIN_QUEUE` preprocessor value passed to clang.
-   Default `true` (Layer 4 single-main-queue mode — every atom's
-   own_queue targets main; deterministic scheduling for existing
-   tests). Set to `false` to opt into F32 concurrent mode
-   (`-DCXC_SINGLE_MAIN_QUEUE=0` — atom queues target the global
-   pool per L1's runtime check, stream queues drop main-target per
-   L5, shutdown drain fires per L2). The flag value participates
-   in the cache key so single-queue and concurrent builds of the
-   same source don't share a binary.
-
-   Returns {:m-path <path> :bin-path <path> :status <clang-exit-code>
-            :stdout <clang-stdout> :stderr <clang-stderr>
-            :cache-hit? <bool>}."
-  ([source name out-dir]
-   (compile-source-to-file source name out-dir {}))
-  ([source name out-dir {:keys [target allow-build-modules? single-queue?]
-                         :or {target prelude/default-target
-                              single-queue? true}}]
-  (let [parse-fn (if allow-build-modules?
-                   parse/parse-with-build-modules
-                   parse/parse)
-        _        (io/make-parents (io/file out-dir "placeholder"))
-        parsed   (parse-fn source)
-        _        (validate-imports parsed)
-        _        (prelude/validate-no-prelude-collisions! parsed)
-        prelude-src (prelude/assemble-source target)
-        full-parsed (parse-fn (str prelude-src source))
+   Returns the same shape as the public entrypoints:
+   `{:m-path :bin-path :status :stdout :stderr :cache-hit?}`."
+  [{:keys [user-parsed full-parsed]} name out-dir
+   {:keys [single-queue?] :or {single-queue? true}}]
+  (let [_        (io/make-parents (io/file out-dir "placeholder"))
         ;; F8 L3d.ii.β / L3b reshape — K3 walker dispatch flows through
         ;; the compiler-internal behavioral registry. `:deprecated`
         ;; remains the sole entry; its input source changed from body
@@ -233,7 +208,7 @@
         ;; computation (e.g. K3's `warn-deprecated-uses` calls
         ;; `collect-deprecations` on `full-parsed` internally).
         _        (doseq [[_ walker-var] (section/behavioral-walkers)]
-                   (walker-var parsed full-parsed))
+                   (walker-var user-parsed full-parsed))
         m-src    (-> full-parsed
                      prelude/rewrite-prelude-names
                      lower/lower
@@ -271,7 +246,57 @@
          :status     exit
          :stdout     out
          :stderr     err
-         :cache-hit? false})))))
+         :cache-hit? false}))))
+
+(defn compile-source-to-file
+  "Compile cxc source text through parse → lower → emit → clang.
+   Prepends the compiler-shipped prelude (see cxc.prelude) before
+   parsing so records/atoms defined there are visible to user code
+   without an import statement. Writes .m to `<out-dir>/<name>.m`
+   and produces binary at `<out-dir>/<name>`.
+
+   Tier-1 cache: content-hashes the emitted .m; on hit, copies the
+   cached binary into place and skips clang entirely. On miss, runs
+   clang as usual and, on success, stores the binary under
+   `.cxc-cache/bin/<sha>`. Regardless of hit or miss, the .m is
+   copied to `.cxc-cache/last/<name>.m` so you can browse the most
+   recently emitted ObjC for any named example without hunting
+   through test tmpdirs.
+
+   F55 Landing 3: optional `:target` key selects the platform prelude
+   (`prelude/target/<target>/*.cxc`). Defaults to `prelude/default-target`
+   (:macos) so existing callers are backward-compatible.
+
+   F32 L6: optional `:single-queue?` key controls the
+   `CXC_SINGLE_MAIN_QUEUE` preprocessor value passed to clang.
+   Default `true` (Layer 4 single-main-queue mode — every atom's
+   own_queue targets main; deterministic scheduling for existing
+   tests). Set to `false` to opt into F32 concurrent mode
+   (`-DCXC_SINGLE_MAIN_QUEUE=0` — atom queues target the global
+   pool per L1's runtime check, stream queues drop main-target per
+   L5, shutdown drain fires per L2). The flag value participates
+   in the cache key so single-queue and concurrent builds of the
+   same source don't share a binary.
+
+   Returns {:m-path <path> :bin-path <path> :status <clang-exit-code>
+            :stdout <clang-stdout> :stderr <clang-stderr>
+            :cache-hit? <bool>}."
+  ([source name out-dir]
+   (compile-source-to-file source name out-dir {}))
+  ([source name out-dir {:keys [target allow-build-modules?]
+                         :or {target prelude/default-target}
+                         :as opts}]
+  (let [parse-fn (if allow-build-modules?
+                   parse/parse-with-build-modules
+                   parse/parse)
+        parsed   (parse-fn source)
+        _        (validate-imports parsed)
+        _        (prelude/validate-no-prelude-collisions! parsed)
+        prelude-src (prelude/assemble-source target)
+        full-parsed (parse-fn (str prelude-src source))]
+    (compile-parsed-to-file
+      {:user-parsed parsed :full-parsed full-parsed}
+      name out-dir opts))))
 
 (defn run-binary
   "Execute the compiled binary and return {:exit :stdout :stderr}."
@@ -860,25 +885,29 @@
         sorted-modules   (topological-sort dep-graph user-modules)
         files-with-nodes (sort-files-by-module-order files-with-nodes
                                                      sorted-modules)
-        ;; F51 L1 — prepend a synthetic `module <derived>` line to
-        ;; each source string before concatenation. The parser sees
-        ;; it as a normal `:module` node; `resolve/build-symbol-table`
-        ;; walks the stream stateful and attributes downstream decls
-        ;; to that module. `strip-module-and-import-lines` still runs
-        ;; to blank `from ...` (the flat-namespace concatenation shim
-        ;; stays until F51 L3 lands scoped resolution).
-        with-module-headers
-        (mapv (fn [{:keys [module src]}]
-                (str "module " (clojure.core/name module) "\n\n"
-                     (strip-module-and-import-lines src)))
-              files-with-nodes)
-        combined (clojure.string/join "\n\n" with-module-headers)
-        ;; F73 note: user `module` headers are rejected at parse-time; the
-        ;; build injects synthetic ones here for per-file provenance and
-        ;; passes `:allow-build-modules?` so the re-parse in
-        ;; `compile-source-to-file` accepts them via `parse-with-build-modules`.
-        result   (compile-source-to-file combined name out-dir
-                                          (assoc opts :allow-build-modules? true))]
+        ;; F51 L3b(b.ii)-3 — retire the concat+reparse shim. Enrich each
+        ;; per-file AST with `:resolves-to` provenance metadata via
+        ;; `resolve/resolve-references`, then assemble a flat top-node
+        ;; stream (synthetic `:module` marker per file for lower's
+        ;; module-attribution walk), prepend the prelude AST, and feed
+        ;; directly into `compile-parsed-to-file`. The `:resolves-to`
+        ;; metadata now survives to lower (previously stripped by the
+        ;; reparse) — activating the qualified-lookup path in
+        ;; `resolve-decl-lookup` for any future consumer.
+        enriched-files   (resolve/resolve-references files-with-nodes)
+        user-parsed      (into []
+                               (mapcat (fn [{:keys [module nodes]}]
+                                         (cons {:node :module
+                                                :name (clojure.core/name module)}
+                                               nodes)))
+                               enriched-files)
+        prelude-nodes    (parse/parse
+                           (prelude/assemble-source
+                             (:target opts prelude/default-target)))
+        full-parsed      (into (vec prelude-nodes) user-parsed)
+        result           (compile-parsed-to-file
+                           {:user-parsed user-parsed :full-parsed full-parsed}
+                           name out-dir opts)]
     ;; F53 L1 — emit one `<module>.cxc-manifest.json` per user module.
     ;; F53 L2 — emit `cxc-deps.json` at out-dir root capturing the
     ;; program-wide module dependency graph.
