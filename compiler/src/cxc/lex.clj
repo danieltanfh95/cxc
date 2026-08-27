@@ -22,7 +22,7 @@
    Reserved words emit as :kw. Everything else identifier-shaped is :ident."
   (:require [clojure.string :as str]))
 
-(def reserved-words
+(def ^:private reserved-words
   ;; F68 L6b (Proposal H) — `record` / `class` / `enum` / `protocol` /
   ;; `methods` / `metadata` / `cases` retired. `def` is the sole opener;
   ;; kind flows from body structural cues (signature-only members→protocol,
@@ -80,7 +80,7 @@
     ;; parser churn later.
     "while" "loop" "break" "continue"})
 
-(def multi-char-glyphs
+(def ^:private multi-char-glyphs
   ;; F39 L6 (2026-08-21) — `??` coalesce operator. Landed ahead of
   ;; L5b-ii-b (Optional storage flip) because L5b-ii's boundary-unwrap
   ;; discipline requires `??` as the sole user-facing surface for
@@ -90,13 +90,13 @@
   ;; lands as :punct `?` and trips the L5a suffix-banned diagnostic.
   ["<:" "<|" "|>" "|:" ":>" ":<" "->" "=>" "==" "!=" "<=" ">=" "//" "**" "??"])
 
-(def single-char-glyphs
+(def ^:private single-char-glyphs
   #{\+ \- \* \/ \% \= \< \> \! \& \|})
 
-(def punctuation
+(def ^:private punctuation
   #{\( \) \[ \] \{ \} \, \: \. \; \? \!})
 
-(def annotation-prefix \@)
+(def ^:private annotation-prefix \@)
 
 (defn- classify-word [w]
   (if (reserved-words w) :kw :ident))
