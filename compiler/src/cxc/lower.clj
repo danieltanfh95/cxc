@@ -90,16 +90,13 @@
 
 (def ^:dynamic ^:private *decl->module* nil)
 
-;; F51 L3b(b.ii)-5b (2026-08-27) — parallel ambient. `*module-map*` is
-;; `{module-kw → #{decl-name-string ...}}`, produced by
-;; `module-map-from-attribution`. Bound at the same site as
-;; `*decl->module*` so any downstream `resolve-decl-lookup` call whose
-;; caller doesn't have `ctx` in scope can still consult the module
-;; index without threading it explicitly. Retire alongside
-;; `*decl->module*` at b.ii-5e (or a followon) when consumer wiring
-;; consolidates to ctx-threading.
-
-(def ^:dynamic ^:private *module-map* nil)
+;; F51 L3b(b.ii)-5d Batch 6 retired `*module-map*`. Every consumer
+;; that read it (cxc-type->c's internal resolve calls, decl-lookup)
+;; now takes the module-map explicitly — from a ctx map (in the
+;; ctx-threaded call paths) or as a threaded function arg (in the
+;; env-builder chain). `*decl->module*` stays: it drives F56 C-id
+;; mangling in `->c-safe` and supplies `:resolves-to` on internal
+;; synthetic type-ref nodes.
 
 ;; Forward decl — the primitive lives further down alongside the other
 ;; F51 b.ii-2 helpers; `cxc-type->c` (defined before it) needs the
@@ -11797,14 +11794,12 @@
   [top-nodes]
   ;; F56 L2+L3 — bind `*decl->module*` so every `->c-safe` call site
   ;; (cxc-type->c, synth-reason-box, class-name-for-atom, ...)
-  ;; consults the correct mangling table. F51 L3b(b.ii)-5b — also bind
-  ;; `*module-map*` (reverse index) so ambient-consulting sites can
-  ;; call `resolve-decl-lookup` without ctx-threading. Both computed
-  ;; here from the raw input top-nodes.
+  ;; consults the correct mangling table. F51 L3b(b.ii)-5d Batch 5+6
+  ;; retired the parallel `*module-map*` ambient; module-map is now a
+  ;; local threaded through builders + carried on ctx maps.
   (let [d->m (attribute-modules-to-decls top-nodes)
         module-map (module-map-from-attribution d->m)]
-   (binding [*decl->module* d->m
-             *module-map*   module-map]
+   (binding [*decl->module* d->m]
    (let [;; F52 L4 — pre-lower constant folding of top-level `let NAME =
         ;; <const-literal>` bindings. Extract every `:module-let` decl
         ;; into a name→value-node map, drop the decls from `top-nodes`,
@@ -11990,17 +11985,14 @@
         ;; program AST that the ε.α tests didn't already expect.
         ctx-nt-shapes (named-tuple/collect-shapes top-nodes)
         ;; F51 L3b(b.ii)-2 — attribute each user declaration to its
-        ;; module by walking top-nodes stream-wise (module context
-        ;; carried by `:module` nodes). Feeds `resolve-decl-lookup`
-        ;; when a caller passes `:resolves-to`. b.ii-3 (multi-file) +
-        ;; b.ii-5c (single-file) preserve `:resolves-to` end-to-end so
-        ;; the hint fires as the primary path; short-name fallback
-        ;; still catches unmigrated sites until b.ii-5e.
-        decl->module (attribute-modules-to-decls top-nodes)
-        module-map   (module-map-from-attribution decl->module)
+        ;; module (walked at the top of `lower` from raw top-nodes as
+        ;; `d->m` / `module-map` above; also `*decl->module*` for F56
+        ;; C-id mangling). Attribution is decl-shaped, not ref-shaped,
+        ;; so the module-let-substitution pass between top and here
+        ;; doesn't affect it — reuse the local instead of recomputing.
         ctx        {:record-env record-env :atom-env atom-env :enum-env enum-env
                     :symbol-table symbol-table
-                    :decl->module decl->module
+                    :decl->module d->m
                     :module-map module-map
                     :named-tuple-env ctx-nt-shapes
                     :locals {}}
