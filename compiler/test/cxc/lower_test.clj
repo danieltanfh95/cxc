@@ -2110,6 +2110,28 @@ def main:
          #"F37 L6.*inner.*Inner"
          (lower-src "def Inner:\n    text: String!\n\ndef W:\n    inner: Inner!\n\ndef main:\n    -> running\n        then:\n            let b: Bytes = W(inner: Inner(text: \"hi\")).as()\n            W.from(source: b)\n")))))
 
+(deftest f37-l6-value-only-enum-field-decode-body-discriminator-and-range-check
+  (testing "F37 L6 value-only enum extension — a record with a field of an enum that has no payload cases synthesizes a decode block that reads a discriminator (width per §3.10.10 case count), range-checks against case count, then casts to the enum's C type. Value-only enums with ≤256 cases use UInt8."
+    (let [prog (lower-src "def Signal:\n    case red\n    case green\n    case yellow\n\ndef R:\n    sig: Signal!\n\ndef main:\n    -> running\n")
+          f    (first (filter #(= "R_cxc_from_bytes" (:name %)) (:functions prog)))
+          body-text (get-in f [:body 0 :text])]
+      (is (some? f))
+      (is (re-find #"expected 1 bytes for enum field sig \(Signal\)" body-text)
+          "1-byte bounds check for a ≤256-case enum")
+      (is (re-find #"if \(__sig_raw >= 3\) return" body-text)
+          "range check against case count 3")
+      (is (re-find #"invalid discriminator for enum field sig \(Signal\)" body-text)
+          "invalid-discriminator diagnostic names the enum + field")
+      (is (re-find #"Signal __sig_val = \(Signal\)__sig_raw" body-text)
+          "casts discriminator to the enum's C type"))))
+
+(deftest f37-l6-tagged-enum-field-fails-nyi-at-intercept
+  (testing "F37 L6 — tagged enum field (any case has payload) currently fails-nyi at the `.from()` intercept. Extension for tagged-enum decode ships in a follow-on sub-landing (needs per-case payload switch + tagged-union write). Uses a String source to bypass the encoder path (enum fields aren't encoder-eligible either)."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"F37 L6.*msg.*Msg"
+         (lower-src "def Msg:\n    case ping\n    case pong(seq: Int32!)\n\ndef R:\n    msg: Msg!\n\ndef Src:\n    x: String!\n\ndef main:\n    -> running\n        then:\n            let b: Bytes = Src(x: \"hi\").as()\n            R.from(source: b)\n")))))
+
 (deftest f37-l6-optional-primitive-field-decode-body-presence-envelope
   (testing "F37 L6 Optional-primitive extension — a record with a bare-T value-typed field (Optional-boxed per F39 L5b-ii-c Sub-P) synthesizes a decode block that: (1) reads a UInt8 presence byte and validates 0x00/0x01 range, (2) on absent leaves `.value` bit-zero (presence 0 short-circuits the payload read), (3) on present bounds-checks + reads T bytes, (4) binds `_Cxc_Optional_<T> __<field>_val = {.present, .value}`. Body inspected for the presence-guarded conditional + validity check."
     (let [prog (lower-src "def Opt:\n    x: Int32\n\ndef main:\n    -> running\n")

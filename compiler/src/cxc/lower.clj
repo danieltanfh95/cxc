@@ -5225,9 +5225,9 @@
                                       "got " (count args) ".")
                                  node))
                          _    (when-not (record-eligible-for-from-bytes-synthesis?
-                                         info (:record-env ctx))
+                                         info (:record-env ctx) (:enum-env ctx))
                                 (let [bad (first (remove #(f37-decode-eligible-field?
-                                                           % (:record-env ctx))
+                                                           % (:record-env ctx) (:enum-env ctx))
                                                          (:fields info)))]
                                   (fail-nyi!
                                    (str "F37 L6: cannot synthesize `.from(Bytes)"
@@ -8598,18 +8598,19 @@
        (contains? record-env (:cxc-ty f))
        (some? (record-fixed-encoded-size (:cxc-ty f) record-env))))
 
-(defn- f37-decode-eligible-field?
-  "F37 L6 field-level eligibility. Primitive fields (Bool / sized-int /
-   Int / Float / Double), `String!` fields, nested-record fields whose
-   inner record is fixed-size, and Optional-boxed primitive fields
-   (bare-T value-typed T where T is primitive) all decode. Enum /
-   variable-length-nested-record / Optional-nested-record fields defer
-   to follow-on sub-landings.
+(declare f37-value-only-enum-decode-field?)
 
-   Single-arity variant covers the record-env-agnostic checks (primitive
-   + String + Optional-primitive); the two-arity variant adds the
-   nested-record path. Callers with access to record-env should prefer
-   the 2-arity form so nested-record fields aren't misdiagnosed as
+(defn- f37-decode-eligible-field?
+  "F37 L6 field-level eligibility. Primitive (Bool / sized-int / Int /
+   Float / Double), `String!`, nested-record (fixed-size inner),
+   Optional-boxed primitive, and value-only enum fields all decode.
+   Tagged-enum / variable-length-nested-record / Optional-nested-record
+   fields defer to follow-on sub-landings.
+
+   Three arities: 1-arity for env-agnostic checks (primitive + String +
+   Optional-primitive); 2-arity adds the nested-record path; 3-arity
+   adds the value-only enum path. Callers with access to enum-env should
+   prefer the 3-arity form so enum fields aren't misdiagnosed as
    non-eligible."
   ([f]
    (or (f37-primitive-byte-field? f)
@@ -8619,26 +8620,36 @@
    (or (f37-primitive-byte-field? f)
        (f37-string-byte-field? f)
        (f37-optional-primitive-field? f)
-       (f37-nested-record-decode-field? f record-env))))
+       (f37-nested-record-decode-field? f record-env)))
+  ([f record-env enum-env]
+   (or (f37-primitive-byte-field? f)
+       (f37-string-byte-field? f)
+       (f37-optional-primitive-field? f)
+       (f37-nested-record-decode-field? f record-env)
+       (f37-value-only-enum-decode-field? f enum-env))))
 
 (defn- record-eligible-for-from-bytes-synthesis?
-  "F37 L6 eligibility: every field must be decode-eligible. Currently
-   covers primitive (Bool / sized-int / Int / Float / Double), `String!`,
-   and nested-record fields (where the inner record is fixed-size).
-   Variable-length nested records / Optional / enum fields defer to
-   follow-on sub-landings; those records emit a fail-nyi at the
-   `.from()` intercept rather than at synthesis time (avoids generating
-   unreachable code).
+  "F37 L6 eligibility: every field must be decode-eligible. Coverage
+   grows with each arity: 1-arity handles primitive + `String!` +
+   Optional-primitive; 2-arity adds fixed-size nested-record;
+   3-arity adds value-only enum. Variable-length nested-record /
+   tagged enum / Optional-nested-record / Optional-enum fields defer
+   to follow-on sub-landings; those records emit a fail-nyi at the
+   `.from()` intercept rather than at synthesis time (avoids
+   generating unreachable code).
 
-   Single-arity keeps the pre-nested compat call sites (record-env-
-   agnostic — nested-record fields fall through to non-eligible). Prefer
-   the 2-arity form at sites that have record-env available."
+   Prefer the highest-arity form callers have envs for so field kinds
+   aren't misdiagnosed as non-eligible."
   ([info]
    (and (not (record-has-user-as-method? info))
         (every? f37-decode-eligible-field? (:fields info))))
   ([info record-env]
    (and (not (record-has-user-as-method? info))
-        (every? #(f37-decode-eligible-field? % record-env) (:fields info)))))
+        (every? #(f37-decode-eligible-field? % record-env) (:fields info))))
+  ([info record-env enum-env]
+   (and (not (record-has-user-as-method? info))
+        (every? #(f37-decode-eligible-field? % record-env enum-env)
+                (:fields info)))))
 
 (defn- synthesize-decode-outcome-struct
   "Per-record `_Cxc_DecodeOutcome_<R>` C struct. `.tag` selects
@@ -8721,6 +8732,53 @@
          res ".data.invalid.reason);\n"
          "    " inner " " bind " = " res ".data.converted.value;\n"
          "    __off += " n ";")))
+
+(defn- f37-value-only-enum-decode-field?
+  "F37 L6 enum extension eligibility (value-only enums only, this
+   sub-landing). Field type is an enum in enum-env and the enum has no
+   payload cases (`:tagged? false`). Tagged-enum decode is a follow-on
+   sub-landing (needs per-case payload switch + union write)."
+  [f enum-env]
+  (and (not (:optional? f))
+       (contains? enum-env (:cxc-ty f))
+       (not (get-in enum-env [(:cxc-ty f) :tagged?]))))
+
+(defn- f37-value-only-enum-field-decode-c-src
+  "F37 L6 value-only enum extension — decode an enum field where the
+   enum has no payload cases. Discriminator width per §3.10.10
+   (`f37-enum-discriminator-width`). Reads big-endian at width > 1;
+   range-checks against case count (invalid discriminator → decode
+   failure). Assigns to the enum's C tag type via cast."
+  [record-name f enum-env]
+  (let [fname   (:name f)
+        cxc-ty  (:cxc-ty f)
+        info    (get enum-env cxc-ty)
+        entries (:case-entries info)
+        n       (count entries)
+        width   (f37-enum-discriminator-width n)
+        bind    (str "__" fname "_val")
+        raw     (str "__" fname "_raw")
+        invalid (decode-invalid-fn-name record-name)
+        read-src
+        (case width
+          1 (str "    uint8_t " raw " = __bytes[__off];\n"
+                 "    __off += 1;")
+          2 (str "    uint16_t " raw "_be;\n"
+                 "    memcpy(&" raw "_be, __bytes + __off, 2);\n"
+                 "    uint16_t " raw " = OSSwapBigToHostInt16(" raw "_be);\n"
+                 "    __off += 2;")
+          4 (str "    uint32_t " raw "_be;\n"
+                 "    memcpy(&" raw "_be, __bytes + __off, 4);\n"
+                 "    uint32_t " raw " = OSSwapBigToHostInt32(" raw "_be);\n"
+                 "    __off += 4;"))]
+    (str "    if (__len < __off + " width ") return " invalid
+         "((int64_t)__off, @\"expected " width " bytes for enum field "
+         fname " (" cxc-ty "), source has less\");\n"
+         read-src "\n"
+         "    if (" raw " >= " n ") return " invalid
+         "((int64_t)(__off - " width "), @\"invalid discriminator for enum field "
+         fname " (" cxc-ty ")\");\n"
+         "    " cxc-ty " " bind " = (" cxc-ty ")" raw ";")))
 
 (defn- f37-optional-primitive-field-decode-c-src
   "F37 L6 Optional-primitive extension — decode a bare-T value-typed
@@ -8815,17 +8873,20 @@
 (defn- f37-field-decode-c-src
   "Dispatch per-field-kind at F37 L6 decode synthesis. Primitive → the
    primitive helper; `String!` → the String helper; Optional-primitive →
-   the Optional helper; nested-record → the nested-record helper.
-   Precondition: `f37-decode-eligible-field?` returned true. New field
-   kinds land as follow-on sub-landings with their own helper."
-  [record-name f record-env]
+   the Optional helper; nested-record → the nested-record helper;
+   value-only enum → the enum helper. Precondition:
+   `f37-decode-eligible-field?` returned true. New field kinds land as
+   follow-on sub-landings with their own helper."
+  [record-name f record-env enum-env]
   (cond
     (f37-primitive-byte-field? f)          (f37-primitive-field-decode-c-src record-name f)
     (f37-string-byte-field? f)             (f37-string-field-decode-c-src record-name f)
     (f37-optional-primitive-field? f)
     (f37-optional-primitive-field-decode-c-src record-name f)
     (f37-nested-record-decode-field? f record-env)
-    (f37-nested-record-field-decode-c-src record-name f record-env)))
+    (f37-nested-record-field-decode-c-src record-name f record-env)
+    (f37-value-only-enum-decode-field? f enum-env)
+    (f37-value-only-enum-field-decode-c-src record-name f enum-env)))
 
 (defn- synthesize-record-from-bytes-fn
   "F37 L6 — emit `<Record>_cxc_from_bytes(NSMutableData *src) ->
@@ -8836,15 +8897,17 @@
    `_cxc_decode_converted_<Record>(...)`. Precondition:
    `record-eligible-for-from-bytes-synthesis?` returned true.
 
-   `record-env` is threaded through for the nested-record decode arm
-   (needs to look up the inner record's fixed encoded size)."
-  [record-name info record-env]
+   `record-env` and `enum-env` are threaded through for the nested-
+   record arm (needs the inner record's fixed encoded size) and the
+   value-only enum arm (needs case count for discriminator width +
+   range check)."
+  [record-name info record-env enum-env]
   (let [fields   (:fields info)
         outcome  (decode-outcome-struct-name record-name)
         head     (str "    NSUInteger __off = 0;\n"
                       "    const uint8_t *__bytes = (const uint8_t *)[src bytes];\n"
                       "    NSUInteger __len = [src length];")
-        blocks   (map #(f37-field-decode-c-src record-name % record-env) fields)
+        blocks   (map #(f37-field-decode-c-src record-name % record-env enum-env) fields)
         ctor-args (str/join ", "
                             (map (fn [f]
                                    (str "." (:name f) " = __" (:name f) "_val"))
@@ -8891,9 +8954,11 @@
         ;; targeted diagnostic pointing at the missing extension.
         decode-fns
         (vec (mapcat (fn [[rec-name info]]
-                       (when (record-eligible-for-from-bytes-synthesis? info record-env)
+                       (when (record-eligible-for-from-bytes-synthesis?
+                              info record-env enum-env)
                          (concat (synthesize-decode-factory-fns rec-name)
-                                 [(synthesize-record-from-bytes-fn rec-name info record-env)])))
+                                 [(synthesize-record-from-bytes-fn
+                                   rec-name info record-env enum-env)])))
                      record-env))
         enum-fns
         (vec (for [[en-name info] enum-env
@@ -10723,7 +10788,7 @@
                       ;; Optional / enum decoding (follow-on sub-landings).
                       decode-struct (when (and rec-info
                                                (record-eligible-for-from-bytes-synthesis?
-                                                rec-info record-env))
+                                                rec-info record-env enum-env))
                                       (synthesize-decode-outcome-struct rec-name))]
                   (cond-> [rec-struct]
                     opt-struct    (conj opt-struct)
