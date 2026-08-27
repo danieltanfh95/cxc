@@ -522,7 +522,11 @@ def main:
       ;; raw :type node alongside :c-type. `self` is synthesized and
       ;; has no :type; `other` carries the parsed :type-ref for V.
       (is (= [{:name "self" :c-type "V"}
-              {:name "other" :c-type "V" :type {:node :type-ref :name "V"}}]
+              {:name "other" :c-type "V"
+               ;; Batch 7 — `ensure-references-enriched` runs at the
+               ;; top of `lower`, so the preserved raw :type node
+               ;; now carries `:resolves-to :main` from attribution.
+               :type {:node :type-ref :name "V" :resolves-to :main}}]
              (:params f)))
       (is (= 1 (count (:body f))))
       (is (= :return (get-in f [:body 0 :node]))))))
@@ -2653,7 +2657,8 @@ def main:
 
 (deftest l11-companion-index-lands-on-atom-env
   (testing "L11 — the companion-index synthesized by env-build is threaded onto each atom's env entry as `:companion-index`, mirroring `:message-index`. Downstream (L12) reads this to wire runtime delivery."
-    (let [prog (p/parse "def A:
+    (let [prog ((requiring-resolve 'cxc.resolve/ensure-references-enriched)
+                 (p/parse "def A:
     n: Int! = 0
     max: Int! = 3
 
@@ -2664,8 +2669,10 @@ def main:
 def main:
     a: A = A()
     -> running
-")
-          env (#'cxc.lower/build-atom-env prog {} {})]
+"))
+          env (#'cxc.lower/build-atom-env prog {}
+                (#'cxc.lower/module-map-from-attribution
+                  (#'cxc.lower/attribute-modules-to-decls prog)))]
       (is (contains? (get-in env ["A" :companion-index]) "bump_failed")
           "A's atom-env entry exposes companion metadata for `bump_failed`"))))
 
@@ -6127,12 +6134,11 @@ def main:
       (is (= #{"A" "B"} (get mm :foo)))
       (is (= #{"C"}     (get mm :bar))))))
 
-(deftest f51-l3b-b-ii-2-lookup-short-name-fallback-with-nil-hint
-  (testing "F51 L3b(b.ii)-2 — with `resolves-to = nil` (the current pipeline's steady state), the primitive falls through to short-name lookup — behavior identical to a bare `(get env name)`. This is the invariant that keeps b.ii-2 a zero-change scaffold: every call site can start passing `nil` today and pick up qualified semantics automatically once b.ii-3 preserves `:resolves-to`."
+(deftest f51-l3b-b-ii-5d-batch-7-lookup-nil-hint-returns-nil
+  (testing "F51 L3b(b.ii)-5d Batch 7 (2026-08-28) — nil `resolves-to` returns nil under strict resolution. The short-name fallback (`:else (get env name)`) retired with this batch: references must carry an attribution hint to resolve; nameless callers use [[env-lookup]] for bookkeeping instead."
     (let [env {"Bag" {:fields [] :methods []}}
           mm  {:foo #{"Bag"}}]
-      (is (= (get env "Bag")
-             (#'cxc.lower/resolve-decl-lookup env mm "Bag" nil))))))
+      (is (nil? (#'cxc.lower/resolve-decl-lookup env mm "Bag" nil))))))
 
 (deftest f51-l3b-b-ii-2-lookup-hint-matches-module-membership
   (testing "F51 L3b(b.ii)-2 — with `resolves-to = :foo` and `:foo` declaring `Bag`, the qualified lookup succeeds — returns the same env entry as the short-name fallback would, but via the qualified path. Under b.ii-3+ this is the primary route; today it's dead code exercised only by this test."
@@ -6163,7 +6169,10 @@ def main:
                 {:node :record :name "R" :sections []}]
           attr (#'cxc.lower/attribute-modules-to-decls top)
           mm   (#'cxc.lower/module-map-from-attribution attr)]
-      (is (= {:foo #{"R"}} mm))
+      ;; Batch 7 — module-map-from-attribution now also seeds the
+      ;; prelude modules so direct-invocation callers (without a
+      ;; prepended prelude AST) still resolve prelude refs.
+      (is (= #{"R"} (get mm :foo)))
       (is (= :foo (get attr "R"))))))
 
 ;; ---------------------------------------------------------------------------
@@ -6183,13 +6192,12 @@ def main:
       (is (= {:kind :record}
              (#'cxc.lower/decl-lookup ctx :record-env ref-node))))))
 
-(deftest f51-l3b-b-ii-5a-decl-lookup-nil-hint-falls-back-to-short-name
-  (testing "F51 L3b(b.ii)-5a — reference nodes without `:resolves-to` (single-file path today) fall back to short-name lookup. Preserves current behavior until b.ii-5e removes the fallback."
+(deftest f51-l3b-b-ii-5d-batch-7-decl-lookup-nil-hint-returns-nil
+  (testing "F51 L3b(b.ii)-5d Batch 7 (2026-08-28) — a ref node with no `:resolves-to` returns nil under strict resolution. The Batch-7 update to `resolve-decl-lookup` retired the short-name fallback; upstream attribution (`resolve/ensure-references-enriched` in single-file / `resolve/resolve-references` in multi-file build) is expected to populate the hint before the reference reaches lower."
     (let [ctx        {:record-env {"Bag" {:kind :record}}
                       :module-map {}}
           ref-node   {:node :type-ref :name "Bag"}]
-      (is (= {:kind :record}
-             (#'cxc.lower/decl-lookup ctx :record-env ref-node))))))
+      (is (nil? (#'cxc.lower/decl-lookup ctx :record-env ref-node))))))
 
 (deftest f51-l3b-b-ii-5a-decl-lookup-hint-mismatch-returns-nil
   (testing "F51 L3b(b.ii)-5a — hint names a module that doesn't declare `name`: strict resolution says unresolved. Callers get nil so they can fire targeted diagnostics (`:cxc-f51-unresolved-name` post-b.ii-5e)."

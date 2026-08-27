@@ -708,9 +708,11 @@
   "Apply `resolve-references-in-file` to every entry in
    `files-with-nodes`. Returns the same shape with enriched nodes.
    Pure additive pass — attaches `:resolves-to <module-kw>` on
-   reference nodes. Consumed by `lower/decl-lookup` (b.ii-5a-c) as
-   the strict hint; short-name fallback still runs when no hint is
-   present (retirement in b.ii-5e)."
+   reference nodes. Consumed by `lower/decl-lookup` as the strict
+   hint (b.ii-5d Batch 7 retired the short-name fallback: unresolved
+   refs now return nil, and consumer sites raise
+   `:cxc-f51-unresolved-name` when nil surfaces at a must-resolve
+   position)."
   [files-with-nodes]
   (let [own-decls-per-module
         (reduce (fn [acc {:keys [module nodes]}]
@@ -722,3 +724,83 @@
         prelude-provenance (prelude-name->module)]
     (mapv #(resolve-references-in-file % own-decls-per-module prelude-provenance)
           files-with-nodes)))
+
+(defn enrich-prelude-nodes
+  "F51 L3b(b.ii)-5d Batch 7 (2026-08-28) — attach `:resolves-to` to
+   every reference inside the parsed prelude AST. Post-Batch 7 the
+   short-name fallback in `lower/resolve-decl-lookup` is retired, so
+   prelude→prelude type refs (e.g. `Instant` fields declared as
+   `Duration`) need explicit provenance to resolve.
+
+   Consumes the flat parsed prelude node vector (as produced by
+   `parse/parse` on the assembled prelude source) and returns the
+   same shape with references enriched. Resolution rules: prelude
+   names hit `prelude-name->module`; unknown names get no
+   `:resolves-to` (primitives like `Int`, and any true user error,
+   are filtered by cxc-type->c's primitive-c-type check before the
+   resolver runs).
+
+   Callers: `build/compile-parsed-to-file` in both single- and
+   multi-file paths — invoked on the raw parsed prelude before the
+   full-parsed concat."
+  [prelude-nodes]
+  (let [prelude-provenance (prelude-name->module)]
+    (walk/postwalk
+      (fn [x]
+        (enrich-node-with-resolution x nil #{} {} prelude-provenance))
+      prelude-nodes)))
+
+(defn ensure-references-enriched
+  "F51 L3b(b.ii)-5d Batch 7 (2026-08-28) — idempotent enrichment for
+   a flat top-node stream (prelude + user, or user-only).
+
+   Post-Batch 7, `lower/resolve-decl-lookup` is strict: refs without
+   `:resolves-to` never match. The single- + multi-file `build.clj`
+   pipeline enriches references upstream via
+   [[resolve-references-in-file]] before feeding lower, so those
+   paths are already covered. This helper handles the remaining
+   surface: direct `lower/lower` callers that bypass build (unit
+   tests, REPL invocations) whose top-nodes carry no
+   `:resolves-to`. Idempotent — nodes that already have the hint
+   pass through unchanged.
+
+   Walks the input twice:
+     1. `decls-in-file` to build per-module own-decl sets (single-
+        file collapses to `:main`; multi-file uses each `:module`
+        marker's module).
+     2. Postwalk each ref through `enrich-node-with-resolution`.
+
+   Imports are not consulted — this is a best-effort fill-in for
+   in-file / prelude refs; cross-module import resolution stays in
+   the build pipeline where the import-graph is available."
+  [top-nodes]
+  (let [prelude-provenance (prelude-name->module)
+        [_ own-decls-per-module]
+        (reduce
+          (fn [[m acc] n]
+            (cond
+              (= :module (:node n))
+              [(keyword (:name n)) acc]
+
+              (contains? #{:record :def-atom :enum} (:node n))
+              [m (update acc m (fnil conj #{}) (:name n))]
+
+              :else [m acc]))
+          [:main {}]
+          top-nodes)]
+    (walk/postwalk
+      (fn [x]
+        (enrich-node-with-resolution
+          x
+          ;; Best-effort own-module: for a mixed stream we can't tell
+          ;; per-node module in a postwalk (postwalk visits leaves
+          ;; first). Callers whose top-nodes carry mixed modules
+          ;; should pre-enrich via `resolve-references` (build.clj
+          ;; does). For single-file `lower-src` callers everything
+          ;; attributes to `:main`, so `own-module = :main` is
+          ;; correct.
+          :main
+          (get own-decls-per-module :main #{})
+          {}
+          prelude-provenance))
+      top-nodes)))

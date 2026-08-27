@@ -306,7 +306,9 @@
             resolve/resolve-references
             first
             :nodes)
-        prelude-nodes (parse/parse (prelude/assemble-source target))
+        prelude-nodes (-> (prelude/assemble-source target)
+                          parse/parse
+                          resolve/enrich-prelude-nodes)
         full-parsed   (into (vec prelude-nodes) enriched-parsed)]
     (compile-parsed-to-file
       {:user-parsed enriched-parsed :full-parsed full-parsed}
@@ -896,9 +898,10 @@
                                                 :name (clojure.core/name module)}
                                                nodes)))
                                enriched-files)
-        prelude-nodes    (parse/parse
-                           (prelude/assemble-source
-                             (:target opts prelude/default-target)))
+        prelude-nodes    (-> (prelude/assemble-source
+                              (:target opts prelude/default-target))
+                             parse/parse
+                             resolve/enrich-prelude-nodes)
         full-parsed      (into (vec prelude-nodes) user-parsed)
         result           (compile-parsed-to-file
                            {:user-parsed user-parsed :full-parsed full-parsed}

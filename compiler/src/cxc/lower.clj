@@ -1107,55 +1107,55 @@
 
 (defn- module-map-from-attribution
   "F51 L3b(b.ii)-2 — invert the name→module map into module→#{names},
-   for reverse (module-scoped) enumeration by the lookup primitive."
+   for reverse (module-scoped) enumeration by the lookup primitive.
+
+   b.ii-5d Batch 7 — also seed the prelude modules from
+   `resolve/prelude-name->module` so a reference to a prelude decl
+   (`Duration`, `SystemPanic`, ...) can resolve even when the caller
+   (test harness, direct-invocation) hasn't prepended the prelude
+   AST to the top-nodes stream. The build.clj pipeline includes the
+   prelude in top-nodes, so this seeding is a no-op for it; the
+   redundancy simplifies attributes-then-resolve for callers that
+   bypass build."
   [name->module]
-  (reduce-kv (fn [acc nm m]
-               (update acc m (fnil conj #{}) nm))
-             {}
-             name->module))
+  (let [with-user
+        (reduce-kv (fn [acc nm m]
+                     (update acc m (fnil conj #{}) nm))
+                   {}
+                   name->module)]
+    (reduce-kv (fn [acc nm m]
+                 (update acc m (fnil conj #{}) nm))
+               with-user
+               (resolve/prelude-name->module))))
 
 (defn- resolve-decl-lookup
-  "F51 L3b(b.ii)-2 primitive — resolve a name reference to an env
-   entry, preferring the caller-supplied `resolves-to` module hint
-   when present. Semantics:
+  "F51 L3b(b.ii)-2 primitive — strict resolution. Returns the env
+   entry when the reference has a `:resolves-to` hint AND that module
+   declares the short name; returns nil otherwise.
 
-     1. If `resolves-to` names a module AND that module's declaration
-        set contains `name`, the lookup succeeds via the qualified
-        path (env is short-name keyed today so we still return
-        `(get env name)` — the qualified path exists to reject a
-        `resolves-to` that names a different module than the one the
-        short-name actually lives in).
-     2. Otherwise fall back to plain short-name lookup.
+   b.ii-5d Batch 7 (2026-08-28) retired the two lenient branches:
+     - The short-name fallback (`:else (get env name)`) — every
+       reference-consuming call site now carries an AST ref node with
+       `:resolves-to` populated by attribution, or uses the
+       bookkeeping primitive [[env-lookup]] (Type-B, plain env
+       access) instead.
+     - The `resolves-to hint set but no match` explicit nil branch
+       merges with the miss.
 
-   b.ii-3 (multi-file) and b.ii-5c (single-file) preserve
-   `:resolves-to` end-to-end, so path (1) is now the primary route for
-   any AST-carried reference; the short-name fallback still catches
-   name-string call sites (see the string arity of [[decl-lookup]])
-   and any AST references that haven't yet migrated to the enriched-
-   metadata code path. b.ii-5e retires the fallback.
+   Silent-miss policy: consumers that treat nil as \"not applicable\"
+   (predicate uses: [[enum-case-access?]], [[enum-payload-call?]],
+   [[record-from-bytes-call?]]) keep working — nil answers the
+   question. Consumers that must-resolve raise
+   `:cxc-f51-unresolved-name` at their callsite when the lookup
+   returns nil (see e.g. [[lower-record-ctor]], [[lower-atom-ctor]]).
 
    `env` may be any of `:record-env` / `:atom-env` / `:enum-env` —
    the primitive is agnostic to which. `module-map` is
    `{module-kw → #{name-string ...}}` (see
    `module-map-from-attribution`)."
   [env module-map name resolves-to]
-  (cond
-    (nil? name)         nil
-
-    (and resolves-to
-         (contains? (get module-map resolves-to #{}) name))
-    (get env name)
-
-    resolves-to
-    ;; `resolves-to` names a module that doesn't declare this name;
-    ;; the reference is unresolved under strict semantics. Every
-    ;; existing user program keeps short-names globally unique so
-    ;; this branch fires rarely today; b.ii-5e's diagnostic
-    ;; (`:cxc-f51-unresolved-name`) raises here instead of silently
-    ;; returning nil.
-    nil
-
-    :else
+  (when (and name resolves-to
+             (contains? (get module-map resolves-to #{}) name))
     (get env name)))
 
 (defn- env-lookup
@@ -4337,6 +4337,15 @@
   [callee-node args ctx]
   (let [record-name (:name callee-node)
         rec        (decl-lookup ctx :record-env callee-node)
+        _          (when-not rec
+                     (fail-compile!
+                      :cxc-f51-unresolved-name
+                      (str "record `" record-name "` constructor call "
+                           "resolved to no env entry — attribution hint "
+                           "`:resolves-to " (pr-str (:resolves-to callee-node))
+                           "` did not match a module declaring this name. "
+                           "(F51 L3b(b.ii)-5d Batch 7 strict-lookup diagnostic.)")
+                      callee-node))
         field-recs (:fields rec)
         field-idx  (into {} (map (juxt :name identity)) field-recs)
         params     (mapv (fn [f] {:name (:name f) :default (:default f)})
@@ -4556,6 +4565,20 @@
   [callee-node args ctx]
   (let [atom-name   (:name callee-node)
         rec         (decl-lookup ctx :atom-env callee-node)
+        ;; L-panic-cap (2026-08-26) — phantom capability atoms have
+        ;; no env entry and lower to a dummy `[[Cls alloc] init]`
+        ;; that emit renders inert. Skip the strict-lookup
+        ;; diagnostic in that case.
+        phantom?    (contains? #{"SystemPanic"} atom-name)
+        _           (when-not (or rec phantom?)
+                      (fail-compile!
+                       :cxc-f51-unresolved-name
+                       (str "atom `" atom-name "` constructor call "
+                            "resolved to no env entry — attribution hint "
+                            "`:resolves-to " (pr-str (:resolves-to callee-node))
+                            "` did not match a module declaring this name. "
+                            "(F51 L3b(b.ii)-5d Batch 7 strict-lookup diagnostic.)")
+                       callee-node))
         ctor-params (:ctor-params rec)]
     (if (empty? ctor-params)
       (do
@@ -10314,7 +10337,13 @@
             (:node as-error-type) "`")
        proposition))
     {:node   :call
-     :callee {:node :ident :name (:name as-error-type)}
+     :callee {:node        :ident
+              :name        (:name as-error-type)
+              ;; F51 b.ii-5d Batch 7 — synthesized error-record ctor
+              ;; call must carry the source `as-error-type`'s
+              ;; `:resolves-to` so `resolve-decl-lookup` finds the
+              ;; env entry under strict lookup.
+              :resolves-to (:resolves-to as-error-type)}
      :args   (mapv (fn [[name value]]
                      {:kind :named :name name :value value})
                    as-error-args)}))
@@ -11797,7 +11826,15 @@
   ;; consults the correct mangling table. F51 L3b(b.ii)-5d Batch 5+6
   ;; retired the parallel `*module-map*` ambient; module-map is now a
   ;; local threaded through builders + carried on ctx maps.
-  (let [d->m (attribute-modules-to-decls top-nodes)
+  ;;
+  ;; F51 L3b(b.ii)-5d Batch 7 — idempotent enrichment for callers
+  ;; that bypass build.clj's `resolve-references` pipeline (unit
+  ;; tests, REPL invocations, direct-invocation callers). No-op on
+  ;; refs that already carry `:resolves-to` from upstream; single-
+  ;; file callers with all-in-`:main` decls resolve against
+  ;; own-decls[:main] + prelude-provenance.
+  (let [top-nodes  (resolve/ensure-references-enriched top-nodes)
+        d->m (attribute-modules-to-decls top-nodes)
         module-map (module-map-from-attribution d->m)]
    (binding [*decl->module* d->m]
    (let [;; F52 L4 — pre-lower constant folding of top-level `let NAME =
