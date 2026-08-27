@@ -125,10 +125,12 @@
 ;; leaks a raw C pointer would notice; no current cxc code path does
 ;; so, and F54 (backend targeting + generated headers) is deferred.
 
-(defn record-variant
+(defn- record-variant
   "Return `:struct` for a data-only record, `:class` for one with
    methods. Trigger is structural — no user syntax picks it. Used
-   by F38 lowering to route ctor / dispatch / F37 synthesis."
+   by F38 lowering to route ctor / dispatch / F37 synthesis. Kept
+   private — callers should read the `:variant` slot off the
+   symbol-table entry rather than recomputing."
   [record-node]
   (if (seq (:methods (record-members record-node)))
     :class
@@ -680,10 +682,11 @@
 
       :else node)))
 
-(defn resolve-references-in-file
+(defn- resolve-references-in-file
   "Return the file's node vector with reference nodes enriched by
    `:resolves-to <module-kw>` per L3b(b.ii) resolution rules. Pure
-   metadata pass — existing consumers ignore the new attribute.
+   metadata pass. Internal — callers use [[resolve-references]] which
+   handles the per-module aggregation up-front.
 
    `own-decls-per-module` is `{module-kw → #{name-string ...}}` of
    own-module decls (produced by aggregating `decls-in-file` across
