@@ -1,5 +1,6 @@
 (ns cxc.resolve-test
   (:require [clojure.test :refer [deftest is testing]]
+            [clojure.walk]
             [cxc.parse :as parse]
             [cxc.prelude :as prelude]
             [cxc.resolve :as resolve]))
@@ -305,3 +306,98 @@
                                   entries))]
       (is (= [:a :b] (:declared-in entry))
           "Config is declared in both :a and :b; declared-in lists both sorted"))))
+
+;; ---------------------------------------------------------------------------
+;; F51 L3b sub-landing (b.ii) — reference resolution enrichment
+;; ---------------------------------------------------------------------------
+
+(defn- first-type-ref-with-name
+  "Walk enriched nodes and return the first :type-ref whose :name matches."
+  [nodes nm]
+  (let [found (atom nil)]
+    (clojure.walk/postwalk
+     (fn [x]
+       (when (and (nil? @found)
+                  (map? x)
+                  (= :type-ref (:node x))
+                  (= nm (:name x)))
+         (reset! found x))
+       x)
+     nodes)
+    @found))
+
+(defn- first-callee-with-name
+  "Walk enriched nodes and return the first :call whose :callee is a bare :ident with the given name."
+  [nodes nm]
+  (let [found (atom nil)]
+    (clojure.walk/postwalk
+     (fn [x]
+       (when (and (nil? @found)
+                  (map? x)
+                  (= :call (:node x))
+                  (let [c (:callee x)]
+                    (and (map? c) (= :ident (:node c)) (= nm (:name c)))))
+         (reset! found (:callee x)))
+       x)
+     nodes)
+    @found))
+
+(deftest f51-l3b-bii-resolves-own-module-type-ref
+  (testing "F51 L3b (b.ii) — a type-ref to a name declared in the same module resolves to that module. Pure metadata enrichment; the original :name is unchanged."
+    (let [files    [(parse-file :geom "def Point:\n    x: Int\n")
+                    (parse-file :geom "def Scene:\n    origin: Point\n")]
+          enriched (resolve/resolve-references files)
+          scene    (second enriched)
+          point-ref (first-type-ref-with-name (:nodes scene) "Point")]
+      (is (some? point-ref) "found the :type-ref for Point")
+      (is (= :geom (:resolves-to point-ref))
+          "Point resolves to :geom (own module)"))))
+
+(deftest f51-l3b-bii-resolves-imported-type-ref
+  (testing "F51 L3b (b.ii) — a type-ref to an imported name resolves to the source module named in the import."
+    (let [files    [(parse-file :geom "def Point:\n    x: Int\n")
+                    (parse-file :viz  "from geom import Point\n\ndef Scene:\n    origin: Point\n")]
+          enriched (resolve/resolve-references files)
+          scene    (second enriched)
+          point-ref (first-type-ref-with-name (:nodes scene) "Point")]
+      (is (= :geom (:resolves-to point-ref))
+          "Point in :viz resolves to :geom via the explicit import"))))
+
+(deftest f51-l3b-bii-resolves-prelude-name
+  (testing "F51 L3b (b.ii) — a type-ref to a prelude name (`Duration`) resolves to the prelude's owning module (`:std.time`) regardless of the referencing module."
+    (let [files    [(parse-file :app "def Job:\n    elapsed: Duration\n")]
+          enriched (resolve/resolve-references files)
+          job      (first enriched)
+          dur-ref  (first-type-ref-with-name (:nodes job) "Duration")]
+      (is (= :std.time (:resolves-to dur-ref))
+          "Duration always resolves to :std.time regardless of caller module"))))
+
+(deftest f51-l3b-bii-unresolved-name-leaves-node-bare
+  (testing "F51 L3b (b.ii) — a reference to a name declared in another module without an explicit import leaves the node WITHOUT :resolves-to (unresolved is L3b(a) WARN territory; the enrichment pass doesn't fabricate cross-module bindings)."
+    (let [files    [(parse-file :geom "def Point:\n    x: Int\n")
+                    (parse-file :viz  "def Scene:\n    origin: Point\n")]
+          enriched (resolve/resolve-references files)
+          scene    (second enriched)
+          point-ref (first-type-ref-with-name (:nodes scene) "Point")]
+      (is (not (contains? point-ref :resolves-to))
+          "Point in :viz has no explicit import from :geom; enrichment leaves it bare"))))
+
+(deftest f51-l3b-bii-resolves-ctor-callee
+  (testing "F51 L3b (b.ii) — a `Foo(x: 1)` ctor call whose callee is a capitalized bare :ident carries :resolves-to on the callee node when Foo's owning module is known."
+    (let [files    [(parse-file :geom "def Point:\n    x: Int\n")
+                    (parse-file :app  "from geom import Point\n\ndef main:\n    -> running\n        then: print(Point(x: 7).x)\n")]
+          enriched (resolve/resolve-references files)
+          app      (second enriched)
+          callee   (first-callee-with-name (:nodes app) "Point")]
+      (is (= :geom (:resolves-to callee))
+          "Point ctor callee in :app resolves to :geom via the from-import"))))
+
+(deftest f51-l3b-bii-enrichment-preserves-existing-node-attrs
+  (testing "F51 L3b (b.ii) — enrichment is ADDITIVE only. Existing node attributes (`:name`, `:node`, `:nonnil?`, ...) survive untouched; downstream consumers that ignore `:resolves-to` see byte-identical AST."
+    (let [files    [(parse-file :app "def Job:\n    elapsed: Duration\n")]
+          orig     (:nodes (first files))
+          enriched (:nodes (first (resolve/resolve-references files)))
+          find-dur (fn [ns] (first-type-ref-with-name ns "Duration"))]
+      (is (= (dissoc (find-dur enriched) :resolves-to)
+             (find-dur orig))
+          "removing :resolves-to from enriched yields the original node"))))

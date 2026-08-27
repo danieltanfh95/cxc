@@ -516,3 +516,147 @@
        :file        file
        :name        nm
        :declared-in (vec (sort (get declared-index nm [])))})))
+
+;; ---------------------------------------------------------------------------
+;; F51 L3b sub-landing (b.ii) — reference resolution enrichment
+;;
+;; Enrichment pass that walks a file's parsed AST and, for every
+;; reference node the L3b(a) walker recognizes, adds a `:resolves-to
+;; <module-kw>` attribute pointing at the module that OWNS the name.
+;; Pure additive metadata — existing consumers ignore the new
+;; attribute. Downstream consumption lands in a follow-on micro-
+;; landing that switches lower's env lookups to prefer the resolved
+;; module when the reference carries `:resolves-to`.
+;;
+;; Resolution rules (mirrors `build-module-scope-index` order):
+;;   1. Prelude name → module from `prelude-name->module`.
+;;   2. Own-module decl → the file's own `:module`.
+;;   3. Imported via `from X import name` / `import X as name` /
+;;      `import X` where X == name → the imported module.
+;;   4. Otherwise → nil (unresolved; L3b(a) WARN territory).
+;;
+;; Ambiguity (name imported via more than one path) → nil in this
+;; micro-landing; a future landing surfaces this as a diagnostic
+;; when the consumer needs to disambiguate.
+;; ---------------------------------------------------------------------------
+
+(defn- import-source-map
+  "Build `{local-name → module-kw}` from a file's `:from-import` /
+   `:import` nodes. Local name is `:as` when present, else the
+   imported symbol / module name. Values are the source module the
+   local binding resolves to."
+  [nodes]
+  (into {}
+        (mapcat (fn [n]
+                  (case (:node n)
+                    :from-import
+                    (let [src-mod (keyword (:from n))]
+                      (map (fn [sym]
+                             [(or (:as sym) (:name sym)) src-mod])
+                           (:names n)))
+                    :import
+                    (let [src-mod (keyword (:from n))]
+                      [[(or (:as n) (:from n)) src-mod]])
+                    nil)))
+        nodes))
+
+(defn- resolve-name-to-module
+  "Resolve a bare name reference to its owning module keyword under
+   the L3b(b.ii) rules. Returns nil when unresolved or ambiguous.
+   `own-module` is the resolving file's module keyword; `own-decls`
+   is the set of names declared anywhere in that module (aggregated
+   across every file in the module); `imports` is the local-binding
+   map `import-source-map` produced for THIS file."
+  [nm own-module own-decls imports prelude-provenance]
+  (cond
+    (contains? prelude-provenance nm)  (get prelude-provenance nm)
+    (contains? own-decls nm)           own-module
+    (contains? imports nm)             (get imports nm)
+    :else                              nil))
+
+(defn- enrich-node-with-resolution
+  "Add `:resolves-to <module>` to a reference-shaped node when the
+   name resolves under the current file's scope. Returns the node
+   unchanged when the name is unresolved OR when the node kind
+   doesn't participate in module-scope resolution. Idempotent —
+   re-enriching a node that already carries `:resolves-to` is a
+   no-op (the second pass computes the same result)."
+  [node own-module own-decls imports prelude-provenance]
+  (letfn [(resolve! [nm]
+            (resolve-name-to-module nm own-module own-decls imports prelude-provenance))]
+    (cond
+      (not (map? node)) node
+
+      (and (= :type-ref (:node node)) (string? (:name node)))
+      (if-let [m (resolve! (:name node))]
+        (assoc node :resolves-to m)
+        node)
+
+      (and (= :call (:node node))
+           (let [c (:callee node)]
+             (and (map? c)
+                  (= :ident (:node c))
+                  (capitalized? (:name c)))))
+      (if-let [m (resolve! (:name (:callee node)))]
+        (update node :callee assoc :resolves-to m)
+        node)
+
+      (and (= :dot (:node node))
+           (let [t (:target node)]
+             (and (map? t)
+                  (= :ident (:node t))
+                  (capitalized? (:name t)))))
+      (if-let [m (resolve! (:name (:target node)))]
+        (update node :target assoc :resolves-to m)
+        node)
+
+      (and (= :extend-class (:node node)) (string? (:target node)))
+      (if-let [m (resolve! (:target node))]
+        (assoc node :resolves-to m)
+        node)
+
+      (and (= :type-of (:node node))
+           (string? (:outer node))
+           (capitalized? (:outer node)))
+      (if-let [m (resolve! (:outer node))]
+        (assoc node :resolves-to m)
+        node)
+
+      :else node)))
+
+(defn resolve-references-in-file
+  "Return the file's node vector with reference nodes enriched by
+   `:resolves-to <module-kw>` per L3b(b.ii) resolution rules. Pure
+   metadata pass — existing consumers ignore the new attribute.
+
+   `own-decls-per-module` is `{module-kw → #{name-string ...}}` of
+   own-module decls (produced by aggregating `decls-in-file` across
+   every file in each module). Prelude-name → prelude-module index
+   is computed once by callers and threaded in."
+  [{:keys [module nodes] :as file-entry} own-decls-per-module prelude-provenance]
+  (let [own-decls  (get own-decls-per-module module #{})
+        imports    (import-source-map nodes)
+        enriched   (walk/postwalk
+                     (fn [x]
+                       (enrich-node-with-resolution
+                         x module own-decls imports prelude-provenance))
+                     nodes)]
+    (assoc file-entry :nodes enriched)))
+
+(defn resolve-references
+  "Apply `resolve-references-in-file` to every entry in
+   `files-with-nodes`. Returns the same shape with enriched nodes.
+   Pure additive pass; safe to run alongside the existing
+   flat-namespace concatenation shim (downstream lower / emit
+   ignore the `:resolves-to` attribute)."
+  [files-with-nodes]
+  (let [own-decls-per-module
+        (reduce (fn [acc {:keys [module nodes]}]
+                  (update acc module
+                          (fnil clojure.set/union #{})
+                          (decls-in-file nodes)))
+                {}
+                files-with-nodes)
+        prelude-provenance (prelude-name->module)]
+    (mapv #(resolve-references-in-file % own-decls-per-module prelude-provenance)
+          files-with-nodes)))
