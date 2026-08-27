@@ -4338,8 +4338,9 @@
          f37-decode-eligible-field?)
 
 (defn- lower-record-ctor
-  [record-name args ctx]
-  (let [rec        (decl-lookup ctx :record-env record-name)
+  [callee-node args ctx]
+  (let [record-name (:name callee-node)
+        rec        (decl-lookup ctx :record-env callee-node)
         field-recs (:fields rec)
         field-idx  (into {} (map (juxt :name identity)) field-recs)
         params     (mapv (fn [f] {:name (:name f) :default (:default f)})
@@ -4510,7 +4511,7 @@
 
         (and (map? arg-tk) (:record arg-tk))
         (let [record-name  (:record arg-tk)
-              value-fields (:fields (decl-lookup ctx :record-env record-name))
+              value-fields (:fields (env-lookup ctx :record-env record-name))
               result       (named-tuple/structural-conforms?
                             value-fields (:fields required))]
           (when-not (:conforms result)
@@ -4556,8 +4557,9 @@
    `[[X alloc] init]`. With ctor params, emits an :objc-init-with node
    carrying the resolved (name, value) pairs — one selector part per
    param in declaration order."
-  [atom-name args ctx]
-  (let [rec         (decl-lookup ctx :atom-env atom-name)
+  [callee-node args ctx]
+  (let [atom-name   (:name callee-node)
+        rec         (decl-lookup ctx :atom-env callee-node)
         ctor-params (:ctor-params rec)]
     (if (empty? ctor-params)
       (do
@@ -5418,10 +5420,10 @@
         (let [callee-name (:name callee)]
           (cond
             (contains? (:record-env ctx) callee-name)
-            (lower-record-ctor callee-name (:args node) ctx)
+            (lower-record-ctor callee (:args node) ctx)
 
             (contains? (:atom-env ctx) callee-name)
-            (lower-atom-ctor callee-name (:args node) ctx)
+            (lower-atom-ctor callee (:args node) ctx)
 
             (= "print" callee-name)
             (lower-print node ctx)
@@ -8030,7 +8032,7 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- lower-record-struct [record-node ctx]
-  (let [rec (decl-lookup ctx :record-env (:name record-node))]
+  (let [rec (env-lookup ctx :record-env (:name record-node))]
     {:node   :c-struct
      :name   (->c-safe (:name record-node))
      :fields (mapv (fn [f] {:name (:name f) :c-type (:c-type f)}) (:fields rec))}))
@@ -12235,9 +12237,27 @@
                                 :class-name (class-name-for-atom "main")
                                 :cap-args (when (seq main-ctor)
                                             (mapv (fn [p]
-                                                    {:name     (:name p)
-                                                     :cap-init (lower-atom-ctor
-                                                                (:cxc-ty p) [] ctx)})
+                                                    (let [;; F51 b.ii-5d Batch 3 — synthesize the
+                                                          ;; ctor-callee reference from the
+                                                          ;; preserved raw parsed :type node so
+                                                          ;; the resolver's `:resolves-to` hint
+                                                          ;; carries through auto-provisioning.
+                                                          ;; The base :name lives on :type when
+                                                          ;; unwrapped, and on :inner :name when
+                                                          ;; :type-nullable/-nonnil wraps it.
+                                                          t     (:type p)
+                                                          inner (if (contains?
+                                                                     #{:type-nullable :type-nonnil}
+                                                                     (:node t))
+                                                                  (:inner t)
+                                                                  t)
+                                                          ref-node {:node        :ident
+                                                                    :name        (:cxc-ty p)
+                                                                    :resolves-to (:resolves-to
+                                                                                  inner)}]
+                                                      {:name     (:name p)
+                                                       :cap-init (lower-atom-ctor
+                                                                  ref-node [] ctx)}))
                                                   main-ctor))}])
                             (main-atom-body main-atom ctx))
         ;; F15 L2.c.iii.c.ε.α — shared collect-shapes computation so
