@@ -4182,9 +4182,8 @@
   [dot-node ctx]
   (let [tgt (:target dot-node)]
     (and (= :ident (:node tgt))
-         (contains? (:enum-env ctx) (:name tgt))
-         (contains? (get-in ctx [:enum-env (:name tgt) :case-index])
-                    (:field dot-node)))))
+         (when-let [en (decl-lookup ctx :enum-env tgt)]
+           (contains? (:case-index en) (:field dot-node))))))
 
 (defn- infer-type [node ctx]
   (case (:node node)
@@ -12098,8 +12097,7 @@
                                        ;; state); skip provisioning
                                        ;; validation for them.
                                        phantom?  (contains?
-                                                  #{"SystemPanic"
-                                                    "_Cxc_SystemPanic"}
+                                                  #{"SystemPanic"}
                                                   ty-name)]]
                            (when-not (or atom-info phantom?)
                              (fail-compile!
