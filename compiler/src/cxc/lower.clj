@@ -4529,7 +4529,7 @@
 
         (and (map? arg-tk) (:record arg-tk))
         (let [record-name  (:record arg-tk)
-              value-fields (get-in ctx [:record-env record-name :fields])
+              value-fields (:fields (decl-lookup ctx :record-env record-name))
               result       (named-tuple/structural-conforms?
                             value-fields (:fields required))]
           (when-not (:conforms result)
@@ -4639,7 +4639,7 @@
         target-lo   (lower-expr (:target dot) ctx)
         list-cont?  (and (map? target-ty) (:atom target-ty)
                          (= :list-container
-                            (get-in ctx [:atom-env (:atom target-ty) :kind])))
+                            (:kind (decl-lookup ctx :atom-env (:atom target-ty)))))
         for-each-with-lambda?
         (and list-cont?
              (= "for_each" method-name)
@@ -4653,9 +4653,9 @@
           ;; methods. Return an observable-synthesized entry that
           ;; mimics the method shape (self as first param) so
           ;; `resolve-args-against-params` works uniformly.
-          (or (get-in ctx [:record-env (:record target-ty) :method-index method-name])
-              (when-let [o (get-in ctx [:record-env (:record target-ty)
-                                        :observable-index method-name])]
+          (let [rec-entry (decl-lookup ctx :record-env (:record target-ty))]
+            (or (get-in rec-entry [:method-index method-name])
+                (when-let [o (get-in rec-entry [:observable-index method-name])]
                 (let [tk (:type-kw o)
                       ret-name (cond
                                  (keyword? tk) (name tk)
@@ -4671,16 +4671,16 @@
                                                  :default (:default p)})
                                               (:params o)))
                    :cxc-return-ty ret-name
-                   :cxc-observable? true})))
+                   :cxc-observable? true}))))
           (and (map? target-ty) (:atom target-ty))
           ;; F67 L4 — parametric observables on atoms dispatch as
           ;; ObjC methods. Method-index lookup first (own/handler
           ;; methods, protocol defaults inherited); fall back to
           ;; observable-index and synthesize a method-shape entry so
           ;; `resolve-args-against-params` fires uniformly.
-          (or (get-in ctx [:atom-env (:atom target-ty) :method-index method-name])
-              (when-let [o (get-in ctx [:atom-env (:atom target-ty)
-                                        :observable-index method-name])]
+          (let [atom-entry (decl-lookup ctx :atom-env (:atom target-ty))]
+            (or (get-in atom-entry [:method-index method-name])
+                (when-let [o (get-in atom-entry [:observable-index method-name])]
                 (let [tk (:type-kw o)
                       ret-name (cond
                                  (keyword? tk) (name tk)
@@ -4696,7 +4696,7 @@
                                                  :default (:default p)})
                                               (:params o)))
                    :cxc-return-ty ret-name
-                   :cxc-observable? true}))))
+                   :cxc-observable? true})))))
         ;; F40 Landing 2: user-facing params (skip self, which is
         ;; either flagged `:is-self? true` on user-authored methods or
         ;; carries name "self" on prelude-synthesized container
@@ -4849,8 +4849,9 @@
 
           (and (map? target-ty) (:atom target-ty))
           (let [atom-name   (:atom target-ty)
-                m           (get-in ctx [:atom-env atom-name :method-index method-name])
-                o           (get-in ctx [:atom-env atom-name :observable-index method-name])
+                atom-entry  (decl-lookup ctx :atom-env atom-name)
+                m           (get-in atom-entry [:method-index method-name])
+                o           (get-in atom-entry [:observable-index method-name])
                 _           (when (and (nil? m) (nil? o))
                               (fail-nyi! (str "method/observable `" method-name "` on atom `"
                                               atom-name "`") call-node))
@@ -4878,7 +4879,7 @@
                 ;; the emit shape (:c-on-nil-dispatch), matching L6-ref
                 ;; and L5b-ii-d's single-eval patterns for side-effecting
                 ;; receivers (`Counter().other.method()` chains).
-                on-nil-expr (get-in ctx [:atom-env atom-name :on-nil-entries method-name])]
+                on-nil-expr (get-in atom-entry [:on-nil-entries method-name])]
             (if on-nil-expr
               {:node     :c-on-nil-dispatch
                :recv     target-lo
@@ -4969,7 +4970,7 @@
    (self as strong reference, primitives by value)."
   [target-lo target-ty lambda-node ctx]
   (let [list-name        (:atom target-ty)
-        element-name     (get-in ctx [:atom-env list-name :element-type])
+        element-name     (:element-type (decl-lookup ctx :atom-env list-name))
         element-type-kw  (cxc-type->type-kw element-name
                                             (:record-env ctx)
                                             (:atom-env ctx)
@@ -5274,7 +5275,7 @@
                   ;; `E_case` C constant.
                   (let [en (get-in node [:target :name])
                         cs (:field node)]
-                    (if (get-in ctx [:enum-env en :tagged?])
+                    (if (:tagged? (decl-lookup ctx :enum-env en))
                       {:node :c-tagged-init :enum-name en :case-name cs
                        :fields []}
                       {:node :name :sym (str en "_" cs)}))
@@ -5467,7 +5468,7 @@
                   ;; is the compile-time "you're on your own" contract.
                   self-info (get-in ctx [:locals "self"])
                   self-atom (and (map? self-info) (:atom self-info))
-                  atom-info (when self-atom (get-in ctx [:atom-env self-atom]))
+                  atom-info (when self-atom (decl-lookup ctx :atom-env self-atom))
                   has-panic-cap?
                   ;; Accept both the mangled prelude name (real
                   ;; user-facing shape) and the un-mangled name (used
@@ -5693,7 +5694,8 @@
                                     "(no `self` in scope)")
                                node))
         atom-name (:atom self-info)
-        stream    (get-in ctx [:atom-env atom-name :stream-index (:msg node)])
+        stream    (get-in (decl-lookup ctx :atom-env atom-name)
+                          [:stream-index (:msg node)])
         _         (when-not stream
                     ;; Shouldn't happen — collect-stream-shapes registered
                     ;; every emit site — but guard against ctx drift.
@@ -6015,8 +6017,7 @@
       ;; the record's field-index.
       (= :any scrut-ty)
       (let [case-nm    (:name pattern)
-            record-env (:record-env ctx)
-            rec        (get record-env case-nm)]
+            rec        (decl-lookup ctx :record-env case-nm)]
         (when-not rec
           (fail-nyi!
            (str "F69 L4b: case pattern `<: " case-nm ":` on id-typed "
@@ -6142,8 +6143,8 @@
                (= :case (:kind (first patterns)))
                (seq (:bindings (first patterns)))
                (map? scrut-ty) (:enum scrut-ty)
-               (seq (get-in ctx [:enum-env (:enum scrut-ty)
-                                 :payload-index (:name (first patterns))])))
+               (seq (get-in (decl-lookup ctx :enum-env (:enum scrut-ty))
+                            [:payload-index (:name (first patterns))])))
           (let [pat        (first patterns)
                 enum-name  (:enum scrut-ty)
                 case-nm    (:name pat)
@@ -6378,7 +6379,7 @@
                   (get-in node [:scrutinee :name])))
           _         (when enum?
                       (let [enum-name  (:enum scrut-ty)
-                            enum-cases (get-in ctx [:enum-env enum-name :cases])]
+                            enum-cases (:cases (decl-lookup ctx :enum-env enum-name))]
                         (check-dispatch-exhaustiveness! enum-name enum-cases
                                                         (:arms node) node)))
           _         (when (and (not enum?) any-scrut-is-companion-reason?)
@@ -6765,10 +6766,11 @@
         ;; behavior.
         self-info (get-in ctx [:locals "self"])
         atom-name (and (map? self-info) (:atom self-info))
+        atom-entry (when atom-name (decl-lookup ctx :atom-env atom-name))
         obs-info  (when atom-name
-                    (get-in ctx [:atom-env atom-name :observable-index (:field update)]))
+                    (get-in atom-entry [:observable-index (:field update)]))
         field-in-atom-index (when atom-name
-                              (get-in ctx [:atom-env atom-name :field-index (:field update)]))
+                              (get-in atom-entry [:field-index (:field update)]))
         _         (when (and obs-info (not field-in-atom-index))
                     (fail-nyi!
                      (str "F8 L3a: `" (:field update) "` is a computed "
@@ -7111,7 +7113,7 @@
                 field-info  (get-in info [:field-index field-name])
                 target-atom (some-> field-info :type base-type-name)
                 companion-nm (:field src)
-                target-info (get-in ctx [:atom-env target-atom])
+                target-info (decl-lookup ctx :atom-env target-atom)
                 comp-entry  (get-in target-info [:companion-index companion-nm])]
             (when (and target-info comp-entry (= 1 (count payload)))
               {:target-atom target-atom
@@ -7239,7 +7241,7 @@
         ;; inside a snapshotted transition (ctx `:snapshot-name`
         ;; set — same predicate as the prelude emission) AND the
         ;; atom has data-fields to commit.
-        data-fields    (get-in ctx [:atom-env atom-name :fields])
+        data-fields    (:fields (decl-lookup ctx :atom-env atom-name))
         commit-fields  (when (:snapshot-name ctx)
                          (filterv (fn [f]
                                     (not (field-needs-slot-setter?
@@ -7275,8 +7277,8 @@
         ;; snapshots keep the old post-commit `checkInvariants` call.
         pre-commit-invariants
         (when (and (:snapshot-name ctx)
-                   (seq (get-in ctx [:atom-env atom-name :invariants])))
-          (let [invs    (get-in ctx [:atom-env atom-name :invariants])
+                   (seq (:invariants (decl-lookup ctx :atom-env atom-name))))
+          (let [invs    (:invariants (decl-lookup ctx :atom-env atom-name))
                 bag-ctx (assoc ctx :snapshot-name "__cxc_next")]
             (vec (map-indexed
                   (fn [i p]
@@ -7364,7 +7366,7 @@
         stream-name  (get-in msg [:source :field])
         source-field (get-in msg [:source :target :name])
         payload      (or (:payload msg) [])
-        source-info  (get-in ctx [:atom-env source-class])
+        source-info  (decl-lookup ctx :atom-env source-class)
         _            (when-not source-info
                        (fail-nyi! (str "receive-glyph source `" source-class
                                        "` is not a def-atom in the program")
@@ -7520,7 +7522,7 @@
                                                  field-nm "` on atom `" atom-name "`")
                                             src))
                               source-class (:cxc-ty field)
-                              source-info  (get-in ctx [:atom-env source-class])
+                              source-info  (decl-lookup ctx :atom-env source-class)
                               _            (when-not source-info
                                              (fail-nyi!
                                               (str "method-stream source `" source-class
@@ -7691,7 +7693,7 @@
                            ;; `lower-then-update`). No snapshot ctx when
                            ;; the atom has no user data-fields — the
                            ;; struct type doesn't exist to reference.
-                           data-fields (get-in ctx [:atom-env atom-name :fields])
+                           data-fields (:fields (decl-lookup ctx :atom-env atom-name))
                            snap-stmt   (when (seq data-fields)
                                          {:node        :state-snapshot-init
                                           :atom-name   atom-name
@@ -8331,10 +8333,10 @@
   [cxc-ty ctx]
   (or (contains? primitive-c-type cxc-ty)
       (and (contains? (:enum-env ctx) cxc-ty)
-           (not (get-in ctx [:enum-env cxc-ty :tagged?])))))
+           (not (:tagged? (decl-lookup ctx :enum-env cxc-ty))))))
 
 (defn- tagged-enum-type? [cxc-ty ctx]
-  (boolean (get-in ctx [:enum-env cxc-ty :tagged?])))
+  (boolean (:tagged? (decl-lookup ctx :enum-env cxc-ty))))
 
 (defn- field-equals-c-src
   "Emit a C expression comparing field `f` between two record variables
@@ -10280,7 +10282,7 @@
         ;; same way lower-atom-method does. Only fires when the atom
         ;; declares invariants (empty invariants → wrap is a no-op
         ;; but adds two selfmsg calls; skip when there are none).
-        has-invariants? (seq (get-in ctx [:atom-env atom-name :invariants]))
+        has-invariants? (seq (:invariants (decl-lookup ctx :atom-env atom-name)))
         check-stmt   {:node :objc-msg
                       :recv {:node :name :sym "self"}
                       :selector "checkInvariants"
@@ -10294,7 +10296,7 @@
         ;; (state struct would be empty, snapshot would be a no-op).
         ;; L4.e.α's guarded emit handles the concurrent-mode source
         ;; flip; observable snapshot mirrors receive-glyph snapshot.
-        data-fields  (get-in ctx [:atom-env atom-name :fields])
+        data-fields  (:fields (decl-lookup ctx :atom-env atom-name))
         snap-stmt    (when (seq data-fields)
                        {:node        :state-snapshot-init
                         :class-name  (class-name-for-atom atom-name)
@@ -12041,7 +12043,7 @@
         record-blocks
         (mapv (fn [r]
                 (let [rec-name    (:name r)
-                      rec-info    (get record-env rec-name)
+                      rec-info    (decl-lookup ctx :record-env rec-name)
                       rec-struct  (lower-record-struct r ctx)
                       opt-struct  (when (contains? rec-inner-set rec-name)
                                     (synth-optional-typedef rec-name ctx))
@@ -12107,7 +12109,7 @@
         _              (when main-as-atom?
                          (doseq [p (get-in atom-env ["main" :ctor-params])
                                  :let [ty-name   (:cxc-ty p)
-                                       atom-info (get atom-env ty-name)
+                                       atom-info (decl-lookup ctx :atom-env ty-name)
                                        ;; L-panic-cap (2026-08-26) —
                                        ;; phantom capability atoms have
                                        ;; no atom-env entry (no runtime
