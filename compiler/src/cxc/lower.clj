@@ -4830,7 +4830,7 @@
 
           (and (map? target-ty) (:atom target-ty))
           (let [atom-name   (:atom target-ty)
-                atom-entry  (decl-lookup ctx :atom-env atom-name)
+                atom-entry  (env-lookup ctx :atom-env atom-name)
                 m           (get-in atom-entry [:method-index method-name])
                 o           (get-in atom-entry [:observable-index method-name])
                 _           (when (and (nil? m) (nil? o))
@@ -4951,7 +4951,7 @@
    (self as strong reference, primitives by value)."
   [target-lo target-ty lambda-node ctx]
   (let [list-name        (:atom target-ty)
-        element-name     (:element-type (decl-lookup ctx :atom-env list-name))
+        element-name     (:element-type (env-lookup ctx :atom-env list-name))
         element-type-kw  (cxc-type->type-kw element-name
                                             (:record-env ctx)
                                             (:atom-env ctx)
@@ -5256,7 +5256,7 @@
                   ;; `E_case` C constant.
                   (let [en (get-in node [:target :name])
                         cs (:field node)]
-                    (if (:tagged? (decl-lookup ctx :enum-env en))
+                    (if (:tagged? (env-lookup ctx :enum-env en))
                       {:node :c-tagged-init :enum-name en :case-name cs
                        :fields []}
                       {:node :name :sym (str en "_" cs)}))
@@ -5755,7 +5755,7 @@
       ;; typed case arm — resolve the record and its bindings
       (= :case (:kind pat))
       (let [case-nm    (:name pat)
-            rec        (decl-lookup ctx :record-env case-nm)
+            rec        (env-lookup ctx :record-env case-nm)
             _          (when-not rec
                          (fail-nyi!
                           (str "Track B/3: `or " case-nm "(...):` arm references "
@@ -5998,7 +5998,7 @@
       ;; the record's field-index.
       (= :any scrut-ty)
       (let [case-nm    (:name pattern)
-            rec        (decl-lookup ctx :record-env case-nm)]
+            rec        (env-lookup ctx :record-env case-nm)]
         (when-not rec
           (fail-nyi!
            (str "F69 L4b: case pattern `<: " case-nm ":` on id-typed "
@@ -6041,7 +6041,7 @@
       :else
       (let [enum-name (:enum scrut-ty)
             case-nm   (:name pattern)
-            info      (decl-lookup ctx :enum-env enum-name)
+            info      (env-lookup ctx :enum-env enum-name)
             cases     (:case-index info)
             tagged?   (:tagged? info)
             payload   (get-in info [:payload-index case-nm])]
@@ -6167,7 +6167,7 @@
                (= :any scrut-ty))
           (let [pat        (first patterns)
                 case-nm    (:name pat)
-                rec        (decl-lookup ctx :record-env case-nm)
+                rec        (env-lookup ctx :record-env case-nm)
                 field-idx  (into {} (map (juxt :name identity)) (:fields rec))
                 box-name   (str "_Cxc_R_" (->c-safe case-nm))]
             (mapv (fn [b]
@@ -6360,7 +6360,7 @@
                   (get-in node [:scrutinee :name])))
           _         (when enum?
                       (let [enum-name  (:enum scrut-ty)
-                            enum-cases (:cases (decl-lookup ctx :enum-env enum-name))]
+                            enum-cases (:cases (env-lookup ctx :enum-env enum-name))]
                         (check-dispatch-exhaustiveness! enum-name enum-cases
                                                         (:arms node) node)))
           _         (when (and (not enum?) any-scrut-is-companion-reason?)
@@ -12014,7 +12014,7 @@
         record-blocks
         (mapv (fn [r]
                 (let [rec-name    (:name r)
-                      rec-info    (decl-lookup ctx :record-env rec-name)
+                      rec-info    (env-lookup ctx :record-env rec-name)
                       rec-struct  (lower-record-struct r ctx)
                       opt-struct  (when (contains? rec-inner-set rec-name)
                                     (synth-optional-typedef rec-name ctx))
