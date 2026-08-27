@@ -11,7 +11,7 @@
    Pipeline:
      cxc.lex      — tokenize .cxc source (layout-aware, bracket-suppressed)
      cxc.parse    — token stream → cxc AST
-     cxc.lower    — cxc AST → ObjC AST (hello-world subset for now)
+     cxc.lower    — cxc AST → ObjC AST (v1.0 language surface)
      cxc.emit     — ObjC AST → .m source string
      cxc.build    — write .m, invoke clang, produce binary
 
