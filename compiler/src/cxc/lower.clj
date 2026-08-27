@@ -3366,6 +3366,104 @@
       :else (fail-nyi! (str "binop " op " between " lt " and " rt)
                        {:left lt :right rt}))))
 
+;; ---------------------------------------------------------------------------
+;; F15 L4 Sub-1 — compiler-known parametric protocol shapes.
+;;
+;; Per plan doc §Landing 4 and [[corvid-no-user-shape-variables]]: v1.0
+;; has no user-declared parametric protocols; `As<T>` and `From<T>` are
+;; compiler-baked shapes described by this registry. Each entry names
+;; the outer protocol and gives the required method-set; placeholders
+;; `:T` (the type parameter, concrete at each call site per §3.4.4 rule 1)
+;; and `:Self` (the type being checked) are resolved before matching
+;; against a candidate type's method-index.
+;;
+;; Sub-1 lands the registry + `structurally-satisfies-protocol?`
+;; predicate. Sub-2 wires it into `infer-method-call-type` as a fallback
+;; on direct-method-lookup miss (per plan doc §Landing 4 Files-to-touch).
+;; ---------------------------------------------------------------------------
+
+(def ^:private compiler-known-protocol-shapes
+  "Fixed registry of compiler-known parametric protocol shapes. Keys are
+   outer protocol names (as users would write in an explicit conforms
+   clause once F9 lands; today they only appear implicitly via `.as()` /
+   `.from(source:)` dispatch). Values map to `:instance-methods` (self-
+   receiver methods keyed by name) and `:class-methods` (class-fn
+   requirements keyed by name; class-fn env isn't wired at v1.0, so a
+   `From<T>` conformer needs Sub-2's env addition to actually resolve
+   here). Method entries carry `:params` (vec of `{:name :type}`) and
+   `:returns` (type-kw or placeholder `:T`/`:Self`). See spec §3.4 +
+   §3.4.6 + §3.10.10."
+  {"As"   {:instance-methods {"as"   {:params  []
+                                      :returns :T}}
+           :class-methods    {}}
+   "From" {:instance-methods {}
+           :class-methods    {"from" {:params  [{:name "source" :type :T}]
+                                      :returns :Self}}}})
+
+(defn- protocol-shape-known?
+  "F15 L4 — is `nm` a compiler-known parametric protocol outer name?"
+  [nm]
+  (contains? compiler-known-protocol-shapes nm))
+
+(defn- protocol-req-matches-method?
+  "F15 L4 Sub-1 — does `method-entry` (a `:method-index` value from a
+   record env slot) match protocol-required signature `req` at
+   instantiation T=`t-tk`, Self=`self-cxc-name`? Placeholders in `req`
+   are resolved to concrete cxc-name-str form before string-comparing
+   against the method entry's own `:cxc-ty` / `:cxc-return-ty`
+   (symmetric with `signature-mismatch-detail`, which also compares
+   cxc-name-strings). Signature identity per trait-qualified dispatch
+   is (param names, param types, return type) — an empty required-
+   params list rejects methods that carry extra non-self params."
+  [req method-entry t-tk self-cxc-name]
+  (let [resolve-str    (fn [ph]
+                         (case ph
+                           :T    (type-kw->cxc-name-str t-tk)
+                           :Self self-cxc-name
+                           ph))
+        req-params     (:params req)
+        method-params  (non-self-params (:params method-entry))
+        expected-ret   (resolve-str (:returns req))
+        actual-ret     (:cxc-return-ty method-entry)]
+    (and (= (count req-params) (count method-params))
+         (= expected-ret actual-ret)
+         (every? (fn [[rp mp]]
+                   (and (= (:name rp) (:name mp))
+                        (= (resolve-str (:type rp)) (:cxc-ty mp))))
+                 (map vector req-params method-params)))))
+
+(defn- structurally-satisfies-protocol?
+  "F15 L4 Sub-1 — does the record described by `type-info` (a record-env
+   slot: `{:method-index ... :class-fn-index? ...}`) structurally satisfy
+   compiler-known protocol `shape-name` when instantiated at T=`t-tk`?
+   `self-cxc-name` names the type being checked (used to resolve `:Self`
+   placeholders). Returns bool.
+
+   Instance-method requirements consult `:method-index` — the same slot
+   direct method dispatch consults, so structural conformance is
+   symmetric with direct lookup on the eligible surface.
+
+   Class-method requirements consult `:class-fn-index`, which isn't
+   populated at v1.0 — a `From<T>` structural check returns false today.
+   The env slot goes live when Sub-2 seeds it from F37 L6 synthesis (or
+   from user-declared class functions once F37 L6b picks up class-fn
+   consumption). Predicate shape is stable across that landing.
+
+   Returns nil for an unknown shape name (protocol-shape-known?
+   guards Sub-2's consumer). Empty required-methods on both sides is
+   vacuously true — no such shape exists in the registry today, but
+   Constructible / other v1.1+ shapes may fall into this case."
+  [type-info self-cxc-name shape-name t-tk]
+  (when-let [shape (get compiler-known-protocol-shapes shape-name)]
+    (and (every? (fn [[mn req]]
+                   (when-let [m (get-in type-info [:method-index mn])]
+                     (protocol-req-matches-method? req m t-tk self-cxc-name)))
+                 (:instance-methods shape))
+         (every? (fn [[mn req]]
+                   (when-let [m (get-in type-info [:class-fn-index mn])]
+                     (protocol-req-matches-method? req m t-tk self-cxc-name)))
+                 (:class-methods shape)))))
+
 (defn- infer-method-call-type
   "For `target.method(args)`: infer target-ty, look up method on the
    record OR atom (falling back to observable-index for atoms), return

@@ -5746,3 +5746,90 @@ def main:
       (is (= :not-yet-implemented (:kind (ex-data ex))))
       (is (re-find #"field `z` not present on named" (.getMessage ex)))
       (is (re-find #"available: x, y" (.getMessage ex))))))
+
+;; ---------------------------------------------------------------------------
+;; F15 L4 Sub-1 — compiler-known parametric protocol shapes (registry +
+;; `structurally-satisfies-protocol?`). Consumer wiring lands in Sub-2.
+;; ---------------------------------------------------------------------------
+
+(defn- f15-l4-record-info
+  "Test helper: build a minimal record-env slot with the given method-
+   entries as `:method-index`. Method-entry shape matches what
+   `observable->method-entry` / extension composition emits — `:params`
+   is a vec of `{:name :cxc-ty :is-self? :default}`, `:cxc-return-ty` is
+   the raw cxc name string. `structurally-satisfies-protocol?` reads
+   these two slots plus (unused today) `:class-fn-index`."
+  [method-entries]
+  {:fields       []
+   :field-index  {}
+   :methods      (vec method-entries)
+   :method-index (into {} (map (juxt :name identity) method-entries))})
+
+(defn- f15-l4-instance-method-entry
+  "Test helper: shape a self-only-plus-non-self method entry."
+  [self-cxc-name method-name non-self-params return-cxc-name]
+  {:name           method-name
+   :params         (into [{:name "self" :cxc-ty self-cxc-name
+                           :is-self? true :default nil}]
+                         (mapv (fn [p]
+                                 (assoc p :is-self? false :default nil))
+                               non-self-params))
+   :cxc-return-ty  return-cxc-name})
+
+(deftest f15-l4-sub1-registry-has-as-and-from-shapes
+  (testing "F15 L4 Sub-1 — the compiler-known protocol registry exposes both `As<T>` and `From<T>` shapes; `protocol-shape-known?` returns true for these and false for user-declared names (Landing 4 leaves user-declared parametric protocols out per no-user-shape-variables 2026-08-24)."
+    (is (#'cxc.lower/protocol-shape-known? "As"))
+    (is (#'cxc.lower/protocol-shape-known? "From"))
+    (is (not (#'cxc.lower/protocol-shape-known? "Foo")))
+    (is (not (#'cxc.lower/protocol-shape-known? "")))
+    (is (not (#'cxc.lower/protocol-shape-known? nil)))))
+
+(deftest f15-l4-sub1-satisfies-as-t-with-matching-instance-method
+  (testing "F15 L4 Sub-1 — a record with `function as(self) -> Bytes` structurally satisfies `As<Bytes>`. Placeholder `:T` in the shape resolves to \"Bytes\" and matches the method's :cxc-return-ty. Symmetric with signature-mismatch-detail's cxc-name-string comparison."
+    (let [info (f15-l4-record-info
+                [(f15-l4-instance-method-entry "Bag" "as" [] "Bytes")])]
+      (is (true? (#'cxc.lower/structurally-satisfies-protocol?
+                  info "Bag" "As" :bytes))))))
+
+(deftest f15-l4-sub1-does-not-satisfy-as-t-when-return-type-differs
+  (testing "F15 L4 Sub-1 — a record whose `as` method returns String does not satisfy `As<Bytes>`. The predicate must reject mismatched return types; otherwise Sub-2's fallback dispatch could route `.as()` to a method with the wrong shape."
+    (let [info (f15-l4-record-info
+                [(f15-l4-instance-method-entry "Bag" "as" [] "String")])]
+      (is (false? (boolean (#'cxc.lower/structurally-satisfies-protocol?
+                            info "Bag" "As" :bytes)))))))
+
+(deftest f15-l4-sub1-does-not-satisfy-as-t-with-extra-params
+  (testing "F15 L4 Sub-1 — a record whose `as` takes an extra non-self param does not satisfy `As<Bytes>`. The registry's `As` shape declares empty required params; extras reject."
+    (let [info (f15-l4-record-info
+                [(f15-l4-instance-method-entry
+                  "Bag" "as" [{:name "target" :cxc-ty "Bytes"}] "Bytes")])]
+      (is (false? (boolean (#'cxc.lower/structurally-satisfies-protocol?
+                            info "Bag" "As" :bytes)))))))
+
+(deftest f15-l4-sub1-does-not-satisfy-as-t-when-method-absent
+  (testing "F15 L4 Sub-1 — a record with no `as` method does not satisfy `As<Bytes>`. Absence rejects — Sub-2 will fall through to the F37 synthesis path (or diagnostic) after this predicate returns false."
+    (let [info (f15-l4-record-info
+                [(f15-l4-instance-method-entry "Bag" "other" [] "Bytes")])]
+      (is (false? (boolean (#'cxc.lower/structurally-satisfies-protocol?
+                            info "Bag" "As" :bytes)))))))
+
+(deftest f15-l4-sub1-from-t-not-satisfied-without-class-fn-index
+  (testing "F15 L4 Sub-1 — `From<T>` requires a class-level `from(source: T) -> Self`; the record env has no `:class-fn-index` at v1.0 so this predicate always returns false for `From<T>` today. Sub-2 (or a later sub) seeds the env slot with F37 L6 synthesized `_cxc_from_bytes` shape or user-authored class functions."
+    (let [info (f15-l4-record-info [])]
+      (is (false? (boolean (#'cxc.lower/structurally-satisfies-protocol?
+                            info "Bag" "From" :bytes)))))))
+
+(deftest f15-l4-sub1-unknown-shape-name-yields-nil
+  (testing "F15 L4 Sub-1 — asking about an unknown protocol shape returns nil (not false). Sub-2's consumer guards on `protocol-shape-known?` first; the nil-vs-false distinction lets a caller tell 'no such shape in the registry' apart from 'shape exists but conformance failed'."
+    (let [info (f15-l4-record-info [])]
+      (is (nil? (#'cxc.lower/structurally-satisfies-protocol?
+                 info "Bag" "NoSuchShape" :bytes))))))
+
+(deftest f15-l4-sub1-multiple-methods-only-required-one-consulted
+  (testing "F15 L4 Sub-1 — extra methods on the record don't affect conformance. The predicate checks only the required set — a record can carry `.as()`, `.shout()`, `.n_bytes()` and still cleanly satisfy `As<Bytes>` based solely on the `as` slot."
+    (let [info (f15-l4-record-info
+                [(f15-l4-instance-method-entry "Bag" "as"      [] "Bytes")
+                 (f15-l4-instance-method-entry "Bag" "shout"   [] "String")
+                 (f15-l4-instance-method-entry "Bag" "n_bytes" [] "Int")])]
+      (is (true? (#'cxc.lower/structurally-satisfies-protocol?
+                  info "Bag" "As" :bytes))))))
