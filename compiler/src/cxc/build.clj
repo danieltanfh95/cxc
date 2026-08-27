@@ -252,10 +252,11 @@
 
 (defn compile-source-to-file
   "Compile cxc source text through parse → lower → emit → clang.
-   Prepends the compiler-shipped prelude (see cxc.prelude) before
-   parsing so records/atoms defined there are visible to user code
-   without an import statement. Writes .m to `<out-dir>/<name>.m`
-   and produces binary at `<out-dir>/<name>`.
+   Parses the compiler-shipped prelude (see cxc.prelude) separately
+   and prepends its AST to the enriched user AST so records/atoms
+   defined there are visible to user code without an import
+   statement. Writes .m to `<out-dir>/<name>.m` and produces binary
+   at `<out-dir>/<name>`.
 
    Tier-1 cache: content-hashes the emitted .m; on hit, copies the
    cached binary into place and skips clang entirely. On miss, runs

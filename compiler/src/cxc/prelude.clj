@@ -1,9 +1,10 @@
 (ns cxc.prelude
   "Compiler-shipped prelude: records + capability shapes that every
-   cxc program can assume exist without importing. Prepended verbatim
-   to the user's source text before parsing so a single parse pass
-   sees both together and lowering resolves prelude references from
-   the same top-level nodes vector.
+   cxc program can assume exist without importing. Parsed separately
+   from user source and AST-prepended to the enriched user AST so
+   lowering resolves prelude references from the same top-level
+   nodes vector. (F51 L3b(b.ii)-3/5c retired the source-level concat
+   + reparse the earlier pipeline used.)
 
    Prelude atoms are tree-shaken by cxc.lower: only those actually
    referenced from user code are emitted, so shipping capability
