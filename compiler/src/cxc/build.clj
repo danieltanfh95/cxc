@@ -495,13 +495,14 @@
 ;; F51 L3b (a) — compat-scan for unscoped type references.
 ;;
 ;; Warn users about cross-module type references that would fail once
-;; `lower`'s short-name fallback is retired in favor of qualified
-;; `:resolves-to` lookup (the b.ii-2 `resolve-decl-lookup` primitive
-;; consulted with the hint the b.ii-1 resolver produces and b.ii-3
-;; now propagates end-to-end). The check is advisory — downstream
-;; lower still resolves via the short-name fallback. Users see one
-;; line per unresolved ref pointing at the file and the module the
-;; ref would need to import.
+;; `lower/decl-lookup`'s short-name fallback retires (b.ii-5e). The
+;; b.ii-5a-c wiring already consumes the `:resolves-to` hint that
+;; b.ii-1's resolver produces (multi-file: b.ii-3; single-file:
+;; b.ii-5c), so cross-module refs with a hint resolve strictly today
+;; — the short-name fallback catches unmigrated sites and cases
+;; where the hint is nil. The check remains advisory; hardens into
+;; an error at b.ii-5e. Users see one line per unresolved ref
+;; pointing at the file and the module the ref would need to import.
 ;; ---------------------------------------------------------------------------
 
 (defn- warn-unscoped-type-refs!
