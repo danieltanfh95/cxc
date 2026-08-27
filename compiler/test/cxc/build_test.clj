@@ -1376,3 +1376,18 @@
       (is (zero? (:status result)))
       (is (zero? exit))
       (is (= "9\n" stdout) "on-disk source used when no override provided"))))
+
+(deftest f51-l3b-b-ii-5c-single-file-threads-resolve-references
+  (testing "F51 L3b(b.ii)-5c — `compile-source-to-file` runs `resolve/resolve-references` on the parsed user AST before feeding lower. Prevents regression to the pre-71c46c9 shim (reparse of concatenated prelude + user source, which stripped `:resolves-to` metadata). Spy on the resolver call — if a future refactor drops it, this test flags the drop before behavior diverges silently."
+    (let [call-count  (atom 0)
+          orig-fn     @#'cxc.resolve/resolve-references
+          spy-fn      (fn [& args]
+                        (swap! call-count inc)
+                        (apply orig-fn args))
+          out-dir     (tmp-dir)]
+      (with-redefs [cxc.resolve/resolve-references spy-fn]
+        (build/compile-source-to-file
+         "def main:\n    -> running\n        then: print(1)\n"
+         "resolve-thread-probe" (.getPath out-dir)))
+      (is (>= @call-count 1)
+          "compile-source-to-file must invoke resolve-references (single-file path enriches user AST before feeding lower)"))))
