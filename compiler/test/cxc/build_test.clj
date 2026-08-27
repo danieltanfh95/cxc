@@ -150,6 +150,12 @@
       (is (zero? exit))
       (is (= "1\n" stdout)))))
 
+(deftest end-to-end-f37-l6-optional-nested-from-bytes
+  (testing "F37 L6 Optional-nested-record extension — round-trip on a record with a bare-T value-typed field where T is a fixed-size nested record. `R(i: Inner(n: 7)).as()` produces 1 presence byte + 4 payload bytes = 5 bytes; `R.from(source: b)` reads the presence, slices Inner's fixed 4 bytes on present, dispatches to Inner_cxc_from_bytes, unpacks into `_Cxc_Optional_Inner.value`. DecodeOutcome discarded; `b.length` prints 5."
+    (let [{:keys [exit stdout]} (compile-and-run "f37-l6-optional-nested-from-bytes")]
+      (is (zero? exit))
+      (is (= "5\n" stdout)))))
+
 (deftest end-to-end-k5-if-expression
   (testing "K5 L1 — `if` at expression position (spec §3.8.1). Uses both simple `if...else` and `if...else if...else` chain. Result flows through `let` bindings. Lowered as C ternary; prints the selected branch value."
     (let [{:keys [exit stdout]} (compile-and-run "k5-if-expression")]

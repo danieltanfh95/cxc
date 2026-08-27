@@ -8635,7 +8635,8 @@
        (contains? record-env (:cxc-ty f))
        (some? (record-fixed-encoded-size (:cxc-ty f) record-env))))
 
-(declare f37-value-only-enum-decode-field?)
+(declare f37-value-only-enum-decode-field?
+         f37-optional-nested-record-decode-field?)
 
 (defn- f37-decode-eligible-field?
   "F37 L6 field-level eligibility. Primitive (Bool / sized-int / Int /
@@ -8657,12 +8658,14 @@
    (or (f37-primitive-byte-field? f)
        (f37-string-byte-field? f)
        (f37-optional-primitive-field? f)
-       (f37-nested-record-decode-field? f record-env)))
+       (f37-nested-record-decode-field? f record-env)
+       (f37-optional-nested-record-decode-field? f record-env)))
   ([f record-env enum-env]
    (or (f37-primitive-byte-field? f)
        (f37-string-byte-field? f)
        (f37-optional-primitive-field? f)
        (f37-nested-record-decode-field? f record-env)
+       (f37-optional-nested-record-decode-field? f record-env)
        (f37-value-only-enum-decode-field? f enum-env))))
 
 (defn- record-eligible-for-from-bytes-synthesis?
@@ -8769,6 +8772,55 @@
          res ".data.invalid.reason);\n"
          "    " inner " " bind " = " res ".data.converted.value;\n"
          "    __off += " n ";")))
+
+(defn- f37-optional-nested-record-decode-field?
+  "F37 L6 Optional-nested-record extension (2026-08-27) — bare-T
+   value-typed field where T is a nested record with a fixed-size
+   encoding (all-primitive-fields transitively). Wire format per
+   §3.10.10 Optional row: UInt8 presence byte + (when present) T's
+   fixed bytes."
+  [f record-env]
+  (and (:optional? f)
+       (contains? record-env (:cxc-ty f))
+       (some? (record-fixed-encoded-size (:cxc-ty f) record-env))))
+
+(defn- f37-optional-nested-record-field-decode-c-src
+  "F37 L6 Optional-nested-record extension — decode a bare-T value-
+   typed field where T is a fixed-size nested record. Presence byte
+   with validity check; on present, slice T's fixed bytes + dispatch
+   to `T_cxc_from_bytes` + propagate invalid or extract converted
+   into `_Cxc_Optional_<T>.value`."
+  [record-name f record-env]
+  (let [fname   (:name f)
+        inner   (:cxc-ty f)
+        n       (record-fixed-encoded-size inner record-env)
+        bind    (str "__" fname "_val")
+        res     (str "__" fname "_res")
+        invalid (decode-invalid-fn-name record-name)
+        opt-ty  (optional-type-name inner)]
+    (str "    if (__len < __off + 1) return " invalid
+         "((int64_t)__off, @\"expected 1 presence byte for Optional "
+         "nested-record field " fname ", source has less\");\n"
+         "    uint8_t " bind "_presence = __bytes[__off];\n"
+         "    __off += 1;\n"
+         "    if (" bind "_presence != 0x00 && " bind "_presence != 0x01) return "
+         invalid "((int64_t)(__off - 1), @\"invalid presence byte for "
+         "Optional nested-record field " fname "\");\n"
+         "    " opt-ty " " bind " = { .present = " bind "_presence, .value = {0} };\n"
+         "    if (" bind "_presence == 0x01) {\n"
+         "        if (__len < __off + " n ") return " invalid
+         "((int64_t)__off, @\"expected " n " bytes for Optional "
+         "nested-record field " fname " payload (" inner "), source has less\");\n"
+         "        NSMutableData *" bind "_slice = "
+         "[[src subdataWithRange:NSMakeRange(__off, " n ")] mutableCopy];\n"
+         "        " (decode-outcome-struct-name inner) " " res
+         " = " (record-synth-from-bytes-name inner) "(" bind "_slice);\n"
+         "        if (" res ".tag == _CXC_DECODE_INVALID) return " invalid
+         "((int64_t)(__off + " res ".data.invalid.offset), "
+         res ".data.invalid.reason);\n"
+         "        " bind ".value = " res ".data.converted.value;\n"
+         "        __off += " n ";\n"
+         "    }")))
 
 (defn- f37-value-only-enum-decode-field?
   "F37 L6 enum extension eligibility (value-only enums only, this
@@ -8922,6 +8974,8 @@
     (f37-optional-primitive-field-decode-c-src record-name f)
     (f37-nested-record-decode-field? f record-env)
     (f37-nested-record-field-decode-c-src record-name f record-env)
+    (f37-optional-nested-record-decode-field? f record-env)
+    (f37-optional-nested-record-field-decode-c-src record-name f record-env)
     (f37-value-only-enum-decode-field? f enum-env)
     (f37-value-only-enum-field-decode-c-src record-name f enum-env)))
 

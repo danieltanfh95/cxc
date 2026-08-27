@@ -2110,6 +2110,27 @@ def main:
          #"F37 L6.*inner.*Inner"
          (lower-src "def Inner:\n    text: String!\n\ndef W:\n    inner: Inner!\n\ndef main:\n    -> running\n        then:\n            let b: Bytes = W(inner: Inner(text: \"hi\")).as()\n            W.from(source: b)\n")))))
 
+(deftest f37-l6-optional-nested-record-field-decode-body-presence-envelope
+  (testing "F37 L6 Optional-nested-record extension (2026-08-27) — a record with a bare-T value-typed field where T is a fixed-size nested record synthesizes a decode block that: (1) reads a UInt8 presence byte and validates 0x00/0x01, (2) on absent leaves `.value` bit-zero, (3) on present bounds-checks + slices T's fixed bytes + dispatches to `T_cxc_from_bytes` + unpacks the outcome — invalid propagates with offset carried from nested reason; converted lands into `_Cxc_Optional_<T>.value` — (4) advances __off by T's fixed size."
+    (let [prog (lower-src "def Inner:\n    n: Int32!\n\ndef R:\n    i: Inner\n\ndef main:\n    -> running\n")
+          f    (first (filter #(= "R_cxc_from_bytes" (:name %)) (:functions prog)))
+          body-text (get-in f [:body 0 :text])]
+      (is (some? f))
+      (is (re-find #"expected 1 presence byte for Optional nested-record field i" body-text)
+          "presence byte bounds-check with per-field diagnostic")
+      (is (re-find #"invalid presence byte for Optional nested-record field i" body-text)
+          "presence byte validity check (0x00/0x01 only)")
+      (is (re-find #"_Cxc_Optional_Inner __i_val = \{ \.present = __i_val_presence" body-text)
+          "designated-initializer for the Optional storage struct")
+      (is (re-find #"if \(__i_val_presence == 0x01\)" body-text)
+          "payload decode guarded by presence check")
+      (is (re-find #"subdataWithRange:NSMakeRange\(__off, 4\)" body-text)
+          "slices Inner's fixed 4 bytes on present")
+      (is (re-find #"Inner_cxc_from_bytes\(__i_val_slice\)" body-text)
+          "dispatches to inner decoder")
+      (is (re-find #"__i_val\.value = __i_res\.data\.converted\.value" body-text)
+          "converted value lands into Optional payload"))))
+
 (deftest f37-encoder-symmetry-record-with-enum-field-synthesizes-as-bytes
   (testing "F37 encoder-symmetry (2026-08-27) — a record with a value-only enum field now synthesizes `<R>_cxc_as_bytes` (previously fail-nyi'd at the intercept). Field encoding dispatches to the enum's synthesized `<Enum>_cxc_as_bytes` mirror of the nested-record arm. Enables round-trip with the F37 L6 value-only enum decode extension."
     (let [prog (lower-src "def Signal:\n    case red\n    case green\n\ndef R:\n    sig: Signal!\n\ndef main:\n    -> running\n")
