@@ -4620,7 +4620,7 @@
         target-lo   (lower-expr (:target dot) ctx)
         list-cont?  (and (map? target-ty) (:atom target-ty)
                          (= :list-container
-                            (:kind (decl-lookup ctx :atom-env (:atom target-ty)))))
+                            (:kind (env-lookup ctx :atom-env (:atom target-ty)))))
         for-each-with-lambda?
         (and list-cont?
              (= "for_each" method-name)
@@ -4634,7 +4634,7 @@
           ;; methods. Return an observable-synthesized entry that
           ;; mimics the method shape (self as first param) so
           ;; `resolve-args-against-params` works uniformly.
-          (let [rec-entry (decl-lookup ctx :record-env (:record target-ty))]
+          (let [rec-entry (env-lookup ctx :record-env (:record target-ty))]
             (or (get-in rec-entry [:method-index method-name])
                 (when-let [o (get-in rec-entry [:observable-index method-name])]
                 (let [tk (:type-kw o)
@@ -4659,7 +4659,7 @@
           ;; methods, protocol defaults inherited); fall back to
           ;; observable-index and synthesize a method-shape entry so
           ;; `resolve-args-against-params` fires uniformly.
-          (let [atom-entry (decl-lookup ctx :atom-env (:atom target-ty))]
+          (let [atom-entry (env-lookup ctx :atom-env (:atom target-ty))]
             (or (get-in atom-entry [:method-index method-name])
                 (when-let [o (get-in atom-entry [:observable-index method-name])]
                 (let [tk (:type-kw o)
@@ -4716,7 +4716,7 @@
       (if (and (map? target-ty) (:record target-ty)
                (= "as" method-name) (empty? args))
         (let [rec-name (:record target-ty)
-              info     (decl-lookup ctx :record-env rec-name)]
+              info     (env-lookup ctx :record-env rec-name)]
           (cond
             (record-has-user-as-method? info)
             {:node :call
@@ -4751,7 +4751,7 @@
         ;; must have all-encodable fields; a targeted fail-nyi names
         ;; the offending case + field type otherwise.
         (let [en-name (:enum target-ty)
-              info    (decl-lookup ctx :enum-env en-name)]
+              info    (env-lookup ctx :enum-env en-name)]
           (if (enum-eligible-for-as-bytes-synthesis? info (:record-env ctx))
             {:node :call
              :fn   (enum-synth-as-bytes-name en-name)
@@ -6124,12 +6124,12 @@
                (= :case (:kind (first patterns)))
                (seq (:bindings (first patterns)))
                (map? scrut-ty) (:enum scrut-ty)
-               (seq (get-in (decl-lookup ctx :enum-env (:enum scrut-ty))
+               (seq (get-in (env-lookup ctx :enum-env (:enum scrut-ty))
                             [:payload-index (:name (first patterns))])))
           (let [pat        (first patterns)
                 enum-name  (:enum scrut-ty)
                 case-nm    (:name pat)
-                info       (decl-lookup ctx :enum-env enum-name)
+                info       (env-lookup ctx :enum-env enum-name)
                 payload    (get-in info [:payload-index case-nm])
                 field-idx  (into {} (map (juxt :name identity)) payload)]
             (mapv (fn [b]
@@ -8313,10 +8313,10 @@
   [cxc-ty ctx]
   (or (contains? primitive-c-type cxc-ty)
       (and (contains? (:enum-env ctx) cxc-ty)
-           (not (:tagged? (decl-lookup ctx :enum-env cxc-ty))))))
+           (not (:tagged? (env-lookup ctx :enum-env cxc-ty))))))
 
 (defn- tagged-enum-type? [cxc-ty ctx]
-  (boolean (:tagged? (decl-lookup ctx :enum-env cxc-ty))))
+  (boolean (:tagged? (env-lookup ctx :enum-env cxc-ty))))
 
 (defn- field-equals-c-src
   "Emit a C expression comparing field `f` between two record variables
