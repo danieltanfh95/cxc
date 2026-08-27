@@ -305,47 +305,24 @@
     {:exit exit :stdout out :stderr err}))
 
 ;; ---------------------------------------------------------------------------
-;; Multi-file compile (Layer 6 Steps 2+3 — minimum viable module system)
+;; Multi-file compile (F51 L3b(b.ii)-3 — per-module AST-in path)
 ;;
-;; Reads every `*.cxc` file under a root directory, concatenates the
-;; sources (module/import lines strip to whitespace so downstream
-;; parsing sees one big program), and feeds through the single-file
-;; pipeline. Module boundaries are ADVISORY at this landing —
-;; concatenation makes every user-authored declaration globally
-;; visible. Real per-module name scoping ships when the compiler grows
-;; a name-resolution pass; this landing proves the multi-file build
-;; entrypoint + import parse without requiring that pass yet.
+;; Reads every `*.cxc` file under a root directory, parses each file
+;; individually, validates imports against the stdlib manifest + user
+;; modules, sorts modules topologically, enriches the per-file ASTs
+;; with `:resolves-to` provenance metadata via
+;; `resolve/resolve-references`, assembles a flat top-node stream
+;; (synthetic `:module` marker per file for lower's attribution walk),
+;; prepends the prelude AST, and feeds the whole thing directly to
+;; `compile-parsed-to-file`. No source-level concatenation, no reparse
+;; of a synthesized combined source — `:resolves-to` metadata now
+;; flows all the way to `lower`.
 ;;
 ;; Stdlib import validation: `from std.<sub> import <name>` is
 ;; checked against the prelude — if the name isn't exported from
 ;; that module (or the module doesn't exist), compile fails cleanly
 ;; instead of hitting an inscrutable downstream unresolved-ref error.
 ;; ---------------------------------------------------------------------------
-
-(defn- strip-module-and-import-lines
-  "Blank out `module <dotted>` and `from <dotted> import ...` lines in
-   a source string. Keeps line numbers stable for downstream errors
-   while making the concatenated multi-file source parse as a single
-   program without redundant/conflicting module headers.
-
-   F73 (2026-08-20) — `module` headers are hard-rejected at parse-time.
-   The strip here only sees `from` and `import` lines in practice;
-   the module-line branch is dead but kept for defensive tolerance
-   until F51 L3 removes the flat-namespace concatenation shim entirely.
-
-   F52 L1 (2026-08-23) — `import X` and `import X as Y` also strip
-   here, matching the `from`-line treatment. Namespace-scoped binding
-   waits on F51 L3."
-  [src]
-  (->> (clojure.string/split-lines src)
-       (map (fn [line]
-              (let [trimmed (clojure.string/trim line)]
-                (cond
-                  (clojure.string/starts-with? trimmed "module ") ""
-                  (clojure.string/starts-with? trimmed "from ")   ""
-                  (clojure.string/starts-with? trimmed "import ") ""
-                  :else line))))
-       (clojure.string/join "\n")))
 
 (def ^:private main-module-kw
   "F51 L1 — root of src-dir (and single-file compile) is module `:main`.
@@ -501,12 +478,14 @@
 ;; ---------------------------------------------------------------------------
 ;; F51 L3b (a) — compat-scan for unscoped type references.
 ;;
-;; Before L3b (b) retires the flat-namespace concatenation shim, warn
-;; users about cross-module type references that would fail under
-;; strict per-module scoping. The check is advisory — it doesn't block
-;; the build; downstream lower still resolves via the shim's flat
-;; namespace. Users see one line per unresolved ref pointing at the
-;; file and the module the ref would need to import.
+;; Warn users about cross-module type references that would fail once
+;; `lower`'s short-name fallback is retired in favor of qualified
+;; `:resolves-to` lookup (the b.ii-2 `resolve-decl-lookup` primitive
+;; consulted with the hint the b.ii-1 resolver produces and b.ii-3
+;; now propagates end-to-end). The check is advisory — downstream
+;; lower still resolves via the short-name fallback. Users see one
+;; line per unresolved ref pointing at the file and the module the
+;; ref would need to import.
 ;; ---------------------------------------------------------------------------
 
 (defn- warn-unscoped-type-refs!
@@ -538,14 +517,14 @@
                 1 (str " isn't imported here — `" name "` is declared in module `"
                        (clojure.core/name (first declared-in))
                        "`. Add `from " (clojure.core/name (first declared-in))
-                       " import " name "` before F51 L3b retires the "
-                       "flat-namespace shim.")
+                       " import " name "` before lower's short-"
+                       "name fallback is retired.")
                 (str " is ambiguous — `" name "` is declared in "
                      (count declared-in) " modules ("
                      (str/join ", " (map clojure.core/name declared-in))
                      "). Qualify the reference (`<module>." name "`) or "
                      "add a `from <module> import " name " as <alias>` "
-                     "before F51 L3b retires the flat-namespace shim."))))))))
+                     "before lower's short-name fallback is retired."))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; F51 L2 — Module import dependency graph + topological order + cycle detection.
@@ -856,17 +835,14 @@
                                       (assoc (ex-data e)
                                              :file (.getPath f))
                                       e))))
-                  ;; F52 L3 — carry the (possibly overridden) source string
-                  ;; forward so the downstream concatenation doesn't re-slurp
-                  ;; the on-disk file and lose the override.
-                  {:file f :module module :nodes parsed :src src}))
+                  {:file f :module module :nodes parsed}))
               (map vector files srcs))
         _       (reject-duplicate-declarations-per-module! files-with-nodes)
         ;; F51 L2 — build the module import dep graph, reject self-imports
         ;; and unknown-module imports, then topologically sort user modules.
-        ;; Files re-ordered so imported modules concatenate before their
-        ;; consumers (deterministic tie-break by sorted file path within a
-        ;; module).
+        ;; Files re-ordered so imported modules appear in the flat top-node
+        ;; stream before their consumers (deterministic tie-break by sorted
+        ;; file path within a module).
         dep-graph        (module-dependency-graph files-with-nodes)
         _                (reject-self-imports! dep-graph)
         _                (reject-unknown-imports! dep-graph user-modules)
@@ -876,11 +852,11 @@
         _                (reject-import-collides-with-decl! files-with-nodes)
         ;; F51 L3b (a) — compat scan: emit a WARN for every type-ref that
         ;; wouldn't resolve under strict per-module scoping (own decls +
-        ;; imports + prelude). The flat-namespace concatenation shim still
-        ;; accepts these references today; L3b (b) will retire the shim
-        ;; and turn each unresolved ref into a hard error. Fires only for
-        ;; cross-module implicit references — same-module and prelude
-        ;; refs stay silent.
+        ;; imports + prelude). Lower's short-name fallback still accepts
+        ;; these references today; a future consumer-wiring landing will
+        ;; retire the fallback and turn each unresolved ref into a hard
+        ;; error. Fires only for cross-module implicit references —
+        ;; same-module and prelude refs stay silent.
         _                (warn-unscoped-type-refs! files-with-nodes)
         sorted-modules   (topological-sort dep-graph user-modules)
         files-with-nodes (sort-files-by-module-order files-with-nodes
