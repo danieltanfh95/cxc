@@ -1083,7 +1083,7 @@
    `:module` slot at build time. Also used to derive `:module-map`
    (module-kw → #{short-name ...}) for reverse lookup."
   [top-nodes]
-  (let [prelude-provenance (@#'cxc.resolve/prelude-name->module)]
+  (let [prelude-provenance (resolve/prelude-name->module)]
     (loop [nodes  top-nodes
            module :main
            acc    {}]

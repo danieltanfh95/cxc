@@ -66,13 +66,15 @@
 ;; Prelude module → declared-names index
 ;; ---------------------------------------------------------------------------
 
-(defn- prelude-name->module
+(defn prelude-name->module
   "Map every prelude-declared name to its owning module keyword.
    F56 L2+L3 (2026-08-27): postwalk retired — AST carries only
    user-visible prelude names, so this table lists only that form.
 
    Built once from `prelude/prelude-modules` — the registry itself
-   is the source of truth."
+   is the source of truth. Public so `cxc.lower/attribute-modules-
+   to-decls` can consume it directly rather than reaching through
+   `@#'`."
   []
   (into {}
         (for [{:keys [name names]} prelude/prelude-modules
