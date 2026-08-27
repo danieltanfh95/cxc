@@ -11490,17 +11490,22 @@
 
 (defn- reject-module-let-shadowing!
   "F52 L4-b — reject any local binding that would shadow a top-level
-   module-let. Walks the tree looking for `:let-stmt` and `:if-let`
-   binding nodes whose `:name` matches a module-let. Fires BEFORE
+   module-let. Walks the tree looking for binding-introducing nodes
+   whose bound name matches a module-let. Fires BEFORE
    `substitute-module-let-refs` runs so the diagnostic surfaces
    cleanly (unshadowed, naive substitution would rewrite the local
    binding's own name into the constant value, producing something
    like `let 5 = 5` — actionable but confusing).
 
-   Only the two local-let AST kinds are checked at this landing.
-   Function-param shadowing is a followon: params are a distinct
-   scoping mechanism (spec §3.7 shadowing rules) and the diagnostic
-   there wants targeted wording."
+   Covered binding kinds:
+   - `:let-stmt` local `let x = expr` (F18 L1).
+   - `:if-let` `:bindings` list (F39 L7 unwrap-statement).
+   - `:function` / `:class-function` `:params` list (spec §3.7 fn
+     params). Params are a distinct scoping mechanism from `let`, but
+     they carry the same collision risk: a param named `PI` inside a
+     method body would refer to the param, and any `PI` reference in
+     that body would substitute to the module-let value under naive
+     rewriting."
   [nodes ml-map]
   (when (seq ml-map)
     (walk/postwalk
@@ -11522,6 +11527,19 @@
                       "let of the same name (F52 L4). Rename one of the "
                       "two.")
                  {:module-let (:name b) :node :if-let}))
+              x)
+
+          (and (map? x)
+               (contains? #{:function :class-function} (:node x)))
+          (do (doseq [p (:params x)
+                      :when (contains? ml-map (:name p))]
+                (fail-nyi!
+                 (str "function `" (:name x) "` parameter `" (:name p)
+                      "` shadows the module-let of the same name (F52 L4). "
+                      "Rename one of the two.")
+                 {:module-let (:name p)
+                  :node       (:node x)
+                  :fn-name    (:name x)}))
               x)
 
           :else x))

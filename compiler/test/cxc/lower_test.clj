@@ -6211,3 +6211,44 @@ def main:
                          :expr {:node :lit-int :value 5}}]}]]
       (is (= tree
              (#'cxc.lower/reject-module-let-shadowing! tree {}))))))
+
+(deftest f52-l4-b-reject-fn-param-shadowing
+  (testing "F52 L4-b — a `:function` parameter whose name matches a module-let fires a targeted fail-nyi identifying both the function and the parameter. Params scope inside the fn body, so any `PI` reference there would resolve to the param — but naive substitution would rewrite it to the module-let value first, silently breaking the fn. The diagnostic names both the fn (`compute`) and the param (`PI`) for actionability."
+    (let [ex (try
+               (#'cxc.lower/reject-module-let-shadowing!
+                 [{:node :record :name "R"
+                   :sections [{:node :function :name "compute"
+                               :params [{:name "PI" :type nil}]
+                               :body []}]}]
+                 {"PI" {:node :lit-float :value 3.14}})
+               nil
+               (catch clojure.lang.ExceptionInfo e e))]
+      (is ex "expected fail-nyi")
+      (is (re-find #"function `compute` parameter `PI` shadows"
+                   (.getMessage ex))))))
+
+(deftest f52-l4-b-reject-class-function-param-shadowing
+  (testing "F52 L4-b — a `:class-function` parameter shadowing a module-let fires the same diagnostic pattern. Class functions land via F37 L6b for `class function from(source: Bytes)` synthesis; their param shape matches instance functions so the shadow-check hits both node kinds via the same case."
+    (let [ex (try
+               (#'cxc.lower/reject-module-let-shadowing!
+                 [{:node :record :name "R"
+                   :sections [{:node :class-function :name "from"
+                               :params [{:name "SEED" :type nil}]
+                               :body []}]}]
+                 {"SEED" {:node :lit-int :value 42}})
+               nil
+               (catch clojure.lang.ExceptionInfo e e))]
+      (is ex "expected fail-nyi")
+      (is (re-find #"function `from` parameter `SEED` shadows"
+                   (.getMessage ex))))))
+
+(deftest f52-l4-b-noop-when-fn-params-dont-collide
+  (testing "F52 L4-b — a fn whose params don't overlap module-let names passes through cleanly. Common case: methods typically use short names (`self`, `x`, `n`) while module-lets use SCREAMING_SNAKE conventionally, so collisions are rare — but the check needs to be exact (not a heuristic on caps) since Corvid lets users pick either style."
+    (let [tree [{:node :record :name "R"
+                 :sections [{:node :function :name "add"
+                             :params [{:name "x" :type nil}
+                                      {:name "y" :type nil}]
+                             :body []}]}]]
+      (is (= tree
+             (#'cxc.lower/reject-module-let-shadowing!
+              tree {"SEED" {:node :lit-int :value 42}}))))))
