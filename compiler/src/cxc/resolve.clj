@@ -57,6 +57,7 @@
    rewriting.
    "
   (:require [clojure.set]
+            [clojure.string :as str]
             [clojure.walk :as walk]
             [cxc.prelude :as prelude]))
 
@@ -240,6 +241,65 @@
           [table current-module]))
       [{} nil]
       top-nodes))))
+
+;; ---------------------------------------------------------------------------
+;; F56 L1 — resolver-produced mangled names.
+;;
+;; Pure fn: given a symbol-table entry (or plain user-visible name +
+;; explicit module), return the C-safe mangled form the emit layer
+;; should use for identifiers derived from this name.
+;;
+;; Scheme (per F56 plan §5):
+;; - `:prelude` (module in `:std.*`) → `_Cxc_<Name>` (backward-
+;;   compatible with existing FFI hatches like `_Cxc_Duration`).
+;; - `:user` and everything else → `<module>_<name>` with dots →
+;;   underscores (e.g. `user.myapp` module + `Foo` name → `user_myapp_Foo`).
+;; - The `:main` module (single-file / root of src-dir per F51 L1)
+;;   uses the unqualified name so existing programs don't churn on
+;;   symbol names in the emitted .m.
+;;
+;; This is additive scaffolding — Landing 1 only introduces the fn;
+;; Landing 2 migrates emit consumers to call it; Landing 3 deletes
+;; the postwalk + rename-table + collision guard.
+;; ---------------------------------------------------------------------------
+
+(defn mangled-name-for
+  "F56 L1 — return the C-safe mangled identifier for a user-visible
+   `name` declared in `module`. Module conventions:
+   - `:std.*` → `_Cxc_<name>` (prelude backward-compat).
+   - `:main` → `name` unchanged (single-file / root; matches the
+     current post-postwalk shape for user-authored root-level decls
+     that weren't in the rename-table).
+   - anything else → `<module-with-dots-as-underscores>_<name>`.
+
+   Pure fn; no reads from the symbol table. Callers who have an entry
+   should use `mangled-name` (below) which extracts the module for
+   them."
+  [module name]
+  (let [module-str (some-> module clojure.core/name)]
+    (cond
+      (nil? module-str)
+      name
+
+      (str/starts-with? module-str "std.")
+      (str "_Cxc_" name)
+
+      (= module-str "main")
+      name
+
+      :else
+      (str (str/replace module-str "." "_") "_" name))))
+
+(defn mangled-name
+  "F56 L1 — convenience wrapper: look up `user-name` in `table` and
+   apply `mangled-name-for`. Returns the input name verbatim when the
+   table has no entry (e.g. a compiler-synthesized name that isn't a
+   user declaration — the postwalk phase still runs today so most
+   emit sites see already-mangled names)."
+  [table user-name]
+  (if-let [entry (get table user-name)]
+    (mangled-name-for (:module entry) user-name)
+    user-name))
 
 ;; ---------------------------------------------------------------------------
 ;; Parity check — Landing 1 safety net

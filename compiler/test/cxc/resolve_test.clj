@@ -401,3 +401,41 @@
       (is (= (dissoc (find-dur enriched) :resolves-to)
              (find-dur orig))
           "removing :resolves-to from enriched yields the original node"))))
+
+;; ---------------------------------------------------------------------------
+;; F56 L1 — resolver-produced mangled names. Pure fn; additive
+;; scaffolding for L2's emit consumers + L3's postwalk retirement.
+;; ---------------------------------------------------------------------------
+
+(deftest f56-l1-mangled-name-for-prelude
+  (testing "F56 L1 — a declaration in a `:std.*` module mangles to `_Cxc_<Name>`. Backward-compatible with the existing rename-table entries (`Duration` → `_Cxc_Duration`, `Clock` → `_Cxc_Clock`) so FFI hatches that hardcode the mangled name don't break during the L2/L3 migration."
+    (is (= "_Cxc_Duration" (resolve/mangled-name-for :std.time "Duration")))
+    (is (= "_Cxc_Clock"    (resolve/mangled-name-for :std.clock "Clock")))
+    (is (= "_Cxc_Console"  (resolve/mangled-name-for :std.io "Console")))))
+
+(deftest f56-l1-mangled-name-for-main
+  (testing "F56 L1 — a `:main` module declaration passes through unchanged. Single-file / root-of-src-dir programs use unmangled names for user decls, matching what the current postwalk phase leaves alone (rename-table has no entry for arbitrary user names)."
+    (is (= "Bag"   (resolve/mangled-name-for :main "Bag")))
+    (is (= "Point" (resolve/mangled-name-for :main "Point")))
+    (is (= "main"  (resolve/mangled-name-for :main "main")))))
+
+(deftest f56-l1-mangled-name-for-user-module
+  (testing "F56 L1 — a user module non-`:main` non-`:std.*` mangles to `<module-with-dots-as-underscores>_<name>`. Explicit prefix keeps debuggable C-symbol output (per F56 plan §5 Q1 ratification 2026-08-17: hardcode Option A). Dots collapse to underscores so `user.myapp.foo` module becomes `user_myapp_foo` prefix."
+    (is (= "geom_Point"          (resolve/mangled-name-for :geom "Point")))
+    (is (= "user_myapp_Foo"      (resolve/mangled-name-for :user.myapp "Foo")))
+    (is (= "com_example_a_b_Bar" (resolve/mangled-name-for :com.example.a.b "Bar")))))
+
+(deftest f56-l1-mangled-name-for-nil-module-returns-input
+  (testing "F56 L1 — nil module treated as \"no attribution\": return the name unchanged. Guards callers who may pass an entry lacking `:module` (compiler-synthesized names in envs, for instance). Landing 2's emit consumers rely on this fallback so migration doesn't require pre-filtering."
+    (is (= "Foo" (resolve/mangled-name-for nil "Foo")))))
+
+(deftest f56-l1-mangled-name-consults-table
+  (testing "F56 L1 — the two-arity `mangled-name` looks up `user-name` in the symbol table and dispatches to `mangled-name-for` with the entry's `:module`. Returns the input verbatim on table miss (compiler-synthesized names bypass the mangle)."
+    (let [table {"Duration" {:name "Duration" :module :std.time :kind :def-atom}
+                 "Bag"      {:name "Bag"      :module :main      :kind :record}
+                 "Point"    {:name "Point"    :module :geom      :kind :record}}]
+      (is (= "_Cxc_Duration" (resolve/mangled-name table "Duration")))
+      (is (= "Bag"           (resolve/mangled-name table "Bag")))
+      (is (= "geom_Point"    (resolve/mangled-name table "Point")))
+      (is (= "Nowhere"       (resolve/mangled-name table "Nowhere"))
+          "table miss returns input verbatim"))))
