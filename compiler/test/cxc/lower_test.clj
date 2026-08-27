@@ -6158,14 +6158,14 @@ def main:
                        :value {:node :lit-float :value 3.14}}
                       {:kind :named :name "other"
                        :value {:node :ident :name "UNTOUCHED"}}]}]
-             (#'cxc.lower/substitute-module-let-refs tree ml))))))
+             (#'cxc.lower/substitute-module-let-refs tree ml #{}))))))
 
 (deftest f52-l4-substitute-noop-on-empty-map
   (testing "F52 L4 — substitution short-circuits on an empty module-let map, returning the input unchanged. Guards the common case (programs with no `:module-let` decls) from paying for a full postwalk."
     (let [tree [{:node :call :callee {:node :ident :name "SEED"}
                  :args []}]]
       (is (identical? tree
-                      (#'cxc.lower/substitute-module-let-refs tree {}))))))
+                      (#'cxc.lower/substitute-module-let-refs tree {} #{}))))))
 
 (deftest f52-l4-b-reject-let-stmt-shadowing
   (testing "F52 L4-b — a local `let NAME = ...` inside a fn body when NAME is a module-let fires a targeted fail-nyi. Runs BEFORE `substitute-module-let-refs` so the diagnostic mentions the shadowing (not the malformed `let 5 = 5` that naive substitution would produce). Users see: `local \\`let SEED\\` shadows the module-let of the same name — rename one of the two.`"
@@ -6275,6 +6275,63 @@ def main:
   (testing "F52 L4-d — shapes we don't emit as static const today (`:lit-nil`, `:lit-string`) return nil. Callers of `module-let-emit-entries` `keep` non-nil results; unsupported shapes disappear from the emit-side declarations while still folding at ref sites. Strings would need `static NSString * const` and its own initialization pattern — deferred until a real user program needs it."
     (is (nil? (#'cxc.lower/module-let-c-type-and-literal {:node :lit-nil})))
     (is (nil? (#'cxc.lower/module-let-c-type-and-literal {:node :lit-string :value "hi"})))))
+
+(deftest f52-l4-c-imported-module-idents-bare-import
+  (testing "F52 L4-c — `import foo` binds `foo` in the current scope. `imported-module-idents` returns `#{\"foo\"}`. Multi-segment paths use the last component per §7.6: `import foo.bar` binds `bar`."
+    (is (= #{"foo"}
+           (#'cxc.lower/imported-module-idents
+             [{:node :import :from "foo" :as nil}])))
+    (is (= #{"bar"}
+           (#'cxc.lower/imported-module-idents
+             [{:node :import :from "foo.bar" :as nil}])))))
+
+(deftest f52-l4-c-imported-module-idents-aliased-import
+  (testing "F52 L4-c — `import foo.bar as baz` binds `baz`. The `:as` slot takes precedence over the `:from` leaf when both are present. Users pick aliases to disambiguate; the pre-lower pass respects the choice."
+    (is (= #{"baz"}
+           (#'cxc.lower/imported-module-idents
+             [{:node :import :from "foo.bar" :as "baz"}])))))
+
+(deftest f52-l4-c-imported-module-idents-skips-from-import
+  (testing "F52 L4-c — `:from-import` nodes bring individual names into scope directly, not a module ident. Skipped here — those names reach the module-let substitution as bare idents via the ident branch, not the `:dot` branch."
+    (is (= #{}
+           (#'cxc.lower/imported-module-idents
+             [{:node :from-import :from "foo" :names [{:name "PI"}]}])))
+    (is (= #{"baz"}
+           (#'cxc.lower/imported-module-idents
+             [{:node :from-import :from "foo" :names [{:name "PI"}]}
+              {:node :import :from "bar" :as "baz"}])))))
+
+(deftest f52-l4-c-substitute-dot-access-on-imported-module
+  (testing "F52 L4-c — `foo.PI` where `foo` is an imported module and `PI` is a module-let rewrites to the value node. Under flat namespace + duplicate rejection, this makes bare `PI` and qualified `foo.PI` interchangeable within a file that imports `foo` — matching spec §7.6."
+    (let [ml   {"PI" {:node :lit-float :value 3.14}}
+          imp  #{"foo"}
+          tree [{:node :call :callee {:node :ident :name "print"}
+                 :args [{:kind :positional
+                         :value {:node :dot
+                                 :target {:node :ident :name "foo"}
+                                 :field "PI"}}]}]]
+      (is (= [{:node :call :callee {:node :ident :name "print"}
+               :args [{:kind :positional
+                       :value {:node :lit-float :value 3.14}}]}]
+             (#'cxc.lower/substitute-module-let-refs tree ml imp))))))
+
+(deftest f52-l4-c-substitute-dot-access-non-imported-target-untouched
+  (testing "F52 L4-c — `f.PI` where `f` is NOT in the imported-modules set (e.g. a local `f: Foo` instance) passes through — the substitution needs the target to be an imported module to avoid false rewrites. Prevents naive rewriting of `<Foo-instance>.PI` field access when a module-let named `PI` exists elsewhere in the program."
+    (let [ml   {"PI" {:node :lit-float :value 3.14}}
+          imp  #{"foo"}                              ; f isn't imported
+          tree [{:node :dot :target {:node :ident :name "f"}
+                 :field "PI"}]]
+      (is (= tree
+             (#'cxc.lower/substitute-module-let-refs tree ml imp))))))
+
+(deftest f52-l4-c-substitute-dot-access-non-module-let-field-untouched
+  (testing "F52 L4-c — `foo.OTHER` where `foo` IS imported but `OTHER` is not a module-let passes through. The check is symmetric on both sides — both target-name membership in imported-modules AND field-name membership in module-lets must hold."
+    (let [ml   {"PI" {:node :lit-float :value 3.14}}
+          imp  #{"foo"}
+          tree [{:node :dot :target {:node :ident :name "foo"}
+                 :field "OTHER"}]]
+      (is (= tree
+             (#'cxc.lower/substitute-module-let-refs tree ml imp))))))
 
 (deftest f52-l4-d-emit-entries-normalizes-map
   (testing "F52 L4-d — `module-let-emit-entries` converts `{name → value-node}` into a vec of `{:name :c-type :c-literal}` entries. Unsupported shapes drop out via `keep`; ordering is unspecified at this layer (emit sorts by name for stable output). All entries carry the three keys emit's declaration builder consumes."

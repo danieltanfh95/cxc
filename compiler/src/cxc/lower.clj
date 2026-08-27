@@ -11472,20 +11472,64 @@
           {}
           top-nodes))
 
+(defn- imported-module-idents
+  "F52 L4-c — collect the set of ident-names the program's `:import`
+   nodes bind. Two shapes:
+   - `import foo` / `import foo.bar` → the leaf (`foo` or `bar`)
+     becomes the local binding — matches how `parse-import` shapes
+     `:from` (dotted path); use the last component so `import
+     foo.bar` binds `bar` in current scope, matching spec §7.6.
+   - `import foo as baz` → `:as` provides the local binding.
+
+   `:from-import` nodes bring individual names directly and don't
+   introduce a module ident, so they're skipped here — those names
+   are already reachable as bare idents (`substitute-module-let-refs`
+   catches them via the module-let map).
+
+   Program-wide flat scan; per-file tracking waits until qualified-
+   name resolution needs it."
+  [top-nodes]
+  (into #{}
+        (comp (filter #(= :import (:node %)))
+              (map (fn [n]
+                     (or (:as n)
+                         (last (clojure.string/split (:from n) #"\."))))))
+        top-nodes))
+
 (defn- substitute-module-let-refs
-  "F52 L4 — postwalk `nodes` replacing every `{:node :ident :name X}`
-   with `(get ml-map X)` when X is a module-let name. Non-matching
-   idents pass through. Non-map / non-`:ident` nodes pass through."
-  [nodes ml-map]
+  "F52 L4 — postwalk `nodes` replacing module-let references with the
+   bound value node. Two forms:
+
+   1. Bare `{:node :ident :name X}` where X is a module-let name →
+      substitute with the value node (L4-a).
+   2. `{:node :dot :target {:node :ident :name X} :field NAME}` where
+      NAME is a module-let AND X is an imported module ident (per
+      `imported-module-idents`) → substitute with the value node
+      (L4-c). Under flat namespace + duplicate rejection, this makes
+      `foo.PI` and bare `PI` interchangeable within a file that
+      imports `foo` — matching spec §7.6 access via imported module.
+
+   Non-matching nodes pass through. Empty map short-circuits."
+  [nodes ml-map imported-modules]
   (if (empty? ml-map)
     nodes
     (walk/postwalk
       (fn [x]
-        (if (and (map? x)
-                 (= :ident (:node x))
-                 (contains? ml-map (:name x)))
+        (cond
+          (and (map? x)
+               (= :ident (:node x))
+               (contains? ml-map (:name x)))
           (get ml-map (:name x))
-          x))
+
+          (and (map? x)
+               (= :dot (:node x))
+               (map? (:target x))
+               (= :ident (:node (:target x)))
+               (contains? imported-modules (:name (:target x)))
+               (contains? ml-map (:field x)))
+          (get ml-map (:field x))
+
+          :else x))
       nodes)))
 
 (defn- module-let-c-type-and-literal
@@ -11596,12 +11640,14 @@
         ;; with the constant. Everything below sees a canonical AST
         ;; with literals in place of module-let refs — no new env slot,
         ;; no runtime state, no per-callsite lookup.
-        module-lets (extract-module-lets top-nodes)
-        top-nodes   (->> top-nodes
-                         (remove #(= :module-let (:node %)))
-                         vec)
-        _           (reject-module-let-shadowing! top-nodes module-lets)
-        top-nodes   (substitute-module-let-refs top-nodes module-lets)
+        module-lets       (extract-module-lets top-nodes)
+        imported-modules  (imported-module-idents top-nodes)
+        top-nodes         (->> top-nodes
+                               (remove #(= :module-let (:node %)))
+                               vec)
+        _                 (reject-module-let-shadowing! top-nodes module-lets)
+        top-nodes         (substitute-module-let-refs top-nodes module-lets
+                                                       imported-modules)
         main-atom  (first (filter main-def-atom? top-nodes))
         _          (when-not main-atom
                      (throw (ex-info "no `def main` entry point found at top level"
