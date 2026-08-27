@@ -212,9 +212,11 @@
    than an expected case.
 
    Provenance: a declaration whose name appears in the prelude
-   name→module index gets that module tag; everything else is
-   attributed to `:user`. When per-file module identification lands
-   (F52), the `:user` fallback splits per input file."
+   name→module index gets that module tag; otherwise the current
+   `:module` marker (last seen in the walk) drives the attribution.
+   Pre-any-marker declarations fall back to `:user` (single-file /
+   pre-F51 L1 convention); the multi-file build's per-file `:module`
+   markers switch this to the file's derived module."
   [top-nodes]
   (let [prelude-provenance (prelude-name->module)]
     (first
