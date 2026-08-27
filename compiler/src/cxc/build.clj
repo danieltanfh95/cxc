@@ -763,14 +763,16 @@
 (defn compile-directory-to-file
   "Compile every `*.cxc` file under `src-dir` as one program. Files
    are read in sorted order (stable across runs), imports are
-   validated against the stdlib manifest, module/from-import lines
-   are stripped from each source (all decls concatenate into one
-   flat namespace at this Layer 6 landing), and the combined source
-   feeds through the single-file pipeline.
+   validated against the stdlib manifest, per-file ASTs are enriched
+   with `:resolves-to` provenance via `resolve/resolve-references`
+   (F51 L3b(b.ii)-3), and the assembled top-node stream (synthetic
+   `:module` markers per file + prepended prelude AST) feeds directly
+   to `compile-parsed-to-file` — no source-level concat, no reparse.
 
-   Real per-module name scoping (a name-resolution pass that respects
-   module boundaries) is a future Layer 6 followon — the entrypoint
-   here proves the multi-file build shape and validates imports.
+   Cross-module scoping surfaces as WARN via
+   `warn-unscoped-type-refs!` today; b.ii-5e retires
+   `lower/decl-lookup`'s short-name fallback and turns the check into
+   a hard error.
 
    F55 Landing 3: `opts` map with `:target` selects the platform
    prelude; passed through to `compile-source-to-file`.
