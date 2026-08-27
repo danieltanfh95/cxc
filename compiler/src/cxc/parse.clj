@@ -7,9 +7,12 @@
    functions take [tokens pos] and return [node new-pos] or throw ex-info
    on parse error.
 
-   Coverage target: parse design/examples/game-toys.cxc end-to-end.
-   Current coverage: module header, from-import, record, method signatures
-   and bodies (partial — expressions still limited)."
+   Coverage: full v1.0 surface — records, def-atom actors, enums, F9
+   extensions, F16/F18 expression flow, F31-F35 concurrent-actor
+   semantics, F52 imports and module let-bindings, F70 messaging.
+   Retired forms (`module` header, `switch`, `function`, brace-payload,
+   `use:` section, binary postfix `|>`) fire targeted rejection
+   diagnostics."
   (:require [clojure.string :as str]
             [clojure.walk :as walk]
             [cxc.lex :as lex]
