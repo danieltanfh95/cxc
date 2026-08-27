@@ -418,9 +418,11 @@
 ;; `def Bar:` collides). `import X` binds `X`; `import X as Y` binds
 ;; `Y`. Fix-it: drop one, or add `as` to the import.
 ;;
-;; Full namespace-scoped resolution (L3b) will retire the flat-
-;; namespace concatenation and add unresolved-name / ambiguous-import
-;; diagnostics on top of this collision guard.
+;; Full namespace-scoped resolution (L3b) retired the flat-namespace
+;; source concatenation (b.ii-3/4). Unresolved-name / ambiguous-import
+;; diagnostics still WARN today via `warn-unscoped-type-refs!` and
+;; harden into errors at b.ii-5e when the short-name fallback in
+;; `lower/decl-lookup` retires.
 
 (defn- import-local-bindings
   "Return [{:name <local-binding> :source <surface>} ...] for a parsed
