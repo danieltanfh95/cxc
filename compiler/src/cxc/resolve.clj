@@ -289,9 +289,11 @@
 (defn mangled-name
   "F56 L1 — convenience wrapper: look up `user-name` in `table` and
    apply `mangled-name-for`. Returns the input name verbatim when the
-   table has no entry (e.g. a compiler-synthesized name that isn't a
-   user declaration — the postwalk phase still runs today so most
-   emit sites see already-mangled names)."
+   table has no entry (compiler-synthesized names that aren't user
+   declarations). Production emit sites go through
+   `cxc.lower/->c-safe`, which consults an ambient `*decl->module*`
+   map instead of a table arg; this fn stays for convenience and
+   external tooling that already holds a symbol-table."
   [table user-name]
   (if-let [entry (get table user-name)]
     (mangled-name-for (:module entry) user-name)
