@@ -537,9 +537,10 @@
    `module-scoped-ref-names` for the walker's inclusion rules.
 
    Sub-landing (a)'s `build` wiring turns each entry into a WARN
-   diagnostic so users can add the missing import before the L3b
-   flip makes the check a hard error. Empty result means every
-   module-scope reference would still resolve after the shim retires.
+   diagnostic so users can add the missing import before b.ii-5e
+   retires the short-name fallback in `lower/decl-lookup` and makes
+   the check a hard error. Empty result means every module-scope
+   reference would still resolve after the fallback retires.
 
    `:declared-in` (added in sub-landing (b.i) per D2 ratification) is
    a vector of module keywords where the unscoped name IS declared
@@ -574,10 +575,10 @@
 ;; Enrichment pass that walks a file's parsed AST and, for every
 ;; reference node the L3b(a) walker recognizes, adds a `:resolves-to
 ;; <module-kw>` attribute pointing at the module that OWNS the name.
-;; Pure additive metadata — existing consumers ignore the new
-;; attribute. Downstream consumption lands in a follow-on micro-
-;; landing that switches lower's env lookups to prefer the resolved
-;; module when the reference carries `:resolves-to`.
+;; b.ii-5a-c consume the hint in `lower/decl-lookup` and
+;; `lower/resolve-decl-lookup`, so path (1) fires whenever the
+;; enriched metadata reaches lower (guaranteed after b.ii-3 multi-file
+;; + b.ii-5c single-file).
 ;;
 ;; Resolution rules (mirrors `build-module-scope-index` order):
 ;;   1. Prelude name → module from `prelude-name->module`.
@@ -586,9 +587,9 @@
 ;;      `import X` where X == name → the imported module.
 ;;   4. Otherwise → nil (unresolved; L3b(a) WARN territory).
 ;;
-;; Ambiguity (name imported via more than one path) → nil in this
-;; micro-landing; a future landing surfaces this as a diagnostic
-;; when the consumer needs to disambiguate.
+;; Ambiguity (name imported via more than one path) → nil today; a
+;; future landing surfaces this as a diagnostic when the consumer
+;; needs to disambiguate.
 ;; ---------------------------------------------------------------------------
 
 (defn- import-source-map
