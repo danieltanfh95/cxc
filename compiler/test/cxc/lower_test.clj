@@ -5964,6 +5964,88 @@ def main:
                   info "Bag" "As" :bytes))))))
 
 ;; ---------------------------------------------------------------------------
+;; F15 L4 Sub-2 — updated From<T> shape uses `{:apply "DecodeOutcome"
+;; :inner :Self}` to reflect F37 L6's canonical bytes contract.
+;; `protocol-req-matches-method?` resolves this marker at instantiation
+;; T=:bytes to `_Cxc_DecodeOutcome_<Rec>`. `seed-class-fn-index-from-
+;; f37-decode` populates the record env's `:class-fn-index` for every
+;; decode-eligible record so the structural check succeeds.
+;; ---------------------------------------------------------------------------
+
+(defn- f15-l4-class-fn-entry
+  "Test helper: shape a class-function method-index entry (no self
+   receiver; class fns don't take a self param)."
+  [_class-name method-name params return-cxc-name]
+  {:name          method-name
+   :params        (mapv (fn [p] (assoc p :is-self? false :default nil)) params)
+   :cxc-return-ty return-cxc-name})
+
+(deftest f15-l4-sub2-from-t-shape-uses-decode-outcome-marker
+  (testing "F15 L4 Sub-2 — the `From<T>` shape's `:returns` is now `{:apply \"DecodeOutcome\" :inner :Self}` rather than plain `:Self`. This reflects F37 L6's canonical-bytes contract where the class function `from(source: Bytes)` returns a fallible `DecodeOutcome<Self>` — not the raw `Self`. Sub-1 committed to `:Self` as a placeholder before spec-reconciliation; Sub-2 adopts the F37 shape so the L6 synthesis is a natural conformer."
+    (let [from-shape (get-in (deref #'cxc.lower/compiler-known-protocol-shapes)
+                             ["From" :class-methods "from"])]
+      (is (= {:apply "DecodeOutcome" :inner :Self}
+             (:returns from-shape))))))
+
+(deftest f15-l4-sub2-satisfies-from-t-with-seeded-class-fn-index
+  (testing "F15 L4 Sub-2 — a record with a `:class-fn-index` entry matching the F37 L6 shape (params `[{name: \"source\" cxc-ty: \"Bytes\"}]`, return-type `_Cxc_DecodeOutcome_<Rec>`) structurally satisfies `From<Bytes>`. `protocol-req-matches-method?` resolves the `{:apply \"DecodeOutcome\" :inner :Self}` return marker to `_Cxc_DecodeOutcome_Bag` at self=Bag, matching the entry's `:cxc-return-ty`."
+    (let [info (-> (f15-l4-record-info [])
+                   (assoc :class-fn-index
+                          {"from" (f15-l4-class-fn-entry
+                                    "Bag" "from"
+                                    [{:name "source" :cxc-ty "Bytes"}]
+                                    "_Cxc_DecodeOutcome_Bag")}))]
+      (is (true? (#'cxc.lower/structurally-satisfies-protocol?
+                   info "Bag" "From" :bytes))))))
+
+(deftest f15-l4-sub2-does-not-satisfy-from-when-return-type-differs
+  (testing "F15 L4 Sub-2 — a class-function `from(source: Bytes) -> Bag` (plain Self, not `DecodeOutcome<Bag>`) does NOT satisfy `From<Bytes>`. `protocol-req-matches-method?` resolves `{:apply \"DecodeOutcome\" :inner :Self}` to `_Cxc_DecodeOutcome_Bag`, which mismatches the entry's `\"Bag\"` return type. Prevents non-fallible `from` shapes from silently conforming."
+    (let [info (-> (f15-l4-record-info [])
+                   (assoc :class-fn-index
+                          {"from" (f15-l4-class-fn-entry
+                                    "Bag" "from"
+                                    [{:name "source" :cxc-ty "Bytes"}]
+                                    "Bag")}))]
+      (is (false? (boolean (#'cxc.lower/structurally-satisfies-protocol?
+                             info "Bag" "From" :bytes)))))))
+
+(deftest f15-l4-sub2-seed-populates-decode-eligible-records
+  (testing "F15 L4 Sub-2 — `seed-class-fn-index-from-f37-decode` walks the record env, checks `record-decode-eligible?` per record, and stamps a synthetic `from` entry on eligible records' `:class-fn-index`. The entry's `:cxc-return-ty` matches `decode-outcome-struct-name` so the structural check succeeds at `T=:bytes`."
+    ;; Programmatic construction of a minimal decode-eligible record
+    ;; env — every field must pass `f37-decode-eligible-field?`. Bool
+    ;; via primitive path is the simplest eligible shape.
+    (let [record-env {"P" {:name         "P"
+                           :fields       [{:name "n" :cxc-ty "Int"
+                                           :nonnil? true}]
+                           :field-index  {}
+                           :methods      []
+                           :method-index {}
+                           :variant      :struct}}
+          enum-env   {}
+          seeded     (#'cxc.lower/seed-class-fn-index-from-f37-decode
+                       record-env enum-env)
+          from       (get-in seeded ["P" :class-fn-index "from"])]
+      (is (some? from) "eligible record gets a `from` entry")
+      (is (= "_Cxc_DecodeOutcome_P" (:cxc-return-ty from)))
+      (is (= "source" (:name (first (:params from)))))
+      (is (= "Bytes"  (:cxc-ty (first (:params from))))))))
+
+(deftest f15-l4-sub2-seed-skips-non-eligible-records
+  (testing "F15 L4 Sub-2 — a record with a field that fails `f37-decode-eligible-field?` (e.g. `Any`) doesn't get seeded. `structurally-satisfies-protocol? info \"P\" \"From\" :bytes` remains false on non-eligible records, matching F37 L6's actual synthesis coverage."
+    (let [record-env {"P" {:name         "P"
+                           :fields       [{:name "thing" :cxc-ty "Any"
+                                           :nonnil? true}]
+                           :field-index  {}
+                           :methods      []
+                           :method-index {}
+                           :variant      :struct}}
+          enum-env   {}
+          seeded     (#'cxc.lower/seed-class-fn-index-from-f37-decode
+                       record-env enum-env)]
+      (is (nil? (get-in seeded ["P" :class-fn-index "from"]))
+          "non-eligible record has no `from` seed"))))
+
+;; ---------------------------------------------------------------------------
 ;; F51 L3b(b.ii)-2 — module attribution + qualified lookup primitive.
 ;; Scaffolding: `attribute-modules-to-decls` builds `{name → module-kw}`
 ;; by walking top-nodes and tracking the current module via `:module`
