@@ -89,6 +89,22 @@
 
 (def ^:dynamic ^:private *decl->module* nil)
 
+;; F51 L3b(b.ii)-5b (2026-08-27) — parallel ambient. `*module-map*` is
+;; `{module-kw → #{decl-name-string ...}}`, produced by
+;; `module-map-from-attribution`. Bound at the same site as
+;; `*decl->module*` so any downstream `resolve-decl-lookup` call whose
+;; caller doesn't have `ctx` in scope can still consult the module
+;; index without threading it explicitly. Retire alongside
+;; `*decl->module*` at b.ii-5e (or a followon) when consumer wiring
+;; consolidates to ctx-threading.
+
+(def ^:dynamic ^:private *module-map* nil)
+
+;; Forward decl — the primitive lives further down alongside the other
+;; F51 b.ii-2 helpers; `cxc-type->c` (defined before it) needs the
+;; symbol resolvable at compile time.
+(declare resolve-decl-lookup)
+
 (defn- ->c-safe
   "F56 L2+L3 — mangle a user-visible declared name to its C-safe
    identifier via the ambient `*decl->module*`. Returns `nm` verbatim
@@ -541,13 +557,17 @@
     (let [inner (:inner ty-node)]
       (case (:node inner)
         :type-ref
-        (let [nm (:name inner)]
+        (let [nm  (:name inner)
+              hit (:resolves-to inner)]
           (cond
-            (contains? atom-env nm)         (str (->c-safe nm) " *")
+            (resolve-decl-lookup atom-env *module-map* nm hit)
+            (str (->c-safe nm) " *")
             (= "String" nm)                 "NSString *"
             (contains? primitive-c-type nm) (primitive-c-type nm)
-            (contains? record-env nm)       (->c-safe nm)
-            (contains? enum-env nm)         (->c-safe nm)
+            (resolve-decl-lookup record-env *module-map* nm hit)
+            (->c-safe nm)
+            (resolve-decl-lookup enum-env *module-map* nm hit)
+            (->c-safe nm)
             :else
             ;; Bootstrap: build-atom-env resolves ctor-param / data-
             ;; field types with record-env={} because records haven't
@@ -570,12 +590,16 @@
     ;; landing. Params + returns get Optional-boxed in a follow-on
     ;; sub-landing that pairs with call-site wrapping (L5b-ii-b* /
     ;; L5b-ii-c).
-    (let [nm (:name ty-node)]
+    (let [nm  (:name ty-node)
+          hit (:resolves-to ty-node)]
       (cond
         (contains? primitive-c-type nm) (primitive-c-type nm)
-        (contains? record-env nm)       (->c-safe nm)
-        (contains? atom-env nm)         (str (->c-safe nm) " *")
-        (contains? enum-env nm)         (->c-safe nm)
+        (resolve-decl-lookup record-env *module-map* nm hit)
+        (->c-safe nm)
+        (resolve-decl-lookup atom-env *module-map* nm hit)
+        (str (->c-safe nm) " *")
+        (resolve-decl-lookup enum-env *module-map* nm hit)
+        (->c-safe nm)
         ;; L-panic-cap (2026-08-26) — phantom capability atom types
         ;; render as atom pointers (never actually referenced at
         ;; runtime; the capability is compile-time only).
@@ -11764,9 +11788,13 @@
   [top-nodes]
   ;; F56 L2+L3 — bind `*decl->module*` so every `->c-safe` call site
   ;; (cxc-type->c, synth-reason-box, class-name-for-atom, ...)
-  ;; consults the correct mangling table. Computed here from the raw
-  ;; input top-nodes.
-  (binding [*decl->module* (attribute-modules-to-decls top-nodes)]
+  ;; consults the correct mangling table. F51 L3b(b.ii)-5b — also bind
+  ;; `*module-map*` (reverse index) so ambient-consulting sites can
+  ;; call `resolve-decl-lookup` without ctx-threading. Both computed
+  ;; here from the raw input top-nodes.
+  (let [d->m (attribute-modules-to-decls top-nodes)]
+   (binding [*decl->module* d->m
+             *module-map*   (module-map-from-attribution d->m)]
    (let [;; F52 L4 — pre-lower constant folding of top-level `let NAME =
         ;; <const-literal>` bindings. Extract every `:module-let` decl
         ;; into a name→value-node map, drop the decls from `top-nodes`,
@@ -12286,4 +12314,4 @@
                                            main-body   ; return 0 unreachable after dispatch_main
                                            (conj main-body
                                                  {:node :return :value {:node :int :value 0}}))
-                           :autorelease? needs-foundation?}})))
+                           :autorelease? needs-foundation?}}))))
