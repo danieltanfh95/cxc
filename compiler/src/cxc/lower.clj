@@ -3077,7 +3077,8 @@
              ;; list onto atom-env so `panic(...)` at a call site can
              ;; check that the enclosing atom declared
              ;; `use panic: SystemPanic`. Cap type-names are captured
-             ;; post-rename (matches the atom-env keys).
+             ;; as user-visible strings (F56 L2+L3 retired the postwalk
+             ;; — atom-env is now keyed by user-visible names too).
              raw-use-caps  (mapv (fn [c] {:name (:name c)
                                           :type-name (base-type-name (:type c))})
                                  use-caps)
@@ -8044,8 +8045,9 @@
 ;;
 ;; The wrapper is compile-time synthesis only; users never write it
 ;; and can't reference `_Cxc_R_*` names directly (leading underscore
-;; is reserved). Naming uses the post-rename record name so prelude
-;; records get the mangled prefix uniformly (`_Cxc_R__Cxc_Position`).
+;; is reserved). Naming uses the C-safe record name (via `->c-safe`,
+;; F56 L2+L3) so prelude records get the mangled prefix uniformly
+;; (`_Cxc_R__Cxc_Position`).
 ;; Later tree-shaking (A/7-adjacent) can restrict synthesis to records
 ;; that actually appear in a `|: as T` clause; for A/2.a we emit
 ;; unconditionally so the machinery is available whenever a receiver

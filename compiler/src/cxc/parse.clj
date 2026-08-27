@@ -1618,13 +1618,6 @@
 ;;   Section body content differs per section — dispatch here.
 ;; ---------------------------------------------------------------------------
 
-(defn- section-header?
-  "True if pos looks like `<kw|ident>:` where the keyword names a section."
-  [tokens pos section-names]
-  (and (or (at? tokens pos :kw) (at? tokens pos :ident))
-       (section-names (t-value (peek-tok tokens pos)))
-       (at? tokens (inc pos) :punct ":")))
-
 (defn- parse-use-line
   "Parse one direct capability declaration at def-body position:
      use cap: SomeCapability

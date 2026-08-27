@@ -361,23 +361,20 @@
 ;; F51 L3b sub-landing (a) — per-module scope index + unscoped type-ref
 ;; discovery.
 ;;
-;; The flat-namespace concatenation shim (see `build/strip-module-and-
-;; import-lines`) resolves every user reference against one global name
-;; pool. Under L3b's strict-scoping rules a name only resolves via:
+;; Under L3b's strict-scoping rules a name resolves via:
 ;;   1. Declarations in the same module.
 ;;   2. Names imported into the module via `from X import a` / `import X`.
 ;;   3. Prelude names (always visible; no import required — spec §7.6
 ;;      resolution precedence).
-;; A reference outside all three would fail under L3b even though the
-;; shim currently accepts it via flat concatenation.
+;; A reference outside all three would fail under strict L3b.
 ;;
 ;; This sub-landing (a) ships the scope index + a walker that surfaces
-;; those references. The shim stays in place; the walker's output is
-;; consumed as a WARN diagnostic in `build/compile-directory-to-file` so
-;; users can migrate proactively before sub-landing (b) retires the shim.
-;; Nothing else consumes the index yet — sub-landing (b) is where the
-;; resolver rewrites bare identifiers to qualified form and lower's env
-;; lookups migrate to the resolved names.
+;; unscoped references. Consumed as a WARN diagnostic in
+;; `build/compile-directory-to-file` so users can migrate proactively
+;; before b.ii-5e retires the short-name fallback path in
+;; `lower/decl-lookup`. b.ii-5a-c wired lower's env lookups to consume
+;; `:resolves-to` (see `resolve-references` below); b.ii-5e retires the
+;; remaining short-name fallback.
 ;; ---------------------------------------------------------------------------
 
 (def builtin-type-names
@@ -700,9 +697,10 @@
 (defn resolve-references
   "Apply `resolve-references-in-file` to every entry in
    `files-with-nodes`. Returns the same shape with enriched nodes.
-   Pure additive pass; safe to run alongside the existing
-   flat-namespace concatenation shim (downstream lower / emit
-   ignore the `:resolves-to` attribute)."
+   Pure additive pass — attaches `:resolves-to <module-kw>` on
+   reference nodes. Consumed by `lower/decl-lookup` (b.ii-5a-c) as
+   the strict hint; short-name fallback still runs when no hint is
+   present (retirement in b.ii-5e)."
   [files-with-nodes]
   (let [own-decls-per-module
         (reduce (fn [acc {:keys [module nodes]}]
