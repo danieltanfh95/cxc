@@ -8280,11 +8280,22 @@
        (enum-eligible-for-as-bytes-synthesis?
         (get enum-env (:cxc-ty f)) record-env)))
 
+(defn- f37-optional-value-only-enum-field?
+  "F37 L6 Optional-value-only-enum extension (2026-08-27) — a bare-T
+   value-typed field whose inner type is a value-only enum (no payload
+   cases). Encoded as `UInt8` presence byte + discriminator bytes when
+   present. Discriminator width follows the case-count rule shared with
+   value-only-enum encode/decode (`f37-enum-discriminator-width`)."
+  [f enum-env]
+  (and (:optional? f)
+       (contains? enum-env (:cxc-ty f))
+       (not (get-in enum-env [(:cxc-ty f) :tagged?]))))
+
 (defn- f37-bytes-encodable-field?
   "F37 Landings 2+3+4+5 + F39 L9 — union of the shipped eligibility
    checks. Any field for which the encoder function has a synthesis
    path. Nested-record + enum fields require env access; 3-arity form
-   adds the enum arm."
+   adds the enum + Optional-value-only-enum arms."
   ([f]
    (or (f37-primitive-byte-field? f)
        (f37-string-byte-field? f)
@@ -8301,7 +8312,8 @@
        (f37-nested-record-field? f record-env)
        (f37-optional-primitive-field? f)
        (f37-optional-nested-record-field? f record-env)
-       (f37-enum-field? f enum-env record-env))))
+       (f37-enum-field? f enum-env record-env)
+       (f37-optional-value-only-enum-field? f enum-env))))
 
 (defn- f37-primitive-value-encode-src
   "Return the C-statement string encoding a primitive value bound at
@@ -8358,6 +8370,11 @@
       ;; `.present` (uint8) + `.value` (raw T). Per §3.10.10:
       ;;   0x00 → absent, no payload bytes
       ;;   0x01 → present, followed by T's canonical bytes
+      ;;
+      ;; Inner-T dispatch order: nested-record → primitive → value-only
+      ;; enum (2026-08-27 extension). Tagged-enum Optional inner is a
+      ;; follow-on landing; unmatched cxc-ty at v1.0 raises the outer
+      ;; encoder's fail-nyi via `record-eligible-for-as-bytes-synthesis?`.
       (let [pres-src (str "uint8_t __p = " fld ".present ? 0x01 : 0x00;"
                           " [__d appendBytes:&__p length:1];")
             val-src  (cond
@@ -8367,7 +8384,12 @@
 
                        (contains? f37-primitive-byte-widths cxc-ty)
                        (f37-primitive-value-encode-src cxc-ty
-                                                       (str fld ".value")))]
+                                                       (str fld ".value"))
+
+                       (and (contains? enum-env cxc-ty)
+                            (not (get-in enum-env [cxc-ty :tagged?])))
+                       (str "NSData *__nd = " cxc-ty "_cxc_as_bytes("
+                            fld ".value); [__d appendData:__nd];"))]
         (str "    {\n"
              "        " pres-src "\n"
              "        if (" fld ".present) { " val-src " }\n"
@@ -8759,7 +8781,8 @@
 
 (declare f37-value-only-enum-decode-field?
          f37-optional-nested-record-decode-field?
-         f37-tagged-enum-decode-field?)
+         f37-tagged-enum-decode-field?
+         f37-optional-value-only-enum-decode-field?)
 
 (defn- f37-decode-eligible-field?
   "F37 L6 field-level eligibility. Primitive (Bool / sized-int / Int /
@@ -8790,7 +8813,8 @@
        (f37-nested-record-decode-field? f record-env)
        (f37-optional-nested-record-decode-field? f record-env)
        (f37-value-only-enum-decode-field? f enum-env)
-       (f37-tagged-enum-decode-field? f enum-env))))
+       (f37-tagged-enum-decode-field? f enum-env)
+       (f37-optional-value-only-enum-decode-field? f enum-env))))
 
 (defn- record-eligible-for-from-bytes-synthesis?
   "F37 L6 eligibility: every field must be decode-eligible. Coverage
@@ -9118,6 +9142,68 @@
        (contains? enum-env (:cxc-ty f))
        (not (get-in enum-env [(:cxc-ty f) :tagged?]))))
 
+(defn- f37-optional-value-only-enum-decode-field?
+  "F37 L6 Optional-value-only-enum extension (2026-08-27) — bare-T
+   value-typed field whose inner is a value-only enum. Wire format:
+   UInt8 presence byte + (when present) discriminator bytes per the
+   width dictated by the case count. Tagged-enum inner is a follow-on
+   sub-landing."
+  [f enum-env]
+  (and (:optional? f)
+       (contains? enum-env (:cxc-ty f))
+       (not (get-in enum-env [(:cxc-ty f) :tagged?]))))
+
+(defn- f37-optional-value-only-enum-field-decode-c-src
+  "F37 L6 Optional-value-only-enum extension — decode a bare-T value-
+   typed field whose inner is a value-only enum. Presence byte with
+   validity check; on present, discriminator read + range check + cast
+   into `_Cxc_Optional_<Enum>.value`. Inlines the value-only-enum
+   decode shape rather than dispatching to a synthesized enum decoder
+   (F37 L6 doesn't synthesize `<Enum>_cxc_from_bytes` today — enum
+   decode ships as inline field-level machinery)."
+  [record-name f enum-env]
+  (let [fname   (:name f)
+        cxc-ty  (:cxc-ty f)
+        info    (get enum-env cxc-ty)
+        entries (:case-entries info)
+        n       (count entries)
+        width   (f37-enum-discriminator-width n)
+        bind    (str "__" fname "_val")
+        raw     (str "__" fname "_disc")
+        invalid (decode-invalid-fn-name record-name)
+        opt-ty  (optional-type-name cxc-ty)
+        disc-read
+        (case width
+          1 (str "        uint8_t " raw " = __bytes[__off];\n"
+                 "        __off += 1;")
+          2 (str "        uint16_t " raw "_be;\n"
+                 "        memcpy(&" raw "_be, __bytes + __off, 2);\n"
+                 "        uint16_t " raw " = OSSwapBigToHostInt16(" raw "_be);\n"
+                 "        __off += 2;")
+          4 (str "        uint32_t " raw "_be;\n"
+                 "        memcpy(&" raw "_be, __bytes + __off, 4);\n"
+                 "        uint32_t " raw " = OSSwapBigToHostInt32(" raw "_be);\n"
+                 "        __off += 4;"))]
+    (str "    if (__len < __off + 1) return " invalid
+         "((int64_t)__off, @\"expected 1 presence byte for Optional "
+         "enum field " fname ", source has less\");\n"
+         "    uint8_t " bind "_presence = __bytes[__off];\n"
+         "    __off += 1;\n"
+         "    if (" bind "_presence != 0x00 && " bind "_presence != 0x01) return "
+         invalid "((int64_t)(__off - 1), @\"invalid presence byte for "
+         "Optional enum field " fname "\");\n"
+         "    " opt-ty " " bind " = { .present = " bind "_presence, .value = 0 };\n"
+         "    if (" bind "_presence == 0x01) {\n"
+         "        if (__len < __off + " width ") return " invalid
+         "((int64_t)__off, @\"expected " width " bytes for Optional "
+         "enum field " fname " (" cxc-ty ") payload, source has less\");\n"
+         disc-read "\n"
+         "        if (" raw " >= " n ") return " invalid
+         "((int64_t)(__off - " width "), @\"invalid discriminator for "
+         "Optional enum field " fname " (" cxc-ty ")\");\n"
+         "        " bind ".value = (" cxc-ty ")" raw ";\n"
+         "    }")))
+
 (defn- f37-value-only-enum-field-decode-c-src
   "F37 L6 value-only enum extension — decode an enum field where the
    enum has no payload cases. Discriminator width per §3.10.10
@@ -9265,7 +9351,9 @@
     (f37-value-only-enum-decode-field? f enum-env)
     (f37-value-only-enum-field-decode-c-src record-name f enum-env)
     (f37-tagged-enum-decode-field? f enum-env)
-    (f37-tagged-enum-field-decode-c-src record-name f enum-env)))
+    (f37-tagged-enum-field-decode-c-src record-name f enum-env)
+    (f37-optional-value-only-enum-decode-field? f enum-env)
+    (f37-optional-value-only-enum-field-decode-c-src record-name f enum-env)))
 
 (defn- synthesize-record-from-bytes-fn
   "F37 L6 — emit `<Record>_cxc_from_bytes(NSMutableData *src) ->

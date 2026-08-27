@@ -162,6 +162,12 @@
       (is (zero? exit))
       (is (= "5\n" stdout)))))
 
+(deftest end-to-end-f37-l6-optional-enum-from-bytes
+  (testing "F37 L6 Optional-value-only-enum extension (2026-08-27) — round-trip on a record with a bare-T value-typed field where T is a value-only enum. `R(sig: Signal.green).as()` produces 1 presence byte + 1 discriminator byte = 2 bytes; `R.from(source: b)` reads presence, on present reads + range-checks the discriminator, casts to Signal into `_Cxc_Optional_Signal.value`. DecodeOutcome discarded; `b.length` prints 2."
+    (let [{:keys [exit stdout]} (compile-and-run "f37-l6-optional-enum-from-bytes")]
+      (is (zero? exit))
+      (is (= "2\n" stdout)))))
+
 
 (deftest end-to-end-k5-if-expression
   (testing "K5 L1 — `if` at expression position (spec §3.8.1). Uses both simple `if...else` and `if...else if...else` chain. Result flows through `let` bindings. Lowered as C ternary; prints the selected branch value."

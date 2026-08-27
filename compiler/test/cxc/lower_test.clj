@@ -2131,6 +2131,42 @@ def main:
       (is (re-find #"__i_val\.value = __i_res\.data\.converted\.value" body-text)
           "converted value lands into Optional payload"))))
 
+(deftest f37-l6-optional-value-only-enum-field-decode-body-presence-envelope
+  (testing "F37 L6 Optional-value-only-enum extension (2026-08-27) — a record with a bare-T value-typed field where T is a value-only enum synthesizes a decode block that (1) reads a UInt8 presence byte and validates 0x00/0x01, (2) on absent leaves `.value` bit-zero, (3) on present bounds-checks + reads discriminator at the width dictated by case count, range-checks against case count, and casts into `_Cxc_Optional_<Enum>.value`. Verifies the presence-envelope + inline enum decode via body-text inspection."
+    (let [prog (lower-src "def Signal:\n    case red\n    case green\n    case yellow\n\ndef R:\n    sig: Signal\n\ndef main:\n    -> running\n")
+          f    (first (filter #(= "R_cxc_from_bytes" (:name %)) (:functions prog)))
+          body-text (get-in f [:body 0 :text])]
+      (is (some? f))
+      (is (re-find #"expected 1 presence byte for Optional enum field sig" body-text)
+          "presence byte bounds-check with per-field diagnostic")
+      (is (re-find #"invalid presence byte for Optional enum field sig" body-text)
+          "presence byte validity check (0x00/0x01 only)")
+      (is (re-find #"_Cxc_Optional_Signal __sig_val = \{ \.present = __sig_val_presence" body-text)
+          "designated-initializer for the Optional storage struct")
+      (is (re-find #"if \(__sig_val_presence == 0x01\)" body-text)
+          "payload decode guarded by presence check")
+      (is (re-find #"expected 1 bytes for Optional enum field sig \(Signal\) payload" body-text)
+          "discriminator width bounds-check picks 1 byte for ≤256 cases")
+      (is (re-find #"if \(__sig_disc >= 3\) return" body-text)
+          "range check against case count 3")
+      (is (re-find #"invalid discriminator for Optional enum field sig \(Signal\)" body-text)
+          "invalid-discriminator diagnostic on out-of-range payload")
+      (is (re-find #"__sig_val\.value = \(Signal\)__sig_disc" body-text)
+          "casts discriminator to the enum's C type into `.value`"))))
+
+(deftest f37-encoder-symmetry-record-with-optional-value-only-enum-field-synthesizes-as-bytes
+  (testing "F37 encoder-symmetry (2026-08-27, Optional-value-only-enum sub) — a record with an Optional-value-only-enum field synthesizes `<R>_cxc_as_bytes`. Field encoding writes a presence byte and dispatches to `<Enum>_cxc_as_bytes(a.<field>.value)` on present. Enables round-trip with the F37 L6 Optional-value-only-enum decode extension."
+    (let [prog (lower-src "def Signal:\n    case red\n    case green\n\ndef R:\n    sig: Signal\n\ndef main:\n    -> running\n")
+          fn-names (set (map :name (:functions prog)))
+          f    (first (filter #(= "R_cxc_as_bytes" (:name %)) (:functions prog)))
+          body-text (get-in f [:body 0 :text])]
+      (is (contains? fn-names "R_cxc_as_bytes"))
+      (is (contains? fn-names "Signal_cxc_as_bytes"))
+      (is (re-find #"a\.sig\.present" body-text)
+          "encodes presence from `.present`")
+      (is (re-find #"Signal_cxc_as_bytes\(a\.sig\.value\)" body-text)
+          "dispatches to the enum encoder on present"))))
+
 (deftest f37-encoder-symmetry-record-with-enum-field-synthesizes-as-bytes
   (testing "F37 encoder-symmetry (2026-08-27) — a record with a value-only enum field now synthesizes `<R>_cxc_as_bytes` (previously fail-nyi'd at the intercept). Field encoding dispatches to the enum's synthesized `<Enum>_cxc_as_bytes` mirror of the nested-record arm. Enables round-trip with the F37 L6 value-only enum decode extension."
     (let [prog (lower-src "def Signal:\n    case red\n    case green\n\ndef R:\n    sig: Signal!\n\ndef main:\n    -> running\n")
