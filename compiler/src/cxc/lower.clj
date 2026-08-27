@@ -1010,6 +1010,112 @@
           "` via `|>` from wherever `" rec-nm "` is used.")
      f)))
 
+;; ---------------------------------------------------------------------------
+;; F51 L3b(b.ii)-2 — module attribution + qualified declaration lookup.
+;;
+;; Under the current concat+reparse pipeline every user module gets a
+;; synthetic `module <derived>` header prepended before concat. The
+;; combined AST that reaches `lower` carries those `:module` nodes
+;; interspersed with declarations, so declaration provenance is
+;; recoverable at lower time by stream-walking (same pattern as
+;; `resolve/build-symbol-table`).
+;;
+;; b.ii-1 added `:resolves-to <module-kw>` metadata on reference nodes
+;; via `resolve/resolve-references`, but that metadata is stripped
+;; by the concat+reparse (metadata lives on the AST, not the source).
+;; b.ii-2 provides a lookup primitive that PREFERS `:resolves-to` when
+;; present and falls back to short-name — dead behavior today, live
+;; once b.ii-3 replaces the concat+reparse with direct-AST plumbing.
+;;
+;; The value at Sub-2: env entries carry `:module` provenance, and a
+;; `:module-map` keyed by module-kw → #{short-name ...} sits alongside
+;; the flat envs. `resolve-decl-lookup` disambiguates a name via the
+;; module hint when supplied — noop under the current pipeline (no
+;; cross-module short-name collisions reach lower under the flat-
+;; namespace concat's dedup upstream).
+;; ---------------------------------------------------------------------------
+
+(defn- attribute-modules-to-decls
+  "F51 L3b(b.ii)-2 — walk `top-nodes` stream-wise tracking the current
+   module via `:module` nodes; return `{decl-name-string → module-kw}`
+   over records/atoms/enums (Corvid's decl kinds). Prelude-declared
+   names get their `std.*` attribution via `prelude-name->module`;
+   declarations before any `:module` node are attributed to `:main`
+   (single-file convention per F51 L1).
+
+   Returns a plain map — env entries consume it to stamp their own
+   `:module` slot at build time. Also used to derive `:module-map`
+   (module-kw → #{short-name ...}) for reverse lookup."
+  [top-nodes]
+  (let [prelude-provenance (@#'cxc.resolve/prelude-name->module)]
+    (loop [nodes  top-nodes
+           module :main
+           acc    {}]
+      (if (empty? nodes)
+        acc
+        (let [n (first nodes)]
+          (cond
+            (= :module (:node n))
+            (recur (rest nodes) (keyword (:name n)) acc)
+
+            (contains? #{:record :def-atom :enum} (:node n))
+            (recur (rest nodes) module
+                   (assoc acc (:name n)
+                          (or (get prelude-provenance (:name n)) module)))
+
+            :else
+            (recur (rest nodes) module acc)))))))
+
+(defn- module-map-from-attribution
+  "F51 L3b(b.ii)-2 — invert the name→module map into module→#{names},
+   for reverse (module-scoped) enumeration by the lookup primitive."
+  [name->module]
+  (reduce-kv (fn [acc nm m]
+               (update acc m (fnil conj #{}) nm))
+             {}
+             name->module))
+
+(defn- resolve-decl-lookup
+  "F51 L3b(b.ii)-2 primitive — resolve a name reference to an env
+   entry, preferring the caller-supplied `resolves-to` module hint
+   when present. Semantics:
+
+     1. If `resolves-to` names a module AND that module's declaration
+        set contains `name`, the lookup succeeds via the qualified
+        path (env is short-name keyed today so we still return
+        `(get env name)` — the qualified path exists to reject a
+        `resolves-to` that names a different module than the one the
+        short-name actually lives in).
+     2. Otherwise fall back to plain short-name lookup.
+
+   Under the current concat+reparse pipeline `:resolves-to` is
+   stripped before reaching lower, so callers pass `nil` and the
+   short-name fallback fires unconditionally — zero behavior change.
+   b.ii-3 will preserve `:resolves-to` end-to-end so path (1) becomes
+   the primary route.
+
+   `env` may be any of `:record-env` / `:atom-env` / `:enum-env` —
+   the primitive is agnostic to which. `module-map` is
+   `{module-kw → #{name-string ...}}` (see
+   `module-map-from-attribution`)."
+  [env module-map name resolves-to]
+  (cond
+    (nil? name)         nil
+
+    (and resolves-to
+         (contains? (get module-map resolves-to #{}) name))
+    (get env name)
+
+    resolves-to
+    ;; `resolves-to` names a module that doesn't declare this name;
+    ;; the reference is unresolved under strict semantics. Under the
+    ;; current pipeline this branch is unreachable (short-name is
+    ;; globally unique post-dedup); reserved for b.ii-3+.
+    nil
+
+    :else
+    (get env name)))
+
 (defn- build-record-env
   [top-nodes atom-env enum-env]
   (let [records  (filter #(= :record (:node %)) top-nodes)
@@ -11464,8 +11570,20 @@
         ;; cheap and eliminates any risk of surfacing shapes on the
         ;; program AST that the ε.α tests didn't already expect.
         ctx-nt-shapes (named-tuple/collect-shapes top-nodes)
+        ;; F51 L3b(b.ii)-2 — attribute each user declaration to its
+        ;; module by walking top-nodes stream-wise (module context
+        ;; carried by `:module` nodes). Feeds `resolve-decl-lookup`
+        ;; when a caller passes `:resolves-to`. Scaffolding until
+        ;; b.ii-3 preserves `:resolves-to` metadata through the
+        ;; pipeline; today `:resolves-to` is stripped by concat+reparse
+        ;; and the lookup falls back to short-name — zero behavior
+        ;; change.
+        decl->module (attribute-modules-to-decls top-nodes)
+        module-map   (module-map-from-attribution decl->module)
         ctx        {:record-env record-env :atom-env atom-env :enum-env enum-env
                     :symbol-table symbol-table
+                    :decl->module decl->module
+                    :module-map module-map
                     :named-tuple-env ctx-nt-shapes
                     :locals {}}
         records    (filter #(= :record (:node %)) top-nodes)
