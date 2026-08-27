@@ -6181,9 +6181,10 @@ def main:
 ;; ---------------------------------------------------------------------------
 ;; F51 L3b(b.ii)-5a — `decl-lookup` caller-facing wrapper. Reads
 ;; `:resolves-to` from the reference node and `:module-map` from ctx,
-;; then dispatches to `resolve-decl-lookup`. Guarded dead code today
-;; (no callers migrated yet); tests pin the terminal-shape semantics so
-;; b.ii-5b+ consumer migrations have a known reference point.
+;; then dispatches to `resolve-decl-lookup`. b.ii-5b/5c migrated ~55
+;; consumer sites through it (single-file + multi-file paths now
+;; consume `:resolves-to`); these tests pin the terminal-shape
+;; semantics so future migrations have a stable contract.
 ;; ---------------------------------------------------------------------------
 
 (deftest f51-l3b-b-ii-5a-decl-lookup-uses-resolves-to-hint
