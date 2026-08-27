@@ -3568,8 +3568,10 @@
    ;; `_Cxc_DecodeOutcome_<Rec>` struct name when checking conformance.
    ;; Sub-1's plain-Self reading was pre-reconciliation; adopting the
    ;; F37 shape means the F37 L6 synthesized function is a natural
-   ;; conformer for `From<Bytes>` (Sub-3 will retire the ad-hoc
-   ;; intercept in favor of this structural check).
+   ;; conformer for `From<Bytes>` (Sub-3 wired the structural fallback
+   ;; in `infer-method-call-type`; full F37 `.from()` intercept
+   ;; consolidation deferred pending `:cxc-synthesized?` flag threading
+   ;; through F37 eligibility).
    "From" {:instance-methods {}
            :class-methods    {"from" {:params  [{:name "source" :type :T}]
                                       :returns {:apply "DecodeOutcome"
