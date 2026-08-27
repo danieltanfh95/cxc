@@ -638,16 +638,19 @@
   "Add `:resolves-to <module>` to a reference-shaped node when the
    name resolves under the current file's scope. Returns the node
    unchanged when the name is unresolved OR when the node kind
-   doesn't participate in module-scope resolution. Idempotent —
-   re-enriching a node that already carries `:resolves-to` is a
-   no-op (the second pass computes the same result)."
+   doesn't participate in module-scope resolution. Idempotent — a
+   node that already carries `:resolves-to` is preserved verbatim
+   (does not re-resolve or overwrite). This lets `lower/lower`
+   safely re-run enrichment on already-enriched input from build.clj
+   without stomping over an intentionally-tampered hint."
   [node own-module own-decls imports prelude-provenance]
   (letfn [(resolve! [nm]
             (resolve-name-to-module nm own-module own-decls imports prelude-provenance))]
     (cond
       (not (map? node)) node
 
-      (and (= :type-ref (:node node)) (string? (:name node)))
+      (and (= :type-ref (:node node)) (string? (:name node))
+           (not (contains? node :resolves-to)))
       (if-let [m (resolve! (:name node))]
         (assoc node :resolves-to m)
         node)
@@ -656,7 +659,8 @@
            (let [c (:callee node)]
              (and (map? c)
                   (= :ident (:node c))
-                  (capitalized? (:name c)))))
+                  (capitalized? (:name c))
+                  (not (contains? c :resolves-to)))))
       (if-let [m (resolve! (:name (:callee node)))]
         (update node :callee assoc :resolves-to m)
         node)
@@ -665,19 +669,22 @@
            (let [t (:target node)]
              (and (map? t)
                   (= :ident (:node t))
-                  (capitalized? (:name t)))))
+                  (capitalized? (:name t))
+                  (not (contains? t :resolves-to)))))
       (if-let [m (resolve! (:name (:target node)))]
         (update node :target assoc :resolves-to m)
         node)
 
-      (and (= :extend-class (:node node)) (string? (:target node)))
+      (and (= :extend-class (:node node)) (string? (:target node))
+           (not (contains? node :resolves-to)))
       (if-let [m (resolve! (:target node))]
         (assoc node :resolves-to m)
         node)
 
       (and (= :type-of (:node node))
            (string? (:outer node))
-           (capitalized? (:outer node)))
+           (capitalized? (:outer node))
+           (not (contains? node :resolves-to)))
       (if-let [m (resolve! (:outer node))]
         (assoc node :resolves-to m)
         node)

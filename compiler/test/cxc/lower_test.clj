@@ -6235,6 +6235,58 @@ def main:
 ;; tests that pinned the shim's behavior deleted with it.
 
 ;; ---------------------------------------------------------------------------
+;; F51 L3b(b.ii)-5d Batch 7 (2026-08-28) — strict-lookup diagnostic.
+;; `resolve-decl-lookup` no longer falls back to short-name; consumer
+;; sites that must-resolve (record/atom ctor call) fire
+;; `:cxc-f51-unresolved-name` when the lookup returns nil.
+;; ---------------------------------------------------------------------------
+
+(deftest f51-l3b-b-ii-5d-batch7-record-ctor-with-stale-hint-diagnostic
+  (testing "F51 L3b(b.ii)-5d Batch 7 — a record ctor call whose callee ident carries a `:resolves-to` hint naming a module that does NOT declare the short name fires `:cxc-f51-unresolved-name`. This models an upstream attribution bug: the ref survived to lower with a stale hint."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"cxc-f51-unresolved-name|resolved to no env entry"
+         (let [prog (p/parse "def R:\n    x: Int\n\ndef main:\n    -> running\n        then: print(R(x: 1).x)\n")
+               ;; Rewrite the R(...) callee's :resolves-to to a
+               ;; module that doesn't declare R — simulates a stale
+               ;; attribution hint.
+               tampered ((requiring-resolve 'clojure.walk/postwalk)
+                          (fn [n]
+                            (if (and (map? n)
+                                     (= :ident (:node n))
+                                     (= "R" (:name n)))
+                              (assoc n :resolves-to :nonexistent-module)
+                              n))
+                          prog)]
+           (lower/lower tampered))))))
+
+(deftest f51-l3b-b-ii-5d-batch7-atom-ctor-with-stale-hint-diagnostic
+  (testing "F51 L3b(b.ii)-5d Batch 7 — same strict-lookup failure on an atom ctor: `A()` with a hint naming a module that doesn't declare `A` raises `:cxc-f51-unresolved-name`. Phantom-cap short-circuit (`SystemPanic`) doesn't apply to user atoms."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"cxc-f51-unresolved-name|resolved to no env entry"
+         (let [prog (p/parse "def A:\n    -> running\n\ndef main:\n    a: A = A()\n    -> running\n")
+               tampered ((requiring-resolve 'clojure.walk/postwalk)
+                          (fn [n]
+                            (if (and (map? n)
+                                     (= :ident (:node n))
+                                     (= "A" (:name n)))
+                              (assoc n :resolves-to :nonexistent-module)
+                              n))
+                          prog)]
+           (lower/lower tampered))))))
+
+(deftest f51-l3b-b-ii-5d-batch7-strict-primitive-returns-nil-without-hint
+  (testing "F51 L3b(b.ii)-5d Batch 7 — the primitive itself has no short-name fallback: a ref-node with `:resolves-to nil` returns nil regardless of whether `(get env name)` would succeed. Callers whose intent is bookkeeping (data-derived name, iteration) use `env-lookup` instead."
+    (let [ctx      {:record-env {"Bag" {:kind :record}} :module-map {:m #{"Bag"}}}
+          ref-node {:node :type-ref :name "Bag"}]
+      (is (nil? (#'cxc.lower/decl-lookup ctx :record-env ref-node)))
+      ;; env-lookup is the correct primitive when the name is
+      ;; data-derived; it returns the entry.
+      (is (= {:kind :record}
+             (#'cxc.lower/env-lookup ctx :record-env "Bag"))))))
+
+;; ---------------------------------------------------------------------------
 ;; F52 L4 — module let-bindings (§7.1). Top-level `let NAME = <const>`
 ;; folds via pre-lower substitution: `extract-module-lets` builds
 ;; `{name → value-node}` (validating const-shape + rejecting duplicates)
