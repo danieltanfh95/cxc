@@ -1172,28 +1172,21 @@
    `:module-map`, then dispatches. `env-kw` is one of `:record-env`,
    `:atom-env`, `:enum-env`.
 
-   Terminal shape (post-b.ii-5e): every reference-consuming site
-   passes `ctx` + the reference AST node here. Sites without a
-   user-reference AST node in hand should use [[env-lookup]] instead
-   — that's not a resolution, it's plain env access.
+   Terminal shape (post-b.ii-5d Batch 4): the sole arity takes a map
+   (an AST reference node) and reads `:name` + `:resolves-to` off it.
+   Sites whose name isn't a user reference (data-derived, iteration,
+   locals) must use [[env-lookup]] — that's plain env access, not a
+   resolution.
 
-   Two arities today: pass a map (AST reference node) to read `:name`
-   and `:resolves-to` off it, or pass a name-string (via ambient
-   `*decl->module*`). The string arity is a shim from b.ii-5c that
-   retires alongside `*module-map*` once the last consumer migrates
-   to map arity or to [[env-lookup]]."
-  [ctx env-kw name-or-node]
+   The former string arity (a b.ii-5c shim consulting the ambient
+   `*decl->module*`) retired at Batch 4 after every caller migrated
+   to either the map arity or [[env-lookup]]."
+  [ctx env-kw ref-node]
   (let [env         (get ctx env-kw)
         module-map  (:module-map ctx)
-        [name resolves-to]
-        (cond
-          (string? name-or-node)
-          [name-or-node (get *decl->module* name-or-node)]
-
-          (map? name-or-node)
-          [(:name name-or-node) (:resolves-to name-or-node)]
-
-          :else [nil nil])]
+        [name resolves-to] (if (map? ref-node)
+                             [(:name ref-node) (:resolves-to ref-node)]
+                             [nil nil])]
     (resolve-decl-lookup env module-map name resolves-to)))
 
 (defn- build-record-env
