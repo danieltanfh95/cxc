@@ -11488,6 +11488,46 @@
           x))
       nodes)))
 
+(defn- reject-module-let-shadowing!
+  "F52 L4-b — reject any local binding that would shadow a top-level
+   module-let. Walks the tree looking for `:let-stmt` and `:if-let`
+   binding nodes whose `:name` matches a module-let. Fires BEFORE
+   `substitute-module-let-refs` runs so the diagnostic surfaces
+   cleanly (unshadowed, naive substitution would rewrite the local
+   binding's own name into the constant value, producing something
+   like `let 5 = 5` — actionable but confusing).
+
+   Only the two local-let AST kinds are checked at this landing.
+   Function-param shadowing is a followon: params are a distinct
+   scoping mechanism (spec §3.7 shadowing rules) and the diagnostic
+   there wants targeted wording."
+  [nodes ml-map]
+  (when (seq ml-map)
+    (walk/postwalk
+      (fn [x]
+        (cond
+          (and (map? x) (= :let-stmt (:node x))
+               (contains? ml-map (:name x)))
+          (fail-nyi!
+           (str "local `let " (:name x) "` shadows the module-let of the "
+                "same name (F52 L4). v1.0 rejects local shadowing of top-"
+                "level module-lets — rename one of the two.")
+           {:module-let (:name x) :node :let-stmt})
+
+          (and (map? x) (= :if-let (:node x)))
+          (do (doseq [b (:bindings x)
+                      :when (contains? ml-map (:name b))]
+                (fail-nyi!
+                 (str "`if let " (:name b) "` binding shadows the module-"
+                      "let of the same name (F52 L4). Rename one of the "
+                      "two.")
+                 {:module-let (:name b) :node :if-let}))
+              x)
+
+          :else x))
+      nodes))
+  nodes)
+
 (defn lower
   "Take parsed top-level nodes and produce an ObjC/C program AST."
   [top-nodes]
@@ -11502,6 +11542,7 @@
         top-nodes   (->> top-nodes
                          (remove #(= :module-let (:node %)))
                          vec)
+        _           (reject-module-let-shadowing! top-nodes module-lets)
         top-nodes   (substitute-module-let-refs top-nodes module-lets)
         main-atom  (first (filter main-def-atom? top-nodes))
         _          (when-not main-atom

@@ -6166,3 +6166,48 @@ def main:
                  :args []}]]
       (is (identical? tree
                       (#'cxc.lower/substitute-module-let-refs tree {}))))))
+
+(deftest f52-l4-b-reject-let-stmt-shadowing
+  (testing "F52 L4-b — a local `let NAME = ...` inside a fn body when NAME is a module-let fires a targeted fail-nyi. Runs BEFORE `substitute-module-let-refs` so the diagnostic mentions the shadowing (not the malformed `let 5 = 5` that naive substitution would produce). Users see: `local \\`let SEED\\` shadows the module-let of the same name — rename one of the two.`"
+    (let [ex (try
+               (#'cxc.lower/reject-module-let-shadowing!
+                 [{:node :def-atom :name "main"
+                   :body [{:node :let-stmt :name "SEED"
+                           :expr {:node :lit-int :value 5}}]}]
+                 {"SEED" {:node :lit-int :value 42}})
+               nil
+               (catch clojure.lang.ExceptionInfo e e))]
+      (is ex "expected fail-nyi")
+      (is (re-find #"local `let SEED` shadows" (.getMessage ex))))))
+
+(deftest f52-l4-b-reject-if-let-shadowing
+  (testing "F52 L4-b — an `if let NAME = ...` binding when NAME is a module-let fires a fail-nyi. The `:if-let` node carries a `:bindings` list per F39 L7's unwrap-statement shape; each binding's `:name` is checked. Rationale is the same as `:let-stmt` shadowing — naive substitution would silently rewrite the binding slot into a literal."
+    (let [ex (try
+               (#'cxc.lower/reject-module-let-shadowing!
+                 [{:node :def-atom :name "main"
+                   :body [{:node :if-let
+                           :bindings [{:name "PI"
+                                       :expr {:node :ident :name "maybe"}}]
+                           :then [] :else []}]}]
+                 {"PI" {:node :lit-float :value 3.14}})
+               nil
+               (catch clojure.lang.ExceptionInfo e e))]
+      (is ex "expected fail-nyi")
+      (is (re-find #"`if let PI` binding shadows" (.getMessage ex))))))
+
+(deftest f52-l4-b-noop-when-no-shadowing
+  (testing "F52 L4-b — a program with no name collisions between local lets and module-lets returns the input tree unchanged (walker runs but finds nothing to reject). The fn's contract is diagnostic-only; return value passes through so the caller can chain."
+    (let [tree [{:node :def-atom :name "main"
+                 :body [{:node :let-stmt :name "local_only"
+                         :expr {:node :lit-int :value 5}}]}]]
+      (is (= tree
+             (#'cxc.lower/reject-module-let-shadowing!
+              tree {"SEED" {:node :lit-int :value 42}}))))))
+
+(deftest f52-l4-b-noop-when-no-module-lets
+  (testing "F52 L4-b — when the module-let map is empty, the check short-circuits without walking (early-return in `when (seq ml-map)`). Programs with no `:module-let` decls skip the walk entirely; the fn returns the input tree unchanged."
+    (let [tree [{:node :def-atom :name "main"
+                 :body [{:node :let-stmt :name "SEED"
+                         :expr {:node :lit-int :value 5}}]}]]
+      (is (= tree
+             (#'cxc.lower/reject-module-let-shadowing! tree {}))))))
