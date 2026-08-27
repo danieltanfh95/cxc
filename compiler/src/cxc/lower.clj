@@ -1052,26 +1052,23 @@
 ;; ---------------------------------------------------------------------------
 ;; F51 L3b(b.ii)-2 — module attribution + qualified declaration lookup.
 ;;
-;; Under the current concat+reparse pipeline every user module gets a
-;; synthetic `module <derived>` header prepended before concat. The
-;; combined AST that reaches `lower` carries those `:module` nodes
-;; interspersed with declarations, so declaration provenance is
-;; recoverable at lower time by stream-walking (same pattern as
-;; `resolve/build-symbol-table`).
+;; The AST that reaches `lower` carries `:module` nodes interspersed
+;; with declarations (multi-file: assembled from per-module ASTs with
+;; synthetic `:module` markers between files; single-file: an implicit
+;; `:main` module for pre-any-`:module`-marker declarations), so
+;; declaration provenance is recoverable at lower time by stream-
+;; walking (same pattern as `resolve/build-symbol-table`).
 ;;
 ;; b.ii-1 added `:resolves-to <module-kw>` metadata on reference nodes
-;; via `resolve/resolve-references`, but that metadata is stripped
-;; by the concat+reparse (metadata lives on the AST, not the source).
-;; b.ii-2 provides a lookup primitive that PREFERS `:resolves-to` when
-;; present and falls back to short-name — dead behavior today, live
-;; once b.ii-3 replaces the concat+reparse with direct-AST plumbing.
+;; via `resolve/resolve-references`. b.ii-3 (multi-file) and b.ii-5c
+;; (single-file) preserve that metadata end-to-end — direct-AST
+;; plumbing replaces the retired concat+reparse.
 ;;
-;; The value at Sub-2: env entries carry `:module` provenance, and a
+;; `resolve-decl-lookup` prefers `:resolves-to` when present and falls
+;; back to short-name. env entries carry `:module` provenance, and a
 ;; `:module-map` keyed by module-kw → #{short-name ...} sits alongside
-;; the flat envs. `resolve-decl-lookup` disambiguates a name via the
-;; module hint when supplied — noop under the current pipeline (no
-;; cross-module short-name collisions reach lower under the flat-
-;; namespace concat's dedup upstream).
+;; the flat envs. The short-name fallback still catches unmigrated
+;; sites; b.ii-5e retires it.
 ;; ---------------------------------------------------------------------------
 
 (defn- attribute-modules-to-decls
@@ -11964,11 +11961,10 @@
         ;; F51 L3b(b.ii)-2 — attribute each user declaration to its
         ;; module by walking top-nodes stream-wise (module context
         ;; carried by `:module` nodes). Feeds `resolve-decl-lookup`
-        ;; when a caller passes `:resolves-to`. Scaffolding until
-        ;; b.ii-3 preserves `:resolves-to` metadata through the
-        ;; pipeline; today `:resolves-to` is stripped by concat+reparse
-        ;; and the lookup falls back to short-name — zero behavior
-        ;; change.
+        ;; when a caller passes `:resolves-to`. b.ii-3 (multi-file) +
+        ;; b.ii-5c (single-file) preserve `:resolves-to` end-to-end so
+        ;; the hint fires as the primary path; short-name fallback
+        ;; still catches unmigrated sites until b.ii-5e.
         decl->module (attribute-modules-to-decls top-nodes)
         module-map   (module-map-from-attribution decl->module)
         ctx        {:record-env record-env :atom-env atom-env :enum-env enum-env
