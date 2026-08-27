@@ -60,7 +60,8 @@
      {:record-env <name -> {:fields :field-index :methods :method-index}>
       :atom-env   <name -> {:fields :field-index :extras}>
       :locals     <name -> ty>       ; local scope for method bodies etc."
-  (:require [clojure.string :as str]
+  (:require [clojure.set]
+            [clojure.string :as str]
             [clojure.walk :as walk]
             [cxc.named-tuple :as named-tuple]
             [cxc.prelude :as prelude]
@@ -198,18 +199,6 @@
       (boolean (:optional? f)))
 
     :else false))
-
-(defn- optional-present-check-stmt
-  "F39 L5b-ii-d — runtime presence check on an Optional operand feeding
-   a `T!` value-typed observation point. `expr-c` is the rendered C
-   expression whose `.present` bit is inspected. On absent (present=0)
-   fires `cxc_nonnil_violation(site, name)` — the same warning-grade
-   runtime helper L3 uses for reference `T!` sites (spec §3.6.1 line
-   3686)."
-  [expr-c site name]
-  {:node :raw-c
-   :text (str "if (!(" expr-c ").present) cxc_nonnil_violation("
-              (c-string-lit site) ", " (c-string-lit name) ");")})
 
 (defn- validate-defaults-after-required!
   "Spec §3.8.5 rule 3: in any parameter list, all defaulted params must
@@ -506,7 +495,7 @@
    ;; `Block[(params) -> R]` grammar with full signature support.
    "Block"   "void (^)(void)"})
 
-(declare base-type-name optional-type-name type-kw->cxc-name-str
+(declare optional-type-name type-kw->cxc-name-str
          optional-tk? unwrap-tk)
 
 (defn- cxc-type->c
@@ -1334,7 +1323,7 @@
                           "See spec §3.4.5.")
                      {:proto proto-name :dupes (vec dupes)}))))
 
-(declare infer-type type-kw->cxc-name-str)
+(declare infer-type)
 
 (defn- infer-protocol-defaults
   "F67 L4b — post-pass over protocol-env: for each default observable
@@ -1652,7 +1641,6 @@
              ;; warnings above; we re-derive the observable list here to
              ;; keep source identity (own vs ext) intact for downstream
              ;; observable emission that needs the raw node.
-             own-by-name (into {} (map (juxt :name identity) own-obs))
              ext-replace-names (set (map :name (filter :replace? ext-obs)))
              ;; Own drops out under any ext-replace on the same name.
              own-effective (filterv #(not (contains? ext-replace-names (:name %)))
@@ -1932,20 +1920,6 @@
 ;; — they land in the class's :methods list and emit via
 ;; record-method-functions / lower-atom's method emission path.
 ;; ---------------------------------------------------------------------------
-
-(defn- default-candidates-for-method
-  "For a class with explicit conforms `conforms-tys`, return the vector
-   of protocol names that (a) the class conforms to AND (b) provide a
-   default for `method-name`. Unknown protocols are skipped silently
-   (L5 already fired on them if the class reached this pass)."
-  [method-name conforms-tys protocol-env]
-  (vec (for [ty    conforms-tys
-             :let  [pn    (type-node-name ty)
-                    proto (get protocol-env pn)]
-             :when (and proto
-                        (some #(= method-name (:name %))
-                              (:defaults proto)))]
-         pn)))
 
 (defn- extract-default-as-method
   "Given a default method-shape entry (produced by observable->method-entry
@@ -3470,8 +3444,6 @@
 ;; Type inference (ctx-threaded)
 ;; ---------------------------------------------------------------------------
 
-(declare infer-type)
-
 (defn- optional-tk?
   "True when a type-kw is [:optional inner] shape."
   [tk]
@@ -4159,8 +4131,7 @@
           ;; list to detect the observable's existence; type inference
           ;; below re-runs on the raw expression.
           raw-obs   (some #(when (= field-name (:name %)) %)
-                          (get-in (:atom-env ctx) [owner :observables]))
-          self-atom (:atom (get-in ctx [:locals "self"]))]
+                          (get-in (:atom-env ctx) [owner :observables]))]
       (cond
         ;; F33 (Proposal C+C1, rewrite 2026-08-17): external `.field`
         ;; reads on any atom are spec-legal. Reading is observation, not
@@ -6462,7 +6433,6 @@
   (or (contains? #{:string :bytes :any :block} tk)
       (and (map? tk) (:atom tk))))
 
-(declare lower-body-stmts)
 
 (defn- lower-if-let-stmt
   "F39 L7 (spec §3.6.1 lines 3693-3705) — lower `if let x = expr : then
@@ -7129,7 +7099,6 @@
                        companion-info (assoc :companion-receive companion-info))
         body-clauses (:body t)
         then-clauses (filter #(= :then-clause (:node %)) body-clauses)
-        do-clauses   (filter #(= :do-clause   (:node %)) body-clauses)
         propositions (filter #(= :proposition (:node %)) body-clauses)
         ;; F18 L1' Landing 2 (2026-08-24) — the transition `let:`
         ;; sub-block retired; statement-form `let x = expr` inside a
@@ -8564,8 +8533,6 @@
   (and (:optional? f)
        (contains? record-env (:cxc-ty f))))
 
-(declare enum-eligible-for-as-bytes-synthesis?)
-
 (defn- f37-enum-field?
   "F37 encoder-symmetry (2026-08-27) — a non-Optional enum field. The
    enum must be in enum-env AND eligible for `.as() -> Bytes`
@@ -9112,8 +9079,6 @@
                "    memcpy(&" bind ", &" bind "_raw, 8);\n"
                "    __off += 8;"))]
     (str bounds "\n" read-src)))
-
-(declare f37-decode-eligible-field?)
 
 (defn- record-decode-eligible?
   "F37 L6 (2026-08-27 variable-length ABI) — a record is decode-
@@ -10178,10 +10143,6 @@
         ;; For value `T!` fed a scalar expression, no check needed —
         ;; the type is already non-nil by construction.
         nonnil-ret?  (= :type-nonnil (get-in method [:cxc-return-ty-node :node]))
-        return-ty-kw (when nonnil-ret?
-                       (cxc-type->type-kw (:cxc-return-ty method)
-                                          (:record-env ctx) (:atom-env ctx)
-                                          (:enum-env ctx) method))
         ret-c-value?  (and (string? ret-c)
                            (not (str/ends-with? ret-c "*"))
                            (not= "id" ret-c)
