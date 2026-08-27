@@ -6073,13 +6073,14 @@ def main:
 
 ;; ---------------------------------------------------------------------------
 ;; F51 L3b(b.ii)-2 — module attribution + qualified lookup primitive.
-;; Scaffolding: `attribute-modules-to-decls` builds `{name → module-kw}`
-;; by walking top-nodes and tracking the current module via `:module`
-;; nodes; `module-map-from-attribution` inverts it; `resolve-decl-lookup`
-;; prefers a caller-supplied `:resolves-to` hint and falls back to short-
-;; name. Under the current concat+reparse pipeline `:resolves-to` never
-;; reaches lower, so the hint path is dead code today — it lights up
-;; once b.ii-3 preserves the metadata end-to-end.
+;; `attribute-modules-to-decls` builds `{name → module-kw}` by walking
+;; top-nodes and tracking the current module via `:module` nodes;
+;; `module-map-from-attribution` inverts it; `resolve-decl-lookup`
+;; prefers a caller-supplied `:resolves-to` hint and falls back to
+;; short-name. b.ii-3 (multi-file) + b.ii-5c (single-file) preserve
+;; `:resolves-to` end-to-end, so the hint path is now the primary
+;; route; the short-name fallback catches unmigrated sites until
+;; b.ii-5e retires it.
 ;; ---------------------------------------------------------------------------
 
 (deftest f51-l3b-b-ii-2-attribution-single-module-all-main
