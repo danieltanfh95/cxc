@@ -3665,16 +3665,34 @@
       :bytes
 
       (and (map? target-ty) (:record target-ty))
-      (let [rn (:record target-ty)
-            m  (get-in (:record-env ctx) [rn :method-index method-name])
-            o  (get-in (:record-env ctx) [rn :observable-index method-name])]
+      (let [rn   (:record target-ty)
+            info (get (:record-env ctx) rn)
+            m    (get (:method-index info) method-name)
+            o    (get (:observable-index info) method-name)
+            ;; F15 L4 Sub-3 — structural fallback on direct-method
+            ;; lookup miss. Consult compiler-known protocol shapes:
+            ;; if `method-name` names an instance-method requirement
+            ;; of some shape AND the record structurally satisfies it,
+            ;; the shape's return type wins. Today the As<T> shape's
+            ;; only instance-method is `as` — a case the F37 intercept
+            ;; already handles at line 3583; the fallback is dead code
+            ;; at v1.0. Scaffolding for future compiler-known
+            ;; protocols (Constructible<T> per F42 L1 etc.) whose
+            ;; return type is unambiguous from the shape alone.
+            struct-hit
+            (when (and (nil? m) (nil? o)
+                       (= "as" method-name)
+                       (structurally-satisfies-protocol? info rn "As" :bytes))
+              :bytes)]
         (cond
-          m (cxc-type->type-kw (:cxc-return-ty m)
-                               (:record-env ctx) (:atom-env ctx) (:enum-env ctx) call-node)
+          m          (cxc-type->type-kw (:cxc-return-ty m)
+                                        (:record-env ctx) (:atom-env ctx)
+                                        (:enum-env ctx) call-node)
           ;; F67 L4a — record observables dispatch the same as record
           ;; methods (both lower to `<Rec>_<name>(self, ...)` C
           ;; functions); type-kw was pre-computed at env build.
-          o (:type-kw o)
+          o          (:type-kw o)
+          struct-hit struct-hit
           :else (fail-nyi! (str "method/observable `" method-name "` on record `" rn "`")
                            call-node)))
 

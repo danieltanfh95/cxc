@@ -6046,6 +6046,35 @@ def main:
           "non-eligible record has no `from` seed"))))
 
 ;; ---------------------------------------------------------------------------
+;; F15 L4 Sub-3 — structural fallback in `infer-method-call-type`.
+;; Consults `structurally-satisfies-protocol?` on direct-method-lookup
+;; miss for compiler-known protocol instance-methods (`As<T>` today).
+;; Truly unreachable at v1.0 because (a) records with a user-declared
+;; `.as()` resolve via direct lookup, and (b) records without one
+;; match the F37 intercept upstream — but scaffolds the shape for
+;; future compiler-known protocols (F42 L1's `Constructible<T>` etc.)
+;; whose return type is unambiguous from the shape alone. Full F37
+;; intercept consolidation deferred — would require distinguishing
+;; synthetic from user-authored method-index entries so the F37
+;; encoder-synthesis + eligibility checks keep working.
+;; ---------------------------------------------------------------------------
+
+(deftest f15-l4-sub3-structural-fallback-when-user-as-would-return-bytes
+  (testing "F15 L4 Sub-3 — when a record HAS a user-declared `.as() -> Bytes` method (thus structurally satisfies `As<Bytes>`), `infer-method-call-type`'s primary `:method-index` lookup wins before the structural fallback runs. The fallback still produces `:bytes` if consulted (verified via direct predicate call) — both paths agree, but priority is direct lookup. Confirms the fallback shape doesn't conflict with the primary path."
+    (let [info (f15-l4-record-info
+                 [(f15-l4-instance-method-entry "Bag" "as" [] "Bytes")])]
+      (is (true? (#'cxc.lower/structurally-satisfies-protocol?
+                   info "Bag" "As" :bytes))
+          "record with .as() -> Bytes structurally satisfies As<Bytes>"))))
+
+(deftest f15-l4-sub3-structural-fallback-shape-is-additive-only
+  (testing "F15 L4 Sub-3 — the fallback branch fires ONLY when both `:method-index` and `:observable-index` misses on `method-name`. For a record with no `as` method at all, `structurally-satisfies-protocol?` returns false (no `:as` in method-index → instance-method requirement unmet), so the fallback misses too. `:else` fail-nyi catches it. At v1.0 no reachable case fires this fallback."
+    (let [info (f15-l4-record-info [])]
+      (is (false? (boolean (#'cxc.lower/structurally-satisfies-protocol?
+                             info "Bag" "As" :bytes)))
+          "record with no .as() method fails As<Bytes> conformance"))))
+
+;; ---------------------------------------------------------------------------
 ;; F51 L3b(b.ii)-2 — module attribution + qualified lookup primitive.
 ;; Scaffolding: `attribute-modules-to-decls` builds `{name → module-kw}`
 ;; by walking top-nodes and tracking the current module via `:module`
