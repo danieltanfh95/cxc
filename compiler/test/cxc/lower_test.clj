@@ -338,26 +338,26 @@
 (deftest wildcard-on-enter-inlined-into-init
   (testing "initial-phase wildcard on-enter → its then:/then: append to :init-body after data defaults"
     (let [prog (lower-src "def Ticker:\n    n: Int! = 0\n\n    -> incremented\n        then: n => n + 1\n\ndef main:\n    t: Ticker = Ticker()\n\n    -> running\n        then: print(0)\n")
-          cls  (first (:classes prog))]
-      ;; State-init runs data defaults then the initial-phase on-enter body.
-      ;; Structural setup owns queue + phase = initial constant.
-      (let [state (first (filter #(= "cxc_stateInit" (:selector %)) (:methods cls)))]
-        (is (= [{:node :assign
-                 :lhs  {:node :name :sym "_n"}
-                 :rhs  {:node :int  :value 0}}
-                {:node :assign
-                 :lhs  {:node :name :sym "_n"}
-                 :rhs  {:node :binop :op "+"
-                        :left  {:node :name :sym "_n"}
-                        :right {:node :int  :value 1}}}
-                {:node :raw-c
-                 :text "if ((_n) == nil) cxc_nonnil_violation(\"def-atom `Ticker` field write\", \"n\");"}
-                ;; F32 L4.d.β.α — concurrent-mode `_state` seed.
-                {:node        :initial-state-commit
-                 :class-name  "Ticker"
-                 :data-fields [{:name "n" :c-type "int64_t"
-                                :attrs ["readonly" "assign"]}]}]
-               (:body state)))))))
+          cls   (first (:classes prog))
+          ;; State-init runs data defaults then the initial-phase on-enter body.
+          ;; Structural setup owns queue + phase = initial constant.
+          state (first (filter #(= "cxc_stateInit" (:selector %)) (:methods cls)))]
+      (is (= [{:node :assign
+               :lhs  {:node :name :sym "_n"}
+               :rhs  {:node :int  :value 0}}
+              {:node :assign
+               :lhs  {:node :name :sym "_n"}
+               :rhs  {:node :binop :op "+"
+                      :left  {:node :name :sym "_n"}
+                      :right {:node :int  :value 1}}}
+              {:node :raw-c
+               :text "if ((_n) == nil) cxc_nonnil_violation(\"def-atom `Ticker` field write\", \"n\");"}
+              ;; F32 L4.d.β.α — concurrent-mode `_state` seed.
+              {:node        :initial-state-commit
+               :class-name  "Ticker"
+               :data-fields [{:name "n" :c-type "int64_t"
+                              :attrs ["readonly" "assign"]}]}]
+             (:body state))))))
 
 (deftest non-initial-wildcard-inlines-into-transitions-that-enter-that-phase
   (testing "`-> dead then: print(0)` inlines into `alive <: die -> dead` branch body (phase change, not self-loop)"
@@ -496,7 +496,9 @@ def main:
 ")
           cls  (first (:classes prog))
           bump (first (filter #(= "bump" (:selector %)) (:methods cls)))
-          branch (first (:body bump))]
+          branch (first (:body bump))
+          wrap (first (:body branch))
+          b    (:body wrap)]
       ;; Branch body wrapped in :end-catch-wrap. Inside (post F33 L3.c):
       ;; [bag-write, commit-next-state]. Wildcard do isn't inlined
       ;; (self-loop isn't a phase change). Post-commit
@@ -504,12 +506,10 @@ def main:
       ;; snapshotted — invariants for this atom would run pre-commit
       ;; inline if any existed, but this atom (`Counter`) has no
       ;; invariants so the pre-commit block is empty.
-      (let [wrap (first (:body branch))
-            b    (:body wrap)]
-        (is (= :end-catch-wrap (:node wrap)))
-        (is (= 2 (count b)))
-        (is (= :assign (:node (first b))))
-        (is (= :commit-next-state (:node (second b))))))))
+      (is (= :end-catch-wrap (:node wrap)))
+      (is (= 2 (count b)))
+      (is (= :assign (:node (first b))))
+      (is (= :commit-next-state (:node (second b)))))))
 
 (deftest record-observable-lowers-to-c-function
   (testing "F67 L4 — record parametric observable → :c-function under :functions with mangled name and self as first param (replaces reader methods per Proposal G class-body collapse)."
@@ -1308,7 +1308,6 @@ def main:
                                       (:methods cls)))
           body         (:body state-method)
           checks       (filter #(= :invariant-check (:node %)) body)
-          assigns      (filter #(= :assign (:node %)) body)
           first-assign-idx (first (keep-indexed
                                     #(when (= :assign (:node %2)) %1)
                                     body))
@@ -1762,28 +1761,17 @@ def main:
     ;; inspect the lowered call node.
     (let [src "def V:\n    x: Int\n\ndef main:\n    -> running\n        then: print(V(x: 1) == V(x: 2))\n"
           prog (lower-src src)
-          m    (some #(when (= :main (:node %)) %) (:classes prog))
-          ;; Not present in this shape — main isn't a class here.
-          ;; Simpler: inspect main's body directly.
           main-body (get-in prog [:main :body])
-          ;; Find the print call and check its arg.
-          call-arg (loop [stmts main-body]
-                     (when-let [s (first stmts)]
-                       (or (when (= :call (:node s))
-                             (first (:args s)))
-                           (recur (rest stmts)))))]
-      ;; The printf call's second arg (formatted value) is the F37 call.
-      ;; Loop over stmts to find any :call whose args mention V_cxc_equals.
-      (let [walker (fn walker [x]
-                     (cond
-                       (map? x)
-                       (or (when (and (= :call (:node x))
-                                      (= "V_cxc_equals" (:fn x)))
-                             x)
-                           (some walker (vals x)))
-                       (sequential? x) (some walker x)))]
-        (is (some? (walker main-body))
-            "expected V_cxc_equals call in main body")))))
+          walker (fn walker [x]
+                   (cond
+                     (map? x)
+                     (or (when (and (= :call (:node x))
+                                    (= "V_cxc_equals" (:fn x)))
+                           x)
+                         (some walker (vals x)))
+                     (sequential? x) (some walker x)))]
+      (is (some? (walker main-body))
+          "expected V_cxc_equals call in main body"))))
 
 ;; ---------------------------------------------------------------------------
 ;; F37 Landing 2 — primitive-field canonical bytes (spec §3.4.6 / §3.10.10)
@@ -6094,7 +6082,7 @@ def main:
               "Color" :main} attr)))))
 
 (deftest f51-l3b-b-ii-2-attribution-tracks-module-headers
-  (testing "F51 L3b(b.ii)-2 — a `:module foo` node re-scopes subsequent decls to `:foo`; a following `:module bar` re-scopes again. This is the direct value b.ii-3 needs: per-decl module provenance derived from the same `:module` nodes that survive concat+reparse (build-symbol-table in resolve.clj uses the same walk pattern)."
+  (testing "F51 L3b(b.ii)-2 — a `:module foo` node re-scopes subsequent decls to `:foo`; a following `:module bar` re-scopes again. Per-decl module provenance derives from the same `:module` nodes that the b.ii-3 multi-file assembly inserts between per-file ASTs (build-symbol-table in resolve.clj uses the same walk pattern)."
     (let [top   [{:node :record :name "A" :sections []}
                  {:node :module :name "foo"}
                  {:node :record :name "B" :sections []}
