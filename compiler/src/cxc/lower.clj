@@ -1178,12 +1178,26 @@
    nil (single-file pipeline strips metadata), so behavior is
    unchanged from raw short-name lookup — the wrapper exists to
    internalize `module-map` access + centralize the fallback removal
-   in one place at b.ii-5e."
-  [ctx env-kw name-node]
+   in one place at b.ii-5e.
+
+   Two arities: pass a map (AST reference node) to read `:name` and
+   `:resolves-to` off it, or pass a name-string when the caller only
+   has that in scope (e.g. name derived from a `:pattern` arm or
+   pulled off a type-kw map). In the string arity the hint is
+   consulted via ambient `*decl->module*` — the same declaration
+   index F56 uses for C-id mangling."
+  [ctx env-kw name-or-node]
   (let [env         (get ctx env-kw)
         module-map  (:module-map ctx)
-        name        (:name name-node)
-        resolves-to (:resolves-to name-node)]
+        [name resolves-to]
+        (cond
+          (string? name-or-node)
+          [name-or-node (get *decl->module* name-or-node)]
+
+          (map? name-or-node)
+          [(:name name-or-node) (:resolves-to name-or-node)]
+
+          :else [nil nil])]
     (resolve-decl-lookup env module-map name resolves-to)))
 
 (defn- build-record-env

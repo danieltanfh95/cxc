@@ -6230,6 +6230,22 @@ def main:
           ref-node {:node :type-ref :name nil}]
       (is (nil? (#'cxc.lower/decl-lookup ctx :record-env ref-node))))))
 
+(deftest f51-l3b-b-ii-5c-decl-lookup-string-arity-consults-ambient
+  (testing "F51 L3b(b.ii)-5c — name-string arity: reads the module hint from ambient `*decl->module*` (same declaration index F56 uses for C-id mangling). Enables Group 2 consumer sites (case-pattern arms, name pulled off a type-kw map) to migrate without threading an AST reference node."
+    (let [ctx {:record-env {"Bag" {:kind :record}}
+               :module-map {:foo #{"Bag"}}}]
+      (push-thread-bindings {#'cxc.lower/*decl->module* {"Bag" :foo}})
+      (try
+        (is (= {:kind :record}
+               (#'cxc.lower/decl-lookup ctx :record-env "Bag")))
+        (finally (pop-thread-bindings))))))
+
+(deftest f51-l3b-b-ii-5c-decl-lookup-string-arity-no-ambient-falls-back
+  (testing "F51 L3b(b.ii)-5c — name-string arity with ambient nil (unit-test call outside `lower`): `resolves-to` is nil and `resolve-decl-lookup` falls back to short-name. Preserves the b.ii-2 zero-change contract for unit tests that exercise consumers outside a full `lower` binding."
+    (let [ctx {:record-env {"Bag" {:kind :record}} :module-map {}}]
+      (is (= {:kind :record}
+             (#'cxc.lower/decl-lookup ctx :record-env "Bag"))))))
+
 ;; ---------------------------------------------------------------------------
 ;; F52 L4 — module let-bindings (§7.1). Top-level `let NAME = <const>`
 ;; folds via pre-lower substitution: `extract-module-lets` builds
