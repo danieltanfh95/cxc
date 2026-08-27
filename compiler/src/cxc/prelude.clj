@@ -95,15 +95,18 @@
   (clojure.string/join "\n" (map #(load-module-src % target) prelude-modules)))
 
 (def source
-  "Prelude source text spliced ahead of user source. Indentation is
-   canonical cxc (4-space blocks); keep flush-left at column 0.
-   Users write bare names; mangling to `_Cxc_<Name>` happens at
-   emit-time via `->c-safe` in `cxc.lower`.
+  "Default-target prelude source text — kept as a public convenience
+   for tests that concat prelude + user source before parsing. The
+   production build path parses prelude via `assemble-source` +
+   `parse` and AST-prepends the result to the enriched user AST (see
+   `cxc.build`). Indentation is canonical cxc (4-space blocks); keep
+   flush-left at column 0. Users write bare names; mangling to
+   `_Cxc_<Name>` happens at emit-time via `->c-safe` in `cxc.lower`.
 
    F55 Landing 2: assembled from `prelude-modules` loaded via
    `io/resource` from the classpath prelude directory tree. Target
-   defaults to `default-target` (macos); explicit target selection
-   through `assemble-source` waits on Landing 3."
+   selection through `assemble-source` shipped in Landing 3; this
+   var defaults to `default-target` (macos)."
   (assemble-source default-target))
 
 ;; F56 L2+L3 (2026-08-27) — the parse-time rename postwalk is
