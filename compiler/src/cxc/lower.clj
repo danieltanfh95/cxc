@@ -1155,26 +1155,33 @@
     :else
     (get env name)))
 
+(defn- env-lookup
+  "Bookkeeping primitive — plain env access by name. Use at sites
+   whose name isn't a user reference: type-kw slot extraction
+   (`(:atom target-ty)`), env-key iteration, name pulled off a data
+   structure, etc. No resolution, no diagnostic — just `(get env nm)`.
+
+   The reference-resolution primitive is [[decl-lookup]] — use that
+   whenever you have a user-visible AST reference node in hand."
+  [ctx env-kw nm]
+  (get (get ctx env-kw) nm))
+
 (defn- decl-lookup
   "F51 L3b(b.ii)-5a — caller-facing wrapper around `resolve-decl-lookup`.
    Reads the reference node's `:resolves-to` hint and the ctx's
    `:module-map`, then dispatches. `env-kw` is one of `:record-env`,
    `:atom-env`, `:enum-env`.
 
-   Terminal shape (post-b.ii-5e) for every reference-consuming site:
-   pass `ctx` + the reference AST node here instead of `(get env name)`.
-   `:resolves-to` now survives to lower (b.ii-3 multi-file + b.ii-5c
-   single-file), so path (1) fires for enriched AST refs; the
-   fallback still catches name-string arity call sites and unmigrated
-   AST refs. b.ii-5e retires the fallback — this wrapper centralizes
-   the removal.
+   Terminal shape (post-b.ii-5e): every reference-consuming site
+   passes `ctx` + the reference AST node here. Sites without a
+   user-reference AST node in hand should use [[env-lookup]] instead
+   — that's not a resolution, it's plain env access.
 
-   Two arities: pass a map (AST reference node) to read `:name` and
-   `:resolves-to` off it, or pass a name-string when the caller only
-   has that in scope (e.g. name derived from a `:pattern` arm or
-   pulled off a type-kw map). In the string arity the hint is
-   consulted via ambient `*decl->module*` — the same declaration
-   index F56 uses for C-id mangling."
+   Two arities today: pass a map (AST reference node) to read `:name`
+   and `:resolves-to` off it, or pass a name-string (via ambient
+   `*decl->module*`). The string arity is a shim from b.ii-5c that
+   retires alongside `*module-map*` once the last consumer migrates
+   to map arity or to [[env-lookup]]."
   [ctx env-kw name-or-node]
   (let [env         (get ctx env-kw)
         module-map  (:module-map ctx)
