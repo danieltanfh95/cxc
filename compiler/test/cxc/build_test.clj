@@ -186,6 +186,12 @@
       (is (zero? exit))
       (is (= "14\n" stdout)))))
 
+(deftest end-to-end-f37-l6-optional-varlen-nested-from-bytes
+  (testing "F37 L6 Optional-nested-record + variable-length ABI (both 2026-08-27) — round-trip on R{i: Inner} where Inner{text: String!, n: Int32!} is variable-length. Encoding: 1 presence + 4 length prefix + 2 UTF-8 + 4 n = 11 bytes. Decoder reads presence, on present dispatches to Inner with the ABI, Inner reports 10 consumed. DecodeOutcome discarded; `b.length` prints 11."
+    (let [{:keys [exit stdout]} (compile-and-run "f37-l6-optional-varlen-nested-from-bytes")]
+      (is (zero? exit))
+      (is (= "11\n" stdout)))))
+
 
 (deftest end-to-end-k5-if-expression
   (testing "K5 L1 — `if` at expression position (spec §3.8.1). Uses both simple `if...else` and `if...else if...else` chain. Result flows through `let` bindings. Lowered as C ternary; prints the selected branch value."

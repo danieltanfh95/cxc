@@ -1,0 +1,24 @@
+def Inner:
+    text: String!
+    n: Int32!
+
+def R:
+    i: Inner
+
+def main:
+    -> running
+        # F37 L6 Optional-nested-record + variable-length ABI (both
+        # 2026-08-27). Inner has a variable-length String! field so
+        # its byte count depends on the string. `R(i: Inner(text:
+        # "hi", n: 7)).as()` produces:
+        #   1 (presence for Optional Inner) +
+        #   4 (String length prefix) + 2 (UTF-8 "hi") + 4 (Int32 n)
+        # = 11 bytes. Decoder reads presence, on present calls
+        # `Inner_cxc_from_bytes(src, __off, &__i_consumed)` which
+        # walks the variable string + fixed int and reports 10
+        # consumed. Advances __off by 10. DecodeOutcome discarded;
+        # `b.length` prints 11.
+        then:
+            let b: Bytes = R(i: Inner(text: "hi", n: 7)).as()
+            R.from(source: b)
+            print(b.length)
