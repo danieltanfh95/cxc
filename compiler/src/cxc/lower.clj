@@ -3958,9 +3958,10 @@
   (let [callee (:callee call-node)]
     (when (and (= :dot (:node callee))
                (= :ident (:node (:target callee))))
-      (let [en (:name (:target callee))
+      (let [tgt     (:target callee)
+            en      (:name tgt)
             case-nm (:field callee)
-            info (get-in ctx [:enum-env en])
+            info    (decl-lookup ctx :enum-env tgt)
             payload (get-in info [:payload-index case-nm])]
         (when (and info payload (seq payload))
           en)))))
@@ -3979,8 +3980,9 @@
     (when (and (= :dot (:node callee))
                (= :ident (:node (:target callee)))
                (= "from" (:field callee)))
-      (let [rn   (:name (:target callee))
-            info (get-in ctx [:record-env rn])]
+      (let [tgt  (:target callee)
+            rn   (:name tgt)
+            info (decl-lookup ctx :record-env tgt)]
         (when info rn)))))
 
 (defn- infer-call-type
