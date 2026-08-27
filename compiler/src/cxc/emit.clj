@@ -1162,10 +1162,17 @@
        "@implementation " (:name rb) " @end"))
 
 (defn- emit-struct [s]
-  (let [decls (->> (:fields s)
-                   (map (fn [f] (str "    " (:c-type f) " " (:name f) ";")))
-                   (str/join "\n"))]
-    (str "typedef struct {\n" decls "\n} " (:name s) ";")))
+  ;; F37 L6 (2026-08-27) — a `:raw-c-decl` shape (used for the per-record
+  ;; `_Cxc_DecodeOutcome_<R>` synthesis) carries the full typedef text
+  ;; in `:text` so nested-struct / union / #define shapes we don't
+  ;; generalize yet emit verbatim. Regular `:c-struct` fields still
+  ;; render via the field-list path unchanged.
+  (if (= :raw-c-decl (:node s))
+    (:text s)
+    (let [decls (->> (:fields s)
+                     (map (fn [f] (str "    " (:c-type f) " " (:name f) ";")))
+                     (str/join "\n"))]
+      (str "typedef struct {\n" decls "\n} " (:name s) ";"))))
 
 (defn- emit-c-enum
   "Value-only enum → C typedef enum. Pre-F16: bare `typedef enum { E_a,

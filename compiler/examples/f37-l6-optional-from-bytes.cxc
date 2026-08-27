@@ -1,0 +1,17 @@
+def Opt:
+    x: Int32
+
+def main:
+    -> running
+        # F37 L6 Optional-primitive extension — round-trip `.as()` then
+        # `.from(source:)` on a record with a bare-T (Optional-boxed
+        # under F39 L5b-ii-c Sub-P) primitive field. `.as()` produces
+        # 1 presence byte + 4 payload bytes = 5 bytes when x is
+        # provided. `.from(source: b)` reads the presence + payload
+        # into `_Cxc_Optional_Int32 __x_val`, then constructs an Opt
+        # via designated initializer. DecodeOutcome discarded (waits
+        # on F16 consumer surface); `b.length` prints 5.
+        then:
+            let b: Bytes = Opt(x: 42).as()
+            Opt.from(source: b)
+            print(b.length)

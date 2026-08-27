@@ -120,6 +120,30 @@
       (is (zero? exit))
       (is (= "1\n" stdout)))))
 
+(deftest end-to-end-f37-l6-from-bytes
+  (testing "F37 L6 — `<Record>.from(source: b)` primitive-only decoder synthesis end-to-end. `Vec(x:1,y:2).as()` produces 8 big-endian bytes; `Vec.from(source: b)` dispatches to the synthesized `Vec_cxc_from_bytes` returning `_Cxc_DecodeOutcome_Vec`. Consumer surface (cxc-visible DecodeOutcome enum) waits on F16 integration, so the call's return value is discarded — the test proves compile+link cleanliness of the synth pipeline (struct + factories + decoder) plus intercept dispatch. `b.length` prints 8 as it does in the L2 fixture."
+    (let [{:keys [exit stdout]} (compile-and-run "f37-l6-from-bytes")]
+      (is (zero? exit))
+      (is (= "8\n" stdout)))))
+
+(deftest end-to-end-f37-l6-string-from-bytes
+  (testing "F37 L6 String field extension — round-trip `.as()` then `.from(source:)` on a String!-only record. `Msg(text: \"hello\").as()` produces UInt32 big-endian length prefix (4 bytes) + UTF-8 payload (5 bytes for \"hello\") = 9 bytes; `Msg.from(source: b)` dispatches to the synthesized `Msg_cxc_from_bytes` which reads the prefix + payload + validates UTF-8. DecodeOutcome result discarded (waits on F16 consumer surface); `b.length` prints 9 confirming compile+link cleanliness of the String decode path."
+    (let [{:keys [exit stdout]} (compile-and-run "f37-l6-string-from-bytes")]
+      (is (zero? exit))
+      (is (= "9\n" stdout)))))
+
+(deftest end-to-end-f37-l6-nested-from-bytes
+  (testing "F37 L6 nested-record extension — round-trip `.as()` then `.from(source:)` on an Outer record with a fixed-size Inner nested field. `Outer(i: Inner(n: 7), k: 42).as()` produces 4 bytes (Inner) + 4 bytes (k) = 8 bytes; `Outer.from(source: b)` dispatches to `Outer_cxc_from_bytes` which slices Inner's fixed 4 bytes, calls `Inner_cxc_from_bytes` on the slice, unpacks the outcome, then reads k. DecodeOutcome discarded (waits on F16 consumer surface); `b.length` prints 8 confirming compile+link cleanliness of the nested-record decode path."
+    (let [{:keys [exit stdout]} (compile-and-run "f37-l6-nested-from-bytes")]
+      (is (zero? exit))
+      (is (= "8\n" stdout)))))
+
+(deftest end-to-end-f37-l6-optional-from-bytes
+  (testing "F37 L6 Optional-primitive extension — round-trip `.as()` then `.from(source:)` on a record with a bare-T (Optional-boxed) primitive field. `Opt(x: 42).as()` produces 1 presence byte + 4 payload bytes = 5 bytes; `Opt.from(source: b)` reads presence + payload into `_Cxc_Optional_Int32 __x_val`, then constructs Opt via designated initializer. DecodeOutcome discarded; `b.length` prints 5."
+    (let [{:keys [exit stdout]} (compile-and-run "f37-l6-optional-from-bytes")]
+      (is (zero? exit))
+      (is (= "5\n" stdout)))))
+
 (deftest end-to-end-k5-if-expression
   (testing "K5 L1 — `if` at expression position (spec §3.8.1). Uses both simple `if...else` and `if...else if...else` chain. Result flows through `let` bindings. Lowered as C ternary; prints the selected branch value."
     (let [{:keys [exit stdout]} (compile-and-run "k5-if-expression")]

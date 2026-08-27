@@ -3611,6 +3611,24 @@
         (when (and info payload (seq payload))
           en)))))
 
+(defn- record-from-bytes-call?
+  "F37 L6 — a `:call` whose callee is `<Record>.from` where `<Record>`
+   is a known record type. Returns the record-name string when matched,
+   nil otherwise. Distinguished from `enum-payload-call?` by looking at
+   the record-env rather than the enum-env, and requiring the field to
+   be `from`. Eligibility (all primitive fields) is checked at lower
+   time, not here — non-eligible receivers still match this predicate
+   so the intercept can raise a targeted `fail-nyi!` naming the
+   offending field type."
+  [call-node ctx]
+  (let [callee (:callee call-node)]
+    (when (and (= :dot (:node callee))
+               (= :ident (:node (:target callee)))
+               (= "from" (:field callee)))
+      (let [rn   (:name (:target callee))
+            info (get-in ctx [:record-env rn])]
+        (when info rn)))))
+
 (defn- infer-call-type
   [{:keys [callee] :as node} ctx]
   (case (:node callee)
@@ -3646,7 +3664,15 @@
         :else (fail-nyi! (str "call to `" nm "`") node)))
     :dot   (if-let [en (enum-payload-call? node ctx)]
              {:enum en}
-             (infer-method-call-type node ctx))
+             (if-let [rn (record-from-bytes-call? node ctx)]
+               ;; F37 L6 — result is the per-record decode-outcome
+               ;; struct. No cxc surface type today; downstream code
+               ;; can only pattern-match via the .converted / .invalid
+               ;; C-level accessors. Marker keyword lets infer-type
+               ;; callers know this is a "decode outcome" without
+               ;; committing to a cxc-visible type surface.
+               {:decode-outcome rn}
+               (infer-method-call-type node ctx)))
     (fail-nyi! (str "call with non-ident/non-dot callee " (:node callee)) node)))
 
 (defn- assert-not-optional-guard!
@@ -3955,7 +3981,11 @@
          f37-bytes-encodable-field?
          ;; F37 Landing 5 — enum canonical bytes.
          enum-synth-as-bytes-name
-         enum-eligible-for-as-bytes-synthesis?)
+         enum-eligible-for-as-bytes-synthesis?
+         ;; F37 Landing 6 — from-bytes decoder synth (primitives + String!).
+         record-synth-from-bytes-name
+         record-eligible-for-from-bytes-synthesis?
+         f37-decode-eligible-field?)
 
 (defn- lower-record-ctor
   [record-name args ctx]
@@ -5179,7 +5209,43 @@
 
         :dot   (if-let [en (enum-payload-call? node ctx)]
                  (lower-enum-payload-ctor en node ctx)
-                 (lower-method-call node ctx))
+                 (if-let [rn (record-from-bytes-call? node ctx)]
+                   ;; F37 L6 — `<Record>.from(source: b)` (class function,
+                   ;; spec §3.4.6). Dispatch to
+                   ;; `<Record>_cxc_from_bytes(b)`. Non-eligible receivers
+                   ;; (String / nested-record / enum / Optional fields)
+                   ;; get a targeted fail-nyi naming the offending
+                   ;; field + type, pointing at the follow-on sub-landings.
+                   (let [info (get-in ctx [:record-env rn])
+                         args (:args node)
+                         _    (when-not (= 1 (count args))
+                                (fail-nyi!
+                                 (str "F37 L6: `" rn ".from(...)` expects "
+                                      "exactly one arg (`source: Bytes`), "
+                                      "got " (count args) ".")
+                                 node))
+                         _    (when-not (record-eligible-for-from-bytes-synthesis?
+                                         info (:record-env ctx))
+                                (let [bad (first (remove #(f37-decode-eligible-field?
+                                                           % (:record-env ctx))
+                                                         (:fields info)))]
+                                  (fail-nyi!
+                                   (str "F37 L6: cannot synthesize `.from(Bytes)"
+                                        " -> DecodeOutcome<" rn ">` — field `"
+                                        (:name bad) "` has type `" (:cxc-ty bad)
+                                        "`, which isn't decode-eligible yet "
+                                        "(primitives Bool/sized-int/Int/Float/Double, "
+                                        "`String!`, and fixed-size nested records "
+                                        "ship at L6; variable-length nested records "
+                                        "/ Optional / enum land in follow-on sub-"
+                                        "landings). Reshape the record or wait "
+                                        "for the extension.")
+                                   node)))
+                         arg-expr (lower-expr (:value (first args)) ctx)]
+                     {:node :call
+                      :fn   (record-synth-from-bytes-name rn)
+                      :args [arg-expr]})
+                   (lower-method-call node ctx)))
 
         (fail-nyi! (str "call with " (:node callee) " callee") node)))
 
@@ -8384,6 +8450,414 @@
                     (:payload ce)))
           (:case-entries info)))
 
+;; ---------------------------------------------------------------------------
+;; F37 Landing 6 — `class function from(source: Bytes) -> DecodeOutcome<Self>`
+;; synthesis. Mirror of Landing 2's `.as() -> Bytes` encoder. Per plan §Landing
+;; 6, DecodeOutcome is per-record monomorphized (no runtime generics) — each
+;; record gets its own `_Cxc_DecodeOutcome_<R>` struct + factory helpers.
+;;
+;; Primitive-only MVP: records whose fields are all primitive-byte-eligible
+;; (Bool / sized int / Int / Float / Double). String / nested / Optional /
+;; enum decoding lands as follow-on sub-landings — the intercept fails-nyi
+;; with a targeted diagnostic pointing at the specific extension needed.
+;; ---------------------------------------------------------------------------
+
+(defn- decode-outcome-struct-name [record-name]
+  (str "_Cxc_DecodeOutcome_" record-name))
+
+(defn- decode-invalid-fn-name [record-name]
+  (str "_cxc_decode_invalid_" record-name))
+
+(defn- decode-converted-fn-name [record-name]
+  (str "_cxc_decode_converted_" record-name))
+
+(defn- record-synth-from-bytes-name [record-name]
+  (str record-name "_cxc_from_bytes"))
+
+(defn- f37-string-field-decode-c-src
+  "F37 L6 String extension — decode a `String!` field. Wire format
+   per §3.10.10: UInt32 big-endian length prefix + raw UTF-8 bytes.
+   Two bounds checks (prefix + payload) and one UTF-8 validity check;
+   any short read or invalid UTF-8 short-circuits to
+   `_cxc_decode_invalid_<R>(offset, reason)` with a per-failure-mode
+   reason. Sets `NSString *__<field>_val` bound to the decoded string."
+  [record-name f]
+  (let [fname   (:name f)
+        bind    (str "__" fname "_val")
+        invalid (decode-invalid-fn-name record-name)]
+    (str "    if (__len < __off + 4) return " invalid
+         "((int64_t)__off, @\"expected 4 bytes for field " fname
+         " length, source has less\");\n"
+         "    uint32_t " bind "_len_raw;\n"
+         "    memcpy(&" bind "_len_raw, __bytes + __off, 4);\n"
+         "    uint32_t " bind "_len = OSSwapBigToHostInt32(" bind "_len_raw);\n"
+         "    __off += 4;\n"
+         "    if (__len < __off + " bind "_len) return " invalid
+         "((int64_t)__off, @\"expected N bytes for field " fname
+         ", source has less than declared length\");\n"
+         "    NSString *" bind " = [[NSString alloc] "
+         "initWithBytes:__bytes + __off length:" bind "_len "
+         "encoding:NSUTF8StringEncoding];\n"
+         "    if (!" bind ") return " invalid
+         "((int64_t)__off, @\"invalid UTF-8 for field " fname "\");\n"
+         "    __off += " bind "_len;")))
+
+(defn- f37-primitive-field-decode-c-src
+  "Return the C statement string decoding a primitive field from
+   `__bytes` at `__off`, binding the result to a local named
+   `__<field>_val` typed appropriately, then advancing `__off`.
+   Bounds-check emitted before the read; returns `_cxc_decode_invalid_<R>(...)`
+   on short input. `record-name` is the enclosing record — used to name
+   the invalid factory (per-record outcome type)."
+  [record-name f]
+  (let [fname  (:name f)
+        cxc-ty (:cxc-ty f)
+        width  (get f37-primitive-byte-widths cxc-ty)
+        bind   (str "__" fname "_val")
+        bounds (str "    if (__len < __off + " width ") return "
+                    (decode-invalid-fn-name record-name)
+                    "((int64_t)__off, "
+                    "@\"expected " width " bytes for field " fname
+                    ", source has less\");")
+        read-src
+        (case cxc-ty
+          "Bool"
+          (str "    uint8_t " bind "_raw = __bytes[__off];\n"
+               "    if (" bind "_raw != 0x00 && " bind "_raw != 0x01) return "
+               (decode-invalid-fn-name record-name)
+               "((int64_t)__off, @\"invalid Bool byte 0x%02x for field "
+               fname "\");\n"
+               "    bool " bind " = (" bind "_raw == 0x01);\n"
+               "    __off += 1;")
+
+          ("UInt8" "Int8")
+          (str "    uint8_t " bind " = __bytes[__off];\n"
+               "    __off += 1;")
+
+          ("UInt16" "Int16")
+          (str "    uint16_t " bind "_raw;\n"
+               "    memcpy(&" bind "_raw, __bytes + __off, 2);\n"
+               "    " (if (= cxc-ty "Int16") "int16_t " "uint16_t ")
+               bind " = " (if (= cxc-ty "Int16") "(int16_t)" "")
+               "OSSwapBigToHostInt16(" bind "_raw);\n"
+               "    __off += 2;")
+
+          ("UInt32" "Int32")
+          (str "    uint32_t " bind "_raw;\n"
+               "    memcpy(&" bind "_raw, __bytes + __off, 4);\n"
+               "    " (if (= cxc-ty "Int32") "int32_t " "uint32_t ")
+               bind " = " (if (= cxc-ty "Int32") "(int32_t)" "")
+               "OSSwapBigToHostInt32(" bind "_raw);\n"
+               "    __off += 4;")
+
+          ("UInt64" "Int64" "Int")
+          (str "    uint64_t " bind "_raw;\n"
+               "    memcpy(&" bind "_raw, __bytes + __off, 8);\n"
+               "    int64_t " bind " = (int64_t)OSSwapBigToHostInt64("
+               bind "_raw);\n"
+               "    __off += 8;")
+
+          "Float"
+          (str "    uint32_t " bind "_raw;\n"
+               "    memcpy(&" bind "_raw, __bytes + __off, 4);\n"
+               "    " bind "_raw = OSSwapBigToHostInt32(" bind "_raw);\n"
+               "    float " bind ";\n"
+               "    memcpy(&" bind ", &" bind "_raw, 4);\n"
+               "    __off += 4;")
+
+          "Double"
+          (str "    uint64_t " bind "_raw;\n"
+               "    memcpy(&" bind "_raw, __bytes + __off, 8);\n"
+               "    " bind "_raw = OSSwapBigToHostInt64(" bind "_raw);\n"
+               "    double " bind ";\n"
+               "    memcpy(&" bind ", &" bind "_raw, 8);\n"
+               "    __off += 8;"))]
+    (str bounds "\n" read-src)))
+
+(defn- record-fixed-encoded-size
+  "Return the total encoded byte count for a record whose fields are
+   ALL primitive (fixed-width). Returns nil when the record is missing
+   from record-env or any field is non-primitive (e.g. String!, nested-
+   record, Optional). Used to gate nested-record decode: a nested Inner
+   field can decode iff Inner's encoding is fixed-length (so the outer
+   decoder knows how many bytes to slice + advance)."
+  [record-name record-env]
+  (when-let [info (get record-env record-name)]
+    (when (every? f37-primitive-byte-field? (:fields info))
+      (reduce + 0 (map #(get f37-primitive-byte-widths (:cxc-ty %))
+                       (:fields info))))))
+
+(defn- f37-nested-record-decode-field?
+  "F37 L6 nested-record extension eligibility: nested record (non-
+   Optional) whose Inner record's full encoding is fixed-length (all
+   primitive fields). Variable-length inner records (containing String!)
+   defer to a follow-on sub-landing that adds a walker-with-out-param
+   ABI."
+  [f record-env]
+  (and (not (:optional? f))
+       (contains? record-env (:cxc-ty f))
+       (some? (record-fixed-encoded-size (:cxc-ty f) record-env))))
+
+(defn- f37-decode-eligible-field?
+  "F37 L6 field-level eligibility. Primitive fields (Bool / sized-int /
+   Int / Float / Double), `String!` fields, nested-record fields whose
+   inner record is fixed-size, and Optional-boxed primitive fields
+   (bare-T value-typed T where T is primitive) all decode. Enum /
+   variable-length-nested-record / Optional-nested-record fields defer
+   to follow-on sub-landings.
+
+   Single-arity variant covers the record-env-agnostic checks (primitive
+   + String + Optional-primitive); the two-arity variant adds the
+   nested-record path. Callers with access to record-env should prefer
+   the 2-arity form so nested-record fields aren't misdiagnosed as
+   non-eligible."
+  ([f]
+   (or (f37-primitive-byte-field? f)
+       (f37-string-byte-field? f)
+       (f37-optional-primitive-field? f)))
+  ([f record-env]
+   (or (f37-primitive-byte-field? f)
+       (f37-string-byte-field? f)
+       (f37-optional-primitive-field? f)
+       (f37-nested-record-decode-field? f record-env))))
+
+(defn- record-eligible-for-from-bytes-synthesis?
+  "F37 L6 eligibility: every field must be decode-eligible. Currently
+   covers primitive (Bool / sized-int / Int / Float / Double), `String!`,
+   and nested-record fields (where the inner record is fixed-size).
+   Variable-length nested records / Optional / enum fields defer to
+   follow-on sub-landings; those records emit a fail-nyi at the
+   `.from()` intercept rather than at synthesis time (avoids generating
+   unreachable code).
+
+   Single-arity keeps the pre-nested compat call sites (record-env-
+   agnostic — nested-record fields fall through to non-eligible). Prefer
+   the 2-arity form at sites that have record-env available."
+  ([info]
+   (and (not (record-has-user-as-method? info))
+        (every? f37-decode-eligible-field? (:fields info))))
+  ([info record-env]
+   (and (not (record-has-user-as-method? info))
+        (every? #(f37-decode-eligible-field? % record-env) (:fields info)))))
+
+(defn- synthesize-decode-outcome-struct
+  "Per-record `_Cxc_DecodeOutcome_<R>` C struct. `.tag` selects
+   `_CXC_DECODE_CONVERTED` or `_CXC_DECODE_INVALID`;
+   `.data.converted.value` holds the decoded record on success;
+   `.data.invalid` carries `.offset` + `.reason` on failure. Mirror of
+   F16 tagged-enum lowering, but hand-rolled here because DecodeOutcome
+   isn't a user-declared enum (no F16 AST node to route through).
+
+   Uses `struct` (not `union`) for `data` because ObjC ARC forbids
+   strong `NSString *` inside a union — ARC can't decide when to
+   release across variant transitions. The struct form carries both
+   variants at once (wastes a few bytes per outcome) but the code
+   remains ARC-clean and the caller reads `.tag` before dereferencing
+   the matching payload."
+  [record-name]
+  {:node :raw-c-decl
+   :text (str "typedef struct " (decode-outcome-struct-name record-name)
+              " {\n"
+              "    uint8_t tag;\n"
+              "    struct {\n"
+              "        struct { " record-name " value; } converted;\n"
+              "        struct { int64_t offset; NSString *reason; } invalid;\n"
+              "    } data;\n"
+              "} " (decode-outcome-struct-name record-name) ";\n"
+              "#ifndef _CXC_DECODE_CONVERTED\n"
+              "#define _CXC_DECODE_CONVERTED 1\n"
+              "#define _CXC_DECODE_INVALID   0\n"
+              "#endif")})
+
+(defn- synthesize-decode-factory-fns
+  "Emit the two per-record factory C functions:
+     _cxc_decode_converted_<R>(<R> v) -> <_Cxc_DecodeOutcome_R>
+     _cxc_decode_invalid_<R>(int64_t offset, NSString *reason) -> <_Cxc_DecodeOutcome_R>
+   Compact designated-initializer constructors for the outcome struct."
+  [record-name]
+  (let [outcome (decode-outcome-struct-name record-name)]
+    [{:node        :c-function
+      :name        (decode-converted-fn-name record-name)
+      :return-type outcome
+      :params      [{:name "v" :c-type record-name}]
+      :body        [{:node :raw-c
+                     :text (str "    return (" outcome
+                                "){ .tag = _CXC_DECODE_CONVERTED,"
+                                " .data.converted.value = v };")}]}
+     {:node        :c-function
+      :name        (decode-invalid-fn-name record-name)
+      :return-type outcome
+      :params      [{:name "offset" :c-type "int64_t"}
+                    {:name "reason" :c-type "NSString *"}]
+      :body        [{:node :raw-c
+                     :text (str "    return (" outcome
+                                "){ .tag = _CXC_DECODE_INVALID,"
+                                " .data.invalid = { .offset = offset,"
+                                " .reason = reason } };")}]}]))
+
+(defn- f37-nested-record-field-decode-c-src
+  "F37 L6 nested-record extension — decode a nested-record field whose
+   inner encoding is fixed-length. Slice N bytes at current __off, wrap
+   as NSMutableData, dispatch to `Inner_cxc_from_bytes`, unpack the
+   outcome: on invalid propagate with offset already carried by the
+   nested reason; on converted extract `.value` and advance __off by N."
+  [record-name f record-env]
+  (let [fname   (:name f)
+        inner   (:cxc-ty f)
+        n       (record-fixed-encoded-size inner record-env)
+        bind    (str "__" fname "_val")
+        res     (str "__" fname "_res")
+        outcome (decode-outcome-struct-name record-name)
+        invalid (decode-invalid-fn-name record-name)]
+    (str "    if (__len < __off + " n ") return " invalid
+         "((int64_t)__off, @\"expected " n " bytes for nested-record "
+         "field " fname " (" inner "), source has less\");\n"
+         "    NSMutableData *" bind "_slice = "
+         "[[src subdataWithRange:NSMakeRange(__off, " n ")] mutableCopy];\n"
+         "    " (decode-outcome-struct-name inner) " " res
+         " = " (record-synth-from-bytes-name inner) "(" bind "_slice);\n"
+         "    if (" res ".tag == _CXC_DECODE_INVALID) return " invalid
+         "((int64_t)(__off + " res ".data.invalid.offset), "
+         res ".data.invalid.reason);\n"
+         "    " inner " " bind " = " res ".data.converted.value;\n"
+         "    __off += " n ";")))
+
+(defn- f37-optional-primitive-field-decode-c-src
+  "F37 L6 Optional-primitive extension — decode a bare-T value-typed
+   field (Optional-boxed, primitive inner) per §3.10.10 Optional row:
+   UInt8 presence byte (0/1 only) + T bytes when present. Absent (0)
+   leaves `.value` bit-zero; present (1) decodes T using the primitive
+   helper pattern. Binds `_Cxc_Optional_<T> __<field>_val` for the
+   designated-initializer constructor at the tail."
+  [record-name f]
+  (let [fname   (:name f)
+        cxc-ty  (:cxc-ty f)
+        width   (get f37-primitive-byte-widths cxc-ty)
+        bind    (str "__" fname "_val")
+        opt-ty  (optional-type-name cxc-ty)
+        invalid (decode-invalid-fn-name record-name)
+        inner-bind (str "__" fname "_inner")
+        inner-read
+        (case cxc-ty
+          "Bool"
+          (str "        uint8_t " inner-bind "_raw = __bytes[__off];\n"
+               "        if (" inner-bind "_raw != 0x00 && " inner-bind "_raw != 0x01) return "
+               invalid "((int64_t)__off, @\"invalid Bool byte in Optional field "
+               fname "\");\n"
+               "        bool " inner-bind " = (" inner-bind "_raw == 0x01);\n"
+               "        " bind ".value = " inner-bind ";\n"
+               "        __off += 1;")
+
+          ("UInt8" "Int8")
+          (str "        uint8_t " inner-bind " = __bytes[__off];\n"
+               "        " bind ".value = " inner-bind ";\n"
+               "        __off += 1;")
+
+          ("UInt16" "Int16")
+          (str "        uint16_t " inner-bind "_raw;\n"
+               "        memcpy(&" inner-bind "_raw, __bytes + __off, 2);\n"
+               "        " (if (= cxc-ty "Int16") "int16_t" "uint16_t") " " inner-bind
+               " = " (if (= cxc-ty "Int16") "(int16_t)" "")
+               "OSSwapBigToHostInt16(" inner-bind "_raw);\n"
+               "        " bind ".value = " inner-bind ";\n"
+               "        __off += 2;")
+
+          ("UInt32" "Int32")
+          (str "        uint32_t " inner-bind "_raw;\n"
+               "        memcpy(&" inner-bind "_raw, __bytes + __off, 4);\n"
+               "        " (if (= cxc-ty "Int32") "int32_t" "uint32_t") " " inner-bind
+               " = " (if (= cxc-ty "Int32") "(int32_t)" "")
+               "OSSwapBigToHostInt32(" inner-bind "_raw);\n"
+               "        " bind ".value = " inner-bind ";\n"
+               "        __off += 4;")
+
+          ("UInt64" "Int64" "Int")
+          (str "        uint64_t " inner-bind "_raw;\n"
+               "        memcpy(&" inner-bind "_raw, __bytes + __off, 8);\n"
+               "        int64_t " inner-bind
+               " = (int64_t)OSSwapBigToHostInt64(" inner-bind "_raw);\n"
+               "        " bind ".value = " inner-bind ";\n"
+               "        __off += 8;")
+
+          "Float"
+          (str "        uint32_t " inner-bind "_raw;\n"
+               "        memcpy(&" inner-bind "_raw, __bytes + __off, 4);\n"
+               "        " inner-bind "_raw = OSSwapBigToHostInt32(" inner-bind "_raw);\n"
+               "        float " inner-bind ";\n"
+               "        memcpy(&" inner-bind ", &" inner-bind "_raw, 4);\n"
+               "        " bind ".value = " inner-bind ";\n"
+               "        __off += 4;")
+
+          "Double"
+          (str "        uint64_t " inner-bind "_raw;\n"
+               "        memcpy(&" inner-bind "_raw, __bytes + __off, 8);\n"
+               "        " inner-bind "_raw = OSSwapBigToHostInt64(" inner-bind "_raw);\n"
+               "        double " inner-bind ";\n"
+               "        memcpy(&" inner-bind ", &" inner-bind "_raw, 8);\n"
+               "        " bind ".value = " inner-bind ";\n"
+               "        __off += 8;"))]
+    (str "    if (__len < __off + 1) return " invalid
+         "((int64_t)__off, @\"expected 1 presence byte for Optional field "
+         fname ", source has less\");\n"
+         "    uint8_t " bind "_presence = __bytes[__off];\n"
+         "    __off += 1;\n"
+         "    if (" bind "_presence != 0x00 && " bind "_presence != 0x01) return "
+         invalid "((int64_t)(__off - 1), @\"invalid presence byte for Optional field "
+         fname "\");\n"
+         "    " opt-ty " " bind " = { .present = " bind "_presence, .value = 0 };\n"
+         "    if (" bind "_presence == 0x01) {\n"
+         "        if (__len < __off + " width ") return " invalid
+         "((int64_t)__off, @\"expected " width " bytes for Optional field "
+         fname " payload, source has less\");\n"
+         inner-read "\n"
+         "    }")))
+
+(defn- f37-field-decode-c-src
+  "Dispatch per-field-kind at F37 L6 decode synthesis. Primitive → the
+   primitive helper; `String!` → the String helper; Optional-primitive →
+   the Optional helper; nested-record → the nested-record helper.
+   Precondition: `f37-decode-eligible-field?` returned true. New field
+   kinds land as follow-on sub-landings with their own helper."
+  [record-name f record-env]
+  (cond
+    (f37-primitive-byte-field? f)          (f37-primitive-field-decode-c-src record-name f)
+    (f37-string-byte-field? f)             (f37-string-field-decode-c-src record-name f)
+    (f37-optional-primitive-field? f)
+    (f37-optional-primitive-field-decode-c-src record-name f)
+    (f37-nested-record-decode-field? f record-env)
+    (f37-nested-record-field-decode-c-src record-name f record-env)))
+
+(defn- synthesize-record-from-bytes-fn
+  "F37 L6 — emit `<Record>_cxc_from_bytes(NSMutableData *src) ->
+   _Cxc_DecodeOutcome_<Record>`. Per-field decode blocks in declaration
+   order, each with a bounds-check that returns
+   `_cxc_decode_invalid_<Record>(offset, reason)` on short input. Success
+   path assembles a designated-initializer constructor and returns
+   `_cxc_decode_converted_<Record>(...)`. Precondition:
+   `record-eligible-for-from-bytes-synthesis?` returned true.
+
+   `record-env` is threaded through for the nested-record decode arm
+   (needs to look up the inner record's fixed encoded size)."
+  [record-name info record-env]
+  (let [fields   (:fields info)
+        outcome  (decode-outcome-struct-name record-name)
+        head     (str "    NSUInteger __off = 0;\n"
+                      "    const uint8_t *__bytes = (const uint8_t *)[src bytes];\n"
+                      "    NSUInteger __len = [src length];")
+        blocks   (map #(f37-field-decode-c-src record-name % record-env) fields)
+        ctor-args (str/join ", "
+                            (map (fn [f]
+                                   (str "." (:name f) " = __" (:name f) "_val"))
+                                 fields))
+        tail      (str "    return " (decode-converted-fn-name record-name)
+                       "((" record-name "){ " ctor-args " });")
+        body-src  (str/join "\n\n" (concat [head] blocks [tail]))]
+    {:node        :c-function
+     :name        (record-synth-from-bytes-name record-name)
+     :return-type outcome
+     :params      [{:name "src" :c-type "NSMutableData *"}]
+     :body        [{:node :raw-c :text body-src}]}))
+
 (defn- synthesized-record-functions
   "Emit the synthesized equals + hash function pair for every record,
    plus F37 Landings 2 + 3 + 4 canonical-bytes synthesis when the
@@ -8408,11 +8882,24 @@
                    :let            [emitted (f-fn rec-name info ctx)]
                    :when           emitted]
                emitted))
+        ;; F37 L6 MVP — for every primitive-field-eligible record, emit
+        ;; the two factory helpers + the from-bytes decoder. Ordered
+        ;; alongside `_cxc_as_bytes` so a `.as().from()` round-trip finds
+        ;; both symbols at emit time. String / nested / Optional / enum
+        ;; support ships in follow-on sub-landings; those records skip
+        ;; synthesis here and the `.from()` intercept fail-nyi's with a
+        ;; targeted diagnostic pointing at the missing extension.
+        decode-fns
+        (vec (mapcat (fn [[rec-name info]]
+                       (when (record-eligible-for-from-bytes-synthesis? info record-env)
+                         (concat (synthesize-decode-factory-fns rec-name)
+                                 [(synthesize-record-from-bytes-fn rec-name info record-env)])))
+                     record-env))
         enum-fns
         (vec (for [[en-name info] enum-env
                    :when          (enum-eligible-for-as-bytes-synthesis? info record-env)]
                (synthesize-enum-as-bytes-fn en-name info record-env)))]
-    (into record-fns enum-fns)))
+    (into (into record-fns decode-fns) enum-fns)))
 
 (defn- lower-list-literal-init
   "Lower `xs: List of T = [e1, e2, ...]` in a data-field default.
@@ -10224,11 +10711,23 @@
         ;; is `_Cxc_Optional_<PrevRec>` sees the typedef declared.
         record-blocks
         (mapv (fn [r]
-                (let [rec-struct (lower-record-struct r ctx)
-                      opt-struct (when (contains? rec-inner-set (:name r))
-                                   (synth-optional-typedef (:name r) ctx))]
+                (let [rec-name    (:name r)
+                      rec-info    (get record-env rec-name)
+                      rec-struct  (lower-record-struct r ctx)
+                      opt-struct  (when (contains? rec-inner-set rec-name)
+                                    (synth-optional-typedef rec-name ctx))
+                      ;; F37 L6 — DecodeOutcome typedef must follow the
+                      ;; record's own struct (references <R> by value).
+                      ;; Only emitted for primitive-field-eligible records;
+                      ;; skipped for records that need String / nested /
+                      ;; Optional / enum decoding (follow-on sub-landings).
+                      decode-struct (when (and rec-info
+                                               (record-eligible-for-from-bytes-synthesis?
+                                                rec-info record-env))
+                                      (synthesize-decode-outcome-struct rec-name))]
                   (cond-> [rec-struct]
-                    opt-struct (conj opt-struct))))
+                    opt-struct    (conj opt-struct)
+                    decode-struct (conj decode-struct))))
               records)
         structs    (into (vec prim-inner-structs)
                          (mapcat identity record-blocks))

@@ -1977,6 +1977,192 @@ def main:
       (is (< int-pos str-pos)
           "Int64 encoder precedes String encoder per declaration order"))))
 
+;; ---------------------------------------------------------------------------
+;; F37 L6 — from(Bytes) decoder synthesis (spec §3.4.6 / §3.10.10).
+;;
+;; Primitives-only MVP: every field of the receiver record must be a
+;; fixed-width primitive (Bool / sized-int / Int / Float / Double).
+;; String / nested-record / Optional / enum decode ship as follow-on
+;; sub-landings; those receivers get a targeted fail-nyi at the intercept.
+;;
+;; The synthesis path emits three artifacts per eligible record:
+;;   1) `_Cxc_DecodeOutcome_<R>` C struct (tagged shape carrying either
+;;      `.data.converted.value : <R>` or `.data.invalid.{offset, reason}`).
+;;   2) `_cxc_decode_converted_<R>` / `_cxc_decode_invalid_<R>` factories.
+;;   3) `<R>_cxc_from_bytes(NSMutableData *src) -> _Cxc_DecodeOutcome_<R>`
+;;      with per-field bounds check + big-endian read + designated-init
+;;      constructor at the tail.
+;; ---------------------------------------------------------------------------
+
+(deftest f37-l6-synthesizes-decode-outcome-struct-per-eligible-record
+  (testing "F37 L6 — a primitive-only record gets a `_Cxc_DecodeOutcome_<R>` C struct in :structs alongside its main <R> struct. Emitted via :raw-c-decl (union+struct+#define text) since the outcome type isn't user-declared and doesn't fit the ordinary field-list struct shape."
+    (let [prog (lower-src "def V:\n    x: Int32!\n    y: Int32!\n\ndef main:\n    -> running\n")
+          structs (:structs prog)
+          outcome (first (filter #(and (= :raw-c-decl (:node %))
+                                       (re-find #"_Cxc_DecodeOutcome_V" (:text %)))
+                                 structs))]
+      (is (some? outcome)
+          "expected _Cxc_DecodeOutcome_V typedef in :structs")
+      (is (re-find #"_CXC_DECODE_CONVERTED" (:text outcome))
+          "tag discriminator macro emitted")
+      (is (re-find #"NSString \*reason" (:text outcome))
+          "invalid payload carries reason NSString"))))
+
+(deftest f37-l6-synthesizes-from-bytes-fn-and-factories
+  (testing "F37 L6 — primitive-only record gets three synthesized C functions: `<R>_cxc_from_bytes`, `_cxc_decode_converted_<R>`, `_cxc_decode_invalid_<R>`. The decoder returns the outcome struct type."
+    (let [prog     (lower-src "def V:\n    x: Int32!\n    y: Int32!\n\ndef main:\n    -> running\n")
+          fn-names (set (map :name (:functions prog)))
+          decoder  (first (filter #(= "V_cxc_from_bytes" (:name %)) (:functions prog)))]
+      (is (contains? fn-names "V_cxc_from_bytes"))
+      (is (contains? fn-names "_cxc_decode_converted_V"))
+      (is (contains? fn-names "_cxc_decode_invalid_V"))
+      (is (= "_Cxc_DecodeOutcome_V" (:return-type decoder)))
+      (is (= "NSMutableData *" (get-in decoder [:params 0 :c-type]))))))
+
+(deftest f37-l6-decoder-body-per-field-bounds-check-and-swap
+  (testing "F37 L6 — decoder body emits per-field bounds check + `OSSwapBigToHostInt32` (matching L2's Host-to-Big) + final designated-initializer constructor tail. Body text inspected for the expected shape."
+    (let [prog (lower-src "def V:\n    x: Int32!\n    y: Int32!\n\ndef main:\n    -> running\n")
+          f    (first (filter #(= "V_cxc_from_bytes" (:name %)) (:functions prog)))
+          body-text (get-in f [:body 0 :text])]
+      (is (some? f))
+      (is (re-find #"NSUInteger __off = 0" body-text)
+          "offset walk starts at 0")
+      (is (re-find #"OSSwapBigToHostInt32" body-text)
+          "Int32 field decoded big-endian → host")
+      (is (re-find #"expected 4 bytes for field x" body-text)
+          "per-field bounds diagnostic names the offending field")
+      (is (re-find #"_cxc_decode_converted_V" body-text)
+          "success tail dispatches to converted factory")
+      (is (re-find #"\.x = __x_val" body-text)
+          "designated-initializer constructor names field x")
+      (is (re-find #"\.y = __y_val" body-text)
+          "designated-initializer constructor names field y"))))
+
+(deftest f37-l6-decoder-body-primitive-widths
+  (testing "F37 L6 — decoder handles Bool (1 byte + validity check), UInt8 (1 byte raw), Int64/Int (8 bytes big-endian). One test exercises all three widths to catch per-type branch drift."
+    (let [prog (lower-src "def R:\n    b: Bool!\n    u: UInt8!\n    n: Int!\n\ndef main:\n    -> running\n")
+          f    (first (filter #(= "R_cxc_from_bytes" (:name %)) (:functions prog)))
+          body-text (get-in f [:body 0 :text])]
+      (is (some? f))
+      (is (re-find #"invalid Bool byte" body-text)
+          "Bool field validates 0x00/0x01 range with a targeted reason")
+      (is (re-find #"OSSwapBigToHostInt64" body-text)
+          "Int (int64_t) field decoded big-endian → host"))))
+
+(deftest f37-l6-from-call-rewrites-to-synthesized-fn
+  (testing "F37 L6 — `V.from(source: b)` at a call site lowers to a `:call` whose `:fn` is `V_cxc_from_bytes` and args carry the source bytes expression. Mirrors the `.as()` intercept pattern from L2."
+    (let [src "def V:\n    x: Int32!\n\ndef main:\n    -> running\n        then:\n            let b: Bytes = V(x: 1).as()\n            V.from(source: b)\n"
+          prog (lower-src src)
+          main-body (get-in prog [:main :body])
+          walker (fn walker [x]
+                   (cond
+                     (map? x)
+                     (or (when (and (= :call (:node x))
+                                    (= "V_cxc_from_bytes" (:fn x)))
+                           x)
+                         (some walker (vals x)))
+                     (sequential? x) (some walker x)))]
+      (is (some? (walker main-body))
+          "expected V_cxc_from_bytes call in main body"))))
+
+(deftest f37-l6-from-wrong-arg-count-fails-nyi
+  (testing "F37 L6 — `V.from()` (zero args) and `V.from(source: b, extra: 0)` (two args) both fail-nyi at lower time; the diagnostic names the expected arity."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"F37 L6.*expects exactly one arg"
+         (lower-src "def V:\n    x: Int32!\n\ndef main:\n    -> running\n        then: V.from()\n")))))
+
+(deftest f37-l6-string-field-decode-body-utf8-and-length-prefix
+  (testing "F37 L6 String extension — a record with a `String!` field synthesizes a decode block that reads a UInt32 big-endian length prefix, bounds-checks it, then reads the raw UTF-8 payload into an NSString via `initWithBytes:length:encoding:` (nil result from invalid UTF-8 short-circuits to `_cxc_decode_invalid_<R>`)."
+    (let [prog (lower-src "def Msg:\n    text: String!\n\ndef main:\n    -> running\n")
+          f    (first (filter #(= "Msg_cxc_from_bytes" (:name %)) (:functions prog)))
+          body-text (get-in f [:body 0 :text])]
+      (is (some? f))
+      (is (re-find #"OSSwapBigToHostInt32" body-text)
+          "UInt32 length prefix decoded big-endian → host")
+      (is (re-find #"expected 4 bytes for field text length" body-text)
+          "prefix short-read diagnostic names the field")
+      (is (re-find #"less than declared length" body-text)
+          "payload short-read diagnostic distinguishes from prefix short-read")
+      (is (re-find #"initWithBytes:__bytes \+ __off length:__text_val_len" body-text)
+          "NSString construction reads payload_len bytes at current offset")
+      (is (re-find #"encoding:NSUTF8StringEncoding" body-text))
+      (is (re-find #"invalid UTF-8 for field text" body-text)
+          "UTF-8 validity check emits a targeted reason on nil NSString"))))
+
+(deftest f37-l6-mixed-primitive-and-string-fields-decode-in-order
+  (testing "F37 L6 — a record mixing `Int!` and `String!` decodes both in declaration order; the primitive walk advances `__off` before the String walk begins. Verifies the offset-walk composition."
+    (let [prog (lower-src "def Named:\n    n: Int!\n    text: String!\n\ndef main:\n    -> running\n")
+          f    (first (filter #(= "Named_cxc_from_bytes" (:name %)) (:functions prog)))
+          body-text (get-in f [:body 0 :text])
+          int-pos (.indexOf body-text "OSSwapBigToHostInt64")
+          str-pos (.indexOf body-text "NSUTF8StringEncoding")]
+      (is (some? f))
+      (is (and (pos? int-pos) (pos? str-pos))
+          "both decode blocks present")
+      (is (< int-pos str-pos)
+          "Int64 decoder precedes String decoder per declaration order"))))
+
+(deftest f37-l6-non-eligible-field-fails-nyi-at-intercept
+  (testing "F37 L6 — a record with a currently-non-eligible field kind fails at the `.from()` intercept with a targeted diagnostic naming the offending field + type and pointing at the follow-on sub-landing. Non-eligible cases per current L6 coverage: variable-length nested records (Inner containing a String!) — the outer decoder can't know how many bytes to slice at Inner's field boundary until a walker-with-out-param ABI ships. Optional / enum land later still. Uses a nested-record field whose Inner contains a variable-length String."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"F37 L6.*inner.*Inner"
+         (lower-src "def Inner:\n    text: String!\n\ndef W:\n    inner: Inner!\n\ndef main:\n    -> running\n        then:\n            let b: Bytes = W(inner: Inner(text: \"hi\")).as()\n            W.from(source: b)\n")))))
+
+(deftest f37-l6-optional-primitive-field-decode-body-presence-envelope
+  (testing "F37 L6 Optional-primitive extension — a record with a bare-T value-typed field (Optional-boxed per F39 L5b-ii-c Sub-P) synthesizes a decode block that: (1) reads a UInt8 presence byte and validates 0x00/0x01 range, (2) on absent leaves `.value` bit-zero (presence 0 short-circuits the payload read), (3) on present bounds-checks + reads T bytes, (4) binds `_Cxc_Optional_<T> __<field>_val = {.present, .value}`. Body inspected for the presence-guarded conditional + validity check."
+    (let [prog (lower-src "def Opt:\n    x: Int32\n\ndef main:\n    -> running\n")
+          f    (first (filter #(= "Opt_cxc_from_bytes" (:name %)) (:functions prog)))
+          body-text (get-in f [:body 0 :text])]
+      (is (some? f))
+      (is (re-find #"expected 1 presence byte for Optional field x" body-text)
+          "presence byte bounds-check with per-field diagnostic")
+      (is (re-find #"invalid presence byte for Optional field x" body-text)
+          "presence byte validity check (0x00/0x01 only)")
+      (is (re-find #"_Cxc_Optional_Int32 __x_val = \{ \.present = __x_val_presence" body-text)
+          "designated-initializer for the Optional storage struct")
+      (is (re-find #"if \(__x_val_presence == 0x01\)" body-text)
+          "payload decode guarded by presence check")
+      (is (re-find #"OSSwapBigToHostInt32" body-text)
+          "payload uses primitive's big-endian → host converter"))))
+
+(deftest f37-l6-optional-nested-in-primitive-record-decodes
+  (testing "F37 L6 — a record mixing Optional-primitive AND non-Optional primitive AND String! decodes all three in declaration order. Verifies the dispatcher handles mixed field kinds without ordering bugs."
+    (let [prog (lower-src "def Mixed:\n    a: Int!\n    b: Int32\n    c: String!\n\ndef main:\n    -> running\n")
+          f    (first (filter #(= "Mixed_cxc_from_bytes" (:name %)) (:functions prog)))
+          body-text (get-in f [:body 0 :text])
+          a-pos (.indexOf body-text "expected 8 bytes for field a")
+          b-pos (.indexOf body-text "expected 1 presence byte for Optional field b")
+          c-pos (.indexOf body-text "expected 4 bytes for field c length")]
+      (is (some? f))
+      (is (and (pos? a-pos) (pos? b-pos) (pos? c-pos))
+          "all three decode blocks present")
+      (is (< a-pos b-pos c-pos)
+          "decode blocks in field declaration order"))))
+
+(deftest f37-l6-nested-record-decode-body-slice-and-recurse
+  (testing "F37 L6 nested-record extension — a record with a fixed-size nested Inner field synthesizes a decode block that: (1) bounds-checks Inner's fixed byte count at current __off, (2) slices those bytes via `subdataWithRange:` + `mutableCopy` (mirrors L6a `.slice`), (3) dispatches to the inner's `Inner_cxc_from_bytes`, (4) unpacks the outcome — invalid propagates with offset carried from nested reason; converted extracts `.data.converted.value` — (5) advances __off. Verifies the four-way pattern via body-text inspection."
+    (let [prog (lower-src "def Inner:\n    n: Int32!\n\ndef Outer:\n    i: Inner!\n    k: Int32!\n\ndef main:\n    -> running\n")
+          fn-names (set (map :name (:functions prog)))
+          f    (first (filter #(= "Outer_cxc_from_bytes" (:name %)) (:functions prog)))
+          body-text (get-in f [:body 0 :text])]
+      (is (contains? fn-names "Inner_cxc_from_bytes"))
+      (is (contains? fn-names "Outer_cxc_from_bytes"))
+      (is (some? f))
+      (is (re-find #"expected 4 bytes for nested-record field i \(Inner\)" body-text)
+          "outer bounds-check names the nested field + inner type")
+      (is (re-find #"subdataWithRange:NSMakeRange\(__off, 4\)" body-text)
+          "slices exactly Inner's fixed byte count at current offset")
+      (is (re-find #"Inner_cxc_from_bytes\(__i_val_slice\)" body-text)
+          "dispatches to the inner record's synthesized decoder")
+      (is (re-find #"__i_res\.tag == _CXC_DECODE_INVALID" body-text)
+          "checks nested outcome discriminator")
+      (is (re-find #"__i_res\.data\.invalid\.offset" body-text)
+          "propagates nested invalid offset (adjusted by outer offset)")
+      (is (re-find #"Inner __i_val = __i_res\.data\.converted\.value" body-text)
+          "extracts converted value from nested outcome"))))
+
 (deftest f67-l4a-zero-arg-record-observable-lowers-as-c-function
   (testing "F67 L4a: `name :< expr` on a record lowers as a `Record_name(self)` C function. Return type inferred from the expression (int here); bare field refs (`x`, `y`) auto-rewrite to `self.x`, `self.y`."
     (let [prog (lower-src "def V:
