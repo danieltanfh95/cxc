@@ -195,15 +195,16 @@
   (into #{} (mapcat :names) prelude-modules))
 
 (defn validate-no-prelude-collisions!
-  "Audit F56 — bounded starter for Phase D prelude architecture: raise
-   a targeted compile error when a user top-level declaration reuses a
-   protected prelude name (spec §4.20 — prelude declarations are
-   unshadowable). Full namespace-scoped resolution that would let user
-   code shadow prelude names is deferred to Phase D.
+  "F56 diagnostic — raise a targeted compile error when a user top-level
+   declaration reuses a protected prelude name (spec §4.20 — prelude
+   declarations are unshadowable at v1.0). Namespace-scoped shadowing
+   support (whereby a module could shadow a prelude name locally
+   without collision) is still deferred beyond F51 L3b's current
+   landing.
 
-   Takes user-only top-nodes (before prelude prepending) — expects to
-   run right after `parse/parse` on the user source and before the
-   prelude+user re-parse."
+   Takes user-only top-nodes (before prelude prepending) — runs right
+   after `parse/parse` on the user source and before the prelude AST
+   prepends onto it."
   [user-top-nodes]
   (doseq [n user-top-nodes
           :when (and (map? n)
