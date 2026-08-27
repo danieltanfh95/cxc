@@ -3,8 +3,8 @@
 
    Layout: cxc is indentation-sensitive. Lines ending in `:` open a block
    whose extent is determined by subsequent indentation. This lexer emits
-   :indent / :dedent / :newline tokens so downstream Instaparse grammar
-   can stay context-free.
+   :indent / :dedent / :newline tokens so the downstream recursive-
+   descent parser can stay context-free.
 
    Token shape: [:kind value line col]
      :kind    keyword — :ident, :int, :float, :string, :char, :kw,
