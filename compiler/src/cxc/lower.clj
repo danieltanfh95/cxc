@@ -509,8 +509,14 @@
    fires `:cxc-f39-nullable-suffix-banned`. `T!` accepts on every
    shape and emits raw `T` (value types opt out of the Optional
    envelope; L3 runtime nonnil-check fires regardless). L5b lands
-   the bare-`T` value-typed → Optional-boxed C-level flip."
-  [ty-node record-env atom-env enum-env]
+   the bare-`T` value-typed → Optional-boxed C-level flip.
+
+   F51 L3b(b.ii)-5d Batch 5 — `module-map` is passed explicitly
+   rather than read from the ambient `*module-map*`. Retires the
+   ambient at Batch 6. Callers that have a ctx map pass
+   `(:module-map ctx)`; bootstrap paths (build-atom-env,
+   build-record-env) thread it through their own signatures."
+  [ty-node record-env atom-env enum-env module-map]
   (case (:node ty-node)
     :type-nullable
     ;; F39 Landing 5a (2026-08-20) — unified rule: `T?` is BANNED at
@@ -549,13 +555,13 @@
         (let [nm  (:name inner)
               hit (:resolves-to inner)]
           (cond
-            (resolve-decl-lookup atom-env *module-map* nm hit)
+            (resolve-decl-lookup atom-env module-map nm hit)
             (str (->c-safe nm) " *")
             (= "String" nm)                 "NSString *"
             (contains? primitive-c-type nm) (primitive-c-type nm)
-            (resolve-decl-lookup record-env *module-map* nm hit)
+            (resolve-decl-lookup record-env module-map nm hit)
             (->c-safe nm)
-            (resolve-decl-lookup enum-env *module-map* nm hit)
+            (resolve-decl-lookup enum-env module-map nm hit)
             (->c-safe nm)
             :else
             ;; Bootstrap: build-atom-env resolves ctor-param / data-
@@ -583,11 +589,11 @@
           hit (:resolves-to ty-node)]
       (cond
         (contains? primitive-c-type nm) (primitive-c-type nm)
-        (resolve-decl-lookup record-env *module-map* nm hit)
+        (resolve-decl-lookup record-env module-map nm hit)
         (->c-safe nm)
-        (resolve-decl-lookup atom-env *module-map* nm hit)
+        (resolve-decl-lookup atom-env module-map nm hit)
         (str (->c-safe nm) " *")
-        (resolve-decl-lookup enum-env *module-map* nm hit)
+        (resolve-decl-lookup enum-env module-map nm hit)
         (->c-safe nm)
         ;; L-panic-cap (2026-08-26) — phantom capability atom types
         ;; render as atom pointers (never actually referenced at
@@ -885,14 +891,14 @@
          field)))))
 
 (defn- fields-from-data-section
-  [data-section record-env atom-env enum-env]
+  [data-section record-env atom-env enum-env module-map]
   (mapv (fn [f]
           (validate-reference-modifier-type! f record-env atom-env enum-env)
           (let [ty-node (:type f)
                 nonnil? (= :type-nonnil (:node ty-node))
                 nullable? (= :type-nullable (:node ty-node))
                 base    (base-type-name ty-node)
-                scalar-c (cxc-type->c ty-node record-env atom-env enum-env)
+                scalar-c (cxc-type->c ty-node record-env atom-env enum-env module-map)
                 ;; F39 L5b-ii — value-typed bare-T fields (no `!`) box
                 ;; to `_Cxc_Optional_<T>` storage. Predicate is inlined
                 ;; here because `field-storage-value-typed?` operates on
@@ -1190,7 +1196,7 @@
     (resolve-decl-lookup env module-map name resolves-to)))
 
 (defn- build-record-env
-  [top-nodes atom-env enum-env]
+  [top-nodes atom-env enum-env module-map]
   (let [records  (filter #(= :record (:node %)) top-nodes)
         skeleton (into {} (map (fn [r]
                                  [(:name r) {:fields [] :field-index {}
@@ -1236,7 +1242,7 @@
                        "F37 L6 in compiler/design/plans/g3-structural-"
                        "canonical/f37-canonical-bytes.md.")
                   {:record name :class-functions cfs}))
-             fields  (fields-from-data-section dsec env atom-env enum-env)
+             fields  (fields-from-data-section dsec env atom-env enum-env module-map)
              site    (str "record `" name "` fields (auto-ctor)")
              _       (validate-defaults-after-required! site fields)
              _       (validate-default-is-const!       site fields atom-env enum-env)
@@ -2103,7 +2109,7 @@
    L2.c.iii.b wire-in. Fields not reading `:type` on lowered
    ctor-params are unaffected; today no test program has a
    named-tuple ctor-param so the extra field is dead metadata."
-  [ctor-params record-env atom-env enum-env]
+  [ctor-params record-env atom-env enum-env module-map]
   (mapv (fn [p]
           (merge {:name      (:name p)
                   :cxc-ty    (base-type-name (:type p))
@@ -2111,7 +2117,7 @@
                   ;; F39 L2 — carry `T!` intent on ctor params too.
                   ;; Runtime binding check wires in L3.
                   :nonnil?   (= :type-nonnil (get-in p [:type :node]))
-                  :c-type    (cxc-type->c (:type p) record-env atom-env enum-env)
+                  :c-type    (cxc-type->c (:type p) record-env atom-env enum-env module-map)
                   :default   (:default p)
                   ;; F15 L2.c.iii.c.β.2 — preserve raw parsed :type node.
                   :type      (:type p)}
@@ -2693,7 +2699,7 @@
    For pure hello-world (no user atoms, no receive transitions on
    main), main stays out of the env and the old main-atom-body path
    handles it as a plain function body."
-  [top-nodes enum-env]
+  [top-nodes enum-env module-map]
   (let [;; F13 L1 — build-record-env runs after this pass, so we can't
         ;; thread the full record-env into fields-from-data-section.
         ;; But the modifier-validation check only needs *names* to
@@ -2939,7 +2945,7 @@
                                      (mapv key dupes))
                                 {:atom name :dupes (mapv key dupes)})))
              merged-dsec   (assoc (or dsec {:node :data-section}) :fields merged-fields)
-             fields        (-> (fields-from-data-section merged-dsec record-name-set env enum-env)
+             fields        (-> (fields-from-data-section merged-dsec record-name-set env enum-env module-map)
                                ;; F36 Landing 2a: invariant-driven picker
                                ;; narrows Int fields whose invariants
                                ;; range-bound them to fit a sized atom.
@@ -2956,7 +2962,7 @@
              ;; checked above), and any default on a field runs in the
              ;; field initializer, not at the ctor call site. Spec
              ;; §3.8.5 governs param defaults, so no const-check here.
-             ctor-params   (ctor-params-normalized merged-ctor {} env enum-env)
+             ctor-params   (ctor-params-normalized merged-ctor {} env enum-env module-map)
              ;; F67 L4 — atom bodies no longer carry `methods:` (retired
              ;; under Proposal G class-body collapse); observables +
              ;; wildcard-self-transitions provide the callable surface.
@@ -5792,7 +5798,8 @@
                           c-ty    (cxc-type->c ty-node
                                                (:record-env ctx)
                                                (:atom-env ctx)
-                                               (:enum-env ctx))]
+                                               (:enum-env ctx)
+                                               (:module-map ctx))]
                       {:name    (:as b)
                        :type-kw tk
                        :c-type  c-ty
@@ -6141,7 +6148,8 @@
                           c-ty    (cxc-type->c ty-node
                                                (:record-env ctx)
                                                (:atom-env ctx)
-                                               (:enum-env ctx))]
+                                               (:enum-env ctx)
+                                               (:module-map ctx))]
                       {:name (:as b) :type-kw tk :c-type c-ty
                        :init {:node :field
                               :target {:node :field
@@ -6197,7 +6205,8 @@
                           c-ty    (cxc-type->c ty-node
                                                (:record-env ctx)
                                                (:atom-env ctx)
-                                               (:enum-env ctx))]
+                                               (:enum-env ctx)
+                                               (:module-map ctx))]
                       {:name (:as b) :type-kw tk :c-type c-ty
                        :init {:node :raw-c-expr
                               :text (str "((" box-name " *)" scrut-tmp
@@ -6615,7 +6624,8 @@
         ct      (if ann
                   (cxc-type->c ann (:record-env ctx)
                                (:atom-env ctx)
-                               (:enum-env ctx))
+                               (:enum-env ctx)
+                               (:module-map ctx))
                   (type-kw->c-type tk expr))
         rhs-lo  (lower-expr expr ctx)
         decl    {:node :var-decl :name (:name node) :c-type ct :rhs rhs-lo}]
@@ -7636,7 +7646,8 @@
                                                     (:type p)
                                                     (:record-env ctx)
                                                     (:atom-env ctx)
-                                                    (:enum-env ctx))
+                                                    (:enum-env ctx)
+                                                    (:module-map ctx))
                                            ;; F15 L2.c.iii.c.δ — preserve raw :type
                                            ;; so `collect-shapes` on the lowered
                                            ;; :classes discovers any :type-named-tuple
@@ -8141,10 +8152,12 @@
    `t` is the source cxc type name (e.g. `\"Int\"`, `\"Position\"`);
    ctx supplies the envs needed to resolve `t`'s raw C type."
   [t ctx]
-  (let [c-value-type (cxc-type->c {:node :type-ref :name t}
+  (let [c-value-type (cxc-type->c {:node :type-ref :name t
+                                   :resolves-to (get *decl->module* t)}
                                   (:record-env ctx)
                                   (:atom-env   ctx)
-                                  (:enum-env   ctx))]
+                                  (:enum-env   ctx)
+                                  (:module-map ctx))]
     {:node   :c-struct
      :name   (optional-type-name t)
      :fields [{:name "present" :c-type "uint8_t"}
@@ -8176,13 +8189,17 @@
                          {:name   (:name p)
                           :c-type (if (= "self" (:name p))
                                     (->c-safe record-name)
-                                    (cxc-type->c {:node :type-ref :name (:cxc-ty p)}
+                                    (cxc-type->c {:node :type-ref :name (:cxc-ty p)
+                                                  :resolves-to (get *decl->module* (:cxc-ty p))}
                                                  (:record-env ctx)
                                                  (:atom-env ctx)
-                                                 (:enum-env ctx)))})
+                                                 (:enum-env ctx)
+                                                 (:module-map ctx)))})
                        (:params method))
-        ret-c    (cxc-type->c {:node :type-ref :name (:cxc-return-ty method)}
-                              (:record-env ctx) (:atom-env ctx) (:enum-env ctx))]
+        ret-c    (cxc-type->c {:node :type-ref :name (:cxc-return-ty method)
+                               :resolves-to (get *decl->module* (:cxc-return-ty method))}
+                              (:record-env ctx) (:atom-env ctx) (:enum-env ctx)
+                              (:module-map ctx))]
     {:node        :c-function
      :name        (c-method-name record-name (:name method))
      :return-type ret-c
@@ -8254,7 +8271,8 @@
                                      :c-type (cxc-type->c (:type p)
                                                           (:record-env ctx)
                                                           (:atom-env ctx)
-                                                          (:enum-env ctx))
+                                                          (:enum-env ctx)
+                                                          (:module-map ctx))
                                      ;; F15 L2.c.iii.c.δ — preserve raw :type
                                      ;; so `collect-shapes` on the lowered
                                      ;; :functions discovers any :type-named-tuple
@@ -10126,15 +10144,19 @@
         param-names (mapv :name args)
         objc-params (mapv (fn [p]
                             {:name   (:name p)
-                             :c-type (cxc-type->c {:node :type-ref :name (:cxc-ty p)}
+                             :c-type (cxc-type->c {:node :type-ref :name (:cxc-ty p)
+                                                   :resolves-to (get *decl->module* (:cxc-ty p))}
                                                   (:record-env ctx)
                                                   (:atom-env ctx)
-                                                  (:enum-env ctx))})
+                                                  (:enum-env ctx)
+                                                  (:module-map ctx))})
                           args)
         ret-c       (if (nil? (:cxc-return-ty method))
                       "void"
-                      (cxc-type->c {:node :type-ref :name (:cxc-return-ty method)}
-                                   (:record-env ctx) (:atom-env ctx) (:enum-env ctx)))
+                      (cxc-type->c {:node :type-ref :name (:cxc-return-ty method)
+                                    :resolves-to (get *decl->module* (:cxc-return-ty method))}
+                                   (:record-env ctx) (:atom-env ctx) (:enum-env ctx)
+                                   (:module-map ctx)))
         check-stmt  {:node :objc-msg
                      :recv {:node :name :sym "self"}
                      :selector "checkInvariants"
@@ -10235,7 +10257,8 @@
                               :c-type (cxc-type->c (:type p)
                                                    (:record-env ctx)
                                                    (:atom-env ctx)
-                                                   (:enum-env ctx))
+                                                   (:enum-env ctx)
+                                                   (:module-map ctx))
                               ;; F15 L2.c.iii.c.δ — preserve raw :type
                               ;; so `collect-shapes` on the lowered
                               ;; :classes discovers any :type-named-tuple
@@ -11063,7 +11086,7 @@
    raw values on the `:c-enum` node so emit can render explicit
    `<Enum>_<case> = <value>` initializers with a typed underlying
    integer (`typedef enum : <raw-type> { … }`, per §3.3)."
-  [enum-node record-env atom-env enum-env]
+  [enum-node record-env atom-env enum-env module-map]
   (let [tagged?    (some #(seq (:payload %)) (:case-entries enum-node))
         raw-values (:raw-values enum-node)
         raw-type   (:raw-type   enum-node)]
@@ -11078,7 +11101,8 @@
                                            :c-type (cxc-type->c (:type p)
                                                                 record-env
                                                                 atom-env
-                                                                enum-env)})
+                                                                enum-env
+                                                                module-map)})
                                         (:payload ce))})
                       (:case-entries enum-node))}
 
@@ -11777,9 +11801,10 @@
   ;; `*module-map*` (reverse index) so ambient-consulting sites can
   ;; call `resolve-decl-lookup` without ctx-threading. Both computed
   ;; here from the raw input top-nodes.
-  (let [d->m (attribute-modules-to-decls top-nodes)]
+  (let [d->m (attribute-modules-to-decls top-nodes)
+        module-map (module-map-from-attribution d->m)]
    (binding [*decl->module* d->m
-             *module-map*   (module-map-from-attribution d->m)]
+             *module-map*   module-map]
    (let [;; F52 L4 — pre-lower constant folding of top-level `let NAME =
         ;; <const-literal>` bindings. Extract every `:module-let` decl
         ;; into a name→value-node map, drop the decls from `top-nodes`,
@@ -11824,7 +11849,7 @@
         ;; deadlock. Warning surfaces both cases before they fire.
         _          (-> top-nodes sync-send-edges warn-sync-send-cycles!)
         enum-env   (build-enum-env top-nodes)
-        atom-env   (build-atom-env top-nodes enum-env)
+        atom-env   (build-atom-env top-nodes enum-env module-map)
         ;; Layer 5c Step 8: seed CxcStream as a runtime-provided atom
         ;; entry so type-refs like `Stream` (mangled to `CxcStream`)
         ;; resolve during cxc-type->c. Class synthesis skips it because
@@ -11848,7 +11873,7 @@
                                         (or (not (contains? prelude/atom-names k))
                                             (contains? kept-prelude k)))
                                       atom-env)))
-        record-env (build-record-env top-nodes atom-env enum-env)
+        record-env (build-record-env top-nodes atom-env enum-env module-map)
         ;; F38 — reject records that hold a raw agent-typed field.
         ;; Runs after atom-env is finalized (post-container-synthesis)
         ;; so `user-declared-atom?` can exclude the synthesized
@@ -11981,7 +12006,7 @@
                     :locals {}}
         records    (filter #(= :record (:node %)) top-nodes)
         enums      (filter #(= :enum   (:node %)) top-nodes)
-        c-enums    (mapv #(lower-enum % record-env atom-env enum-env) enums)
+        c-enums    (mapv #(lower-enum % record-env atom-env enum-env module-map) enums)
         ;; F39 L5b-ii-a — collect + synthesize Optional-boxed value-type
         ;; typedefs. Under L5b-ii-a `collect-optional-types` returns the
         ;; empty set unconditionally (dead code); the pipeline is in

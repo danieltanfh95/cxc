@@ -2665,7 +2665,7 @@ def main:
     a: A = A()
     -> running
 ")
-          env (#'cxc.lower/build-atom-env prog {})]
+          env (#'cxc.lower/build-atom-env prog {} {})]
       (is (contains? (get-in env ["A" :companion-index]) "bump_failed")
           "A's atom-env entry exposes companion metadata for `bump_failed`"))))
 
@@ -5662,13 +5662,13 @@ def main:
               :fields [{:name "x" :type {:node :type-ref :name "Int"}}
                        {:name "y" :type {:node :type-ref :name "Int"}}]}]
       (is (= "_Cxc_NT_x_Int_y_Int"
-             (#'cxc.lower/cxc-type->c ty {} {} {})))
+             (#'cxc.lower/cxc-type->c ty {} {} {} {})))
       (is (= "_Cxc_NT_x_Int_y_Int"
              (#'cxc.lower/cxc-type->c
               {:node :type-named-tuple
                :fields [{:name "y" :type {:node :type-ref :name "Int"}}
                         {:name "x" :type {:node :type-ref :name "Int"}}]}
-              {} {} {}))
+              {} {} {} {}))
           "field order at call site doesn't affect the emitted C name (canonical mangling)"))))
 
 (deftest f15-l2c-iii-c-beta1-base-type-name-emits-mangled-for-named-tuple
@@ -5690,7 +5690,7 @@ def main:
                         :type    {:node :type-ref :name "Int"}
                         :default nil}]
           lowered     (#'cxc.lower/ctor-params-normalized
-                       ctor-params {} {} {})]
+                       ctor-params {} {} {} {})]
       (is (= 1 (count lowered)))
       (is (= {:node :type-ref :name "Int"} (:type (first lowered)))
           "raw :type node preserved on the lowered ctor-param")
