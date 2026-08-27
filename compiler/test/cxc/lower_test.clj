@@ -6178,6 +6178,59 @@ def main:
       (is (= :foo (get attr "R"))))))
 
 ;; ---------------------------------------------------------------------------
+;; F51 L3b(b.ii)-5a — `decl-lookup` caller-facing wrapper. Reads
+;; `:resolves-to` from the reference node and `:module-map` from ctx,
+;; then dispatches to `resolve-decl-lookup`. Guarded dead code today
+;; (no callers migrated yet); tests pin the terminal-shape semantics so
+;; b.ii-5b+ consumer migrations have a known reference point.
+;; ---------------------------------------------------------------------------
+
+(deftest f51-l3b-b-ii-5a-decl-lookup-uses-resolves-to-hint
+  (testing "F51 L3b(b.ii)-5a — `decl-lookup` extracts `:resolves-to` from the reference node and forwards to `resolve-decl-lookup`. When the hint names the module the decl lives in, returns the env entry."
+    (let [ctx        {:record-env {"Bag" {:kind :record}}
+                      :module-map {:foo #{"Bag"}}}
+          ref-node   {:node :type-ref :name "Bag" :resolves-to :foo}]
+      (is (= {:kind :record}
+             (#'cxc.lower/decl-lookup ctx :record-env ref-node))))))
+
+(deftest f51-l3b-b-ii-5a-decl-lookup-nil-hint-falls-back-to-short-name
+  (testing "F51 L3b(b.ii)-5a — reference nodes without `:resolves-to` (single-file path today) fall back to short-name lookup. Preserves current behavior until b.ii-5e removes the fallback."
+    (let [ctx        {:record-env {"Bag" {:kind :record}}
+                      :module-map {}}
+          ref-node   {:node :type-ref :name "Bag"}]
+      (is (= {:kind :record}
+             (#'cxc.lower/decl-lookup ctx :record-env ref-node))))))
+
+(deftest f51-l3b-b-ii-5a-decl-lookup-hint-mismatch-returns-nil
+  (testing "F51 L3b(b.ii)-5a — hint names a module that doesn't declare `name`: strict resolution says unresolved. Callers get nil so they can fire targeted diagnostics (`:cxc-f51-unresolved-name` post-b.ii-5e)."
+    (let [ctx        {:atom-env {"Clock" {:kind :atom}}
+                      :module-map {:std.clock #{"Clock"}}}
+          ref-node   {:node :type-ref :name "Clock" :resolves-to :foo}]
+      (is (nil? (#'cxc.lower/decl-lookup ctx :atom-env ref-node))))))
+
+(deftest f51-l3b-b-ii-5a-decl-lookup-dispatches-per-env-kw
+  (testing "F51 L3b(b.ii)-5a — `env-kw` selects which of `:record-env` / `:atom-env` / `:enum-env` to consult. Consumers pass the kw they'd have written into a raw `get` — no need to pull the env out at the call site."
+    (let [ctx {:record-env {"R" {:tag :record-hit}}
+               :atom-env   {"A" {:tag :atom-hit}}
+               :enum-env   {"E" {:tag :enum-hit}}
+               :module-map {:m #{"R" "A" "E"}}}]
+      (is (= {:tag :record-hit}
+             (#'cxc.lower/decl-lookup ctx :record-env
+                                      {:node :type-ref :name "R" :resolves-to :m})))
+      (is (= {:tag :atom-hit}
+             (#'cxc.lower/decl-lookup ctx :atom-env
+                                      {:node :type-ref :name "A" :resolves-to :m})))
+      (is (= {:tag :enum-hit}
+             (#'cxc.lower/decl-lookup ctx :enum-env
+                                      {:node :type-ref :name "E" :resolves-to :m}))))))
+
+(deftest f51-l3b-b-ii-5a-decl-lookup-nil-name-returns-nil
+  (testing "F51 L3b(b.ii)-5a — reference nodes with `:name` nil (compiler-synthesized nodes at certain positions) short-circuit through the `resolve-decl-lookup` nil-name guard. Matches the b.ii-2 tests for the primitive."
+    (let [ctx      {:record-env {"Bag" {}} :module-map {:foo #{"Bag"}}}
+          ref-node {:node :type-ref :name nil}]
+      (is (nil? (#'cxc.lower/decl-lookup ctx :record-env ref-node))))))
+
+;; ---------------------------------------------------------------------------
 ;; F52 L4 — module let-bindings (§7.1). Top-level `let NAME = <const>`
 ;; folds via pre-lower substitution: `extract-module-lets` builds
 ;; `{name → value-node}` (validating const-shape + rejecting duplicates)

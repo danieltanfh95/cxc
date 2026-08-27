@@ -1142,6 +1142,26 @@
     :else
     (get env name)))
 
+(defn- decl-lookup
+  "F51 L3b(b.ii)-5a — caller-facing wrapper around `resolve-decl-lookup`.
+   Reads the reference node's `:resolves-to` hint and the ctx's
+   `:module-map`, then dispatches. `env-kw` is one of `:record-env`,
+   `:atom-env`, `:enum-env`.
+
+   Terminal shape (post-b.ii-5e) for every reference-consuming site:
+   pass `ctx` + the reference AST node here instead of `(get env name)`.
+   Today the fallback branch still fires whenever `:resolves-to` is
+   nil (single-file pipeline strips metadata), so behavior is
+   unchanged from raw short-name lookup — the wrapper exists to
+   internalize `module-map` access + centralize the fallback removal
+   in one place at b.ii-5e."
+  [ctx env-kw name-node]
+  (let [env         (get ctx env-kw)
+        module-map  (:module-map ctx)
+        name        (:name name-node)
+        resolves-to (:resolves-to name-node)]
+    (resolve-decl-lookup env module-map name resolves-to)))
+
 (defn- build-record-env
   [top-nodes atom-env enum-env]
   (let [records  (filter #(= :record (:node %)) top-nodes)
