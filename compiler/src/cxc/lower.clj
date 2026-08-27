@@ -1145,9 +1145,11 @@
 
     resolves-to
     ;; `resolves-to` names a module that doesn't declare this name;
-    ;; the reference is unresolved under strict semantics. Under the
-    ;; current pipeline this branch is unreachable (short-name is
-    ;; globally unique post-dedup); reserved for b.ii-3+.
+    ;; the reference is unresolved under strict semantics. Every
+    ;; existing user program keeps short-names globally unique so
+    ;; this branch fires rarely today; b.ii-5e's diagnostic
+    ;; (`:cxc-f51-unresolved-name`) raises here instead of silently
+    ;; returning nil.
     nil
 
     :else
