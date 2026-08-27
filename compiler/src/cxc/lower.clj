@@ -44,22 +44,22 @@
      {:node :objc-alloc-init :class \"Counter\"}
      {:node :call            :fn \"printf\" :args [ ... ]}
 
-   Coverage this file (2026-08-13):
-   - Hello-world: `def main: -> running then: print(\"...\")`
-   - Arithmetic in print; binops with %d/%f dispatch
-   - Records → C typedef structs; construction; field access; defaults
-   - Record methods → C functions (`V_plus(self, other)`); method-call
-     syntax `v.plus(other)` lowers to `V_plus(v, other)`
-   - Def-atoms with `data:` only → ObjC classes (NSObject subclass with
-     @property ivars + -init that fills defaults). `X()` → alloc/init
-
-   Not yet: transitions on def-atoms, use: injection, contracts, nested
-   slots, actor runtime. Those raise :not-yet-implemented.
+   Coverage: full v1.0 language surface — records / def-atom actors
+   (transitions, observables, capabilities, invariants) / F9
+   extensions with target-typed dispatch / F31-F35 concurrent-actor
+   semantics / F37 canonical bytes / F39 nullability / F48/Q1 typed-
+   reason recovery / F52 module let-bindings / F56 emit-boundary
+   mangling. Feature-by-feature status lives in plans/g*/.
 
    Ctx map threaded through infer-type / lower-expr:
-     {:record-env <name -> {:fields :field-index :methods :method-index}>
-      :atom-env   <name -> {:fields :field-index :extras}>
-      :locals     <name -> ty>       ; local scope for method bodies etc."
+     {:record-env    <name -> {:fields :field-index :methods :method-index}>
+      :atom-env      <name -> {:fields :field-index :extras}>
+      :enum-env      <name -> {:cases :case-entries ...}>
+      :decl->module  <name -> module-kw>  ; F51 b.ii-2 provenance
+      :module-map    <module-kw -> #{decl-names}>
+      :symbol-table  <full resolve/build-symbol-table>
+      :named-tuple-env <mangled-name -> shape>  ; F15 L2.c.iii
+      :locals        <name -> ty>       ; local scope for method bodies etc."
   (:require [clojure.set]
             [clojure.string :as str]
             [clojure.walk :as walk]
