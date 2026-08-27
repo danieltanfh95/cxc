@@ -6,44 +6,35 @@
             [cxc.resolve :as resolve]))
 
 (defn- table-from
-  "Parse `src` (user source), prepend prelude, run the same rename
-   postwalk `lower` sees, and build the symbol table over it. Mirrors
-   what `cxc.lower/lower` does internally so table shape matches
-   what downstream landings will consume."
+  "Parse `src` (user source), prepend prelude, build the symbol table.
+   F56 L2+L3 (2026-08-27): parse-time postwalk retired; AST + table
+   key by user-visible names."
   [user-src]
-  (let [combined  (parse/parse (str prelude/source user-src))
-        renamed   (prelude/rewrite-prelude-names combined)]
-    (resolve/build-symbol-table renamed)))
+  (let [combined (parse/parse (str prelude/source user-src))]
+    (resolve/build-symbol-table combined)))
 
 (defn- table-from-with-module
   "F51 L1 — like `table-from` but with a synthetic `module <mod>`
-   header prepended to the user source, mirroring what
-   `build/compile-directory-to-file` injects per file. Verifies
-   `build-symbol-table` walks `:module` nodes statefully and
-   attributes downstream user decls to that module (rather than
-   falling back to `:user`)."
+   header prepended, mirroring what `build/compile-directory-to-file`
+   injects per file."
   [module-nm user-src]
   (let [tagged   (str "module " module-nm "\n\n" user-src)
-        ;; F73 (2026-08-20) — user `module` headers rejected at parse
-        ;; time; the resolve test mimics the multi-file build's synthetic
-        ;; injection and uses the same internal entry point the build does.
-        combined (parse/parse-with-build-modules (str prelude/source tagged))
-        renamed  (prelude/rewrite-prelude-names combined)]
-    (resolve/build-symbol-table renamed)))
+        combined (parse/parse-with-build-modules (str prelude/source tagged))]
+    (resolve/build-symbol-table combined)))
 
 (deftest table-carries-prelude-provenance
   (testing "F51 — each prelude declaration is attributed to its owning std.* module"
     (let [table (table-from "def main:\n    -> running\n        then: print(\"hi\")\n")]
       ;; Post-rename, prelude Duration is _Cxc_Duration in the AST;
       ;; provenance lookup handles both forms.
-      (is (= :std.time (get-in table ["_Cxc_Duration" :module])))
-      (is (= :std.time (get-in table ["_Cxc_Instant"  :module])))
-      (is (= :std.geom (get-in table ["_Cxc_Position" :module])))
-      (is (= :std.input (get-in table ["_Cxc_Key"     :module])))
-      (is (= :std.input (get-in table ["_Cxc_TestKeyboardInput" :module])))
-      (is (= :std.io   (get-in table ["_Cxc_Console"  :module])))
-      (is (= :std.clock (get-in table ["_Cxc_Clock"   :module])))
-      (is (= :std.random (get-in table ["_Cxc_Random" :module]))))))
+      (is (= :std.time (get-in table ["Duration" :module])))
+      (is (= :std.time (get-in table ["Instant"  :module])))
+      (is (= :std.geom (get-in table ["Position" :module])))
+      (is (= :std.input (get-in table ["Key"     :module])))
+      (is (= :std.input (get-in table ["TestKeyboardInput" :module])))
+      (is (= :std.io   (get-in table ["Console"  :module])))
+      (is (= :std.clock (get-in table ["Clock"   :module])))
+      (is (= :std.random (get-in table ["Random" :module]))))))
 
 (deftest table-carries-user-provenance
   (testing "F51 — user declarations get :user provenance"
@@ -99,9 +90,9 @@
 (deftest f38-prelude-records-with-methods-are-class-variant
   (testing "F38 — prelude Duration/Instant/Position all carry methods → all classified :class"
     (let [table (table-from "def main:\n    -> running\n")]
-      (is (= :class (get-in table ["_Cxc_Duration" :variant])))
-      (is (= :class (get-in table ["_Cxc_Instant"  :variant])))
-      (is (= :class (get-in table ["_Cxc_Position" :variant]))))))
+      (is (= :class (get-in table ["Duration" :variant])))
+      (is (= :class (get-in table ["Instant"  :variant])))
+      (is (= :class (get-in table ["Position" :variant]))))))
 
 (deftest lookup-member-drills-into-declaration
   (testing "F51 — `lookup-member` finds a member by kind + name inside a decl. F67 L4: `:methods` mirrors `:observables` for the parametric-reader surface."
@@ -122,7 +113,7 @@
     (let [table (table-from-with-module "foo" "def V:\n    x: Int\n\ndef main:\n    -> running\n")]
       (is (= :foo   (get-in table ["V"    :module])))
       (is (= :foo   (get-in table ["main" :module])))
-      (is (= :std.time (get-in table ["_Cxc_Duration" :module]))
+      (is (= :std.time (get-in table ["Duration" :module]))
           "prelude decls unaffected by user module header"))))
 
 (deftest f51-l1-no-module-header-defaults-user-provenance
@@ -408,13 +399,13 @@
 ;; ---------------------------------------------------------------------------
 
 (deftest f56-l1-mangled-name-for-prelude
-  (testing "F56 L1 — a declaration in a `:std.*` module mangles to `_Cxc_<Name>`. Backward-compatible with the existing rename-table entries (`Duration` → `_Cxc_Duration`, `Clock` → `_Cxc_Clock`) so FFI hatches that hardcode the mangled name don't break during the L2/L3 migration."
+  (testing "F56 L1 — a declaration in a `:std.*` module mangles to `_Cxc_<Name>`. FFI hatches that hardcode the mangled name (`_Cxc_Duration`, `_Cxc_Clock`, ...) match this shape; after L2+L3 (2026-08-27) the emit-boundary `->c-safe` helper produces this form."
     (is (= "_Cxc_Duration" (resolve/mangled-name-for :std.time "Duration")))
     (is (= "_Cxc_Clock"    (resolve/mangled-name-for :std.clock "Clock")))
     (is (= "_Cxc_Console"  (resolve/mangled-name-for :std.io "Console")))))
 
 (deftest f56-l1-mangled-name-for-main
-  (testing "F56 L1 — a `:main` module declaration passes through unchanged. Single-file / root-of-src-dir programs use unmangled names for user decls, matching what the current postwalk phase leaves alone (rename-table has no entry for arbitrary user names)."
+  (testing "F56 L1 — a `:main` module declaration passes through unchanged. Single-file / root-of-src-dir programs use unmangled names for user decls."
     (is (= "Bag"   (resolve/mangled-name-for :main "Bag")))
     (is (= "Point" (resolve/mangled-name-for :main "Point")))
     (is (= "main"  (resolve/mangled-name-for :main "main")))))

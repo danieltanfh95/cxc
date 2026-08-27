@@ -13,11 +13,10 @@
    prelude source before parse and runs the post-parse rewrite pass
    that mangles user-visible prelude names (`Uncaught` → `_Cxc_Uncaught`).
    Use in tests that reference prelude records / atoms by name — plain
-   `lower-src` skips the prelude and rewrite, which is fine for most
-   tests but drops Uncaught / Duration / etc. from the record-env."
+   `lower-src` skips the prelude, which is fine for most tests but
+   drops Uncaught / Duration / etc. from the record-env."
   [src]
   (-> (p/parse (str prelude/source "\n" src))
-      prelude/rewrite-prelude-names
       lower/lower))
 
 (deftest f37-l6b-class-function-on-atom-fails-nyi-with-f37-l6-pointer
@@ -4553,12 +4552,10 @@ def main:
    Anything downstream of the F51 read path lands here; the ad-hoc
    envs are omitted because `def-kind` reads via `resolve/lookup`."
   [src]
-  (let [combined  (p/parse (str (:source (find-ns 'cxc.prelude)) src))]
-    ;; use the same rename postwalk lower runs so table keys match
-    (let [renamed  ((requiring-resolve 'cxc.prelude/rewrite-prelude-names) combined)
-          table    ((requiring-resolve 'cxc.resolve/build-symbol-table) renamed)]
-      {:symbol-table table
-       :protocol-env {}})))
+  (let [combined (p/parse (str (:source (find-ns 'cxc.prelude)) src))
+        table    ((requiring-resolve 'cxc.resolve/build-symbol-table) combined)]
+    {:symbol-table table
+     :protocol-env {}}))
 
 (deftest f69-l2-def-kind-structural
   (testing "F69 L2 — fields-only def resolves to :structural"

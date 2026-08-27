@@ -74,6 +74,32 @@
   (throw (ex-info msg {:kind kind :what msg :node node})))
 
 ;; ---------------------------------------------------------------------------
+;; F56 L2+L3 (2026-08-27) — emit-boundary mangling.
+;;
+;; The parse-time `rewrite-prelude-names` postwalk is retired. Post-parse
+;; AST carries only user-visible names throughout — envs are keyed by
+;; user-visible names, downstream lower comparisons work in user-visible
+;; space. Mangling happens at the emit boundary via `->c-safe`, which
+;; consults a `decl->module` map bound dynamically at the top of `lower`.
+;;
+;; `->c-safe` is idempotent on already-mangled input (name not in the
+;; table → passthrough) so callers that happen to receive a compiler-
+;; synthesized C name (e.g. `_Cxc_Optional_Int64`) also work.
+;; ---------------------------------------------------------------------------
+
+(def ^:dynamic ^:private *decl->module* nil)
+
+(defn- ->c-safe
+  "F56 L2+L3 — mangle a user-visible declared name to its C-safe
+   identifier via the ambient `*decl->module*`. Returns `nm` verbatim
+   when: `nm` is nil / not in the table (compiler-synthesized names,
+   primitives) / already in mangled form."
+  [nm]
+  (if (and nm *decl->module* (contains? *decl->module* nm))
+    (resolve/mangled-name-for (get *decl->module* nm) nm)
+    nm))
+
+;; ---------------------------------------------------------------------------
 ;; F69 L2 — Unified body-shape lookup.
 ;;
 ;; parse-def-atom stamps `:inferred-kind` on every reshaped node:
@@ -517,11 +543,11 @@
         :type-ref
         (let [nm (:name inner)]
           (cond
-            (contains? atom-env nm)         (str nm " *")
+            (contains? atom-env nm)         (str (->c-safe nm) " *")
             (= "String" nm)                 "NSString *"
             (contains? primitive-c-type nm) (primitive-c-type nm)
-            (contains? record-env nm)       nm
-            (contains? enum-env nm)         nm
+            (contains? record-env nm)       (->c-safe nm)
+            (contains? enum-env nm)         (->c-safe nm)
             :else
             ;; Bootstrap: build-atom-env resolves ctor-param / data-
             ;; field types with record-env={} because records haven't
@@ -529,7 +555,7 @@
             ;; value-shaped user type — same as bare `T` fallback.
             ;; A genuine typo surfaces later at the bare `T` :type-ref
             ;; site as "unknown type".
-            nm))
+            (->c-safe nm)))
         (fail-nyi! (str "cxc-type->c: `!` on unknown inner " (:node inner))
                    ty-node)))
     :type-ref
@@ -547,14 +573,14 @@
     (let [nm (:name ty-node)]
       (cond
         (contains? primitive-c-type nm) (primitive-c-type nm)
-        (contains? record-env nm)       nm
-        (contains? atom-env nm)         (str nm " *")
-        (contains? enum-env nm)         nm
+        (contains? record-env nm)       (->c-safe nm)
+        (contains? atom-env nm)         (str (->c-safe nm) " *")
+        (contains? enum-env nm)         (->c-safe nm)
         ;; L-panic-cap (2026-08-26) — phantom capability atom types
         ;; render as atom pointers (never actually referenced at
         ;; runtime; the capability is compile-time only).
-        (contains? #{"SystemPanic" "_Cxc_SystemPanic"} nm)
-        (str nm " *")
+        (contains? #{"SystemPanic"} nm)
+        (str (->c-safe nm) " *")
         :else                            (fail-nyi! (str "type " nm) ty-node)))
     :type-named-tuple
     ;; F15 L2.c.iii.c.α (2026-08-24) — a named-tuple param type lowers
@@ -709,7 +735,7 @@
       ;; L-panic-cap (2026-08-26) — phantom capability atoms are
       ;; compiler-known types. Recognized here so type resolution
       ;; passes even when no user def exists.
-      (contains? #{"SystemPanic" "_Cxc_SystemPanic"} cxc-name)
+      (contains? #{"SystemPanic"} cxc-name)
       {:atom cxc-name}
       ;; F15 L2.c.iii.c.γ.α (2026-08-24) — mangled named-tuple names
       ;; (D4-reserved `_Cxc_NT` prefix, per named-tuple/reserved-type-
@@ -777,9 +803,9 @@
     ;; as the synthesized `_Cxc_Optional_<inner-name>` typedef.
     (and (vector? tk) (= :optional (first tk)))
     (optional-type-name (type-kw->cxc-name-str (second tk)))
-    (and (map? tk) (:record tk)) (:record tk)
-    (and (map? tk) (:atom   tk)) (str (:atom tk) " *")
-    (and (map? tk) (:enum   tk)) (:enum tk)
+    (and (map? tk) (:record tk)) (->c-safe (:record tk))
+    (and (map? tk) (:atom   tk)) (str (->c-safe (:atom tk)) " *")
+    (and (map? tk) (:enum   tk)) (->c-safe (:enum tk))
     ;; F15 L2.c.iii.c.γ.β (2026-08-24) — `:named-tuple` type-kw
     ;; renders as the bare mangled struct name, matching L2.c.ii-b's
     ;; field-side convention. Value type (no pointer suffix); the
@@ -2797,7 +2823,7 @@
              ;; license their `use:` slot but never resolve to a
              ;; user-defined atom. Recognized here so validation
              ;; passes without requiring the user to `def` them.
-             phantom-caps  #{"SystemPanic" "_Cxc_SystemPanic"}
+             phantom-caps  #{"SystemPanic"}
              _             (doseq [c use-caps]
                              (let [ty-nm (base-type-name (:type c))]
                                (when-not (or (contains? atom-names ty-nm)
@@ -3817,7 +3843,7 @@
     ;; Instant → _Cxc_Instant); the ffi table stays in the same naming
     ;; convention as its C emission.
     :return-type-node {:node :type-of :outer "CxcStream"
-                       :inner {:node :type-ref :name "_Cxc_Instant"}}
+                       :inner {:node :type-ref :name "Instant"}}
     :arity     2
     :emit-c    (fn [args]
                  (let [src  (first args)
@@ -4305,7 +4331,7 @@
         fields   (mapv (fn [{:keys [name value]}]
                          {:name name :value (wrap-value name value)})
                        resolved)]
-    {:node :struct-lit :type record-name :fields fields}))
+    {:node :struct-lit :type (->c-safe record-name) :fields fields}))
 
 (defn- lower-enum-payload-ctor
   "F16 L1 — lower `E.case(named args)` where `case` carries a payload.
@@ -4498,28 +4524,24 @@
           (fail-nyi! (str "atom constructor args on `" atom-name
                           "` — atom declares no ctor params")
                      {:atom atom-name :args args}))
-        {:node :objc-alloc-init :class atom-name})
+        {:node :objc-alloc-init :class (class-name-for-atom atom-name)})
       (let [resolved (resolve-args-against-params
                       (str "`" atom-name "` constructor")
                       ctor-params args)]
-        ;; F15 L2.d.ii.β — structural conformance check runs on
-        ;; resolved args before lower-expr so a mismatch surfaces with
-        ;; the raw source-level type node in the diagnostic rather
-        ;; than a lowered form (better user-facing error).
         (check-named-tuple-ctor-conformance! atom-name ctor-params
                                              resolved ctx)
         {:node :objc-init-with
-         :class atom-name
+         :class (class-name-for-atom atom-name)
          :args  (mapv (fn [{:keys [name value]}]
                         {:name name :value (lower-expr value ctx)})
                       resolved)}))))
 
 (defn- c-method-name
-  "Free-function name for a record's method: `<Record>_<method>`. Simple
-   name-mangling; collisions with user-declared functions of that shape
-   would be a legitimate compile error, not a silent shadowing."
+  "Free-function name for a record's method: `<Record>_<method>`.
+   F56 L2+L3: `<Record>` is passed through `->c-safe` so prelude
+   records get `_Cxc_Duration_plus` rather than `Duration_plus`."
   [record-name method-name]
-  (str record-name "_" method-name))
+  (str (->c-safe record-name) "_" method-name))
 
 (defn- objc-method-selector
   "Build the ObjC selector for a method call. Zero-arg → bare name;
@@ -5390,7 +5412,7 @@
                   ;; Accept both the mangled prelude name (real
                   ;; user-facing shape) and the un-mangled name (used
                   ;; by unit tests that skip the prelude rewrite pass).
-                  (some #(contains? #{"_Cxc_SystemPanic" "SystemPanic"}
+                  (some #(contains? #{"SystemPanic"}
                                     (:type-name %))
                         (:use-caps atom-info))
                   _    (when-not has-panic-cap?
@@ -5700,7 +5722,7 @@
                                case-nm "(...)` on the target).")
                           enclosing-node))
             field-idx  (into {} (map (juxt :name identity)) (:fields rec))
-            box-name   (str "_Cxc_R_" case-nm)
+            box-name   (str "_Cxc_R_" (->c-safe case-nm))
             binding-decls
             (mapv (fn [b]
                     (let [_       (when (nil? (:field b))
@@ -5963,7 +5985,7 @@
          :selector "isKindOfClass:"
          :args     [{:node     :objc-msg
                      :recv     {:node :name
-                                :sym  (str "_Cxc_R_" case-nm)}
+                                :sym  (str "_Cxc_R_" (->c-safe case-nm))}
                      :selector "class"
                      :args     []}]})
 
@@ -6105,7 +6127,7 @@
                 case-nm    (:name pat)
                 rec        (get-in ctx [:record-env case-nm])
                 field-idx  (into {} (map (juxt :name identity)) (:fields rec))
-                box-name   (str "_Cxc_R_" case-nm)]
+                box-name   (str "_Cxc_R_" (->c-safe case-nm))]
             (mapv (fn [b]
                     (let [;; Validate before destructuring; nil-field
                           ;; would NPE in base-type-name otherwise.
@@ -6923,7 +6945,7 @@
    are unchanged — sender is derived at fanout, not passed by the caller
    of `:> name`."
   [source-class stream-name payload-keys]
-  (objc-method-selector (str "cxc_stream_" stream-name "_from_" source-class)
+  (objc-method-selector (str "cxc_stream_" stream-name "_from_" (->c-safe source-class))
                         (into ["sender"] payload-keys)))
 
 (defn- stream-emit-selector
@@ -7969,7 +7991,7 @@
 (defn- lower-record-struct [record-node ctx]
   (let [rec (get-in ctx [:record-env (:name record-node)])]
     {:node   :c-struct
-     :name   (:name record-node)
+     :name   (->c-safe (:name record-node))
      :fields (mapv (fn [f] {:name (:name f) :c-type (:c-type f)}) (:fields rec))}))
 
 ;; ---------------------------------------------------------------------------
@@ -8001,18 +8023,23 @@
 
 (defn- reason-box-name
   "Wrapper class name for a record. Prefix `_Cxc_R_` is compile-time
-   reserved — leading underscore is off-limits to user identifiers."
-  [record-name]
-  (str "_Cxc_R_" record-name))
+   reserved — leading underscore is off-limits to user identifiers.
+   Takes the record's C-safe (mangled) name so prelude records produce
+   `_Cxc_R__Cxc_Position`, user records `_Cxc_R_Counter`.
+   F56 L2+L3 (2026-08-27): callers pass the mangled form via
+   `->c-safe`."
+  [record-c-name]
+  (str "_Cxc_R_" record-c-name))
 
 (defn- synth-reason-box
   "Build a `:reason-box` node describing the wrapper class for one
    record. Emit consumes it as an `@interface X : NSObject { @public
    T value; } @end / @implementation X @end` pair."
   [record-node]
-  {:node          :reason-box
-   :name          (reason-box-name (:name record-node))
-   :struct-c-type (:name record-node)})
+  (let [rec-c (->c-safe (:name record-node))]
+    {:node          :reason-box
+     :name          (reason-box-name rec-c)
+     :struct-c-type rec-c}))
 
 ;; F39 Landing 5b-ii-a (2026-08-21) — Optional-boxed value-type
 ;; infrastructure. Under the unified rule (spec §3.6.1, design premise
@@ -8111,7 +8138,7 @@
         params   (mapv (fn [p]
                          {:name   (:name p)
                           :c-type (if (= "self" (:name p))
-                                    record-name
+                                    (->c-safe record-name)
                                     (cxc-type->c {:node :type-ref :name (:cxc-ty p)}
                                                  (:record-env ctx)
                                                  (:atom-env ctx)
@@ -8184,7 +8211,7 @@
         ret-kw        (infer-type rewritten-expr infer-ctx)
         ret-c         (type-kw->c-type ret-kw obs)
         body-ctx      (assoc ctx :locals (assoc param-locals "self" {:record record-name}))
-        params        (into [{:name "self" :c-type record-name}]
+        params        (into [{:name "self" :c-type (->c-safe record-name)}]
                             (mapv (fn [p]
                                     {:name   (:name p)
                                      :c-type (cxc-type->c (:type p)
@@ -8230,10 +8257,10 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- record-synth-equals-name [record-name]
-  (str record-name "_cxc_equals"))
+  (str (->c-safe record-name) "_cxc_equals"))
 
 (defn- record-synth-hash-name [record-name]
-  (str record-name "_cxc_hash"))
+  (str (->c-safe record-name) "_cxc_hash"))
 
 (defn- primitive-eq-op?
   "True when the field's cxc type name is a primitive whose C
@@ -8380,8 +8407,8 @@
     {:node        :c-function
      :name        (record-synth-equals-name record-name)
      :return-type "bool"
-     :params      [{:name "a" :c-type record-name}
-                   {:name "b" :c-type record-name}]
+     :params      [{:name "a" :c-type (->c-safe record-name)}
+                   {:name "b" :c-type (->c-safe record-name)}]
      :body        [{:node :raw-c :text (str "return " body-src ";")}]}))
 
 (defn- synthesize-record-hash-fn
@@ -8397,7 +8424,7 @@
     {:node        :c-function
      :name        (record-synth-hash-name record-name)
      :return-type "long"
-     :params      [{:name "a" :c-type record-name}]
+     :params      [{:name "a" :c-type (->c-safe record-name)}]
      :body        [{:node :raw-c :text body-src}]}))
 
 ;; ---------------------------------------------------------------------------
@@ -8417,7 +8444,7 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- record-synth-as-bytes-name [record-name]
-  (str record-name "_cxc_as_bytes"))
+  (str (->c-safe record-name) "_cxc_as_bytes"))
 
 (def ^:private f37-primitive-byte-widths
   ;; C fixed widths per §3.10.10. Bool is one byte (0/1).
@@ -8774,11 +8801,11 @@
     {:node        :c-function
      :name        (record-synth-as-bytes-name record-name)
      :return-type "NSMutableData *"
-     :params      [{:name "a" :c-type record-name}]
+     :params      [{:name "a" :c-type (->c-safe record-name)}]
      :body        [{:node :raw-c :text body-src}]}))
 
 (defn- enum-synth-as-bytes-name [enum-name]
-  (str enum-name "_cxc_as_bytes"))
+  (str (->c-safe enum-name) "_cxc_as_bytes"))
 
 (defn- f37-enum-discriminator-width
   "F37 L5 — discriminator width in bytes per §3.10.10: ≤256 → 1, ≤65536
@@ -8913,16 +8940,16 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- decode-outcome-struct-name [record-name]
-  (str "_Cxc_DecodeOutcome_" record-name))
+  (str "_Cxc_DecodeOutcome_" (->c-safe record-name)))
 
 (defn- decode-invalid-fn-name [record-name]
-  (str "_cxc_decode_invalid_" record-name))
+  (str "_cxc_decode_invalid_" (->c-safe record-name)))
 
 (defn- decode-converted-fn-name [record-name]
-  (str "_cxc_decode_converted_" record-name))
+  (str "_cxc_decode_converted_" (->c-safe record-name)))
 
 (defn- record-synth-from-bytes-name [record-name]
-  (str record-name "_cxc_from_bytes"))
+  (str (->c-safe record-name) "_cxc_from_bytes"))
 
 (defn- f37-string-field-decode-c-src
   "F37 L6 String extension — decode a `String!` field. Wire format
@@ -9139,7 +9166,7 @@
               " {\n"
               "    uint8_t tag;\n"
               "    struct {\n"
-              "        struct { " record-name " value; } converted;\n"
+              "        struct { " (->c-safe record-name) " value; } converted;\n"
               "        struct { int64_t offset; NSString *reason; } invalid;\n"
               "    } data;\n"
               "} " (decode-outcome-struct-name record-name) ";\n"
@@ -9158,7 +9185,7 @@
     [{:node        :c-function
       :name        (decode-converted-fn-name record-name)
       :return-type outcome
-      :params      [{:name "v" :c-type record-name}]
+      :params      [{:name "v" :c-type (->c-safe record-name)}]
       :body        [{:node :raw-c
                      :text (str "    return (" outcome
                                 "){ .tag = _CXC_DECODE_CONVERTED,"
@@ -9816,7 +9843,7 @@
         tail      (str "    if (consumed_out) *consumed_out = (int64_t)"
                        "(__off - (NSUInteger)start_off);\n"
                        "    return " (decode-converted-fn-name record-name)
-                       "((" record-name "){ " ctor-args " });")
+                       "((" (->c-safe record-name) "){ " ctor-args " });")
         body-src  (str/join "\n\n" (concat [head] blocks [tail]))]
     {:node        :c-function
      :name        (record-synth-from-bytes-name record-name)
@@ -10321,7 +10348,7 @@
         reason-box
         (when-let [et (:as-error-type proposition)]
           (when (= :type-ref (:node et))
-            (str "_Cxc_R_" (:name et))))]
+            (str "_Cxc_R_" (->c-safe (:name et)))))]
     (cond->
      {:node  :invariant-check
       :cond  (if (optional-tk? pred-tk)
@@ -10376,7 +10403,7 @@
             reason-box
             (when-let [et (:as-error-type proposition)]
               (when (= :type-ref (:node et))
-                (str "_Cxc_R_" (:name et))))]
+                (str "_Cxc_R_" (->c-safe (:name et)))))]
         (cond->
          {:node  :invariant-check
           :cond  (if (optional-tk? pred-tk)
@@ -10388,11 +10415,12 @@
           reason-box     (assoc :reason-box-name reason-box))))))
 
 (defn- class-name-for-atom
-  "Emitted ObjC class name. Regular atoms use their cxc name verbatim.
-   Main gets `CxcMain` — `main` collides with C's main() symbol and
-   also isn't idiomatic ObjC (class names are UpperCamel)."
+  "Emitted ObjC class name. Regular atoms use their cxc name (mangled
+   at emit boundary via `->c-safe` — prelude atoms like `Clock` become
+   `_Cxc_Clock`; user atoms stay unchanged in `:main`). Main gets
+   `CxcMain` — `main` collides with C's main() symbol."
   [atom-name]
-  (if (= "main" atom-name) "CxcMain" atom-name))
+  (if (= "main" atom-name) "CxcMain" (->c-safe atom-name)))
 
 (defn- lower-atom [atom-name ctx & {:keys [is-main?]}]
   (let [rec           (get-in ctx [:atom-env atom-name])
@@ -11151,7 +11179,8 @@
    directly). Prelude atoms are added only when the user program
    mentions them by name, so shipping capability stubs like Clock
    doesn't pull their fanout selectors into unrelated programs.
-   Names here are post-rename (see cxc.prelude/rename-table)."
+   Names here are user-visible (F56 L2+L3 retired the rename postwalk;
+   `prelude-atom-names` is `prelude/atom-names` in user-visible form)."
   [top-nodes prelude-atom-names]
   (names-mentioned-in top-nodes prelude-atom-names))
 
@@ -11713,7 +11742,12 @@
 (defn lower
   "Take parsed top-level nodes and produce an ObjC/C program AST."
   [top-nodes]
-  (let [;; F52 L4 — pre-lower constant folding of top-level `let NAME =
+  ;; F56 L2+L3 — bind `*decl->module*` so every `->c-safe` call site
+  ;; (cxc-type->c, synth-reason-box, class-name-for-atom, ...)
+  ;; consults the correct mangling table. Computed here from the raw
+  ;; input top-nodes.
+  (binding [*decl->module* (attribute-modules-to-decls top-nodes)]
+   (let [;; F52 L4 — pre-lower constant folding of top-level `let NAME =
         ;; <const-literal>` bindings. Extract every `:module-let` decl
         ;; into a name→value-node map, drop the decls from `top-nodes`,
         ;; and postwalk-substitute every matching `:ident` reference
@@ -11975,7 +12009,7 @@
         ;; non-typed catches; guaranteeing the class exists here
         ;; keeps that reference well-defined without coupling lower
         ;; to the caller's prelude-prepending discipline.
-        has-uncaught? (some #(= "_Cxc_Uncaught" (:name %)) records)
+        has-uncaught? (some #(= "Uncaught" (:name %)) records)
         uncaught-struct-node
         (when-not has-uncaught?
           {:node   :c-struct
@@ -12232,4 +12266,4 @@
                                            main-body   ; return 0 unreachable after dispatch_main
                                            (conj main-body
                                                  {:node :return :value {:node :int :value 0}}))
-                           :autorelease? needs-foundation?}}))
+                           :autorelease? needs-foundation?}})))

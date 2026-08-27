@@ -14,14 +14,16 @@
    surface for callers. Grows conservatively.
 
    Naming (Layer 5 minimum). Users write bare `Duration`, `Instant`,
-   `Clock`. Post-parse, `rewrite-prelude-names` mangles every
-   occurrence to `_Cxc_Duration`, `_Cxc_Instant`, `_Cxc_Clock` so the
+   `Clock`. At emit time, each identifier flows through `->c-safe`
+   (in `cxc.lower`) which consults `resolve/mangled-name-for` and
+   produces `_Cxc_Duration`, `_Cxc_Instant`, `_Cxc_Clock` so the
    emitted C/ObjC source dodges CoreServices' `Duration` SInt32
    typedef and any other Cocoa/CoreFoundation collision that
-   Foundation.h drags in. This replaces Layer 4b's user-visible
-   `Cxc` prefix — the mangling is now internal-only. Layer 6's full
-   module system supersedes the rename table with proper
-   namespace-scoped resolution."
+   Foundation.h drags in. F56 L2+L3 (2026-08-27) retired the
+   parse-time rename postwalk: mangling now happens at the C-id output
+   boundary rather than as a wholesale AST rewrite. Layer 6's full
+   module system supersedes this with proper namespace-scoped
+   resolution."
   (:require [clojure.java.io :as io]
             [clojure.string]
             [clojure.walk :as walk]))
@@ -90,8 +92,8 @@
 (def source
   "Prelude source text spliced ahead of user source. Indentation is
    canonical cxc (4-space blocks); keep flush-left at column 0.
-   Users write bare names; `rewrite-prelude-names` mangles them
-   post-parse.
+   Users write bare names; mangling to `_Cxc_<Name>` happens at
+   emit-time via `->c-safe` in `cxc.lower`.
 
    F55 Landing 2: assembled from `prelude-modules` loaded via
    `io/resource` from the classpath prelude directory tree. Target
@@ -99,58 +101,22 @@
    through `assemble-source` waits on Landing 3."
   (assemble-source default-target))
 
-;; F56 L2-α (2026-08-27) — the prelude name → mangled name mapping is
-;; derived from `prelude-modules` (the registry) rather than
-;; hardcoded. Each prelude declaration mangles to `_Cxc_<Name>`, which
-;; matches what the retired hardcoded table encoded byte-for-byte.
-;;
-;; `Stream` remains a manual entry: it's the user-visible name for
-;; method-returned reactive streams, mapped to the RUNTIME-PROVIDED
-;; helper class `CxcStream` — a different naming category per F56
-;; plan §5 Q3 (runtime-provided helpers use `Cxc<Name>` convention,
-;; prelude declarations use `_Cxc_<Name>`).
-;;
-;; Later F56 landings retire this rewrite pass entirely once emit
-;; consumes `resolve/mangled-name` at each identifier site.
-
-(defn- derive-prelude-rename-entries
-  "F56 L2-α — mint `{user-name → mangled-name}` entries for every
-   name declared in `prelude-modules`. `_Cxc_<Name>` per entry —
-   matches the retired hardcoded table."
-  []
-  (into {}
-        (for [{:keys [names]} prelude-modules
-              nm names]
-          [nm (str "_Cxc_" nm)])))
-
-(def rename-table
-  "User-visible → mangled internal name. Applied post-parse to every
-   `:name`, `:type`, `:outer` string in the AST. Entries derive from
-   `prelude-modules` per F56 L2-α (each prelude name → `_Cxc_<Name>`)
-   plus manual overrides for runtime-provided helpers (`Stream` →
-   `CxcStream`)."
-  (assoc (derive-prelude-rename-entries)
-         ;; Runtime-provided helper — different mangling convention
-         ;; (`Cxc<Name>`, not `_Cxc_<Name>`) per F56 plan §5 Q3.
-         "Stream" "CxcStream"))
-
-(defn rename-if
-  "Rename `s` via `rename-table` if `s` is a string that appears in
-   the table; otherwise return `s` unchanged. Non-string inputs pass
-   through so callers can apply this uniformly across AST fields
-   whose values may be strings, maps, or nil."
-  [s]
-  (if (and (string? s) (contains? rename-table s))
-    (get rename-table s)
-    s))
+;; F56 L2+L3 (2026-08-27) — the parse-time rename postwalk is
+;; retired. Every downstream consumer (emit, resolve, lower) works in
+;; user-visible name space and mangles at C-id output boundary via
+;; `->c-safe`, which consults `resolve/mangled-name-for`. The old
+;; `rename-table` / `rename-if` / `rewrite-prelude-names` /
+;; `derive-prelude-rename-entries` defs went with it — `_Cxc_<Name>`
+;; mangling now flows from `resolve/mangled-name-for` computed against
+;; `prelude-modules` at the boundary. `Stream` remains a runtime-
+;; provided helper mapped separately to `CxcStream` inside emit.
 
 (def atom-names
-  "Names of def-atom entries in the prelude, in their POST-RENAME
-   (mangled) form. Tree-shaking in cxc.lower compares against these
-   after the rewrite pass runs, so entries here match what the
-   lowered AST carries — not what the prelude source spelled."
-  #{"_Cxc_Clock" "_Cxc_Random" "_Cxc_TestKeyboardInput"
-    "_Cxc_Console" "_Cxc_SystemPanic"})
+  "Names of def-atom entries in the prelude, in user-visible form
+   (F56 L2+L3, 2026-08-27 — postwalk retired). Tree-shaking in
+   cxc.lower compares against these; entries match what the parsed
+   AST carries verbatim from prelude source."
+  #{"Clock" "Random" "TestKeyboardInput" "Console" "SystemPanic"})
 
 ;; F5 retirement (2026-08-15): unit-suffix desugaring (`100ms`,
 ;; `2s`, `1.5min` → `Duration(millis: N)`) is retired per spec
@@ -161,19 +127,22 @@
 
 (def ^:private class-member-desugars
   "Static-like accessors on prelude record types. Rewrite
-   `<Type>.<member>` (post-rename mangled) to an equivalent value
-   construction. Small, closed set — general record-class-members
-   are Layer 5.5+ machinery, but a handful of designated static
-   constants are enough for the common cases (`Instant.epoch`,
-   `Position.origin`)."
-  {["_Cxc_Instant" "epoch"]
+   `<Type>.<member>` to an equivalent value construction. Small,
+   closed set — general record-class-members are Layer 5.5+
+   machinery, but a handful of designated static constants are enough
+   for the common cases (`Instant.epoch`, `Position.origin`).
+
+   Keyed by user-visible name (F56 L2+L3, 2026-08-27) — postwalk
+   retired; every consumer works in user-visible name space and
+   mangles at C-id output boundary via `->c-safe`."
+  {["Instant" "epoch"]
    {:node   :call
-    :callee {:node :ident :name "_Cxc_Instant"}
+    :callee {:node :ident :name "Instant"}
     :args   [{:kind :named :name "millis"
               :value {:node :lit-int :value 0}}]}
-   ["_Cxc_Position" "origin"]
+   ["Position" "origin"]
    {:node   :call
-    :callee {:node :ident :name "_Cxc_Position"}
+    :callee {:node :ident :name "Position"}
     :args   [{:kind :named :name "x" :value {:node :lit-float :value 0.0}}
              {:kind :named :name "y" :value {:node :lit-float :value 0.0}}]}})
 
@@ -190,67 +159,54 @@
         node)
     node))
 
+(defn desugar-prelude-class-members
+  "F56 L2+L3 (2026-08-27) — standalone pass that desugars
+   `<PreludeType>.<member>` references (`Instant.epoch`,
+   `Position.origin`) to their equivalent constructor calls.
+   Formerly performed inside `rewrite-prelude-names` (retired).
+   Runs on the parsed AST before lower."
+  [nodes]
+  (walk/postwalk
+    (fn [x]
+      (if (and (map? x) (= :dot (:node x)))
+        (desugar-class-member x)
+        x))
+    nodes))
+
 (def ^:private user-declaration-kinds
   ;; Top-level node kinds whose `:name` field is a user-visible
   ;; identifier that would collide with a prelude type.
   #{:def-atom :record :enum})
 
+(def ^:private protected-prelude-names
+  "Set of user-visible prelude declaration names (from
+   `prelude-modules`). Used by `validate-no-prelude-collisions!` to
+   reject `def Duration:` / `def Instant:` at the source. Runtime-
+   provided `Stream` is not in this set — it isn't a user-declared
+   prelude type."
+  (into #{} (mapcat :names) prelude-modules))
+
 (defn validate-no-prelude-collisions!
   "Audit F56 — bounded starter for Phase D prelude architecture: raise
    a targeted compile error when a user top-level declaration reuses a
    protected prelude name (spec §4.20 — prelude declarations are
-   unshadowable). Previously `rewrite-prelude-names` would silently
-   rename a `def Duration:` to `def _Cxc_Duration:` and merge it into
-   the prelude namespace, producing baffling downstream errors.
+   unshadowable). Full namespace-scoped resolution that would let user
+   code shadow prelude names is deferred to Phase D.
 
    Takes user-only top-nodes (before prelude prepending) — expects to
    run right after `parse/parse` on the user source and before the
-   prelude+user re-parse. Full namespace-scoped resolution (retiring
-   the postwalk entirely) is deferred to Phase D."
+   prelude+user re-parse."
   [user-top-nodes]
   (doseq [n user-top-nodes
           :when (and (map? n)
                      (contains? user-declaration-kinds (:node n))
-                     (contains? rename-table (:name n)))]
+                     (contains? protected-prelude-names (:name n)))]
     (throw (ex-info
             (str "user declaration `" (:name n)
                  "` collides with a protected prelude name (spec §4.20). "
                  "Rename the declaration; namespace-scoped resolution that "
                  "would let user code shadow prelude names is deferred to "
                  "Phase D.")
-            {:kind    :prelude-name-collision
-             :name    (:name n)
-             :node    (:node n)
-             :mangled (get rename-table (:name n))}))))
-
-(defn rewrite-prelude-names
-  "Post-parse walk that mangles every occurrence of a user-visible
-   prelude name to its internal form. Walks the parsed top-nodes
-   vector; renames strings at map keys that carry type/identifier
-   names (`:name`, `:type`, `:outer`). Other :inner values are
-   maps (nested type nodes) and get renamed recursively by
-   postwalk's own descent, not by this fn's direct value check.
-
-   Safe to run over any parsed AST — the rename table only contains
-   specific prelude names, so a program that never mentions them is
-   an identity transform.
-
-   Unit-suffix desugaring (formerly `1000ms` → `_Cxc_Duration(millis:
-   1000)`) was retired 2026-08-15 per spec §2.7.1 (F5). Users
-   construct dimensioned values via the type's ordinary constructor;
-   lex + parse reject the suffix form at source-position."
-  [nodes]
-  (walk/postwalk
-    (fn [x]
-      (if (map? x)
-        (cond
-          (= :dot (:node x))
-          (desugar-class-member x)
-
-          :else
-          (cond-> x
-            (contains? x :name)  (update :name  rename-if)
-            (contains? x :type)  (update :type  rename-if)
-            (contains? x :outer) (update :outer rename-if)))
-        x))
-    nodes))
+            {:kind :prelude-name-collision
+             :name (:name n)
+             :node (:node n)}))))

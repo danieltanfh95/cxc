@@ -126,9 +126,9 @@
 (def ^:private stdlib-manifest
   "Known exports from prelude std.* modules. Keyed by dotted module
    name → set of exported symbol names. Layer 6 seeds this from the
-   current prelude's rename-table — each mangled type gets its
-   user-facing name registered under the appropriate std.<sub>
-   module. Expands as later Layer 6 steps add capabilities."
+   current prelude's `prelude-modules` registry — each declared type
+   gets its user-facing name registered under the appropriate
+   std.<sub> module. Expands as later Layer 6 steps add capabilities."
   {"std.time"        #{"Duration" "Instant" "Clock"}
    "std.geometry"    #{"Position"}
    "std.random"      #{"Random"}
@@ -190,7 +190,8 @@
      - `:full-parsed` — prelude AST prepended to `user-parsed`.
 
    Runs behavioral walkers (which need both scopes),
-   `prelude/rewrite-prelude-names`, `lower/lower`, `emit/emit`, then
+   `prelude/desugar-prelude-class-members`, `lower/lower`,
+   `emit/emit`, then
    writes `.m`, computes cache SHA (including the queue-mode flag
    per F32 L6), and either restores from the tier-1 binary cache or
    runs clang.
@@ -210,7 +211,7 @@
         _        (doseq [[_ walker-var] (section/behavioral-walkers)]
                    (walker-var user-parsed full-parsed))
         m-src    (-> full-parsed
-                     prelude/rewrite-prelude-names
+                     prelude/desugar-prelude-class-members
                      lower/lower
                      emit/emit)
         m-file   (io/file out-dir (str name ".m"))

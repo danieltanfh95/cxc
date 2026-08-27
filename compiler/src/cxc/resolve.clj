@@ -51,10 +51,11 @@
                     :node    <raw>
                     :members {:cases [\"arrow_up\" \"arrow_down\" ...]}}}
 
-   `:name` is the *user-visible* (pre-mangling) name. When
-   `rewrite-prelude-names` postwalk retires (F56), the table becomes
-   authoritative for resolving user references without text-level
-   rewriting.
+   `:name` is the *user-visible* (pre-mangling) name. F56 L2+L3
+   (2026-08-27) retired the parse-time `rewrite-prelude-names`
+   postwalk — this table is now authoritative for resolving user
+   references; mangling happens at C-id output boundary in
+   `cxc.lower/->c-safe`.
    "
   (:require [clojure.set]
             [clojure.string :as str]
@@ -67,23 +68,16 @@
 
 (defn- prelude-name->module
   "Map every prelude-declared name to its owning module keyword.
-   Includes BOTH the user-visible form (`\"Duration\"`) AND the
-   post-rename mangled form (`\"_Cxc_Duration\"`) so provenance
-   lookup works whether the caller feeds pre- or post-rename AST.
-   Landing 1 sees post-rename AST via `cxc.lower/lower`; the
-   pre-rename form will matter once F56's postwalk retires and the
-   table becomes the authoritative name resolver.
+   F56 L2+L3 (2026-08-27): postwalk retired — AST carries only
+   user-visible prelude names, so this table lists only that form.
 
    Built once from `prelude/prelude-modules` — the registry itself
-   is the source of truth, so any module added by dropping a new
-   resource file into `resources/prelude/` gets picked up
-   automatically once its entry lands in the registry."
+   is the source of truth."
   []
   (into {}
         (for [{:keys [name names]} prelude/prelude-modules
-              nm names
-              nm-form [nm (get prelude/rename-table nm nm)]]
-          [nm-form (keyword (str "std." (clojure.core/name name)))])))
+              nm names]
+          [nm (keyword (str "std." (clojure.core/name name)))])))
 
 ;; ---------------------------------------------------------------------------
 ;; Member extraction — flatten each declaration's per-kind detail
@@ -258,18 +252,18 @@
 ;;   uses the unqualified name so existing programs don't churn on
 ;;   symbol names in the emitted .m.
 ;;
-;; This is additive scaffolding — Landing 1 only introduces the fn;
-;; Landing 2 migrates emit consumers to call it; Landing 3 deletes
-;; the postwalk + rename-table + collision guard.
+;; L1 introduced the fn; L2+L3 (2026-08-27) migrated emit consumers
+;; to call it via `cxc.lower/->c-safe` and deleted the parse-time
+;; rename postwalk + rename-table. `validate-no-prelude-collisions!`
+;; remains as a source-level guard (spec §4.20).
 ;; ---------------------------------------------------------------------------
 
 (defn mangled-name-for
   "F56 L1 — return the C-safe mangled identifier for a user-visible
    `name` declared in `module`. Module conventions:
    - `:std.*` → `_Cxc_<name>` (prelude backward-compat).
-   - `:main` → `name` unchanged (single-file / root; matches the
-     current post-postwalk shape for user-authored root-level decls
-     that weren't in the rename-table).
+   - `:main` → `name` unchanged (single-file / root; user-authored
+     root-level decls emit under their user-visible name).
    - anything else → `<module-with-dots-as-underscores>_<name>`.
 
    Pure fn; no reads from the symbol table. Callers who have an entry

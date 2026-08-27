@@ -62,7 +62,7 @@
       (build/run-binary bin-path))))
 
 (deftest user-declaration-collides-with-prelude-name-rejected
-  (testing "Audit F56 — bounded starter: a user declaration reusing a protected prelude name (e.g. `def Duration:`) parses cleanly, but `compile-source-to-file` raises a targeted diagnostic before the prelude is even prepended. Previously the postwalk in `rewrite-prelude-names` silently renamed the user's `Duration` to `_Cxc_Duration` and merged it with the prelude atom, producing baffling downstream errors."
+  (testing "Audit F56 — bounded starter: a user declaration reusing a protected prelude name (e.g. `def Duration:`) parses cleanly, but `compile-source-to-file` raises a targeted diagnostic before the prelude is even prepended. Prevents the prelude and user code from colliding on the same declaration name (spec §4.20 unshadowable prelude names)."
     (let [out-dir (tmp-dir)]
       (is (thrown-with-msg?
            clojure.lang.ExceptionInfo
@@ -687,7 +687,7 @@
           "expected pre-store diagnostic naming construction site + source value violation"))))
 
 (deftest end-to-end-stdlib-basics
-  (testing "stdlib-basics.cxc — three stdlib additions in one program. (1) Prelude `Position` record with `x: Float, y: Float`; ctor + field access. (2) `clamp(x, lo, hi)` compiler builtin — polymorphic on first arg's numeric type (Int here), lowers to nested-ternary via a fresh :ffi-call with an inline emit-c-fn. (3) `Instant.epoch` desugars at rewrite-prelude-names to `Instant(millis: 0)` — a small closed set of prelude class-member statics registered in `class-member-desugars`. Program: `clamp(15,0,10) + Instant.epoch.millis + Position(x:1.0, y:2.0).x` → 10 + 0 + 1.0 = 11.0."
+  (testing "stdlib-basics.cxc — three stdlib additions in one program. (1) Prelude `Position` record with `x: Float, y: Float`; ctor + field access. (2) `clamp(x, lo, hi)` compiler builtin — polymorphic on first arg's numeric type (Int here), lowers to nested-ternary via a fresh :ffi-call with an inline emit-c-fn. (3) `Instant.epoch` desugars via `desugar-prelude-class-members` to `Instant(millis: 0)` — a small closed set of prelude class-member statics registered in `class-member-desugars`. Program: `clamp(15,0,10) + Instant.epoch.millis + Position(x:1.0, y:2.0).x` → 10 + 0 + 1.0 = 11.0."
     (let [{:keys [exit stdout]} (compile-and-run "stdlib-basics")]
       (is (zero? exit))
       (is (= "11.000000\n" stdout)))))
