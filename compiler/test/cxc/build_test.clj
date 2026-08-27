@@ -156,6 +156,13 @@
       (is (zero? exit))
       (is (= "5\n" stdout)))))
 
+(deftest end-to-end-f37-l6-tagged-enum-from-bytes
+  (testing "F37 L6 tagged-enum extension — round-trip on a record with a tagged enum field. `R(msg: Msg.pong(seq: 42)).as()` produces 1 discriminator byte + 4 payload bytes = 5 bytes; `R.from(source: b)` reads the discriminator, writes the tag, dispatches to the pong arm which decodes seq into `.data.pong.seq`. DecodeOutcome discarded; `b.length` prints 5. Also exercises the `memcmp`-based tagged-enum equals/hash fix landing alongside."
+    (let [{:keys [exit stdout]} (compile-and-run "f37-l6-tagged-enum-from-bytes")]
+      (is (zero? exit))
+      (is (= "5\n" stdout)))))
+
+
 (deftest end-to-end-k5-if-expression
   (testing "K5 L1 — `if` at expression position (spec §3.8.1). Uses both simple `if...else` and `if...else if...else` chain. Result flows through `let` bindings. Lowered as C ternary; prints the selected branch value."
     (let [{:keys [exit stdout]} (compile-and-run "k5-if-expression")]

@@ -7946,10 +7946,16 @@
 (defn- primitive-eq-op?
   "True when the field's cxc type name is a primitive whose C
    representation supports raw `==` (all numerics, char, bool, and
-   enums-as-int)."
+   VALUE-ONLY enums-as-int). Tagged enums are structs — comparing
+   them needs `memcmp` or per-case dispatch; those hit distinct arms
+   in `field-equals-c-src` / `field-hash-c-src`."
   [cxc-ty ctx]
   (or (contains? primitive-c-type cxc-ty)
-      (contains? (:enum-env ctx) cxc-ty)))
+      (and (contains? (:enum-env ctx) cxc-ty)
+           (not (get-in ctx [:enum-env cxc-ty :tagged?])))))
+
+(defn- tagged-enum-type? [cxc-ty ctx]
+  (boolean (get-in ctx [:enum-env cxc-ty :tagged?])))
 
 (defn- field-equals-c-src
   "Emit a C expression comparing field `f` between two record variables
@@ -7992,6 +7998,14 @@
       (str (record-synth-equals-name cxc-ty)
            "(" a-fld ", " b-fld ")")
 
+      (tagged-enum-type? cxc-ty ctx)
+      ;; F16 tagged enums are structs `{tag; union{...}}`; C99
+      ;; designated-init ctors zero-init unspecified bytes so memcmp
+      ;; on the whole struct is deterministic. Bytes-based equality
+      ;; matches structural equality when the same ctor path produced
+      ;; each value — which is the only way to construct these.
+      (str "(memcmp(&" a-fld ", &" b-fld ", sizeof(" cxc-ty ")) == 0)")
+
       (contains? (:atom-env ctx) cxc-ty)
       (str "(" a-fld " == " b-fld ")")
 
@@ -8026,6 +8040,16 @@
 
       (contains? (:record-env ctx) cxc-ty)
       (str (record-synth-hash-name cxc-ty) "(" fld ")")
+
+      (tagged-enum-type? cxc-ty ctx)
+      ;; F16 tagged-enum hash: FNV-1a-ish accumulation over the raw
+      ;; struct bytes. Determinism relies on the same C99
+      ;; designated-init contract that lets `memcmp` in
+      ;; `field-equals-c-src` compare struct-equal values correctly.
+      (str "({ long __h = 0; const unsigned char *__b = "
+           "(const unsigned char *)&" fld "; "
+           "for (size_t __i = 0; __i < sizeof(" cxc-ty "); __i++) "
+           "__h = __h * 31 + __b[__i]; __h; })")
 
       (contains? (:atom-env ctx) cxc-ty)
       (str "(long)(intptr_t)" fld)
@@ -8636,7 +8660,8 @@
        (some? (record-fixed-encoded-size (:cxc-ty f) record-env))))
 
 (declare f37-value-only-enum-decode-field?
-         f37-optional-nested-record-decode-field?)
+         f37-optional-nested-record-decode-field?
+         f37-tagged-enum-decode-field?)
 
 (defn- f37-decode-eligible-field?
   "F37 L6 field-level eligibility. Primitive (Bool / sized-int / Int /
@@ -8666,7 +8691,8 @@
        (f37-optional-primitive-field? f)
        (f37-nested-record-decode-field? f record-env)
        (f37-optional-nested-record-decode-field? f record-env)
-       (f37-value-only-enum-decode-field? f enum-env))))
+       (f37-value-only-enum-decode-field? f enum-env)
+       (f37-tagged-enum-decode-field? f enum-env))))
 
 (defn- record-eligible-for-from-bytes-synthesis?
   "F37 L6 eligibility: every field must be decode-eligible. Coverage
@@ -8820,6 +8846,168 @@
          res ".data.invalid.reason);\n"
          "        " bind ".value = " res ".data.converted.value;\n"
          "        __off += " n ";\n"
+         "    }")))
+
+(defn- f37-tagged-enum-payload-field-eligible?
+  "F37 L6 tagged-enum extension — a payload field is decode-eligible
+   when its normalized shape is a fixed-width primitive or `String!`.
+   Nested-record / enum / Optional payload fields defer (would need
+   nested outcome propagation or presence envelopes)."
+  [payload-param]
+  (let [f (f37-enum-payload-field-for-encoding payload-param)]
+    (or (f37-primitive-byte-field? f)
+        (f37-string-byte-field? f))))
+
+(defn- f37-tagged-enum-decode-field?
+  "F37 L6 tagged-enum extension eligibility — non-Optional field whose
+   type is a tagged enum (`:tagged? true`) where every payload field on
+   every case is either primitive or `String!`."
+  [f enum-env]
+  (and (not (:optional? f))
+       (contains? enum-env (:cxc-ty f))
+       (get-in enum-env [(:cxc-ty f) :tagged?])
+       (every? (fn [ce]
+                 (every? f37-tagged-enum-payload-field-eligible?
+                         (:payload ce)))
+               (:case-entries (get enum-env (:cxc-ty f))))))
+
+(defn- f37-tagged-enum-payload-decode-c-src
+  "F37 L6 tagged-enum extension — emit the C for decoding a single
+   payload field into `__<record-field>_val.data.<case>.<pfield-name>`.
+   Shares the primitive + String decode helpers but writes directly
+   into the union member rather than a local binding."
+  [record-name record-field-name case-nm pparam]
+  (let [f (f37-enum-payload-field-for-encoding pparam)
+        pname (:name f)
+        target (str "__" record-field-name "_val.data." case-nm "." pname)
+        invalid (decode-invalid-fn-name record-name)]
+    (cond
+      (f37-primitive-byte-field? f)
+      (let [cxc-ty (:cxc-ty f)
+            width  (get f37-primitive-byte-widths cxc-ty)
+            raw    (str "__" record-field-name "_" case-nm "_" pname "_raw")
+            bounds (str "            if (__len < __off + " width ") return "
+                        invalid "((int64_t)__off, @\"expected " width
+                        " bytes for payload field " pname " of "
+                        record-field-name "." case-nm ", source has less\");")
+            read-src
+            (case cxc-ty
+              "Bool"
+              (str "            uint8_t " raw " = __bytes[__off];\n"
+                   "            if (" raw " != 0x00 && " raw " != 0x01) return "
+                   invalid "((int64_t)__off, @\"invalid Bool byte in payload "
+                   pname " of " record-field-name "." case-nm "\");\n"
+                   "            " target " = (" raw " == 0x01);\n"
+                   "            __off += 1;")
+              ("UInt8" "Int8")
+              (str "            " target " = (" cxc-ty ")__bytes[__off];\n"
+                   "            __off += 1;")
+              ("UInt16" "Int16")
+              (str "            uint16_t " raw ";\n"
+                   "            memcpy(&" raw ", __bytes + __off, 2);\n"
+                   "            " target " = " (if (= cxc-ty "Int16") "(int16_t)" "")
+                   "OSSwapBigToHostInt16(" raw ");\n"
+                   "            __off += 2;")
+              ("UInt32" "Int32")
+              (str "            uint32_t " raw ";\n"
+                   "            memcpy(&" raw ", __bytes + __off, 4);\n"
+                   "            " target " = " (if (= cxc-ty "Int32") "(int32_t)" "")
+                   "OSSwapBigToHostInt32(" raw ");\n"
+                   "            __off += 4;")
+              ("UInt64" "Int64" "Int")
+              (str "            uint64_t " raw ";\n"
+                   "            memcpy(&" raw ", __bytes + __off, 8);\n"
+                   "            " target " = (int64_t)OSSwapBigToHostInt64(" raw ");\n"
+                   "            __off += 8;")
+              "Float"
+              (str "            uint32_t " raw ";\n"
+                   "            memcpy(&" raw ", __bytes + __off, 4);\n"
+                   "            " raw " = OSSwapBigToHostInt32(" raw ");\n"
+                   "            memcpy(&" target ", &" raw ", 4);\n"
+                   "            __off += 4;")
+              "Double"
+              (str "            uint64_t " raw ";\n"
+                   "            memcpy(&" raw ", __bytes + __off, 8);\n"
+                   "            " raw " = OSSwapBigToHostInt64(" raw ");\n"
+                   "            memcpy(&" target ", &" raw ", 8);\n"
+                   "            __off += 8;"))]
+        (str bounds "\n" read-src))
+
+      (f37-string-byte-field? f)
+      (let [lenv (str "__" record-field-name "_" case-nm "_" pname "_len")
+            raw  (str lenv "_raw")]
+        (str "            if (__len < __off + 4) return " invalid
+             "((int64_t)__off, @\"expected 4 bytes for payload String "
+             "length " pname " of " record-field-name "." case-nm
+             ", source has less\");\n"
+             "            uint32_t " raw ";\n"
+             "            memcpy(&" raw ", __bytes + __off, 4);\n"
+             "            uint32_t " lenv " = OSSwapBigToHostInt32(" raw ");\n"
+             "            __off += 4;\n"
+             "            if (__len < __off + " lenv ") return " invalid
+             "((int64_t)__off, @\"expected " lenv " bytes for payload "
+             "String " pname " of " record-field-name "." case-nm
+             ", source has less than declared length\");\n"
+             "            " target " = [[NSString alloc] "
+             "initWithBytes:__bytes + __off length:" lenv " "
+             "encoding:NSUTF8StringEncoding];\n"
+             "            if (!" target ") return " invalid
+             "((int64_t)__off, @\"invalid UTF-8 in payload String "
+             pname " of " record-field-name "." case-nm "\");\n"
+             "            __off += " lenv ";")))))
+
+(defn- f37-tagged-enum-field-decode-c-src
+  "F37 L6 tagged-enum extension — decode a field whose type is a
+   tagged enum. Reads discriminator (width per case count), range-
+   checks, then switches on the tag to decode per-case payloads
+   directly into the union member. Bare cases produce an empty arm."
+  [record-name f enum-env]
+  (let [fname   (:name f)
+        cxc-ty  (:cxc-ty f)
+        info    (get enum-env cxc-ty)
+        entries (:case-entries info)
+        n       (count entries)
+        width   (f37-enum-discriminator-width n)
+        bind    (str "__" fname "_val")
+        raw     (str "__" fname "_disc")
+        invalid (decode-invalid-fn-name record-name)
+        disc-read
+        (case width
+          1 (str "    uint8_t " raw " = __bytes[__off];\n"
+                 "    __off += 1;")
+          2 (str "    uint16_t " raw "_be;\n"
+                 "    memcpy(&" raw "_be, __bytes + __off, 2);\n"
+                 "    uint16_t " raw " = OSSwapBigToHostInt16(" raw "_be);\n"
+                 "    __off += 2;")
+          4 (str "    uint32_t " raw "_be;\n"
+                 "    memcpy(&" raw "_be, __bytes + __off, 4);\n"
+                 "    uint32_t " raw " = OSSwapBigToHostInt32(" raw "_be);\n"
+                 "    __off += 4;"))
+        arms
+        (for [ce entries]
+          (let [case-nm (:name ce)
+                fields  (:payload ce)
+                blocks  (if (seq fields)
+                          (str/join "\n"
+                                    (map #(f37-tagged-enum-payload-decode-c-src
+                                           record-name fname case-nm %)
+                                         fields))
+                          "")]
+            (str "        case " cxc-ty "_Tag_" case-nm ": {\n"
+                 (when (seq blocks) (str blocks "\n"))
+                 "            break;\n"
+                 "        }")))]
+    (str "    if (__len < __off + " width ") return " invalid
+         "((int64_t)__off, @\"expected " width " bytes for tagged enum "
+         "field " fname " (" cxc-ty "), source has less\");\n"
+         disc-read "\n"
+         "    if (" raw " >= " n ") return " invalid
+         "((int64_t)(__off - " width "), @\"invalid discriminator for "
+         "tagged enum field " fname " (" cxc-ty ")\");\n"
+         "    " cxc-ty " " bind ";\n"
+         "    " bind ".tag = (" cxc-ty "_Tag)" raw ";\n"
+         "    switch (" raw ") {\n"
+         (str/join "\n" arms) "\n"
          "    }")))
 
 (defn- f37-value-only-enum-decode-field?
@@ -8977,7 +9165,9 @@
     (f37-optional-nested-record-decode-field? f record-env)
     (f37-optional-nested-record-field-decode-c-src record-name f record-env)
     (f37-value-only-enum-decode-field? f enum-env)
-    (f37-value-only-enum-field-decode-c-src record-name f enum-env)))
+    (f37-value-only-enum-field-decode-c-src record-name f enum-env)
+    (f37-tagged-enum-decode-field? f enum-env)
+    (f37-tagged-enum-field-decode-c-src record-name f enum-env)))
 
 (defn- synthesize-record-from-bytes-fn
   "F37 L6 — emit `<Record>_cxc_from_bytes(NSMutableData *src) ->

@@ -2158,12 +2158,28 @@ def main:
       (is (re-find #"Signal __sig_val = \(Signal\)__sig_raw" body-text)
           "casts discriminator to the enum's C type"))))
 
-(deftest f37-l6-tagged-enum-field-fails-nyi-at-intercept
-  (testing "F37 L6 — tagged enum field (any case has payload) currently fails-nyi at the `.from()` intercept. Extension for tagged-enum decode ships in a follow-on sub-landing (needs per-case payload switch + tagged-union write). Uses a String source to bypass the encoder path (enum fields aren't encoder-eligible either)."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"F37 L6.*msg.*Msg"
-         (lower-src "def Msg:\n    case ping\n    case pong(seq: Int32!)\n\ndef R:\n    msg: Msg!\n\ndef Src:\n    x: String!\n\ndef main:\n    -> running\n        then:\n            let b: Bytes = Src(x: \"hi\").as()\n            R.from(source: b)\n")))))
+(deftest f37-l6-tagged-enum-field-decode-body-per-case-payload-switch
+  (testing "F37 L6 tagged-enum extension (2026-08-27) — a field whose type is a tagged enum with primitive/String payload cases synthesizes a decode block: (1) reads discriminator (width per case count), (2) range-checks, (3) writes tag into the union struct, (4) switches on the discriminator with a per-case arm that decodes payload fields directly into `.data.<case>.<field>`. Verifies via body-text inspection."
+    (let [prog (lower-src "def Msg:\n    case ping\n    case pong(seq: Int32!)\n\ndef R:\n    msg: Msg!\n\ndef main:\n    -> running\n")
+          f    (first (filter #(= "R_cxc_from_bytes" (:name %)) (:functions prog)))
+          body-text (get-in f [:body 0 :text])]
+      (is (some? f))
+      (is (re-find #"expected 1 bytes for tagged enum field msg \(Msg\)" body-text)
+          "discriminator bounds-check names field + enum")
+      (is (re-find #"if \(__msg_disc >= 2\) return" body-text)
+          "range check against case count 2")
+      (is (re-find #"Msg __msg_val" body-text)
+          "declares local of the enum type")
+      (is (re-find #"__msg_val\.tag = \(Msg_Tag\)__msg_disc" body-text)
+          "writes tag into the union struct")
+      (is (re-find #"case Msg_Tag_ping:" body-text)
+          "per-case arm for bare case")
+      (is (re-find #"case Msg_Tag_pong:" body-text)
+          "per-case arm for payload case")
+      (is (re-find #"__msg_val\.data\.pong\.seq" body-text)
+          "payload field decoded directly into union member")
+      (is (re-find #"OSSwapBigToHostInt32" body-text)
+          "Int32 payload decoded big-endian → host"))))
 
 (deftest f37-l6-optional-primitive-field-decode-body-presence-envelope
   (testing "F37 L6 Optional-primitive extension — a record with a bare-T value-typed field (Optional-boxed per F39 L5b-ii-c Sub-P) synthesizes a decode block that: (1) reads a UInt8 presence byte and validates 0x00/0x01 range, (2) on absent leaves `.value` bit-zero (presence 0 short-circuits the payload read), (3) on present bounds-checks + reads T bytes, (4) binds `_Cxc_Optional_<T> __<field>_val = {.present, .value}`. Body inspected for the presence-guarded conditional + validity check."
