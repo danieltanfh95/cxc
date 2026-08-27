@@ -383,7 +383,7 @@
 ;; remaining short-name fallback.
 ;; ---------------------------------------------------------------------------
 
-(def builtin-type-names
+(def ^:private builtin-type-names
   "Type names built into the language grammar — always in scope, no
    import required. Includes numeric widths (spec §3.1), non-numeric
    substrate (§3.1.3 Any/Never/Unit), reference-shaped primitives
@@ -398,7 +398,7 @@
     "Any" "Unit" "Never"
     "List" "Map" "Set" "Array" "Optional"})
 
-(def prelude-name-set
+(def ^:private prelude-name-set
   "Every user-visible name declared in the prelude plus every builtin
    type name — the fixed \"always in scope\" set that every module
    sees regardless of imports. Assembled from `prelude/prelude-modules`
