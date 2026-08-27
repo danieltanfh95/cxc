@@ -36,12 +36,16 @@
 ;; module and its declared user-visible names; sources load on demand
 ;; via `io/resource` so a runtime with a stripped-down classpath (e.g.
 ;; a future non-macos target) doesn't need to ship the .cxc it never
-;; assembles. Selected target is passed through `assemble-source`;
-;; default is :macos until Landing 3 wires proper target selection.
+;; assembles. Selected target is passed through `assemble-source` —
+;; F55 Landing 3 wired `:target` through `build/compile-source-to-
+;; file` + `compile-directory-to-file`; unset callers fall back to
+;; `default-target` (:macos).
 
 (def default-target
   "Default target when the compiler is invoked without an explicit
-   target. Landing 3 will introduce target-selection plumbing."
+   target. F55 Landing 3 wired target-selection through the build
+   entrypoints; this value is the fallback when no `:target` is
+   passed."
   :macos)
 
 (defn- load-module-src
