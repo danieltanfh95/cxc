@@ -1127,11 +1127,12 @@
         short-name actually lives in).
      2. Otherwise fall back to plain short-name lookup.
 
-   Under the current concat+reparse pipeline `:resolves-to` is
-   stripped before reaching lower, so callers pass `nil` and the
-   short-name fallback fires unconditionally — zero behavior change.
-   b.ii-3 will preserve `:resolves-to` end-to-end so path (1) becomes
-   the primary route.
+   b.ii-3 (multi-file) and b.ii-5c (single-file) preserve
+   `:resolves-to` end-to-end, so path (1) is now the primary route for
+   any AST-carried reference; the short-name fallback still catches
+   name-string call sites (see the string arity of [[decl-lookup]])
+   and any AST references that haven't yet migrated to the enriched-
+   metadata code path. b.ii-5e retires the fallback.
 
    `env` may be any of `:record-env` / `:atom-env` / `:enum-env` —
    the primitive is agnostic to which. `module-map` is
@@ -1163,11 +1164,11 @@
 
    Terminal shape (post-b.ii-5e) for every reference-consuming site:
    pass `ctx` + the reference AST node here instead of `(get env name)`.
-   Today the fallback branch still fires whenever `:resolves-to` is
-   nil (single-file pipeline strips metadata), so behavior is
-   unchanged from raw short-name lookup — the wrapper exists to
-   internalize `module-map` access + centralize the fallback removal
-   in one place at b.ii-5e.
+   `:resolves-to` now survives to lower (b.ii-3 multi-file + b.ii-5c
+   single-file), so path (1) fires for enriched AST refs; the
+   fallback still catches name-string arity call sites and unmigrated
+   AST refs. b.ii-5e retires the fallback — this wrapper centralizes
+   the removal.
 
    Two arities: pass a map (AST reference node) to read `:name` and
    `:resolves-to` off it, or pass a name-string when the caller only
