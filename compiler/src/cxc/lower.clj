@@ -4358,7 +4358,7 @@
 
 (defn- lower-record-ctor
   [record-name args ctx]
-  (let [rec        (get-in ctx [:record-env record-name])
+  (let [rec        (decl-lookup ctx :record-env record-name)
         field-recs (:fields rec)
         field-idx  (into {} (map (juxt :name identity)) field-recs)
         params     (mapv (fn [f] {:name (:name f) :default (:default f)})
@@ -4576,7 +4576,7 @@
    carrying the resolved (name, value) pairs — one selector part per
    param in declaration order."
   [atom-name args ctx]
-  (let [rec         (get-in ctx [:atom-env atom-name])
+  (let [rec         (decl-lookup ctx :atom-env atom-name)
         ctor-params (:ctor-params rec)]
     (if (empty? ctor-params)
       (do
@@ -4735,7 +4735,7 @@
       (if (and (map? target-ty) (:record target-ty)
                (= "as" method-name) (empty? args))
         (let [rec-name (:record target-ty)
-              info     (get-in ctx [:record-env rec-name])]
+              info     (decl-lookup ctx :record-env rec-name)]
           (cond
             (record-has-user-as-method? info)
             {:node :call
@@ -4770,7 +4770,7 @@
         ;; must have all-encodable fields; a targeted fail-nyi names
         ;; the offending case + field type otherwise.
         (let [en-name (:enum target-ty)
-              info    (get-in ctx [:enum-env en-name])]
+              info    (decl-lookup ctx :enum-env en-name)]
           (if (enum-eligible-for-as-bytes-synthesis? info (:record-env ctx))
             {:node :call
              :fn   (enum-synth-as-bytes-name en-name)
@@ -5772,7 +5772,7 @@
       ;; typed case arm — resolve the record and its bindings
       (= :case (:kind pat))
       (let [case-nm    (:name pat)
-            rec        (get-in ctx [:record-env case-nm])
+            rec        (decl-lookup ctx :record-env case-nm)
             _          (when-not rec
                          (fail-nyi!
                           (str "Track B/3: `or " case-nm "(...):` arm references "
@@ -5880,7 +5880,7 @@
                                     "expression (got " (pr-str target-ty) ")")
                                node))
         atom-name (:atom target-ty)
-        atom-info (get-in ctx [:atom-env atom-name])
+        atom-info (decl-lookup ctx :atom-env atom-name)
         _         (when-not atom-info
                     (fail-nyi! (str "unknown atom type `" atom-name "` on send target") node))
         msg-name  (:msg node)
@@ -6059,7 +6059,7 @@
       :else
       (let [enum-name (:enum scrut-ty)
             case-nm   (:name pattern)
-            info      (get-in ctx [:enum-env enum-name])
+            info      (decl-lookup ctx :enum-env enum-name)
             cases     (:case-index info)
             tagged?   (:tagged? info)
             payload   (get-in info [:payload-index case-nm])]
@@ -6147,7 +6147,7 @@
           (let [pat        (first patterns)
                 enum-name  (:enum scrut-ty)
                 case-nm    (:name pat)
-                info       (get-in ctx [:enum-env enum-name])
+                info       (decl-lookup ctx :enum-env enum-name)
                 payload    (get-in info [:payload-index case-nm])
                 field-idx  (into {} (map (juxt :name identity)) payload)]
             (mapv (fn [b]
@@ -6185,7 +6185,7 @@
                (= :any scrut-ty))
           (let [pat        (first patterns)
                 case-nm    (:name pat)
-                rec        (get-in ctx [:record-env case-nm])
+                rec        (decl-lookup ctx :record-env case-nm)
                 field-idx  (into {} (map (juxt :name identity)) (:fields rec))
                 box-name   (str "_Cxc_R_" (->c-safe case-nm))]
             (mapv (fn [b]
@@ -6707,7 +6707,7 @@
   [field-name ctx]
   (let [self-info (get-in ctx [:locals "self"])
         atom-name (and (map? self-info) (:atom self-info))
-        info      (get-in ctx [:atom-env atom-name])
+        info      (decl-lookup ctx :atom-env atom-name)
         subs      (get-in info [:subscription-map field-name])]
     (boolean (seq subs))))
 
@@ -6718,7 +6718,7 @@
   [field-name ctx]
   (let [self-info (get-in ctx [:locals "self"])
         atom-name (and (map? self-info) (:atom self-info))
-        info      (get-in ctx [:atom-env atom-name])
+        info      (decl-lookup ctx :atom-env atom-name)
         f         (get-in info [:field-index field-name])]
     (boolean (:nonnil? f))))
 
@@ -6730,7 +6730,7 @@
   [field-name ctx]
   (let [self-info (get-in ctx [:locals "self"])
         atom-name (and (map? self-info) (:atom self-info))
-        info      (get-in ctx [:atom-env atom-name])]
+        info      (decl-lookup ctx :atom-env atom-name)]
     (get-in info [:field-index field-name])))
 
 (defn- lower-then-update
@@ -7107,7 +7107,7 @@
                    (= :dot (:node src))
                    (= :ident (get-in src [:target :node])))
           (let [field-name  (get-in src [:target :name])
-                info        (get-in ctx [:atom-env atom-name])
+                info        (decl-lookup ctx :atom-env atom-name)
                 field-info  (get-in info [:field-index field-name])
                 target-atom (some-> field-info :type base-type-name)
                 companion-nm (:field src)
@@ -8049,7 +8049,7 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- lower-record-struct [record-node ctx]
-  (let [rec (get-in ctx [:record-env (:name record-node)])]
+  (let [rec (decl-lookup ctx :record-env (:name record-node))]
     {:node   :c-struct
      :name   (->c-safe (:name record-node))
      :fields (mapv (fn [f] {:name (:name f) :c-type (:c-type f)}) (:fields rec))}))
@@ -8258,7 +8258,7 @@
                                                       (:enum-env ctx)
                                                       p)])
                                 (:params obs)))
-        rec           (get-in ctx [:record-env record-name])
+        rec           (decl-lookup ctx :record-env record-name)
         self-fields   (into {} (map (juxt :name identity) (:fields rec)))
         field-names   (set (map :name (:fields rec)))
         param-names   (set (map :name (:params obs)))
@@ -10483,7 +10483,7 @@
   (if (= "main" atom-name) "CxcMain" (->c-safe atom-name)))
 
 (defn- lower-atom [atom-name ctx & {:keys [is-main?]}]
-  (let [rec           (get-in ctx [:atom-env atom-name])
+  (let [rec           (decl-lookup ctx :atom-env atom-name)
         extras        (:extras rec)
         ctor-params   (:ctor-params rec)
         methods       (:methods rec)
