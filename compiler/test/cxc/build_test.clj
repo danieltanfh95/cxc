@@ -174,6 +174,12 @@
       (is (zero? exit))
       (is (= "6\n" stdout)))))
 
+(deftest end-to-end-f37-l6-nullable-string-from-bytes
+  (testing "F37 L6 nullable-String extension (2026-08-27) — round-trip on a record with a bare `String` field (nullable; storage is `NSString *` directly, not Optional-boxed). `R(msg: \"hi\").as()` produces 1 presence + 4 length-prefix + 2 UTF-8 payload = 7 bytes; `R.from(source: b)` reads presence, on present reads + validates length prefix + payload bytes + UTF-8 into `NSString *__msg_val`. DecodeOutcome discarded; `b.length` prints 7."
+    (let [{:keys [exit stdout]} (compile-and-run "f37-l6-nullable-string-from-bytes")]
+      (is (zero? exit))
+      (is (= "7\n" stdout)))))
+
 
 (deftest end-to-end-k5-if-expression
   (testing "K5 L1 — `if` at expression position (spec §3.8.1). Uses both simple `if...else` and `if...else if...else` chain. Result flows through `let` bindings. Lowered as C ternary; prints the selected branch value."

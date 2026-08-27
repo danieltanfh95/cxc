@@ -1827,11 +1827,11 @@ def main:
           "expected V_cxc_as_bytes call in main body"))))
 
 (deftest f37-l2-bytes-non-primitive-field-fails-nyi
-  (testing "F37 L2+3 — a record with a bare (nullable) `String` field falls outside L3's `String!`-only path. Raises a targeted fail-nyi naming the field and pointing at F39 L9 Optional plumbing as the unblocker."
+  (testing "F37 L2+3 — a record with a currently-unsupported field kind falls outside every landed encoder arm. The remaining hole at v1.0 is `Any` (heterogeneous reference type — no canonical wire format). Nullable `String` was previously listed here as fail-nyi; 2026-08-27 landed nullable-String encoder+decoder so the diagnostic re-targets the next unlanded field type."
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
-         #"F37 Landings 2 \+ 3.*W\.name.*String"
-         (lower-src "def W:\n    name: String\n\ndef main:\n    -> running\n        then:\n            let b: Bytes = W(name: \"hi\").as()\n            print(b.length)\n")))))
+         #"F37 Landings 2 \+ 3.*W\.thing.*Any"
+         (lower-src "def W:\n    thing: Any\n\ndef main:\n    -> running\n        then:\n            let b: Bytes = W(thing: 0).as()\n            print(b.length)\n")))))
 
 (deftest f37-l3-bytes-string-field-encodes-utf8-with-uint32-prefix
   (testing "F37 L3 — a record with a `String!` field synthesizes an encoder that emits `UInt32` big-endian length prefix + raw UTF-8 bytes per §3.10.10 String row. Body inspected for `dataUsingEncoding:NSUTF8StringEncoding` + `OSSwapHostToBigInt32` at the prefix site."
@@ -2193,6 +2193,45 @@ def main:
           "per-case arm for payload case")
       (is (re-find #"__msg_val\.value\.data\.pong\.seq" body-text)
           "payload field written into the Optional's inner tagged-union member"))))
+
+(deftest f37-l6-nullable-string-field-decode-body-presence-plus-length-prefix
+  (testing "F37 L6 nullable-String extension (2026-08-27) — a record with a bare `String` field (nullable; not `String!`) synthesizes a decode block that: (1) reads presence byte + validity check, (2) on present bounds-checks + reads UInt32 big-endian length prefix, (3) bounds-checks payload against declared length, (4) `NSString initWithBytes:length:encoding:` with UTF-8 validity. Binds `NSString *__<field>_val = nil` at the top and assigns on present — no `_Cxc_Optional_String` envelope (String is excluded from F39 L5b-ii Sub-P value-typed boxing; nil at rest represents absent)."
+    (let [prog (lower-src "def R:\n    msg: String\n\ndef main:\n    -> running\n")
+          f    (first (filter #(= "R_cxc_from_bytes" (:name %)) (:functions prog)))
+          body-text (get-in f [:body 0 :text])]
+      (is (some? f))
+      (is (re-find #"expected 1 presence byte for nullable String field msg" body-text)
+          "presence-byte bounds check with per-field diagnostic")
+      (is (re-find #"invalid presence byte for nullable String field msg" body-text)
+          "presence-byte validity check (0x00/0x01)")
+      (is (re-find #"NSString \*__msg_val = nil;" body-text)
+          "reference-type binding starts nil (no Optional envelope)")
+      (is (re-find #"if \(__msg_val_presence == 0x01\)" body-text)
+          "payload decode guarded by presence check")
+      (is (re-find #"expected 4 bytes for nullable String field msg length prefix" body-text)
+          "length-prefix bounds check")
+      (is (re-find #"OSSwapBigToHostInt32" body-text)
+          "length prefix decoded big-endian → host")
+      (is (re-find #"expected __msg_slen bytes for nullable String field msg, source has less than declared length" body-text)
+          "payload bounds check against declared length")
+      (is (re-find #"initWithBytes:__bytes \+ __off length:__msg_slen encoding:NSUTF8StringEncoding" body-text)
+          "NSString UTF-8 decode direct assignment")
+      (is (re-find #"invalid UTF-8 for nullable String field msg" body-text)
+          "UTF-8 validity check on nil return"))))
+
+(deftest f37-encoder-symmetry-record-with-nullable-string-field-synthesizes-as-bytes
+  (testing "F37 encoder-symmetry (2026-08-27, nullable-String sub) — a record with a nullable `String` field synthesizes `<R>_cxc_as_bytes`. Field encoding writes a presence byte based on `a.<field> != nil`; on present, dispatches to the String encoding path (UInt32 length prefix + UTF-8 payload) reading from `a.<field>` directly (no `.value` accessor)."
+    (let [prog (lower-src "def R:\n    msg: String\n\ndef main:\n    -> running\n")
+          fn-names (set (map :name (:functions prog)))
+          f    (first (filter #(= "R_cxc_as_bytes" (:name %)) (:functions prog)))
+          body-text (get-in f [:body 0 :text])]
+      (is (contains? fn-names "R_cxc_as_bytes"))
+      (is (re-find #"a\.msg != nil" body-text)
+          "encodes presence from `!= nil` check")
+      (is (re-find #"\[a\.msg dataUsingEncoding:NSUTF8StringEncoding\]" body-text)
+          "extracts UTF-8 bytes from `a.msg` directly on present")
+      (is (re-find #"OSSwapHostToBigInt32" body-text)
+          "length prefix encoded big-endian"))))
 
 (deftest f37-encoder-symmetry-record-with-optional-tagged-enum-field-synthesizes-as-bytes
   (testing "F37 encoder-symmetry (2026-08-27, Optional-tagged-enum sub) — a record with an Optional-tagged-enum field synthesizes `<R>_cxc_as_bytes`. Field encoding writes a presence byte and dispatches to `<Enum>_cxc_as_bytes(a.<field>.value)` on present. Enables round-trip with the F37 L6 Optional-tagged-enum decode extension."

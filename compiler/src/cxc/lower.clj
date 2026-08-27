@@ -8296,6 +8296,17 @@
        (enum-eligible-for-as-bytes-synthesis?
         (get enum-env (:cxc-ty f)) record-env)))
 
+(defn- f37-nullable-string-field?
+  "F37 L6 nullable-String extension (2026-08-27) — bare-T `String`
+   field. String is excluded from F39 L5b-ii-c Sub-P value-typed
+   boxing (reference type stays reference); storage is `NSString *`
+   directly, with nil representing absence. Wire format follows
+   §3.10.10 Optional row: `UInt8` presence byte + (when present)
+   `UInt32` big-endian length prefix + raw UTF-8 payload."
+  [f]
+  (and (= "String" (:cxc-ty f))
+       (not (:nonnil? f))))
+
 (defn- f37-optional-value-only-enum-field?
   "F37 L6 Optional-value-only-enum extension (2026-08-27) — a bare-T
    value-typed field whose inner type is a value-only enum (no payload
@@ -8332,18 +8343,21 @@
   ([f]
    (or (f37-primitive-byte-field? f)
        (f37-string-byte-field? f)
-       (f37-optional-primitive-field? f)))
+       (f37-optional-primitive-field? f)
+       (f37-nullable-string-field? f)))
   ([f record-env]
    (or (f37-primitive-byte-field? f)
        (f37-string-byte-field? f)
        (f37-nested-record-field? f record-env)
        (f37-optional-primitive-field? f)
+       (f37-nullable-string-field? f)
        (f37-optional-nested-record-field? f record-env)))
   ([f record-env enum-env]
    (or (f37-primitive-byte-field? f)
        (f37-string-byte-field? f)
        (f37-nested-record-field? f record-env)
        (f37-optional-primitive-field? f)
+       (f37-nullable-string-field? f)
        (f37-optional-nested-record-field? f record-env)
        (f37-enum-field? f enum-env record-env)
        (f37-optional-value-only-enum-field? f enum-env)
@@ -8450,6 +8464,28 @@
       ;; L6 enum decode extension.
       (str "    { NSData *__nd = " cxc-ty "_cxc_as_bytes(" fld ");"
            " [__d appendData:__nd]; }")
+
+      (f37-nullable-string-field? f)
+      ;; F37 L6 nullable-String extension (2026-08-27) — reference-
+      ;; typed nullable `String` (bare `String`, not `String!`). Wire
+      ;; format follows §3.10.10 Optional row directly: `UInt8`
+      ;; presence byte (0 if nil, 1 if not) + (when present) `UInt32`
+      ;; big-endian length prefix + raw UTF-8 payload. No struct
+      ;; envelope; presence keyed off `a.<field> != nil`. NSString
+      ;; round-trips through UTF-8 losslessly, so no encode-side
+      ;; validity guard.
+      (str "    {\n"
+           "        uint8_t __p = (" fld " != nil) ? 0x01 : 0x00;\n"
+           "        [__d appendBytes:&__p length:1];\n"
+           "        if (" fld " != nil) {\n"
+           "            NSData *__sd = [" fld " dataUsingEncoding:"
+           "NSUTF8StringEncoding];\n"
+           "            uint32_t __sdlen = OSSwapHostToBigInt32("
+           "(uint32_t)[__sd length]);\n"
+           "            [__d appendBytes:&__sdlen length:4];\n"
+           "            [__d appendData:__sd];\n"
+           "        }\n"
+           "    }")
 
       :else
       (case cxc-ty
@@ -8822,7 +8858,8 @@
          f37-optional-nested-record-decode-field?
          f37-tagged-enum-decode-field?
          f37-optional-value-only-enum-decode-field?
-         f37-optional-tagged-enum-decode-field?)
+         f37-optional-tagged-enum-decode-field?
+         f37-nullable-string-decode-field?)
 
 (defn- f37-decode-eligible-field?
   "F37 L6 field-level eligibility. Primitive (Bool / sized-int / Int /
@@ -8839,17 +8876,20 @@
   ([f]
    (or (f37-primitive-byte-field? f)
        (f37-string-byte-field? f)
-       (f37-optional-primitive-field? f)))
+       (f37-optional-primitive-field? f)
+       (f37-nullable-string-decode-field? f)))
   ([f record-env]
    (or (f37-primitive-byte-field? f)
        (f37-string-byte-field? f)
        (f37-optional-primitive-field? f)
+       (f37-nullable-string-decode-field? f)
        (f37-nested-record-decode-field? f record-env)
        (f37-optional-nested-record-decode-field? f record-env)))
   ([f record-env enum-env]
    (or (f37-primitive-byte-field? f)
        (f37-string-byte-field? f)
        (f37-optional-primitive-field? f)
+       (f37-nullable-string-decode-field? f)
        (f37-nested-record-decode-field? f record-env)
        (f37-optional-nested-record-decode-field? f record-env)
        (f37-value-only-enum-decode-field? f enum-env)
@@ -9248,6 +9288,58 @@
          "        " bind ".value = (" cxc-ty ")" raw ";\n"
          "    }")))
 
+(defn- f37-nullable-string-decode-field?
+  "F37 L6 nullable-String extension (2026-08-27) — bare `String` (not
+   `String!`). Storage is `NSString *`; wire format is Optional per
+   §3.10.10 — `UInt8` presence byte + (when present) `UInt32` big-
+   endian length prefix + UTF-8 payload with validity check."
+  [f]
+  (and (= "String" (:cxc-ty f))
+       (not (:nonnil? f))))
+
+(defn- f37-nullable-string-field-decode-c-src
+  "F37 L6 nullable-String extension — decode a nullable `String` field.
+   Presence byte + validity check; on present, UInt32 length prefix
+   bounds check + read + payload bounds check + `NSString
+   initWithBytes:length:encoding:` with UTF-8 validity. Binds
+   `NSString * __<field>_val` directly (no `_Cxc_Optional_String`
+   envelope; nil at rest represents absent, mirroring F39's String-
+   excluded-from-value-typed rule)."
+  [record-name f]
+  (let [fname   (:name f)
+        bind    (str "__" fname "_val")
+        invalid (decode-invalid-fn-name record-name)
+        lenv    (str "__" fname "_slen")
+        raw     (str lenv "_raw")]
+    (str "    if (__len < __off + 1) return " invalid
+         "((int64_t)__off, @\"expected 1 presence byte for nullable "
+         "String field " fname ", source has less\");\n"
+         "    uint8_t " bind "_presence = __bytes[__off];\n"
+         "    __off += 1;\n"
+         "    if (" bind "_presence != 0x00 && " bind "_presence != 0x01) return "
+         invalid "((int64_t)(__off - 1), @\"invalid presence byte for "
+         "nullable String field " fname "\");\n"
+         "    NSString *" bind " = nil;\n"
+         "    if (" bind "_presence == 0x01) {\n"
+         "        if (__len < __off + 4) return " invalid
+         "((int64_t)__off, @\"expected 4 bytes for nullable String "
+         "field " fname " length prefix, source has less\");\n"
+         "        uint32_t " raw ";\n"
+         "        memcpy(&" raw ", __bytes + __off, 4);\n"
+         "        uint32_t " lenv " = OSSwapBigToHostInt32(" raw ");\n"
+         "        __off += 4;\n"
+         "        if (__len < __off + " lenv ") return " invalid
+         "((int64_t)__off, @\"expected " lenv " bytes for nullable "
+         "String field " fname ", source has less than declared length\");\n"
+         "        " bind " = [[NSString alloc] "
+         "initWithBytes:__bytes + __off length:" lenv " "
+         "encoding:NSUTF8StringEncoding];\n"
+         "        if (!" bind ") return " invalid
+         "((int64_t)__off, @\"invalid UTF-8 for nullable String field "
+         fname "\");\n"
+         "        __off += " lenv ";\n"
+         "    }")))
+
 (defn- f37-optional-tagged-enum-decode-field?
   "F37 L6 Optional-tagged-enum extension (2026-08-27) — bare-T value-
    typed field whose inner is a tagged enum with primitive / `String!`
@@ -9483,7 +9575,9 @@
     (f37-optional-value-only-enum-decode-field? f enum-env)
     (f37-optional-value-only-enum-field-decode-c-src record-name f enum-env)
     (f37-optional-tagged-enum-decode-field? f enum-env)
-    (f37-optional-tagged-enum-field-decode-c-src record-name f enum-env)))
+    (f37-optional-tagged-enum-field-decode-c-src record-name f enum-env)
+    (f37-nullable-string-decode-field? f)
+    (f37-nullable-string-field-decode-c-src record-name f)))
 
 (defn- synthesize-record-from-bytes-fn
   "F37 L6 — emit `<Record>_cxc_from_bytes(NSMutableData *src) ->
