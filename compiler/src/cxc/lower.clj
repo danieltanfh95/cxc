@@ -4376,22 +4376,23 @@
              :fn   (c-method-name rec-name "as")
              :args [target-lo]}
 
-            (every? #(f37-bytes-encodable-field? % (:record-env ctx))
+            (every? #(f37-bytes-encodable-field? % (:record-env ctx) (:enum-env ctx))
                     (:fields info))
             {:node :call
              :fn   (record-synth-as-bytes-name rec-name)
              :args [target-lo]}
 
             :else
-            (let [bad (first (remove #(f37-bytes-encodable-field? % (:record-env ctx))
+            (let [bad (first (remove #(f37-bytes-encodable-field?
+                                       % (:record-env ctx) (:enum-env ctx))
                                      (:fields info)))]
               (fail-nyi!
                (str "F37 Landings 2 + 3: cannot synthesize `.as() -> Bytes` for "
                     "record `" rec-name "." (:name bad) "` (type `"
                     (:cxc-ty bad) "`" (when (:optional? bad) " Optional-boxed")
                     "). Primitive fields (Bool / sized-int / Int / Float / "
-                    "Double) and `String!` fields ship at Landings 2 + 3; "
-                    "nested records land in Landing 4, enums in Landing 5, "
+                    "Double), `String!` fields, and eligible nested-record/"
+                    "enum fields ship at Landings 2-5 + encoder-symmetry; "
                     "Optional in F39 Landing 9, atoms require user-written "
                     "`.as()` (spec §3.4.6). Write `function as(self) -> "
                     "Bytes:` on the record to override.")
@@ -8142,11 +8143,26 @@
   (and (:optional? f)
        (contains? record-env (:cxc-ty f))))
 
+(declare enum-eligible-for-as-bytes-synthesis?)
+
+(defn- f37-enum-field?
+  "F37 encoder-symmetry (2026-08-27) — a non-Optional enum field. The
+   enum must be in enum-env AND eligible for `.as() -> Bytes`
+   synthesis (all payload cases bytes-encodable). Encodes by
+   dispatching to `<Enum>_cxc_as_bytes(a.<field>)` mirror of the
+   nested-record path — no length prefix; enum encoding is fixed-shape
+   per the tag + payload layout."
+  [f enum-env record-env]
+  (and (not (:optional? f))
+       (contains? enum-env (:cxc-ty f))
+       (enum-eligible-for-as-bytes-synthesis?
+        (get enum-env (:cxc-ty f)) record-env)))
+
 (defn- f37-bytes-encodable-field?
-  "F37 Landings 2+3+4 + F39 L9 — union of the shipped eligibility
+  "F37 Landings 2+3+4+5 + F39 L9 — union of the shipped eligibility
    checks. Any field for which the encoder function has a synthesis
-   path. Nested-record fields require record-env to check whether the
-   field's cxc-ty is a known record."
+   path. Nested-record + enum fields require env access; 3-arity form
+   adds the enum arm."
   ([f]
    (or (f37-primitive-byte-field? f)
        (f37-string-byte-field? f)
@@ -8156,7 +8172,14 @@
        (f37-string-byte-field? f)
        (f37-nested-record-field? f record-env)
        (f37-optional-primitive-field? f)
-       (f37-optional-nested-record-field? f record-env))))
+       (f37-optional-nested-record-field? f record-env)))
+  ([f record-env enum-env]
+   (or (f37-primitive-byte-field? f)
+       (f37-string-byte-field? f)
+       (f37-nested-record-field? f record-env)
+       (f37-optional-primitive-field? f)
+       (f37-optional-nested-record-field? f record-env)
+       (f37-enum-field? f enum-env record-env))))
 
 (defn- f37-primitive-value-encode-src
   "Return the C-statement string encoding a primitive value bound at
@@ -8198,10 +8221,11 @@
   "Emit a C compound statement that appends field `f`'s big-endian
    encoding to `__d` (the NSMutableData accumulator). Assumes the
    record var is bound as `a`. Landings 2 (primitive) + 3 (String) +
-   4 (nested record) + F39 L9 (Optional envelope) — other field types
-   raise the caller's fail-nyi guard first. record-env is consulted
-   for the L4/L9 dispatch to nested records' synthesized fns."
-  [f record-env]
+   4 (nested record) + F39 L9 (Optional envelope) + encoder-symmetry
+   2026-08-27 (enum fields) — other field types raise the caller's
+   fail-nyi guard first. record-env consulted for L4/L9; enum-env
+   consulted for the enum-field arm."
+  [f record-env enum-env]
   (let [fname (:name f)
         cxc-ty (:cxc-ty f)
         fld    (str "a." fname)]
@@ -8232,6 +8256,15 @@
       ;; synthesized fn. No length prefix per §3.10.10 record row
       ;; (fixed-shape concatenation). Forward declarations at emit
       ;; time make dispatch order irrelevant.
+      (str "    { NSData *__nd = " cxc-ty "_cxc_as_bytes(" fld ");"
+           " [__d appendData:__nd]; }")
+
+      (f37-enum-field? f enum-env record-env)
+      ;; F37 encoder-symmetry (2026-08-27) — enum field dispatches to
+      ;; the enum's synthesized `<Enum>_cxc_as_bytes`. Same shape as
+      ;; nested-record: no length prefix, encoding is discriminator +
+      ;; (per-case) payload per §3.10.10. Enables round-trip with the
+      ;; L6 enum decode extension.
       (str "    { NSData *__nd = " cxc-ty "_cxc_as_bytes(" fld ");"
            " [__d appendData:__nd]; }")
 
@@ -8300,7 +8333,11 @@
         (every? f37-bytes-encodable-field? (:fields info))))
   ([info record-env]
    (and (not (record-has-user-as-method? info))
-        (every? #(f37-bytes-encodable-field? % record-env) (:fields info)))))
+        (every? #(f37-bytes-encodable-field? % record-env) (:fields info))))
+  ([info record-env enum-env]
+   (and (not (record-has-user-as-method? info))
+        (every? #(f37-bytes-encodable-field? % record-env enum-env)
+                (:fields info)))))
 
 (defn- synthesize-record-as-bytes-fn
   "F37 Landings 2 + 3 + 4 — produce a `:c-function` node implementing
@@ -8308,9 +8345,9 @@
    `record-eligible-for-as-bytes-synthesis?` returned true.
 
    Capacity hint sums the compile-time-known widths of primitive
-   fields; String / nested-record fields are variable-length so any
-   record containing one drops the hint (passes 0)."
-  [record-name info record-env]
+   fields; String / nested-record / enum fields are variable-length
+   (or opaque) so any record containing one drops the hint (passes 0)."
+  [record-name info record-env enum-env]
   (let [fields    (:fields info)
         all-fixed? (every? f37-primitive-byte-field? fields)
         total     (if all-fixed?
@@ -8319,7 +8356,7 @@
                     0)
         head      (str "    NSMutableData *__d = [NSMutableData dataWithCapacity:"
                        total "];")
-        blocks    (map #(f37-field-encoding-c-src % record-env) fields)
+        blocks    (map #(f37-field-encoding-c-src % record-env enum-env) fields)
         body-src  (str/join "\n" (concat [head] blocks ["    return __d;"]))]
     {:node        :c-function
      :name        (record-synth-as-bytes-name record-name)
@@ -8940,8 +8977,10 @@
                    f-fn            [synthesize-record-equals-fn
                                     synthesize-record-hash-fn
                                     (fn [rn ri _]
-                                      (when (record-eligible-for-as-bytes-synthesis? ri record-env)
-                                        (synthesize-record-as-bytes-fn rn ri record-env)))]
+                                      (when (record-eligible-for-as-bytes-synthesis?
+                                             ri record-env enum-env)
+                                        (synthesize-record-as-bytes-fn
+                                         rn ri record-env enum-env)))]
                    :let            [emitted (f-fn rec-name info ctx)]
                    :when           emitted]
                emitted))

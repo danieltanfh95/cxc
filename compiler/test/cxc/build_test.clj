@@ -144,6 +144,12 @@
       (is (zero? exit))
       (is (= "5\n" stdout)))))
 
+(deftest end-to-end-f37-l6-enum-from-bytes
+  (testing "F37 L6 value-only enum extension + F37 encoder-symmetry — round-trip `.as()` then `.from(source:)` on a record with a value-only enum field. `R(sig: Signal.green).as()` produces 1 discriminator byte (Signal has ≤256 cases so UInt8). `R.from(source: b)` reads the discriminator, range-checks against case count 3, casts to Signal. DecodeOutcome discarded; `b.length` prints 1."
+    (let [{:keys [exit stdout]} (compile-and-run "f37-l6-enum-from-bytes")]
+      (is (zero? exit))
+      (is (= "1\n" stdout)))))
+
 (deftest end-to-end-k5-if-expression
   (testing "K5 L1 — `if` at expression position (spec §3.8.1). Uses both simple `if...else` and `if...else if...else` chain. Result flows through `let` bindings. Lowered as C ternary; prints the selected branch value."
     (let [{:keys [exit stdout]} (compile-and-run "k5-if-expression")]

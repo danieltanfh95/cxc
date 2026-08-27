@@ -2110,6 +2110,18 @@ def main:
          #"F37 L6.*inner.*Inner"
          (lower-src "def Inner:\n    text: String!\n\ndef W:\n    inner: Inner!\n\ndef main:\n    -> running\n        then:\n            let b: Bytes = W(inner: Inner(text: \"hi\")).as()\n            W.from(source: b)\n")))))
 
+(deftest f37-encoder-symmetry-record-with-enum-field-synthesizes-as-bytes
+  (testing "F37 encoder-symmetry (2026-08-27) — a record with a value-only enum field now synthesizes `<R>_cxc_as_bytes` (previously fail-nyi'd at the intercept). Field encoding dispatches to the enum's synthesized `<Enum>_cxc_as_bytes` mirror of the nested-record arm. Enables round-trip with the F37 L6 value-only enum decode extension."
+    (let [prog (lower-src "def Signal:\n    case red\n    case green\n\ndef R:\n    sig: Signal!\n\ndef main:\n    -> running\n")
+          fn-names (set (map :name (:functions prog)))
+          f    (first (filter #(= "R_cxc_as_bytes" (:name %)) (:functions prog)))
+          body-text (get-in f [:body 0 :text])]
+      (is (contains? fn-names "R_cxc_as_bytes"))
+      (is (contains? fn-names "Signal_cxc_as_bytes")
+          "enum's own encoder still emitted (F37 L5)")
+      (is (re-find #"Signal_cxc_as_bytes\(a\.sig\)" body-text)
+          "field encoding dispatches to the enum encoder"))))
+
 (deftest f37-l6-value-only-enum-field-decode-body-discriminator-and-range-check
   (testing "F37 L6 value-only enum extension — a record with a field of an enum that has no payload cases synthesizes a decode block that reads a discriminator (width per §3.10.10 case count), range-checks against case count, then casts to the enum's C type. Value-only enums with ≤256 cases use UInt8."
     (let [prog (lower-src "def Signal:\n    case red\n    case green\n    case yellow\n\ndef R:\n    sig: Signal!\n\ndef main:\n    -> running\n")
