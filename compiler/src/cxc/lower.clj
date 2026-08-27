@@ -12136,22 +12136,22 @@
                                                           :map-container
                                                           :set-container
                                                           :runtime-provided}
-                                                        (:kind (get atom-env %))))
+                                                        (:kind (decl-lookup ctx :atom-env %))))
                                       (keys atom-env))
         container-atom-names  (filter #(= :list-container
-                                          (:kind (get atom-env %)))
+                                          (:kind (decl-lookup ctx :atom-env %)))
                                       (keys atom-env))
         map-container-names   (filter #(= :map-container
-                                          (:kind (get atom-env %)))
+                                          (:kind (decl-lookup ctx :atom-env %)))
                                       (keys atom-env))
         set-container-names   (filter #(= :set-container
-                                          (:kind (get atom-env %)))
+                                          (:kind (decl-lookup ctx :atom-env %)))
                                       (keys atom-env))
         real-atom-classes     (mapv (fn [nm]
                                       (lower-atom nm ctx :is-main? (= "main" nm)))
                                     real-atom-names)
         list-container-classes (mapv (fn [nm]
-                                       (let [entry (get atom-env nm)]
+                                       (let [entry (decl-lookup ctx :atom-env nm)]
                                          (synthesize-list-container-class
                                           nm
                                           (:element-type entry)
@@ -12159,14 +12159,14 @@
                                           :fanin-payloads (:stream-payload-index entry))))
                                      container-atom-names)
         map-container-classes (mapv (fn [nm]
-                                      (let [entry (get atom-env nm)]
+                                      (let [entry (decl-lookup ctx :atom-env nm)]
                                         (synthesize-map-container-class
                                          nm
                                          (:key-type entry)
                                          (:val-type entry))))
                                     map-container-names)
         set-container-classes (mapv (fn [nm]
-                                      (let [entry (get atom-env nm)]
+                                      (let [entry (decl-lookup ctx :atom-env nm)]
                                         (synthesize-set-container-class
                                          nm
                                          (:element-type entry))))
