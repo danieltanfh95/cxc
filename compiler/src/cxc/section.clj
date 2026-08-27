@@ -33,7 +33,7 @@
 ;; Primitive vocabulary
 ;; ---------------------------------------------------------------------------
 
-(def primitives
+(def ^:private primitives
   "Spec §4.10.1 Stage-1 primitives. Each entry describes one primitive
    section-class and the axis it contributes to. The axis label is the
    compose-time contradiction key: two primitives sharing an axis
@@ -159,7 +159,7 @@
 ;; Registry — compiler-baked sections and internal primitive compositions
 ;; ---------------------------------------------------------------------------
 
-(def protected-section-names
+(def ^:private protected-section-names
   "Compiler-baked behavioral section-header names. These are the
    sections shipped by the compiler (L3a `computed`, L3b `invariants`,
    L3c `metadata`, L3d `deprecated`) plus `use` (K6 capability
@@ -250,7 +250,7 @@
                 :allowed-in-extend? false
                 :notes              "L4 direct-line parser preserves the normalized :use-section/:caps shape consumed by K6."}})
 
-(def registry
+(def ^:private registry
   "Section-class registry — `{section-name-keyword → spec}`. Compiler-
    internal. Seeded with the compiler-baked reservations. Names with
    a landed backend carry `:kind :behavioral` + a spec pointer
