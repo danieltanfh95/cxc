@@ -146,48 +146,13 @@
    :named-tuple-env named-tuple-env
    :locals          {}})
 
-;; ---------------------------------------------------------------------------
-;; M3 — atom-env :kind vocabulary + phantom-cap registry.
-;;
-;; atom-env entries fall into one of these kinds. The distinction
-;; matters at env-consumer sites that want to skip synthesized /
-;; runtime entries (e.g. F38's "no agent field in record" check
-;; excludes containers because `List of Tally` is legal).
-;;
-;;   :def-atom          user-declared `def X:` — the default kind
-;;   :runtime-provided  prelude-supplied (Clock, Console, CxcStream, …)
-;;   :list-container    synthesized `List of T` class
-;;   :map-container     synthesized `Map of (K, V)` class
-;;   :set-container     synthesized `Set of T` class
-;;
-;; Phantom capability atoms (SystemPanic, ...) are compiler-known
-;; cap types that never appear in atom-env — they license `use:`
-;; slots without requiring the user to `def` them. Extension is one
-;; edit here (add the name); consumers reach it via
-;; `phantom-atom-name?`.
-;; ---------------------------------------------------------------------------
-
-(def ^:private synthesized-atom-kinds
-  #{:runtime-provided :list-container :map-container :set-container})
-
-(defn- synthesized-atom-kind?
-  "True when a `:kind` value on an atom-env entry marks it as
-   compiler-synthesized (container class, runtime-provided prelude
-   entry) rather than a user-declared `def-atom`."
-  [k]
-  (contains? synthesized-atom-kinds k))
-
-(def ^:private phantom-atom-names
-  "Cap types the compiler recognizes without a matching atom-env entry.
-   Adding a new phantom cap: extend this set + any `use: <name>`
-   validation that reaches it (grep `phantom-atom-name?`)."
-  #{"SystemPanic"})
-
-(defn- phantom-atom-name?
-  "True when `nm` names a phantom capability atom — one the compiler
-   licenses at type-check without requiring the user to declare it."
-  [nm]
-  (contains? phantom-atom-names nm))
+;; M1b prep — atom-env :kind + phantom-cap helpers moved to cxc.env
+;; (2026-08-28) so leaf namespaces can reach them without back-
+;; referencing cxc.lower. Rebound below for unqualified use.
+(def synthesized-atom-kinds  env/synthesized-atom-kinds)
+(def synthesized-atom-kind?  env/synthesized-atom-kind?)
+(def phantom-atom-names      env/phantom-atom-names)
+(def phantom-atom-name?      env/phantom-atom-name?)
 
 ;; M1b prep — F56 emit-boundary mangling extracted to cxc.mangle.
 ;; `*decl->module*` + `->c-safe` live there. cxc.lower uses the

@@ -24,6 +24,50 @@
    plan doc for the full derivation."
   (:require [cxc.resolve :as resolve]))
 
+;; ---------------------------------------------------------------------------
+;; atom-env :kind vocabulary + phantom-cap registry (moved here 2026-08-28
+;; from cxc.lower so cxc.type-kw and other leaves can reach them without
+;; back-referencing cxc.lower).
+;;
+;; atom-env entries fall into one of these kinds. The distinction matters
+;; at env-consumer sites that want to skip synthesized / runtime entries
+;; (e.g. F38's "no agent field in record" check excludes containers
+;; because `List of Tally` is legal).
+;;
+;;   :def-atom          user-declared `def X:` — the default kind
+;;   :runtime-provided  prelude-supplied (Clock, Console, CxcStream, …)
+;;   :list-container    synthesized `List of T` class
+;;   :map-container     synthesized `Map of (K, V)` class
+;;   :set-container     synthesized `Set of T` class
+;;
+;; Phantom capability atoms (SystemPanic, ...) are compiler-known cap
+;; types that never appear in atom-env — they license `use:` slots
+;; without requiring the user to `def` them. Extension is one edit
+;; here (add the name); consumers reach it via `phantom-atom-name?`.
+;; ---------------------------------------------------------------------------
+
+(def synthesized-atom-kinds
+  #{:runtime-provided :list-container :map-container :set-container})
+
+(defn synthesized-atom-kind?
+  "True when a `:kind` value on an atom-env entry marks it as
+   compiler-synthesized (container class, runtime-provided prelude
+   entry) rather than a user-declared `def-atom`."
+  [k]
+  (contains? synthesized-atom-kinds k))
+
+(def phantom-atom-names
+  "Cap types the compiler recognizes without a matching atom-env entry.
+   Adding a new phantom cap: extend this set + any `use: <name>`
+   validation that reaches it (grep `phantom-atom-name?`)."
+  #{"SystemPanic"})
+
+(defn phantom-atom-name?
+  "True when `nm` names a phantom capability atom — one the compiler
+   licenses at type-check without requiring the user to declare it."
+  [nm]
+  (contains? phantom-atom-names nm))
+
 (defn attribute-modules-to-decls
   "F51 L3b(b.ii)-2 — walk `top-nodes` stream-wise tracking the current
    module via `:module` nodes; return `{decl-name-string → module-kw}`
