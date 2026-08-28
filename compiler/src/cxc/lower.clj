@@ -179,6 +179,49 @@
    :locals          {}})
 
 ;; ---------------------------------------------------------------------------
+;; M3 — atom-env :kind vocabulary + phantom-cap registry.
+;;
+;; atom-env entries fall into one of these kinds. The distinction
+;; matters at env-consumer sites that want to skip synthesized /
+;; runtime entries (e.g. F38's "no agent field in record" check
+;; excludes containers because `List of Tally` is legal).
+;;
+;;   :def-atom          user-declared `def X:` — the default kind
+;;   :runtime-provided  prelude-supplied (Clock, Console, CxcStream, …)
+;;   :list-container    synthesized `List of T` class
+;;   :map-container     synthesized `Map of (K, V)` class
+;;   :set-container     synthesized `Set of T` class
+;;
+;; Phantom capability atoms (SystemPanic, ...) are compiler-known
+;; cap types that never appear in atom-env — they license `use:`
+;; slots without requiring the user to `def` them. Extension is one
+;; edit here (add the name); consumers reach it via
+;; `phantom-atom-name?`.
+;; ---------------------------------------------------------------------------
+
+(def ^:private synthesized-atom-kinds
+  #{:runtime-provided :list-container :map-container :set-container})
+
+(defn- synthesized-atom-kind?
+  "True when a `:kind` value on an atom-env entry marks it as
+   compiler-synthesized (container class, runtime-provided prelude
+   entry) rather than a user-declared `def-atom`."
+  [k]
+  (contains? synthesized-atom-kinds k))
+
+(def ^:private phantom-atom-names
+  "Cap types the compiler recognizes without a matching atom-env entry.
+   Adding a new phantom cap: extend this set + any `use: <name>`
+   validation that reaches it (grep `phantom-atom-name?`)."
+  #{"SystemPanic"})
+
+(defn- phantom-atom-name?
+  "True when `nm` names a phantom capability atom — one the compiler
+   licenses at type-check without requiring the user to declare it."
+  [nm]
+  (contains? phantom-atom-names nm))
+
+;; ---------------------------------------------------------------------------
 ;; F56 L2+L3 (2026-08-27) — emit-boundary mangling.
 ;;
 ;; The parse-time `rewrite-prelude-names` postwalk is retired. Post-parse
@@ -699,7 +742,7 @@
         ;; L-panic-cap (2026-08-26) — phantom capability atom types
         ;; render as atom pointers (never actually referenced at
         ;; runtime; the capability is compile-time only).
-        (contains? #{"SystemPanic"} nm)
+        (phantom-atom-name? nm)
         (str (->c-safe nm) " *")
         :else                            (fail-nyi! (str "type " nm) ty-node)))
     :type-named-tuple
@@ -855,7 +898,7 @@
       ;; L-panic-cap (2026-08-26) — phantom capability atoms are
       ;; compiler-known types. Recognized here so type resolution
       ;; passes even when no user def exists.
-      (contains? #{"SystemPanic"} cxc-name)
+      (phantom-atom-name? cxc-name)
       {:atom cxc-name}
       ;; F15 L2.c.iii.c.γ.α (2026-08-24) — mangled named-tuple names
       ;; (D4-reserved `_Cxc_NT` prefix, per named-tuple/reserved-type-
@@ -1127,9 +1170,7 @@
    distinguish `foo: Tally` (reject) from `foo: List of Int` (allow)."
   [atom-env nm]
   (when-let [info (get atom-env nm)]
-    (not (contains? #{:runtime-provided :list-container
-                      :map-container :set-container}
-                    (:kind info)))))
+    (not (synthesized-atom-kind? (:kind info)))))
 
 (defn- validate-no-agent-fields-in-records!
   "F38 — a structural (record) def can't hold a field whose type
@@ -2982,11 +3023,10 @@
              ;; license their `use:` slot but never resolve to a
              ;; user-defined atom. Recognized here so validation
              ;; passes without requiring the user to `def` them.
-             phantom-caps  #{"SystemPanic"}
              _             (doseq [c use-caps]
                              (let [ty-nm (base-type-name (:type c))]
                                (when-not (or (contains? atom-names ty-nm)
-                                             (contains? phantom-caps ty-nm))
+                                             (phantom-atom-name? ty-nm))
                                  (fail-nyi!
                                   (str "use: `" (:name c) "` requires an atom type; got `"
                                        ty-nm "` (Layer 3.1 only "
@@ -3246,13 +3286,11 @@
              ;; explicit `:cxc-compiler-synthesized` marker and are
              ;; excluded — caps live in the shared env, not as owned
              ;; children.
-             non-slot-kinds #{:list-container :map-container :set-container
-                              :runtime-provided}
              regular-atom-name?
              (fn [nm]
                (let [info (get env nm)]
                  (and info
-                      (not (contains? non-slot-kinds (:kind info))))))
+                      (not (synthesized-atom-kind? (:kind info))))))
              ;; F13 L2 — `weak` / `unowned` fields are non-owning
              ;; references. The child atom has a different owner (or
              ;; no owner); this atom must NOT install a parent back-
@@ -4720,7 +4758,7 @@
         ;; no env entry and lower to a dummy `[[Cls alloc] init]`
         ;; that emit renders inert. Skip the strict-lookup
         ;; diagnostic in that case.
-        phantom?    (contains? #{"SystemPanic"} atom-name)
+        phantom?    (phantom-atom-name? atom-name)
         _           (when-not (or rec phantom?)
                       (fail-compile!
                        :cxc-f51-unresolved-name
@@ -5627,8 +5665,7 @@
                   ;; Accept both the mangled prelude name (real
                   ;; user-facing shape) and the un-mangled name (used
                   ;; by unit tests that skip the prelude rewrite pass).
-                  (some #(contains? #{"SystemPanic"}
-                                    (:type-name %))
+                  (some #(phantom-atom-name? (:type-name %))
                         (:use-caps atom-info))
                   _    (when-not has-panic-cap?
                          (fail-compile!
@@ -12324,9 +12361,7 @@
                                        ;; no atom-env entry (no runtime
                                        ;; state); skip provisioning
                                        ;; validation for them.
-                                       phantom?  (contains?
-                                                  #{"SystemPanic"}
-                                                  ty-name)]]
+                                       phantom?  (phantom-atom-name? ty-name)]]
                            (when-not (or atom-info phantom?)
                              (fail-compile!
                               :cxc-f50-non-atom-main-param
