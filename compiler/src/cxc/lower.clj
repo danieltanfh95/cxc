@@ -5382,7 +5382,7 @@
         atom-name (:atom target-ty)
         atom-info (env/env-lookup ctx :atom-env atom-name)
         _         (when-not atom-info
-                    (fail-nyi! (str "unknown atom type `" atom-name "` on send target") node))
+                    (fail-user! (str "unknown atom type `" atom-name "` on send target") node))
         msg-name  (:msg node)
         ;; Cross-atom shape check (Step 10 formalizes diagnostic).
         msg-shape (get-in atom-info [:message-index msg-name])
@@ -6458,7 +6458,7 @@
       :call  (if (and (map? (:callee src))
                       (= :dot (get-in src [:callee :node])))
                :method-stream
-               (fail-nyi! (str "receive-glyph source `:call` needs a "
+               (fail-user! (str "receive-glyph source `:call` needs a "
                                "dot callee (`source.method(args)`); got "
                                (get-in src [:callee :node]))
                           src))
@@ -6834,7 +6834,7 @@
   [atom-name enclosing-fields dot-src]
   (let [target (:target dot-src)
         _      (when-not (= :ident (:node target))
-                 (fail-nyi! (str "receive-glyph source `" (:field dot-src)
+                 (fail-user! (str "receive-glyph source `" (:field dot-src)
                                  "` must be `<field>." (:field dot-src)
                                  "` where <field> names a data-field / cap "
                                  "on the enclosing atom (got "
@@ -6843,7 +6843,7 @@
         fname  (:name target)
         field  (get enclosing-fields fname)
         _      (when-not field
-                 (fail-nyi! (str "receive-glyph source `" fname "." (:field dot-src)
+                 (fail-user! (str "receive-glyph source `" fname "." (:field dot-src)
                                  "` — no data-field / cap named `" fname
                                  "` on atom `" atom-name "`")
                             dot-src))
@@ -6865,14 +6865,14 @@
         payload      (or (:payload msg) [])
         source-info  (env/env-lookup ctx :atom-env source-class)
         _            (when-not source-info
-                       (fail-nyi! (str "receive-glyph source `" source-class
+                       (fail-user! (str "receive-glyph source `" source-class
                                        "` is not a def-atom in the program")
                                   t))
         stream       (get-in source-info [:stream-index stream-name])
         companion    (when-not stream
                        (get-in source-info [:companion-index stream-name]))
         _            (when-not (or stream companion)
-                       (fail-nyi! (str "atom `" source-class "` emits no `:> "
+                       (fail-user! (str "atom `" source-class "` emits no `:> "
                                        stream-name "` stream and has no "
                                        "`" stream-name "` companion message — "
                                        "receive-glyph `" source-field "."
@@ -6890,7 +6890,7 @@
         expected-keys (mapv :name (:payload stream))
         got-keys      (mapv :name payload)
         _            (when (not= expected-keys got-keys)
-                       (fail-nyi! (str "receive-glyph payload shape on atom `"
+                       (fail-user! (str "receive-glyph payload shape on atom `"
                                        atom-name "` subscribing to `"
                                        source-class "." stream-name
                                        "` differs from source-side emit shape: "
@@ -10010,7 +10010,7 @@
         ctx-in-init   (assoc ctx-with-self
                              :locals (assoc locals "self" {:atom atom-name}))]
     (when (seq extras)
-      (fail-nyi! (str "def-atom `" atom-name "` has body items beyond `data:`/`methods:`"
+      (fail-user! (str "def-atom `" atom-name "` has body items beyond `data:`/`methods:`"
                       "/observable/wildcard on-enter transition "
                       "(" (mapv :node extras) ") — use:/invariants/receive-glyphs next up")
                  {:atom atom-name :extras extras}))
@@ -10571,7 +10571,7 @@
         initial-txn (first (filter #(= :implicit (get-in % [:source :kind]))
                                    transitions))]
     (when-not initial-txn
-      (fail-nyi! "`def main` must have an initial transition (e.g. `-> running`)"
+      (fail-user! "`def main` must have an initial transition (e.g. `-> running`)"
                  main-node))
     (lower-transition-body (:body initial-txn) ctx)))
 
