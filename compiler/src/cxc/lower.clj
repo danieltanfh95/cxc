@@ -226,7 +226,10 @@
                      check-dispatch-exhaustiveness!
                      scrut-ty->c-type
                      dispatch-scrutinee-supported?
-                     reference-tk?]]))
+                     reference-tk?]]
+            [cxc.lower.emit-names :as emit-names
+             :refer [class-name-for-atom
+                     synth-reason-box]]))
 
 ;; M1b prep — compile-error funnels (fail-nyi! / fail-user! /
 ;; fail-compile!) extracted to cxc.diagnostics. See its ns docstring
@@ -1666,8 +1669,6 @@
 ;; ---------------------------------------------------------------------------
 ;; Expression lowering (ctx-threaded)
 ;; ---------------------------------------------------------------------------
-
-(declare class-name-for-atom)
 
 (declare lower-expr lower-stmt lower-body-stmts
          resolve-args-against-params)
@@ -5105,26 +5106,8 @@
 ;; wants to dispatch against a record type.
 ;; ---------------------------------------------------------------------------
 
-(defn- reason-box-name
-  "Wrapper class name for a record. Prefix `_Cxc_R_` is compile-time
-   reserved — leading underscore is off-limits to user identifiers.
-   Takes the record's C-safe (mangled) name so prelude records produce
-   `_Cxc_R__Cxc_Position`, user records `_Cxc_R_Counter`.
-   F56 L2+L3 (2026-08-27): callers pass the mangled form via
-   `->c-safe`."
-  [record-c-name]
-  (str "_Cxc_R_" record-c-name))
-
-(defn- synth-reason-box
-  "Build a `:reason-box` node describing the wrapper class for one
-   record. Emit consumes it as an `@interface X : NSObject { @public
-   T value; } @end / @implementation X @end` pair."
-  [record-node]
-  (let [rec-c (->c-safe (:name record-node))]
-    {:node          :reason-box
-     :name          (reason-box-name rec-c)
-     :struct-c-type rec-c}))
-
+;; M1c — reason-box-name + synth-reason-box moved to
+;; cxc.lower.emit-names.
 
 ;; M1c — F39 Optional-typedef synth (collect-optional-types,
 ;; synth-optional-typedef, synth-optional-typedefs) moved to
@@ -5758,13 +5741,7 @@
           failure-value  (assoc :failure-value failure-value)
           reason-box     (assoc :reason-box-name reason-box))))))
 
-(defn- class-name-for-atom
-  "Emitted ObjC class name. Regular atoms use their cxc name (mangled
-   at emit boundary via `->c-safe` — prelude atoms like `Clock` become
-   `_Cxc_Clock`; user atoms stay unchanged in `:main`). Main gets
-   `CxcMain` — `main` collides with C's main() symbol."
-  [atom-name]
-  (if (= "main" atom-name) "CxcMain" (->c-safe atom-name)))
+;; M1c — class-name-for-atom moved to cxc.lower.emit-names.
 
 (defn- lower-atom [atom-name ctx & {:keys [is-main?]}]
   (let [rec           (env/env-lookup ctx :atom-env atom-name)
