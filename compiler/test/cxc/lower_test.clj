@@ -5,6 +5,7 @@
             [cxc.parse :as p]
             [cxc.prelude :as prelude]
             [cxc.lower :as lower]
+            [cxc.type-kw :as type-kw]
             [cxc.emit :as emit]))
 
 (defn- lower-src [src] (lower/lower (p/parse src)))
@@ -4678,11 +4679,11 @@ def main:
 
 (deftest f39-l5b-ii-a-optional-type-name-mangling
   (testing "F39 Landing 5b-ii-a (2026-08-21) — `optional-type-name` mangles a value-type name into the Optional-boxed C typedef name. `Int` canonicalizes to `Int64` per §3.1 (prelude alias). Other primitives, records, and enums pass through unchanged."
-    (is (= "_Cxc_Optional_Int64"    (lower/optional-type-name "Int")))
-    (is (= "_Cxc_Optional_Int32"    (lower/optional-type-name "Int32")))
-    (is (= "_Cxc_Optional_Bool"     (lower/optional-type-name "Bool")))
-    (is (= "_Cxc_Optional_Double"   (lower/optional-type-name "Double")))
-    (is (= "_Cxc_Optional_Position" (lower/optional-type-name "Position")))))
+    (is (= "_Cxc_Optional_Int64"    (type-kw/optional-type-name "Int")))
+    (is (= "_Cxc_Optional_Int32"    (type-kw/optional-type-name "Int32")))
+    (is (= "_Cxc_Optional_Bool"     (type-kw/optional-type-name "Bool")))
+    (is (= "_Cxc_Optional_Double"   (type-kw/optional-type-name "Double")))
+    (is (= "_Cxc_Optional_Position" (type-kw/optional-type-name "Position")))))
 
 (deftest f39-l5b-ii-c-collect-emits-optional-typedefs-for-bare-value-fields
   (testing "F39 Landing 5b-ii-c (2026-08-22) — flip landed: `collect-optional-types` scans record/atom envs for value-typed bare-`T` fields and emits the corresponding `_Cxc_Optional_<T>` typedefs (`_Cxc_Optional_Int64` for Int, plus `_Cxc_Optional_Bool` always when any Optional exists so ord binops have somewhere to land)."
@@ -5670,9 +5671,9 @@ def main:
               :fields [{:name "x" :type {:node :type-ref :name "Int"}}
                        {:name "y" :type {:node :type-ref :name "Int"}}]}]
       (is (= "_Cxc_NT_x_Int_y_Int"
-             (#'cxc.lower/cxc-type->c ty {} {} {} {})))
+             (#'cxc.type-kw/cxc-type->c ty {} {} {} {})))
       (is (= "_Cxc_NT_x_Int_y_Int"
-             (#'cxc.lower/cxc-type->c
+             (#'cxc.type-kw/cxc-type->c
               {:node :type-named-tuple
                :fields [{:name "y" :type {:node :type-ref :name "Int"}}
                         {:name "x" :type {:node :type-ref :name "Int"}}]}
@@ -5685,9 +5686,9 @@ def main:
               :fields [{:name "x" :type {:node :type-ref :name "Int"}}
                        {:name "y" :type {:node :type-ref :name "Int"}}]}]
       (is (= "_Cxc_NT_x_Int_y_Int"
-             (#'cxc.lower/base-type-name ty)))
+             (#'cxc.type-kw/base-type-name ty)))
       (is (= "_Cxc_NT_x_Int_y_Int"
-             (#'cxc.lower/base-type-name
+             (#'cxc.type-kw/base-type-name
               {:node :type-nullable :inner ty}))
           "nullable wrapping is orthogonal — base-type-name recurses"))))
 
@@ -5711,26 +5712,26 @@ def main:
   Non-`_Cxc_NT` names still fall through to the existing `:else` fail-nyi, and record/atom/enum-env lookups still take precedence when a name happens to resolve there (nominal registration wins over prefix recognition, matching L2.a's discipline that user-declared names collide with reserved prefixes at parse time — see `reserved-type-name-prefix?`)."
     ;; Recognition: mangled named-tuple → :named-tuple kw.
     (is (= {:named-tuple "_Cxc_NT_x_Int_y_Int"}
-           (#'cxc.lower/cxc-type->type-kw
+           (#'cxc.type-kw/cxc-type->type-kw
             "_Cxc_NT_x_Int_y_Int" {} {} {} nil)))
     ;; Recognition survives across nesting-prefixed manglings.
     (is (= {:named-tuple "_Cxc_NT_outer_Nt1_inner_Int"}
-           (#'cxc.lower/cxc-type->type-kw
+           (#'cxc.type-kw/cxc-type->type-kw
             "_Cxc_NT_outer_Nt1_inner_Int" {} {} {} nil)))
     ;; Non-mangled names still fail-nyi (prefix isn't `_Cxc_NT`).
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
          #"unresolved type name"
-         (#'cxc.lower/cxc-type->type-kw
+         (#'cxc.type-kw/cxc-type->type-kw
           "SomeUserType" {} {} {} nil)))))
 
 (deftest f15-l2c-iii-c-gamma-beta-type-kw-to-c-type-named-tuple
   (testing "F15 L2.c.iii.c.γ.β — `type-kw->c-type` renders `:named-tuple` type-kws as the bare mangled struct name (value type, no pointer suffix, matches L2.c.ii-b's field-side convention + the L2.c.iii.c.α cxc-type->c convention). Dead code today; enables γ-chain end-to-end when combined with the earlier sub-fires."
     (is (= "_Cxc_NT_x_Int_y_Int"
-           (#'cxc.lower/type-kw->c-type
+           (#'cxc.type-kw/type-kw->c-type
             {:named-tuple "_Cxc_NT_x_Int_y_Int"} nil)))
     (is (= "_Cxc_NT_outer_Nt1_inner_Int"
-           (#'cxc.lower/type-kw->c-type
+           (#'cxc.type-kw/type-kw->c-type
             {:named-tuple "_Cxc_NT_outer_Nt1_inner_Int"} nil)))))
 
 (deftest f15-l2c-iii-c-named-tuple-ctor-param-end-to-end-typedef
