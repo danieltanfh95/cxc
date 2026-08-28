@@ -8,6 +8,7 @@
             [cxc.lower.module-lets :as module-lets]
             cxc.lower.shape-collection
             cxc.lower.ctor-params
+            cxc.lower.protocol-shapes
             [cxc.type-kw :as type-kw]
             [cxc.emit :as emit]))
 
@@ -5906,14 +5907,14 @@ def main:
   (testing "F15 L4 Sub-1 — a record with `function as(self) -> Bytes` structurally satisfies `As<Bytes>`. Placeholder `:T` in the shape resolves to \"Bytes\" and matches the method's :cxc-return-ty. Symmetric with signature-mismatch-detail's cxc-name-string comparison."
     (let [info (f15-l4-record-info
                 [(f15-l4-instance-method-entry "Bag" "as" [] "Bytes")])]
-      (is (true? (#'cxc.lower/structurally-satisfies-protocol?
+      (is (true? (#'cxc.lower.protocol-shapes/structurally-satisfies-protocol?
                   info "Bag" "As" :bytes))))))
 
 (deftest f15-l4-sub1-does-not-satisfy-as-t-when-return-type-differs
   (testing "F15 L4 Sub-1 — a record whose `as` method returns String does not satisfy `As<Bytes>`. The predicate must reject mismatched return types; otherwise Sub-2's fallback dispatch could route `.as()` to a method with the wrong shape."
     (let [info (f15-l4-record-info
                 [(f15-l4-instance-method-entry "Bag" "as" [] "String")])]
-      (is (false? (boolean (#'cxc.lower/structurally-satisfies-protocol?
+      (is (false? (boolean (#'cxc.lower.protocol-shapes/structurally-satisfies-protocol?
                             info "Bag" "As" :bytes)))))))
 
 (deftest f15-l4-sub1-does-not-satisfy-as-t-with-extra-params
@@ -5921,26 +5922,26 @@ def main:
     (let [info (f15-l4-record-info
                 [(f15-l4-instance-method-entry
                   "Bag" "as" [{:name "target" :cxc-ty "Bytes"}] "Bytes")])]
-      (is (false? (boolean (#'cxc.lower/structurally-satisfies-protocol?
+      (is (false? (boolean (#'cxc.lower.protocol-shapes/structurally-satisfies-protocol?
                             info "Bag" "As" :bytes)))))))
 
 (deftest f15-l4-sub1-does-not-satisfy-as-t-when-method-absent
   (testing "F15 L4 Sub-1 — a record with no `as` method does not satisfy `As<Bytes>`. Absence rejects — Sub-2 will fall through to the F37 synthesis path (or diagnostic) after this predicate returns false."
     (let [info (f15-l4-record-info
                 [(f15-l4-instance-method-entry "Bag" "other" [] "Bytes")])]
-      (is (false? (boolean (#'cxc.lower/structurally-satisfies-protocol?
+      (is (false? (boolean (#'cxc.lower.protocol-shapes/structurally-satisfies-protocol?
                             info "Bag" "As" :bytes)))))))
 
 (deftest f15-l4-sub1-from-t-not-satisfied-without-class-fn-index
   (testing "F15 L4 Sub-1 — `From<T>` requires a class-level `from(source: T) -> Self`; the record env has no `:class-fn-index` at v1.0 so this predicate always returns false for `From<T>` today. Sub-2 (or a later sub) seeds the env slot with F37 L6 synthesized `_cxc_from_bytes` shape or user-authored class functions."
     (let [info (f15-l4-record-info [])]
-      (is (false? (boolean (#'cxc.lower/structurally-satisfies-protocol?
+      (is (false? (boolean (#'cxc.lower.protocol-shapes/structurally-satisfies-protocol?
                             info "Bag" "From" :bytes)))))))
 
 (deftest f15-l4-sub1-unknown-shape-name-yields-nil
   (testing "F15 L4 Sub-1 — asking about an unknown protocol shape returns nil (not false). The nil-vs-false distinction lets a caller tell 'no such shape in the registry' apart from 'shape exists but conformance failed'."
     (let [info (f15-l4-record-info [])]
-      (is (nil? (#'cxc.lower/structurally-satisfies-protocol?
+      (is (nil? (#'cxc.lower.protocol-shapes/structurally-satisfies-protocol?
                  info "Bag" "NoSuchShape" :bytes))))))
 
 (deftest f15-l4-sub1-multiple-methods-only-required-one-consulted
@@ -5949,7 +5950,7 @@ def main:
                 [(f15-l4-instance-method-entry "Bag" "as"      [] "Bytes")
                  (f15-l4-instance-method-entry "Bag" "shout"   [] "String")
                  (f15-l4-instance-method-entry "Bag" "n_bytes" [] "Int")])]
-      (is (true? (#'cxc.lower/structurally-satisfies-protocol?
+      (is (true? (#'cxc.lower.protocol-shapes/structurally-satisfies-protocol?
                   info "Bag" "As" :bytes))))))
 
 ;; ---------------------------------------------------------------------------
@@ -5971,7 +5972,7 @@ def main:
 
 (deftest f15-l4-sub2-from-t-shape-uses-decode-outcome-marker
   (testing "F15 L4 Sub-2 — the `From<T>` shape's `:returns` is now `{:apply \"DecodeOutcome\" :inner :Self}` rather than plain `:Self`. This reflects F37 L6's canonical-bytes contract where the class function `from(source: Bytes)` returns a fallible `DecodeOutcome<Self>` — not the raw `Self`. Sub-1 committed to `:Self` as a placeholder before spec-reconciliation; Sub-2 adopts the F37 shape so the L6 synthesis is a natural conformer."
-    (let [from-shape (get-in (deref #'cxc.lower/compiler-known-protocol-shapes)
+    (let [from-shape (get-in (deref #'cxc.lower.protocol-shapes/compiler-known-protocol-shapes)
                              ["From" :class-methods "from"])]
       (is (= {:apply "DecodeOutcome" :inner :Self}
              (:returns from-shape))))))
@@ -5984,7 +5985,7 @@ def main:
                                     "Bag" "from"
                                     [{:name "source" :cxc-ty "Bytes"}]
                                     "_Cxc_DecodeOutcome_Bag")}))]
-      (is (true? (#'cxc.lower/structurally-satisfies-protocol?
+      (is (true? (#'cxc.lower.protocol-shapes/structurally-satisfies-protocol?
                    info "Bag" "From" :bytes))))))
 
 (deftest f15-l4-sub2-does-not-satisfy-from-when-return-type-differs
@@ -5995,7 +5996,7 @@ def main:
                                     "Bag" "from"
                                     [{:name "source" :cxc-ty "Bytes"}]
                                     "Bag")}))]
-      (is (false? (boolean (#'cxc.lower/structurally-satisfies-protocol?
+      (is (false? (boolean (#'cxc.lower.protocol-shapes/structurally-satisfies-protocol?
                              info "Bag" "From" :bytes)))))))
 
 (deftest f15-l4-sub2-seed-populates-decode-eligible-records
@@ -6011,7 +6012,7 @@ def main:
                            :method-index {}
                            :variant      :struct}}
           enum-env   {}
-          seeded     (#'cxc.lower/seed-class-fn-index-from-f37-decode
+          seeded     (#'cxc.lower.protocol-shapes/seed-class-fn-index-from-f37-decode
                        record-env enum-env)
           from       (get-in seeded ["P" :class-fn-index "from"])]
       (is (some? from) "eligible record gets a `from` entry")
@@ -6029,7 +6030,7 @@ def main:
                            :method-index {}
                            :variant      :struct}}
           enum-env   {}
-          seeded     (#'cxc.lower/seed-class-fn-index-from-f37-decode
+          seeded     (#'cxc.lower.protocol-shapes/seed-class-fn-index-from-f37-decode
                        record-env enum-env)]
       (is (nil? (get-in seeded ["P" :class-fn-index "from"]))
           "non-eligible record has no `from` seed"))))
@@ -6052,14 +6053,14 @@ def main:
   (testing "F15 L4 Sub-3 — when a record HAS a user-declared `.as() -> Bytes` method (thus structurally satisfies `As<Bytes>`), `infer-method-call-type`'s primary `:method-index` lookup wins before the structural fallback runs. The fallback still produces `:bytes` if consulted (verified via direct predicate call) — both paths agree, but priority is direct lookup. Confirms the fallback shape doesn't conflict with the primary path."
     (let [info (f15-l4-record-info
                  [(f15-l4-instance-method-entry "Bag" "as" [] "Bytes")])]
-      (is (true? (#'cxc.lower/structurally-satisfies-protocol?
+      (is (true? (#'cxc.lower.protocol-shapes/structurally-satisfies-protocol?
                    info "Bag" "As" :bytes))
           "record with .as() -> Bytes structurally satisfies As<Bytes>"))))
 
 (deftest f15-l4-sub3-structural-fallback-shape-is-additive-only
   (testing "F15 L4 Sub-3 — the fallback branch fires ONLY when both `:method-index` and `:observable-index` misses on `method-name`. For a record with no `as` method at all, `structurally-satisfies-protocol?` returns false (no `:as` in method-index → instance-method requirement unmet), so the fallback misses too. `:else` fail-nyi catches it. At v1.0 no reachable case fires this fallback."
     (let [info (f15-l4-record-info [])]
-      (is (false? (boolean (#'cxc.lower/structurally-satisfies-protocol?
+      (is (false? (boolean (#'cxc.lower.protocol-shapes/structurally-satisfies-protocol?
                              info "Bag" "As" :bytes)))
           "record with no .as() method fails As<Bytes> conformance"))))
 

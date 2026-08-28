@@ -128,7 +128,6 @@
                      enum-eligible-for-as-bytes-synthesis?
                      record-synth-from-bytes-name
                      record-eligible-for-from-bytes-synthesis?
-                     record-decode-eligible? decode-outcome-struct-name
                      f37-decode-eligible-field?
                      synthesize-decode-outcome-struct
                      synthesized-record-functions]]
@@ -179,8 +178,7 @@
                      compose-record-env-with-extensions
                      compose-atom-env-with-extensions]]
             [cxc.lower.conformance :as conformance
-             :refer [non-self-params
-                     validate-explicit-conformances!
+             :refer [validate-explicit-conformances!
                      inherit-defaults-into-env]]
             [cxc.lower.int-picker :as int-picker
              :refer [narrow-fields-by-invariants]]
@@ -238,7 +236,10 @@
             [cxc.lower.self-field :as self-field-ns
              :refer [field-needs-slot-setter?
                      field-nonnil?
-                     self-field-info]]))
+                     self-field-info]]
+            [cxc.lower.protocol-shapes :as protocol-shapes
+             :refer [structurally-satisfies-protocol?
+                     seed-class-fn-index-from-f37-decode]]))
 
 ;; M1b prep — compile-error funnels (fail-nyi! / fail-user! /
 ;; fail-compile!) extracted to cxc.diagnostics. See its ns docstring
@@ -1092,160 +1093,9 @@
       :else (fail-user! (str "binop " op " between " lt " and " rt)
                        {:left lt :right rt}))))
 
-;; ---------------------------------------------------------------------------
-;; F15 L4 Sub-1 — compiler-known parametric protocol shapes.
-;;
-;; Per plan doc §Landing 4 and [[corvid-no-user-shape-variables]]: v1.0
-;; has no user-declared parametric protocols; `As<T>` and `From<T>` are
-;; compiler-baked shapes described by this registry. Each entry names
-;; the outer protocol and gives the required method-set; placeholders
-;; `:T` (the type parameter, concrete at each call site per §3.4.4 rule 1)
-;; and `:Self` (the type being checked) are resolved before matching
-;; against a candidate type's method-index.
-;;
-;; Sub-1 lands the registry + `structurally-satisfies-protocol?`
-;; predicate. Sub-2 wires it into `infer-method-call-type` as a fallback
-;; on direct-method-lookup miss (per plan doc §Landing 4 Files-to-touch).
-;; ---------------------------------------------------------------------------
-
-(def ^:private compiler-known-protocol-shapes
-  "Fixed registry of compiler-known parametric protocol shapes. Keys are
-   outer protocol names (as users would write in an explicit conforms
-   clause once F9 lands; today they only appear implicitly via `.as()` /
-   `.from(source:)` dispatch). Values map to `:instance-methods` (self-
-   receiver methods keyed by name) and `:class-methods` (class-fn
-   requirements keyed by name; class-fn env isn't wired at v1.0, so a
-   `From<T>` conformer needs Sub-2's env addition to actually resolve
-   here). Method entries carry `:params` (vec of `{:name :type}`) and
-   `:returns` (type-kw or placeholder `:T`/`:Self`). See spec §3.4 +
-   §3.4.6 + §3.10.10."
-  {"As"   {:instance-methods {"as"   {:params  []
-                                      :returns :T}}
-           :class-methods    {}}
-   ;; F15 L4 Sub-2 (2026-08-27) — `From<T>` follows the F37 L6 canonical
-   ;; bytes contract: the class function `from(source: T)` returns
-   ;; `DecodeOutcome<Self>` (fallible; the outcome distinguishes
-   ;; converted-value from decode-error at runtime), not bare `Self`.
-   ;; The `{:apply "DecodeOutcome" :inner :Self}` marker on `:returns`
-   ;; is what `protocol-req-matches-method?` resolves to the record's
-   ;; `_Cxc_DecodeOutcome_<Rec>` struct name when checking conformance.
-   ;; Sub-1's plain-Self reading was pre-reconciliation; adopting the
-   ;; F37 shape means the F37 L6 synthesized function is a natural
-   ;; conformer for `From<Bytes>` (Sub-3 wired the structural fallback
-   ;; in `infer-method-call-type`; full F37 `.from()` intercept
-   ;; consolidation deferred pending `:cxc-synthesized?` flag threading
-   ;; through F37 eligibility).
-   "From" {:instance-methods {}
-           :class-methods    {"from" {:params  [{:name "source" :type :T}]
-                                      :returns {:apply "DecodeOutcome"
-                                                :inner :Self}}}}})
-
-(defn- protocol-req-matches-method?
-  "F15 L4 Sub-1 — does `method-entry` (a `:method-index` value from a
-   record env slot) match protocol-required signature `req` at
-   instantiation T=`t-tk`, Self=`self-cxc-name`? Placeholders in `req`
-   are resolved to concrete cxc-name-str form before string-comparing
-   against the method entry's own `:cxc-ty` / `:cxc-return-ty`
-   (symmetric with `signature-mismatch-detail`, which also compares
-   cxc-name-strings). Signature identity per trait-qualified dispatch
-   is (param names, param types, return type) — an empty required-
-   params list rejects methods that carry extra non-self params."
-  [req method-entry t-tk self-cxc-name]
-  (let [resolve-str    (fn resolve-str [ph]
-                         (cond
-                           (= :T    ph)    (type-kw->cxc-name-str t-tk)
-                           (= :Self ph)    self-cxc-name
-                           ;; F15 L4 Sub-2 — nested `{:apply "Outer"
-                           ;; :inner ph}` marker for parametric wrapper
-                           ;; return types (`DecodeOutcome<Self>` on
-                           ;; `From<T>`). Resolves the inner placeholder
-                           ;; then wraps with the outer's compiler-known
-                           ;; naming rule. Only `"DecodeOutcome"` today
-                           ;; — matches the F37 L6 struct name
-                           ;; convention (`_Cxc_DecodeOutcome_<Rec>`).
-                           (and (map? ph) (= "DecodeOutcome" (:apply ph)))
-                           (str "_Cxc_DecodeOutcome_" (resolve-str (:inner ph)))
-
-                           :else ph))
-        req-params     (:params req)
-        method-params  (non-self-params (:params method-entry))
-        expected-ret   (resolve-str (:returns req))
-        actual-ret     (:cxc-return-ty method-entry)]
-    (and (= (count req-params) (count method-params))
-         (= expected-ret actual-ret)
-         (every? (fn [[rp mp]]
-                   (and (= (:name rp) (:name mp))
-                        (= (resolve-str (:type rp)) (:cxc-ty mp))))
-                 (map vector req-params method-params)))))
-
-(defn- seed-class-fn-index-from-f37-decode
-  "F15 L4 Sub-2 — seed `:class-fn-index` on every decode-eligible
-   record in `record-env` with the synthetic entry describing F37
-   L6's `<Rec>_cxc_from_bytes(NSMutableData *)` shape. Presence of
-   this entry lets `structurally-satisfies-protocol?` return TRUE
-   for `From<Bytes>` conformance on eligible records — the F37
-   synthesis is now discoverable via the same protocol-shape lookup
-   Sub-1's registry describes.
-
-   Method-entry shape mirrors `observable->method-entry` / extension
-   composition (see f15-l4-record-info helper in lower_test.clj):
-
-     {:name          \"from\"
-      :params        [{:name \"source\" :cxc-ty \"Bytes\"
-                       :is-self? false :default nil}]
-      :cxc-return-ty \"_Cxc_DecodeOutcome_<Rec>\"}
-
-   `:cxc-return-ty` matches what `protocol-req-matches-method?`
-   compares against after resolving the `From<T>` shape's
-   `{:apply \"DecodeOutcome\" :inner :Self}` marker at `T=:bytes`.
-
-   Scaffolding only at this landing — no consumer of the seeded
-   index has been wired yet. Sub-3 unifies F37's ad-hoc `.from()`
-   intercept with the structural check that consults this seed."
-  [record-env enum-env]
-  (reduce-kv
-    (fn [env rn _info]
-      (if (record-decode-eligible? rn env enum-env)
-        (assoc-in env [rn :class-fn-index "from"]
-                  {:name          "from"
-                   :params        [{:name "source" :cxc-ty "Bytes"
-                                    :is-self? false :default nil}]
-                   :cxc-return-ty (decode-outcome-struct-name rn)})
-        env))
-    record-env
-    record-env))
-
-(defn- structurally-satisfies-protocol?
-  "F15 L4 Sub-1 — does the record described by `type-info` (a record-env
-   slot: `{:method-index ... :class-fn-index? ...}`) structurally satisfy
-   compiler-known protocol `shape-name` when instantiated at T=`t-tk`?
-   `self-cxc-name` names the type being checked (used to resolve `:Self`
-   placeholders). Returns bool.
-
-   Instance-method requirements consult `:method-index` — the same slot
-   direct method dispatch consults, so structural conformance is
-   symmetric with direct lookup on the eligible surface.
-
-   Class-method requirements consult `:class-fn-index`, which isn't
-   populated at v1.0 — a `From<T>` structural check returns false today.
-   The env slot goes live when Sub-2 seeds it from F37 L6 synthesis (or
-   from user-declared class functions once F37 L6b picks up class-fn
-   consumption). Predicate shape is stable across that landing.
-
-   Returns nil for a shape name not in `compiler-known-protocol-shapes`.
-   Empty required-methods on both sides is vacuously true — no such
-   shape exists in the registry today, but Constructible / other v1.1+
-   shapes may fall into this case."
-  [type-info self-cxc-name shape-name t-tk]
-  (when-let [shape (get compiler-known-protocol-shapes shape-name)]
-    (and (every? (fn [[mn req]]
-                   (when-let [m (get-in type-info [:method-index mn])]
-                     (protocol-req-matches-method? req m t-tk self-cxc-name)))
-                 (:instance-methods shape))
-         (every? (fn [[mn req]]
-                   (when-let [m (get-in type-info [:class-fn-index mn])]
-                     (protocol-req-matches-method? req m t-tk self-cxc-name)))
-                 (:class-methods shape)))))
+;; M1c — F15 L4 (compiler-known-protocol-shapes + protocol-req-matches-
+;; method? + seed-class-fn-index-from-f37-decode + structurally-
+;; satisfies-protocol?) moved to cxc.lower.protocol-shapes.
 
 (defn- infer-method-call-type
   "For `target.method(args)`: infer target-ty, look up method on the
