@@ -95,6 +95,7 @@
   (:require [clojure.set]
             [clojure.string :as str]
             [clojure.walk :as walk]
+            [cxc.env :as env]
             [cxc.named-tuple :as named-tuple]
             [cxc.prelude :as prelude]
             [cxc.resolve :as resolve]))
@@ -699,13 +700,13 @@
         (let [nm  (:name inner)
               hit (:resolves-to inner)]
           (cond
-            (resolve-decl-lookup atom-env module-map nm hit)
+            (env/resolve-decl-lookup atom-env module-map nm hit)
             (str (->c-safe nm) " *")
             (= "String" nm)                 "NSString *"
             (contains? primitive-c-type nm) (primitive-c-type nm)
-            (resolve-decl-lookup record-env module-map nm hit)
+            (env/resolve-decl-lookup record-env module-map nm hit)
             (->c-safe nm)
-            (resolve-decl-lookup enum-env module-map nm hit)
+            (env/resolve-decl-lookup enum-env module-map nm hit)
             (->c-safe nm)
             :else
             ;; Bootstrap: build-atom-env resolves ctor-param / data-
@@ -733,11 +734,11 @@
           hit (:resolves-to ty-node)]
       (cond
         (contains? primitive-c-type nm) (primitive-c-type nm)
-        (resolve-decl-lookup record-env module-map nm hit)
+        (env/resolve-decl-lookup record-env module-map nm hit)
         (->c-safe nm)
-        (resolve-decl-lookup atom-env module-map nm hit)
+        (env/resolve-decl-lookup atom-env module-map nm hit)
         (str (->c-safe nm) " *")
-        (resolve-decl-lookup enum-env module-map nm hit)
+        (env/resolve-decl-lookup enum-env module-map nm hit)
         (->c-safe nm)
         ;; L-panic-cap (2026-08-26) — phantom capability atom types
         ;; render as atom pointers (never actually referenced at
@@ -1219,123 +1220,9 @@
 ;; sites; b.ii-5e retires it.
 ;; ---------------------------------------------------------------------------
 
-(defn- attribute-modules-to-decls
-  "F51 L3b(b.ii)-2 — walk `top-nodes` stream-wise tracking the current
-   module via `:module` nodes; return `{decl-name-string → module-kw}`
-   over records/atoms/enums (Corvid's decl kinds). Prelude-declared
-   names get their `std.*` attribution via `prelude-name->module`;
-   declarations before any `:module` node are attributed to `:main`
-   (single-file convention per F51 L1).
-
-   Returns a plain map — env entries consume it to stamp their own
-   `:module` slot at build time. Also used to derive `:module-map`
-   (module-kw → #{short-name ...}) for reverse lookup."
-  [top-nodes]
-  (let [prelude-provenance (resolve/prelude-name->module)]
-    (loop [nodes  top-nodes
-           module :main
-           acc    {}]
-      (if (empty? nodes)
-        acc
-        (let [n (first nodes)]
-          (cond
-            (= :module (:node n))
-            (recur (rest nodes) (keyword (:name n)) acc)
-
-            (contains? #{:record :def-atom :enum} (:node n))
-            (recur (rest nodes) module
-                   (assoc acc (:name n)
-                          (or (get prelude-provenance (:name n)) module)))
-
-            :else
-            (recur (rest nodes) module acc)))))))
-
-(defn- module-map-from-attribution
-  "F51 L3b(b.ii)-2 — invert the name→module map into module→#{names},
-   for reverse (module-scoped) enumeration by the lookup primitive.
-
-   b.ii-5d Batch 7 — also seed the prelude modules from
-   `resolve/prelude-name->module` so a reference to a prelude decl
-   (`Duration`, `SystemPanic`, ...) can resolve even when the caller
-   (test harness, direct-invocation) hasn't prepended the prelude
-   AST to the top-nodes stream. The build.clj pipeline includes the
-   prelude in top-nodes, so this seeding is a no-op for it; the
-   redundancy simplifies attributes-then-resolve for callers that
-   bypass build."
-  [name->module]
-  (let [with-user
-        (reduce-kv (fn [acc nm m]
-                     (update acc m (fnil conj #{}) nm))
-                   {}
-                   name->module)]
-    (reduce-kv (fn [acc nm m]
-                 (update acc m (fnil conj #{}) nm))
-               with-user
-               (resolve/prelude-name->module))))
-
-(defn- resolve-decl-lookup
-  "F51 L3b(b.ii)-2 primitive — strict resolution. Returns the env
-   entry when the reference has a `:resolves-to` hint AND that module
-   declares the short name; returns nil otherwise.
-
-   b.ii-5d Batch 7 (2026-08-28) retired the two lenient branches:
-     - The short-name fallback (`:else (get env name)`) — every
-       reference-consuming call site now carries an AST ref node with
-       `:resolves-to` populated by attribution, or uses the
-       bookkeeping primitive [[env-lookup]] (Type-B, plain env
-       access) instead.
-     - The `resolves-to hint set but no match` explicit nil branch
-       merges with the miss.
-
-   Silent-miss policy: consumers that treat nil as \"not applicable\"
-   (predicate uses: [[enum-case-access?]], [[enum-payload-call?]],
-   [[record-from-bytes-call?]]) keep working — nil answers the
-   question. Consumers that must-resolve raise
-   `:cxc-f51-unresolved-name` at their callsite when the lookup
-   returns nil (see e.g. [[lower-record-ctor]], [[lower-atom-ctor]]).
-
-   `env` may be any of `:record-env` / `:atom-env` / `:enum-env` —
-   the primitive is agnostic to which. `module-map` is
-   `{module-kw → #{name-string ...}}` (see
-   `module-map-from-attribution`)."
-  [env module-map name resolves-to]
-  (when (and name resolves-to
-             (contains? (get module-map resolves-to #{}) name))
-    (get env name)))
-
-(defn- env-lookup
-  "Bookkeeping primitive — plain env access by name. Use at sites
-   whose name isn't a user reference: type-kw slot extraction
-   (`(:atom target-ty)`), env-key iteration, name pulled off a data
-   structure, etc. No resolution, no diagnostic — just `(get env nm)`.
-
-   The reference-resolution primitive is [[decl-lookup]] — use that
-   whenever you have a user-visible AST reference node in hand."
-  [ctx env-kw nm]
-  (get (get ctx env-kw) nm))
-
-(defn- decl-lookup
-  "F51 L3b(b.ii)-5a — caller-facing wrapper around `resolve-decl-lookup`.
-   Reads the reference node's `:resolves-to` hint and the ctx's
-   `:module-map`, then dispatches. `env-kw` is one of `:record-env`,
-   `:atom-env`, `:enum-env`.
-
-   Terminal shape (post-b.ii-5d Batch 4): the sole arity takes a map
-   (an AST reference node) and reads `:name` + `:resolves-to` off it.
-   Sites whose name isn't a user reference (data-derived, iteration,
-   locals) must use [[env-lookup]] — that's plain env access, not a
-   resolution.
-
-   The former string arity (a b.ii-5c shim consulting the ambient
-   `*decl->module*`) retired at Batch 4 after every caller migrated
-   to either the map arity or [[env-lookup]]."
-  [ctx env-kw ref-node]
-  (let [env         (get ctx env-kw)
-        module-map  (:module-map ctx)
-        [name resolves-to] (if (map? ref-node)
-                             [(:name ref-node) (:resolves-to ref-node)]
-                             [nil nil])]
-    (resolve-decl-lookup env module-map name resolves-to)))
+;; M1a — attribute-modules-to-decls / module-map-from-attribution /
+;; resolve-decl-lookup / env-lookup / decl-lookup extracted to
+;; `cxc.env`. Callers below use the `env/` alias.
 
 (defn- build-record-env
   [top-nodes atom-env enum-env module-map]
@@ -4117,7 +4004,7 @@
       (let [tgt     (:target callee)
             en      (:name tgt)
             case-nm (:field callee)
-            info    (decl-lookup ctx :enum-env tgt)
+            info    (env/decl-lookup ctx :enum-env tgt)
             payload (get-in info [:payload-index case-nm])]
         (when (and info payload (seq payload))
           {:name   en
@@ -4147,7 +4034,7 @@
                (= "from" (:field callee)))
       (let [tgt  (:target callee)
             rn   (:name tgt)
-            info (decl-lookup ctx :record-env tgt)]
+            info (env/decl-lookup ctx :record-env tgt)]
         (when info
           {:name   rn
            :module (get (:decl->module ctx) rn)
@@ -4359,7 +4246,7 @@
   [dot-node ctx]
   (let [tgt (:target dot-node)]
     (when (= :ident (:node tgt))
-      (when-let [info (decl-lookup ctx :enum-env tgt)]
+      (when-let [info (env/decl-lookup ctx :enum-env tgt)]
         (when (contains? (:case-index info) (:field dot-node))
           {:name   (:name tgt)
            :module (get (:decl->module ctx) (:name tgt))
@@ -4525,7 +4412,7 @@
 (defn- lower-record-ctor
   [callee-node args ctx]
   (let [record-name (:name callee-node)
-        rec        (decl-lookup ctx :record-env callee-node)
+        rec        (env/decl-lookup ctx :record-env callee-node)
         _          (when-not rec
                      (fail-compile!
                       :cxc-f51-unresolved-name
@@ -4578,7 +4465,7 @@
    `resolve-args-against-params`, matching record ctor discipline)."
   [enum-name call-node ctx]
   (let [case-nm  (:field (:callee call-node))
-        en-info  (decl-lookup ctx :enum-env (:target (:callee call-node)))
+        en-info  (env/decl-lookup ctx :enum-env (:target (:callee call-node)))
         payload  (get-in en-info [:payload-index case-nm])
         params   (mapv (fn [f] {:name (:name f) :default (:default f)})
                        payload)
@@ -4705,7 +4592,7 @@
 
         (and (map? arg-tk) (:record arg-tk))
         (let [record-name  (:record arg-tk)
-              value-fields (:fields (env-lookup ctx :record-env record-name))
+              value-fields (:fields (env/env-lookup ctx :record-env record-name))
               result       (named-tuple/structural-conforms?
                             value-fields (:fields required))]
           (when-not (:conforms result)
@@ -4753,7 +4640,7 @@
    param in declaration order."
   [callee-node args ctx]
   (let [atom-name   (:name callee-node)
-        rec         (decl-lookup ctx :atom-env callee-node)
+        rec         (env/decl-lookup ctx :atom-env callee-node)
         ;; L-panic-cap (2026-08-26) — phantom capability atoms have
         ;; no env entry and lower to a dummy `[[Cls alloc] init]`
         ;; that emit renders inert. Skip the strict-lookup
@@ -4830,7 +4717,7 @@
         target-lo   (lower-expr (:target dot) ctx)
         list-cont?  (and (map? target-ty) (:atom target-ty)
                          (= :list-container
-                            (:kind (env-lookup ctx :atom-env (:atom target-ty)))))
+                            (:kind (env/env-lookup ctx :atom-env (:atom target-ty)))))
         for-each-with-lambda?
         (and list-cont?
              (= "for_each" method-name)
@@ -4844,7 +4731,7 @@
           ;; methods. Return an observable-synthesized entry that
           ;; mimics the method shape (self as first param) so
           ;; `resolve-args-against-params` works uniformly.
-          (let [rec-entry (env-lookup ctx :record-env (:record target-ty))]
+          (let [rec-entry (env/env-lookup ctx :record-env (:record target-ty))]
             (or (get-in rec-entry [:method-index method-name])
                 (when-let [o (get-in rec-entry [:observable-index method-name])]
                 (let [tk (:type-kw o)
@@ -4869,7 +4756,7 @@
           ;; methods, protocol defaults inherited); fall back to
           ;; observable-index and synthesize a method-shape entry so
           ;; `resolve-args-against-params` fires uniformly.
-          (let [atom-entry (env-lookup ctx :atom-env (:atom target-ty))]
+          (let [atom-entry (env/env-lookup ctx :atom-env (:atom target-ty))]
             (or (get-in atom-entry [:method-index method-name])
                 (when-let [o (get-in atom-entry [:observable-index method-name])]
                 (let [tk (:type-kw o)
@@ -4926,7 +4813,7 @@
       (if (and (map? target-ty) (:record target-ty)
                (= "as" method-name) (empty? args))
         (let [rec-name (:record target-ty)
-              info     (env-lookup ctx :record-env rec-name)]
+              info     (env/env-lookup ctx :record-env rec-name)]
           (cond
             (record-has-user-as-method? info)
             {:node :call
@@ -4961,7 +4848,7 @@
         ;; must have all-encodable fields; a targeted fail-nyi names
         ;; the offending case + field type otherwise.
         (let [en-name (:enum target-ty)
-              info    (env-lookup ctx :enum-env en-name)]
+              info    (env/env-lookup ctx :enum-env en-name)]
           (if (enum-eligible-for-as-bytes-synthesis? info (:record-env ctx))
             {:node :call
              :fn   (enum-synth-as-bytes-name en-name)
@@ -5040,7 +4927,7 @@
 
           (and (map? target-ty) (:atom target-ty))
           (let [atom-name   (:atom target-ty)
-                atom-entry  (env-lookup ctx :atom-env atom-name)
+                atom-entry  (env/env-lookup ctx :atom-env atom-name)
                 m           (get-in atom-entry [:method-index method-name])
                 o           (get-in atom-entry [:observable-index method-name])
                 _           (when (and (nil? m) (nil? o))
@@ -5161,7 +5048,7 @@
    (self as strong reference, primitives by value)."
   [target-lo target-ty lambda-node ctx]
   (let [list-name        (:atom target-ty)
-        element-name     (:element-type (env-lookup ctx :atom-env list-name))
+        element-name     (:element-type (env/env-lookup ctx :atom-env list-name))
         element-type-kw  (cxc-type->type-kw element-name
                                             (:record-env ctx)
                                             (:atom-env ctx)
@@ -5660,7 +5547,7 @@
                   ;; is the compile-time "you're on your own" contract.
                   self-info (get-in ctx [:locals "self"])
                   self-atom (and (map? self-info) (:atom self-info))
-                  atom-info (when self-atom (env-lookup ctx :atom-env self-atom))
+                  atom-info (when self-atom (env/env-lookup ctx :atom-env self-atom))
                   has-panic-cap?
                   ;; Accept both the mangled prelude name (real
                   ;; user-facing shape) and the un-mangled name (used
@@ -5888,7 +5775,7 @@
                                     "(no `self` in scope)")
                                node))
         atom-name (:atom self-info)
-        stream    (get-in (env-lookup ctx :atom-env atom-name)
+        stream    (get-in (env/env-lookup ctx :atom-env atom-name)
                           [:stream-index (:msg node)])
         _         (when-not stream
                     ;; Shouldn't happen — collect-stream-shapes registered
@@ -5968,7 +5855,7 @@
       ;; typed case arm — resolve the record and its bindings
       (= :case (:kind pat))
       (let [case-nm    (:name pat)
-            rec        (env-lookup ctx :record-env case-nm)
+            rec        (env/env-lookup ctx :record-env case-nm)
             _          (when-not rec
                          (fail-nyi!
                           (str "Track B/3: `or " case-nm "(...):` arm references "
@@ -6077,7 +5964,7 @@
                                     "expression (got " (pr-str target-ty) ")")
                                node))
         atom-name (:atom target-ty)
-        atom-info (env-lookup ctx :atom-env atom-name)
+        atom-info (env/env-lookup ctx :atom-env atom-name)
         _         (when-not atom-info
                     (fail-nyi! (str "unknown atom type `" atom-name "` on send target") node))
         msg-name  (:msg node)
@@ -6212,7 +6099,7 @@
       ;; the record's field-index.
       (= :any scrut-ty)
       (let [case-nm    (:name pattern)
-            rec        (env-lookup ctx :record-env case-nm)]
+            rec        (env/env-lookup ctx :record-env case-nm)]
         (when-not rec
           (fail-nyi!
            (str "F69 L4b: case pattern `<: " case-nm ":` on id-typed "
@@ -6255,7 +6142,7 @@
       :else
       (let [enum-name (:enum scrut-ty)
             case-nm   (:name pattern)
-            info      (env-lookup ctx :enum-env enum-name)
+            info      (env/env-lookup ctx :enum-env enum-name)
             cases     (:case-index info)
             tagged?   (:tagged? info)
             payload   (get-in info [:payload-index case-nm])]
@@ -6338,12 +6225,12 @@
                (= :case (:kind (first patterns)))
                (seq (:bindings (first patterns)))
                (map? scrut-ty) (:enum scrut-ty)
-               (seq (get-in (env-lookup ctx :enum-env (:enum scrut-ty))
+               (seq (get-in (env/env-lookup ctx :enum-env (:enum scrut-ty))
                             [:payload-index (:name (first patterns))])))
           (let [pat        (first patterns)
                 enum-name  (:enum scrut-ty)
                 case-nm    (:name pat)
-                info       (env-lookup ctx :enum-env enum-name)
+                info       (env/env-lookup ctx :enum-env enum-name)
                 payload    (get-in info [:payload-index case-nm])
                 field-idx  (into {} (map (juxt :name identity)) payload)]
             (mapv (fn [b]
@@ -6382,7 +6269,7 @@
                (= :any scrut-ty))
           (let [pat        (first patterns)
                 case-nm    (:name pat)
-                rec        (env-lookup ctx :record-env case-nm)
+                rec        (env/env-lookup ctx :record-env case-nm)
                 field-idx  (into {} (map (juxt :name identity)) (:fields rec))
                 box-name   (str "_Cxc_R_" (->c-safe case-nm))]
             (mapv (fn [b]
@@ -6576,7 +6463,7 @@
                   (get-in node [:scrutinee :name])))
           _         (when enum?
                       (let [enum-name  (:enum scrut-ty)
-                            enum-cases (:cases (env-lookup ctx :enum-env enum-name))]
+                            enum-cases (:cases (env/env-lookup ctx :enum-env enum-name))]
                         (check-dispatch-exhaustiveness! enum-name enum-cases
                                                         (:arms node) node)))
           _         (when (and (not enum?) any-scrut-is-companion-reason?)
@@ -6905,7 +6792,7 @@
   [field-name ctx]
   (let [self-info (get-in ctx [:locals "self"])
         atom-name (and (map? self-info) (:atom self-info))
-        info      (env-lookup ctx :atom-env atom-name)
+        info      (env/env-lookup ctx :atom-env atom-name)
         subs      (get-in info [:subscription-map field-name])]
     (boolean (seq subs))))
 
@@ -6916,7 +6803,7 @@
   [field-name ctx]
   (let [self-info (get-in ctx [:locals "self"])
         atom-name (and (map? self-info) (:atom self-info))
-        info      (env-lookup ctx :atom-env atom-name)
+        info      (env/env-lookup ctx :atom-env atom-name)
         f         (get-in info [:field-index field-name])]
     (boolean (:nonnil? f))))
 
@@ -6928,7 +6815,7 @@
   [field-name ctx]
   (let [self-info (get-in ctx [:locals "self"])
         atom-name (and (map? self-info) (:atom self-info))
-        info      (env-lookup ctx :atom-env atom-name)]
+        info      (env/env-lookup ctx :atom-env atom-name)]
     (get-in info [:field-index field-name])))
 
 (defn- lower-then-update
@@ -6963,7 +6850,7 @@
         ;; behavior.
         self-info (get-in ctx [:locals "self"])
         atom-name (and (map? self-info) (:atom self-info))
-        atom-entry (when atom-name (env-lookup ctx :atom-env atom-name))
+        atom-entry (when atom-name (env/env-lookup ctx :atom-env atom-name))
         obs-info  (when atom-name
                     (get-in atom-entry [:observable-index (:field update)]))
         field-in-atom-index (when atom-name
@@ -7306,11 +7193,11 @@
                    (= :dot (:node src))
                    (= :ident (get-in src [:target :node])))
           (let [field-name  (get-in src [:target :name])
-                info        (env-lookup ctx :atom-env atom-name)
+                info        (env/env-lookup ctx :atom-env atom-name)
                 field-info  (get-in info [:field-index field-name])
                 target-atom (some-> field-info :type base-type-name)
                 companion-nm (:field src)
-                target-info (env-lookup ctx :atom-env target-atom)
+                target-info (env/env-lookup ctx :atom-env target-atom)
                 comp-entry  (get-in target-info [:companion-index companion-nm])]
             (when (and target-info comp-entry (= 1 (count payload)))
               {:target-atom target-atom
@@ -7437,7 +7324,7 @@
         ;; inside a snapshotted transition (ctx `:snapshot-name`
         ;; set — same predicate as the prelude emission) AND the
         ;; atom has data-fields to commit.
-        data-fields    (:fields (env-lookup ctx :atom-env atom-name))
+        data-fields    (:fields (env/env-lookup ctx :atom-env atom-name))
         commit-fields  (when (:snapshot-name ctx)
                          (filterv (fn [f]
                                     (not (field-needs-slot-setter?
@@ -7473,8 +7360,8 @@
         ;; snapshots keep the old post-commit `checkInvariants` call.
         pre-commit-invariants
         (when (and (:snapshot-name ctx)
-                   (seq (:invariants (env-lookup ctx :atom-env atom-name))))
-          (let [invs    (:invariants (env-lookup ctx :atom-env atom-name))
+                   (seq (:invariants (env/env-lookup ctx :atom-env atom-name))))
+          (let [invs    (:invariants (env/env-lookup ctx :atom-env atom-name))
                 bag-ctx (assoc ctx :snapshot-name "__cxc_next")]
             (vec (map-indexed
                   (fn [i p]
@@ -7562,7 +7449,7 @@
         stream-name  (get-in msg [:source :field])
         source-field (get-in msg [:source :target :name])
         payload      (or (:payload msg) [])
-        source-info  (env-lookup ctx :atom-env source-class)
+        source-info  (env/env-lookup ctx :atom-env source-class)
         _            (when-not source-info
                        (fail-nyi! (str "receive-glyph source `" source-class
                                        "` is not a def-atom in the program")
@@ -7718,7 +7605,7 @@
                                                  field-nm "` on atom `" atom-name "`")
                                             src))
                               source-class (:cxc-ty field)
-                              source-info  (env-lookup ctx :atom-env source-class)
+                              source-info  (env/env-lookup ctx :atom-env source-class)
                               _            (when-not source-info
                                              (fail-nyi!
                                               (str "method-stream source `" source-class
@@ -7890,7 +7777,7 @@
                            ;; `lower-then-update`). No snapshot ctx when
                            ;; the atom has no user data-fields — the
                            ;; struct type doesn't exist to reference.
-                           data-fields (:fields (env-lookup ctx :atom-env atom-name))
+                           data-fields (:fields (env/env-lookup ctx :atom-env atom-name))
                            snap-stmt   (when (seq data-fields)
                                          {:node        :state-snapshot-init
                                           :atom-name   atom-name
@@ -8248,7 +8135,7 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- lower-record-struct [record-node ctx]
-  (let [rec (env-lookup ctx :record-env (:name record-node))]
+  (let [rec (env/env-lookup ctx :record-env (:name record-node))]
     {:node   :c-struct
      :name   (->c-safe (:name record-node))
      :fields (mapv (fn [f] {:name (:name f) :c-type (:c-type f)}) (:fields rec))}))
@@ -8464,7 +8351,7 @@
                                                       (:enum-env ctx)
                                                       p)])
                                 (:params obs)))
-        rec           (env-lookup ctx :record-env record-name)
+        rec           (env/env-lookup ctx :record-env record-name)
         self-fields   (into {} (map (juxt :name identity) (:fields rec)))
         field-names   (set (map :name (:fields rec)))
         param-names   (set (map :name (:params obs)))
@@ -8538,10 +8425,10 @@
   [cxc-ty ctx]
   (or (contains? primitive-c-type cxc-ty)
       (and (contains? (:enum-env ctx) cxc-ty)
-           (not (:tagged? (env-lookup ctx :enum-env cxc-ty))))))
+           (not (:tagged? (env/env-lookup ctx :enum-env cxc-ty))))))
 
 (defn- tagged-enum-type? [cxc-ty ctx]
-  (boolean (:tagged? (env-lookup ctx :enum-env cxc-ty))))
+  (boolean (:tagged? (env/env-lookup ctx :enum-env cxc-ty))))
 
 (defn- field-equals-c-src
   "Emit a C expression comparing field `f` between two record variables
@@ -10484,7 +10371,7 @@
         ;; same way lower-atom-method does. Only fires when the atom
         ;; declares invariants (empty invariants → wrap is a no-op
         ;; but adds two selfmsg calls; skip when there are none).
-        has-invariants? (seq (:invariants (env-lookup ctx :atom-env atom-name)))
+        has-invariants? (seq (:invariants (env/env-lookup ctx :atom-env atom-name)))
         check-stmt   {:node :objc-msg
                       :recv {:node :name :sym "self"}
                       :selector "checkInvariants"
@@ -10498,7 +10385,7 @@
         ;; (state struct would be empty, snapshot would be a no-op).
         ;; L4.e.α's guarded emit handles the concurrent-mode source
         ;; flip; observable snapshot mirrors receive-glyph snapshot.
-        data-fields  (:fields (env-lookup ctx :atom-env atom-name))
+        data-fields  (:fields (env/env-lookup ctx :atom-env atom-name))
         snap-stmt    (when (seq data-fields)
                        {:node        :state-snapshot-init
                         :class-name  (class-name-for-atom atom-name)
@@ -10693,7 +10580,7 @@
   (if (= "main" atom-name) "CxcMain" (->c-safe atom-name)))
 
 (defn- lower-atom [atom-name ctx & {:keys [is-main?]}]
-  (let [rec           (env-lookup ctx :atom-env atom-name)
+  (let [rec           (env/env-lookup ctx :atom-env atom-name)
         extras        (:extras rec)
         ctor-params   (:ctor-params rec)
         methods       (:methods rec)
@@ -12080,8 +11967,8 @@
   ;; file callers with all-in-`:main` decls resolve against
   ;; own-decls[:main] + prelude-provenance.
   (let [top-nodes  (resolve/ensure-references-enriched top-nodes)
-        d->m (attribute-modules-to-decls top-nodes)
-        module-map (module-map-from-attribution d->m)]
+        d->m (env/attribute-modules-to-decls top-nodes)
+        module-map (env/module-map-from-attribution d->m)]
    (binding [*decl->module* d->m]
    (let [;; F52 L4 — pre-lower constant folding of top-level `let NAME =
         ;; <const-literal>` bindings. Extract every `:module-let` decl
@@ -12289,7 +12176,7 @@
         record-blocks
         (mapv (fn [r]
                 (let [rec-name    (:name r)
-                      rec-info    (env-lookup ctx :record-env rec-name)
+                      rec-info    (env/env-lookup ctx :record-env rec-name)
                       rec-struct  (lower-record-struct r ctx)
                       opt-struct  (when (contains? rec-inner-set rec-name)
                                     (synth-optional-typedef rec-name ctx))
@@ -12355,7 +12242,7 @@
         _              (when main-as-atom?
                          (doseq [p (get-in atom-env ["main" :ctor-params])
                                  :let [ty-name   (:cxc-ty p)
-                                       atom-info (env-lookup ctx :atom-env ty-name)
+                                       atom-info (env/env-lookup ctx :atom-env ty-name)
                                        ;; L-panic-cap (2026-08-26) —
                                        ;; phantom capability atoms have
                                        ;; no atom-env entry (no runtime
@@ -12380,22 +12267,22 @@
                                                           :map-container
                                                           :set-container
                                                           :runtime-provided}
-                                                        (:kind (env-lookup ctx :atom-env %))))
+                                                        (:kind (env/env-lookup ctx :atom-env %))))
                                       (keys atom-env))
         container-atom-names  (filter #(= :list-container
-                                          (:kind (env-lookup ctx :atom-env %)))
+                                          (:kind (env/env-lookup ctx :atom-env %)))
                                       (keys atom-env))
         map-container-names   (filter #(= :map-container
-                                          (:kind (env-lookup ctx :atom-env %)))
+                                          (:kind (env/env-lookup ctx :atom-env %)))
                                       (keys atom-env))
         set-container-names   (filter #(= :set-container
-                                          (:kind (env-lookup ctx :atom-env %)))
+                                          (:kind (env/env-lookup ctx :atom-env %)))
                                       (keys atom-env))
         real-atom-classes     (mapv (fn [nm]
                                       (lower-atom nm ctx :is-main? (= "main" nm)))
                                     real-atom-names)
         list-container-classes (mapv (fn [nm]
-                                       (let [entry (env-lookup ctx :atom-env nm)]
+                                       (let [entry (env/env-lookup ctx :atom-env nm)]
                                          (synthesize-list-container-class
                                           nm
                                           (:element-type entry)
@@ -12403,14 +12290,14 @@
                                           :fanin-payloads (:stream-payload-index entry))))
                                      container-atom-names)
         map-container-classes (mapv (fn [nm]
-                                      (let [entry (env-lookup ctx :atom-env nm)]
+                                      (let [entry (env/env-lookup ctx :atom-env nm)]
                                         (synthesize-map-container-class
                                          nm
                                          (:key-type entry)
                                          (:val-type entry))))
                                     map-container-names)
         set-container-classes (mapv (fn [nm]
-                                      (let [entry (env-lookup ctx :atom-env nm)]
+                                      (let [entry (env/env-lookup ctx :atom-env nm)]
                                         (synthesize-set-container-class
                                          nm
                                          (:element-type entry))))

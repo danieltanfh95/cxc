@@ -1,6 +1,7 @@
 (ns cxc.lower-test
   (:require [clojure.test :refer [deftest is testing]]
             [clojure.string :as str]
+            [cxc.env :as env]
             [cxc.parse :as p]
             [cxc.prelude :as prelude]
             [cxc.lower :as lower]
@@ -2671,8 +2672,8 @@ def main:
     -> running
 "))
           env (#'cxc.lower/build-atom-env prog {}
-                (#'cxc.lower/module-map-from-attribution
-                  (#'cxc.lower/attribute-modules-to-decls prog)))]
+                (cxc.env/module-map-from-attribution
+                  (cxc.env/attribute-modules-to-decls prog)))]
       (is (contains? (get-in env ["A" :companion-index]) "bump_failed")
           "A's atom-env entry exposes companion metadata for `bump_failed`"))))
 
@@ -6075,7 +6076,7 @@ def main:
     (let [top   [{:node :record :name "Bag"     :sections []}
                  {:node :def-atom :name "State" :sections []}
                  {:node :enum    :name "Color"  :cases []}]
-          attr  (#'cxc.lower/attribute-modules-to-decls top)]
+          attr  (cxc.env/attribute-modules-to-decls top)]
       (is (= {"Bag"   :main
               "State" :main
               "Color" :main} attr)))))
@@ -6088,7 +6089,7 @@ def main:
                  {:node :def-atom :name "C" :sections []}
                  {:node :module :name "bar"}
                  {:node :enum :name "D" :cases []}]
-          attr  (#'cxc.lower/attribute-modules-to-decls top)]
+          attr  (cxc.env/attribute-modules-to-decls top)]
       (is (= {"A" :main
               "B" :foo
               "C" :foo
@@ -6099,7 +6100,7 @@ def main:
     (let [top   [{:node :module :name "user"}
                  {:node :record :name "Bag"      :sections []}
                  {:node :record :name "Duration" :sections []}]
-          attr  (#'cxc.lower/attribute-modules-to-decls top)]
+          attr  (cxc.env/attribute-modules-to-decls top)]
       (is (= :user     (get attr "Bag")))
       (is (= :std.time (get attr "Duration"))))))
 
@@ -6109,20 +6110,20 @@ def main:
                  {:node :use    :name "std.time"}
                  {:node :record :name "R" :sections []}
                  {:node :something-else :name "R-ignored"}]
-          attr  (#'cxc.lower/attribute-modules-to-decls top)]
+          attr  (cxc.env/attribute-modules-to-decls top)]
       (is (= {"R" :foo} attr))
       (is (not (contains? attr "R-ignored")))
       (is (not (contains? attr "std.time"))))))
 
 (deftest f51-l3b-b-ii-2-module-map-inverts-attribution
   (testing "F51 L3b(b.ii)-2 — `module-map-from-attribution` inverts `{name → module}` into `{module → #{names}}`. This shape lets the lookup primitive test membership in O(1) — the hot path is `resolve-decl-lookup` under Sub-3's future preserved-metadata pipeline, so the reverse index is worth building once at ctx-construction."
-    (let [attr (#'cxc.lower/attribute-modules-to-decls
+    (let [attr (cxc.env/attribute-modules-to-decls
                 [{:node :module :name "foo"}
                  {:node :record :name "A" :sections []}
                  {:node :record :name "B" :sections []}
                  {:node :module :name "bar"}
                  {:node :enum   :name "C" :cases []}])
-          mm   (#'cxc.lower/module-map-from-attribution attr)]
+          mm   (cxc.env/module-map-from-attribution attr)]
       (is (= #{"A" "B"} (get mm :foo)))
       (is (= #{"C"}     (get mm :bar))))))
 
@@ -6130,25 +6131,25 @@ def main:
   (testing "F51 L3b(b.ii)-5d Batch 7 (2026-08-28) — nil `resolves-to` returns nil under strict resolution. The short-name fallback (`:else (get env name)`) retired with this batch: references must carry an attribution hint to resolve; nameless callers use [[env-lookup]] for bookkeeping instead."
     (let [env {"Bag" {:fields [] :methods []}}
           mm  {:foo #{"Bag"}}]
-      (is (nil? (#'cxc.lower/resolve-decl-lookup env mm "Bag" nil))))))
+      (is (nil? (cxc.env/resolve-decl-lookup env mm "Bag" nil))))))
 
 (deftest f51-l3b-b-ii-2-lookup-hint-matches-module-membership
   (testing "F51 L3b(b.ii)-2 — with `resolves-to = :foo` and `:foo` declaring `Bag`, the qualified lookup succeeds — returns the same env entry as the short-name fallback would, but via the qualified path. Under b.ii-3+ this is the primary route; today it's dead code exercised only by this test."
     (let [env {"Bag" {:fields [] :methods []}}
           mm  {:foo #{"Bag"}}]
       (is (= (get env "Bag")
-             (#'cxc.lower/resolve-decl-lookup env mm "Bag" :foo))))))
+             (cxc.env/resolve-decl-lookup env mm "Bag" :foo))))))
 
 (deftest f51-l3b-b-ii-2-lookup-hint-mismatch-returns-nil
   (testing "F51 L3b(b.ii)-2 — with `resolves-to = :bar` but `:bar` NOT declaring `Bag`, the primitive returns nil rather than falling back to short-name. Rationale: the hint asserts the caller resolved this reference to a specific module; if that module doesn't own the name, the reference is unresolved (a stale hint or a bug upstream) — silently defaulting to short-name would mask the error. Unreachable under today's flat-namespace pipeline; reserved for b.ii-3 diagnostics."
     (let [env {"Bag" {:fields [] :methods []}}
           mm  {:foo #{"Bag"} :bar #{"Other"}}]
-      (is (nil? (#'cxc.lower/resolve-decl-lookup env mm "Bag" :bar))))))
+      (is (nil? (cxc.env/resolve-decl-lookup env mm "Bag" :bar))))))
 
 (deftest f51-l3b-b-ii-2-lookup-nil-name-returns-nil
   (testing "F51 L3b(b.ii)-2 — passing `nil` as the name short-circuits to nil regardless of module hint. Defensive guard — some AST slots (`:callee`, `:type`) are nil for compiler-synthesized nodes and callers should be free to pass them through without threading a pre-check."
-    (is (nil? (#'cxc.lower/resolve-decl-lookup {"Bag" {}} {:foo #{"Bag"}} nil :foo)))
-    (is (nil? (#'cxc.lower/resolve-decl-lookup {"Bag" {}} {}          nil nil)))))
+    (is (nil? (cxc.env/resolve-decl-lookup {"Bag" {}} {:foo #{"Bag"}} nil :foo)))
+    (is (nil? (cxc.env/resolve-decl-lookup {"Bag" {}} {}          nil nil)))))
 
 (deftest f51-l3b-b-ii-2-ctx-carries-module-map-slot
   (testing "F51 L3b(b.ii)-2 — the ctx assembled by `lower` carries `:module-map` and `:decl->module` slots so downstream call sites can consult them without re-walking top-nodes. Scaffolding today; consumer wiring lives in Sub-3+. Verified indirectly via a minimal end-to-end lower that emits an empty main — the slots must show up in the same env-construction path any real program takes."
@@ -6159,8 +6160,8 @@ def main:
     ;; shape lower sees, then inversion.
     (let [top  [{:node :module :name "foo"}
                 {:node :record :name "R" :sections []}]
-          attr (#'cxc.lower/attribute-modules-to-decls top)
-          mm   (#'cxc.lower/module-map-from-attribution attr)]
+          attr (cxc.env/attribute-modules-to-decls top)
+          mm   (cxc.env/module-map-from-attribution attr)]
       ;; Batch 7 — module-map-from-attribution now also seeds the
       ;; prelude modules so direct-invocation callers (without a
       ;; prepended prelude AST) still resolve prelude refs.
@@ -6182,21 +6183,21 @@ def main:
                       :module-map {:foo #{"Bag"}}}
           ref-node   {:node :type-ref :name "Bag" :resolves-to :foo}]
       (is (= {:kind :record}
-             (#'cxc.lower/decl-lookup ctx :record-env ref-node))))))
+             (cxc.env/decl-lookup ctx :record-env ref-node))))))
 
 (deftest f51-l3b-b-ii-5d-batch-7-decl-lookup-nil-hint-returns-nil
   (testing "F51 L3b(b.ii)-5d Batch 7 (2026-08-28) — a ref node with no `:resolves-to` returns nil under strict resolution. The Batch-7 update to `resolve-decl-lookup` retired the short-name fallback; upstream attribution (`resolve/ensure-references-enriched` in single-file / `resolve/resolve-references` in multi-file build) is expected to populate the hint before the reference reaches lower."
     (let [ctx        {:record-env {"Bag" {:kind :record}}
                       :module-map {}}
           ref-node   {:node :type-ref :name "Bag"}]
-      (is (nil? (#'cxc.lower/decl-lookup ctx :record-env ref-node))))))
+      (is (nil? (cxc.env/decl-lookup ctx :record-env ref-node))))))
 
 (deftest f51-l3b-b-ii-5a-decl-lookup-hint-mismatch-returns-nil
   (testing "F51 L3b(b.ii)-5a — hint names a module that doesn't declare `name`: strict resolution says unresolved. Callers get nil so they can fire targeted diagnostics (`:cxc-f51-unresolved-name` post-b.ii-5e)."
     (let [ctx        {:atom-env {"Clock" {:kind :atom}}
                       :module-map {:std.clock #{"Clock"}}}
           ref-node   {:node :type-ref :name "Clock" :resolves-to :foo}]
-      (is (nil? (#'cxc.lower/decl-lookup ctx :atom-env ref-node))))))
+      (is (nil? (cxc.env/decl-lookup ctx :atom-env ref-node))))))
 
 (deftest f51-l3b-b-ii-5a-decl-lookup-dispatches-per-env-kw
   (testing "F51 L3b(b.ii)-5a — `env-kw` selects which of `:record-env` / `:atom-env` / `:enum-env` to consult. Consumers pass the kw they'd have written into a raw `get` — no need to pull the env out at the call site."
@@ -6205,20 +6206,20 @@ def main:
                :enum-env   {"E" {:tag :enum-hit}}
                :module-map {:m #{"R" "A" "E"}}}]
       (is (= {:tag :record-hit}
-             (#'cxc.lower/decl-lookup ctx :record-env
+             (cxc.env/decl-lookup ctx :record-env
                                       {:node :type-ref :name "R" :resolves-to :m})))
       (is (= {:tag :atom-hit}
-             (#'cxc.lower/decl-lookup ctx :atom-env
+             (cxc.env/decl-lookup ctx :atom-env
                                       {:node :type-ref :name "A" :resolves-to :m})))
       (is (= {:tag :enum-hit}
-             (#'cxc.lower/decl-lookup ctx :enum-env
+             (cxc.env/decl-lookup ctx :enum-env
                                       {:node :type-ref :name "E" :resolves-to :m}))))))
 
 (deftest f51-l3b-b-ii-5a-decl-lookup-nil-name-returns-nil
   (testing "F51 L3b(b.ii)-5a — reference nodes with `:name` nil (compiler-synthesized nodes at certain positions) short-circuit through the `resolve-decl-lookup` nil-name guard. Matches the b.ii-2 tests for the primitive."
     (let [ctx      {:record-env {"Bag" {}} :module-map {:foo #{"Bag"}}}
           ref-node {:node :type-ref :name nil}]
-      (is (nil? (#'cxc.lower/decl-lookup ctx :record-env ref-node))))))
+      (is (nil? (cxc.env/decl-lookup ctx :record-env ref-node))))))
 
 ;; b.ii-5d Batch 4 retired the `decl-lookup` string arity (a b.ii-5c
 ;; shim that consulted ambient `*decl->module*`). Every consumer now
@@ -6272,11 +6273,11 @@ def main:
   (testing "F51 L3b(b.ii)-5d Batch 7 — the primitive itself has no short-name fallback: a ref-node with `:resolves-to nil` returns nil regardless of whether `(get env name)` would succeed. Callers whose intent is bookkeeping (data-derived name, iteration) use `env-lookup` instead."
     (let [ctx      {:record-env {"Bag" {:kind :record}} :module-map {:m #{"Bag"}}}
           ref-node {:node :type-ref :name "Bag"}]
-      (is (nil? (#'cxc.lower/decl-lookup ctx :record-env ref-node)))
+      (is (nil? (cxc.env/decl-lookup ctx :record-env ref-node)))
       ;; env-lookup is the correct primitive when the name is
       ;; data-derived; it returns the entry.
       (is (= {:kind :record}
-             (#'cxc.lower/env-lookup ctx :record-env "Bag"))))))
+             (cxc.env/env-lookup ctx :record-env "Bag"))))))
 
 ;; ---------------------------------------------------------------------------
 ;; F52 L4 — module let-bindings (§7.1). Top-level `let NAME = <const>`
