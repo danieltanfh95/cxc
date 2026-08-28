@@ -105,7 +105,7 @@
              :refer [primitive-c-type cxc-type->c base-type-name
                      list-container-class-name cxc-type->type-kw
                      int-family? float-family? numeric-family? int-bit-width
-                     type-kw->c-type map-key-val-of
+                     type-kw->c-type
                      optional-tk? unwrap-tk type-kw->cxc-name-str
                      optional-type-name]]
             [cxc.lower.util :as util
@@ -196,7 +196,9 @@
                      collect-stream-shapes
                      collect-message-shapes
                      collect-companion-shapes
-                     augment-atom-env-with-companions]]))
+                     augment-atom-env-with-companions]]
+            [cxc.lower.ctor-params :as ctor-params-ns
+             :refer [ctor-params-normalized]]))
 
 ;; M1b prep — compile-error funnels (fail-nyi! / fail-user! /
 ;; fail-compile!) extracted to cxc.diagnostics. See its ns docstring
@@ -458,34 +460,7 @@
 ;; M1c — def-atom-{data-section,top-level-fields,effective-data-section}
 ;; moved to cxc.lower.def-atom-accessors.
 
-(defn- ctor-params-normalized
-  "Def-atom :ctor-params come from the parser as `:field` nodes
-   (`{:node :field :name :type :default}`). Normalize to
-   `{:name :cxc-ty :nullable? :c-type :default :type}` for the
-   atom-env.
-
-   F15 L2.c.iii.c.β.2 (2026-08-24) — the raw parsed `:type` node is
-   preserved on the lowered ctor-param. Downstream `collect-shapes`
-   postwalk on the lowered program AST (`:classes` → per-class
-   ctor-params → `:type`) discovers any `:type-named-tuple` shape at
-   a ctor-param position and feeds it into `emit-typedefs` via the
-   L2.c.iii.b wire-in. Fields not reading `:type` on lowered
-   ctor-params are unaffected; today no test program has a
-   named-tuple ctor-param so the extra field is dead metadata."
-  [ctor-params record-env atom-env enum-env module-map]
-  (mapv (fn [p]
-          (merge {:name      (:name p)
-                  :cxc-ty    (base-type-name (:type p))
-                  :nullable? (= :type-nullable (get-in p [:type :node]))
-                  ;; F39 L2 — carry `T!` intent on ctor params too.
-                  ;; Runtime binding check wires in L3.
-                  :nonnil?   (= :type-nonnil (get-in p [:type :node]))
-                  :c-type    (cxc-type->c (:type p) record-env atom-env enum-env module-map)
-                  :default   (:default p)
-                  ;; F15 L2.c.iii.c.β.2 — preserve raw parsed :type node.
-                  :type      (:type p)}
-                 (map-key-val-of (:type p))))
-        ctor-params))
+;; M1c — ctor-params-normalized moved to cxc.lower.ctor-params.
 
 ;; M1c — def-atom-{transitions,observables,invariants,use-caps,on-nil-entries}
 ;; moved to cxc.lower.def-atom-accessors.

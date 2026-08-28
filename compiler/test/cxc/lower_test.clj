@@ -7,6 +7,7 @@
             [cxc.lower :as lower]
             [cxc.lower.module-lets :as module-lets]
             cxc.lower.shape-collection
+            cxc.lower.ctor-params
             [cxc.type-kw :as type-kw]
             [cxc.emit :as emit]))
 
@@ -5700,7 +5701,7 @@ def main:
                         :name    "x"
                         :type    {:node :type-ref :name "Int"}
                         :default nil}]
-          lowered     (#'cxc.lower/ctor-params-normalized
+          lowered     (#'cxc.lower.ctor-params/ctor-params-normalized
                        ctor-params {} {} {} {})]
       (is (= 1 (count lowered)))
       (is (= {:node :type-ref :name "Int"} (:type (first lowered)))
