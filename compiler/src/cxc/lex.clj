@@ -489,9 +489,10 @@
             g))
         multi-char-glyphs))
 
-(defn- tokenize-line [line line-no]
+(defn- tokenize-line
   "Tokenize a single line's content (indent already stripped).
    Returns a vector of tokens (no :newline / :indent / :dedent added here)."
+  [line line-no]
   (let [n (count line)]
     (loop [i 0 out (transient [])]
       (cond
@@ -537,13 +538,14 @@
               (throw (ex-info (str "unexpected character: " (pr-str c))
                               {:line line-no :col (inc i) :char c})))))))))
 
-(defn- leading-indent [line line-no]
+(defn- leading-indent
   "Return [indent-count content] where indent-count is spaces and content
    is the rest of the line. Tabs count as 8 spaces (matches ObjC/Cocoa
    convention). Blank / comment-only lines return [nil nil] and are skipped.
 
    F3 / §2.4: tabs and spaces MUST NOT mix within a single line's leading
    indent. Mixing raises a compile error naming the line + offending column."
+  [line line-no]
   (let [n (count line)]
     (loop [i 0 indent 0 saw-space? false saw-tab? false]
       (cond

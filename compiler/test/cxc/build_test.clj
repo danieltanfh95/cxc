@@ -6,8 +6,10 @@
    outside the test harness. See `examples/README.md` for the current
    coverage table and how to add a new one."
   (:require [clojure.test :refer [deftest is testing]]
+            [clojure.string :as str]
             [cxc.build :as build]
-            [cxc.parse]))
+            [cxc.parse]
+            [cxc.resolve :as resolve]))
 
 (defn- tmp-dir []
   (let [d (java.nio.file.Files/createTempDirectory
@@ -1218,7 +1220,7 @@
                                                     "prog" (.getPath out-dir))
           lib-json  (slurp (manifest-path out-dir "lib"))
           main-json (slurp (manifest-path out-dir "main"))
-          main-exports (first (clojure.string/split main-json #"\"imports\":"))]
+          main-exports (first (str/split main-json #"\"imports\":"))]
       (is (re-find #"\"module\": \"lib\"" lib-json) "lib manifest names lib")
       (is (re-find #"\"name\": \"Helper\"" lib-json) "lib manifest lists Helper")
       (is (re-find #"\"owner\": \"lib-team\"" lib-json) "lib metadata stays with Helper")
@@ -1380,12 +1382,12 @@
 (deftest f51-l3b-b-ii-5c-single-file-threads-resolve-references
   (testing "F51 L3b(b.ii)-5c — `compile-source-to-file` runs `resolve/resolve-references` on the parsed user AST before feeding lower. Prevents regression to the pre-71c46c9 shim (reparse of concatenated prelude + user source, which stripped `:resolves-to` metadata). Spy on the resolver call — if a future refactor drops it, this test flags the drop before behavior diverges silently."
     (let [call-count  (atom 0)
-          orig-fn     @#'cxc.resolve/resolve-references
+          orig-fn     @#'resolve/resolve-references
           spy-fn      (fn [& args]
                         (swap! call-count inc)
                         (apply orig-fn args))
           out-dir     (tmp-dir)]
-      (with-redefs [cxc.resolve/resolve-references spy-fn]
+      (with-redefs [resolve/resolve-references spy-fn]
         (build/compile-source-to-file
          "def main:\n    -> running\n        then: print(1)\n"
          "resolve-thread-probe" (.getPath out-dir)))

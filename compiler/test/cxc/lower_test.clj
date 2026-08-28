@@ -5897,14 +5897,6 @@ def main:
                                non-self-params))
    :cxc-return-ty  return-cxc-name})
 
-(deftest f15-l4-sub1-registry-has-as-and-from-shapes
-  (testing "F15 L4 Sub-1 — the compiler-known protocol registry exposes both `As<T>` and `From<T>` shapes; `protocol-shape-known?` returns true for these and false for user-declared names (Landing 4 leaves user-declared parametric protocols out per no-user-shape-variables 2026-08-24)."
-    (is (#'cxc.lower/protocol-shape-known? "As"))
-    (is (#'cxc.lower/protocol-shape-known? "From"))
-    (is (not (#'cxc.lower/protocol-shape-known? "Foo")))
-    (is (not (#'cxc.lower/protocol-shape-known? "")))
-    (is (not (#'cxc.lower/protocol-shape-known? nil)))))
-
 (deftest f15-l4-sub1-satisfies-as-t-with-matching-instance-method
   (testing "F15 L4 Sub-1 — a record with `function as(self) -> Bytes` structurally satisfies `As<Bytes>`. Placeholder `:T` in the shape resolves to \"Bytes\" and matches the method's :cxc-return-ty. Symmetric with signature-mismatch-detail's cxc-name-string comparison."
     (let [info (f15-l4-record-info
@@ -5941,7 +5933,7 @@ def main:
                             info "Bag" "From" :bytes)))))))
 
 (deftest f15-l4-sub1-unknown-shape-name-yields-nil
-  (testing "F15 L4 Sub-1 — asking about an unknown protocol shape returns nil (not false). Sub-2's consumer guards on `protocol-shape-known?` first; the nil-vs-false distinction lets a caller tell 'no such shape in the registry' apart from 'shape exists but conformance failed'."
+  (testing "F15 L4 Sub-1 — asking about an unknown protocol shape returns nil (not false). The nil-vs-false distinction lets a caller tell 'no such shape in the registry' apart from 'shape exists but conformance failed'."
     (let [info (f15-l4-record-info [])]
       (is (nil? (#'cxc.lower/structurally-satisfies-protocol?
                  info "Bag" "NoSuchShape" :bytes))))))

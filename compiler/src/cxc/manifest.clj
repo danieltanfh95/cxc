@@ -15,8 +15,7 @@
    pulling `org.clojure/data.json` for a bounded output surface.
    Extend `write-json` if the shape grows."
   (:require [clojure.java.io :as io]
-            [clojure.string :as str]
-            [cxc.resolve :as resolve]))
+            [clojure.string :as str]))
 
 ;; ---------------------------------------------------------------------------
 ;; Constants

@@ -4,6 +4,7 @@
   (:require [clojure.java.io :as io]
             [clojure.java.shell :as shell]
             [clojure.string :as str]
+            [clojure.walk :as walk]
             [cxc.parse    :as parse]
             [cxc.lower    :as lower]
             [cxc.emit     :as emit]
@@ -98,7 +99,7 @@
         (let [decl-name (:name n)
               skip-self (and (contains? #{:def-atom :record} (:node n))
                              (contains? deprecations decl-name))]
-          (clojure.walk/postwalk
+          (walk/postwalk
            (fn [x]
              (when (map? x)
                ;; Only :ident and :type-ref — a `:call` node with an

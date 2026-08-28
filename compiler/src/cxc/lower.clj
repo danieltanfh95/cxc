@@ -1290,10 +1290,11 @@
 ;; establishes the registry. L5+ validates conforming atoms cover it.
 ;; ---------------------------------------------------------------------------
 
-(defn- protocol-defs [top-nodes]
+(defn- protocol-defs
   "Return defs inferred as protocols from their signature-only body shape.
    The class/kind check preserves the parser's downstream-stable reshape;
    inferred-kind also makes this consumer tolerant of a raw signature def."
+  [top-nodes]
   (filter (fn [n]
             (or (= :protocol (:inferred-kind n))
                 (and (= :class (:node n)) (= :protocol (:kind n)))))
@@ -1539,13 +1540,11 @@
         (dissoc d :__source))
 
       ;; Any `replace` extension present — last replace wins.
+      ;; Losers among non-replace extensions still lose but silently
+      ;; (the user documented replace intent by including `replace`
+      ;; on at least one extension).
       (seq replaces)
-      (do
-        ;; If a replace-flagged extension exists among multiple decls
-        ;; there IS a target; suppress the shadow warning for the
-        ;; winner. Losers among non-replace extensions still lose but
-        ;; silently (the user documented replace intent).
-        (dissoc (last replaces) :__source))
+      (dissoc (last replaces) :__source)
 
       ;; Own present, no replace — own wins; warn on shadow extensions.
       own-decl
@@ -3580,11 +3579,6 @@
                                       :returns {:apply "DecodeOutcome"
                                                 :inner :Self}}}}})
 
-(defn- protocol-shape-known?
-  "F15 L4 — is `nm` a compiler-known parametric protocol outer name?"
-  [nm]
-  (contains? compiler-known-protocol-shapes nm))
-
 (defn- protocol-req-matches-method?
   "F15 L4 Sub-1 — does `method-entry` (a `:method-index` value from a
    record env slot) match protocol-required signature `req` at
@@ -3651,7 +3645,7 @@
    intercept with the structural check that consults this seed."
   [record-env enum-env]
   (reduce-kv
-    (fn [env rn info]
+    (fn [env rn _info]
       (if (record-decode-eligible? rn env enum-env)
         (assoc-in env [rn :class-fn-index "from"]
                   {:name          "from"
@@ -3679,10 +3673,10 @@
    from user-declared class functions once F37 L6b picks up class-fn
    consumption). Predicate shape is stable across that landing.
 
-   Returns nil for an unknown shape name (protocol-shape-known?
-   guards Sub-2's consumer). Empty required-methods on both sides is
-   vacuously true — no such shape exists in the registry today, but
-   Constructible / other v1.1+ shapes may fall into this case."
+   Returns nil for a shape name not in `compiler-known-protocol-shapes`.
+   Empty required-methods on both sides is vacuously true — no such
+   shape exists in the registry today, but Constructible / other v1.1+
+   shapes may fall into this case."
   [type-info self-cxc-name shape-name t-tk]
   (when-let [shape (get compiler-known-protocol-shapes shape-name)]
     (and (every? (fn [[mn req]]
@@ -5132,7 +5126,6 @@
                              (and (optional-tk? rt) left-nil?))))
                   (let [op (:op node)
                         lt (infer-type (:left node) ctx)
-                        rt (infer-type (:right node) ctx)
                         opt-side (if (optional-tk? lt) (:left node) (:right node))
                         negate?  (= "!=" op)]
                     {:node    :c-optional-nil-check

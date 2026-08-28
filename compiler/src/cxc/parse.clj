@@ -86,7 +86,6 @@
 (defn- t-kind  [tok] (nth tok 0))
 (defn- t-value [tok] (nth tok 1))
 (defn- t-line  [tok] (nth tok 2))
-(defn- t-col   [tok] (nth tok 3))
 
 (defn- peek-tok [tokens pos]
   (nth tokens pos nil))
@@ -905,7 +904,7 @@
             (and t
                  (= :ident (t-kind t))
                  (let [v (t-value t)]
-                   (and (not (empty? v))
+                   (and (seq v)
                         (Character/isUpperCase (first v))
                         ;; F16 L3 — NOT followed by `(` (constructor
                         ;; call being passed as a value) or `.`
@@ -1106,48 +1105,6 @@
             :else (fail! tokens p2 "expected `,` or `)` in param list")))))))
 
 (declare parse-block)
-
-(defn- warn-function-deprecated!
-  "K8 — the `function` method opener is retired at v1.0 (spec §1201,
-   §2330); spec canonical is `def`. Prints a per-occurrence
-   deprecation warning to *err* naming file/line so users can migrate.
-   Non-fatal — parser still accepts the keyword. A `--strict-
-   deprecations` flag to promote to error is a follow-on."
-  [tokens pos]
-  (let [t (peek-tok tokens pos)]
-    (binding [*out* *err*]
-      (println (str "warning: `function` method opener is deprecated at v1.0 "
-                    "(spec §1201, §2330) — use `def` instead. At line "
-                    (t-line t) ", col " (t-col t) ".")))))
-
-(defn- parse-function-decl
-  "Method declaration in two accepted forms:
-     function name(params) -> RetType: <block>   ; legacy — audit K8
-     def name(params) -> RetType: <block>        ; spec §2.5 canonical
-
-   The `function` keyword is retired at v1.0 (spec §1201/§2330); we
-   still parse it during the grace period but emit a per-occurrence
-   deprecation warning via `warn-function-deprecated!`. The `def`
-   form is distinguished from the retired nested-atom slot form
-   (`def name: TypeName`, F34 L3) by the paren immediately after
-   the name — this method-decl path only fires when parens are
-   present."
-  [tokens pos]
-  (let [[_ p]      (cond
-                     (at? tokens pos :kw "function")
-                     (do (warn-function-deprecated! tokens pos)
-                         (expect tokens pos :kw "function"))
-                     (at? tokens pos :kw "def")      (expect tokens pos :kw "def")
-                     :else (fail! tokens pos "expected `def` or `function` for method"))
-        [name p]   (expect tokens p :ident)
-        [params p] (parse-param-list-parens tokens p)
-        [ret p]    (if (at? tokens p :glyph "->")
-                     (parse-type tokens (inc p))
-                     [nil p])
-        [_ p]      (expect tokens p :punct ":")
-        [_ p]      (expect tokens p :newline)
-        [body p]   (parse-block tokens p)]
-    [{:node :function :name name :params params :return-type ret :body body} p]))
 
 (defn- parse-class-function-decl
   "F37 L6b (2026-08-24) — spec §3.4.6 static-fn shape:
