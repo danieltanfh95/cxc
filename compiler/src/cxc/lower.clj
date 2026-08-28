@@ -97,6 +97,7 @@
             [clojure.walk :as walk]
             [cxc.diagnostics :refer [fail-nyi! fail-user! fail-compile!]]
             [cxc.env :as env]
+            [cxc.mangle :as mangle :refer [->c-safe]]
             [cxc.named-tuple :as named-tuple]
             [cxc.prelude :as prelude]
             [cxc.resolve :as resolve]))
@@ -188,44 +189,9 @@
   [nm]
   (contains? phantom-atom-names nm))
 
-;; ---------------------------------------------------------------------------
-;; F56 L2+L3 (2026-08-27) — emit-boundary mangling.
-;;
-;; The parse-time `rewrite-prelude-names` postwalk is retired. Post-parse
-;; AST carries only user-visible names throughout — envs are keyed by
-;; user-visible names, downstream lower comparisons work in user-visible
-;; space. Mangling happens at the emit boundary via `->c-safe`, which
-;; consults a `decl->module` map bound dynamically at the top of `lower`.
-;;
-;; `->c-safe` is idempotent on already-mangled input (name not in the
-;; table → passthrough) so callers that happen to receive a compiler-
-;; synthesized C name (e.g. `_Cxc_Optional_Int64`) also work.
-;; ---------------------------------------------------------------------------
-
-(def ^:dynamic ^:private *decl->module* nil)
-
-;; F51 L3b(b.ii)-5d Batch 6 retired `*module-map*`. Every consumer
-;; that read it (cxc-type->c's internal resolve calls, decl-lookup)
-;; now takes the module-map explicitly — from a ctx map (in the
-;; ctx-threaded call paths) or as a threaded function arg (in the
-;; env-builder chain). `*decl->module*` stays: it drives F56 C-id
-;; mangling in `->c-safe` and supplies `:resolves-to` on internal
-;; synthetic type-ref nodes.
-
-;; Forward decl — the primitive lives further down alongside the other
-;; F51 b.ii-2 helpers; `cxc-type->c` (defined before it) needs the
-;; symbol resolvable at compile time.
-(declare resolve-decl-lookup)
-
-(defn- ->c-safe
-  "F56 L2+L3 — mangle a user-visible declared name to its C-safe
-   identifier via the ambient `*decl->module*`. Returns `nm` verbatim
-   when: `nm` is nil / not in the table (compiler-synthesized names,
-   primitives) / already in mangled form."
-  [nm]
-  (if (and nm *decl->module* (contains? *decl->module* nm))
-    (resolve/mangled-name-for (get *decl->module* nm) nm)
-    nm))
+;; M1b prep — F56 emit-boundary mangling extracted to cxc.mangle.
+;; `*decl->module*` + `->c-safe` live there. cxc.lower uses the
+;; `mangle/` alias.
 
 ;; ---------------------------------------------------------------------------
 ;; F69 L2 — Unified body-shape lookup.
@@ -11935,7 +11901,7 @@
   (let [top-nodes  (resolve/ensure-references-enriched top-nodes)
         d->m (env/attribute-modules-to-decls top-nodes)
         module-map (env/module-map-from-attribution d->m)]
-   (binding [*decl->module* d->m]
+   (binding [mangle/*decl->module* d->m]
    (let [;; F52 L4 — pre-lower constant folding of top-level `let NAME =
         ;; <const-literal>` bindings. Extract every `:module-let` decl
         ;; into a name→value-node map, drop the decls from `top-nodes`,
