@@ -210,7 +210,17 @@
                      field-list-element-name
                      field-is-map-of?
                      field-is-set-of?
-                     field-storage-value-typed?]]))
+                     field-storage-value-typed?]]
+            [cxc.lower.phase-helpers :as phase-helpers
+             :refer [initial-phase-for
+                     collect-phase-names
+                     phase-constant-name
+                     wildcard-on-enter?
+                     message-triggered?
+                     transition-trigger-kind
+                     transition-msg-name
+                     transition-display-name
+                     wildcards-by-target-phase]]))
 
 ;; M1b prep — compile-error funnels (fail-nyi! / fail-user! /
 ;; fail-compile!) extracted to cxc.diagnostics. See its ns docstring
@@ -4210,112 +4220,14 @@
           clauses)]
     stmts))
 
-(defn- initial-phase-for
-  "First phase mentioned as a transition target — i.e. the phase the
-   atom enters when init completes. cxc has no explicit initial-phase
-   marker; declaration order fixes it. Atoms without any transitions
-   default to `init` — every atom has a phase (spec §1.12), and `init`
-   is a semantically-neutral choice for `data:`/`methods:`-only atoms."
-  [transitions]
-  (or (some :target transitions) "init"))
-
-(defn- collect-phase-names
-  "All phase names appearing in transition sources or targets, plus the
-   implicit `init` and `end` sentinels. Order-preserving dedup — the
-   first mention fixes ordering, which matters for readability of the
-   emitted `static NSString * const` block. `init` is always first,
-   `end` always last. `self` (audit F24 — spec §1.11) is a target
-   pseudo-phase meaning \"no phase change\" and is NOT a real phase."
-  [transitions]
-  (let [mentioned (concat (keep #(when (= :phase (get-in % [:source :kind]))
-                                   (get-in % [:source :name])) transitions)
-                          (map :target transitions))
-        middle    (remove #{"init" "end" "self" "*"} (distinct mentioned))]
-    (vec (concat ["init"] middle ["end"]))))
-
-(defn- phase-constant-name
-  "Canonicalized ObjC constant name for a phase: `k<Atom>_phase_<name>`.
-   Every read/write in emitted code references one of these — never a
-   raw literal — so pointer-equality comparisons are safe (spec §5)."
-  [atom-name phase-name]
-  (str "k" atom-name "_phase_" phase-name))
-
-(defn- wildcard-on-enter?
-  "A transition with implicit source and no message receipt —
-   the `-> phase then/do: ...` form that fires on every entry."
-  [t]
-  (and (= :implicit (get-in t [:source :kind]))
-       (nil? (:receive t))))
-
-(defn- message-triggered?
-  "A transition with a receive glyph (`<:` async, `<|` sync). Contrasts
-   with implicit-source wildcards (`-> phase ...`) which fire on every
-   entry to their target phase."
-  [t]
-  (contains? #{"<:" "<|"} (get-in t [:receive :glyph])))
-
-(defn- transition-trigger-kind
-  "Classify a receive-glyph transition's source pattern:
-   - :message       — bare ident like `bump`. Direct message-triggered
-                      transition (Steps 4-7).
-   - :stream        — dot expression like `source.beep`. Stream
-                      subscription (Layer 4b Step 13); source atom's
-                      static stream emit drives the transition.
-   - :method-stream — call expression like `source.every(rate)`. The
-                      source atom's method returns a CxcStream value
-                      (Layer 5c Step 8); subscriber attaches at
-                      cxc_runtimeBinding via -cxc_addSubscriber:."
-  [t]
-  (let [src (get-in t [:receive :msg :source])]
-    (case (:node src)
-      :ident :message
-      :dot   :stream
-      :call  (if (and (map? (:callee src))
-                      (= :dot (get-in src [:callee :node])))
-               :method-stream
-               (fail-user! (str "receive-glyph source `:call` needs a "
-                               "dot callee (`source.method(args)`); got "
-                               (get-in src [:callee :node]))
-                          src))
-      (fail-user! (str "receive-glyph source pattern must be a bare ident "
-                       "(message), dot expression (static stream), or "
-                       "method call (returned stream); got " (:node src))
-                  src))))
-
-(defn- transition-msg-name
-  "Extract the message-name from a message-triggered receive-glyph
-   transition. Only bare-ident sources call this; stream transitions
-   go through transition-stream-descriptor."
-  [t]
-  (let [src (get-in t [:receive :msg :source])]
-    (case (:node src)
-      :ident (:name src)
-      (fail-user! (str "expected bare-ident message source (got " (:node src) ")")
-                  src))))
-
-(defn- transition-display-name
-  "Human-readable identifier for a receive-glyph transition, used in
-   diagnostics. Handles both message-triggered (`bump`) and stream-
-   subscribed (`source.beep`) shapes without discriminating on kind."
-  [t]
-  (let [src (get-in t [:receive :msg :source])]
-    (case (:node src)
-      :ident (:name src)
-      :dot   (str (get-in src [:target :name]) "." (:field src))
-      (pr-str src))))
+;; M1c — phase/transition helpers (initial-phase-for, collect-phase-
+;; names, phase-constant-name, wildcard-on-enter?, message-triggered?,
+;; transition-{trigger-kind,msg-name,display-name}) moved to
+;; cxc.lower.phase-helpers.
 
 ;; M1c — stream-selector / stream-emit-selector moved to cxc.lower.selectors.
 
-(defn- wildcards-by-target-phase
-  "Index wildcards (`-> phase then:/do:`) by their target phase. A
-   phase may have zero, one, or (rare) multiple wildcards; multiples
-   are concat'd in declaration order (design §6 leaves the count
-   unspecified but doesn't forbid — declaration order is the natural
-   choice)."
-  [transitions]
-  (reduce (fn [acc t] (update acc (:target t) (fnil conj []) t))
-          {}
-          (filter wildcard-on-enter? transitions)))
+;; M1c — wildcards-by-target-phase moved to cxc.lower.phase-helpers.
 
 (defn- inline-wildcard-then-stmts
   "Then-clauses from all wildcards targeting phase X, in order. Fires
