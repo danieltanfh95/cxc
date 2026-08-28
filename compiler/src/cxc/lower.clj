@@ -1401,6 +1401,24 @@
 
 (declare infer-type)
 
+(defn- try-infer-type
+  "Infer a type-kw for `expr` under `ctx`, or return nil if the
+   inference machinery raises `:not-yet-implemented`. Catches ONLY
+   that kind — anything else propagates so genuine bugs stay visible.
+
+   Use at sites where 'we couldn't type this' is a legitimate
+   outcome (helper defaults with un-inferrable expressions, best-
+   effort diagnostic annotations). Everywhere else, call `infer-type`
+   directly — a throw there means the inference contract was violated
+   and the caller wants to hear about it."
+  [expr ctx]
+  (try
+    (infer-type expr ctx)
+    (catch clojure.lang.ExceptionInfo e
+      (when-not (= :not-yet-implemented (:kind (ex-data e)))
+        (throw e))
+      nil)))
+
 (defn- infer-protocol-defaults
   "F67 L4b — post-pass over protocol-env: for each default observable
    whose `:cxc-return-ty` is still nil (helper default with no matching
@@ -1409,20 +1427,23 @@
    `type-kw->cxc-name-str`. Runs AFTER
    `infer-observables-in-{record,atom}-env` so the ctx has real envs
    for cross-record/atom references; helper bodies are typically
-   literals or arithmetic that infer cheaply."
-  [protocol-env record-env atom-env enum-env]
+   literals or arithmetic that infer cheaply.
+
+   `base-ctx` is the caller's fully-formed lowering ctx (per `mk-ctx`
+   at the top of lower). Sharing it here — instead of assembling a
+   partial 4-key ctx on the fly — is what M4 restored: the sub-ctx
+   now carries every BASE key so a helper-default expression that
+   happens to touch `:module-map` / `:decl->module` / `:symbol-table`
+   / `:named-tuple-env` resolves cleanly instead of hitting
+   silently-swallowed exceptions."
+  [protocol-env base-ctx]
   (reduce-kv
    (fn [acc pn info]
      (let [defaults' (mapv (fn [d]
                              (if (:cxc-return-ty d)
                                d
                                (let [expr (get-in d [:body :stmts 0 :expr])
-                                     ctx  {:record-env record-env
-                                           :atom-env   atom-env
-                                           :enum-env   enum-env
-                                           :locals     {}}
-                                     tk   (try (infer-type expr ctx)
-                                               (catch Exception _ nil))
+                                     tk   (try-infer-type expr base-ctx)
                                      nm   (type-kw->cxc-name-str tk)]
                                  (cond-> d
                                    nm (assoc :cxc-return-ty nm)))))
@@ -11987,12 +12008,43 @@
         ;; growth to programs that actually subscribe.
         atom-env   (augment-atom-env-with-companions atom-env record-env
                                                      enum-env)
+        ;; M4 — infer-protocol-defaults now takes a full base ctx, so
+        ;; the F51 unified symbol table + F15 shape env must be built
+        ;; before this call. Both are pure functions of `top-nodes`
+        ;; so lifting them here is a no-op on downstream ordering;
+        ;; the tail-end `:named-tuple-env` walk on the LOWERED AST
+        ;; (below) is unchanged.
+        symbol-table    (resolve/build-symbol-table top-nodes)
+        _               (resolve/verify-parity!
+                          symbol-table
+                          ;; Trim atom-env of runtime-provided + synthesized
+                          ;; container entries — those aren't in top-nodes
+                          ;; (they're added by the passes above) and so
+                          ;; can't appear in the symbol table by design.
+                          {:record-env record-env
+                           :atom-env   (into {}
+                                             (filter (fn [[_ v]]
+                                                       (not (contains?
+                                                              #{:runtime-provided
+                                                                :list-container
+                                                                :map-container
+                                                                :set-container}
+                                                              (:kind v))))
+                                                     atom-env))
+                           :enum-env   enum-env})
+        ctx-nt-shapes   (named-tuple/collect-shapes top-nodes)
         ;; F67 L4b — infer return types on protocol helper defaults
         ;; (observables with no matching signature) so downstream
         ;; C emission has a concrete return type when the default gets
         ;; inherited into a conforming class.
-        protocol-env (infer-protocol-defaults protocol-env record-env atom-env
-                                              enum-env)
+        protocol-env (infer-protocol-defaults protocol-env
+                                              (mk-ctx {:record-env      record-env
+                                                       :atom-env        atom-env
+                                                       :enum-env        enum-env
+                                                       :symbol-table    symbol-table
+                                                       :decl->module    d->m
+                                                       :module-map      module-map
+                                                       :named-tuple-env ctx-nt-shapes}))
         ;; Layer 5 Step 3: scan post-inference atom-env for `List of T`
         ;; field/ctor usages, register a synthesized entry per distinct
         ;; T for method-lookup, and generate a matching :objc-class per
@@ -12015,29 +12067,6 @@
         set-instantiations  (set-instantiations-from-atom-env atom-env)
         set-atom-entries    (synthesize-set-container-entries set-instantiations)
         atom-env            (merge atom-env set-atom-entries)
-        ;; F51 Landing 1 — build the unified symbol table alongside the
-        ;; ad-hoc envs. `verify-parity!` catches drift between the two
-        ;; views so migration is stepwise; downstream landings will
-        ;; replace `(:record-env ctx)` / `(:atom-env ctx)` /
-        ;; `(:enum-env ctx)` lookups with `resolve/lookup ctx name`.
-        symbol-table (resolve/build-symbol-table top-nodes)
-        _            (resolve/verify-parity!
-                       symbol-table
-                       ;; Trim atom-env of runtime-provided + synthesized
-                       ;; container entries — those aren't in top-nodes
-                       ;; (they're added by the passes above) and so
-                       ;; can't appear in the symbol table by design.
-                       {:record-env record-env
-                        :atom-env   (into {}
-                                          (filter (fn [[_ v]]
-                                                    (not (contains?
-                                                           #{:runtime-provided
-                                                             :list-container
-                                                             :map-container
-                                                             :set-container}
-                                                           (:kind v))))
-                                                  atom-env))
-                        :enum-env   enum-env})
         ;; F9 L3 — collect extension blocks and validate targets against
         ;; the full symbol table. Composition (merging methods,
         ;; applying `replace`, running §3.3.2 rules 1-7) is L4.
@@ -12076,16 +12105,6 @@
         ;; default inheritance) so the eligibility check sees the
         ;; final composed member set. Sub-3 wires the consumer.
         record-env (seed-class-fn-index-from-f37-decode record-env enum-env)
-        ;; F15 L2.c.iii.c.ε.β.β (2026-08-24) — a shape env computed from
-        ;; the RAW source AST is threaded into ctx so class/atom
-        ;; lowering can consult it during `.field` access inference
-        ;; (`field-type-for-owner` — ε.β.γ adds the consuming branch).
-        ;; Kept separate from the tail-end lowered-AST walk (below)
-        ;; that populates `:named-tuple-env` on the program AST — that
-        ;; walk stays byte-identical to ε.α semantics. Duplication is
-        ;; cheap and eliminates any risk of surfacing shapes on the
-        ;; program AST that the ε.α tests didn't already expect.
-        ctx-nt-shapes (named-tuple/collect-shapes top-nodes)
         ;; F51 L3b(b.ii)-2 — attribute each user declaration to its
         ;; module (walked at the top of `lower` from raw top-nodes as
         ;; `d->m` / `module-map` above; also `*decl->module*` for F56
