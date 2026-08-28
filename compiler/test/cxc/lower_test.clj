@@ -154,13 +154,13 @@
           call (first (get-in prog [:main :body]))]
       (is (= "%f\n" (get-in call [:args 0 :value]))))))
 
-(deftest missing-field-in-ctor-fails-nyi
-  (testing "V(x: 1) when V requires x + y (no default on y) — fail-nyi"
+(deftest missing-field-in-ctor-rejected
+  (testing "V(x: 1) when V requires x + y (no default on y) — cxc-user-error (T2 reclassified from :not-yet-implemented — a missing required field is a structural user error, not a compiler gap)"
     (try
       (lower-src "def V:\n    x: Int\n    y: Int\n\ndef main:\n    -> running\n        then: print(V(x: 1).x)\n")
-      (is false "expected NYI throw")
+      (is false "expected throw")
       (catch clojure.lang.ExceptionInfo e
-        (is (= :not-yet-implemented (:kind (ex-data e))))))))
+        (is (= :cxc-user-error (:kind (ex-data e))))))))
 
 (deftest record-defaults-fill-omitted-fields
   (testing "omitted field with a declared default is filled from the default"
@@ -189,7 +189,7 @@
                nil
                (catch clojure.lang.ExceptionInfo e e))]
       (is ex "expected exception")
-      (is (= :not-yet-implemented (:kind (ex-data ex))))
+      (is (= :cxc-user-error (:kind (ex-data ex))))
       (is (re-find #"duplicate named arg" (.getMessage ex))))))
 
 (deftest f40-record-ctor-unknown-named-arg-rejected
@@ -199,7 +199,7 @@
                nil
                (catch clojure.lang.ExceptionInfo e e))]
       (is ex "expected exception")
-      (is (= :not-yet-implemented (:kind (ex-data ex))))
+      (is (= :cxc-user-error (:kind (ex-data ex))))
       (is (re-find #"unknown named arg" (.getMessage ex)))
       (is (re-find #"bogus" (.getMessage ex))))))
 
@@ -210,7 +210,7 @@
                nil
                (catch clojure.lang.ExceptionInfo e e))]
       (is ex "expected exception")
-      (is (= :not-yet-implemented (:kind (ex-data ex))))
+      (is (= :cxc-user-error (:kind (ex-data ex))))
       (is (re-find #"too many positional" (.getMessage ex))))))
 
 (deftest f40-record-ctor-positional-and-named-collision-rejected
@@ -220,7 +220,7 @@
                nil
                (catch clojure.lang.ExceptionInfo e e))]
       (is ex "expected exception")
-      (is (= :not-yet-implemented (:kind (ex-data ex))))
+      (is (= :cxc-user-error (:kind (ex-data ex))))
       (is (re-find #"both positionally and by name" (.getMessage ex))))))
 
 (deftest f40-record-fields-defaults-must-follow-required
@@ -230,7 +230,7 @@
                nil
                (catch clojure.lang.ExceptionInfo e e))]
       (is ex "expected exception")
-      (is (= :not-yet-implemented (:kind (ex-data ex))))
+      (is (= :cxc-user-error (:kind (ex-data ex))))
       (is (re-find #"defaulted param" (.getMessage ex))))))
 
 (deftest f40-atom-ctor-duplicate-named-arg-rejected
@@ -240,7 +240,7 @@
                nil
                (catch clojure.lang.ExceptionInfo e e))]
       (is ex "expected exception")
-      (is (= :not-yet-implemented (:kind (ex-data ex))))
+      (is (= :cxc-user-error (:kind (ex-data ex))))
       (is (re-find #"duplicate named arg" (.getMessage ex))))))
 
 (deftest f40-atom-ctor-unknown-named-arg-rejected
@@ -250,7 +250,7 @@
                nil
                (catch clojure.lang.ExceptionInfo e e))]
       (is ex "expected exception")
-      (is (= :not-yet-implemented (:kind (ex-data ex))))
+      (is (= :cxc-user-error (:kind (ex-data ex))))
       (is (re-find #"unknown named arg" (.getMessage ex))))))
 
 (deftest def-atom-lowers-to-objc-class
@@ -758,7 +758,7 @@ def main:
                nil
                (catch clojure.lang.ExceptionInfo e e))]
       (is ex "expected exception")
-      (is (= :not-yet-implemented (:kind (ex-data ex))))
+      (is (= :cxc-user-error (:kind (ex-data ex))))
       (is (re-find #"unknown named arg" (.getMessage ex))))))
 
 ;; F27 semantic once-only — chained comparison lowers to :chained-cmp;

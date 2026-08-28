@@ -99,9 +99,41 @@
             [cxc.prelude :as prelude]
             [cxc.resolve :as resolve]))
 
+;; ---------------------------------------------------------------------------
+;; Compile-error surface. Three funnels, chosen by what a hypothetical
+;; downstream tool (LSP, error UI) would want to do with the failure:
+;;
+;;   fail-nyi!    — a language surface the compiler hasn't landed yet.
+;;                  Message is "this feature is planned but not
+;;                  implemented" + a pointer at the tracking plan.
+;;                  Discovering one means the user hit an edge of the
+;;                  bootstrap; the fix is a compiler landing.
+;;
+;;   fail-user!   — a structural user error: the source violates a
+;;                  spec rule (duplicate names, wrong-target reference,
+;;                  reference modifier on a value type). Message names
+;;                  the rule + spec §. The fix is in the user's source.
+;;
+;;   fail-compile!— per-site diagnostic with a caller-supplied :kind
+;;                  keyword. Use when the diagnostic is one-of-a-kind
+;;                  (F51 unresolved name, F9 duplicate protocol
+;;                  signature) and the caller wants a distinct :kind
+;;                  for downstream classification (LSP, tests grep).
+;;
+;; Triage rule: if the failing message says "duplicate", "expected …
+;; got", "requires", or references a spec § the user's source violates
+;; — it's `fail-user!`. If it says "not yet lowered", "NYI", or names
+;; a plan-doc landing pending — it's `fail-nyi!`. `fail-compile!` is
+;; for the few call sites that get their own kind slug.
+;; ---------------------------------------------------------------------------
+
 (defn- fail-nyi! [what node]
   (throw (ex-info (str "lowering not yet implemented: " what)
                   {:kind :not-yet-implemented :what what :node node})))
+
+(defn- fail-user! [what node]
+  (throw (ex-info what
+                  {:kind :cxc-user-error :what what :node node})))
 
 (defn- fail-compile! [kind msg node]
   (throw (ex-info msg {:kind kind :what msg :node node})))
@@ -283,10 +315,10 @@
     (when ps
       (let [p (first ps)]
         (if (and seen-default? (nil? (:default p)))
-          (fail-nyi! (str "required param `" (:name p) "` follows a defaulted "
-                          "param on " site " — spec §3.8.5 requires "
-                          "defaulted params to come last")
-                     {:site site :param (:name p)})
+          (fail-user! (str "required param `" (:name p) "` follows a defaulted "
+                           "param on " site " — spec §3.8.5 requires "
+                           "defaulted params to come last")
+                      {:site site :param (:name p)})
           (recur (or seen-default? (some? (:default p)))
                  (next ps)))))))
 
@@ -3020,7 +3052,7 @@
              _             (let [n->count (frequencies (map :name merged-ctor))
                                  dupes    (filter #(> (val %) 1) n->count)]
                              (when (seq dupes)
-                               (fail-nyi!
+                               (fail-user!
                                 (str "duplicate ctor-param names on def-atom `" name
                                      "` (likely collision between use: and explicit "
                                      "ctor-params): " (mapv key dupes))
@@ -3028,7 +3060,7 @@
              _             (let [n->count (frequencies (map :name merged-fields))
                                  dupes    (filter #(> (val %) 1) n->count)]
                              (when (seq dupes)
-                               (fail-nyi!
+                               (fail-user!
                                 (str "duplicate field names on def-atom `" name
                                      "` (collision between data:/use:): "
                                      (mapv key dupes))
@@ -4515,10 +4547,10 @@
                            (keep (fn [[n c]] (when (> c 1) n)))
                            sort)]
             (when (seq dupes)
-              (fail-nyi! (str "duplicate named arg" (when (> (count dupes) 1) "s")
-                              " on " call-site-label ": "
-                              (str/join ", " (map #(str "`" % "`") dupes)))
-                         {:site call-site-label :duplicates dupes})))
+              (fail-user! (str "duplicate named arg" (when (> (count dupes) 1) "s")
+                               " on " call-site-label ": "
+                               (str/join ", " (map #(str "`" % "`") dupes)))
+                          {:site call-site-label :duplicates dupes})))
         ;; Unknown named args
         _ (let [unknown (->> named-args
                              (map :name)
@@ -4526,22 +4558,22 @@
                              distinct
                              sort)]
             (when (seq unknown)
-              (fail-nyi! (str "unknown named arg" (when (> (count unknown) 1) "s")
-                              " on " call-site-label ": "
-                              (str/join ", " (map #(str "`" % "`") unknown))
-                              " (declared params: "
-                              (str/join ", " (map #(str "`" % "`") param-names))
-                              ")")
-                         {:site call-site-label :unknown unknown
-                          :declared param-names})))
+              (fail-user! (str "unknown named arg" (when (> (count unknown) 1) "s")
+                               " on " call-site-label ": "
+                               (str/join ", " (map #(str "`" % "`") unknown))
+                               " (declared params: "
+                               (str/join ", " (map #(str "`" % "`") param-names))
+                               ")")
+                          {:site call-site-label :unknown unknown
+                           :declared param-names})))
         ;; Surplus positional args
         _ (when (> (count positional) (count params))
-            (fail-nyi! (str "too many positional args on " call-site-label
-                            ": got " (count positional) ", expected at most "
-                            (count params))
-                       {:site call-site-label
-                        :positional-count (count positional)
-                        :param-count (count params)}))
+            (fail-user! (str "too many positional args on " call-site-label
+                             ": got " (count positional) ", expected at most "
+                             (count params))
+                        {:site call-site-label
+                         :positional-count (count positional)
+                         :param-count (count params)}))
         ;; Same param supplied positionally AND by name
         _ (let [by-name-set (set (map :name named-args))
                 collisions  (->> (map-indexed (fn [i _] (get param-names i))
@@ -4550,21 +4582,21 @@
                                  distinct
                                  sort)]
             (when (seq collisions)
-              (fail-nyi! (str "arg for param" (when (> (count collisions) 1) "s")
-                              " " (str/join ", " (map #(str "`" % "`") collisions))
-                              " supplied both positionally and by name on "
-                              call-site-label)
-                         {:site call-site-label :collisions collisions})))
+              (fail-user! (str "arg for param" (when (> (count collisions) 1) "s")
+                               " " (str/join ", " (map #(str "`" % "`") collisions))
+                               " supplied both positionally and by name on "
+                               call-site-label)
+                          {:site call-site-label :collisions collisions})))
         by-name (into {} (map (juxt :name :value) named-args))]
     (mapv (fn [i p]
             (let [v (or (get by-name (:name p))
                         (:value (get positional i))
                         (:default p))]
               (when-not v
-                (fail-nyi! (str "no value provided for param `" (:name p)
-                                "` on " call-site-label
-                                " (no arg and no default)")
-                           {:param (:name p) :site call-site-label}))
+                (fail-user! (str "no value provided for param `" (:name p)
+                                 "` on " call-site-label
+                                 " (no arg and no default)")
+                            {:param (:name p) :site call-site-label}))
               {:name (:name p) :value v}))
           (range)
           params)))
@@ -11745,7 +11777,7 @@
                         "at this landing; got `" (:node v) "` node.")
                    {:module-let nm :value-node (:node v)}))
                 (when (contains? acc nm)
-                  (fail-nyi!
+                  (fail-user!
                    (str "duplicate module let-binding `" nm "` — v1.0 uses "
                         "a flat namespace across modules for top-level "
                         "bindings; rename one of the duplicates.")
