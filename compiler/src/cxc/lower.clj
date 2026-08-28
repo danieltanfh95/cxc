@@ -3473,13 +3473,13 @@
         (= "clamp" nm)                   ;; polymorphic on first arg
         (let [args (:args node)
               _    (when-not (= 3 (count args))
-                     (fail-nyi! (str "clamp expects 3 args (x, lo, hi), got "
-                                     (count args))
-                                node))
+                     (fail-user! (str "clamp expects 3 args (x, lo, hi), got "
+                                      (count args))
+                                 node))
               x-ty (infer-type (:value (first args)) ctx)]
           (when-not (numeric-family? x-ty)
-            (fail-nyi! (str "clamp arg must be numeric; got " (pr-str x-ty))
-                       node))
+            (fail-user! (str "clamp arg must be numeric; got " (pr-str x-ty))
+                        node))
           x-ty)
         (ffi-builtin? nm)                (:return-kw (get ffi-builtins nm))
         ;; Layer 6 Step 12 — bare call on a Block-typed self-field.
@@ -3737,9 +3737,9 @@
                     (numeric-family? inner)
                     (if opt? [:optional inner] inner)
                     :else
-                    (fail-nyi! (str "unary minus on non-numeric type "
-                                    (pr-str t))
-                               node)))
+                    (fail-user! (str "unary minus on non-numeric type "
+                                     (pr-str t))
+                                node)))
     :not        (let [t (infer-type (:expr node) ctx)]
                   (if (optional-tk? t) [:optional :bool] :bool))
     :call       (infer-call-type node ctx)
@@ -4075,9 +4075,9 @@
     (if (empty? ctor-params)
       (do
         (when (seq args)
-          (fail-nyi! (str "atom constructor args on `" atom-name
-                          "` — atom declares no ctor params")
-                     {:atom atom-name :args args}))
+          (fail-user! (str "atom constructor args on `" atom-name
+                           "` — atom declares no ctor params")
+                      {:atom atom-name :args args}))
         {:node :objc-alloc-init :class (class-name-for-atom atom-name)})
       (let [resolved (resolve-args-against-params
                       (str "`" atom-name "` constructor")
@@ -4311,9 +4311,9 @@
           (and (keyword? target-ty) (= :bytes target-ty)
                (= "at" method-name))
           (do (when-not (= 1 (count arg-exprs))
-                (fail-nyi! (str "F37 L6a: `Bytes.at` expects exactly one "
-                                "arg (offset), got " (count arg-exprs))
-                           call-node))
+                (fail-user! (str "F37 L6a: `Bytes.at` expects exactly one "
+                                 "arg (offset), got " (count arg-exprs))
+                            call-node))
               {:node      :ffi-call
                :name      "cxc_bytes_at"
                :args      [target-lo (first arg-exprs)]
@@ -4331,9 +4331,9 @@
           (and (keyword? target-ty) (= :bytes target-ty)
                (= "slice" method-name))
           (do (when-not (= 2 (count arg-exprs))
-                (fail-nyi! (str "F37 L6a: `Bytes.slice` expects exactly two "
-                                "args (start, length), got " (count arg-exprs))
-                           call-node))
+                (fail-user! (str "F37 L6a: `Bytes.slice` expects exactly two "
+                                 "args (start, length), got " (count arg-exprs))
+                            call-node))
               {:node      :ffi-call
                :name      "cxc_bytes_slice"
                :args      (into [target-lo] arg-exprs)
@@ -4948,15 +4948,15 @@
             (= "panic" callee-name)
             (let [args (:args node)
                   _    (when-not (= 1 (count args))
-                         (fail-nyi! (str "panic() expects exactly one string "
-                                         "arg, got " (count args))
-                                    node))
+                         (fail-user! (str "panic() expects exactly one string "
+                                          "arg, got " (count args))
+                                     node))
                   msg-expr (:value (first args))
                   _    (when-not (= :lit-string (:node msg-expr))
-                         (fail-nyi! (str "panic() arg must be a string literal "
-                                         "for MVP (spec §3.5.4). Domain-error "
-                                         "payload waits on Result infra.")
-                                    node))
+                         (fail-user! (str "panic() arg must be a string literal "
+                                          "for MVP (spec §3.5.4). Domain-error "
+                                          "payload waits on Result infra.")
+                                     node))
                   ;; L-panic-cap (2026-08-26) — require the enclosing
                   ;; atom to declare `use panic: SystemPanic`. Panic
                   ;; is the process-terminal escape hatch; the `use:`
@@ -5376,9 +5376,9 @@
   (let [target-lo (lower-expr (:target node) ctx)
         target-ty (infer-type (:target node) ctx)
         _         (when-not (and (map? target-ty) (:atom target-ty))
-                    (fail-nyi! (str "send target must resolve to an atom-typed "
-                                    "expression (got " (pr-str target-ty) ")")
-                               node))
+                    (fail-user! (str "send target must resolve to an atom-typed "
+                                     "expression (got " (pr-str target-ty) ")")
+                                node))
         atom-name (:atom target-ty)
         atom-info (env/env-lookup ctx :atom-env atom-name)
         _         (when-not atom-info
@@ -6462,10 +6462,10 @@
                                "dot callee (`source.method(args)`); got "
                                (get-in src [:callee :node]))
                           src))
-      (fail-nyi! (str "receive-glyph source pattern must be a bare ident "
-                      "(message), dot expression (static stream), or "
-                      "method call (returned stream); got " (:node src))
-                 src))))
+      (fail-user! (str "receive-glyph source pattern must be a bare ident "
+                       "(message), dot expression (static stream), or "
+                       "method call (returned stream); got " (:node src))
+                  src))))
 
 (defn- transition-msg-name
   "Extract the message-name from a message-triggered receive-glyph
@@ -6475,8 +6475,8 @@
   (let [src (get-in t [:receive :msg :source])]
     (case (:node src)
       :ident (:name src)
-      (fail-nyi! (str "expected bare-ident message source (got " (:node src) ")")
-                 src))))
+      (fail-user! (str "expected bare-ident message source (got " (:node src) ")")
+                  src))))
 
 (defn- transition-display-name
   "Human-readable identifier for a receive-glyph transition, used in
