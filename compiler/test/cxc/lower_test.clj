@@ -91,13 +91,13 @@
 (deftest missing-program-errors
   (is (thrown? clojure.lang.ExceptionInfo (lower-src "def R:\n    x: Int\n"))))
 
-(deftest unsupported-call-fails-nyi
-  (testing "any call other than print raises :not-yet-implemented"
+(deftest unsupported-call-fails-user
+  (testing "any call other than print raises :cxc-user-error (T2 batch 3: unknown-name call is a structural user error, not a compiler gap)"
     (try
       (lower-src "def main:\n    -> running\n        then: unknown_fn(1)\n")
       (is false "expected NYI throw")
       (catch clojure.lang.ExceptionInfo e
-        (is (= :not-yet-implemented (:kind (ex-data e))))))))
+        (is (= :cxc-user-error (:kind (ex-data e))))))))
 
 (deftest arithmetic-in-print-int
   (testing "int + int uses %lld format (Phase D F36a — Int aliased to Int64; printf format widens accordingly); binop lowers with left/right"
@@ -649,7 +649,7 @@ def main:
                nil
                (catch clojure.lang.ExceptionInfo e e))]
       (is ex "expected exception")
-      (is (= :not-yet-implemented (:kind (ex-data ex))))
+      (is (= :cxc-user-error (:kind (ex-data ex))))
       (is (re-find #"not a compile-time constant" (.getMessage ex))))))
 
 (deftest f40-record-field-default-call-rejected
@@ -659,7 +659,7 @@ def main:
                nil
                (catch clojure.lang.ExceptionInfo e e))]
       (is ex "expected exception")
-      (is (= :not-yet-implemented (:kind (ex-data ex))))
+      (is (= :cxc-user-error (:kind (ex-data ex))))
       (is (re-find #"not a compile-time constant" (.getMessage ex))))))
 
 (deftest f40-atom-ctor-default-computed-rejected
@@ -669,7 +669,7 @@ def main:
                nil
                (catch clojure.lang.ExceptionInfo e e))]
       (is ex "expected exception")
-      (is (= :not-yet-implemented (:kind (ex-data ex))))
+      (is (= :cxc-user-error (:kind (ex-data ex))))
       (is (re-find #"not a compile-time constant" (.getMessage ex))))))
 
 (deftest f40-observable-default-computed-rejected
@@ -679,7 +679,7 @@ def main:
                nil
                (catch clojure.lang.ExceptionInfo e e))]
       (is ex "expected exception")
-      (is (= :not-yet-implemented (:kind (ex-data ex))))
+      (is (= :cxc-user-error (:kind (ex-data ex))))
       (is (re-find #"not a compile-time constant" (.getMessage ex))))))
 
 (deftest f16-l3-enum-case-default-accepted
@@ -5795,7 +5795,7 @@ def main:
                nil
                (catch clojure.lang.ExceptionInfo e e))]
       (is ex "expected exception")
-      (is (= :not-yet-implemented (:kind (ex-data ex))))
+      (is (= :cxc-user-error (:kind (ex-data ex))))
       (is (re-find #"does not structurally conform" (.getMessage ex)))
       (is (re-find #"missing field `y`" (.getMessage ex)))
       (is (re-find #"record has: x" (.getMessage ex))))))
@@ -5813,7 +5813,7 @@ def main:
                nil
                (catch clojure.lang.ExceptionInfo e e))]
       (is ex "expected exception")
-      (is (= :not-yet-implemented (:kind (ex-data ex))))
+      (is (= :cxc-user-error (:kind (ex-data ex))))
       (is (re-find #"does not structurally conform" (.getMessage ex)))
       (is (re-find #"field `x` type mismatch" (.getMessage ex))))))
 
@@ -5866,7 +5866,7 @@ def main:
                   nil
                   (catch clojure.lang.ExceptionInfo e e))]
       (is ex "expected exception")
-      (is (= :not-yet-implemented (:kind (ex-data ex))))
+      (is (= :cxc-user-error (:kind (ex-data ex))))
       (is (re-find #"field `z` not present on named" (.getMessage ex)))
       (is (re-find #"available: x, y" (.getMessage ex))))))
 

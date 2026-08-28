@@ -324,7 +324,7 @@
                       (not (:cxc-f41-synthesized p))
                       (not (:cxc-compiler-synthesized p)))]
      (when-not (default-expr-const-shape? d atom-env enum-env)
-       (fail-nyi! (str "default for `" (:name p) "` on " site
+       (fail-user! (str "default for `" (:name p) "` on " site
                        " is not a compile-time constant (spec §3.8.5 "
                        "permits primitive literals, `nil`, unary `-`/"
                        "`not` on those, a value-alias identifier, or a"
@@ -2985,7 +2985,7 @@
             r-fam (or (and (vector? rt*) (first rt*)) :int)]
         (cond
           (not= l-fam r-fam)
-          (fail-nyi! (str "binop " op " mixes signed " lt* " with unsigned " rt*
+          (fail-user! (str "binop " op " mixes signed " lt* " with unsigned " rt*
                           " — spec §3.11 requires an explicit conversion")
                      {:left lt :right rt})
           :else
@@ -2994,7 +2994,7 @@
                 r  (if (>= lw rw) lt* rt*)]
             (if any-opt? [:optional r] r))))
 
-      :else (fail-nyi! (str "binop " op " between " lt " and " rt)
+      :else (fail-user! (str "binop " op " between " lt " and " rt)
                        {:left lt :right rt}))))
 
 ;; ---------------------------------------------------------------------------
@@ -3215,7 +3215,7 @@
           ;; functions); type-kw was pre-computed at env build.
           o          (:type-kw o)
           struct-hit struct-hit
-          :else (fail-nyi! (str "method/observable `" method-name "` on record `" rn "`")
+          :else (fail-user! (str "method/observable `" method-name "` on record `" rn "`")
                            call-node)))
 
       (and (map? target-ty) (:atom target-ty))
@@ -3226,7 +3226,7 @@
           m (cxc-type->type-kw (:cxc-return-ty m)
                                (:record-env ctx) (:atom-env ctx) (:enum-env ctx) call-node)
           o (:type-kw o)
-          :else (fail-nyi! (str "method/observable `" method-name "` on atom `" an "`")
+          :else (fail-user! (str "method/observable `" method-name "` on atom `" an "`")
                            call-node)))
 
       ;; F37 L6a — primitive-method dispatch on `:bytes` values.
@@ -3245,7 +3245,7 @@
       :bytes
 
       :else
-      (fail-nyi! "method call on non-record/non-atom target" call-node))))
+      (fail-user! "method call on non-record/non-atom target" call-node))))
 
 (def ^:private ffi-builtins
   "Compiler-recognized function names that lower to raw C/ObjC. Intended
@@ -3489,7 +3489,7 @@
         (and (get-in ctx [:self-fields nm])
              (= "Block" (:cxc-ty (get-in ctx [:self-fields nm]))))
         :void
-        :else (fail-nyi! (str "call to `" nm "`") node)))
+        :else (fail-user! (str "call to `" nm "`") node)))
     :dot   (if-let [enum-payload (enum-payload-call? node ctx)]
              {:enum (:name enum-payload)}
              (if-let [record-from (record-from-bytes-call? node ctx)]
@@ -3552,7 +3552,7 @@
     (= :bytes owner-ty)
     (case field-name
       "length" :int
-      (fail-nyi! (str "field `" field-name "` on Bytes — only `.length` "
+      (fail-user! (str "field `" field-name "` on Bytes — only `.length` "
                       "ships in F37b L1 (spec §3.10.10). Slice/at/builder "
                       "methods follow when a use case forces them.")
                  node))
@@ -3585,7 +3585,7 @@
                    node)
 
         (nil? type-node)
-        (fail-nyi! (str "field `" field-name "` not present on named "
+        (fail-user! (str "field `" field-name "` not present on named "
                         "tuple `" mangled "` (available: "
                         (str/join ", " (map :name (:fields shape))) ")")
                    node)
@@ -3605,7 +3605,7 @@
                                             (:record-env ctx) (:atom-env ctx) (:enum-env ctx) node))
         o (:type-kw o)
         :else
-        (fail-nyi! (str "field/observable `" field-name "` on record `" owner "`") node)))
+        (fail-user! (str "field/observable `" field-name "` on record `" owner "`") node)))
 
     (and (map? owner-ty) (:atom owner-ty))
     (let [owner     (:atom owner-ty)
@@ -3643,10 +3643,10 @@
                                                     "self" {:atom owner}))]
                   (infer-type (:expr raw-obs) obs-ctx))
         :else
-        (fail-nyi! (str "field/observable `" field-name "` on atom `" owner "`") node)))
+        (fail-user! (str "field/observable `" field-name "` on atom `" owner "`") node)))
 
     :else
-    (fail-nyi! "field access on non-aggregate type" node)))
+    (fail-user! "field access on non-aggregate type" node)))
 
 (defn- enum-case-access?
   "A `:dot` whose target is an `:ident` naming an enum, and whose field
@@ -3690,7 +3690,7 @@
                                   "blocks)")
                              node))
     :self       (or (get (:locals ctx) "self")
-                    (fail-nyi! "type-of `self` outside a method body" node))
+                    (fail-user! "type-of `self` outside a method body" node))
     :ident      (or
                  ;; F49 pre-store invariant substitution — when
                  ;; `:field-substitutions` maps this ident to a
@@ -3759,7 +3759,7 @@
                   (cond
                     (= target-ty :string) :int
                     :else
-                    (fail-nyi! (str "subscript `expr[i]` on target of type "
+                    (fail-user! (str "subscript `expr[i]` on target of type "
                                     (pr-str target-ty)
                                     " — F19 L2 handles `String[i]` only. "
                                     "List / Map indexing waits on F42 "
@@ -4024,7 +4024,7 @@
                                     (pr-str (:expected result))
                                     ", got " (pr-str (:got result)) ")")
                                "")]
-              (fail-nyi! (str "atom ctor `" atom-name "` param `"
+              (fail-user! (str "atom ctor `" atom-name "` param `"
                               param-name "`: record `" record-name
                               "` does not structurally conform to named tuple `"
                               required-mangled "` —" reason-msg
@@ -4038,7 +4038,7 @@
         (let [arg-mangled      (:named-tuple arg-tk)
               required-mangled (named-tuple/canonical-named-tuple-name required)]
           (when-not (= arg-mangled required-mangled)
-            (fail-nyi! (str "atom ctor `" atom-name "` param `"
+            (fail-user! (str "atom ctor `" atom-name "` param `"
                             param-name "`: named tuple `"
                             arg-mangled "` does not match required `"
                             required-mangled
@@ -4347,13 +4347,13 @@
                 m           (get-in atom-entry [:method-index method-name])
                 o           (get-in atom-entry [:observable-index method-name])
                 _           (when (and (nil? m) (nil? o))
-                              (fail-nyi! (str "method/observable `" method-name "` on atom `"
+                              (fail-user! (str "method/observable `" method-name "` on atom `"
                                               atom-name "`") call-node))
                 ;; F67 L2: parametric observables carry `:params`; a call
                 ;; with args must supply exactly those params.
                 _           (when (and o (seq arg-exprs)
                                        (not= (count arg-exprs) (count (:params o))))
-                              (fail-nyi! (str "observable `" method-name "` called with "
+                              (fail-user! (str "observable `" method-name "` called with "
                                               (count arg-exprs) " args but declares "
                                               (count (:params o)) " params")
                                          call-node))
@@ -4382,7 +4382,7 @@
               msg-send))
 
           :else
-          (fail-nyi! "method call on non-record/non-atom target" call-node))))))))
+          (fail-user! "method call on non-record/non-atom target" call-node))))))))
 
 (def ^:private statement-node-kinds
   #{:expr-stmt :emit :break-stmt :continue-stmt :while-stmt
@@ -4918,7 +4918,7 @@
                               :args     [(lower-expr (:index node) ctx)]}}
 
                     :else
-                    (fail-nyi! (str "subscript `expr[i]` on target of type "
+                    (fail-user! (str "subscript `expr[i]` on target of type "
                                     (pr-str target-ty)
                                     " — F19 L2 handles `String[i]` only. "
                                     "List / Map indexing waits on F42 "
@@ -5067,7 +5067,7 @@
               {:node :call :fn (str "_" callee-name) :args []})
 
             :else
-            (fail-nyi! (str "call to `" callee-name "`") node)))
+            (fail-user! (str "call to `" callee-name "`") node)))
 
         :dot   (if-let [enum-payload (enum-payload-call? node ctx)]
                  (lower-enum-payload-ctor (:name enum-payload) node ctx)
@@ -5186,7 +5186,7 @@
   [node ctx]
   (let [self-info (get-in ctx [:locals "self"])
         _         (when-not (and (map? self-info) (:atom self-info))
-                    (fail-nyi! (str "untargeted `:> " (:msg node)
+                    (fail-user! (str "untargeted `:> " (:msg node)
                                     "` outside a def-atom transition body "
                                     "(no `self` in scope)")
                                node))
@@ -5196,7 +5196,7 @@
         _         (when-not stream
                     ;; Shouldn't happen — collect-stream-shapes registered
                     ;; every emit site — but guard against ctx drift.
-                    (fail-nyi! (str "atom `" atom-name "` has no `:> "
+                    (fail-user! (str "atom `" atom-name "` has no `:> "
                                     (:msg node) "` emit registered "
                                     "(stream-index missed it)")
                                node))
@@ -5387,7 +5387,7 @@
         ;; Cross-atom shape check (Step 10 formalizes diagnostic).
         msg-shape (get-in atom-info [:message-index msg-name])
         _         (when-not msg-shape
-                    (fail-nyi! (str "atom `" atom-name "` has no `<: " msg-name
+                    (fail-user! (str "atom `" atom-name "` has no `<: " msg-name
                                     "` message-triggered transition — cannot send")
                                node))
         declared-params (mapv (fn [p] {:name    (:name p)
