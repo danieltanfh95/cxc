@@ -51,15 +51,47 @@
    reason recovery / F52 module let-bindings / F56 emit-boundary
    mangling. Feature-by-feature status lives in plans/g*/.
 
-   Ctx map threaded through infer-type / lower-expr:
-     {:record-env    <name -> {:fields :field-index :methods :method-index}>
-      :atom-env      <name -> {:fields :field-index :extras}>
-      :enum-env      <name -> {:cases :case-entries ...}>
-      :decl->module  <name -> module-kw>  ; F51 b.ii-2 provenance
-      :module-map    <module-kw -> #{decl-names}>
-      :symbol-table  <full resolve/build-symbol-table>
-      :named-tuple-env <mangled-name -> shape>  ; F15 L2.c.iii
-      :locals        <name -> ty>       ; local scope for method bodies etc."
+   Ctx map threaded through `infer-type` / `lower-expr`.
+   ---------------------------------------------------------------------
+   Ctx is a plain map. Every base key is present on every ctx that
+   reaches `lower-expr`; scope-scoped keys are added by an `assoc`
+   inside a particular lowering context and disappear when that
+   context's frame returns. Callers use `mk-ctx` (below) to build
+   the base ctx from env-builder outputs.
+
+   BASE (required — always present after `mk-ctx`):
+     :record-env       <name -> {:fields :field-index
+                                 :methods :method-index :kind ...}>
+     :atom-env         <name -> {:fields :field-index :extras
+                                 :kind :method-index ...}>
+     :enum-env         <name -> {:cases :case-entries ...}>
+     :symbol-table     <full resolve/build-symbol-table>  ; F51 unified
+     :decl->module     <name -> module-kw>                ; F51 b.ii-2
+     :module-map       <module-kw -> #{decl-names}>       ; F51 b.ii-2
+     :named-tuple-env  <mangled-name -> shape>            ; F15 L2.c.iii
+     :locals           <name -> ty>                       ; may be {}
+
+   SCOPE-SCOPED (added by a specific lowering frame; absent otherwise):
+     :self-fields         set by atom-body method lowering (F5 methods
+                          reading own fields via `self.x`).
+     :snapshot-name       set by then: bag / pre-store invariant / F49
+                          field-update lowering. Values are C-side var
+                          names: `\"__cxc_snap\"`, `\"__cxc_next\"`.
+     :field-substitutions substitution map applied inside a store's
+                          expression rewrite (F49 pre-store invariant).
+     :in-loop?            set by loop bodies to allow break/continue.
+     :companion-receive   set inside companion (F31) receive lowering
+                          when the atom carries a companion protocol.
+
+   LEGACY (may be absent — do not fail if missing):
+     :protocol-env        F51 hasn't absorbed protocols into
+                          `:symbol-table` yet; `def-kind` reads this
+                          as a fallback. Retires when F51 covers
+                          protocols.
+
+   Adding a new key: extend `mk-ctx` (base) or document the scope
+   frame that owns it (scope-scoped). Never let a key appear
+   silently in some paths and not others."
   (:require [clojure.set]
             [clojure.string :as str]
             [clojure.walk :as walk]
@@ -73,6 +105,46 @@
 
 (defn- fail-compile! [kind msg node]
   (throw (ex-info msg {:kind kind :what msg :node node})))
+
+(defn- mk-ctx
+  "Construct the base lowering ctx from env-builder outputs. See the
+   ns docstring above for the full ctx schema — this constructor
+   installs every BASE key so downstream `(get ctx :foo)` never
+   silently returns nil for one of them. Scope-scoped keys
+   (`:self-fields`, `:snapshot-name`, `:field-substitutions`,
+   `:in-loop?`, `:companion-receive`) are added by their owning
+   lowering frame via `assoc`, not here.
+
+   All base keys are required. A missing arg indicates a caller bug
+   (env-builder pipeline shortcut, test harness bypassing an env);
+   fail loud rather than propagate nil through infer-type / lookup."
+  [{:keys [record-env atom-env enum-env symbol-table
+           decl->module module-map named-tuple-env]}]
+  (when-not (map? record-env)
+    (throw (ex-info "mk-ctx: :record-env required" {:got record-env})))
+  (when-not (map? atom-env)
+    (throw (ex-info "mk-ctx: :atom-env required" {:got atom-env})))
+  (when-not (map? enum-env)
+    (throw (ex-info "mk-ctx: :enum-env required" {:got enum-env})))
+  (when-not (map? symbol-table)
+    (throw (ex-info "mk-ctx: :symbol-table required" {:got symbol-table})))
+  (when-not (map? decl->module)
+    (throw (ex-info "mk-ctx: :decl->module required (may be {})"
+                    {:got decl->module})))
+  (when-not (map? module-map)
+    (throw (ex-info "mk-ctx: :module-map required (may be {})"
+                    {:got module-map})))
+  (when-not (map? named-tuple-env)
+    (throw (ex-info "mk-ctx: :named-tuple-env required (may be {})"
+                    {:got named-tuple-env})))
+  {:record-env      record-env
+   :atom-env        atom-env
+   :enum-env        enum-env
+   :symbol-table    symbol-table
+   :decl->module    decl->module
+   :module-map      module-map
+   :named-tuple-env named-tuple-env
+   :locals          {}})
 
 ;; ---------------------------------------------------------------------------
 ;; F56 L2+L3 (2026-08-27) — emit-boundary mangling.
@@ -12020,12 +12092,13 @@
         ;; C-id mangling). Attribution is decl-shaped, not ref-shaped,
         ;; so the module-let-substitution pass between top and here
         ;; doesn't affect it — reuse the local instead of recomputing.
-        ctx        {:record-env record-env :atom-env atom-env :enum-env enum-env
-                    :symbol-table symbol-table
-                    :decl->module d->m
-                    :module-map module-map
-                    :named-tuple-env ctx-nt-shapes
-                    :locals {}}
+        ctx        (mk-ctx {:record-env      record-env
+                            :atom-env        atom-env
+                            :enum-env        enum-env
+                            :symbol-table    symbol-table
+                            :decl->module    d->m
+                            :module-map      module-map
+                            :named-tuple-env ctx-nt-shapes})
         records    (filter #(= :record (:node %)) top-nodes)
         enums      (filter #(= :enum   (:node %)) top-nodes)
         c-enums    (mapv #(lower-enum % record-env atom-env enum-env module-map) enums)
