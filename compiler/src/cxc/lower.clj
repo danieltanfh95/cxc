@@ -234,7 +234,11 @@
              :refer [proposition-error-call
                      collect-self-field-refs]]
             [cxc.lower.args-resolve :as args-resolve
-             :refer [resolve-args-against-params]]))
+             :refer [resolve-args-against-params]]
+            [cxc.lower.self-field :as self-field-ns
+             :refer [field-needs-slot-setter?
+                     field-nonnil?
+                     self-field-info]]))
 
 ;; M1b prep — compile-error funnels (fail-nyi! / fail-user! /
 ;; fail-compile!) extracted to cxc.diagnostics. See its ns docstring
@@ -3893,39 +3897,8 @@
 
 ;; M1c — `capitalize-first` moved to cxc.lower.util.
 
-(defn- field-needs-slot-setter?
-  "True when writing this field in a `then:` update must route through
-   the synthesized slot setter instead of a direct ivar assignment.
-   Applies when the field is a subscription root on the enclosing
-   atom's :subscription-map. Other fields keep the simple write."
-  [field-name ctx]
-  (let [self-info (get-in ctx [:locals "self"])
-        atom-name (and (map? self-info) (:atom self-info))
-        info      (env/env-lookup ctx :atom-env atom-name)
-        subs      (get-in info [:subscription-map field-name])]
-    (boolean (seq subs))))
-
-(defn- field-nonnil?
-  "F39 L3 — is the field with this name declared `T!` on the enclosing
-   atom? Reads self-fields from ctx; returns false when not found (so
-   containers without the enclosing-atom context degrade gracefully)."
-  [field-name ctx]
-  (let [self-info (get-in ctx [:locals "self"])
-        atom-name (and (map? self-info) (:atom self-info))
-        info      (env/env-lookup ctx :atom-env atom-name)
-        f         (get-in info [:field-index field-name])]
-    (boolean (:nonnil? f))))
-
-(defn- self-field-info
-  "F39 L5b-ii-c helper — look up a field record on the enclosing atom
-   in ctx. Returns nil when self isn't an atom in scope (e.g. record
-   method context or free position). Callers use this to check
-   `:optional?` / `:c-type` for Optional wrap/unwrap decisions."
-  [field-name ctx]
-  (let [self-info (get-in ctx [:locals "self"])
-        atom-name (and (map? self-info) (:atom self-info))
-        info      (env/env-lookup ctx :atom-env atom-name)]
-    (get-in info [:field-index field-name])))
+;; M1c — field-needs-slot-setter? / field-nonnil? / self-field-info
+;; moved to cxc.lower.self-field.
 
 (defn- lower-then-update
   "`then: field => expr` → `_field = <expr>;` for the common case.
