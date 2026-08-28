@@ -118,7 +118,10 @@
                      substitute-module-let-refs module-let-emit-entries
                      reject-module-let-shadowing!]]
             [cxc.lower.enum :as lower-enum-ns
-             :refer [lower-enum]]))
+             :refer [lower-enum]]
+            [cxc.lower.optional :as lower-optional
+             :refer [collect-optional-types synth-optional-typedef
+                     synth-optional-typedefs]]))
 
 ;; M1b prep — compile-error funnels (fail-nyi! / fail-user! /
 ;; fail-compile!) extracted to cxc.diagnostics. See its ns docstring
@@ -7462,75 +7465,11 @@
      :name          (reason-box-name rec-c)
      :struct-c-type rec-c}))
 
-;; F39 Landing 5b-ii-a (2026-08-21) — Optional-boxed value-type
-;; infrastructure. Under the unified rule (spec §3.6.1, design premise
-;; 1 of plans/g3-structural-canonical/f39-nullability.md) bare `T` on a value type is nullable
-;; at every position. The C representation carrying nil is a
-;; `_Cxc_Optional_<T> { uint8_t present; T value; }` struct.
-;;
-;; L5b-ii-a lands the collection + synthesis + name-mangling
-;; machinery as DEAD CODE — no field yet triggers Optional storage.
-;; L5b-ii-b flips `cxc-type->c :type-ref` to consult this machinery.
-;; Isolated here so the flip is a one-place change rather than a
-;; scattered rewrite.
 
-;; M1b — `optional-type-name` moved to cxc.type-kw.
+;; M1c — F39 Optional-typedef synth (collect-optional-types,
+;; synth-optional-typedef, synth-optional-typedefs) moved to
+;; cxc.lower.optional.
 
-(defn- collect-optional-types
-  "L5b-ii-b (2026-08-22): scan record + atom envs for fields whose
-   storage was flipped to `_Cxc_Optional_<T>` (i.e. `:optional? true`)
-   and return the set of inner T names that need a typedef.
-   `fields-from-data-section` sets the flag when a bare-T value-typed
-   field lands storage. Returned names feed `synth-optional-typedefs`.
-
-   Atom envs share the same fields shape when the atom has a
-   data-section — those get their fields via the same helper."
-  [record-env atom-env _enum-env]
-  (let [rec-fields  (mapcat :fields (vals record-env))
-        atom-fields (mapcat (fn [info]
-                              (or (:fields info) []))
-                            (vals atom-env))
-        field-set   (into #{}
-                          (comp (filter :optional?)
-                                (map :cxc-ty))
-                          (concat rec-fields atom-fields))]
-    ;; F39 L5b-ii-c — ord binops (`x.n > 0`) on Optional operands produce
-    ;; Optional<Bool>, which needs the `_Cxc_Optional_Bool` typedef even
-    ;; when no field is declared Bool. Cheap to include unconditionally
-    ;; whenever any Optional field exists.
-    (if (seq field-set)
-      (conj field-set "Bool")
-      field-set)))
-
-(defn- synth-optional-typedef
-  "Produce a `:c-struct` for `_Cxc_Optional_<T>`. Layout is presence-
-   byte-first per §3.10.10 wire encoding — the `.present` field IS
-   the first canonical byte, avoiding a conversion pass for
-   `.as() to Bytes` (L9). C99 designated initializers construct
-   instances at wrap sites via the existing `:struct-lit` emit path
-   (no new emitter code needed).
-
-   `t` is the source cxc type name (e.g. `\"Int\"`, `\"Position\"`);
-   ctx supplies the envs needed to resolve `t`'s raw C type."
-  [t ctx]
-  (let [c-value-type (cxc-type->c {:node :type-ref :name t
-                                   :resolves-to (get (:decl->module ctx) t)}
-                                  (:record-env ctx)
-                                  (:atom-env   ctx)
-                                  (:enum-env   ctx)
-                                  (:module-map ctx))]
-    {:node   :c-struct
-     :name   (optional-type-name t)
-     :fields [{:name "present" :c-type "uint8_t"}
-              {:name "value"   :c-type c-value-type}]}))
-
-(defn- synth-optional-typedefs
-  "Emit one `_Cxc_Optional_<T>` typedef per T in `optional-types`.
-   Called from `lower` after record/enum/atom envs are built so
-   `cxc-type->c` can resolve the inner T. Under L5b-ii-a `optional-
-   types` is always empty; under L5b-ii-b it becomes non-empty."
-  [optional-types ctx]
-  (mapv #(synth-optional-typedef % ctx) (sort optional-types)))
 
 (defn- lower-method-fn
   "A record method becomes a free C function. `self` and each typed
