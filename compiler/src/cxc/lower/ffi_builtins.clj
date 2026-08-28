@@ -1,0 +1,153 @@
+(ns cxc.lower.ffi-builtins
+  "Compiler-recognized FFI builtin table.
+
+   Prelude-authored bodies (real Clock/Random/Console capabilities) call
+   these names; lowering intercepts them via `ffi-builtin?` and emits raw
+   C/ObjC via each entry's `:emit-c` fn.
+
+   Retirement pending — this registry is a compiler-invented mechanism
+   (audit F/K7) parallel to the spec's `foreign library` blocks (§1.14)
+   consumed via the `Extern` capability atom (§1.12). Real machinery
+   requires prelude directory tree + name resolution + capability
+   provisioning (Phase D). Until then, prelude bodies use this hatch.
+
+   Table shape (per entry): {:return-kw <type-kw for infer-type>
+                             :return-type-node <optional raw type node>
+                             :arity <int>
+                             :emit-c <fn [lowered-args] → C string>}")
+
+(def ffi-builtins
+  "Map from builtin name to metadata. Public because M1 splits the
+   consumers (infer/lower) across sibling namespaces."
+  {"native_millis_now"
+   {:return-kw :int
+    :arity     0
+    :emit-c    (fn [_args]
+                 "((int)([[NSDate date] timeIntervalSince1970] * 1000))")}
+   "native_random_u32"
+   {:return-kw :int
+    :arity     0
+    :emit-c    (fn [_args]
+                 "((int)(arc4random() & 0x7FFFFFFF))")}
+   "native_console_write"
+   ;; Layer 6 Step 5: Console.write(msg) writes to stdout, returns
+   ;; the number of bytes written. Wraps printf's %s to route
+   ;; through the same underlying fd as `print` — subsequent output
+   ;; from either path interleaves correctly.
+   ;;
+   ;; F65: msg is NSString *; extract UTF8 bytes at the print site.
+   {:return-kw :int
+    :arity     1
+    :emit-c    (fn [args]
+                 (str "printf(\"%s\", [" (first args) " UTF8String])"))}
+   "native_random_below"
+   {:return-kw :int
+    :arity     1
+    :emit-c    (fn [args]
+                 (str "((int)arc4random_uniform((uint32_t)("
+                      (first args) ")))"))}
+   "native_clock_every"
+   ;; Layer 5c Step 8/10 — real method-returned Stream. Called from
+   ;; Clock's `every(rate_ms: Int) -> Stream` method body; creates a
+   ;; CxcStream carrying subscribers plus a dispatch_source_t periodic
+   ;; timer whose event handler builds a fresh `_Cxc_Instant` and
+   ;; fans it to every subscriber via `objc_msgSend` cast. macOS
+   ;; libdispatch quirk: `dispatch_source_t` timers targeting the main
+   ;; queue don't fire under `dispatch_main()`, so the timer lives on
+   ;; a dedicated serial queue.
+   ;;
+   ;; Payload shape (`t: Instant`) matches the registration in
+   ;; `method-stream-payload-shapes` for `[_Cxc_Clock every]`. Selector
+   ;; on the subscriber side is
+   ;; `cxc_stream_every_from__Cxc_ClockWithsender:t:` — receiver-side
+   ;; method synthesis in `lower-receive-glyph-transitions` builds the
+   ;; matching signature. The fanout bypasses CxcStream's generic
+   ;; `-cxc_emit` because that method assumes a fixed (id, id)
+   ;; signature; typed payload needs a per-payload-shape cast, which
+   ;; we specialize inline here.
+   ;;
+   ;; Lifecycle: the CxcStream owns the timer via its teardown block.
+   ;; The subscriber owns the CxcStream (see :raw-stream-subscribe in
+   ;; emit — cxc_own_resource(self, stream) at subscription site).
+   ;; When the subscriber -> end, its resources drop the stream →
+   ;; ARC dealloc → -cxc_end fires teardown → timer cancelled → the
+   ;; CxcTimerHandle deallocs → queue released. Clock (the source)
+   ;; is just a factory here; it holds no reference to the stream
+   ;; and its own lifecycle is independent. Retires the earlier
+   ;; CFBridgingRetain leaks and unblocks per-subscriber lifetime
+   ;; (a Clock with a short internal beat count doesn't kill a
+   ;; subscriber's every-stream anymore).
+   ;;
+   ;; The event handler holds a strong ref to the CxcStream — that
+   ;; ref lives inside the timer's captured block. The
+   ;; CxcTimerHandle in the teardown-captured `__cxc_h` closure keeps
+   ;; the timer + queue alive as long as the stream lives. Cycle:
+   ;; stream → teardown block → handle → (no back-ref to stream).
+   ;; No retain cycle; when subscriber drops stream, stream deallocs
+   ;; → teardown runs → handle released → block destroyed → strong
+   ;; stream ref inside block also released (already dealloc'd, so
+   ;; no-op).
+   {:return-kw {:atom "CxcStream"}
+    ;; F67 L4b — parametric return-type node consulted by the receive-glyph
+    ;; :method-stream resolver so observables wrapping this native inherit the
+    ;; `Stream of T` structure without an explicit `-> T` annotation on the
+    ;; observable header. Post-prelude-rename shape (Stream → CxcStream,
+    ;; Instant → _Cxc_Instant); the ffi table stays in the same naming
+    ;; convention as its C emission.
+    :return-type-node {:node :type-of :outer "CxcStream"
+                       :inner {:node :type-ref :name "Instant"}}
+    :arity     2
+    :emit-c    (fn [args]
+                 (let [src  (first args)
+                       rate (second args)]
+                   (str "({ "
+                        "id __cxc_src = " src "; "
+                        "int64_t __cxc_ms = (int64_t)(" rate "); "
+                        "dispatch_queue_t __cxc_q = "
+                        "dispatch_queue_create(\"cxc.every\", DISPATCH_QUEUE_SERIAL); "
+                        "dispatch_source_t __cxc_t = "
+                        "dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, "
+                        "__cxc_q); "
+                        "dispatch_source_set_timer(__cxc_t, "
+                        "dispatch_time(DISPATCH_TIME_NOW, __cxc_ms * NSEC_PER_MSEC), "
+                        "__cxc_ms * NSEC_PER_MSEC, 0); "
+                        "CxcStream *__cxc_s = "
+                        "[[CxcStream alloc] initWithSelector:"
+                        "@\"cxc_stream_every_from__Cxc_ClockWithsender:value:\" "
+                        "source:__cxc_src]; "
+                        ;; Weak ref inside the event handler so the
+                        ;; timer's block doesn't keep the stream
+                        ;; alive after subscribers drop it. Without
+                        ;; the weak, stream → handle → block → strong
+                        ;; stream is a real cycle.
+                        "__weak CxcStream *__cxc_ws = __cxc_s; "
+                        "dispatch_source_set_event_handler(__cxc_t, ^{ "
+                        "CxcStream *__cxc_ss = __cxc_ws; "
+                        "if (__cxc_ss == nil) return; "
+                        ;; Build a fresh Instant per fire — matches
+                        ;; the receive-side `{t: Instant}` type. Layer
+                        ;; 5 keeps Instant.millis as int (see prelude
+                        ;; Instant record); a wider integral type
+                        ;; requires plumbing all the way through.
+                        "_Cxc_Instant __cxc_inst = { .millis = "
+                        "(int)([[NSDate date] timeIntervalSince1970] * 1000) }; "
+                        "SEL __cxc_sel = sel_registerName("
+                        "\"cxc_stream_every_from__Cxc_ClockWithsender:value:\"); "
+                        "for (id sub in __cxc_ss.subscribers) { "
+                        ;; Hop to subscriber via cxc_send_async so
+                        ;; the msg lands on the subscriber's own_queue
+                        ;; — same delivery model as generic cxc_emit.
+                        "cxc_send_async(sub, ^{ "
+                        "((void (*)(id, SEL, id, _Cxc_Instant))objc_msgSend)"
+                        "(sub, __cxc_sel, __cxc_src, __cxc_inst); "
+                        "}); "
+                        "} "
+                        "}); "
+                        "dispatch_resume(__cxc_t); "
+                        "CxcTimerHandle *__cxc_h = [[CxcTimerHandle alloc] init]; "
+                        "__cxc_h.source = __cxc_t; "
+                        "__cxc_h.queue = __cxc_q; "
+                        "__cxc_s.teardown = ^{ (void)__cxc_h; }; "
+                        "__cxc_s; })")))}})
+
+(defn ffi-builtin? [name] (contains? ffi-builtins name))
