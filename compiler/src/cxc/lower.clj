@@ -229,7 +229,10 @@
                      reference-tk?]]
             [cxc.lower.emit-names :as emit-names
              :refer [class-name-for-atom
-                     synth-reason-box]]))
+                     synth-reason-box]]
+            [cxc.lower.proposition-helpers :as proposition-helpers
+             :refer [proposition-error-call
+                     collect-self-field-refs]]))
 
 ;; M1b prep — compile-error funnels (fail-nyi! / fail-user! /
 ;; fail-compile!) extracted to cxc.diagnostics. See its ns docstring
@@ -5571,31 +5574,7 @@
      :params      objc-params
      :body        body-stmts}))
 
-(defn- proposition-error-call
-  "Convert a normalized proposition's optional typed failure payload back
-   into the ordinary constructor-call AST consumed by `lower-expr`. L2a
-   keeps the type and named args separate so all proposition placements
-   share one record shape; F49 only needs to reconstruct the expression
-   when it builds a runtime failure branch."
-  [{:keys [as-error-type as-error-args] :as proposition}]
-  (when as-error-type
-    (when-not (= :type-ref (:node as-error-type))
-      (fail-compile!
-       :cxc-l2b-invalid-proposition-error-type
-       (str "typed proposition failure must construct a named error type; got `"
-            (:node as-error-type) "`")
-       proposition))
-    {:node   :call
-     :callee {:node        :ident
-              :name        (:name as-error-type)
-              ;; F51 b.ii-5d Batch 7 — synthesized error-record ctor
-              ;; call must carry the source `as-error-type`'s
-              ;; `:resolves-to` so `resolve-decl-lookup` finds the
-              ;; env entry under strict lookup.
-              :resolves-to (:resolves-to as-error-type)}
-     :args   (mapv (fn [[name value]]
-                     {:kind :named :name name :value value})
-                   as-error-args)}))
+;; M1c — proposition-error-call moved to cxc.lower.proposition-helpers.
 
 (defn- lower-invariant-check
   "One normalized proposition → an :invariant-check init statement. Ctx must carry
@@ -5686,25 +5665,7 @@
       failure-value  (assoc :failure-value failure-value)
       reason-box     (assoc :reason-box-name reason-box))))
 
-(defn- collect-self-field-refs
-  "Walk an AST value bottom-up, returning the set of unqualified :ident names
-   that would resolve to a self-field (not to a local, not to a fully-
-   qualified path). Used by F49 Landing A to decide whether a proposition
-   (predicate plus optional typed failure args) is safe to pre-store-check:
-   if every field ref has a source value in the substitution map, the
-   pre-store check emits before any field assignment truncates."
-  [ast ctx]
-  (let [acc (atom #{})]
-    (walk/postwalk
-     (fn [n]
-       (when (and (map? n)
-                  (= :ident (:node n))
-                  (not (contains? (:locals ctx) (:name n)))
-                  (get (:self-fields ctx) (:name n)))
-         (swap! acc conj (:name n)))
-       n)
-     ast)
-    @acc))
+;; M1c — collect-self-field-refs moved to cxc.lower.proposition-helpers.
 
 (defn- pre-store-invariant-check
   "F49 Landing A: emit the pre-store construction check for a normalized
