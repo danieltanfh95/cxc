@@ -11373,13 +11373,21 @@
        `-cxc_stream_<name>_from_<Element>...` that receive an event
        and re-emit on the container with `e` prepended to payload."
   [class-name element-name & {:keys [fanin-streams fanin-payloads]}]
-  (let [;; Step 6 fan-in via Layer 4b machinery. Container is the
+  ;; T1 — the caller (list-container-classes site in `lower`) reaches
+  ;; `(:stream-order entry)` / `(:stream-payload-index entry)` which
+  ;; can be nil for atoms without any streams. Sanitize once at the
+  ;; top so every downstream expression sees non-nil defaults —
+  ;; `:or` in destructure only fires on ABSENT keys, not on explicit
+  ;; nil values, so we cannot hoist it into the argvec.
+  (let [fanin-streams  fanin-streams
+        fanin-payloads (or fanin-payloads {})
+        ;; Step 6 fan-in via Layer 4b machinery. Container is the
         ;; source of its own fan-in streams; stream-source-methods
         ;; produces the hashtable ivars + emit methods + add/remove-
         ;; subscriber methods + generic dispatch.
         stream-parts (stream-source-methods class-name
-                                            (or fanin-streams [])
-                                            (or fanin-payloads {}))
+                                            fanin-streams
+                                            fanin-payloads)
         ;; Per-fan-in-stream forwarding on the container side:
         ;; when an element emits `<name>`, its fanout invokes
         ;; `[container cxc_stream_<name>_from_<Element>(...)]`. The
@@ -11413,7 +11421,7 @@
                                   :args     (into [{:node :name :sym "sender"}]
                                                   (map #(hash-map :node :name :sym %)
                                                        elem-keys))}]}))
-              (or fanin-streams []))
+              fanin-streams)
         ;; cxc_add: normal add + register container as subscriber on
         ;; each element-side stream.
         add-body (into
@@ -11426,14 +11434,14 @@
                           :recv {:node :name :sym "e"}
                           :selector (str "cxc_addSubscriberFor_" nm ":")
                           :args [{:node :name :sym "self"}]})
-                       (or fanin-streams [])))
+                       fanin-streams))
         remove-body (into
                      (mapv (fn [nm]
                              {:node :objc-msg
                               :recv {:node :name :sym "e"}
                               :selector (str "cxc_removeSubscriberFor_" nm ":")
                               :args [{:node :name :sym "self"}]})
-                           (or fanin-streams []))
+                           fanin-streams)
                      [{:node :objc-msg
                        :recv {:node :name :sym "_elements"}
                        :selector "removeObject:"
@@ -11473,7 +11481,7 @@
                       ;; silently unhooked, and their emits (fired
                       ;; during their own -> running) would drop
                       ;; when main queues them post-dispatch_main.
-                      (cond-> (seq (or fanin-streams []))
+                      (cond-> (seq fanin-streams)
                         (conj {:node :raw-c
                                :text (str "for (id _cxc_ie in _elements) { "
                                           (str/join " "
@@ -12161,9 +12169,13 @@
         ;; assumes records don't cycle by name (spec §3.4 — value-type
         ;; records are trees).
         record-name-set (into #{} (map :name) records)
-        {rec-inner-opts true prim-inner-opts false}
+        ;; T1 — hoist :or defaults so downstream reads don't have to
+        ;; re-defend against a missing group. group-by omits the key
+        ;; entirely when nothing lands in that bucket.
+        {rec-inner-opts true prim-inner-opts false
+         :or {rec-inner-opts [] prim-inner-opts []}}
         (group-by #(contains? record-name-set %) optional-types)
-        prim-inner-structs (synth-optional-typedefs (or prim-inner-opts []) ctx)
+        prim-inner-structs (synth-optional-typedefs prim-inner-opts ctx)
         rec-inner-set      (into #{} rec-inner-opts)
         ;; Emit each record struct followed by its own Optional-typedef
         ;; (when present in the set), so a downstream record whose field
