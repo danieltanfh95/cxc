@@ -4064,7 +4064,14 @@
 (defn- enum-payload-call?
   "F16 L1 — a `:call` whose callee is `<Enum>.<case>` where `<Enum>`
    is a known enum and `<case>` is one of its payload-carrying cases.
-   Returns the enum-name string when matched, nil otherwise."
+
+   Returns nil on no match, else a structured map:
+     {:name   \"Enum\"              ; enum declared name
+      :module <module-kw>          ; F51 provenance from :decl->module
+      :kind   :enum-payload
+      :case   \"caseName\"           ; the specific case selected
+      :info   <enum-env entry>}    ; :case-index, :payload-index, etc.
+   Callers destructure the fields they need — no re-lookup required."
   [call-node ctx]
   (let [callee (:callee call-node)]
     (when (and (= :dot (:node callee))
@@ -4075,17 +4082,26 @@
             info    (decl-lookup ctx :enum-env tgt)
             payload (get-in info [:payload-index case-nm])]
         (when (and info payload (seq payload))
-          en)))))
+          {:name   en
+           :module (get (:decl->module ctx) en)
+           :kind   :enum-payload
+           :case   case-nm
+           :info   info})))))
 
 (defn- record-from-bytes-call?
   "F37 L6 — a `:call` whose callee is `<Record>.from` where `<Record>`
-   is a known record type. Returns the record-name string when matched,
-   nil otherwise. Distinguished from `enum-payload-call?` by looking at
-   the record-env rather than the enum-env, and requiring the field to
-   be `from`. Eligibility (all primitive fields) is checked at lower
-   time, not here — non-eligible receivers still match this predicate
-   so the intercept can raise a targeted `fail-nyi!` naming the
-   offending field type."
+   is a known record type. Distinguished from `enum-payload-call?` by
+   looking at the record-env rather than the enum-env, and requiring
+   the field to be `from`. Eligibility (all primitive fields) is
+   checked at lower time, not here — non-eligible receivers still
+   match this predicate so the intercept can raise a targeted
+   diagnostic naming the offending field type.
+
+   Returns nil on no match, else a structured map:
+     {:name   \"Record\"            ; record declared name
+      :module <module-kw>          ; F51 provenance
+      :kind   :record-from-bytes
+      :info   <record-env entry>}  ; :fields, :field-index, ..."
   [call-node ctx]
   (let [callee (:callee call-node)]
     (when (and (= :dot (:node callee))
@@ -4094,7 +4110,11 @@
       (let [tgt  (:target callee)
             rn   (:name tgt)
             info (decl-lookup ctx :record-env tgt)]
-        (when info rn)))))
+        (when info
+          {:name   rn
+           :module (get (:decl->module ctx) rn)
+           :kind   :record-from-bytes
+           :info   info})))))
 
 (defn- infer-call-type
   [{:keys [callee] :as node} ctx]
@@ -4129,16 +4149,16 @@
              (= "Block" (:cxc-ty (get-in ctx [:self-fields nm]))))
         :void
         :else (fail-nyi! (str "call to `" nm "`") node)))
-    :dot   (if-let [en (enum-payload-call? node ctx)]
-             {:enum en}
-             (if-let [rn (record-from-bytes-call? node ctx)]
+    :dot   (if-let [enum-payload (enum-payload-call? node ctx)]
+             {:enum (:name enum-payload)}
+             (if-let [record-from (record-from-bytes-call? node ctx)]
                ;; F37 L6 — result is the per-record decode-outcome
                ;; struct. No cxc surface type today; downstream code
                ;; can only pattern-match via the .converted / .invalid
                ;; C-level accessors. Marker keyword lets infer-type
                ;; callers know this is a "decode outcome" without
                ;; committing to a cxc-visible type surface.
-               {:decode-outcome rn}
+               {:decode-outcome (:name record-from)}
                (infer-method-call-type node ctx)))
     (fail-nyi! (str "call with non-ident/non-dot callee " (:node callee)) node)))
 
@@ -4290,12 +4310,24 @@
 (defn- enum-case-access?
   "A `:dot` whose target is an `:ident` naming an enum, and whose field
    is one of that enum's cases. Not to be confused with instance field
-   access on an aggregate."
+   access on an aggregate.
+
+   Returns nil on no match, else a structured map:
+     {:name   \"Enum\"              ; enum declared name
+      :module <module-kw>          ; F51 provenance
+      :kind   :enum-case
+      :case   \"caseName\"           ; the specific case selected
+      :info   <enum-env entry>}"
   [dot-node ctx]
   (let [tgt (:target dot-node)]
-    (and (= :ident (:node tgt))
-         (when-let [en (decl-lookup ctx :enum-env tgt)]
-           (contains? (:case-index en) (:field dot-node))))))
+    (when (= :ident (:node tgt))
+      (when-let [info (decl-lookup ctx :enum-env tgt)]
+        (when (contains? (:case-index info) (:field dot-node))
+          {:name   (:name tgt)
+           :module (get (:decl->module ctx) (:name tgt))
+           :kind   :enum-case
+           :case   (:field dot-node)
+           :info   info})))))
 
 (defn- infer-type [node ctx]
   (case (:node node)
@@ -4370,8 +4402,8 @@
     :not        (let [t (infer-type (:expr node) ctx)]
                   (if (optional-tk? t) [:optional :bool] :bool))
     :call       (infer-call-type node ctx)
-    :dot        (if (enum-case-access? node ctx)
-                  {:enum (get-in node [:target :name])}
+    :dot        (if-let [enum-case (enum-case-access? node ctx)]
+                  {:enum (:name enum-case)}
                   (field-type-for-owner (infer-type (:target node) ctx)
                                         ctx (:field node) node))
     ;; F19 L2 — subscript index access. String[i] returns Int (Unicode
@@ -5387,18 +5419,20 @@
         {:node :chained-cmp
          :operands lowered
          :ops      ops}))
-    :dot        (cond
-                  (enum-case-access? node ctx)
-                  ;; F16 L1 — tagged enums require a compound literal
-                  ;; even for bare cases (the C type is a struct, not
-                  ;; an integer). Value-only enums keep the pre-F16
-                  ;; `E_case` C constant.
-                  (let [en (get-in node [:target :name])
-                        cs (:field node)]
-                    (if (:tagged? (env-lookup ctx :enum-env en))
-                      {:node :c-tagged-init :enum-name en :case-name cs
-                       :fields []}
-                      {:node :name :sym (str en "_" cs)}))
+    :dot        (let [enum-case (enum-case-access? node ctx)]
+                  (cond
+                    ;; F16 L1 — tagged enums require a compound literal
+                    ;; even for bare cases (the C type is a struct, not
+                    ;; an integer). Value-only enums keep the pre-F16
+                    ;; `E_case` C constant. M7 — predicate returns a
+                    ;; structured `{:name :case :info …}` so the caller
+                    ;; destructures instead of re-fetching from ctx.
+                    (some? enum-case)
+                    (let [{en :name cs :case info :info} enum-case]
+                      (if (:tagged? info)
+                        {:node :c-tagged-init :enum-name en :case-name cs
+                         :fields []}
+                        {:node :name :sym (str en "_" cs)}))
 
                   ;; F67 L4a — zero-arg observable on a record. `V(...).mag`
                   ;; is really `V_mag(V(...))` — a C function call, not
@@ -5528,7 +5562,7 @@
                               (and atom-nm
                                    (not= :self (:node (:target node))))
                               (assoc :cross-atom-cls-name
-                                     (class-name-for-atom atom-nm)))))))))
+                                     (class-name-for-atom atom-nm))))))))))
     ;; F19 L2 — String[i] lowers to `(int64_t)[str characterAtIndex:i]`.
     ;; Other container types still fail-nyi (see infer-type site for the
     ;; F42/F43 dependency rationale).
@@ -5695,16 +5729,19 @@
             :else
             (fail-nyi! (str "call to `" callee-name "`") node)))
 
-        :dot   (if-let [en (enum-payload-call? node ctx)]
-                 (lower-enum-payload-ctor en node ctx)
-                 (if-let [rn (record-from-bytes-call? node ctx)]
+        :dot   (if-let [enum-payload (enum-payload-call? node ctx)]
+                 (lower-enum-payload-ctor (:name enum-payload) node ctx)
+                 (if-let [record-from (record-from-bytes-call? node ctx)]
                    ;; F37 L6 — `<Record>.from(source: b)` (class function,
                    ;; spec §3.4.6). Dispatch to
                    ;; `<Record>_cxc_from_bytes(b)`. Non-eligible receivers
                    ;; (String / nested-record / enum / Optional fields)
                    ;; get a targeted fail-nyi naming the offending
                    ;; field + type, pointing at the follow-on sub-landings.
-                   (let [info (decl-lookup ctx :record-env (:target (:callee node)))
+                   ;; M7 — predicate returns `{:name :info …}` so no
+                   ;; re-lookup of `info` needed here.
+                   (let [rn   (:name record-from)
+                         info (:info record-from)
                          args (:args node)
                          _    (when-not (= 1 (count args))
                                 (fail-nyi!
