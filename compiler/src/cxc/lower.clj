@@ -137,7 +137,11 @@
              :refer [record-synth-equals-name]]
             [cxc.lower.map-set-containers :as map-set-containers
              :refer [synthesize-map-container-class
-                     synthesize-set-container-class]]))
+                     synthesize-set-container-class]]
+            [cxc.lower.selectors :as selectors
+             :refer [c-method-name objc-method-selector
+                     stream-selector stream-emit-selector
+                     stream-source-methods]]))
 
 ;; M1b prep — compile-error funnels (fail-nyi! / fail-user! /
 ;; fail-compile!) extracted to cxc.diagnostics. See its ns docstring
@@ -3953,23 +3957,7 @@
                         {:name name :value (lower-expr value ctx)})
                       resolved)}))))
 
-(defn- c-method-name
-  "Free-function name for a record's method: `<Record>_<method>`.
-   F56 L2+L3: `<Record>` is passed through `->c-safe` so prelude
-   records get `_Cxc_Duration_plus` rather than `Duration_plus`."
-  [record-name method-name]
-  (str (->c-safe record-name) "_" method-name))
-
-(defn- objc-method-selector
-  "Build the ObjC selector for a method call. Zero-arg → bare name;
-   with args → `<name>With<first>:<rest>:...` matching the initWith
-   convention on ctors. Not to be confused with cxc's `.name` — cxc
-   source uses dot syntax; only the emit layer sees selectors."
-  [method-name arg-names]
-  (if (empty? arg-names)
-    method-name
-    (str method-name "With" (first arg-names) ":"
-         (str/join "" (map #(str % ":") (rest arg-names))))))
+;; M1c — c-method-name / objc-method-selector moved to cxc.lower.selectors.
 
 (declare lower-for-each-call lambda-body-stmts unbox-prelude-for-element)
 
@@ -6352,32 +6340,7 @@
       :dot   (str (get-in src [:target :name]) "." (:field src))
       (pr-str src))))
 
-(defn- stream-selector
-  "Cocoa selector on the SUBSCRIBER side for a stream receive. Encoding:
-   `cxc_stream_<streamname>_from_<SourceClass>Withsender:<k1>:<k2>:...`.
-   The `_from_<Source>` suffix scopes the selector to the source class,
-   so two receive-glyph transitions on the same subscriber pulling
-   streams named identically from different sources compile to distinct
-   selectors (Choice 1A, see design analysis).
-
-   Layer 5b Step 6b: every subscriber-side selector carries a leading
-   `sender:` argument (typed `id`) filled by the source's fanout with
-   `self`. Container fan-in forwarding methods use it as the element
-   pointer on re-emit (`e:`); ordinary main-side subscribers receive it
-   but can ignore it. Source-side selectors (`cxc_emit_<name>[With...]`)
-   are unchanged — sender is derived at fanout, not passed by the caller
-   of `:> name`."
-  [source-class stream-name payload-keys]
-  (objc-method-selector (str "cxc_stream_" stream-name "_from_" (->c-safe source-class))
-                        (into ["sender"] payload-keys)))
-
-(defn- stream-emit-selector
-  "Cocoa selector on the SOURCE side for a stream emit method:
-   `cxc_emit_<streamname>[With<k1>:<k2>:...]`. Called by `:>` emit-site
-   lowering; body iterates the subscriber hashtable + cxc_send_async's
-   each."
-  [stream-name payload-keys]
-  (objc-method-selector (str "cxc_emit_" stream-name) payload-keys))
+;; M1c — stream-selector / stream-emit-selector moved to cxc.lower.selectors.
 
 (defn- wildcards-by-target-phase
   "Index wildcards (`-> phase then:/do:`) by their target phase. A
@@ -7284,129 +7247,8 @@
               (assoc info :stream-payload-index typed))))
    atom-env atom-env))
 
-;; ---------------------------------------------------------------------------
-;; Stream source-side synthesis (Step 13, Choice 3A + generic dispatch).
-;;
-;; A source atom owns one NSHashTable (weak refs) per stream it emits.
-;; The compiler synthesizes four kinds of members per atom:
-;;   1. Ivar/property `_stream_subscribers_<name>` per stream
-;;   2. Init statement in cxc_structuralSetup: hashtable allocation
-;;   3. Emit method `-cxc_emit_<name>[With<k>:...]` iterating + fan-out
-;;   4. Subscribe methods:
-;;        - Per-stream `-cxc_addSubscriberFor_<name>:` (compiled sites)
-;;        - Generic  `-cxc_addSubscriberToStream:sub:` (restore/reflection)
-;;
-;; All subscribe bodies wrap addObject in dispatch_sync(_own_queue, ^{})
-;; to future-proof against Layer 4c multi-thread — free under single-
-;; thread (dispatch_sync-to-current-queue is fast). See design analysis
-;; §4.5 for the rationale.
-;; ---------------------------------------------------------------------------
-
-(defn- stream-subscribers-ivar-name
-  [stream-name]
-  (str "_stream_subscribers_" stream-name))
-
-(defn- stream-subscribers-prop
-  "Per-stream `NSHashTable *_stream_subscribers_<name>` property.
-   `strong` under ARC because the hashtable itself is owned by this
-   atom; weak semantics are on the HASHTABLE's stored subscribers
-   (configured via +weakObjectsHashTable), not on the container."
-  [stream-name]
-  {:name   (subs (stream-subscribers-ivar-name stream-name) 1)  ; drop leading _
-   :c-type "NSHashTable *"
-   :attrs  ["nonatomic" "strong"]})
-
-(defn- stream-source-methods
-  "Synthesize the per-stream ivars, init statements, and methods for
-   an atom that emits `streams`. `typed-payloads` maps stream-name →
-   inferred payload [{:name :type-kw :c-type} ...] (from
-   infer-stream-payload-types). Callers wire the returned pieces into
-   the class's :properties, cxc_structuralSetup body, and :methods
-   list."
-  [source-class stream-order typed-payloads]
-  (if (empty? stream-order)
-    {:properties [] :init-stmts [] :methods []}
-    (let [props     (mapv stream-subscribers-prop stream-order)
-          init-stmts (mapv (fn [nm]
-                             {:node :hashtable-init
-                              :ivar (stream-subscribers-ivar-name nm)})
-                           stream-order)
-          emit-methods
-          (mapv (fn [nm]
-                  (let [payload (get typed-payloads nm [])
-                        keys    (mapv :name payload)
-                        c-types (mapv :c-type payload)
-                        method-params (mapv (fn [p] {:name (:name p)
-                                                     :c-type (:c-type p)})
-                                            payload)]
-                    {:node        :objc-method
-                     :selector    (stream-emit-selector nm keys)
-                     :return-type "void"
-                     :params      method-params
-                     ;; Layer 5b Step 6b: fanout dispatches to subscribers
-                     ;; with `sender: self` prepended to the user payload.
-                     ;; :arg-names / :arg-c-types match `stream-selector`
-                     ;; (which now also prepends "sender").
-                     :body        [{:node        :stream-fanout
-                                    :ivar        (stream-subscribers-ivar-name nm)
-                                    :selector    (stream-selector source-class nm keys)
-                                    :arg-names   (into ["sender"] keys)
-                                    :arg-c-types (into ["id"] c-types)
-                                    :prepend-self? true}]}))
-                stream-order)
-          per-stream-add
-          (mapv (fn [nm]
-                  {:node        :objc-method
-                   :selector    (str "cxc_addSubscriberFor_" nm ":")
-                   :return-type "void"
-                   :params      [{:name "sub" :c-type "id"}]
-                   :body        [{:node :stream-add-sub
-                                  :ivar (stream-subscribers-ivar-name nm)}]})
-                stream-order)
-          per-stream-remove
-          ;; Layer 4b: nullable-slot dynamic subscription. When a slot
-          ;; is reassigned, the setter unsubs from the old source. Sends
-          ;; are nil-message-safe (Cocoa), so callers pass whatever's in
-          ;; the slot without pre-checking.
-          (mapv (fn [nm]
-                  {:node        :objc-method
-                   :selector    (str "cxc_removeSubscriberFor_" nm ":")
-                   :return-type "void"
-                   :params      [{:name "sub" :c-type "id"}]
-                   :body        [{:node :stream-remove-sub
-                                  :ivar (stream-subscribers-ivar-name nm)}]})
-                stream-order)
-          generic-add
-          {:node        :objc-method
-           :selector    "cxc_addSubscriberToStream:sub:"
-           :return-type "void"
-           :params      [{:name "streamName" :c-type "NSString *"}
-                         {:name "sub"        :c-type "id"}]
-           :body        [{:node     :stream-add-sub-dispatch
-                          :branches (mapv (fn [nm]
-                                            {:stream-name nm
-                                             :selector    (str "cxc_addSubscriberFor_"
-                                                               nm ":")})
-                                          stream-order)}]}
-          generic-remove
-          {:node        :objc-method
-           :selector    "cxc_removeSubscriberFromStream:sub:"
-           :return-type "void"
-           :params      [{:name "streamName" :c-type "NSString *"}
-                         {:name "sub"        :c-type "id"}]
-           :body        [{:node     :stream-add-sub-dispatch
-                          :branches (mapv (fn [nm]
-                                            {:stream-name nm
-                                             :selector    (str "cxc_removeSubscriberFor_"
-                                                               nm ":")})
-                                          stream-order)}]}]
-      {:properties props
-       :init-stmts init-stmts
-       :methods    (-> emit-methods
-                       (into per-stream-add)
-                       (into per-stream-remove)
-                       (conj generic-add generic-remove))})))
-
+;; M1c — stream-source-methods + stream-subscribers-{ivar-name,prop}
+;; moved to cxc.lower.selectors.
 ;; ---------------------------------------------------------------------------
 ;; Top-level lowering — records, methods, atoms, main
 ;; ---------------------------------------------------------------------------
