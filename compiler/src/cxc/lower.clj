@@ -11904,6 +11904,52 @@
       nodes))
   nodes)
 
+(defn- finalize-atom-env-inference
+  "M6 — collapses the linear post-shake atom-env pipeline into one
+   named step so downstream readers don't have to track three
+   consecutive `atom-env (…)` rebindings.
+
+   Runs in order (each stage depends on the previous):
+     1. `infer-observables-in-atom-env` — types every `name :<
+        expr` observable body against the current envs.
+     2. `infer-streams-in-atom-env`     — types `name :> …` fanouts;
+        depends on observable inference so an observable-of-
+        stream chain has the intermediate type.
+     3. `augment-atom-env-with-companions` — for each subscribed
+        stream, drops a per-companion stream-index entry so per-
+        stream synthesis (ivar/hashtable/emit/subscribe) picks
+        it up.
+
+   `record-env` must already have its observables inferred at the
+   call site — this stage's `atom-env` consumers reach into
+   `record-env`'s method/observable indexes."
+  [atom-env record-env enum-env]
+  (-> atom-env
+      (infer-observables-in-atom-env record-env enum-env)
+      (infer-streams-in-atom-env record-env enum-env)
+      (augment-atom-env-with-companions record-env enum-env)))
+
+(defn- synthesize-container-entries
+  "M6 — collapses the L5/L6 container-synthesis pipeline. Scans
+   the current atom-env for `List/Map/Set of T` instantiations and
+   merges the synthesized container entries in. Order matters only
+   in that later scans see prior additions — but List/Map/Set
+   registrations are keyed by mangled container class name (which
+   is a deterministic function of the element type) so re-scanning
+   an already-synthesized entry is a no-op merge.
+
+   Runs after inference so observables typed as `List/Map/Set of T`
+   also participate."
+  [atom-env]
+  (let [ae1 (merge atom-env (synthesize-list-container-entries
+                              (list-instantiations-from-atom-env atom-env)
+                              atom-env))
+        ae2 (merge ae1     (synthesize-map-container-entries
+                              (map-instantiations-from-atom-env ae1)))
+        ae3 (merge ae2     (synthesize-set-container-entries
+                              (set-instantiations-from-atom-env ae2)))]
+    ae3))
+
 (defn lower
   "Take parsed top-level nodes and produce an ObjC/C program AST."
   [top-nodes]
@@ -11999,15 +12045,10 @@
         ;; used for observable inference / struct emission.
         _          (validate-no-agent-fields-in-records! record-env atom-env)
         record-env (infer-observables-in-record-env record-env atom-env enum-env)
-        atom-env   (infer-observables-in-atom-env atom-env record-env enum-env)
-        atom-env   (infer-streams-in-atom-env atom-env record-env enum-env)
-        ;; L12b — augment atom-env with per-companion stream-index
-        ;; entries where a subscriber demand exists. This lets the
-        ;; existing per-stream synthesis (ivar/hashtable/emit/subscribe
-        ;; methods) pick companions up automatically, bounding output
-        ;; growth to programs that actually subscribe.
-        atom-env   (augment-atom-env-with-companions atom-env record-env
-                                                     enum-env)
+        ;; M6 — three consecutive atom-env rebindings (observables,
+        ;; streams, companions) collapsed into one named step. See
+        ;; `finalize-atom-env-inference` above for the internal order.
+        atom-env   (finalize-atom-env-inference atom-env record-env enum-env)
         ;; M4 — infer-protocol-defaults now takes a full base ctx, so
         ;; the F51 unified symbol table + F15 shape env must be built
         ;; before this call. Both are pure functions of `top-nodes`
@@ -12045,28 +12086,10 @@
                                                        :decl->module    d->m
                                                        :module-map      module-map
                                                        :named-tuple-env ctx-nt-shapes}))
-        ;; Layer 5 Step 3: scan post-inference atom-env for `List of T`
-        ;; field/ctor usages, register a synthesized entry per distinct
-        ;; T for method-lookup, and generate a matching :objc-class per
-        ;; instantiation. Runs after inference so any observable typed
-        ;; as `List of T` also participates. Registration is idempotent
-        ;; across the two passes: entries keyed by mangled class name
-        ;; (which is a deterministic function of the element type).
-        list-instantiations (list-instantiations-from-atom-env atom-env)
-        list-atom-entries   (synthesize-list-container-entries
-                             list-instantiations atom-env)
-        atom-env            (merge atom-env list-atom-entries)
-        ;; Layer 6 Step 8 — mirror of the List instantiation pass for
-        ;; Map. Runs after inference so an observable typed `Map of
-        ;; (K, V)` also participates (though no observable produces a
-        ;; Map today; setup is future-proof).
-        map-instantiations  (map-instantiations-from-atom-env atom-env)
-        map-atom-entries    (synthesize-map-container-entries map-instantiations)
-        atom-env            (merge atom-env map-atom-entries)
-        ;; Layer 6 Step 9 — Set mirrors Map's instantiation pass.
-        set-instantiations  (set-instantiations-from-atom-env atom-env)
-        set-atom-entries    (synthesize-set-container-entries set-instantiations)
-        atom-env            (merge atom-env set-atom-entries)
+        ;; M6 — L5 Step 3 (List) + L6 Step 8 (Map) + L6 Step 9 (Set)
+        ;; instantiation-scan pipeline collapsed into one call. See
+        ;; `synthesize-container-entries` above.
+        atom-env   (synthesize-container-entries atom-env)
         ;; F9 L3 — collect extension blocks and validate targets against
         ;; the full symbol table. Composition (merging methods,
         ;; applying `replace`, running §3.3.2 rules 1-7) is L4.
