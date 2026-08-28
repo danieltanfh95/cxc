@@ -8238,7 +8238,7 @@
    ctx supplies the envs needed to resolve `t`'s raw C type."
   [t ctx]
   (let [c-value-type (cxc-type->c {:node :type-ref :name t
-                                   :resolves-to (get *decl->module* t)}
+                                   :resolves-to (get (:decl->module ctx) t)}
                                   (:record-env ctx)
                                   (:atom-env   ctx)
                                   (:enum-env   ctx)
@@ -8275,14 +8275,14 @@
                           :c-type (if (= "self" (:name p))
                                     (->c-safe record-name)
                                     (cxc-type->c {:node :type-ref :name (:cxc-ty p)
-                                                  :resolves-to (get *decl->module* (:cxc-ty p))}
+                                                  :resolves-to (get (:decl->module ctx) (:cxc-ty p))}
                                                  (:record-env ctx)
                                                  (:atom-env ctx)
                                                  (:enum-env ctx)
                                                  (:module-map ctx)))})
                        (:params method))
         ret-c    (cxc-type->c {:node :type-ref :name (:cxc-return-ty method)
-                               :resolves-to (get *decl->module* (:cxc-return-ty method))}
+                               :resolves-to (get (:decl->module ctx) (:cxc-return-ty method))}
                               (:record-env ctx) (:atom-env ctx) (:enum-env ctx)
                               (:module-map ctx))]
     {:node        :c-function
@@ -10230,7 +10230,7 @@
         objc-params (mapv (fn [p]
                             {:name   (:name p)
                              :c-type (cxc-type->c {:node :type-ref :name (:cxc-ty p)
-                                                   :resolves-to (get *decl->module* (:cxc-ty p))}
+                                                   :resolves-to (get (:decl->module ctx) (:cxc-ty p))}
                                                   (:record-env ctx)
                                                   (:atom-env ctx)
                                                   (:enum-env ctx)
@@ -10239,7 +10239,7 @@
         ret-c       (if (nil? (:cxc-return-ty method))
                       "void"
                       (cxc-type->c {:node :type-ref :name (:cxc-return-ty method)
-                                    :resolves-to (get *decl->module* (:cxc-return-ty method))}
+                                    :resolves-to (get (:decl->module ctx) (:cxc-return-ty method))}
                                    (:record-env ctx) (:atom-env ctx) (:enum-env ctx)
                                    (:module-map ctx)))
         check-stmt  {:node :objc-msg
