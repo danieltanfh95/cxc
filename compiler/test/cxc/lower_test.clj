@@ -5,6 +5,7 @@
             [cxc.parse :as p]
             [cxc.prelude :as prelude]
             [cxc.lower :as lower]
+            [cxc.lower.module-lets :as module-lets]
             [cxc.type-kw :as type-kw]
             [cxc.emit :as emit]))
 
@@ -6290,30 +6291,30 @@ def main:
 
 (deftest f52-l4-module-let-const-shape-accepts-primitives
   (testing "F52 L4 — the pre-lower const-shape check accepts all primitive literal kinds (Int / Float / String / Char / Bool / nil) plus unary neg/not wrapping a primitive. This restricted subset runs before atom-env / enum-env are built, so ident chains and ctor-call defaults are rejected — they'll surface via `default-expr-const-shape?` at the field-default sites where those envs exist."
-    (is (#'cxc.lower/module-let-const-shape? {:node :lit-int    :value 42}))
-    (is (#'cxc.lower/module-let-const-shape? {:node :lit-float  :value 3.14}))
-    (is (#'cxc.lower/module-let-const-shape? {:node :lit-string :value "hi"}))
-    (is (#'cxc.lower/module-let-const-shape? {:node :lit-char   :value \x}))
-    (is (#'cxc.lower/module-let-const-shape? {:node :lit-bool   :value true}))
-    (is (#'cxc.lower/module-let-const-shape? {:node :lit-nil}))
-    (is (#'cxc.lower/module-let-const-shape?
+    (is (#'cxc.lower.module-lets/module-let-const-shape? {:node :lit-int    :value 42}))
+    (is (#'cxc.lower.module-lets/module-let-const-shape? {:node :lit-float  :value 3.14}))
+    (is (#'cxc.lower.module-lets/module-let-const-shape? {:node :lit-string :value "hi"}))
+    (is (#'cxc.lower.module-lets/module-let-const-shape? {:node :lit-char   :value \x}))
+    (is (#'cxc.lower.module-lets/module-let-const-shape? {:node :lit-bool   :value true}))
+    (is (#'cxc.lower.module-lets/module-let-const-shape? {:node :lit-nil}))
+    (is (#'cxc.lower.module-lets/module-let-const-shape?
           {:node :neg :expr {:node :lit-int :value 7}}))
-    (is (#'cxc.lower/module-let-const-shape?
+    (is (#'cxc.lower.module-lets/module-let-const-shape?
           {:node :not :expr {:node :lit-bool :value false}}))))
 
 (deftest f52-l4-module-let-const-shape-rejects-non-const
   (testing "F52 L4 — the const check rejects any RHS shape that isn't a primitive literal or unary of one. Rationale: the substitution runs before atom-env / enum-env are built, so ident-chain / atom-ctor / enum-case forms have no way to resolve during the pre-lower pass. The field-default check `default-expr-const-shape?` accepts a broader set (see F16 L3 / F34 L1); MVP module-lets restrict further."
-    (is (not (#'cxc.lower/module-let-const-shape? {:node :ident :name "OTHER"})))
-    (is (not (#'cxc.lower/module-let-const-shape? {:node :call :callee {:node :ident :name "Foo"} :args []})))
-    (is (not (#'cxc.lower/module-let-const-shape?
+    (is (not (#'cxc.lower.module-lets/module-let-const-shape? {:node :ident :name "OTHER"})))
+    (is (not (#'cxc.lower.module-lets/module-let-const-shape? {:node :call :callee {:node :ident :name "Foo"} :args []})))
+    (is (not (#'cxc.lower.module-lets/module-let-const-shape?
                {:node :dot :target {:node :ident :name "Color"} :field "red"})))
-    (is (not (#'cxc.lower/module-let-const-shape?
+    (is (not (#'cxc.lower.module-lets/module-let-const-shape?
                {:node :binop :op "+" :lhs {:node :lit-int :value 1}
                              :rhs {:node :lit-int :value 2}})))))
 
 (deftest f52-l4-extract-module-lets-empty-when-no-decls
   (testing "F52 L4 — a program with no `:module-let` decls yields an empty ident→value map. Substitution over an empty map is a no-op (early-return in `substitute-module-let-refs`), so this path costs nothing for programs that don't use the feature."
-    (is (= {} (#'cxc.lower/extract-module-lets
+    (is (= {} (#'cxc.lower.module-lets/extract-module-lets
                 [{:node :record :name "R" :sections []}
                  {:node :def-atom :name "main"}])))))
 
@@ -6322,7 +6323,7 @@ def main:
     (is (= {"SEED"  {:node :lit-int   :value 41}
             "GRAV"  {:node :lit-float :value 9.8}
             "GREET" {:node :lit-string :value "hi"}}
-           (#'cxc.lower/extract-module-lets
+           (#'cxc.lower.module-lets/extract-module-lets
              [{:node :module-let :name "SEED"  :type nil :value {:node :lit-int    :value 41}}
               {:node :module-let :name "GRAV"  :type nil :value {:node :lit-float  :value 9.8}}
               {:node :module-let :name "GREET" :type nil :value {:node :lit-string :value "hi"}}
@@ -6331,7 +6332,7 @@ def main:
 (deftest f52-l4-extract-module-lets-rejects-non-const
   (testing "F52 L4 — a `:module-let` whose RHS fails `module-let-const-shape?` fires a targeted fail-nyi identifying the binding and the offending node kind. The diagnostic points at §7.1 + §3.8.5 rule 1 and names the current MVP restriction (primitives + unary) so users know what shapes are accepted today."
     (let [ex (try
-               (#'cxc.lower/extract-module-lets
+               (#'cxc.lower.module-lets/extract-module-lets
                  [{:node :module-let :name "X" :type nil
                    :value {:node :ident :name "OTHER"}}])
                nil
@@ -6343,7 +6344,7 @@ def main:
 (deftest f52-l4-extract-module-lets-rejects-duplicate-names
   (testing "F52 L4 — duplicate module-let names across the program are rejected with a targeted diagnostic. v1.0 uses a flat namespace for top-level bindings (matches records/atoms); cross-module qualified access (`foo.PI` disambiguation via `import foo`) is a follow-on landing."
     (let [ex (try
-               (#'cxc.lower/extract-module-lets
+               (#'cxc.lower.module-lets/extract-module-lets
                  [{:node :module-let :name "PI" :type nil :value {:node :lit-float :value 3.14}}
                   {:node :module-let :name "PI" :type nil :value {:node :lit-float :value 3.14159}}])
                nil
@@ -6369,19 +6370,19 @@ def main:
                        :value {:node :lit-float :value 3.14}}
                       {:kind :named :name "other"
                        :value {:node :ident :name "UNTOUCHED"}}]}]
-             (#'cxc.lower/substitute-module-let-refs tree ml #{}))))))
+             (#'cxc.lower.module-lets/substitute-module-let-refs tree ml #{}))))))
 
 (deftest f52-l4-substitute-noop-on-empty-map
   (testing "F52 L4 — substitution short-circuits on an empty module-let map, returning the input unchanged. Guards the common case (programs with no `:module-let` decls) from paying for a full postwalk."
     (let [tree [{:node :call :callee {:node :ident :name "SEED"}
                  :args []}]]
       (is (identical? tree
-                      (#'cxc.lower/substitute-module-let-refs tree {} #{}))))))
+                      (#'cxc.lower.module-lets/substitute-module-let-refs tree {} #{}))))))
 
 (deftest f52-l4-b-reject-let-stmt-shadowing
   (testing "F52 L4-b — a local `let NAME = ...` inside a fn body when NAME is a module-let fires a targeted fail-nyi. Runs BEFORE `substitute-module-let-refs` so the diagnostic mentions the shadowing (not the malformed `let 5 = 5` that naive substitution would produce). Users see: `local \\`let SEED\\` shadows the module-let of the same name — rename one of the two.`"
     (let [ex (try
-               (#'cxc.lower/reject-module-let-shadowing!
+               (#'cxc.lower.module-lets/reject-module-let-shadowing!
                  [{:node :def-atom :name "main"
                    :body [{:node :let-stmt :name "SEED"
                            :expr {:node :lit-int :value 5}}]}]
@@ -6394,7 +6395,7 @@ def main:
 (deftest f52-l4-b-reject-if-let-shadowing
   (testing "F52 L4-b — an `if let NAME = ...` binding when NAME is a module-let fires a fail-nyi. The `:if-let` node carries a `:bindings` list per F39 L7's unwrap-statement shape; each binding's `:name` is checked. Rationale is the same as `:let-stmt` shadowing — naive substitution would silently rewrite the binding slot into a literal."
     (let [ex (try
-               (#'cxc.lower/reject-module-let-shadowing!
+               (#'cxc.lower.module-lets/reject-module-let-shadowing!
                  [{:node :def-atom :name "main"
                    :body [{:node :if-let
                            :bindings [{:name "PI"
@@ -6412,7 +6413,7 @@ def main:
                  :body [{:node :let-stmt :name "local_only"
                          :expr {:node :lit-int :value 5}}]}]]
       (is (= tree
-             (#'cxc.lower/reject-module-let-shadowing!
+             (#'cxc.lower.module-lets/reject-module-let-shadowing!
               tree {"SEED" {:node :lit-int :value 42}}))))))
 
 (deftest f52-l4-b-noop-when-no-module-lets
@@ -6421,12 +6422,12 @@ def main:
                  :body [{:node :let-stmt :name "SEED"
                          :expr {:node :lit-int :value 5}}]}]]
       (is (= tree
-             (#'cxc.lower/reject-module-let-shadowing! tree {}))))))
+             (#'cxc.lower.module-lets/reject-module-let-shadowing! tree {}))))))
 
 (deftest f52-l4-b-reject-fn-param-shadowing
   (testing "F52 L4-b — a `:function` parameter whose name matches a module-let fires a targeted fail-nyi identifying both the function and the parameter. Params scope inside the fn body, so any `PI` reference there would resolve to the param — but naive substitution would rewrite it to the module-let value first, silently breaking the fn. The diagnostic names both the fn (`compute`) and the param (`PI`) for actionability."
     (let [ex (try
-               (#'cxc.lower/reject-module-let-shadowing!
+               (#'cxc.lower.module-lets/reject-module-let-shadowing!
                  [{:node :record :name "R"
                    :sections [{:node :function :name "compute"
                                :params [{:name "PI" :type nil}]
@@ -6441,7 +6442,7 @@ def main:
 (deftest f52-l4-b-reject-class-function-param-shadowing
   (testing "F52 L4-b — a `:class-function` parameter shadowing a module-let fires the same diagnostic pattern. Class functions land via F37 L6b for `class function from(source: Bytes)` synthesis; their param shape matches instance functions so the shadow-check hits both node kinds via the same case."
     (let [ex (try
-               (#'cxc.lower/reject-module-let-shadowing!
+               (#'cxc.lower.module-lets/reject-module-let-shadowing!
                  [{:node :record :name "R"
                    :sections [{:node :class-function :name "from"
                                :params [{:name "SEED" :type nil}]
@@ -6461,54 +6462,54 @@ def main:
                                       {:name "y" :type nil}]
                              :body []}]}]]
       (is (= tree
-             (#'cxc.lower/reject-module-let-shadowing!
+             (#'cxc.lower.module-lets/reject-module-let-shadowing!
               tree {"SEED" {:node :lit-int :value 42}}))))))
 
 (deftest f52-l4-d-c-type-and-literal-primitives
   (testing "F52 L4-d — primitive literal → `[c-type c-literal]` derivation covers Int / Float / Bool / Char. Whole-number floats get a `.0` suffix so clang doesn't warn on int→double narrowing at the const site. Bool normalizes to `int` with `1`/`0` literal (C has no bool without `<stdbool.h>`; using int keeps the const usable in any expression context)."
-    (is (= ["int"    "42"]  (#'cxc.lower/module-let-c-type-and-literal {:node :lit-int :value 42})))
-    (is (= ["double" "3.14"] (#'cxc.lower/module-let-c-type-and-literal {:node :lit-float :value 3.14})))
-    (is (= ["double" "5.0"] (#'cxc.lower/module-let-c-type-and-literal {:node :lit-float :value 5.0})))
-    (is (= ["char"   "'x'"] (#'cxc.lower/module-let-c-type-and-literal {:node :lit-char :value \x})))
-    (is (= ["int"    "1"]   (#'cxc.lower/module-let-c-type-and-literal {:node :lit-bool :value true})))
-    (is (= ["int"    "0"]   (#'cxc.lower/module-let-c-type-and-literal {:node :lit-bool :value false})))))
+    (is (= ["int"    "42"]  (#'cxc.lower.module-lets/module-let-c-type-and-literal {:node :lit-int :value 42})))
+    (is (= ["double" "3.14"] (#'cxc.lower.module-lets/module-let-c-type-and-literal {:node :lit-float :value 3.14})))
+    (is (= ["double" "5.0"] (#'cxc.lower.module-lets/module-let-c-type-and-literal {:node :lit-float :value 5.0})))
+    (is (= ["char"   "'x'"] (#'cxc.lower.module-lets/module-let-c-type-and-literal {:node :lit-char :value \x})))
+    (is (= ["int"    "1"]   (#'cxc.lower.module-lets/module-let-c-type-and-literal {:node :lit-bool :value true})))
+    (is (= ["int"    "0"]   (#'cxc.lower.module-lets/module-let-c-type-and-literal {:node :lit-bool :value false})))))
 
 (deftest f52-l4-d-c-type-and-literal-unary
   (testing "F52 L4-d — unary neg / not wrap the recursive derivation. Neg preserves the inner numeric type (Int → int, Float → double). Not always produces int, since C's `!` operator returns int (0/1) regardless of operand type."
-    (is (= ["int"    "-(42)"] (#'cxc.lower/module-let-c-type-and-literal
+    (is (= ["int"    "-(42)"] (#'cxc.lower.module-lets/module-let-c-type-and-literal
                                 {:node :neg :expr {:node :lit-int :value 42}})))
-    (is (= ["double" "-(3.14)"] (#'cxc.lower/module-let-c-type-and-literal
+    (is (= ["double" "-(3.14)"] (#'cxc.lower.module-lets/module-let-c-type-and-literal
                                   {:node :neg :expr {:node :lit-float :value 3.14}})))
-    (is (= ["int"    "!(1)"]  (#'cxc.lower/module-let-c-type-and-literal
+    (is (= ["int"    "!(1)"]  (#'cxc.lower.module-lets/module-let-c-type-and-literal
                                 {:node :not :expr {:node :lit-bool :value true}})))))
 
 (deftest f52-l4-d-c-type-and-literal-nil-for-unsupported
   (testing "F52 L4-d — shapes we don't emit as static const today (`:lit-nil`, `:lit-string`) return nil. Callers of `module-let-emit-entries` `keep` non-nil results; unsupported shapes disappear from the emit-side declarations while still folding at ref sites. Strings would need `static NSString * const` and its own initialization pattern — deferred until a real user program needs it."
-    (is (nil? (#'cxc.lower/module-let-c-type-and-literal {:node :lit-nil})))
-    (is (nil? (#'cxc.lower/module-let-c-type-and-literal {:node :lit-string :value "hi"})))))
+    (is (nil? (#'cxc.lower.module-lets/module-let-c-type-and-literal {:node :lit-nil})))
+    (is (nil? (#'cxc.lower.module-lets/module-let-c-type-and-literal {:node :lit-string :value "hi"})))))
 
 (deftest f52-l4-c-imported-module-idents-bare-import
   (testing "F52 L4-c — `import foo` binds `foo` in the current scope. `imported-module-idents` returns `#{\"foo\"}`. Multi-segment paths use the last component per §7.6: `import foo.bar` binds `bar`."
     (is (= #{"foo"}
-           (#'cxc.lower/imported-module-idents
+           (#'cxc.lower.module-lets/imported-module-idents
              [{:node :import :from "foo" :as nil}])))
     (is (= #{"bar"}
-           (#'cxc.lower/imported-module-idents
+           (#'cxc.lower.module-lets/imported-module-idents
              [{:node :import :from "foo.bar" :as nil}])))))
 
 (deftest f52-l4-c-imported-module-idents-aliased-import
   (testing "F52 L4-c — `import foo.bar as baz` binds `baz`. The `:as` slot takes precedence over the `:from` leaf when both are present. Users pick aliases to disambiguate; the pre-lower pass respects the choice."
     (is (= #{"baz"}
-           (#'cxc.lower/imported-module-idents
+           (#'cxc.lower.module-lets/imported-module-idents
              [{:node :import :from "foo.bar" :as "baz"}])))))
 
 (deftest f52-l4-c-imported-module-idents-skips-from-import
   (testing "F52 L4-c — `:from-import` nodes bring individual names into scope directly, not a module ident. Skipped here — those names reach the module-let substitution as bare idents via the ident branch, not the `:dot` branch."
     (is (= #{}
-           (#'cxc.lower/imported-module-idents
+           (#'cxc.lower.module-lets/imported-module-idents
              [{:node :from-import :from "foo" :names [{:name "PI"}]}])))
     (is (= #{"baz"}
-           (#'cxc.lower/imported-module-idents
+           (#'cxc.lower.module-lets/imported-module-idents
              [{:node :from-import :from "foo" :names [{:name "PI"}]}
               {:node :import :from "bar" :as "baz"}])))))
 
@@ -6524,7 +6525,7 @@ def main:
       (is (= [{:node :call :callee {:node :ident :name "print"}
                :args [{:kind :positional
                        :value {:node :lit-float :value 3.14}}]}]
-             (#'cxc.lower/substitute-module-let-refs tree ml imp))))))
+             (#'cxc.lower.module-lets/substitute-module-let-refs tree ml imp))))))
 
 (deftest f52-l4-c-substitute-dot-access-non-imported-target-untouched
   (testing "F52 L4-c — `f.PI` where `f` is NOT in the imported-modules set (e.g. a local `f: Foo` instance) passes through — the substitution needs the target to be an imported module to avoid false rewrites. Prevents naive rewriting of `<Foo-instance>.PI` field access when a module-let named `PI` exists elsewhere in the program."
@@ -6533,7 +6534,7 @@ def main:
           tree [{:node :dot :target {:node :ident :name "f"}
                  :field "PI"}]]
       (is (= tree
-             (#'cxc.lower/substitute-module-let-refs tree ml imp))))))
+             (#'cxc.lower.module-lets/substitute-module-let-refs tree ml imp))))))
 
 (deftest f52-l4-c-substitute-dot-access-non-module-let-field-untouched
   (testing "F52 L4-c — `foo.OTHER` where `foo` IS imported but `OTHER` is not a module-let passes through. The check is symmetric on both sides — both target-name membership in imported-modules AND field-name membership in module-lets must hold."
@@ -6542,11 +6543,11 @@ def main:
           tree [{:node :dot :target {:node :ident :name "foo"}
                  :field "OTHER"}]]
       (is (= tree
-             (#'cxc.lower/substitute-module-let-refs tree ml imp))))))
+             (#'cxc.lower.module-lets/substitute-module-let-refs tree ml imp))))))
 
 (deftest f52-l4-d-emit-entries-normalizes-map
   (testing "F52 L4-d — `module-let-emit-entries` converts `{name → value-node}` into a vec of `{:name :c-type :c-literal}` entries. Unsupported shapes drop out via `keep`; ordering is unspecified at this layer (emit sorts by name for stable output). All entries carry the three keys emit's declaration builder consumes."
-    (let [entries (#'cxc.lower/module-let-emit-entries
+    (let [entries (#'cxc.lower.module-lets/module-let-emit-entries
                     {"SEED"  {:node :lit-int   :value 41}
                      "PI"    {:node :lit-float :value 3.14}
                      "GREET" {:node :lit-string :value "hi"}
