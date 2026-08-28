@@ -116,7 +116,9 @@
             [cxc.lower.module-lets :as module-lets
              :refer [extract-module-lets imported-module-idents
                      substitute-module-let-refs module-let-emit-entries
-                     reject-module-let-shadowing!]]))
+                     reject-module-let-shadowing!]]
+            [cxc.lower.enum :as lower-enum-ns
+             :refer [lower-enum]]))
 
 ;; M1b prep — compile-error funnels (fail-nyi! / fail-user! /
 ;; fail-compile!) extracted to cxc.diagnostics. See its ns docstring
@@ -10436,55 +10438,7 @@
 (defn- main-def-atom? [node]
   (and (= :def-atom (:node node)) (= "main" (:name node))))
 
-(defn- lower-enum
-  "Top-level `def Foo:` with case markers.
-   Value-only enums (all cases bare) lower to a C typedef enum with
-   `Foo_a`, `Foo_b`, ... as members — pre-F16 behavior preserved.
-
-   F16 L1 — if any case carries a payload, lower to a tagged-union
-   struct: `typedef struct { <Foo>_Tag tag; union { struct { … } case1;
-   … } data; } Foo;` with an accompanying `<Foo>_Tag` enum for the
-   discriminator. Emit resolves per-field C types via record-env /
-   atom-env / enum-env.
-
-   F16 L2 — raw-value enums (all cases have `= <int>`) preserve their
-   raw values on the `:c-enum` node so emit can render explicit
-   `<Enum>_<case> = <value>` initializers with a typed underlying
-   integer (`typedef enum : <raw-type> { … }`, per §3.3)."
-  [enum-node record-env atom-env enum-env module-map]
-  (let [tagged?    (some #(seq (:payload %)) (:case-entries enum-node))
-        raw-values (:raw-values enum-node)
-        raw-type   (:raw-type   enum-node)]
-    (cond
-      tagged?
-      {:node    :c-tagged-enum
-       :name    (:name enum-node)
-       :entries (mapv (fn [ce]
-                        {:name    (:name ce)
-                         :payload (mapv (fn [p]
-                                          {:name   (:name p)
-                                           :c-type (cxc-type->c (:type p)
-                                                                record-env
-                                                                atom-env
-                                                                enum-env
-                                                                module-map)})
-                                        (:payload ce))})
-                      (:case-entries enum-node))}
-
-      raw-values
-      {:node       :c-enum
-       :name       (:name enum-node)
-       :cases      (:cases enum-node)
-       :raw-values raw-values
-       :raw-c-type (get {"UInt8" "uint8_t" "UInt16" "uint16_t"
-                          "UInt32" "uint32_t" "UInt64" "uint64_t"}
-                         raw-type)}
-
-      :else
-      {:node  :c-enum
-       :name  (:name enum-node)
-       :cases (:cases enum-node)})))
-
+;; M1c — `lower-enum` moved to cxc.lower.enum.
 (defn- infer-observables-in-record-env
   "F67 L4a — mirror of `infer-observables-in-atom-env` for records.
    With record-env built (fields resolved), infer each observable's
