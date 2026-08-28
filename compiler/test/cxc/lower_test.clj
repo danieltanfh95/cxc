@@ -6,6 +6,7 @@
             [cxc.prelude :as prelude]
             [cxc.lower :as lower]
             [cxc.lower.module-lets :as module-lets]
+            cxc.lower.shape-collection
             [cxc.type-kw :as type-kw]
             [cxc.emit :as emit]))
 
@@ -2611,7 +2612,7 @@ def main:
         then: n => n + 1
 "
                 "A")
-          companions (#'cxc.lower/collect-companion-shapes "A" txns)]
+          companions (#'cxc.lower.shape-collection/collect-companion-shapes "A" txns)]
       (is (contains? companions "bump_failed") "bump gets a companion")
       (let [entry (get companions "bump_failed")]
         (is (= "bump" (:of-msg entry)))
@@ -2631,7 +2632,7 @@ def main:
         then: n => n + 1
 "
                 "A")
-          companions (#'cxc.lower/collect-companion-shapes "A" txns)
+          companions (#'cxc.lower.shape-collection/collect-companion-shapes "A" txns)
           entry (get companions "bump_failed")]
       (is (some #(and (= :typed (:kind %)) (= "OutOfRange" (:type-name %)))
                 (:reason-types entry))
@@ -2652,7 +2653,7 @@ def main:
         then: n => n
 "
                 "A")
-          companions (#'cxc.lower/collect-companion-shapes "A" txns)
+          companions (#'cxc.lower.shape-collection/collect-companion-shapes "A" txns)
           entry (get companions "bump_failed")
           kinds (set (map :kind (:reason-types entry)))]
       (is (contains? kinds :invariant-violation) "bare `|:` union member")
