@@ -204,7 +204,13 @@
             [cxc.lower.call-shape :as call-shape
              :refer [enum-payload-call?
                      record-from-bytes-call?
-                     enum-case-access?]]))
+                     enum-case-access?]]
+            [cxc.lower.field-preds :as field-preds
+             :refer [field-is-list-of?
+                     field-list-element-name
+                     field-is-map-of?
+                     field-is-set-of?
+                     field-storage-value-typed?]]))
 
 ;; M1b prep — compile-error funnels (fail-nyi! / fail-user! /
 ;; fail-compile!) extracted to cxc.diagnostics. See its ns docstring
@@ -5442,33 +5448,8 @@
             :class class-name
             :args  [{:name "elements" :value array-lit}]}}))
 
-(defn- field-is-list-of?
-  "Field's :cxc-ty is a `List of T` mangled class name."
-  [field]
-  (and (string? (:cxc-ty field))
-       (.startsWith ^String (:cxc-ty field) "_Cxc_ListOf")))
-
-(defn- field-list-element-name [field]
-  (subs (:cxc-ty field) (count "_Cxc_ListOf")))
-
-(defn- field-is-map-of? [field]
-  (and (string? (:cxc-ty field))
-       (.startsWith ^String (:cxc-ty field) "_Cxc_MapOf")))
-
-(defn- field-is-set-of? [field]
-  (and (string? (:cxc-ty field))
-       (.startsWith ^String (:cxc-ty field) "_Cxc_SetOf")))
-
-(defn- field-storage-value-typed?
-  [field ctx]
-  (let [c-ty (:c-type field)
-        nm   (:cxc-ty field)]
-    (and (string? c-ty)
-         (not (str/ends-with? c-ty "*"))
-         (not= "id" c-ty)
-         (or (contains? primitive-c-type nm)
-             (contains? (:record-env ctx) nm)
-             (contains? (:enum-env   ctx) nm)))))
+;; M1c — field-is-{list,map,set}-of? / field-list-element-name /
+;; field-storage-value-typed? moved to cxc.lower.field-preds.
 
 (defn- default-init-stmt-for [field ctx]
   (let [d (:default field)]
