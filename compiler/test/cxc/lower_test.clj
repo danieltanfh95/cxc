@@ -687,18 +687,43 @@ def main:
       (is (re-find #"not a compile-time constant" (.getMessage ex))))))
 
 (deftest f16-l3-enum-case-default-accepted
-  (testing "F16 L3 — bare enum-case access `d: Direction = Direction.up` accepted as a compile-time constant default per §3.8.5. `default-expr-const-shape?` reaches into enum-env to verify: target is a bare `:ident` naming an enum, field is one of that enum's bare (payload-less) cases. Payload-carrying cases would need compound-literal defaults — deferred; those still reject."
+  (testing "F16 L3 — bare enum-case access `d: Direction = Direction.up` accepted as a compile-time constant default per §3.8.5. `default-expr-const-shape?` reaches into enum-env to verify: target is a bare `:ident` naming an enum, field is one of that enum's bare (payload-less) cases."
     ;; Should not throw.
     (let [prog (lower-src "def Direction:\n    case up\n    case down\n\ndef Box:\n    d: Direction = Direction.up\n\ndef main:\n    -> running\n        then: print(Box().d)\n")]
       (is (some? prog) "compile succeeds"))))
 
-(deftest f16-l3-enum-payload-case-default-still-rejected
-  (testing "F16 L3 — payload-carrying enum-case defaults (`.ok(v: 1)`) are NOT accepted at v1.0. Compound-literal defaults would require a separate lowering path; treat as follow-up work."
+(deftest q10b-enum-payload-case-default-accepted
+  (testing "Q10-B relaxation (2026-08-30) — payload-carrying enum-case defaults (`.ok(value: 1)`) are now accepted as compile-time constants when all payload args are themselves compile-time constants. Reversal of the F16 L3 deferral (`f16-l3-enum-payload-case-default-still-rejected`) after spec §4.16.10 relaxed the const-expr definition to cover constructor calls with all-const args, transitively. Enum payload cases are one such shape (parser produces `:call` over `:dot`)."
+    ;; Should not throw — Q10-B accepts.
+    (let [prog (lower-src "def Outcome:\n    case ok(value: Int)\n    case failed(reason: Int)\n\ndef Box:\n    o: Outcome = Outcome.ok(value: 1)\n\ndef main:\n    -> running\n        then: print(1)\n")]
+      (is (some? prog) "compile succeeds under Q10-B"))))
+
+(deftest q10b-enum-payload-case-default-with-nonconst-arg-still-rejected
+  (testing "Q10-B — payload'd enum-case default whose payload arg is NOT a compile-time constant still rejects. `.ok(value: foo())` — the `foo()` call isn't const, so the const-shape check fails."
     (let [ex (try
-               (lower-src "def Outcome:\n    case ok(value: Int)\n    case failed(reason: Int)\n\ndef Box:\n    o: Outcome = Outcome.ok(value: 1)\n\ndef main:\n    -> running\n        then: print(1)\n")
+               (lower-src "def Outcome:\n    case ok(value: Int)\n\ndef Box:\n    o: Outcome = Outcome.ok(value: foo())\n\ndef main:\n    -> running\n        then: print(1)\n")
                nil
                (catch clojure.lang.ExceptionInfo e e))]
-      (is ex "expected exception on payload-case default")
+      (is ex "expected exception when payload arg is non-const")
+      (is (re-find #"not a compile-time constant" (.getMessage ex))))))
+
+(deftest q10b-list-literal-default-accepted
+  (testing "Q10-B relaxation (2026-08-30) — list literal default `xs: List of Int = [1, 2, 3]` accepted as compile-time constant when all elements are themselves compile-time constants. Persistent-collection semantics (F33) mean the folded value is shared safely across call sites — no mutable-default footgun."
+    (let [prog (lower-src "def Box:\n    xs: List of Int = [1, 2, 3]\n\ndef main:\n    -> running\n        then: print(1)\n")]
+      (is (some? prog) "compile succeeds under Q10-B — empty transitive check"))))
+
+(deftest q10b-empty-list-default-accepted
+  (testing "Q10-B — empty list literal `[]` accepted (empty-collection const)."
+    (let [prog (lower-src "def Box:\n    xs: List of Int = []\n\ndef main:\n    -> running\n        then: print(1)\n")]
+      (is (some? prog) "compile succeeds under Q10-B"))))
+
+(deftest q10b-list-with-nonconst-element-rejected
+  (testing "Q10-B — list-literal default with a non-const element `[1, foo(), 3]` rejects — the const-shape check is transitive; a single non-const element aborts folding."
+    (let [ex (try
+               (lower-src "def Box:\n    xs: List of Int = [1, foo(), 3]\n\ndef main:\n    -> running\n        then: print(1)\n")
+               nil
+               (catch clojure.lang.ExceptionInfo e e))]
+      (is ex "expected exception when list contains non-const element")
       (is (re-find #"not a compile-time constant" (.getMessage ex))))))
 
 (deftest f40-neg-literal-default-accepted

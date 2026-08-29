@@ -36,29 +36,52 @@
 
 (defn default-expr-const-shape?
   "Spec §3.8.5 rule 1: default expressions must be compile-time
-   constants. Permitted forms: primitive literals (int/float/string/
-   char/bool/nil, with or without unit), unary `-`/`not` wrapping a
-   permitted form, and bare identifiers (value-alias references —
-   validated as-such once value aliases land; treated permissively
-   pre-alias).
+   constants. Permitted forms track spec §4.16.10 (Q10-B relaxation
+   ratified 2026-08-29 + landed 2026-08-30):
 
-   F34 L1 (2026-08-18): when `atom-env` is provided, also accept
-   `:call` nodes whose callee is a bare `:ident` naming an atom in
-   `atom-env`. Records/atoms hold atom references through the
-   spec-canonical `<name>: <TypeName> = <TypeName>()` shape (§1.11),
-   so atom-type ctor calls in field defaults must be accepted. The
-   exemption is narrow: only ctor-shaped calls on atom types (not
-   value-typed records/enums, which have no runtime state to justify
-   a ctor call).
+   Baseline (always):
+     - Primitive literals: int/float/string/char/bool/nil.
+     - `:ident` (value-alias reference — validated by alias table
+       downstream; treated permissively at this shape check).
+     - Unary `-` / `not` wrapping a permitted form.
 
-   F16 L3 (2026-08-23): when `enum-env` is provided, also accept
-   `:dot` nodes whose target is a bare `:ident` naming an enum and
-   whose field is one of that enum's bare (no-payload) cases —
-   `Direction.up` etc. Payload-carrying case defaults (`.ok(v: 1)`)
-   would be a compound-literal constant; not accepted here yet.
+   With `atom-env` (F34 L1, 2026-08-18):
+     - `:call` whose callee is a bare `:ident` naming an atom in
+       `atom-env`. Enables the spec-canonical
+       `<name>: <TypeName> = <TypeName>()` field-default shape (§1.11).
 
-   Explicitly rejected otherwise: subscripts, binops, collection
-   literals, message-shapes, emit sites, blocks, ifs, switches."
+   With `enum-env` (F16 L3, 2026-08-23):
+     - `:dot` whose target is a bare `:ident` naming an enum in
+       `enum-env` and whose field is one of that enum's bare
+       (no-payload) cases — `Direction.up`.
+
+   Q10-B relaxation (2026-08-30):
+     - `:list` collection literals when every `:items` element is
+       itself a compile-time constant (transitive). Empty `:list`
+       qualifies. Collection literals in defaults are safe because
+       cxc collections are persistent per F33 — the compile-time-
+       folded value is shared safely across call sites (no mutable-
+       default footgun).
+     - Payload'd enum-case invocations `Enum.case(arg, arg, ...)`
+       when every argument is itself a compile-time constant. The
+       payload check uses `enum-env`'s `:payload-index` (already
+       populated per F16 L2). Both dotted-call form
+       `:call` over `:dot` and bare-payload form (if the parser
+       lifts one) are accepted.
+
+   Explicitly still rejected: non-ctor function/method/observable
+   calls, `use:`-capability reads, receive-glyph interactions,
+   message sends, subscripts, binops other than the arithmetic/
+   comparison combinators listed in spec §4.16.10 (deferred to a
+   later relaxation landing — this predicate widens conservatively).
+
+   Non-const arithmetic combinators (`+`, `-` binary, `*`, `/`, `%`,
+   `and`, `or`, comparisons) are NOT accepted here yet even though
+   spec §4.16.10 lists them as compile-time constants. Their
+   folding requires an evaluation pass (produces a normalized
+   literal AST node); this predicate is a shape check, not an
+   evaluator. Callers that need arithmetic-const support must
+   invoke a folder pass before checking shape."
   ([expr] (default-expr-const-shape? expr nil nil))
   ([expr atom-env] (default-expr-const-shape? expr atom-env nil))
   ([expr atom-env enum-env]
@@ -67,11 +90,43 @@
       :lit-nil :lit-bool)             true
      :ident                           true
      (:neg :not)                      (default-expr-const-shape? (:expr expr) atom-env enum-env)
+     :list                            (every? #(default-expr-const-shape? % atom-env enum-env)
+                                              (:items expr))
      :call                            (let [callee (:callee expr)]
-                                        (and (some? atom-env)
-                                             (map? callee)
-                                             (= :ident (:node callee))
-                                             (contains? atom-env (:name callee))))
+                                        (cond
+                                          ;; F34 L1 — atom-type ctor call.
+                                          (and (some? atom-env)
+                                               (map? callee)
+                                               (= :ident (:node callee))
+                                               (contains? atom-env (:name callee)))
+                                          (every? #(default-expr-const-shape?
+                                                    (if (map? %) (or (:value %) %) %)
+                                                    atom-env enum-env)
+                                                  (:args expr))
+
+                                          ;; Q10-B — payload'd enum-case call
+                                          ;; `Enum.case(arg, arg, ...)`. Parser
+                                          ;; produces a `:call` whose callee is
+                                          ;; a `:dot` naming a payload-carrying
+                                          ;; case; args must all be const.
+                                          (and (some? enum-env)
+                                               (map? callee)
+                                               (= :dot (:node callee))
+                                               (let [target (:target callee)
+                                                     fname  (:field callee)]
+                                                 (and (map? target)
+                                                      (= :ident (:node target))
+                                                      (let [en   (:name target)
+                                                            info (get enum-env en)]
+                                                        (and info
+                                                             (contains? (set (:cases info)) fname)
+                                                             (seq (get-in info [:payload-index fname])))))))
+                                          (every? #(default-expr-const-shape?
+                                                    (if (map? %) (or (:value %) %) %)
+                                                    atom-env enum-env)
+                                                  (:args expr))
+
+                                          :else false))
      :dot                             (let [target (:target expr)
                                             fname  (:field expr)]
                                         (and (some? enum-env)
