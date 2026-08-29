@@ -989,6 +989,47 @@ def main:
          #"Extension propositions compose additively"
          (p/parse "extend A:\n    invariants:\n        ready\n")))))
 
+(deftest q10d-plugin-annotation-on-module-decl-accepted
+  (testing "Q10-D (2026-08-30, spec §7.2.1) — `@plugin(...)` annotation on the line above `module <name>` is legal; the module declaration returns a `:module` AST node with annotations attached. Manifest fields are captured verbatim in the annotation's args for the downstream F75 resolver."
+    (let [nodes (p/parse (str "@plugin(name: \"http-nsurlsession\", version: 1)\n"
+                              "module com.acme.http_nsurlsession\n"))
+          node  (first nodes)]
+      (is (= 1 (count nodes)))
+      (is (= :module (:node node)))
+      (is (= "com.acme.http_nsurlsession" (:name node)))
+      (is (= 1 (count (:annotations node))))
+      (is (= "plugin" (:name (first (:annotations node)))))
+      ;; annotation args are the manifest fields — parser captures the
+      ;; raw arg AST; F75 (manifest resolver) does semantic evaluation.
+      (let [args (:args (first (:annotations node)))]
+        (is (= 2 (count args)))
+        (is (= "name" (:name (first args))))
+        (is (= "http-nsurlsession" (get-in (first args) [:value :value])))
+        (is (= "version" (:name (second args))))
+        (is (= 1 (get-in (second args) [:value :value])))))))
+
+(deftest q10d-module-decl-without-plugin-annotation-rejected
+  (testing "Q10-D — regular `module <name>` header (no `@plugin(...)` annotation) still rejects per F73 (2026-08-20). Module identity for regular modules is structural (file path)."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"`module <name>` declaration is retired \(2026-08-20\)"
+         (p/parse "module com.example.plain\n")))))
+
+(deftest q10d-non-plugin-annotation-on-module-decl-rejected
+  (testing "Q10-D — annotation set that doesn't include `@plugin` is not sufficient to license `module <name>`. Targeted diagnostic points at the Q10-D gate. Annotation-attachment rule stays `def`-only for non-`@plugin` annotations (existing L3a rule)."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"`module <name>` header requires a `@plugin"
+         (p/parse (str "@metadata(kind: record)\n"
+                       "module com.example.foo\n"))))))
+
+(deftest q10d-plugin-annotation-followed-by-nothing-diagnostic-updated
+  (testing "Q10-D — the parse-annotated-def error message now mentions `module` as a legal follow-target when @plugin is present. Fires when annotation set contains neither `def` nor `module` follow-target."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"Annotations cannot stand alone"
+         (p/parse "@plugin(name: \"x\")\nlet x: Int = 1\n")))))
+
 (deftest f9-l3-extend-class-rejects-top-level-fields
   (testing "F9 Landing 3 + F67 L5 — a field declaration inside `extend class` fails at parse per §3.3.2 (extensions cannot add state). Post-L5 the surface is top-level fields (no `data:` header)."
     (is (thrown-with-msg?

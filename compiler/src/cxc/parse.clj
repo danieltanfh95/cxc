@@ -3343,20 +3343,53 @@
 
 (defn- parse-annotated-def
   "Parse one or more annotation lines and attach them, in source order, to
-   the following structurally inferred `def` declaration. In the consolidated
-   surface, record/enum/protocol/agent kinds all enter through `def`, so
-   attaching after `parse-def-atom` preserves one normalized AST location."
+   the following declaration. In the consolidated surface, record/enum/
+   protocol/agent kinds all enter through `def`, so attaching after
+   `parse-def-atom` preserves one normalized AST location.
+
+   Q10-D carve-out (2026-08-30, spec §7.2.1) — when the annotation set
+   contains a `@plugin` annotation, `module <name>` is also a legal
+   follow-target. The `module` declaration returns a `:module` AST node
+   with the annotations attached; downstream (F75 manifest resolver)
+   consumes the `@plugin` args as the plugin manifest. Any other
+   annotation set still requires a `def` follow-target (existing L3a
+   attachment rule)."
   [tokens pos]
   (loop [annotations [] p pos]
     (if (at? tokens p :annotation-prefix)
       (let [[annotation p2] (parse-annotation tokens p)]
         (recur (conj annotations annotation) (skip-newlines tokens p2)))
-      (if (at? tokens p :kw "def")
+      (cond
+        (at? tokens p :kw "def")
         (let [[declaration p2] (parse-def-atom tokens p)]
           [(assoc declaration :annotations annotations) p2])
+
+        ;; Q10-D — `@plugin(...)` may attach to `module <name>`; the
+        ;; annotation's presence is the authorization gate for the
+        ;; header (which stays retired for regular modules per F73).
+        (and (at? tokens p :kw "module")
+             (some #(= "plugin" (:name %)) annotations))
+        (let [[declaration p2] (parse-module-decl-internal tokens p)]
+          [(assoc declaration :annotations annotations) p2])
+
+        ;; `module` seen but no `@plugin` in the annotation set —
+        ;; targeted diagnostic pointing at the Q10-D gate.
+        (at? tokens p :kw "module")
+        (fail! tokens p
+               (str "`module <name>` header requires a `@plugin(...)` "
+                    "annotation on the preceding line (Q10-D carve-out, "
+                    "spec §7.2.1). Regular modules take their identity "
+                    "from the file path (F73, 2026-08-20). If this is a "
+                    "plugin module, add `@plugin(name: ..., version: ..., "
+                    "requires: ..., ...)` above the `module` line. "
+                    "Otherwise delete the `module` line."))
+
+        :else
         (fail! tokens p
                (str "top-level annotation must be followed by a `def` "
-                    "declaration; annotations cannot stand alone in L3a"))))))
+                    "declaration (or `module <name>` when the annotation "
+                    "set contains `@plugin(...)`, per Q10-D §7.2.1). "
+                    "Annotations cannot stand alone."))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Top-level dispatch
