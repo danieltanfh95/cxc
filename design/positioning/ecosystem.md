@@ -1,5 +1,14 @@
 # Corvid and the Apple Ecosystem
 
+> **v1.0-consolidation supersession note (2026-08-29).** Mentions
+> of "Corvid's Channel section" / "the section mechanism" reflect
+> pre-v1.0 F6/F7/F8 machinery retired at the 2026-08-25 v1.0
+> user-surface consolidation. The interop claims (same runtime as
+> ObjC/Swift, class-metadata compatibility, category visibility,
+> mixed-language codebases) all stand; the specific vocabulary
+> describing user-facing extensibility does not. Authoritative
+> current syntax: [../spec/spec-cxc-v1.0.md](../spec/spec-cxc-v1.0.md).
+
 ## Corvid's relationship to existing Apple-ecosystem languages
 
 Corvid targets the same runtime as Objective-C and Swift (libobjc2 on Linux, objc4 on Apple platforms). Classes compile to the same metadata format, dispatch through the same `objc_msgSend`, and participate in the same class registry. Categories added by any of the three languages are visible to the others.

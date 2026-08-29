@@ -6,7 +6,22 @@
 
 **This is not the spec.** The spec (`spec/spec-cxc-v1.0.md`) is normative. This document is onboarding guidance. When they disagree, the spec wins.
 
-> **Status note (post-collapse, 2026-08-17).** Under Proposal G (F67 L3/L4/L5) the class-body vocabulary has collapsed to two glyphs (`:<` observable, `<:` transition), with top-level fields and no `data:` / `methods:` sections. Many code examples below still use the retired `data:` / `state:` / `methods:` / `-> handler(args):` forms because this doc catalogs PATTERNS (what to reach for) — the shape of the answer is what matters; the surface syntax on the code sketches lags. Read code samples as illustrations; consult the spec §1.11 class-body-collapse addendum for the current surface. A pattern-level sweep is planned as a follow-up landing.
+> **v1.0-consolidation supersession note (2026-08-29,
+> supersedes 2026-08-17 post-collapse note).** Code sketches
+> throughout still teach retired section-header syntax (`use:` /
+> `data:` / `state:` / `invariants:` / `methods:` / `metadata:`
+> as top-level section headers on class bodies) — under Proposal G
+> (F67 L3/L4/L5, 2026-08-17) the class-body vocabulary collapsed
+> to two glyphs (`:<` observable, `<:` transition) with top-level
+> fields, and the 2026-08-25 v1.0 user-surface consolidation
+> retired the section-header form entirely. Ratified v1.0
+> spellings: `use <name>: <T>` (atom-body keyword, not section),
+> direct fields, `@metadata(...)` / `@deprecated(...)`
+> annotations, `|:` propositions in place of `invariants:`. Read
+> code samples as PATTERN illustrations (the shape of the answer
+> is what matters); consult [spec/spec-cxc-v1.0.md](spec/spec-cxc-v1.0.md)
+> for current surface. A pattern-level syntax-refresh sweep
+> remains a planned follow-up.
 
 ---
 

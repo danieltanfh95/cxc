@@ -1,5 +1,22 @@
 # Corvid Design Charter
 
+> **v1.0-consolidation supersession note (2026-08-29).** This
+> charter's premises 1.2/1.4/1.6/1.7/1.8/1.9 reference the pre-v1.0
+> "sections as unified metaprogramming" model that was retired at
+> the 2026-08-25 v1.0 user-surface consolidation. Specifically
+> retired as SECTION HEADERS: `use:` / `data:` / `state:` /
+> `invariants:` / `metadata:` / `computed:` / `deprecated:` /
+> `accepts:` / `channel:` / `signal:` (still valid in v1.0 as
+> atom-body keywords in the ratified `use <name>: <T>` /
+> direct-field / `@name(...)` annotation form). F6 metaprogramming,
+> F7 aliases, F8 user-section-class syntax, F10/F11/F12 dedicated
+> section headers all retired. The premises' INTENT (correctness
+> by construction, first-class contracts, orthogonal mechanisms)
+> survives; the specific implementation vocabulary described here
+> does not. Authoritative current surface:
+> [spec-cxc-v1.0.md](spec-cxc-v1.0.md). Retirement table:
+> [../../compiler/design/plans/archive/v1-user-surface-retirement-landed.md](../../compiler/design/plans/archive/v1-user-surface-retirement-landed.md).
+
 The nine design premises below constitute the philosophical foundation of Corvid. Every subsequent design decision in the full specification (§2-§14) descends from these premises. Any change to a decision should first check whether it violates a premise; if it does, the premise should be either revised deliberately or preserved as a constraint.
 
 Read this document before the full specification. It's short enough to internalize (~2000 words) and comprehensive enough that the rest of the spec can be understood as consequences of these premises.

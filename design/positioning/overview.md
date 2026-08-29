@@ -1,5 +1,19 @@
 # Corvid — Positioning Statement
 
+> **v1.0-consolidation supersession note (2026-08-29).** Bet #1
+> below ("Sections as unified metaprogramming") describes the
+> pre-v1.0 F6 metaprogramming + F7 aliases + F8 user-section-class
+> model, retired at the 2026-08-25 v1.0 user-surface consolidation.
+> The stage roadmap ("built-in sections" / "user-definable sections
+> and describers" through v1.0/v1.5) reflects the pre-consolidation
+> plan. Ratified v1.0 mechanism: `use <name>: <T>` capability
+> atoms, direct fields, `@name(...)` annotations, `|:`
+> propositions. The positioning claims (native-first, Apple-
+> ecosystem interop, correctness by construction) stand; the
+> specific vocabulary describing HOW does not. See
+> [../spec/spec-cxc-v1.0.md](../spec/spec-cxc-v1.0.md) and
+> [../../compiler/design/plans/archive/v1-user-surface-retirement-landed.md](../../compiler/design/plans/archive/v1-user-surface-retirement-landed.md).
+
 ## What Corvid is
 
 Corvid is a native-first programming language for the Apple ecosystem. It targets macOS, iOS, and Foundation-Swift-compatible servers. It compiles to the same runtime substrate as Objective-C and Swift (libobjc2 / objc4) and interoperates directly with Foundation, AppKit, and UIKit code without a bridge layer.
