@@ -614,7 +614,7 @@ Additive session — small, mostly mechanical spec fills for constructs the pari
 
 - **Numeric conversion (§3.11 new).** `Convertible<From, To>` protocol. `.into(T)` for wrapping conversion (matches §3.9 arithmetic overflow discipline — signed/unsigned narrowing wraps by default, consistent with two's-complement modular arithmetic). `.checked_into(T) -> Result<T, OverflowError>` for callers who want to handle out-of-range. `.saturating_into(T)` clamps to `[T.min, T.max]`. Prelude ships conformances for all numeric primitive pairs.
 - **Bounded protocol (§3.11).** `T.max`, `T.min` for numeric types. `FloatingPoint` protocol extends with `.infinity`, `.nan`, `.epsilon`. Small stdlib formalization.
-- **Parameter defaults (§3.8.5 new).** Constructor and function parameters may carry `= <expr>` defaults where `<expr>` is a compile-time constant expression: primitive literal, `nil`, or a value-alias reference (§4.16.10). Compiler substitutes the constant at each call site that omits the argument — static insertion, no runtime cost, no shared-mutable-state footgun. Collection literals as defaults are rejected (they allocate); use `nil` + coalesce in the body for runtime-computed defaults.
+- **Parameter defaults (§3.8.5 new).** Constructor and function parameters may carry `= <expr>` defaults where `<expr>` is a compile-time constant expression per the §4.16.10 definition (primitive literals, value-alias references, enum cases, collection literals, constructor calls with all-const args — full list at §4.16.10). Compiler substitutes the constant at each call site that omits the argument — static insertion, no runtime cost, no shared-mutable-state footgun (cxc collections are persistent per F33; the compile-time-folded constant is shared safely across call sites). Runtime-computed defaults are still rejected — use `nil` + coalesce in the body when the default depends on runtime state.
 - **Multi-binding `guard let` / `if let` (§3.6.1 extension).** Comma-separated bindings: `if let x = a, let y = b:` binds both or takes the else branch on first failure. `guard let x = a, let y = b else: ...` same shape. Standard from Swift; small grammar extension.
 - **Enum associated values remain named-only.** Retracted earlier proposal to add positional form. Consistency with the rest of cxc (named args, named record fields, named `accepts`) wins over Swift-familiarity. Style guide notes: when translating positional Swift enums, add names.
 - **Grammar (§10).** Parameter default production added. Multi-binding `if_let` / `guard_let` productions added. `Convertible` and `Bounded` are stdlib protocols, no grammar impact.
@@ -1819,7 +1819,7 @@ protocol Healable:
 **FFI and shim atoms.**
 
 - **`Extern` capability atom** — the sole FFI mechanism. Shim atoms request access via `use: extern: Extern`; the runtime provisions it only to stdlib-designated shims. `extern.get("name")` returns a typed native handle resolved at compile time against the target prelude's `foreign library` declarations. Signatures use C types (`CString`, `Int32`, `SizeT`, `Ptr of Byte`); marshalling from cxc types happens in shim bodies (explicit at boundary); library resolution is per-target (`libc` for native, `wasi_snapshot_preview1` for WASI, `js` for JavaScript host).
-- **User code never gets `Extern`** — trust boundary. Only stdlib shim atoms bridge to native code; the runtime audits them. User code accesses OS through typed capabilities (Clock, Filesystem, ...) only.
+- **Application code never gets `Extern`** — trust boundary. `Extern` is provisioned only to prelude-shipped stdlib shim atoms AND to shim atoms inside `@plugin(...)`-annotated modules (§7.2.1, Q9 relaxation 2026-08-30). Regular application code (no `@plugin` annotation, not under `prelude/`) accesses OS through typed capabilities (Clock, Filesystem, ...) provided by prelude or plugin modules only.
 - **Direction inferred from symbol type.** `(Args) -> Ret` = outbound (cxc invokes); `Stream of T` = inbound (native invokes; runtime pushes onto stream). No direction sub-labels. Callbacks-with-return unsupported in v1.0.
 - Rejected: `native def` keyword splits the type system into two atom categories. FFI-as-capability was rejected in an earlier draft on type-safety grounds but is now accepted under the prelude-typed form (types come from prelude declarations, not from runtime string arguments).
 
@@ -1842,7 +1842,7 @@ protocol Healable:
 cxc has **no separate effect system**. Effect tracking falls out of the substrate:
 
 1. **cxc atoms have no OS access.** The substrate provides `data:`, transitions, wires, observables, invariants — none touch the OS.
-2. **The only path to the OS is `Extern`**, provisioned only to stdlib-designated shim atoms (never user code).
+2. **The only path to the OS is `Extern`**, provisioned to prelude-shipped stdlib shim atoms AND to shim atoms inside `@plugin(...)`-annotated modules (Q9 relaxation 2026-08-30; §7.2.1). Never to regular application code.
 3. **Shim atoms wrap OS calls as user-facing capability atoms** (Clock, Filesystem, Network, ...) shipped in the platform prelude.
 4. **User code accesses these only via `use:` declarations.**
 5. **`use:` propagates through composition** — a compound atom's `use:` closure = union of children's `use:` minus what's locally provided (per this section, "The `use:` block").
@@ -1895,7 +1895,7 @@ The atom substrate commits to a single mechanism (atom composition) for every op
 [ OS ]                                ← outside cxc
 ```
 
-**No OS-touching language primitives.** No `print`, no `read_file`, no `now()`, no `random()`, no `sleep`, no `exit`. Every operation that crosses the OS boundary is a method on a capability atom in `env`. This is enforced by construction — the parser has no productions for OS calls; the only path to a syscall is through a shim atom holding the `Extern` capability, and the runtime provisions `Extern` only to stdlib-designated shim atoms.
+**No OS-touching language primitives.** No `print`, no `read_file`, no `now()`, no `random()`, no `sleep`, no `exit`. Every operation that crosses the OS boundary is a method on a capability atom in `env`. This is enforced by construction — the parser has no productions for OS calls; the only path to a syscall is through a shim atom holding the `Extern` capability, and the runtime provisions `Extern` only to (a) prelude-shipped stdlib shim atoms and (b) shim atoms inside `@plugin(...)`-annotated modules (§7.2.1, Q9 relaxation 2026-08-30).
 
 **The `use:` block.** Every atom that depends on env capabilities declares them:
 
@@ -2104,7 +2104,7 @@ For v1.0: **runtime dispatch** of state-specific handlers via auto-delegation wi
 
 **FFI mechanism — `Extern` capability + prelude symbol registry.**
 
-The FFI is a capability atom, not a syntactic privilege. Shim atoms request access via `use: extern: Extern`; the runtime provisions `Extern` only to stdlib-designated shims. User code cannot receive `Extern` in its env — any `use:` entry is syntactically legal, but the runtime linker refuses to fill an `extern: Extern` slot for non-stdlib atoms. Trust boundary enforced at env construction, not at parse time.
+The FFI is a capability atom, not a syntactic privilege. Shim atoms request access via `use: extern: Extern`; the runtime provisions `Extern` to (a) prelude-shipped stdlib shims and (b) shims inside `@plugin(...)`-annotated modules (§7.2.1, Q9 relaxation 2026-08-30). Regular application code cannot receive `Extern` in its env — any `use:` entry is syntactically legal, but the runtime linker refuses to fill an `extern: Extern` slot for atoms outside those two authorized categories. Trust boundary enforced at env construction, not at parse time.
 
 Native symbol declarations live in target-scoped prelude files (§1.14). Each declaration binds a typed handle to a native symbol; the compiler resolves `extern.get("name")` against the target's symbol table at compile time.
 
@@ -2141,7 +2141,7 @@ def PosixFs:
 
 Rules:
 
-1. **`Extern` is prelude-internal in v1.0.** Only stdlib-designated shim atoms receive `Extern` in their env. User code has no path to raw FFI; it accesses OS through typed capabilities (Clock, Filesystem, Network, ...). Trust boundary lives at env provisioning, not at parse time.
+1. **`Extern` scope — prelude OR `@plugin`-annotated module** (relaxed 2026-08-30 for L7, Q9). At v1.0 the runtime provisions `Extern` to two categories of atom: (a) prelude-shipped stdlib shim atoms, and (b) shim atoms declared inside modules that carry a top-level `@plugin(...)` annotation (§7.2.1). No other userland modules receive `Extern`. Application code (regular modules with no `@plugin` annotation) has no path to raw FFI; it accesses OS through typed capabilities (Clock, Filesystem, Network, ...) provided by prelude or plugin modules. Trust boundary lives at env provisioning: the runtime linker refuses to fill an `extern: Extern` slot on an atom outside those two categories. Parse-time `foreign library` / `foreign symbol` visibility follows the same gate (see line 2469 below).
 2. **Compile-time symbol resolution.** `extern.get("name")` requires a compile-time string literal. The compiler resolves the argument against the target's prelude symbol table at compile time. Unknown symbol → compile error at the call site. Dynamic string arguments are rejected.
 3. **Type comes from the prelude declaration.** The retrieved handle's type is what the prelude symbol declaration says it is. The `data:` field's declared type is checked against the prelude type; mismatch → compile error. No caller-asserted signatures.
 4. **Direction inferred from type shape.** Symbols with type `(Args) -> Ret` are **outbound** — cxc invokes; native provides the impl. Symbols with type `Stream of T` are **inbound** — native invokes (via runtime callback); cxc receives on the stream via ordinary `|>` composition. Callbacks-with-return values are unsupported in v1.0 (no general encoding fits both hot synchronous callbacks and cold async ones; hand-crafted per-API shims with compiler-baked trampolines handle the rare stdlib cases that require them).
@@ -2466,9 +2466,14 @@ foreign library "cxc_runtime":
 
 No explicit `direction:` field; no `inbound_symbol` / `outbound_symbol` keywords. One rule, disambiguated by type. Callbacks-with-return values (qsort comparator, Win32 `WndProc`) are unsupported in v1.0 — the general FFI type system covers only the two shapes above; rare APIs needing returning callbacks require hand-crafted per-API shims with compiler-baked native trampolines.
 
-**Scope restriction — prelude-only.** The declaration forms `foreign library "..." :` and `symbol "..." : <type>` are legal *only* inside files under `prelude/`. The parser rejects them elsewhere with a targeted error. User code cannot extend the foreign symbol table; new native surface must be contributed to the target prelude.
+**Scope restriction — prelude OR `@plugin`-annotated module** (relaxed 2026-08-30 for L7, Q9). The declaration forms `foreign library "..." :` and `symbol "..." : <type>` are legal in two locations:
 
-Rationale: the primary trust boundary lives at env provisioning (`Extern` is not handed to user atoms). The declaration-form restriction is a second layer of defense — even if a shim atom somehow received `Extern`, non-prelude atoms cannot declare new symbols to resolve against. Prelude is the only place native surface is described.
+1. Inside files under `prelude/` (as before — stdlib native surface).
+2. Inside modules that carry a top-level `@plugin(...)` annotation (§7.2.1). Third-party plugins declare their own native-symbol surface using the same grammar; the plugin manifest's `requires:` set enumerates which OS primitives those symbols reach for, and the compiler cross-checks that every declared foreign symbol resolves against a primitive in the plugin's declared `requires:` set (see F74/F75/F76).
+
+The parser rejects `foreign library` / `foreign symbol` in any other location with a targeted error. Regular application modules (no `@plugin` annotation, not under `prelude/`) cannot extend the foreign symbol table; new native surface must be contributed to the target prelude OR published as a plugin module.
+
+Rationale: the primary trust boundary lives at env provisioning (`Extern` is not handed to arbitrary user atoms — only to those in prelude or plugin modules). The declaration-form restriction is a second layer of defense — even if a shim atom somehow received `Extern`, application atoms outside prelude and plugin modules cannot declare new symbols to resolve against. Q9 (ratified 2026-08-29) widens the second-layer gate from "prelude-only" to "prelude OR `@plugin`-annotated" because the same rationale applies: the `@plugin(...)` annotation is a machine-checked gate the compiler enforces (F75 manifest resolver), so a plugin module's foreign declarations are as auditable as prelude's. Ordinary application code retains its zero-FFI-surface guarantee.
 
 **Worked example — WallClock (Unix).**
 
@@ -6691,6 +6696,31 @@ function timeout() -> Duration:
 
 Value aliases must be compile-time constants. Runtime-computed values are not permissible in aliases.
 
+**Compile-time constant expression — definition** (relaxed 2026-08-30 for the L7 plugin manifest form, Q10):
+
+An expression is a **compile-time constant** iff its evaluation is a pure construction from constants alone — no I/O, no observable dispatch, no `use:`-capability read, no user-visible side effect. The constant-folder AST pass evaluates such expressions at compile time to a normal-form constant AST node; the result is inlined at every use site.
+
+The following expression shapes qualify:
+
+1. **Primitive literals.** `Int` / `Float` / `Bool` / `String` / `Char` / `nil`. Numeric literals with prefix (`0x…`, `0b…`, `0o…`) and underscore separators are literals.
+2. **Value-alias references.** A previously-declared `alias NAME: <const>` used by name expands transitively; cycles are rejected per §4.16.12.
+3. **Enum-case references.** `EnumName.case_name` for cases without payload, and `EnumName.case_name(<const>, <const>, …)` for payload'd cases where every payload argument is itself a compile-time constant. Raw-valued enum cases substitute their integer literal.
+4. **Collection literals.** `[<const>, <const>, …]` (List), `#{<const>, <const>, …}` (Set), `{<const>: <const>, …}` (Dict / Map) — provided every element (key + value) is itself a compile-time constant. Empty collection literals qualify.
+5. **Constructor calls.** `T(<named-arg>: <const>, …)` where `T` is any def-shape that supports construction (structural-shape, fields-only, tagged-variant with payload case) AND every actual argument is a compile-time constant. Applies transitively — nested constructor calls chain: `PluginManifest(requires: #{NetTcpClient, NetDns}, target: Target(os: "darwin", arch: "arm64"))`.
+6. **Arithmetic and boolean combinators over constants.** `+`, `-`, `*`, `/`, `%`, unary `-`, `and`, `or`, `not`, comparison operators applied to compile-time constants produce compile-time constants; division-by-zero at fold time is a compile error.
+
+The following are **not** compile-time constants and are rejected in const positions:
+
+- Function or method calls other than constructors (`foo()`, `x.bar()`, observables `x.name`) — these are runtime dispatch.
+- `use:`-capability reads (e.g. `clock.now`, `env.args`) — these read runtime state.
+- References to receive-glyph atoms, transitions, or `-> handler:` declarations.
+- Any expression that involves a message send (`:>`, `|>`, `<:`, `<|`).
+- Format-string interpolation `"hello ${name}"` when `name` is not itself a compile-time constant.
+
+**Motivation for the constructor-call relaxation (Q10).** The L7 plugin manifest form (`@plugin(...)` annotation, §4.16.x pending) requires expressing declarative data — capability requirements, OS-primitive descriptors, target ranges — as annotation arguments that must be foldable at compile time. Without constructor-call folding, plugin authors would need to encode this data as opaque strings and re-parse at compile time; with the relaxation, plugin manifests read as ordinary cxc constructor calls and the compiler folds them into their AST form during the manifest-resolution pass. The rule is uniform: if the expression is a pure construction over constants, it's constant.
+
+**Compile-time constant is a transitive property.** A `Foo(x: Bar(y: 3))` call is constant iff `Bar(y: 3)` is constant AND `x: <constant Bar>` satisfies Foo's construction contract. The folder walks the expression tree bottom-up; the first non-constant argument aborts folding with a diagnostic pointing at the offending sub-expression.
+
 #### 4.16.11 Module Aliases
 
 Shorten a qualified module path. No body:
@@ -8201,6 +8231,38 @@ A **module** is a named compilation unit. Modules:
 **Single-source modules** compile as an implicit module named after the file when the source is compiled standalone.
 
 **Multi-source modules** — a directory whose files share a common path prefix — benefit from shared metadata (LSP sees the whole module structure), cross-source visibility of internal-by-convention declarations, and unified exposed-interface export.
+
+#### 7.2.1 Plugin Modules — `@plugin(...) module <name>` Carve-Out (Q10-D, 2026-08-30)
+
+The F73 retirement of `module <name>` headers has one carve-out: **plugin modules re-introduce the header as the syntactic host for the `@plugin(...)` manifest annotation.** Presence of the `@plugin(...)` annotation is the authorization gate; without it, `module <name>` remains retired.
+
+**Canonical form:**
+
+```
+@plugin(
+    name:       "http-nsurlsession",
+    version:    Version(0, 1, 0),
+    cxc_compat: Range(from: Version(1, 0, 0), to: Version(2, 0, 0)),
+    requires:   #{OsPrimitive.NetTcpClient,
+                  OsPrimitive.NetDns,
+                  OsPrimitive.ClockMonotonic},
+    exports:    [HttpClient],
+    targets:    #{Target.Darwin}
+)
+module com.acme.http_nsurlsession
+```
+
+**Rules:**
+
+- **`@plugin` is a compiler-recognized annotation name** (like `@metadata` and `@deprecated`). Not a keyword; reuses the existing `@name(args)` annotation grammar (§4.16.x-annotation-scoping). The compiler dispatches on the annotation name during manifest resolution.
+- **The annotation's arguments must all be compile-time constants** per the relaxed §4.16.10 definition — constructor calls, collection literals, enum-case references, and literals compose freely. This is what makes the manifest build-time readable without running any user code.
+- **`module <name>` header is required when — and only when — the file carries a `@plugin(...)` annotation.** For plugin modules the header names the module; the file path is not authoritative. For non-plugin modules `module <name>` remains rejected (F73).
+- **The annotation attaches to the `module` line, not to a following `def`.** This is a widening of the annotation-attachment rule (previously `def`-only per L3a): annotations at the top of a file whose annotation name is `@plugin` attach to the `module` declaration that follows. All other annotation names retain the `def`-only attachment rule.
+- **Manifest is build-time readable.** The compiler evaluates the annotation's constant arguments during the manifest-resolution pass (before running any user code) and produces a folded `PluginManifest` AST node.
+- **Manifest fields (v1.0 shape).** `name: String!`, `version: Version`, `cxc_compat: Range[Version]`, `requires: Set[OsPrimitive]`, `exports: List[CapabilityAtomRef]`, `targets: Set[Target]`. Semantic types shipped as stdlib per F74/F75. See [decisions-frozen-2026-08-29.md §Q10](../../compiler/design/decisions-frozen-2026-08-29.md) for the full field discipline.
+- **Presence gates `Extern` and `foreign symbol` visibility.** Only prelude modules and `@plugin`-annotated modules may take `use: extern: Extern` and declare `foreign library` / `foreign symbol` blocks. See §1.14 (prelude) and Q9 for the ratification; §7.2.1's job is to name `@plugin` as one of the two gates.
+
+**Why the carve-out (not a full F73 rollback).** Regular application modules benefit from structural identity — no chance of drift between declared name and file path, one source of truth, LSP resolves paths without parsing the whole module. Plugin modules have a different constraint: they need a machine-readable manifest that travels with the source (not in a separate manifest file), and that manifest needs a syntactic host. Reusing the annotation grammar on a `module` line satisfies both goals without introducing new syntax. Application modules gain nothing from a header they don't need; plugin modules gain the manifest anchor they do. Two shapes, one grammar, no design duplication.
 
 ### 7.3 Packages
 
