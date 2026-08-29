@@ -1,0 +1,136 @@
+# hello-agent.cxc — minimum viable agent harness (L7 aspirational)
+#
+# This file does NOT compile today. Requires:
+#   - L7 F80 (HttpClient reference plugin)
+#   - JSON parse/emit library
+#   - Subprocess plugin (std.subprocess)
+#   - Env plugin (std.env)
+#   - L6 Step 10 (File state machine — currently deferred)
+# See STATUS.md for the full landing chain.
+#
+# Purpose: the SHAPE of an agent in cxc. Every L7 landing decision
+# gets checked against "does this let hello-agent.cxc parse and lower?"
+
+module com.example.hello_agent
+
+# ----- Third-party plugins (L7 F80+ era) --------------------------------
+from com.acme.http_claude   import Claude, ChatResponse, StopReason, ToolCall
+
+# ----- First-party stdlib capabilities ----------------------------------
+from std.io                 import Console
+from std.fs                 import File, ReadOnly, ReadWrite
+from std.subprocess         import Subprocess, ProcResult, ShellError
+from std.env                import Env
+from std.error              import IOError
+
+# ----- Data shapes ------------------------------------------------------
+# Shapes flow: CLI arg → Message → ctx → Claude → ChatResponse → dispatch → loop
+
+def Role:
+    case system
+    case user
+    case assistant
+    case tool
+
+def Message:
+    role:    Role
+    content: String!
+    # tool-result messages carry a tool_call_id in content JSON;
+    # a richer variant is deferred to a real ContentBlock enum.
+
+    class fn system(text: String!)    -> Message = Message(role: Role.system,    content: text)
+    class fn user(text: String!)      -> Message = Message(role: Role.user,      content: text)
+    class fn tool_result(id: String!, out: String!) -> Message =
+        Message(role: Role.tool, content: "{\"tool_use_id\":\"" + id + "\",\"content\":" + out + "}")
+
+# ----- Custom composite capability --------------------------------------
+# AgentTools bundles fs + shell + env into one capability atom. An Agent
+# declares `use: tools: AgentTools` and gains the whole tool surface as
+# one unit. The plugin manifest declares the transitively-required
+# OS primitives once, not per sub-capability.
+
+def AgentTools:
+    use: fs:    File
+    use: shell: Subprocess
+    use: env:   Env
+
+    fn read_file(path: String!) -> Result[String, IOError] =
+        fs.open(path, ReadOnly).read_all()
+
+    fn write_file(path: String!, content: String!) -> Result[Unit, IOError] =
+        fs.open(path, ReadWrite).write(content)
+
+    fn run_shell(cmd: String!) -> Result[ProcResult, ShellError] =
+        shell.run(cmd, timeout_ms: 30000)
+
+    fn get_env(name: String!) -> String =
+        env.read(name)
+
+# ----- The agent atom ---------------------------------------------------
+
+def Agent(user_task: String!):
+    ctx:       List of Message = []
+    step:      Int             = 0
+    max_steps: Int             = 20
+
+    use: console: Console
+    use: claude:  Claude
+    use: tools:   AgentTools
+
+    -> planning
+        then:
+            ctx.append(Message.system(system_prompt()))
+            ctx.append(Message.user(user_task))
+            |> claude.chat(messages: ctx)
+
+    # Loop iteration: tool_use → dispatch → send back → wait.
+    planning <: claude.response(r: ChatResponse) -> planning
+        |: r.stop_reason == StopReason.tool_use
+        |: step < max_steps
+        then:
+            step => step + 1
+            ctx.append(r.as_message())
+            for tc in r.tool_calls:
+                ctx.append(Message.tool_result(id: tc.id, out: dispatch(tc)))
+            |> claude.chat(messages: ctx)
+
+    # Terminal: LLM stopped without tool_use → print final text.
+    planning <: claude.response(r: ChatResponse) -> done
+        |: r.stop_reason == StopReason.end
+        then: console.write(r.text)
+
+    # Terminal: hit step budget.
+    planning <: claude.response(r: ChatResponse) -> done
+        |: step >= max_steps
+        then: console.write("[agent] hit max_steps (" + max_steps.to_string() + ")")
+
+    -> done
+
+    # ----- Private helpers ------------------------------------------------
+
+    fn dispatch(tc: ToolCall!) -> String =
+        switch tc.name
+            case "shell": tools.run_shell(tc.args.get("cmd")).to_json()
+            case "read":  tools.read_file(tc.args.get("path")).to_json()
+            case "write": tools.write_file(
+                              tc.args.get("path"),
+                              tc.args.get("content")
+                          ).to_json()
+            case "env":   tools.get_env(tc.args.get("name"))
+            case _:       "{\"error\": \"unknown tool: " + tc.name + "\"}"
+
+    fn system_prompt() -> String =
+        "You are a helpful agent. Available tools:\n" +
+        "  shell(cmd: String)                          -> ProcResult\n" +
+        "  read(path: String)                          -> String\n" +
+        "  write(path: String, content: String)        -> Unit\n" +
+        "  env(name: String)                           -> String\n" +
+        "Emit JSON tool_use blocks. When finished, emit final text."
+
+# ----- Main entry -------------------------------------------------------
+
+def main:
+    task: String! = args.get_or(index: 1, default: "hello")
+    agent: Agent  = Agent(user_task: task)
+    -> running
+    running <: agent.done -> end

@@ -17,7 +17,12 @@ Reference implementations written in cxc. Two purposes:
 
 ## Status
 
-No examples exist yet. `game-of-life/` will land here when either (a) the spec-gap sweep completes and the design is stable enough to write against, or (b) it is written as spec-pressure ahead of the sweep to force gap discovery.
+`game-of-life/` will land here when either (a) the spec-gap sweep completes and the design is stable enough to write against, or (b) it is written as spec-pressure ahead of the sweep to force gap discovery.
+
+**Landed spec-pressure examples:**
+
+- [`hello-agent/`](hello-agent/) — minimum viable LLM agent harness. L7-aspirational (blocks on HttpClient plugin + JSON library + subprocess plugin); demonstrates atom-as-agent, composite `AgentTools` capability, and the L7 use-→ manifest-→ enforcement chain. Forcing function for L7 F74–F80.
+- `game-i4-preview.cxc`, `game-toys.cxc` — pre-substrate; retained as historical spec-pressure sketches.
 
 ## Convention
 
