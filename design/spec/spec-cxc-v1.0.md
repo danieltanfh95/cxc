@@ -1,5 +1,37 @@
 # cxc Language Specification — v1.0 Draft
 
+> **v1.0-consolidation supersession banner (2026-08-29).** This
+> document has stale references to retired forms that have not yet
+> been swept. When any part of the spec below disagrees with a
+> ratification in
+> [`../../compiler/design/decisions-frozen-2026-08-25.md`](../../compiler/design/decisions-frozen-2026-08-25.md)
+> or later, the frozen-decisions doc wins.
+>
+> **Known drift as of 2026-08-29 (sweep in progress):**
+>
+> - **Transition `when:` guards → `|:` propositions on their own
+>   line before `then:`** (ratified 2026-08-25, L2c commit `3d35444`).
+>   The compact single-line form `<phase> -> <target> when: <expr>`
+>   expands to two lines with `|:` on the second.
+> - **`invariants:` section header → def-body `|:` proposition**
+>   (ratified 2026-08-25, L2b commit `5e90cff`).
+> - **`abort` keyword → `|:` in `then:` bodies as post-statement
+>   assertion** (ratified 2026-08-25, D8).
+> - **`switch` construct → expression-position `<:` receive-glyph
+>   dispatch** (ratified F69 2026-08-18).
+> - **`Result[T, E]` never adopted** (Q11 rejected 2026-08-29) —
+>   failure is exceptions + `or T(reason):` recovery arms.
+> - **User-defined `section class Name:` retired** (F8 L4, 2026-08-25).
+>   Section mechanism carries as internal-only.
+> - **`data:` / `state:` / `invariants:` / `metadata:` / `computed:`
+>   / `deprecated:` / `accepts:` as SECTION HEADERS retired**
+>   (still valid as atom-body keywords in `use <name>: <T>` /
+>   direct-field / `@name(...)` annotation form).
+>
+> `|:` is the ratified guard/proposition marker throughout v1.0.
+> Any inline `when:` in transitions or examples below is stale
+> text pending sweep, not authoritative.
+
 **Name.** cxc — pronounced letter-by-letter — reads as **channels-C**, positioned in the naming lineage of **objc** (objective-C). Just as objc added object-orientation on top of C, cxc adds channels / CSP / the atom substrate on top of the C-family systems lineage. The name IS a positioning claim: cxc is what a modern Swift/ObjC-ecosystem developer reaches for when they want the substrate that objc→Swift didn't deliver.
 
 **Codename.** The language was designed under the codename **Corvid** and is still referenced by that name in historical design notes (`../working-notes.md`), directory paths, and repository infrastructure. Corvid → cxc is a naming transition, not a design change; both names refer to the same language.
@@ -58,7 +90,7 @@ Retire the value/reference substrate divide. All user types declare via `def`; t
 - **§10 grammar.** `switch_expr` production retires; `case` remains as `def X: case ...:` production per F68 L2. Expression-position `<:` block added.
 - **Retained from prior spec.** All semantics carry over — nullability model, pattern matching, contracts, conversion protocols, byte/string subsystems, canonical bytes, structural conformance. F69 is a syntactic-packaging change; behaviors preserved.
 - **Companion retirements (same 2026-08-18 pass).** F17 L2/L3 (`loop:` + `break value`), F20 (`for` sugar), F45 (spec §5.6 escaping-closure overreach). All follow the same pattern: retire mechanisms that duplicate the actor substrate.
-- **§3.7 guard-keyword consolidation (2026-08-19, F69 L4c3 follow-on).** Pattern-guard clause spells as `<: pattern when: <cond>:` — reuses the class-body-transition `when:` guard keyword rather than introducing a distinct `if <cond>` form. One guard keyword across the language; earlier drafts using `if` in §3.7 examples are updated.
+- **§3.7 guard-keyword consolidation (2026-08-19, F69 L4c3 follow-on).** Pattern-guard clause spells as `<: pattern when: <cond>:` rather than introducing a distinct `if <cond>` form. Earlier drafts using `if` in §3.7 examples are updated. (Historical: this entry originally read "reuses the class-body-transition `when:` guard keyword". The class-body-transition guard subsequently retired the `when:` sub-block in favor of `|:` propositions on their own lines — D5, ratified 2026-08-25. The two guard sites are now lexically distinct; the pattern-guard `when:` remains valid inside pattern-match alternatives per this entry.)
 
 **Change log to v1.0 — F70 surface facelift (2026-08-19):**
 
@@ -1160,7 +1192,8 @@ Compiler warns on the collision to force explicit disambiguation.
 ```
 def Enemy:
     alive <: take_damage(amount: Int)
-    -> dead when: health <= amount
+    -> dead
+        |: health <= amount
         then: :> died        # ← just emits; no sink parameter
 
     dead -> end
@@ -1345,10 +1378,10 @@ Every atom has two implicit phases the user never declares:
 - **`end`** — deconstructor. Any transition targeting `end` deconstructs the atom: the transition's `then:` block runs its side-effect statements (last chance to emit signals or clean up), then the atom is destroyed. Any nullable slot holding this atom **auto-nils** on destruction — parents observe the slot going nil, no explicit "on completion" transition needed.
 
 Corollaries:
-- `end` transitions may have `when:` and `then:` side-effect statements (`:>`, `|>`, external calls); `field => expr` update entries in a `then:` on an `-> end` transition are meaningless (the atom's state is being discarded) and are a compile error.
+- `end` transitions may have `|:` propositions and `then:` side-effect statements (`:>`, `|>`, external calls); `field => expr` update entries in a `then:` on an `-> end` transition are meaningless (the atom's state is being discarded) and are a compile error.
 - Parent atoms detect sub-atom completion via `is nil` on the slot, or via explicit event-up (sub emits `:> completed` in its `end`-transition's `then:` block before destruction).
 - **Cascade destruction is synchronous and post-order.** When a parent atom transitions to `end`: (1) parent's `then:` side-effect statements run first (final emissions to sibling atoms while sub-atoms are still alive and reachable); (2) each sub-atom in a slot recursively transitions to `end` in declaration order (their `then:` side-effects run; their own sub-atoms cascade); (3) all sub-atoms are destroyed; (4) parent is destroyed. Any slot holding a destroyed atom auto-nils.
-- **Auto-nil visibility timing.** The slot auto-nils **atomically at the end** of the sub-atom's `end`-transition — specifically, after the sub-atom's `then:` side-effects complete and before any other transition on the parent evaluates its `when:` guard. A parent transition guard evaluated after the sub-atom's `end` fires WILL see the slot as nil. Rationale: transitions are atomic units; observers never see the intermediate "sub-atom destroyed but slot not yet nil" state.
+- **Auto-nil visibility timing.** The slot auto-nils **atomically at the end** of the sub-atom's `end`-transition — specifically, after the sub-atom's `then:` side-effects complete and before any other transition on the parent evaluates its `|:` propositions. A parent transition guard evaluated after the sub-atom's `end` fires WILL see the slot as nil. Rationale: transitions are atomic units; observers never see the intermediate "sub-atom destroyed but slot not yet nil" state.
 
 **Phase declarations are inferred from transition arrows.** Empty `def phase` declarations are unnecessary. Phases named as source or target of any transition arrow (`X -> Y`, `<: msg -> Y`, `-> Y`, etc.) are automatically declared. Explicit `def phase:` blocks with bodies remain only when a phase has genuinely distinct shape (rare; usually a sub-atom slot expresses phase-scoped state better).
 
@@ -1359,7 +1392,8 @@ The general shape of a transition line has a header (one or two lines) followed 
 ```
 <source> <:|<| <msg>[(args)]                              # header line 1 (async or sync receive)
 -> <target>                                                # header line 2 (may be joined with line 1)
-    when: <additional guard>                              # optional: further narrows the trigger
+    |: <additional guard>                                 # optional: further narrows the trigger
+    |: <another guard>                                    # (each proposition on its own line — own-line rule)
     let:  <name>: <expr>+                                 # optional: intermediate bindings
     then: <entries>+                                      # committed effects: <field> => <expr> updates
                                                           # AND/OR side-effect statements (emissions,
@@ -1372,15 +1406,14 @@ The general shape of a transition line has a header (one or two lines) followed 
 Alternative header for state/time-triggered transitions (no message receive):
 
 ```
-<source>
-when: <trigger condition>                                 # e.g. `clock.after(timeout)` or state-only guard
--> <target>
+<source> -> <target>
+    |: <trigger condition>                                # e.g. `clock.after(timeout)` or state-only guard
     then: ...
 ```
 
 - **`<source> <: <msg>(args)`** — message-triggered header. `<:` = async receive; `<|` = sync receive. The message name and args block declare what triggers the transition and what fields bind from the payload. Parens `(...)` omitted when the message has no args.
 - **`-> <target>`** — target phase. May be a phase name, `self` (self-transition, no phase change), or `end` (deconstruct).
-- **`when:`** — additional guard composed on top of the trigger. For message-triggered transitions, narrows further. For guard-only transitions (no `<:` / `<|`), the entire trigger.
+- **`|:`** — proposition on its own line before `then:`. For message-triggered transitions, narrows further. For guard-only transitions (no `<:` / `<|`), the entire trigger. Multiple `|:` lines compose as conjunction. Own-line rule ratified 2026-08-25 (D5); supersedes the retired `when:` sub-block.
 - **`let:`** — pure named bindings visible in `then:`. Uses `name: expression` syntax. Use when a value is shared across multiple `then:` entries.
 - **`then:`** — the sole effect clause (F70 I3, 2026-08-19). Accepts two kinds of entries in one block:
   - **Field updates** — **`field => expression`** (reads as "field becomes expression"). Fields resolve lexically: **target scope first, compound scope second**. Unlisted fields carry forward. Updates commit atomically per F33 snapshot. Compile error if a `-> end` transition contains any `field => expr` update entry (state is being discarded).
@@ -1431,11 +1464,11 @@ Under earlier drafts, transition targets carried constructor args (`<to>(field: 
 
 **Reading order:** guard fires → compute helpers (`let:`) → produce new self (phase from header + `then:` field updates, atomically) → run `then:` side-effect statements in source order after commit.
 
-**Compact single-line form** is sugar for the block form with only `when:` populated:
+**Compact form** for guard-only transitions splits across two lines with `|:` on the second (own-line rule):
 
 ```
-idle -> up when pressed(key: Key.arrow_up)         # sugar for:
-                                                    #   idle -> up when: pressed(key: Key.arrow_up)
+idle -> up
+    |: pressed(key: Key.arrow_up)
 ```
 
 **No assignment anywhere.** `x = y`, `x += y`, `Compound.field = y` are all syntax errors — at atom-body top level, inside handler bodies, inside transition bodies, everywhere. Field updates happen exclusively through the target-constructor header and the `then:` block. There is no general mutation in the language.
@@ -1447,7 +1480,7 @@ A nested-state transition (e.g., `alive -> firing_fireball(...)`) whose new stat
 1. **`then:` on the nested-state transition itself.** The `then:` block updates both scopes in one atomic swap; lexical resolution routes each name to the right scope:
    ```
    alive -> firing_fireball
-       when: cast_fireball() and can_cast and mana >= fireball_mana_cost
+       |: cast_fireball() and can_cast and mana >= fireball_mana_cost
        then:
            mana         => mana - fireball_mana_cost      # firing_fireball.mana (target scope)
            last_cast_at => clock.now                       # Player.last_cast_at (compound scope)
@@ -1456,13 +1489,13 @@ A nested-state transition (e.g., `alive -> firing_fireball(...)`) whose new stat
 2. **Emit + listen** decomposition. The nested-state transition emits an event; a separate compound self-transition listens for the event and produces the new compound self:
    ```
    alive -> firing_fireball
-       when: cast_fireball() and ...
+       |: cast_fireball() and ...
        then:
            mana => mana - fireball_mana_cost
            :> fireball_launched
 
    self -> self
-       when: fireball_launched()
+       |: fireball_launched()
        then: last_cast_at => clock.now
    ```
 
@@ -1507,7 +1540,7 @@ def Player:
     
     alive <: cast_fireball
     -> alive
-        when: mana >= cost and (action is nil)
+        |: mana >= cost and (action is nil)
         then:
             mana   => mana - cost
             action => ActionMachine(clock: clock)     # instantiate sub-atom into slot
@@ -1545,7 +1578,7 @@ Parent atoms coordinate with sub-atoms in slots via four patterns:
    # In Player (parent): check the predicate, not the phase name
    alive <: cast_fireball
    -> alive
-       when: action.is_idle and ...
+       |: action.is_idle and ...
    ```
    Rationale: exposing observable predicates insulates parents from internal phase renames in the sub-atom. Directly checking `action is idle` couples parent to sub's internal phase names.
 
@@ -1649,7 +1682,7 @@ Under Corvid's actor substrate, all external interaction with an atom is one of 
 ```
 
 - Pure expression over `self`'s fields (and args if parametric).
-- No `then:`, no `when:`, no side effects.
+- No `then:`, no `|:`, no side effects.
 - Zero-arg (`hp_display :< format(hp)`) — unchanged from prior spec.
 - Parametric (`healed_by(amt: Int) :< min(hp + amt, max_hp)`) — new. Replaces reader methods.
 
@@ -1657,13 +1690,13 @@ Under Corvid's actor substrate, all external interaction with an atom is one of 
 
 ```
 <source-phase-or-*> <: <msg-name>(args) -> <target-phase-or-*>
-    [when: <guard-expr>]
+    [|: <proposition>]*
     [then: <field-update-or-side-effect-stmt>[, ...]]
 ```
 
 - Source `*` — from any phase (wildcard).
 - Target `*` — same as matched source phase (stay — no phase change).
-- `when:` guards; `then:` unifies two entry kinds — `field => expr` updates commit atomically per F33 L2-L3, then side-effect statements (`:>`, `|>`, calls) fire in source order reading the F33 snapshot.
+- `|:` propositions (each on its own line, own-line rule D5) narrow the trigger; multiple propositions compose as conjunction. `then:` unifies two entry kinds — `field => expr` updates commit atomically per F33 L2-L3, then side-effect statements (`:>`, `|>`, calls) fire in source order reading the F33 snapshot.
 - **Void return per §1.11 line 1243.** Transitions produce new state, not values. Values come from observables.
 
 **Class body top-level content:**
@@ -1701,7 +1734,7 @@ def Player:
         then: print(msg)
 
     alive <: heal(amt: Int) -> alive                # message → mutate state
-        when: hp < max_hp
+        |: hp < max_hp
         then: hp => min(hp + amt, max_hp)
 
     alive <: die -> dead                            # message → phase change
@@ -1727,8 +1760,8 @@ protocol Healable:
       use:
           clock: Clock                          # inherit from parent env (shape-only)
       ...
-      waiting when: clock.after(deadline)      # bare `clock` — implicit env lookup;
-      -> idle                                  # time-guarded transition
+      waiting -> idle                          # time-guarded transition
+          |: clock.after(deadline)             # bare `clock` — implicit env lookup
           then: :> fire_pending
   ```
 - The source expression in each `use:` entry tells the composition checker where the value comes from:
@@ -1736,7 +1769,7 @@ protocol Healable:
   - Construction (`clock: GameClock(tick_ms: 16)`) → construct locally; this compound provides it to children.
   - Expression (`fs: SandboxedFs(inner: fs, ...)`) → evaluate; bare names inside the expression resolve in *enclosing* scope (parent env), enabling wrap-parent-and-reprovide.
 - Children of a compound see the compound's local bindings; whether an entry was inherited or constructed is invisible to them (substitutability).
-- **All OS-adjacent capabilities are atoms.** No language primitives touch the OS. `Clock` (no `after` primitive; delayed dispatch is either `<phase> when: clock.after(deadline) -> <target>` as a time-guarded transition, or a Delay/Throttle transformer in a receive-glyph source expression), `Filesystem`, `Network`, `Console`, `Random`, `Args`, `EnvVars`, `Exit`, `Signals`, `Log`, and (per capability) Threads, Process, Devices, GUI events are all capability atoms in `env`.
+- **All OS-adjacent capabilities are atoms.** No language primitives touch the OS. `Clock` (no `after` primitive; delayed dispatch is either `<phase> -> <target>` with `|: clock.after(deadline)` as a time-guarded transition, or a Delay/Throttle transformer in a receive-glyph source expression), `Filesystem`, `Network`, `Console`, `Random`, `Args`, `EnvVars`, `Exit`, `Signals`, `Log`, and (per capability) Threads, Process, Devices, GUI events are all capability atoms in `env`.
 - **Runtime provides shim atoms** wrapping OS syscalls. Same capability shape has per-target implementations (`PosixFs`, `WasiFs`, `BrowserFs`); runtime picks at build/launch time based on target.
 - **`use:` declaration IS the effect surface.** An atom's transitive `use:` closure is its effect set. Atoms with no `use:` block are proof-by-signature that they don't touch time, files, network — pure over their inputs.
 
@@ -1846,8 +1879,8 @@ def debounce(duration: Duration):
             fire_at => clock.now + duration
     
     # Time-guarded transition — fires when clock reaches deadline
-    waiting when: clock.after(fire_at)
-    -> idle
+    waiting -> idle
+        |: clock.after(fire_at)
         then:
             pending => nil
             fire_at => nil
@@ -1895,7 +1928,7 @@ use:
 **Capability catalog (v1.0 stdlib).**
 
 *Core (must ship v1.0):*
-- **Clock** — wall, monotonic, timers, scheduled tasks. No `after` primitive. Delayed dispatch is a time-guarded transition (`<phase> when: clock.after(deadline) -> <target>`) or a Delay/Throttle transformer in a receive-glyph source expression.
+- **Clock** — wall, monotonic, timers, scheduled tasks. No `after` primitive. Delayed dispatch is a time-guarded transition (`<phase> -> <target>` with `|: clock.after(deadline)`) or a Delay/Throttle transformer in a receive-glyph source expression.
 - **Random** — CSPRNG, seeded PRNG, distributions.
 - **Filesystem** — read, write, watch, path ops, directory listing, metadata, stat.
 - **Network** — TCP/UDP sockets, DNS, HTTP client, HTTP server, WebSocket.
@@ -1957,7 +1990,7 @@ def File(path: Path):                            # constructor param — implici
     unopened <: open
     -> opened
         let: fd: Int = native_open(path, O_RDWR)
-        when: fd >= 0
+        |: fd >= 0
         then:
             handle => NativeHandle(fd)
             :> opened
@@ -1965,13 +1998,13 @@ def File(path: Path):                            # constructor param — implici
     unopened <: open
     -> unopened
         let: fd: Int = native_open(path, O_RDWR)
-        when: fd < 0
+        |: fd < 0
         then: :> open_failed(errno: current_errno())
 
     # Reads while opened — sync send to the file's read channel returns the bytes.
     opened <| read(byte_count: Int)
     -> opened
-        when: byte_count >= 0
+        |: byte_count >= 0
         then: :> bytes(native_read(handle, byte_count))
 
     opened <| write(bytes: Bytes)
@@ -1995,7 +2028,7 @@ def File(path: Path):                            # constructor param — implici
     # fd in end's `then:` block. Wildcard on-exit for `opened` also fires cleanup
     # when transitioning away from `opened` via any path.
     opened -> end
-        when: destruction_requested()            # runtime-triggered on drop-while-opened
+        |: destruction_requested()               # runtime-triggered on drop-while-opened
         then:
             native_close(handle)
             :> closed
@@ -2003,7 +2036,7 @@ def File(path: Path):                            # constructor param — implici
     # `closed` has no message-triggered transitions — structurally ignores
     # read/write/close/seek. Transitions to `end` when destruction is requested.
     closed -> end
-        when: destruction_requested()
+        |: destruction_requested()
 ```
 
 Properties that fall out of the state-machine model:
@@ -2432,7 +2465,7 @@ def WallClock:
     # The shim atom subscribes via an ordinary receive-glyph transition — no free wires.
     self <: timer_callbacks(id: Int)
     -> self
-        when: pending contains id
+        |: pending contains id
         then:
             pending => pending - id
             pending[id] :> fire(t: now)
@@ -2499,7 +2532,7 @@ sizeof alignof offsetof
 - `function` — retired; write `def name(x) -> y: ...` for the trivial atom shape.
 - `on` (handler prefix) — replaced by `->` prefix. `on event(...):` → `-> event(...):`.
 - `emit` (call form) — replaced by `:>` push-channel glyph. `emit(value)` → `:> value`; `emit channel_name(value)` → `:> channel_name(value)`.
-- `after` (as language primitive with implicit clock) — retired. Time is accessed via a `Clock` capability atom declared in `use:`. Delayed dispatch is a time-guarded transition (`<phase> when: clock.after(deadline) -> <target>`) or a Delay/Throttle transformer inside a receive-glyph source expression. The `~>` time-deferred wire glyph is retired (2026-08-12).
+- `after` (as language primitive with implicit clock) — retired. Time is accessed via a `Clock` capability atom declared in `use:`. Delayed dispatch is a time-guarded transition (`<phase> -> <target>` with `|: clock.after(deadline)`) or a Delay/Throttle transformer inside a receive-glyph source expression. The `~>` time-deferred wire glyph is retired (2026-08-12).
 - `type`, `contract` — retired at v1.0 (see §1.11); types ARE atoms; predicates are `invariants:`/`requires`/`ensures`/predicate atoms.
 - `extern` (as section keyword) — retired at v1.0 (see §1.12). FFI is a capability atom (`Extern`) provisioned through env to stdlib shims only. `Extern` (PascalCase) is a regular identifier for the capability atom, not a keyword. Foreign symbol declarations moved to prelude-only `foreign library` / `symbol` forms (see §1.14).
 - `program` (as top-level declaration keyword) — retired at v1.0 (2026-08-13). The runtime entry point is `def main` by naming convention; the atom named `main` at module top level is the one the OS runtime instantiates and provides env to. `program` violated the atoms-are-the-sole-primitive premise (§1.11) as a distinct declaration form; case convention already carries the role signal (`def Foo` = atom class, `def main` = entry-point trivial atom).
@@ -2554,10 +2587,10 @@ The following character sequences are reserved as glyph tokens for the atom-subs
 - `-->` — collapsed to `->` (2026-08-11).
 - `<--` — replaced by `:<` (2026-08-11).
 - `->` in stream composition — collapsed to `|>` (2026-08-12).
-- **`~>` — retired (2026-08-12).** Time-deferred behavior expressed as a time-guarded transition (`when: clock.after(deadline)`) or a Delay/Throttle transformer inside a receive-glyph source expression.
+- **`~>` — retired (2026-08-12).** Time-deferred behavior expressed as a time-guarded transition (`|: clock.after(deadline)`) or a Delay/Throttle transformer inside a receive-glyph source expression.
 - **Top-level `|>` wire composition — retired (2026-08-12).** Standing wires as atom-body top-level statements do not exist; all subscriptions are receive-glyph transitions.
 - `after N -> handler` sugar — retired (2026-08-12); express delayed dispatch as a time-guarded transition or via a Delay transformer in a receive-glyph source expression.
-- `when: msg_name(args)` as message-triggered transition trigger — retired (2026-08-12) in favor of receive-glyph header (`<source> <: msg(args) -> <target>`). `when:` remains for state/time guards and for additional narrowing composed with a receive glyph.
+- `when: msg_name(args)` as message-triggered transition trigger — retired (2026-08-12) in favor of receive-glyph header (`<source> <: msg(args) -> <target>`). Additional state/time narrowing composed with a receive glyph now uses `|:` propositions on their own lines (D5, ratified 2026-08-25); the `when:` sub-block form is retired.
 
 ### 2.7 Literals
 
@@ -3247,7 +3280,18 @@ Under uniform visibility (§7.7), all top-level protocols are part of the module
 
 #### 3.4.2 Class-Level Contracts (Invariants)
 
-Classes and structs can carry class-level contracts via the `invariants:` section — predicate expressions that must hold at every observable point (after construction, before/after each method call, before destruction).
+> **v1.0 surface note (2026-08-25 user-surface consolidation).** The `invariants:` section header is retired at v1.0. Class-level invariants are now expressed as def-body `|:` propositions on their own lines (four-position unification, ratified 2026-08-25 L2b, commit `5e90cff` — see [decisions-frozen-2026-08-25.md](../../compiler/design/decisions-frozen-2026-08-25.md) §L2b). The semantic meaning is unchanged: predicate expressions that must hold at every observable point. The examples below still show the retired `invariants:` block form — read those as historical illustrations; the current form is `|:` propositions at def body top level, adjacent to fields.
+>
+> Migration:
+> ```
+> # Retired (v0.11 surface):        # v1.0 surface:
+> def Counter:                        def Counter:
+>     count: Int = 0                      count: Int = 0
+>     invariants:                         |: 0 <= count <= 100
+>         0 <= count <= 100
+> ```
+
+Classes and structs can carry class-level contracts via `|:` propositions (historically: the `invariants:` section) — predicate expressions that must hold at every observable point (after construction, before/after each method call, before destruction).
 
 ```
 def Connection:
@@ -3928,7 +3972,7 @@ The block header is `<expression>:` — any expression followed by `:` and an in
 - **Case patterns for tagged-variant defs:** `<: some(let x):`, `<: none:`.
 - **Type patterns (for `Any`):** `<: Order(o):`, `<: String(s):`.
 - **Structural patterns (structural-shape defs):** `<: Order(id: some_id, items: []):`.
-- **Guard patterns:** `<: Order(o) when: o.total > 100:` — reuses the class-body-transition `when:` guard keyword (spec §4). One guard keyword across the language, not two. (Earlier drafts spelled this `if <cond>`; consolidated to `when:` on 2026-08-19.)
+- **Guard patterns:** `<: Order(o) when: o.total > 100:` — inline `when:` clause on a pattern alternative (F69 L4c3, consolidated 2026-08-19 from an earlier `if <cond>` draft). Note: this is the pattern-guard `when:`, distinct from the retired class-body-transition `when:` sub-block (which was superseded by `|:` propositions on 2026-08-25, D5). The pattern-guard keeps `when:` because it stays inline with a pattern; there is no own-line proposition ambiguity to resolve here.
 - **Wildcard:** `<: *:`.
 - **Leading-dot shorthand:** inside a `<: name(...)` pattern where the scrutinee's type is known, `<: .name(...)` resolves the qualifier automatically (§3.7.2).
 
@@ -5096,7 +5140,29 @@ Sugar accessors: `Double.infinity`, `Double.nan`, `Double.epsilon`.
 
 ## 4. Sections
 
-> **v1.0 note.** The section mechanism itself — labeled semantic blocks resolved to section classes — carries into v1.0 unchanged; what changes is which body sections are meaningful under the atom substrate (§1.11). Retirements at v1.0: `state:` (all fields are `data:`; mutations happen through transitions), `channels:` (return type is authoritative), `entrypoints:` (all `-> handler:` declarations are exposed by default), `wires:` (there are no free-standing wires — subscriptions live in receive-glyph transitions), `handlers:` as grouping container (`-> handler:` prefix IS the declaration). The primary body sections for atoms are `data:`, `use:`, `invariants:`, `contracts:`, `constructor:`, `metadata:`, plus per-transition `let:` / `when:` / `then:` sub-blocks (F70 I3 unifies effect clauses under `then:`; the retired `do:` clause folds into `then:`). See §10 grammar for the authoritative list. §4.10 built-in section classes below describe the sections mechanism vocabulary in the v0.11 shape; entries for retired sections should be read as historical.
+> **v1.0 note.** The section mechanism itself — labeled semantic blocks resolved to section classes — carries into v1.0 unchanged; what changes is which body sections are meaningful under the atom substrate (§1.11).
+>
+> **Retired at v1.0** (class-body-collapse + user-surface consolidation, 2026-08-17 through 2026-08-25):
+> - `data:` — fields are declared top-level with no wrapping header (class-body-collapse §1.11, L5).
+> - `state:` — merged into top-level fields; mutations happen through transitions.
+> - `channels:` — return type on receive/observable transitions is authoritative.
+> - `entrypoints:` — all `-> handler:` declarations are exposed by default.
+> - `wires:` — no free-standing wires; subscriptions live in receive-glyph transitions.
+> - `handlers:` as grouping container — the `-> handler:` prefix IS the declaration.
+> - `metadata:` / `computed:` / `deprecated:` / `accepts:` — retired as user-facing section headers by the 2026-08-25 user-surface consolidation.
+>
+> **Additionally retired 2026-08-25** (user-surface consolidation, [decisions-frozen-2026-08-25.md](../../compiler/design/decisions-frozen-2026-08-25.md) §L2b / §L3c):
+> - `invariants:` section header — replaced by def-body `|:` propositions (four-position unification, L2b commit `5e90cff`).
+> - `metadata:` / `constructor:` / `contracts:` / `execution:` — replaced by `@metadata(...)` annotation, per-type constructor synthesis + explicit factories, and `|:` propositions for invariants/contracts respectively (F10/F11/F12 retirement, L3c).
+> - `requires` / `ensures` — folded into `|:` propositions (same L3c ratification).
+>
+> **Active class-body content at v1.0**: top-level field declarations (`name: T = default`), observables (`:<`), receive-glyph transitions (`<:` / `<|`), `-> handler:` declarations, and one configuration section: `use:` (capability declarations). All other configuration is via annotations (`@metadata`, `@plugin`, etc.) or per-transition `|:` propositions.
+>
+> **Per-transition sub-blocks**: `|:` propositions on their own lines (D5, ratified 2026-08-25) + `let:` intermediate bindings + `then:` unified effect clause (F70 I3 folds the retired `do:` clause into `then:`).
+>
+> **Compiler-vs-spec drift note (2026-08-30 audit).** `compiler/src/cxc/lex.clj` still lists `invariants` in its reserved-keyword table. Either the compiler retains lex-level recognition solely as a diagnostic anchor (rejecting the retired header with a rewrite hint), or L2b's downstream cleanup is not yet complete. This is a compiler-side follow-up, not a spec-side ambiguity — the ratified state is retirement.
+>
+> See §10 grammar for the authoritative parsed shape. Descriptions in §4.10 built-in section classes below and elsewhere in this document that reference retired sections should be read as historical unless they explicitly note post-2026-08-25 status. Ratifications: class-body-collapse frozen at [decisions-frozen-2026-08-25.md](../../compiler/design/decisions-frozen-2026-08-25.md); user-surface consolidation frozen in the same file under §L5.
 
 The **section mechanism** is the language's general form for labeled semantic blocks. A section is a labeled, indented block whose contents are governed by a section class. Sections appear across scopes:
 
@@ -7212,7 +7278,7 @@ Constraints on the prelude:
 6. **Paradigm-mismatch exclusions.** Some constructs common in adjacent languages are deliberately kept out of the prelude because they do not fit cxc's class-based, universally-dispatched, openly-extensible model:
    - **`|>` (pipe operator).** Pipe threads values through free functions — a shape native to FP languages where data and behavior are separate. cxc has universal method dispatch and cheap extensions/sections; the native pipeline shape is method chaining (`x.f().g().h()`), which is left-to-right, top-down, and integrated with tooling (autocomplete on `.`, jump-to-definition). Shipping `|>` would create two idioms for the same operation and pull users toward free functions instead of extension methods. Projects that genuinely want pipe can declare `alias <lhs> @|> <rhs> ...` locally; the `@` marker makes the project-local nature visible at every use site.
 
-7. **Iteration boundary — method dispatch only; `while` is bootstrap.** Iteration in cxc is method dispatch on the collection: `y.for_each(x => body)`, `.map`, `.filter`, `.fold`, `.sorted`, `.find`, `.any`, `.all`. No `for` sugar exists at any layer (F20 REJECTED 2026-08-18) — iteration is method dispatch per §3.7.1 rationale 3 / §3.10.1, and the sugar was leftover C-family surface syntax over the same dispatch. `while` remains bootstrap because stdlib needs a primitive control-flow loop to *implement* iteration methods without infinite regress or requiring a Tail Call Optimization commitment. `loop:` also retired (F17 L2 REJECTED 2026-08-18) — accumulate-until-done idioms model as self-transitions with `when:` guards. The discipline:
+7. **Iteration boundary — method dispatch only; `while` is bootstrap.** Iteration in cxc is method dispatch on the collection: `y.for_each(x => body)`, `.map`, `.filter`, `.fold`, `.sorted`, `.find`, `.any`, `.all`. No `for` sugar exists at any layer (F20 REJECTED 2026-08-18) — iteration is method dispatch per §3.7.1 rationale 3 / §3.10.1, and the sugar was leftover C-family surface syntax over the same dispatch. `while` remains bootstrap because stdlib needs a primitive control-flow loop to *implement* iteration methods without infinite regress or requiring a Tail Call Optimization commitment. `loop:` also retired (F17 L2 REJECTED 2026-08-18) — accumulate-until-done idioms model as self-transitions with `|:` guards. The discipline:
    - **User-facing code uses method dispatch.** `.for_each`, `.map`, `.filter`, `.fold`, `.find`, `.any`, `.all`. There is no sugar form; the underlying dispatch IS the surface.
    - **`while` is the tool stdlib uses.** It is legal in user code too, but reaching for it signals either "I'm writing an iterator primitive" or "this algorithm genuinely doesn't fit collection-dispatch shape." Both are legitimate; both are rare.
    - **No `.for_each` for `while`.** Condition-based looping doesn't naturally correspond to a method on a collection (there's no collection). If needed, a project can define `alias @while_true <cond>: <body>` locally expanding to a closure-based helper.
@@ -7432,7 +7498,8 @@ schedule_later(function(): self.tick())
 Actor-substrate form (spec-canonical, §1.11 Clock capability):
 
 ```
-waiting when: clock.after(deadline) -> fired
+waiting -> fired
+    |: clock.after(deadline)
 
 fired <: enter() -> fired
     do: self.tick()
@@ -9280,7 +9347,7 @@ class_member := metadata_section | section_usage
 observable_decl := identifier ('(' parameter_list ')')? ':<' expr
 
 # Transition line — see §1.11 "Transition-line block form" for the full
-# body shape (when:/let:/then:). Sources: phase name, `self`, `*`
+# body shape (|:-propositions / let: / then:). Sources: phase name, `self`, `*`
 # (wildcard, F67 L3), or implicit (bare `-> target`). Targets: phase name,
 # `self`, `*` (wildcard = no phase change; handler-shape when source is
 # also `*`), or `end` (deconstruct).
@@ -9680,7 +9747,7 @@ transition_decl :=
 
 transition_trigger :=                                                  # optional receive-glyph header;
     receive_glyph receive_source message_args                          # if omitted, transition is triggered
-                                                                       # only by `when:` in the body (state/time)
+                                                                       # only by `|:` propositions in the body (state/time)
 receive_glyph      := '<:'                                             # async receive — non-blocking pickup
                     | '<:' channel_modifier                            # optional per-site channel semantic
                     | '<|'                                             # sync receive — transition parks on msg
@@ -9716,8 +9783,8 @@ message_args       := '(' ')'                                          # zero ar
                                                                        # (after all transformers, if any).
                                                                        # REQUIRED — no elision from source signature.
 arg_binding        := identifier ':' type_ref                          # `target: Position` — declares field/type;
-                                                                       #   binds a local name usable in when:/let:/
-                                                                       #   then: as the received value.
+                                                                       #   binds a local name usable in `|:` / `let:` /
+                                                                       #   `then:` as the received value.
 
 phase_pattern := identifier                                            # nested state atom name OR enum case name
                | identifier ':' identifier                             # `field: case` — disambiguate when
@@ -9759,30 +9826,38 @@ wildcard_exit_decl  := phase_pattern '->' block_transition_body       # `<phase>
 #   Explicit `init -> <phase>` form is legal for clarity when the initial phase choice
 #   is ambiguous (multiple wildcard on-enters could plausibly claim init).
 # `end`  — appears only as target. Any transition into `end` deconstructs the atom.
-#   `end` transitions may have `when:` and `then:` side-effect statements but NOT
+#   `end` transitions may have `|:` propositions and `then:` side-effect statements but NOT
 #   `field => expr` update entries (state is being discarded). Compiler enforces:
 #   any `field => expr` update entry in a `then:` on an `-> end` transition is an error.
 
 # Compact form: `<from> <: <msg>(args) -> <to>` — sugar for block with only receive-glyph
-# header (no additional when:/let:/then: body). Whitespace-flexible: source+trigger may be
-# on one or two lines. Also: `<from> -> <to> when <guard>` — sugar for block with only
-# `when:` populated (no receive glyph; state/time-triggered).
+# header (no additional `|:` / `let:` / `then:` body). Whitespace-flexible: source+trigger
+# may be on one or two lines. State/time-only triggers (no receive glyph) express as a
+# guard-only block with one or more `|:` propositions on their own lines before `then:`.
+# The legacy `<from> -> <to> when <guard>` inline form is retired (2026-08-25, L2c);
+# rewrite as two lines with `|:` on the second.
 inline_transition_body :=
-    'when' expr                                                        # trailing single-expression guard
-    |                                                                  # empty — receive glyph in header is the trigger
+    (empty — receive glyph in header is the sole trigger)              # for message-triggered transitions
+                                                                       # with no additional guard, the compact form
+                                                                       # collapses to just the header line.
 
 # Block form: sub-blocks are all optional; must appear in the order shown below.
 # F70 I3 (2026-08-19) unifies effect clauses under `then:`; the legacy `do:`
 # sub-block retires (Stage 3). `then:` accepts both `field => expr` update
 # entries and side-effect statements; entries interleave in source order.
 # Multiple `then:` sub-blocks in one body merge at lowering (F22 exemption).
+# Guard propositions (`|:` lines) precede the `let:` and `then:` sub-blocks; each is
+# its own line (own-line rule ratified 2026-08-25, D5).
 block_transition_body :=
-    when_subblock
+    prop_line*                                                         # zero or more `|:` propositions
     let_subblock?
     then_subblock*
 
-when_subblock := 'when' ':' ( expr                                     # single-line: `when: msg(x) and cond`
-                            | INDENT expr+ DEDENT )                    # multi-line block
+prop_line     := '|:' expr                                             # own-line proposition; guards the arm.
+                                                                       # Typed form: `|: expr as ErrorType(field: value, ...)`
+                                                                       # emits the error value on failure.
+                                                                       # Ratified 2026-08-25 (L2c commit `3d35444`);
+                                                                       # supersedes the retired `when:` sub-block.
 
 let_subblock  := 'let'  ':' ( named_binding                            # single-line: `let: new_health: max(...)`
                             | INDENT named_binding+ DEDENT )
@@ -9855,7 +9930,7 @@ sync_send_stmt := '|>' atom_ref '.' identifier '(' arg_list? ')'      # `|> play
 #     Migrate to a receive-glyph transition (`<phase> <: expr (args) -> <phase> then: target(args)`)
 #     or a receive-glyph with inline transformer chain (see receive_source).
 #   Time-deferred `~>` chain — glyph retired entirely. Time-shaped behavior is either
-#     `when: clock.after(deadline)` on the transition, or a `Delay`/`Throttle` transformer
+#     `|: clock.after(deadline)` on the transition, or a `Delay`/`Throttle` transformer
 #     inside a receive-glyph source expression.
 
 # ---- Nested def (compound atoms contain nested atoms) ----
@@ -9923,7 +9998,7 @@ ffi_type := 'CString' | 'Int8' | 'Int16' | 'Int32' | 'Int64'
 # `emit(value)` call form → replaced by `:> value` (with `:> name(value)` for named).
 # `Type<T>` generic-arg brackets → replaced by `Type of T` qualifier.
 # `after N -> handler` time sugar → retired; express delayed dispatch as a
-#     time-guarded transition (`<phase> when: clock.after(deadline) -> <target>`)
+#     time-guarded transition (`<phase> -> <target>` with `|: clock.after(deadline)`)
 #     or a Delay/Throttle transformer in a receive-glyph source expression.
 # `->` in wire composition → retired; `|>` composes streams inside receive-glyph
 #     source expressions (see receive_source).
