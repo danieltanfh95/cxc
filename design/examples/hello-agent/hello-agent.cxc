@@ -1,30 +1,38 @@
 # hello-agent.cxc — minimum viable agent harness (L7 aspirational)
 #
 # This file does NOT compile today. Requires:
-#   - L7 F80 (HttpClient reference plugin)
-#   - JSON parse/emit library
-#   - Subprocess plugin (std.subprocess)
-#   - Env plugin (std.env)
-#   - L6 Step 10 (File state machine — currently deferred)
+#   - Full L7 rollout (F74-F80): OS-primitive registry, plugin manifest
+#     resolver, Extern promotion, HttpClient reference plugin
+#   - Composed plugins: com.acme.http_claude (HttpClient + JSON)
+#   - First-party plugins: std.fs (bundles File), std.subprocess, std.env
+#   - JSON parse/emit library in cxc
 # See STATUS.md for the full landing chain.
 #
-# Purpose: the SHAPE of an agent in cxc. Every L7 landing decision
-# gets checked against "does this let hello-agent.cxc parse and lower?"
+# Design decisions this example embodies:
+#   - No Result[T, E] wrapping (Q11 rejected 2026-08-29). Methods return
+#     raw success types; failures throw typed exceptions handled via
+#     `or T(...):` recovery arms at call sites.
+#   - No `switch` / `case` construct (Q12 rejected 2026-08-29). Tool
+#     dispatch happens via ToolAction tagged variant + agent self-send
+#     + transitions on variant patterns.
 
 module com.example.hello_agent
 
 # ----- Third-party plugins (L7 F80+ era) --------------------------------
-from com.acme.http_claude   import Claude, ChatResponse, StopReason, ToolCall
+from com.acme.http_claude   import Claude, ChatResponse, StopReason, ToolCall, ToolAction
 
 # ----- First-party stdlib capabilities ----------------------------------
 from std.io                 import Console
-from std.fs                 import File, ReadOnly, ReadWrite
+from std.fs                 import File, ReadOnly, ReadWrite, IOError
 from std.subprocess         import Subprocess, ProcResult, ShellError
 from std.env                import Env
-from std.error              import IOError
 
-# ----- Data shapes ------------------------------------------------------
-# Shapes flow: CLI arg → Message → ctx → Claude → ChatResponse → dispatch → loop
+# ============================================================
+# Data shapes
+# ------------------------------------------------------------
+# Message shapes flow:
+#   CLI arg → Message → ctx → Claude → ChatResponse → self.exec_tool → ctx (loop)
+# ============================================================
 
 def Role:
     case system
@@ -35,43 +43,78 @@ def Role:
 def Message:
     role:    Role
     content: String!
-    # tool-result messages carry a tool_call_id in content JSON;
-    # a richer variant is deferred to a real ContentBlock enum.
 
     class fn system(text: String!)    -> Message = Message(role: Role.system,    content: text)
     class fn user(text: String!)      -> Message = Message(role: Role.user,      content: text)
+    class fn assistant(text: String!) -> Message = Message(role: Role.assistant, content: text)
     class fn tool_result(id: String!, out: String!) -> Message =
-        Message(role: Role.tool, content: "{\"tool_use_id\":\"" + id + "\",\"content\":" + out + "}")
+        Message(role: Role.tool,
+                content: "{\"tool_use_id\":\"" + id + "\",\"content\":" + out + "}")
 
-# ----- Custom composite capability --------------------------------------
-# AgentTools bundles fs + shell + env into one capability atom. An Agent
-# declares `use: tools: AgentTools` and gains the whole tool surface as
-# one unit. The plugin manifest declares the transitively-required
-# OS primitives once, not per sub-capability.
+# ToolCall + ToolAction come from com.acme.http_claude. For reference,
+# the shapes they expose look like:
+#
+#   def ToolAction:
+#       case shell(cmd: String!)
+#       case read(path: String!)
+#       case write(path: String!, content: String!)
+#       case env_var(name: String!)
+#
+#   def ToolCall:
+#       id:     String!
+#       action: ToolAction
+
+# ============================================================
+# Composite capability
+# ------------------------------------------------------------
+# Bundles fs + shell + env into one capability atom so the agent
+# declares `use: tools: AgentTools` once. Plugin manifest declares
+# transitively-required OS primitives via the composition graph.
+#
+# No Result wrapping — each method throws its capability's typed
+# exception; callers handle with `or T(...):`.
+# ============================================================
 
 def AgentTools:
     use: fs:    File
     use: shell: Subprocess
     use: env:   Env
 
-    fn read_file(path: String!) -> Result[String, IOError] =
-        fs.open(path, ReadOnly).read_all()
+    fn read_file(path: String!)                     -> String     = fs.open(path, ReadOnly).read_all()
+    fn write_file(path: String!, content: String!)  -> Unit       = fs.open(path, ReadWrite).write(content)
+    fn run_shell(cmd: String!)                      -> ProcResult = shell.run(cmd, timeout_ms: 30000)
+    fn get_env(name: String!)                       -> String     = env.read(name)
 
-    fn write_file(path: String!, content: String!) -> Result[Unit, IOError] =
-        fs.open(path, ReadWrite).write(content)
-
-    fn run_shell(cmd: String!) -> Result[ProcResult, ShellError] =
-        shell.run(cmd, timeout_ms: 30000)
-
-    fn get_env(name: String!) -> String =
-        env.read(name)
-
-# ----- The agent atom ---------------------------------------------------
+# ============================================================
+# The agent atom
+# ------------------------------------------------------------
+# Phases:  planning → dispatching → using_tools → recording
+#                       ↑                            │
+#                       └────────────────────────────┘
+#                                                    → planning
+#                                                    → done
+#
+#   planning     — waiting for claude.response
+#   dispatching  — received a tool_use response; routes each
+#                  ToolCall by ToolAction variant → using_tools
+#   using_tools  — actually invokes the capability method;
+#                  emits a `result` message carrying id + out
+#   recording    — receives `result`; appends to ctx + drops
+#                  from pending; forks to dispatching (more to
+#                  drain) or planning (drained → ping claude)
+#   done         — printed final text or hit step budget
+#
+# Value flow is through messages (id + payload fields); no
+# local `out =` bindings, no helper fns holding intermediate
+# state. Each phase has a clear semantic role, visible in the
+# FSM diagram and in F48 crash-cascade attribution.
+# ============================================================
 
 def Agent(user_task: String!):
-    ctx:       List of Message = []
-    step:      Int             = 0
-    max_steps: Int             = 20
+    ctx:       List of Message  = []
+    pending:   List of ToolCall = []
+    step:      Int              = 0
+    max_steps: Int              = 20
 
     use: console: Console
     use: claude:  Claude
@@ -79,20 +122,11 @@ def Agent(user_task: String!):
 
     -> planning
         then:
-            ctx.append(Message.system(system_prompt()))
-            ctx.append(Message.user(user_task))
+            ctx => ctx.append(Message.system(system_prompt()))
+            ctx => ctx.append(Message.user(user_task))
             |> claude.chat(messages: ctx)
 
-    # Loop iteration: tool_use → dispatch → send back → wait.
-    planning <: claude.response(r: ChatResponse) -> planning
-        |: r.stop_reason == StopReason.tool_use
-        |: step < max_steps
-        then:
-            step => step + 1
-            ctx.append(r.as_message())
-            for tc in r.tool_calls:
-                ctx.append(Message.tool_result(id: tc.id, out: dispatch(tc)))
-            |> claude.chat(messages: ctx)
+    # ---------- planning transitions ----------
 
     # Terminal: LLM stopped without tool_use → print final text.
     planning <: claude.response(r: ChatResponse) -> done
@@ -104,33 +138,105 @@ def Agent(user_task: String!):
         |: step >= max_steps
         then: console.write("[agent] hit max_steps (" + max_steps.to_string() + ")")
 
+    # Tool use: fan out into dispatching, one self-send per tool call.
+    planning <: claude.response(r: ChatResponse) -> dispatching
+        |: r.stop_reason == StopReason.tool_use
+        |: step < max_steps
+        then:
+            step    => step + 1
+            pending => r.tool_calls
+            ctx     => ctx.append(r.as_message())
+            pending.for_each(fn (tc) -> |> self.exec_tool(tc))
+
+    # ---------- dispatching → using_tools ----------
+    # Route each ToolCall by ToolAction variant. Variant matching uses
+    # the existing `|:` guard slot with `is .<variant>(<payload>)`;
+    # payload becomes a message field on the corresponding run_* send.
+    # No compute in this phase — pure routing.
+
+    dispatching <: exec_tool(tc: ToolCall!) -> using_tools
+        |: tc.action is .shell(cmd)
+        then: :> self.run_shell(id: tc.id, cmd: cmd)
+
+    dispatching <: exec_tool(tc: ToolCall!) -> using_tools
+        |: tc.action is .read(path)
+        then: :> self.run_read(id: tc.id, path: path)
+
+    dispatching <: exec_tool(tc: ToolCall!) -> using_tools
+        |: tc.action is .write(path, content)
+        then: :> self.run_write(id: tc.id, path: path, content: content)
+
+    dispatching <: exec_tool(tc: ToolCall!) -> using_tools
+        |: tc.action is .env_var(name)
+        then: :> self.run_env(id: tc.id, name: name)
+
+    # ---------- using_tools → recording ----------
+    # Actually invoke the capability. Result flows out through the
+    # `result` message — no local binding. `or T(reason):` recovery
+    # inlines the error path into the same emit.
+
+    using_tools <: run_shell(id: String!, cmd: String!) -> recording
+        then: :> self.result(id: id,
+                             out: tools.run_shell(cmd).to_json()
+                                  or ShellError(reason): error_json(reason.msg))
+
+    using_tools <: run_read(id: String!, path: String!) -> recording
+        then: :> self.result(id: id,
+                             out: tools.read_file(path)
+                                  or IOError(reason): error_json(reason.msg))
+
+    using_tools <: run_write(id: String!, path: String!, content: String!) -> recording
+        then:
+            tools.write_file(path, content)
+                or IOError(reason):
+                    :> self.result(id: id, out: error_json(reason.msg))
+                    return
+            :> self.result(id: id, out: "{\"ok\": true}")
+
+    using_tools <: run_env(id: String!, name: String!) -> recording
+        then: :> self.result(id: id,
+                             out: "{\"value\": \"" + tools.get_env(name) + "\"}")
+
+    # ---------- recording → dispatching or planning ----------
+    # Fork on remaining work. `|: pending.length > 1` = more to drain;
+    # `|: pending.length == 1` = this is the last one → ping claude.
+    # Guards are exhaustive over the incoming shape (we only receive
+    # `result` when a tool call is in flight, so length >= 1).
+
+    recording <: result(id: String!, out: String!) -> dispatching
+        |: pending.length > 1
+        then:
+            ctx     => ctx.append(Message.tool_result(id: id, out: out))
+            pending => pending.filter(fn (t) -> t.id != id)
+
+    recording <: result(id: String!, out: String!) -> planning
+        |: pending.length == 1
+        then:
+            ctx     => ctx.append(Message.tool_result(id: id, out: out))
+            pending => pending.filter(fn (t) -> t.id != id)
+            |> claude.chat(messages: ctx)
+
     -> done
 
-    # ----- Private helpers ------------------------------------------------
+    # ---------- private helpers ----------
 
-    fn dispatch(tc: ToolCall!) -> String =
-        switch tc.name
-            case "shell": tools.run_shell(tc.args.get("cmd")).to_json()
-            case "read":  tools.read_file(tc.args.get("path")).to_json()
-            case "write": tools.write_file(
-                              tc.args.get("path"),
-                              tc.args.get("content")
-                          ).to_json()
-            case "env":   tools.get_env(tc.args.get("name"))
-            case _:       "{\"error\": \"unknown tool: " + tc.name + "\"}"
+    fn error_json(msg: String!) -> String =
+        "{\"error\": \"" + msg + "\"}"
 
     fn system_prompt() -> String =
         "You are a helpful agent. Available tools:\n" +
-        "  shell(cmd: String)                          -> ProcResult\n" +
-        "  read(path: String)                          -> String\n" +
-        "  write(path: String, content: String)        -> Unit\n" +
-        "  env(name: String)                           -> String\n" +
+        "  shell(cmd: String!)                          -> ProcResult\n" +
+        "  read(path: String!)                          -> String\n" +
+        "  write(path: String!, content: String!)       -> Unit\n" +
+        "  env(name: String!)                           -> String\n" +
         "Emit JSON tool_use blocks. When finished, emit final text."
 
-# ----- Main entry -------------------------------------------------------
+# ============================================================
+# Main entry
+# ============================================================
 
 def main:
-    task: String! = args.get_or(index: 1, default: "hello")
-    agent: Agent  = Agent(user_task: task)
+    task:  String! = args.get_or(index: 1, default: "hello")
+    agent: Agent   = Agent(user_task: task)
     -> running
     running <: agent.done -> end
