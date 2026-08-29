@@ -1,36 +1,70 @@
 # cxc Language Specification — v1.0 Draft
 
-> **v1.0-consolidation supersession banner (2026-08-29).** This
-> document has stale references to retired forms that have not yet
-> been swept. When any part of the spec below disagrees with a
-> ratification in
+> **v1.0-consolidation supersession banner (updated 2026-08-30).** This
+> document has stale references to retired forms; sweep is in progress
+> and covers the highest-confusion sites first. When any part of the
+> spec below disagrees with a ratification in
 > [`../../compiler/design/decisions-frozen-2026-08-25.md`](../../compiler/design/decisions-frozen-2026-08-25.md)
 > or later, the frozen-decisions doc wins.
 >
-> **Known drift as of 2026-08-29 (sweep in progress):**
+> **Ratified retirements as of 2026-08-30:**
 >
-> - **Transition `when:` guards → `|:` propositions on their own
->   line before `then:`** (ratified 2026-08-25, L2c commit `3d35444`).
->   The compact single-line form `<phase> -> <target> when: <expr>`
->   expands to two lines with `|:` on the second.
-> - **`invariants:` section header → def-body `|:` proposition**
->   (ratified 2026-08-25, L2b commit `5e90cff`).
+> - **`when:` transition-guard sub-block → `|:` propositions on their
+>   own line before `then:`** (D5 ratified 2026-08-25, L2c commit
+>   `3d35444`). Compact form `<phase> -> <target> when: <expr>` splits
+>   to two lines with `|:` on the second.
+> - **`invariants:` class-body section header → def-body `|:`
+>   proposition at top level** (L2b commit `5e90cff`, ratified
+>   2026-08-25). Same four-position unification.
+> - **`requires` / `ensures` transition contracts → `|:` propositions
+>   inside transition body** (L3c, ratified 2026-08-25). Four-position
+>   unification `|:` covers all four contract sites: class-invariants,
+>   transition-guards, preconditions, postconditions.
+> - **`metadata:` / `constructor:` / `contracts:` / `execution:`
+>   section headers → `@metadata(...)` annotation on `def` line +
+>   per-type constructor synthesis + `|:` propositions** (F10/F11/F12
+>   retirement, L3c ratified 2026-08-25).
+> - **`data:` section header → top-level field declarations** (F67 L5
+>   class-body-collapse, 2026-08-17). Fields sit at def-body top
+>   level with no wrapping header.
+> - **`methods:` / `state:` / `channels:` / `entrypoints:` / `wires:`
+>   / `handlers:` / `computed:` / `deprecated:` / `accepts:` section
+>   headers retired** (class-body-collapse + user-surface
+>   consolidation waves). Semantics fold into: fields at top level,
+>   observables `:<`, receive-glyph transitions `<:`/`<|`, `-> handler:`
+>   declarations, `@metadata(...)` annotations.
+> - **`do:` transition sub-block → folded into `then:`** (F70 I3, hard
+>   parse error post-Stage-3 2026-08-20). Expression-position `do:`
+>   block (§3.8) is a distinct construct and stays.
 > - **`abort` keyword → `|:` in `then:` bodies as post-statement
->   assertion** (ratified 2026-08-25, D8).
+>   assertion** (D8, ratified 2026-08-25).
+> - **User-defined `section class Name:` declarations retired**
+>   (F8 L4, ratified 2026-08-25). Section-class mechanism carries as
+>   compiler-internal machinery; user-facing declaration form retired.
 > - **`switch` construct → expression-position `<:` receive-glyph
->   dispatch** (ratified F69 2026-08-18).
+>   dispatch** (F69, ratified 2026-08-18).
 > - **`Result[T, E]` never adopted** (Q11 rejected 2026-08-29) —
 >   failure is exceptions + `or T(reason):` recovery arms.
-> - **User-defined `section class Name:` retired** (F8 L4, 2026-08-25).
->   Section mechanism carries as internal-only.
-> - **`data:` / `state:` / `invariants:` / `metadata:` / `computed:`
->   / `deprecated:` / `accepts:` as SECTION HEADERS retired**
->   (still valid as atom-body keywords in `use <name>: <T>` /
->   direct-field / `@name(...)` annotation form).
+> - **`switch`/`case` value-dispatch construct never adopted** (Q12
+>   rejected 2026-08-29) — dispatch is transitions + `|:` + variant
+>   patterns.
 >
-> `|:` is the ratified guard/proposition marker throughout v1.0.
-> Any inline `when:` in transitions or examples below is stale
-> text pending sweep, not authoritative.
+> **Sole surviving user-facing class-body configuration section header**
+> at v1.0: `use:` (capability declarations). Everything else is either
+> top-level content (fields, `:<`, `<:`, `-> handler:`), `|:`
+> propositions, or `@…(...)` annotations.
+>
+> **Pattern-guard `<: pattern when: <cond>:` (§3.7 F69 L4c3) is
+> preserved** — the `when:` there is a distinct syntactic site (inline
+> with a pattern in a receive-glyph dispatch block), not part of the
+> four-position unification.
+>
+> `|:` is the ratified proposition marker throughout v1.0. Any inline
+> `when:` in transitions or class-bodies below is stale text pending
+> sweep, not authoritative. Live-code examples using retired section
+> headers (`data:` / `invariants:` / `metadata:` / etc.) are historical
+> illustrations of the underlying mechanism; the current form is what
+> this banner documents.
 
 **Name.** cxc — pronounced letter-by-letter — reads as **channels-C**, positioned in the naming lineage of **objc** (objective-C). Just as objc added object-orientation on top of C, cxc adds channels / CSP / the atom substrate on top of the C-family systems lineage. The name IS a positioning claim: cxc is what a modern Swift/ObjC-ecosystem developer reaches for when they want the substrate that objc→Swift didn't deliver.
 
@@ -1699,16 +1733,18 @@ Under Corvid's actor substrate, all external interaction with an atom is one of 
 - `|:` propositions (each on its own line, own-line rule D5) narrow the trigger; multiple propositions compose as conjunction. `then:` unifies two entry kinds — `field => expr` updates commit atomically per F33 L2-L3, then side-effect statements (`:>`, `|>`, calls) fire in source order reading the F33 snapshot.
 - **Void return per §1.11 line 1243.** Transitions produce new state, not values. Values come from observables.
 
-**Class body top-level content:**
+**Class body top-level content** (v1.0 authoritative, post user-surface consolidation 2026-08-25):
 
 1. **Field declarations** (`<name>: <TypeRef> [= <default>]`) — the atom's state. Fields at top level; no `data:` header. Extensions cannot add fields (layout invariance §4.18.3).
 2. **Observables** (`:<`) — pure reads.
-3. **Receive-glyph transitions** (`<:`) — message handlers.
-4. **Configuration sections** (`use:`, `metadata:`, `invariants:`, `contracts:`) — group *declarations about the class*, not callables. Keep their headers.
+3. **Receive-glyph transitions** (`<:` / `<|`) — message handlers.
+4. **`|:` propositions** on their own lines — class-level invariants (four-position unification, D5 ratified 2026-08-25, L2b commit `5e90cff`).
+5. **`use:` section** — capability declarations. The sole surviving configuration section header at v1.0.
+6. **`@metadata(...)` annotations** — attached to the `def` line (F10/F11/F12 header retirement, L3c 2026-08-25).
 
-**Nothing else.** No `methods:` section. No `-> handler:` prefix. No `function` inside class bodies.
+**Nothing else.** No `methods:` section. No `data:` / `state:` / `invariants:` / `metadata:` / `constructor:` / `contracts:` / `execution:` / `computed:` / `deprecated:` / `accepts:` / `channels:` / `entrypoints:` / `wires:` / `handlers:` section headers. No `-> handler:` prefix. No `function` inside class bodies. No `requires` / `ensures` keywords (folded into `|:`).
 
-**Retirement mapping (old surface → post-collapse form):**
+**Retirement mapping (old surface → v1.0 form):**
 
 | Old surface | New form |
 |---|---|
@@ -1718,6 +1754,13 @@ Under Corvid's actor substrate, all external interaction with an atom is one of 
 | `-> log(msg: String): print(msg)` (F14 handler decl) | `* <: log(msg: String) -> self then: print(msg)` |
 | `function heal(self, amt: Int): <mutation>` (writer method — currently only possible via transitions) | `* <: heal(amt: Int) -> self then: <update>` |
 | `alive <: tick -> alive then: n => n + 1` (self-transition) | unchanged |
+| `invariants:` block | `|: <proposition>` on its own line at def-body top level |
+| `metadata: kind: record` (metadata block) | `@metadata(kind: record)` annotation on `def` line |
+| `constructor:` block | per-type constructor synthesis + explicit factory `fn` at module scope |
+| `contracts:` block | `|: <proposition>` propositions (same four-position unification) |
+| `requires <expr>` / `ensures <expr>` on transitions | `|: <expr>` on its own line inside transition body |
+| `do:` transition sub-block | folded into `then:` (F70 I3, hard parse error post-Stage-3 2026-08-20) |
+| Transition `when: <expr>` sub-block | `|: <expr>` on its own line (D5 ratified 2026-08-25) |
 
 **Why the collapse.** Corvid's atom substrate is actor-shaped. In actor languages (Erlang gen_server, Elixir GenServer, Clojure agents, Rust actix), all external interaction is either a state-query or a message; there is no separate "method" concept. Corvid inherited `methods:` from OO habit — the section became a namespace container for functions that happened to take `self`. That's the OO-namespace-abuse pattern the actor model exists to prevent. Under the collapse: if a function operates on `self`'s state via a transition or produces a value from `self`'s state via an observable, it belongs in the class body. Everything else belongs at module scope.
 
@@ -2651,9 +2694,22 @@ Because these are prelude aliases, they are inspectable — users can look up wh
 
 ### 3.1 Primitive Types
 
-**Types are atoms. Predicates are contracts, not refinements.** Every "primitive type" is a first-class atom with `data:` + `value :<` observable + optional `invariants:` — the same mechanism used for user-defined types (§1.3). There is no primitive/refined distinction. The set below is what the prelude ships; user domain types (Age, UserId, Percent, ...) are declared the same way and get the same treatment.
+> **v1.0 surface note (2026-08-25 user-surface consolidation).** The code examples throughout §3.1 (and continuing through §3.1.x) show fields under a `data:` section header and invariants under an `invariants:` section header. Both are retired at v1.0:
+> - `data:` header retired (class-body-collapse F67 L5) — fields sit at def-body top level with no wrapping header.
+> - `invariants:` header retired (L2b, commit `5e90cff`) — invariants are `|:` propositions on their own lines at def-body top level.
+>
+> Read the examples below as *historical illustrations of the derivation mechanism* (from `Bit` → `Byte` → sized atoms) — the mechanism carries into v1.0 unchanged; only the surface syntax collapsed. The v1.0 form of the `UInt8` example on line 1229 is:
+> ```
+> def UInt8:                                # v1.0 surface
+>     raw: Byte
+>     value :< raw.to_uint()
+>     |: 0 <= value <= 255
+> ```
+> instead of the `data: raw: Byte / invariants: 0 <= value <= 255` block form shown below. Migration is mechanical; see §1.11 class-body-collapse and the retirement mapping table for the full rewrite.
 
-**Prelude ships the concrete substrate.** Sized atoms (`UInt8`/`Int8`/`UInt16`/`Int16`/`UInt32`/`Int32`/`UInt64`/`Int64`, `Float`, `Double`), plus `Bool`, `Char`, `String`, `Bytes`, `Unit`, `Never`, `Any`, plus bare `Int` (aliased to `Int64` as the ergonomic default). Domain narrowing types (`Nat`, `Age`, `UserId`, `Percent`, `Port`, ...) are **NOT** in the prelude — users define them as ordinary atoms using the same `data:` + `value :<` + `invariants:` mechanism the prelude uses. `Nat` in the exploration file is an example of what a user-defined narrowing atom looks like, not a prelude commitment.
+**Types are atoms. Predicates are contracts, not refinements.** Every "primitive type" is a first-class atom with fields + `value :<` observable + optional `|:` propositions (historically: `data:` + `value :<` + `invariants:`) — the same mechanism used for user-defined types (§1.3). There is no primitive/refined distinction. The set below is what the prelude ships; user domain types (Age, UserId, Percent, ...) are declared the same way and get the same treatment.
+
+**Prelude ships the concrete substrate.** Sized atoms (`UInt8`/`Int8`/`UInt16`/`Int16`/`UInt32`/`Int32`/`UInt64`/`Int64`, `Float`, `Double`), plus `Bool`, `Char`, `String`, `Bytes`, `Unit`, `Never`, `Any`, plus bare `Int` (aliased to `Int64` as the ergonomic default). Domain narrowing types (`Nat`, `Age`, `UserId`, `Percent`, `Port`, ...) are **NOT** in the prelude — users define them as ordinary atoms using the same fields + `value :<` + `|:` mechanism the prelude uses. `Nat` in the exploration file is an example of what a user-defined narrowing atom looks like, not a prelude commitment.
 
 #### 3.1.1 The Derivation
 
@@ -5648,7 +5704,12 @@ The `quote:` block is an expression evaluating to a `Code` value. `${expr}` spli
 
 These section classes ship with the language and are available in every module. They fall into three categories, described below.
 
-> **Status note (post-collapse, 2026-08-17).** Under Proposal G (F67 L3/L4/L5) the class body vocabulary has collapsed to two glyphs (`:<` observable, `<:` transition) with top-level fields and no `data:` / `methods:` sections. Several examples in this §4.10 still use the retired `data:` / `state:` / `methods:` / `-> handler(args):` forms because §4.10 documents the section MECHANISM (which survives — `use:`, `invariants:`, `metadata:`, `contracts:` still work). Read the retired forms as historical illustrations of the mechanism; the current class-body vocabulary is authoritative in §1.11 (see the addendum starting *Class body collapse to two glyphs (Proposal G)*).
+> **Status note (revised 2026-08-30, superseding the 2026-08-17 note).** Two waves of retirement collapsed the class body vocabulary:
+>
+> - **Wave 1 — class-body-collapse (2026-08-17, Proposal G / F67 L3/L4/L5)** — vocabulary collapsed to two glyphs (`:<` observable, `<:` transition) with top-level fields and no `data:` / `methods:` sections.
+> - **Wave 2 — user-surface consolidation (2026-08-25, L2b + L3c)** — retired the remaining user-facing configuration section headers: `invariants:` (→ `|:` propositions, L2b), `metadata:` / `constructor:` / `contracts:` / `execution:` / `requires` / `ensures` (→ `@metadata(...)` annotation + per-type ctor synthesis + `|:` propositions, L3c). Also retired user-facing `section class Name:` declarations (F8 L4). See [decisions-frozen-2026-08-25.md](../../compiler/design/decisions-frozen-2026-08-25.md) for the frozen state.
+>
+> Post-Wave-2, the sole surviving user-facing configuration section header is `use:` (capability declarations). Everything §4.10 says about `data:` / `state:` / `methods:` / `-> handler(args):` / `invariants:` / `metadata:` / `contracts:` / user-defined `section class` — read as **historical illustrations of the underlying section-class mechanism**, which survives as compiler-internal machinery. The current authoritative class-body vocabulary is in §1.11 (class-body-collapse addendum) and the §1.1 top-of-file supersession banner.
 
 #### 4.10.0 Taxonomy — Primitives, Aliases, and Behavioral Sections
 
@@ -6220,6 +6281,8 @@ def UserList:
 **Rationale.** ObjC's nil-messaging gives cxc safe nil-propagation for free. `on_nil` is the mechanism for the Clojure-style extension: instead of "nil.count() returns nil (the always-legal inhabitant of `Int`)", authors can declare "nil.count() returns 0" and get the collection-punning idiom. Because the mechanism is a section (§4), users write it once per class or protocol; it composes with everything else via the standard section rules.
 
 ### 4.11 User-Defined Section Classes
+
+> **v1.0 surface note (2026-08-25 user-surface consolidation).** User-defined `section class Name:` syntax is retired as a user-facing construct (F8 L4, ratified 2026-08-25 — see [decisions-frozen-2026-08-25.md](../../compiler/design/decisions-frozen-2026-08-25.md) §L4 and the memory rule [[corvid-pipe-colon-unification]]). The section-class mechanism is retained as **compiler-internal machinery** — the compiler still resolves built-in section headers (`use:`, historically `data:` / `metadata:` / `invariants:` / etc.) via section classes, but the ability for users to declare new `section class Foo:` is retired. Prior use cases that motivated user-defined section classes fold into: `@metadata(...)` annotations (F10/F11/F12 retirement, L3c), `|:` propositions (four-position unification, L2b), and the class-body-collapse vocabulary (fields / `:<` / `<:`). Read this section as documenting the compiler-internal mechanism that survives; the user-facing declaration form does not.
 
 Users define section classes using the same syntax as built-in ones. Example — an `Channel` section:
 
@@ -7454,7 +7517,7 @@ def Handler:
     on_ready: Block = () => print("ready")
 
     ready <: fire() -> ready
-        do: self.on_ready()
+        then: self.on_ready()
 ```
 
 - `Block` fields carry zero-argument, void-return blocks only.
@@ -7484,7 +7547,7 @@ def Listener:
     -> alive
 
     alive <: event(payload: EventPayload) -> alive
-        do: self.handle(payload)
+        then: self.handle(payload)
 ```
 
 The subscription's lifetime IS the Listener atom's lifetime. The `-> end` cascade auto-drops the subscription via the runtime's owned-resource bookkeeping (F35 L5–L6). No `[weak self]`, no retain-cycle risk, message payload shape checked against the channel's `accepts:`.
@@ -7502,7 +7565,7 @@ waiting -> fired
     |: clock.after(deadline)
 
 fired <: enter() -> fired
-    do: self.tick()
+    then: self.tick()
 ```
 
 The transition fires when the clock capability's `after` observable becomes true. No callback registration, no closure lifetime to manage.
