@@ -404,17 +404,21 @@
       (is (some? ast)))))
 
 (deftest state-section-retired-in-def-atom
-  (testing "`state:` section in a def-atom body is retired at v1.0 (spec §1.11). Parser emits a targeted migration diagnostic pointing at `data:` instead of a generic fall-through error."
+  (testing "`state:` section in a def-atom body is retired at v1.0 (class-body-collapse F67 L5). Parser emits a targeted migration diagnostic pointing at top-level field declarations instead of a generic fall-through error. Message updated 2026-08-30 to reflect `data:` header also being retired."
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
-         #"`state:` section is retired at v1.0"
+         #"`state:` section header is retired at v1.0"
+         (p/parse "def main:\n    state:\n        count: Int = 0\n")))
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"class-body-collapse F67 L5"
          (p/parse "def main:\n    state:\n        count: Int = 0\n")))))
 
 (deftest state-section-retired-in-record
-  (testing "`state:` section in a record body is also retired (records are immutable; use `data:`)."
+  (testing "`state:` section in a record body is also retired — records are immutable, all fields sit at def-body top level with no wrapping header."
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
-         #"`state:` section is retired at v1.0"
+         #"`state:` section header is retired at v1.0"
          (p/parse "def V:\n    state:\n        x: Float\n")))))
 
 (deftest f8-l3c-metadata-annotation-is-the-sole-user-metadata-surface
@@ -967,11 +971,23 @@ def main:
       (is (= ">" (get-in n [:body 0 :predicate :op]))))))
 
 (deftest l2b-invariants-section-header-is-hard-retired
-  (testing "L2b/D3 — the legacy `invariants:` header has no parser fallback"
-    (is (thrown? clojure.lang.ExceptionInfo
-                 (p/parse "def A:\n    invariants:\n        ready\n")))
-    (is (thrown? clojure.lang.ExceptionInfo
-                 (p/parse "extend A:\n    invariants:\n        ready\n")))))
+  (testing "L2b/D3 — the legacy `invariants:` header has no parser fallback AND emits a targeted migration diagnostic at both def-body and extend-body positions (2026-08-30 audit follow-on)"
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"`invariants:` section header is retired at v1.0"
+         (p/parse "def A:\n    invariants:\n        ready\n")))
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"four-position `\|:` unification"
+         (p/parse "def A:\n    invariants:\n        ready\n")))
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"`invariants:` section header is retired at v1.0"
+         (p/parse "extend A:\n    invariants:\n        ready\n")))
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"Extension propositions compose additively"
+         (p/parse "extend A:\n    invariants:\n        ready\n")))))
 
 (deftest f9-l3-extend-class-rejects-top-level-fields
   (testing "F9 Landing 3 + F67 L5 — a field declaration inside `extend class` fails at parse per §3.3.2 (extensions cannot add state). Post-L5 the surface is top-level fields (no `data:` header)."

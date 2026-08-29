@@ -2534,6 +2534,23 @@
         (let [[prop p2] (parse-proposition tokens p)]
           (recur (conj body prop) (skip-newlines tokens p2)))
 
+        ;; L2b retirement diagnostic — targeted fix-it for `invariants:`
+        ;; section header (retired 2026-08-25, commit `5e90cff`). Reserved
+        ;; keyword `invariants` in `lex.clj` exists solely to anchor this
+        ;; diagnostic; without it the fall-through emits a generic
+        ;; "expected …" list that doesn't name the migration path.
+        (at? tokens p :kw "invariants")
+        (fail! tokens p
+               (str "`invariants:` section header is retired at v1.0 "
+                    "(four-position `|:` unification, ratified 2026-08-25). "
+                    "Migrate each invariant to a def-body `|:` proposition "
+                    "on its own line at def-body top level:\n\n"
+                    "  def " name ":\n"
+                    "      <field decls>\n"
+                    "      |: <proposition>          ← was `invariants:` entry\n"
+                    "      |: <another proposition>\n\n"
+                    "See spec §1.11 retirement mapping table and §3.4.2."))
+
         ;; L5 — a leading `<:` with no source phase and no `->` target is
         ;; an async receive signature. Its presence participates in the
         ;; body-shape protocol inference at the end of the loop.
@@ -2640,17 +2657,23 @@
                       "(args...)`), preserve them on the RHS ctor call:\n\n"
                       "  " nm ": " ty-nm " = " ty-nm "(args...)")))
 
-        ;; `state:` section retired at v1.0 (spec §1.11, §1.259). All
-        ;; fields are `data:` (per-instance; updated only through
-        ;; transitions). Targeted diagnostic beats the generic
-        ;; "expected …" fall-through so the migration path is visible.
+        ;; `state:` section retired at v1.0 (spec §1.11 class-body-collapse
+        ;; F67 L5). All fields sit at def-body top level with no wrapping
+        ;; section header; mutation is only through transitions. Targeted
+        ;; diagnostic beats the generic "expected …" fall-through so the
+        ;; migration path is visible.
         (and (at? tokens p :ident)
              (= "state" (t-value (peek-tok tokens p)))
              (at? tokens (inc p) :punct ":"))
         (fail! tokens p
-               (str "`state:` section is retired at v1.0. All fields are "
-                    "`data:` (per-instance, updated only through "
-                    "transitions). See spec §1.11."))
+               (str "`state:` section header is retired at v1.0 "
+                    "(class-body-collapse F67 L5). Migrate each field to "
+                    "def-body top level with no wrapping header:\n\n"
+                    "  def " name ":\n"
+                    "      <field>: <Type> [= <default>]     ← was inside `state:`\n"
+                    "      <another field>: <Type>\n\n"
+                    "Mutation still happens only through transitions. "
+                    "See spec §1.11."))
 
         ;; L5 / D3 atomic retirement — retain the reserved token solely
         ;; to give both retired spellings one actionable hard error.
@@ -3045,6 +3068,21 @@
     ;; header has no registry or hardcoded fallback.
     (at? tokens pos :glyph "|:")
     (parse-proposition tokens pos)
+
+    ;; L2b retirement diagnostic — same targeted fix-it as def-body,
+    ;; adjusted for extend-body context. Extensions can add propositions
+    ;; (they compose additively per section-registry :allowed-in-extend?)
+    ;; but must use `|:`, not the retired header.
+    (at? tokens pos :kw "invariants")
+    (fail! tokens pos
+           (str "`invariants:` section header is retired at v1.0 "
+                "(four-position `|:` unification, ratified 2026-08-25). "
+                "Migrate each invariant to a `|:` proposition on its own "
+                "line at extend-body top level:\n\n"
+                "  extend " target ":\n"
+                "      |: <proposition>          ← was `invariants:` entry\n\n"
+                "Extension propositions compose additively with the def's "
+                "existing propositions. See spec §1.11 and §3.4.2."))
 
     ;; F8 L3b.iii — behavioral construct dispatch via registry, gated
     ;; by `:allowed-in-extend?` per §3.3.2. Direct `use` and
