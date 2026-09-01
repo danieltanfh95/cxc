@@ -8,10 +8,14 @@
 > `invariants:` / `metadata:` / `computed:` / `deprecated:` /
 > `accepts:` / `channel:` / `signal:` (still valid in v1.0 as
 > atom-body keywords in the ratified `use <name>: <T>` /
-> direct-field / `@name(...)` annotation form). F6 metaprogramming,
-> F7 aliases, F8 user-section-class syntax, F10/F11/F12 dedicated
-> section headers all retired. The premises' INTENT (correctness
-> by construction, first-class contracts, orthogonal mechanisms)
+> direct-field form). F6 metaprogramming, F7 aliases, F8
+> user-section-class syntax, F10/F11/F12 dedicated section
+> headers all retired. (The `@name(args)` annotation grammar
+> once cited above as ratified was itself retired 2026-08-30
+> per [decisions-frozen-2026-08-30.md §R1](../../compiler/design/decisions-frozen-2026-08-30.md#r1)
+> — kind info flows through body-shape inference; deprecation is
+> a comment convention.) The premises' INTENT (correctness by
+> construction, first-class contracts, orthogonal mechanisms)
 > survives; the specific implementation vocabulary described here
 > does not. Authoritative current surface:
 > [spec-cxc-v1.0.md](spec-cxc-v1.0.md). Retirement table:

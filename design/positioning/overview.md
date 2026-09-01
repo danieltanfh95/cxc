@@ -7,10 +7,18 @@
 > The stage roadmap ("built-in sections" / "user-definable sections
 > and describers" through v1.0/v1.5) reflects the pre-consolidation
 > plan. Ratified v1.0 mechanism: `use <name>: <T>` capability
-> atoms, direct fields, `@name(...)` annotations, `|:`
-> propositions. The positioning claims (native-first, Apple-
-> ecosystem interop, correctness by construction) stand; the
-> specific vocabulary describing HOW does not. See
+> atoms, direct fields, `|:` propositions. (The annotation grammar
+> `@name(args)` was itself retired 2026-08-30 —
+> [decisions-frozen-2026-08-30.md](../../compiler/design/decisions-frozen-2026-08-30.md#r1) —
+> kind info flows through body-shape inference.) The positioning
+> claims (native-first, Apple-ecosystem interop, correctness by
+> construction) stand; the specific vocabulary describing HOW does
+> not. Further post-2026-08-29 retirements the vocabulary here
+> predates: F73 `module <name>` header (file path IS the module
+> name), R7-R11 plugin/FFI wave (`Plugin` sole FFI capability,
+> `def plugin:` marker, nested `foreign "..."`). Positioning
+> content itself does not reference these — noted for banner
+> completeness. See
 > [../spec/spec-cxc-v1.0.md](../spec/spec-cxc-v1.0.md) and
 > [../../compiler/design/plans/archive/v1-user-surface-retirement-landed.md](../../compiler/design/plans/archive/v1-user-surface-retirement-landed.md).
 

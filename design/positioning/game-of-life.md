@@ -6,7 +6,7 @@
 > 2026-08-25 v1.0 user-surface consolidation that retired top-level
 > section headers on class bodies. Ratified v1.0 spellings use
 > `use <name>: <T>` (capability atoms), direct fields, `|:`
-> propositions, `<:` / `:<` glyphs. Authoritative current syntax:
+> propositions, `<:` / `:-` glyphs. Authoritative current syntax:
 > [../spec/spec-cxc-v1.0.md](../spec/spec-cxc-v1.0.md).
 
 The multiplayer Game of Life is Corvid's reference implementation and empirical validation target. It demonstrates the language's runtime story, concurrency model, cross-target code sharing, and Apple framework interop simultaneously. If Corvid can build this cleanly, the design has landed. If it can't, we've learned what needs to change.

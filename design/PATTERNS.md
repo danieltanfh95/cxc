@@ -12,16 +12,43 @@
 > `data:` / `state:` / `invariants:` / `methods:` / `metadata:`
 > as top-level section headers on class bodies) — under Proposal G
 > (F67 L3/L4/L5, 2026-08-17) the class-body vocabulary collapsed
-> to two glyphs (`:<` observable, `<:` transition) with top-level
+> to two glyphs (`:-` observable, `<:` transition) with top-level
 > fields, and the 2026-08-25 v1.0 user-surface consolidation
 > retired the section-header form entirely. Ratified v1.0
 > spellings: `use <name>: <T>` (atom-body keyword, not section),
-> direct fields, `@metadata(...)` / `@deprecated(...)`
-> annotations, `|:` propositions in place of `invariants:`. Read
+> direct fields, and `|:` propositions in place of `invariants:`.
+> (The annotation grammar `@name(args)` was itself retired
+> 2026-08-30 per [decisions-frozen-2026-08-30.md](../compiler/design/decisions-frozen-2026-08-30.md#r1) —
+> `@metadata` / `@deprecated` gone; kind info flows through
+> body-shape inference; deprecation is a comment convention.
+> The `@` sigil is a hard lex error at v1.0, which retires the
+> **`alias @Name = ...`** user-alias mechanism (spec §4.16.16
+> banner) — the samples below that say "declare `alias @X = ...`
+> locally" are stale. User aliases as a mechanism are deferred to
+> v1.x; use named types/methods directly at v1.0. R9 2026-08-31
+> further retired user-defined operator overloading — no `alias
+> @|> ...`, no user-declared operator glyphs of any kind.)
+> Read
 > code samples as PATTERN illustrations (the shape of the answer
 > is what matters); consult [spec/spec-cxc-v1.0.md](spec/spec-cxc-v1.0.md)
 > for current surface. A pattern-level syntax-refresh sweep
 > remains a planned follow-up.
+>
+> **Further retirements not yet swept from the code sketches below:**
+> - **`switch` / `case`** — retired (F69 2026-08-18 + Q12 2026-08-29).
+>   Variant dispatch is expression-position `<:` receive-glyph blocks
+>   with `|:` variant-arm guards (see `||:` multi-arm dispatch,
+>   [[corvid-multi-arm-dispatch]]). Any `switch` / `case` in sketches
+>   below is pattern illustration only.
+> - **`Result[T, E]` / `Result of (T, E)`** — retired (Q11 2026-08-29).
+>   Fallible operations raise typed exceptions recovered via
+>   `or T():` arms (see [[corvid-failure-and-dispatch]]).
+> - **`module <name>` header** — retired (F73 2026-08-20). File path
+>   IS the module name; no header.
+> - **FFI capability rename** — `Extern` retired 2026-09-01 (R11);
+>   `Plugin` is the sole FFI capability. Any `use extern: Extern` or
+>   prelude-shim references in sketches below should be read as
+>   `use plugin: Plugin` provisioned inside a `def plugin:` module.
 
 ---
 
@@ -152,16 +179,14 @@ See §3.2, §4.10.7.
 
 ### "I need `let x: T` with conditional initialization (definite assignment)"
 
-`let` requires an initializer at declaration. For conditional initialization, use the expression form of `if` / `switch` / `do:` — the whole branch is the initializer.
+`let` requires an initializer at declaration. For conditional initialization, use the expression-position multi-arm dispatch `||: <guard> : <body>` — the whole chain is the initializer.
 
 ```
-let payload: Bytes = if self.needs_decompression:
-                        self.delegate.decompress(...) ?? frame.payload
-                     else:
-                        frame.payload
+let payload: Bytes = ||: self.needs_decompression : self.delegate.decompress(...) or Bytes(): frame.payload
+                     ||: else                     : frame.payload
 ```
 
-Same guarantee as Swift's definite-assignment analysis (assigned exactly once, then immutable), no separate mechanism. Reader sees "let = <one expression>" which happens to be a multi-line `if`. See §3.8, §7.1.
+Same guarantee as Swift's definite-assignment analysis (assigned exactly once, then immutable), no separate mechanism. Reader sees "let = <one expression>" which happens to be a `||:` chain. See §3.8 (`||:` grammar, R6 2026-08-31) and §7.1.
 
 ### "I need `guard` / `guard let`"
 
@@ -298,12 +323,15 @@ class LevenshteinPattern:
         function first_match(self, source: String) -> Match: ...
         function all_matches(self, source: String) -> Iterator<Match>: ...
 
-# One-line prelude-style user alias for a literal form:
-alias @fuzzy"<content>" raw = LevenshteinPattern(needle: <content>, max_distance: 2)
+# Pre-R1 (retired) — user prefix-literal alias:
+# alias @fuzzy"<content>" raw = LevenshteinPattern(needle: <content>, max_distance: 2)
+# s.first_position(matching: @fuzzy"aplle")
 
-# Use:
-s.first_position(matching: @fuzzy"aplle")
+# v1.0 — call the constructor directly:
+s.first_position(matching: LevenshteinPattern(needle: "aplle", max_distance: 2))
 ```
+
+*(The `@name"content"` prefix-literal alias mechanism retired 2026-08-30 with the rest of the `@`-marker grammar; there is no user-declarable literal-form escape hatch at v1.0.)*
 
 ---
 
@@ -412,16 +440,16 @@ class Config:
         return Self(raw: source.as())
 ```
 
-Trait-qualified dispatch: multiple `as` methods differ by return type via the conformed `As<T>` instantiation, not by parameter overloading (§3.4.4). Call-site resolution: return-type context, turbofish (`.as::<Bytes>()`), or `As<Bytes>.as(x)`.
+Trait-qualified dispatch: multiple `as` methods differ by return type via the conformed `As<T>` instantiation, not by parameter overloading (§3.4.4). Call-site resolution: return-type context, turbofish (`.as::-Bytes>()`), or `As<Bytes>.as(x)`.
 
 **Difference from Rust.** No blanket `impl<T, U> Into<U> for T where U: From<T>` — cxc does not auto-derive one direction from the other. Author both explicitly when both are meaningful. Rationale: projection and construction have distinct semantics; symmetric auto-derivation hides where information is lost or where construction may fail.
 
 **Numeric narrowing lives OUTSIDE `As<T>`.** Prelude ships `As<T>` conformance only for **widening** numeric pairs (source range ⊆ target range — lossless). `Int32(300).as() -> UInt8` is a compile error; the diagnostic points at three narrowing methods on the source primitive:
 
 ```
-Int32(300).wrapping_to::<UInt8>()      # -> UInt8(44)   modular per §3.9
-Int32(300).saturating_to::<UInt8>()    # -> UInt8(255)  clamp
-Int32(300).checked_to::<UInt8>()       # -> ConvertOutcome<UInt8>.overflow(...)
+Int32(300).wrapping_to::-UInt8>()      # -> UInt8(44)   modular per §3.9
+Int32(300).saturating_to::-UInt8>()    # -> UInt8(255)  clamp
+Int32(300).checked_to::-UInt8>()       # -> ConvertOutcome<UInt8>.overflow(...)
 ```
 
 These are ordinary methods, not a protocol family. **Rationale:** `As<T>` differentiates by target type via trait-qualified dispatch, but the three narrowing semantics share a target type (UInt8) — target type can't distinguish them. Inventing sibling protocols (`WrappingAs<T>` etc.) would mimic As's shape without using its dispatch mechanism. Per §1.2 (author intent, not authority), the semantics choice belongs at the call site as a method name. This is a design invariant worth internalizing: when multiple candidate methods share a return type but differ in semantics, use method names, not protocols. See §3.11.1–§3.11.4.
@@ -461,9 +489,9 @@ See §3.10.1.
 
 ### "I need `x = foo() if bar else baz`"
 
-`if` is an expression in cxc — write it as `if bar: foo() else: baz`, no ternary syntax needed. `switch` is also an expression.
+Use expression-position multi-arm dispatch: `x = ||: bar : foo() ||: else : baz`. First truthy guard wins; `else` is the catch-all. No ternary syntax; `if` is statement-only at v1.0 (R6, 2026-08-31 retired the `if X: Y else: Z` expression form).
 
-See §3.8 (everything is an expression).
+See §3.8 (`||:` grammar).
 
 ### "I need list comprehensions"
 
@@ -510,7 +538,7 @@ switch event:
     case .text(let s): ...
 ```
 
-Consumers who want brevity add a per-file alias: `alias @Event = com.example.ws.FrameCollectorEvent`.
+Consumers who want brevity use a `from` import: `from com.example.ws import FrameCollectorEvent`. *(Pre-R1 sample: `alias @Event = com.example.ws.FrameCollectorEvent`. The `@`-marker alias mechanism retired 2026-08-30 — see top-of-file banner.)*
 
 See §3.3.1, §3.7.2.
 
@@ -601,9 +629,9 @@ See §3.4.3.
 
 ### "I need `|>` (pipe operator)"
 
-Not in the prelude. Method chaining `x.f().g().h()` is cxc's native pipeline; universal method dispatch and cheap extensions/sections make it work at parity. Projects that genuinely want pipe can declare `alias <lhs> @|> <rhs> ...` locally per v0.8.2 `@` marker discipline.
+Not in the prelude. Method chaining `x.f().g().h()` is cxc's native pipeline; universal method dispatch and cheap extensions/sections make it work at parity. Under R9 (2026-08-31) there is no project-local `@|>` escape hatch either — user code cannot declare operator aliases at v1.0. Projects wanting pipe-shaped composition build it as a named `.pipe(f)` method.
 
-See §4.20.3 (paradigm-mismatch exclusions).
+See §4.20.3 (paradigm-mismatch exclusions), §4.16.16 (R9 alias-@ retirement banner).
 
 ### "I need `do`-notation / for-comprehension for `Result`"
 
@@ -662,7 +690,7 @@ If you find yourself wanting to synchronize "across two classes," you probably w
 
 ### Sugar is a library
 
-The bootstrap grammar (§10) is minimal. Almost everything that looks like syntax is a **prelude alias**: `record`, `enum`, `protocol`, `[…]`, `{…}`, `..<`, `??`, `${…}`, `for`, and so on. The prelude is spec-committed (§4.20); users can inspect every alias to see exactly what it expands to. Projects that want their own surface additions declare `alias @name …` per the v0.8.2 `@` marker discipline — user aliases are visually distinct at every use site.
+The bootstrap grammar (§10) is minimal. Almost everything that looks like syntax is a **prelude alias**: `record`, `enum`, `protocol`, `[…]`, `{…}`, `..<`, `??`, `${…}`, and so on. The prelude is spec-committed (§4.20); users can inspect every alias to see exactly what it expands to. User-side surface extensions are not available at v1.0 — the `alias @name …` mechanism (v0.8.2 `@` marker discipline) retired 2026-08-30 (R1 annotation-grammar-retirement) and 2026-08-31 (R9 user-operator retirement). Language surface additions are compiler-team-owned at v1.0; user-facing composition happens through named types, methods, and `from … import …`.
 
 ### Names beat positions, uniformly
 
@@ -675,7 +703,7 @@ The one exception: `case .some(let x)` — single-associated-value shorthand ins
 
 ### Class-associated types are flat
 
-No nested type declarations (v0.8.4). Types conventionally associated with a class use `<ClassName><Role>` at module scope. Leading-dot shorthand (§3.7.2) makes use sites read cleanly regardless. Consumers who want brevity add per-file `alias @Event = ...`.
+No nested type declarations (v0.8.4). Types conventionally associated with a class use `<ClassName><Role>` at module scope. Leading-dot shorthand (§3.7.2) makes use sites read cleanly regardless. Consumers who want brevity use `from <mod> import Event` to bring the flat name into module scope. *(Pre-R1 sample: `alias @Event = ...`; retired 2026-08-30.)*
 
 ### Before adding a mechanism, check what's already there
 
@@ -693,7 +721,7 @@ The v1.0 target is the atom model with a small set of surface commitments. Each 
 
 ### "I need `emit(value)` to push a message from a handler"
 
-Use the `:>` push-channel glyph, symmetric with the `:<` observable pull-channel:
+Use the `:>` push-channel glyph, symmetric with the `:-` observable pull-channel:
 
 ```
 def debounce(duration: Duration):
@@ -729,7 +757,7 @@ running <: source_stream |> Throttle{interval: 100ms} {payload: T} -> running
     do: handler(payload: payload)
 ```
 
-The `~>` time-deferred wire glyph is retired (2026-08-12). See §1.12 for time-as-capability rationale. Test-clocks, game-clocks, simulation-clocks are user-writable atoms conforming to `Clock` — the runtime provides a default `WallClock`; user code substitutes.
+The `~>` time-deferred wire glyph is retired (2026-08-12). See §1.12 for time-as-capability rationale. Test-clocks, game-clocks, simulation-clocks are user-writable atoms conforming to `Clock` — the `std.clock` plugin provides the default `WallClock` (R11 2026-09-01); user code substitutes.
 
 ### "I need to compose transformers on a stream — where does `|>` go?"
 
@@ -753,7 +781,7 @@ Each `|> Transformer{args}` is an anonymous sub-atom scoped to the enclosing pha
 
 **Retired:** free-standing wires at atom-body top-level (`source |> target` outside any transition). All subscriptions are receive-glyph transitions. See §1.11 "Stream composition in receive-glyph source expressions."
 
-See §1.11 wiring-glyph table. The six glyphs are: `->` (return-type + transition arrow), `|>` (stream composition + sync send), `:<` (observable pull), `:>` (emit async), `<:` (receive async), `<|` (receive sync). Zero overlap.
+See §1.11 wiring-glyph table. The six glyphs are: `->` (return-type + transition arrow), `|>` (stream composition + sync send), `:-` (observable pull), `:>` (emit async), `<:` (receive async), `<|` (receive sync). Zero overlap.
 
 ### "I need `on event(...):` for a handler declaration"
 
@@ -850,18 +878,17 @@ Callers reference channels by name on the atom instance: `partitioner.matched |>
 
 ### "I need `provide:` to give my children a shadowed capability"
 
-Use `use:` with a construction expression. Source expression tells the composition checker where the value comes from:
+Use `use <name>: <T>` with a construction expression. Source expression tells the composition checker where the value comes from:
 
 ```
 def GameProgram:
-    use:
-        clock: GameClock(tick_ms: 16)                        # constructed locally; provided to children
-        random: Random                                        # shape-only: inherited from parent env
-        fs: SandboxedFs(inner: fs, allowed: ["/data/**"])    # wraps parent's fs (outer `fs` resolves in parent env)
-        console: Console
+    use clock: GameClock(tick_ms: 16)                        # constructed locally; provided to children
+    use random: Random                                        # shape-only: inherited from parent env
+    use fs: SandboxedFs(inner: fs, allowed: ["/data/**"])    # wraps parent's fs (outer `fs` resolves in parent env)
+    use console: Console
 ```
 
-Shape-only entry inherits from parent env; construction/expression entry is local and propagates to children. `provide:` was never committed — `use:` covers both roles. See §1.12 `use:` block semantics.
+Shape-only entry inherits from parent env; construction/expression entry is local and propagates to children. `provide:` was never committed — `use <name>: <T>` covers both roles. See §1.12 `use` declaration semantics.
 
 ### "I need `read_file(path)` / `println(x)` / `random()` / `sleep(ms)` — direct OS calls"
 
@@ -881,7 +908,7 @@ def MyProgram:
         clock.after(1s) |> tick_handler
 ```
 
-Runtime provides shim atoms (`PosixFs`, `PosixConsole`, `OsRandom`, `WallClock`) at program launch. Alternatives (test, sandbox, remote) are user-writable atoms conforming to the same shape. See §1.12 OS-boundary layering and §1.13 stdlib capability catalog.
+Env provisions first-party plugin atoms (`std.fs`/PosixFs, `std.console`/PosixConsole, `std.random`/OsRandom, `std.clock`/WallClock — R11 2026-09-01) at program launch; alternatives (test, sandbox, remote) are user-writable atoms conforming to the same prelude shape. See §1.12 OS-boundary layering and §1.13 stdlib capability catalog.
 
 ### "I need `try/finally` for resource cleanup (files, sockets, threads)"
 
@@ -903,32 +930,37 @@ Use-after-close and double-close fall out of the state-machine model (handlers o
 
 ### "I need FFI / C ABI bindings in my library"
 
-You don't. User code accesses OS through typed capabilities (`Clock`, `Filesystem`, `Network`, `Console`, ...) — never through raw FFI. If a typed capability doesn't exist for what you need, contribute a shim to the stdlib prelude.
+You don't. User code accesses OS through typed capabilities (`Clock`, `Filesystem`, `Network`, `Console`, ...) — never through raw FFI. If a typed capability doesn't exist for what you need, contribute a plugin (first-party under `std.*` or third-party under your own namespace).
 
-Under the hood: FFI is a capability atom (`Extern`) provisioned only to stdlib shim atoms. Foreign symbol declarations live in per-target prelude `foreign library` blocks. Shim atoms use `extern.get("name")` to retrieve typed native handles.
+Under the hood: FFI is a single capability atom (`Plugin`) provisioned only to shim atoms inside modules that carry a top-level `def plugin:` marker (R11 plugin-only wave 2026-09-01, superseding same-day R10's short-lived Extern+Plugin split). Foreign symbol declarations use one scoped form: nested `foreign "..."` sections inside a `def plugin:` body (R7 2026-08-31). Plugin peer defs use `plugin.get("name")` / `plugin.send(recv, "sel", args...)` / `plugin.class_send("Class", "sel", args...)` against their own `def plugin:` body's `foreign "..."` blocks — cross-plugin symbol reach is grammatically impossible, and application code cannot request `Plugin` at all.
 
 ```
-# ---- prelude/unix/libc.cxc (prelude-only; user code cannot declare these) ----
-foreign library "libc":
-    symbol "open":  (path: CString, flags: Int32, mode: Int32) -> Int32
-    symbol "read":  (fd: Int32, buf: Ptr of Byte, len: SizeT) -> SsizeT
-    symbol "close": (fd: Int32) -> Int32
+# ---- std/fs/darwin.cxc (first-party plugin; ships with compiler) ----
 
-# ---- prelude/unix/posix_fs.cxc (stdlib shim) ----
+def plugin:
+    name:    String!       = "std.fs"
+    version: SemVer!       = SemVer(0, 1, 0)
+    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0),
+                                          max: SemVer(2, 0, 0))
+
+    foreign "libc":
+        symbol "open":  (path: CString, flags: Int32, mode: Int32) -> Int32
+        symbol "read":  (fd: Int32, buf: Ptr of Byte, len: SizeT) -> SsizeT
+        symbol "close": (fd: Int32) -> Int32
+
 def PosixFs:
-    conforms: Filesystem
-    use:
-        extern: Extern                       # runtime provisions Extern to stdlib shims only
-    native_open:  (CString, Int32, Int32) -> Int32       = extern.get("open")
-    native_read:  (Int32, Ptr of Byte, SizeT) -> SsizeT  = extern.get("read")
-    native_close: (Int32) -> Int32                        = extern.get("close")
+    conforms: Filesystem                              # shape from prelude/shared/capabilities.cxc
+    use plugin: Plugin                                # sole FFI capability at v1.0 (R11)
+    native_open:  (CString, Int32, Int32) -> Int32       = plugin.get("open")
+    native_read:  (Int32, Ptr of Byte, SizeT) -> SsizeT  = plugin.get("read")
+    native_close: (Int32) -> Int32                        = plugin.get("close")
     -> open(path: Path) -> Future of (File | IOError):
         ...
 ```
 
-**Direction inferred from symbol type shape.** `(Args) -> Ret` = outbound (cxc invokes; native impl). `Stream of T` = inbound (native invokes via runtime callback; cxc subscribes). Callbacks-with-return unsupported in v1.0. See §1.12 for the trust boundary and §1.14 for the prelude structure and worked WallClock example (both directions).
+**Direction inferred from symbol type shape.** `(Args) -> Ret` = outbound (cxc invokes; native impl). `Stream of T` = inbound (native invokes via runtime callback; cxc subscribes). Callbacks-with-return unsupported in v1.0. See §1.12 for the trust boundary and §1.14 for the (small) prelude structure and worked WallClock plugin example (both directions).
 
-Rejected: `native def` keyword splits the type system into two atom categories. FFI-as-capability was rejected in an earlier draft on type-safety grounds but is now accepted under the prelude-typed form (types come from prelude declarations, resolved at compile time).
+Rejected: `native def` keyword splits the type system into two atom categories. FFI-as-capability was rejected in an earlier draft on type-safety grounds but is now accepted under the plugin-typed form (types come from the plugin's own foreign declarations, resolved at compile time).
 
 ### "I need `Future<T>` / `Signal<T>` / `Promise<T>` for one-shot async values"
 
@@ -1143,7 +1175,7 @@ def ActionMachine(clock: Clock):
     fireball_target:    Position  = nil
     cast_started_at:    Instant   = nil
     
-    is_idle :< self is idle    # stable predicate for parents
+    is_idle :- self is idle    # stable predicate for parents
     
     idle <: start_cast{target: Position, cast_time: Duration}
     -> casting_fireball
@@ -1190,7 +1222,7 @@ Receive glyph in the transition header; matches the sub's `:> cast_completed(...
 **3. State query** — parent reads sub's state via observable predicates:
 ```
 # In sub-atom (ActionMachine):
-is_idle :< self is idle
+is_idle :- self is idle
 
 # In parent (Player):
 alive <: cast_fireball

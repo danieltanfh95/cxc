@@ -21,9 +21,12 @@
 >   unification `|:` covers all four contract sites: class-invariants,
 >   transition-guards, preconditions, postconditions.
 > - **`metadata:` / `constructor:` / `contracts:` / `execution:`
->   section headers → `@metadata(...)` annotation on `def` line +
->   per-type constructor synthesis + `|:` propositions** (F10/F11/F12
->   retirement, L3c ratified 2026-08-25).
+>   section headers retired** (F10/F11/F12 retirement, L3c ratified
+>   2026-08-25). Interim `@metadata(...)` annotation form retired
+>   2026-08-30 with the annotation-grammar-retirement wave. Kind
+>   info flows through body-shape inference (§3.3); constructors
+>   via per-type synthesis + explicit factories; contracts via
+>   `|:` propositions.
 > - **`data:` section header → top-level field declarations** (F67 L5
 >   class-body-collapse, 2026-08-17). Fields sit at def-body top
 >   level with no wrapping header.
@@ -31,8 +34,9 @@
 >   / `handlers:` / `computed:` / `deprecated:` / `accepts:` section
 >   headers retired** (class-body-collapse + user-surface
 >   consolidation waves). Semantics fold into: fields at top level,
->   observables `:<`, receive-glyph transitions `<:`/`<|`, `-> handler:`
->   declarations, `@metadata(...)` annotations.
+>   observables `:-`, receive-glyph transitions `<:`/`<|`, `-> handler:`
+>   declarations. Prior transitional `@metadata(...)` migration target
+>   for these retired with the annotation-grammar-retirement (2026-08-30).
 > - **`do:` transition sub-block → folded into `then:`** (F70 I3, hard
 >   parse error post-Stage-3 2026-08-20). Expression-position `do:`
 >   block (§3.8) is a distinct construct and stays.
@@ -50,9 +54,15 @@
 >   patterns.
 >
 > **Sole surviving user-facing class-body configuration section header**
-> at v1.0: `use:` (capability declarations). Everything else is either
-> top-level content (fields, `:<`, `<:`, `-> handler:`), `|:`
-> propositions, or `@…(...)` annotations.
+> at v1.0: `use:` (capability declarations, via L4 direct-keyword form
+> `use <name>: <Type>`). Everything else is either top-level content
+> (fields, `:-`, `<:`, `-> handler:`) or `|:` propositions. Annotation
+> grammar `@name(args)` retired 2026-08-30, which retires the `@`
+> sigil universally — including the **`alias @Name = ...`** user-alias
+> mechanism (§4.16.16 banner). Prose sites that say "declare `alias @X
+> = ...`" or reference "v0.8.2 `@` marker discipline" are stale; user
+> aliases as a mechanism are deferred to v1.x. R9 2026-08-31 further
+> retired user-defined operator overloading (`alias @|> ...` gone).
 >
 > **Pattern-guard `<: pattern when: <cond>:` (§3.7 F69 L4c3) is
 > preserved** — the `when:` there is a distinct syntactic site (inline
@@ -75,7 +85,7 @@
 **Reading guide.**
 
 - **Start with §1** — design premises, then §1.11 (atom substrate), §1.12 (OS boundary as capability atoms), §1.13 (stdlib capability shapes), §1.14 (prelude structure). These define what cxc IS.
-- **§2 (lexical structure)** — keywords, glyphs, literals. The six wiring glyphs (`->`, `|>`, `:<`, `:>`, `<:`, `<|`) are the substrate's surface.
+- **§2 (lexical structure)** — keywords, glyphs, literals. The six wiring glyphs (`->`, `|>`, `:-`, `:>`, `<:`, `<|`) are the substrate's surface.
 - **§3–§9** — describe the v0.11 shape (`class`, `record`, `enum`, `protocol`, methods, contracts) which is the **intermediate approximation** cxc is being restructured away from. Under v1.0, all four are sugar keywords over specific `def` shapes; these sections will be reorganized as "atom sub-form: <name>" in a subsequent spec revision. For now, read them as documenting individual behaviors that will be preserved (nullability, pattern matching, contracts, conversion protocols, byte/string/pattern subsystems) — the syntactic packaging will change, the semantics carry over.
 - **§10 (grammar)** — bootstrap subset; §10 has been extended for the substrate's core productions (transitions with receive glyphs, wildcard on-enter/on-exit, universal `init`/`end` phases). Sub-atom slot declarations and modifier syntax reach are still being formalized.
 
@@ -84,10 +94,10 @@
 - **`def` as sole declaration keyword** — `class`, `record`, `enum`, `protocol` are sugar over specific `def` shapes. The runtime entry point is `def main` by convention (no dedicated keyword).
 - **Atoms with typed I/O, phases, and transitions.** Every transition is a pure function `state → message → new_state`. State is a value; transitions produce new values via field updates in a `then:` block. **No assignment anywhere in the language.**
 - **Universal implicit phases `init` (constructor) and `end` (deconstructor).** Every atom has both; instantiation fires implicit `init -> [first target phase]`; any transition targeting `end` deconstructs the atom.
-- **Six wiring glyphs, zero overlap.** `->` (transition arrow + return-type marker), `|>` (stream composition in receive-glyph source expression + prefix sync send `|> target.method(args)` inside `then:`), `:<` (observable pull), `:>` (emit async), `<:` (receive async), `<|` (receive sync). Sender-blocking and receiver-blocking are independent axes — any sender glyph pairs with any receiver glyph; the wire is always mailbox-buffered. **Free-standing wires at atom-body top-level do NOT exist**; all subscriptions are receive-glyph transitions whose source expression may compose transformer atoms via `|>`.
+- **Six wiring glyphs, zero overlap.** `->` (transition arrow + return-type marker), `|>` (stream composition in receive-glyph source expression + prefix sync send `|> target.method(args)` inside `then:`), `:-` (observable pull), `:>` (emit async), `<:` (receive async), `<|` (receive sync). Sender-blocking and receiver-blocking are independent axes — any sender glyph pairs with any receiver glyph; the wire is always mailbox-buffered. **Free-standing wires at atom-body top-level do NOT exist**; all subscriptions are receive-glyph transitions whose source expression may compose transformer atoms via `|>`.
 - **Sub-atom-as-state-machine pattern.** State with lifecycle (queueing, interruption, independent concurrent activity) belongs in its own atom, held in a nullable slot on the parent. Union-typed slots for state discrimination are retired.
 - **`use:` block** for env capability declaration with implicit access inside atom bodies.
-- **All OS-adjacent capabilities are atoms** — no `after` primitive, no `print`, no `now()`, no `random()`. Runtime provides shim atoms wrapping syscalls via the **`Extern` capability atom** provisioned only to stdlib shims, consuming typed foreign symbols declared in per-target prelude `foreign library` blocks.
+- **All OS-adjacent capabilities are atoms** — no `after` primitive, no `print`, no `now()`, no `random()`. Every OS-touching capability at v1.0 is a plugin (R11 plugin-only wave, 2026-09-01): first-party (`std.clock`, `std.fs`, `std.console`, `std.args`, `std.subprocess`, ..., ships-with-compiler) or third-party (`com.acme.*`). Shims request FFI access via `use plugin: Plugin`; the runtime provisions `Plugin` only to shim atoms inside modules that carry a top-level `def plugin:` marker, consuming foreign symbols declared in nested `foreign "..."` sections in that same plugin body. Application code receives no FFI capability. See §1.12, §1.14, §7.2.1.
 - **Resource lifecycle** (File, Socket, Process, Thread) as state-machine atoms; RAII via `<phase> -> end` transitions with `then:` cleanup entries (F70 I3 unifies effect clauses).
 - **`of` qualifier for structural type parameters** (retires `<T>`); lowercase names in `of` position are shape variables bound in signature scope by first-mention.
 - **Types-as-atoms unification.** Type-checking is atom-shape-conformance (structural). No refinement types at the signature level — predicates live in `invariants:`/`requires`/`ensures`/predicate atoms.
@@ -262,7 +272,7 @@ Working draft. v0.10.2 formalizes explicit protocol-conformance syntax (§3.4.5 
 - **`Pattern` protocol (§3.10.9.1 new).** Two-method contract: `first_match(source) -> Match` and `all_matches(source) -> Iterator<Match>`. Every pattern implementation structurally conforms.
 - **`Match` / `MatchRange` / `MatchGroup` records (§3.10.9.2 new).** Match carries a backreference to its source String, a MatchRange (StringPosition pair), and a Map<String, MatchGroup> of named captures. Named-only per §3.2 discipline — no positional-capture accessors.
 - **Three concrete conformers (§3.10.9.3 new).** `Literal` (exact-string match, no interpretation), `Glob` (`*`, `?`, `[abc]` — filename-style patterns), `Regex` (regular expressions with `RegexOptions` §3.10.9.4). All three are agent-shape defs (reference-typed, per v1.0 F69 body-shape inference §3.3; v0.10.1 originally called this "`kind: regular` classes"); compiled at construction time; cached when constructed from compile-time-constant source per §4.16.10 value-alias discipline.
-- **Prelude pattern literals (§3.10.9.5 new + §4.16.17 new).** Three prelude aliases ship: `regex"^\d+"`, `glob"*.txt"`, `literal","`. Users author their own (`peg"..."`, `fuzzy"..."`, etc.) via `alias @name"..." = Constructor(...)` per §4.16.17 — the new raw-content prefix-literal alias shape, discussed below.
+- **Prelude pattern literals (§3.10.9.5 new + §4.16.17 new).** Three prelude aliases ship: `regex"^\d+"`, `glob"*.txt"`, `literal","`. New pattern types are constructed directly (`PegParser("...")`, `FuzzyPattern("...")`) or shipped via the prelude. *(v0.10.1 originally allowed users to declare `alias @name"..." = Constructor(...)`; the `@`-marker alias mechanism retired 2026-08-30 (R1), so user-declarable prefix-literal aliases retire with it. See §4.16.17.)*
 - **§4.16.17 new — raw-content prefix-literal aliases.** Prefix-literal aliases (`name"content"`) may declare `raw` in their alias body to receive the literal content unmodified — no escape processing (`\d` reaches the constructor as `\d`, not as escape-sequence failure). Required for regex source strings; useful for any pattern language that has its own escape rules.
 - **Named captures only (§3.10.9.6 new).** Regex source containing unnamed groups `(...)` is a compile error at pattern-construction time; users write `(?<name>...)` always. Consistent with §3.2 named-only discipline and §3.7.1 named-only enum associated values. Enforces "named at the source of the pattern" — the reader sees capture names in the pattern string.
 - **§3.10.5 (String) revised.** `split(self, separator: String)` widened to `split(self, pattern: Pattern)` — `Literal(",")` covers the pre-v0.10.1 use case with one more character at the call site. New methods: `first_position(matching: Pattern)`, `all_matches(matching: Pattern)`, `replace_all(pattern:, with:)`.
@@ -310,13 +320,13 @@ Major-version-adjacent session. The v0.10.0 bump reflects that the string/bytes/
 **`Bytes` (§3.10.4 new).**
 
 - **Agent-shape def, mutable.** Matches the v0.9.0 §3.2 pattern for Array/Map/Set — collection containers are reference-shaped defs with transitions. Corresponds to Foundation NSMutableData at the runtime layer; toll-free bridged. *(v0.9.0 spelled this "`kind: regular`"; F69 body-shape inference §3.3 supersedes.)*
-- **Read operations:** `length()`, `subscript(i)`, `slice(range)`, `concat(other)`, `starts_with(prefix)`, iteration via `Iterable<UInt8>`.
-- **Write operations:** `append(byte)`, `append(bytes)`, `append<T: As<Bytes>>(value)`, `subscript_set(i, byte)`, `insert(at, byte)`, `remove(at)`, `clear()`.
+- **Read operations:** `length()`, `at(i)`, `slice(range)`, `concat(other)`, `starts_with(prefix)`, iteration via `Iterable<UInt8>`.
+- **Write operations:** `append(byte)`, `append(bytes)`, `append<T: As<Bytes>>(value)`, `set(i, byte)`, `insert(at, byte)`, `remove(at)`, `clear()`.
 - **Conversion:** `as(self) -> Bytes` (identity — returns a copy), `decoded_as(encoding) -> DecodeOutcome<String>`.
 - **Construction:** standard class constructors (`Bytes()`, `Bytes(bytes: [UInt8])`, `Bytes(capacity: Int)`, `Bytes(repeating: byte, count: Int)`). Array-literal conformance: `let b: Bytes = [0x42, 0xff]`.
 - **Value hygiene.** `x.as() -> Bytes` on any type returns a fresh Bytes; caller can mutate without affecting the source. Immutability guarantees for consumers come from (a) reader/writer classification (§8.4.1), (b) contracts, (c) wrapping in a record.
 - **No separate `BytesBuilder` type.** Bytes itself is the builder — construction + mutation happen on the same type. Consistent with Array/Map/Set (no separate ArrayBuilder etc.).
-- **`unsafe:` narrows to raw pointer access only.** In-place byte mutation (via `bytes[i] = 42`) is safe because Bytes participates in normal contract discipline. Raw pointer access (`bytes.raw_pointer()` for C interop) is the only reason to enter `unsafe:` for byte work.
+- **`unsafe:` narrows to raw pointer access only.** In-place byte mutation (via `bytes.set(i, 42)`) is safe because Bytes participates in normal contract discipline. Raw pointer access (`bytes.raw_pointer()` for C interop) is the only reason to enter `unsafe:` for byte work. *(Pre-R9 wrote `bytes[i] = 42`; R9 2026-08-31 retired user-side subscript in favor of named `.at(i)` / `.set(i, v)`.)*
 
 **`String` (§3.10.5 new).**
 
@@ -372,7 +382,7 @@ By convention, any type with an `.as() -> Bytes` method (via `As<Bytes>` conform
 **Stdlib friction items dissolved:**
 
 - **String position API** (Ink #25, `#W-30` position part). Dissolved: `StringPosition` tokens replace integer indexing; text-manipulation methods take positions.
-- **Byte-array raw access** (`#W-53`). Dissolved: Bytes has `subscript(i)`, `slice(range)`, direct mutation. Raw pointer access remains in `unsafe:` for C interop only.
+- **Byte-array raw access** (`#W-53`). Dissolved: Bytes has `.at(i)`, `.set(i, v)`, `slice(range)`. (R9 2026-08-31 retires user-side operator overloading; named methods only.) Raw pointer access remains in `unsafe:` for C interop only.
 - **Byte slice methods** (`#W-52`, `#W-61`, `F8`). Dissolved: Bytes has `.slice(range)` and `.concat(other)`.
 - **String from bytes** (`#W-14`). Dissolved: `Bytes.decoded_as(encoding: Encoding) -> DecodeOutcome<String>`.
 - **Base64 encoding** (`#W-37e`). Dissolved: extend Bytes via `extend Bytes: methods: function base64_encoded() -> String: ...` per §3.3.2.
@@ -385,12 +395,12 @@ The v0.7.1-era `Convertible<To>` protocol bundled three narrowing semantics (wra
 **Retired in v0.10.0.** Replaced with:
 
 - **`As<T>` (§3.10.3)** for the **lossless** case only — prelude ships conformance for every widening numeric pair. Narrowing pairs have no `As<T>` conformance; `Int32(300).as() -> UInt8` is a compile error with a diagnostic pointing at the three narrowing methods.
-- **Three ordinary methods per numeric primitive (§3.11.2)** — `wrapping_to::<T>()`, `saturating_to::<T>()`, `checked_to::<T>() -> ConvertOutcome<T>`. These are *not* a protocol family; the differentiator between them is semantics, not target type, and trait-qualified dispatch (§3.10.3) differentiates by target type. Sibling protocols like `WrappingAs<T>` / `SaturatingAs<T>` / `CheckedAs<T>` would have mimicked the shape of `As<T>` without using its dispatch mechanism — mechanism-duplication rather than consolidation.
+- **Three ordinary methods per numeric primitive (§3.11.2)** — `wrapping_to::-T>()`, `saturating_to::-T>()`, `checked_to::-T>() -> ConvertOutcome<T>`. These are *not* a protocol family; the differentiator between them is semantics, not target type, and trait-qualified dispatch (§3.10.3) differentiates by target type. Sibling protocols like `WrappingAs<T>` / `SaturatingAs<T>` / `CheckedAs<T>` would have mimicked the shape of `As<T>` without using its dispatch mechanism — mechanism-duplication rather than consolidation.
 - **`ConvertOutcome<T>` enum (§3.11.3)** — replaces `Result<T, OverflowError>`. Domain enum per v0.8.5.
 
 **Design principle surfaced.** When multiple candidate methods share a return type but differ in semantics, the semantics is not a type-parameter question and does not need a protocol family. Per §1.2 (author intent, not authority), the choice belongs at the call site as a method name. Applied here: three narrowing methods on the source type, not three protocols. Same principle applies to any future case where "N semantics for the same signature" tempts a protocol family.
 
-**Migration:** `x.into(T)` → `x.wrapping_to::<T>()`; `x.saturating_into(T)` → `x.saturating_to::<T>()`; `x.checked_into(T) -> Result<T, OverflowError>` → `x.checked_to::<T>() -> ConvertOutcome<T>`.
+**Migration:** `x.into(T)` → `x.wrapping_to::-T>()`; `x.saturating_into(T)` → `x.saturating_to::-T>()`; `x.checked_into(T) -> Result<T, OverflowError>` → `x.checked_to::-T>() -> ConvertOutcome<T>`.
 
 **Consistency with prior decisions:**
 
@@ -651,7 +661,7 @@ Spec-committed stdlib aliases shipped with the language distribution. Users get 
 **What remains bootstrap (compiler-committed, cannot be user-overridden):**
 
 - Lexical: identifiers, base integer/float/bool/nil literals, base string literals (no interpolation), comments, indentation-based layout
-- Base expression grammar: identifier reference, call `f(...)`, member access `x.y`, subscript `x[i]`, arithmetic (`+`, `-`, `*`, `/`, `%`), comparison (`==`, `!=`, `<`, `<=`, `>`, `>=`), logical (`and`, `or`, `not`), assignment (`=` and compound forms per bootstrap operators)
+- Base expression grammar: identifier reference, call `f(...)`, member access `x.y`, arithmetic (`+`, `-`, `*`, `/`, `%`), comparison (`==`, `!=`, `<`, `<=`, `>`, `>=`), logical (`and`, `or`, `not`), assignment `=` (module-scope `let` and function-scope binding only — R9 2026-08-31 declined user-defined operator overloading; R3 2026-08-31 retired module-let for non-plugin scopes). Compound-assignment forms (`+=`, `-=`, `*=`, `/=`, `%=`) are RETIRED per §1.11 immutable-FSM sharpening. Subscript `x[i]` is RETIRED as a user surface — use `.at(idx)` per R9 2026-08-31; the grammar reserves `[...]` only for Array literals (`[1, 2, 3]`, `[]`).
 - Base type grammar: identifier + generic args
 - Control flow keywords + structure: `if`, `while`, `loop`, `break`, `continue`, `return`; expression-position `<:` receive-glyph dispatch (§3.7) replaces `switch` (F69 retired 2026-08-18); `for` retired (F20 REJECTED — iteration is method dispatch, `xs.for_each(...)`)
 - Section syntax: `label:` followed by indented block; `metadata:` section
@@ -707,14 +717,14 @@ Session 1 of the post-nil Category 2 backlog. Direct inheritance from C — zero
 - **Character literals (§2.7, §3.1).** `'a'` produces a `Char` (Unicode scalar). Standard C escape sequences (`'\n'`, `'\t'`, `'\\'`, `'\''`, `'\0'`) plus Unicode escape `'\u{1F600}'`.
 - **Bitwise operators (§3.9).** `&`, `|`, `^`, `~`, `<<`, `>>` with C precedence. Compound-assignment forms `&=`, `|=`, `^=`, `<<=`, `>>=`. Legal on integer types (including unsigned); rejected on floats.
 - **Modulo operator (§3.9).** `%` for integer remainder (C99 truncated semantics — result sign matches dividend). `%=` compound form. Not defined on floats (use `Double.remainder(_:)` for float modulo).
-- **`let` at module scope (§7.1).** Top-level immutable binding: `let PI: Double = 3.14159`. Same shape as function-scope `let`. Evaluated at module-load time; type annotation required.
+- **`let` at module scope (§7.1).** Top-level immutable binding: `let PI: Double = 3.14159`. Same shape as function-scope `let`. Evaluated at module-load time; type annotation required. *(RETIRED 2026-08-31 per [decisions-frozen-2026-08-31.md §R3](../../compiler/design/decisions-frozen-2026-08-31.md#r3--module-let-let-name-type--value-at-module-scope-retires-universally). Module-scope constants belong in a `def` record (fields with compile-time-constant defaults) or a plugin manifest (`def plugin:`, §7.2.1). Function-scope `let` remains.)*
 - **`sizeof` (§9.2).** `sizeof(T)` returns `Int` — the size in bytes of type `T` under its natural layout. For C interop only; not idiomatic in pure cxc code. `alignof(T)` and `offsetof(Struct, field)` complete the trio.
-- **`else if`** — already in v0.7 grammar (§3.8.1); §2.5 keyword note reaffirms it is written as two tokens.
+- **`else if`** — statement-form `if / else if / else` chains remain legal; §2.5 keyword note reaffirms `else if` is written as two tokens, not one (`elif` is not a keyword). *(For expression-position multi-arm dispatch, use `||:` chains per §3.8.1 R6 2026-08-31; `if / else if` is statement-form only at v1.0.)*
 - **Grammar (§10).** Literal productions extended; operator table added.
 
 Rationale: these constructs are unremarkable inheritance from C. The parity translations assumed them because they're universal, but the spec text hadn't stated them. Codifying them here removes ~10 friction points at zero design cost, and unblocks any protocol/wire code path.
 
-Downstream cleanups: new §2.7 (Literals), §2.5 keyword list adds `let` and `sizeof`, §3.1 Char literal note, new §3.9 (Operators), §7.1 module-level `let` note, §9.2 sizeof/alignof/offsetof, §10 grammar productions.
+Downstream cleanups: new §2.7 (Literals), §2.5 keyword list adds `let` and `sizeof`, §3.1 Char literal note, new §3.9 (Operators), §7.1 function-scope `let` (module-scope form later retired 2026-08-31 R3), §9.2 sizeof/alignof/offsetof, §10 grammar productions.
 
 **Change log from v0.6.0 → v0.7.0 (nil-messaging inversion):**
 
@@ -743,7 +753,7 @@ Consolidates struct, enumeration, and protocol into a single declaration form: `
 - **`enum` sugar with raw values.** `enum Foo: case a = 1; case b = 2` desugars to `class + metadata: kind: enum, raw_type: <inferred>` with auto-generated `raw_value(self)` and `class function from_raw(value:)`. Raw type inferred from case values (smallest fit); overridable via `metadata: raw_type:`. Resolves the widest single interop gap in v0.5.
 - **`protocol` sugar clarified.** Under `kind: protocol`, `accepts:` section holds required signatures, `methods:` section holds default implementations. `accepts foo(...)` per-method form remains legal as sugar for single-requirement protocols.
 - **Type-expression sugar formalized.** `[T]` = `Array<T>`, `{K: V}` = `Map<K, V>`, `{T}` = `Set<T>`, `(A, B) -> C` = `Callable<(A,B), C>`. Sugar is lossless; expanded forms always legal. New sugar requires spec commitment. (`T?` was in this table pre-v1.0; retired 2026-08-20 under the unified nullability rule — see §3.6.1.)
-- **Everything is an expression.** `if`, `switch`, block, and expression-position `do:` produce values. Field/parameter/return initializers accept control-flow expressions directly. Blocks return the value of their final expression unless an explicit `return` is present. *(F69, 2026-08-18: `switch` retired; expression-position `<:` receive-glyph dispatch (§3.7) replaces it. Everything-is-an-expression principle unchanged.)*
+- **Everything is an expression.** Block and expression-position `do:` produce values. Expression-position multi-arm dispatch via `||: <guard> : <body>` chains (§3.8, R6 2026-08-31) covers the conditional-expression role. Field/parameter/return initializers accept control-flow expressions directly. Blocks return the value of their final expression unless an explicit `return` is present. *(F69, 2026-08-18: `switch` retired; expression-position `<:` receive-glyph dispatch (§3.7) covers variant-form dispatch. R6, 2026-08-31: `if X: Y else: Z` expression form retired; use `||:` chain. `if` remains a statement-form keyword. Everything-is-an-expression principle unchanged.)*
 - **Loops return Bool.** `while` and `for` produce `Bool` — `true` if the loop exhausted its condition/iteration naturally, `false` if exited via `break`. Break-with-value is not supported on `while`/`for`; use `loop { ... break value }` (Rust-style infinite loop) if a T-typed return is genuinely needed. *(F20 REJECTED, 2026-08-18: `for` is not a keyword; iteration is method dispatch via `xs.for_each(e => body)`. `while` still returns `Bool` per §3.8.3.)*
 - **Closures are anonymous classes.** A closure literal desugars to an anonymous `class` with a single `call` method. Sugar hierarchy: `function(x: T) -> R: ...` (explicit) → `x => x + 1` (arrow, inferred types) → method reference (`self.foo`). Strong capture by default; `[weak self, ...]` prefix opts into weak capture per variable. Compiler warns on closures capturing `self` strongly and stored in a field of `self` (classic retain-cycle pattern).
 - **Channel modes (§8.6).** `channel:` section extends with `metadata: mode:` — `work` (default, CSP-style competing consumers), `broadcast` (all subscribers see all items, slowest sets pace), `pub` (topic-partitioned, requires `topic_fn:`). Direct field entries (`input: Bytes`) declare channel items; composition with nested `data:` retains the v0.5 change-auto-publish behavior. Unbounded by default; opt into `metadata: capacity: N` + `on_full:` for bounded.
@@ -934,7 +944,7 @@ A "type" is a named contract: a set of accepted messages with signatures, precon
 
 **What's traded away.** Named types that carry predicates at the signature level (`def foo(n: Nat)` reading "n must be non-negative"). Compile-time refinement inference (`nat1 + nat2 : Nat` proved from `nat1, nat2 : Nat`). The Liquid-Haskell / Whiley / dependent-type direction. In its place: contracts on transitions (`requires n >= 0`), invariants on atoms, and predicate atoms for reusable predicates. Constraints are more localized (co-located with what they constrain); type-checking stays a shape-conformance question (simpler compiler, faster feedback); users familiar with Swift / Kotlin / Rust find the model familiar (predicates as assertions, not as types).
 
-See §3.4.2 for the invariant mechanism. §1.11 for the atom substrate that this unification lives inside — specifically §1.11's "Contracts on shapes — types as named contracts" subsection walks the operational form (types built bottom-up from Bit, interpretation via `value :<` observables, `bit_ops` prelude, invariant-check paths). `../explorations/integers-from-bits.cxc` is the worked derivation.
+See §3.4.2 for the invariant mechanism. §1.11 for the atom substrate that this unification lives inside — specifically §1.11's "Contracts on shapes — types as named contracts" subsection walks the operational form (types built bottom-up from Bit, interpretation via `value :-` observables, `bit_ops` prelude, invariant-check paths). `../explorations/integers-from-bits.cxc` is the worked derivation.
 
 **Note on named contracts vs "refined types."** The ban above targets the terse type-alias-with-refinement form (`def Nat: Int where value >= 0` as a floating name over an inferred predicate). Full `def` atoms with `data:` + `invariants:` (`def Nat: data: raw: ...; invariants: value >= 0`) are legitimate — they're first-class atoms with proper structure, not shorthand for refinement inference. Predicates stay co-located with the data they constrain; contracts propagate through construction as documented in §1.11.
 
@@ -1077,7 +1087,7 @@ The premises §1.1–§1.10 point at a specific primitive: **the atom**. An atom
 | `def main` | Top-level compound atom with environment = OS — entry point by naming convention, no dedicated keyword |
 | message send | Route a message to an atom, triggering its receive-glyph transition |
 | field | Immutable per-instance datum on a compound atom (top-level declaration; F67 L5) |
-| observable | Pull-channel derived view of state — pure computation over self's fields (`:<`) |
+| observable | Pull-channel derived view of state — pure computation over self's fields (`:-`) |
 | type (nominal or structural) | An atom (its named shape) |
 | generic type | A structurally-polymorphic atom (`def List: ...`; element type flows through body via `of`) |
 
@@ -1095,7 +1105,7 @@ The premises §1.1–§1.10 point at a specific primitive: **the atom**. An atom
 |---|---|---|
 | `->` | Return-type marker in signatures + transition arrow (source-to-target phase) | "produces / becomes" |
 | `\|>` | Stream composition inside receive-glyph source expression + sync send prefix (`\|> recv.msg(args)`) | "pipe left into right" / "sync-send" |
-| `:<` | Observable pull channel (standing declaration; subscribers read on demand) | "define left, drawn from right" |
+| `:-` | Observable pull channel (standing declaration; subscribers read on demand) | "define left, drawn from right" |
 | `:>` | Emit async — fire-and-forget push (imperative statement) | "emit / async-send" |
 | `<:` | Receive async — non-blocking pickup during phase (transition header, receiver-side) | "on async-receive of" |
 | `<\|` | Receive sync — blocking receive; transition parks on this message (transition header, receiver-side) | "on sync-receive of" |
@@ -1136,9 +1146,9 @@ The premises §1.1–§1.10 point at a specific primitive: **the atom**. An atom
 
 `->` does NOT appear in stream composition — that role belongs to `|>` uniformly inside receive-glyph source expressions.
 
-**Rationale for `:<` and `:>` as atom-boundary channel glyphs.** Both glyphs mark the atom's outward-facing surface, using the colon-on-the-atom-side convention. Arrow direction distinguishes modality:
+**Rationale for `:-` and `:>` as atom-boundary channel glyphs.** Both glyphs mark the atom's outward-facing surface, using the colon-on-the-atom-side convention. Arrow direction distinguishes modality:
 
-- `:<` — arrow points inward (into the observable channel from a source). Standing declaration; subscribers read on demand. Declarative modality.
+- `:-` — arrow points inward (into the observable channel from a source). Standing declaration; subscribers read on demand. Declarative modality.
 - `:>` — arrow points outward (from the atom to a receiver). Imperative statement; subscribers receive as it happens. Discrete modality.
 
 Both are "external subscriber-facing channels"; the difference is pull vs push. This is the same distinction that RxJS makes between `BehaviorSubject.value` (pull) and `Subject.next(x)` (push), spelled at the glyph level.
@@ -1246,11 +1256,11 @@ def EnemySpawner:
 
 **Contracts on shapes — types as named contracts.**
 
-There is no primitive / refined type distinction in cxc. Every type is a **named contract on a shape**, where a shape is (recursively) a sequence of bits or a composition of shapes. `UInt8`, `Int8`, `Char`, `Nat`, `Age`, user-defined domain types are all constructed by the same mechanism: `def <name>: <underlying>` with optional `value :<` observable (the interpretation) and optional `invariants:` (the predicate). See §1.3 for the design premise ("contracts replace nominal types"); this section is the operational form.
+There is no primitive / refined type distinction in cxc. Every type is a **named contract on a shape**, where a shape is (recursively) a sequence of bits or a composition of shapes. `UInt8`, `Int8`, `Char`, `Nat`, `Age`, user-defined domain types are all constructed by the same mechanism: `def <name>: <underlying>` with optional `value :-` observable (the interpretation) and optional `invariants:` (the predicate). See §1.3 for the design premise ("contracts replace nominal types"); this section is the operational form.
 
 **Value-typed atoms — the substrate for values.** An atom with only fields (no phases, no transitions) is value-typed. Fields are immutable per-instance; the atom IS its data. Every integer, character, enum case, and record is a value-typed atom.
 
-**Interpretation lives on the derived type, not on the underlying shape.** Byte is 8 bits with a count invariant — purely structural, no interpretation. Meaning comes from types that wrap Byte and provide their own `value :<`:
+**Interpretation lives on the derived type, not on the underlying shape.** Byte is 8 bits with a count invariant — purely structural, no interpretation. Meaning comes from types that wrap Byte and provide their own `value :-`:
 
 ```
 def Byte:
@@ -1259,16 +1269,16 @@ def Byte:
 
 def UInt8:
     raw: Byte
-    value :< bit_ops.decode_uint(raw.bits)
+    value :- bit_ops.decode_uint(raw.bits)
     invariants: 0 <= value <= 255
 
 def Int8:
     raw: Byte
-    value :< bit_ops.decode_int_2c(raw.bits)
+    value :- bit_ops.decode_int_2c(raw.bits)
     invariants: -128 <= value <= 127
 ```
 
-Same 8 bits, different interpretations, different invariants. Compiler eliminates the wrapper layer at runtime (same bits, different observable). Adding a new interpretation (`Fixed48Point`, `IPv4Octet`, `PackedDecimal`) defines its own type with its own `value :<`; Byte stays uninterpreted.
+Same 8 bits, different interpretations, different invariants. Compiler eliminates the wrapper layer at runtime (same bits, different observable). Adding a new interpretation (`Fixed48Point`, `IPv4Octet`, `PackedDecimal`) defines its own type with its own `value :-`; Byte stays uninterpreted.
 
 **`bit_ops` prelude module.** Bit-level primitives (`decode_uint`, `decode_int_2c`, `ascii_decode`, `add_bytes`, `narrow_*`, `widen_*`) are pure functions with contracts in a `bit_ops` prelude module. Not language substrate; compiler may special-case for perf but the surface is functions the author can call, extend, and inspect.
 
@@ -1316,7 +1326,7 @@ The atom substrate is the design commitment. §1.11–§1.14 document the substr
 **Preserved from v0.11 without change.** The following are v1.0-native as documented:
 
 - Records as functional-swap (transitions return new selves; no in-place mutation).
-- Primitives as atoms with fields + `value :<` + `invariants:` (unified with user domain types; §3.1). Retires the "primitives are records with a single `bytes` field" framing from v0.11 — the current form derives primitives from `Bit` → `Byte` → sized atoms per the exploration in `design/explorations/integers-from-bits.cxc`.
+- Primitives as atoms with fields + `value :-` + `invariants:` (unified with user domain types; §3.1). Retires the "primitives are records with a single `bytes` field" framing from v0.11 — the current form derives primitives from `Bit` → `Byte` → sized atoms per the exploration in `design/explorations/integers-from-bits.cxc`.
 - Canonical bytes as value-type base-class property (§3.4.6, §3.10.10).
 - Types-as-guards at wire boundaries (§1.3).
 - Nullability + nil-punning + nil-receiver dispatch (§3.6.1, §5.7).
@@ -1333,7 +1343,7 @@ The atom substrate is the design commitment. §1.11–§1.14 document the substr
 - Method call → route message to an atom's transition (see class-body-collapse addendum below).
 - `state:` section → retired; all fields are per-instance immutable, updated only through transitions.
 - `data:` section header → retired (Proposal D, F67 L5). Fields sit at class-body top level: `name: Type [= default]`. Downstream AST folds into a synthetic data-section so tooling stays shape-stable.
-- `methods:` section → retired (Proposal G, F67 L4). Reader methods become parametric observables (`name(args) :< expr`); void-side-effect methods become wildcard handler-shape transitions (`* <: name(args) -> self then:` side-effect statements); state-mutating methods become wildcard self-transitions with `then:` field updates; utility functions move to module scope.
+- `methods:` section → retired (Proposal G, F67 L4). Reader methods become parametric observables (`name(args) :- expr`); void-side-effect methods become wildcard handler-shape transitions (`* <: name(args) -> self then:` side-effect statements); state-mutating methods become wildcard self-transitions with `then:` field updates; utility functions move to module scope.
 - `-> handler(args):` prefix → retired (Proposal G, F67 L3). Handlers are wildcard receive-glyph transitions: `* <: handler(args) -> self then: <body>`.
 - Structural type inference through atom bodies (retires `<T>` generic-parameter syntax; `of` qualifier is the sole form).
 
@@ -1367,7 +1377,7 @@ The atom substrate is the design commitment. §1.11–§1.14 document the substr
 
 - `->` — return-type + transition arrow (source-to-target phase)
 - `|>` — stream composition inside receive-glyph source expression + sync send prefix (`|> recv.msg(args)`)
-- `:<` — observable pull channel
+- `:-` — observable pull channel
 - `:>` — emit async — fire-and-forget push
 - `<:` — receive async — non-blocking pickup during phase; transition-header receiver-side
 - `<|` — receive sync — blocking receive; transition parks on this message; transition-header receiver-side
@@ -1389,12 +1399,12 @@ cxc is a close-to-immutable OOP language built on the atom substrate. **Every tr
 | `conforms:` (optional) | Explicit capability-shape conformance declaration | documentation; compiler warns on likely-match if omitted |
 | `contracts:` (optional) | Signature-level `requires`/`ensures` grouping | when contracts are extensive |
 
-**Retired:** `state:` section (all fields are per-instance immutable; mutability via transitions). `data:` section (Proposal D, F67 L5 — fields sit at class-body top level, no wrapper). `methods:` section (Proposal G, F67 L4 — callables collapse to `:<` observables + `<:` transitions). `extern:` section (FFI is a capability atom `Extern`, provisioned via `use:` to stdlib shims only; foreign symbols are declared in prelude `foreign library` blocks — see §1.12, §1.14).
+**Retired:** `state:` section (all fields are per-instance immutable; mutability via transitions). `data:` section (Proposal D, F67 L5 — fields sit at class-body top level, no wrapper). `methods:` section (Proposal G, F67 L4 — callables collapse to `:-` observables + `<:` transitions). `extern:` section (FFI is a capability atom `Plugin`, provisioned via `use:` to plugin peer defs only; foreign symbols are declared in nested `foreign "..."` sections inside `def plugin:` bodies — see §1.12, §1.14, R11 2026-09-01).
 
 *Bare declarations at atom-body top level (each has a unique marker):*
 
-- **`name: Type [= default]`** — field declaration (F67 L5, Proposal D). Immutable per-instance state; the atom's storage. `:` between name and type distinguishes from observable `:<` and transition-source `<:`/`->`.
-- **`name[(args)] :< source`** — observable declaration. Zero-arg (`name :< expr`) or parametric (`name(args) :< expr`, F67 L2). Pull channel; subscribers read on demand. `:<` marker unique.
+- **`name: Type [= default]`** — field declaration (F67 L5, Proposal D). Immutable per-instance state; the atom's storage. `:` between name and type distinguishes from observable `:-` and transition-source `<:`/`->`.
+- **`name[(args)] :- source`** — observable declaration. Zero-arg (`name :- expr`) or parametric (`name(args) :- expr`, F67 L2). Pull channel; subscribers read on demand. `:-` marker unique.
 - **`<from> [receive_trigger] -> <to> [when <guard>]`** — transition line. Declares a phase transition (source phase to target phase), self-transition, or handler-shape (wildcard source AND target — see next entry). The optional receive-glyph trigger (`<: source_expr {args}` or `<| ...`) makes the transition message-driven; without it the transition is guard-only. Compact single-line form is sugar for the block form. See "Transition-line block form" below.
 - **`* <: handler(args) -> self then: <body>`** — externally-invocable message handler (side-effect only, no state change). Wildcard source AND wildcard target with a typed-params receive pattern. Every state-changing handler is a phase-transition line with `then:` field updates. *(F67 L3 migration target for the retired `-> handler(args):` prefix.)*
 
@@ -1607,7 +1617,7 @@ Parent atoms coordinate with sub-atoms in slots via four patterns:
 3. **State query** — parent reads sub's state via **observable predicates**, not raw phase names:
    ```
    # In ActionMachine (child): expose a stable predicate
-   is_idle :< self is idle
+   is_idle :- self is idle
    
    # In Player (parent): check the predicate, not the phase name
    alive <: cast_fireball
@@ -1650,7 +1660,7 @@ Advanced semantics (priority discipline, sliding-window drop policy) may require
 **Concurrency model.**
 
 - **Transitions are atomic per atom, concurrent across atoms.** Each atom serializes its own transitions on its own mailbox. Different atoms execute transitions concurrently. Classic actor model — no shared mutable state to synchronize on, because state is replaced (not mutated) at transition boundaries.
-- **Memory model: value-based, no torn reads.** Cross-atom reads (observables via `:<`, receive-glyph subscriptions) always see a coherent snapshot — whichever atomic state was current when the message propagated. There is nothing to tear because there is nothing being mutated in place.
+- **Memory model: value-based, no torn reads.** Cross-atom reads (observables via `:-`, receive-glyph subscriptions) always see a coherent snapshot — whichever atomic state was current when the message propagated. There is nothing to tear because there is nothing being mutated in place.
 - **Scheduling: cooperative work-stealing pool.** The runtime picks up any atom with a pending message or timer, runs one transition to completion (or to a suspension point), releases the worker. No preemption inside a transition. Number of workers is a runtime-configuration knob (default: hardware concurrency).
 - **`|>` is a cooperative suspension point.** When a transition executes a sync send `|>`, the worker parks that transition and moves on to other atoms. When the receiver's transition on this message completes (processing sync), the parked sender's transition is resumed on some worker. **The sending atom does NOT process other messages in its mailbox while parked** — it remains committed to the current transition until that transition completes.
 - **Phase-scoped receivers, no phase-cross-check on sender.** A `<:` or `<|` receive site exists only during the phase in which it's declared. Messages arriving for a receiver whose phase is inactive follow the modifier discipline (drop, queue, or replace) at the receiver's mailbox. The sender is not aware of the receiver's current phase and cannot statically check it — which is why `|>` is pure ordering-guarantee without reply obligation (see above).
@@ -1709,16 +1719,16 @@ Bare call-expressions (`pipe |> handler_name(arg)`) are rejected — the payload
 
 Under Corvid's actor substrate, all external interaction with an atom is one of two things: **pull a computed view of state** (observable) or **send a message that may change state** (transition). Everything else — methods, handlers, function-groupings — is OO residue. The class body collapses to two glyphs, one primitive each.
 
-**Observable (`:<`) — pull-getter for a computed view of state.**
+**Observable (`:-`) — pull-getter for a computed view of state.**
 
 ```
-<name>[(args)] :< <expression>
+<name>[(args)] :- <expression>
 ```
 
 - Pure expression over `self`'s fields (and args if parametric).
 - No `then:`, no `|:`, no side effects.
-- Zero-arg (`hp_display :< format(hp)`) — unchanged from prior spec.
-- Parametric (`healed_by(amt: Int) :< min(hp + amt, max_hp)`) — new. Replaces reader methods.
+- Zero-arg (`hp_display :- format(hp)`) — unchanged from prior spec.
+- Parametric (`healed_by(amt: Int) :- min(hp + amt, max_hp)`) — new. Replaces reader methods.
 
 **Receive-glyph transition (`<:`) — message handler that may change state.**
 
@@ -1736,26 +1746,25 @@ Under Corvid's actor substrate, all external interaction with an atom is one of 
 **Class body top-level content** (v1.0 authoritative, post user-surface consolidation 2026-08-25):
 
 1. **Field declarations** (`<name>: <TypeRef> [= <default>]`) — the atom's state. Fields at top level; no `data:` header. Extensions cannot add fields (layout invariance §4.18.3).
-2. **Observables** (`:<`) — pure reads.
+2. **Observables** (`:-`) — pure reads.
 3. **Receive-glyph transitions** (`<:` / `<|`) — message handlers.
 4. **`|:` propositions** on their own lines — class-level invariants (four-position unification, D5 ratified 2026-08-25, L2b commit `5e90cff`).
-5. **`use:` section** — capability declarations. The sole surviving configuration section header at v1.0.
-6. **`@metadata(...)` annotations** — attached to the `def` line (F10/F11/F12 header retirement, L3c 2026-08-25).
+5. **`use <name>: <Type>`** — capability declarations (L4 direct-keyword form). The sole surviving configuration surface at v1.0.
 
-**Nothing else.** No `methods:` section. No `data:` / `state:` / `invariants:` / `metadata:` / `constructor:` / `contracts:` / `execution:` / `computed:` / `deprecated:` / `accepts:` / `channels:` / `entrypoints:` / `wires:` / `handlers:` section headers. No `-> handler:` prefix. No `function` inside class bodies. No `requires` / `ensures` keywords (folded into `|:`).
+**Nothing else.** No `methods:` section. No `data:` / `state:` / `invariants:` / `metadata:` / `constructor:` / `contracts:` / `execution:` / `computed:` / `deprecated:` / `accepts:` / `channels:` / `entrypoints:` / `wires:` / `handlers:` section headers. No `-> handler:` prefix. No `function` inside class bodies. No `requires` / `ensures` keywords (folded into `|:`). No `@name(args)` annotation grammar (retired 2026-08-30, annotation-grammar-retirement wave).
 
 **Retirement mapping (old surface → v1.0 form):**
 
 | Old surface | New form |
 |---|---|
 | `data: hp: Int = 100` (data section header) | `hp: Int = 100` (top-level field) |
-| `hp_display :< format(hp)` (zero-arg observable) | unchanged |
-| `function healed_by(self, amt: Int) -> Int: return min(hp + amt, max_hp)` (reader method) | `healed_by(amt: Int) :< min(hp + amt, max_hp)` (parametric observable) |
+| `hp_display :- format(hp)` (zero-arg observable) | unchanged |
+| `function healed_by(self, amt: Int) -> Int: return min(hp + amt, max_hp)` (reader method) | `healed_by(amt: Int) :- min(hp + amt, max_hp)` (parametric observable) |
 | `-> log(msg: String): print(msg)` (F14 handler decl) | `* <: log(msg: String) -> self then: print(msg)` |
 | `function heal(self, amt: Int): <mutation>` (writer method — currently only possible via transitions) | `* <: heal(amt: Int) -> self then: <update>` |
 | `alive <: tick -> alive then: n => n + 1` (self-transition) | unchanged |
 | `invariants:` block | `|: <proposition>` on its own line at def-body top level |
-| `metadata: kind: record` (metadata block) | `@metadata(kind: record)` annotation on `def` line |
+| `metadata: kind: record` (metadata block) | body-shape inference (§3.3) — no explicit surface at v1.0; interim `@metadata(kind: record)` also retired 2026-08-30 |
 | `constructor:` block | per-type constructor synthesis + explicit factory `fn` at module scope |
 | `contracts:` block | `|: <proposition>` propositions (same four-position unification) |
 | `requires <expr>` / `ensures <expr>` on transitions | `|: <expr>` on its own line inside transition body |
@@ -1770,8 +1779,8 @@ def Player:
     hp: Int = 100
     max_hp: Int = 100
 
-    hp_display :< format(hp)                        # observable — zero-arg
-    healed_by(amt: Int) :< min(hp + amt, max_hp)    # observable — parametric
+    hp_display :- format(hp)                        # observable — zero-arg
+    healed_by(amt: Int) :- min(hp + amt, max_hp)    # observable — parametric
 
     * <: log(msg: String) -> self                      # message handler (side-effect)
         then: print(msg)
@@ -1789,7 +1798,7 @@ def Player:
 **Protocol contracts under collapse.** Protocols describe accepted observables and transitions:
 ```
 protocol Healable:
-    accepts hp_display :< String
+    accepts hp_display :- String
     accepts heal(amt: Int)          # transition accept (void)
 ```
 
@@ -1813,15 +1822,15 @@ protocol Healable:
   - Expression (`fs: SandboxedFs(inner: fs, ...)`) → evaluate; bare names inside the expression resolve in *enclosing* scope (parent env), enabling wrap-parent-and-reprovide.
 - Children of a compound see the compound's local bindings; whether an entry was inherited or constructed is invisible to them (substitutability).
 - **All OS-adjacent capabilities are atoms.** No language primitives touch the OS. `Clock` (no `after` primitive; delayed dispatch is either `<phase> -> <target>` with `|: clock.after(deadline)` as a time-guarded transition, or a Delay/Throttle transformer in a receive-glyph source expression), `Filesystem`, `Network`, `Console`, `Random`, `Args`, `EnvVars`, `Exit`, `Signals`, `Log`, and (per capability) Threads, Process, Devices, GUI events are all capability atoms in `env`.
-- **Runtime provides shim atoms** wrapping OS syscalls. Same capability shape has per-target implementations (`PosixFs`, `WasiFs`, `BrowserFs`); runtime picks at build/launch time based on target.
+- **Env provisions shim atoms** wrapping OS syscalls — all of them plugin atoms (R11 2026-09-01). Same capability shape has per-target plugin files (`std/fs/darwin.cxc`, `std/fs/wasi.cxc`, ...); the compiler picks per-target at build time.
 - **`use:` declaration IS the effect surface.** An atom's transitive `use:` closure is its effect set. Atoms with no `use:` block are proof-by-signature that they don't touch time, files, network — pure over their inputs.
 
 **FFI and shim atoms.**
 
-- **`Extern` capability atom** — the sole FFI mechanism. Shim atoms request access via `use: extern: Extern`; the runtime provisions it only to stdlib-designated shims. `extern.get("name")` returns a typed native handle resolved at compile time against the target prelude's `foreign library` declarations. Signatures use C types (`CString`, `Int32`, `SizeT`, `Ptr of Byte`); marshalling from cxc types happens in shim bodies (explicit at boundary); library resolution is per-target (`libc` for native, `wasi_snapshot_preview1` for WASI, `js` for JavaScript host).
-- **Application code never gets `Extern`** — trust boundary. `Extern` is provisioned only to prelude-shipped stdlib shim atoms AND to shim atoms inside `@plugin(...)`-annotated modules (§7.2.1, Q9 relaxation 2026-08-30). Regular application code (no `@plugin` annotation, not under `prelude/`) accesses OS through typed capabilities (Clock, Filesystem, ...) provided by prelude or plugin modules only.
+- **`Plugin` capability atom** — the sole FFI mechanism at v1.0 (R11 plugin-only wave, 2026-09-01, superseding same-day R10's short-lived Extern/Plugin split). Shim atoms request access via `use plugin: Plugin`; the runtime provisions it only to shims inside modules that carry a `def plugin:` marker. `plugin.get("name")` / `plugin.send(recv, "sel", args...)` / `plugin.class_send("Class", "sel", args...)` resolve at compile time against `foreign "..."` sections nested inside the enclosing `def plugin:` body (§7.2.1 R7). Signatures use C types (`CString`, `Int32`, `SizeT`, `Ptr of Byte`); marshalling from cxc types happens in shim bodies (explicit at boundary); library resolution is per-plugin per-target (each plugin ships per-target files: `std/fs/darwin.cxc`, `std/fs/linux.cxc`, ...).
+- **Application code never gets `Plugin`** — trust boundary. `Plugin` is provisioned only to shim atoms inside modules that carry a `def plugin:` record marker (§7.2.1, Q9 relaxation 2026-08-30 + R2/R7 marker shape 2026-08-31 + R11 plugin-only collapse 2026-09-01). Regular application code (no `plugin` marker) accesses OS through typed capabilities (Clock, Filesystem, ...) whose SHAPES live in prelude and whose shim implementations live in plugin modules — the plugin origin is invisible in consumer source.
 - **Direction inferred from symbol type.** `(Args) -> Ret` = outbound (cxc invokes); `Stream of T` = inbound (native invokes; runtime pushes onto stream). No direction sub-labels. Callbacks-with-return unsupported in v1.0.
-- Rejected: `native def` keyword splits the type system into two atom categories. FFI-as-capability was rejected in an earlier draft on type-safety grounds but is now accepted under the prelude-typed form (types come from prelude declarations, not from runtime string arguments).
+- Rejected: `native def` keyword splits the type system into two atom categories. FFI-as-capability was rejected in an earlier draft on type-safety grounds but is now accepted under the plugin-typed form (types come from the plugin's own `foreign "..."` declarations, not from runtime string arguments).
 
 **Resource lifecycle.**
 
@@ -1835,15 +1844,15 @@ protocol Healable:
 - Core (must ship v1.0): Clock, Random, Filesystem, Network, Console, Args, EnvVars, Exit, Signals, Log.
 - Extended (v1.0 if language supports; else v1.1): Threads/Workers, Process, IPC, TimeZone/Locale, Crypto.
 - v1.1+ (device-specific): GUI events, Audio, GPU, Sensors/Devices.
-- Every capability is a stdlib atom, built using the `Extern` capability atom for the syscall boundary (consuming symbols declared in prelude `foreign library` blocks). If a capability can't be expressed cleanly in cxc, the language has a gap that needs fixing — not a stdlib workaround.
+- Every OS-touching capability is a plugin atom (R11 plugin-only wave, 2026-09-01), built using the `Plugin` FFI capability for the syscall boundary — consuming foreign symbols declared in nested `foreign "..."` sections inside the enclosing `def plugin:` body (see §1.14 / §7.2.1). First-party stdlib capabilities (`std.clock`, `std.fs`, ...) ship with the compiler as plugins; third-party plugins use the same mechanism. If a capability can't be expressed cleanly in cxc, the language has a gap that needs fixing — not a stdlib workaround.
 
 **Effects — `use:` closure is the effect signature.**
 
 cxc has **no separate effect system**. Effect tracking falls out of the substrate:
 
 1. **cxc atoms have no OS access.** The substrate provides `data:`, transitions, wires, observables, invariants — none touch the OS.
-2. **The only path to the OS is `Extern`**, provisioned to prelude-shipped stdlib shim atoms AND to shim atoms inside `@plugin(...)`-annotated modules (Q9 relaxation 2026-08-30; §7.2.1). Never to regular application code.
-3. **Shim atoms wrap OS calls as user-facing capability atoms** (Clock, Filesystem, Network, ...) shipped in the platform prelude.
+2. **The only path to the OS is `Plugin`**, per R11 plugin-only wave (2026-09-01). `Plugin` is provisioned only to shim atoms inside modules that carry a `def plugin:` record marker (Q9 relaxation 2026-08-30 + R2/R7 marker shape 2026-08-31 + R11 plugin-only collapse 2026-09-01; §7.2.1). Never to regular application code.
+3. **Shim atoms wrap OS calls as user-facing capability atoms** (Clock, Filesystem, Network, ...) shipped as first-party plugin modules under `std.*` (R11 2026-09-01; capability SHAPES stay in prelude).
 4. **User code accesses these only via `use:` declarations.**
 5. **`use:` propagates through composition** — a compound atom's `use:` closure = union of children's `use:` minus what's locally provided (per this section, "The `use:` block").
 6. **Therefore an atom's transitive `use:` closure IS its complete effect signature.** Statically visible; zero inference; zero annotation cost beyond writing `use:`.
@@ -1851,11 +1860,11 @@ cxc has **no separate effect system**. Effect tracking falls out of the substrat
 Consequences that fall out for free:
 
 - **An atom with no `use:` is pure over its inputs.** Structurally, not by convention. Compiler-verifiable at a glance. Stronger than most languages' "pure" annotations because no unsafe backdoor exists — there is no path to the OS without a `use:`-declared capability.
-- **Effect polymorphism = capability substitution.** `use: clock: Clock` accepts any atom conforming to `Clock` (WallClock, GameClock, TestClock, MockClock). Structural conformance handles it; no effect algebra needed.
+- **Effect polymorphism = capability substitution.** `use clock: Clock` accepts any atom conforming to `Clock` (WallClock, GameClock, TestClock, MockClock). Structural conformance handles it; no effect algebra needed.
 - **Effect inference = `use:` closure computation.** Compiler walks the transitive `use:` set. No effect-annotation language needed.
 - **Testing / mocking is capability substitution.** Compose with a test env that provides mock capabilities; atom body is unchanged.
 - **Capability-based security is the same mechanism.** An atom cannot use what its env doesn't provide.
-- **Adding new effects = shipping new prelude capability atoms.** Extending the effect vocabulary is stdlib work, not language work.
+- **Adding new effects = shipping new plugin capability atoms** (plus the prelude shape they conform to; R11 2026-09-01). Extending the effect vocabulary is stdlib work, not language work.
 
 **No `pure:` marker, no `can:` labels, no monad transformers, no effect algebra.** The `use:` name IS the effect declaration. Reader sees `use: clock: Clock, fs: Filesystem` and knows exactly what the atom touches. Grep-friendly, refactor-safe, review-simple.
 
@@ -1888,14 +1897,14 @@ The atom substrate commits to a single mechanism (atom composition) for every op
       ↑ use: env capabilities
 [ env: Clock, Fs, Net, Console, … ]   ← typed capability atoms
       ↑ wrap
-[ Shim atoms: WallClock, PosixFs, …]  ← use: Extern; extern.get("symbol") returns typed handle
+[ Plugin shim atoms: WallClock, PosixFs, …]  ← use plugin: Plugin (R11); each plugin under std.*
       ↑ resolve against
-[ Target prelude foreign symbols ]    ← typed native symbol declarations (§1.14)
+[ Per-plugin foreign "..." declarations (in the enclosing def plugin: body) ]  ← typed native symbol declarations (§7.2.1)
       ↓ link
 [ OS ]                                ← outside cxc
 ```
 
-**No OS-touching language primitives.** No `print`, no `read_file`, no `now()`, no `random()`, no `sleep`, no `exit`. Every operation that crosses the OS boundary is a method on a capability atom in `env`. This is enforced by construction — the parser has no productions for OS calls; the only path to a syscall is through a shim atom holding the `Extern` capability, and the runtime provisions `Extern` only to (a) prelude-shipped stdlib shim atoms and (b) shim atoms inside `@plugin(...)`-annotated modules (§7.2.1, Q9 relaxation 2026-08-30).
+**No OS-touching language primitives.** No `print`, no `read_file`, no `now()`, no `random()`, no `sleep`, no `exit`. Every operation that crosses the OS boundary is a method on a capability atom in `env`. This is enforced by construction — the parser has no productions for OS calls; the only path to a syscall is through a shim atom holding `Plugin`. The runtime provisions `Plugin` only to shim atoms inside modules that carry a `def plugin:` record marker (§7.2.1, R11 plugin-only wave 2026-09-01, superseding R10's short-lived two-capability split same-day).
 
 **The `use:` block.** Every atom that depends on env capabilities declares them:
 
@@ -1986,7 +1995,7 @@ use:
 
 *v1.1+ (device-specific):* GUI events (keyboard/mouse/touch/gestures), Audio (playback/capture), GPU (compute/render), Sensors/Devices (hardware access).
 
-**Dogfooding rule.** Every stdlib capability atom is written in cxc, using the `Extern` capability atom for the syscall boundary. If a capability can't be expressed cleanly, the language has a gap that needs fixing — not a stdlib workaround. Building `HTTP server`, `Filesystem watch`, and `Signals` in cxc tests whether the atom substrate handles high-concurrency I/O, OS notification queues, and asynchronous OS-driven events.
+**Dogfooding rule.** Every stdlib capability atom is written in cxc as a plugin (R11 plugin-only wave, 2026-09-01), using the `Plugin` FFI capability for the syscall boundary. If a capability can't be expressed cleanly, the language has a gap that needs fixing — not a stdlib workaround. Building `HTTP server`, `Filesystem watch`, and `Signals` in cxc tests whether the atom substrate handles high-concurrency I/O, OS notification queues, and asynchronous OS-driven events; the plugin mechanism gets exercised by every OS-touching capability, not just by third-party additions.
 
 **Runtime constructs env with policy baked in.** Sandboxing, rate-limiting, remoting, logging, and audit are all normal atom composition — the runtime constructs shim atoms wrapping OS, wraps them with policy atoms, and hands the composed capability to the top-level `def main` atom:
 
@@ -2102,55 +2111,70 @@ Same pattern for Socket (`created → connecting → connected → closing → c
 
 For v1.0: **runtime dispatch** of state-specific handlers via auto-delegation with clear "state X has no handler Y" errors. **Compile-time type-state proofs** (Rust-typestate-style) deferred past v1.0 as a compile-time optimization/verification layer.
 
-**FFI mechanism — `Extern` capability + prelude symbol registry.**
+**FFI mechanism — `Plugin` capability + nested `foreign "..."` grammar.**
 
-The FFI is a capability atom, not a syntactic privilege. Shim atoms request access via `use: extern: Extern`; the runtime provisions `Extern` to (a) prelude-shipped stdlib shims and (b) shims inside `@plugin(...)`-annotated modules (§7.2.1, Q9 relaxation 2026-08-30). Regular application code cannot receive `Extern` in its env — any `use:` entry is syntactically legal, but the runtime linker refuses to fill an `extern: Extern` slot for atoms outside those two authorized categories. Trust boundary enforced at env construction, not at parse time.
+The FFI is a single capability atom, not a syntactic privilege. `Plugin` is the sole FFI capability at v1.0 (R11 plugin-only wave, 2026-09-01, superseding same-day R10's short-lived Extern/Plugin split). Shim atoms request access via `use plugin: Plugin`; the runtime provisions `Plugin` only to shims declared inside modules that carry a top-level `def plugin:` record marker (§7.2.1). Regular application code cannot receive `Plugin` — any `use plugin: Plugin` entry is syntactically legal, but the runtime linker refuses to fill the slot outside `def plugin:` modules. Trust boundary enforced at env construction, not at parse time.
 
-Native symbol declarations live in target-scoped prelude files (§1.14). Each declaration binds a typed handle to a native symbol; the compiler resolves `extern.get("name")` against the target's symbol table at compile time.
+`plugin.get("name")` / `plugin.send(recv, "sel", args...)` / `plugin.class_send("Class", "sel", args...)` resolve against `foreign "..."` sections nested inside the enclosing `def plugin:` body — no cross-plugin symbol access. Each plugin sees only its own declared foreign surface. Codegen: dyld resolution for `.get`, `objc_msgSend` on Darwin for `.send`/`.class_send`; C-type marshalling at the boundary.
+
+Native symbol declarations live in each plugin's own `def plugin:` body (see §7.2.1 R7). The compiler resolves the string argument to `plugin.get` / `plugin.send` / `plugin.class_send` against the enclosing plugin's symbol table at compile time.
+
+**No prelude shims at v1.0.** Under R11 (2026-09-01), every OS-touching capability is a plugin — first-party (`std.clock`, `std.fs`, `std.console`, `std.args`, `std.subprocess`, ..., ships-with-compiler) or third-party (`com.acme.*`). Prelude carries only capability SHAPES (§1.13), always-in-scope prelude records (`SemVer`, `VersionRange`, `Stream`, `Future`, `Signal`), and parse-time recognition of the `def plugin:` / nested `foreign "..."` grammar. See §1.14.
 
 ```
+# std/fs/darwin.cxc  (path = module name, F73)  — first-party plugin
+
+def plugin:
+    name:    String!       = "std.fs"
+    version: SemVer!       = SemVer(0, 1, 0)
+    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0),
+                                          max: SemVer(2, 0, 0))
+
+    foreign "libc":
+        symbol "open":  (CString, Int32, Int32) -> Int32
+        symbol "read":  (Int32, Ptr of Byte, SizeT) -> SsizeT
+        symbol "write": (Int32, Ptr of Byte, SizeT) -> SsizeT
+        symbol "close": (Int32) -> Int32
+
 def PosixFs:
-    conforms: Filesystem
-    
-    use:
-        extern: Extern                                    # capability; runtime provisions to stdlib shims only
-    
-    # Typed handles retrieved from the target prelude's symbol table.
-    # Type on the LHS must match the declared type in prelude/<target>/libc.cxc.
-    native_open:  (CString, Int32, Int32) -> Int32           = extern.get("open")
-    native_read:  (Int32, Ptr of Byte, SizeT) -> SsizeT      = extern.get("read")
-    native_write: (Int32, Ptr of Byte, SizeT) -> SsizeT      = extern.get("write")
-    native_close: (Int32) -> Int32                            = extern.get("close")
-    
+    conforms: Filesystem                  # shape from prelude/shared/capabilities.cxc
+    use plugin: Plugin                    # sole FFI capability at v1.0 (R11)
+
+    # Typed handles retrieved from this plugin's own foreign surface (above).
+    native_open:  (CString, Int32, Int32) -> Int32       = plugin.get("open")
+    native_read:  (Int32, Ptr of Byte, SizeT) -> SsizeT  = plugin.get("read")
+    native_write: (Int32, Ptr of Byte, SizeT) -> SsizeT  = plugin.get("write")
+    native_close: (Int32) -> Int32                        = plugin.get("close")
+
     -> open(path: Path) -> Future of (File | IOError):
-        let cpath = path.to_cstring()
-        let fd = native_open(cpath, O_RDWR, 0)
-        if fd < 0:
-            return IOError(errno: current_errno())
-        return File(path: path, handle: NativeHandle(fd))
-    
-    -> read(handle: NativeHandle, len: Int) -> Future of (Bytes | IOError):
-        let buf = Bytes.allocate(len)
-        let n = native_read(handle.raw, buf.as_ptr(), len)
-        if n < 0:
-            return IOError(errno: current_errno())
-        return buf.slice(0, n)
-    
-    # write, close, seek, ...
+        cpath: CString = path.to_cstring()
+        fd:    Int32   = native_open(cpath, O_RDWR, 0)
+        ||: fd < 0 : IOError(errno: current_errno())
+        ||: else   : File(path: path, handle: NativeHandle(fd))
+
+    # read, write, close, seek, ...
 ```
 
 Rules:
 
-1. **`Extern` scope — prelude OR `@plugin`-annotated module** (relaxed 2026-08-30 for L7, Q9). At v1.0 the runtime provisions `Extern` to two categories of atom: (a) prelude-shipped stdlib shim atoms, and (b) shim atoms declared inside modules that carry a top-level `@plugin(...)` annotation (§7.2.1). No other userland modules receive `Extern`. Application code (regular modules with no `@plugin` annotation) has no path to raw FFI; it accesses OS through typed capabilities (Clock, Filesystem, Network, ...) provided by prelude or plugin modules. Trust boundary lives at env provisioning: the runtime linker refuses to fill an `extern: Extern` slot on an atom outside those two categories. Parse-time `foreign library` / `foreign symbol` visibility follows the same gate (see line 2469 below).
-2. **Compile-time symbol resolution.** `extern.get("name")` requires a compile-time string literal. The compiler resolves the argument against the target's prelude symbol table at compile time. Unknown symbol → compile error at the call site. Dynamic string arguments are rejected.
-3. **Type comes from the prelude declaration.** The retrieved handle's type is what the prelude symbol declaration says it is. The `data:` field's declared type is checked against the prelude type; mismatch → compile error. No caller-asserted signatures.
-4. **Direction inferred from type shape.** Symbols with type `(Args) -> Ret` are **outbound** — cxc invokes; native provides the impl. Symbols with type `Stream of T` are **inbound** — native invokes (via runtime callback); cxc receives on the stream via ordinary `|>` composition. Callbacks-with-return values are unsupported in v1.0 (no general encoding fits both hot synchronous callbacks and cold async ones; hand-crafted per-API shims with compiler-baked trampolines handle the rare stdlib cases that require them).
+1. **One capability, one scope** (R11 plugin-only wave 2026-09-01; the provisioning gate traversed annotation → module-let → `def plugin:` record marker over three consecutive days 2026-08-30/31, then split briefly into two capabilities on 2026-09-01 R10 before R11 collapsed the split same-day by retiring the prelude-shim tier). At v1.0 the runtime provisions `Plugin` only to shim atoms declared inside modules that carry a top-level `def plugin:` record marker (§7.2.1). No other modules receive `Plugin`. Application code (regular modules without the `plugin` marker) has no path to raw FFI; it accesses OS through typed capabilities (Clock, Filesystem, Network, ...) — shapes provided by prelude, shim implementations provided by plugin modules. Trust boundary lives at env provisioning: the runtime linker refuses to fill a `plugin: Plugin` slot on an atom outside a `def plugin:` module. Parse-time foreign-symbol visibility follows the same gate: `foreign "..."` sections are legal only nested inside `def plugin:` bodies (R7 2026-08-31).
+2. **Compile-time symbol resolution.** `plugin.get("name")` / `plugin.send(recv, "sel", ...)` / `plugin.class_send("Class", "sel", ...)` require compile-time string literals. The compiler resolves the argument against the enclosing `def plugin:` body's nested `foreign "..."` blocks. Unknown symbol → compile error at the call site. Dynamic string arguments are rejected.
+3. **Type comes from the plugin's foreign declaration.** The retrieved handle's type is what the plugin's `foreign "..."` block says it is. The field's declared type is checked against the foreign declaration; mismatch → compile error. No caller-asserted signatures.
+4. **Direction inferred from type shape.** Symbols with type `(Args) -> Ret` are **outbound** — cxc invokes; native provides the impl. Symbols with type `Stream of T` are **inbound** — native invokes (via runtime callback); cxc receives on the stream via ordinary `|>` composition. Callbacks-with-return values are unsupported in v1.0.
 5. **C types at the boundary.** Signatures use `CString`, `Int8`/`Int16`/`Int32`/`Int64`, `UInt8`/.../`UInt64`, `Float32`/`Float64`, `Ptr of T`, `SizeT`, `SsizeT`. Marshalling from cxc types (`Path`, `Bytes`, `String`) to C types happens in shim atom method bodies — explicit conversion at the boundary.
-6. **Portability by target.** Prelude is target-scoped (§1.14). A capability's shape (`Filesystem`) is target-agnostic; its shim implementation (`PosixFs`, `WasiFs`, `BrowserFs`) and the symbols each shim consumes come from the target's prelude subdirectory. User code sees the same `Filesystem` interface regardless of target — full portability across native, WASM, sandbox, browser, embedded, tests.
+6. **Portability by target.** Plugins ship per-target implementation files (`std/fs/darwin.cxc`, `std/fs/linux.cxc`, ...) mirroring the pattern established in R7 for `std/array/darwin.cxc`. Compiler picks per-target at build time; capability SHAPES (`Filesystem`) live in prelude and are target-agnostic, so consumer code sees the same interface regardless of target — full portability across native, WASM, sandbox, browser, embedded, tests.
 
-**Historical note — two collapses.** An earlier draft used an `extern:` *section* inside shim atom bodies, gated at parse time to stdlib atoms only. Two collapses replaced it: (a) the FFI became a capability atom (`Extern`) provisioned through env, matching the treatment of every other OS-adjacent capability; (b) the symbol registry moved into the prelude, where target-scoping is already handled and cxc syntax already reaches. The `extern:` section retires. The old rejection of "FFI-as-capability" (loses type safety, args become dynamic) does not apply to the prelude-typed form: symbol types come from prelude declarations, not from runtime string arguments, so both the retrieval and the call are fully typed at compile time.
+**Historical note — two collapses, a split, a collapse.**
 
-The `native def` keyword remains rejected — the current model keeps shim atoms as normal atoms with an extra `use:` entry (`extern: Extern`), not a distinct atom category.
+*(a) `extern:`-section retirement.* An earlier draft used an `extern:` *section* inside shim atom bodies, gated at parse time to stdlib atoms only. Replaced by a capability-atom form + prelude-hosted symbol registry — matched the treatment of every other OS-adjacent capability. The `extern:` section retired. The old rejection of "FFI-as-capability" (loses type safety, args become dynamic) doesn't apply to the compile-time-typed form: symbol types come from foreign declarations, not from runtime string arguments, so both the retrieval and the call are fully typed at compile time.
+
+*(b) Q9 plugin-scope opening (2026-08-30).* `Extern` originally provisioned only to prelude shims; Q9 widened the gate so plugin peer defs could also `use extern: Extern` — a single capability spanning both scopes.
+
+*(c) R10 capability split (2026-09-01).* Q9's single-Extern-two-scopes model let the capability handle in a plugin-body shim reach prelude foreign symbols in principle. R10 split the capability in two — `Extern` narrowed to prelude, new `Plugin` capability for plugin bodies — so cross-scope FFI reach became grammatically impossible, matching the two-form `foreign` split (prelude `foreign library "..."` vs plugin `foreign "..."`) on the declaration side.
+
+*(d) R11 plugin-only collapse (2026-09-01, same-day supersession of R10).* The hello-agent audit surfaced that R10 was patching an asymmetry that shouldn't exist. Prelude shims and plugin peer defs were structurally the same thing; "compiler-blessed" vs "third-party" is a distribution choice, not a mechanism choice. R11 removed the prelude-shim tier entirely: every OS-touching capability at v1.0 becomes a plugin. `Extern` capability, `foreign library "..."` grammar, and `prelude/target/` shim subtree all retire. `Plugin` becomes the sole FFI capability; nested `foreign "..."` inside `def plugin:` becomes the sole foreign-declaration form. R10's whole reason to exist evaporated because there's no longer a second scope for reach to cross into. See [[corvid-plugin-shape]].
+
+The `native def` keyword remains rejected — the current model keeps shim atoms as normal atoms with a `use plugin: Plugin` slot, not a distinct atom category.
 
 ### 1.13 Stdlib capability shape drafts
 
@@ -2172,8 +2196,8 @@ Operators propagate cardinality via contracts on their signatures: `map: emits(o
 
 ```
 def Clock:                                        # capability shape (signature-only atom)
-    :< now: Instant                               # current wall time as pull channel
-    :< monotonic_now: Instant                     # monotonic time (non-decreasing) as pull channel
+    :- now: Instant                               # current wall time as pull channel
+    :- monotonic_now: Instant                     # monotonic time (non-decreasing) as pull channel
     
     -> after(duration: Duration) -> Future of Unit:
         # Emits once after `duration` elapses. May not fire if the caller unsubscribes.
@@ -2187,7 +2211,7 @@ def Clock:                                        # capability shape (signature-
 
 Notes:
 - `Instant` = point in time (opaque); `Duration` = span of time (opaque). Both are records.
-- Default runtime shim: `WallClock`. Alternatives: `TestClock` (manual `advance_to`), `GameClock` (frame-driven), `RemoteClock` (RPC).
+- Default plugin: `std.clock` (first-party, `WallClock` atom). Alternatives: `TestClock` (manual `advance_to`), `GameClock` (frame-driven), `RemoteClock` (RPC).
 
 **Random.**
 
@@ -2207,7 +2231,7 @@ def Random:
 ```
 
 Notes:
-- Default runtime shim: `OsRandom` (uses `/dev/urandom` or platform CSPRNG). Alternatives: `SeededPrng(seed:)`, `TestRandom(fixture:)`.
+- Default plugin: `std.random` (first-party, `OsRandom` atom; uses `/dev/urandom` or platform CSPRNG). Alternatives: `SeededPrng(seed:)`, `TestRandom(fixture:)`.
 - No distributions in the core shape — sampling from normal/exponential/binomial lives in `cxc.random.distributions` extension package.
 
 **Filesystem.**
@@ -2231,15 +2255,15 @@ def Filesystem:
     -> rename(from: Path, to: Path) -> Future of (Unit | IOError):
     -> mkdir(path: Path, recursive: Bool) -> Future of (Unit | IOError):
     
-    :< cwd: Path                                  # current working directory
-    :< separator: String                          # platform path separator
+    :- cwd: Path                                  # current working directory
+    :- separator: String                          # platform path separator
 ```
 
 Notes:
 - `File` is a state-machine atom (§1.12 example); `Filesystem.open` returns a File already transitioned into `opened` state.
 - Fallible operations return `Future of (T | IOError)` — sum type at the boundary, per cxc's failure-via-return-type discipline (§3.5.4).
 - `OpenMode` = enum {`read`, `write`, `append`, `read_write`, `create`}.
-- Default runtime shim: `PosixFs`, `WasiFs`, `BrowserFs` per target.
+- Default plugin: `std.fs` (first-party; per-target atoms `PosixFs`, `WasiFs`, `BrowserFs` shipped as per-target plugin files `std/fs/darwin.cxc`, `std/fs/wasi.cxc`, ...).
 
 **Network.**
 
@@ -2270,13 +2294,13 @@ Notes:
 - `Socket`, `Listener`, `UdpSocket`, `HttpServer` are state-machine atoms with lifecycles.
 - `Listener` exposes an `.accepted: Stream of Socket` observable that emits new connections.
 - [DECISION] Nested capability atoms (`http`, `http_server` as sub-atoms of `Network`) — right decomposition, or should `HttpClient` and `HttpServer` be top-level env capabilities? Nested reads well when they share the network stack; top-level reads well when a program wants HTTP but not raw sockets.
-- Default runtime shim: `TcpNet` (uses OS sockets); alternatives: `InMemoryNet` (for tests), `MockNet(scenarios:)`.
+- Default plugin: `std.network` (first-party, `TcpNet` atom; uses OS sockets). Alternatives: `InMemoryNet` (for tests), `MockNet(scenarios:)`.
 
 **Console.**
 
 ```
 def Console:
-    :< stdin: Stream of Bytes                     # push channel: bytes as they arrive from stdin
+    :- stdin: Stream of Bytes                     # push channel: bytes as they arrive from stdin
     -> read_line -> Future of String:              # convenience: buffer stdin until newline
     -> read_bytes(count: Int) -> Future of Bytes:  # fixed-size read
     
@@ -2285,23 +2309,23 @@ def Console:
     -> write_err(bytes: Bytes) -> Future of Unit:  # write to stderr
     -> write_err_line(s: String) -> Future of Unit:
     
-    :< is_tty: Bool                                # true if stdout is attached to a terminal
-    :< width: Int                                  # terminal width in columns
-    :< height: Int                                 # terminal height in rows
+    :- is_tty: Bool                                # true if stdout is attached to a terminal
+    :- width: Int                                  # terminal width in columns
+    :- height: Int                                 # terminal height in rows
     
     -> clear -> Future of Unit:                    # clear terminal (ANSI escape or equivalent)
 ```
 
 Notes:
-- Default runtime shim: `PosixConsole` (uses `stdin/stdout/stderr` fds); `TestConsole(fixture_input: ..., capture_output: true)` for tests.
+- Default plugin: `std.console` (first-party, `PosixConsole` atom; uses `stdin/stdout/stderr` fds). `TestConsole(fixture_input: ..., capture_output: true)` for tests.
 - [DECISION] Terminal control (colors, cursor movement, raw mode) — v1.0 core, or `cxc.tty` extension package? Leaning extension; keep core Console flat.
 
 **Args.**
 
 ```
 def Args:
-    :< raw: [String]                              # raw argv (excluding program name at [0])
-    :< program_name: String                       # argv[0]
+    :- raw: [String]                              # raw argv (excluding program name at [0])
+    :- program_name: String                       # argv[0]
 ```
 
 Notes:
@@ -2312,14 +2336,14 @@ Notes:
 
 ```
 def EnvVars:
-    :< all: {String: String}                      # snapshot of environment at program launch
+    :- all: {String: String}                      # snapshot of environment at program launch
     -> get(name: String) -> String               # nil if unset
     -> has(name: String) -> Bool
 ```
 
 Notes:
 - Read-only view; environment mutation is a v1.1+ concern if ever (subprocesses inherit at spawn-time).
-- Default runtime shim: `PosixEnv` (reads `environ`); `FixtureEnv({...})` for tests.
+- Default plugin: `std.env` (first-party, `PosixEnv` atom; reads `environ`). `FixtureEnv({...})` for tests.
 
 **Exit.**
 
@@ -2329,7 +2353,7 @@ def Exit:
         # Terminates the program immediately with the given exit code.
         # Return type Never = does not return.
     
-    :< requested: Signal of Int
+    :- requested: Signal of Int
         # Push channel that emits when exit has been requested but not yet performed.
         # Emitted by OS signal handlers or `Exit.now`. Programs subscribe to run cleanup.
 ```
@@ -2381,7 +2405,7 @@ def Log:
         # Returns a child Log capability where every log call inherits these fields.
         # For structured logging: request IDs, user IDs, correlation IDs propagate down.
     
-    :< min_level: LogLevel                        # current minimum enabled level (runtime-configurable)
+    :- min_level: LogLevel                        # current minimum enabled level (runtime-configurable)
 
 def LogLevel:
     case trace
@@ -2395,66 +2419,52 @@ def LogLevel:
 Notes:
 - Structured logging (msg + fields) is v1.0-committed shape. Plain-string logging is expressible as `info(msg, {})`.
 - `with_context` returns a projection view of the same underlying Log — light-weight (same sink, different pre-populated field set), not a new capability atom.
-- Default runtime shim: `StderrLog` (writes to stderr in text or JSON format). Alternatives: `JsonLog(sink:)`, `SyslogLog`, `NullLog` (drops everything), `CaptureLog(buffer:)` (for tests).
+- Default plugin: `std.log` (first-party, `StderrLog` atom; writes to stderr in text or JSON format). Alternatives: `JsonLog(sink:)`, `SyslogLog`, `NullLog` (drops everything), `CaptureLog(buffer:)` (for tests).
 
 **Cross-cutting notes:**
 
 - **Return types.** Fallible operations return `Future of (T | Error)` — sum type at the boundary. Total operations return `Future of T` (async) or bare `T` (synchronous-when-safe, e.g., `EnvVars.has(name)`).
 - **Channel primitive is `Stream of T` uniformly.** `Future of T` and `Signal of T` are prelude aliases for `Stream of T where emits <= 1` and `Stream of T where emits == 1` respectively — see the primitive-and-aliases block at the top of this section.
-- **`Ptr of T`.** Used in FFI signatures (`Ptr of Byte`); the atom-shape of Ptr itself is a stdlib primitive (opaque handle to native memory). Only manipulable in `unsafe:` contexts or by shim atoms holding `Extern`.
+- **`Ptr of T`.** Used in FFI signatures (`Ptr of Byte`); the atom-shape of Ptr itself is a stdlib primitive (opaque handle to native memory). Only manipulable by shim atoms holding `Plugin` (R11); v1.0 has no `unsafe:` keyword in app source.
 - **Runtime env slot naming.** Each capability's env-slot name in `env` matches its stdlib type name (lowercase snake): `env.clock`, `env.random`, `env.fs` (short for filesystem), `env.net` (short for network), `env.console`, `env.args`, `env.env_vars`, `env.exit`, `env.signals`, `env.log`. Standard convention; users' `use:` blocks default to these names.
 - **All handlers are exposed by default.** No `entrypoints:` section on any capability shape above. External callers, internal wires, and any other message sender all reach handlers the same way.
 
-### 1.14 Prelude — target scoping, foreign symbols, and a worked shim
+### 1.14 Prelude — capability shapes, prelude records, and a worked plugin shim
 
-The prelude (see §4.20 for the general mechanism) is cxc's always-in-scope declaration space. For the OS-boundary machinery (§1.12), the prelude carries two extra responsibilities: **target scoping** so per-platform types and shims can vary, and **foreign symbol declarations** that populate the FFI symbol table `Extern` consults.
+The prelude (see §4.20 for the general mechanism) is cxc's always-in-scope declaration space. Under R11 (2026-09-01 plugin-only wave) the prelude's responsibility for the OS-boundary machinery collapses to two things: **capability SHAPES** (§1.13 — `Clock`, `Filesystem`, `Network`, `Console`, `KeyboardInput`, `Random` — the interface defs plugins `conforms:` to) and **always-in-scope prelude records** (`SemVer`, `VersionRange`, `Stream`, `Future`, `Signal`, and the `Plugin` capability atom shape). Prelude no longer ships shims and no longer hosts a foreign-symbol registry — that responsibility moved to plugins.
 
-**Directory layout.**
+**Directory layout** (post-R11, single `shared/` root; per-target `prelude/target/*` subtree retired):
 
 ```
 prelude/
-├── shared/
-│   ├── types.cxc              # Duration, Instant, Stream, Future, Signal
-│   ├── capabilities.cxc        # Clock, Filesystem, Network, ... capability shapes (§1.13)
-│   ├── extern.cxc              # Extern capability shape
-├── unix/
-│   ├── libc.cxc                # foreign symbols for libc
-│   ├── runtime.cxc             # foreign symbols for cxc_runtime
-│   ├── wall_clock.cxc          # WallClock shim (Clock impl for Unix)
-│   ├── posix_fs.cxc            # PosixFs shim
-│   ├── posix_console.cxc       # PosixConsole shim
-│   ├── ...
-├── windows/
-│   ├── win32.cxc               # foreign symbols for Win32
-│   ├── win_clock.cxc           # Clock impl for Windows
-│   ├── ...
-├── wasi/
-│   ├── wasi_preview1.cxc       # foreign symbols for wasi_snapshot_preview1
-│   ├── wasi_fs.cxc             # Filesystem impl for WASI
-│   ├── ...
-├── browser/
-│   ├── js.cxc                  # foreign symbols for JavaScript host
-│   ├── ...
+└── shared/
+    ├── types.cxc              # Duration, Instant, Stream, Future, Signal
+    ├── capabilities.cxc       # Clock, Filesystem, Network, ... capability SHAPES (§1.13)
+    ├── plugin.cxc             # Plugin capability atom shape (R7 + R11)
+    ├── semver.cxc             # SemVer + VersionRange records (R8)
 ```
 
-The compiler picks `shared/ + <target>/` at build time based on the compilation target. `shared/` is always in scope; exactly one `<target>/` directory is included per build.
+The prelude is target-agnostic. Per-target implementation lives in per-plugin per-target files (`std/clock/darwin.cxc`, `std/clock/linux.cxc`, ...), following the pattern established in R7 for `std/array/darwin.cxc`. The compiler picks the target's plugin file at build time; capability SHAPES are the same across targets.
 
-**`foreign library` blocks.** The prelude declares typed native symbols using `foreign library` blocks, one per native library:
+**Foreign-declaration form — nested `foreign "..."` inside `def plugin:`** (R7 2026-08-31, sole form post-R11). Plugin modules declare their native surface as `foreign "<library>":` sections nested inside the plugin's `def plugin:` body. No `library` keyword — the surrounding `def plugin:` body already scopes the declarations. The R7 grammar admits `type`, `selector`, `class_selector`, and `symbol` as body elements:
 
 ```
-# prelude/unix/libc.cxc
+# raw/plugin-drafts/std/array/darwin.cxc  (excerpt)
 
-foreign library "libc":
-    symbol "clock_gettime":  () -> Instant
-    symbol "open":           (path: CString, flags: Int32, mode: Int32) -> Int32
-    symbol "read":           (fd: Int32, buf: Ptr of Byte, len: SizeT) -> SsizeT
-    symbol "write":          (fd: Int32, buf: Ptr of Byte, len: SizeT) -> SsizeT
-    symbol "close":          (fd: Int32) -> Int32
+def plugin:
+    name:    String!       = "std.array"
+    version: SemVer!       = SemVer(0, 1, 0)
+    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0),
+                                          max: SemVer(2, 0, 0))
 
-foreign library "cxc_runtime":
-    symbol "cxc_schedule_timer":          (Instant, Int) -> Unit
-    symbol "cxc_schedule_timer_callback": Stream of Int    # inbound: runtime pushes onto stream
-    symbol "cxc_signal_callback":         Stream of Int    # inbound: OS signal deliveries
+    foreign "Foundation":
+        type "NSArray"
+        selector "count"                          -> Int
+        selector "objectAtIndex:"                 -> NSObject
+        class_selector "NSArray" "array"          -> NSArray
+
+    foreign "libc":
+        symbol "getenv" -> (name: CString) -> CString
 ```
 
 **Direction is inferred from the declared type.**
@@ -2466,51 +2476,55 @@ foreign library "cxc_runtime":
 
 No explicit `direction:` field; no `inbound_symbol` / `outbound_symbol` keywords. One rule, disambiguated by type. Callbacks-with-return values (qsort comparator, Win32 `WndProc`) are unsupported in v1.0 — the general FFI type system covers only the two shapes above; rare APIs needing returning callbacks require hand-crafted per-API shims with compiler-baked native trampolines.
 
-**Scope restriction — prelude OR `@plugin`-annotated module** (relaxed 2026-08-30 for L7, Q9). The declaration forms `foreign library "..." :` and `symbol "..." : <type>` are legal in two locations:
+**Scope gate — `def plugin:` scope only** (R7 2026-08-31 grammar + R11 2026-09-01 collapse). Foreign symbol declarations are legal in exactly one location: **`foreign "..." :`** nested inside a `def plugin:` body in a module that carries the plugin marker (§7.2.1). The parser rejects `foreign` in any other location with a targeted diagnostic. Regular application modules (no `def plugin:`) cannot extend the foreign symbol table; new native surface must be published as a plugin module (first-party in `std.*`, third-party elsewhere).
 
-1. Inside files under `prelude/` (as before — stdlib native surface).
-2. Inside modules that carry a top-level `@plugin(...)` annotation (§7.2.1). Third-party plugins declare their own native-symbol surface using the same grammar; the plugin manifest's `requires:` set enumerates which OS primitives those symbols reach for, and the compiler cross-checks that every declared foreign symbol resolves against a primitive in the plugin's declared `requires:` set (see F74/F75/F76).
+Rationale: the primary trust boundary lives at env provisioning (`Plugin` is not handed outside a `def plugin:` module — see §1.12). The declaration-form restriction is a second layer of defense — even if a shim atom somehow received `Plugin`, application atoms outside plugin modules cannot declare new symbols to resolve against. Q9 (ratified 2026-08-29) widened the FFI capability gate from "prelude-only" to "prelude OR plugin-module"; R7 (ratified 2026-08-31) tightened the plugin-side grammar so the plugin marker → foreign-symbol coupling is machine-checked at parse (grammatical), not just at resolution (semantic); R10 (ratified 2026-09-01) briefly split the FFI capability into `Extern` + `Plugin` to make cross-scope reach grammatically impossible; R11 (ratified 2026-09-01, same-day) collapsed the prelude-shim tier entirely — every OS-touching capability is a plugin, `Extern` retires, `foreign library "..."` retires, `Plugin` is the sole FFI capability with a single scope. Ordinary application code retains its zero-FFI-surface guarantee under all four waves.
 
-The parser rejects `foreign library` / `foreign symbol` in any other location with a targeted error. Regular application modules (no `@plugin` annotation, not under `prelude/`) cannot extend the foreign symbol table; new native surface must be contributed to the target prelude OR published as a plugin module.
+**Worked example — WallClock (Darwin).**
 
-Rationale: the primary trust boundary lives at env provisioning (`Extern` is not handed to arbitrary user atoms — only to those in prelude or plugin modules). The declaration-form restriction is a second layer of defense — even if a shim atom somehow received `Extern`, application atoms outside prelude and plugin modules cannot declare new symbols to resolve against. Q9 (ratified 2026-08-29) widens the second-layer gate from "prelude-only" to "prelude OR `@plugin`-annotated" because the same rationale applies: the `@plugin(...)` annotation is a machine-checked gate the compiler enforces (F75 manifest resolver), so a plugin module's foreign declarations are as auditable as prelude's. Ordinary application code retains its zero-FFI-surface guarantee.
-
-**Worked example — WallClock (Unix).**
-
-WallClock implements the `Clock` capability shape on Unix. It uses two outbound symbols (read the clock, schedule a timer with the OS) and one inbound symbol (receive completion callback from the runtime's timer dispatcher):
+WallClock implements the `Clock` capability shape on Darwin. It uses two outbound symbols (read the clock, schedule a timer with the OS) and one inbound symbol (receive completion callback from the runtime's timer dispatcher). Post-R11, WallClock ships as a plugin (`std.clock`) rather than a prelude shim:
 
 ```
-# prelude/unix/wall_clock.cxc
+# std/clock/darwin.cxc  (path = module name, F73)  — first-party plugin
+
+def plugin:
+    name:    String!       = "std.clock"
+    version: SemVer!       = SemVer(0, 1, 0)
+    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0),
+                                          max: SemVer(2, 0, 0))
+
+    foreign "libc":
+        symbol "clock_gettime": () -> Instant
+
+    foreign "cxc_runtime":                              # compiler-emitted runtime symbols
+        symbol "cxc_schedule_timer":          (Instant, Int) -> Unit
+        symbol "cxc_schedule_timer_callback": Stream of Int    # inbound
+        symbol "cxc_signal_callback":         Stream of Int    # inbound
 
 def WallClock:
-    conforms: Clock
-    
-    use:
-        extern: Extern
-    
-    # Typed handles from the prelude symbol table (compile-time resolved).
-    native_now:      () -> Instant           = extern.get("clock_gettime")
-    native_schedule: (Instant, Int) -> Unit  = extern.get("cxc_schedule_timer")
-    timer_callbacks: Stream of Int           = extern.get("cxc_schedule_timer_callback")
-        
-    pending:  Map of (Int, Handler) = {}
-    next_id:  Int                   = 0
-    
-    # Observable — pull channel exposing current wall time
-    now :< native_now()
-    
-    # Outbound path: caller invokes clock.after(duration); atom schedules a timer via the OS.
-    # `sink` here is the reply channel bound at the call site (Future-returning method).
+    conforms: Clock                                     # shape from prelude/shared/capabilities.cxc
+    use plugin: Plugin                                  # sole FFI capability at v1.0 (R11)
+
+    # Typed handles from this plugin's own foreign surface (compile-time resolved).
+    native_now:      () -> Instant           = plugin.get("clock_gettime")
+    native_schedule: (Instant, Int) -> Unit  = plugin.get("cxc_schedule_timer")
+    timer_callbacks: Stream of Int           = plugin.get("cxc_schedule_timer_callback")
+
+    pending:  Map of (Int, Handler)! = {}
+    next_id:  Int!                   = 0
+
+    now :- Instant
+        native_now()
+
     self <: after(duration: Duration, sink: FireSink)
     -> self
-        let: id = next_id
         then:
+            id: Int = next_id
             pending => pending + {id: sink}
             next_id => next_id + 1
             native_schedule(now + duration, id)
 
-    # Inbound path: OS-timer callbacks arrive on the extern stream `timer_callbacks`.
-    # The shim atom subscribes via an ordinary receive-glyph transition — no free wires.
+    # Inbound path: OS-timer callbacks arrive on the plugin-scoped stream.
     self <: timer_callbacks(id: Int)
     -> self
         |: pending contains id
@@ -2519,20 +2533,21 @@ def WallClock:
             pending[id] :> fire(t: now)
 ```
 
-Two shapes at the boundary, both routed through `Extern`:
+Two shapes at the boundary, both routed through `Plugin`:
 
-- **Outbound calls** (`native_now`, `native_schedule`) are function-typed handles retrieved from the symbol table and invoked as ordinary cxc method calls.
-- **Inbound callbacks** (`timer_callbacks`) are `Stream of T` handles retrieved from the symbol table and consumed by receive-glyph transitions on the shim atom (`<phase> <: timer_callbacks(id: Int) -> <phase> then: ...`). The runtime pushes onto this stream from its OS-callback dispatcher; the shim receives via ordinary stream mechanics.
+- **Outbound calls** (`native_now`, `native_schedule`) are function-typed handles retrieved from the plugin's own symbol table and invoked as ordinary cxc method calls.
+- **Inbound callbacks** (`timer_callbacks`) are `Stream of T` handles retrieved from the plugin's own symbol table and consumed by receive-glyph transitions on the shim atom (`<phase> <: timer_callbacks(id: Int) -> <phase> then: ...`). The runtime pushes onto this stream from its OS-callback dispatcher; the shim receives via ordinary stream mechanics.
 
-No inbound-only section, no callback-handler keyword, no direction sub-labels. Both directions collapse into two existing atom composition primitives (function invocation and stream wiring) over typed handles the prelude symbol table provides.
+No inbound-only section, no callback-handler keyword, no direction sub-labels. Both directions collapse into two existing atom composition primitives (function invocation and stream wiring) over typed handles the plugin's foreign surface provides.
 
-**Non-Unix shim examples.** The same `Clock` shape is implemented differently per target:
+**Cross-target shim examples.** The same `Clock` shape is implemented differently per target, each as a sibling plugin file:
 
-- `prelude/windows/win_clock.cxc` — uses `QueryPerformanceCounter` (Win32) and Win32 timer callbacks.
-- `prelude/wasi/wasi_clock.cxc` — uses `clock_time_get` (WASI) and WASI async polling.
-- `prelude/browser/browser_clock.cxc` — uses `performance.now` (JS host) and `setTimeout` callbacks.
+- `std/clock/darwin.cxc` — uses `clock_gettime` (libc) + `cxc_runtime` timer callbacks.
+- `std/clock/linux.cxc` — same libc primitives; per-target file for target-specific specifics (glibc vs musl symbol paths, etc.).
+- `std/clock/wasi.cxc` — uses `clock_time_get` (WASI) + WASI async polling.
+- `std/clock/browser.cxc` — uses `performance.now` (JS host) + `setTimeout` callbacks.
 
-User code writing `use: clock: Clock` sees the target's active shim through a `Clock`-shaped interface; the shim's `Extern` usage and consumed symbols are internal to the prelude.
+Compiler picks per-target at build time; consumer code writing `use clock: Clock` sees the same `Clock`-shaped interface regardless of which per-target plugin file backs it. The plugin's `Plugin` usage and consumed symbols are internal to the plugin — invisible in consumer source.
 
 ---
 
@@ -2558,7 +2573,7 @@ Indentation-delimited blocks (Python-style). Indent must be consistent within a 
 ```
 def class record enum protocol program
 use conforms provides
-foreign library symbol
+foreign symbol type selector class_selector          # scoped to `foreign "..."` inside `def plugin:` — R7 + R11
 accepts requires ensures invariants
 async allocates blocks
 mutable immutable let
@@ -2582,7 +2597,7 @@ sizeof alignof offsetof
 - `emit` (call form) — replaced by `:>` push-channel glyph. `emit(value)` → `:> value`; `emit channel_name(value)` → `:> channel_name(value)`.
 - `after` (as language primitive with implicit clock) — retired. Time is accessed via a `Clock` capability atom declared in `use:`. Delayed dispatch is a time-guarded transition (`<phase> -> <target>` with `|: clock.after(deadline)`) or a Delay/Throttle transformer inside a receive-glyph source expression. The `~>` time-deferred wire glyph is retired (2026-08-12).
 - `type`, `contract` — retired at v1.0 (see §1.11); types ARE atoms; predicates are `invariants:`/`requires`/`ensures`/predicate atoms.
-- `extern` (as section keyword) — retired at v1.0 (see §1.12). FFI is a capability atom (`Extern`) provisioned through env to stdlib shims only. `Extern` (PascalCase) is a regular identifier for the capability atom, not a keyword. Foreign symbol declarations moved to prelude-only `foreign library` / `symbol` forms (see §1.14).
+- `extern` (as section keyword or capability identifier) — retired at v1.0 (see §1.12). FFI is a single capability atom (`Plugin`) provisioned through env only to shim atoms inside modules that carry a `def plugin:` marker (R11 plugin-only wave 2026-09-01, superseding the short-lived R10 Extern+Plugin split same-day). `Plugin` (PascalCase) is a regular identifier for the capability atom, not a keyword. Foreign symbol declarations use one scoped form: plugin-body nested `foreign "..."` inside `def plugin:` (R7, feeds `Plugin`). The pre-R11 top-level `foreign library "..."` form retires with the prelude-shim tier.
 - `program` (as top-level declaration keyword) — retired at v1.0 (2026-08-13). The runtime entry point is `def main` by naming convention; the atom named `main` at module top level is the one the OS runtime instantiates and provides env to. `program` violated the atoms-are-the-sole-primitive premise (§1.11) as a distinct declaration form; case convention already carries the role signal (`def Foo` = atom class, `def main` = entry-point trivial atom).
 - `for`, `in` — retired at v1.0 (2026-08-18, F20 REJECTED). Iteration is method dispatch, not language sugar (see §3.7.1 rationale 3, §3.10.1). `for e in xs: body` → `xs.for_each(e => body)`; `.map` / `.filter` / `.fold` / `.sorted` for other iteration shapes. `for` / `in` remain reserved by the lexer as diagnostic anchors — compiler emits a targeted diagnostic pointing at `.for_each`. Same pattern as `loop` retirement post-F17 L2 rejection.
 - `match` — retired at v1.0 (2026-08-18). Spec §3.7 line 702 already committed to `switch`, not `match`; `match` was reserved-but-never-parsed. Reservation removed.
@@ -2597,11 +2612,11 @@ Removed from prior drafts: `sealed`, `dynamic`, `open`, `final`, `public`, `priv
 - `of` — type qualifier for structural type parameters (see §1.11 and §3.2). `Stream of Bytes` (concrete), `Stream of s` (variable). Also legal in type-alias positions and constraint positions.
 - `conforms` — used in `conforms:` declarations on atoms that implement a capability shape (`conforms: Filesystem`) and in `where` constraints (`s conforms Hashable`).
 - `provides` — reserved for future use; do not use in new code. `use:` covers both inheritance and provision via source expression.
-- `foreign`, `library`, `symbol` — **prelude-only** keywords for declaring typed native symbols (see §1.14). The parser rejects `foreign library "..." :` and `symbol "..." : <type>` outside files under `prelude/`. Not usable in user code, application code, or non-prelude stdlib code.
+- `foreign`, `symbol`, `type`, `selector`, `class_selector` — scoped keywords for declaring typed native symbols (see §1.14, §7.2.1). One grammar, one gate: `foreign "..." :` with `type`, `selector`, `class_selector`, `symbol` entries — legal only nested inside a `def plugin:` body (R7, 2026-08-31; sole form post-R11 2026-09-01). Parser rejects `foreign` outside `def plugin:` with a targeted diagnostic. `type`, `selector`, `class_selector` are contextual keywords active only inside `foreign "..."` blocks. Not usable in user code or in application code. `library` (as `foreign library "..."` prefix) is retired at v1.0 along with the prelude-shim tier per R11.
 
 Note: `else if` is written as two tokens, not one; there is no `elif`.
 
-Note: `let` binds an immutable local or module-level constant (§7.1). `var` is not a keyword — mutable bindings use bare identifier assignment (see §6.15).
+Note: `let` binds an immutable **function-scope** local (§7.1). Module-scope `let` retired 2026-08-31 (R3); module-scope constants belong in a `def` record with compile-time-constant field defaults. `var` is not a keyword — mutable bindings use bare identifier assignment (see §6.15).
 
 ### 2.6 Reserved Syntactic Space
 
@@ -2615,7 +2630,7 @@ The following character sequences are reserved as glyph tokens for the atom-subs
 |---|---|
 | `->` | Return-type marker (in signatures) + transition arrow (source-to-target phase) + handler prefix (side-effect-only handlers) |
 | `\|>` | Stream composition inside receive-glyph source expression + sync send prefix (`\|> recv.msg(args)`) inside `then:` blocks |
-| `:<` | Observable pull channel declaration (`name :< source`) |
+| `:-` | Observable pull channel declaration (`name :- source`) |
 | `:>` | Emit async — fire-and-forget push (`:> value` default, `:> channel(value)` named) |
 | `<:` | Receive async — non-blocking pickup during phase; in transition header between source phase and arrow. Legal with any sender glyph. Source expression may compose transformers via `\|>`. |
 | `<\|` | Receive sync (blocking) — transition parks specifically on this message; in transition header between source phase and arrow. Legal with any sender glyph. Source expression may compose transformers via `\|>`. |
@@ -2633,7 +2648,7 @@ The following character sequences are reserved as glyph tokens for the atom-subs
 
 **Retired glyph forms:**
 - `-->` — collapsed to `->` (2026-08-11).
-- `<--` — replaced by `:<` (2026-08-11).
+- `<--` — replaced by `:-` (2026-08-11).
 - `->` in stream composition — collapsed to `|>` (2026-08-12).
 - **`~>` — retired (2026-08-12).** Time-deferred behavior expressed as a time-guarded transition (`|: clock.after(deadline)`) or a Delay/Throttle transformer inside a receive-glyph source expression.
 - **Top-level `|>` wire composition — retired (2026-08-12).** Standing wires as atom-body top-level statements do not exist; all subscriptions are receive-glyph transitions.
@@ -2692,7 +2707,7 @@ Because these are prelude aliases, they are inspectable — users can look up wh
 > **What changes (with post-collapse status, 2026-08-17).** `class Foo:` → `def Foo:` with sugar-keyword equivalents documented per shape. Under Proposal G (F67 L3/L4/L5):
 > - `state:` section retires; all fields are per-instance immutable, updated only through transitions.
 > - `data:` section header retires (F67 L5, Proposal D) — fields sit at class-body top level: `name: Type [= default]`.
-> - `methods:` section retires (F67 L4) — readers become parametric observables `name(args) :< expr`; void side-effect methods become `* <: name(args) -> self then:` (wildcard handler-shape transitions with side-effect entries); state-mutating methods become wildcard self-transitions with `then:` field updates; utilities move to module scope.
+> - `methods:` section retires (F67 L4) — readers become parametric observables `name(args) :- expr`; void side-effect methods become `* <: name(args) -> self then:` (wildcard handler-shape transitions with side-effect entries); state-mutating methods become wildcard self-transitions with `then:` field updates; utilities move to module scope.
 > - `-> handler(args):` prefix retires (F67 L3) — handlers are `* <: handler(args) -> self then: <body>`.
 >
 > **Code examples in §3–§9 still use the retired forms** as historical illustrations of shape and semantics. The retirements are AST-preserving (surface syntax changed; downstream folds into the same AST), so the semantic content of every example carries over. The current class-body vocabulary is authoritative in §1.11 (see the addendum *Class body collapse to two glyphs (Proposal G)*).
@@ -2707,14 +2722,14 @@ Because these are prelude aliases, they are inspectable — users can look up wh
 > ```
 > def UInt8:                                # v1.0 surface
 >     raw: Byte
->     value :< raw.to_uint()
+>     value :- raw.to_uint()
 >     |: 0 <= value <= 255
 > ```
 > instead of the `data: raw: Byte / invariants: 0 <= value <= 255` block form shown below. Migration is mechanical; see §1.11 class-body-collapse and the retirement mapping table for the full rewrite.
 
-**Types are atoms. Predicates are contracts, not refinements.** Every "primitive type" is a first-class atom with fields + `value :<` observable + optional `|:` propositions (historically: `data:` + `value :<` + `invariants:`) — the same mechanism used for user-defined types (§1.3). There is no primitive/refined distinction. The set below is what the prelude ships; user domain types (Age, UserId, Percent, ...) are declared the same way and get the same treatment.
+**Types are atoms. Predicates are contracts, not refinements.** Every "primitive type" is a first-class atom with fields + `value :-` observable + optional `|:` propositions (historically: `data:` + `value :-` + `invariants:`) — the same mechanism used for user-defined types (§1.3). There is no primitive/refined distinction. The set below is what the prelude ships; user domain types (Age, UserId, Percent, ...) are declared the same way and get the same treatment.
 
-**Prelude ships the concrete substrate.** Sized atoms (`UInt8`/`Int8`/`UInt16`/`Int16`/`UInt32`/`Int32`/`UInt64`/`Int64`, `Float`, `Double`), plus `Bool`, `Char`, `String`, `Bytes`, `Unit`, `Never`, `Any`, plus bare `Int` (aliased to `Int64` as the ergonomic default). Domain narrowing types (`Nat`, `Age`, `UserId`, `Percent`, `Port`, ...) are **NOT** in the prelude — users define them as ordinary atoms using the same fields + `value :<` + `|:` mechanism the prelude uses. `Nat` in the exploration file is an example of what a user-defined narrowing atom looks like, not a prelude commitment.
+**Prelude ships the concrete substrate.** Sized atoms (`UInt8`/`Int8`/`UInt16`/`Int16`/`UInt32`/`Int32`/`UInt64`/`Int64`, `Float`, `Double`), plus `Bool`, `Char`, `String`, `Bytes`, `Unit`, `Never`, `Any`, plus bare `Int` (aliased to `Int64` as the ergonomic default). Domain narrowing types (`Nat`, `Age`, `UserId`, `Percent`, `Port`, ...) are **NOT** in the prelude — users define them as ordinary atoms using the same fields + `value :-` + `|:` mechanism the prelude uses. `Nat` in the exploration file is an example of what a user-defined narrowing atom looks like, not a prelude commitment.
 
 #### 3.1.1 The Derivation
 
@@ -2737,23 +2752,23 @@ def Byte:
         bits.count == 8
 ```
 
-**`UInt8`, `Int8`, `Char`** — same eight bits, different interpretations. The `value :<` observable IS the interpretation; the `invariants:` state what the observable produces.
+**`UInt8`, `Int8`, `Char`** — same eight bits, different interpretations. The `value :-` observable IS the interpretation; the `invariants:` state what the observable produces.
 
 ```
 def UInt8:
     raw: Byte
-    value :< bit_ops.decode_uint(raw.bits)
+    value :- bit_ops.decode_uint(raw.bits)
     invariants:
         0 <= value <= 255
 
 def Int8:
     raw: Byte
-    value :< bit_ops.decode_int_2c(raw.bits)
+    value :- bit_ops.decode_int_2c(raw.bits)
     invariants:
         -128 <= value <= 127
 ```
 
-**`UInt16`, `UInt32`, `UInt64`, `Int16`, `Int32`, `Int64`** — same pattern with `List of Byte` and a `count == N` invariant on the raw bytes. The `value :<` observable delegates to the corresponding `bit_ops.decode_*` prelude function.
+**`UInt16`, `UInt32`, `UInt64`, `Int16`, `Int32`, `Int64`** — same pattern with `List of Byte` and a `count == N` invariant on the raw bytes. The `value :-` observable delegates to the corresponding `bit_ops.decode_*` prelude function.
 
 **`Int`** — bare signed integer. **Aliased to `Int64` in the prelude.** No prelude-level "compiler picks representation" behavior; users who want tighter representation write a domain atom that wraps `Int` with narrower invariants (see below).
 
@@ -2791,13 +2806,13 @@ def Float:
     raw: List of Byte
     invariants:
         raw.count == 4
-    value :< bit_ops.decode_ieee_f32(raw)
+    value :- bit_ops.decode_ieee_f32(raw)
 
 def Double:
     raw: List of Byte
     invariants:
         raw.count == 8
-    value :< bit_ops.decode_ieee_f64(raw)
+    value :- bit_ops.decode_ieee_f64(raw)
 ```
 
 **`Bool`** — single byte carrying `zero`/`one`.
@@ -2805,7 +2820,7 @@ def Double:
 ```
 def Bool:
     raw: Byte
-    value :< bit_ops.decode_uint(raw.bits) == 1
+    value :- bit_ops.decode_uint(raw.bits) == 1
     invariants:
         0 <= bit_ops.decode_uint(raw.bits) <= 1
 ```
@@ -2818,7 +2833,7 @@ def Char:
     invariants:
         1 <= raw.count <= 255
         bit_ops.is_valid_grapheme(raw)
-    value :< bit_ops.grapheme_of(raw)
+    value :- bit_ops.grapheme_of(raw)
 ```
 
 **`String`** — UTF-8, immutable. Agent-shaped def per §3.10.5 (transitions-present body → handle emit). Methods per §3.10.5.
@@ -2841,7 +2856,7 @@ The compiler picks a machine-instruction representation for each numeric field f
 
 3. **User-defined domain atoms picked by the compiler based on the domain atom's own invariants**, propagated through the `data:` chain. Example: user defines `Age` wrapping `Nat` with `invariants: 0 <= value <= 150`; a field `player_age: Age` compiles to UInt8 storage. Same rule for user-defined `Nat`, `Port`, `Percent`, `UserId`, etc. — the compiler reads the domain atom's invariants and picks the narrowest sized-atom representation that satisfies them, then elides the wrapper at runtime.
 
-   **Invariant forms the picker recognizes.** Chained-comparison predicates in the invariants block: `lo <= field <= hi`, `lo <= field < hi`, `field >= lo`, `field <= hi`, and same forms substituting `value` when the atom declares `value :< field` (identity observable). Bounds must be compile-time constants. Multiple bounds compose (intersect). Invariants not in this form (arbitrary predicate expressions, dependent bounds) don't narrow — the field keeps its declared width. Full decode-expression observables (`value :< bit_ops.decode_uint(raw.bits)`) are v1.1+ picker work.
+   **Invariant forms the picker recognizes.** Chained-comparison predicates in the invariants block: `lo <= field <= hi`, `lo <= field < hi`, `field >= lo`, `field <= hi`, and same forms substituting `value` when the atom declares `value :- field` (identity observable). Bounds must be compile-time constants. Multiple bounds compose (intersect). Invariants not in this form (arbitrary predicate expressions, dependent bounds) don't narrow — the field keeps its declared width. Full decode-expression observables (`value :- bit_ops.decode_uint(raw.bits)`) are v1.1+ picker work.
 
 4. **No use-based inference.** The compiler reads what's WRITTEN in `invariants:` — nothing more. If the user wants tight representation, they define a domain atom with narrower invariants. If the user writes bare `Int`, they get Int64. This keeps representation choice source-visible: a reader knows what the compiler picked by reading the invariants, not by running an inspection tool. Contracts stay load-bearing (spec §1.3) rather than becoming optional performance hints.
 
@@ -2964,7 +2979,7 @@ The three treatments correspond to genuinely different runtime shapes. The disti
 
 **Structural-shape base-class properties are language commitments, not protocol conformances.** Structural-shape defs (fields-only body) and tagged-variant defs (cases-only body) have `.as() -> Bytes`, `==`, `hash`, and copy-on-assign as *fundamental properties of what those shapes ARE* — the compiler synthesizes these methods per class from field / case layout, same shape as automatic structural equality in Haskell records or Rust structs. Structural conformance to `As<Bytes>` / `From<Bytes>` / `Equatable` / `Hashable` (§3.4) falls out as a consequence — the base methods exist, so structural checks succeed with no separate "auto-conformance" mechanism. See §3.4.6 for the byte-property detail and §3.10.10 for the canonical wire format.
 
-Primitives (`Int`, `Float`, `Bool`, `Char`, etc.) are atoms with the same `data:` + `value :<` + `invariants:` structure user domain types use — see §3.1 for the derivation from `Bit` → `Byte` → sized atoms. Their bodies are fields-only (structural shape); the compiler synthesizes byte methods from each primitive's field layout via the same pathway as user structural-shape defs (§3.4.6). Storage is a compiler specialization (inline machine word) invisible to the surface; semantically primitives ARE atoms.
+Primitives (`Int`, `Float`, `Bool`, `Char`, etc.) are atoms with the same `data:` + `value :-` + `invariants:` structure user domain types use — see §3.1 for the derivation from `Bit` → `Byte` → sized atoms. Their bodies are fields-only (structural shape); the compiler synthesizes byte methods from each primitive's field layout via the same pathway as user structural-shape defs (§3.4.6). Storage is a compiler specialization (inline machine word) invisible to the surface; semantically primitives ARE atoms.
 
 **Agent-shape defs get none of these base-class properties automatically** — mutable-via-transition state, persistent identity, and potential cycles make mechanical equality/hashing/serialization unsafe. Agent-shape authors define `==` / `hash(self)` / `.as() -> Bytes` explicitly if they want those behaviors.
 
@@ -3068,16 +3083,18 @@ protocol FrameCollectorDelegate:
 
 **Rationale.** Nested types (`def Foo: def Bar: ...` with `Foo.Bar` access from outside) were considered and rejected. The ownership signal they provide is small (IDE goto-definition and grep already handle this), and the cost is real: every consumer file that references the nested type either pays per-use path noise (`FrameCollector.Event.text(...)`) or pays per-file aliasing overhead (the C# `using Event = FrameCollector.Event;` problem). Flat naming pushes the cost to one longer name at declaration and leaves consumers free — one longer symbol per import site vs. one alias per consumer file.
 
-**Brevity when consumers want it.** A consumer file that references a class-associated type heavily can add a module or type alias locally (§4.16.9, v0.8.2 `@`-marker discipline):
+**Brevity when consumers want it.** A consumer file that references a class-associated type heavily uses `from … import …` to bring the flat name into module scope:
 
 ```
-alias @Event = com.example.ws.FrameCollectorEvent
-alias @State = com.example.ws.FrameCollectorState
+from com.example.ws import FrameCollectorEvent as Event
+from com.example.ws import FrameCollectorState as State
 
 # Local use sites read short:
-if @State.idle == handler.state: ...
-event = @Event.text("hello")
+if State.idle == handler.state: ...
+event = Event.text("hello")
 ```
+
+*(Pre-R1 the mechanism was `alias @Event = com.example.ws.FrameCollectorEvent`; the `@`-marker alias grammar retired 2026-08-30. `from … import … as …` covers the same ergonomic without a per-file alias declaration.)*
 
 Aliases are opt-in per consumer, not forced by the declaration.
 
@@ -3137,7 +3154,8 @@ extend Array<T> where T: UnsignedInteger, T: Bounded:
         function saturating_sum(self) -> T:
             var acc: T = 0
             self.iter().for_each(x =>
-                acc = if acc > T.max - x: T.max else: acc + x)
+                acc = ||: acc > T.max - x : T.max
+                      ||: else            : acc + x)
             return acc
 ```
 
@@ -3188,7 +3206,7 @@ To silence the warning explicitly (document intent), use the `replace` modifier:
 # Post F67 L4c (Proposal G class-body collapse) — the modifier prefixes
 # the observable / wildcard-transition declaration directly:
 extend NSString:
-    replace shout() :< self.upper_case + "!"     # explicit intent: shadow the prior shout
+    replace shout() :- self.upper_case + "!"     # explicit intent: shadow the prior shout
 ```
 
 **Post-collapse form (F67 L4c).** `replace` is a *prefix keyword* on the observable or wildcard self-transition it modifies. It is legal *only* inside an `extend class` body — a plain class body has no shadow target and rejects `replace` at parse time (§3.3.2 rule 4 requires an extension context). The examples earlier in this section using pre-collapse `methods:` / `function` bodies remain semantically accurate but are being migrated to the post-collapse form during the F67 landing sequence (see `compiler/design/plans/archive/proposal-g-class-body-collapse.md`).
@@ -3410,17 +3428,18 @@ def Ledger:
     
     methods:
         function transfer(self, from: AccountID, to: AccountID, amount: Money):
-            requires accounts[from] >= amount
-            ensures result.accounts[from] == self.accounts[from] - amount
-            ensures result.accounts[to]   == self.accounts[to]   + amount
-            
-            self.accounts[from] -= amount
-            self.accounts[to] += amount
+            requires accounts.at(from) >= amount
+            ensures result.accounts.at(from) == self.accounts.at(from) - amount
+            ensures result.accounts.at(to)   == self.accounts.at(to)   + amount
+
+            self.accounts = self.accounts.set(from, self.accounts.at(from) - amount)
+            self.accounts = self.accounts.set(to,   self.accounts.at(to)   + amount)
 ```
 
-- `self.accounts[from]` in the ensures clause is the pre-transfer balance.
-- `result.accounts[from]` is the post-transfer balance.
+- `self.accounts.at(from)` in the ensures clause is the pre-transfer balance.
+- `result.accounts.at(from)` is the post-transfer balance.
 - `amount` is the parameter value (unchanged from entry).
+- Named `.at(k)` / `.set(k, v)` replace subscript per R9 2026-08-31; compound assignment `-=` / `+=` retired per §2.7 bootstrap-grammar note (R9). Immutable update pattern: `.set(...)` returns a new Map.
 
 The same rule applies to reader methods that return a value:
 
@@ -3513,7 +3532,7 @@ def Payload:
 All three methods coexist in `Payload`'s method table without conflict; each is keyed by `(name, conformed-protocol-instantiation)` rather than by `name` alone. At the call site, the compiler infers which one to dispatch by:
 
 1. **Return-type context.** `let b: Bytes = p.as()` → `As<Bytes>.as`.
-2. **Explicit turbofish.** `p.as::<Json>()` when context is insufficient.
+2. **Explicit turbofish.** `p.as::-Json>()` when context is insufficient.
 3. **Trait qualification.** `As<Json>.as(p)` when maximally explicit is preferred.
 
 If none of the three yields a unique target, compile error at the call site with the ambiguous candidates listed.
@@ -3756,7 +3775,7 @@ def Timestamp:
     methods:
         function as(self) -> Bytes:
             # Custom format: single UInt64 nanoseconds since epoch, not two fields.
-            return (self.seconds * 1_000_000_000 + self.nanos.as::<UInt64>()).as()
+            return (self.seconds * 1_000_000_000 + self.nanos.as::-UInt64>()).as()
 ```
 
 **Interaction with §3.4.5 explicit conformance.** A structural-shape def does not need `def Point(As<Bytes>):` header sugar — the byte methods already exist as base-class properties, so structural conformance succeeds. Declaring it explicitly is legal but redundant (compiler treats it as a no-op reaffirmation, no warning). Explicit declaration on an agent-shape def does what it always did — validates at declaration time that the def's method table satisfies `As<Bytes>`'s `accepts:` list (which for agent-shape defs means the user's own `.as() -> Bytes` must be present).
@@ -3771,7 +3790,7 @@ Users needing JSON write `function as(self) -> Json:` explicitly per record. Thi
 
 ### 3.5 Effects
 
-> **v1.0 supersession.** The advisory / semantic effect framing below (`allocates`, `blocks`, `async`, `with E` effect polymorphism) is superseded by §1.12: **the `use:` closure IS the effect signature**. Real-world effects enter through Extern (§1.12) → prelude capability atoms → the transitive `use:` closure of any atom. There is no separate effect system; there are no effect labels distinct from capability atoms. Effect polymorphism becomes capability substitution (pass a different `Clock` / `Random` / `Net` atom); effect handlers-with-resume are deferred beyond v1.0. §3.5.4 (failure handling — nil-punning + domain enums, no `throws`) carries over unchanged. §3.5.1–§3.5.3 below describe a design that did not survive; read them as historical.
+> **v1.0 supersession.** The advisory / semantic effect framing below (`allocates`, `blocks`, `async`, `with E` effect polymorphism) is superseded by §1.12: **the `use:` closure IS the effect signature**. Real-world effects enter through `Plugin` (§1.12) → plugin-shipped capability atoms → the transitive `use:` closure of any atom. There is no separate effect system; there are no effect labels distinct from capability atoms. Effect polymorphism becomes capability substitution (pass a different `Clock` / `Random` / `Net` atom); effect handlers-with-resume are deferred beyond v1.0. §3.5.4 (failure handling — nil-punning + domain enums, no `throws`) carries over unchanged. §3.5.1–§3.5.3 below describe a design that did not survive; read them as historical.
 
 #### 3.5.1 Advisory Effects
 
@@ -4179,28 +4198,28 @@ Error message points at the leading-dot expression and suggests the qualified fo
 
 ### 3.8 Expressions and Statements
 
-cxc commits to **everything is an expression** for control-flow constructs. `if`, `<:` receive-glyph dispatch (§3.7), blocks, and (in a specific form) loops all produce values. This unifies control flow and expression composition — one construct, usable in statement position or expression position depending on context.
+cxc commits to **everything is an expression** for control-flow constructs. `<:` receive-glyph dispatch (§3.7), blocks, `||:` multi-arm dispatch (§3.8.1), and (in a specific form) loops all produce values. `if` is a **statement-only** construct at v1.0 (R6, 2026-08-31 retired `if X: Y else: Z` in expression position — see §3.8.1 rationale). This unifies control flow and expression composition without giving `if` two roles.
 
-#### 3.8.1 If-as-expression
+#### 3.8.1 Multi-arm dispatch `||:` — expression-position cond
+
+Expression-position conditional dispatch uses the `||:` multi-arm construct: a chain of `||: <guard> : <body>` arms, first truthy wins, `else` as catch-all. Every arm's body must have compatible types.
 
 ```
-port: Int = if is_tls: 443 else: 80
+port: Int = ||: is_tls : 443
+            ||: else   : 80
 
-max_size = if payload_length > threshold:
-    2 * threshold
-else:
-    payload_length
+max_size = ||: payload_length > threshold : 2 * threshold
+           ||: else                       : payload_length
 
-# Chained else-if works uniformly:
-category = if code < 400:
-    "success"
-else if code < 500:
-    "client_error"
-else:
-    "server_error"
+# Chained guards:
+category = ||: code < 400 : "success"
+           ||: code < 500 : "client_error"
+           ||: else       : "server_error"
 ```
 
-Both branches must have compatible types. A one-armed `if` without `else` returns `Unit`; using it in expression position is legal but rarely useful.
+**Rationale (R6, 2026-08-31).** An earlier draft allowed `if X: Y else: Z` in expression position ("everything is an expression"). R6 retired that form because it gave `if` two grammatical roles (statement + expression) with position-sensitive disambiguation. `||:` is the sole expression-position multi-arm construct; `if` remains a statement-form keyword. See [decisions-frozen-2026-08-31-glyphs.md §R6](../../compiler/design/decisions-frozen-2026-08-31-glyphs.md#r6--multi-arm-dispatch--).
+
+**No expression-form `if`.** `let x = if cond: y else: z` is a parse error at v1.0. Rewrite as `let x = ||: cond : y ||: else : z`. `if` for side-effect-only statement position remains legal: `if cond: run_side_effect()`.
 
 #### 3.8.2 Block-as-expression
 
@@ -4254,9 +4273,9 @@ first_match = loop:
 
 #### 3.8.4 Statement position
 
-Any expression can be used as a statement — its value is discarded. Loops, `if`, `<:` dispatch, and blocks all work this way; using them in statement position simply discards the Bool/T result.
+Any expression can be used as a statement — its value is discarded. Loops, `<:` dispatch, `||:` chains, and blocks all work this way; using them in statement position simply discards the Bool/T result. `if` is statement-only (R6 2026-08-31); there is no expression-position `if` to demote.
 
-**Consequence for legibility.** Users can write code the way they think about it: `if condition: run_side_effect()` reads as a statement even though `if` is technically an expression; the discarded `Unit` value doesn't affect meaning.
+**Consequence for legibility.** Users can write code the way they think about it: `if condition: run_side_effect()` reads as a statement — that's `if`'s only role at v1.0. For expression-position conditional values, use the `||:` multi-arm form (§3.8.1).
 
 #### 3.8.5 Parameter Defaults
 
@@ -4487,7 +4506,7 @@ def Config:
 **Call-site dispatch resolution.** The compiler picks the `.as()` target using (in priority order):
 
 1. Return-type context: `let b: Bytes = config.as()`.
-2. Turbofish: `config.as::<Bytes>()`.
+2. Turbofish: `config.as::-Bytes>()`.
 3. Trait qualification: `As<Bytes>.as(config)`.
 
 If none resolves uniquely, compile error with candidate list.
@@ -4568,9 +4587,9 @@ def Bytes:
 
 **No separate builder type.** Bytes is the builder — construct, mutate, hand off. Consistent with Array/Map/Set: no ArrayBuilder, no MapBuilder, no BytesBuilder. If a caller needs immutability guarantees, they wrap the Bytes in a record or use §8.4.1 reader/writer classification.
 
-**Raw-pointer access is `unsafe:`.** `bytes.raw_pointer()` for C interop requires the caller to enter an `unsafe:` block per §6.7. In-place byte mutation via `bytes[i] = x` is safe — Bytes participates in normal contract discipline.
+**Raw-pointer access is `unsafe:`.** `bytes.raw_pointer()` for C interop requires the caller to enter an `unsafe:` block per §6.7. In-place byte mutation via `bytes.set(i, x)` is safe — Bytes participates in normal contract discipline. *(Pre-R9 wrote `bytes[i] = x`; R9 2026-08-31 retired user-side subscript in favor of named `.at(i)` / `.set(i, v)`.)*
 
-**Reader/writer classification.** All read methods (length, subscript, slice, iter, etc.) are readers per §8.4.1; write methods (append, insert, clear, subscript_set) are writers. Concurrent access is governed by the RWLock-style dispatch already in place for agent-shape defs.
+**Reader/writer classification.** All read methods (`.length`, `.at`, `.slice`, `.iter`, etc.) are readers per §8.4.1; write methods (`.append`, `.insert`, `.clear`, `.set`) are writers. Concurrent access is governed by the RWLock-style dispatch already in place for agent-shape defs.
 
 #### 3.10.5 The `String` Type
 
@@ -4881,19 +4900,20 @@ s.replace_all(pattern: regex"\s+", with: " ")
 
 **Raw content.** The `<raw content>` between the double quotes is passed unmodified to the constructor — no escape processing, so `\d` reaches the regex engine as two characters `\` + `d`, not as an escape-sequence attempt. This is what §4.16.17 (below in §4.16) formalizes.
 
-**User-defined pattern literals.** Users define their own with one prelude-alias-style declaration in their module:
+**User-defined pattern literals — RETIRED at v1.0.** The prior `alias @peg"..."` / `alias @fuzzy"..."` user-declarable prefix-literal alias form retired 2026-08-30 with the rest of the `@`-marker mechanism (R1). New pattern types ship via the prelude (regex/glob/literal above); ad-hoc pattern types are constructed directly at call sites:
 
 ```
-# In some user module:
-alias @peg"<raw content>" = PegParser(<raw content>)
-alias @fuzzy"<raw content>" = FuzzyPattern(<raw content>)
+# Pre-R1 (retired):
+# alias @peg"<raw content>" = PegParser(<raw content>)
+# let parser = peg"expr <- term ('+' term)*"
+# s.first_match(matching: fuzzy"apple")
 
-# Use:
-let parser = peg"expr <- term ('+' term)*"
-s.first_match(matching: fuzzy"apple")
+# v1.0 — call the constructor directly:
+let parser = PegParser("expr <- term ('+' term)*")
+s.first_match(matching: FuzzyPattern("apple"))
 ```
 
-`@`-marker discipline per §4.16.16 keeps user aliases distinguishable from prelude aliases.
+See §4.16.17 for the current prefix-literal alias declaration rules (prelude-only) and [decisions-frozen-2026-08-30.md §R1](../../compiler/design/decisions-frozen-2026-08-30.md#r1) for the retirement rationale.
 
 ##### 3.10.9.6 Named Captures Only
 
@@ -5040,9 +5060,9 @@ error[E0501]: no lossless conversion from `Int32` to `UInt8`
    |
 help: pick a narrowing semantics explicitly
    |
-12 |         let byte: UInt8 = value.wrapping_to::<UInt8>()
-12 |         let byte: UInt8 = value.saturating_to::<UInt8>()
-12 |         let outcome = value.checked_to::<UInt8>()
+12 |         let byte: UInt8 = value.wrapping_to::-UInt8>()
+12 |         let byte: UInt8 = value.saturating_to::-UInt8>()
+12 |         let outcome = value.checked_to::-UInt8>()
 ```
 
 **Why no `As<T>` on narrowing.** `As<T>` promises canonical, lossless projection. A narrowing operation on an out-of-range value is inherently lossy — three legitimate answers exist (wrap, saturate, fail) and no one of them is "the" canonical projection. Making `.as()` silently pick one would be a footgun; refusing it entirely and requiring the author to spell the semantics out is per §1.2 (author intent, not authority).
@@ -5063,13 +5083,13 @@ function checked_to<To>(self) -> ConvertOutcome<To>
 **Usage:**
 
 ```
-Int32(300).wrapping_to::<UInt8>()      # -> UInt8(44)    — 300 mod 256
-Int32(300).saturating_to::<UInt8>()    # -> UInt8(255)   — clamp to UInt8.max
-Int32(300).checked_to::<UInt8>()       # -> ConvertOutcome.overflow(source: "Int32(300)", target: "UInt8")
-Int32(100).checked_to::<UInt8>()       # -> ConvertOutcome.converted(UInt8(100))
+Int32(300).wrapping_to::-UInt8>()      # -> UInt8(44)    — 300 mod 256
+Int32(300).saturating_to::-UInt8>()    # -> UInt8(255)   — clamp to UInt8.max
+Int32(300).checked_to::-UInt8>()       # -> ConvertOutcome.overflow(source: "Int32(300)", target: "UInt8")
+Int32(100).checked_to::-UInt8>()       # -> ConvertOutcome.converted(UInt8(100))
 ```
 
-The turbofish `::<UInt8>` is required — the return type carries the target and there is no receiver-side context to infer from. Sugar aliases in call-site-annotated contexts:
+The turbofish `::-UInt8>` is required — the return type carries the target and there is no receiver-side context to infer from. Sugar aliases in call-site-annotated contexts:
 
 ```
 let byte: UInt8 = big.wrapping_to()    # target inferred from binding annotation
@@ -5090,7 +5110,7 @@ def ConvertOutcome<T>:
 Ships in the prelude. Caller dispatches on the outcome per v0.8.5 no-throws discipline:
 
 ```
-big.checked_to::<UInt8>():
+big.checked_to::-UInt8>():
     <: converted(let byte):
         buffer.append(byte)
     <: overflow(let source, let target):
@@ -5104,7 +5124,7 @@ big.checked_to::<UInt8>():
 
 > **Revision pending (2026-08-15).** §3.1 has been rewritten to derive primitives from `Bit` → `Byte` → sized atoms (see the exploration in `design/explorations/integers-from-bits.cxc`). The specific field-layout examples in this section still reference the earlier v0.11 framing (`data: bytes: Bytes where length == N`); the mechanism it describes — byte-method synthesis from field layout via the §3.4.6 pathway — carries over unchanged. Full rewrite of the examples to match the new atom shapes (`data: raw: Byte` for UInt8, `data: raw: List of Byte` with `invariants: raw.count == N` for wider atoms) is a follow-on pass.
 
-Primitives are atoms shipped in prelude with `data:` + `value :<` + `invariants:` (see §3.1 for the derivation); byte methods synthesize from each atom's field layout via the same pathway as user records (§3.4.6). Under §3.10.10's refinement-driven length-prefix specialization, a fixed-length field synthesizes to raw N bytes with no runtime prefix — so `UInt8`'s single `Byte` field synthesizes to `.as() -> Bytes` producing 1 raw byte (matches §3.10.10's UInt8 spec); `UInt32`'s `List of Byte` with `raw.count == 4` invariant synthesizes to 4 raw big-endian bytes (matches UInt32 spec); and so on for every fixed-length primitive. Structural conformance to `As<Bytes>` and `From<Bytes>` (§3.4) follows because the synthesized methods exist on the class.
+Primitives are atoms shipped in prelude with `data:` + `value :-` + `invariants:` (see §3.1 for the derivation); byte methods synthesize from each atom's field layout via the same pathway as user records (§3.4.6). Under §3.10.10's refinement-driven length-prefix specialization, a fixed-length field synthesizes to raw N bytes with no runtime prefix — so `UInt8`'s single `Byte` field synthesizes to `.as() -> Bytes` producing 1 raw byte (matches §3.10.10's UInt8 spec); `UInt32`'s `List of Byte` with `raw.count == 4` invariant synthesizes to 4 raw big-endian bytes (matches UInt32 spec); and so on for every fixed-length primitive. Structural conformance to `As<Bytes>` and `From<Bytes>` (§3.4) follows because the synthesized methods exist on the class.
 
 **No per-primitive prelude implementation.** Prior to the (A) reframe, prelude shipped a hand-written `extend UInt8: methods: function as() -> Bytes: ...` block per primitive — under the "primitives have no field layout" claim in early v0.11 drafts. That claim was false (primitives DO have field layout — the `Bit`/`Byte`/`List of Byte` chain per §3.1), and the reframe removed the per-primitive prelude blocks: the same synthesis pathway that gives a user's `def Point: data: x: Float, y: Float` its `.as() -> Bytes` gives `UInt32` its `.as() -> Bytes`. One pathway; no hand-writes; no framing-fudge about "prelude extend blocks that are actually language-provided."
 
@@ -5119,7 +5139,7 @@ def UInt32:
             order:
                 <: little:
                     let raw = self.bytes                # big-endian storage
-                    return Bytes.from([raw[3], raw[2], raw[1], raw[0]])
+                    return Bytes.from([raw.at(3), raw.at(2), raw.at(1), raw.at(0)])
                 <: big:      return self.bytes                   # canonical
                 <: network:  return self.bytes                   # alias for .big
                 <: host:     return self.as_bytes(order: platform_native_order)
@@ -5136,7 +5156,7 @@ T.from(source: v.as()) == .converted(v)
 
 Verified by prelude test suite; users may rely on this in contracts.
 
-**Interaction with `Convertible` migration.** The `wrapping_to::<T>()` / `saturating_to::<T>()` / `checked_to::<T>()` narrowing methods (§3.11.2) are ordinary methods — they do not participate in `As<T>` dispatch. Narrowing is orthogonal to byte encoding; a value can be narrowed (`Int32(300).saturating_to::<UInt8>() → 255`) and then encoded (`.as() → [0xff]`) or encoded and then narrowed. Callers write the sequence they need.
+**Interaction with `Convertible` migration.** The `wrapping_to::-T>()` / `saturating_to::-T>()` / `checked_to::-T>()` narrowing methods (§3.11.2) are ordinary methods — they do not participate in `As<T>` dispatch. Narrowing is orthogonal to byte encoding; a value can be narrowed (`Int32(300).saturating_to::-UInt8>() → 255`) and then encoded (`.as() → [0xff]`) or encoded and then narrowed. Callers write the sequence they need.
 
 #### 3.11.5 Retirement Note — `Convertible<To>`
 
@@ -5156,9 +5176,9 @@ Int32(300).saturating_into(UInt8)     # -> UInt8(255)
 Int32(300).checked_into(UInt8)        # -> Result<UInt8, OverflowError>
 
 # New (v0.10.0):
-Int32(300).wrapping_to::<UInt8>()     # -> UInt8(44)
-Int32(300).saturating_to::<UInt8>()   # -> UInt8(255)
-Int32(300).checked_to::<UInt8>()      # -> ConvertOutcome<UInt8>
+Int32(300).wrapping_to::-UInt8>()     # -> UInt8(44)
+Int32(300).saturating_to::-UInt8>()   # -> UInt8(255)
+Int32(300).checked_to::-UInt8>()      # -> ConvertOutcome<UInt8>
 ```
 
 Mechanical migration. Same three semantics; different method names + explicit target-type turbofish; no `Result` wrapper.
@@ -5214,10 +5234,15 @@ Sugar accessors: `Double.infinity`, `Double.nan`, `Double.epsilon`.
 >
 > **Additionally retired 2026-08-25** (user-surface consolidation, [decisions-frozen-2026-08-25.md](../../compiler/design/decisions-frozen-2026-08-25.md) §L2b / §L3c):
 > - `invariants:` section header — replaced by def-body `|:` propositions (four-position unification, L2b commit `5e90cff`).
-> - `metadata:` / `constructor:` / `contracts:` / `execution:` — replaced by `@metadata(...)` annotation, per-type constructor synthesis + explicit factories, and `|:` propositions for invariants/contracts respectively (F10/F11/F12 retirement, L3c).
+> - `metadata:` / `constructor:` / `contracts:` / `execution:` — initially replaced by `@metadata(...)` annotation (L3c 2026-08-25); the annotation form itself then retired 2026-08-30 with the annotation-grammar-retirement wave. Kind info flows through body-shape inference (§3.3); per-type constructor synthesis + explicit factories cover constructors; `|:` propositions cover invariants/contracts.
 > - `requires` / `ensures` — folded into `|:` propositions (same L3c ratification).
 >
-> **Active class-body content at v1.0**: top-level field declarations (`name: T = default`), observables (`:<`), receive-glyph transitions (`<:` / `<|`), `-> handler:` declarations, and one configuration section: `use:` (capability declarations). All other configuration is via annotations (`@metadata`, `@plugin`, etc.) or per-transition `|:` propositions.
+> **Additionally retired 2026-08-30** (annotation-grammar-retirement, [decisions-frozen-2026-08-30.md](../../compiler/design/decisions-frozen-2026-08-30.md)):
+> - `@name(args)` annotation grammar — universal retirement. `@metadata(...)`, `@deprecated(...)`, `@plugin(...)` all gone. `@` sigil rejected at lex time.
+> - `module <name>` header — Q10-D carve-out reversed; F73 stands unconditionally. Plugin manifest is a `def plugin:` record marker (§7.2.1).
+> - Deprecation — no language surface at v1.0; expressed as comment or user convention.
+>
+> **Active class-body content at v1.0**: top-level field declarations (`name: T = default`), observables (`:-`), receive-glyph transitions (`<:` / `<|`), `-> handler:` declarations, and one configuration section: `use:` (capability declarations). All other configuration is via `|:` propositions.
 >
 > **Per-transition sub-blocks**: `|:` propositions on their own lines (D5, ratified 2026-08-25) + `let:` intermediate bindings + `then:` unified effect clause (F70 I3 folds the retired `do:` clause into `then:`).
 >
@@ -5709,12 +5734,14 @@ The `quote:` block is an expression evaluating to a `Code` value. `${expr}` spli
 
 These section classes ship with the language and are available in every module. They fall into three categories, described below.
 
-> **Status note (revised 2026-08-30, superseding the 2026-08-17 note).** Two waves of retirement collapsed the class body vocabulary:
+> **Status note (revised 2026-08-31, superseding the 2026-08-30 note).** Four waves of retirement collapsed the class body vocabulary:
 >
-> - **Wave 1 — class-body-collapse (2026-08-17, Proposal G / F67 L3/L4/L5)** — vocabulary collapsed to two glyphs (`:<` observable, `<:` transition) with top-level fields and no `data:` / `methods:` sections.
-> - **Wave 2 — user-surface consolidation (2026-08-25, L2b + L3c)** — retired the remaining user-facing configuration section headers: `invariants:` (→ `|:` propositions, L2b), `metadata:` / `constructor:` / `contracts:` / `execution:` / `requires` / `ensures` (→ `@metadata(...)` annotation + per-type ctor synthesis + `|:` propositions, L3c). Also retired user-facing `section class Name:` declarations (F8 L4). See [decisions-frozen-2026-08-25.md](../../compiler/design/decisions-frozen-2026-08-25.md) for the frozen state.
+> - **Wave 1 — class-body-collapse (2026-08-17, Proposal G / F67 L3/L4/L5)** — vocabulary collapsed to two glyphs (`:-` observable, `<:` transition) with top-level fields and no `data:` / `methods:` sections.
+> - **Wave 2 — user-surface consolidation (2026-08-25, L2b + L3c)** — retired the remaining user-facing configuration section headers: `invariants:` (→ `|:` propositions, L2b), `metadata:` / `constructor:` / `contracts:` / `execution:` / `requires` / `ensures` (initially → `@metadata(...)` annotation + per-type ctor synthesis + `|:` propositions, L3c). Also retired user-facing `section class Name:` declarations (F8 L4). See [decisions-frozen-2026-08-25.md](../../compiler/design/decisions-frozen-2026-08-25.md) for the frozen state.
+> - **Wave 3 — annotation-grammar-retirement (2026-08-30)** — retired `@name(args)` grammar entirely. `@metadata` / `@deprecated` / `@plugin` all gone. Kind info flows through body-shape inference (§3.3); plugin manifest interim landed on module-let (`let plugin: Plugin = Plugin(...)`); deprecation is a comment/user-convention at v1.0. See [decisions-frozen-2026-08-30.md](../../compiler/design/decisions-frozen-2026-08-30.md).
+> - **Wave 4 — plugin-abi-shape (2026-08-31)** — module-let mechanism retires universally; plugin manifest becomes `def plugin:` record marker with reserved name; plugin system committed compile-time-only at v1.0 (no runtime plugin loading, no lifecycle, no HostAPI injection); ObjC class registration via emitted `+load` methods. See [decisions-frozen-2026-08-31.md](../../compiler/design/decisions-frozen-2026-08-31.md).
 >
-> Post-Wave-2, the sole surviving user-facing configuration section header is `use:` (capability declarations). Everything §4.10 says about `data:` / `state:` / `methods:` / `-> handler(args):` / `invariants:` / `metadata:` / `contracts:` / user-defined `section class` — read as **historical illustrations of the underlying section-class mechanism**, which survives as compiler-internal machinery. The current authoritative class-body vocabulary is in §1.11 (class-body-collapse addendum) and the §1.1 top-of-file supersession banner.
+> Post-Wave-3, the sole surviving user-facing configuration surface is `use <name>: <Type>` (capability declarations, L4 direct-keyword). Everything §4.10 says about `data:` / `state:` / `methods:` / `-> handler(args):` / `invariants:` / `metadata:` / `contracts:` / user-defined `section class` — read as **historical illustrations of the underlying section-class mechanism**, which survives as compiler-internal machinery. The current authoritative class-body vocabulary is in §1.11 (class-body-collapse addendum) and the §1.1 top-of-file supersession banner.
 
 #### 4.10.0 Taxonomy — Primitives, Aliases, and Behavioral Sections
 
@@ -6261,7 +6288,7 @@ def UserList:
         function is_empty(self) -> Bool:
             return self.entries.length == 0
         function first(self) -> User:
-            return self.entries[0]
+            return self.entries.at(0)
     on_nil:
         count: 0
         is_empty: true
@@ -6287,7 +6314,7 @@ def UserList:
 
 ### 4.11 User-Defined Section Classes
 
-> **v1.0 surface note (2026-08-25 user-surface consolidation).** User-defined `section class Name:` syntax is retired as a user-facing construct (F8 L4, ratified 2026-08-25 — see [decisions-frozen-2026-08-25.md](../../compiler/design/decisions-frozen-2026-08-25.md) §L4 and the memory rule [[corvid-pipe-colon-unification]]). The section-class mechanism is retained as **compiler-internal machinery** — the compiler still resolves built-in section headers (`use:`, historically `data:` / `metadata:` / `invariants:` / etc.) via section classes, but the ability for users to declare new `section class Foo:` is retired. Prior use cases that motivated user-defined section classes fold into: `@metadata(...)` annotations (F10/F11/F12 retirement, L3c), `|:` propositions (four-position unification, L2b), and the class-body-collapse vocabulary (fields / `:<` / `<:`). Read this section as documenting the compiler-internal mechanism that survives; the user-facing declaration form does not.
+> **v1.0 surface note (2026-08-25 user-surface consolidation).** User-defined `section class Name:` syntax is retired as a user-facing construct (F8 L4, ratified 2026-08-25 — see [decisions-frozen-2026-08-25.md](../../compiler/design/decisions-frozen-2026-08-25.md) §L4 and the memory rule [[corvid-pipe-colon-unification]]). The section-class mechanism is retained as **compiler-internal machinery** — the compiler still resolves built-in section headers (`use:`, historically `data:` / `metadata:` / `invariants:` / etc.) via section classes, but the ability for users to declare new `section class Foo:` is retired. Prior use cases that motivated user-defined section classes fold into: body-shape inference (§3.3) for classification, `|:` propositions (four-position unification, L2b) for constraints and invariants, and the class-body-collapse vocabulary (fields / `:-` / `<:`) for structure. The interim `@metadata(...)` annotation migration target (L3c 2026-08-25) retired same-day + 5 days later (2026-08-30) with the annotation-grammar-retirement wave. Read this section as documenting the compiler-internal mechanism that survives; the user-facing declaration form does not.
 
 Users define section classes using the same syntax as built-in ones. Example — an `Channel` section:
 
@@ -6498,14 +6525,7 @@ Name a declaration keyword that expands to `class` plus prepended body content. 
 
 > **RETIRED 2026-08-18 (F69 atom unification).** The `record` / `enum` class-kind aliases retire — write `def X:` for every class; the body's shape tells the compiler what the def IS (§3.3). `protocol` remains as a distinct declaration keyword. `section` sugar remains for §4.11 section-class declarations (`section Name:` expands to `section class Name:` — the section-class machinery is orthogonal to body-shape inference and stays).
 >
-> **User-defined class-kind aliases.** The `@entity Name:` pattern (aliases that expand to `class + metadata: kind: ...`) is subsumed by body-shape inference — a user's `entity` sugar is just a `def X:` with a domain-specific metadata key. If the sugar is genuinely just naming convention plus a metadata annotation, write the two lines directly:
->
-> ```
-> def Player:
->     metadata: ecs_role: entity
->     position: Vec3
->     velocity: Vec3
-> ```
+> **User-defined class-kind aliases.** Retired transitively with the annotation-grammar-retirement (2026-08-30) — `@metadata(...)` no longer parses at v1.0, so class-kind aliases that expanded to `class + metadata: kind: ...` have no compilation target. Body-shape inference (§3.3) covers the ratified use cases (`record`, `enum`, `protocol`, `agent`); domain-specific kinds await a replacement mechanism if user demand emerges. Prior transitional forms (`@entity Name:` etc.) do not parse.
 >
 > The section-composition alias mechanism (§4.16.4, §4.16.5) remains for genuine syntactic surface additions — type-expression aliases, value-position aliases, module aliases. Class-kind aliases specifically retire because there is no longer a "class kind" selector for them to abbreviate.
 
@@ -6605,27 +6625,21 @@ alias not <expr> precedence: 2 in expression_position:
 
 Prefix and suffix aliases carry precedence for parser disambiguation but their associativity is fixed (prefix = right, suffix = left).
 
-**User-defined infix, prefix, and suffix operators require `@` prefixed to the operator token** (§4.16.16). The `@` is part of the operator glyph itself, both in the declaration signature and at every use site:
+**User-defined operators — RETIRED (R9, 2026-08-31).** At v1.0 user code cannot declare its own operator aliases (infix, prefix, or suffix). The former `@`-prefixed grammar (`@|>`, `@!`, etc.) is retired along with the general operator-observation form; see [decisions-frozen-2026-08-31-plugin-shape.md §R9](../../compiler/design/decisions-frozen-2026-08-31-plugin-shape.md#r9--no-user-defined-operator-overloading). Compose behavior via named methods instead:
 
 ```
-# User-defined pipe in a project that wants it despite the prelude declining to ship it:
-alias <lhs> @|> <rhs> precedence: 100, associativity: left in expression_position:
-    Callable.apply(rhs, lhs)
-
-# Usage:
+# Pre-R9 (retired):
 result = data @|> filter_valid @|> normalize
 
-# User-defined prefix:
-alias @! <expr> precedence: 2 in expression_position:
-    MyLogic.strong_negate(expr)
-
-# Usage:
-if @!condition: ...
+# v1.0 (named method chain):
+result = data.pipe(filter_valid).pipe(normalize)
+# — or plainer —
+result = normalize(filter_valid(data))
 ```
 
-Bootstrap operators (`+`, `-`, `*`, `/`, `%`, `<`, `<=`, `>`, `>=`, `==`, `!=`, `and`, `or`, `not`) and prelude-declared operators (`&`, `|`, `^`, `~`, `<<`, `>>`, `??`, `..<`, `...`) are unmarked. Only user-defined operators carry `@`.
+Bootstrap operators (`+`, `-`, `*`, `/`, `%`, `<`, `<=`, `>`, `>=`, `==`, `!=`, `and`, `or`, `not`) and prelude-declared operators (`&`, `|`, `^`, `~`, `<<`, `>>`, `??`, `..<`, `...`) remain compiler/prelude-blessed on their designated primitive types. Only these are operator-shaped; user types (records, atoms, enums, plugin-exported capabilities) expose behavior exclusively through named observations and transitions.
 
-**`|>` is deliberately not in the prelude.** Method chaining (`x.f().g().h()`) covers every case pipe would in cxc's class-based, universally-dispatched, openly-extensible model; shipping `|>` would create two idioms for the same operation and pull users toward free functions instead of extension methods (§4.20.3). Projects that want pipe can declare it locally as shown above; the `@` cost per use makes the project-local nature visible.
+**`|>` is deliberately not in the prelude.** Method chaining (`x.f().g().h()`) covers every case pipe would in cxc's class-based, universally-dispatched, openly-extensible model; shipping `|>` would create two idioms for the same operation and pull users toward free functions instead of extension methods (§4.20.3). Under R9 there is no project-local `@|>` escape hatch either — projects that want pipe-shaped composition build it as a named `.pipe(f)` method.
 
 #### 4.16.8 String Interpolation Aliases
 
@@ -6717,7 +6731,7 @@ The following are **not** compile-time constants and are rejected in const posit
 - Any expression that involves a message send (`:>`, `|>`, `<:`, `<|`).
 - Format-string interpolation `"hello ${name}"` when `name` is not itself a compile-time constant.
 
-**Motivation for the constructor-call relaxation (Q10).** The L7 plugin manifest form (`@plugin(...)` annotation, §4.16.x pending) requires expressing declarative data — capability requirements, OS-primitive descriptors, target ranges — as annotation arguments that must be foldable at compile time. Without constructor-call folding, plugin authors would need to encode this data as opaque strings and re-parse at compile time; with the relaxation, plugin manifests read as ordinary cxc constructor calls and the compiler folds them into their AST form during the manifest-resolution pass. The rule is uniform: if the expression is a pure construction over constants, it's constant.
+**Motivation for the constructor-call relaxation (Q10).** The L7 plugin manifest form (`def plugin:` record marker, §7.2.1) requires expressing declarative data — capability requirements, OS-primitive descriptors, target ranges — as field-default expressions (constructor calls over literals, arithmetic on constants, etc.) that must be foldable at compile time. Without constructor-call folding, plugin authors would need to encode this data as opaque strings and re-parse at compile time; with the relaxation, plugin manifests read as ordinary cxc field defaults and the compiler folds them into their AST form during the manifest-resolution pass. The rule is uniform: if the expression is a pure construction over constants, it's constant. (Q10's original motivating vehicle was an `@plugin(...)` annotation, then an interim `let plugin: Plugin = Plugin(...)` module-let; both retired. The const-shape relaxation is orthogonal to the surface shape and stays — it's what makes any of the three vehicles' compile-time evaluation work.)
 
 **Compile-time constant is a transitive property.** A `Foo(x: Bar(y: 3))` call is constant iff `Bar(y: 3)` is constant AND `x: <constant Bar>` satisfies Foo's construction contract. The folder walks the expression tree bottom-up; the first non-constant argument aborts folding with a diagnostic pointing at the offending sub-expression.
 
@@ -6825,6 +6839,8 @@ Alias tables cache across incremental compilations — Pass 1 runs only for sour
 
 #### 4.16.16 The `@` Marker for User-Defined Aliases
 
+> **RETIRED 2026-08-30 (annotation-grammar-retirement wave).** The `@` sigil is unavailable at v1.0 — the lexer rejects it with a targeted retirement diagnostic (see decisions-frozen-2026-08-30.md). The `@` marker for user-defined aliases was the same character as the retired `@name(args)` annotation grammar; both retire together. A replacement invocation surface for user-defined aliases (bare-name, sigil-free, or a different sigil) will be designed if and when user-defined aliases become a v1.x priority. The description below is preserved as design history; none of it parses at v1.0.
+
 **Rule.** Every user-defined alias — in every position — requires the `@` marker prefixed to its trigger at both the declaration signature and every use site. Prelude aliases (§4.20) are unmarked in both declaration and use; they are committed surface syntax.
 
 **Positions and forms.** The `@` prefix attaches to whatever the trigger token is:
@@ -6861,32 +6877,13 @@ Substitution aliases (`alias @Vec = std.math.Vector3`) could ergonomically get a
 
 **Why bare bootstrap operators stay unmarked.**
 
-Bootstrap operators (§3.9, §10) — `+`, `-`, `*`, `/`, `%`, `<`, `<=`, `>`, `>=`, `==`, `!=`, `and`, `or`, `not` — are compiler-committed, not aliases. They carry no `@`. Prelude-declared operators (`&`, `|`, `^`, `~`, `<<`, `>>`, `??`, `..<`, `...`) are aliases in principle but unmarked in practice because they live in the prelude. Only user-defined operators use `@` — and the `@` fuses with the glyph (e.g., `@|>`), which conveniently keeps the alias namespace disjoint from the bootstrap/prelude operator table.
-
-**Interaction with `expose`.**
-
-Whether an alias is `expose`d controls cross-module visibility, orthogonal to `@`. The declaration form is `expose alias @Name ...`; the use form is `@Name`. Marking never varies with visibility.
-
-**Legibility policy.**
-
-The `@` marker is the language-level answer to "is this project-specific surface syntax?" Style guides for individual projects SHOULD still exercise restraint on how many user aliases they introduce — one hundred `@` markers per file is legible in the "look up the declaration" sense but exhausting in the "read the code" sense. Prefer methods and extensions where they suffice; reach for `@`-marked aliases when a genuine syntactic gain is available.
+Bootstrap operators (§3.9, §10) — `+`, `-`, `*`, `/`, `%`, `<`, `<=`, `>`, `>=`, `==`, `!=`, `and`, `or`, `not` — are compiler-committed, not aliases. Prelude-declared operators (`&`, `|`, `^`, `~`, `<<`, `>>`, `??`, `..<`, `...`) are aliases in principle but unmarked in practice because they live in the prelude. Both sets are the entire operator surface at v1.0 — R9 (2026-08-31) removed the user-declarable `@`-prefixed operator alias grammar, so the "only user-defined operators use `@`" carve-out no longer applies. User code composes behavior via named methods; the `@` sigil itself is a hard lex error at v1.0 per the annotation-grammar retirement (R1 2026-08-30).
 
 #### 4.16.17 Raw-Content Prefix-Literal Aliases
 
 An alias whose signature has the shape `name"<content>"` (identifier followed immediately by a double-quoted content region, no intervening whitespace) is a **prefix-literal alias**. Its content is captured as a single string parameter and passed to the alias body's constructor call. The captured content may declare either **cooked** semantics (default — escape processing per §2.7) or **raw** semantics (backslashes and other characters pass through unmodified).
 
-**Declaration form.**
-
-```
-# Cooked (default) — escape processing per §2.7:
-alias @cooked"<content>" = SomeConstructor(<content>)
-
-# Raw — content passes through unchanged:
-alias @regex"<content>" raw = Regex(<content>)
-alias @glob"<content>"  raw = Glob(<content>)
-```
-
-The `raw` marker sits between the signature and the `=` body. Without it, escapes are processed at parse time — `\n` becomes a newline, `\\` becomes a single backslash, etc. With it, the content between the quotes is captured verbatim: `regex"^\d+"` passes the four characters `^`, `\`, `d`, `+` to `Regex`, not a parse-time-escaped variant.
+**Declaration form (prelude only at v1.0).** Prefix-literal aliases are declared inside the prelude with the compiler-internal alias mechanism. The `raw` marker sits between the signature and the `=` body. Without it, escapes are processed at parse time — `\n` becomes a newline, `\\` becomes a single backslash, etc. With it, the content between the quotes is captured verbatim: `regex"^\d+"` passes the four characters `^`, `\`, `d`, `+` to `Regex`, not a parse-time-escaped variant.
 
 **Prelude prefix-literal aliases (§4.20.1 additions):**
 
@@ -6896,21 +6893,9 @@ alias glob"<content>"    raw = Glob(<content>)           # §3.10.9.3
 alias literal"<content>" raw = Literal(<content>)        # §3.10.9.3
 ```
 
-Prelude aliases are unmarked (no `@`) per §4.16.16.
+These are the entire user-visible prefix-literal surface at v1.0.
 
-**Composition with `@` marker.** User-defined prefix-literal aliases follow the standard `@` discipline:
-
-```
-alias @peg"<content>"   raw = PegParser(<content>)
-alias @fuzzy"<content>" raw = FuzzyPattern(<content>)
-
-# Use sites:
-let parser = peg"expr <- term ('+' term)*"               # prelude alias — no @
-let m = @peg"expr <- ..."                                # user alias — @ required at use site
-                                                          # (wait — user's own alias, marked)
-```
-
-Correction on the above: user prefix-literal aliases require `@` at both declaration and use (per §4.16.16 uniformity). The `regex"..."` / `glob"..."` / `literal"..."` forms without `@` are ship-with-language surface syntax; anything else takes `@`.
+**No user-declarable prefix-literal aliases.** The prior `alias @peg"..." raw = PegParser(...)` / `alias @fuzzy"..." raw = FuzzyPattern(...)` etc. forms retired 2026-08-30 with the rest of the `@`-marker mechanism (R1). New pattern types must ship via the prelude — or be constructed directly at call sites, e.g. `PegParser("expr <- term ('+' term)*")`, `FuzzyPattern("aplle")`. See §4.16.16 banner and [decisions-frozen-2026-08-30.md §R1](../../compiler/design/decisions-frozen-2026-08-30.md#r1).
 
 **Why raw is opt-in, not default.** Cooked content is the more common case — string interpolation, config values, human-readable messages. Raw content is specific to pattern languages (regex, PEG, path globs, format strings with their own escape rules) where the constructor's grammar overlaps with the host language's escape syntax. Making cooked the default preserves consistency with §2.7 string literals; the `raw` marker makes the deviation visible at the alias declaration site.
 
@@ -7242,12 +7227,11 @@ alias {<T>} in type_position:
 alias (<Args>) -> <R> in type_position:
     Callable<(Args,), R>
 
-alias <T> ? in type_position where T is value_type:
-    Optional<T>
-
 alias <T> ! in type_position where T is reference_type:
     T with invariant: != nil
 ```
+
+*(The pre-existing `<T> ?` alias for `Optional<T>` retired 2026-08-20 under the unified nullability rule (§3.6.1) — `T?` is banned at every position. `T` is nullable by default and `T!` is the non-nil contract; there is no postfix-`?` form at v1.0.)*
 
 **Expression-position literal aliases:**
 
@@ -7310,21 +7294,7 @@ alias ${<expr>} in string_interpolation_position:
     String.interpolate_expr(expr)
 ```
 
-**Control-flow alias (`for`):**
-
-```
-alias for <var> in <collection>: in expression_position:
-    collection.iter().for_each { var -> ... }
-```
-
-`for` is not bootstrap grammar — it is a prelude alias that expands to iteration-method dispatch on any type conforming to `Iterable<T>` (§3.10.1). The `...` body-placeholder rule (§4.16.2) captures the loop body; the closure passed to `for_each` receives one element per iteration and executes the body with `var` bound to that element. Users write:
-
-```
-for entry in dict:
-    process(key: entry.key, value: entry.value)
-```
-
-Which expands to:
+**Control-flow alias (`for`) — RETIRED (F20 REJECTED, 2026-08-18).** The prelude no longer ships a `for` alias. Iteration is method dispatch on the collection: `.for_each`, `.map`, `.filter`, `.fold`, `.find`, `.any`, `.all`. `for` / `in` remain reserved by the lexer as diagnostic anchors — user code writing `for e in xs: body` receives a targeted rewrite hint pointing at `.for_each`. Users write directly:
 
 ```
 dict.iter().for_each { entry ->
@@ -7332,7 +7302,7 @@ dict.iter().for_each { entry ->
 }
 ```
 
-No language-level `for` production exists. `Iterable<T>` conformance is what makes a class iterable — collections, ranges, strings, and any user class can conform.
+`Iterable<T>` conformance is what makes a class iterable — collections, ranges, strings, and any user class can conform. See §4.20.3 iteration-boundary discipline and §10 grammar retirement note for `for_expr`.
 
 **Why `while` and `loop` remain bootstrap.** `while` and `loop` are language primitives, not prelude aliases. They stay in bootstrap because stdlib needs a primitive control-flow loop to *implement* iteration methods (`.for_each`, `.map`, `.filter`) without either infinite regress or a Tail Call Optimization commitment. `while cond: body` and `loop: body` are the low-level tools; user-facing code should prefer method dispatch on collections. See §4.20.3 for the discipline note.
 
@@ -7357,7 +7327,7 @@ Precedence integers used across the prelude follow the C99 precedence order, map
 | 13 | `??` (prelude) |
 | 14 | Assignment `=` and compound forms (bootstrap; right-associative) |
 
-Precedence values 1-14 are reserved for bootstrap and prelude operators. User-defined operator aliases MUST use precedence values 100+ (documented reserved range for user extensions).
+Precedence values 1-14 are reserved for bootstrap and prelude operators. The 100+ precedence range previously reserved for user-defined operator aliases is now vacant: R9 (2026-08-31) retired the user-declarable operator surface entirely. The range remains reserved for future language-level operator additions but is not user-extensible at v1.0.
 
 #### 4.20.3 Prelude Discipline
 
@@ -7369,90 +7339,74 @@ Constraints on the prelude:
 4. **Spec-committed.** Changes to prelude alias signatures or expansions are language-version-affecting changes subject to the same versioning discipline as bootstrap grammar changes.
 5. **Minimal by design.** Aliases are added to the prelude only when their utility is universal across cxc codebases AND when there is no cleaner way to express the same construct in cxc's paradigm. Domain-specific sugar belongs in libraries (as `@`-marked user aliases), not the prelude.
 6. **Paradigm-mismatch exclusions.** Some constructs common in adjacent languages are deliberately kept out of the prelude because they do not fit cxc's class-based, universally-dispatched, openly-extensible model:
-   - **`|>` (pipe operator).** Pipe threads values through free functions — a shape native to FP languages where data and behavior are separate. cxc has universal method dispatch and cheap extensions/sections; the native pipeline shape is method chaining (`x.f().g().h()`), which is left-to-right, top-down, and integrated with tooling (autocomplete on `.`, jump-to-definition). Shipping `|>` would create two idioms for the same operation and pull users toward free functions instead of extension methods. Projects that genuinely want pipe can declare `alias <lhs> @|> <rhs> ...` locally; the `@` marker makes the project-local nature visible at every use site.
+   - **`|>` (pipe operator).** Pipe threads values through free functions — a shape native to FP languages where data and behavior are separate. cxc has universal method dispatch and cheap extensions/sections; the native pipeline shape is method chaining (`x.f().g().h()`), which is left-to-right, top-down, and integrated with tooling (autocomplete on `.`, jump-to-definition). Shipping `|>` would create two idioms for the same operation and pull users toward free functions instead of extension methods. Under R9 (2026-08-31) there is no project-local `@|>` escape hatch either — user code cannot declare operator aliases at v1.0. Projects wanting pipe-shaped composition build it as a named `.pipe(f)` method.
 
 7. **Iteration boundary — method dispatch only; `while` is bootstrap.** Iteration in cxc is method dispatch on the collection: `y.for_each(x => body)`, `.map`, `.filter`, `.fold`, `.sorted`, `.find`, `.any`, `.all`. No `for` sugar exists at any layer (F20 REJECTED 2026-08-18) — iteration is method dispatch per §3.7.1 rationale 3 / §3.10.1, and the sugar was leftover C-family surface syntax over the same dispatch. `while` remains bootstrap because stdlib needs a primitive control-flow loop to *implement* iteration methods without infinite regress or requiring a Tail Call Optimization commitment. `loop:` also retired (F17 L2 REJECTED 2026-08-18) — accumulate-until-done idioms model as self-transitions with `|:` guards. The discipline:
    - **User-facing code uses method dispatch.** `.for_each`, `.map`, `.filter`, `.fold`, `.find`, `.any`, `.all`. There is no sugar form; the underlying dispatch IS the surface.
    - **`while` is the tool stdlib uses.** It is legal in user code too, but reaching for it signals either "I'm writing an iterator primitive" or "this algorithm genuinely doesn't fit collection-dispatch shape." Both are legitimate; both are rare.
-   - **No `.for_each` for `while`.** Condition-based looping doesn't naturally correspond to a method on a collection (there's no collection). If needed, a project can define `alias @while_true <cond>: <body>` locally expanding to a closure-based helper.
+   - **No `.for_each` for `while`.** Condition-based looping doesn't naturally correspond to a method on a collection (there's no collection). Under R9 (2026-08-31) there is no user-alias escape hatch either — projects that want a `while_true`-shaped helper build it as a named function taking a closure argument.
    - **`for` / `in` remain reserved** by the lexer as diagnostic anchors — user code writing `for e in xs: body` gets a targeted diagnostic pointing at `.for_each`, not a generic parse error.
 
-#### 4.20.4 User Extensions
+#### 4.20.4 User Extensions — RETIRED at v1.0
 
-Users define their own aliases at module level following the mechanism in §4.16. All user aliases carry the `@` marker at declaration signature and every use site (§4.16.16). Common patterns:
+User-declarable aliases retire universally under two waves — the `@`-marker mechanism itself retired 2026-08-30 (R1, annotation-grammar-retirement) and user-defined operator overloading retired 2026-08-31 (R9). At v1.0 there is no user-facing surface-extension mechanism; user code composes behavior via named types, methods, and imports. The four sub-sections below (domain-specific literals, project-specific declaration keywords, domain-specific operators, substitution aliases) are preserved as design history — none of the forms shown parses at v1.0.
 
-**Domain-specific literals:**
-
-```
-# In a graphics module
-alias @v[<x>, <y>, <z>] in expression_position:
-    Vec3(x: x, y: y, z: z)
-
-# In a config module
-alias @%<name>% in string_interpolation_position:
-    Config.lookup(name)
-```
-
-Use sites:
+**Domain-specific literals — RETIRED.** Pre-R1 samples:
 
 ```
-position = @v[1.0, 2.0, 3.0]
-message  = "Connecting to @%database.url%"
+# Pre-R1 (retired):
+# alias @v[<x>, <y>, <z>] in expression_position: Vec3(x: x, y: y, z: z)
+# alias @%<name>% in string_interpolation_position: Config.lookup(name)
+# position = @v[1.0, 2.0, 3.0]
+# message  = "Connecting to @%database.url%"
+
+# v1.0 replacements — construct directly, use standard interpolation:
+position = Vec3(x: 1.0, y: 2.0, z: 3.0)
+message  = "Connecting to ${Config.lookup(\"database.url\")}"
 ```
 
-**Project-specific declaration keywords:**
+**Project-specific declaration keywords — RETIRED.** The `@entity Name:` / `@system Name:` sketch used both the retired `@`-marker AND the retired `metadata:` section header (F10/F11/F12, 2026-08-25). At v1.0 there is no user-declarable keyword grammar; ECS-style role marking uses body-shape inference plus a plain marker field on the `def`:
 
 ```
-# In an ECS framework
-alias @entity Name:
-    def Name:
-        metadata: ecs_role: entity
-        ...
-
-alias @system Name:
-    def Name:
-        metadata: ecs_role: system
-        ...
-```
-
-Use sites:
-
-```
-@entity Player:
+# v1.0 — role is a plain field, kind is body-shape-inferred:
+def Player:
+    role: EcsRole! = EcsRole.entity
     position: Vec3
     velocity: Vec3
 
-@system Physics:
-    function step(dt: Duration): ...
+def Physics:
+    role: EcsRole! = EcsRole.system
+    step(dt: Duration): ...
 ```
 
-Body shape (transitions vs fields-only vs cases-only) still determines runtime treatment per §3.3 — the alias adds a metadata annotation, not a runtime-treatment override.
+Body shape (transitions vs fields-only vs cases-only) determines runtime treatment per §3.3.
 
-**Domain-specific operators:**
-
-```
-# In a quaternion library
-alias <lhs> @** <rhs> precedence: 105, associativity: left in expression_position:
-    Quaternion.multiply(lhs, rhs)
-
-# In a project that wants pipe despite the prelude declining to ship it
-alias <lhs> @|> <rhs> precedence: 100, associativity: left in expression_position:
-    Callable.apply(rhs, lhs)
-```
-
-Use sites:
+**Domain-specific operators — RETIRED (R9, 2026-08-31).** User code cannot declare its own operator aliases at v1.0. Compose behavior via named methods instead:
 
 ```
-composed = a @** b @** c
-result   = data @|> filter_valid @|> normalize
+# Quaternion multiply (was `a @** b @** c`):
+composed = a.multiply(b).multiply(c)
+
+# Pipe-shaped composition (was `data @|> filter_valid @|> normalize`):
+result   = normalize(filter_valid(data))
+# — or, if the type carries a `.pipe` method —
+result   = data.pipe(filter_valid).pipe(normalize)
 ```
 
-**Substitution aliases (type / value / module):**
+**Substitution aliases (type / value / module) — RETIRED under the same wave.** The `@`-marker mechanism itself retired 2026-08-30 (R1, annotation-grammar-retirement), which took the `alias @Name = ...` grammar with it. At v1.0 use the fully-qualified names directly, or `from <mod> import <name>` to bring them into module scope:
 
 ```
+# Pre-R1 (retired):
 alias @Vec = std.math.Vector3
-alias @MAX_CONN = 1024
 alias @orders = com.example.orders
+
+# v1.0 replacements:
+from std.math import Vector3
+from com.example import orders
+
+# Constants live in a `def` record (see §7.1):
+def Config:
+    MAX_CONN: Int! = 1024
 ```
 
 Use sites:
@@ -8186,35 +8140,34 @@ function main():
 
 Invoked as `oc5 hello.cxc`. No manifest required; no module declaration required (the source is treated as its own implicit module). Standard library available implicitly.
 
-**Module-level declarations.** In addition to class, function, and section declarations (§4), sources may contain top-level immutable bindings:
+**Module-level declarations.** Sources contain `def` declarations (§4 — atoms, records, enums, protocols, plugins), `from <mod> import <name>` statements (§7.2), and comments. Module-level `let` is RETIRED (R3, 2026-08-31 — see [decisions-frozen-2026-08-31.md §R3](../../compiler/design/decisions-frozen-2026-08-31.md#r3--module-let-let-name-type--value-at-module-scope-retires-universally)). Module-scope constants live in a `def` record whose fields carry compile-time-constant defaults, or in the plugin-manifest `def plugin:` record (§7.2.1) when they configure a plugin module:
 
 ```
-let PROTOCOL_VERSION: UInt16 = 13
-let DEFAULT_TIMEOUT: Double = 30.0
-let WHITELIST: [String] = ["ws", "wss", "http", "https"]
-
-function handshake(url: URL) -> Result<Response, Error>:
-    ...
+def Constants:
+    PROTOCOL_VERSION: UInt16! = 13
+    DEFAULT_TIMEOUT:  Double! = 30.0
+    WHITELIST:        List(String)! = ["ws", "wss", "http", "https"]
 ```
 
-**Rules for `let`:**
+Consumers reference the constants via `Constants.PROTOCOL_VERSION` etc. (Field defaults are evaluated at compile time under the Q10-B relaxation, §4.16.10.)
 
-1. **Initializer required at declaration.** `let x: T = <expr>`. No declare-then-assign pattern. For conditional initialization, use the expression form of `if` / `<:` dispatch / `do:` as the initializer — everything-is-an-expression (§3.8) means branched initializers fold into a single expression naturally:
+**Rules for function-scope `let`:**
+
+1. **Initializer required at declaration.** `let x: T = <expr>`. No declare-then-assign pattern. For conditional initialization, use `||:` multi-arm dispatch (§3.8.1) / `<:` dispatch / `do:` as the initializer — everything-is-an-expression (§3.8) means branched initializers fold into a single expression naturally:
 
    ```
-   let payload: Bytes = if self.needs_decompression:
-                           self.delegate.decompress(...) ?? frame.payload
-                        else:
-                           frame.payload
+   let payload: Bytes = ||: self.needs_decompression : self.delegate.decompress(...) or Bytes(): frame.payload
+                        ||: else                     : frame.payload
    ```
 
-   No separate "definite assignment analysis" is spec'd or needed — the expression form provides the same "assigned exactly once, then immutable" guarantee.
+   No separate "definite assignment analysis" is spec'd or needed — the multi-arm form provides the same "assigned exactly once, then immutable" guarantee. (Pre-R6 the initializer read `if X: Y else: Z`; R6 2026-08-31 retired that form.)
 
-2. **Immutable.** No reassignment. `let` at module scope is the only form; `var`-equivalent module-level mutable state is not supported. Mutable module-level state uses an atom with `data:` fields and a singleton pattern, so that access is scoped and metadata-queryable.
-3. **Type annotation required at module scope.** Module-level `let` must specify the type — no type inference across module boundaries. Ensures the module's public interface is deterministic without full-program analysis. Function-scope `let` allows type inference from the initializer.
-4. **Evaluated at module load** (module scope) or **at binding site** (function scope). Module-level initializers run at module load time, in declaration order within the source. Cross-source ordering follows dependency order (§7.2).
-5. **Constant-expression preferred.** If the initializer is a compile-time constant, the compiler evaluates it at build time and inlines the value. Otherwise it becomes a module-load-time (or binding-time) expression.
-6. **Public by construction.** A module-level `let` is part of the module's public interface — no `expose` marker (§7.7, §7.8). `expose` was retired at v1.0; every top-level declaration is externally nameable.
+2. **Immutable.** No reassignment. Function-scope `let` binds a single value for the rest of the enclosing scope.
+3. **Type inference allowed.** Function-scope `let` may omit the type annotation; the initializer's type is inferred.
+4. **Evaluated at binding site.** The initializer runs when control reaches the `let` statement.
+5. **Constant-folding when possible.** If the initializer is a compile-time constant, the compiler evaluates it at build time and inlines the value.
+
+*(Pre-R3 §7.1 also spec'd module-scope `let` with public-by-construction, module-load-time evaluation, and mandatory type annotation. All four of those rules retire with the module-let form.)*
 
 ### 7.2 Modules
 
@@ -8232,37 +8185,61 @@ A **module** is a named compilation unit. Modules:
 
 **Multi-source modules** — a directory whose files share a common path prefix — benefit from shared metadata (LSP sees the whole module structure), cross-source visibility of internal-by-convention declarations, and unified exposed-interface export.
 
-#### 7.2.1 Plugin Modules — `@plugin(...) module <name>` Carve-Out (Q10-D, 2026-08-30)
+#### 7.2.1 Plugin Modules — `def plugin:` unified marker (plugin-shape consolidation 2026-08-31 R7+R8)
 
-The F73 retirement of `module <name>` headers has one carve-out: **plugin modules re-introduce the header as the syntactic host for the `@plugin(...)` manifest annotation.** Presence of the `@plugin(...)` annotation is the authorization gate; without it, `module <name>` remains retired.
+The F73 retirement of `module <name>` headers stands **unconditionally** at v1.0. Regular and plugin modules both take their identity from the file path. Plugin modules distinguish themselves not by a header but by a **reserved-name top-level record** `def plugin:` whose body admits both manifest fields AND nested `foreign "..."` sections declaring OS-symbol imports.
+
+> **Supersedes:**
+> - The Q10-D carve-out (2026-08-30, first form: `@plugin(...) module <name>` annotation) — retired same-day as part of the annotation-grammar-retirement wave.
+> - The interim `let plugin: Plugin = Plugin(...)` module-let form (2026-08-30, second form) — reopened 2026-08-31 once the compile-time-vs-runtime ABI question surfaced. Module-let mechanism retires universally in the same wave (see [decisions-frozen-2026-08-31.md](../../compiler/design/decisions-frozen-2026-08-31.md) §R3).
+> - The R2 fields-only-body invariant + 9-integer version fields (2026-08-31 first wave). Body admits nested `foreign "..."` sections (R7); manifest fields collapse to structured `SemVer` / `VersionRange` records (R8). See [decisions-frozen-2026-08-31-plugin-shape.md](../../compiler/design/decisions-frozen-2026-08-31-plugin-shape.md) §R7 + §R8.
 
 **Canonical form:**
 
 ```
-@plugin(
-    name:       "http-nsurlsession",
-    version:    Version(0, 1, 0),
-    cxc_compat: Range(from: Version(1, 0, 0), to: Version(2, 0, 0)),
-    requires:   #{OsPrimitive.NetTcpClient,
-                  OsPrimitive.NetDns,
-                  OsPrimitive.ClockMonotonic},
-    exports:    [HttpClient],
-    targets:    #{Target.Darwin}
-)
-module com.acme.http_nsurlsession
+# File: com/acme/http_nsurlsession.cxc  (path = module name, F73)
+
+def plugin:
+    # ---- Manifest ----
+    name:    String!       = "http-nsurlsession"
+    version: SemVer!       = SemVer(0, 1, 0)
+    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0),
+                                          max: SemVer(2, 0, 0))
+
+    # ---- Foreign surface (this plugin's OS imports) ----
+    foreign "Foundation":
+        type "NSURLSession"
+        selector "dataTaskWithURL:" -> NSObject
+
+    foreign "libc":                    # multiple libraries admitted
+        symbol "getenv" -> (name: CString) -> CString
+
+# Peer defs — regular defs at module top-level, may `use plugin: Plugin`.
+# (R11 plugin-only wave, 2026-09-01: `Plugin` is the sole FFI capability;
+#  reaches only this plugin's nested `foreign "..."` sections.)
+def HttpClient:
+    use plugin: Plugin
+    ...
 ```
 
 **Rules:**
 
-- **`@plugin` is a compiler-recognized annotation name** (like `@metadata` and `@deprecated`). Not a keyword; reuses the existing `@name(args)` annotation grammar (§4.16.x-annotation-scoping). The compiler dispatches on the annotation name during manifest resolution.
-- **The annotation's arguments must all be compile-time constants** per the relaxed §4.16.10 definition — constructor calls, collection literals, enum-case references, and literals compose freely. This is what makes the manifest build-time readable without running any user code.
-- **`module <name>` header is required when — and only when — the file carries a `@plugin(...)` annotation.** For plugin modules the header names the module; the file path is not authoritative. For non-plugin modules `module <name>` remains rejected (F73).
-- **The annotation attaches to the `module` line, not to a following `def`.** This is a widening of the annotation-attachment rule (previously `def`-only per L3a): annotations at the top of a file whose annotation name is `@plugin` attach to the `module` declaration that follows. All other annotation names retain the `def`-only attachment rule.
-- **Manifest is build-time readable.** The compiler evaluates the annotation's constant arguments during the manifest-resolution pass (before running any user code) and produces a folded `PluginManifest` AST node.
-- **Manifest fields (v1.0 shape).** `name: String!`, `version: Version`, `cxc_compat: Range[Version]`, `requires: Set[OsPrimitive]`, `exports: List[CapabilityAtomRef]`, `targets: Set[Target]`. Semantic types shipped as stdlib per F74/F75. See [decisions-frozen-2026-08-29.md §Q10](../../compiler/design/decisions-frozen-2026-08-29.md) for the full field discipline.
-- **Presence gates `Extern` and `foreign symbol` visibility.** Only prelude modules and `@plugin`-annotated modules may take `use: extern: Extern` and declare `foreign library` / `foreign symbol` blocks. See §1.14 (prelude) and Q9 for the ratification; §7.2.1's job is to name `@plugin` as one of the two gates.
+- **`plugin` is a reserved name at module top-level.** Like `main`, the name is claimed by the language for this specific role. `def plugin:` is legal only as the plugin marker; a user cannot repurpose the name for any other declaration.
+- **Body admits exactly two element kinds** (R7): field declarations (`name: Type = value`) and `foreign "<library>"` sections. No transitions (`<:`), no observations (`:-`), no `use ...` slots — plugin is a record, not an atom.
+- **`foreign` keyword requires `def plugin:` scope** (R7). Grammar rejects `foreign "..."` outside a plugin body with a targeted diagnostic ("`foreign` requires `def plugin:` scope; see R7"). This makes the plugin-marker → foreign-symbols coupling grammatical, not just semantic. Sole foreign-declaration form at v1.0 (R11 plugin-only wave, 2026-09-01, retired the pre-R11 prelude top-level `foreign library "..."` counterpart along with the prelude-shim tier).
+- **Foreign body elements**: `type "<name>"`, `selector "<sel>" -> <RetType>`, `class_selector "<class>" "<sel>" -> <RetType>`, `symbol "<name>" -> <FnType>`. Contextual keywords inside a `foreign "..."` block, not full reserved words.
+- **Field defaults must be compile-time constants** per §4.16.10 (constructor calls over constants, literals, arithmetic on constants — including `SemVer(0, 1, 0)` and `VersionRange(min: ..., max: ...)` ctor calls). This is what makes the manifest build-time readable without running any user code — the compiler folds field defaults during the manifest-resolution pass.
+- **Required manifest fields at v1.0** (compiler F75 pass reads these): `name` (String!), `version` (SemVer!), `compat` (VersionRange!). `SemVer` (fields: `major` / `minor` / `patch` as Int!) and `VersionRange` (fields: `min` / `max` as SemVer!) are prelude records — always in scope, no import needed. Additional fields (`requires`, `exports`, `targets`) land when `List(T)` syntax and first-class `Type` values are ready.
+- **No shared `Plugin` prelude type.** The manifest SCHEMA lives in the compiler's F75 introspection pass, not in a prelude data-class. Adding a required field is a compiler change (schema evolves by editing the introspection pass's expected shape), not a prelude type edit. (`SemVer` / `VersionRange` are prelude, but they're field-value types, not the manifest schema itself.)
+- **Presence gates `Plugin` visibility** (R11 plugin-only wave, 2026-09-01). Modules that carry a valid `def plugin:` record are the sole recipients of `use plugin: Plugin` on their peer defs; `plugin.get` / `plugin.send` / `plugin.class_send` in those defs resolve only against the enclosing `def plugin:` body's nested `foreign "..."` sections. `Plugin` is the sole FFI capability at v1.0 — the pre-R11 prelude-shim tier and its `Extern` capability retire under R11. See §1.12, §1.14.
+- **Regular modules define nothing at that name.** A module with no `def plugin:` is a regular application module; its identity is the file path, no FFI capability widening, no manifest emission. Not-plugin is the default.
 
-**Why the carve-out (not a full F73 rollback).** Regular application modules benefit from structural identity — no chance of drift between declared name and file path, one source of truth, LSP resolves paths without parsing the whole module. Plugin modules have a different constraint: they need a machine-readable manifest that travels with the source (not in a separate manifest file), and that manifest needs a syntactic host. Reusing the annotation grammar on a `module` line satisfies both goals without introducing new syntax. Application modules gain nothing from a header they don't need; plugin modules gain the manifest anchor they do. Two shapes, one grammar, no design duplication.
+**Plugin system is compile-time only at v1.0.** cxc has no runtime plugin loading. Plugin modules link statically into the consuming binary. No `dlopen`, no `plugin_init` lifecycle, no HostAPI injection, no unload, no hot reload. The plugin system exists to let the compiler consume trusted foreign-interfacing code with capability discipline — it is not a runtime extension mechanism. Users wanting a runtime plugin system can build one on top of cxc; the compiler doesn't provide one at v1.0. See [decisions-frozen-2026-08-31.md](../../compiler/design/decisions-frozen-2026-08-31.md) §R1.
+
+**Why the record-marker form (not module-let, not annotation).** The design terrain was traversed in three ratifications on three consecutive days:
+- 2026-08-30 first form (Q10-D): `@plugin(...) module <name>` annotation — retired same-day with the annotation-grammar-retirement wave (`@name(args)` gone universally).
+- 2026-08-30 second form (R3): `let plugin: Plugin = Plugin(...)` module-let — reopened next day once the ABI question surfaced (function-pointer fields on a data-class value muddied the "manifest is pure data" story; a separate reserved-name entry-point atom would have been a two-shape design).
+- 2026-08-31 (R2, this section): `def plugin:` record marker — one mechanism (`def`), reserved name, uses existing body-shape inference, no runtime lifecycle needed under compile-time-only commitment. Also lets module-let retire universally (see §R3 in the ratification) since it had no other articulated use case.
 
 ### 7.3 Packages
 
@@ -8669,7 +8646,7 @@ def Buffer:
     methods:
         async function pop(self) -> Item
             requires items.count > 0:
-            item = self.items[0]
+            item = self.items.at(0)
             self.items = self.items.drop_first()
             return item
         
@@ -8720,18 +8697,18 @@ def Ledger:
     
     methods:
         function balance(self, id: AccountID) -> Money:      # READER (no assignment)
-            return self.accounts[id] ?? 0
-        
+            return self.accounts.at(id) or Money(): 0
+
         function total(self) -> Money:                        # READER
             return self.accounts.values.sum
-        
+
         function transfer(self, from: AccountID, to: AccountID, amount: Money):   # WRITER
-            requires accounts[from] >= amount
-            ensures result.accounts[from] == self.accounts[from] - amount
-            ensures result.accounts[to]   == self.accounts[to]   + amount
-            
-            self.accounts[from] -= amount
-            self.accounts[to] += amount
+            requires accounts.at(from) >= amount
+            ensures result.accounts.at(from) == self.accounts.at(from) - amount
+            ensures result.accounts.at(to)   == self.accounts.at(to)   + amount
+
+            self.accounts = self.accounts.set(from, self.accounts.at(from) - amount)
+            self.accounts = self.accounts.set(to,   self.accounts.at(to)   + amount)
 ```
 
 Multiple threads can call `.balance(id)` or `.total()` concurrently. Any `.transfer(...)` blocks until all in-flight readers complete, then executes exclusively. When it completes, waiting readers resume.
@@ -8826,7 +8803,7 @@ Types that can safely cross task boundaries. Determined by shape, not annotation
 - **Value types** (struct, enumeration) — always Sendable. Copied on transfer.
 - **Class handles** — always Sendable. The extent lives globally; handles point into it. Access is coordinated by the extent's state machine.
 - **Function values** — Sendable if their captured environment is Sendable.
-- **Types with mutable global state** — not Sendable. Rarely encountered because cxc has no true globals (module-level constants are immutable; module-level state doesn't exist).
+- **Types with mutable global state** — not Sendable. Rarely encountered because cxc has no true globals: module-level `let` retired 2026-08-31 (R3) so there are no free-standing module bindings at all; module-scope constants live as compile-time-const fields inside a `def` record (§7.1), and module-level mutable state doesn't exist.
 
 The runtime enforces Sendable at task boundaries. Attempting to pass a non-Sendable value into a spawned task raises a compile error (Stage 3+) or runtime error (Stage 1).
 
@@ -9469,7 +9446,7 @@ class_member := metadata_section | section_usage
 # the field production itself is unchanged.
 #
 # F67 L2 observable. Zero-arg or parametric.
-observable_decl := identifier ('(' parameter_list ')')? ':<' expr
+observable_decl := identifier ('(' parameter_list ')')? ':-' expr
 
 # Transition line — see §1.11 "Transition-line block form" for the full
 # body shape (|:-propositions / let: / then:). Sources: phase name, `self`, `*`
@@ -9515,7 +9492,7 @@ method_decl := ('replace')? 'function' identifier
                effect_clause? contract_clause?
                ':' INDENT statement* DEDENT
               # Retired inside class bodies at v1.0 (F67 L4, Proposal G) —
-              # class-body callables are observables (`:<`) or transitions
+              # class-body callables are observables (`:-`) or transitions
               # (`<:` receive-glyph). This production remains for
               # extend-class-`replace` and for the `function` keyword at
               # module scope (free-function declarations).
@@ -9558,15 +9535,25 @@ field_decl := ('immutable' | 'mutable')? ('weak' | 'unowned')?
               # external mutation is impossible by grammar under the actor substrate.
 
 # Expression forms (§3.8).
-expr := ... | if_expr | receive_dispatch | block_expr | while_expr | loop_expr
+expr := ... | multi_arm_dispatch | receive_dispatch | block_expr | while_expr | loop_expr
       | closure_literal | function_literal | arrow_literal
       | if_let_expr | guard_let_stmt
 
-if_expr := 'if' expr ':' expr_body ('else if' expr ':' expr_body)* ('else' ':' expr_body)?
+# Multi-arm expression-position dispatch (§3.8.1, R6 2026-08-31). Chain of
+# `||:` arms, first truthy guard wins, `else` is the catch-all. All arm bodies
+# must have compatible types.
+multi_arm_dispatch := multi_arm+ ('||:' 'else' ':' expr)?
+multi_arm          := '||:' expr ':' expr
+
 receive_dispatch := expr '<:' INDENT case_arm+ DEDENT     # §3.7 receive-glyph dispatch
 block_expr := 'do' ':' INDENT statement* DEDENT
 while_expr := 'while' expr ':' expr_body                  # returns Bool; bootstrap primitive (§4.20.3)
 loop_expr := 'loop' ':' INDENT statement* DEDENT          # returns type of `break value`; bootstrap primitive (§4.20.3)
+
+# `if_expr` retired 2026-08-31 (R6). `if X: Y else: Z` in expression position
+# no longer parses; use `multi_arm_dispatch` (`||:`) instead. `if` remains a
+# statement-form keyword (§3.8.4). Parser emits a targeted diagnostic on
+# expression-position `if` pointing to `||:`.
 
 # `switch_expr` retired 2026-08-18 (F69). Pattern matching is expression-position
 # `<:` receive-glyph dispatch (§3.7). `switch` remains reserved by the lexer as
@@ -9682,26 +9669,19 @@ prelude_signature := identifier_pattern
                    | keyword_pattern
                    | interpolation_pattern
 
-# User signatures — every trigger carries `@`.
-user_signature    := user_identifier_pattern
-                   | user_infix_pattern
-                   | user_prefix_pattern
-                   | user_suffix_pattern
-                   | user_delimited_pattern
-                   | user_keyword_pattern
-                   | user_interpolation_pattern
+# User signatures — RETIRED at v1.0. The `@`-marker mechanism retired 2026-08-30
+# (R1, annotation-grammar-retirement); the entire user-alias signature grammar
+# retires with it. R9 (2026-08-31) additionally forbids user-defined operators
+# in any surface form. All eight production families below (`user_*_pattern`) are
+# rejected at parse time with a targeted diagnostic. User-facing extension of
+# the language surface is deferred to v1.x; at v1.0, users compose behavior via
+# named methods, extend existing types via `def` records/atoms, and import
+# names via `from <mod> import <name>`.
 
-user_identifier_pattern    := '@' identifier (generic_params)?
-user_keyword_pattern       := '@' identifier identifier (generic_params)?     # e.g. `@entity Name`
-user_infix_pattern         := '<' identifier '>' '@' operator_token '<' identifier '>'
-user_prefix_pattern        := '@' operator_token '<' identifier '>'
-user_suffix_pattern        := '<' identifier '>' '@' operator_token
-user_delimited_pattern     := '@' identifier? '[' '<' identifier '>' ']'
-                            | '@' identifier? '{' '<' identifier '>' '}'
-                            | '@' identifier? '{' '<' identifier '>' ':' '<' identifier '>' '}'
-                            | '@' identifier? '(' '<' identifier '>' ')'
-user_interpolation_pattern := '@' identifier '<' identifier '>'                              # e.g. `@mention<id>`
-                            | '@' operator_token '<' identifier '>' operator_token           # e.g. `@%<name>%`
+# The prelude signature productions below (`identifier_pattern`, `infix_pattern`,
+# etc.) survive as compiler-internal grammar used to declare prelude aliases like
+# `record`, `enum`, `??`, `..<`. Users cannot declare in these forms either —
+# the prelude is the sole author of unmarked alias signatures (§4.20.3).
 
 # Prelude versions (unmarked) — same shapes without the '@'.
 identifier_pattern    := identifier (generic_params)?
@@ -9807,7 +9787,7 @@ def_member := use_section
             | transition_decl              # v1.0: `<from> <: <msg>{args} -> <to>` (see §1.11)
             | wildcard_enter_decl          # v1.0: `-> <phase>` on-enter (see §1.11)
             | wildcard_exit_decl           # v1.0: `<phase> ->` on-exit  (see §1.11)
-            | observable_decl              # v1.0: `<name> :< <source>` at atom-body top
+            | observable_decl              # v1.0: `<name> :- <source>` at atom-body top
             # RETIRED: standing_wire_decl (2026-08-12) — no top-level `|>`.
             # All subscriptions are receive-glyph transitions; source expression
             # may compose transformers via `|>` (see receive_source below).
@@ -9815,9 +9795,11 @@ def_member := use_section
             | method_decl                  # legacy v0.11 form; grace period
 
 # ---- Retired atom-body members ----
-# `extern_section` — RETIRED at v1.0. FFI is the `Extern` capability atom (see §1.12).
-#     Shim atoms request it in `use:`; the runtime provisions it only to stdlib shims.
-#     Foreign symbol declarations moved to prelude-only `foreign_library_block` (below).
+# `extern_section` — RETIRED at v1.0. FFI is the `Plugin` capability atom (see §1.12).
+#     Plugin peer defs request it in `use:`; the runtime provisions it only to shims
+#     inside modules that carry a `def plugin:` marker. Foreign symbol declarations
+#     use the single scoped production `foreign_block` (nested in `def plugin:`, R7
+#     2026-08-31; sole form post-R11 2026-09-01).
 # `state_section` — RETIRED at v1.0. All fields are `data:`; mutability is expressed via
 #     transitions. See §1.11.
 
@@ -10030,7 +10012,7 @@ field_path    := identifier                                            # unquali
 # `direction: idle -> up`. See §1.11 for disambiguation rules.
 
 # ---- Observables ----
-observable_decl := identifier ':<' expr                                # `name :< source_expression`
+observable_decl := identifier ':-' expr                                # `name :- source_expression`
 
 # ---- Emit statements (inside transition `then:` blocks or side-effect handler bodies) ----
 emit_stmt := ':>' expr                                                 # `:> value` — default channel
@@ -10092,20 +10074,36 @@ where_atom   := identifier 'conforms' identifier                       # `s conf
               | expr                                                    # arbitrary predicate expression
                                                                         # (e.g., `s.element_size <= 64`)
 
-# ---- Prelude-only productions (parser rejects outside prelude/ files) ----
-foreign_library_block := 'foreign' 'library' string_literal ':' INDENT
-                             foreign_symbol_decl+
-                         DEDENT
-foreign_symbol_decl   := 'symbol' string_literal ':' type_expression
+# ---- Scoped foreign-symbol production (single form under R11 — see §1.14, §7.2.1) ----
 
-# `type_expression` in a `foreign_symbol_decl` is either a function type or a
+# Plugin form (R7, 2026-08-31; sole form post-R11 2026-09-01): nested inside a
+# `def plugin:` body. Legal only there — the surrounding plugin body is the
+# scope gate. No `library` keyword; the block admits four contextual body
+# elements. The pre-R11 top-level `foreign_library_block` production retires
+# along with the prelude-shim tier per R11 plugin-only wave.
+foreign_block                := 'foreign' string_literal ':' INDENT
+                                    foreign_body_decl+
+                                DEDENT
+foreign_body_decl            := foreign_type_decl
+                              | foreign_selector_decl
+                              | foreign_class_selector_decl
+                              | foreign_symbol_decl
+foreign_type_decl            := 'type' string_literal
+foreign_selector_decl        := 'selector' string_literal '->' type_expression
+foreign_class_selector_decl  := 'class_selector' string_literal string_literal '->' type_expression
+foreign_symbol_decl          := 'symbol' string_literal '->' type_expression
+
+# `type_expression` in a symbol declaration is either a function type or a
 # `Stream of T`; direction is inferred from that shape (see §1.14):
 #   (Args) -> Ret  → outbound (cxc invokes; native provides impl)
 #   Stream of T    → inbound (native invokes via runtime; cxc subscribes)
 # Callback-with-return shapes are unsupported in v1.0.
 #
-# `foreign`, `library`, `symbol` are keywords only inside this production; parser
-# rejects `foreign library` and `symbol` outside files under `prelude/`.
+# `foreign`, `symbol`, `type`, `selector`, `class_selector` are scoped keywords
+# under the production above; parser rejects `foreign "..."` outside a
+# `def plugin:` body. Contextual keywords `type`, `selector`, `class_selector`
+# are active only inside `foreign_block` bodies. `library` (as `foreign library
+# "..."` prefix) retires at v1.0 per R11.
 
 # ---- FFI type set (referenced by foreign_symbol_decl type_expression) ----
 ffi_type := 'CString' | 'Int8' | 'Int16' | 'Int32' | 'Int64'
@@ -10133,9 +10131,13 @@ ffi_type := 'CString' | 'Int8' | 'Int16' | 'Int32' | 'Int64'
 #     a receive-glyph transition. See "Wire composition" retirements above.
 # `provide:` section → never committed; `use:` unified handles both roles.
 # `channels:` section → never committed; named tuple return type is authoritative.
-# `extern_section` production → retired; FFI moved to `Extern` capability atom (see
-#     §1.12) + prelude-only `foreign_library_block` (above). `extern` retired as a
-#     keyword; `Extern` (PascalCase) is a regular identifier for the capability atom.
+# `extern_section` production → retired; FFI moved to `Plugin` capability atom (see
+#     §1.12) + scoped foreign-symbol production above (plugin-body `foreign_block`, R7
+#     2026-08-31; sole form post-R11 plugin-only wave 2026-09-01). `extern` retired
+#     as a keyword; `Extern` retired as a capability atom identifier per R11.
+#     `Plugin` (PascalCase) is the sole FFI capability atom identifier at v1.0.
+# `foreign_library_block` production → retired at R11 (2026-09-01) along with the
+#     prelude-shim tier. Top-level `foreign library "..."` grammar no longer parses.
 # `state_section` production → retired; all fields are `data:` (see §1.11).
 # Assignment inside transition bodies (`=`, `+=`, `-=`, `*=`, `/=`, `%=`) → retired
 #     at the immutable-FSM sharpening (see §1.11). Field updates happen exclusively
@@ -10204,7 +10206,7 @@ ffi_type := 'CString' | 'Int8' | 'Int16' | 'Int32' | 'Int64'
 > `def` is the sole opener; kind flows from body structural cues), `state:`
 > section (retired v1.0 §1.11 — all fields are `data:` at class-body top
 > level, mutations happen through transitions per F67 L5), `methods:` section
-> (retired F67 L4 — readers are observables `:<`, writers are transitions
+> (retired F67 L4 — readers are observables `:-`, writers are transitions
 > `<:`), `function constructor` (retired — auto-synthesized from `data:`
 > fields), and `expose` (retired F33 L6 — all members externally readable,
 > API stability is a documentation contract per §7.7). Read for
