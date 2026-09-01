@@ -125,7 +125,7 @@ def Enemy:
         then: print("enemy down")
 
     # Helper used by the guard on the attacked subscription.
-    in_range() :< true      # (stub — real logic elided)
+    in_range() :- true      # (stub — real logic elided)
 
 
 # ---------------------------------------------------------------------

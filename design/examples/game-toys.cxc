@@ -144,8 +144,8 @@ def Vector2:
     x: Float
     y: Float
 
-    plus(other: Vector2)  :< Vector2(x: self.x + other.x, y: self.y + other.y)
-    scaled(k: Float)      :< Vector2(x: self.x * k, y: self.y * k)
+    plus(other: Vector2)  :- Vector2(x: self.x + other.x, y: self.y + other.y)
+    scaled(k: Float)      :- Vector2(x: self.x * k, y: self.y * k)
 
 
 # =============================================================================
@@ -166,8 +166,8 @@ def Paddle:
 
     |: -screen_bounds <= y <= screen_bounds
 
-    position :< y
-    moving   :< velocity != 0.0
+    position :- y
+    moving   :- velocity != 0.0
 
     # ---- Init transition: idle is the first-mentioned target, so implicit
     #      init -> idle fires on construction. Wildcard on-enter for idle
@@ -217,7 +217,7 @@ def ActionMachine(clock: Clock):
 
     # ---- Public observable for parents (stable predicate; insulates
     #      parents from internal phase renames) ----
-    is_idle :< self is idle
+    is_idle :- self is idle
 
     # ---- Init: implicit init -> idle; no per-phase writes needed since
     #      compound-scope defaults cover it. ----
@@ -280,7 +280,7 @@ def Player(max_hp: Int = 100, starting_mana: Int = 50):
                                                         # F39 L1 / spec §3.6.1 — the
                                                         # `?` would be redundant)
 
-    can_cast :< clock.now - last_cast_at >= cast_cooldown
+    can_cast :- clock.now - last_cast_at >= cast_cooldown
 
     # ---- Init: on-enter for alive sets initial hp/mana ----
     -> alive then:
@@ -329,7 +329,7 @@ def Player(max_hp: Int = 100, starting_mana: Int = 50):
 
     # ---- Helper — in a real game this reads from input capability ----
     # Placeholder for cursor position lookup at cast time.
-    cursor_position :< input.cursor_position
+    cursor_position :- input.cursor_position
 
 
 # =============================================================================
@@ -348,7 +348,7 @@ def Enemy(start: Vector2, hp: Int = 20, velocity: Vector2 = Vector2(x: -100.0, y
 
     |: health >= death_threshold
 
-    position :< pos
+    position :- pos
 
     # ---- Init transition implicit: init -> alive on construction. ----
 
@@ -394,8 +394,8 @@ def EnemySpawner:
     base_hp:        Int           =   20
     active_enemies: List of Enemy = []
 
-    enemy_count :< active_enemies.count
-    positions   :< active_enemies.map(e => e.position)
+    enemy_count :- active_enemies.count
+    positions   :- active_enemies.map(e => e.position)
 
     # ---- React to enemy deaths via fan-in on the collection ----
     # `active_enemies.died` is the List's fan-in of each element's `died`
@@ -429,9 +429,9 @@ def Game:
     spawner: EnemySpawner  = EnemySpawner()
 
     # ---- Compound observables aggregate child observables ----
-    paddle_position :< paddle.position
-    player_hp       :< player.hp
-    enemy_count     :< spawner.enemy_count
+    paddle_position :- paddle.position
+    player_hp       :- player.hp
+    enemy_count     :- spawner.enemy_count
 
     # ---- OS-driven tick fan-out — receive-glyph on the clock's periodic
     #      stream; each tick fans out to paddle and to each active enemy. ----

@@ -15,9 +15,9 @@ Contract at every seam is JSON (the LLM API's native surface).
 | Shape | Producer | Consumer | Contents |
 |---|---|---|---|
 | **Task** | user (CLI arg) | Agent atom | `String!` — the user's prompt |
-| **Message** | Agent / Claude / tool | context list | `{role: Role, content: String \| List of ContentBlock}` |
+| **Message** | Agent / Claude / tool | context list | `{role: Role, content: String \| List(ContentBlock)}` |
 | **Role** | enum | Message.role | `system` \| `user` \| `assistant` \| `tool` |
-| **ChatResponse** | Claude plugin | Agent atom | `{stop_reason: StopReason, text: String, tool_calls: List of ToolCall}` |
+| **ChatResponse** | Claude plugin | Agent atom | `{stop_reason: StopReason, text: String, tool_calls: List(ToolCall)}` |
 | **StopReason** | enum | Agent transition guard | `end` \| `tool_use` \| `max_tokens` |
 | **ToolCall** | Claude plugin | AgentTools | `{id: String, name: String, args: Json}` |
 | **ToolResult** | AgentTools | context list | `{id: String, output: String}` |
@@ -27,7 +27,7 @@ Contract at every seam is JSON (the LLM API's native surface).
 ```
 CLI arg  ──►  Agent.user_task (String!)
                  │
-                 └──►  Message.user  ──►  ctx: List of Message
+                 └──►  Message.user  ──►  ctx: List(Message)
                                                 │
                                                 ▼
                                       |> claude.chat(messages: ctx)
@@ -53,10 +53,10 @@ CLI arg  ──►  Agent.user_task (String!)
 
 The example demonstrates **AgentTools** — a composite capability
 atom that bundles filesystem + subprocess + env access into one
-`use:` slot. This is what a real agent needs (its tool set), and
+`use` slot. This is what a real agent needs (its tool set), and
 it shows off L7's compositional discipline:
 
-- App author writes `use: tools: AgentTools` — one line.
+- App author writes `use tools: AgentTools` — one line.
 - The Agent's transitively-required OS primitives are computed at
   build time: `{os.net.tcp-client, os.net.dns, os.fs.read, os.fs.write,
   os.subprocess.spawn, os.env.read, os.stdio}`.
@@ -74,13 +74,15 @@ is the abstraction; the manifest is the audit.
   done` state machine
 - **§3.4 (records)** — Message, ChatResponse, ToolCall
 - **§3.5 (enums / tagged variants)** — Role, StopReason
-- **§3.10.9 (Result[T, E])** — fallible tool operations
+- **§3.10.9 (exceptions + `or T():` recovery)** — fallible tool operations
 - **§4.16 (aliases, collection literals)** — `[]`, `{}` in
   Message construction
-- **§1.11 (use: capabilities)** — capability composition via
+- **§1.11 (`use` capabilities)** — capability composition via
   `AgentTools`
-- **Layer 6 §Extern** — `foreign library` in the (plugin-provided)
-  Claude / Subprocess implementations
+- **Layer 6 §Plugin** — nested `foreign "..."` blocks inside
+  `def plugin:` bodies in the plugin-provided Claude / Subprocess
+  implementations (§7.2.1 plugin form, R7 2026-08-31; sole FFI form
+  post-R11 plugin-only wave 2026-09-01)
 - **Layer 7 (proposal)** — OS-primitive vocabulary, capability
   manifest emission, plugin ABI
 
@@ -89,7 +91,7 @@ is the abstraction; the manifest is the audit.
 - Streaming (SSE) — first draft is single-shot
 - Session persistence across CLI invocations — single-turn
 - Multiple concurrent agents — single Agent instance
-- Error recovery (`or:` arms) beyond max_steps guard
+- Error recovery (`or T():` recovery arms) beyond max_steps guard
 - Rate limiting / retry logic on LLM API failures
 
 Each of these adds real code; the first draft's goal is the
