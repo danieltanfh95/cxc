@@ -1,9 +1,9 @@
 def Clock(ticks: Int! = 3):
     remaining: Int! = ticks
 
-    now :< native_millis_now()
+    now :- native_millis_now()
 
-    every(rate_ms: Int) :< native_clock_every(self, rate_ms)
+    every(rate_ms: Int) :- native_clock_every(self, rate_ms)
 
     -> running
         then: self :> beat

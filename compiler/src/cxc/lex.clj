@@ -8,16 +8,19 @@
 
    Token shape: [:kind value line col]
      :kind    keyword — :ident, :int, :float, :string, :char, :kw,
-              :glyph, :annotation-prefix, :punct, :indent, :dedent,
-              :newline, :eof
+              :glyph, :punct, :indent, :dedent, :newline, :eof
      :value   token payload (string / number / keyword)
      :line    1-based line number
      :col     1-based column
 
-   Glyphs recognized (longest-match): <: <| |> |: :> :< -> => == != <= >=
+   Glyphs recognized (longest-match): <: <| |> ||: |: :> :- -> => == != <= >=
    Single-char operators emit as :glyph with the char as value.
-   Annotation prefix: @
    Punctuation: ( ) [ ] { } , : . ;
+
+   Annotation prefix `@` retired 2026-08-30 (annotation-grammar-
+   retirement wave). Encountering `@` throws a targeted diagnostic
+   pointing at the replacement surfaces (see decisions-frozen-
+   2026-08-30 for retirement rationale).
 
    Reserved words emit as :kw. Everything else identifier-shaped is :ident."
   (:require [clojure.string :as str]))
@@ -88,7 +91,13 @@
   ;; happens before single-char `?` :punct fallback so `??` tokenises
   ;; as one :glyph; postfix `T?` at the type-annotation site still
   ;; lands as :punct `?` and trips the L5a suffix-banned diagnostic.
-  ["<:" "<|" "|>" "|:" ":>" ":<" "->" "=>" "==" "!=" "<=" ">=" "//" "**" "??"])
+  ;; 2026-08-31 glyph-consolidation wave (R5+R6):
+  ;;   - `:-` replaces retired `:<` for observation bodies (R5). Kills the
+  ;;     mirror-with-`<:` swap hazard.
+  ;;   - `||:` new expression-position multi-arm dispatch operator (R6).
+  ;;     Ordered BEFORE `|:` for longest-match — `||:` must win over
+  ;;     `|:` followed by `|` when the source has `||:`.
+  ["<:" "<|" "|>" "||:" "|:" ":>" ":-" "->" "=>" "==" "!=" "<=" ">=" "//" "**" "??"])
 
 (def ^:private single-char-glyphs
   #{\+ \- \* \/ \% \= \< \> \! \& \|})
@@ -96,6 +105,9 @@
 (def ^:private punctuation
   #{\( \) \[ \] \{ \} \, \: \. \; \? \!})
 
+;; annotation-prefix `@` retired 2026-08-30 (annotation-grammar-
+;; retirement wave). Kept as a private char-literal only to anchor the
+;; targeted retirement diagnostic inside `tokenize`. See ns docstring.
 (def ^:private annotation-prefix \@)
 
 (defn- classify-word [w]
@@ -526,7 +538,15 @@
           (let [c (.charAt line i)]
             (cond
               (= annotation-prefix c)
-              (recur (inc i) (conj! out [:annotation-prefix (str c) line-no (inc i)]))
+              (throw (ex-info
+                      (str "annotation grammar (`@name(...)`) is retired at "
+                           "v1.0 (annotation-grammar-retirement 2026-08-30). "
+                           "Plugin manifest → `plugin: Plugin = Plugin(...)` "
+                           "at module-let scope (spec §7.2). Metadata (kind) "
+                           "→ body-shape inference (§3.3). Deprecation → "
+                           "comment / user convention.")
+                      {:kind :annotation-grammar-retired
+                       :line line-no :col (inc i) :char c}))
 
               (punctuation c)
               (recur (inc i) (conj! out [:punct (str c) line-no (inc i)]))

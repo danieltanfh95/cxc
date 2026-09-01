@@ -175,25 +175,15 @@
   "Top-level AST node kinds that produce a symbol-table entry."
   #{:record :def-atom :enum})
 
-(defn- metadata-annotations
-  "Return the parsed `@metadata(...)` annotations attached to a def.
-   Keep the normalized annotation AST intact here; F53 owns conversion
-   from expression nodes to the consumer-facing JSON value shape."
-  [node]
-  (into []
-        (filter #(= "metadata" (:name %)))
-        (:annotations node)))
-
 (defn- entry-for [node module]
+  ;; Annotation-grammar retired 2026-08-30. Prior L3c pipe-through of
+  ;; `:annotations` and `:metadata-annotations` deleted — F53 never
+  ;; consumed either end-to-end (verified during retirement audit).
+  ;; Kind info flows through body-shape inference (§3.3).
   (cond-> {:name    (:name node)
            :module  module
            :kind    (:node node)
            :node    node
-           ;; L3c NEW-INPUT — make annotation data a first-class symbol
-           ;; entry field instead of requiring downstream users to reach
-           ;; back through the full declaration AST.
-           :annotations          (vec (:annotations node))
-           :metadata-annotations (metadata-annotations node)
            :members (extract-members node)}
     ;; F38 auto-detect: only records carry :variant. Atoms are always
     ;; ObjC classes; enums are always ints. Recording it here lets

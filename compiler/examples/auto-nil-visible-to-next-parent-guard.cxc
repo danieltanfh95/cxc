@@ -8,7 +8,7 @@ def Parent:
     child:    Child = Child()
     raw_hits: Int   = 0
 
-    hits :< raw_hits
+    hits :- raw_hits
 
     -> alive
 

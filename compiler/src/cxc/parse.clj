@@ -1110,7 +1110,7 @@
   "F37 L6b (2026-08-24) — spec §3.4.6 static-fn shape:
      class function name(params) -> RetType: <block>
 
-   Distinguished from instance methods (`name :< expr`) by the
+   Distinguished from instance methods (`name :- expr`) by the
    `class function` prefix. Return type is required per spec (§3.4.6
    `class function from(source: Bytes) -> DecodeOutcome<Self>`) but
    parsed as optional here to match `parse-function-decl`'s
@@ -1603,7 +1603,7 @@
    the first real token on a line, so a valid `|:` follows NEWLINE, INDENT,
    or the DEDENT that closes a multiline predecessor. This deliberately
    rejects crammed forms such as
-   `foo :< bar |: pred = expr`."
+   `foo :- bar |: pred = expr`."
   [tokens pos]
   (or (zero? pos)
       (when-let [prev (peek-tok tokens (dec pos))]
@@ -1703,8 +1703,8 @@
 
 ;; ---------------------------------------------------------------------------
 ;; Observables:
-;;   Zero-arg:   <name> :< <expr>
-;;   Parametric: <name>(<param-list>) :< <expr>       # F67 L2
+;;   Zero-arg:   <name> :- <expr>
+;;   Parametric: <name>(<param-list>) :- <expr>       # F67 L2
 ;;   Declaration-flavored assignment (§1.11). The colon-less-than glyph.
 ;;   Parametric observables (Proposal G L2) replace reader methods: any
 ;;   pure computation over self's fields with args now goes here rather
@@ -1715,7 +1715,7 @@
   ;; F37 L8 — spec-committed method names that tokenize as reserved
   ;; words (`import X as Y` / `from X import`) also participate in the
   ;; user-callable surface. Accept them at observable declaration
-  ;; position so a user's `as() :< bytes-expr` on a record shadows the
+  ;; position so a user's `as() :- bytes-expr` on a record shadows the
   ;; synthesized F37 `.as() -> Bytes` default per spec §3.3.2 rule 6.
   ;; Mirrors the dot-branch's `:ident` / `:kw` acceptance for method
   ;; calls (`p.as()`).
@@ -1723,9 +1723,9 @@
 
 (defn- signature-return-type-start?
   "True when `pos` begins a user type name. Corvid type names are
-   TitleCase; this disambiguates `op() :< ReturnType` from a bodyful
+   TitleCase; this disambiguates `op() :- ReturnType` from a bodyful
    observable whose entire expression is a bare value identifier such as
-   `op() :< cached`."
+   `op() :- cached`."
   [tokens pos]
   (when (at? tokens pos :ident)
     (let [nm (t-value (peek-tok tokens pos))]
@@ -1746,13 +1746,13 @@
         [params p] (if has-param-list?
                      (parse-param-list-parens tokens p)
                      [[] p])
-        [_ p]      (expect tokens p :glyph ":<")
-        ;; The existing inferred form (`name :< expr`) remains unchanged.
-        ;; The explicit form is `name :< ReturnType = expr`. Observation-
+        [_ p]      (expect tokens p :glyph ":-")
+        ;; The existing inferred form (`name :- expr`) remains unchanged.
+        ;; The explicit form is `name :- ReturnType = expr`. Observation-
         ;; scoped propositions occupy an indented body between the declared
         ;; return type and `= expr`, per §Propositions:
         ;;
-        ;;   name :< ReturnType
+        ;;   name :- ReturnType
         ;;       |: predicate
         ;;   = expression
         [candidate-type type-end]
@@ -2158,7 +2158,7 @@
 ;;     - `use <name>: <Type>`                        → normalized use section
 ;;     - `<ident>: <Type>`                           → direct field
 ;;     - `|:`                                        → proposition
-;;     - `<ident> :<` or `<ident>(...) :<`           → observable (zero-arg or parametric)
+;;     - `<ident> :-` or `<ident>(...) :-`           → observable (zero-arg or parametric)
 ;;     - `<ident|self> <:|<|` OR `<ident> ->` OR `->` → transition
 ;; ---------------------------------------------------------------------------
 
@@ -2181,11 +2181,11 @@
 
 (defn- looks-like-observable? [tokens pos]
   (and (observable-name-token? tokens pos)
-       (or (at? tokens (inc pos) :glyph ":<")
-           ;; F67 L2 — parametric observable: `<name>(params) :<`
+       (or (at? tokens (inc pos) :glyph ":-")
+           ;; F67 L2 — parametric observable: `<name>(params) :-`
            (and (at? tokens (inc pos) :punct "(")
                 (when-let [after-close (scan-past-parens tokens (inc pos))]
-                  (at? tokens after-close :glyph ":<"))))))
+                  (at? tokens after-close :glyph ":-"))))))
 
 ;; F14 / F67 L3 — the legacy `-> handler(args):` sugar (F14) is retired
 ;; under Proposal G's class-body collapse. The migration target is the
@@ -2222,8 +2222,8 @@
   "F67 L5 — top-level field declaration at atom/record body:
      `<lowercase-ident> : <TypeRef> [= <expr>]`
    Distinguished from transition source-phase (`<ident> <:` / `<ident> ->`)
-   and from observable (`<ident> :<` / `<ident>(...) :<`) by requiring
-   `:punct \":\"` at position 1 (observables use `:glyph \":<\"`,
+   and from observable (`<ident> :-` / `<ident>(...) :-`) by requiring
+   `:punct \":\"` at position 1 (observables use `:glyph \":-\"`,
    transitions use `:glyph`). Section keywords are `:kw`, not `:ident`,
    so they never match here.
 
@@ -2241,14 +2241,14 @@
 ;;
 ;; A `computed:` section body accepts field-shaped decls `name: T = expr`
 ;; (or a bare `name = expr` — type inferred). Each entry is rewritten to a
-;; zero-arg observable `name() :< expr` at parse time — the field_getter
+;; zero-arg observable `name() :- expr` at parse time — the field_getter
 ;; generator described in the F8 plan §Landing 3a. Users get field-style
 ;; ergonomics (declarative + typed) but the compiler treats it as a getter
 ;; so cross-atom reads always recompute from the current state (spec
 ;; §4.10.4.1 Computed contract).
 ;;
 ;; MVP scope: only zero-param computed fields. Parametric readers keep
-;; using the top-level `name(args) :< expr` observable form. Setter
+;; using the top-level `name(args) :- expr` observable form. Setter
 ;; generation (`@compile_error_setter`) is naturally covered by the
 ;; existing "no setter on observable" behavior — a user write to a
 ;; computed field lowers as an assignment to an observable name, which
@@ -2519,13 +2519,18 @@
         (at? tokens p :newline)
         (recur body (inc p))
 
-        ;; L3a — annotations are declaration prefixes, not def-body items.
-        ;; Keep the rejection here targeted so an indented `@name(...)`
-        ;; cannot fall through to the generic body-item diagnostic.
+        ;; Annotation grammar retired 2026-08-30 (annotation-grammar-
+        ;; retirement wave). `@name(...)` no longer parses anywhere;
+        ;; targeted diagnostic points at the replacement surfaces so
+        ;; pre-retirement code lands on a migration hint instead of a
+        ;; generic "unexpected character" error.
         (at? tokens p :annotation-prefix)
         (fail! tokens p
-               (str "annotations are top-level only in L3a. Move `@name(...)` "
-                    "above `def " name ":` so it annotates the declaration."))
+               (str "annotation grammar (`@name(...)`) is retired at v1.0 "
+                    "(annotation-grammar-retirement 2026-08-30). "
+                    "Plugin manifest → `plugin: Plugin = Plugin(...)` at "
+                    "module-let scope (spec §7.2). Metadata (kind) → body-shape "
+                    "inference (§3.3). Deprecation → comment / user convention."))
 
         ;; L2b — direct def-body proposition (class-level invariant).
         ;; `invariants:` is hard-retired; this is the sole invariant
@@ -2612,7 +2617,7 @@
                (str "F67 L4: `function` keyword inside `def " name "` body is "
                     "retired (Proposal G class-body collapse). Migrate the "
                     "method by category:\n\n"
-                    "  - reader → observable: `name(args) :< <expr>`\n"
+                    "  - reader → observable: `name(args) :- <expr>`\n"
                     "  - void   → transition: `* <: name(args) -> * then: <body>`\n"
                     "  - writer → transition: `* <: name(args) -> * then: <update>`\n\n"
                     "Utility functions unrelated to `self` belong at module "
@@ -2627,7 +2632,7 @@
                     "retired (Proposal G class-body collapse). Migrate the "
                     "method by category:\n\n"
                     "  - reader → observable: `" (t-value (peek-tok tokens (inc p)))
-                    "(args) :< <expr>`\n"
+                    "(args) :- <expr>`\n"
                     "  - void   → transition: `* <: " (t-value (peek-tok tokens (inc p)))
                     "(args) -> * then: <body>`\n"
                     "  - writer → transition: `* <: " (t-value (peek-tok tokens (inc p)))
@@ -2682,7 +2687,7 @@
                (str "`accepts:` and `accepts name(...)` are retired at "
                     "v1.0. Declare protocol members directly in `def " name
                     "` using `<: name(args)` for async receives or "
-                    "`name(args) :< ReturnType` for sync observations."))
+                    "`name(args) :- ReturnType` for sync observations."))
 
         ;; F68 L2 (Proposal H) — `case <ident>` prefix marks an enum
         ;; case. Presence of any `:enum-case` node in the body triggers
@@ -2773,7 +2778,7 @@
           (recur (conj body t) (skip-newlines tokens p2)))
 
         :else
-        (fail! tokens p "expected direct use (`use name: Type`), field decl (`name: Type [= default]`), own-line `|:` proposition, on_nil:, observable/signature (`name[(args)] :< expr-or-type`), async signature (`<: name(args)`), or transition inside def-atom body")))))
+        (fail! tokens p "expected direct use (`use name: Type`), field decl (`name: Type [= default]`), own-line `|:` proposition, on_nil:, observable/signature (`name[(args)] :- expr-or-type`), async signature (`<: name(args)`), or transition inside def-atom body")))))
 
 ;; ---------------------------------------------------------------------------
 ;; F68 L1 (Proposal H) — structural detection helpers for `def` reshape.
@@ -2877,7 +2882,7 @@
              (str "signature-only protocol `" (:name def-atom) "` mixes "
                   "protocol declarations with state, transitions, or other "
                   "concrete body items. A protocol body may contain only "
-                  "`<: name(args)`, `name(args) :< ReturnType`, and "
+                  "`<: name(args)`, `name(args) :- ReturnType`, and "
                   "bodyful observable defaults.")))
     {:node          :class
      :name          (:name def-atom)
@@ -2918,7 +2923,8 @@
     ;;
     ;; F16 L2 — if any case carries `:raw-value`, all cases must.
     ;; The raw-type is the smallest fitting unsigned integer type.
-    ;; Overriding via `@metadata(raw_type: ...)` is a follow-on landing.
+    ;; A raw-type override surface (if ever needed) awaits a design;
+    ;; the prior `@metadata(raw_type: ...)` proposal retired 2026-08-30.
     (let [with-raw    (filterv :raw-value cases)
           without-raw (remove :raw-value cases)]
       (when (and (seq with-raw) (seq without-raw))
@@ -2967,7 +2973,7 @@
 ;; legal-kinds) are all deleted; the sole class/protocol/record/enum
 ;; surface is `def X:` with structural detection in parse-def-atom.
 ;; Protocol members now parse directly in `def` bodies as `<: name(args)`
-;; and `name(args) :< ReturnType`. `accepts:` and `accepts name(...)` are
+;; and `name(args) :- ReturnType`. `accepts:` and `accepts name(...)` are
 ;; hard-retired; conformance parsing below remains for `extend` blocks.
 ;; ---------------------------------------------------------------------------
 
@@ -3059,7 +3065,7 @@
         :else
         (fail! tokens p
                (str "`replace` inside `extend " target "` must "
-                    "prefix an observable (`replace name[(args)] :< expr`) "
+                    "prefix an observable (`replace name[(args)] :- expr`) "
                     "or a wildcard self-transition (`replace * <: msg(args) "
                     "-> * then: <body>`). See §3.3.2 rule 4."))))
 
@@ -3175,7 +3181,7 @@
         (if-let [[sec p2] (parse-extend-section tokens p target)]
           (recur (conj body sec) (skip-newlines tokens p2))
           (fail! tokens p
-                 (str "expected observable (`name[(args)] :< expr`), "
+                 (str "expected observable (`name[(args)] :- expr`), "
                       "transition (`* <: msg(args) -> * …`), own-line `|:`, "
                       "conforms:, or dedent in `extend " target "` body")))))))
 
@@ -3321,75 +3327,23 @@
         [{:node :import :from dotted :as alias} p]))))
 
 ;; ---------------------------------------------------------------------------
-;; L3a — top-level annotations
+;; Annotation grammar retired 2026-08-30 (annotation-grammar-retirement
+;; wave). `parse-annotation` + `parse-annotated-def` deleted; the L3a
+;; `@name(args)` grammar has no parser entry point at v1.0. The
+;; `:annotation-prefix` lex token is also retired (see cxc.lex); `@`
+;; at any position throws a targeted retirement diagnostic. Prior
+;; consumers:
+;;
+;; - Q10-D `@plugin(...)` on `module <name>` → reversed; F73 (module
+;;   header retirement) stands unconditionally. Plugin manifest lives
+;;   as `plugin: Plugin = Plugin(...)` module-let (see spec §7.2).
+;; - L3c `@metadata(...)` → retired; kind info via body-shape
+;;   inference (§3.3). F53 never end-to-end consumed the pipe (drift).
+;; - L3b `@deprecated(...)` → retired; K3 walker deleted (cxc.build).
+;;   Deprecation expressed as comment/user convention at v1.0.
+;;
+;; See decisions-frozen-2026-08-30.md for the retirement rationale.
 ;; ---------------------------------------------------------------------------
-
-(defn- parse-annotation
-  "Parse one own-line `@name(args...)` annotation. Argument syntax and AST
-   shape intentionally match ordinary call arguments: positional entries are
-   `{:kind :positional :value ...}` and keyword entries are
-   `{:kind :named :name ... :value ...}`. Recognition of annotation names is
-   semantic work for later landings; this parser accepts any identifier-like
-   name, including lexer-reserved words such as `deprecated`."
-  [tokens pos]
-  (let [[_ p] (expect tokens pos :annotation-prefix)
-        name-tok (peek-tok tokens p)
-        _ (when-not (#{:ident :kw} (t-kind name-tok))
-            (fail! tokens p "expected an annotation name after `@`"))
-        name (t-value name-tok)
-        [args p] (parse-args-parens tokens (inc p))
-        [_ p] (expect tokens p :newline)]
-    [{:node :annotation :name name :args args} p]))
-
-(defn- parse-annotated-def
-  "Parse one or more annotation lines and attach them, in source order, to
-   the following declaration. In the consolidated surface, record/enum/
-   protocol/agent kinds all enter through `def`, so attaching after
-   `parse-def-atom` preserves one normalized AST location.
-
-   Q10-D carve-out (2026-08-30, spec §7.2.1) — when the annotation set
-   contains a `@plugin` annotation, `module <name>` is also a legal
-   follow-target. The `module` declaration returns a `:module` AST node
-   with the annotations attached; downstream (F75 manifest resolver)
-   consumes the `@plugin` args as the plugin manifest. Any other
-   annotation set still requires a `def` follow-target (existing L3a
-   attachment rule)."
-  [tokens pos]
-  (loop [annotations [] p pos]
-    (if (at? tokens p :annotation-prefix)
-      (let [[annotation p2] (parse-annotation tokens p)]
-        (recur (conj annotations annotation) (skip-newlines tokens p2)))
-      (cond
-        (at? tokens p :kw "def")
-        (let [[declaration p2] (parse-def-atom tokens p)]
-          [(assoc declaration :annotations annotations) p2])
-
-        ;; Q10-D — `@plugin(...)` may attach to `module <name>`; the
-        ;; annotation's presence is the authorization gate for the
-        ;; header (which stays retired for regular modules per F73).
-        (and (at? tokens p :kw "module")
-             (some #(= "plugin" (:name %)) annotations))
-        (let [[declaration p2] (parse-module-decl-internal tokens p)]
-          [(assoc declaration :annotations annotations) p2])
-
-        ;; `module` seen but no `@plugin` in the annotation set —
-        ;; targeted diagnostic pointing at the Q10-D gate.
-        (at? tokens p :kw "module")
-        (fail! tokens p
-               (str "`module <name>` header requires a `@plugin(...)` "
-                    "annotation on the preceding line (Q10-D carve-out, "
-                    "spec §7.2.1). Regular modules take their identity "
-                    "from the file path (F73, 2026-08-20). If this is a "
-                    "plugin module, add `@plugin(name: ..., version: ..., "
-                    "requires: ..., ...)` above the `module` line. "
-                    "Otherwise delete the `module` line."))
-
-        :else
-        (fail! tokens p
-               (str "top-level annotation must be followed by a `def` "
-                    "declaration (or `module <name>` when the annotation "
-                    "set contains `@plugin(...)`, per Q10-D §7.2.1). "
-                    "Annotations cannot stand alone."))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Top-level dispatch
@@ -3421,7 +3375,6 @@
       (at? tokens p :kw "from")    (parse-from-import tokens p)
       (at? tokens p :kw "import")  (parse-import tokens p)
       (at? tokens p :kw "let")     (parse-module-let tokens p)
-      (at? tokens p :annotation-prefix) (parse-annotated-def tokens p)
       (at? tokens p :kw "def")     (parse-def-atom tokens p)
 
       ;; F9 L3 / L2b — `extend Foo:` at top level. Extension body is
@@ -3437,16 +3390,22 @@
                   "For closed sum types use `enum` with associated values; "
                   "for open protocols (any type may conform), drop `sealed`."))
       ;; `extern <Name>:` section retired at v1.0 (spec §1.12, §2335).
-      ;; FFI is a capability atom (Extern) provisioned to stdlib shims
-      ;; via `use extern: Extern`; foreign symbols are declared in
-      ;; per-target prelude `foreign library "..."` blocks (§1.14).
-      ;; Both are deferred to Phase D (see compiler/design/spec-drift-audit.md).
+      ;; FFI post-R11 (2026-09-01) is the `Plugin` capability atom
+      ;; provisioned to shim atoms via `use plugin: Plugin` inside
+      ;; modules that carry a `def plugin:` marker; foreign symbols
+      ;; are declared as nested `foreign "..."` sections inside the
+      ;; enclosing `def plugin:` body (§1.12, §1.14, §7.2.1, R7+R11).
+      ;; `Extern` and `foreign library "..."` module-scope grammar
+      ;; retired. Parser landing for `def plugin:` + nested `foreign`
+      ;; is future (F74/F75).
       (and (at? tokens p :ident)
            (= "extern" (t-value (peek-tok tokens p))))
       (fail! tokens p
              (str "`extern` as a top-level section keyword is retired at v1.0. "
-                  "FFI moves to prelude `foreign library` blocks + the "
-                  "`Extern` capability atom. See spec §1.12 and §1.14."))
+                  "FFI is a `Plugin` capability atom (R11 2026-09-01) provisioned "
+                  "to shims inside `def plugin:` modules; foreign symbols nest "
+                  "inside the plugin body (`foreign \"libname\":` sections). "
+                  "See spec §1.12, §1.14, §7.2.1."))
 
       ;; F69 L3 — `record` / `enum` / `class` as declaration-position
       ;; sugar retired at v1.0 (spec §3.3, F69 atom unification 2026-08-18).

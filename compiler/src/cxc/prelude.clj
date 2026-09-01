@@ -82,6 +82,18 @@
    {:name :geom    :kind :shared :names ["Position"]}
    {:name :input   :kind :shared :names ["Key" "TestKeyboardInput"]}
    {:name :system  :kind :shared :names ["SystemPanic" "Uncaught"]}
+   ;; SemVer + VersionRange are used by every plugin's `def plugin:`
+   ;; manifest (`version: SemVer!` / `compat: VersionRange!` fields).
+   ;; Centralized here so plugin authors never import. Landed 2026-08-31
+   ;; R8 (plugin-shape consolidation wave); see
+   ;; decisions-frozen-2026-08-31-plugin-shape.md.
+   {:name :semver  :kind :shared :names ["SemVer" "VersionRange"]}
+   ;;
+   ;; No `Plugin` prelude type at v1.0 — plugin marker is `def plugin:`
+   ;; record with reserved name at module scope; body admits fields +
+   ;; nested `foreign "..."` sections per 2026-08-31 R7 (plugin-shape
+   ;; consolidation wave, supersedes R2's fields-only invariant).
+   ;; Manifest schema lives in F75 introspection, not a prelude type.
    {:name :random  :kind :target :names ["Random"]}
    {:name :clock   :kind :target :names ["Clock"]}
    {:name :io      :kind :target :names ["Console"]}])

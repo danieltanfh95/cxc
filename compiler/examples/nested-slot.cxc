@@ -1,7 +1,7 @@
 def Paddle:
     raw_y: Int = 7
 
-    y :< raw_y
+    y :- raw_y
 
     -> running
 
@@ -10,7 +10,7 @@ def Paddle:
 def Game:
     paddle: Paddle = Paddle()
 
-    y_of_paddle :< paddle.y
+    y_of_paddle :- paddle.y
 
 def main:
     -> running

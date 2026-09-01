@@ -2,7 +2,7 @@ def Box:
     w: Int = 3
     h: Int = 4
 
-    scaled_area(sx: Int, sy: Int) :< (w * sx) * (h * sy)
+    scaled_area(sx: Int, sy: Int) :- (w * sx) * (h * sy)
 
     -> running
 

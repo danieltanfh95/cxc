@@ -519,7 +519,7 @@ def main:
 
 (deftest record-observable-lowers-to-c-function
   (testing "F67 L4 — record parametric observable → :c-function under :functions with mangled name and self as first param (replaces reader methods per Proposal G class-body collapse)."
-    (let [prog (lower-src "def V:\n    x: Float\n    y: Float\n\n    plus(other: V) :< V(x: self.x + other.x, y: self.y + other.y)\n\ndef main:\n    -> running\n        then: print(V(x: 1.0, y: 2.0).plus(V(x: 3.0, y: 4.0)).x)\n")
+    (let [prog (lower-src "def V:\n    x: Float\n    y: Float\n\n    plus(other: V) :- V(x: self.x + other.x, y: self.y + other.y)\n\ndef main:\n    -> running\n        then: print(V(x: 1.0, y: 2.0).plus(V(x: 3.0, y: 4.0)).x)\n")
           f    (first (:functions prog))]
       (is (= :c-function (:node f)))
       (is (= "V_plus" (:name f)))
@@ -610,7 +610,7 @@ def main:
 
 (deftest atom-observable-lowers-to-objc-method
   (testing "F67 L4 — def-atom parametric observable → :objc-method under class :methods (replaces reader methods per Proposal G)."
-    (let [prog (lower-src "def Counter:\n    n: Int! = 10\n\n    bump() :< n + 1\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        then: print(Counter().bump())\n")
+    (let [prog (lower-src "def Counter:\n    n: Int! = 10\n\n    bump() :- n + 1\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        then: print(Counter().bump())\n")
           cls  (first (:classes prog))
           m    (first (filter #(= "bump" (:selector %)) (:methods cls)))]
       (is (= :objc-method (:node m)))
@@ -620,7 +620,7 @@ def main:
 
 (deftest atom-observable-call-lowers-to-objc-msg
   (testing "counter.bump() → :objc-msg with the receiver as :recv and bare selector (observable call site, F67 L4)."
-    (let [prog (lower-src "def Counter:\n    n: Int! = 10\n\n    bump() :< n + 1\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        then: print(Counter().bump())\n")
+    (let [prog (lower-src "def Counter:\n    n: Int! = 10\n\n    bump() :- n + 1\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        then: print(Counter().bump())\n")
           call (first (main-work-body prog))
           msg  (get-in call [:args 1])]
       (is (= :objc-msg (:node msg)))
@@ -630,7 +630,7 @@ def main:
 
 (deftest atom-observable-multiarg-selector
   (testing "plus(other: Int) → selector `plusWithother:` and matching call (parametric observable selector construction, F67 L2/L4)."
-    (let [prog (lower-src "def Counter:\n    n: Int! = 10\n\n    plus(other: Int) :< n + other\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        then: print(Counter().plus(5))\n")
+    (let [prog (lower-src "def Counter:\n    n: Int! = 10\n\n    plus(other: Int) :- n + other\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        then: print(Counter().plus(5))\n")
           m    (first (filter #(= "plusWithother:" (:selector %))
                               (:methods (first (filter #(= "Counter" (:name %)) (:classes prog))))))
           call (first (main-work-body prog))
@@ -679,7 +679,7 @@ def main:
 (deftest f40-observable-default-computed-rejected
   (testing "parametric observable with `factor: Int = 2 * 2` default fails — non-const check runs on observable params too."
     (let [ex (try
-               (lower-src "def V:\n    x: Int\n\n    scaled(factor: Int = 2 * 2) :< x * factor\n\ndef main:\n    -> running\n        then: print(V(x: 5).scaled())\n")
+               (lower-src "def V:\n    x: Int\n\n    scaled(factor: Int = 2 * 2) :- x * factor\n\ndef main:\n    -> running\n        then: print(V(x: 5).scaled())\n")
                nil
                (catch clojure.lang.ExceptionInfo e e))]
       (is ex "expected exception")
@@ -747,7 +747,7 @@ def main:
 
 (deftest f40-atom-observable-accepts-named-args
   (testing "counter.plus(other: 7) — named arg on atom observable resolves (F67 L4 parametric observable arg dispatch)."
-    (let [prog (lower-src "def Counter:\n    n: Int! = 10\n\n    plus(other: Int) :< n + other\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        then: print(Counter().plus(other: 7))\n")
+    (let [prog (lower-src "def Counter:\n    n: Int! = 10\n\n    plus(other: Int) :- n + other\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        then: print(Counter().plus(other: 7))\n")
           call (first (main-work-body prog))
           msg  (get-in call [:args 1])]
       (is (= "plusWithother:" (:selector msg)))
@@ -756,7 +756,7 @@ def main:
 
 (deftest f40-atom-observable-defaults-fill-when-omitted
   (testing "counter.plus() with other defaulted uses default (F67 L4)."
-    (let [prog (lower-src "def Counter:\n    n: Int! = 10\n\n    plus(other: Int = 3) :< n + other\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        then: print(Counter().plus())\n")
+    (let [prog (lower-src "def Counter:\n    n: Int! = 10\n\n    plus(other: Int = 3) :- n + other\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        then: print(Counter().plus())\n")
           call (first (main-work-body prog))
           msg  (get-in call [:args 1])]
       (is (= "plusWithother:" (:selector msg)))
@@ -765,7 +765,7 @@ def main:
 
 (deftest f40-atom-observable-named-out-of-order-reorders
   (testing "counter.plus3(c: 3, a: 1, b: 2) — reordered to decl order (F67 L4 parametric observable)."
-    (let [prog (lower-src "def Counter:\n    n: Int! = 0\n\n    plus3(a: Int, b: Int, c: Int) :< n + a + b + c\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        then: print(Counter().plus3(c: 3, a: 1, b: 2))\n")
+    (let [prog (lower-src "def Counter:\n    n: Int! = 0\n\n    plus3(a: Int, b: Int, c: Int) :- n + a + b + c\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        then: print(Counter().plus3(c: 3, a: 1, b: 2))\n")
           call (first (main-work-body prog))
           msg  (get-in call [:args 1])
           arg-values (mapv :value (:args msg))]
@@ -773,7 +773,7 @@ def main:
 
 (deftest f40-record-observable-defaults-fill-when-omitted
   (testing "record parametric observable with param default inserts default at call site (F67 L4)."
-    (let [prog (lower-src "def V:\n    x: Int!\n\n    scaled(factor: Int = 4) :< x * factor\n\ndef main:\n    -> running\n        then: print(V(x: 5).scaled())\n")
+    (let [prog (lower-src "def V:\n    x: Int!\n\n    scaled(factor: Int = 4) :- x * factor\n\ndef main:\n    -> running\n        then: print(V(x: 5).scaled())\n")
           call (first (main-work-body prog))
           inner (get-in call [:args 1])]
       (is (= :call (:node inner)))
@@ -785,7 +785,7 @@ def main:
 (deftest f40-observable-unknown-named-arg-rejected
   (testing "atom observable with unknown named arg fails (F67 L4)."
     (let [ex (try
-               (lower-src "def Counter:\n    n: Int = 10\n\n    plus(other: Int) :< n + other\n\ndef main:\n    -> running\n        then: print(Counter().plus(bogus: 5))\n")
+               (lower-src "def Counter:\n    n: Int = 10\n\n    plus(other: Int) :- n + other\n\ndef main:\n    -> running\n        then: print(Counter().plus(bogus: 5))\n")
                nil
                (catch clojure.lang.ExceptionInfo e e))]
       (is ex "expected exception")
@@ -843,7 +843,7 @@ def main:
 
 (deftest is-nil-emits-pointer-eq
   (testing "`x is nil` → `x == nil` at emit layer (pointer identity in ObjC)"
-    (let [prog (lower-src "def Counter:\n    raw_other: Counter = nil\n\n    other :< raw_other\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        then: print(Counter().other is nil)\n")
+    (let [prog (lower-src "def Counter:\n    raw_other: Counter = nil\n\n    other :- raw_other\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        then: print(Counter().other is nil)\n")
           call (first (main-work-body prog))
           expr (get-in call [:args 1])]
       (is (= :binop (:node expr)))
@@ -998,7 +998,7 @@ def main:
 
 (deftest method-call-lowers-to-c-function-call
   (testing "v.plus(other) → :call {:fn V_plus :args [v other]} — F67 L4 parametric observable dispatch"
-    (let [prog (lower-src "def V:\n    x: Float!\n    y: Float!\n\n    plus(other: V) :< V(x: self.x + other.x, y: self.y + other.y)\n\ndef main:\n    -> running\n        then: print(V(x: 1.0, y: 2.0).plus(V(x: 3.0, y: 4.0)).x)\n")
+    (let [prog (lower-src "def V:\n    x: Float!\n    y: Float!\n\n    plus(other: V) :- V(x: self.x + other.x, y: self.y + other.y)\n\ndef main:\n    -> running\n        then: print(V(x: 1.0, y: 2.0).plus(V(x: 3.0, y: 4.0)).x)\n")
           print-call (first (get-in prog [:main :body]))
           field-node (get-in print-call [:args 1])
           plus-call  (:target field-node)]
@@ -1249,7 +1249,7 @@ def main:
   (testing "Phase D F36a Landing 1b — width variants (`[:int 32]`/`[:uint 8]`/`[:float 32]`) carry their C type in metadata so `type-kw->c-type` picks the correct width for observable return types. Prior to 1b, all integer widths collapsed to `int64_t` at observable boundary regardless of the source width."
     (let [prog (lower-src "def Counter:
     n: UInt8! = 0
-    small_next :< n
+    small_next :- n
 
     -> running
 
@@ -1303,7 +1303,7 @@ def main:
       (is (= "_Cxc_Optional_Bool"   (field-c-type "b"))  "Bool uses Optional value storage"))))
 
 (deftest non-numeric-substrate-lowers-to-correct-c-types
-  (testing "Phase D F36a Landing 3a — spec §3.1 non-numeric substrate (Any/Bytes). Bytes and Any resolve as reference-typed field storage. Unit/Never return-type mapping to `void` is not testable under F67 L4 observables (no explicit return type annotation); tracked as a follow-on for a `name(args) -> T :< expr` observable-return-type surface."
+  (testing "Phase D F36a Landing 3a — spec §3.1 non-numeric substrate (Any/Bytes). Bytes and Any resolve as reference-typed field storage. Unit/Never return-type mapping to `void` is not testable under F67 L4 observables (no explicit return type annotation); tracked as a follow-on for a `name(args) -> T :- expr` observable-return-type surface."
     (let [prog (lower-src "def NonNumeric:
     payload: Bytes
     opaque:  Any
@@ -1508,7 +1508,7 @@ def main:
     |: 0 <= v
     |: v <= 150
 
-    noop() :< v
+    noop() :- v
 
     -> running
 
@@ -1754,7 +1754,7 @@ def main:
          (lower-src "def R:
     n: Int!
 
-    first() :< self.n[0]
+    first() :- self.n[0]
 
 def main:
     -> running
@@ -1766,7 +1766,7 @@ def main:
     (let [prog (lower-src "def R:
     s: String
 
-    first_char() :< self.s[0]
+    first_char() :- self.s[0]
 
 def main:
     -> running
@@ -1884,7 +1884,7 @@ def main:
                                "    x: Int!\n\n"
                                "def Outer:\n"
                                "    i: Inner!\n\n"
-                               "    as() :< i.as()\n\n"
+                               "    as() :- i.as()\n\n"
                                "def main:\n"
                                "    -> running\n        then: print(0)\n"))
           fn-names (into #{} (map :name (:functions prog)))]
@@ -1896,10 +1896,10 @@ def main:
           "Outer's user observable is emitted as `Outer_as`"))))
 
 (deftest f37-l8-parser-accepts-as-at-observable-declaration-position
-  (testing "F37 L8 — the parser accepts `as` as an observable name on a record. Pre-L8 the lexer tokenizes `as` as `:kw` (reserved for `import X as Y`), and `parse-observable` demanded `:ident`, so `as() :< …` was a syntax error. L8 threads a whitelist (`as`, `from`) through both `looks-like-observable?` and `parse-observable`."
+  (testing "F37 L8 — the parser accepts `as` as an observable name on a record. Pre-L8 the lexer tokenizes `as` as `:kw` (reserved for `import X as Y`), and `parse-observable` demanded `:ident`, so `as() :- …` was a syntax error. L8 threads a whitelist (`as`, `from`) through both `looks-like-observable?` and `parse-observable`."
     (let [prog (lower-src (str "def V:\n"
                                "    n: Int!\n\n"
-                               "    as() :< n\n\n"
+                               "    as() :- n\n\n"
                                "def main:\n"
                                "    -> running\n        then: print(0)\n"))
           v-fn (first (filter #(= "V_as" (:name %)) (:functions prog)))]
@@ -1911,7 +1911,7 @@ def main:
   (testing "F37 L8 — a user `as()` observable whose inferred return is NOT Bytes still suppresses synthesis (name-based shadow). Return-type-differentiated dispatch (§3.10.3 trait-qualified) is a deeper landing; the L8 shadow rule keys on name to match how §3.3.2 rule 6 is worded (\"if the class defines `as` …\"). If a user wants BOTH a Bytes-typed `as()` and an Int-typed one, they can name them differently or wait for the trait-qualified follow-on."
     (let [prog (lower-src (str "def V:\n"
                                "    n: Int!\n\n"
-                               "    as() :< n\n\n"
+                               "    as() :- n\n\n"
                                "def main:\n"
                                "    -> running\n        then: print(0)\n"))
           fn-names (into #{} (map :name (:functions prog)))]
@@ -2386,12 +2386,12 @@ def main:
           "outer dispatches with start_off + consumed_out"))))
 
 (deftest f67-l4a-zero-arg-record-observable-lowers-as-c-function
-  (testing "F67 L4a: `name :< expr` on a record lowers as a `Record_name(self)` C function. Return type inferred from the expression (int here); bare field refs (`x`, `y`) auto-rewrite to `self.x`, `self.y`."
+  (testing "F67 L4a: `name :- expr` on a record lowers as a `Record_name(self)` C function. Return type inferred from the expression (int here); bare field refs (`x`, `y`) auto-rewrite to `self.x`, `self.y`."
     (let [prog (lower-src "def V:
     x: Int
     y: Int
 
-    magnitude_sq :< x * x + y * y
+    magnitude_sq :- x * x + y * y
 
 def main:
     -> running
@@ -2404,12 +2404,12 @@ def main:
       (is (= "V" (:c-type (first (:params f))))))))
 
 (deftest f67-l4a-parametric-record-observable-lowers-with-args
-  (testing "F67 L4a: `name(args) :< expr` on a record lowers as `Record_name(self, args...)` C function. Args become C params after self."
+  (testing "F67 L4a: `name(args) :- expr` on a record lowers as `Record_name(self, args...)` C function. Args become C params after self."
     (let [prog (lower-src "def V:
     x: Int
     y: Int
 
-    scaled(k: Int) :< (x + y) * k
+    scaled(k: Int) :- (x + y) * k
 
 def main:
     -> running
@@ -3312,7 +3312,7 @@ def main:
 (deftest f9-l2-protocol-lowers-and-registers
   (testing "L5 — a signature-only def lowers cleanly and its sync/async declarations populate the unchanged internal :accepts protocol map."
     (let [prog (lower-src (str "def P:\n"
-                               "    foo(x: Int) :< Int\n"
+                               "    foo(x: Int) :- Int\n"
                                "    <: bar(s: String)\n"
                                "\n"
                                "def main:\n"
@@ -3330,9 +3330,9 @@ def main:
 (deftest f9-l2-protocol-with-default-observables-registered
   (testing "F9 Landing 2 + F67 L4 — protocols may carry default observable bodies; L2 stores them under :defaults for L6 (inheritance) to consume. Under Proposal G class-body collapse, defaults are observables, not `methods:` entries."
     (let [prog (lower-src (str "def P:\n"
-                               "    greet() :< Int\n"
+                               "    greet() :- Int\n"
                                "\n"
-                               "    greet() :< 42\n"
+                               "    greet() :- 42\n"
                                "\n"
                                "def main:\n"
                                "    -> running\n"
@@ -3348,8 +3348,8 @@ def main:
          clojure.lang.ExceptionInfo
          #"declares signature `foo` more than once"
          (lower-src (str "def P:\n"
-                         "    foo(x: Int) :< Int\n"
-                         "    foo(y: String) :< Bool\n"
+                         "    foo(x: Int) :- Int\n"
+                         "    foo(y: String) :- Bool\n"
                          "\n"
                          "def main:\n"
                          "    -> running\n"
@@ -3361,10 +3361,10 @@ def main:
                                "    n: Int\n"
                                "\n"
                                "extend Widget:\n"
-                               "    bar() :< 1\n"
+                               "    bar() :- 1\n"
                                "\n"
                                "extend Widget:\n"
-                               "    baz() :< 2\n"
+                               "    baz() :- 2\n"
                                "\n"
                                "def main:\n"
                                "    -> running\n"
@@ -3380,7 +3380,7 @@ def main:
          clojure.lang.ExceptionInfo
          #"targets unknown class `BogusFoo`.*§3.3.2"
          (lower-src (str "extend BogusFoo:\n"
-                         "    bar() :< 1\n"
+                         "    bar() :- 1\n"
                          "\n"
                          "def main:\n"
                          "    -> running\n"
@@ -3389,10 +3389,10 @@ def main:
 (deftest f9-l3-extension-may-target-protocol
   (testing "F9 Landing 3 — `extend P:` where P is a protocol is legal at L3: extension-env just records; L6 handles default-method inheritance from extension observables (F67 L4)."
     (let [prog (lower-src (str "def P:\n"
-                               "    foo(x: Int) :< Int\n"
+                               "    foo(x: Int) :- Int\n"
                                "\n"
                                "extend P:\n"
-                               "    bar() :< 1\n"
+                               "    bar() :- 1\n"
                                "\n"
                                "def main:\n"
                                "    -> running\n"
@@ -3424,10 +3424,10 @@ def main:
                         #(lower-src (str "def Widget:\n"
                                          "    n: Int\n"
                                          "\n"
-                                         "    own_m() :< 1\n"
+                                         "    own_m() :- 1\n"
                                          "\n"
                                          "extend Widget:\n"
-                                         "    ext_m() :< 2\n"
+                                         "    ext_m() :- 2\n"
                                          "\n"
                                          "def main:\n"
                                          "    -> running\n"
@@ -3444,10 +3444,10 @@ def main:
                         #(lower-src (str "def Widget:\n"
                                          "    n: Int\n"
                                          "\n"
-                                         "    own_m() :< 100\n"
+                                         "    own_m() :- 100\n"
                                          "\n"
                                          "extend Widget:\n"
-                                         "    own_m() :< 200\n"
+                                         "    own_m() :- 200\n"
                                          "\n"
                                          "def main:\n"
                                          "    -> running\n"
@@ -3472,10 +3472,10 @@ def main:
                                          "    n: Int\n"
                                          "\n"
                                          "extend Widget:\n"
-                                         "    m() :< 1\n"
+                                         "    m() :- 1\n"
                                          "\n"
                                          "extend Widget:\n"
-                                         "    m() :< 2\n"
+                                         "    m() :- 2\n"
                                          "\n"
                                          "def main:\n"
                                          "    -> running\n"
@@ -3490,13 +3490,13 @@ def main:
 (deftest f9-l4-extension-conforms-union
   (testing "F9 Landing 4 — extension-added conformances union into the target's `:conforms` at composition time."
     (let [prog (lower-src (str "def P:\n"
-                               "    m(self) :< Int\n"
+                               "    m(self) :- Int\n"
                                "\n"
                                "def Widget:\n"
                                "    n: Int\n"
                                "\n"
                                "extend Widget(P):\n"
-                               "    m() :< 1\n"
+                               "    m() :- 1\n"
                                "\n"
                                "def main:\n"
                                "    -> running\n"
@@ -3532,13 +3532,13 @@ def main:
 (deftest l5-sync-and-async-signature-conformance
   (testing "F9 Landing 5 + L5 — `extend Widget(P):` supplying `m` (as an observable) matching P's sync signature validates cleanly."
     (let [prog (lower-src (str "def P:\n"
-                               "    m() :< Int\n"
+                               "    m() :- Int\n"
                                "\n"
                                "def Widget:\n"
                                "    n: Int\n"
                                "\n"
                                "extend Widget(P):\n"
-                               "    m() :< 1\n"
+                               "    m() :- 1\n"
                                "\n"
                                "def main:\n"
                                "    -> running\n"
@@ -3556,7 +3556,7 @@ def main:
                                "        then: print(msg)\n"
                                "\n"
                                "extend LoggerImpl(Logger):\n"
-                               "    helper() :< 0\n"
+                               "    helper() :- 0\n"
                                "\n"
                                "def main:\n"
                                "    -> running\n"
@@ -3575,10 +3575,10 @@ def main:
                  (lower-src (str "def Widget:\n"
                                  "    n: Int\n"
                                  "\n"
-                                 "    bar() :< 1\n"
+                                 "    bar() :- 1\n"
                                  "\n"
                                  "extend Widget:\n"
-                                 "    replace bar() :< 2\n"
+                                 "    replace bar() :- 2\n"
                                  "\n"
                                  "def main:\n"
                                  "    -> running\n"
@@ -3599,10 +3599,10 @@ def main:
                   (lower-src (str "def Widget:\n"
                                   "    n: Int\n"
                                   "\n"
-                                  "    bar() :< 1\n"
+                                  "    bar() :- 1\n"
                                   "\n"
                                   "extend Widget:\n"
-                                  "    bar() :< 2\n"
+                                  "    bar() :- 2\n"
                                   "\n"
                                   "def main:\n"
                                   "    -> running\n"
@@ -3618,7 +3618,7 @@ def main:
                                   "    n: Int\n"
                                   "\n"
                                   "extend Widget:\n"
-                                  "    replace unrelated() :< 1\n"
+                                  "    replace unrelated() :- 1\n"
                                   "\n"
                                   "def main:\n"
                                   "    -> running\n"
@@ -3635,7 +3635,7 @@ def main:
                          "    n: Int\n"
                          "\n"
                          "extend Widget(BogusProto):\n"
-                         "    m() :< 1\n"
+                         "    m() :- 1\n"
                          "\n"
                          "def main:\n"
                          "    -> running\n"
@@ -3647,13 +3647,13 @@ def main:
          clojure.lang.ExceptionInfo
          #"claims conformance to `P` but neither implements nor inherits a default for `m`"
          (lower-src (str "def P:\n"
-                         "    m() :< Int\n"
+                         "    m() :- Int\n"
                          "\n"
                          "def Widget:\n"
                          "    n: Int\n"
                          "\n"
                          "extend Widget(P):\n"
-                         "    unrelated() :< 1\n"
+                         "    unrelated() :- 1\n"
                          "\n"
                          "def main:\n"
                          "    -> running\n"
@@ -3665,13 +3665,13 @@ def main:
          clojure.lang.ExceptionInfo
          #"return type mismatch — expected `Int`, got `String`"
          (lower-src (str "def P:\n"
-                         "    m() :< Int\n"
+                         "    m() :- Int\n"
                          "\n"
                          "def Widget:\n"
                          "    n: Int\n"
                          "\n"
                          "extend Widget(P):\n"
-                         "    m() :< \"x\"\n"
+                         "    m() :- \"x\"\n"
                          "\n"
                          "def main:\n"
                          "    -> running\n"
@@ -3683,13 +3683,13 @@ def main:
          clojure.lang.ExceptionInfo
          #"param name mismatch — expected `x`, got `y`"
          (lower-src (str "def P:\n"
-                         "    m(x: Int) :< Int\n"
+                         "    m(x: Int) :- Int\n"
                          "\n"
                          "def Widget:\n"
                          "    n: Int\n"
                          "\n"
                          "extend Widget(P):\n"
-                         "    m(y: Int) :< y\n"
+                         "    m(y: Int) :- y\n"
                          "\n"
                          "def main:\n"
                          "    -> running\n"
@@ -3701,13 +3701,13 @@ def main:
          clojure.lang.ExceptionInfo
          #"param `x` type mismatch — expected `Int`, got `String`"
          (lower-src (str "def P:\n"
-                         "    m(x: Int) :< Int\n"
+                         "    m(x: Int) :- Int\n"
                          "\n"
                          "def Widget:\n"
                          "    n: Int\n"
                          "\n"
                          "extend Widget(P):\n"
-                         "    m(x: String) :< 1\n"
+                         "    m(x: String) :- 1\n"
                          "\n"
                          "def main:\n"
                          "    -> running\n"
@@ -3716,15 +3716,15 @@ def main:
 (deftest f9-l5-protocol-default-satisfies-conformance
   (testing "F9 Landing 5 + F67 L4 — protocol carries a default observable body for `m`; class declares `conforms: P` and doesn't implement `m` itself. L5 accepts the default's presence as structural satisfaction."
     (let [prog (lower-src (str "def P:\n"
-                               "    m() :< Int\n"
+                               "    m() :- Int\n"
                                "\n"
-                               "    m() :< 42\n"
+                               "    m() :- 42\n"
                                "\n"
                                "def Widget:\n"
                                "    n: Int\n"
                                "\n"
                                "extend Widget(P):\n"
-                               "    unrelated() :< 1\n"
+                               "    unrelated() :- 1\n"
                                "\n"
                                "def main:\n"
                                "    -> running\n"
@@ -3741,15 +3741,15 @@ def main:
 (deftest f9-l6-inherits-default-into-composed-table
   (testing "F9 Landing 6 + F67 L4 — class explicitly conforms to P, P provides default observable `m`, class doesn't define `m` — default folded into class's composed :methods and emitted as a C function keyed by the class name."
     (let [prog (lower-src (str "def P:\n"
-                               "    m() :< Int\n"
+                               "    m() :- Int\n"
                                "\n"
-                               "    m() :< 42\n"
+                               "    m() :- 42\n"
                                "\n"
                                "def Widget:\n"
                                "    n: Int\n"
                                "\n"
                                "extend Widget(P):\n"
-                               "    unrelated() :< 1\n"
+                               "    unrelated() :- 1\n"
                                "\n"
                                "def main:\n"
                                "    -> running\n"
@@ -3765,15 +3765,15 @@ def main:
 (deftest f9-l6-own-method-shadows-default
   (testing "F9 Landing 6 + F67 L4 — when the class defines `m` itself (own or via extension), the own observable wins over the protocol default with no diamond, no warning."
     (let [prog (lower-src (str "def P:\n"
-                               "    m() :< Int\n"
+                               "    m() :- Int\n"
                                "\n"
-                               "    m() :< 42\n"
+                               "    m() :- 42\n"
                                "\n"
                                "def Widget:\n"
                                "    n: Int\n"
                                "\n"
                                "extend Widget(P):\n"
-                               "    m() :< 100\n"
+                               "    m() :- 100\n"
                                "\n"
                                "def main:\n"
                                "    -> running\n"
@@ -3790,20 +3790,20 @@ def main:
          clojure.lang.ExceptionInfo
          #"diamond ambiguity.*method `m`.*Widget.*`P`.*`Q`"
          (lower-src (str "def P:\n"
-                         "    m() :< Int\n"
+                         "    m() :- Int\n"
                          "\n"
-                         "    m() :< 1\n"
+                         "    m() :- 1\n"
                          "\n"
                          "def Q:\n"
-                         "    m() :< Int\n"
+                         "    m() :- Int\n"
                          "\n"
-                         "    m() :< 2\n"
+                         "    m() :- 2\n"
                          "\n"
                          "def Widget:\n"
                          "    n: Int\n"
                          "\n"
                          "extend Widget(P, Q):\n"
-                         "    unrelated() :< 0\n"
+                         "    unrelated() :- 0\n"
                          "\n"
                          "def main:\n"
                          "    -> running\n"
@@ -3812,14 +3812,14 @@ def main:
 (deftest f9-l6b-structural-conformance-inherits-default
   (testing "F9 Landing 6b + L5 — class does NOT declare `conforms: P` but structurally satisfies P's signature surface and inherits P's helper default."
     (let [prog (lower-src (str "def P:\n"
-                               "    iter(self) :< Int\n"
+                               "    iter(self) :- Int\n"
                                "\n"
-                               "    count_helper() :< 99\n"
+                               "    count_helper() :- 99\n"
                                "\n"
                                "def Widget:\n"
                                "    n: Int\n"
                                "\n"
-                               "    iter() :< 7\n"
+                               "    iter() :- 7\n"
                                "\n"
                                "def main:\n"
                                "    -> running\n"
@@ -3834,12 +3834,12 @@ def main:
 (deftest f9-l6b-protocol-with-no-defaults-not-inherited
   (testing "F9 Landing 6b — a protocol with no defaults produces no inheritance even under structural conformance. Structural-conformance detection is only for inheriting defaults; conforming-without-defaults is a call-site concern (L7+)."
     (let [prog (lower-src (str "def P:\n"
-                               "    iter(self) :< Int\n"
+                               "    iter(self) :- Int\n"
                                "\n"
                                "def Widget:\n"
                                "    n: Int\n"
                                "\n"
-                               "    iter() :< 7\n"
+                               "    iter() :- 7\n"
                                "\n"
                                "def main:\n"
                                "    -> running\n"
@@ -3861,19 +3861,19 @@ def main:
          clojure.lang.ExceptionInfo
          #"diamond ambiguity.*method `helper`.*Widget"
          (lower-src (str "def P:\n"
-                         "    iter(self) :< Int\n"
+                         "    iter(self) :- Int\n"
                          "\n"
-                         "    helper() :< 1\n"
+                         "    helper() :- 1\n"
                          "\n"
                          "def Q:\n"
-                         "    iter(self) :< Int\n"
+                         "    iter(self) :- Int\n"
                          "\n"
-                         "    helper() :< 2\n"
+                         "    helper() :- 2\n"
                          "\n"
                          "def Widget:\n"
                          "    n: Int\n"
                          "\n"
-                         "    iter() :< 7\n"
+                         "    iter() :- 7\n"
                          "\n"
                          "def main:\n"
                          "    -> running\n"
@@ -3885,20 +3885,20 @@ def main:
          clojure.lang.ExceptionInfo
          #"diamond ambiguity.*method `helper`.*Widget"
          (lower-src (str "def P:\n"
-                         "    iter(self) :< Int\n"
+                         "    iter(self) :- Int\n"
                          "\n"
-                         "    helper() :< 1\n"
+                         "    helper() :- 1\n"
                          "\n"
                          "def Q:\n"
-                         "    iter(self) :< Int\n"
+                         "    iter(self) :- Int\n"
                          "\n"
-                         "    helper() :< 2\n"
+                         "    helper() :- 2\n"
                          "\n"
                          "def Widget:\n"
                          "    n: Int\n"
                          "\n"
                          "extend Widget(P):\n"
-                         "    iter() :< 7\n"
+                         "    iter() :- 7\n"
                          "\n"
                          "def main:\n"
                          "    -> running\n"
@@ -3907,20 +3907,20 @@ def main:
 (deftest f9-l6-diamond-resolved-by-own-method
   (testing "F9 Landing 6 + F67 L4 — same P/Q diamond setup + class defines its own `m` → own shadows all defaults per §3.4.4; no diamond error."
     (let [prog (lower-src (str "def P:\n"
-                               "    m() :< Int\n"
+                               "    m() :- Int\n"
                                "\n"
-                               "    m() :< 1\n"
+                               "    m() :- 1\n"
                                "\n"
                                "def Q:\n"
-                               "    m() :< Int\n"
+                               "    m() :- Int\n"
                                "\n"
-                               "    m() :< 2\n"
+                               "    m() :- 2\n"
                                "\n"
                                "def Widget:\n"
                                "    n: Int\n"
                                "\n"
                                "extend Widget(P, Q):\n"
-                               "    m() :< 999\n"
+                               "    m() :- 999\n"
                                "\n"
                                "def main:\n"
                                "    -> running\n"
@@ -3936,7 +3936,7 @@ def main:
     (let [prog (lower-src (str "def Msg:\n"
                                "    payload: Bytes\n"
                                "\n"
-                               "    size() :< self.payload.length\n"
+                               "    size() :- self.payload.length\n"
                                "\n"
                                "def main:\n"
                                "    -> running\n"
@@ -3959,8 +3959,8 @@ def main:
                                "    a: Bytes\n"
                                "    b: Bytes\n"
                                "\n"
-                               "    eq()  :< self.a == self.b\n"
-                               "    neq() :< self.a != self.b\n"
+                               "    eq()  :- self.a == self.b\n"
+                               "    neq() :- self.a != self.b\n"
                                "\n"
                                "def main:\n"
                                "    -> running\n"
@@ -4205,7 +4205,7 @@ def main:
 ;; surface to declare `-> T!` on a reader. Field-level nonnil enforcement
 ;; (writes into `T!` slots) stays intact via `nonnil-check-stmt`. Restoring
 ;; nonnil enforcement on observable returns requires deriving nonnil from
-;; the protocol sync signature (`:< T!` wraps the derived
+;; the protocol sync signature (`:- T!` wraps the derived
 ;; method body's return) — separate follow-on landing, distinct from the
 ;; observable-header annotation reverted in L4b.
 
@@ -4272,7 +4272,7 @@ def main:
 
 (deftest f39-l5b-ii-d-method-return-value-nonnil-inserts-runtime-check
   (testing "F39 Landing 5b-ii-d + L5 — a protocol-inherited default whose sync signature returns `T!` inserts the runtime presence check on the return path."
-    (let [prog     (lower-src "def P:\n    strict_read() :< Int!\n\n    strict_read() :< n\n\ndef X:\n    n: Int = 0\n\n    -> running\n\nextend X(P):\n    _dummy() :< 1\n\ndef main:\n    -> running\n        then: print(0)\n")
+    (let [prog     (lower-src "def P:\n    strict_read() :- Int!\n\n    strict_read() :- n\n\ndef X:\n    n: Int = 0\n\n    -> running\n\nextend X(P):\n    _dummy() :- 1\n\ndef main:\n    -> running\n        then: print(0)\n")
           cls      (first (filter #(= "X" (:name %)) (:classes prog)))
           m        (first (filter #(= "strict_read" (:selector %)) (:methods cls)))
           ret-decl (first (filter #(and (map? %)
@@ -4303,19 +4303,19 @@ def main:
 
 (deftest f33-observable-read-still-allowed
   (testing "Observable reads compile — the observable-wrapped shape is one of two valid patterns for exposing computed views (the other being direct `.field` reads under Proposal C+C1)."
-    (let [prog (lower-src "def Counter:\n    raw_n: Int = 42\n\n    n :< raw_n\n\ndef main:\n    -> running\n        then: print(Counter().n)\n")]
+    (let [prog (lower-src "def Counter:\n    raw_n: Int = 42\n\n    n :- raw_n\n\ndef main:\n    -> running\n        then: print(Counter().n)\n")]
       (is (= :objc-program (:node prog))
           "observable read is spec-legal"))))
 
 (deftest f33-self-field-read-still-allowed
   (testing "Self-field reads inside the atom's own observable / invariant / transition body compile — `self.n` (or bare `n`) reads the data field directly. Post F67 L4: observables replace the reader-method surface."
-    (let [prog (lower-src "def Counter:\n    n: Int = 10\n\n    bump() :< n + 1\n\n    -> running\n\n    -> end\n\ndef main:\n    c: Counter = Counter()\n\n    -> running\n        then: print(0)\n")]
+    (let [prog (lower-src "def Counter:\n    n: Int = 10\n\n    bump() :- n + 1\n\n    -> running\n\n    -> end\n\ndef main:\n    c: Counter = Counter()\n\n    -> running\n        then: print(0)\n")]
       (is (= :objc-program (:node prog))
           "self.n inside Counter's own observable compiles cleanly"))))
 
 (deftest f67-l2-parametric-observable-lowers-with-args
-  (testing "F67 L2 (Proposal G): parametric observables `<name>(args) :< <expr>` emit as ObjC methods with declared params. The observable body may reference both self-fields and its own args; both resolve during type inference. Under Proposal G this shape replaces reader methods — `function healed_by(self, amt) -> Int: return self.hp + amt` migrates to `healed_by(amt: Int) :< hp + amt`."
-    (let [prog (lower-src "def Player:\n    hp: Int! = 100\n    max_hp: Int! = 100\n\n    healed_by(amt: Int) :< hp + amt\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        then: print(0)\n")
+  (testing "F67 L2 (Proposal G): parametric observables `<name>(args) :- <expr>` emit as ObjC methods with declared params. The observable body may reference both self-fields and its own args; both resolve during type inference. Under Proposal G this shape replaces reader methods — `function healed_by(self, amt) -> Int: return self.hp + amt` migrates to `healed_by(amt: Int) :- hp + amt`."
+    (let [prog (lower-src "def Player:\n    hp: Int! = 100\n    max_hp: Int! = 100\n\n    healed_by(amt: Int) :- hp + amt\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        then: print(0)\n")
           cls  (first (filter #(= "Player" (:name %)) (:classes prog)))
           obs  (first (filter #(re-matches #"healed_by.*" (or (:selector %) "")) (:methods cls)))]
       (is (some? obs) "parametric observable emits as :objc-method")
@@ -4327,8 +4327,8 @@ def main:
           "return type inferred from body expression (hp + amt : Int)"))))
 
 (deftest f67-l2-zero-arg-observable-still-lowers
-  (testing "F67 L2: zero-arg observable shape is preserved — `<name> :< <expr>` (no parens) still parses and lowers exactly as before. The parametric extension does not require parens on zero-arg observables."
-    (let [prog (lower-src "def Counter:\n    n: Int = 0\n\n    doubled :< n + n\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        then: print(0)\n")
+  (testing "F67 L2: zero-arg observable shape is preserved — `<name> :- <expr>` (no parens) still parses and lowers exactly as before. The parametric extension does not require parens on zero-arg observables."
+    (let [prog (lower-src "def Counter:\n    n: Int = 0\n\n    doubled :- n + n\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        then: print(0)\n")
           cls  (first (filter #(= "Counter" (:name %)) (:classes prog)))
           obs  (first (filter #(= "doubled" (:selector %)) (:methods cls)))]
       (is (some? obs) "zero-arg observable still emits with bare selector")
@@ -4337,7 +4337,7 @@ def main:
 
 (deftest f67-l2-parametric-observable-multi-arg
   (testing "F67 L2: parametric observables with multiple args. Each arg becomes an ObjC method param; the body expression sees all args + self-fields in scope."
-    (let [prog (lower-src "def Box:\n    w: Int = 0\n    h: Int = 0\n\n    scaled_area(sx: Int, sy: Int) :< (w * sx) * (h * sy)\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        then: print(0)\n")
+    (let [prog (lower-src "def Box:\n    w: Int = 0\n    h: Int = 0\n\n    scaled_area(sx: Int, sy: Int) :- (w * sx) * (h * sy)\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        then: print(0)\n")
           cls  (first (filter #(= "Box" (:name %)) (:classes prog)))
           obs  (first (filter #(re-matches #"scaled_area.*" (or (:selector %) "")) (:methods cls)))]
       (is (some? obs) "multi-arg parametric observable emits")
@@ -4918,7 +4918,7 @@ def main:
     (let [prog (lower-src (str "def UserList:\n"
                                "    n: Int! = 5\n\n"
                                "    -> alive\n\n"
-                               "    count() :< 42\n\n"
+                               "    count() :- 42\n\n"
                                "    on_nil:\n"
                                "        count: 7\n\n"
                                "def X:\n"
@@ -4940,7 +4940,7 @@ def main:
     (let [prog  (lower-src (str "def UserList:\n"
                                 "    n: Int! = 5\n\n"
                                 "    -> alive\n\n"
-                                "    count() :< 42\n\n"
+                                "    count() :- 42\n\n"
                                 "    on_nil:\n"
                                 "        count: 7\n\n"
                                 "def X:\n"
@@ -4967,7 +4967,7 @@ def main:
          (lower-src (str "def UserList:\n"
                          "    n: Int! = 5\n\n"
                          "    -> alive\n\n"
-                         "    count() :< 42\n\n"
+                         "    count() :- 42\n\n"
                          "    on_nil:\n"
                          "        bogus: 0\n\n"
                          "def main:\n"
@@ -4981,7 +4981,7 @@ def main:
          (lower-src (str "def UserList:\n"
                          "    n: Int! = 5\n\n"
                          "    -> alive\n\n"
-                         "    count() :< 42\n\n"
+                         "    count() :- 42\n\n"
                          "    on_nil:\n"
                          "        count: 7\n"
                          "        count: 9\n\n"
@@ -4996,7 +4996,7 @@ def main:
          (lower-src (str "def UserList:\n"
                          "    n: Int! = 5\n\n"
                          "    -> alive\n\n"
-                         "    count() :< 42\n\n"
+                         "    count() :- 42\n\n"
                          "    on_nil:\n"
                          "        count: 1 + 2\n\n"
                          "def main:\n"
@@ -5007,8 +5007,8 @@ def main:
     (let [prog  (lower-src (str "def UserList:\n"
                                 "    n: Int! = 5\n\n"
                                 "    -> alive\n\n"
-                                "    count() :< 42\n"
-                                "    other() :< 99\n\n"
+                                "    count() :- 42\n"
+                                "    other() :- 99\n\n"
                                 "    on_nil:\n"
                                 "        count: 7\n\n"
                                 "def X:\n"
@@ -5100,7 +5100,7 @@ def main:
   (testing "F32 L4.e.β.2.α — atom observable bodies now prepend a `:state-snapshot-init` and thread `:snapshot-name` into the body ctx so field reads route via `__cxc_snap._field` (parallel to receive-glyph body). Under the default flag the snapshot copies from ivars — same values, small stack alloc overhead; under concurrent mode L4.e.α's guarded shape sources from `_state` so observable reads see committed state. Closes the observable side of the ivar-reader gap so L4.e.β proper can retire per-field ivar writes."
     (let [prog  (lower-src (str "def Counter:\n"
                                 "    n: Int! = 10\n\n"
-                                "    bump :< n + 1\n\n"
+                                "    bump :- n + 1\n\n"
                                 "    -> running\n\n"
                                 "    -> end\n\n"
                                 "def main:\n"
@@ -5156,7 +5156,7 @@ def main:
 (deftest f32-l4e-beta-2-alpha-observable-on-zero-data-atom-skips-snapshot
   (testing "F32 L4.e.β.2.α — an observable on an atom with no data fields skips the snapshot init (state struct would be empty; snapshot would be a pointless no-op)."
     (let [prog  (lower-src (str "def Ticker:\n"
-                                "    always_true :< true\n\n"
+                                "    always_true :- true\n\n"
                                 "    -> running\n\n"
                                 "    -> end\n\n"
                                 "def main:\n"
@@ -5169,12 +5169,12 @@ def main:
 
 (deftest f32-l4e-beta-1-self-field-outside-receive-glyph-stays-on-ivar-path
   (testing "F32 L4.e.β.1 — `self.field` reads OUTSIDE a receive-glyph body (init bodies, invariant sites, observable bodies) do NOT have `:snapshot-name` in ctx and stay on the ObjC property path unchanged. Regression guard: the reroute is scoped strictly to snapshotted contexts."
-    ;; A record with a self-referring observable: `doubled :< self.n * 2`.
+    ;; A record with a self-referring observable: `doubled :- self.n * 2`.
     ;; The observable body has no snapshot ctx, so `self.n` stays as
     ;; direct property access (`self.n * 2` in emitted C).
     (let [prog  (lower-src (str "def V:\n"
                                 "    n: Int = 0\n\n"
-                                "    doubled :< n * 2\n\n"
+                                "    doubled :- n * 2\n\n"
                                 "def main:\n"
                                 "    -> running\n        then: print(0)\n"))
           c-src (emit/emit prog)]
@@ -5667,7 +5667,7 @@ def main:
          #"F8 L3a: `doubled` is a computed field \(observable\) on atom `V`"
          (lower-src (str "def V:\n"
                          "    n: Int = 3\n\n"
-                         "    doubled :< n * 2\n\n"
+                         "    doubled :- n * 2\n\n"
                          "    running <: bump -> self\n"
                          "        then: doubled => 10\n\n"
                          "def main:\n"
@@ -5679,7 +5679,7 @@ def main:
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
          #"F8 L3a: observable `n` on record `V` collides with a data field"
-         (lower-src "def V:\n    n: Int\n    n :< 2\n\ndef main:\n    -> running\n")))))
+         (lower-src "def V:\n    n: Int\n    n :- 2\n\ndef main:\n    -> running\n")))))
 
 (deftest f8-l3a-atom-field-observable-name-collision-rejected
   (testing "F8 L3a follow-on — same check applies inside atoms (a `def` with a `running <:` clause): a data field and a computed observable with the same name is a hard error. Blocks silent-dead-code and blocks `then: n => …` from firing on the observable and hitting the L3a setter-error path."
@@ -5688,7 +5688,7 @@ def main:
          #"F8 L3a: observable `n` on atom `V` collides with a data field"
          (lower-src (str "def V:\n"
                          "    n: Int = 3\n\n"
-                         "    n :< 2\n\n"
+                         "    n :- 2\n\n"
                          "    running <: bump -> self\n\n"
                          "def main:\n"
                          "    v: V = V()\n"

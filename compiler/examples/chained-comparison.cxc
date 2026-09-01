@@ -3,7 +3,7 @@ def Bounded:
     raw_val: Int = 5
     hi:      Int = 10
 
-    val :< raw_val
+    val :- raw_val
 
     |: lo <= raw_val <= hi
 

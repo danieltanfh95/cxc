@@ -51,7 +51,7 @@
 
 (deftest table-carries-record-members
   (testing "F51 — records expose their fields + observables in :members. F67 L4: methods retire; observables carry the callable surface. `:methods` mirrors `:observables` for query-shape parity."
-    (let [table (table-from "def V:\n    x: Int\n    y: Int\n\n    sum() :< x + y\n\ndef main:\n    -> running\n")
+    (let [table (table-from "def V:\n    x: Int\n    y: Int\n\n    sum() :- x + y\n\ndef main:\n    -> running\n")
           v     (get table "V")
           fs    (get-in v [:members :fields])
           ms    (get-in v [:members :methods])]
@@ -60,7 +60,7 @@
 
 (deftest table-carries-atom-members
   (testing "F51 — atoms expose data-fields + transitions + observables"
-    (let [table (table-from "def Counter:\n    n: Int = 0\n\n    tally :< n\n\n    -> running\n\n    running <: bump -> self\n        then: n => n + 1\n\ndef main:\n    c: Counter = Counter()\n\n    -> running\n")
+    (let [table (table-from "def Counter:\n    n: Int = 0\n\n    tally :- n\n\n    -> running\n\n    running <: bump -> self\n        then: n => n + 1\n\ndef main:\n    c: Counter = Counter()\n\n    -> running\n")
           counter (get table "Counter")]
       (is (= ["n"]           (mapv :name (get-in counter [:members :data-fields]))))
       (is (>= (count (get-in counter [:members :transitions])) 2)
@@ -81,7 +81,7 @@
 
 (deftest f38-record-variant-auto-detected
   (testing "F38 — a record with no callables is :struct; a record with any observable is :class. Trigger is structural — no user syntax."
-    (let [table (table-from "def P:\n    x: Int\n\ndef V:\n    n: Int\n\n    bumped() :< n + 1\n\ndef main:\n    -> running\n")]
+    (let [table (table-from "def P:\n    x: Int\n\ndef V:\n    n: Int\n\n    bumped() :- n + 1\n\ndef main:\n    -> running\n")]
       (is (= :struct (get-in table ["P" :variant]))
           "P has no observables → :struct variant")
       (is (= :class  (get-in table ["V" :variant]))
@@ -96,7 +96,7 @@
 
 (deftest lookup-member-drills-into-declaration
   (testing "F51 — `lookup-member` finds a member by kind + name inside a decl. F67 L4: `:methods` mirrors `:observables` for the parametric-reader surface."
-    (let [table (table-from "def V:\n    x: Int\n\n    bump() :< x\n\ndef main:\n    -> running\n")
+    (let [table (table-from "def V:\n    x: Int\n\n    bump() :- x\n\ndef main:\n    -> running\n")
           ctx   {:symbol-table table}]
       (is (= "bump" (:name (resolve/lookup-member ctx "V" :methods "bump"))))
       (is (= "x"    (:name (resolve/lookup-member ctx "V" :fields  "x"))))
@@ -213,7 +213,7 @@
 (deftest f51-l3b-find-unscoped-flags-cross-module-extend-target
   (testing "F51 L3b (a) — `extend Foo:` targets a top-level type. Extension of a type declared in another user module without an explicit import is a module-scope concern; the walker flags the extend target."
     (let [files    [(parse-file :geom "def Point:\n    x: Int\n")
-                    (parse-file :viz  "extend Point:\n    bumped :< 1\n\ndef main:\n    -> running\n")]
+                    (parse-file :viz  "extend Point:\n    bumped :- 1\n\ndef main:\n    -> running\n")]
           unscoped (resolve/find-unscoped-type-refs files)]
       (is (some (fn [{:keys [module name]}]
                   (and (= :viz module) (= "Point" name)))
@@ -222,7 +222,7 @@
 
 (deftest f51-l3b-find-unscoped-flags-cross-module-dot-target
   (testing "F51 L3b (a) — a `:dot` whose target is a capitalized bare :ident refers to a top-level type (receive-glyph source, static access, etc.). Cross-module use without an import surfaces under the walker."
-    (let [files    [(parse-file :sources "def SomeSource:\n    msg :< 1\n")
+    (let [files    [(parse-file :sources "def SomeSource:\n    msg :- 1\n")
                     (parse-file :sink    "def Sink:\n    running <: SomeSource.msg -> next\n")]
           unscoped (resolve/find-unscoped-type-refs files)]
       (is (some (fn [{:keys [module name]}]

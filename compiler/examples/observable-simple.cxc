@@ -1,7 +1,7 @@
 def Sensor(x: Int = 21):
     raw: Int = x
 
-    doubled :< raw + raw
+    doubled :- raw + raw
 
 def main:
     -> running

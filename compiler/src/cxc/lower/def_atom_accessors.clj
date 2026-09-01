@@ -125,14 +125,13 @@
 
 (defn def-atom-body-extras
   "Everything in the def-atom body that isn't a section lower knows
-   how to consume — e.g. contracts: (Layer 6+). Deprecated: is
-   handled at the build/compile step (cxc.build/warn-deprecated-uses)
-   and doesn't reach lower, so it's filtered here too. Handler-decls
-   are consumed separately by F14. F67 L5 top-level `:field` nodes
-   are consumed by `def-atom-effective-data-section`. F37 L6b
+   how to consume — e.g. contracts: (Layer 6+). Handler-decls are
+   consumed separately by F14. F67 L5 top-level `:field` nodes are
+   consumed by `def-atom-effective-data-section`. F37 L6b
    `:class-function` is filtered separately by `def-atom-class-
    functions` (fail-nyi'd with an F37 L6 pointer until synthesis
-   lands)."
+   lands). (Prior K3 deprecation walker + `@deprecated` annotation
+   retired 2026-08-30 with the annotation-grammar-retirement wave.)"
   [atom-node]
   (remove #(#{:data-section :methods-section :transition :observable
               :proposition :use-section

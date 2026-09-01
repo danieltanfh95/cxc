@@ -1,7 +1,7 @@
 def OffsetSource:
     raw_offset: Int = 1000
 
-    offset :< raw_offset
+    offset :- raw_offset
 
     -> running
 
@@ -12,7 +12,7 @@ def Timer:
 
     base: Int = 42
 
-    total :< base + src.offset
+    total :- base + src.offset
 
 def main:
     -> running

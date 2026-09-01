@@ -147,16 +147,16 @@
     (is (not (sec/protected? :my_custom_section)))))
 
 (deftest registry-seeded-with-protected-reservations
-  (testing "F8 D5 + L3b.i + L3c + L3d.i + L3-use.i — the registry is seeded with a protected entry for every protected name. Names still awaiting backend wire-in carry `:kind :reserved` + `:spec nil`; landed backends carry `:kind :behavioral` + a spec pointer."
+  (testing "F8 D5 + L3b.i + L3-use.i — the registry is seeded with a protected entry for every protected name. Names still awaiting backend wire-in carry `:kind :reserved` + `:spec nil`; landed backends carry `:kind :behavioral` + a spec pointer. Post annotation-grammar-retirement (2026-08-30) :metadata + :deprecated revert to :reserved."
     ;; Reserved-shape entries: backend not yet claimed via the registry.
     (let [e (sec/lookup :computed)]
       (is (some? e))
       (is (= :computed (:name e)))
       (is (= :reserved (:kind e))))
+    (is (= :reserved (:kind (sec/lookup :metadata))))
+    (is (= :reserved (:kind (sec/lookup :deprecated))))
     ;; Behavioral-shape entries.
     (is (= :behavioral (:kind (sec/lookup :invariants))))
-    (is (= :behavioral (:kind (sec/lookup :metadata))))
-    (is (= :behavioral (:kind (sec/lookup :deprecated))))
     (is (= :behavioral (:kind (sec/lookup :use))))))
 
 (deftest invariants-seed-records-f49-backend
@@ -171,31 +171,17 @@
     (is (= :behavioral (:kind (sec/lookup "Invariants"))))
     (is (= :behavioral (:kind (sec/lookup :Invariants))))))
 
-(deftest deprecated-seed-records-k3-backend
-  (testing "L3b — the `:deprecated` seed routes parsing through the L3a annotation surface and retains its `:walker-sym` pointer to build.clj's unchanged K3 warning walker. Case-insensitive lookup remains preserved."
-    (let [e (sec/lookup :deprecated)]
-      (is (= :behavioral (:kind e)))
-      (is (= :compiler-baked (get-in e [:spec :impl])))
-      (is (= :k3-deprecation-walker (get-in e [:spec :backend])))
-      (is (= 'cxc.parse/parse-annotation
-             (get-in e [:spec :parser-sym])))
-      (is (= 'cxc.build/warn-deprecated-uses
-             (get-in e [:spec :walker-sym]))))
-    (is (= :behavioral (:kind (sec/lookup "Deprecated"))))
-    (is (= :behavioral (:kind (sec/lookup :Deprecated))))))
+;; :deprecated + :metadata registry seeds retired 2026-08-30 alongside the
+;; annotation-grammar retirement wave. Both entries flowed through
+;; `parse-annotation` (also retired). :deprecated's K3 walker retired.
+;; :metadata's F53 pipe was drift — F53 never consumed :annotations end-
+;; to-end (verified during retirement audit). Kind info now via body-
+;; shape inference (§3.3).
 
-(deftest metadata-seed-records-f53-annotation-backend
-  (testing "L3c — metadata is an annotation-surface registry entry routed to F53, with no section walker or extension permission."
-    (let [e (sec/lookup :metadata)]
-      (is (= :behavioral (:kind e)))
-      (is (= :compiler-baked (get-in e [:spec :impl])))
-      (is (= :f53-manifest-emission (get-in e [:spec :backend])))
-      (is (= 'cxc.parse/parse-annotation
-             (get-in e [:spec :parser-sym])))
-      (is (nil? (get-in e [:spec :walker-sym])))
-      (is (false? (get-in e [:spec :allowed-in-extend?]))))
-    (is (= :behavioral (:kind (sec/lookup "Metadata"))))
-    (is (= :behavioral (:kind (sec/lookup :Metadata))))))
+(deftest deprecated-metadata-seeds-retired
+  (testing "annotation-grammar-retirement (2026-08-30) — :deprecated and :metadata are no longer behavioral seeds"
+    (is (not= :behavioral (:kind (sec/lookup :deprecated))))
+    (is (not= :behavioral (:kind (sec/lookup :metadata))))))
 
 (deftest use-seed-records-k6-backend
   (testing "L4 — the `:use` seed points at the direct-line parser (no `:walker-sym` since capability extraction happens inline in lower, not as a post-parse walker). The parser preserves `:use-section`/`:caps`, so lower continues reading the same normalized shape."
@@ -215,14 +201,12 @@
     (is (nil? (sec/behavioral-parser "Invariants")))
     (is (nil? (sec/behavioral-parser :Invariants)))))
 
-(deftest behavioral-parser-resolves-annotation-surfaces-and-use
-  (testing "L3b/L3c/L4 — metadata and deprecated resolve to the annotation parser while use resolves to its direct-line parser."
-    (is (= (requiring-resolve 'cxc.parse/parse-annotation)
-           (sec/behavioral-parser :metadata)))
-    (is (= (requiring-resolve 'cxc.parse/parse-annotation)
-           (sec/behavioral-parser :deprecated)))
+(deftest behavioral-parser-resolves-use-only
+  (testing "annotation-grammar-retirement (2026-08-30) — only :use survives as a behavioral-parser entry; :metadata + :deprecated retired with the annotation grammar"
     (is (= (requiring-resolve 'cxc.parse/parse-use-line)
-           (sec/behavioral-parser :use)))))
+           (sec/behavioral-parser :use)))
+    (is (nil? (sec/behavioral-parser :metadata)))
+    (is (nil? (sec/behavioral-parser :deprecated)))))
 
 (deftest behavioral-parser-nil-for-reserved-entries
   (testing "F8 L3b.ii.α — a `:reserved` entry (no backend wired yet) resolves to nil. Caller uses nil to fall through to the direct hardcoded parser arm (until L3b.ii.β retires the hardcoded arms)."
@@ -233,35 +217,20 @@
     (is (nil? (sec/behavioral-parser :madeupthing)))
     (is (nil? (sec/behavioral-parser :nothingregistered)))))
 
-(deftest behavioral-walker-resolves-deprecated
-  (testing "L3b — `behavioral-walker :deprecated` still resolves to the K3 walker var after the parse surface moves to annotations."
-    (let [v (sec/behavioral-walker :deprecated)]
-      (is (var? v))
-      (is (= (requiring-resolve 'cxc.build/warn-deprecated-uses) v)))))
-
-(deftest behavioral-walker-nil-when-no-walker-sym
-  (testing "F8 L3d.ii.α/L3c — metadata, invariants, and use carry no walker; their consumers are direct."
+(deftest behavioral-walker-nil-at-v1
+  (testing "annotation-grammar-retirement (2026-08-30) — no registry seed carries a :walker-sym at v1.0; behavioral-walker returns nil for every name. Prior K3 :deprecated walker retired with the annotation grammar."
+    (is (nil? (sec/behavioral-walker :deprecated)))
     (is (nil? (sec/behavioral-walker :metadata)))
     (is (nil? (sec/behavioral-walker :invariants)))
     (is (nil? (sec/behavioral-walker :use)))
     (is (nil? (sec/behavioral-walker :computed)))
     (is (nil? (sec/behavioral-walker :madeupthing)))))
 
-(deftest behavioral-walkers-enumerates-registry-walker-vars
-  (testing "L3b — `behavioral-walkers` retains the single compiler-baked `:deprecated` to K3 walker entry after the input reshape. Returns a `sorted-map` for deterministic iteration order across runs."
+(deftest behavioral-walkers-empty-at-v1
+  (testing "annotation-grammar-retirement (2026-08-30) — `behavioral-walkers` returns an empty sorted-map at v1.0; the substrate stays for future walker landings. Prior compiler-baked K3 :deprecated walker retired with the annotation grammar."
     (let [m (sec/behavioral-walkers)]
       (is (map? m))
-      (is (contains? m :deprecated))
-      (is (= (requiring-resolve 'cxc.build/warn-deprecated-uses)
-             (get m :deprecated))))))
-
-(deftest behavioral-walkers-omits-entries-without-walker-sym
-  (testing "F8 L3d.ii.α/L3c — behavioral entries without a walker (metadata, invariants, use) and reserved computed are omitted."
-    (let [m (sec/behavioral-walkers)]
-      (is (not (contains? m :invariants)))
-      (is (not (contains? m :use)))
-      (is (not (contains? m :computed)))
-      (is (not (contains? m :metadata))))))
+      (is (empty? m)))))
 
 (deftest allowed-in-extend-only-invariants
   (testing "L2b — the `:invariants` registry marker records that direct `|:` propositions compose additively inside `extend Foo:` bodies. It is not a header-parser permission. `:use` and `:deprecated` remain false; reserved and unregistered names default to false."
@@ -274,15 +243,15 @@
     (is (false? (sec/allowed-in-extend? :madeupthing)))))
 
 (deftest clear-registry-restores-protected-reservations
-  (testing "L3b.i — the test-helper `clear-registry!` re-seeds the compiler-baked reservations, so tests always start from a state that reflects the compiler-baked guarantees. The behavioral seed for `:invariants` (L3b.i) is part of that guarantee — clearing must not regress it back to `:reserved`."
+  (testing "L3b.i — the test-helper `clear-registry!` re-seeds the compiler-baked reservations, so tests always start from a state that reflects the compiler-baked guarantees. The behavioral seed for `:invariants` (L3b.i) is part of that guarantee — clearing must not regress it back to `:reserved`. Post annotation-grammar-retirement (2026-08-30) :metadata + :deprecated are :reserved after clear."
     (sec/clear-registry!)
     (is (= :reserved (:kind (sec/lookup :computed)))
         ":reserved protected entries present after clear")
     (is (= :behavioral (:kind (sec/lookup :invariants)))
         "L3b.i behavioral seed present after clear")
-    (is (= :behavioral (:kind (sec/lookup :metadata)))
-        "L3c F53 annotation seed present after clear")
-    (is (= :behavioral (:kind (sec/lookup :deprecated)))
-        "L3d.i behavioral seed present after clear")
+    (is (= :reserved (:kind (sec/lookup :metadata)))
+        "annotation-grammar-retirement — :metadata reverts to :reserved after clear")
+    (is (= :reserved (:kind (sec/lookup :deprecated)))
+        "annotation-grammar-retirement — :deprecated reverts to :reserved after clear")
     (is (= :behavioral (:kind (sec/lookup :use)))
         "L3-use.i behavioral seed present after clear")))

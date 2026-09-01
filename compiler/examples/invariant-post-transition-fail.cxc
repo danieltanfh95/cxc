@@ -2,7 +2,7 @@ def Gauge:
     raw_value: Int = 3
     max:       Int = 5
 
-    value :< raw_value
+    value :- raw_value
 
     |: raw_value <= max
 

@@ -1,12 +1,12 @@
 def Cell(v: Int = 0):
     raw_stored: Int = v
 
-    stored :< raw_stored
+    stored :- raw_stored
 
 def Container:
     cell: Cell = Cell(v: 99)
 
-    stored :< cell.stored
+    stored :- cell.stored
 
 def main:
     -> running

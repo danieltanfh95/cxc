@@ -1,7 +1,7 @@
 def Machine:
     raw_n: Int = 0
 
-    n :< raw_n
+    n :- raw_n
 
     -> ready
         then:

@@ -4,7 +4,6 @@
   (:require [clojure.java.io :as io]
             [clojure.java.shell :as shell]
             [clojure.string :as str]
-            [clojure.walk :as walk]
             [cxc.parse    :as parse]
             [cxc.lower    :as lower]
             [cxc.emit     :as emit]
@@ -54,71 +53,13 @@
   ;; hit "Permission denied".
   (.setExecutable f true false))
 
-;; Layer 6 Step 11 — deprecation walker. `@deprecated("msg")` above
-;; a def attaches a message to the declaration. Use-site walker below
-;; finds every `:ident` /
-;; `:type-ref` / `:call` reference to a deprecated name and emits a
-;; warning to stderr with the migration message.
-
-(defn- collect-deprecations
-  "Walk top-level nodes; return map of {name → message} for every
-   def-atom or record carrying a `@deprecated(\"msg\")` annotation."
-  [top-nodes]
-  (into {}
-        (keep (fn [n]
-                (when (contains? #{:def-atom :record} (:node n))
-                  (let [dep (first (filter #(= "deprecated" (:name %))
-                                           (:annotations n)))]
-                    (when dep
-                      [(:name n) (get-in dep [:args 0 :value :value])]))))
-              top-nodes)))
-
-(defn warn-deprecated-uses
-  "F8 L3d walker for `:deprecated`. Standard L3d.ii.β walker signature:
-   `[user-parsed full-parsed]` — the walker owns its own input
-   computation. `user-parsed` is the AST for user source (what we
-   warn against); `full-parsed` is `prelude + user` (what we scan for
-   deprecation annotations, so a deprecated prelude export triggers
-   a warning when user code uses it).
-
-   Prints one warning per reference to *err*. Refs checked:
-   `:ident` (name uses), `:type-ref` (type annotations); `:call`
-   with an ident callee is covered transitively via the callee's
-   `:ident` node, so covering `:call` too would double-warn.
-   Definition sites in the deprecated def itself are skipped — a
-   deprecated Foo referencing its own name in its methods doesn't
-   self-warn.
-
-   Public so `cxc.section/behavioral-walkers` can resolve it via
-   `requiring-resolve` from the `:deprecated` seed's `:walker-sym`
-   without depending on private-var access."
-  [top-nodes full-parsed]
-  (let [deprecations (collect-deprecations full-parsed)]
-    (when (seq deprecations)
-      (doseq [n top-nodes]
-        (let [decl-name (:name n)
-              skip-self (and (contains? #{:def-atom :record} (:node n))
-                             (contains? deprecations decl-name))]
-          (walk/postwalk
-           (fn [x]
-             (when (map? x)
-               ;; Only :ident and :type-ref — a `:call` node with an
-               ;; ident callee has its callee's :ident visited by the
-               ;; postwalk already, so covering :call too would
-               ;; double-warn on `Foo(...)` (once for the callee, once
-               ;; for the call).
-               (let [ref-name (cond
-                                (= :ident (:node x))    (:name x)
-                                (= :type-ref (:node x)) (:name x))]
-                 (when (and ref-name
-                            (contains? deprecations ref-name)
-                            (not (and skip-self (= ref-name decl-name))))
-                   (binding [*out* *err*]
-                     (println (str "warning: `" ref-name
-                                   "` is deprecated: "
-                                   (get deprecations ref-name)))))))
-             x)
-           n))))))
+;; Layer 6 Step 11 deprecation walker retired 2026-08-30 alongside the
+;; annotation-grammar retirement wave. `@deprecated("msg")` no longer
+;; parses; deprecation is expressed as a comment or user-code convention
+;; at v1.0. See decisions-frozen-2026-08-30.md for the retirement
+;; rationale. `section/behavioral-walkers` still iterates the walker
+;; map — post-retirement the map is empty and the doseq becomes a
+;; no-op, which is fine.
 
 ;; Layer 6 Step 2/3 — stdlib import manifest + validation. Defined
 ;; here (before compile-source-to-file) so the single-file entrypoint
@@ -203,13 +144,13 @@
   [{:keys [user-parsed full-parsed]} name out-dir
    {:keys [single-queue?] :or {single-queue? true}}]
   (let [_        (io/make-parents (io/file out-dir "placeholder"))
-        ;; F8 L3d.ii.β / L3b reshape — K3 walker dispatch flows through
-        ;; the compiler-internal behavioral registry. `:deprecated`
-        ;; remains the sole entry; its input source changed from body
-        ;; sections to annotations. Walker calling convention:
-        ;; `[user-parsed full-parsed]` — the walker owns its own input
-        ;; computation (e.g. K3's `warn-deprecated-uses` calls
-        ;; `collect-deprecations` on `full-parsed` internally).
+        ;; Behavioral-walker dispatch — reads `section/behavioral-walkers`
+        ;; (registry-provided walker vars, keyed by seed name). Post
+        ;; annotation-grammar-retirement (2026-08-30) no seed carries a
+        ;; walker-sym; the loop is a no-op at v1.0 and stays as the
+        ;; substrate for future walker landings. Walker calling convention:
+        ;; `[user-parsed full-parsed]` — walker owns its own input
+        ;; computation.
         _        (doseq [[_ walker-var] (section/behavioral-walkers)]
                    (walker-var user-parsed full-parsed))
         m-src    (-> full-parsed
@@ -734,17 +675,12 @@
               (map str))
         files-with-nodes))
 
-(defn- user-metadata-from-symbol-table
-  "L3c NEW-INPUT — collect declaration metadata annotations retained by
-   resolve. `build-manifest` accepts this map separately from the compiler-
-   derived symbol-table facts so user fields cannot overwrite name/kind/
-   variant/member output."
-  [symbol-table]
-  (into {}
-        (keep (fn [[name entry]]
-                (when (seq (:metadata-annotations entry))
-                  [name (:metadata-annotations entry)])))
-        symbol-table))
+;; `user-metadata-from-symbol-table` retired 2026-08-30 with the
+;; annotation-grammar-retirement wave. `:metadata-annotations` no
+;; longer exists on symbol-table entries (resolve.clj pipe-through
+;; deleted alongside `@metadata(...)` grammar retirement). When a
+;; replacement user-metadata surface lands (e.g. `meta = Meta(...)`
+;; module-let), a new source function goes here.
 
 (defn- emit-module-manifests!
   "F53 L1 — write `<out-dir>/<module>.cxc-manifest.json` for every
@@ -752,7 +688,6 @@
    modules sorted by name for reproducible builds."
   [out-dir files-with-nodes]
   (let [symbol-table (symbol-table-across-modules files-with-nodes)
-        user-metadata (user-metadata-from-symbol-table symbol-table)
         compiled-at  (iso-utc-now)
         modules      (into (sorted-set) (map :module) files-with-nodes)]
     (doseq [module modules]
@@ -764,7 +699,6 @@
            :source-files  (source-files-for-module files-with-nodes module)
            :source-hash   (source-hash-for-module files-with-nodes module)
            :symbol-table  symbol-table
-           :user-metadata user-metadata
            :imports       (import-nodes-for-module files-with-nodes module)
            :compiled-at   compiled-at})))))
 

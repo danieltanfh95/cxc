@@ -1,9 +1,0 @@
-@deprecated("use NewBox instead — OldBox loses precision on large values")
-def OldBox:
-    n: Int = 0
-
-def main:
-    -> running
-        then: print(OldBox(n: 7).n)
-
-    -> end

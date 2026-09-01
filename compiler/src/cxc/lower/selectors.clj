@@ -10,7 +10,7 @@
      - Stream plumbing (Layer 5b Step 6 / Layer 4b): source-side
        selector shapes (`cxc_emit_<name>[With...]`), subscriber-side
        selector shapes
-       (`cxc_stream_<name>_from_<Source>Withsender:<k1>:...`),
+       (`cxc_stream_<name>_from_<Source>Withsender:-k1>:...`),
        per-stream subscribers-hashtable ivar / property, and the
        full `stream-source-methods` factory that produces the emit +
        add/remove-subscriber method set for one atom's stream-order.
@@ -29,7 +29,7 @@
 
 (defn objc-method-selector
   "Build the ObjC selector for a method call. Zero-arg → bare name;
-   with args → `<name>With<first>:<rest>:...` matching the initWith
+   with args → `<name>With<first>:-rest>:...` matching the initWith
    convention on ctors. Not to be confused with cxc's `.name` — cxc
    source uses dot syntax; only the emit layer sees selectors."
   [method-name arg-names]
@@ -40,7 +40,7 @@
 
 (defn stream-selector
   "Cocoa selector on the SUBSCRIBER side for a stream receive. Encoding:
-   `cxc_stream_<streamname>_from_<SourceClass>Withsender:<k1>:<k2>:...`.
+   `cxc_stream_<streamname>_from_<SourceClass>Withsender:-k1>:-k2>:...`.
    The `_from_<Source>` suffix scopes the selector to the source class,
    so two receive-glyph transitions on the same subscriber pulling
    streams named identically from different sources compile to distinct
@@ -59,7 +59,7 @@
 
 (defn stream-emit-selector
   "Cocoa selector on the SOURCE side for a stream emit method:
-   `cxc_emit_<streamname>[With<k1>:<k2>:...]`. Called by `:>` emit-site
+   `cxc_emit_<streamname>[With<k1>:-k2>:...]`. Called by `:>` emit-site
    lowering; body iterates the subscriber hashtable + cxc_send_async's
    each."
   [stream-name payload-keys]

@@ -29,7 +29,7 @@
 
 (deftest multi-char-glyphs
   (testing "all cxc wire glyphs recognized as single tokens"
-    (doseq [g ["<:" "<|" "|>" ":>" ":<" "->" "=>" "==" "!=" "<=" ">="]]
+    (doseq [g ["<:" "<|" "|>" ":>" ":-" "->" "=>" "==" "!=" "<=" ">="]]
       (let [toks (vals-of (lex/tokenize (str "a " g " b")))]
         (is (= [:glyph g] (nth toks 1))
             (str "glyph " g " should lex as :glyph"))))))
@@ -44,23 +44,17 @@
     (is (= [[:glyph "|:"] [:ident "x"] [:glyph ">="] [:int 0]]
            (vals-of (lex/tokenize "|: x >= 0"))))))
 
-(deftest annotation-prefix-token
-  (testing "@ lexes as a distinct annotation-prefix token"
-    (is (= [[:annotation-prefix "@"]]
-           (vals-of (lex/tokenize "@"))))))
+;; @ annotation-prefix retired 2026-08-30 (annotation-grammar-retirement
+;; wave). `@` at column 0 is a targeted retirement diagnostic; no token
+;; is emitted for it. Coverage moves to parse_test / lex_test retirement
+;; diagnostics.
 
-(deftest annotation-prefix-in-context
-  (testing "@ prefixes @deprecated with a positional string"
-    (is (= [[:annotation-prefix "@"] [:kw "deprecated"] [:punct "("]
-            [:string "msg"] [:punct ")"]]
-           (vals-of (lex/tokenize "@deprecated(\"msg\")")))))
-  (testing "@ prefixes @metadata with named literal fields"
-    (is (= [[:annotation-prefix "@"] [:ident "metadata"] [:punct "("]
-            [:ident "docs"] [:punct ":"] [:string "Counter"]
-            [:punct ","] [:ident "stable"] [:punct ":"] [:kw "true"]
-            [:punct ")"]]
-           (vals-of
-            (lex/tokenize "@metadata(docs: \"Counter\", stable: true)"))))))
+(deftest annotation-prefix-retired
+  (testing "annotation-grammar-retirement (2026-08-30) — `@` character rejects with a targeted retirement diagnostic"
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"annotation grammar .*retired at v1.0"
+         (lex/tokenize "@deprecated(\"msg\")")))))
 
 (deftest string-literals
   (testing "basic string"

@@ -2,7 +2,7 @@ def Bounded(y: Int = 5, limit: Int = 10):
     raw_val: Int = y
     lim:     Int = limit
 
-    val :< raw_val
+    val :- raw_val
 
     |: -lim <= raw_val <= lim
 

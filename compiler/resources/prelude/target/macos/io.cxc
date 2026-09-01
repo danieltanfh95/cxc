@@ -1,5 +1,5 @@
 def Console:
-    write(msg: String) :< native_console_write(msg)
+    write(msg: String) :- native_console_write(msg)
 
     -> running
 

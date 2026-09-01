@@ -1,8 +1,8 @@
 def Counter:
     n: Int = 10
 
-    bump :< n + 1
-    plus(other: Int) :< n + other
+    bump :- n + 1
+    plus(other: Int) :- n + other
 
 def main:
     -> running

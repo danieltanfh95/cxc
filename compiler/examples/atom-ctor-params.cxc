@@ -1,7 +1,7 @@
 def Counter(initial: Int = 0):
     raw_n: Int = initial
 
-    n :< raw_n
+    n :- raw_n
 
 def main:
     -> running

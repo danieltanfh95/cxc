@@ -115,82 +115,35 @@
    :message (:msg t)
    :target (:target t)})
 
-(defn- metadata-value->export
-  "Convert an annotation argument expression into its JSON-facing value.
-   Literal metadata becomes the corresponding JSON scalar; lists recurse;
-   bare identifiers/type references become names. For expression shapes
-   without a scalar interpretation, retain the AST map as opaque metadata
-   rather than rejecting open-ended user keys."
-  [value]
-  (if-not (map? value)
-    value
-    (case (:node value)
-      :lit-string (:value value)
-      :lit-char   (:value value)
-      :lit-int    (:value value)
-      :lit-float  (:value value)
-      :lit-bool   (:value value)
-      :lit-nil    nil
-      :ident      (:name value)
-      :type-ref   (:name value)
-      :list       (mapv metadata-value->export (:items value))
-      :neg        (let [inner (metadata-value->export (:expr value))]
-                    (if (number? inner) (- inner) value))
-      value)))
-
-(defn- metadata-annotations->export
-  "Fold parsed `@metadata(...)` annotations into one deterministic map.
-   Named arguments become user-facing fields; repeated fields use the
-   later source value. Positional arguments are preserved under `$args`
-   so the generic L3a annotation grammar remains lossless even though the
-   normal metadata surface uses named fields."
-  [annotations]
-  (reduce
-   (fn [metadata annotation]
-     (reduce
-      (fn [m {:keys [kind name value]}]
-        (if (= :named kind)
-          (assoc m (keyword name) (metadata-value->export value))
-          (update m :$args (fnil conj [])
-                  (metadata-value->export value))))
-      metadata
-      (:args annotation)))
-   (sorted-map)
-   annotations))
-
-(defn- normalize-user-metadata
-  "Accept either raw parsed metadata annotations or an already-materialized
-   metadata map. The map form keeps `build-manifest` useful to tooling/tests
-   that construct compiler and user metadata independently of the parser."
-  [metadata]
-  (cond
-    (map? metadata)
-    (into (sorted-map)
-          (map (fn [[k v]] [k (metadata-value->export v)]))
-          metadata)
-
-    (sequential? metadata)
-    (metadata-annotations->export metadata)
-
-    :else
-    (sorted-map)))
+;; User-metadata folding retired 2026-08-30 alongside the annotation-
+;; grammar-retirement wave. `@metadata(...)` no longer parses, so the
+;; folding fns (`metadata-value->export`, `metadata-annotations->export`,
+;; `normalize-user-metadata`) had no upstream producer and are deleted.
+;; Manifest emission is now compiler-derived facts only (name, kind,
+;; variant, members). When a replacement user-metadata surface lands
+;; (e.g. `meta = Meta(...)` module- or def-scope binding), this pipe
+;; re-enters here as a resolved-value reader, not an AST-annotation
+;; folder. See decisions-frozen-2026-08-30.md.
 
 (defn entry->export
   "Convert a resolve/build-symbol-table entry to its manifest exports
    shape. Kind-specific member details flatten to arrays of maps that
    downstream JSON consumers can traverse without knowing the parse
-   AST shapes. User `@metadata(...)` fields are additive and live under
-   `:metadata`, alongside (without overriding) compiler-derived fields."
+   AST shapes.
+
+   Post annotation-grammar-retirement (2026-08-30) the user-metadata
+   arg is retained as an already-materialized map for tooling/tests
+   that inject metadata directly; the annotation-folding path is gone."
   ([entry]
    (entry->export entry nil))
-  ([{:keys [name kind variant members metadata-annotations] :as entry}
+  ([{:keys [name kind variant members] :as entry}
     user-metadata]
    (let [metadata-input (cond
                           (some? user-metadata) user-metadata
-                          (seq metadata-annotations) metadata-annotations
                           (contains? entry :metadata) (:metadata entry)
                           :else nil)
-         metadata       (normalize-user-metadata metadata-input)]
+         metadata       (when (map? metadata-input)
+                          (into (sorted-map) metadata-input))]
      (cond-> {:name    name
               :kind    (clojure.core/name kind)}
        variant

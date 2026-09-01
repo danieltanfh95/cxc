@@ -19,7 +19,7 @@
    silent-corruption path.
 
    MVP form: only recognizes literal bounds (compile-time integer/
-   float constants). Observable-form invariants (`value :< decode(raw)`
+   float constants). Observable-form invariants (`value :- decode(raw)`
    with `<= value <=`) are v1.1+ picker work — this pass matches
    direct field references only."
   (:require [clojure.walk :as walk]

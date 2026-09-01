@@ -1,8 +1,8 @@
 def Chain:
     n: Int = 3
 
-    twice    :< n * 2
-    plus_one :< twice + 1
+    twice    :- n * 2
+    plus_one :- twice + 1
 
     -> running
 

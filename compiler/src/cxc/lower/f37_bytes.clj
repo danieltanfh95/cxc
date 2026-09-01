@@ -229,7 +229,7 @@
                           " [__d appendBytes:&__p length:1];")
             val-src  (cond
                        (contains? record-env cxc-ty)
-                       (str "NSData *__nd = " cxc-ty "_cxc_as_bytes("
+                       (str "NSData *__nd = " (->c-safe cxc-ty) "_cxc_as_bytes("
                             fld ".value); [__d appendData:__nd];")
 
                        (contains? f37-primitive-byte-widths cxc-ty)
@@ -238,12 +238,12 @@
 
                        (and (contains? enum-env cxc-ty)
                             (not (get-in enum-env [cxc-ty :tagged?])))
-                       (str "NSData *__nd = " cxc-ty "_cxc_as_bytes("
+                       (str "NSData *__nd = " (->c-safe cxc-ty) "_cxc_as_bytes("
                             fld ".value); [__d appendData:__nd];")
 
                        (and (contains? enum-env cxc-ty)
                             (get-in enum-env [cxc-ty :tagged?]))
-                       (str "NSData *__nd = " cxc-ty "_cxc_as_bytes("
+                       (str "NSData *__nd = " (->c-safe cxc-ty) "_cxc_as_bytes("
                             fld ".value); [__d appendData:__nd];"))]
         (str "    {\n"
              "        " pres-src "\n"
@@ -255,7 +255,7 @@
       ;; synthesized fn. No length prefix per §3.10.10 record row
       ;; (fixed-shape concatenation). Forward declarations at emit
       ;; time make dispatch order irrelevant.
-      (str "    { NSData *__nd = " cxc-ty "_cxc_as_bytes(" fld ");"
+      (str "    { NSData *__nd = " (->c-safe cxc-ty) "_cxc_as_bytes(" fld ");"
            " [__d appendData:__nd]; }")
 
       (f37-enum-field? f enum-env record-env)
@@ -264,7 +264,7 @@
       ;; nested-record: no length prefix, encoding is discriminator +
       ;; (per-case) payload per §3.10.10. Enables round-trip with the
       ;; L6 enum decode extension.
-      (str "    { NSData *__nd = " cxc-ty "_cxc_as_bytes(" fld ");"
+      (str "    { NSData *__nd = " (->c-safe cxc-ty) "_cxc_as_bytes(" fld ");"
            " [__d appendData:__nd]; }")
 
       (f37-nullable-string-field? f)
@@ -438,7 +438,7 @@
         fld     (str "a.data." case-nm "." fname)]
     (cond
       (contains? record-env cxc-ty)
-      (str "        { NSData *__nd = " cxc-ty "_cxc_as_bytes(" fld ");"
+      (str "        { NSData *__nd = " (->c-safe cxc-ty) "_cxc_as_bytes(" fld ");"
            " [__d appendData:__nd]; }")
 
       (= "String" cxc-ty)
@@ -804,7 +804,7 @@
          "(src, (int64_t)__off, &" cons ");\n"
          "    if (" res ".tag == _CXC_DECODE_INVALID) return " invalid
          "(" res ".data.invalid.offset, " res ".data.invalid.reason);\n"
-         "    " inner " " bind " = " res ".data.converted.value;\n"
+         "    " (->c-safe inner) " " bind " = " res ".data.converted.value;\n"
          "    __off += (NSUInteger)" cons ";")))
 
 (defn f37-optional-nested-record-decode-field?

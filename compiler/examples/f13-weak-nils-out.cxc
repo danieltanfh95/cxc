@@ -1,6 +1,6 @@
 def Child:
     raw_value: Int = 42
-    value :< raw_value
+    value :- raw_value
 
     -> alive
 

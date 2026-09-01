@@ -1,7 +1,7 @@
 def Toggle:
     raw_state: Int = 0
 
-    state :< raw_state
+    state :- raw_state
 
     # `boot` is a scratch phase with only an on-enter — the three
     # flips exit it into `on`/`off` and never re-enter. Phases with

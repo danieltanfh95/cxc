@@ -8,62 +8,36 @@
 (defn- node-kind [n] (:node n))
 
 ;; ---------------------------------------------------------------------------
-;; L3a — top-level `@name(...)` annotations
+;; Annotation grammar retired 2026-08-30 (annotation-retirement wave).
+;; L3a `@name(args)` + Q10-D `@plugin(...)` on module both retire.
+;; Plugin manifests: interim landed on `let plugin: Plugin = Plugin(...)`
+;; module-let (2026-08-30), then reshaped to `def plugin:` record marker
+;; (2026-08-31, plugin-abi-shape wave) with module-let retiring universally.
+;; Kind info via body-shape inference (§3.3); deprecation retires as
+;; language surface (express as comment or convention).
 ;; ---------------------------------------------------------------------------
 
-(deftest l3a-deprecated-positional-annotation-attaches-to-def
-  (testing "a positional @deprecated argument attaches to the following def"
-    (let [n   (first-node "@deprecated(\"msg\")\ndef X:\n    value: Int\n")
-          ann (first (:annotations n))]
-      (is (= "X" (:name n)))
-      (is (= :annotation (:node ann)))
-      (is (= "deprecated" (:name ann)))
-      (is (= :positional (get-in ann [:args 0 :kind])))
-      (is (= {:node :lit-string :value "msg"}
-             (get-in ann [:args 0 :value]))))))
-
-(deftest l3a-metadata-keyword-annotation-attaches-to-def
-  (testing "a keyword @metadata argument retains its name and value"
-    (let [n   (first-node "@metadata(kind: \"class\")\ndef X:\n    value: Int\n")
-          arg (get-in n [:annotations 0 :args 0])]
-      (is (= "metadata" (get-in n [:annotations 0 :name])))
-      (is (= :named (:kind arg)))
-      (is (= "kind" (:name arg)))
-      (is (= {:node :lit-string :value "class"} (:value arg))))))
-
-(deftest l3a-multiple-annotations-stack-in-source-order
-  (testing "multiple own-line annotations all attach to one declaration"
-    (let [n (first-node (str "@deprecated(\"msg\")\n"
-                             "@metadata(kind: \"class\")\n"
-                             "def X:\n"
-                             "    value: Int\n"))]
-      (is (= ["deprecated" "metadata"]
-             (mapv :name (:annotations n))))
-      (is (= 2 (count (:annotations n)))))))
-
-(deftest l3a-annotation-without-following-def-rejects
-  (testing "an annotation cannot stand alone at end of input"
+(deftest annotation-grammar-retired
+  (testing "annotation-grammar-retirement (2026-08-30) — `@name(args)` at top level rejects with a targeted migration pointer"
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
-         #"top-level annotation must be followed by a `def` declaration"
-         (p/parse "@orphan(\"value\")\n")))))
-
-(deftest l3a-annotation-inside-def-body-rejects
-  (testing "annotations are top-level-only in this landing"
+         #"annotation grammar .*retired at v1.0"
+         (p/parse "@deprecated(\"msg\")\ndef X:\n    value: Int\n")))
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
-         #"annotations are top-level only in L3a"
+         #"annotation grammar .*retired at v1.0"
+         (p/parse "@metadata(kind: \"class\")\ndef X:\n    value: Int\n")))
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"annotation grammar .*retired at v1.0"
+         (p/parse "@plugin(name: \"x\")\nmodule com.acme.foo\n")))))
+
+(deftest annotation-grammar-retired-in-def-body
+  (testing "annotation-grammar-retirement — `@name(...)` inside def body rejects with the same migration pointer"
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"annotation grammar .*retired at v1.0"
          (p/parse "def X:\n    @metadata(kind: \"class\")\n    value: Int\n")))))
-
-(deftest l3a-unknown-annotation-with-mixed-args-parses
-  (testing "unknown names and mixed positional/keyword args receive no parse-time semantic validation"
-    (let [n    (first-node "@custom_tag(\"tag\", priority: 2)\ndef X:\n    value: Int\n")
-          ann  (first (:annotations n))
-          args (:args ann)]
-      (is (= "custom_tag" (:name ann)))
-      (is (= [:positional :named] (mapv :kind args)))
-      (is (= "priority" (get-in args [1 :name])))
-      (is (= {:node :lit-int :value 2} (get-in args [1 :value]))))))
 
 (deftest module-decl-retired
   (testing "F73 (2026-08-20) — the `module <name>` header is retired. Module identity is the file path relative to the source root; the resolver walks the tree. Parser rejects with a migration diagnostic instead of producing a `:module` node."
@@ -146,7 +120,7 @@
     x: Float
     y: Float
 
-    plus(other: Vector2) :< Vector2(x: self.x + other.x, y: self.y + other.y)
+    plus(other: Vector2) :- Vector2(x: self.x + other.x, y: self.y + other.y)
 "
           n (first-node src)]
       (is (= :record (node-kind n)))
@@ -159,7 +133,7 @@
 
 (deftest expr-binops-and-dots
   (testing "self.x + other.x — dot access + binary op inside observable body"
-    (let [n   (first-node "def R:\n    f() :< self.x + other.x\n")
+    (let [n   (first-node "def R:\n    f() :- self.x + other.x\n")
           obs (first (filter #(= :observable (:node %)) (:sections n)))
           expr (:expr obs)]
       (is (= :binop (:node expr)))
@@ -169,7 +143,7 @@
       (is (= "x" (get-in expr [:left :field]))))))
 
 (deftest expr-nested-call-with-named-args
-  (let [n   (first-node "def R:\n    f() :< V(x: 1, y: 2)\n")
+  (let [n   (first-node "def R:\n    f() :- V(x: 1, y: 2)\n")
         obs (first (filter #(= :observable (:node %)) (:sections n)))
         call (:expr obs)]
     (is (= :call (:node call)))
@@ -194,7 +168,7 @@
 
     |: x >= 0
 
-    obs :< x
+    obs :- x
 
     -> idle then: x => 0
 ")]
@@ -421,16 +395,8 @@
          #"`state:` section header is retired at v1.0"
          (p/parse "def V:\n    state:\n        x: Float\n")))))
 
-(deftest f8-l3c-metadata-annotation-is-the-sole-user-metadata-surface
-  (testing "L3c NEW-INPUT — @metadata named fields attach above the def"
-    (let [n (first-node (str "@metadata(docs: \"Counter\", stable: true)\n"
-                             "def Counter:\n"
-                             "    n: Int = 0\n\n"
-                             "    -> running\n"))]
-      (is (= "metadata" (get-in n [:annotations 0 :name])))
-      (is (= ["docs" "stable"]
-             (mapv :name (get-in n [:annotations 0 :args]))))))
-  (testing "L3c HARD RETIRE — metadata: has no targeted or generic section shim"
+(deftest f8-l3c-metadata-section-remains-retired-after-annotation-retirement
+  (testing "L3c HARD RETIRE — metadata: has no targeted or generic section shim; @metadata annotation also retired (annotation-grammar-retirement 2026-08-30). Kind info now via body-shape inference (§3.3)."
     (is (thrown?
          clojure.lang.ExceptionInfo
          (p/parse (str "def Counter:\n"
@@ -466,7 +432,7 @@
     (is (some? (p/parse "def V:
     x: Int
 
-    mid() :< self.x
+    mid() :- self.x
 
 def main:
     v: V = V(x: 5)
@@ -616,7 +582,7 @@ def main:
 
 (deftest subscript-postfix-parses
   (testing "F19 / §3.9 — `expr[i]` parses as a :subscript node (index is any expression). Post F67 L4: observable body is a bare expression, no `return`."
-    (let [src "def R:\n    xs: List of Int\n\n    head() :< xs[0]\n"
+    (let [src "def R:\n    xs: List of Int\n\n    head() :- xs[0]\n"
           rec (first-node src)
           obs (first (filter #(= :observable (:node %)) (:sections rec)))]
       (is (= :subscript (:node (:expr obs))))
@@ -626,7 +592,7 @@ def main:
 
 (deftest subscript-chains-with-other-postfix
   (testing "F19 — subscript composes with `.field` and `(args)` in any order. Post F67 L4: observable expression body."
-    (let [src "def R:\n    xs: List of Int\n\n    z() :< xs[0].bar(1)\n"
+    (let [src "def R:\n    xs: List of Int\n\n    z() :- xs[0].bar(1)\n"
           rec (first-node src)
           obs (first (filter #(= :observable (:node %)) (:sections rec)))
           call (:expr obs)]
@@ -747,8 +713,8 @@ def main:
 (deftest l5-def-with-sync-signatures-reshapes-to-protocol
   (testing "L5 — a def containing sync observation signatures reshapes into `:class :kind :protocol`, preserving bodyless signature AST nodes for protocol env-build."
     (let [n (first-node (str "def Iterable:\n"
-                             "    has_next() :< Bool\n"
-                             "    next() :< Element\n"))
+                             "    has_next() :- Bool\n"
+                             "    next() :- Element\n"))
           signatures (:body n)]
       (is (= :class (:node n)))
       (is (= :protocol (:kind n)))
@@ -776,7 +742,7 @@ def main:
          clojure.lang.ExceptionInfo
          #"F68 L1.*ctor params.*protocols declare signatures only"
          (first-node (str "def Iterable(x: Int):\n"
-                          "    has_next() :< Bool\n"))))))
+                          "    has_next() :- Bool\n"))))))
 
 (deftest f68-l1-def-with-transition-stays-def-atom
   (testing "F68 L1 — `def Foo:` with a transition stays `:def-atom` (structural detection classifies as class/atom; not reshaped)."
@@ -840,7 +806,7 @@ def main:
   (testing "F68 L3 — `extend Foo:` (no `class` word) parses to the same `:extend-class` AST node as `extend Foo:`."
     (let [n (first-node
              (str "extend Foo:\n"
-                  "    bar() :< 1\n"))]
+                  "    bar() :- 1\n"))]
       (is (= :extend-class (:node n)))
       (is (= "Foo" (:target n)))
       (let [obs (first (:body n))]
@@ -851,7 +817,7 @@ def main:
   (testing "F68 L3 — `extend Foo(NewProtocol):` (short form + header-parens conformance) parses to `:extend-class` with `:conforms` populated."
     (let [n (first-node
              (str "extend Foo(NewProtocol):\n"
-                  "    bar() :< 3\n"))]
+                  "    bar() :- 3\n"))]
       (is (= :extend-class (:node n)))
       (is (= "Foo" (:target n)))
       (is (= [{:node :type-ref :name "NewProtocol"}]
@@ -862,10 +828,10 @@ def main:
 ;; ---------------------------------------------------------------------------
 
 (deftest l5-sync-and-async-protocol-signatures-parse
-  (testing "L5 — sync `op(args) :< T` and async `<: name(args)` declarations coexist in a signature-only protocol body."
+  (testing "L5 — sync `op(args) :- T` and async `<: name(args)` declarations coexist in a signature-only protocol body."
     (let [n (first-node
              (str "def P:\n"
-                  "    foo(x: Int) :< Int\n"
+                  "    foo(x: Int) :- Int\n"
                   "    <: bar(s: String)\n"))
           [sync-sig async-sig] (:body n)]
       (is (= :class    (:node n)))
@@ -880,7 +846,7 @@ def main:
          clojure.lang.ExceptionInfo
          #"signature-only protocol.*mixes protocol declarations"
          (first-node (str "def Bad:\n"
-                          "    op() :< Int\n"
+                          "    op() :- Int\n"
                           "    n: Int = 0\n"))))))
 
 (deftest l5-accepts-surface-hard-retired
@@ -904,7 +870,7 @@ def main:
   (testing "F9 Landing 3 + F67 L4 — `extend Foo:` accepts observables (Proposal G reader surface). Extensions land in `:extend-class` node carrying target name and body sections."
     (let [n (first-node
              (str "extend Foo:\n"
-                  "    bar() :< 1\n"))]
+                  "    bar() :- 1\n"))]
       (is (= :extend-class (:node n)))
       (is (= "Foo" (:target n)))
       (is (empty? (:conforms n)))
@@ -916,7 +882,7 @@ def main:
   (testing "F67 L4c — `replace` keyword prefixed to an extension observable marks the parsed node with `:replace? true` so composition (§3.3.2 rule 4) can honor the intentional shadow without a warning."
     (let [n (first-node
              (str "extend Foo:\n"
-                  "    replace bar() :< 2\n"))]
+                  "    replace bar() :- 2\n"))]
       (is (= :extend-class (:node n)))
       (is (= "Foo" (:target n)))
       (let [obs (first (:body n))]
@@ -942,13 +908,13 @@ def main:
          (first-node
           (str "def Widget:\n"
                "    n: Int = 0\n"
-               "    replace bumped() :< n + 1\n"))))))
+               "    replace bumped() :- n + 1\n"))))))
 
 (deftest f9-l3-extend-class-with-header-conforms
   (testing "F9 Landing 3 — `extend Foo(NewProtocol):` populates `:conforms` from header parens."
     (let [n (first-node
              (str "extend Foo(NewProtocol):\n"
-                  "    bar() :< 3\n"))]
+                  "    bar() :- 3\n"))]
       (is (= [{:node :type-ref :name "NewProtocol"}]
              (:conforms n))))))
 
@@ -957,7 +923,7 @@ def main:
     (let [n (first-node
              (str "extend Foo:\n"
                   "    conforms: NewProtocol\n"
-                  "    bar() :< 4\n"))]
+                  "    bar() :- 4\n"))]
       (is (= [{:node :type-ref :name "NewProtocol"}]
              (:conforms n)))
       (is (= [:observable] (mapv :node (:body n)))))))
@@ -989,46 +955,40 @@ def main:
          #"Extension propositions compose additively"
          (p/parse "extend A:\n    invariants:\n        ready\n")))))
 
-(deftest q10d-plugin-annotation-on-module-decl-accepted
-  (testing "Q10-D (2026-08-30, spec §7.2.1) — `@plugin(...)` annotation on the line above `module <name>` is legal; the module declaration returns a `:module` AST node with annotations attached. Manifest fields are captured verbatim in the annotation's args for the downstream F75 resolver."
-    (let [nodes (p/parse (str "@plugin(name: \"http-nsurlsession\", version: 1)\n"
-                              "module com.acme.http_nsurlsession\n"))
-          node  (first nodes)]
-      (is (= 1 (count nodes)))
-      (is (= :module (:node node)))
-      (is (= "com.acme.http_nsurlsession" (:name node)))
-      (is (= 1 (count (:annotations node))))
-      (is (= "plugin" (:name (first (:annotations node)))))
-      ;; annotation args are the manifest fields — parser captures the
-      ;; raw arg AST; F75 (manifest resolver) does semantic evaluation.
-      (let [args (:args (first (:annotations node)))]
-        (is (= 2 (count args)))
-        (is (= "name" (:name (first args))))
-        (is (= "http-nsurlsession" (get-in (first args) [:value :value])))
-        (is (= "version" (:name (second args))))
-        (is (= 1 (get-in (second args) [:value :value])))))))
+;; Q10-D (2026-08-30) `@plugin(...)` on `module <name>` retired same-day as
+;; part of the annotation-grammar-retirement wave. Plugin manifest interim
+;; landed on `let plugin: Plugin = Plugin(...)` at module-let scope; that
+;; form retired 2026-08-31 (plugin-abi-shape wave) in favor of the
+;; `def plugin:` record marker. The `module <name>` header is unconditionally
+;; retired — F73 stands with no carve-out. Coverage for the retirement lives
+;; in `annotation-grammar-retired` above and `module-decl-retired` earlier.
 
-(deftest q10d-module-decl-without-plugin-annotation-rejected
-  (testing "Q10-D — regular `module <name>` header (no `@plugin(...)` annotation) still rejects per F73 (2026-08-20). Module identity for regular modules is structural (file path)."
+(deftest module-decl-unconditionally-retired-post-q10d-reversal
+  (testing "annotation-grammar-retirement (2026-08-30) — Q10-D carve-out reversed; `module <name>` rejects unconditionally (F73 2026-08-20 stands with no exception)"
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
-         #"`module <name>` declaration is retired \(2026-08-20\)"
+         #"`module <name>` declaration is retired"
          (p/parse "module com.example.plain\n")))))
 
-(deftest q10d-non-plugin-annotation-on-module-decl-rejected
-  (testing "Q10-D — annotation set that doesn't include `@plugin` is not sufficient to license `module <name>`. Targeted diagnostic points at the Q10-D gate. Annotation-attachment rule stays `def`-only for non-`@plugin` annotations (existing L3a rule)."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"`module <name>` header requires a `@plugin"
-         (p/parse (str "@metadata(kind: record)\n"
-                       "module com.example.foo\n"))))))
-
-(deftest q10d-plugin-annotation-followed-by-nothing-diagnostic-updated
-  (testing "Q10-D — the parse-annotated-def error message now mentions `module` as a legal follow-target when @plugin is present. Fires when annotation set contains neither `def` nor `module` follow-target."
-    (is (thrown-with-msg?
-         clojure.lang.ExceptionInfo
-         #"Annotations cannot stand alone"
-         (p/parse "@plugin(name: \"x\")\nlet x: Int = 1\n")))))
+(deftest plugin-marker-as-def-plugin-record
+  (testing "plugin-abi-shape (2026-08-31) — plugin manifest is expressed as `def plugin:` — a fields-only body at module top level with the reserved name `plugin`. Field defaults are compile-time constants read by the F75 introspection pass. Parses cleanly via body-shape inference (§3.3); the reserved-name discipline + required-field schema are enforced by the F75 pass (landing separately). Supersedes the interim 2026-08-30 `let plugin: Plugin = Plugin(...)` module-let form."
+    (let [src (str "def plugin:\n"
+                   "    name:                  String! = \"test-plugin\"\n"
+                   "    version_major:         Int!    = 0\n"
+                   "    version_minor:         Int!    = 1\n"
+                   "    version_patch:         Int!    = 0\n"
+                   "    cxc_compat_min_major:  Int!    = 1\n"
+                   "    cxc_compat_min_minor:  Int!    = 0\n"
+                   "    cxc_compat_min_patch:  Int!    = 0\n"
+                   "    cxc_compat_max_major:  Int!    = 2\n"
+                   "    cxc_compat_max_minor:  Int!    = 0\n"
+                   "    cxc_compat_max_patch:  Int!    = 0\n")
+          nodes (p/parse src)
+          plugin-def (first (filter #(= "plugin" (:name %)) nodes))]
+      (is (some? plugin-def)
+          "plugin marker parsed as top-level def with name \"plugin\"")
+      (is (contains? #{:def-atom :record :def} (:node plugin-def))
+          "reshapes via body-shape inference (any of :def-atom / :record / :def acceptable pending F75 landing)"))))
 
 (deftest f9-l3-extend-class-rejects-top-level-fields
   (testing "F9 Landing 3 + F67 L5 — a field declaration inside `extend class` fails at parse per §3.3.2 (extensions cannot add state). Post-L5 the surface is top-level fields (no `data:` header)."
@@ -1488,7 +1448,7 @@ def main:
 
 (deftest l2a-observation-body-proposition-parses-as-scoped-bound
   (testing "an observation-body `|: T: Bound` attaches to the explicit-return observable"
-    (let [n    (first-node "def Pipeline:\n    total: Int = 0\n\n    sum :< Out\n        |: Out: Addable\n    = self.total\n")
+    (let [n    (first-node "def Pipeline:\n    total: Int = 0\n\n    sum :- Out\n        |: Out: Addable\n    = self.total\n")
           obs  (first (filter #(= :observable (:node %)) (:sections n)))
           prop (first (:propositions obs))]
       (is (= "Out" (get-in obs [:return-type :name])))
@@ -1501,7 +1461,7 @@ def main:
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
          #"`\|:` proposition must occupy its own line"
-         (p/parse "def A:\n    foo :< bar |: pred = expr\n")))))
+         (p/parse "def A:\n    foo :- bar |: pred = expr\n")))))
 
 (deftest l2a-typed-proposition-attaches-error-type-and-args
   (testing "`as ErrorType(field: value)` normalizes its type and named argument map"
@@ -1522,7 +1482,7 @@ def main:
 
 ;; ---------------------------------------------------------------------------
 ;; L8 (2026-08-25) — `computed:` section header retired. The direct
-;; observable syntax (`name :< expr` at def-body position) is the
+;; observable syntax (`name :- expr` at def-body position) is the
 ;; terminal shape; the section header was parse-time sugar and has
 ;; been removed.
 ;; ---------------------------------------------------------------------------
@@ -1533,8 +1493,8 @@ def main:
                  (p/parse "def V:\n    n: Int\n\n    computed:\n        doubled: Int = n * 2\n")))))
 
 (deftest l8-direct-observable-parses-at-def-body
-  (testing "L8 — the direct observable spelling (`name :< expr`) replaces `computed:` for zero-arg computed fields at def-body position."
-    (let [n   (first-node "def V:\n    n: Int\n\n    doubled :< n * 2\n")
+  (testing "L8 — the direct observable spelling (`name :- expr`) replaces `computed:` for zero-arg computed fields at def-body position."
+    (let [n   (first-node "def V:\n    n: Int\n\n    doubled :- n * 2\n")
           obs (first (filter #(and (= :observable (:node %))
                                    (= "doubled" (:name %)))
                              (:sections n)))]
@@ -1545,13 +1505,13 @@ def main:
 
 (deftest l8-multiple-direct-observables-preserve-order
   (testing "L8 — multiple direct observables at def-body position preserve declaration order."
-    (let [n   (first-node "def V:\n    n: Int\n\n    d :< n * 2\n    t :< n * 3\n")
+    (let [n   (first-node "def V:\n    n: Int\n\n    d :- n * 2\n    t :- n * 3\n")
           obs (filterv #(= :observable (:node %)) (:sections n))]
       (is (= ["d" "t"] (mapv :name obs))))))
 
 (deftest l8-parametric-observable-parses-at-def-body
-  (testing "L8 — parametric observables (`name(params) :< expr`) parse at def-body position unchanged from prior support."
-    (let [n   (first-node "def V:\n    n: Int\n\n    scaled(k: Int) :< n * k\n")
+  (testing "L8 — parametric observables (`name(params) :- expr`) parse at def-body position unchanged from prior support."
+    (let [n   (first-node "def V:\n    n: Int\n\n    scaled(k: Int) :- n * k\n")
           obs (first (filter #(and (= :observable (:node %))
                                    (= "scaled" (:name %)))
                              (:sections n)))]
@@ -1675,7 +1635,7 @@ def main:
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo
          #"Track C/2: `queue: <discipline>` is meaningful only on agent atoms"
-         (p/parse "def R(queue: bounded(10)):\n    has_next() :< Bool\n")))))
+         (p/parse "def R(queue: bounded(10)):\n    has_next() :- Bool\n")))))
 
 (deftest track-c2-queue-unknown-discipline-rejected
   (testing "Track C/2 — only `bounded(N)` and `unbounded` are recognized disciplines today. `queue: sliding(4)` etc. fail with a targeted diagnostic listing the two accepted forms."

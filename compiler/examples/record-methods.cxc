@@ -2,7 +2,7 @@ def V:
     x: Float
     y: Float
 
-    plus(other: V) :< V(x: x + other.x, y: y + other.y)
+    plus(other: V) :- V(x: x + other.x, y: y + other.y)
 
 def main:
     -> running

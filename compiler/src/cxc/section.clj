@@ -195,12 +195,6 @@
    `def-atom-invariants` / extend-class merging. This seed makes that
    ownership explicit without reviving section-header dispatch.
 
-   `:deprecated` — K3 deprecation walker (build.clj Layer 6 Step 11
-   `warn-deprecated-uses`) walks each parsed program for `:type-ref` /
-   `:call` references to definitions carrying a `@deprecated(\"msg\")`
-   annotation and emits stderr warnings. The L3a top-level annotation
-   parser owns the sole parse surface; the walker remains registry-routed.
-
    `:computed` intentionally stays `:reserved` even though L3a
    shipped: L3a chose parse-time sugar (rewrite to zero-arg
    observables before lower sees the AST) rather than a
@@ -209,41 +203,31 @@
    waits on a followup that decides the metadata schema for
    parse-sugar sections.
 
-   `:metadata` — F53 sidecar manifest emission. The L3a top-level
-   annotation parser owns the sole parse surface; parsed metadata
-   annotations are retained by resolve and emitted on declaration
-   exports in `<module>.cxc-manifest.json`. There is deliberately no
-   section-header parser.
-
    `:use` — K6 partial capability-request extraction. Parser handles
    direct `use <name>: <Type>` via `parse-use-line`; lower reads the caps set at
    multiple sites (atom-env building, transition-injection eligibility,
    effect-checking dispatch). Same L3b.i shape — backend landed,
    registry ownership not yet wired.
 
+   `:metadata` + `:deprecated` seeds retired 2026-08-30 with the
+   annotation-grammar-retirement wave (see decisions-frozen-2026-08-30).
+   `@metadata(...)` and `@deprecated(...)` no longer parse; the seeds
+   revert to plain reserved-name entries with no backend. Kind info
+   flows through body-shape inference (§3.3); deprecation is expressed
+   as a comment/convention at v1.0.
+
    Seed flags:
    - `:allowed-in-extend?` — F8 L3b.iii — is the section permitted
      inside `extend Foo:` bodies? Default false (spec §3.3.2 restricts
      extensions from adding state, capabilities, or deprecation).
      `:invariants` is true since invariants compose additively across
-     extensions per F49's extension-invariant merging. `:use` and
-     `:deprecated` stay false — extend rejects them by design."
+     extensions per F49's extension-invariant merging. `:use` stays
+     false — extend rejects it by design."
   {:invariants {:impl               :compiler-baked
                 :backend            :f49-invariant-machinery
                 :parser-less?       true
                 :allowed-in-extend? true
                 :notes              "L2b: `|:` propositions parse directly; F49 consumes their normalized records."}
-   :metadata   {:impl               :compiler-baked
-                :backend            :f53-manifest-emission
-                :parser-sym         'cxc.parse/parse-annotation
-                :allowed-in-extend? false
-                :notes              "L3c: `@metadata(...)` annotations feed F53 declaration exports; no section-header backend exists."}
-   :deprecated {:impl               :compiler-baked
-                :backend            :k3-deprecation-walker
-                :parser-sym         'cxc.parse/parse-annotation
-                :walker-sym         'cxc.build/warn-deprecated-uses
-                :allowed-in-extend? false
-                :notes              "L3b: `@deprecated(\"msg\")` annotations feed the unchanged K3 walker."}
    :use        {:impl               :compiler-baked
                 :backend            :k6-capability-extraction
                 :parser-sym         'cxc.parse/parse-use-line
@@ -254,12 +238,15 @@
   "Section-class registry — `{section-name-keyword → spec}`. Compiler-
    internal. Seeded with the compiler-baked reservations. Names with
    a landed backend carry `:kind :behavioral` + a spec pointer
-   (L3b.i: `invariants` → F49 machinery; L3c: `metadata` → F53
-   manifest emission; L3d.i: `deprecated` → K3 walker; L3-use.i:
-   `use` → K6 capability extraction); names still awaiting behavioral
-   wire-in carry `:kind :reserved` + `:spec nil`. Kept as a var so
-   the parser hook and post-parse walker enumeration consult a single
-   canonical location.
+   (L3b.i: `invariants` → F49 machinery; L3-use.i: `use` → K6
+   capability extraction); names still awaiting behavioral wire-in
+   carry `:kind :reserved` + `:spec nil`. Kept as a var so the parser
+   hook and post-parse walker enumeration consult a single canonical
+   location.
+
+   `metadata` + `deprecated` entries retired 2026-08-30 with the
+   annotation-grammar-retirement wave; both revert to reserved-name
+   status (no behavioral seed). See decisions-frozen-2026-08-30.
 
    Registry entries have shape:
      {:name    :foo
@@ -290,11 +277,11 @@
    hit the resolved var directly.
 
    Case-insensitive via `lookup`. Callers invoke the returned var as
-   `[tokens pos] → [node next-pos]`. A parser may own a direct line
-   (`parse-use-line`) or a consolidated surface (`parse-annotation`
-   for `@deprecated`). Parser-less behavioral entries such as
-   `:invariants` return nil because their direct syntax has its own
-   positional parser entry point.
+   `[tokens pos] → [node next-pos]`. Post annotation-grammar-retirement
+   (2026-08-30) only `:use` carries a `:parser-sym` (`parse-use-line`).
+   Parser-less behavioral entries such as `:invariants` return nil
+   because their direct syntax has its own positional parser entry
+   point.
 
    No parser wire-through yet — this fn is the substrate. L3b.ii.β
    (def-atom-body dispatch) and L3b.iii (class-body dispatch) will
@@ -331,8 +318,9 @@
    `:use` — their lower-time processing happens inline, not as a
    post-parse walker).
 
-   Callers invoke the returned var per the walker's own signature
-   (currently only `warn-deprecated-uses [user-parsed full-parsed]`)."
+   Callers invoke the returned var per the walker's own signature.
+   Post annotation-grammar-retirement (2026-08-30) no registry entry
+   carries a `:walker-sym`; this fn always returns nil at v1.0."
   [nm]
   (let [e (lookup nm)]
     (when (= :behavioral (:kind e))
@@ -345,9 +333,10 @@
    for deterministic iteration order across runs).
 
    Substrate for `build/compile-source-to-file` to iterate walkers via
-   the registry instead of hardcoding a `warn-deprecated-uses` call.
-   Today only `:deprecated` carries a walker-sym, so the returned map
-   has one entry for the compiler-baked K3 walker.
+   the registry rather than hardcoding walker calls. Post annotation-
+   grammar-retirement (2026-08-30) no seed carries a `:walker-sym`;
+   the returned map is empty and the caller's doseq is a no-op. The
+   substrate stays so future walker landings need no wiring change.
 
    Skips reserved entries + behavioral entries without a `:walker-sym`.
    Walker resolution is on-demand via `requiring-resolve` — the target

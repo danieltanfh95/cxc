@@ -93,7 +93,7 @@
       (is (= "42\n" stdout)))))
 
 (deftest end-to-end-f8-computed
-  (testing "L8 — direct observable syntax at def-body position. `V { n: Int = 21 }` declares `doubled :< n * 2` directly; `V().doubled` dispatches through the observable path and prints 42."
+  (testing "L8 — direct observable syntax at def-body position. `V { n: Int = 21 }` declares `doubled :- n * 2` directly; `V().doubled` dispatches through the observable path and prints 42."
     (let [{:keys [exit stdout]} (compile-and-run "f8-computed")]
       (is (zero? exit))
       (is (= "42\n" stdout)))))
@@ -361,7 +361,7 @@
       (is (= "30\n" stdout)))))
 
 (deftest end-to-end-observable-simple
-  (testing "observable-simple.cxc — `doubled :< raw + raw` synthesizes a zero-arg getter; .doubled reads it"
+  (testing "observable-simple.cxc — `doubled :- raw + raw` synthesizes a zero-arg getter; .doubled reads it"
     (let [{:keys [exit stdout]} (compile-and-run "observable-simple")]
       (is (zero? exit))
       (is (= "42\n" stdout)))))
@@ -373,7 +373,7 @@
       (is (= "7\n" stdout)))))
 
 (deftest end-to-end-observable-parametric
-  (testing "F67 L2 — observable-parametric.cxc: `scaled_area(sx: Int, sy: Int) :< (w * sx) * (h * sy)` — parametric observable emits as ObjC method with declared params; caller invokes `r.scaled_area(2, 5)` and gets (3*2)*(4*5) = 120."
+  (testing "F67 L2 — observable-parametric.cxc: `scaled_area(sx: Int, sy: Int) :- (w * sx) * (h * sy)` — parametric observable emits as ObjC method with declared params; caller invokes `r.scaled_area(2, 5)` and gets (3*2)*(4*5) = 120."
     (let [{:keys [exit stdout]} (compile-and-run "observable-parametric")]
       (is (zero? exit))
       (is (= "120\n" stdout)))))
@@ -547,7 +547,7 @@
       (is (= "750\n" stdout)))))
 
 (deftest end-to-end-clock-now
-  (testing "clock-now.cxc — Layer 5b Step A + Step 9. Clock gains a `now :< native_millis_now()` observable via the compiler-internal FFI hatch (native_* builtins lower to raw C expressions). Program takes `clock.now > 0` — always 1 on any system with a valid wall clock — as a liveness check on the observable and prints 1. Also exercises the fanout-selector NSObject category emitted at the top of the file: Clock's tick/done streams have no subscribers here, and Apple clang treats an unknown-selector send to an `id`-typed receiver as a hard error; the category makes every fanout selector declared program-wide."
+  (testing "clock-now.cxc — Layer 5b Step A + Step 9. Clock gains a `now :- native_millis_now()` observable via the compiler-internal FFI hatch (native_* builtins lower to raw C expressions). Program takes `clock.now > 0` — always 1 on any system with a valid wall clock — as a liveness check on the observable and prints 1. Also exercises the fanout-selector NSObject category emitted at the top of the file: Clock's tick/done streams have no subscribers here, and Apple clang treats an unknown-selector send to an `id`-typed receiver as a hard error; the category makes every fanout selector declared program-wide."
     (let [{:keys [exit stdout]} (compile-and-run "clock-now")]
       (is (zero? exit))
       (is (= "1\n" stdout)))))
@@ -565,7 +565,7 @@
       (is (= "1\n" stdout)))))
 
 (deftest end-to-end-random-below
-  (testing "random-below.cxc — Layer 5b Step 11. Prelude ships `Random` with `next_u32 :< native_random_u32()` observable and `below(n)` method wrapping `native_random_below(n)` — both hatched through the FFI-builtin registry to `arc4random`/`arc4random_uniform`. Deterministic assertion: `rng.below(1)` always returns 0."
+  (testing "random-below.cxc — Layer 5b Step 11. Prelude ships `Random` with `next_u32 :- native_random_u32()` observable and `below(n)` method wrapping `native_random_below(n)` — both hatched through the FFI-builtin registry to `arc4random`/`arc4random_uniform`. Deterministic assertion: `rng.below(1)` always returns 0."
     (let [{:keys [exit stdout]} (compile-and-run "random-below")]
       (is (zero? exit))
       (is (= "0\n" stdout)))))
@@ -588,37 +588,11 @@
       (is (zero? exit))
       (is (= "1\n" stdout)))))
 
-(deftest f8-l3d-ii-beta-walker-uses-standard-signature
-  (testing "F8 L3d.ii.β — `warn-deprecated-uses` accepts the standard `[user-parsed full-parsed]` walker signature: the walker owns its own input computation (calls `collect-deprecations` on `full-parsed` internally). Under the L3d.ii.β wire-through in `compile-source-to-file`, the registry loop invokes every `behavioral-walkers` entry with `(walker-var parsed full-parsed)` — this test pins that contract directly by driving the walker in-process without going through clang. Verifies (a) the 2-arg call succeeds, (b) a deprecated def in `full-parsed` triggers a stderr warning when `user-parsed` references it, (c) definitions in `user-parsed` itself don't self-warn."
-    (let [prelude-src "@deprecated(\"use NewBox\")\ndef OldBox:\n    v: Int = 0\n\n"
-          user-src    "def main:\n    -> running\n        then: print(OldBox(v: 3).v)\n\n    -> end\n"
-          user-parsed (cxc.parse/parse user-src)
-          full-parsed (cxc.parse/parse (str prelude-src user-src))
-          err-writer  (java.io.StringWriter.)
-          _           (binding [*err* err-writer]
-                        (build/warn-deprecated-uses user-parsed full-parsed))
-          stderr      (.toString err-writer)]
-      (is (.contains stderr "`OldBox` is deprecated")
-          "warning fires when user code references a def deprecated elsewhere in full-parsed")
-      (is (.contains stderr "use NewBox")
-          "warning carries the deprecation message from the annotation"))))
-
-(deftest f8-l3d-ii-beta-walker-skips-self-references
-  (testing "F8 L3d.ii.β — the walker skips definition-site self-references: a deprecated `Foo` referencing its own name in its methods doesn't self-warn (existing K3 semantics; pinned here so the L3d.ii.β signature-change didn't regress it)."
-    (let [src         "@deprecated(\"gone\")\ndef Foo:\n    v: Int = 0\n\ndef main:\n    -> running\n        then: print(0)\n\n    -> end\n"
-          parsed      (cxc.parse/parse src)
-          err-writer  (java.io.StringWriter.)
-          _           (binding [*err* err-writer]
-                        (build/warn-deprecated-uses parsed parsed))
-          stderr      (.toString err-writer)]
-      (is (not (.contains stderr "`Foo` is deprecated"))
-          "no self-warning on the def-site itself even when parsed and full-parsed coincide"))))
-
-(deftest end-to-end-deprecation-warning
-  (testing "deprecation-warning.cxc — L3b / Layer 6 Step 11. `@deprecated(\"<message>\")` above a def attaches a deprecation message; the unchanged use-site walker in cxc.build emits one warning per external reference to *err*. Verifies the program still compiles and runs to `7`; the warning is visible on stderr."
-    (let [{:keys [exit stdout]} (compile-and-run "deprecation-warning")]
-      (is (zero? exit))
-      (is (= "7\n" stdout)))))
+;; f8-l3d-ii-beta-walker-* + end-to-end-deprecation-warning retired
+;; 2026-08-30 with the annotation-grammar-retirement wave. `@deprecated`
+;; no longer parses; K3 walker deleted; deprecation is a comment/user
+;; convention at v1.0. deprecation-warning.cxc example file retired
+;; separately (see examples/ cleanup).
 
 (deftest end-to-end-event-callback
   (testing "event-callback.cxc — Layer 6 Step 12 MVP. `data: cb: Block` on main (bare `Block` type = zero-arg void-return escaping block, `void (^)(void)` at C). `then: cb => () => print(42)` installs the block via a new zero-arg-lambda grammar path — parser recognizes `()` `=>` as `{:node :lambda :params [] :body <expr>}`, lowered to `{:node :objc-block-literal :params [] :stmts [<body-expr>]}` when the containing type context is Block. `then: cb()` invokes the stored block — bare-ident-callee resolution recognizes Block-typed self-fields and emits `_cb()`. Block field promotes `def main` to a real atom class so ivar storage + ctx-with-self are available. ARC-wise, block property is `nonatomic copy` so stack blocks migrate to heap on assignment (standard ObjC block-property pattern). Prints `42`."
@@ -1147,11 +1121,11 @@
   (java.io.File. out-dir (str module ".cxc-manifest.json")))
 
 (deftest f53-l1-manifest-emitted-for-single-file
-  (testing "F53 L1 + L3c — a root file emits main.cxc-manifest.json and carries declaration metadata."
+  (testing "F53 L1 — a root file emits main.cxc-manifest.json listing its declarations. Post annotation-grammar-retirement (2026-08-30) the manifest carries compiler-derived facts only (name/kind/variant/members); user-metadata surface awaits a replacement (e.g. `meta = Meta(...)` module-let)."
     (let [src-dir (tmp-dir)
           out-dir (tmp-dir)
           _       (write-file! src-dir "app.cxc"
-                               "@metadata(owner: \"core\")\ndef Foo:\n    n: Int\n\ndef main:\n    -> running\n        then: print(1)\n")
+                               "def Foo:\n    n: Int\n\ndef main:\n    -> running\n        then: print(1)\n")
           {:keys [status stderr]}
           (build/compile-directory-to-file (.getPath src-dir)
                                            "prog" (.getPath out-dir))
@@ -1160,17 +1134,14 @@
       (is (zero? status) (str "clang failed: " stderr))
       (is (.exists m-file) "main.cxc-manifest.json written to out-dir")
       (is (pos? (.length m-file)) "manifest is non-empty")
-      (is (re-find #"\"owner\": \"core\"" m-json)
-          "@metadata owner field is emitted"))))
+      (is (re-find #"\"name\": \"Foo\"" m-json) "Foo export present"))))
 
 (deftest f53-l1-manifest-includes-all-declarations
   (testing "F53 L1 — every user declaration in the module (records, atoms, enums) appears in the manifest's exports array with its kind."
     (let [src-dir (tmp-dir)
           out-dir (tmp-dir)
           _       (write-file! src-dir "app.cxc"
-                               (str "@metadata(docs: \"UI widget\", stable: true)\n"
-                                    "def Widget:\n    n: Int\n\n"
-                                    "@metadata(raw_type: \"UInt8\")\n"
+                               (str "def Widget:\n    n: Int\n\n"
                                     "def Kind:\n    case red\n    case blue\n\n"
                                     "def main:\n    -> running\n        then: print(1)\n"))
           {:keys [status]}
@@ -1180,20 +1151,17 @@
       (is (zero? status))
       (is (re-find #"\"name\": \"Widget\"" m-json) "Widget export present")
       (is (re-find #"\"kind\": \"record\"" m-json) "record kind serialised")
-      (is (re-find #"\"docs\": \"UI widget\"" m-json) "string metadata serialised")
-      (is (re-find #"\"stable\": true" m-json) "boolean metadata serialised")
       (is (re-find #"\"name\": \"Kind\"" m-json) "Kind export present")
       (is (re-find #"\"kind\": \"enum\"" m-json) "enum kind serialised")
-      (is (re-find #"\"raw_type\": \"UInt8\"" m-json) "enum metadata serialised")
       (is (re-find #"\"name\": \"main\"" m-json) "main atom export present")
       (is (re-find #"\"kind\": \"def-atom\"" m-json) "def-atom kind serialised"))))
 
 (deftest f53-l1-manifest-shape-matches-schema
-  (testing "F53 L1 + L3c — schema keys stay intact and annotated exports gain a metadata object."
+  (testing "F53 L1 — manifest schema keys stay intact. Post annotation-grammar-retirement the `:metadata` object no longer appears (no source annotations to fold); reinstated when a replacement user-metadata surface lands."
     (let [src-dir (tmp-dir)
           out-dir (tmp-dir)
           _       (write-file! src-dir "app.cxc"
-                               "@metadata(entrypoint: true)\ndef main:\n    -> running\n        then: print(1)\n")
+                               "def main:\n    -> running\n        then: print(1)\n")
           _       (build/compile-directory-to-file (.getPath src-dir)
                                                     "prog" (.getPath out-dir))
           m-json  (slurp (manifest-path out-dir "main"))]
@@ -1204,18 +1172,16 @@
       (is (re-find #"\"source-hash\":" m-json))
       (is (re-find #"\"source-files\":" m-json))
       (is (re-find #"\"exports\":" m-json))
-      (is (re-find #"\"imports\":" m-json))
-      (is (re-find #"\"metadata\":" m-json))
-      (is (re-find #"\"entrypoint\": true" m-json)))))
+      (is (re-find #"\"imports\":" m-json)))))
 
 (deftest f53-l1-manifest-emitted-per-module-in-multi-file
   (testing "F53 L1 — in multi-file mode with modules `lib` and `main`, one manifest is written per user module and each manifest lists only that module's declarations."
     (let [src-dir (tmp-dir)
           out-dir (tmp-dir)
           _       (write-file! src-dir "lib/util.cxc"
-                               "@metadata(owner: \"lib-team\")\ndef Helper:\n    x: Int\n")
+                               "def Helper:\n    x: Int\n")
           _       (write-file! src-dir "app.cxc"
-                               "from lib import Helper\n\n@metadata(owner: \"app-team\")\ndef main:\n    -> running\n        then: print(1)\n")
+                               "from lib import Helper\n\ndef main:\n    -> running\n        then: print(1)\n")
           _       (build/compile-directory-to-file (.getPath src-dir)
                                                     "prog" (.getPath out-dir))
           lib-json  (slurp (manifest-path out-dir "lib"))
@@ -1223,19 +1189,15 @@
           main-exports (first (str/split main-json #"\"imports\":"))]
       (is (re-find #"\"module\": \"lib\"" lib-json) "lib manifest names lib")
       (is (re-find #"\"name\": \"Helper\"" lib-json) "lib manifest lists Helper")
-      (is (re-find #"\"owner\": \"lib-team\"" lib-json) "lib metadata stays with Helper")
       (is (not (re-find #"\"name\": \"Helper\"" main-exports))
           "main manifest's exports do NOT list Helper (that's lib's export)")
-      (is (not (re-find #"\"owner\": \"lib-team\"" main-exports))
-          "lib metadata does not leak into main exports")
       (is (re-find #"\"module\": \"main\"" main-json) "main manifest names main")
       (is (re-find #"\"name\": \"main\"" main-exports) "main manifest exports the main atom")
-      (is (re-find #"\"owner\": \"app-team\"" main-exports) "main metadata stays with main")
       (is (re-find #"\"kind\": \"from-import\"" main-json)
           "main manifest records its from-import of Helper"))))
 
 (deftest f53-l1-manifest-source-hash-changes-on-source-change
-  (testing "F53 L1 + L3c — metadata is both emitted and included in the module source hash."
+  (testing "F53 L1 — module source content participates in the source-hash. Distinct sources yield distinct hashes; identical sources yield identical hashes."
     (let [compile-once
           (fn [src-content]
             (let [src-dir (tmp-dir)
@@ -1246,15 +1208,13 @@
                   json    (slurp (manifest-path out-dir "main"))]
               [(second (re-find #"\"source-hash\": \"([^\"]+)\"" json))
                json]))
-          [h1 j1] (compile-once
-                   "@metadata(version: \"1.0\")\ndef Foo:\n    n: Int\n\ndef main:\n    -> running\n        then: print(1)\n")
-          [h2 j2] (compile-once
-                   "@metadata(version: \"2.0\")\ndef Foo:\n    n: Int\n\ndef main:\n    -> running\n        then: print(1)\n")]
+          [h1 _] (compile-once
+                   "def Foo:\n    n: Int\n\ndef main:\n    -> running\n        then: print(1)\n")
+          [h2 _] (compile-once
+                   "def Foo:\n    n: Int = 1\n\ndef main:\n    -> running\n        then: print(1)\n")]
       (is (some? h1) "hash extractable from first manifest")
       (is (some? h2) "hash extractable from second manifest")
-      (is (not= h1 h2) "metadata source change → different source-hash")
-      (is (re-find #"\"version\": \"1.0\"" j1))
-      (is (re-find #"\"version\": \"2.0\"" j2)))))
+      (is (not= h1 h2) "source change → different source-hash"))))
 
 ;; ---------------------------------------------------------------------------
 ;; F53 L2 — program-wide cxc-deps.json emission.

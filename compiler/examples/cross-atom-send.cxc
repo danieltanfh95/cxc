@@ -1,7 +1,7 @@
 def Sink:
     raw_total: Int = 0
 
-    total :< raw_total
+    total :- raw_total
 
     -> alive
 

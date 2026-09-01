@@ -1755,7 +1755,7 @@
         method-info
         (cond
           (and (map? target-ty) (:record target-ty))
-          ;; F67 L4a — parametric observables (`name(args) :< expr`)
+          ;; F67 L4a — parametric observables (`name(args) :- expr`)
           ;; dispatch through the same C-function pathway as record
           ;; methods. Return an observable-synthesized entry that
           ;; mimics the method shape (self as first param) so
@@ -5099,7 +5099,7 @@
       ;; `= nil` OR no-default → `{present:0}`;
       ;; already-Optional default (e.g. `= Counter(...).bump` where
       ;; `.bump` returns Optional) → pass-through struct-copy;
-      ;; scalar default → wrap `{present:1, .value:<lowered>}`.
+      ;; scalar default → wrap `{present:1, .value:-lowered>}`.
       (:optional? field)
       (let [opt-c (:c-type field)
             nil-default? (or (nil? d)
@@ -5244,8 +5244,8 @@
 
 (defn- lower-observable-method
   "An observable becomes a synthesized method:
-     zero-arg   `foo :< expr`         → `-(T)foo { return <expr>; }`
-     parametric `foo(a: A) :< expr`   → `-(T)fooWithA:(A)a { return <expr>; }`
+     zero-arg   `foo :- expr`         → `-(T)foo { return <expr>; }`
+     parametric `foo(a: A) :- expr`   → `-(T)fooWithA:(A)a { return <expr>; }`
 
    Reads self-fields via ivar direct access (matches init-body). Args
    (if any) are ObjC method params visible in the body expression.
@@ -6158,7 +6158,7 @@
    consecutive `atom-env (…)` rebindings.
 
    Runs in order (each stage depends on the previous):
-     1. `infer-observables-in-atom-env` — types every `name :<
+     1. `infer-observables-in-atom-env` — types every `name :-
         expr` observable body against the current envs.
      2. `infer-streams-in-atom-env`     — types `name :> …` fanouts;
         depends on observable inference so an observable-of-

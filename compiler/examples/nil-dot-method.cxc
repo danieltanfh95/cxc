@@ -14,7 +14,7 @@
 def Counter:
     raw_n: Int = 5
 
-    n :< raw_n
+    n :- raw_n
 
     -> running
 
@@ -23,7 +23,7 @@ def Counter:
 def Wrapper:
     raw_c: Counter = nil
 
-    c :< raw_c
+    c :- raw_c
 
     -> running
 
