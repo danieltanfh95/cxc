@@ -141,7 +141,13 @@
    ;; wraps libc `getenv`; unset vars return the default. Single
    ;; method at MVP — a distinct `get()` returning nullable String
    ;; waits on nullable-String surface tightening.
-   {:name :env :kind :target :names ["Env"]}])
+   {:name :env :kind :target :names ["Env"]}
+   ;; 2h (2026-09-03) — `Args` capability. `length` (argc as Int)
+   ;; + `get_or(index, fallback)` (argv[index] with default).
+   ;; Argc/argv accessed via Darwin's `*_NSGetArgc()` / `*_NSGetArgv()`
+   ;; (declared in `<crt_externs.h>` which base-includes auto-adds
+   ;; when Foundation is on).
+   {:name :args :kind :target :names ["Args"]}])
 
 (defn assemble-source
   "Load and concatenate prelude module sources for a given target.
@@ -182,7 +188,7 @@
    cxc.lower compares against these; entries match what the parsed
    AST carries verbatim from prelude source."
   #{"Clock" "Random" "TestKeyboardInput" "Console" "SystemPanic" "Plugin" "OsPrimitive"
-    "FileSystem" "Subprocess" "Env"})
+    "FileSystem" "Subprocess" "Env" "Args"})
 
 ;; F5 retirement (2026-08-15): unit-suffix desugaring (`100ms`,
 ;; `2s`, `1.5min` → `Duration(millis: N)`) is retired per spec

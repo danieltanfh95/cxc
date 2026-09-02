@@ -7173,7 +7173,13 @@
                              ;; used by FFI builtins that need to invoke
                              ;; arbitrary receiver-side selectors (e.g.
                              ;; Clock.every's typed-payload dispatch).
-                             "<objc/message.h>"]
+                             "<objc/message.h>"
+                             ;; 2h (2026-09-03) — `_NSGetArgv/_NSGetArgc`
+                             ;; declarations for the `native_args_*`
+                             ;; intrinsics. Darwin-only header, harmless
+                             ;; to always include when we've already
+                             ;; committed to Foundation (i.e. macOS).
+                             "<crt_externs.h>"]
                             ["<stdio.h>"])
         ;; F37 Landings 2 + 5 — synthesized `<Record>_cxc_as_bytes` /
         ;; `<Enum>_cxc_as_bytes` use OSSwapHostToBigInt16/32/64.

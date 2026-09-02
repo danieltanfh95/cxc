@@ -1833,9 +1833,10 @@
         (is (= "hello world\n" stdout))))))
 
 (deftest end-to-end-mini-agent
-  (testing "2026-09-02 — cross-capability composition proof. `mini-agent.cxc` uses FileSystem + Subprocess + Console + Env + Int.to_string + String concat in a single `then:` block: reads MINI_AGENT_CMD / TMPDIR env vars (with defaults), runs the resolved shell command via popen, writes captured output to a file via NSString `writeToFile:`, prints a summary. Verifies the five MVP capabilities compose without conflicting on runtime, prelude autoloading, or emit shape. Log-path is derived from TMPDIR so exact path varies per run; asserts stdout carries the expected shape and the write status was 0."
+  (testing "2026-09-03 — cross-capability composition proof. `mini-agent.cxc` uses Args + FileSystem + Subprocess + Console + Env + Int.to_string + String concat in a single `then:` block: reads argv[1] via `args.get_or(1, fallback)`, otherwise consults `MINI_AGENT_CMD` env var (default `date`); runs the resolved shell command via popen, writes captured output to a file via NSString `writeToFile:`, prints a summary (including argc + write status via `Int.to_string()`). Verifies the six MVP capabilities compose without conflicting on runtime, prelude autoloading, or emit shape. run-binary calls shell/sh with no args, so argc=1 (just the program name) and the env-var fallback wins."
     (let [{:keys [exit stdout]} (compile-and-run "mini-agent")]
       (is (zero? exit))
+      (is (clojure.string/includes? stdout "argc: 1"))
       (is (clojure.string/includes? stdout "cmd: date"))
       (is (clojure.string/includes? stdout "log: "))
       (is (clojure.string/includes? stdout "write status: 0"))

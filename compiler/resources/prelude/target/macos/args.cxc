@@ -1,0 +1,8 @@
+def Args:
+    length :- native_args_length()
+
+    get_or(index: Int, fallback: String) :- native_args_get_or(index, fallback)
+
+    -> running
+
+    -> end

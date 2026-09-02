@@ -3,14 +3,17 @@ def main:
     use shell:   Subprocess
     use console: Console
     use env:     Env
+    use args:    Args
 
     -> running
         then:
-            let cmd:      String = env.get_or("MINI_AGENT_CMD", "date")
+            let cmd:      String = args.get_or(1, env.get_or("MINI_AGENT_CMD", "date"))
             let log_dir:  String = env.get_or("TMPDIR", "/tmp/")
             let log_path: String = log_dir + "mini-agent.log"
             let output:   String = shell.run(cmd)
             let status:   Int    = fs.write_text(log_path, output)
+            let argc:     Int    = args.length()
+            console.write("argc: " + argc.to_string())
             console.write("cmd: " + cmd)
             console.write("log: " + log_path)
             console.write("write status: " + status.to_string())

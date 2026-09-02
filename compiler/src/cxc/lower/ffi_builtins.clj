@@ -106,6 +106,36 @@
                       "pclose(__p); "
                       "__r = (NSString *)__out; } } "
                       "__r; })"))}
+   "native_args_length"
+   ;; 2h (2026-09-03) — argc as an Int. Reads from Darwin's
+   ;; `*_NSGetArgc()` accessor; `<crt_externs.h>` is auto-included
+   ;; whenever Foundation is included (see base-includes).
+   {:return-kw :int
+    :arity     0
+    :emit-c    (fn [_args]
+                 "((int)(*_NSGetArgc()))")}
+   "native_args_get_or"
+   ;; 2h (2026-09-03) — argv[index] as String, or the caller's
+   ;; fallback if index is out of range. Darwin argc/argv accessed
+   ;; via `*_NSGetArgc()` / `*_NSGetArgv()`; the argv entries are
+   ;; `char *` C-strings which we wrap via `+stringWithUTF8String:`
+   ;; (NULL-tolerant with an outer nil guard). Negative indices
+   ;; return the fallback (unsigned cast would wrap silently, so
+   ;; we branch).
+   {:return-kw :string
+    :arity     2
+    :emit-c    (fn [args]
+                 (let [idx      (first args)
+                       fallback (second args)]
+                   (str "({ int __i = (int)(" idx "); "
+                        "int __ac = *_NSGetArgc(); "
+                        "char **__av = *_NSGetArgv(); "
+                        "NSString *__fb = " fallback "; "
+                        "NSString *__r = __fb; "
+                        "if (__i >= 0 && __i < __ac && __av[__i]) { "
+                        "__r = [NSString stringWithUTF8String:__av[__i]]; "
+                        "} "
+                        "__r; })")))}
    "native_env_get_or_default"
    ;; 2g (2026-09-02) — read an environment variable, defaulting on
    ;; miss. libc `getenv(name)` returns `const char *`; when the var
