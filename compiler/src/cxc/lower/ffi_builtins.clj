@@ -632,6 +632,17 @@
                       "if ([__cur isKindOfClass:[NSArray class]]) { "
                       "__r = (int64_t)[(NSArray *)__cur count]; } } } "
                       "__r; })"))}
+   "native_env_has"
+   ;; 2026-09-03 — check whether an environment variable is set.
+   ;; Distinct from `get_or(name, "") == ""`: an env var explicitly
+   ;; set to empty string reads as present here but empty via get_or.
+   ;; Nil name → false.
+   {:return-kw :bool
+    :arity     1
+    :emit-c    (fn [args]
+                 (str "((" (first args) " && "
+                      "getenv([(" (first args) ") UTF8String]) != NULL) "
+                      "? YES : NO)"))}
    "native_env_remove"
    ;; 2026-09-03 — remove an environment variable from the current
    ;; process (libc `unsetenv`). Returns 0 on success (including

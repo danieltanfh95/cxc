@@ -1891,6 +1891,16 @@
       (is (str/includes? stdout "len32: 32"))
       (is (str/includes? stdout "len_neg: 0")))))
 
+(deftest end-to-end-env-has
+  (testing "2026-09-03 — `env.has(name)` distinguishes set-to-empty from unset. `get_or(name, X)` returns X on both absent and empty-string cases; `has` returns true for the second and false for the first, using libc `getenv(name) != NULL` directly. Also asserts `PATH` is set (universal on Unix) as a positive-control anchor that doesn't depend on test-mutable state."
+    (let [{:keys [exit stdout]} (compile-and-run "env-has")]
+      (is (zero? exit))
+      (is (str/includes? stdout "has_after_remove: false"))
+      (is (str/includes? stdout "has_after_set_empty: true"))
+      (is (str/includes? stdout "get_after_set_empty: []"))
+      (is (str/includes? stdout "has_after_second_remove: false"))
+      (is (str/includes? stdout "has_path: true")))))
+
 (deftest end-to-end-env-remove-fs-append
   (testing "2026-09-03 — `env.remove(name)` (libc unsetenv wrapper; verified by round-trip set→get→remove→get returning fallback) + `fs.append_text(path, content)` (fopen `a` mode; verified by appending two lines then reading back). Together these round out Env (get_or / set / remove) and FileSystem (read_text / write_text / append_text / exists / mkdirs / remove). Cleans its own scratch file before + after so residue doesn't skew assertions."
     (shell/sh "rm" "-f" "/tmp/cxc-append-example.log")
