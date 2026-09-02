@@ -60,6 +60,7 @@ Under [examples/](./):
 - [list-contains.cxc](./list-contains.cxc) — `List of T .contains(e) -> Bool` for T ∈ {Int, String, Bool}: NSArray -containsObject: via -isEqual: on each element.
 - [int-abs-min-max.cxc](./int-abs-min-max.cxc) — Int method intrinsics `abs()`, `min(other)`, `max(other)`; compile-time ternaries, no helper call.
 - [trim-prefix-suffix.cxc](./trim-prefix-suffix.cxc) — String `.trim_prefix(pre)` / `.trim_suffix(suf)` — URL scheme strip, trailing-newline strip, pass-through on non-match / empty pattern.
+- [string-repeat-pad.cxc](./string-repeat-pad.cxc) — String `.repeat(n)`, `.pad_left(n, ch)`, `.pad_right(n, ch)` — build-by-repetition and column-align formatting.
 
 ## Non-plugin prelude capabilities enriched this session
 

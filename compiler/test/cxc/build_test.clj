@@ -1123,6 +1123,12 @@
       (is (zero? exit))
       (is (= "example.com\nplain\npath/to/file.txt\nnofinalnewline\naaabbb\naaabbb\n" stdout)))))
 
+(deftest end-to-end-string-repeat-pad
+  (testing "string-repeat-pad.cxc — `String.repeat(n)`, `String.pad_left(n, ch)`, `String.pad_right(n, ch)`. Assertions on `.length()` (asserts pad-and-trim invariants without depending on visible trailing-space rendering) plus visible pad_left/right outputs for zero-padding a numeric string and pass-through when receiver already meets target width."
+    (let [{:keys [exit stdout]} (compile-and-run "string-repeat-pad")]
+      (is (zero? exit))
+      (is (= "5\n6\n0\n005\nhello\n5..\nhello\n6\n6\n" stdout)))))
+
 (deftest end-to-end-console-hello
   (testing "console-hello.cxc — Layer 6 Step 5. Console prelude atom with `write(msg: String) -> Int` method wrapping the `native_console_write` FFI hatch (printf %s). Main is capability-provisioned (`def main(console: Console)`) and calls `console.write(\"hi\\n\")` in its `-> running do:`. Prints `hi` + newline."
     (let [{:keys [exit stdout]} (compile-and-run "console-hello")]

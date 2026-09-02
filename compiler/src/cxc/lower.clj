@@ -1256,7 +1256,8 @@
                         "substring" "index_of" "trim" "replace"
                         "to_int_or" "uppercase" "lowercase" "to_bytes"
                         "path_join" "basename" "dirname" "extension"
-                        "trim_prefix" "trim_suffix"}
+                        "trim_prefix" "trim_suffix"
+                        "repeat" "pad_left" "pad_right"}
                       method-name))
       (case method-name
         "length"    :int
@@ -1265,7 +1266,8 @@
         "to_bytes"  :bytes
         ("substring" "trim" "replace" "uppercase" "lowercase"
          "path_join" "basename" "dirname" "extension"
-         "trim_prefix" "trim_suffix") :string
+         "trim_prefix" "trim_suffix"
+         "repeat" "pad_left" "pad_right") :string
         :bool)
 
       :else
@@ -2424,12 +2426,13 @@
                             "substring" "index_of" "trim" "replace"
                             "to_int_or" "uppercase" "lowercase" "to_bytes"
                             "path_join" "basename" "dirname" "extension"
-                            "trim_prefix" "trim_suffix"}
+                            "trim_prefix" "trim_suffix"
+                            "repeat" "pad_left" "pad_right"}
                           method-name))
           (let [want-args (case method-name
                             ("length" "trim" "uppercase" "lowercase" "to_bytes"
                              "basename" "dirname" "extension") 0
-                            ("substring" "replace") 2
+                            ("substring" "replace" "pad_left" "pad_right") 2
                             1)]
             (when-not (= want-args (count arg-exprs))
               (fail-user! (str "String." method-name " takes "
@@ -2560,7 +2563,48 @@
                                  "NSString *__q = (" suf "); "
                                  "(__s && __q && [__s hasSuffix:__q]) "
                                  "? [__s substringToIndex:(__s.length - __q.length)] "
-                                 ": __s; })"))}))
+                                 ": __s; })"))}
+              "repeat"
+              {:node :ffi-call :name "cxc_string_repeat"
+               :args [target-lo (first arg-exprs)]
+               :emit-c-fn (fn [[s n]]
+                            (str "({ NSString *__s = (" s "); "
+                                 "int64_t __n = (int64_t)(" n "); "
+                                 "NSMutableString *__r = [NSMutableString string]; "
+                                 "if (__s && __n > 0) { "
+                                 "for (int64_t __i = 0; __i < __n; ++__i) "
+                                 "[__r appendString:__s]; } "
+                                 "(NSString *)__r; })"))}
+              "pad_left"
+              {:node :ffi-call :name "cxc_string_pad_left"
+               :args (into [target-lo] arg-exprs)
+               :emit-c-fn (fn [[s n ch]]
+                            (str "({ NSString *__s = (" s "); "
+                                 "int64_t __n = (int64_t)(" n "); "
+                                 "NSString *__c = (" ch "); "
+                                 "if (__s && __c && __c.length > 0 && "
+                                 "(int64_t)__s.length < __n) { "
+                                 "NSUInteger __pad = (NSUInteger)(__n - (int64_t)__s.length); "
+                                 "NSMutableString *__r = [NSMutableString string]; "
+                                 "for (NSUInteger __i = 0; __i < __pad; ++__i) "
+                                 "[__r appendString:[__c substringToIndex:1]]; "
+                                 "[__r appendString:__s]; __s = (NSString *)__r; } "
+                                 "__s; })"))}
+              "pad_right"
+              {:node :ffi-call :name "cxc_string_pad_right"
+               :args (into [target-lo] arg-exprs)
+               :emit-c-fn (fn [[s n ch]]
+                            (str "({ NSString *__s = (" s "); "
+                                 "int64_t __n = (int64_t)(" n "); "
+                                 "NSString *__c = (" ch "); "
+                                 "if (__s && __c && __c.length > 0 && "
+                                 "(int64_t)__s.length < __n) { "
+                                 "NSUInteger __pad = (NSUInteger)(__n - (int64_t)__s.length); "
+                                 "NSMutableString *__r = [NSMutableString stringWithString:__s]; "
+                                 "for (NSUInteger __i = 0; __i < __pad; ++__i) "
+                                 "[__r appendString:[__c substringToIndex:1]]; "
+                                 "__s = (NSString *)__r; } "
+                                 "__s; })"))}))
 
           ;; F37 L6a — `Bytes.slice(start: Int, length: Int) -> Bytes`.
           ;; Emits `[(NSMutableData *)[bytes subdataWithRange:NSMakeRange(start, length)] mutableCopy]`
