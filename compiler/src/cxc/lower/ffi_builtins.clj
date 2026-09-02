@@ -44,6 +44,22 @@
     :arity     1
     :emit-c    (fn [args]
                  (str "printf(\"%s\", [" (first args) " UTF8String])"))}
+   "native_console_readln"
+   ;; 2026-09-03 — read one line from stdin. Trailing newline is
+   ;; stripped. Returns nil on EOF or read error (empty stdin, EOF
+   ;; without terminator, or IO failure). Uses a 4 KiB stack buffer;
+   ;; longer lines are truncated at the first fgets boundary
+   ;; (subsequent readln calls return the tail). String/stdio
+   ;; symbols reach through Foundation's transitive includes.
+   {:return-kw :string
+    :arity     0
+    :emit-c    (fn [_args]
+                 (str "({ char __buf[4096]; NSString *__r = nil; "
+                      "if (fgets(__buf, sizeof(__buf), stdin)) { "
+                      "size_t __n = strlen(__buf); "
+                      "if (__n > 0 && __buf[__n-1] == '\\n') __buf[__n-1] = '\\0'; "
+                      "__r = [NSString stringWithUTF8String:__buf]; } "
+                      "__r; })"))}
    "native_random_below"
    {:return-kw :int
     :arity     1

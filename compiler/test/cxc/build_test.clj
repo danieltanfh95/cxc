@@ -7,6 +7,7 @@
    coverage table and how to add a new one."
   (:require [clojure.test :refer [deftest is testing]]
             [clojure.string :as str]
+            [clojure.java.shell :as shell]
             [cxc.build :as build]
             [cxc.parse]
             [cxc.resolve :as resolve]))
@@ -1848,6 +1849,18 @@
       (is (clojure.string/includes? stdout "to_int_or abc: -1"))
       (is (clojure.string/includes? stdout "to_int_or ws17: 17"))
       (is (clojure.string/includes? stdout "to_int_or 42abc: -1")))))
+
+(deftest end-to-end-console-readln
+  (testing "2026-09-03 — `console.readln()` reads one line from stdin, strips the trailing newline, returns nil on EOF. Backed by libc `fgets` on a 4 KiB stack buffer, wrapped in a stmt-expr that yields an NSString*. Round-trip: pipe a known line into stdin, assert the program echoes it back verbatim through `console.write`."
+    (let [src     (example "console-readln")
+          out-dir (tmp-dir)
+          {:keys [status stderr bin-path]}
+          (build/compile-source-to-file src "console-readln" (.getPath out-dir))]
+      (is (zero? status) (str "clang failed:\n" stderr))
+      (when (zero? status)
+        (let [{:keys [exit out]} (shell/sh bin-path :in "hello from stdin\n")]
+          (is (zero? exit))
+          (is (str/includes? out "got: hello from stdin")))))))
 
 (deftest end-to-end-time-wall-clock
   (testing "2026-09-03 — `Time` wall-clock capability. `time.now()` returns an `Instant` whose `.millis` field is Unix epoch milliseconds. Backed by `[[NSDate date] timeIntervalSince1970] * 1000` (int64_t; the prior `int` cast in `native_millis_now` silently truncated for any modern timestamp). Verified by asserting the returned millis exceeds 1.7 trillion (Nov 2023 boundary) — proves both non-zero and beyond-int32 range. Kept distinct from `Clock` (periodic-tick stream source); `Time` is a one-shot wall-clock read."
