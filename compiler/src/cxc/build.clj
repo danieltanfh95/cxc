@@ -250,6 +250,11 @@
         ;; symbols rather than `plugin.<method>` grammar. Runs after
         ;; B5 validation — every literal is guaranteed to resolve.
         parsed   (plugin-manifest/rewrite-plugin-refs parsed module-manifest)
+        ;; FL-11 (2026-09-02): elide foreign-alias fields — fields
+        ;; typed as `:foreign-fn-type` with `:foreign-ref` defaults
+        ;; become source-level aliases; `self.<name>(args)` in the same
+        ;; atom body gets rewritten to a direct foreign-ref call.
+        parsed   (plugin-manifest/rewrite-foreign-alias-fields parsed)
         ;; F51 L3b(b.ii)-5c (2026-08-27) — enrich user AST with
         ;; `:resolves-to` provenance before concatenating with prelude.
         ;; Single-file callers implicitly declare into the `:main`
@@ -848,7 +853,10 @@
                         ;; before lower sees the AST. Idempotent on
                         ;; non-plugin files.
                         parsed (plugin-manifest/rewrite-plugin-refs
-                                 parsed file-manifest)]
+                                 parsed file-manifest)
+                        ;; FL-11: elide foreign-alias fields per atom.
+                        parsed (plugin-manifest/rewrite-foreign-alias-fields
+                                 parsed)]
                     {:file f :module module :nodes parsed})))
               (map vector files srcs))
         _       (reject-duplicate-declarations-per-module! files-with-nodes)

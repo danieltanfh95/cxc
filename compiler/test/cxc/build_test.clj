@@ -117,6 +117,31 @@
       (is (zero? exit))
       (is (= "hello via FFI\n42\n" stdout)))))
 
+(deftest ffi-foreign-alias-field-fl-11
+  (testing "FL-11 (2026-09-02) — foreign-alias field elision. A field typed `:foreign-fn-type` with a `plugin.get(SYM)` default becomes a compile-time symbolic alias; `self.<name>(args)` in the same atom's body rewrites to a direct foreign call, and the field itself is dropped from data-section so no ivar is emitted. Plugin authors get the `_puts: (CString) -> Int = plugin.get(\"puts\")` idiom without paying for real function-pointer storage."
+    (let [src (str "def plugin:\n"
+                   "    name:    String!       = \"p\"\n"
+                   "    version: SemVer!       = SemVer(0, 1, 0)\n"
+                   "    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0), max: SemVer(2, 0, 0))\n"
+                   "\n"
+                   "    foreign \"libc\":\n"
+                   "        symbol \"puts\" -> (CString) -> Int\n"
+                   "\n"
+                   "def main:\n"
+                   "    use plugin: Plugin\n"
+                   "    _puts: (CString) -> Int = plugin.get(\"puts\")\n"
+                   "\n"
+                   "    -> ready\n"
+                   "        then: self._puts(\"hello via alias\")\n")
+          out-dir (tmp-dir)
+          {:keys [status stderr bin-path]}
+          (build/compile-source-to-file src "ffi-alias" (.getPath out-dir))]
+      (is (zero? status) (str "clang failed:\n" stderr))
+      (when (zero? status)
+        (let [{:keys [exit stdout]} (build/run-binary bin-path)]
+          (is (zero? exit))
+          (is (= "hello via alias\n" stdout)))))))
+
 (deftest ffi-ptr-of-byte-signature-fl-7
   (testing "FL-7 (2026-09-02) — `Ptr of T` parametric renders as `T *` in foreign signatures. `write -> (Int32, Ptr of Byte, SizeT) -> SsizeT` type-checks, and FL-6 auto-marshaling recognizes String args against `Ptr of Byte` slots (byte-buffer target) same as against `String`. Verifies plugin-draft-realistic write() signature works end-to-end."
     (let [src (str "def plugin:\n"

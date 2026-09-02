@@ -467,6 +467,120 @@
     (let [index (build-foreign-index (:foreign-blocks manifest))]
       (mapv #(rewrite-plugin-refs* % index) top-nodes))))
 
+;; ============================================================================
+;; FL-11 (2026-09-02) — foreign-alias field elision.
+;;
+;; A field with fn-type annotation and a `:foreign-ref` default is a
+;; compile-time symbolic alias — not runtime storage. We rewrite each
+;; `self.<name>(args...)` in the atom body to `<foreign-ref>(args...)`
+;; so lower/FL-3 emits the direct C call, and we drop the field from
+;; the atom's data-section so lower never sees an ivar for it.
+;;
+;;   def Console:
+;;       use plugin: Plugin
+;;       _write: (Int32, Ptr of Byte, SizeT) -> SsizeT = plugin.get("write")
+;;       hi() :- Int32 = self._write(1, "hi\n", 3)
+;;   →
+;;   def Console:
+;;       use plugin: Plugin
+;;       hi() :- Int32 = plugin.get("write")(1, "hi\n", 3)  ; conceptually
+;;
+;; No new fields, no runtime ivars, no init logic — the alias is
+;; purely a source-level ergonomic wrapper around the FFI call.
+;; Trade-off: `self._write` isn't a first-class value (can't be
+;; passed as a fn arg). Real function-pointer storage is a follow-on
+;; landing when a fixture asks.
+;; ============================================================================
+
+(defn- foreign-alias-field?
+  "True when a field-decl is a foreign-symbol alias — has a
+   `:foreign-fn-type` type annotation AND a `:foreign-ref` default
+   (already resolved by FL-1)."
+  [field]
+  (and (= :field (:node field))
+       (= :foreign-fn-type (get-in field [:type :node]))
+       (= :foreign-ref    (get-in field [:default :node]))))
+
+(defn- collect-alias-map
+  "Walk an atom's body; return `{field-name → :foreign-ref-node}` for
+   each foreign-alias field discovered inside its `:data-section`s."
+  [atom-node]
+  (into {}
+        (comp
+         (filter #(= :data-section (:node %)))
+         (mapcat :fields)
+         (filter foreign-alias-field?)
+         (map (juxt :name :default)))
+        (:body atom-node)))
+
+(defn- drop-alias-fields
+  "Return atom body with alias fields removed from every data-section."
+  [body aliases]
+  (mapv (fn [n]
+          (if (= :data-section (:node n))
+            (assoc n :fields
+                   (vec (remove (fn [f]
+                                  (and (foreign-alias-field? f)
+                                       (contains? aliases (:name f))))
+                                (:fields n))))
+            n))
+        body))
+
+(defn- self-alias-call?
+  "True when `x` is `:call {:callee {:dot :target :self :field NAME}}`
+   and NAME is in the alias map."
+  [x aliases]
+  (and (map? x)
+       (= :call (:node x))
+       (let [c (:callee x)]
+         (and (map? c)
+              (= :dot (:node c))
+              (= :self (get-in c [:target :node]))
+              (contains? aliases (:field c))))))
+
+(defn- rewrite-self-alias-calls*
+  "Depth-first walk replacing `self.<alias-name>(args)` with a `:call`
+   whose callee is the aliased `:foreign-ref` — same shape FL-3 expects."
+  [x aliases]
+  (cond
+    (self-alias-call? x aliases)
+    (let [foreign-ref (get aliases (get-in x [:callee :field]))
+          new-args    (mapv (fn [a]
+                              (update a :value #(rewrite-self-alias-calls* % aliases)))
+                            (:args x))]
+      (assoc x :callee foreign-ref :args new-args))
+
+    (map? x)
+    (into {}
+          (map (fn [[k v]] [k (rewrite-self-alias-calls* v aliases)]))
+          x)
+
+    (vector? x) (mapv #(rewrite-self-alias-calls* % aliases) x)
+    (sequential? x) (map #(rewrite-self-alias-calls* % aliases) x)
+    :else x))
+
+(defn- rewrite-atom-foreign-aliases
+  "Per-atom pass: collect the alias map, drop the alias field decls,
+   rewrite `self.<alias>(args)` call sites in the body to direct
+   foreign-ref calls. Non-atom nodes pass through unchanged."
+  [node]
+  (if-not (= :def-atom (:node node))
+    node
+    (let [aliases (collect-alias-map node)]
+      (if (empty? aliases)
+        node
+        (-> node
+            (update :body drop-alias-fields aliases)
+            (update :body rewrite-self-alias-calls* aliases))))))
+
+(defn rewrite-foreign-alias-fields
+  "FL-11 entry point. Run per-atom `rewrite-atom-foreign-aliases` across
+   every top-node. Called AFTER `rewrite-plugin-refs` so foreign-alias
+   fields already carry `:foreign-ref` defaults. Idempotent — a second
+   pass finds no alias fields left in the AST."
+  [top-nodes]
+  (mapv rewrite-atom-foreign-aliases top-nodes))
+
 (defn extract
   "F75 manifest resolver entry point. Given a parsed top-nodes vector,
    returns the plugin manifest map (see ns docstring) or `nil` when

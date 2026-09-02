@@ -1000,6 +1000,8 @@
     "UInt" "UInt8" "UInt16" "UInt32" "UInt64"
     "Float" "Double" "Bool" "Char" "Byte" "Bytes" "Unit" "Never"})
 
+(declare parse-foreign-signature)
+
 (defn- parse-field
   "name: [<modifier>] Type [= default]
 
@@ -1018,6 +1020,17 @@
         modifier-pos  (dec p)
         modifier-nm   (when modifier (clojure.core/name modifier))
         [ty p]        (parse-type tokens p)
+        ;; FL-11 (2026-09-02) — function-type extension at field position.
+        ;; When the field type is followed by `->`, parse the return type
+        ;; and wrap into a `:foreign-fn-type` node — same shape the
+        ;; foreign-signature parser produces. Enables plugin authors to
+        ;; write `_write: (Int32, Ptr of Byte, SizeT) -> SsizeT =
+        ;; plugin.get("write")` as a symbolic alias for the resolved
+        ;; foreign symbol. Right-associative to mirror foreign-fn-type.
+        [ty p]        (if (at? tokens p :glyph "->")
+                        (let [[right p2] (parse-foreign-signature tokens (inc p))]
+                          [{:node :foreign-fn-type :args ty :return right} p2])
+                        [ty p])
         _             (when modifier
                         (cond
                           ;; F39 Landing 5a (2026-08-20) — the pre-L5a
