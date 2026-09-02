@@ -549,3 +549,109 @@ def MyShim:
     (is (= :call (:node deflt)))
     (is (= :foreign-ref (get-in deflt [:args 0 :value :node]))
         "plugin.get inside an outer call is rewritten in place")))
+
+;; ---------------------------------------------------------------------------
+;; FL-12 (2026-09-02) — `type "NSFoo"` ObjC type alias registration.
+;; Rewrites `:type-ref` inside foreign-block entry signatures matching a
+;; registered alias to `{:type-ref \"Any\"}` (id at C level), preserving
+;; the original name under `:objc-original` for tooling.
+;; ---------------------------------------------------------------------------
+
+(deftest fl-12-collapses-alias-in-return-type
+  (let [src "def plugin:
+    name:    String!       = \"fl12-return\"
+    version: SemVer!       = SemVer(0, 1, 0)
+    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0),
+                                          max: SemVer(2, 0, 0))
+    foreign \"Foundation\":
+        type \"NSURLSession\"
+        symbol \"session_shared\" -> () -> NSURLSession
+"
+        nodes    (parse/parse src)
+        out      (pm/rewrite-objc-type-aliases nodes)
+        entries  (mapcat :entries
+                         (get-in (first (filter #(= :def-plugin (:node %)) out))
+                                 [:foreign-blocks]))
+        sym-sig  (:signature (first (filter #(= :symbol (:kind %)) entries)))]
+    (is (= {:node :type-ref :name "Any" :objc-original "NSURLSession"}
+           (:return sym-sig))
+        "bare `type \"NSURLSession\"` registers itself as alias; return becomes Any")))
+
+(deftest fl-12-collapses-alias-in-named-arg
+  (let [src "def plugin:
+    name:    String!       = \"fl12-arg\"
+    version: SemVer!       = SemVer(0, 1, 0)
+    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0),
+                                          max: SemVer(2, 0, 0))
+    foreign \"Foundation\":
+        type \"NSString\" as NSStr
+        symbol \"utf8_of\" -> (s: NSStr) -> Ptr of Byte
+"
+        nodes    (parse/parse src)
+        out      (pm/rewrite-objc-type-aliases nodes)
+        entries  (mapcat :entries
+                         (get-in (first (filter #(= :def-plugin (:node %)) out))
+                                 [:foreign-blocks]))
+        arg      (first (get-in (first (filter #(= :symbol (:kind %)) entries))
+                                [:signature :args :fields]))]
+    (is (= {:node :type-ref :name "Any" :objc-original "NSStr"}
+           (:type arg))
+        "explicit `as NSStr` alias flows through named-arg field types")))
+
+(deftest fl-12-noop-when-no-def-plugin
+  (let [src   "def Foo:\n    x: Int! = 1\n"
+        nodes (parse/parse src)]
+    (is (= nodes (pm/rewrite-objc-type-aliases nodes))
+        "non-plugin modules pass through untouched")))
+
+(deftest fl-12-noop-when-no-type-entries
+  (let [src "def plugin:
+    name:    String!       = \"fl12-none\"
+    version: SemVer!       = SemVer(0, 1, 0)
+    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0),
+                                          max: SemVer(2, 0, 0))
+    foreign \"libc\":
+        symbol \"abs\" -> (Int) -> Int
+"
+        nodes (parse/parse src)]
+    (is (= nodes (pm/rewrite-objc-type-aliases nodes))
+        "plugin without any `type` entries is untouched")))
+
+(deftest fl-12-leaves-non-alias-type-refs-alone
+  (let [src "def plugin:
+    name:    String!       = \"fl12-mixed\"
+    version: SemVer!       = SemVer(0, 1, 0)
+    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0),
+                                          max: SemVer(2, 0, 0))
+    foreign \"Foundation\":
+        type \"NSURLSession\"
+        symbol \"mix\" -> (fd: Int32, s: NSURLSession) -> Int32
+"
+        nodes    (parse/parse src)
+        out      (pm/rewrite-objc-type-aliases nodes)
+        entries  (mapcat :entries
+                         (get-in (first (filter #(= :def-plugin (:node %)) out))
+                                 [:foreign-blocks]))
+        sym      (first (filter #(= :symbol (:kind %)) entries))
+        fields   (get-in sym [:signature :args :fields])]
+    (is (= "Int32"  (get-in (nth fields 0) [:type :name])))
+    (is (= "Any"    (get-in (nth fields 1) [:type :name])))
+    (is (= "Int32"  (get-in sym [:signature :return :name]))
+        "non-alias primitives survive; alias slot alone is collapsed")))
+
+(deftest fl-12-is-idempotent
+  (let [src "def plugin:
+    name:    String!       = \"fl12-idem\"
+    version: SemVer!       = SemVer(0, 1, 0)
+    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0),
+                                          max: SemVer(2, 0, 0))
+    foreign \"Foundation\":
+        type \"NSURLSession\"
+        symbol \"session_shared\" -> () -> NSURLSession
+"
+        nodes (parse/parse src)
+        once  (pm/rewrite-objc-type-aliases nodes)
+        twice (pm/rewrite-objc-type-aliases once)]
+    (is (= once twice)
+        "second application is a fixpoint (alias set is empty on rewritten shape)")))
+

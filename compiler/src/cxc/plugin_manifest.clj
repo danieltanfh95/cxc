@@ -581,6 +581,81 @@
   [top-nodes]
   (mapv rewrite-atom-foreign-aliases top-nodes))
 
+;; ============================================================================
+;; FL-12 (2026-09-02) — ObjC type alias registration.
+;;
+;; `foreign "Foundation": type "NSURLSession"` registers NSURLSession as
+;; a usable cxc type name at foreign-signature positions. All ObjC types
+;; collapse to `id` at the C level (uniform opaque pointer), so the
+;; rewrite is: scan every foreign-block signature for `:type-ref` nodes
+;; whose name is a registered alias, replace with `:type-ref "Any"`
+;; (which lowers to `id`).
+;;
+;; Scope-limited to FFI signature positions since app-side code can't
+;; reach an ObjC value directly at v1.0 (would need `plugin.send` /
+;; `plugin.class_send` — FL-13/14). Extending user-side ObjC-type
+;; recognition is additive when those land.
+;; ============================================================================
+
+(defn- collect-objc-type-aliases
+  "Extract `{alias-name → objc-name}` from every `:type` entry across
+   all foreign blocks of the (at most one) `:def-plugin` in top-nodes.
+   Bare `type \"NSFoo\"` → alias = \"NSFoo\"; `type \"NSFoo\" as Bar`
+   → alias = \"Bar\". Both map to the same C-level `id`. Runs before
+   manifest extraction so B5/FL-1 see the rewritten signatures."
+  [top-nodes]
+  (if-let [dp (find-def-plugin top-nodes)]
+    (into {}
+          (comp (mapcat :entries)
+                (filter #(= :type (:kind %)))
+                (map (fn [e] [(:alias e) (first (:name-strs e))])))
+          (:foreign-blocks dp))
+    {}))
+
+(defn- rewrite-objc-type-refs*
+  "Depth-first walk within a foreign signature. Replace `:type-ref`
+   whose `:name` is in `aliases` with `{:type-ref \"Any\"}`. Non-
+   signature subtrees pass through unchanged."
+  [x aliases]
+  (cond
+    (and (map? x) (= :type-ref (:node x))
+         (contains? aliases (:name x)))
+    {:node :type-ref :name "Any" :objc-original (:name x)}
+
+    (map? x)
+    (into {}
+          (map (fn [[k v]] [k (rewrite-objc-type-refs* v aliases)]))
+          x)
+
+    (vector? x) (mapv #(rewrite-objc-type-refs* % aliases) x)
+    (sequential? x) (map #(rewrite-objc-type-refs* % aliases) x)
+    :else x))
+
+(defn rewrite-objc-type-aliases
+  "FL-12 entry point. Walk the top-nodes' `:def-plugin` (if present)
+   collecting alias→ObjC-name from `type` entries, then rewrite every
+   `:type-ref` inside foreign-block entries' signatures whose name is
+   a registered alias to `{:type-ref \"Any\"}` (id at C level).
+
+   Runs BEFORE manifest extraction so B5's foreign-index and FL-1's
+   rewritten `:foreign-ref` nodes carry the Any-substituted signatures.
+   No-op when the module has no `:def-plugin` or no `type` entries."
+  [top-nodes]
+  (let [aliases (collect-objc-type-aliases top-nodes)]
+    (if (empty? aliases)
+      top-nodes
+      (mapv (fn [n]
+              (if (= :def-plugin (:node n))
+                (update n :foreign-blocks
+                        (fn [blocks]
+                          (mapv (fn [b]
+                                  (update b :entries
+                                          (fn [es]
+                                            (mapv #(rewrite-objc-type-refs* % aliases) es))))
+                                blocks)))
+                n))
+            top-nodes))))
+
 (defn extract
   "F75 manifest resolver entry point. Given a parsed top-nodes vector,
    returns the plugin manifest map (see ns docstring) or `nil` when

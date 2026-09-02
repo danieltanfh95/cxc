@@ -239,6 +239,12 @@
         _        (validate-imports parsed)
         _        (prelude/validate-no-prelude-collisions! parsed)
         _        (plugin-manifest/validate-plugin-capability-uses! parsed)
+        ;; FL-12 (2026-09-02): before extracting the manifest, rewrite
+        ;; foreign-block signature type-refs matching registered
+        ;; `type "NSFoo"` aliases to `Any` (id). This way B5's
+        ;; foreign-index + FL-1's :foreign-ref nodes carry the
+        ;; substituted signatures.
+        parsed   (plugin-manifest/rewrite-objc-type-aliases parsed)
         ;; B5 (2026-09-02): resolve `plugin.get(LIT)` against the
         ;; module's `foreign "..."` blocks. Extract manifest first;
         ;; nil when this module isn't a plugin — resolver no-ops then.
@@ -833,11 +839,16 @@
                                       (assoc (ex-data e)
                                              :file (.getPath f))
                                       e))))
-                  ;; B5: per-file `plugin.get(LIT)` resolution against
-                  ;; the file's own foreign blocks. Manifest is
-                  ;; module-scoped; cross-plugin symbol reach is
-                  ;; grammatically impossible under R11.
-                  (let [file-manifest
+                  ;; FL-12: rewrite `type "NSFoo" as Alias` refs to
+                  ;; `Any` (id) BEFORE manifest extraction so the
+                  ;; foreign-index carries substituted signatures.
+                  (let [parsed (plugin-manifest/rewrite-objc-type-aliases
+                                 parsed)
+                        ;; B5: per-file `plugin.get(LIT)` resolution against
+                        ;; the file's own foreign blocks. Manifest is
+                        ;; module-scoped; cross-plugin symbol reach is
+                        ;; grammatically impossible under R11.
+                        file-manifest
                         (try
                           (let [mfst (plugin-manifest/extract parsed)]
                             (plugin-manifest/validate-plugin-symbol-refs!

@@ -2581,9 +2581,15 @@
         [{:kind (keyword kind) :name-strs [cls sel] :signature sig} p])
 
       "type"
+      ;; FL-12 (2026-09-02) — `as <Alias>` is optional. When absent,
+      ;; the alias is the ObjC type name verbatim. Matches every
+      ;; plugin draft's shape (`type "NSURLSession"` alone). The
+      ;; explicit `as` clause remains for renaming (e.g., `type
+      ;; "NSURLRequest" as Request`).
       (let [[objc-nm p] (expect tokens p :string)
-            [_ p]       (expect tokens p :kw "as")
-            [alias p]   (expect tokens p :ident)]
+            [alias p]   (if (at? tokens p :kw "as")
+                          (expect tokens (inc p) :ident)
+                          [objc-nm p])]
         [{:kind :type :name-strs [objc-nm] :alias alias} p]))))
 
 (defn- parse-foreign-block

@@ -1630,6 +1630,29 @@ def main:
       (is (= ["NSString" "stringWithUTF8String:"]
              (get-in pd [:foreign-blocks 1 :entries 0 :name-strs]))))))
 
+(deftest fl-12-def-plugin-foreign-block-type-entry-bare
+  (testing "FL-12 — bare `type \"NSFoo\"` (no `as` clause) registers the ObjC name as its own alias"
+    (let [ast (p/parse (str "def plugin:\n"
+                            "    name: String = \"fl12\"\n"
+                            "    foreign \"Foundation\":\n"
+                            "        type \"NSURLSession\"\n"))
+          e   (get-in (first ast) [:foreign-blocks 0 :entries 0])]
+      (is (= :type              (:kind e)))
+      (is (= ["NSURLSession"]   (:name-strs e)))
+      (is (= "NSURLSession"     (:alias e))
+          "bare form defaults alias to the ObjC name itself"))))
+
+(deftest fl-12-def-plugin-foreign-block-type-entry-explicit-alias
+  (testing "FL-12 — `type \"NSFoo\" as Bar` records the explicit alias for shorter downstream refs"
+    (let [ast (p/parse (str "def plugin:\n"
+                            "    name: String = \"fl12\"\n"
+                            "    foreign \"Foundation\":\n"
+                            "        type \"NSURLRequest\" as Request\n"))
+          e   (get-in (first ast) [:foreign-blocks 0 :entries 0])]
+      (is (= :type              (:kind e)))
+      (is (= ["NSURLRequest"]   (:name-strs e)))
+      (is (= "Request"          (:alias e))))))
+
 (deftest r7-foreign-outside-plugin-rejected
   (testing "R7 PR-4 — `foreign \"...\"` outside a `def plugin:` marker is a compile error"
     (is (thrown-with-msg?
