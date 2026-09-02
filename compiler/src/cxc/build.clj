@@ -239,6 +239,11 @@
         _        (validate-imports parsed)
         _        (prelude/validate-no-prelude-collisions! parsed)
         _        (plugin-manifest/validate-plugin-capability-uses! parsed)
+        ;; B5 (2026-09-02): resolve `plugin.get(LIT)` against the
+        ;; module's `foreign "..."` blocks. Extract manifest first;
+        ;; nil when this module isn't a plugin — resolver no-ops then.
+        _        (plugin-manifest/validate-plugin-symbol-refs!
+                   parsed (plugin-manifest/extract parsed))
         ;; F51 L3b(b.ii)-5c (2026-08-27) — enrich user AST with
         ;; `:resolves-to` provenance before concatenating with prelude.
         ;; Single-file callers implicitly declare into the `:main`
@@ -800,6 +805,19 @@
                   ;; file.
                   (try
                     (plugin-manifest/validate-plugin-capability-uses! parsed)
+                    (catch clojure.lang.ExceptionInfo e
+                      (throw (ex-info (str "in " (.getName f)
+                                           ": " (.getMessage e))
+                                      (assoc (ex-data e)
+                                             :file (.getPath f))
+                                      e))))
+                  ;; B5: per-file `plugin.get(LIT)` resolution against
+                  ;; the file's own foreign blocks. Manifest is
+                  ;; module-scoped; cross-plugin symbol reach is
+                  ;; grammatically impossible under R11.
+                  (try
+                    (plugin-manifest/validate-plugin-symbol-refs!
+                      parsed (plugin-manifest/extract parsed))
                     (catch clojure.lang.ExceptionInfo e
                       (throw (ex-info (str "in " (.getName f)
                                            ": " (.getMessage e))

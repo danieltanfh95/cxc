@@ -230,6 +230,160 @@
                  :atom-name   (:name a)
                  :cap-name    (:name cap)}))))))
 
+;; ============================================================================
+;; B5 (2026-09-02) — plugin symbol resolver
+;;
+;; Compile-time binding of `plugin.get("sym")` against the enclosing plugin
+;; module's `foreign "..."` blocks. Cross-plugin symbol reach is grammatically
+;; impossible under R11 — each module carries its own manifest, so the index
+;; is naturally per-module.
+;;
+;; Index shape (built from a manifest's :foreign-blocks):
+;;   {"sym-name" {:library STR :signature <sig-node> :entry <full-entry-map>}}
+;;
+;; Collision policy: two `foreign "..."` blocks in the same module declaring
+;; the same symbol name → throw at index-build. Author must rename or drop
+;; one. R7 said blocks' namespaces are per-library-disjoint by convention;
+;; this makes it a hard rule.
+;; ============================================================================
+
+(defn build-foreign-index
+  "Given a plugin manifest's `:foreign-blocks` vector, return a per-symbol
+   lookup index. Throws `ex-info :kind :plugin-foreign-symbol-collision`
+   when the same symbol appears in more than one block."
+  [foreign-blocks]
+  (reduce
+   (fn [idx {:keys [library entries]}]
+     (reduce
+      (fn [idx entry]
+        (if-not (= :symbol (:kind entry))
+          idx
+          (let [sym (first (:name-strs entry))]
+            (when (contains? idx sym)
+              (throw (ex-info
+                      (str "plugin foreign symbol `" sym "` declared in "
+                           "both `" (get-in idx [sym :library]) "` and `"
+                           library "` blocks. Symbols must be unique across "
+                           "a plugin's foreign blocks (R7 per-library "
+                           "disjoint namespaces).")
+                      {:kind          :plugin-foreign-symbol-collision
+                       :symbol        sym
+                       :first-library (get-in idx [sym :library])
+                       :second-library library})))
+            (assoc idx sym {:library   library
+                            :signature (:signature entry)
+                            :entry     entry}))))
+      idx
+      entries))
+   {}
+   foreign-blocks))
+
+(defn- plugin-method-call?
+  "True when `expr` is `plugin.<method>(args...)` for one of the recognized
+   plugin methods (`get`, `send`, `class_send`)."
+  [expr]
+  (and (map? expr)
+       (= :call (:node expr))
+       (let [c (:callee expr)]
+         (and (map? c)
+              (= :dot (:node c))
+              (= :ident (get-in c [:target :node]))
+              (= "plugin" (get-in c [:target :name]))
+              (contains? #{"get" "send" "class_send"} (:field c))))))
+
+(defn- plugin-method
+  "Return the method name string of a `plugin.<method>(...)` call."
+  [expr]
+  (get-in expr [:callee :field]))
+
+(defn- first-string-arg
+  "Return the string value of `expr`'s first positional arg if it's a
+   literal string; nil otherwise."
+  [expr]
+  (let [a (first (:args expr))]
+    (when (and a
+               (= :positional (:kind a))
+               (= :lit-string (get-in a [:value :node])))
+      (get-in a [:value :value]))))
+
+(defn resolve-plugin-get
+  "Resolve a `plugin.get(LIT-STR)` call against a foreign-index. Returns
+   the index entry `{:library :signature :entry}`. Throws
+   `ex-info :kind :plugin-symbol-unresolved` when the symbol is not in
+   any foreign block, or `:plugin-get-non-literal-arg` when the first
+   arg is not a literal string."
+  [call-node index]
+  (let [sym (first-string-arg call-node)]
+    (when-not sym
+      (throw (ex-info
+              (str "plugin.get expects a literal string argument at compile "
+                   "time (compile-time symbol binding); got "
+                   (pr-str (get-in call-node [:args 0 :value :node])))
+              {:kind :plugin-get-non-literal-arg
+               :call call-node})))
+    (or (get index sym)
+        (throw (ex-info
+                (str "plugin.get(\"" sym "\"): symbol not declared in any "
+                     "`foreign \"...\"` block of this plugin's manifest. "
+                     "Add `symbol \"" sym "\" -> <signature>` to a foreign "
+                     "block, or check for a typo.")
+                {:kind   :plugin-symbol-unresolved
+                 :symbol sym
+                 :call   call-node})))))
+
+(defn- walk-plugin-calls
+  "Depth-first walk over `x` invoking `f` on every node matching
+   `plugin-method-call?`. Pure traversal — `f` returns nothing; used
+   for validation side-effects."
+  [x f]
+  (cond
+    (plugin-method-call? x)
+    (do (f x)
+        (doseq [a (:args x)]
+          (walk-plugin-calls (:value a) f)))
+
+    (map? x)
+    (doseq [v (vals x)]
+      (walk-plugin-calls v f))
+
+    (sequential? x)
+    (doseq [v x]
+      (walk-plugin-calls v f))))
+
+(defn validate-plugin-symbol-refs!
+  "B5 (2026-09-02). Given parsed top-nodes and their extracted plugin
+   manifest (from `extract`), walk every atom body for `plugin.get`,
+   `plugin.send`, and `plugin.class_send` calls. Resolve each `plugin.get`
+   against the manifest's foreign-block symbols; throw with a targeted
+   diagnostic on unresolved symbols. `.send` / `.class_send` currently
+   raise `ex-info :kind :plugin-method-nyi` — B5 MVP covers `.get` only;
+   selector-based calls land when a plugin fixture needs them.
+
+   No-op when `manifest` is nil (module is not a plugin — B4 already
+   rejected any `use <name>: Plugin` in that case)."
+  [top-nodes manifest]
+  (when manifest
+    (let [index (build-foreign-index (:foreign-blocks manifest))]
+      (doseq [a (atom-nodes top-nodes)]
+        (walk-plugin-calls
+         (:body a)
+         (fn [call]
+           (case (plugin-method call)
+             "get"
+             (resolve-plugin-get call index)
+
+             ("send" "class_send")
+             (throw (ex-info
+                     (str "plugin." (plugin-method call) " is not yet "
+                          "implemented at v1.0. Selector-call resolution "
+                          "against `foreign \"...\": selector \"...\"` "
+                          "entries lands when a plugin fixture needs it. "
+                          "Meanwhile, use `plugin.get(\"c-symbol\")` for "
+                          "libc / cxc_runtime bindings.")
+                     {:kind      :plugin-method-nyi
+                      :method    (plugin-method call)
+                      :atom-name (:name a)})))))))))
+
 (defn extract
   "F75 manifest resolver entry point. Given a parsed top-nodes vector,
    returns the plugin manifest map (see ns docstring) or `nil` when

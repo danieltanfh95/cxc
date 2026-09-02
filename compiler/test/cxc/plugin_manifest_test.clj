@@ -215,3 +215,109 @@ def Console:
         nodes (parse/parse src)]
     (is (nil? (pm/validate-plugin-capability-uses! nodes))
         "app-side capability atom imports are unaffected")))
+
+;; ============================================================================
+;; B5 — plugin symbol resolver: plugin.get(LIT) against foreign blocks
+;; ============================================================================
+
+(def foreign-block-src
+  "def plugin:
+    name:    String!       = \"p\"
+    version: SemVer!       = SemVer(0, 1, 0)
+    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0),
+                                          max: SemVer(2, 0, 0))
+
+    foreign \"libc\":
+        symbol \"write\" -> Int32
+
+    foreign \"cxc_runtime\":
+        symbol \"cxc_wall_now\" -> Int64
+")
+
+(deftest foreign-index-collects-symbols
+  (let [m   (pm/extract (parse/parse foreign-block-src))
+        idx (pm/build-foreign-index (:foreign-blocks m))]
+    (is (= "libc"        (get-in idx ["write"        :library])))
+    (is (= "cxc_runtime" (get-in idx ["cxc_wall_now" :library])))
+    (is (= 2 (count idx)))))
+
+(deftest foreign-index-rejects-collision
+  (let [m   (pm/extract (parse/parse "def plugin:
+    name:    String!       = \"p\"
+    version: SemVer!       = SemVer(0, 1, 0)
+    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0),
+                                          max: SemVer(2, 0, 0))
+
+    foreign \"libc\":
+        symbol \"write\" -> Int32
+
+    foreign \"cxc_runtime\":
+        symbol \"write\" -> Int32
+"))
+        ex  (try (pm/build-foreign-index (:foreign-blocks m))
+                 nil
+                 (catch clojure.lang.ExceptionInfo e e))]
+    (is (some? ex))
+    (is (= :plugin-foreign-symbol-collision (:kind (ex-data ex))))
+    (is (= "write" (:symbol (ex-data ex))))))
+
+(deftest resolve-happy-path
+  (let [full (str foreign-block-src "
+def Console:
+    use plugin: Plugin
+    x: Int! = plugin.get(\"write\")
+")
+        nodes    (parse/parse full)
+        manifest (pm/extract nodes)]
+    (is (nil? (pm/validate-plugin-symbol-refs! nodes manifest)))))
+
+(deftest resolve-unresolved-symbol-fails
+  (let [full (str foreign-block-src "
+def Console:
+    use plugin: Plugin
+    x: Int! = plugin.get(\"nope\")
+")
+        nodes    (parse/parse full)
+        manifest (pm/extract nodes)
+        ex       (try (pm/validate-plugin-symbol-refs! nodes manifest)
+                      nil
+                      (catch clojure.lang.ExceptionInfo e e))]
+    (is (some? ex))
+    (is (= :plugin-symbol-unresolved (:kind (ex-data ex))))
+    (is (= "nope" (:symbol (ex-data ex))))))
+
+(deftest resolve-non-literal-arg-fails
+  (let [full (str foreign-block-src "
+def Console:
+    use plugin: Plugin
+    key: String! = \"write\"
+    x: Int! = plugin.get(self.key)
+")
+        nodes    (parse/parse full)
+        manifest (pm/extract nodes)
+        ex       (try (pm/validate-plugin-symbol-refs! nodes manifest)
+                      nil
+                      (catch clojure.lang.ExceptionInfo e e))]
+    (is (some? ex))
+    (is (= :plugin-get-non-literal-arg (:kind (ex-data ex))))))
+
+(deftest resolve-noop-on-non-plugin-module
+  (let [nodes (parse/parse "def Foo:\n    x: Int! = 1\n")]
+    (is (nil? (pm/validate-plugin-symbol-refs! nodes nil)))))
+
+(deftest resolve-flags-send-and-class-send-as-nyi
+  (doseq [method ["send" "class_send"]]
+    (testing (str "plugin." method " NYI")
+      (let [full (str foreign-block-src "
+def Console:
+    use plugin: Plugin
+    x: Int! = plugin." method "(\"write\")
+")
+            nodes    (parse/parse full)
+            manifest (pm/extract nodes)
+            ex       (try (pm/validate-plugin-symbol-refs! nodes manifest)
+                          nil
+                          (catch clojure.lang.ExceptionInfo e e))]
+        (is (some? ex))
+        (is (= :plugin-method-nyi (:kind (ex-data ex))))
+        (is (= method (:method (ex-data ex))))))))
