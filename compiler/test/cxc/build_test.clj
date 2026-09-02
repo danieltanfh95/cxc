@@ -111,6 +111,33 @@
               "gate-check"
               (.getPath out-dir)))))))
 
+(deftest end-to-end-ffi-lowering-fl-5
+  (testing "FL-5 (2026-09-02) — full FFI pipeline: def plugin: with `foreign \"libc\":` block, `plugin.get(\"abs\")(-42)` in main atom's then-body. FL-1 rewrites plugin.get → :foreign-ref, FL-3 lowers the call form to :ffi-call, emit produces `abs(...)`, Foundation.h transitively covers libc's abs, binary runs and prints 42. Golden-string deterministic verification of the whole FL-1..FL-3 chain."
+    (let [{:keys [exit stdout]} (compile-and-run "hello-plugin-ffi")]
+      (is (zero? exit))
+      (is (= "42\n" stdout)))))
+
+(deftest ffi-bare-foreign-ref-not-called-rejected
+  (testing "FL-3 diagnostic — storing plugin.get(SYM) as a function pointer (not calling it inline) rejected with a fail-nyi pointing at the MVP-supported call form."
+    (let [src (str "def plugin:\n"
+                   "    name:    String!       = \"p\"\n"
+                   "    version: SemVer!       = SemVer(0, 1, 0)\n"
+                   "    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0), max: SemVer(2, 0, 0))\n"
+                   "\n"
+                   "    foreign \"libc\":\n"
+                   "        symbol \"abs\" -> (Int) -> Int\n"
+                   "\n"
+                   "def main:\n"
+                   "    use plugin: Plugin\n"
+                   "    handle: Int! = plugin.get(\"abs\")\n"
+                   "    -> ready\n"
+                   "        then: print(handle)\n")
+          out-dir (tmp-dir)]
+      (is (thrown-with-msg?
+            clojure.lang.ExceptionInfo
+            #"FL-3.*plugin\.get.*not immediately called"
+            (build/compile-source-to-file src "ffi-bare" (.getPath out-dir)))))))
+
 (deftest resolver-rejects-unresolved-plugin-get-b5-integration
   (testing "B5 (2026-09-02) — compile pipeline rejects `plugin.get(\"nope\")` when the symbol is not declared in any foreign block."
     (let [src (str "def plugin:\n"

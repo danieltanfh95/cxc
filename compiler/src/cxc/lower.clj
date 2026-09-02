@@ -2867,6 +2867,20 @@
                         lowered)]
       {:node :c-stmt-expr :stmts wrapped})
 
+    :foreign-ref
+    ;; FL-3 (2026-09-02) — bare `:foreign-ref` in expression position
+    ;; (not immediately called). Storage as a function-pointer field
+    ;; would need function-typed slot support in the record env plus
+    ;; a real signature-aware C typedef; deferred until a fixture asks
+    ;; for it. Actionable diagnostic points at the supported call form.
+    (fail-nyi!
+      (str "FL-3: `plugin.get(\"" (:symbol node) "\")` used as a value "
+           "(not immediately called). MVP FFI lowering only supports the "
+           "call form `plugin.get(\"" (:symbol node) "\")(args...)`; "
+           "storing the resolved symbol as a function pointer waits on a "
+           "follow-on landing.")
+      node)
+
     (fail-nyi! (str "expression " (:node node)) node)))
 
 ;; ---------------------------------------------------------------------------

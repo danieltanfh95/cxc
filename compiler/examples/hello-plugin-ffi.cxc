@@ -1,0 +1,27 @@
+# FL-5 (2026-09-02) — end-to-end FFI compile.
+#
+# Exercises the full FL-1..FL-3 pipeline:
+#   1. `def plugin:` marker + `foreign "libc"` block parses (R7)
+#   2. B3 extracts the manifest with the abs symbol
+#   3. B5 resolves `plugin.get("abs")` against the block
+#   4. FL-1 rewrites plugin.get(LIT) → :foreign-ref AST
+#   5. FL-3 lowers the call form → :ffi-call → emit as `abs(...)` in C
+#   6. Foundation.h transitively pulls in stdlib.h → abs links
+#   7. Binary runs and prints |−42| = 42
+#
+# Deterministic output — safe for golden-string integration test.
+
+def plugin:
+    name:    String!       = "hello-plugin-ffi"
+    version: SemVer!       = SemVer(0, 1, 0)
+    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0),
+                                          max: SemVer(2, 0, 0))
+
+    foreign "libc":
+        symbol "abs" -> (Int) -> Int
+
+def main:
+    use plugin: Plugin
+
+    -> ready
+        then: print(plugin.get("abs")(-42))
