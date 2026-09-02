@@ -72,6 +72,26 @@
                       "if (__n > 0 && __buf[__n-1] == '\\n') __buf[__n-1] = '\\0'; "
                       "__r = [NSString stringWithUTF8String:__buf]; } "
                       "__r; })"))}
+   "native_sha256_hex"
+   ;; 2026-09-03 — SHA-256 hash of a Bytes, formatted as 64 lowercase
+   ;; hex characters. Backed by CommonCrypto's `CC_SHA256`. Nil input
+   ;; → empty String. Common uses: cache keys, dedup, integrity
+   ;; checks, content addressing. Header `<CommonCrypto/CommonDigest.h>`
+   ;; auto-added via FL-18 foreign-symbol include table.
+   {:return-kw :string
+    :arity     1
+    :emit-c    (fn [args]
+                 (str "({ NSMutableData *__b = " (first args) "; "
+                      "NSString *__r = @\"\"; "
+                      "if (__b) { "
+                      "unsigned char __d[32]; "
+                      "CC_SHA256([__b bytes], (CC_LONG)[__b length], __d); "
+                      "NSMutableString *__out = "
+                      "[NSMutableString stringWithCapacity:64]; "
+                      "for (int __i = 0; __i < 32; __i++) "
+                      "[__out appendFormat:@\"%02x\", __d[__i]]; "
+                      "__r = (NSString *)__out; } "
+                      "__r; })"))}
    "native_random_uuid"
    ;; 2026-09-03 — RFC 4122 v4 UUID as a lowercase canonical
    ;; hyphenated String. Foundation's `[NSUUID UUID]` seeds from

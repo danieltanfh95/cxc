@@ -7422,7 +7422,16 @@
                              ;; intrinsics. Darwin-only header, harmless
                              ;; to always include when we've already
                              ;; committed to Foundation (i.e. macOS).
-                             "<crt_externs.h>"]
+                             "<crt_externs.h>"
+                             ;; 2026-09-03 — `CC_SHA256` (backing
+                             ;; `Hash.sha256_hex` and any future
+                             ;; digest natives). Foundation doesn't
+                             ;; transitively pull CommonCrypto in, so
+                             ;; the header must be listed explicitly
+                             ;; whenever Foundation is included.
+                             ;; libSystem provides the implementation
+                             ;; — no separate link flag needed.
+                             "<CommonCrypto/CommonDigest.h>"]
                             ["<stdio.h>"])
         ;; F37 Landings 2 + 5 — synthesized `<Record>_cxc_as_bytes` /
         ;; `<Enum>_cxc_as_bytes` use OSSwapHostToBigInt16/32/64.

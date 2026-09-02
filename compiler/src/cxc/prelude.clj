@@ -164,6 +164,13 @@
    ;; empty `"{}"` sends no custom headers. Sufficient for Claude
    ;; Messages API + generic REST calls at MVP.
    {:name :http :kind :target :names ["Http"]}
+   ;; 2026-09-03 — `Hash` capability. `sha256_hex(data: Bytes) ->
+   ;; String` returns the 64-char lowercase hex SHA-256 of the input
+   ;; bytes. Backed by CommonCrypto (`CC_SHA256`). Header
+   ;; `<CommonCrypto/CommonDigest.h>` auto-added by base-includes
+   ;; when this atom is referenced. Common uses: cache keys, dedup,
+   ;; content-addressed storage, integrity checks.
+   {:name :hash :kind :target :names ["Hash"]}
    ;; 2026-09-03 — `Time` wall-clock capability. `now() -> Instant`
    ;; returns the current wall-clock time as an Instant (millis since
    ;; Unix epoch). Backed by Foundation `[[NSDate date]
@@ -213,7 +220,7 @@
    cxc.lower compares against these; entries match what the parsed
    AST carries verbatim from prelude source."
   #{"Clock" "Random" "TestKeyboardInput" "Console" "SystemPanic" "Plugin" "OsPrimitive"
-    "FileSystem" "Subprocess" "Env" "Args" "Json" "Http" "Time"})
+    "FileSystem" "Subprocess" "Env" "Args" "Json" "Http" "Time" "Hash"})
 
 ;; F5 retirement (2026-08-15): unit-suffix desugaring (`100ms`,
 ;; `2s`, `1.5min` → `Duration(millis: N)`) is retired per spec

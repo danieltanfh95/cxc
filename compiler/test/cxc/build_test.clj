@@ -2057,6 +2057,13 @@
           (is (zero? exit))
           (is (str/includes? out "got: hello from stdin")))))))
 
+(deftest end-to-end-hash-sha256
+  (testing "2026-09-03 — `hasher.sha256_hex(bytes)` via CommonCrypto's `CC_SHA256`. Asserted against known-answer vectors: SHA-256(\"hello\") = 2cf24dba... and the well-known SHA-256(\"\") = e3b0c442.... Header `<CommonCrypto/CommonDigest.h>` added to base-includes (Foundation doesn't transitively pull it in). NOTE: user-side name `hasher` avoids NSObject's built-in `-hash` selector collision on Objective-C ivars synthesized for `use hash:` bindings; the atom TYPE `Hash` is fine."
+    (let [{:keys [exit stdout]} (compile-and-run "hash-sha256")]
+      (is (zero? exit))
+      (is (str/includes? stdout "sha_hello: 2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"))
+      (is (str/includes? stdout "sha_empty: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")))))
+
 (deftest end-to-end-time-iso
   (testing "2026-09-03 — `time.now_iso()` returns a human-readable ISO 8601 UTC timestamp with fractional-second precision (`YYYY-MM-DDTHH:MM:SS.fffZ`, length 24). Uses `NSISO8601DateFormatter` cached under dispatch_once so repeated calls don't reallocate. Shape assertions only (value depends on wall clock)."
     (let [{:keys [exit stdout]} (compile-and-run "time-iso")]

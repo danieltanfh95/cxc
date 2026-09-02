@@ -1,0 +1,6 @@
+def Hash:
+    sha256_hex(data: Bytes) :- native_sha256_hex(data)
+
+    -> running
+
+    -> end
