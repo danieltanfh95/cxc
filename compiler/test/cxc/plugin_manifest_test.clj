@@ -399,3 +399,62 @@ def Console:
         (is (some? ex))
         (is (= :plugin-method-nyi (:kind (ex-data ex))))
         (is (= method (:method (ex-data ex))))))))
+
+;; ============================================================================
+;; B7 / F77 — .cxc-caps manifest emission
+;; ============================================================================
+
+(deftest caps-map-empty-when-no-plugins
+  (let [caps (pm/build-caps-map [nil nil] :macos "0.11.0")]
+    (is (= pm/caps-schema-tag (:schema caps)))
+    (is (= "0.11.0" (:cxc_version caps)))
+    (is (= "macos"  (:target caps)))
+    (is (= []       (:plugins caps)))
+    (is (= []       (:os_primitives caps)))))
+
+(deftest caps-map-sorts-plugins-by-name
+  (let [m-b (pm/extract (parse/parse plugin-b-src))
+        m-a (pm/extract (parse/parse plugin-a-src))
+        caps (pm/build-caps-map [m-b m-a] :macos "0.11.0")]
+    (is (= ["a" "b"] (mapv :name (:plugins caps)))
+        "plugins deterministically ordered by name")
+    (is (= "0.1.0" (get-in caps [:plugins 0 :version])))))
+
+(deftest caps-map-drops-nil-entries
+  (let [m-a (pm/extract (parse/parse plugin-a-src))]
+    (is (= 1 (count (:plugins (pm/build-caps-map [nil m-a nil] :macos "0.11.0"))))
+        "non-plugin files contribute nil, which is dropped")))
+
+(deftest caps-map-sorts-os-primitives
+  ;; requires-set carrier: we synthesize a manifest with a requires set
+  ;; since the source-level set-literal grammar isn't parsed yet.
+  (let [m-c {:name "c" :version {:major 1 :minor 0 :patch 0}
+             :requires #{:fs_read :stdio :clock_monotonic}}
+        m-d {:name "d" :version {:major 1 :minor 0 :patch 0}
+             :requires #{:stdio :net_dns}}
+        caps (pm/build-caps-map [m-c m-d] :macos "0.11.0")]
+    (is (= ["clock_monotonic" "fs_read" "net_dns" "stdio"]
+           (:os_primitives caps))
+        "primitives unioned across all plugins, deterministically sorted")))
+
+(deftest emit-caps-writes-json-file
+  (let [tmp (java.io.File/createTempFile "cxc-caps-test" ".bin")
+        _   (.deleteOnExit tmp)
+        caps-map (pm/build-caps-map [nil] :macos "0.11.0")
+        f   (pm/emit-caps! (.getPath tmp) caps-map)]
+    (is (.exists f))
+    (is (.endsWith (.getPath f) ".cxc-caps"))
+    (let [content (slurp f)]
+      (is (re-find #"\"schema\": \"cxc-caps/v1\"" content))
+      (is (re-find #"\"target\": \"macos\"" content))
+      (is (re-find #"\"plugins\": \[\]" content)))))
+
+(deftest extract-all-manifests-pass-through-order
+  (let [nodes-a  (parse/parse plugin-a-src)
+        nodes-b  (parse/parse plugin-b-src)
+        non-plug (parse/parse "def Foo:\n    x: Int! = 1\n")
+        results  (pm/extract-all-manifests [nodes-a non-plug nodes-b])]
+    (is (= 3 (count results)))
+    (is (= "a" (:name (nth results 0))))
+    (is (nil? (nth results 1)))
+    (is (= "b" (:name (nth results 2))))))

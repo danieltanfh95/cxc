@@ -1,5 +1,6 @@
 (ns cxc.plugin-manifest
-  "F75 / B3 (2026-09-02) — plugin manifest resolver pass.
+  "F75 / B3–B7 (2026-09-02) — plugin manifest resolver + linker gate +
+   symbol binder + .cxc-caps emission.
 
    Walks a parsed top-nodes vector, locates the single `:def-plugin`
    node (R7 unified marker; spec §7.2.1), evaluates its compile-time-
@@ -33,7 +34,9 @@
    prelude-ctor args. Anything else in a manifest default position is
    a targeted diagnostic — the manifest is data the compiler reads
    before any runtime evaluator exists."
-  (:require [clojure.string :as str]))
+  (:require [clojure.java.io :as io]
+            [clojure.string  :as str]
+            [cxc.manifest    :as manifest]))
 
 (defn- fail!
   [msg node]
@@ -424,3 +427,70 @@
                                 :entries (:entries b)})
                              (:foreign-blocks dp))
        :source-node    dp})))
+
+;; ============================================================================
+;; B7 / F77 (2026-09-02) — .cxc-caps manifest emission.
+;;
+;; Per-binary JSON manifest listing plugins present + unioned OS primitives.
+;; Consumers: CI audit tools, package managers, per-target enforcement emit
+;; (Darwin entitlements, Linux seccomp-bpf, OpenBSD pledge). Documentation-
+;; only on non-enforcing platforms.
+;;
+;; Shape (schema-tag `cxc-caps/v1`):
+;;   {"schema":        "cxc-caps/v1"
+;;    "cxc_version":   "0.11.0"
+;;    "target":        "macos"
+;;    "plugins":       [{"name": STR, "version": "X.Y.Z"} ...]      ; sorted by name
+;;    "os_primitives": ["clock_monotonic", "fs_read", ...]}         ; sorted set
+;;
+;; Deferred (aspirational per §7 spec, not v1.0):
+;; - binary_sha256   — needs post-clang hash
+;; - capability_atoms_used  — needs cross-module import + use analysis
+;; - enforcement     — per-target primitive → syscall/entitlement mapping
+;; ============================================================================
+
+(def caps-schema-tag "cxc-caps/v1")
+
+(defn- version->string
+  "Render a `{:major :minor :patch}` map as canonical `X.Y.Z`."
+  [{:keys [major minor patch]}]
+  (str major "." minor "." patch))
+
+(defn build-caps-map
+  "Given a seq of extracted plugin manifests (nils filtered), a target
+   keyword, and a cxc-version string, produce the JSON-serializable
+   caps map. Deterministic ordering: plugins sorted by name,
+   primitives sorted alphabetically."
+  [manifests target cxc-version]
+  (let [ms      (->> manifests
+                     (filter some?)
+                     (sort-by :name))
+        prims   (->> ms
+                     (mapcat :requires)
+                     (map name)
+                     (into (sorted-set)))]
+    {:schema        caps-schema-tag
+     :cxc_version   cxc-version
+     :target        (name target)
+     :plugins       (mapv (fn [m]
+                            {:name    (:name m)
+                             :version (version->string (:version m))})
+                          ms)
+     :os_primitives (vec prims)}))
+
+(defn emit-caps!
+  "Serialize `caps-map` as JSON and write to `<bin-path>.cxc-caps`.
+   Returns the written File. `bin-path` is the compiled binary path
+   (per compile-parsed-to-file's :bin-path return)."
+  [bin-path caps-map]
+  (let [f (io/file (str bin-path ".cxc-caps"))]
+    (io/make-parents f)
+    (spit f (manifest/write-json caps-map))
+    f))
+
+(defn extract-all-manifests
+  "Given a seq of parsed per-file top-nodes vectors, extract each file's
+   plugin manifest (returning nil for non-plugin files). Deterministic
+   pass-through of order."
+  [per-file-nodes]
+  (mapv extract per-file-nodes))

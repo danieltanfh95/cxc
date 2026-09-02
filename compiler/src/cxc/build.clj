@@ -258,10 +258,21 @@
         prelude-nodes (-> (prelude/assemble-source target)
                           parse/parse
                           resolve/enrich-prelude-nodes)
-        full-parsed   (into (vec prelude-nodes) enriched-parsed)]
-    (compile-parsed-to-file
-      {:user-parsed enriched-parsed :full-parsed full-parsed}
-      name out-dir opts))))
+        full-parsed   (into (vec prelude-nodes) enriched-parsed)
+        result        (compile-parsed-to-file
+                        {:user-parsed enriched-parsed :full-parsed full-parsed}
+                        name out-dir opts)]
+    ;; B7 / F77 — emit `<binary>.cxc-caps` on successful compile. Single-
+    ;; file entry has at most one plugin manifest (the source itself if it
+    ;; carries `def plugin:`).
+    (when (zero? (:status result))
+      (plugin-manifest/emit-caps!
+        (:bin-path result)
+        (plugin-manifest/build-caps-map
+          [(plugin-manifest/extract parsed)]
+          target
+          manifest/compiler-version)))
+    result)))
 
 (defn run-binary
   "Execute the compiled binary and return {:exit :stdout :stderr}."
@@ -887,5 +898,16 @@
           {:graph          dep-graph
            :user-modules   user-modules
            :sorted-modules sorted-modules
-           :compiled-at    (iso-utc-now)})))
+           :compiled-at    (iso-utc-now)}))
+      ;; B7 / F77 — union all reachable plugin modules' manifests into
+      ;; one `<binary>.cxc-caps` sidecar. Per-file manifests come from
+      ;; `files-with-nodes` (post-import validation); non-plugin files
+      ;; contribute nil (filtered by build-caps-map).
+      (plugin-manifest/emit-caps!
+        (:bin-path result)
+        (plugin-manifest/build-caps-map
+          (plugin-manifest/extract-all-manifests
+            (map :nodes files-with-nodes))
+          (:target opts prelude/default-target)
+          manifest/compiler-version)))
     result)))
