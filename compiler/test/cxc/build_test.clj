@@ -447,6 +447,36 @@
             (is (= "(null)" (second lines))
                 "absent var yields nil String → NSLog prints (null); no crash")))))))
 
+(deftest ffi-per-symbol-header-augment-fl-18
+  (testing "FL-18 (2026-09-02) — foreign-symbol-driven include augmentation. `_NSGetArgv` / `_NSGetArgc` live in `<crt_externs.h>` (outside cxc's default include set of `<Foundation/…>` / `<stdlib.h>` / `<string.h>` / `<libkern/OSByteOrder.h>` / `<execinfo.h>`). A foreign-block declaring either symbol causes the compiler to add `<crt_externs.h>` to the file's `#import` list. Extern generation from plugin manifests is deliberately NOT done (cxc's Int / CString types don't match libc's int / char*, so machine-generated externs conflict with stdlib prototypes); the narrower per-symbol header map is what makes `_NSGetArgv`-style symbols usable at v1.0. Verifies (a) `<crt_externs.h>` appears in the emit when `_NSGetArgv` is referenced, (b) the resulting binary runs argv iteration end-to-end (`_NSGetArgv().deref.at(i).to_string()` composes FL-15 / FL-17 to yield the ith arg as String), (c) argv[0] is the program path (crt1 invariant)."
+    (let [src (str "def plugin:\n"
+                   "    name:    String!       = \"p\"\n"
+                   "    version: SemVer!       = SemVer(0, 1, 0)\n"
+                   "    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0), max: SemVer(2, 0, 0))\n"
+                   "\n"
+                   "    foreign \"libc\":\n"
+                   "        symbol \"_NSGetArgc\" -> () -> Ptr of Int32\n"
+                   "        symbol \"_NSGetArgv\" -> () -> Ptr of Ptr of CString\n"
+                   "\n"
+                   "def main:\n"
+                   "    use plugin: Plugin\n"
+                   "    use console: Console\n"
+                   "    -> ready\n"
+                   "        then:\n"
+                   "            console.write(plugin.get(\"_NSGetArgv\")().deref().at(0).to_string())\n")
+          out-dir (tmp-dir)
+          {:keys [status stderr bin-path m-path]}
+          (build/compile-source-to-file src "fl18-argv" (.getPath out-dir))]
+      (is (zero? status) (str "clang failed:\n" stderr))
+      (when (zero? status)
+        (let [emitted (slurp m-path)]
+          (is (re-find #"#import <crt_externs\.h>" emitted)
+              "<crt_externs.h> augmented into the include set"))
+        (let [{:keys [exit stdout]} (build/run-binary bin-path)]
+          (is (zero? exit))
+          (is (str/includes? stdout bin-path)
+              "argv[0] resolves to the program path (crt1 invariant)"))))))
+
 (deftest ffi-cstring-to-string-arity-mismatch-fl-17
   (testing "FL-17 — arity check. `.to_string(x)` rejects with actionable diagnostic."
     (let [src (str "def plugin:\n"

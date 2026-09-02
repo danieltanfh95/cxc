@@ -1286,6 +1286,57 @@
         [args-node]))
     []))
 
+(def ^:private foreign-symbol-headers
+  "FL-18 (2026-09-02) — per-symbol header include map. A foreign
+   symbol referenced anywhere in the program that appears here causes
+   the mapped header to be added to the file's `#import` set. Kept
+   deliberately narrow: covers only foreign symbols known to require
+   a header outside cxc's default include set (`<Foundation/…>`,
+   `<objc/message.h>`, `<stdio.h>`, `<stdlib.h>`, `<string.h>`,
+   `<libkern/OSByteOrder.h>`, `<execinfo.h>`).
+
+   Emitting extern declarations from plugin manifest signatures is
+   NOT viable at v1.0 — cxc's type-kw surface can't express libc's
+   `int` (Int64 vs int32_t) or non-const `char *` (only CString =
+   `const char *`), so machine-generated externs conflict with
+   stdlib prototypes. Users instead route through the plugin marker
+   as usual; the compiler augments includes for symbols outside the
+   default coverage. Grows as new plugin drafts land."
+  {"_NSGetArgv" "<crt_externs.h>"
+   "_NSGetArgc" "<crt_externs.h>"})
+
+(defn- collect-foreign-refs
+  "Walk `nodes` (arbitrary nested map/vector tree) and return a vec of
+   unique `:foreign-ref` nodes, dedup by (library, symbol) — first
+   encountered wins."
+  [nodes]
+  (let [seen (volatile! #{})
+        out  (volatile! [])
+        walk (fn walk [x]
+               (cond
+                 (map? x)
+                 (do (when (and (= :foreign-ref (:node x))
+                                (:library x) (:symbol x))
+                       (let [k [(:library x) (:symbol x)]]
+                         (when-not (contains? @seen k)
+                           (vswap! seen conj k)
+                           (vswap! out conj x))))
+                     (run! walk (vals x)))
+                 (sequential? x)
+                 (run! walk x)))]
+    (walk nodes)
+    @out))
+
+(defn- extra-includes-for-foreign-symbols
+  "FL-18 (2026-09-02) — return the additional header include strings
+   required by any foreign symbols referenced in `top-nodes`. Consults
+   `foreign-symbol-headers`; symbols not in the map contribute nothing
+   (assumed covered by the default include set)."
+  [top-nodes]
+  (into #{}
+        (keep #(get foreign-symbol-headers (:symbol %)))
+        (collect-foreign-refs top-nodes)))
+
 (defn- foreign-arg-needs-cstring-marshal?
   "FL-6 (2026-09-02) — true when a foreign signature arg position expects
    a C-string / byte-buffer at the boundary. Recognized targets:
@@ -7046,6 +7097,14 @@
                             ;; F31/F35 L2 — panic()'s inline backtrace
                             ;; pulls in execinfo.h + stdlib.h (free()).
                             needs-panic?   (conj "<stdlib.h>" "<execinfo.h>"))
+        ;; FL-18 (2026-09-02) — foreign-symbol-driven include
+        ;; augmentation. `_NSGetArgv`/`_NSGetArgc` (std.args plugin)
+        ;; live in `<crt_externs.h>`, outside cxc's default include
+        ;; set. Consulted via `foreign-symbol-headers`; grows one
+        ;; entry per new plugin draft that references a symbol not
+        ;; covered by the base includes.
+        includes          (into includes
+                                (extra-includes-for-foreign-symbols top-nodes))
         ;; Dedup includes while preserving order.
         includes          (vec (distinct includes))
         main-body         (if main-as-atom?
