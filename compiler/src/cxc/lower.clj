@@ -1047,6 +1047,14 @@
       ;; classification below.
       (= "in" op) :bool
 
+      ;; 2026-09-02 — String concatenation. `String + String` → String
+      ;; (rendered at the emit layer via `[left stringByAppendingString:
+      ;; right]`). Nil-tolerant: an ObjC message to nil returns nil, so
+      ;; `nil_string + "x"` yields nil (matches ObjC nil-messaging
+      ;; semantics; callers wanting non-nil concat should guard first).
+      (and (= "+" op) (= :string lt*) (= :string rt*))
+      (if any-opt? [:optional :string] :string)
+
       ;; Phase D F36a Landing 1b — arithmetic widening rules:
       ;;
       ;; 1. int + float (either side) → float family wins (int→float
@@ -2580,6 +2588,19 @@
                    :mode  :reference
                    :left  (lower-expr (:left node)  ctx)
                    :right (lower-expr (:right node) ctx)}
+
+                  ;; 2026-09-02 — `String + String` concatenation.
+                  ;; Emits `[left stringByAppendingString:right]`. Sits
+                  ;; ABOVE the Optional/eq/arith branches so `"a" + "b"`
+                  ;; never falls into numeric widening. Nil-safe by
+                  ;; ObjC nil-messaging (nil recv → nil result).
+                  (and (= "+" (:op node))
+                       (= :string (unwrap-tk (infer-type (:left node) ctx)))
+                       (= :string (unwrap-tk (infer-type (:right node) ctx))))
+                  {:node     :objc-msg
+                   :recv     (lower-expr (:left node) ctx)
+                   :selector "stringByAppendingString:"
+                   :args     [(lower-expr (:right node) ctx)]}
 
                   ;; F39 L5b-ii-c (Sub-H) — presence check on Optional.
                   ;; `x is nil` / `x == nil` / `x != nil` (or symmetric)

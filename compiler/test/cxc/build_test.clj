@@ -1821,6 +1821,31 @@
       ;; the interaction between echo's default trailing newline and puts.
       (is (= "hi from subprocess\n\n" stdout)))))
 
+(deftest end-to-end-string-concat
+  (testing "2026-09-02 — `String + String` binop lowers to `-[NSString stringByAppendingString:]`. `+` on two String operands returns a fresh String (nil-safe via ObjC nil-messaging). Predicate lives in `infer-binop-type` above the arithmetic-widening branch, so numeric `+` is unchanged; the lower-side sits above the eq/arith dispatch. Exercised inline via mini-agent (see below); this test verifies the simplest shape."
+    (let [src "def main:\n    use console: Console\n    -> running\n        then: console.write(\"hello\" + \" \" + \"world\")\n    -> end\n"
+          out-dir (tmp-dir)
+          {:keys [status stderr bin-path]}
+          (build/compile-source-to-file src "concat-test" (.getPath out-dir))]
+      (is (zero? status) (str "clang failed:\n" stderr))
+      (let [{:keys [exit stdout]} (build/run-binary bin-path)]
+        (is (zero? exit))
+        (is (= "hello world\n" stdout))))))
+
+(deftest end-to-end-mini-agent
+  (testing "2026-09-02 — cross-capability composition proof. `mini-agent.cxc` uses FileSystem + Subprocess + Console + String concat in a single `then:` block: runs a fixed shell command via popen, writes captured output to a file via NSString `writeToFile:`, prints a summary via `console.write(String + String)`. Verifies the four MVP capabilities (FileSystem/Subprocess/Console + string-concat lowering) compose without conflicting on runtime, prelude autoloading, or emit shape. Cleans /tmp/mini-agent.log before the run so the write path is exercised. Log content is a `date` command output — asserts non-empty (the exact string varies)."
+    (let [log-path "/tmp/mini-agent.log"]
+      (try
+        (.delete (java.io.File. log-path))
+        (let [{:keys [exit stdout]} (compile-and-run "mini-agent")]
+          (is (zero? exit))
+          (is (clojure.string/includes? stdout "cmd: date"))
+          (is (clojure.string/includes? stdout "log: /tmp/mini-agent.log"))
+          (is (clojure.string/includes? stdout "output:"))
+          (is (pos? (.length (java.io.File. log-path)))
+              "log file should have been written with popen output"))
+        (finally (.delete (java.io.File. log-path)))))))
+
 (deftest f52-l3-source-override-defaults-to-none-when-opts-omit
   (testing "F52 L3 — opts without :source-overrides is a no-op (default `{}`); on-disk sources are used as before. Regression guard for the 3-arity + 4-arity dispatch: existing callers pass no opts (line 613 pattern) or opts without the key (line 615 pattern)."
     (let [src-dir (tmp-dir)

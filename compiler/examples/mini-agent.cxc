@@ -1,0 +1,17 @@
+def main:
+    use fs:      FileSystem
+    use shell:   Subprocess
+    use console: Console
+
+    -> running
+        then:
+            let cmd:      String = "date"
+            let log_path: String = "/tmp/mini-agent.log"
+            let output:   String = shell.run(cmd)
+            fs.write_text(log_path, output)
+            console.write("cmd: " + cmd)
+            console.write("log: " + log_path)
+            console.write("output:")
+            console.write(output)
+
+    -> end
