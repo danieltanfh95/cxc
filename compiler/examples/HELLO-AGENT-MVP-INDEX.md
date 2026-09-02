@@ -61,6 +61,7 @@ Under [examples/](./):
 - [int-abs-min-max.cxc](./int-abs-min-max.cxc) — Int method intrinsics `abs()`, `min(other)`, `max(other)`; compile-time ternaries, no helper call.
 - [trim-prefix-suffix.cxc](./trim-prefix-suffix.cxc) — String `.trim_prefix(pre)` / `.trim_suffix(suf)` — URL scheme strip, trailing-newline strip, pass-through on non-match / empty pattern.
 - [string-repeat-pad.cxc](./string-repeat-pad.cxc) — String `.repeat(n)`, `.pad_left(n, ch)`, `.pad_right(n, ch)` — build-by-repetition and column-align formatting.
+- [set-basic.cxc](./set-basic.cxc) — `Set of T` end-to-end for T ∈ {String, Int}: add/remove/contains/count with dedup semantics. Regression test for prior `Set of Int` compile break (params were id-typed but body tried to `@(id)` box).
 
 ## Non-plugin prelude capabilities enriched this session
 

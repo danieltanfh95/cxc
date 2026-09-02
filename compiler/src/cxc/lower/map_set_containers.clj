@@ -126,14 +126,18 @@
      - `-addWithe:` — box element, `[_elements addObject:box(e)]`
      - `-removeWithe:` — box element, `[_elements removeObject:box(e)]`
      - `-containsWithe:` — box element, `[_elements containsObject:box(e)] ? 1 : 0`
-   No fan-in machinery at Step 9 MVP (parallels Map's landing —
-   deferred until element atoms with observable aggregation need it)."
+   Element params carry the per-element C type (Int → int, String →
+   NSString *) so the caller passes an unboxed value — mirrors Map's
+   k-c/v-c specialization. No fan-in machinery at Step 9 MVP (parallels
+   Map's landing — deferred until element atoms with observable
+   aggregation need it)."
   [class-name element-name]
   (when-not (contains? set-supported-element-types element-name)
     (fail-user! (str "Set element type `" element-name "` — Layer 6 Step 9 "
                      "MVP supports " (sort set-supported-element-types))
                 {:set-element element-name}))
-  (let [box-e (map-box-expr element-name "e")]
+  (let [box-e (map-box-expr element-name "e")
+        e-c   (map-c-type   element-name)]
     {:node        :objc-class
      :name        class-name
      :superclass  "NSObject"
@@ -161,19 +165,19 @@
                                                    :args []}}}]}
                    {:name        "addWithe"
                     :selector    "addWithe:"
-                    :params      [{:name "e" :c-type "id"}]
+                    :params      [{:name "e" :c-type e-c}]
                     :return-type "void"
                     :body        [{:node :raw-c
                                    :text (str "[_elements addObject:" box-e "];")}]}
                    {:name        "removeWithe"
                     :selector    "removeWithe:"
-                    :params      [{:name "e" :c-type "id"}]
+                    :params      [{:name "e" :c-type e-c}]
                     :return-type "void"
                     :body        [{:node :raw-c
                                    :text (str "[_elements removeObject:" box-e "];")}]}
                    {:name        "containsWithe"
                     :selector    "containsWithe:"
-                    :params      [{:name "e" :c-type "id"}]
+                    :params      [{:name "e" :c-type e-c}]
                     :return-type "int"
                     :body        [{:node :raw-c
                                    :text (str "return [_elements containsObject:"

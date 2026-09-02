@@ -1129,6 +1129,12 @@
       (is (zero? exit))
       (is (= "5\n6\n0\n005\nhello\n5..\nhello\n6\n6\n" stdout)))))
 
+(deftest end-to-end-set-basic
+  (testing "set-basic.cxc — `Set of T` end-to-end for T ∈ {String, Int}. Verifies (1) `xs: Set of T` field on main auto-inits to empty NSMutableSet; (2) synthesized -addWithe: / -removeWithe: / -containsWithe: use per-element C types (Int → int + NSNumber @(e) boxing; String → NSString * passthrough) so callers pass unboxed values; (3) duplicate-add is a no-op (2 adds of same key → count=1 delta, xs.add(\"a\") twice → count=2 after third distinct add); (4) contains reflects membership; (5) remove reduces count by 1. Pre-fix, Set of Int failed to compile — params were id-typed but body tried to `@(id)` box."
+    (let [{:keys [exit stdout]} (compile-and-run "set-basic")]
+      (is (zero? exit))
+      (is (= "2\n2\ntrue\nfalse\ntrue\nfalse\n1\n1\n" stdout)))))
+
 (deftest end-to-end-console-hello
   (testing "console-hello.cxc — Layer 6 Step 5. Console prelude atom with `write(msg: String) -> Int` method wrapping the `native_console_write` FFI hatch (printf %s). Main is capability-provisioned (`def main(console: Console)`) and calls `console.write(\"hi\\n\")` in its `-> running do:`. Prints `hi` + newline."
     (let [{:keys [exit stdout]} (compile-and-run "console-hello")]

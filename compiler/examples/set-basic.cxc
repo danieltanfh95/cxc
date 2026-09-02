@@ -1,0 +1,22 @@
+def main:
+    xs: Set of String
+    ys: Set of Int
+
+    -> running
+        then:
+            xs.add("a")
+            xs.add("b")
+            xs.add("a")
+            ys.add(10)
+            ys.add(20)
+            ys.add(10)
+            print(xs.count.to_string())
+            print(ys.count.to_string())
+            print(xs.contains("a").to_string())
+            print(xs.contains("z").to_string())
+            print(ys.contains(20).to_string())
+            print(ys.contains(99).to_string())
+            xs.remove("a")
+            ys.remove(10)
+            print(xs.count.to_string())
+            print(ys.count.to_string())
