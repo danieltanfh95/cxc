@@ -258,6 +258,74 @@
           (is (= "9\n" stdout)
               "[[NSString stringWithUTF8String:greetings] length] = 9"))))))
 
+(deftest ffi-ptr-deref-and-index-fl-15
+  (testing "FL-15 (2026-09-02) — pointer methods on `Ptr of T`. `.deref()` emits `(*p)`, `.at(i)` emits `(p)[i]`. Enables the libc errno pattern: `plugin.get(\"__error\")()` returns `Ptr of Int32`; `.deref()` yields the current errno as Int32. No bounds checks — caller's responsibility (raw C pointer)."
+    (let [src (str "def plugin:\n"
+                   "    name:    String!       = \"p\"\n"
+                   "    version: SemVer!       = SemVer(0, 1, 0)\n"
+                   "    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0), max: SemVer(2, 0, 0))\n"
+                   "\n"
+                   "    foreign \"libc\":\n"
+                   "        symbol \"__error\" -> () -> Ptr of Int32\n"
+                   "\n"
+                   "def main:\n"
+                   "    use plugin: Plugin\n"
+                   "    -> ready\n"
+                   "        then:\n"
+                   "            let ep = plugin.get(\"__error\")()\n"
+                   "            let via_deref = ep.deref()\n"
+                   "            let via_at    = ep.at(0)\n"
+                   "            print(via_deref)\n"
+                   "            print(via_at)\n")
+          out-dir (tmp-dir)
+          {:keys [status stderr bin-path m-path]}
+          (build/compile-source-to-file src "ffi-ptr-deref" (.getPath out-dir))]
+      (is (zero? status) (str "clang failed:\n" stderr))
+      (when (zero? status)
+        (let [emitted (slurp m-path)]
+          (is (re-find #"\(\*ep\)" emitted)
+              ".deref() emits (*ep)")
+          (is (re-find #"\(ep\)\[0\]" emitted)
+              ".at(0) emits (ep)[0]"))
+        (let [{:keys [exit stdout]} (build/run-binary bin-path)]
+          (is (zero? exit))
+          (let [lines (clojure.string/split stdout #"\n")]
+            (is (= 2 (count (filter seq lines))))
+            (is (= (first lines) (second lines))
+                "both deref forms read the same underlying int32")))))))
+
+(deftest ffi-ptr-deref-arity-mismatch-fl-15
+  (testing "FL-15 — arity checks on pointer methods. `.deref(x)` and `.at()` both reject with actionable diagnostics."
+    (let [src-base (str "def plugin:\n"
+                        "    name:    String!       = \"p\"\n"
+                        "    version: SemVer!       = SemVer(0, 1, 0)\n"
+                        "    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0), max: SemVer(2, 0, 0))\n"
+                        "\n"
+                        "    foreign \"libc\":\n"
+                        "        symbol \"__error\" -> () -> Ptr of Int32\n"
+                        "\n"
+                        "def main:\n"
+                        "    use plugin: Plugin\n")
+          bad-deref (str src-base
+                         "    -> ready\n"
+                         "        then:\n"
+                         "            let ep = plugin.get(\"__error\")()\n"
+                         "            print(ep.deref(0))\n")
+          bad-at    (str src-base
+                         "    -> ready\n"
+                         "        then:\n"
+                         "            let ep = plugin.get(\"__error\")()\n"
+                         "            print(ep.at())\n")
+          out-dir   (tmp-dir)]
+      (is (thrown-with-msg?
+            clojure.lang.ExceptionInfo
+            #"FL-15.*deref\(\) takes no args"
+            (build/compile-source-to-file bad-deref "fl15-bad-deref" (.getPath out-dir))))
+      (is (thrown-with-msg?
+            clojure.lang.ExceptionInfo
+            #"FL-15.*at\(idx\) takes one arg"
+            (build/compile-source-to-file bad-at "fl15-bad-at" (.getPath out-dir)))))))
+
 (deftest ffi-bare-foreign-ref-not-called-rejected
   (testing "FL-3 diagnostic — storing plugin.get(SYM) as a function pointer (not calling it inline) rejected with a fail-nyi pointing at the MVP-supported call form."
     (let [src (str "def plugin:\n"

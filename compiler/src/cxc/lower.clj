@@ -1187,6 +1187,15 @@
            (= "slice" method-name))
       :bytes
 
+      ;; FL-15 (2026-09-02) — pointer methods on `Ptr of T`. Type-kw
+      ;; shape is `[:ptr <inner-tk>]` (foreign-type-node->tk output).
+      ;; `.deref()`  — zero-arg, returns inner-tk (C: `*p`).
+      ;; `.at(idx)`  — one-arg, returns inner-tk (C: `p[idx]`).
+      ;; No bounds check; caller responsibility (raw C pointer).
+      (and (vector? target-ty) (= :ptr (first target-ty))
+           (contains? #{"deref" "at"} method-name))
+      (second target-ty)
+
       :else
       (fail-user! "method call on non-record/non-atom target" call-node))))
 
@@ -2064,6 +2073,34 @@
                :emit-c-fn (fn [[b o]]
                             (str "((int64_t)((const uint8_t *)["
                                  b " bytes])[" o "])"))})
+
+          ;; FL-15 (2026-09-02) — pointer dereference / indexed load on
+          ;; `Ptr of T`. `.deref()` emits `(*p)`; `.at(i)` emits `p[i]`.
+          ;; No bounds check — raw C pointers, caller's responsibility.
+          ;; Interception runs BEFORE the record/atom/list-container
+          ;; branches so a pointer receiver never hits the "not a
+          ;; record/atom" fail-user.
+          (and (vector? target-ty) (= :ptr (first target-ty))
+               (= "deref" method-name))
+          (do (when-not (zero? (count arg-exprs))
+                (fail-user! (str "FL-15: `Ptr of T`.deref() takes no args, got "
+                                 (count arg-exprs))
+                            call-node))
+              {:node      :ffi-call
+               :name      "cxc_ptr_deref"
+               :args      [target-lo]
+               :emit-c-fn (fn [[p]] (str "(*" p ")"))})
+
+          (and (vector? target-ty) (= :ptr (first target-ty))
+               (= "at" method-name))
+          (do (when-not (= 1 (count arg-exprs))
+                (fail-user! (str "FL-15: `Ptr of T`.at(idx) takes one arg "
+                                 "(index), got " (count arg-exprs))
+                            call-node))
+              {:node      :ffi-call
+               :name      "cxc_ptr_at"
+               :args      [target-lo (first arg-exprs)]
+               :emit-c-fn (fn [[p i]] (str "(" p ")[" i "]"))})
 
           ;; F37 L6a — `Bytes.slice(start: Int, length: Int) -> Bytes`.
           ;; Emits `[(NSMutableData *)[bytes subdataWithRange:NSMakeRange(start, length)] mutableCopy]`
