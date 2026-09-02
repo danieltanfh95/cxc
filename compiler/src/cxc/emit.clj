@@ -433,6 +433,7 @@
     :objc-num-lit    (case (:kind node)
                        :int   (str "@" (:value node))
                        :float (str "@(" (:value node) ")")
+                       :bool  (if (:value node) "@YES" "@NO")
                        (str "@(" (emit-expr (:expr node)) ")"))
     :objc-array-literal
     ;; ObjC boxed-array literal `@[<items>]`. Items are already emitted

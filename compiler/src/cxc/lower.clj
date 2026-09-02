@@ -2663,6 +2663,14 @@
     [{:node :raw-c
       :text (str "NSString *" user-name " = (NSString *)" raw-name ";")}]
 
+    ;; 2026-09-03 — Bool: NSNumber (@YES/@NO) → BOOL via -boolValue.
+    ;; Without this branch, the raw id-typed param falls through to
+    ;; the else clause and every element reads as truthy (any non-nil
+    ;; id is truthy in ObjC), silently swallowing the actual value.
+    (= :bool element-type-kw)
+    [{:node :raw-c
+      :text (str "BOOL " user-name " = [" raw-name " boolValue];")}]
+
     :else
     ;; id-typed pass-through: just alias user-name to raw
     [{:node :raw-c
@@ -5837,6 +5845,19 @@
                          ;; block's `id` param back to the atom pointer.
                          (and (map? ty) (:atom ty))
                          (lower-expr item-node ctx)
+                         ;; 2026-09-03 — String elements: NSString * is
+                         ;; already id-compatible, so the string literal
+                         ;; lowers to `@"..."` and drops into the array
+                         ;; literal directly. Container's for_each unbox
+                         ;; prelude casts the block's `id` back to
+                         ;; NSString * per the element-type-derived cast.
+                         (= :string ty)
+                         (lower-expr item-node ctx)
+                         ;; 2026-09-03 — Bool elements box to NSNumber
+                         ;; via the ObjC BOOL boxing literal `@YES`/`@NO`.
+                         (= :bool ty)
+                         {:node :objc-num-lit :kind :bool
+                          :value (:value item-node)}
                          :else
                          (fail-nyi! (str "List of `" element-name "` literal — "
                                          "element type " (pr-str ty) " not "
