@@ -1156,6 +1156,12 @@
                   "missing exists: 0\nmissing is_dir: 0\nmissing is_file: 0\n")
              stdout)))))
 
+(deftest end-to-end-env-typed-get
+  (testing "env-typed-get.cxc — `Env.get_or_int(name, fallback)` / `Env.get_or_bool(name, fallback)`. Prelude compositions: `native_env_get_or_default(name, \"\").to_int_or(fallback)` / `.to_bool_or(fallback)`. Verifies parse-success, missing-key fallback, unparseable-value fallback across both Int and Bool."
+    (let [{:keys [exit stdout]} (compile-and-run "env-typed-get")]
+      (is (zero? exit))
+      (is (= "8080\n42\n99\ntrue\ntrue\nfalse\n" stdout)))))
+
 (deftest end-to-end-console-hello
   (testing "console-hello.cxc — Layer 6 Step 5. Console prelude atom with `write(msg: String) -> Int` method wrapping the `native_console_write` FFI hatch (printf %s). Main is capability-provisioned (`def main(console: Console)`) and calls `console.write(\"hi\\n\")` in its `-> running do:`. Prints `hi` + newline."
     (let [{:keys [exit stdout]} (compile-and-run "console-hello")]

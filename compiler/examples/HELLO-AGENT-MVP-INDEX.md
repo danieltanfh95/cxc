@@ -11,7 +11,7 @@ Under [resources/prelude/target/macos/](../resources/prelude/target/macos/):
 |------|------------|---------|--------|
 | [fs.cxc](../resources/prelude/target/macos/fs.cxc) | `FileSystem` | `read_text` / `write_text` / `append_text` / `exists` / `is_dir` / `is_file` / `mkdirs` / `remove` / `copy` / `rename` / `size` / `tmp_path` / `list_dir` / `read_bytes` / `write_bytes` | 47a4c2f + 2c9d094 + 25cb3bd + 5e10972 + 954b5b7 + 40d5786 + 07a5ff9 |
 | [subprocess.cxc](../resources/prelude/target/macos/subprocess.cxc) | `Subprocess` | `run(cmd)` + `run_full(cmd)` (envelope: `{exit_code, stdout, stderr}` via NSTask) | 07d4994 + 358f883 |
-| [env.cxc](../resources/prelude/target/macos/env.cxc) | `Env` | `get_or` + `set` + `remove` + `has` | c5e2f68 + db01b54 + 25cb3bd + 700b377 |
+| [env.cxc](../resources/prelude/target/macos/env.cxc) | `Env` | `get_or` + `get_or_int` + `get_or_bool` + `set` + `remove` + `has` | c5e2f68 + db01b54 + 25cb3bd + 700b377 |
 | [args.cxc](../resources/prelude/target/macos/args.cxc) | `Args` | `length()` + `get_or` + `all_after` | 4d6a897 + 962108b |
 | [json.cxc](../resources/prelude/target/macos/json.cxc) | `Json` | `encode_str` / `field_string` / `field_string_or` / `field_int_or` / `field_string_path` / `field_string_or_path` / `field_int_or_path` / `field_bool_or` / `array_length_at` | 6b12a7d + c922c06 + a798ab9 + f3c49bd |
 | [http.cxc](../resources/prelude/target/macos/http.cxc) | `Http` | `get` / `post` / `get_envelope` / `post_envelope` / `head_status` / `download_to_file` | 838533a + 0e17b7b + 210a1fa + 40d5786 |
@@ -65,6 +65,7 @@ Under [examples/](./):
 - [string-to-bool-or.cxc](./string-to-bool-or.cxc) — String `.to_bool_or(fallback)` — parses true/false/yes/no/1/0/on/off case-insensitively; unrecognized/empty falls through to fallback.
 - [json-string-or.cxc](./json-string-or.cxc) — Json `.field_string_or` / `.field_string_or_path` — nil-tolerant fallback variants; save the caller a `||: v == nil : fallback ||: else : v` ladder on every JSON lookup.
 - [fs-is-dir-file.cxc](./fs-is-dir-file.cxc) — FileSystem `.is_dir` / `.is_file` — distinguish directory from regular file (via NSFileManager -fileExistsAtPath:isDirectory:); nine-way {dir, file, missing} × {exists, is_dir, is_file} matrix.
+- [env-typed-get.cxc](./env-typed-get.cxc) — Env `.get_or_int(name, fallback)` / `.get_or_bool(name, fallback)` — typed env var lookup composed prelude-side from `get_or(name, "").to_{int,bool}_or(fallback)`.
 
 ## Non-plugin prelude capabilities enriched this session
 
