@@ -536,6 +536,39 @@
                         "dispatch_semaphore_wait(__sem, DISPATCH_TIME_FOREVER); "
                         "} } "
                         "__envelope; })")))}
+   "native_env_set"
+   ;; 2026-09-03 — set an environment variable in the current process
+   ;; (overwrite existing value). Returns 0 on success, -1 on failure
+   ;; (out-of-memory or invalid name). libc `setenv(name, value, 1)`;
+   ;; nil-guards on both args (either nil → no-op → returns -1).
+   {:return-kw :int
+    :arity     2
+    :emit-c    (fn [args]
+                 (let [name  (first args)
+                       value (second args)]
+                   (str "({ NSString *__n = " name "; "
+                        "NSString *__v = " value "; "
+                        "int __r = -1; "
+                        "if (__n && __v) { "
+                        "__r = setenv([__n UTF8String], [__v UTF8String], 1); "
+                        "} "
+                        "(int64_t)__r; })")))}
+   "native_time_sleep_ms"
+   ;; 2026-09-03 — suspend the current thread for `ms` milliseconds.
+   ;; libc `usleep(ms * 1000)`. Negative or zero → no-op. Truncates
+   ;; long sleeps to the useconds_t max (uint32) per usleep's contract;
+   ;; use for retry backoff, throttling, small delays only. Not for
+   ;; long-running waits (use dispatch/GCD for that once scheduler
+   ;; primitives land).
+   {:return-kw :int
+    :arity     1
+    :emit-c    (fn [args]
+                 (str "({ int64_t __ms = (int64_t)(" (first args) "); "
+                      "if (__ms > 0) { "
+                      "useconds_t __us = (useconds_t)((__ms > 4000000) ? "
+                      "4000000000u : (uint64_t)__ms * 1000u); "
+                      "usleep(__us); } "
+                      "(int64_t)0; })"))}
    "native_env_get_or_default"
    ;; 2g (2026-09-02) — read an environment variable, defaulting on
    ;; miss. libc `getenv(name)` returns `const char *`; when the var

@@ -1850,6 +1850,15 @@
       (is (clojure.string/includes? stdout "to_int_or ws17: 17"))
       (is (clojure.string/includes? stdout "to_int_or 42abc: -1")))))
 
+(deftest end-to-end-env-set-time-since-sleep
+  (testing "2026-09-03 — three landings verified together. `env.set(name, value)` wraps libc `setenv(...,overwrite=1)` returning 0/-1 (verified by round-tripping through `env.get_or`). `time.since(t)` returns a Duration for wall-clock elapsed since an Instant (uses Int subtraction via `native_millis_now`). `time.sleep_ms(ms)` wraps libc `usleep(ms*1000)` — verified by measuring the elapsed time after a 50ms sleep (lower bound 40ms accommodates coarse scheduler quanta; upper bound 500ms guards against runaway waits)."
+    (let [{:keys [exit stdout]} (compile-and-run "env-set-time-since-sleep")]
+      (is (zero? exit))
+      (is (str/includes? stdout "set_rc: 0"))
+      (is (str/includes? stdout "env_roundtrip: hello-from-cxc"))
+      (is (str/includes? stdout "slept_ms_lower: true"))
+      (is (str/includes? stdout "slept_ms_upper: true")))))
+
 (deftest end-to-end-console-readln
   (testing "2026-09-03 — `console.readln()` reads one line from stdin, strips the trailing newline, returns nil on EOF. Backed by libc `fgets` on a 4 KiB stack buffer, wrapped in a stmt-expr that yields an NSString*. Round-trip: pipe a known line into stdin, assert the program echoes it back verbatim through `console.write`."
     (let [src     (example "console-readln")

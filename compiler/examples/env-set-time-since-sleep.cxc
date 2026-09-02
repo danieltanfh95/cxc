@@ -1,0 +1,18 @@
+def main:
+    use env:     Env
+    use time:    Time
+    use console: Console
+
+    -> running
+        then:
+            let set_rc: Int = env.set("CXC_TEST_VAR", "hello-from-cxc")
+            let got: String = env.get_or("CXC_TEST_VAR", "MISSING")
+            console.write("set_rc: " + set_rc.to_string())
+            console.write("env_roundtrip: " + got)
+            let t0: Instant = time.now()
+            let _: Int = time.sleep_ms(50)
+            let d: Duration = time.since(t0)
+            console.write("slept_ms_lower: " + (d.millis >= 40).to_string())
+            console.write("slept_ms_upper: " + (d.millis < 500).to_string())
+
+    -> end

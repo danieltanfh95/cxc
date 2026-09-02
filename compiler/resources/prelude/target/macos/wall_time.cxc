@@ -1,6 +1,10 @@
 def Time:
     now() :- Instant(millis: native_millis_now())
 
+    since(t: Instant) :- Duration(millis: native_millis_now() - t.millis)
+
+    sleep_ms(ms: Int) :- native_time_sleep_ms(ms)
+
     -> running
 
     -> end
