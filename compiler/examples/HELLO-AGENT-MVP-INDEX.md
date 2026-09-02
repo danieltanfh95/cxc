@@ -30,6 +30,15 @@ Under [examples/](./):
 - [http-example-com.cxc](./http-example-com.cxc) — 5 manual verification (fetches https://example.com and prints HTML). Not run in CI.
 - [hello-agent-mini.cxc](./hello-agent-mini.cxc) — 6 MVP hello-agent shape. Direct Claude Messages API POST composing every stdlib capability. Landed in 603859a.
 
+## Post-MVP polish (2026-09-03 second-day landings)
+
+- `Console.write_raw(text)` — no trailing newline; companion to `write` (ac862c0)
+- `Json.field_int_or(json, key, fallback)` — numeric field extraction (c922c06)
+- `String == String` reroutes to `-isEqualToString:` (was pointer-eq before) (5d10ab4)
+- `String.length()` / `.contains(sub)` / `.starts_with(pre)` / `.ends_with(suf)` (5d10ab4)
+- `Bool.to_string()` — literal `"true"` / `"false"` (5d10ab4)
+- `String.substring(start, len)` — nil-safe slice (1319b71)
+
 ## What's NOT in the MVP
 
 The full designed hello-agent (see [design/examples/hello-agent/hello-agent.cxc](../../design/examples/hello-agent/hello-agent.cxc)) needs several language landings that were deliberately deferred:
