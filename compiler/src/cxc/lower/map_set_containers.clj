@@ -102,7 +102,17 @@
                     :return-type "int"
                     :body        [{:node :raw-c
                                    :text (str "return ([_elements objectForKey:"
-                                              box-k "] != nil) ? 1 : 0;")}]}]}))
+                                              box-k "] != nil) ? 1 : 0;")}]}
+                   {:name        "get_orWithk_fallback"
+                    :selector    "get_orWithk:fallback:"
+                    :params      [{:name "k"        :c-type k-c}
+                                  {:name "fallback" :c-type v-c}]
+                    :return-type v-c
+                    :body        [{:node :raw-c
+                                   :text (str "id __v = [_elements objectForKey:" box-k "]; "
+                                              (case v-name
+                                                "Int"    "return __v ? [(NSNumber *)__v intValue] : fallback;"
+                                                "String" "return __v ? (NSString *)__v : fallback;"))}]}]}))
 
 (defn synthesize-set-container-class
   "Emit-ready :objc-class node for one `_Cxc_SetOf<T>` instantiation.

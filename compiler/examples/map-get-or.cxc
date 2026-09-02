@@ -1,0 +1,11 @@
+def main:
+    m: Map of (String, Int)
+
+    -> running
+        then:
+            m.add("apples", 3)
+            m.add("pears", 7)
+            print(m.get_or("apples", -1).to_string())
+            print(m.get_or("cherries", -1).to_string())
+
+    -> end

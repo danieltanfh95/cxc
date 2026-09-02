@@ -1075,6 +1075,18 @@
       (is (zero? exit))
       (is (= "1\n0\n1\n" stdout)))))
 
+(deftest end-to-end-map-get-or
+  (testing "map-get-or.cxc — Layer 6 Step 8 extension. `Map of (String, Int)` with `.get_or(k, fallback) -> V` lookup. Present key returns the value (apples → 3); missing key returns the fallback (cherries → -1). Verifies the synthesized `-get_orWithk:fallback:` method on _Cxc_MapOfStringInt: `id v = [_elements objectForKey:box(k)]; return v ? [v intValue] : fallback;`. Method-index registers cxc-return-ty=V so infer-method-call-type resolves the call as an Int expression suitable for chaining `.to_string()`."
+    (let [{:keys [exit stdout]} (compile-and-run "map-get-or")]
+      (is (zero? exit))
+      (is (= "3\n-1\n" stdout)))))
+
+(deftest end-to-end-map-get-or-string
+  (testing "map-get-or-string.cxc — `Map of (String, String)` with `.get_or(k, fallback) -> String`. Exercises the String branch of the synthesized get_or: return v ? (NSString *)v : fallback. Present key `host` → `example.com`; missing key `port` → `unknown`."
+    (let [{:keys [exit stdout]} (compile-and-run "map-get-or-string")]
+      (is (zero? exit))
+      (is (= "example.com\nunknown\n" stdout)))))
+
 (deftest end-to-end-console-hello
   (testing "console-hello.cxc — Layer 6 Step 5. Console prelude atom with `write(msg: String) -> Int` method wrapping the `native_console_write` FFI hatch (printf %s). Main is capability-provisioned (`def main(console: Console)`) and calls `console.write(\"hi\\n\")` in its `-> running do:`. Prints `hi` + newline."
     (let [{:keys [exit stdout]} (compile-and-run "console-hello")]

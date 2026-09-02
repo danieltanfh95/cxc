@@ -119,7 +119,11 @@
                                                 nil)
                               (container-method "contains"
                                                 [{:name "k" :cxc-ty k}]
-                                                "Bool")]]
+                                                "Bool")
+                              (container-method "get_or"
+                                                [{:name "k"        :cxc-ty k}
+                                                 {:name "fallback" :cxc-ty v}]
+                                                v)]]
                  [class-name
                   (merge (container-entry-defaults)
                          count-observable-defaults

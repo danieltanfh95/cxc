@@ -52,6 +52,8 @@ Under [examples/](./):
 - [fs-bytes-io.cxc](./fs-bytes-io.cxc) — F37 `.as() -> Bytes` on a record → write_bytes → read_bytes → size + nil-on-miss.
 - [bytes-string-roundtrip.cxc](./bytes-string-roundtrip.cxc) — `String.to_bytes` / `Bytes.to_string` UTF-8 roundtrip, both in-memory and via disk.
 - [hash-sha256.cxc](./hash-sha256.cxc) — SHA-256 of `"hello"` and `""` against known-answer vectors.
+- [map-get-or.cxc](./map-get-or.cxc) — `Map of (String, Int).get_or(k, fallback) -> Int` — present-key value / missing-key fallback.
+- [map-get-or-string.cxc](./map-get-or-string.cxc) — `Map of (String, String).get_or(k, fallback) -> String` (String branch of the synthesized method).
 
 ## Non-plugin prelude capabilities enriched this session
 
