@@ -965,6 +965,34 @@
                  (str "((" (first args) " && "
                       "[[NSFileManager defaultManager] fileExistsAtPath:"
                       (first args) "]) ? 1 : 0)"))}
+   "native_fs_is_dir"
+   ;; 2026-09-03 — path resolves to a directory (or a symlink to one).
+   ;; NSFileManager -fileExistsAtPath:isDirectory: sets the out-param
+   ;; only when the entry exists; 0 return covers both "missing" and
+   ;; "not a directory" cases.
+   {:return-kw :int
+    :arity     1
+    :emit-c    (fn [args]
+                 (str "({ NSString *__p = " (first args) "; "
+                      "BOOL __d = NO; "
+                      "int __r = 0; "
+                      "if (__p && [[NSFileManager defaultManager] "
+                      "fileExistsAtPath:__p isDirectory:&__d] && __d) __r = 1; "
+                      "__r; })"))}
+   "native_fs_is_file"
+   ;; 2026-09-03 — path resolves to a regular file (not directory).
+   ;; Uses the same isDirectory: out-param variant, negating the
+   ;; directory bit. Symlinks-to-files count as file (Foundation
+   ;; follows symlinks per R19 default).
+   {:return-kw :int
+    :arity     1
+    :emit-c    (fn [args]
+                 (str "({ NSString *__p = " (first args) "; "
+                      "BOOL __d = NO; "
+                      "int __r = 0; "
+                      "if (__p && [[NSFileManager defaultManager] "
+                      "fileExistsAtPath:__p isDirectory:&__d] && !__d) __r = 1; "
+                      "__r; })"))}
    "native_fs_list_dir"
    ;; 2026-09-03 — list a directory as a newline-separated String
    ;; (one filename per line, no leading path). Empty String on error

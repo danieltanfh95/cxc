@@ -9,7 +9,7 @@ Under [resources/prelude/target/macos/](../resources/prelude/target/macos/):
 
 | File | Capability | Methods | Landed |
 |------|------------|---------|--------|
-| [fs.cxc](../resources/prelude/target/macos/fs.cxc) | `FileSystem` | `read_text` / `write_text` / `append_text` / `exists` / `mkdirs` / `remove` / `copy` / `rename` / `size` / `tmp_path` / `list_dir` / `read_bytes` / `write_bytes` | 47a4c2f + 2c9d094 + 25cb3bd + 5e10972 + 954b5b7 + 40d5786 + 07a5ff9 |
+| [fs.cxc](../resources/prelude/target/macos/fs.cxc) | `FileSystem` | `read_text` / `write_text` / `append_text` / `exists` / `is_dir` / `is_file` / `mkdirs` / `remove` / `copy` / `rename` / `size` / `tmp_path` / `list_dir` / `read_bytes` / `write_bytes` | 47a4c2f + 2c9d094 + 25cb3bd + 5e10972 + 954b5b7 + 40d5786 + 07a5ff9 |
 | [subprocess.cxc](../resources/prelude/target/macos/subprocess.cxc) | `Subprocess` | `run(cmd)` + `run_full(cmd)` (envelope: `{exit_code, stdout, stderr}` via NSTask) | 07d4994 + 358f883 |
 | [env.cxc](../resources/prelude/target/macos/env.cxc) | `Env` | `get_or` + `set` + `remove` + `has` | c5e2f68 + db01b54 + 25cb3bd + 700b377 |
 | [args.cxc](../resources/prelude/target/macos/args.cxc) | `Args` | `length()` + `get_or` + `all_after` | 4d6a897 + 962108b |
@@ -64,6 +64,7 @@ Under [examples/](./):
 - [set-basic.cxc](./set-basic.cxc) — `Set of T` end-to-end for T ∈ {String, Int}: add/remove/contains/count with dedup semantics. Regression test for prior `Set of Int` compile break (params were id-typed but body tried to `@(id)` box).
 - [string-to-bool-or.cxc](./string-to-bool-or.cxc) — String `.to_bool_or(fallback)` — parses true/false/yes/no/1/0/on/off case-insensitively; unrecognized/empty falls through to fallback.
 - [json-string-or.cxc](./json-string-or.cxc) — Json `.field_string_or` / `.field_string_or_path` — nil-tolerant fallback variants; save the caller a `||: v == nil : fallback ||: else : v` ladder on every JSON lookup.
+- [fs-is-dir-file.cxc](./fs-is-dir-file.cxc) — FileSystem `.is_dir` / `.is_file` — distinguish directory from regular file (via NSFileManager -fileExistsAtPath:isDirectory:); nine-way {dir, file, missing} × {exists, is_dir, is_file} matrix.
 
 ## Non-plugin prelude capabilities enriched this session
 

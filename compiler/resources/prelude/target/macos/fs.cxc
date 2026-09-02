@@ -7,6 +7,10 @@ def FileSystem:
 
     exists(path: String) :- native_fs_exists(path)
 
+    is_dir(path: String) :- native_fs_is_dir(path)
+
+    is_file(path: String) :- native_fs_is_file(path)
+
     mkdirs(path: String) :- native_fs_mkdirs(path)
 
     remove(path: String) :- native_fs_remove(path)

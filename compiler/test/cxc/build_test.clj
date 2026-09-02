@@ -1147,6 +1147,15 @@
       (is (zero? exit))
       (is (= "claude\nfallback\nbash\nls\nnot-there\nfallback\n" stdout)))))
 
+(deftest end-to-end-fs-is-dir-file
+  (testing "fs-is-dir-file.cxc — FileSystem `.is_dir(path)` / `.is_file(path)`. Backed by NSFileManager -fileExistsAtPath:isDirectory: with the directory-out-param branch. Distinguishes dir vs file vs missing across all three probes. Nine-way matrix: {mkdirs'd dir, written file, missing path} × {exists, is_dir, is_file}."
+    (let [{:keys [exit stdout]} (compile-and-run "fs-is-dir-file")]
+      (is (zero? exit))
+      (is (= (str "dir exists: 1\ndir is_dir: 1\ndir is_file: 0\n"
+                  "file exists: 1\nfile is_dir: 0\nfile is_file: 1\n"
+                  "missing exists: 0\nmissing is_dir: 0\nmissing is_file: 0\n")
+             stdout)))))
+
 (deftest end-to-end-console-hello
   (testing "console-hello.cxc — Layer 6 Step 5. Console prelude atom with `write(msg: String) -> Int` method wrapping the `native_console_write` FFI hatch (printf %s). Main is capability-provisioned (`def main(console: Console)`) and calls `console.write(\"hi\\n\")` in its `-> running do:`. Prints `hi` + newline."
     (let [{:keys [exit stdout]} (compile-and-run "console-hello")]
