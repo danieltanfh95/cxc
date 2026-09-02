@@ -37,6 +37,7 @@ Under [examples/](./):
 - [env-remove-fs-append.cxc](./env-remove-fs-append.cxc) — env.remove round-trip + fs.append_text two-write log.
 - [random-hex.cxc](./random-hex.cxc) — CSPRNG hex length invariants (0 / 1 / 8 / 32 / negative).
 - [json-bool-array.cxc](./json-bool-array.cxc) — strict-Bool + array_length_at walk (nested + numeric-index paths).
+- [logged-fetch.cxc](./logged-fetch.cxc) — six-capability composition demo (Http + Time + Random + Json + Fs + Console); real HTTP fetch instrumented with a `random.hex(16)` correlation ID, epoch timestamp, latency measurement, appended to a log file. Manual runtime verification; CI asserts compile only. (5bb9b5f)
 
 ## Non-plugin prelude capabilities enriched this session
 
@@ -93,6 +94,7 @@ Under [examples/](./):
 ## Commit sequence
 
 ```
+5bb9b5f logged-fetch: six-capability composition demo
 f3c49bd Json.field_bool_or + Json.array_length_at
 38b0774 Random.hex(nybbles) — CSPRNG hex String
 25cb3bd Env.remove + FileSystem.append_text
