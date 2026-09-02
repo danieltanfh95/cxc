@@ -1238,11 +1238,13 @@
       ;;   .replace(from, to)    -> String (all occurrences)
       (and (= :string target-ty)
            (contains? #{"length" "contains" "starts_with" "ends_with"
-                        "substring" "index_of" "trim" "replace"}
+                        "substring" "index_of" "trim" "replace"
+                        "to_int_or"}
                       method-name))
       (case method-name
         "length"    :int
         "index_of"  :int
+        "to_int_or" :int
         ("substring" "trim" "replace") :string
         :bool)
 
@@ -2381,7 +2383,8 @@
           ;; yields 0/NO/nil per the method's return type).
           (and (= :string target-ty)
                (contains? #{"length" "contains" "starts_with" "ends_with"
-                            "substring" "index_of" "trim" "replace"}
+                            "substring" "index_of" "trim" "replace"
+                            "to_int_or"}
                           method-name))
           (let [want-args (case method-name
                             ("length" "trim") 0
@@ -2447,7 +2450,20 @@
                :emit-c-fn (fn [[s from to]]
                             (str "[(" s ") "
                                  "stringByReplacingOccurrencesOfString:(" from ") "
-                                 "withString:(" to ")]"))}))
+                                 "withString:(" to ")]"))}
+              "to_int_or"
+              {:node :ffi-call :name "cxc_string_to_int_or"
+               :args (into [target-lo] arg-exprs)
+               :emit-c-fn (fn [[s fb]]
+                            (str "({ NSString *__s = (" s "); "
+                                 "int64_t __fb = (int64_t)(" fb "); "
+                                 "int64_t __r = __fb; "
+                                 "if (__s) { "
+                                 "NSScanner *__sc = [NSScanner scannerWithString:__s]; "
+                                 "long long __v = 0; "
+                                 "if ([__sc scanLongLong:&__v] && [__sc isAtEnd]) "
+                                 "{ __r = (int64_t)__v; } } "
+                                 "__r; })"))}))
 
           ;; F37 L6a — `Bytes.slice(start: Int, length: Int) -> Bytes`.
           ;; Emits `[(NSMutableData *)[bytes subdataWithRange:NSMakeRange(start, length)] mutableCopy]`

@@ -22,5 +22,13 @@ def main:
             console.write("length: " + s.length().to_string())
             console.write("true.to_string: " + ttt.to_string())
             console.write("false.to_string: " + fff.to_string())
+            let n1: Int = "42".to_int_or(-1)
+            let n2: Int = "abc".to_int_or(-1)
+            let n3: Int = "  17  ".to_int_or(-1)
+            let n4: Int = "42abc".to_int_or(-1)
+            console.write("to_int_or 42: " + n1.to_string())
+            console.write("to_int_or abc: " + n2.to_string())
+            console.write("to_int_or ws17: " + n3.to_string())
+            console.write("to_int_or 42abc: " + n4.to_string())
 
     -> end

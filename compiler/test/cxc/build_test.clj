@@ -1843,7 +1843,11 @@
       (is (clojure.string/includes? stdout "ends_with world: yes"))
       (is (clojure.string/includes? stdout "length: 11"))
       (is (clojure.string/includes? stdout "true.to_string: true"))
-      (is (clojure.string/includes? stdout "false.to_string: false")))))
+      (is (clojure.string/includes? stdout "false.to_string: false"))
+      (is (clojure.string/includes? stdout "to_int_or 42: 42"))
+      (is (clojure.string/includes? stdout "to_int_or abc: -1"))
+      (is (clojure.string/includes? stdout "to_int_or ws17: 17"))
+      (is (clojure.string/includes? stdout "to_int_or 42abc: -1")))))
 
 (deftest hello-agent-mini-compiles-6
   (testing "6 (2026-09-03) — MVP hello-agent shape. Composes Args + Env + Http + Json + Console + String concat into a direct Claude Messages API POST. Assembles headers as a JSON String (x-api-key from env, anthropic-version, content-type) and body as a JSON String (model from env, single user message from argv[1] or default) using Json.encode_str for every String-typed value so escaping is correct. Sends via http.post, reads top-level `stop_reason` + `type` fields from the response with Json.field_string, prints everything via Console. This is the maximum agent-shape currently expressible without closures, `List of T`, variant destructuring, or or-recovery on non-emit expressions. Manual network verification only (needs ANTHROPIC_API_KEY); CI-side asserts the compile path clears cleanly."
