@@ -67,12 +67,13 @@ Under [examples/](./):
 - [fs-is-dir-file.cxc](./fs-is-dir-file.cxc) — FileSystem `.is_dir` / `.is_file` — distinguish directory from regular file (via NSFileManager -fileExistsAtPath:isDirectory:); nine-way {dir, file, missing} × {exists, is_dir, is_file} matrix.
 - [env-typed-get.cxc](./env-typed-get.cxc) — Env `.get_or_int(name, fallback)` / `.get_or_bool(name, fallback)` — typed env var lookup composed prelude-side from `get_or(name, "").to_{int,bool}_or(fallback)`.
 - [args-typed-get.cxc](./args-typed-get.cxc) — Args `.get_or_int(i, fallback)` / `.get_or_bool(i, fallback)` — typed argv lookup, same composition shape as env; tested with runtime argv.
+- [random-between.cxc](./random-between.cxc) — Random `.between(low, high)` — uniform sampling on [low, high); positive-only and negative-crossing ranges; degenerate width-1 always yields low.
 
 ## Non-plugin prelude capabilities enriched this session
 
 | File | Capability | Additions this push | Landed |
 |------|------------|---------------------|--------|
-| [random.cxc](../resources/prelude/target/macos/random.cxc) | `Random` | `hex(nybbles)` + `uuid()` — CSPRNG hex + RFC 4122 v4 UUID | 38b0774 + 7021840 |
+| [random.cxc](../resources/prelude/target/macos/random.cxc) | `Random` | `next_u32` + `below(n)` + `between(low, high)` + `hex(nybbles)` + `uuid()` — CSPRNG hex + RFC 4122 v4 UUID | 38b0774 + 7021840 |
 
 ## Language surface added this session
 

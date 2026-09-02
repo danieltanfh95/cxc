@@ -1174,6 +1174,12 @@
           (is (zero? exit))
           (is (= "7\n100\ntrue\ntrue\n" out)))))))
 
+(deftest end-to-end-random-between
+  (testing "random-between.cxc — `Random.between(low, high) -> Int` — uniform CSPRNG-backed integer sampling on the half-open interval [low, high). Prelude-composed as `low + native_random_below(high - low)`. Four in-range assertions (positive-only + negative-crossing ranges) plus the degenerate width-1 range where between(100, 101) always yields 100."
+    (let [{:keys [exit stdout]} (compile-and-run "random-between")]
+      (is (zero? exit))
+      (is (= "true\ntrue\ntrue\ntrue\n100\n" stdout)))))
+
 (deftest end-to-end-console-hello
   (testing "console-hello.cxc — Layer 6 Step 5. Console prelude atom with `write(msg: String) -> Int` method wrapping the `native_console_write` FFI hatch (printf %s). Main is capability-provisioned (`def main(console: Console)`) and calls `console.write(\"hi\\n\")` in its `-> running do:`. Prints `hi` + newline."
     (let [{:keys [exit stdout]} (compile-and-run "console-hello")]
