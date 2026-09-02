@@ -1520,6 +1520,56 @@ def main:
       (is (= "k" (get-in obs [:params 0 :name]))))))
 
 ;; ---------------------------------------------------------------------------
+;; R6 (2026-08-31, decisions-frozen-2026-08-31-glyphs.md) — expression-position
+;; `||: <guard>: <body>` multi-arm dispatch. First truthy guard's body is the
+;; expression value. `else` reserved as sole catch-all guard marker. Chains
+;; either inline (`||: g1 : b1 ||: g2 : b2 ||: else : bN`) or block
+;; (subsequent arms follow a NEWLINE + optional INDENT).
+;; ---------------------------------------------------------------------------
+
+(defn- observable-expr [source name-str]
+  (let [n   (first-node source)
+        obs (first (filter #(and (= :observable (:node %))
+                                 (= name-str (:name %)))
+                           (:sections n)))]
+    (:expr obs)))
+
+(deftest r6-multi-arm-dispatch-inline-parses
+  (testing "R6 — inline `||: g : b ||: else : bN` chain parses as :multi-arm-dispatch"
+    (let [ex (observable-expr "def F:\n    bar :- ||: 1 > 0 : 1 ||: else : 0\n" "bar")]
+      (is (= :multi-arm-dispatch (:node ex)))
+      (is (= 2 (count (:arms ex))))
+      (is (= :binop        (get-in ex [:arms 0 :guard :node])))
+      (is (= :else-marker  (get-in ex [:arms 1 :guard :node]))))))
+
+(deftest r6-multi-arm-dispatch-block-parses
+  (testing "R6 — block form (arms on subsequent indented lines) parses the same way"
+    (let [ex (observable-expr "def F:\n    bar(x: Int!) :- ||: x > 0 : x\n        ||: else     : 0\n" "bar")]
+      (is (= :multi-arm-dispatch (:node ex)))
+      (is (= 2 (count (:arms ex)))))))
+
+(deftest r6-multi-arm-dispatch-three-arms-preserve-order
+  (testing "R6 — three-arm chain preserves declaration order"
+    (let [ex (observable-expr "def F:\n    bar(x: Int!) :- ||: x > 0 : 1 ||: x < 0 : 2 ||: else : 0\n" "bar")]
+      (is (= 3 (count (:arms ex))))
+      (is (= 1 (get-in ex [:arms 0 :body :value])))
+      (is (= 2 (get-in ex [:arms 1 :body :value])))
+      (is (= 0 (get-in ex [:arms 2 :body :value]))))))
+
+(deftest r6-multi-arm-dispatch-nested-arm-body
+  (testing "R6 — nested `||:` inside an arm body is parsed as a nested :multi-arm-dispatch"
+    ;; Inline nested chains are inherently greedy — the inner chain consumes
+    ;; every subsequent `||:` on the same line/block, so the outer chain sees
+    ;; a single arm whose body is the inner chain. Users disambiguate with
+    ;; newlines / explicit parens when both an outer and inner chain are
+    ;; intended at the same source depth.
+    (let [ex (observable-expr "def F:\n    bar(x: Int!) :- ||: x > 0 : ||: x > 100 : 100 ||: else : x\n" "bar")]
+      (is (= :multi-arm-dispatch (:node ex)))
+      (is (= 1 (count (:arms ex))))
+      (is (= :multi-arm-dispatch (get-in ex [:arms 0 :body :node])))
+      (is (= 2 (count (get-in ex [:arms 0 :body :arms])))))))
+
+;; ---------------------------------------------------------------------------
 ;; Track B/1 (2026-08-26) — `or:` recovery arms grow bind + typed shapes.
 ;; The parser produces `:arms` on the `:emit` node: an ordered vector of
 ;; `{:pattern p :body stmts}` where `p` is nil (bare), a bind

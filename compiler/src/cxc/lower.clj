@@ -2761,6 +2761,34 @@
      :then (lower-expr (:then node) ctx)
      :else (lower-expr (:else node) ctx)}
 
+    ;; R6 (2026-08-31, decisions-frozen-2026-08-31-glyphs) — expression-
+    ;; position multi-arm dispatch `||: g1 : b1 ||: g2 : b2 ||: else : bN`.
+    ;; Lowers right-to-left into nested :c-ternary chains so evaluation
+    ;; short-circuits on the first truthy guard. The `else` guard emits
+    ;; the arm body directly (no ternary layer). A chain without an else
+    ;; arm falls through to a runtime abort — matches four-position `|:`
+    ;; proposition semantics. For MVP, we require the terminal arm to be
+    ;; `else` (compile error otherwise); relaxation to "no-else = raise"
+    ;; is a future refinement gated on a `MultiArmNoMatch` exception type.
+    :multi-arm-dispatch
+    (let [arms (:arms node)
+          _ (when (empty? arms)
+              (fail-nyi! "empty :multi-arm-dispatch chain" node))
+          _ (when-not (= :else-marker (get-in arms [(dec (count arms)) :guard :node]))
+              (fail-nyi! (str "R6 MVP: `||:` chain must terminate with an "
+                              "`||: else : <body>` arm — no-else fallthrough "
+                              "requires MultiArmNoMatch runtime type (deferred)")
+                         node))]
+      (loop [i    (- (count arms) 2)
+             else (lower-expr (get-in arms [(dec (count arms)) :body]) ctx)]
+        (if (neg? i)
+          else
+          (recur (dec i)
+                 {:node :c-ternary
+                  :cond (lower-expr (get-in arms [i :guard]) ctx)
+                  :then (lower-expr (get-in arms [i :body])  ctx)
+                  :else else}))))
+
     ;; F18 L2 — `do:` at expression position. Lower statements uniformly
     ;; via lower-body-stmts (already threads `let`-binding ctx). Wrap any
     ;; naked expression node (from lower-expr on an :expr-stmt) as

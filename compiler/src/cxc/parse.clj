@@ -626,6 +626,8 @@
                (str "F69 L4: expected `<: <pattern>: <body>` arm or dedent "
                     "inside a dispatch block."))))))
 
+(declare parse-multi-arm-dispatch)
+
 (defn- parse-expr [tokens pos]
   (let [[e p] (parse-binop tokens pos 1)]
     (if (looks-like-dispatch-tail? tokens p)
@@ -691,9 +693,77 @@
                 "[" (let [[items p] (parse-list-literal tokens pos)]
                       [items p])
                 (fail! tokens pos "unexpected punctuation in expression"))
+      :glyph  (case (t-value t)
+                ;; R6 (2026-08-31, decisions-frozen-2026-08-31-glyphs.md) —
+                ;; expression-position multi-arm dispatch: `||: <guard>: <body>`
+                ;; chain. First truthy guard's body is the value. `else` is
+                ;; the sole catch-all marker. See parse-multi-arm-dispatch.
+                "||:" (parse-multi-arm-dispatch tokens pos)
+                (fail! tokens pos (str "unexpected glyph `" (t-value t) "` in expression")))
       (fail! tokens pos "expected an expression"))))
 
 (declare parse-statement)
+
+(defn- parse-multi-arm-arm
+  "Parse one `||: <guard>: <body>` arm. `<guard>` is either the `else`
+   keyword (catch-all) or an ordinary expression. `<body>` is one
+   expression on the same line."
+  [tokens pos]
+  (let [[_ p]     (expect tokens pos :glyph "||:")
+        [guard p] (if (at? tokens p :kw "else")
+                    [{:node :else-marker} (inc p)]
+                    (parse-expr tokens p))
+        [_ p]     (expect tokens p :punct ":")
+        [body p]  (parse-expr tokens p)]
+    [{:guard guard :body body} p]))
+
+(defn- parse-multi-arm-dispatch
+  "R6 (2026-08-31) — expression-position multi-arm dispatch. Chain of
+   `||: <guard>: <body>` arms; first truthy guard's body is the
+   expression value. `else` is the sole catch-all guard marker.
+
+   Two forms supported:
+     (a) Inline chain: `||: g1 : b1 ||: g2 : b2 ||: else : bN`
+     (b) Block chain:  first arm inline, subsequent arms after NEWLINE
+                       + optional INDENT at same or deeper indentation.
+                       If an INDENT was opened by the first-arm
+                       continuation, the closing DEDENT is consumed
+                       here.
+
+   At least one arm required. Emits
+   `{:node :multi-arm-dispatch :arms [{:guard g :body b} ...]}`
+   where `g` is either an expression AST node or `{:node :else-marker}`
+   for the `else` arm."
+  [tokens pos]
+  (loop [arms         []
+         p            pos
+         opened-indent? false]
+    (let [after-newline (if (at? tokens p :newline) (inc p) p)
+          opened?       (or opened-indent?
+                            (and (not= after-newline p)
+                                 (at? tokens after-newline :indent)))
+          after-indent  (if (and (not opened-indent?)
+                                 (not= after-newline p)
+                                 (at? tokens after-newline :indent))
+                          (inc after-newline)
+                          after-newline)]
+      (if (at? tokens after-indent :glyph "||:")
+        (let [[arm p2] (parse-multi-arm-arm tokens after-indent)]
+          (recur (conj arms arm) p2 opened?))
+        (if (seq arms)
+          (let [;; If we opened an INDENT for the chain, consume the
+                ;; matching DEDENT (peek past optional NEWLINE first).
+                p-final
+                (if opened-indent?
+                  (let [q (if (at? tokens p :newline) (inc p) p)]
+                    (if (at? tokens q :dedent)
+                      (inc q)
+                      (fail! tokens q
+                             "expected DEDENT after multi-arm `||:` chain")))
+                  p)]
+            [{:node :multi-arm-dispatch :arms arms} p-final])
+          (fail! tokens pos
+                 "expected `||: <guard>: <body>` arm to start multi-arm dispatch chain"))))))
 
 (defn- parse-do-block-expr
   "F18 L2 — `do:` at expression position. Called from parse-primary
