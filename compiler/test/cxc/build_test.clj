@@ -1850,6 +1850,20 @@
       (is (clojure.string/includes? stdout "to_int_or ws17: 17"))
       (is (clojure.string/includes? stdout "to_int_or 42abc: -1")))))
 
+(deftest end-to-end-fs-mkdirs-remove
+  (testing "2026-09-03 — `FileSystem.mkdirs(path)` (mkdir -p: NSFileManager createDirectoryAtPath withIntermediateDirectories:YES) and `FileSystem.remove(path)` (recursive delete). Round-trip: create a nested dir tree, write a file inside, remove the whole tree, verify absence afterwards. Test cleans its own scratch path (`/tmp/cxc-mkdirs-example`) before running so residue from earlier iterations doesn't spuriously fail the mkdirs return code."
+    ;; Best-effort pre-clean so a residual dir from a previous failed
+    ;; run doesn't skew the assertion — the program itself is what's
+    ;; under test, not the harness.
+    (shell/sh "rm" "-rf" "/tmp/cxc-mkdirs-example")
+    (let [{:keys [exit stdout]} (compile-and-run "fs-mkdirs-remove")]
+      (is (zero? exit))
+      (is (str/includes? stdout "mk_rc: 0"))
+      (is (str/includes? stdout "ex_after_mk: 1"))
+      (is (str/includes? stdout "wr_rc: 0"))
+      (is (str/includes? stdout "rm_rc: 0"))
+      (is (str/includes? stdout "ex_after_rm: 0")))))
+
 (deftest end-to-end-env-set-time-since-sleep
   (testing "2026-09-03 — three landings verified together. `env.set(name, value)` wraps libc `setenv(...,overwrite=1)` returning 0/-1 (verified by round-tripping through `env.get_or`). `time.since(t)` returns a Duration for wall-clock elapsed since an Instant (uses Int subtraction via `native_millis_now`). `time.sleep_ms(ms)` wraps libc `usleep(ms*1000)` — verified by measuring the elapsed time after a 50ms sleep (lower bound 40ms accommodates coarse scheduler quanta; upper bound 500ms guards against runaway waits)."
     (let [{:keys [exit stdout]} (compile-and-run "env-set-time-since-sleep")]

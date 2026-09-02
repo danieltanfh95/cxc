@@ -605,6 +605,40 @@
                  (str "((" (first args) " && "
                       "[[NSFileManager defaultManager] fileExistsAtPath:"
                       (first args) "]) ? 1 : 0)"))}
+   "native_fs_mkdirs"
+   ;; 2026-09-03 — create a directory, plus any missing intermediate
+   ;; directories on the way (mkdir -p). Foundation:
+   ;; `-[NSFileManager createDirectoryAtPath:withIntermediateDirectories:
+   ;; attributes:error:]` with intermediates=YES. Returns 0 on success,
+   ;; -1 on failure. Nil path → -1.
+   {:return-kw :int
+    :arity     1
+    :emit-c    (fn [args]
+                 (str "({ NSString *__p = " (first args) "; "
+                      "int64_t __r = -1; "
+                      "if (__p) { NSError *__e = nil; "
+                      "BOOL __ok = [[NSFileManager defaultManager] "
+                      "createDirectoryAtPath:__p "
+                      "withIntermediateDirectories:YES "
+                      "attributes:nil error:&__e]; "
+                      "__r = (__ok && !__e) ? 0 : -1; } "
+                      "__r; })"))}
+   "native_fs_remove"
+   ;; 2026-09-03 — delete a file or directory tree. Foundation:
+   ;; `-[NSFileManager removeItemAtPath:error:]` (recursive for
+   ;; directories). Returns 0 on success, -1 on failure. Nil path
+   ;; → -1. Absent path → -1 (does not silently succeed). Callers
+   ;; who want "remove-if-exists" should `exists` check first.
+   {:return-kw :int
+    :arity     1
+    :emit-c    (fn [args]
+                 (str "({ NSString *__p = " (first args) "; "
+                      "int64_t __r = -1; "
+                      "if (__p) { NSError *__e = nil; "
+                      "BOOL __ok = [[NSFileManager defaultManager] "
+                      "removeItemAtPath:__p error:&__e]; "
+                      "__r = (__ok && !__e) ? 0 : -1; } "
+                      "__r; })"))}
    "native_clock_every"
    ;; Layer 5c Step 8/10 — real method-returned Stream. Called from
    ;; Clock's `every(rate_ms: Int) -> Stream` method body; creates a
