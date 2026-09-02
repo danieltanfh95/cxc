@@ -193,6 +193,49 @@
                         "} "
                         "} "
                         "__r; })")))}
+   "native_json_field_string_path"
+   ;; 2026-09-03 — walk a dot-separated path through nested
+   ;; NSDictionary / NSArray from JSON and return the terminal
+   ;; String value (or nil if the path breaks, the JSON is
+   ;; malformed, or the terminal isn't a String). Numeric path
+   ;; segments index into NSArray; non-numeric segments look up
+   ;; NSDictionary keys. Enables clean Claude Messages API
+   ;; extraction: `Json.field_string_path(resp, "content.0.text")`
+   ;; returns the assistant's reply text without the manual
+   ;; string surgery hello-agent-mini used before.
+   {:return-kw :string
+    :arity     2
+    :emit-c    (fn [args]
+                 (let [json-arg (first args)
+                       path-arg (second args)]
+                   (str "({ NSString *__j = " json-arg "; "
+                        "NSString *__p = " path-arg "; "
+                        "NSString *__r = nil; "
+                        "if (__j && __p) { "
+                        "NSData *__d = [__j dataUsingEncoding:NSUTF8StringEncoding]; "
+                        "NSError *__err = nil; "
+                        "id __cur = [NSJSONSerialization JSONObjectWithData:__d "
+                        "options:(NSJSONReadingOptions)0 error:&__err]; "
+                        "if (!__err && __cur) { "
+                        "NSArray *__parts = [__p componentsSeparatedByString:@\".\"]; "
+                        "for (NSString *__seg in __parts) { "
+                        "if (__cur == nil) break; "
+                        "NSScanner *__sc = [NSScanner scannerWithString:__seg]; "
+                        "NSInteger __idx = 0; "
+                        "if ([__sc scanInteger:&__idx] && __sc.isAtEnd) { "
+                        "if ([__cur isKindOfClass:[NSArray class]] && "
+                        "__idx >= 0 && (NSUInteger)__idx < [(NSArray *)__cur count]) { "
+                        "__cur = [(NSArray *)__cur objectAtIndex:(NSUInteger)__idx]; "
+                        "} else { __cur = nil; } "
+                        "} else if ([__cur isKindOfClass:[NSDictionary class]]) { "
+                        "__cur = [(NSDictionary *)__cur objectForKey:__seg]; "
+                        "} else { __cur = nil; } "
+                        "} "
+                        "if ([__cur isKindOfClass:[NSString class]]) { "
+                        "__r = (NSString *)__cur; } "
+                        "} "
+                        "} "
+                        "__r; })")))}
    "native_json_field_string"
    ;; 4 (2026-09-03) — parse `json` as a top-level JSON object,
    ;; read the value at `key`, and return it as a String. Returns

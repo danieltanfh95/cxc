@@ -20,12 +20,8 @@ def main:
             let type_field: String = json.field_string(resp, "type")
             let in_tok:  Int = json.field_int_or(resp, "input_tokens", 0)
             let out_tok: Int = json.field_int_or(resp, "output_tokens", 0)
-            let text_key: String = "\"text\":\""
-            let text_at: Int = resp.index_of(text_key)
-            let after_start: Int = text_at + text_key.length()
-            let tail: String = resp.substring(after_start, resp.length() - after_start)
-            let close_offset: Int = tail.index_of("\"")
-            let claude_text: String = ||: text_at >= 0 : resp.substring(after_start, close_offset) ||: else : "(no text field)"
+            let claude_text: String = json.field_string_path(resp, "content.0.text")
+            let text_out: String = ||: claude_text == nil : "(no text)" ||: else : claude_text
             console.write("task: " + task)
             console.write("model: " + model)
             console.write("http: " + ok)
@@ -33,6 +29,6 @@ def main:
             console.write("type: " + type_field)
             console.write("input_tokens: " + in_tok.to_string())
             console.write("output_tokens: " + out_tok.to_string())
-            console.write("claude: " + claude_text)
+            console.write("claude: " + text_out)
 
     -> end
