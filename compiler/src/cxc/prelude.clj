@@ -98,6 +98,13 @@
    ;; shape declared in the prelude atom. See
    ;; decisions-frozen-2026-09-01-plugin-only.md and prelude/shared/plugin.cxc.
    {:name :plugin  :kind :shared :names ["Plugin"]}
+   ;; F74 (B2, 2026-09-02) — OS-primitive vocabulary. Fixed pledge-
+   ;; shaped set of syscall-grouped primitives that plugins claim in
+   ;; their `requires:` manifest field. F77 unions across all reachable
+   ;; plugins into a per-binary `.cxc-caps` manifest. See
+   ;; decisions-frozen-2026-08-29.md Q3 (per-primitive storage,
+   ;; consolidated into one enum for MVP).
+   {:name :os_primitive :kind :shared :names ["OsPrimitive"]}
    {:name :random  :kind :target :names ["Random"]}
    {:name :clock   :kind :target :names ["Clock"]}
    {:name :io      :kind :target :names ["Console"]}])
@@ -140,7 +147,7 @@
    (F56 L2+L3, 2026-08-27 — postwalk retired). Tree-shaking in
    cxc.lower compares against these; entries match what the parsed
    AST carries verbatim from prelude source."
-  #{"Clock" "Random" "TestKeyboardInput" "Console" "SystemPanic" "Plugin"})
+  #{"Clock" "Random" "TestKeyboardInput" "Console" "SystemPanic" "Plugin" "OsPrimitive"})
 
 ;; F5 retirement (2026-08-15): unit-suffix desugaring (`100ms`,
 ;; `2s`, `1.5min` → `Duration(millis: N)`) is retired per spec
