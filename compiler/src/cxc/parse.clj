@@ -2515,10 +2515,18 @@
 
 (defn- parse-foreign-signature
   "Right-associative function-type parser for foreign entry signatures.
-   Handles `T`, `(args) -> Ret`, and `(args) -> (args2) -> Ret` shapes
-   by recursion on `->`. Terminals delegate to `parse-type`."
+   Handles `T`, `() -> Ret` (FL-9 zero-arg), `(args) -> Ret`, and
+   `(args) -> (args2) -> Ret` shapes by recursion on `->`. Terminals
+   delegate to `parse-type`. FL-9 (2026-09-02): the special-case
+   `()` at arg position (empty parens) produces a synthetic empty
+   `:type-tuple` so `foreign-signature-arg-types` sees a zero-length
+   arg list — matches `fork() -> Int32` idiom used across plugin drafts."
   [tokens pos]
-  (let [[left p] (parse-type tokens pos)]
+  (let [[left p]
+        (if (and (at? tokens pos :punct "(")
+                 (at? tokens (inc pos) :punct ")"))
+          [{:node :type-tuple :types []} (+ pos 2)]
+          (parse-type tokens pos))]
     (if (at? tokens p :glyph "->")
       (let [[right p2] (parse-foreign-signature tokens (inc p))]
         [{:node :foreign-fn-type :args left :return right} p2])
