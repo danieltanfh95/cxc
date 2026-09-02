@@ -1867,6 +1867,26 @@
           (is (not (str/includes? out "to stderr")))
           (is (not (str/includes? err "to stdout"))))))))
 
+(deftest end-to-end-args-all-after
+  (testing "2026-09-03 — `args.all_after(index)` joins argv[index..argc] with single spaces. Returns \"\" if index >= argc or negative. Common shape for CLI programs where a free-form trailing query is easier for the user than a single quoted argument. Verified by invoking the compiled binary twice — once with no args (only argv[0]), once with several — and checking the joined output plus the guard cases."
+    (let [src     (example "args-all-after")
+          out-dir (tmp-dir)
+          {:keys [status stderr bin-path]}
+          (build/compile-source-to-file src "args-all-after" (.getPath out-dir))]
+      (is (zero? status) (str "clang failed:\n" stderr))
+      (when (zero? status)
+        (let [{:keys [exit out]} (shell/sh bin-path)]
+          (is (zero? exit))
+          (is (str/includes? out "count: 1"))
+          (is (str/includes? out "joined: []")))
+        (let [{:keys [exit out]}
+              (shell/sh bin-path "list" "all" "md" "files")]
+          (is (zero? exit))
+          (is (str/includes? out "count: 5"))
+          (is (str/includes? out "joined: [list all md files]"))
+          (is (str/includes? out "past_end: []"))
+          (is (str/includes? out "neg: []")))))))
+
 (deftest end-to-end-json-bool-array
   (testing "2026-09-03 — `json.field_bool_or(json, key, fallback)` reads a strictly-typed JSON Bool (RFC 8259: only literal true/false accepted — numeric 1/0 falls through to the fallback). `json.array_length_at(json, path)` walks a dot-path (supports numeric indices for array walks) and returns the terminal array's count, or -1 on invalid JSON / missing path / non-array terminus. Covers positive-Bool, negative-Bool, null-as-Bool, absent-Bool, numeric-as-Bool, top-level array, nested-array, non-array-terminus, and missing-path cases."
     (let [{:keys [exit stdout]} (compile-and-run "json-bool-array")]

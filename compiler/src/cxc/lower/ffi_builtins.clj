@@ -203,6 +203,28 @@
                         "__r = [NSString stringWithUTF8String:__av[__i]]; "
                         "} "
                         "__r; })")))}
+   "native_args_all_after"
+   ;; 2026-09-03 — join argv[index..argc] with single-space separators.
+   ;; Returns "" if index >= argc or negative. Common shape for CLI
+   ;; programs that treat the trailing tokens as a natural-language
+   ;; query (e.g. `agent "list all .md files"` where the shell has
+   ;; already tokenized on quotes vs `agent list all .md files`
+   ;; where quoting is elided). Argv entries wrapped via
+   ;; +stringWithUTF8String; nil entries skipped defensively.
+   {:return-kw :string
+    :arity     1
+    :emit-c    (fn [args]
+                 (str "({ int __i = (int)(" (first args) "); "
+                      "int __ac = *_NSGetArgc(); "
+                      "char **__av = *_NSGetArgv(); "
+                      "NSMutableString *__out = [NSMutableString string]; "
+                      "if (__i < 0) __i = __ac; "
+                      "for (int __j = __i; __j < __ac; __j++) { "
+                      "if (__av[__j]) { "
+                      "if ([__out length] > 0) [__out appendString:@\" \"]; "
+                      "[__out appendString:"
+                      "[NSString stringWithUTF8String:__av[__j]]]; } } "
+                      "(NSString *)__out; })"))}
    "native_json_encode_str"
    ;; 4 (2026-09-03) — take a raw String, produce a JSON-encoded
    ;; String literal WITH surrounding quotes. `NSJSONSerialization`

@@ -3,6 +3,8 @@ def Args:
 
     get_or(index: Int, fallback: String) :- native_args_get_or(index, fallback)
 
+    all_after(index: Int) :- native_args_all_after(index)
+
     -> running
 
     -> end
