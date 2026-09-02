@@ -1,0 +1,32 @@
+# Prelude — Plugin capability shape (R11 plugin-only wave, 2026-09-01).
+#
+# `use plugin: Plugin` inside a shim atom licenses that shim to call
+# the compiler-resolved FFI intrinsics:
+#
+#   plugin.get(sym: String) -> <declared-signature>
+#   plugin.send(recv, sel: String, args...) -> <declared-signature>
+#   plugin.class_send(cls: String, sel: String, args...) -> <declared-signature>
+#
+# The runtime linker (F76) refuses to fill this slot outside modules
+# carrying a top-level `def plugin:` record marker. Trust boundary
+# enforced at env construction, not parse time.
+#
+# Method surface is compile-time-resolved: the string argument to
+# .get / .send / .class_send names a foreign entry declared inside
+# the enclosing `def plugin:` body's nested `foreign "libname":`
+# sections. The resolver (B5) substitutes each call with a typed
+# :ffi-call node using the signature declared for that foreign
+# entry. Because signatures vary per foreign entry, Plugin declares
+# no method shape here at v1.0 — B5 supplies the shape from the
+# foreign declaration.
+#
+# Cross-plugin symbol access is impossible by construction (B6):
+# each `Plugin` capability handle resolves ONLY against the
+# enclosing plugin's own `foreign` sections, never another
+# plugin's.
+#
+# See spec §1.12, §7.2.1 R7, decisions-frozen-2026-09-01-plugin-only.md,
+# and [[corvid-plugin-shape]].
+
+def Plugin:
+    -> ready

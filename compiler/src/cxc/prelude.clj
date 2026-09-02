@@ -88,12 +88,16 @@
    ;; R8 (plugin-shape consolidation wave); see
    ;; decisions-frozen-2026-08-31-plugin-shape.md.
    {:name :semver  :kind :shared :names ["SemVer" "VersionRange"]}
-   ;;
-   ;; No `Plugin` prelude type at v1.0 — plugin marker is `def plugin:`
-   ;; record with reserved name at module scope; body admits fields +
-   ;; nested `foreign "..."` sections per 2026-08-31 R7 (plugin-shape
-   ;; consolidation wave, supersedes R2's fields-only invariant).
-   ;; Manifest schema lives in F75 introspection, not a prelude type.
+   ;; `Plugin` — sole FFI capability at v1.0 (R11 plugin-only wave,
+   ;; 2026-09-01). `use plugin: Plugin` inside a shim atom of a
+   ;; `def plugin:` module licenses compiler-resolved FFI intrinsics
+   ;; (.get/.send/.class_send). Runtime linker (F76) refuses to fill
+   ;; the slot outside modules carrying a `def plugin:` marker.
+   ;; Method surface is compile-time-resolved by B5 against the
+   ;; enclosing plugin's `foreign "..."` sections — no fixed method
+   ;; shape declared in the prelude atom. See
+   ;; decisions-frozen-2026-09-01-plugin-only.md and prelude/shared/plugin.cxc.
+   {:name :plugin  :kind :shared :names ["Plugin"]}
    {:name :random  :kind :target :names ["Random"]}
    {:name :clock   :kind :target :names ["Clock"]}
    {:name :io      :kind :target :names ["Console"]}])
@@ -136,7 +140,7 @@
    (F56 L2+L3, 2026-08-27 — postwalk retired). Tree-shaking in
    cxc.lower compares against these; entries match what the parsed
    AST carries verbatim from prelude source."
-  #{"Clock" "Random" "TestKeyboardInput" "Console" "SystemPanic"})
+  #{"Clock" "Random" "TestKeyboardInput" "Console" "SystemPanic" "Plugin"})
 
 ;; F5 retirement (2026-08-15): unit-suffix desugaring (`100ms`,
 ;; `2s`, `1.5min` → `Duration(millis: N)`) is retired per spec
