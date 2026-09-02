@@ -9,14 +9,14 @@ Under [resources/prelude/target/macos/](../resources/prelude/target/macos/):
 
 | File | Capability | Methods | Landed |
 |------|------------|---------|--------|
-| [fs.cxc](../resources/prelude/target/macos/fs.cxc) | `FileSystem` | `read_text` / `write_text` / `exists` | 47a4c2f |
+| [fs.cxc](../resources/prelude/target/macos/fs.cxc) | `FileSystem` | `read_text` / `write_text` / `exists` / `mkdirs` / `remove` | 47a4c2f + 2c9d094 |
 | [subprocess.cxc](../resources/prelude/target/macos/subprocess.cxc) | `Subprocess` | `run(cmd)` (combined stdout+stderr via popen) | 07d4994 |
 | [env.cxc](../resources/prelude/target/macos/env.cxc) | `Env` | `get_or(name, fallback)` + `set(name, value)` | c5e2f68 + db01b54 |
 | [args.cxc](../resources/prelude/target/macos/args.cxc) | `Args` | `length()` + `get_or(index, fallback)` | 4d6a897 |
 | [json.cxc](../resources/prelude/target/macos/json.cxc) | `Json` | `encode_str` / `field_string` / `field_int_or` / `field_string_path` / `field_int_or_path` | 6b12a7d + c922c06 + a798ab9 |
 | [http.cxc](../resources/prelude/target/macos/http.cxc) | `Http` | `get` / `post` / `get_envelope` / `post_envelope` | 838533a + 0e17b7b |
 | [wall_time.cxc](../resources/prelude/target/macos/wall_time.cxc) | `Time` | `now()` + `since(t)` + `sleep_ms(ms)` | c3e098e + db01b54 |
-| [console.cxc](../resources/prelude/target/macos/console.cxc) | `Console` | `write` + `write_raw` + `readln` | da59e95 + ac862c0 + 11155d1 |
+| [console.cxc](../resources/prelude/target/macos/console.cxc) | `Console` | `write` + `write_raw` + `readln` + `write_err` | da59e95 + ac862c0 + 11155d1 + 6390fa5 |
 
 ## Examples (regression tests + manual demos)
 
@@ -29,7 +29,11 @@ Under [examples/](./):
 - [json-roundtrip.cxc](./json-roundtrip.cxc) — Json encode+extract with escape roundtrip.
 - [string-helpers.cxc](./string-helpers.cxc) — String helper surface + Bool.to_string.
 - [http-example-com.cxc](./http-example-com.cxc) — manual HTTP verification (fetches example.com).
-- [hello-agent-mini.cxc](./hello-agent-mini.cxc) — full MVP hello-agent shape: Claude Messages API POST, status discrimination, response text extraction via string surgery. (Manual real-API run needs `ANTHROPIC_API_KEY`.)
+- [hello-agent-mini.cxc](./hello-agent-mini.cxc) — full MVP hello-agent shape: Claude Messages API POST, status discrimination, response text extraction via string surgery, round-trip latency via `Time.since`. (Manual real-API run needs `ANTHROPIC_API_KEY`.)
+- [time-wall-clock.cxc](./time-wall-clock.cxc) — Time.now() liveness + Instant.millis > 2023 boundary (int64 range check).
+- [console-readln.cxc](./console-readln.cxc) — stdin readln round-trip.
+- [env-set-time-since-sleep.cxc](./env-set-time-since-sleep.cxc) — env.set/get_or round-trip + Time.sleep_ms bracketed by Time.since.
+- [fs-mkdirs-remove.cxc](./fs-mkdirs-remove.cxc) — nested mkdirs / write file / recursive remove.
 
 ## Language surface added this session
 
@@ -48,6 +52,7 @@ Under [examples/](./):
 - `String.substring(start, len)` — nil-safe slice. (1319b71)
 - `String.index_of(sub)`, `.trim()`, `.replace(from, to)` — parsing primitives. (dddac82)
 - `String.to_int_or(fallback)` — NSScanner + isAtEnd; fallback on non-integer or partial match. (b93f385)
+- `String.uppercase()` / `.lowercase()` — Foundation NSString case-mapping. (6390fa5)
 
 ### Native intrinsics (backing prelude atoms)
 
@@ -62,6 +67,8 @@ Under [examples/](./):
 - `native_console_readln` — fgets on stdin; strips trailing newline; nil on EOF. (11155d1)
 - `native_env_set` — setenv(name, value, 1); returns 0/-1. (db01b54)
 - `native_time_sleep_ms` — usleep(ms*1000); no-op on non-positive; truncates absurd waits. (db01b54)
+- `native_fs_mkdirs` / `native_fs_remove` — NSFileManager createDirectoryAtPath (mkdir -p) + removeItemAtPath (recursive). (2c9d094)
+- `native_console_write_err` — fputs+fputc newline to stderr. (6390fa5)
 - `native_http_get` / `native_http_post` — sync NSURLSession dataTask + dispatch_semaphore. (838533a)
 - `native_http_get_envelope` / `native_http_post_envelope` — same with `{status,body}` JSON envelope. (0e17b7b)
 
@@ -72,6 +79,9 @@ Under [examples/](./):
 ## Commit sequence
 
 ```
+6390fa5 String.uppercase / lowercase + Console.write_err
+2c9d094 FileSystem.mkdirs + .remove
+253f948 hello-agent-mini: report round-trip latency via Time.since
 db01b54 Env.set + Time.since(Instant) + Time.sleep_ms
 11155d1 Console.readln() — stdin line read
 c3e098e Time wall-clock capability + int64_t truncation fix
