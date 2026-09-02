@@ -72,6 +72,17 @@
                       "if (__n > 0 && __buf[__n-1] == '\\n') __buf[__n-1] = '\\0'; "
                       "__r = [NSString stringWithUTF8String:__buf]; } "
                       "__r; })"))}
+   "native_random_uuid"
+   ;; 2026-09-03 — RFC 4122 v4 UUID as a lowercase canonical
+   ;; hyphenated String. Foundation's `[NSUUID UUID]` seeds from
+   ;; the OS CSPRNG; result is 36 characters
+   ;; (`xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx` per v4 shape).
+   ;; NSUUID formats uppercase, so we lowercase for downstream
+   ;; case-insensitive consumers that prefer canonical form.
+   {:return-kw :string
+    :arity     0
+    :emit-c    (fn [_args]
+                 "[[[NSUUID UUID] UUIDString] lowercaseString]")}
    "native_random_hex"
    ;; 2026-09-03 — return a hex String of length `nybbles`. Uses
    ;; `arc4random_buf` to fill a stack byte buffer (rounded up to

@@ -5,6 +5,8 @@ def Random:
 
     hex(nybbles: Int) :- native_random_hex(nybbles)
 
+    uuid() :- native_random_uuid()
+
     -> running
 
     -> end

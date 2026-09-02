@@ -1881,6 +1881,18 @@
       (is (str/includes? stdout "non_array: -1"))
       (is (str/includes? stdout "missing_path: -1")))))
 
+(deftest end-to-end-random-uuid
+  (testing "2026-09-03 — `random.uuid()` returns a lowercased canonical RFC 4122 v4 UUID (36 chars, hyphens at positions 8/13/18/23, version nibble '4' at position 14). Wraps `[NSUUID UUID].UUIDString`. Two consecutive calls produce different UUIDs — same-value implies broken CSPRNG and would fail loudly."
+    (let [{:keys [exit stdout]} (compile-and-run "random-uuid")]
+      (is (zero? exit))
+      (is (str/includes? stdout "u1_len: 36"))
+      (is (str/includes? stdout "u1_v4: 4"))
+      (is (str/includes? stdout "u1_hyphen_pos_8: -"))
+      (is (str/includes? stdout "u1_hyphen_pos_13: -"))
+      (is (str/includes? stdout "u1_hyphen_pos_18: -"))
+      (is (str/includes? stdout "u1_hyphen_pos_23: -"))
+      (is (str/includes? stdout "u1_ne_u2: false")))))
+
 (deftest end-to-end-random-hex
   (testing "2026-09-03 — `random.hex(nybbles)` returns a hex String of exactly `nybbles` characters (odd counts truncated from the last byte). Backed by libc `arc4random_buf` (CSPRNG per Corvid's Random guarantee — see corvid-random-cryptographic memory). Bounds: non-positive → empty; > 4096 clamped to 4096 (to keep the stack byte buffer bounded). Test asserts length invariants across zero / one / even / odd / negative — the sampled value is non-deterministic so we don't assert content."
     (let [{:keys [exit stdout]} (compile-and-run "random-hex")]
