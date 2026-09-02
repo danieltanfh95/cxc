@@ -3,6 +3,7 @@ def main:
     use env:     Env
     use http:    Http
     use json:    Json
+    use time:    Time
     use console: Console
 
     -> running
@@ -12,7 +13,9 @@ def main:
             let model: String = env.get_or("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001")
             let headers: String = "{\"x-api-key\":" + json.encode_str(key) + ",\"anthropic-version\":\"2023-06-01\",\"content-type\":\"application/json\"}"
             let body: String = "{\"model\":" + json.encode_str(model) + ",\"max_tokens\":128,\"messages\":[{\"role\":\"user\",\"content\":" + json.encode_str(task) + "}]}"
+            let t0: Instant = time.now()
             let envelope: String = http.post_envelope("https://api.anthropic.com/v1/messages", headers, body)
+            let latency: Duration = time.since(t0)
             let status: Int = json.field_int_or(envelope, "status", -1)
             let resp: String = json.field_string(envelope, "body")
             let ok: String = ||: status == 200 : "ok" ||: else : "http " + status.to_string()
@@ -24,6 +27,7 @@ def main:
             let text_out: String = ||: claude_text == nil : "(no text)" ||: else : claude_text
             console.write("task: " + task)
             console.write("model: " + model)
+            console.write("latency_ms: " + latency.millis.to_string())
             console.write("http: " + ok)
             console.write("stop_reason: " + stop)
             console.write("type: " + type_field)
