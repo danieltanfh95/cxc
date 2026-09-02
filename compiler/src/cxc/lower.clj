@@ -1232,16 +1232,18 @@
       ;;   .contains(sub)        -> Bool   (containsString:)
       ;;   .starts_with(pre)     -> Bool   (hasPrefix:)
       ;;   .ends_with(suf)       -> Bool   (hasSuffix:)
-      ;;   .substring(start, len)-> String (substringWithRange:; nil
-      ;;                                    on out-of-range so callers
-      ;;                                    don't crash on bad slices)
+      ;;   .substring(start, len)-> String (nil on out-of-range)
+      ;;   .index_of(sub)        -> Int    (-1 if not found)
+      ;;   .trim()               -> String (leading + trailing whitespace)
+      ;;   .replace(from, to)    -> String (all occurrences)
       (and (= :string target-ty)
            (contains? #{"length" "contains" "starts_with" "ends_with"
-                        "substring"}
+                        "substring" "index_of" "trim" "replace"}
                       method-name))
       (case method-name
         "length"    :int
-        "substring" :string
+        "index_of"  :int
+        ("substring" "trim" "replace") :string
         :bool)
 
       :else
@@ -2368,11 +2370,11 @@
           ;; yields 0/NO/nil per the method's return type).
           (and (= :string target-ty)
                (contains? #{"length" "contains" "starts_with" "ends_with"
-                            "substring"}
+                            "substring" "index_of" "trim" "replace"}
                           method-name))
           (let [want-args (case method-name
-                            "length"    0
-                            "substring" 2
+                            ("length" "trim") 0
+                            ("substring" "replace") 2
                             1)]
             (when-not (= want-args (count arg-exprs))
               (fail-user! (str "String." method-name " takes "
@@ -2402,8 +2404,6 @@
               {:node :ffi-call :name "cxc_string_substring"
                :args (into [target-lo] arg-exprs)
                :emit-c-fn (fn [[s start len]]
-                            ;; Out-of-range guard: return nil rather
-                            ;; than crash on Foundation's NSRangeException.
                             (str "({ NSString *__s = (" s "); "
                                  "NSUInteger __st = (NSUInteger)(" start "); "
                                  "NSUInteger __ln = (NSUInteger)(" len "); "
@@ -2411,7 +2411,32 @@
                                  "if (__s && __st + __ln <= __s.length) { "
                                  "__r = [__s substringWithRange:"
                                  "NSMakeRange(__st, __ln)]; } "
-                                 "__r; })"))}))
+                                 "__r; })"))}
+              "index_of"
+              {:node :ffi-call :name "cxc_string_index_of"
+               :args [target-lo (first arg-exprs)]
+               :emit-c-fn (fn [[s sub]]
+                            ;; NSNotFound → -1 (NSNotFound is
+                            ;; NSUIntegerMax which would truncate to
+                            ;; -1 when cast to int64_t, but the
+                            ;; explicit branch is clearer).
+                            (str "({ NSRange __r = [(" s ") rangeOfString:(" sub ")]; "
+                                 "(__r.location == NSNotFound) ? (int64_t)-1 "
+                                 ": (int64_t)__r.location; })"))}
+              "trim"
+              {:node :ffi-call :name "cxc_string_trim"
+               :args [target-lo]
+               :emit-c-fn (fn [[s]]
+                            (str "[(" s ") "
+                                 "stringByTrimmingCharactersInSet:"
+                                 "[NSCharacterSet whitespaceAndNewlineCharacterSet]]"))}
+              "replace"
+              {:node :ffi-call :name "cxc_string_replace"
+               :args (into [target-lo] arg-exprs)
+               :emit-c-fn (fn [[s from to]]
+                            (str "[(" s ") "
+                                 "stringByReplacingOccurrencesOfString:(" from ") "
+                                 "withString:(" to ")]"))}))
 
           ;; F37 L6a — `Bytes.slice(start: Int, length: Int) -> Bytes`.
           ;; Emits `[(NSMutableData *)[bytes subdataWithRange:NSMakeRange(start, length)] mutableCopy]`
