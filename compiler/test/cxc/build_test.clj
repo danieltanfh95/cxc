@@ -111,11 +111,11 @@
               "gate-check"
               (.getPath out-dir)))))))
 
-(deftest end-to-end-ffi-lowering-fl-5
-  (testing "FL-5 (2026-09-02) — full FFI pipeline: def plugin: with `foreign \"libc\":` block, `plugin.get(\"abs\")(-42)` in main atom's then-body. FL-1 rewrites plugin.get → :foreign-ref, FL-3 lowers the call form to :ffi-call, emit produces `abs(...)`, Foundation.h transitively covers libc's abs, binary runs and prints 42. Golden-string deterministic verification of the whole FL-1..FL-3 chain."
+(deftest end-to-end-ffi-lowering-fl-5-and-fl-6
+  (testing "FL-5 + FL-6 (2026-09-02) — full FFI pipeline including CString marshaling: def plugin: with `foreign \"libc\":` block declaring abs + puts, `plugin.get(\"puts\")(\"hello via FFI\")` uses FL-6's String→CString marshaling via `[expr UTF8String]`, `plugin.get(\"abs\")(-42)` exercises FL-3's plain call path. Foundation.h covers both symbols. Golden two-line stdout."
     (let [{:keys [exit stdout]} (compile-and-run "hello-plugin-ffi")]
       (is (zero? exit))
-      (is (= "42\n" stdout)))))
+      (is (= "hello via FFI\n42\n" stdout)))))
 
 (deftest ffi-bare-foreign-ref-not-called-rejected
   (testing "FL-3 diagnostic — storing plugin.get(SYM) as a function pointer (not calling it inline) rejected with a fail-nyi pointing at the MVP-supported call form."

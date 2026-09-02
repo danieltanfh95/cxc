@@ -1226,6 +1226,49 @@
       (fail-nyi! (str "FL-3: unknown foreign signature kind " (:node sig))
                  foreign-ref))))
 
+(defn- foreign-signature-arg-types
+  "FL-6 (2026-09-02) — return the vector of arg type-nodes from a foreign
+   signature. Handles:
+   - bare `:type-ref` — zero-arg (returns []); signature is treated as
+     `-> RetType`
+   - `:foreign-fn-type` with `:args :type-ref` — single-arg (returns [ty])
+   - `:foreign-fn-type` with `:args :type-tuple` — multi-arg
+     (returns each type in the tuple)"
+  [sig]
+  (case (:node sig)
+    :type-ref []
+    :foreign-fn-type
+    (let [args-node (:args sig)]
+      (case (:node args-node)
+        :type-tuple (vec (:types args-node))
+        [args-node]))
+    []))
+
+(defn- foreign-arg-needs-cstring-marshal?
+  "FL-6 (2026-09-02) — true when a foreign signature arg position typed
+   `String` needs `NSString → const char *` marshaling. `String` in a
+   foreign context always means C string; explicit `CString` type would
+   be additive (deferred). Matches on the bare `:type-ref` shape; wraps
+   in `:type-nonnil` etc. are unusual for foreign sigs but pass through
+   as no-marshal if seen."
+  [ty-node]
+  (and (map? ty-node)
+       (= :type-ref (:node ty-node))
+       (= "String" (:name ty-node))))
+
+(defn- marshal-foreign-arg
+  "Given a lowered cxc arg expression and its C-signature type-node,
+   wrap the expression with the appropriate marshaling for the C
+   boundary. Currently only handles String → CString via `[expr
+   UTF8String]`. Non-marshaled types pass through unchanged."
+  [lowered-arg arg-ty-node]
+  (if (foreign-arg-needs-cstring-marshal? arg-ty-node)
+    {:node :objc-msg
+     :recv lowered-arg
+     :selector "UTF8String"
+     :args []}
+    lowered-arg))
+
 (defn- infer-call-type
   [{:keys [callee] :as node} ctx]
   (case (:node callee)
@@ -2591,9 +2634,21 @@
         ;; free C function call using the symbol name verbatim. The
         ;; `:emit-c-fn` closure inlines args via `,`-join, matching the
         ;; existing `:ffi-call` shape emit already understands.
+        ;;
+        ;; FL-6 (2026-09-02) — String args in a foreign signature marshal
+        ;; to `const char *` via `[expr UTF8String]` so calls like
+        ;; `plugin.get("puts")("hi")` cross the NSString ↔ C-string
+        ;; boundary correctly instead of passing the NSString pointer
+        ;; verbatim (which clang warns on and produces garbage output).
         :foreign-ref
         (let [sym       (:symbol callee)
-              arg-exprs (mapv #(lower-expr (:value %) ctx) (:args node))]
+              arg-tys   (foreign-signature-arg-types (:signature callee))
+              arg-exprs (mapv (fn [i a]
+                                (marshal-foreign-arg
+                                  (lower-expr (:value a) ctx)
+                                  (nth arg-tys i nil)))
+                              (range (count (:args node)))
+                              (:args node))]
           {:node      :ffi-call
            :name      sym
            :args      arg-exprs
