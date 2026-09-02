@@ -164,6 +164,35 @@
                       "} "
                       "if (__r == nil) __r = @\"null\"; } "
                       "__r; })"))}
+   "native_json_field_int_or"
+   ;; 2026-09-03 — parse `json` as a top-level object and return
+   ;; the Int value at `key`, or `fallback` if the JSON is
+   ;; malformed, the top-level isn't an object, the key is
+   ;; missing, or the value isn't a JSON number. NSNumber's
+   ;; `longLongValue` handles both integers and floats (floats
+   ;; truncate); if that's the wrong policy for a caller,
+   ;; layering a `field_number` (Float) sibling stays trivial.
+   {:return-kw :int
+    :arity     3
+    :emit-c    (fn [args]
+                 (let [json-arg (first args)
+                       key-arg  (second args)
+                       fb-arg   (nth args 2)]
+                   (str "({ NSString *__j = " json-arg "; "
+                        "NSString *__k = " key-arg "; "
+                        "int64_t __r = (int64_t)(" fb-arg "); "
+                        "if (__j && __k) { "
+                        "NSData *__d = [__j dataUsingEncoding:NSUTF8StringEncoding]; "
+                        "NSError *__err = nil; "
+                        "id __o = [NSJSONSerialization JSONObjectWithData:__d "
+                        "options:(NSJSONReadingOptions)0 error:&__err]; "
+                        "if (!__err && [__o isKindOfClass:[NSDictionary class]]) { "
+                        "id __v = [(NSDictionary *)__o objectForKey:__k]; "
+                        "if ([__v isKindOfClass:[NSNumber class]]) { "
+                        "__r = [(NSNumber *)__v longLongValue]; } "
+                        "} "
+                        "} "
+                        "__r; })")))}
    "native_json_field_string"
    ;; 4 (2026-09-03) — parse `json` as a top-level JSON object,
    ;; read the value at `key`, and return it as a String. Returns
