@@ -403,6 +403,71 @@
                    "        then: print(stackalloc(Int32, self.n))\n")
               "fl16-shape-n" (.getPath out-dir)))))))
 
+(deftest ffi-cstring-to-string-fl-17
+  (testing "FL-17 (2026-09-02) — `CString.to_string() -> String` intrinsic. NULL-tolerant: `getenv` returning NULL on an unset name yields nil String rather than crashing `+stringWithUTF8String:` (which is documented unsafe with NULL). Emits `((c) ? [NSString stringWithUTF8String:c] : nil)` — a ternary guard around the Foundation constructor. Verifies (a) the emitted C carries the guarded ternary, (b) a present env var round-trips through the intrinsic and prints, (c) an absent env var prints NSLog's nil rendering `(null)` with a clean exit code (no crash)."
+    (let [src (str "def plugin:\n"
+                   "    name:    String!       = \"p\"\n"
+                   "    version: SemVer!       = SemVer(0, 1, 0)\n"
+                   "    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0), max: SemVer(2, 0, 0))\n"
+                   "\n"
+                   "    foreign \"libc\":\n"
+                   "        symbol \"getenv\" -> (CString) -> CString\n"
+                   "\n"
+                   "def main:\n"
+                   "    use plugin: Plugin\n"
+                   "    use console: Console\n"
+                   "    -> ready\n"
+                   "        then:\n"
+                   "            print(plugin.get(\"getenv\")(\"FL17_PRESENT\").to_string())\n"
+                   "            print(plugin.get(\"getenv\")(\"FL17_DEFINITELY_UNSET_XYZ\").to_string())\n")
+          out-dir (tmp-dir)
+          {:keys [status stderr bin-path m-path]}
+          (build/compile-source-to-file src "ffi-cstring-to-string" (.getPath out-dir))]
+      (is (zero? status) (str "clang failed:\n" stderr))
+      (when (zero? status)
+        (let [emitted (slurp m-path)]
+          (is (re-find #"\?\s*\[NSString stringWithUTF8String:" emitted)
+              "emit includes NULL-tolerant ternary around stringWithUTF8String:")
+          (is (re-find #":\s*nil\)" emitted)
+              "ternary's nil-branch present"))
+        (let [pb  (java.lang.ProcessBuilder. [bin-path])
+              env (.environment pb)
+              _   (.put env "FL17_PRESENT" "hello-from-fl17")
+              _   (.remove env "FL17_DEFINITELY_UNSET_XYZ")
+              _   (.redirectErrorStream pb true)
+              p   (.start pb)
+              _   (.waitFor p)
+              exit   (.exitValue p)
+              stdout (slurp (.getInputStream p))]
+          (is (zero? exit))
+          (let [lines (clojure.string/split stdout #"\n")]
+            (is (>= (count lines) 2))
+            (is (= "hello-from-fl17" (first lines))
+                "present var round-trips through CString.to_string()")
+            (is (= "(null)" (second lines))
+                "absent var yields nil String → NSLog prints (null); no crash")))))))
+
+(deftest ffi-cstring-to-string-arity-mismatch-fl-17
+  (testing "FL-17 — arity check. `.to_string(x)` rejects with actionable diagnostic."
+    (let [src (str "def plugin:\n"
+                   "    name:    String!       = \"p\"\n"
+                   "    version: SemVer!       = SemVer(0, 1, 0)\n"
+                   "    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0), max: SemVer(2, 0, 0))\n"
+                   "\n"
+                   "    foreign \"libc\":\n"
+                   "        symbol \"getenv\" -> (CString) -> CString\n"
+                   "\n"
+                   "def main:\n"
+                   "    use plugin: Plugin\n"
+                   "    -> ready\n"
+                   "        then:\n"
+                   "            print(plugin.get(\"getenv\")(\"HOME\").to_string(1))\n")
+          out-dir (tmp-dir)]
+      (is (thrown-with-msg?
+            clojure.lang.ExceptionInfo
+            #"FL-17.*to_string\(\).* takes no args"
+            (build/compile-source-to-file src "fl17-bad-arity" (.getPath out-dir)))))))
+
 (deftest ffi-bare-foreign-ref-not-called-rejected
   (testing "FL-3 diagnostic — storing plugin.get(SYM) as a function pointer (not calling it inline) rejected with a fail-nyi pointing at the MVP-supported call form."
     (let [src (str "def plugin:\n"

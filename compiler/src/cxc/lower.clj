@@ -1196,6 +1196,14 @@
            (contains? #{"deref" "at"} method-name))
       (second target-ty)
 
+      ;; FL-17 (2026-09-02) — `CString.to_string() -> String`. NULL-
+      ;; tolerant: a NULL `char *` (e.g. `getenv` miss) returns nil
+      ;; String rather than crashing `+stringWithUTF8String:`. The C
+      ;; layer sees `String` type-kw `:string` → `NSString *`.
+      (and (vector? target-ty) (= :cstring (first target-ty))
+           (= "to_string" method-name))
+      :string
+
       :else
       (fail-user! "method call on non-record/non-atom target" call-node))))
 
@@ -2208,6 +2216,23 @@
                :name      "cxc_ptr_at"
                :args      [target-lo (first arg-exprs)]
                :emit-c-fn (fn [[p i]] (str "(" p ")[" i "]"))})
+
+          ;; FL-17 (2026-09-02) — CString.to_string() intrinsic. NULL-
+          ;; tolerant conversion so `getenv` misses return nil rather
+          ;; than crashing `+stringWithUTF8String:` (which is documented
+          ;; unsafe with NULL). Zero-arg; return `NSString *` or `nil`.
+          (and (vector? target-ty) (= :cstring (first target-ty))
+               (= "to_string" method-name))
+          (do (when-not (zero? (count arg-exprs))
+                (fail-user! (str "FL-17: `CString.to_string()` takes no args, "
+                                 "got " (count arg-exprs))
+                            call-node))
+              {:node      :ffi-call
+               :name      "cxc_cstring_to_string"
+               :args      [target-lo]
+               :emit-c-fn (fn [[c]]
+                            (str "((" c ") ? [NSString stringWithUTF8String:"
+                                 c "] : nil)"))})
 
           ;; F37 L6a — `Bytes.slice(start: Int, length: Int) -> Bytes`.
           ;; Emits `[(NSMutableData *)[bytes subdataWithRange:NSMakeRange(start, length)] mutableCopy]`
