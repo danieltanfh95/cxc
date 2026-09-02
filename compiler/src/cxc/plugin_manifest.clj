@@ -1,0 +1,220 @@
+(ns cxc.plugin-manifest
+  "F75 / B3 (2026-09-02) — plugin manifest resolver pass.
+
+   Walks a parsed top-nodes vector, locates the single `:def-plugin`
+   node (R7 unified marker; spec §7.2.1), evaluates its compile-time-
+   const manifest fields into a plain map, and returns a
+   `:plugin-manifest` map for downstream consumers (F76 linker gate,
+   F77 caps emitter). Returns `nil` when the module isn't a plugin.
+
+   Shape of the returned manifest — the stable contract downstream
+   passes rely on:
+
+   ```
+   {:name            \"std.console\"          ; String (from name: field)
+    :version         {:major N :minor N :patch N}
+    :compat          {:min {:major :minor :patch}
+                      :max {:major :minor :patch}}
+    :requires        #{:stdio :fs_read ...}   ; OsPrimitive names as kws
+    :foreign-blocks  [{:library STR :entries [...]}]
+    :source-node     <the original :def-plugin node — for diagnostics>}
+   ```
+
+   Field policy — matches R7 (`decisions-frozen-2026-08-31-plugin-shape.md`
+   §R7 line 86): `name`, `version`, `compat` mandatory; missing any
+   raises `ex-info :kind :plugin-manifest-invalid`. `requires` is
+   optional at v1.0 (defaults to `#{}`) — current plugin drafts don't
+   set it yet, and B7 (caps emit) will retrofit as it comes online.
+   `exports:` and `targets:` are R7-defined but deferred to L6 module
+   resolution / target-selection landings; not extracted here.
+
+   Only compile-time constants admitted (spec §4.16.10 / Q10-B):
+   literal strings, and prelude ctor-calls with literal-int / nested
+   prelude-ctor args. Anything else in a manifest default position is
+   a targeted diagnostic — the manifest is data the compiler reads
+   before any runtime evaluator exists."
+  (:require [clojure.string :as str]))
+
+(defn- fail!
+  [msg node]
+  (throw (ex-info (str "plugin manifest: " msg)
+                  {:kind :plugin-manifest-invalid
+                   :node node})))
+
+(defn- unwrap-nonnil
+  "Manifest fields are declared `T!` per spec; strip the `:type-nonnil`
+   wrapper so callers see the inner ref."
+  [ty]
+  (if (= :type-nonnil (:node ty)) (:inner ty) ty))
+
+(defn- type-name
+  "Return the bare type-ref name of a field's type annotation, or nil
+   if the type isn't a simple ref."
+  [ty]
+  (let [inner (unwrap-nonnil ty)]
+    (when (= :type-ref (:node inner))
+      (:name inner))))
+
+(defn- callee-name
+  "Return the ident-name of a `:call`'s callee, or nil if not a bare
+   ident callee."
+  [call]
+  (when (and (= :call (:node call))
+             (= :ident (get-in call [:callee :node])))
+    (get-in call [:callee :name])))
+
+(defn- eval-semver
+  "Accept a `SemVer(major, minor, patch)` call expression, return
+   `{:major N :minor N :patch N}`. All three positional int args
+   mandatory — named args or non-int args are rejected."
+  [expr field-name]
+  (when-not (= "SemVer" (callee-name expr))
+    (fail! (str field-name " default must be a `SemVer(...)` call; got "
+                (pr-str (:node expr)))
+           expr))
+  (let [args (:args expr)]
+    (when-not (= 3 (count args))
+      (fail! (str field-name " SemVer(...) needs exactly 3 args "
+                  "(major, minor, patch); got " (count args))
+             expr))
+    (doseq [a args]
+      (when-not (= :positional (:kind a))
+        (fail! (str field-name " SemVer(...) args must be positional; "
+                    "got named `" (:name a) "`")
+               expr))
+      (when-not (= :lit-int (get-in a [:value :node]))
+        (fail! (str field-name " SemVer(...) args must be integer literals; "
+                    "got " (pr-str (get-in a [:value :node])))
+               expr)))
+    (zipmap [:major :minor :patch]
+            (mapv #(get-in % [:value :value]) args))))
+
+(defn- eval-version-range
+  "Accept a `VersionRange(min: SemVer(...), max: SemVer(...))` call,
+   return `{:min {...} :max {...}}`. Both named args mandatory."
+  [expr field-name]
+  (when-not (= "VersionRange" (callee-name expr))
+    (fail! (str field-name " default must be a `VersionRange(...)` call; got "
+                (pr-str (:node expr)))
+           expr))
+  (let [named (into {} (map (juxt :name :value))
+                    (filter #(= :named (:kind %)) (:args expr)))]
+    (doseq [k ["min" "max"]]
+      (when-not (contains? named k)
+        (fail! (str field-name " VersionRange(...) missing required named arg `"
+                    k ": SemVer(...)`")
+               expr)))
+    {:min (eval-semver (get named "min") (str field-name ".min"))
+     :max (eval-semver (get named "max") (str field-name ".max"))}))
+
+(defn- eval-string
+  [expr field-name]
+  (when-not (= :lit-string (:node expr))
+    (fail! (str field-name " default must be a literal string; got "
+                (pr-str (:node expr)))
+           expr))
+  (:value expr))
+
+(defn- eval-os-primitive-set
+  "Accept a set-literal `{OsPrimitive.stdio, OsPrimitive.fs_read, ...}`
+   and return `#{:stdio :fs_read ...}` — bare snake_case case-names.
+   Empty set literal `{}` returns `#{}`. Anything other than a set
+   literal of `OsPrimitive.<case>` dots is a targeted diagnostic."
+  [expr field-name]
+  (when-not (= :set (:node expr))
+    (fail! (str field-name " default must be a set literal "
+                "`{OsPrimitive.stdio, ...}`; got " (pr-str (:node expr)))
+           expr))
+  (into #{}
+        (map (fn [e]
+               (when-not (and (= :dot (:node e))
+                              (= :ident (get-in e [:target :node]))
+                              (= "OsPrimitive" (get-in e [:target :name])))
+                 (fail! (str field-name " set entries must be `OsPrimitive.<case>`; "
+                             "got " (pr-str e))
+                        e))
+               (keyword (:field e))))
+        (:elements expr)))
+
+(defn- fields->map
+  "Index a `:fields` vector by field name for O(1) lookup."
+  [fields]
+  (into {} (map (juxt :name identity)) fields))
+
+(defn- extract-required
+  [by-name field-name eval-fn]
+  (let [f (get by-name field-name)]
+    (when-not f
+      (fail! (str "missing required manifest field `" field-name ":`. "
+                  "R7: name/version/compat are mandatory (spec §7.2.1).")
+             nil))
+    (when-not (:default f)
+      (fail! (str "field `" field-name ":` requires an inline default "
+                  "(compile-time-const per §4.16.10).")
+             f))
+    (eval-fn (:default f) field-name)))
+
+(defn- extract-optional
+  [by-name field-name eval-fn default-value]
+  (if-let [f (get by-name field-name)]
+    (if (:default f)
+      (eval-fn (:default f) field-name)
+      default-value)
+    default-value))
+
+(defn find-def-plugin
+  "Return the single `:def-plugin` top-node in `top-nodes`, or nil if
+   the module isn't a plugin. Raises on duplicate markers — the parser
+   already gates reserved-name discipline, but a defensive check keeps
+   this pass total."
+  [top-nodes]
+  (let [ps (filterv #(= :def-plugin (:node %)) top-nodes)]
+    (case (count ps)
+      0 nil
+      1 (first ps)
+      (throw (ex-info (str "plugin manifest: module has " (count ps)
+                           " `def plugin:` markers; exactly one allowed "
+                           "(spec §7.2.1). Merge them or split the module.")
+                      {:kind :plugin-manifest-invalid
+                       :count (count ps)})))))
+
+(defn extract
+  "F75 manifest resolver entry point. Given a parsed top-nodes vector,
+   returns the plugin manifest map (see ns docstring) or `nil` when
+   no `:def-plugin` marker is present. Throws
+   `ex-info :kind :plugin-manifest-invalid` for missing required
+   fields or wrong-shape defaults."
+  [top-nodes]
+  (when-let [dp (find-def-plugin top-nodes)]
+    (let [by-name (fields->map (:fields dp))
+          allowed #{"name" "version" "compat" "requires"}
+          unknown (remove allowed (keys by-name))]
+      (when (seq unknown)
+        (fail! (str "unknown manifest field(s): "
+                    (str/join ", " (map #(str "`" % ":`") (sort unknown)))
+                    ". R7 v1.0 admits name/version/compat/requires only "
+                    "(exports/targets deferred to L6).")
+               dp))
+      (doseq [fname ["name" "version" "compat"]
+              :let  [f (get by-name fname)]
+              :when f
+              :let  [tname (type-name (:type f))]]
+        (let [expected (case fname
+                         "name"    "String"
+                         "version" "SemVer"
+                         "compat"  "VersionRange")]
+          (when-not (= tname expected)
+            (fail! (str "field `" fname ":` must be typed `" expected "!`; "
+                        "got `" (pr-str tname) "`.")
+                   f))))
+      {:name           (extract-required by-name "name"    eval-string)
+       :version        (extract-required by-name "version" eval-semver)
+       :compat         (extract-required by-name "compat"  eval-version-range)
+       :requires       (extract-optional by-name "requires"
+                                         eval-os-primitive-set
+                                         #{})
+       :foreign-blocks (mapv (fn [b]
+                               {:library (:library b)
+                                :entries (:entries b)})
+                             (:foreign-blocks dp))
+       :source-node    dp})))
