@@ -1850,7 +1850,11 @@
       (is (clojure.string/includes? stdout "to_int_or ws17: 17"))
       (is (clojure.string/includes? stdout "to_int_or 42abc: -1"))
       (is (clojure.string/includes? stdout "upper: HELLO WORLD"))
-      (is (clojure.string/includes? stdout "lower: hello world")))))
+      (is (clojure.string/includes? stdout "lower: hello world"))
+      (is (clojure.string/includes? stdout "path_join: /tmp/cxc/data/config.json"))
+      (is (clojure.string/includes? stdout "basename: config.json"))
+      (is (clojure.string/includes? stdout "dirname: /tmp/cxc/data"))
+      (is (clojure.string/includes? stdout "extension: json")))))
 
 (deftest end-to-end-console-write-err
   (testing "2026-09-03 — `console.write_err(msg)` writes to stderr with a trailing newline (mirrors puts-to-stdout used by console.write). Verified by running the program with stdout redirected to /dev/null and asserting the message shows up on stderr — a stdout-only capture wouldn't see it. This gives programs a diagnostic channel that won't intermix with pipeable output."

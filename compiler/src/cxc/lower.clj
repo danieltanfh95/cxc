@@ -1247,14 +1247,16 @@
       (and (= :string target-ty)
            (contains? #{"length" "contains" "starts_with" "ends_with"
                         "substring" "index_of" "trim" "replace"
-                        "to_int_or" "uppercase" "lowercase" "to_bytes"}
+                        "to_int_or" "uppercase" "lowercase" "to_bytes"
+                        "path_join" "basename" "dirname" "extension"}
                       method-name))
       (case method-name
         "length"    :int
         "index_of"  :int
         "to_int_or" :int
         "to_bytes"  :bytes
-        ("substring" "trim" "replace" "uppercase" "lowercase") :string
+        ("substring" "trim" "replace" "uppercase" "lowercase"
+         "path_join" "basename" "dirname" "extension") :string
         :bool)
 
       :else
@@ -2393,10 +2395,12 @@
           (and (= :string target-ty)
                (contains? #{"length" "contains" "starts_with" "ends_with"
                             "substring" "index_of" "trim" "replace"
-                            "to_int_or" "uppercase" "lowercase" "to_bytes"}
+                            "to_int_or" "uppercase" "lowercase" "to_bytes"
+                            "path_join" "basename" "dirname" "extension"}
                           method-name))
           (let [want-args (case method-name
-                            ("length" "trim" "uppercase" "lowercase" "to_bytes") 0
+                            ("length" "trim" "uppercase" "lowercase" "to_bytes"
+                             "basename" "dirname" "extension") 0
                             ("substring" "replace") 2
                             1)]
             (when-not (= want-args (count arg-exprs))
@@ -2479,6 +2483,25 @@
                                  "NSUTF8StringEncoding]; "
                                  "if (__d) __r = [__d mutableCopy]; } "
                                  "__r; })"))}
+              "path_join"
+              {:node :ffi-call :name "cxc_string_path_join"
+               :args (into [target-lo] arg-exprs)
+               :emit-c-fn (fn [[s sub]]
+                            (str "[(" s ") stringByAppendingPathComponent:("
+                                 sub ")]"))}
+              "basename"
+              {:node :ffi-call :name "cxc_string_basename"
+               :args [target-lo]
+               :emit-c-fn (fn [[s]] (str "[(" s ") lastPathComponent]"))}
+              "dirname"
+              {:node :ffi-call :name "cxc_string_dirname"
+               :args [target-lo]
+               :emit-c-fn (fn [[s]]
+                            (str "[(" s ") stringByDeletingLastPathComponent]"))}
+              "extension"
+              {:node :ffi-call :name "cxc_string_extension"
+               :args [target-lo]
+               :emit-c-fn (fn [[s]] (str "[(" s ") pathExtension]"))}
               "to_int_or"
               {:node :ffi-call :name "cxc_string_to_int_or"
                :args (into [target-lo] arg-exprs)

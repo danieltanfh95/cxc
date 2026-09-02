@@ -33,5 +33,11 @@ def main:
             let mixed: String = "Hello World"
             console.write("upper: " + mixed.uppercase())
             console.write("lower: " + mixed.lowercase())
+            let base: String = "/tmp/cxc/data"
+            let file: String = base.path_join("config.json")
+            console.write("path_join: " + file)
+            console.write("basename: " + file.basename())
+            console.write("dirname: " + file.dirname())
+            console.write("extension: " + file.extension())
 
     -> end
