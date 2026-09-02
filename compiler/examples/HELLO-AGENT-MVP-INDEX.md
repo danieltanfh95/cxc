@@ -56,6 +56,7 @@ Under [examples/](./):
 - [map-get-or-string.cxc](./map-get-or-string.cxc) — `Map of (String, String).get_or(k, fallback) -> String` (String branch of the synthesized method).
 - [map-of-bool.cxc](./map-of-bool.cxc) — `Map of (String, Bool)` toggle map: add/get_or with present-key overriding fallback + missing-key falling through both directions.
 - [list-at-or.cxc](./list-at-or.cxc) — `List of T .at_or(i, fallback) -> T` random access for T ∈ {Int, String, Bool}: in-range value / past-end fallback / negative-index fallback.
+- [map-int-key.cxc](./map-int-key.cxc) — `Map of (Int, String)`: Int-as-key coverage (HTTP status→reason lookup).
 
 ## Non-plugin prelude capabilities enriched this session
 

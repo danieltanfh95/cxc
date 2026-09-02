@@ -1,0 +1,11 @@
+def main:
+    m: Map of (Int, String)
+
+    -> running
+        then:
+            m.add(200, "ok")
+            m.add(404, "not-found")
+            m.add(500, "error")
+            print(m.get_or(200, "?"))
+            print(m.get_or(404, "?"))
+            print(m.get_or(418, "?"))

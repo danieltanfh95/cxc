@@ -1099,6 +1099,12 @@
       (is (zero? exit))
       (is (= "10\n30\n-1\n-1\nb\n?\ntrue\nfalse\ntrue\n" stdout)))))
 
+(deftest end-to-end-map-int-key
+  (testing "map-int-key.cxc — `Map of (Int, String)`. Verifies Int-as-key: `@(k)` NSNumber boxing on both add and get_or lookup, forKey: NSNumber equality resolves via -isEqual: on the numeric value. HTTP-status→reason lookup: 200/404 present, 418 falls through to fallback."
+    (let [{:keys [exit stdout]} (compile-and-run "map-int-key")]
+      (is (zero? exit))
+      (is (= "ok\nnot-found\n?\n" stdout)))))
+
 (deftest end-to-end-console-hello
   (testing "console-hello.cxc — Layer 6 Step 5. Console prelude atom with `write(msg: String) -> Int` method wrapping the `native_console_write` FFI hatch (printf %s). Main is capability-provisioned (`def main(console: Console)`) and calls `console.write(\"hi\\n\")` in its `-> running do:`. Prints `hi` + newline."
     (let [{:keys [exit stdout]} (compile-and-run "console-hello")]
