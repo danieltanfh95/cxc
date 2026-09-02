@@ -9,8 +9,8 @@ Under [resources/prelude/target/macos/](../resources/prelude/target/macos/):
 
 | File | Capability | Methods | Landed |
 |------|------------|---------|--------|
-| [fs.cxc](../resources/prelude/target/macos/fs.cxc) | `FileSystem` | `read_text` / `write_text` / `append_text` / `exists` / `mkdirs` / `remove` / `copy` / `rename` / `size` / `tmp_path` / `list_dir` | 47a4c2f + 2c9d094 + 25cb3bd + 5e10972 + 954b5b7 + 40d5786 |
-| [subprocess.cxc](../resources/prelude/target/macos/subprocess.cxc) | `Subprocess` | `run(cmd)` (combined stdout+stderr via popen) | 07d4994 |
+| [fs.cxc](../resources/prelude/target/macos/fs.cxc) | `FileSystem` | `read_text` / `write_text` / `append_text` / `exists` / `mkdirs` / `remove` / `copy` / `rename` / `size` / `tmp_path` / `list_dir` / `read_bytes` / `write_bytes` | 47a4c2f + 2c9d094 + 25cb3bd + 5e10972 + 954b5b7 + 40d5786 + 07a5ff9 |
+| [subprocess.cxc](../resources/prelude/target/macos/subprocess.cxc) | `Subprocess` | `run(cmd)` + `run_full(cmd)` (envelope: `{exit_code, stdout, stderr}` via NSTask) | 07d4994 + 358f883 |
 | [env.cxc](../resources/prelude/target/macos/env.cxc) | `Env` | `get_or` + `set` + `remove` + `has` | c5e2f68 + db01b54 + 25cb3bd + 700b377 |
 | [args.cxc](../resources/prelude/target/macos/args.cxc) | `Args` | `length()` + `get_or` + `all_after` | 4d6a897 + 962108b |
 | [json.cxc](../resources/prelude/target/macos/json.cxc) | `Json` | `encode_str` / `field_string` / `field_int_or` / `field_string_path` / `field_int_or_path` / `field_bool_or` / `array_length_at` | 6b12a7d + c922c06 + a798ab9 + f3c49bd |
@@ -47,6 +47,9 @@ Under [examples/](./):
 - [http-head-status.cxc](./http-head-status.cxc) — HEAD status: found / not-found / URL-error. Manual.
 - [fs-list-dir.cxc](./fs-list-dir.cxc) — populate temp dir + list contents + missing-dir empty.
 - [http-download.cxc](./http-download.cxc) — GET example.com → temp file → check size + doctype prefix. Manual.
+- [subprocess-run-full.cxc](./subprocess-run-full.cxc) — envelope decomposition: normal / exit-42 / not-found (127).
+- [fs-bytes-io.cxc](./fs-bytes-io.cxc) — F37 `.as() -> Bytes` on a record → write_bytes → read_bytes → size + nil-on-miss.
+- [bytes-string-roundtrip.cxc](./bytes-string-roundtrip.cxc) — `String.to_bytes` / `Bytes.to_string` UTF-8 roundtrip, both in-memory and via disk.
 
 ## Non-plugin prelude capabilities enriched this session
 
@@ -72,6 +75,9 @@ Under [examples/](./):
 - `String.index_of(sub)`, `.trim()`, `.replace(from, to)` — parsing primitives. (dddac82)
 - `String.to_int_or(fallback)` — NSScanner + isAtEnd; fallback on non-integer or partial match. (b93f385)
 - `String.uppercase()` / `.lowercase()` — Foundation NSString case-mapping. (6390fa5)
+- `String.to_bytes()` — UTF-8 encode to Bytes (NSMutableData). (a501598)
+- `String.path_join(sub)` / `.basename()` / `.dirname()` / `.extension()` — NSString path methods. (9baf551)
+- `Bytes.to_string()` — UTF-8 decode from NSMutableData. (a501598)
 
 ### Native intrinsics (backing prelude atoms)
 
@@ -102,6 +108,8 @@ Under [examples/](./):
 - `native_http_head_status` — sync NSURLSession HEAD; returns status Int or -1. (210a1fa)
 - `native_fs_list_dir` — NSFileManager contentsOfDirectoryAtPath joined by `\n`; empty on error. (40d5786)
 - `native_http_download_to_file` — NSURLSession dataTask + NSData writeToFile:atomically; binary-safe. (40d5786)
+- `native_subprocess_run_full` — NSTask + separate stdout/stderr pipes; returns `{exit_code, stdout, stderr}` JSON envelope. (358f883)
+- `native_fs_read_bytes` / `native_fs_write_bytes` — NSData dataWithContentsOfFile / writeToFile; Bytes ↔ NSMutableData. (07a5ff9)
 - `native_http_get` / `native_http_post` — sync NSURLSession dataTask + dispatch_semaphore. (838533a)
 - `native_http_get_envelope` / `native_http_post_envelope` — same with `{status,body}` JSON envelope. (0e17b7b)
 
@@ -112,6 +120,10 @@ Under [examples/](./):
 ## Commit sequence
 
 ```
+9baf551 String path helpers (.path_join / .basename / .dirname / .extension)
+a501598 String.to_bytes + Bytes.to_string — UTF-8 roundtrip
+07a5ff9 FileSystem.read_bytes + .write_bytes — binary I/O
+358f883 Subprocess.run_full — NSTask envelope with real exit code + separated streams
 40d5786 FileSystem.list_dir + Http.download_to_file
 210a1fa Http.head_status(url)
 962108b Args.all_after(index)
@@ -162,8 +174,8 @@ The full designed hello-agent (see [design/examples/hello-agent/hello-agent.cxc]
 - `=>` field reassignment shorthand
 - `<expr> or T(binding): body` recovery on non-emit expressions (2d-iii(B))
 - Multi-arm transitions with rich `||:` guards on payload fields
-- `Bytes` / `Path` types for binary I/O (2d-ii)
-- `ProcResult { exit_code, stdout, stderr }` — richer subprocess surface
+- `Path` distinct-type (NSString path methods available via `String.path_join/basename/dirname/extension` since 9baf551 — a Path newtype would give static-safety; deferred)
+- `ProcResult` as a distinct record type (envelope-shaped `{exit_code, stdout, stderr}` JSON is available via `subprocess.run_full` since 358f883 — richer record-typed return waits on native intrinsics returning records)
 - Nested JSON navigation for anything beyond dot-paths — `field_string_path` / `field_int_or_path` cover `a.b.0.c`-style walks, but not general JSONPath, filters, or wildcards
 - Real subprocess status + stderr separation
 
