@@ -1141,6 +1141,12 @@
       (is (zero? exit))
       (is (= "true\nfalse\ntrue\ntrue\nfalse\ntrue\nfalse\ntrue\nfalse\ntrue\nfalse\ntrue\n" stdout)))))
 
+(deftest end-to-end-json-string-or
+  (testing "json-string-or.cxc — Json.field_string_or / field_string_or_path — fallback variants for nil String returns. Saves the caller a `||: v == nil : fallback ||: else : v` ladder. Six assertions: top-level hit, top-level miss, deep-path hit (tools.0.name), deeper-path hit (tools.0.input.cmd), out-of-range array index falls through, non-existent path falls through."
+    (let [{:keys [exit stdout]} (compile-and-run "json-string-or")]
+      (is (zero? exit))
+      (is (= "claude\nfallback\nbash\nls\nnot-there\nfallback\n" stdout)))))
+
 (deftest end-to-end-console-hello
   (testing "console-hello.cxc — Layer 6 Step 5. Console prelude atom with `write(msg: String) -> Int` method wrapping the `native_console_write` FFI hatch (printf %s). Main is capability-provisioned (`def main(console: Console)`) and calls `console.write(\"hi\\n\")` in its `-> running do:`. Prints `hi` + newline."
     (let [{:keys [exit stdout]} (compile-and-run "console-hello")]

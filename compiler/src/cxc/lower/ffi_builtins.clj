@@ -469,6 +469,72 @@
                         "} "
                         "} "
                         "__r; })")))}
+   "native_json_field_string_or"
+   ;; 2026-09-03 — nil-tolerant wrapper around field_string. Returns
+   ;; fallback when JSON is invalid, key is missing, value is nil, or
+   ;; value isn't a String. Saves the caller a ||: nil ||: else :
+   ;; ladder in the common config-lookup shape.
+   {:return-kw :string
+    :arity     3
+    :emit-c    (fn [args]
+                 (let [json-arg (nth args 0)
+                       key-arg  (nth args 1)
+                       fb-arg   (nth args 2)]
+                   (str "({ NSString *__j = " json-arg "; "
+                        "NSString *__k = " key-arg "; "
+                        "NSString *__fb = " fb-arg "; "
+                        "NSString *__r = __fb; "
+                        "if (__j && __k) { "
+                        "NSData *__d = [__j dataUsingEncoding:NSUTF8StringEncoding]; "
+                        "NSError *__err = nil; "
+                        "id __o = [NSJSONSerialization JSONObjectWithData:__d "
+                        "options:(NSJSONReadingOptions)0 error:&__err]; "
+                        "if (!__err && [__o isKindOfClass:[NSDictionary class]]) { "
+                        "id __v = [(NSDictionary *)__o objectForKey:__k]; "
+                        "if ([__v isKindOfClass:[NSString class]]) { "
+                        "__r = (NSString *)__v; } "
+                        "} "
+                        "} "
+                        "__r; })")))}
+   "native_json_field_string_or_path"
+   ;; 2026-09-03 — nil-tolerant path variant. Same semantics as
+   ;; field_string_path with an added fallback for missing/mistyped/
+   ;; broken paths.
+   {:return-kw :string
+    :arity     3
+    :emit-c    (fn [args]
+                 (let [json-arg (nth args 0)
+                       path-arg (nth args 1)
+                       fb-arg   (nth args 2)]
+                   (str "({ NSString *__j = " json-arg "; "
+                        "NSString *__p = " path-arg "; "
+                        "NSString *__fb = " fb-arg "; "
+                        "NSString *__r = __fb; "
+                        "if (__j && __p) { "
+                        "NSData *__d = [__j dataUsingEncoding:NSUTF8StringEncoding]; "
+                        "NSError *__err = nil; "
+                        "id __cur = [NSJSONSerialization JSONObjectWithData:__d "
+                        "options:(NSJSONReadingOptions)0 error:&__err]; "
+                        "if (!__err && __cur) { "
+                        "NSArray *__parts = [__p componentsSeparatedByString:@\".\"]; "
+                        "for (NSString *__seg in __parts) { "
+                        "if (__cur == nil) break; "
+                        "NSScanner *__sc = [NSScanner scannerWithString:__seg]; "
+                        "NSInteger __idx = 0; "
+                        "if ([__sc scanInteger:&__idx] && __sc.isAtEnd) { "
+                        "if ([__cur isKindOfClass:[NSArray class]] && "
+                        "__idx >= 0 && (NSUInteger)__idx < [(NSArray *)__cur count]) { "
+                        "__cur = [(NSArray *)__cur objectAtIndex:(NSUInteger)__idx]; "
+                        "} else { __cur = nil; } "
+                        "} else if ([__cur isKindOfClass:[NSDictionary class]]) { "
+                        "__cur = [(NSDictionary *)__cur objectForKey:__seg]; "
+                        "} else { __cur = nil; } "
+                        "} "
+                        "if ([__cur isKindOfClass:[NSString class]]) { "
+                        "__r = (NSString *)__cur; } "
+                        "} "
+                        "} "
+                        "__r; })")))}
    "native_http_head_status"
    ;; 2026-09-03 — send a HEAD request to the URL and return the
    ;; HTTP status code (Int). Returns -1 on network error, nil URL,

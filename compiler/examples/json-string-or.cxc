@@ -1,0 +1,12 @@
+def main:
+    use json: Json
+
+    -> running
+        then:
+            let doc: String = "{\"name\":\"claude\",\"tools\":[{\"name\":\"bash\",\"input\":{\"cmd\":\"ls\"}}]}"
+            print(json.field_string_or(doc, "name", "?"))
+            print(json.field_string_or(doc, "missing", "fallback"))
+            print(json.field_string_or_path(doc, "tools.0.name", "?"))
+            print(json.field_string_or_path(doc, "tools.0.input.cmd", "?"))
+            print(json.field_string_or_path(doc, "tools.9.name", "not-there"))
+            print(json.field_string_or_path(doc, "does.not.exist", "fallback"))
