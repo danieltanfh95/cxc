@@ -54,6 +54,7 @@ Under [examples/](./):
 - [hash-sha256.cxc](./hash-sha256.cxc) — SHA-256 of `"hello"` and `""` against known-answer vectors.
 - [map-get-or.cxc](./map-get-or.cxc) — `Map of (String, Int).get_or(k, fallback) -> Int` — present-key value / missing-key fallback.
 - [map-get-or-string.cxc](./map-get-or-string.cxc) — `Map of (String, String).get_or(k, fallback) -> String` (String branch of the synthesized method).
+- [map-of-bool.cxc](./map-of-bool.cxc) — `Map of (String, Bool)` toggle map: add/get_or with present-key overriding fallback + missing-key falling through both directions.
 
 ## Non-plugin prelude capabilities enriched this session
 

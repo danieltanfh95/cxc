@@ -1087,6 +1087,12 @@
       (is (zero? exit))
       (is (= "example.com\nunknown\n" stdout)))))
 
+(deftest end-to-end-map-of-bool
+  (testing "map-of-bool.cxc — `Map of (String, Bool)` toggle-map with add / get_or. Verifies Bool as V: BOOL c-type + NSNumber @(v) boxing + [v boolValue] unbox in get_or's synthesized body. verbose=true, dry_run=false stored; present-key returns stored value regardless of fallback (verbose→true even with fallback=false); missing keys fall through (missing→true with fallback=true, missing→false with fallback=false)."
+    (let [{:keys [exit stdout]} (compile-and-run "map-of-bool")]
+      (is (zero? exit))
+      (is (= "true\nfalse\ntrue\nfalse\n" stdout)))))
+
 (deftest end-to-end-console-hello
   (testing "console-hello.cxc — Layer 6 Step 5. Console prelude atom with `write(msg: String) -> Int` method wrapping the `native_console_write` FFI hatch (printf %s). Main is capability-provisioned (`def main(console: Console)`) and calls `console.write(\"hi\\n\")` in its `-> running do:`. Prints `hi` + newline."
     (let [{:keys [exit stdout]} (compile-and-run "console-hello")]

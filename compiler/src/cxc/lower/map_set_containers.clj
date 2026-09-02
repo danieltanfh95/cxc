@@ -14,24 +14,27 @@
   (:require [cxc.diagnostics :refer [fail-user!]]))
 
 (def map-supported-key-types #{"String" "Int"})
-(def map-supported-val-types #{"String" "Int"})
+(def map-supported-val-types #{"String" "Int" "Bool"})
 (def set-supported-element-types #{"String" "Int"})
 
 (defn map-box-expr
   "Cxc-typed expr → NSDictionary-safe ObjC expr. Int wraps as NSNumber
    `@(v)`; String is ALREADY NSString * per F65 §3.10.5, no wrapping
-   needed."
+   needed; Bool wraps as NSNumber via `@(v)` (BOOL is a primitive ObjC
+   truth type, boxed as NSNumber with numberWithBool)."
   [ty raw-name]
   (case ty
     "Int"    (str "@(" raw-name ")")
-    "String" raw-name))
+    "String" raw-name
+    "Bool"   (str "@(" raw-name ")")))
 
 (defn map-c-type
   "C-level parameter type for a supported K or V map type."
   [ty]
   (case ty
     "Int"    "int"
-    "String" "NSString *"))                 ; F65 §3.10.5
+    "String" "NSString *"                   ; F65 §3.10.5
+    "Bool"   "BOOL"))
 
 (defn synthesize-map-container-class
   "Emit-ready :objc-class node for one `_Cxc_MapOf<K><V>` instantiation.
@@ -112,7 +115,8 @@
                                    :text (str "id __v = [_elements objectForKey:" box-k "]; "
                                               (case v-name
                                                 "Int"    "return __v ? [(NSNumber *)__v intValue] : fallback;"
-                                                "String" "return __v ? (NSString *)__v : fallback;"))}]}]}))
+                                                "String" "return __v ? (NSString *)__v : fallback;"
+                                                "Bool"   "return __v ? [(NSNumber *)__v boolValue] : fallback;"))}]}]}))
 
 (defn synthesize-set-container-class
   "Emit-ready :objc-class node for one `_Cxc_SetOf<T>` instantiation.
