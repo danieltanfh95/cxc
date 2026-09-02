@@ -12,7 +12,10 @@ def main:
             let model: String = env.get_or("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001")
             let headers: String = "{\"x-api-key\":" + json.encode_str(key) + ",\"anthropic-version\":\"2023-06-01\",\"content-type\":\"application/json\"}"
             let body: String = "{\"model\":" + json.encode_str(model) + ",\"max_tokens\":128,\"messages\":[{\"role\":\"user\",\"content\":" + json.encode_str(task) + "}]}"
-            let resp: String = http.post("https://api.anthropic.com/v1/messages", headers, body)
+            let envelope: String = http.post_envelope("https://api.anthropic.com/v1/messages", headers, body)
+            let status: Int = json.field_int_or(envelope, "status", -1)
+            let resp: String = json.field_string(envelope, "body")
+            let ok: String = ||: status == 200 : "ok" ||: else : "http " + status.to_string()
             let stop: String = json.field_string(resp, "stop_reason")
             let type_field: String = json.field_string(resp, "type")
             let in_tok:  Int = json.field_int_or(resp, "input_tokens", 0)
@@ -20,10 +23,12 @@ def main:
             let text_key: String = "\"text\":\""
             let text_at: Int = resp.index_of(text_key)
             let after_start: Int = text_at + text_key.length()
-            let close_from: Int = after_start + resp.substring(after_start, resp.length() - after_start).index_of("\"")
-            let claude_text: String = ||: text_at >= 0 : resp.substring(after_start, close_from - after_start) ||: else : "(no text field)"
+            let tail: String = resp.substring(after_start, resp.length() - after_start)
+            let close_offset: Int = tail.index_of("\"")
+            let claude_text: String = ||: text_at >= 0 : resp.substring(after_start, close_offset) ||: else : "(no text field)"
             console.write("task: " + task)
             console.write("model: " + model)
+            console.write("http: " + ok)
             console.write("stop_reason: " + stop)
             console.write("type: " + type_field)
             console.write("input_tokens: " + in_tok.to_string())
