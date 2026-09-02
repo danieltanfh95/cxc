@@ -1832,6 +1832,19 @@
         (is (zero? exit))
         (is (= "hello world\n" stdout))))))
 
+(deftest end-to-end-string-helpers
+  (testing "2026-09-03 — String content-equality + Foundation-backed helpers + Bool.to_string(). `String == String` reroutes through `-isEqualToString:` (with a leading pointer-eq short-circuit for the nil-nil case) so equal-content Strings from different sources compare true; raw C `==` before this landed only worked for pooled literals. Adds `s.length() -> Int`, `s.contains(sub) -> Bool`, `s.starts_with(pre) -> Bool`, `s.ends_with(suf) -> Bool` (all NSString direct methods) and `Bool.to_string() -> String` (literal \"true\"/\"false\") to round out the log-message interpolation surface."
+    (let [{:keys [exit stdout]} (compile-and-run "string-helpers")]
+      (is (zero? exit))
+      (is (clojure.string/includes? stdout "a==b: same"))
+      (is (clojure.string/includes? stdout "a==c: diff"))
+      (is (clojure.string/includes? stdout "contains world: yes"))
+      (is (clojure.string/includes? stdout "starts_with hello: yes"))
+      (is (clojure.string/includes? stdout "ends_with world: yes"))
+      (is (clojure.string/includes? stdout "length: 11"))
+      (is (clojure.string/includes? stdout "true.to_string: true"))
+      (is (clojure.string/includes? stdout "false.to_string: false")))))
+
 (deftest hello-agent-mini-compiles-6
   (testing "6 (2026-09-03) — MVP hello-agent shape. Composes Args + Env + Http + Json + Console + String concat into a direct Claude Messages API POST. Assembles headers as a JSON String (x-api-key from env, anthropic-version, content-type) and body as a JSON String (model from env, single user message from argv[1] or default) using Json.encode_str for every String-typed value so escaping is correct. Sends via http.post, reads top-level `stop_reason` + `type` fields from the response with Json.field_string, prints everything via Console. This is the maximum agent-shape currently expressible without closures, `List of T`, variant destructuring, or or-recovery on non-emit expressions. Manual network verification only (needs ANTHROPIC_API_KEY); CI-side asserts the compile path clears cleanly."
     (let [out-dir (tmp-dir)

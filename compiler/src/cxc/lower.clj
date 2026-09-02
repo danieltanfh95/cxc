@@ -1221,6 +1221,25 @@
       (and (int-family? target-ty) (= "to_string" method-name))
       :string
 
+      ;; 2026-09-03 — `Bool.to_string() -> String`. Renders as
+      ;; "true" / "false". Convenient for log message
+      ;; interpolation alongside Int.to_string.
+      (and (= :bool target-ty) (= "to_string" method-name))
+      :string
+
+      ;; 2026-09-03 — String helpers backed by Foundation NSString.
+      ;;   .length()         -> Int    (character count, not byte
+      ;;                                count — NSString.length)
+      ;;   .contains(sub)    -> Bool   (containsString: presence check)
+      ;;   .starts_with(pre) -> Bool   (hasPrefix:)
+      ;;   .ends_with(suf)   -> Bool   (hasSuffix:)
+      (and (= :string target-ty)
+           (contains? #{"length" "contains" "starts_with" "ends_with"}
+                      method-name))
+      (case method-name
+        "length" :int
+        :bool)
+
       :else
       (fail-user! "method call on non-record/non-atom target" call-node))))
 
@@ -2327,6 +2346,51 @@
                             (str "[NSString stringWithFormat:@\"%lld\", "
                                  "(long long)(" n ")]"))})
 
+          ;; 2026-09-03 — `Bool.to_string()` — literal "true"/"false".
+          (and (= :bool target-ty)
+               (= "to_string" method-name))
+          (do (when-not (zero? (count arg-exprs))
+                (fail-user! (str "Bool.to_string() takes no args, got "
+                                 (count arg-exprs))
+                            call-node))
+              {:node      :ffi-call
+               :name      "cxc_bool_to_string"
+               :args      [target-lo]
+               :emit-c-fn (fn [[b]]
+                            (str "((" b ") ? @\"true\" : @\"false\")"))})
+
+          ;; 2026-09-03 — String helpers. All zero- or one-arg; nil-
+          ;; tolerant via ObjC nil-messaging on the receiver (nil recv
+          ;; yields 0/NO/nil per the method's return type).
+          (and (= :string target-ty)
+               (contains? #{"length" "contains" "starts_with" "ends_with"}
+                          method-name))
+          (let [want-args (case method-name "length" 0 1)]
+            (when-not (= want-args (count arg-exprs))
+              (fail-user! (str "String." method-name " takes "
+                               want-args " arg(s), got " (count arg-exprs))
+                          call-node))
+            (case method-name
+              "length"
+              {:node :ffi-call :name "cxc_string_length"
+               :args [target-lo]
+               :emit-c-fn (fn [[s]] (str "((int64_t)[(" s ") length])"))}
+              "contains"
+              {:node :ffi-call :name "cxc_string_contains"
+               :args [target-lo (first arg-exprs)]
+               :emit-c-fn (fn [[s sub]]
+                            (str "([(" s ") containsString:(" sub ")])"))}
+              "starts_with"
+              {:node :ffi-call :name "cxc_string_starts_with"
+               :args [target-lo (first arg-exprs)]
+               :emit-c-fn (fn [[s pre]]
+                            (str "([(" s ") hasPrefix:(" pre ")])"))}
+              "ends_with"
+              {:node :ffi-call :name "cxc_string_ends_with"
+               :args [target-lo (first arg-exprs)]
+               :emit-c-fn (fn [[s suf]]
+                            (str "([(" s ") hasSuffix:(" suf ")])"))}))
+
           ;; F37 L6a — `Bytes.slice(start: Int, length: Int) -> Bytes`.
           ;; Emits `[(NSMutableData *)[bytes subdataWithRange:NSMakeRange(start, length)] mutableCopy]`
           ;; — Foundation's -subdataWithRange returns an immutable
@@ -2716,7 +2780,18 @@
                         ;; byte content). Raw C `==` on two NSData
                         ;; pointers is pointer-eq, which is almost
                         ;; never what the user wrote.
-                        bytes-eq? (and cmp? (= :bytes lt) (= :bytes rt))]
+                        bytes-eq? (and cmp? (= :bytes lt) (= :bytes rt))
+                        ;; 2026-09-03 — `String == String` reroutes to
+                        ;; `-isEqualToString:` for content-equality.
+                        ;; Raw C `==` on two NSString pointers is
+                        ;; pointer-eq, which happens to hold for
+                        ;; identical string literals (compiler pools
+                        ;; them) but silently fails for equal-content
+                        ;; strings from different sources (e.g. a
+                        ;; literal vs. a getenv result). Nil-tolerant
+                        ;; via a leading `(a == b) ||` short-circuit
+                        ;; so `nil == nil` still equals true.
+                        string-eq? (and cmp? (= :string lt) (= :string rt))]
                     (cond
                       rec-name
                       (let [call {:node :call
@@ -2734,6 +2809,18 @@
                         (if (= "==" (:op node))
                           msg
                           {:node :unary :op "!" :expr msg}))
+                      string-eq?
+                      (let [l  (lower-expr (:left node) ctx)
+                            r  (lower-expr (:right node) ctx)
+                            eq {:node :binop :op "||"
+                                :left  {:node :binop :op "==" :left l :right r}
+                                :right {:node :objc-msg
+                                        :recv l
+                                        :selector "isEqualToString:"
+                                        :args [r]}}]
+                        (if (= "==" (:op node))
+                          eq
+                          {:node :unary :op "!" :expr eq}))
                       :else
                       {:node  :binop
                        :op    (case (:op node)
