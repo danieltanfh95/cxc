@@ -117,6 +117,30 @@
       (is (zero? exit))
       (is (= "hello via FFI\n42\n" stdout)))))
 
+(deftest ffi-multi-arg-mixed-marshaling
+  (testing "FL-3 + FL-6 (2026-09-02) — multi-arg foreign call with mixed types. `write(1, \"hello\\n\", 6)` — fd (Int32) passes through, buf (String) marshals via [UTF8String], nbyte (SizeT) passes through. Verifies FL-6 per-arg marshaling correctly indexes into the signature's `:type-tuple` args and only wraps positions where the signature-C-type is CString."
+    (let [src (str "def plugin:\n"
+                   "    name:    String!       = \"p\"\n"
+                   "    version: SemVer!       = SemVer(0, 1, 0)\n"
+                   "    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0), max: SemVer(2, 0, 0))\n"
+                   "\n"
+                   "    foreign \"libc\":\n"
+                   "        symbol \"write\" -> (Int32, String, SizeT) -> SsizeT\n"
+                   "\n"
+                   "def main:\n"
+                   "    use plugin: Plugin\n"
+                   "    -> ready\n"
+                   "        then: print(plugin.get(\"write\")(1, \"hello\\n\", 6))\n")
+          out-dir (tmp-dir)
+          {:keys [status stderr bin-path]}
+          (build/compile-source-to-file src "ffi-write" (.getPath out-dir))]
+      (is (zero? status) (str "clang failed:\n" stderr))
+      (when (zero? status)
+        (let [{:keys [exit stdout]} (build/run-binary bin-path)]
+          (is (zero? exit))
+          (is (= "hello\n6\n" stdout)
+              "write(2) drops 'hello\\n' onto stdout and returns 6"))))))
+
 (deftest ffi-bare-foreign-ref-not-called-rejected
   (testing "FL-3 diagnostic — storing plugin.get(SYM) as a function pointer (not calling it inline) rejected with a fail-nyi pointing at the MVP-supported call form."
     (let [src (str "def plugin:\n"
