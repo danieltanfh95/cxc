@@ -1228,16 +1228,20 @@
       :string
 
       ;; 2026-09-03 — String helpers backed by Foundation NSString.
-      ;;   .length()         -> Int    (character count, not byte
-      ;;                                count — NSString.length)
-      ;;   .contains(sub)    -> Bool   (containsString: presence check)
-      ;;   .starts_with(pre) -> Bool   (hasPrefix:)
-      ;;   .ends_with(suf)   -> Bool   (hasSuffix:)
+      ;;   .length()             -> Int    (character count)
+      ;;   .contains(sub)        -> Bool   (containsString:)
+      ;;   .starts_with(pre)     -> Bool   (hasPrefix:)
+      ;;   .ends_with(suf)       -> Bool   (hasSuffix:)
+      ;;   .substring(start, len)-> String (substringWithRange:; nil
+      ;;                                    on out-of-range so callers
+      ;;                                    don't crash on bad slices)
       (and (= :string target-ty)
-           (contains? #{"length" "contains" "starts_with" "ends_with"}
+           (contains? #{"length" "contains" "starts_with" "ends_with"
+                        "substring"}
                       method-name))
       (case method-name
-        "length" :int
+        "length"    :int
+        "substring" :string
         :bool)
 
       :else
@@ -2363,9 +2367,13 @@
           ;; tolerant via ObjC nil-messaging on the receiver (nil recv
           ;; yields 0/NO/nil per the method's return type).
           (and (= :string target-ty)
-               (contains? #{"length" "contains" "starts_with" "ends_with"}
+               (contains? #{"length" "contains" "starts_with" "ends_with"
+                            "substring"}
                           method-name))
-          (let [want-args (case method-name "length" 0 1)]
+          (let [want-args (case method-name
+                            "length"    0
+                            "substring" 2
+                            1)]
             (when-not (= want-args (count arg-exprs))
               (fail-user! (str "String." method-name " takes "
                                want-args " arg(s), got " (count arg-exprs))
@@ -2389,7 +2397,21 @@
               {:node :ffi-call :name "cxc_string_ends_with"
                :args [target-lo (first arg-exprs)]
                :emit-c-fn (fn [[s suf]]
-                            (str "([(" s ") hasSuffix:(" suf ")])"))}))
+                            (str "([(" s ") hasSuffix:(" suf ")])"))}
+              "substring"
+              {:node :ffi-call :name "cxc_string_substring"
+               :args (into [target-lo] arg-exprs)
+               :emit-c-fn (fn [[s start len]]
+                            ;; Out-of-range guard: return nil rather
+                            ;; than crash on Foundation's NSRangeException.
+                            (str "({ NSString *__s = (" s "); "
+                                 "NSUInteger __st = (NSUInteger)(" start "); "
+                                 "NSUInteger __ln = (NSUInteger)(" len "); "
+                                 "NSString *__r = nil; "
+                                 "if (__s && __st + __ln <= __s.length) { "
+                                 "__r = [__s substringWithRange:"
+                                 "NSMakeRange(__st, __ln)]; } "
+                                 "__r; })"))}))
 
           ;; F37 L6a — `Bytes.slice(start: Int, length: Int) -> Bytes`.
           ;; Emits `[(NSMutableData *)[bytes subdataWithRange:NSMakeRange(start, length)] mutableCopy]`
