@@ -1,0 +1,10 @@
+def FileSystem:
+    read_text(path: String) :- native_fs_read_text(path)
+
+    write_text(path: String, content: String) :- native_fs_write_text(path, content)
+
+    exists(path: String) :- native_fs_exists(path)
+
+    -> running
+
+    -> end

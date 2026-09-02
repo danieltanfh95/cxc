@@ -118,7 +118,18 @@
    ;; no-newline behavior is retired. Callers that embedded a
    ;; trailing `\n` in the argument produce a double newline until
    ;; migrated.
-   {:name :console :kind :target :names ["Console"]}])
+   {:name :console :kind :target :names ["Console"]}
+   ;; 2d (2026-09-02) — `FileSystem` capability. Foundation-backed
+   ;; text file I/O (`read_text` / `write_text` / `exists`). Native
+   ;; intrinsics (`native_fs_read_text` etc.) sit in ffi-builtins;
+   ;; `FileSystem` is a plain capability atom (like Random/Clock)
+   ;; and is NOT plugin-shaped at MVP — Foundation class-selector
+   ;; access through `plugin.class_send` would demand NSError**
+   ;; out-param plumbing which the FFI layer doesn't cover yet.
+   ;; When binary I/O or richer error reporting are needed, migrate
+   ;; via the same path Random/Clock will take (plugin-shaped +
+   ;; class_selector entries).
+   {:name :fs      :kind :target :names ["FileSystem"]}])
 
 (defn assemble-source
   "Load and concatenate prelude module sources for a given target.
@@ -158,7 +169,8 @@
    (F56 L2+L3, 2026-08-27 — postwalk retired). Tree-shaking in
    cxc.lower compares against these; entries match what the parsed
    AST carries verbatim from prelude source."
-  #{"Clock" "Random" "TestKeyboardInput" "Console" "SystemPanic" "Plugin" "OsPrimitive"})
+  #{"Clock" "Random" "TestKeyboardInput" "Console" "SystemPanic" "Plugin" "OsPrimitive"
+    "FileSystem"})
 
 ;; F5 retirement (2026-08-15): unit-suffix desugaring (`100ms`,
 ;; `2s`, `1.5min` → `Duration(millis: N)`) is retired per spec

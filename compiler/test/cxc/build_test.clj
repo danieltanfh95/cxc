@@ -1800,6 +1800,18 @@
       (is (zero? exit))
       (is (= "boom\n" stdout)))))
 
+(deftest end-to-end-fs-write-then-read-2d
+  (testing "2d (2026-09-02) — `FileSystem` prelude capability, Foundation-backed text I/O. `fs.write_text(path, content)` calls `-[NSString writeToFile:atomically:encoding:error:]` and returns 0/-1; `fs.read_text(path)` calls `+[NSString stringWithContentsOfFile:encoding:error:]` and returns String (nil on failure). Test writes a fixed string to /tmp, reads it back, prints via Console. Verifies the three native intrinsics (`native_fs_write_text`, `native_fs_read_text`, `native_fs_exists`) wire correctly and the FileSystem atom auto-loads from the prelude registry. Cleans /tmp/cxc-fs-test.txt before the run so the write path is exercised even on a re-run."
+    (let [test-path "/tmp/cxc-fs-test.txt"]
+      (try
+        (.delete (java.io.File. test-path))
+        (let [{:keys [exit stdout]} (compile-and-run "fs-write-then-read")]
+          (is (zero? exit))
+          (is (= "hello from cxc\n" stdout))
+          (is (= "hello from cxc" (slurp test-path))
+              "the file on disk should contain what write_text wrote"))
+        (finally (.delete (java.io.File. test-path)))))))
+
 (deftest f52-l3-source-override-defaults-to-none-when-opts-omit
   (testing "F52 L3 — opts without :source-overrides is a no-op (default `{}`); on-disk sources are used as before. Regression guard for the 3-arity + 4-arity dispatch: existing callers pass no opts (line 613 pattern) or opts without the key (line 615 pattern)."
     (let [src-dir (tmp-dir)

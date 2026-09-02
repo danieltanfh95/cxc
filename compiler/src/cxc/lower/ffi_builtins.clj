@@ -46,6 +46,50 @@
     :emit-c    (fn [args]
                  (str "((int)arc4random_uniform((uint32_t)("
                       (first args) ")))"))}
+   "native_fs_read_text"
+   ;; 2d (2026-09-02) — read a UTF-8 file into a String. Returns
+   ;; `nil` on failure (missing file, permission denied, non-UTF-8
+   ;; bytes). Foundation call: `+stringWithContentsOfFile:encoding:
+   ;; error:` with nil error out-param (we don't surface NSError
+   ;; details in the MVP). Callers check with `exists` first or
+   ;; branch on nil to decide whether to raise IOError. When the
+   ;; input NSString is nil (shouldn't happen from cxc code but
+   ;; harmless to guard), returns nil.
+   {:return-kw :string
+    :arity     1
+    :emit-c    (fn [args]
+                 (str "((" (first args) ") ? "
+                      "[NSString stringWithContentsOfFile:" (first args)
+                      " encoding:NSUTF8StringEncoding error:nil] : nil)"))}
+   "native_fs_write_text"
+   ;; 2d (2026-09-02) — write a String to a UTF-8 file, atomically.
+   ;; Returns Int status: 0 on success, -1 on failure (path unwritable,
+   ;; disk full, permission denied). Foundation call:
+   ;; `-writeToFile:atomically:encoding:error:` with nil error out-
+   ;; param. Callers can raise IOError on -1.
+   {:return-kw :int
+    :arity     2
+    :emit-c    (fn [args]
+                 (let [path    (first args)
+                       content (second args)]
+                   (str "((" content " && " path " && "
+                        "[" content " writeToFile:" path
+                        " atomically:YES encoding:NSUTF8StringEncoding error:nil]) "
+                        "? 0 : -1)")))}
+   "native_fs_exists"
+   ;; 2d (2026-09-02) — check whether a path resolves to any
+   ;; filesystem entry (file, directory, symlink). Returns Int:
+   ;; 1 if present, 0 if absent. Foundation call:
+   ;; `-[NSFileManager fileExistsAtPath:]` on the default manager.
+   ;; Note: this is a snapshot; TOCTOU-safe callers should perform
+   ;; the actual read/write and handle failure directly rather than
+   ;; check-then-act.
+   {:return-kw :int
+    :arity     1
+    :emit-c    (fn [args]
+                 (str "((" (first args) " && "
+                      "[[NSFileManager defaultManager] fileExistsAtPath:"
+                      (first args) "]) ? 1 : 0)"))}
    "native_clock_every"
    ;; Layer 5c Step 8/10 — real method-returned Stream. Called from
    ;; Clock's `every(rate_ms: Int) -> Stream` method body; creates a
