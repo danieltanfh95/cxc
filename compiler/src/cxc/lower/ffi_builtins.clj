@@ -72,6 +72,30 @@
                       "if (__n > 0 && __buf[__n-1] == '\\n') __buf[__n-1] = '\\0'; "
                       "__r = [NSString stringWithUTF8String:__buf]; } "
                       "__r; })"))}
+   "native_random_hex"
+   ;; 2026-09-03 — return a hex String of length `nybbles`. Uses
+   ;; `arc4random_buf` to fill a stack byte buffer (rounded up to
+   ;; whole bytes), then hex-encodes into an NSMutableString. Max
+   ;; nybbles per call is 4096 (2048 bytes) to keep the stack usage
+   ;; bounded; values above that clamp. Non-positive → empty String.
+   ;; CSPRNG-strong (arc4random_buf) per Corvid's Random guarantee.
+   {:return-kw :string
+    :arity     1
+    :emit-c    (fn [args]
+                 (str "({ int64_t __nyb = (int64_t)(" (first args) "); "
+                      "NSString *__r = @\"\"; "
+                      "if (__nyb > 0) { "
+                      "if (__nyb > 4096) __nyb = 4096; "
+                      "int64_t __bytes = (__nyb + 1) / 2; "
+                      "unsigned char __buf[2048]; "
+                      "arc4random_buf(__buf, (size_t)__bytes); "
+                      "NSMutableString *__out = "
+                      "[NSMutableString stringWithCapacity:__nyb]; "
+                      "for (int64_t __i = 0; __i < __bytes; __i++) { "
+                      "[__out appendFormat:@\"%02x\", __buf[__i]]; } "
+                      "__r = (__nyb % 2 == 1) ? "
+                      "[__out substringToIndex:__nyb] : (NSString *)__out; } "
+                      "__r; })"))}
    "native_random_below"
    {:return-kw :int
     :arity     1

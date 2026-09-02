@@ -1867,6 +1867,16 @@
           (is (not (str/includes? out "to stderr")))
           (is (not (str/includes? err "to stdout"))))))))
 
+(deftest end-to-end-random-hex
+  (testing "2026-09-03 — `random.hex(nybbles)` returns a hex String of exactly `nybbles` characters (odd counts truncated from the last byte). Backed by libc `arc4random_buf` (CSPRNG per Corvid's Random guarantee — see corvid-random-cryptographic memory). Bounds: non-positive → empty; > 4096 clamped to 4096 (to keep the stack byte buffer bounded). Test asserts length invariants across zero / one / even / odd / negative — the sampled value is non-deterministic so we don't assert content."
+    (let [{:keys [exit stdout]} (compile-and-run "random-hex")]
+      (is (zero? exit))
+      (is (str/includes? stdout "len0: 0"))
+      (is (str/includes? stdout "len1: 1"))
+      (is (str/includes? stdout "len8: 8"))
+      (is (str/includes? stdout "len32: 32"))
+      (is (str/includes? stdout "len_neg: 0")))))
+
 (deftest end-to-end-env-remove-fs-append
   (testing "2026-09-03 — `env.remove(name)` (libc unsetenv wrapper; verified by round-trip set→get→remove→get returning fallback) + `fs.append_text(path, content)` (fopen `a` mode; verified by appending two lines then reading back). Together these round out Env (get_or / set / remove) and FileSystem (read_text / write_text / append_text / exists / mkdirs / remove). Cleans its own scratch file before + after so residue doesn't skew assertions."
     (shell/sh "rm" "-f" "/tmp/cxc-append-example.log")
