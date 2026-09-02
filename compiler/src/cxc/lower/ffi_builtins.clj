@@ -20,10 +20,14 @@
   "Map from builtin name to metadata. Public because M1 splits the
    consumers (infer/lower) across sibling namespaces."
   {"native_millis_now"
+   ;; Wall-clock milliseconds since Unix epoch, as Int (int64_t).
+   ;; The prior cast to `int` (32-bit) truncated silently for any
+   ;; timestamp beyond ~24 days after epoch, so real clock reads
+   ;; returned garbage. int64_t holds the whole value.
    {:return-kw :int
     :arity     0
     :emit-c    (fn [_args]
-                 "((int)([[NSDate date] timeIntervalSince1970] * 1000))")}
+                 "((int64_t)([[NSDate date] timeIntervalSince1970] * 1000.0))")}
    "native_random_u32"
    {:return-kw :int
     :arity     0

@@ -163,7 +163,16 @@
    ;; Headers pass as a JSON String (parsed via NSJSONSerialization);
    ;; empty `"{}"` sends no custom headers. Sufficient for Claude
    ;; Messages API + generic REST calls at MVP.
-   {:name :http :kind :target :names ["Http"]}])
+   {:name :http :kind :target :names ["Http"]}
+   ;; 2026-09-03 — `Time` wall-clock capability. `now() -> Instant`
+   ;; returns the current wall-clock time as an Instant (millis since
+   ;; Unix epoch). Backed by Foundation `[[NSDate date]
+   ;; timeIntervalSince1970]` via `native_millis_now`. Distinct from
+   ;; Clock (which is a periodic-tick source for streaming); Time is
+   ;; a one-shot read. Named `wall_time` at the module registry so
+   ;; the file doesn't collide with the shared `:time` module that
+   ;; declares the Duration/Instant records this depends on.
+   {:name :wall_time :kind :target :names ["Time"]}])
 
 (defn assemble-source
   "Load and concatenate prelude module sources for a given target.
@@ -204,7 +213,7 @@
    cxc.lower compares against these; entries match what the parsed
    AST carries verbatim from prelude source."
   #{"Clock" "Random" "TestKeyboardInput" "Console" "SystemPanic" "Plugin" "OsPrimitive"
-    "FileSystem" "Subprocess" "Env" "Args" "Json" "Http"})
+    "FileSystem" "Subprocess" "Env" "Args" "Json" "Http" "Time"})
 
 ;; F5 retirement (2026-08-15): unit-suffix desugaring (`100ms`,
 ;; `2s`, `1.5min` → `Duration(millis: N)`) is retired per spec

@@ -1849,6 +1849,13 @@
       (is (clojure.string/includes? stdout "to_int_or ws17: 17"))
       (is (clojure.string/includes? stdout "to_int_or 42abc: -1")))))
 
+(deftest end-to-end-time-wall-clock
+  (testing "2026-09-03 — `Time` wall-clock capability. `time.now()` returns an `Instant` whose `.millis` field is Unix epoch milliseconds. Backed by `[[NSDate date] timeIntervalSince1970] * 1000` (int64_t; the prior `int` cast in `native_millis_now` silently truncated for any modern timestamp). Verified by asserting the returned millis exceeds 1.7 trillion (Nov 2023 boundary) — proves both non-zero and beyond-int32 range. Kept distinct from `Clock` (periodic-tick stream source); `Time` is a one-shot wall-clock read."
+    (let [{:keys [exit stdout]} (compile-and-run "time-wall-clock")]
+      (is (zero? exit))
+      (is (clojure.string/includes? stdout "wall_positive: true"))
+      (is (clojure.string/includes? stdout "wall_recent: true")))))
+
 (deftest hello-agent-mini-compiles-6
   (testing "6 (2026-09-03) — MVP hello-agent shape. Composes Args + Env + Http + Json + Console + String concat into a direct Claude Messages API POST. Assembles headers as a JSON String (x-api-key from env, anthropic-version, content-type) and body as a JSON String (model from env, single user message from argv[1] or default) using Json.encode_str for every String-typed value so escaping is correct. Sends via http.post, reads top-level `stop_reason` + `type` fields from the response with Json.field_string, prints everything via Console. This is the maximum agent-shape currently expressible without closures, `List of T`, variant destructuring, or or-recovery on non-emit expressions. Manual network verification only (needs ANTHROPIC_API_KEY); CI-side asserts the compile path clears cleanly."
     (let [out-dir (tmp-dir)

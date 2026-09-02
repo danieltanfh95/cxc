@@ -1,0 +1,6 @@
+def Time:
+    now() :- Instant(millis: native_millis_now())
+
+    -> running
+
+    -> end
