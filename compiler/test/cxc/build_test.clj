@@ -1812,6 +1812,15 @@
               "the file on disk should contain what write_text wrote"))
         (finally (.delete (java.io.File. test-path)))))))
 
+(deftest end-to-end-subprocess-echo-2e
+  (testing "2e (2026-09-02) — `Subprocess` prelude capability. `shell.run(cmd)` runs the command via libc `popen(cmd + \" 2>&1\", \"r\")` and returns combined stdout+stderr as a String (nil on popen failure). Test runs `echo hi from subprocess` and pipes the output through Console. Verifies the `native_subprocess_run` intrinsic emits a valid GNU stmt-expr, popen/pclose lifecycle is clean, and the Subprocess atom auto-loads from the prelude registry. MVP shape does NOT expose exit code — that migration waits on a composite-return FFI marshal."
+    (let [{:keys [exit stdout]} (compile-and-run "subprocess-echo")]
+      (is (zero? exit))
+      ;; Double newline: echo emits `hi from subprocess\n` into popen's pipe,
+      ;; then Console.write (puts) appends another `\n`. Not a bug — just
+      ;; the interaction between echo's default trailing newline and puts.
+      (is (= "hi from subprocess\n\n" stdout)))))
+
 (deftest f52-l3-source-override-defaults-to-none-when-opts-omit
   (testing "F52 L3 — opts without :source-overrides is a no-op (default `{}`); on-disk sources are used as before. Regression guard for the 3-arity + 4-arity dispatch: existing callers pass no opts (line 613 pattern) or opts without the key (line 615 pattern)."
     (let [src-dir (tmp-dir)

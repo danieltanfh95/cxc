@@ -1,0 +1,6 @@
+def Subprocess:
+    run(cmd: String) :- native_subprocess_run(cmd)
+
+    -> running
+
+    -> end

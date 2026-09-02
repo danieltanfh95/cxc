@@ -129,7 +129,14 @@
    ;; When binary I/O or richer error reporting are needed, migrate
    ;; via the same path Random/Clock will take (plugin-shaped +
    ;; class_selector entries).
-   {:name :fs      :kind :target :names ["FileSystem"]}])
+   {:name :fs      :kind :target :names ["FileSystem"]}
+   ;; 2e (2026-09-02) — `Subprocess` capability. `run(cmd)` returns
+   ;; combined stdout+stderr as String (or nil on popen/fork failure).
+   ;; MVP shape: single method, no exit-code surface, `2>&1` shell
+   ;; redirect for stream unification. Migrate to a proper
+   ;; `ProcResult{exit_code, stdout, stderr}` shape via NSTask +
+   ;; NSPipe once the FFI carries composite return types.
+   {:name :subprocess :kind :target :names ["Subprocess"]}])
 
 (defn assemble-source
   "Load and concatenate prelude module sources for a given target.
@@ -170,7 +177,7 @@
    cxc.lower compares against these; entries match what the parsed
    AST carries verbatim from prelude source."
   #{"Clock" "Random" "TestKeyboardInput" "Console" "SystemPanic" "Plugin" "OsPrimitive"
-    "FileSystem"})
+    "FileSystem" "Subprocess"})
 
 ;; F5 retirement (2026-08-15): unit-suffix desugaring (`100ms`,
 ;; `2s`, `1.5min` → `Duration(millis: N)`) is retired per spec

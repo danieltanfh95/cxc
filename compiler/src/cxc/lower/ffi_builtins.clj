@@ -76,6 +76,36 @@
                         "[" content " writeToFile:" path
                         " atomically:YES encoding:NSUTF8StringEncoding error:nil]) "
                         "? 0 : -1)")))}
+   "native_subprocess_run"
+   ;; 2e (2026-09-02) — run a shell command and capture combined
+   ;; stdout+stderr as a String. Uses libc `popen(cmd, "r")` with
+   ;; the `2>&1` redirect appended so a single pipe carries both
+   ;; streams. Returns nil on popen failure (fork/exec problem);
+   ;; returns the collected output string otherwise. Exit code is
+   ;; NOT surfaced at MVP — callers get combined output only. When
+   ;; exit-code discrimination is needed, migrate to a
+   ;; `ProcResult`-returning native (needs a wider FFI marshal for
+   ;; composite return types, or a prefix-encoded String consumers
+   ;; parse; both deferred). The `2>&1` shell redirect is a MVP
+   ;; simplification — real subprocess separates stderr via NSTask
+   ;; + NSPipe; migrate when that FFI is available.
+   {:return-kw :string
+    :arity     1
+    :emit-c    (fn [args]
+                 (str "({ NSString *__c = " (first args) "; "
+                      "NSString *__r = nil; "
+                      "if (__c) { "
+                      "NSString *__cmd2 = [__c stringByAppendingString:@\" 2>&1\"]; "
+                      "FILE *__p = popen([__cmd2 UTF8String], \"r\"); "
+                      "if (__p) { "
+                      "NSMutableString *__out = [NSMutableString string]; "
+                      "char __buf[4096]; "
+                      "while (fgets(__buf, sizeof(__buf), __p)) { "
+                      "[__out appendString:[NSString stringWithUTF8String:__buf]]; "
+                      "} "
+                      "pclose(__p); "
+                      "__r = (NSString *)__out; } } "
+                      "__r; })"))}
    "native_fs_exists"
    ;; 2d (2026-09-02) — check whether a path resolves to any
    ;; filesystem entry (file, directory, symlink). Returns Int:

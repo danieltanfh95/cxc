@@ -1,0 +1,10 @@
+def main:
+    use shell: Subprocess
+    use console: Console
+
+    -> running
+        then:
+            let out: String = shell.run("echo hi from subprocess")
+            console.write(out)
+
+    -> end
