@@ -991,6 +991,12 @@
       (is (zero? exit))
       (is (= "42\n" stdout)))))
 
+(deftest end-to-end-hello-slice-b8-minimum
+  (testing "hello-slice/ — B8 minimum viable (2026-09-02). Two-file program proving cross-module capability propagation for plugin-authored capability atoms end-to-end. `hello_slice/writer.cxc` declares `def plugin:` with a libc `puts` foreign symbol PLUS a peer `def Writer:` capability atom whose body carries `use plugin: Plugin` and a `write(msg) :- plugin.get(\"puts\")(msg)` observable. `main.cxc` at the src-dir root does `from hello_slice import Writer` + `use writer: Writer` and calls `writer.write(\"hello from B8 slice\")`. Verifies the F76-cousin auto-provisioning: main's F50 bootstrap constructs Writer via `Writer()`; Writer's ctor-params include a Plugin cap that main did NOT supply; `lower-atom-ctor` recognizes Plugin as a runtime-auto-provisioned capability and fills the slot inline via a recursive Plugin() construction. Before this landing the same fixture failed with `no value provided for param plugin`. Prints one line to stdout."
+    (let [{:keys [exit stdout]} (compile-dir-and-run "hello-slice")]
+      (is (zero? exit))
+      (is (= "hello from B8 slice\n" stdout)))))
+
 (deftest end-to-end-list-atom-fan-in
   (testing "list-atom-fan-in.cxc — F62-migrated. `List of AtomType` fan-in with element identity. Container holds a `List of Emitter` populated by a literal `[Emitter(seed: 10), Emitter(seed: 20)]`. Each Emitter emits `beep(v: val)` on its `-> running do:`. Main subscribes via `<: xs.beep(e: Emitter, v: Int)` and accumulates `v` into total; a Clock.every(50) receive-side count bound (single tick) fires `-> end` after both beeps arrive. Verifies three landing pieces: (1) atom-typed elements accepted in list literals (previously fail-nyi as `not boxable`); (2) container auto-subscribes to each element's fan-in stream at `-initWithElements:` for literal-loaded elements (runtime `cxc_add:` path already did this; init-load path was silently unhooked); (3) untargeted `:>` in transition then: blocks defers via `cxc_send_async(self, ...)` so subscribers registered in later init phases (container init, main runtimeBinding) are hooked up when the fanout runs on dispatch_main. Total = 10 + 20 = 30."
     (let [{:keys [exit stdout]} (compile-and-run "list-atom-fan-in")]

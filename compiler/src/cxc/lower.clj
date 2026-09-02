@@ -1878,11 +1878,32 @@
 
         :else nil))))
 
+(defn- runtime-auto-provisioned-cap?
+  "F76-cousin (2026-09-02) — true for capability types that get filled
+   by the runtime linker rather than explicitly constructed at the
+   call site. Currently: phantom caps (SystemPanic, ...) plus `Plugin`
+   (R11 sole FFI capability; auto-provisioned from the enclosing
+   module's plugin marker at construction time).
+
+   Used by `lower-atom-ctor` to auto-fill missing ctor-arg values for
+   these types before `resolve-args-against-params` runs — closes the
+   depth-2+ case that F50's main-bootstrap handles at depth-1."
+  [ty-name]
+  (or (phantom-atom-name? ty-name) (= "Plugin" ty-name)))
+
 (defn- lower-atom-ctor
   "`X(a: 1, b: 2)` → ObjC init call. With no ctor params, emits plain
    `[[X alloc] init]`. With ctor params, emits an :objc-init-with node
    carrying the resolved (name, value) pairs — one selector part per
-   param in declaration order."
+   param in declaration order.
+
+   F76-cousin (2026-09-02): ctor-params typed as auto-provisioned caps
+   (phantom or Plugin) that the caller didn't supply get filled inline
+   via a recursive `lower-atom-ctor T [] ctx`. Same trick F50 does at
+   main-bootstrap, extended one level deeper so cross-module capability
+   atoms (`use console: Console` where Console itself has `use plugin:
+   Plugin` in its body) construct cleanly without demanding a caller-
+   supplied `plugin` arg."
   [callee-node args ctx]
   (let [atom-name   (:name callee-node)
         rec         (env/decl-lookup ctx :atom-env callee-node)
@@ -1908,15 +1929,41 @@
                            "` — atom declares no ctor params")
                       {:atom atom-name :args args}))
         {:node :objc-alloc-init :class (class-name-for-atom atom-name)})
-      (let [resolved (resolve-args-against-params
-                      (str "`" atom-name "` constructor")
-                      ctor-params args)]
+      ;; F76-cousin: pre-fill auto-provisioned cap ctor-params the
+      ;; caller omitted. Values carry `::pre-lowered` so the final
+      ;; wrapper skips redundant `lower-expr`.
+      (let [named-supplied  (into #{} (keep :name args))
+            positional-args (filter #(nil? (:name %)) args)
+            positional-slots (set (map :name (take (count positional-args) ctor-params)))
+            supplied?       (fn [p]
+                              (or (contains? named-supplied (:name p))
+                                  (contains? positional-slots (:name p))))
+            auto-args (keep (fn [p]
+                              (let [ty-nm (base-type-name (:type p))]
+                                (when (and (not (supplied? p))
+                                           (nil? (:default p))
+                                           (runtime-auto-provisioned-cap? ty-nm))
+                                  (let [ref  {:node :ident :name ty-nm
+                                              :resolves-to (or (:resolves-to (:type p))
+                                                               (:resolves-to
+                                                                 (:inner (:type p))))}
+                                        init (lower-atom-ctor ref [] ctx)]
+                                    {:kind :named :name (:name p)
+                                     :value (with-meta init {::pre-lowered true})}))))
+                            ctor-params)
+            args      (into (vec args) auto-args)
+            resolved  (resolve-args-against-params
+                       (str "`" atom-name "` constructor")
+                       ctor-params args)]
         (check-named-tuple-ctor-conformance! atom-name ctor-params
                                              resolved ctx)
         {:node :objc-init-with
          :class (class-name-for-atom atom-name)
          :args  (mapv (fn [{:keys [name value]}]
-                        {:name name :value (lower-expr value ctx)})
+                        {:name name
+                         :value (if (::pre-lowered (meta value))
+                                  (vary-meta value dissoc ::pre-lowered)
+                                  (lower-expr value ctx))})
                       resolved)}))))
 
 ;; M1c — c-method-name / objc-method-selector moved to cxc.lower.selectors.
