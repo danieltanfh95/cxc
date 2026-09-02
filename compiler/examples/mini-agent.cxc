@@ -2,15 +2,18 @@ def main:
     use fs:      FileSystem
     use shell:   Subprocess
     use console: Console
+    use env:     Env
 
     -> running
         then:
-            let cmd:      String = "date"
-            let log_path: String = "/tmp/mini-agent.log"
+            let cmd:      String = env.get_or("MINI_AGENT_CMD", "date")
+            let log_dir:  String = env.get_or("TMPDIR", "/tmp/")
+            let log_path: String = log_dir + "mini-agent.log"
             let output:   String = shell.run(cmd)
-            fs.write_text(log_path, output)
+            let status:   Int    = fs.write_text(log_path, output)
             console.write("cmd: " + cmd)
             console.write("log: " + log_path)
+            console.write("write status: " + status.to_string())
             console.write("output:")
             console.write(output)
 

@@ -106,6 +106,28 @@
                       "pclose(__p); "
                       "__r = (NSString *)__out; } } "
                       "__r; })"))}
+   "native_env_get_or_default"
+   ;; 2g (2026-09-02) — read an environment variable, defaulting on
+   ;; miss. libc `getenv(name)` returns `const char *`; when the var
+   ;; is unset, getenv returns NULL and we fall back to the caller's
+   ;; default. Also nil-guards the name (nil name → default). No
+   ;; distinct "get" (returning nullable String) is exposed at MVP —
+   ;; callers who want nil-on-miss can pass an empty String default
+   ;; and check for empty; nullable-String surface arrives when
+   ;; hello-agent needs it.
+   {:return-kw :string
+    :arity     2
+    :emit-c    (fn [args]
+                 (let [name    (first args)
+                       default (second args)]
+                   (str "({ NSString *__n = " name "; "
+                        "NSString *__d = " default "; "
+                        "NSString *__r = __d; "
+                        "if (__n) { "
+                        "const char *__v = getenv([__n UTF8String]); "
+                        "if (__v) __r = [NSString stringWithUTF8String:__v]; "
+                        "} "
+                        "__r; })")))}
    "native_fs_exists"
    ;; 2d (2026-09-02) — check whether a path resolves to any
    ;; filesystem entry (file, directory, symlink). Returns Int:

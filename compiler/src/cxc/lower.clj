@@ -1212,6 +1212,15 @@
            (= "to_string" method-name))
       :string
 
+      ;; 2i (2026-09-02) — `Int.to_string() -> String`. Renders a
+      ;; 64-bit signed integer as a decimal String via
+      ;; `+[NSString stringWithFormat:@"%lld", (long long)n]`.
+      ;; Zero-arg. Matches FL-17's shape so users can write
+      ;; `count.to_string()` in log messages without needing the
+      ;; awkward `native_int_to_string(count)` intrinsic form.
+      (and (int-family? target-ty) (= "to_string" method-name))
+      :string
+
       :else
       (fail-user! "method call on non-record/non-atom target" call-node))))
 
@@ -2300,6 +2309,23 @@
                :emit-c-fn (fn [[c]]
                             (str "((" c ") ? [NSString stringWithUTF8String:"
                                  c "] : nil)"))})
+
+          ;; 2i (2026-09-02) — `Int.to_string()` — decimal render.
+          ;; `+[NSString stringWithFormat:@"%lld", (long long)n]`.
+          ;; Zero-arg. Callers most often want this for log/error
+          ;; message interpolation via String concat.
+          (and (int-family? target-ty)
+               (= "to_string" method-name))
+          (do (when-not (zero? (count arg-exprs))
+                (fail-user! (str "2i: `Int.to_string()` takes no args, "
+                                 "got " (count arg-exprs))
+                            call-node))
+              {:node      :ffi-call
+               :name      "cxc_int_to_string"
+               :args      [target-lo]
+               :emit-c-fn (fn [[n]]
+                            (str "[NSString stringWithFormat:@\"%lld\", "
+                                 "(long long)(" n ")]"))})
 
           ;; F37 L6a — `Bytes.slice(start: Int, length: Int) -> Bytes`.
           ;; Emits `[(NSMutableData *)[bytes subdataWithRange:NSMakeRange(start, length)] mutableCopy]`

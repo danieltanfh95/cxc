@@ -1833,18 +1833,13 @@
         (is (= "hello world\n" stdout))))))
 
 (deftest end-to-end-mini-agent
-  (testing "2026-09-02 — cross-capability composition proof. `mini-agent.cxc` uses FileSystem + Subprocess + Console + String concat in a single `then:` block: runs a fixed shell command via popen, writes captured output to a file via NSString `writeToFile:`, prints a summary via `console.write(String + String)`. Verifies the four MVP capabilities (FileSystem/Subprocess/Console + string-concat lowering) compose without conflicting on runtime, prelude autoloading, or emit shape. Cleans /tmp/mini-agent.log before the run so the write path is exercised. Log content is a `date` command output — asserts non-empty (the exact string varies)."
-    (let [log-path "/tmp/mini-agent.log"]
-      (try
-        (.delete (java.io.File. log-path))
-        (let [{:keys [exit stdout]} (compile-and-run "mini-agent")]
-          (is (zero? exit))
-          (is (clojure.string/includes? stdout "cmd: date"))
-          (is (clojure.string/includes? stdout "log: /tmp/mini-agent.log"))
-          (is (clojure.string/includes? stdout "output:"))
-          (is (pos? (.length (java.io.File. log-path)))
-              "log file should have been written with popen output"))
-        (finally (.delete (java.io.File. log-path)))))))
+  (testing "2026-09-02 — cross-capability composition proof. `mini-agent.cxc` uses FileSystem + Subprocess + Console + Env + Int.to_string + String concat in a single `then:` block: reads MINI_AGENT_CMD / TMPDIR env vars (with defaults), runs the resolved shell command via popen, writes captured output to a file via NSString `writeToFile:`, prints a summary. Verifies the five MVP capabilities compose without conflicting on runtime, prelude autoloading, or emit shape. Log-path is derived from TMPDIR so exact path varies per run; asserts stdout carries the expected shape and the write status was 0."
+    (let [{:keys [exit stdout]} (compile-and-run "mini-agent")]
+      (is (zero? exit))
+      (is (clojure.string/includes? stdout "cmd: date"))
+      (is (clojure.string/includes? stdout "log: "))
+      (is (clojure.string/includes? stdout "write status: 0"))
+      (is (clojure.string/includes? stdout "output:")))))
 
 (deftest f52-l3-source-override-defaults-to-none-when-opts-omit
   (testing "F52 L3 — opts without :source-overrides is a no-op (default `{}`); on-disk sources are used as before. Regression guard for the 3-arity + 4-arity dispatch: existing callers pass no opts (line 613 pattern) or opts without the key (line 615 pattern)."

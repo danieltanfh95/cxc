@@ -136,7 +136,12 @@
    ;; redirect for stream unification. Migrate to a proper
    ;; `ProcResult{exit_code, stdout, stderr}` shape via NSTask +
    ;; NSPipe once the FFI carries composite return types.
-   {:name :subprocess :kind :target :names ["Subprocess"]}])
+   {:name :subprocess :kind :target :names ["Subprocess"]}
+   ;; 2g (2026-09-02) — `Env` capability. `get_or(name, default)`
+   ;; wraps libc `getenv`; unset vars return the default. Single
+   ;; method at MVP — a distinct `get()` returning nullable String
+   ;; waits on nullable-String surface tightening.
+   {:name :env :kind :target :names ["Env"]}])
 
 (defn assemble-source
   "Load and concatenate prelude module sources for a given target.
@@ -177,7 +182,7 @@
    cxc.lower compares against these; entries match what the parsed
    AST carries verbatim from prelude source."
   #{"Clock" "Random" "TestKeyboardInput" "Console" "SystemPanic" "Plugin" "OsPrimitive"
-    "FileSystem" "Subprocess"})
+    "FileSystem" "Subprocess" "Env"})
 
 ;; F5 retirement (2026-08-15): unit-suffix desugaring (`100ms`,
 ;; `2s`, `1.5min` → `Duration(millis: N)`) is retired per spec
