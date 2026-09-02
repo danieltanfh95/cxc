@@ -1967,6 +1967,12 @@
       (is (str/includes? stdout "disk_size: 16"))
       (is (str/includes? stdout "miss_nil: true")))))
 
+(deftest end-to-end-list-of-bytes
+  (testing "2026-09-03 — `List of Bytes` literal + for_each. Bytes elements (NSMutableData *) drop into the array literal directly (id-compatible, no NSNumber wrapping); the for_each unbox prelude casts back to `NSMutableData *` so `.length` / `.slice(...)` / `.to_string()` resolve at the right static type. Field-declaration only for now (List-container synthesis walks fields + ctor-params, not let-bindings)."
+    (let [{:keys [exit stdout]} (compile-and-run "list-of-bytes")]
+      (is (zero? exit))
+      (is (str/includes? stdout "2\n3\n4")))))
+
 (deftest end-to-end-list-of-string-bool
   (testing "2026-09-03 — `List of String` + `List of Bool` literals + for_each closure. Previously only Int and atom-typed elements were boxable in list literals; String and Bool were rejected as 'not boxable at Layer 5 Step 3'. Extended: String elements pass through directly (NSString is id-compatible), Bool elements box via `@YES`/`@NO`, and both types have unbox preludes in the for_each block body so downstream String / Bool operations see the right static type (avoids the truthy-id bug where every Bool read true)."
     (let [{:keys [exit stdout]} (compile-and-run "list-of-string-bool")]

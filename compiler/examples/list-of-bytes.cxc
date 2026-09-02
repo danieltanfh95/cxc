@@ -1,0 +1,6 @@
+def main:
+    xs: List of Bytes = ["aa".to_bytes(), "bbb".to_bytes(), "cccc".to_bytes()]
+
+    -> running
+        then:
+            xs.for_each(bs => print(bs.length.to_string()))

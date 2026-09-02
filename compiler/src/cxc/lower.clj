@@ -2671,6 +2671,15 @@
     [{:node :raw-c
       :text (str "BOOL " user-name " = [" raw-name " boolValue];")}]
 
+    ;; 2026-09-03 — Bytes: raw NSMutableData * cast so downstream
+    ;; `.length` / `.slice(...)` / `.to_string()` see the correct
+    ;; type. Same shape as the atom-typed branch above but with
+    ;; the primitive class name.
+    (= :bytes element-type-kw)
+    [{:node :raw-c
+      :text (str "NSMutableData *" user-name " = (NSMutableData *)"
+                 raw-name ";")}]
+
     :else
     ;; id-typed pass-through: just alias user-name to raw
     [{:node :raw-c
@@ -5858,6 +5867,13 @@
                          (= :bool ty)
                          {:node :objc-num-lit :kind :bool
                           :value (:value item-node)}
+                         ;; 2026-09-03 — Bytes elements: NSMutableData
+                         ;; is id-compatible so the item's lowered form
+                         ;; drops straight into the array literal.
+                         ;; unbox-prelude-for-element casts back at
+                         ;; the block-body entry (below).
+                         (= :bytes ty)
+                         (lower-expr item-node ctx)
                          :else
                          (fail-nyi! (str "List of `" element-name "` literal — "
                                          "element type " (pr-str ty) " not "
