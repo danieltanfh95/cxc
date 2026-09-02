@@ -305,6 +305,84 @@ def Console:
   (let [nodes (parse/parse "def Foo:\n    x: Int! = 1\n")]
     (is (nil? (pm/validate-plugin-symbol-refs! nodes nil)))))
 
+;; ============================================================================
+;; B6 — cross-plugin scope: `plugin.get(sym)` in module M only reaches M's
+;; own foreign blocks. Invariant is architectural (B5 resolver reads only the
+;; per-module manifest); these tests lock it against future regression.
+;; ============================================================================
+
+(def plugin-a-src
+  "def plugin:
+    name:    String!       = \"a\"
+    version: SemVer!       = SemVer(0, 1, 0)
+    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0),
+                                          max: SemVer(2, 0, 0))
+
+    foreign \"liba\":
+        symbol \"sym_a\" -> Int32
+")
+
+(def plugin-b-src
+  "def plugin:
+    name:    String!       = \"b\"
+    version: SemVer!       = SemVer(0, 1, 0)
+    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0),
+                                          max: SemVer(2, 0, 0))
+
+    foreign \"libb\":
+        symbol \"sym_b\" -> Int32
+")
+
+(deftest cross-plugin-b-cannot-reach-a-symbols
+  (testing "plugin B's atom calling plugin.get(\"sym_a\") fails at B's resolver"
+    (let [b-full (str plugin-b-src "
+def BCap:
+    use plugin: Plugin
+    x: Int! = plugin.get(\"sym_a\")
+")
+          nodes    (parse/parse b-full)
+          manifest (pm/extract nodes)
+          ex       (try (pm/validate-plugin-symbol-refs! nodes manifest)
+                        nil
+                        (catch clojure.lang.ExceptionInfo e e))]
+      (is (some? ex))
+      (is (= :plugin-symbol-unresolved (:kind (ex-data ex))))
+      (is (= "sym_a" (:symbol (ex-data ex)))
+          "sym_a only exists in plugin A's manifest — B cannot reach it"))))
+
+(deftest per-module-manifests-are-disjoint
+  (testing "extracting A's manifest gives only A's symbols; B likewise"
+    (let [ma  (pm/extract (parse/parse plugin-a-src))
+          mb  (pm/extract (parse/parse plugin-b-src))
+          ixa (pm/build-foreign-index (:foreign-blocks ma))
+          ixb (pm/build-foreign-index (:foreign-blocks mb))]
+      (is (contains? ixa "sym_a"))
+      (is (not (contains? ixa "sym_b"))
+          "A's index carries no B symbols")
+      (is (contains? ixb "sym_b"))
+      (is (not (contains? ixb "sym_a"))
+          "B's index carries no A symbols"))))
+
+(deftest cross-plugin-b-can-reuse-a-library-name
+  (testing "two plugins may declare the same library (libc) with disjoint symbols"
+    (let [same-lib "def plugin:
+    name:    String!       = \"b\"
+    version: SemVer!       = SemVer(0, 1, 0)
+    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0),
+                                          max: SemVer(2, 0, 0))
+
+    foreign \"liba\":
+        symbol \"sym_b\" -> Int32
+
+def BCap:
+    use plugin: Plugin
+    x: Int! = plugin.get(\"sym_b\")
+"
+          nodes    (parse/parse same-lib)
+          manifest (pm/extract nodes)]
+      (is (nil? (pm/validate-plugin-symbol-refs! nodes manifest))
+          "sharing a library name (liba) across plugins is fine when symbols disjoint"))))
+
 (deftest resolve-flags-send-and-class-send-as-nyi
   (doseq [method ["send" "class_send"]]
     (testing (str "plugin." method " NYI")
