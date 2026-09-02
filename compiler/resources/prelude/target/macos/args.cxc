@@ -5,6 +5,10 @@ def Args:
 
     all_after(index: Int) :- native_args_all_after(index)
 
+    get_or_int(index: Int, fallback: Int) :- native_args_get_or(index, "").to_int_or(fallback)
+
+    get_or_bool(index: Int, fallback: Bool) :- native_args_get_or(index, "").to_bool_or(fallback)
+
     -> running
 
     -> end

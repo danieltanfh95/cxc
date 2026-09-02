@@ -1162,6 +1162,18 @@
       (is (zero? exit))
       (is (= "8080\n42\n99\ntrue\ntrue\nfalse\n" stdout)))))
 
+(deftest end-to-end-args-typed-get
+  (testing "args-typed-get.cxc — `Args.get_or_int(i, fallback)` / `Args.get_or_bool(i, fallback)` — typed argv lookup composed prelude-side from `native_args_get_or(i, \"\").to_{int,bool}_or(fallback)`. Invokes the compiled binary with argv [\"7\", \"xyz\", \"true\"] so argv[1]=7 (parses → 7), argv[2]=\"xyz\" (unparseable → fallback 100), argv[3]=\"true\" (parses → true), argv[9] (missing → fallback true)."
+    (let [src     (example "args-typed-get")
+          out-dir (tmp-dir)
+          {:keys [status stderr bin-path]}
+          (build/compile-source-to-file src "args-typed-get" (.getPath out-dir))]
+      (is (zero? status) (str "clang failed:\n" stderr))
+      (when (zero? status)
+        (let [{:keys [exit out]} (shell/sh bin-path "7" "xyz" "true")]
+          (is (zero? exit))
+          (is (= "7\n100\ntrue\ntrue\n" out)))))))
+
 (deftest end-to-end-console-hello
   (testing "console-hello.cxc — Layer 6 Step 5. Console prelude atom with `write(msg: String) -> Int` method wrapping the `native_console_write` FFI hatch (printf %s). Main is capability-provisioned (`def main(console: Console)`) and calls `console.write(\"hi\\n\")` in its `-> running do:`. Prints `hi` + newline."
     (let [{:keys [exit stdout]} (compile-and-run "console-hello")]
