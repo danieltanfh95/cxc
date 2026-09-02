@@ -15,11 +15,19 @@ def main:
             let resp: String = http.post("https://api.anthropic.com/v1/messages", headers, body)
             let stop: String = json.field_string(resp, "stop_reason")
             let type_field: String = json.field_string(resp, "type")
+            let in_tok:  Int = json.field_int_or(resp, "input_tokens", 0)
+            let out_tok: Int = json.field_int_or(resp, "output_tokens", 0)
+            let text_key: String = "\"text\":\""
+            let text_at: Int = resp.index_of(text_key)
+            let after_start: Int = text_at + text_key.length()
+            let close_from: Int = after_start + resp.substring(after_start, resp.length() - after_start).index_of("\"")
+            let claude_text: String = ||: text_at >= 0 : resp.substring(after_start, close_from - after_start) ||: else : "(no text field)"
             console.write("task: " + task)
             console.write("model: " + model)
             console.write("stop_reason: " + stop)
             console.write("type: " + type_field)
-            console.write("---raw response---")
-            console.write(resp)
+            console.write("input_tokens: " + in_tok.to_string())
+            console.write("output_tokens: " + out_tok.to_string())
+            console.write("claude: " + claude_text)
 
     -> end
