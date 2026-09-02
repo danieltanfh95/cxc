@@ -103,7 +103,17 @@
    ;; needs it.
    "Byte"    "uint8_t"
    "SizeT"   "size_t"
-   "SsizeT"  "ssize_t"})
+   "SsizeT"  "ssize_t"
+   ;; FL-8 (2026-09-02) — explicit C-string type for foreign signature
+   ;; positions where the boundary type is `const char *` and the user
+   ;; wants it distinct from cxc `String` (NSString *). std.env's
+   ;; `getenv(name: CString) -> CString` uses this. FL-6 auto-marshals
+   ;; String literals into CString slots via `[UTF8String]`; users
+   ;; passing an already-`char *`-typed value pass through unchanged.
+   ;; Reverse marshaling (`const char *` return → NSString) is deferred
+   ;; until a fixture asks — for now CString return values are opaque
+   ;; `const char *` at cxc surface (usable in further FFI calls).
+   "CString" "const char *"})
 
 (declare optional-type-name type-kw->cxc-name-str
          optional-tk? unwrap-tk base-type-name)
@@ -378,6 +388,12 @@
     "Byte"   ^{:cxc-c-type "uint8_t"} [:uint 8]
     "SizeT"  ^{:cxc-c-type "size_t"}  [:uint 64]
     "SsizeT" ^{:cxc-c-type "ssize_t"} [:int 64]
+    ;; FL-8 — CString as its own type-kw so infer-type can distinguish
+    ;; a CString return from a String return; the `:cxc-c-type` metadata
+    ;; surfaces at type-kw->c-type so downstream storage/emit renders
+    ;; `const char *`. Distinct kw prevents accidental NSString-selector
+    ;; dispatch on it.
+    "CString" ^{:cxc-c-type "const char *"} [:cstring]
     (cond
       (contains? record-env cxc-name) {:record cxc-name}
       (contains? atom-env   cxc-name) {:atom   cxc-name}
