@@ -11,3 +11,5 @@ def Console:
     use plugin: Plugin
 
     write(text: String) :- plugin.get("puts")(text)
+
+    write_raw(text: String) :- native_console_write(text)
