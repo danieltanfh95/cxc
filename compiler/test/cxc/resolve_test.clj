@@ -32,7 +32,7 @@
       (is (= :std.geom (get-in table ["Position" :module])))
       (is (= :std.input (get-in table ["Key"     :module])))
       (is (= :std.input (get-in table ["TestKeyboardInput" :module])))
-      (is (= :std.io   (get-in table ["Console"  :module])))
+      (is (= :std.console (get-in table ["Console"  :module])))
       (is (= :std.clock (get-in table ["Clock"   :module])))
       (is (= :std.random (get-in table ["Random" :module]))))))
 

@@ -75,7 +75,8 @@
   {"std.time"        #{"Duration" "Instant" "Clock"}
    "std.geometry"    #{"Position"}
    "std.random"      #{"Random"}
-   "std.io"          #{"TestKeyboardInput" "Console"}
+   "std.console"     #{"Console"}
+   "std.input"       #{"TestKeyboardInput"}
    "std.math"        #{"clamp"}
    "std.stream"      #{"Stream"}
    "std.collections" #{"List" "Map" "Set"}})
@@ -193,6 +194,28 @@
          :stderr     err
          :cache-hit? false}))))
 
+(defn- process-prelude-nodes
+  "2c-i (2026-09-02) — assemble + parse + plugin-pipeline + enrich
+   the prelude for a given target. The plugin pipeline (FL-12 objc-
+   alias rewrite → manifest extract → validate → FL-1 plugin.get
+   rewrite → FL-11 foreign-alias field elision) now runs on the
+   prelude as well as user source, so a prelude module carrying
+   `def plugin:` (e.g. `console.cxc` post-Console-retirement) gets
+   its `plugin.get(LIT)` calls rewritten to `:foreign-ref` before
+   lower sees the AST. Same pipeline order as user source in
+   `compile-source-to-file` and per-file in `compile-directory-to-
+   file`; single site of truth for prelude preprocessing."
+  [target]
+  (let [ps (parse/parse (prelude/assemble-source target))
+        ps (plugin-manifest/rewrite-objc-type-aliases ps)
+        manifest (plugin-manifest/extract ps)]
+    (when manifest
+      (plugin-manifest/validate-plugin-symbol-refs! ps manifest))
+    (-> ps
+        (plugin-manifest/rewrite-plugin-refs manifest)
+        plugin-manifest/rewrite-foreign-alias-fields
+        resolve/enrich-prelude-nodes)))
+
 (defn compile-source-to-file
   "Compile cxc source text through parse → lower → emit → clang.
    Parses the compiler-shipped prelude (see cxc.prelude) separately
@@ -272,9 +295,7 @@
             resolve/resolve-references
             first
             :nodes)
-        prelude-nodes (-> (prelude/assemble-source target)
-                          parse/parse
-                          resolve/enrich-prelude-nodes)
+        prelude-nodes (process-prelude-nodes target)
         full-parsed   (into (vec prelude-nodes) enriched-parsed)
         result        (compile-parsed-to-file
                         {:user-parsed enriched-parsed :full-parsed full-parsed}
@@ -910,10 +931,8 @@
                                                 :name (clojure.core/name module)}
                                                nodes)))
                                enriched-files)
-        prelude-nodes    (-> (prelude/assemble-source
-                              (:target opts prelude/default-target))
-                             parse/parse
-                             resolve/enrich-prelude-nodes)
+        prelude-nodes    (process-prelude-nodes
+                           (:target opts prelude/default-target))
         full-parsed      (into (vec prelude-nodes) user-parsed)
         result           (compile-parsed-to-file
                            {:user-parsed user-parsed :full-parsed full-parsed}

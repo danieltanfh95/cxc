@@ -107,7 +107,18 @@
    {:name :os_primitive :kind :shared :names ["OsPrimitive"]}
    {:name :random  :kind :target :names ["Random"]}
    {:name :clock   :kind :target :names ["Clock"]}
-   {:name :io      :kind :target :names ["Console"]}])
+   ;; 2c-i (2026-09-02) — `:io` module retired. Console is now a
+   ;; plugin-shaped module (`def plugin:` + `def Console:` in
+   ;; `console.cxc`) backed by libc `puts`. Still autoloaded via the
+   ;; prelude for backward compat with existing consumers; the
+   ;; capability surface consumers see is unchanged
+   ;; (`use console: Console` / `console.write(text)`). Semantic
+   ;; change: `write` now line-terminates (puts adds `\n`) — matches
+   ;; the ratified std.console draft; the prior `printf("%s", ...)`
+   ;; no-newline behavior is retired. Callers that embedded a
+   ;; trailing `\n` in the argument produce a double newline until
+   ;; migrated.
+   {:name :console :kind :target :names ["Console"]}])
 
 (defn assemble-source
   "Load and concatenate prelude module sources for a given target.

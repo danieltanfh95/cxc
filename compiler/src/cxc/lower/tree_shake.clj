@@ -31,12 +31,27 @@
     (into #{} found)))
 
 (defn reachable-prelude-atoms
-  "Which prelude atoms are actually referenced by non-prelude
-   top-nodes. Non-prelude atoms are always kept (users authored them
-   directly). Prelude atoms are added only when the user program
-   mentions them by name, so shipping capability stubs like Clock
-   doesn't pull their fanout selectors into unrelated programs.
+  "Which prelude atoms are actually referenced by non-prelude top-nodes
+   — computed as a transitive closure over prelude-atom bodies.
+   Non-prelude atoms are always kept (users authored them directly).
+   Prelude atoms are added only when the user program mentions them
+   directly OR when a kept prelude atom's own body mentions them.
+
+   Transitivity matters post-2c-i (2026-09-02): the prelude Console
+   was retired in favor of a plugin-shaped Console (`use plugin:
+   Plugin`), so a user program mentioning only `Console` transitively
+   requires `Plugin`. Without the closure, Plugin gets tree-shaken
+   away and Console's `use plugin: Plugin` slot fails to type-resolve.
+
    Names here are user-visible (F56 L2+L3 retired the rename postwalk;
    `prelude-atom-names` is `prelude/atom-names` in user-visible form)."
-  [top-nodes prelude-atom-names]
-  (names-mentioned-in top-nodes prelude-atom-names))
+  [top-nodes prelude-atom-names prelude-atom-nodes]
+  (let [by-name (into {} (map (juxt :name identity) prelude-atom-nodes))]
+    (loop [reached (names-mentioned-in top-nodes prelude-atom-names)]
+      (let [expanded (reduce (fn [acc nm]
+                               (into acc (names-mentioned-in
+                                          (get by-name nm)
+                                          prelude-atom-names)))
+                             reached
+                             reached)]
+        (if (= expanded reached) reached (recur expanded))))))

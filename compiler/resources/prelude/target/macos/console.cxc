@@ -1,0 +1,13 @@
+def plugin:
+    name:    String!       = "std.console"
+    version: SemVer!       = SemVer(0, 1, 0)
+    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0),
+                                          max: SemVer(2, 0, 0))
+
+    foreign "libc":
+        symbol "puts" -> (CString) -> Int
+
+def Console:
+    use plugin: Plugin
+
+    write(text: String) :- plugin.get("puts")(text)

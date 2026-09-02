@@ -1,7 +1,7 @@
 def main:
-    console: Console = Console()
+    use console: Console
 
     -> running
-        then: console.write("hi\n")
+        then: console.write("hi")
 
     -> end

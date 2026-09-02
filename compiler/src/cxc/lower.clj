@@ -6756,8 +6756,12 @@
         non-prelude-nodes (remove #(and (= :def-atom (:node %))
                                         (contains? prelude/atom-names (:name %)))
                                   top-nodes)
+        prelude-atom-nodes (filter #(and (= :def-atom (:node %))
+                                         (contains? prelude/atom-names (:name %)))
+                                   top-nodes)
         atom-env   (let [kept-prelude (reachable-prelude-atoms
-                                       non-prelude-nodes prelude/atom-names)]
+                                       non-prelude-nodes prelude/atom-names
+                                       prelude-atom-nodes)]
                      (into {} (filter (fn [[k _]]
                                         (or (not (contains? prelude/atom-names k))
                                             (contains? kept-prelude k)))
