@@ -405,6 +405,18 @@
                        "        kind: class\n\n"
                        "    -> running\n"))))))
 
+(deftest use-binding-rejects-nsobject-collision-names
+  (testing "2026-09-03 — parse-time reject `use <reserved>: T` for names that would generate an ivar (`_<name>`) colliding with NSObject's synthesized backing storage. Without the reject, the emitted `.m` fails clang with a deep-stack error users can't decode. Reserved set: hash, description, debugDescription, class, superclass. Diagnostic includes the offending name and a suggested rename."
+    (doseq [nm ["hash" "description" "debugDescription" "class" "superclass"]]
+      (is (thrown-with-msg?
+           clojure.lang.ExceptionInfo
+           (re-pattern (str "`use " nm ": ...`.*collides.*NSObject"))
+           (p/parse (str "def main:\n"
+                         "    use " nm ": Hash\n"
+                         "    -> running\n"
+                         "    -> end\n")))
+          (str "expected parse rejection for `use " nm ": ...`")))))
+
 (deftest chained-comparison-desugars-to-chained-cmp
   (testing "F27 semantic once-only: `a <= b <= c` becomes a `:chained-cmp` node carrying flat operands + ops vectors. Emit renders it as a GNU statement-expression that binds each interior operand once (via `__typeof__`) so an effectful middle like a call fires exactly once at runtime."
     ;; Middle is an ident — desugars to :chained-cmp with 3 operands.

@@ -1681,6 +1681,20 @@
 ;;   Section body content differs per section — dispatch here.
 ;; ---------------------------------------------------------------------------
 
+(def ^:private nsobject-reserved-use-names
+  "User-facing capability binding names that would collide with
+   NSObject-synthesized instance state at emit time. The compiler
+   generates `_<name>` as the ivar for each `use <name>: T`; ivar
+   names that overlap NSObject's own synthesized backing storage
+   (e.g. `_hash` for the built-in `-hash` selector) produce clang
+   errors deep in the emitted `.m`. Reject at parse-time with an
+   actionable diagnostic so users don't have to decode the clang
+   error. Suggested rename in the error text.
+
+   Grows conservatively — kept to well-known NSObject-family
+   collisions rather than every reserved word."
+  #{"hash" "description" "debugDescription" "class" "superclass"})
+
 (defn- parse-use-line
   "Parse one direct capability declaration at def-body position:
      use cap: SomeCapability
@@ -1696,6 +1710,14 @@
                             "Declare each capability directly at def-body "
                             "position: `use <name>: <Type>`.")))
         [name p] (expect tokens p :ident)
+        _        (when (contains? nsobject-reserved-use-names name)
+                   (fail! tokens (dec p)
+                          (str "`use " name ": ...` — `" name
+                               "` collides with an NSObject-synthesized "
+                               "ivar / method (backing storage `_" name
+                               "` overlaps NSObject's own). Choose a "
+                               "different local name (e.g. `" name
+                               "er`, `" name "_cap`).")))
         [_ p]    (expect tokens p :punct ":")
         [ty p]   (parse-type tokens p)]
     [{:node :use-section :caps [{:name name :type ty}]} p]))
