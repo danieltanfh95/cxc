@@ -1255,7 +1255,8 @@
            (contains? #{"length" "contains" "starts_with" "ends_with"
                         "substring" "index_of" "trim" "replace"
                         "to_int_or" "uppercase" "lowercase" "to_bytes"
-                        "path_join" "basename" "dirname" "extension"}
+                        "path_join" "basename" "dirname" "extension"
+                        "trim_prefix" "trim_suffix"}
                       method-name))
       (case method-name
         "length"    :int
@@ -1263,7 +1264,8 @@
         "to_int_or" :int
         "to_bytes"  :bytes
         ("substring" "trim" "replace" "uppercase" "lowercase"
-         "path_join" "basename" "dirname" "extension") :string
+         "path_join" "basename" "dirname" "extension"
+         "trim_prefix" "trim_suffix") :string
         :bool)
 
       :else
@@ -2421,7 +2423,8 @@
                (contains? #{"length" "contains" "starts_with" "ends_with"
                             "substring" "index_of" "trim" "replace"
                             "to_int_or" "uppercase" "lowercase" "to_bytes"
-                            "path_join" "basename" "dirname" "extension"}
+                            "path_join" "basename" "dirname" "extension"
+                            "trim_prefix" "trim_suffix"}
                           method-name))
           (let [want-args (case method-name
                             ("length" "trim" "uppercase" "lowercase" "to_bytes"
@@ -2539,7 +2542,25 @@
                                  "long long __v = 0; "
                                  "if ([__sc scanLongLong:&__v] && [__sc isAtEnd]) "
                                  "{ __r = (int64_t)__v; } } "
-                                 "__r; })"))}))
+                                 "__r; })"))}
+              "trim_prefix"
+              {:node :ffi-call :name "cxc_string_trim_prefix"
+               :args [target-lo (first arg-exprs)]
+               :emit-c-fn (fn [[s pre]]
+                            (str "({ NSString *__s = (" s "); "
+                                 "NSString *__p = (" pre "); "
+                                 "(__s && __p && [__s hasPrefix:__p]) "
+                                 "? [__s substringFromIndex:__p.length] "
+                                 ": __s; })"))}
+              "trim_suffix"
+              {:node :ffi-call :name "cxc_string_trim_suffix"
+               :args [target-lo (first arg-exprs)]
+               :emit-c-fn (fn [[s suf]]
+                            (str "({ NSString *__s = (" s "); "
+                                 "NSString *__q = (" suf "); "
+                                 "(__s && __q && [__s hasSuffix:__q]) "
+                                 "? [__s substringToIndex:(__s.length - __q.length)] "
+                                 ": __s; })"))}))
 
           ;; F37 L6a — `Bytes.slice(start: Int, length: Int) -> Bytes`.
           ;; Emits `[(NSMutableData *)[bytes subdataWithRange:NSMakeRange(start, length)] mutableCopy]`

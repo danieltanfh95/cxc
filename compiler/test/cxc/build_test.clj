@@ -1117,6 +1117,12 @@
       (is (zero? exit))
       (is (= "7\n3\n-7\n3\n3\n10\n" stdout)))))
 
+(deftest end-to-end-trim-prefix-suffix
+  (testing "trim-prefix-suffix.cxc — `String.trim_prefix(pre)` / `String.trim_suffix(suf)`. Removes the leading/trailing occurrence when present; passes the receiver through unchanged otherwise. Empty pattern also passes through (hasPrefix/hasSuffix on empty NSString returns YES → substringFromIndex:0 is the whole string). Six assertions: URL scheme strip, non-matching prefix, trailing-newline strip, no-newline pass-through, empty-prefix pass, empty-suffix pass."
+    (let [{:keys [exit stdout]} (compile-and-run "trim-prefix-suffix")]
+      (is (zero? exit))
+      (is (= "example.com\nplain\npath/to/file.txt\nnofinalnewline\naaabbb\naaabbb\n" stdout)))))
+
 (deftest end-to-end-console-hello
   (testing "console-hello.cxc — Layer 6 Step 5. Console prelude atom with `write(msg: String) -> Int` method wrapping the `native_console_write` FFI hatch (printf %s). Main is capability-provisioned (`def main(console: Console)`) and calls `console.write(\"hi\\n\")` in its `-> running do:`. Prints `hi` + newline."
     (let [{:keys [exit stdout]} (compile-and-run "console-hello")]
