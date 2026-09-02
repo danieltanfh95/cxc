@@ -1,0 +1,27 @@
+def main:
+    use json:    Json
+    use console: Console
+
+    -> running
+        then:
+            let doc: String = "{\"ok\": true, \"cancelled\": false, \"maybe\": null, \"n\": 1, \"items\": [\"a\",\"b\",\"c\"], \"nested\": {\"list\": [1,2]}}"
+            let ok:  Bool = json.field_bool_or(doc, "ok", false)
+            let can: Bool = json.field_bool_or(doc, "cancelled", true)
+            let mis: Bool = json.field_bool_or(doc, "absent", true)
+            let non: Bool = json.field_bool_or(doc, "n", false)
+            let nul: Bool = json.field_bool_or(doc, "maybe", true)
+            let cnt: Int  = json.array_length_at(doc, "items")
+            let nls: Int  = json.array_length_at(doc, "nested.list")
+            let miss: Int = json.array_length_at(doc, "ok")
+            let bad: Int  = json.array_length_at(doc, "absent")
+            console.write("ok: " + ok.to_string())
+            console.write("cancelled: " + can.to_string())
+            console.write("absent: " + mis.to_string())
+            console.write("numeric_as_bool: " + non.to_string())
+            console.write("null_as_bool: " + nul.to_string())
+            console.write("items_len: " + cnt.to_string())
+            console.write("nested_list_len: " + nls.to_string())
+            console.write("non_array: " + miss.to_string())
+            console.write("missing_path: " + bad.to_string())
+
+    -> end

@@ -1867,6 +1867,20 @@
           (is (not (str/includes? out "to stderr")))
           (is (not (str/includes? err "to stdout"))))))))
 
+(deftest end-to-end-json-bool-array
+  (testing "2026-09-03 — `json.field_bool_or(json, key, fallback)` reads a strictly-typed JSON Bool (RFC 8259: only literal true/false accepted — numeric 1/0 falls through to the fallback). `json.array_length_at(json, path)` walks a dot-path (supports numeric indices for array walks) and returns the terminal array's count, or -1 on invalid JSON / missing path / non-array terminus. Covers positive-Bool, negative-Bool, null-as-Bool, absent-Bool, numeric-as-Bool, top-level array, nested-array, non-array-terminus, and missing-path cases."
+    (let [{:keys [exit stdout]} (compile-and-run "json-bool-array")]
+      (is (zero? exit))
+      (is (str/includes? stdout "ok: true"))
+      (is (str/includes? stdout "cancelled: false"))
+      (is (str/includes? stdout "absent: true"))
+      (is (str/includes? stdout "numeric_as_bool: false"))
+      (is (str/includes? stdout "null_as_bool: true"))
+      (is (str/includes? stdout "items_len: 3"))
+      (is (str/includes? stdout "nested_list_len: 2"))
+      (is (str/includes? stdout "non_array: -1"))
+      (is (str/includes? stdout "missing_path: -1")))))
+
 (deftest end-to-end-random-hex
   (testing "2026-09-03 — `random.hex(nybbles)` returns a hex String of exactly `nybbles` characters (odd counts truncated from the last byte). Backed by libc `arc4random_buf` (CSPRNG per Corvid's Random guarantee — see corvid-random-cryptographic memory). Bounds: non-positive → empty; > 4096 clamped to 4096 (to keep the stack byte buffer bounded). Test asserts length invariants across zero / one / even / odd / negative — the sampled value is non-deterministic so we don't assert content."
     (let [{:keys [exit stdout]} (compile-and-run "random-hex")]

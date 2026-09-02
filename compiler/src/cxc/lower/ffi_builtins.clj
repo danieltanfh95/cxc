@@ -572,6 +572,66 @@
                         "dispatch_semaphore_wait(__sem, DISPATCH_TIME_FOREVER); "
                         "} } "
                         "__envelope; })")))}
+   "native_json_field_bool_or"
+   ;; 2026-09-03 — read a top-level Bool field from a JSON object.
+   ;; Returns `fallback` on any of: invalid JSON, missing key, or
+   ;; non-Bool value. Backed by `NSJSONSerialization` — the parsed
+   ;; value at the key must be an `NSNumber` whose objCType is 'c'
+   ;; (BOOL). Numeric 0/1 are NOT accepted (`true` and `false` in
+   ;; JSON are the only truth-bearing tokens per RFC 8259).
+   {:return-kw :bool
+    :arity     3
+    :emit-c    (fn [args]
+                 (let [json (first args) key (second args) fb (nth args 2)]
+                   (str "({ NSString *__j = " json "; "
+                        "NSString *__k = " key "; "
+                        "BOOL __r = (BOOL)(" fb "); "
+                        "if (__j && __k) { "
+                        "NSError *__e = nil; "
+                        "NSData *__d = [__j dataUsingEncoding:NSUTF8StringEncoding]; "
+                        "id __o = __d ? [NSJSONSerialization JSONObjectWithData:__d "
+                        "options:(NSJSONReadingOptions)0 error:&__e] : nil; "
+                        "if (__o && !__e && [__o isKindOfClass:[NSDictionary class]]) { "
+                        "id __v = [(NSDictionary *)__o objectForKey:__k]; "
+                        "if ([__v isKindOfClass:[NSNumber class]] && "
+                        "strcmp([(NSNumber *)__v objCType], \"c\") == 0) { "
+                        "__r = [(NSNumber *)__v boolValue] ? YES : NO; } } } "
+                        "__r; })")))}
+   "native_json_array_length_at"
+   ;; 2026-09-03 — walk dot-path (as `field_string_path`) and return
+   ;; the array length at the terminus. -1 on: invalid JSON, path
+   ;; miss, or terminus not an array. Complements `field_string_path`
+   ;; / `field_int_or_path` for iterating a known-shape response:
+   ;; caller reads length, then extracts each element via
+   ;; `<prefix>.<i>.<field>`. Numeric-index segments in the path
+   ;; walk NSArray entries.
+   {:return-kw :int
+    :arity     2
+    :emit-c    (fn [args]
+                 (str "({ NSString *__j = " (first args) "; "
+                      "NSString *__pa = " (second args) "; "
+                      "int64_t __r = -1; "
+                      "if (__j && __pa) { "
+                      "NSError *__e = nil; "
+                      "NSData *__d = [__j dataUsingEncoding:NSUTF8StringEncoding]; "
+                      "id __cur = __d ? [NSJSONSerialization JSONObjectWithData:__d "
+                      "options:(NSJSONReadingOptions)0 error:&__e] : nil; "
+                      "if (__cur && !__e) { "
+                      "NSArray *__parts = [__pa componentsSeparatedByString:@\".\"]; "
+                      "for (NSString *__p in __parts) { "
+                      "if (__cur == nil) break; "
+                      "NSScanner *__sc = [NSScanner scannerWithString:__p]; "
+                      "long long __idx = 0; "
+                      "if ([__sc scanLongLong:&__idx] && [__sc isAtEnd] && "
+                      "[__cur isKindOfClass:[NSArray class]] && "
+                      "__idx >= 0 && (NSUInteger)__idx < [(NSArray *)__cur count]) { "
+                      "__cur = [(NSArray *)__cur objectAtIndex:(NSUInteger)__idx]; "
+                      "} else if ([__cur isKindOfClass:[NSDictionary class]]) { "
+                      "__cur = [(NSDictionary *)__cur objectForKey:__p]; "
+                      "} else { __cur = nil; break; } } "
+                      "if ([__cur isKindOfClass:[NSArray class]]) { "
+                      "__r = (int64_t)[(NSArray *)__cur count]; } } } "
+                      "__r; })"))}
    "native_env_remove"
    ;; 2026-09-03 — remove an environment variable from the current
    ;; process (libc `unsetenv`). Returns 0 on success (including

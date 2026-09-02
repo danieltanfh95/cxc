@@ -9,6 +9,10 @@ def Json:
 
     field_int_or_path(json: String, path: String, fallback: Int) :- native_json_field_int_or_path(json, path, fallback)
 
+    field_bool_or(json: String, key: String, fallback: Bool) :- native_json_field_bool_or(json, key, fallback)
+
+    array_length_at(json: String, path: String) :- native_json_array_length_at(json, path)
+
     -> running
 
     -> end
