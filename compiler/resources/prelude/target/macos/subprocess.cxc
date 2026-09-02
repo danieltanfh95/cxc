@@ -1,6 +1,8 @@
 def Subprocess:
     run(cmd: String) :- native_subprocess_run(cmd)
 
+    run_full(cmd: String) :- native_subprocess_run_full(cmd)
+
     -> running
 
     -> end

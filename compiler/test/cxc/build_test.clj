@@ -1989,6 +1989,16 @@
       (is (str/includes? stdout "missing_size: -1"))
       (is (str/includes? stdout "dir_size: -1")))))
 
+(deftest end-to-end-subprocess-run-full
+  (testing "2026-09-03 — `subprocess.run_full(cmd)` returns a JSON envelope `{exit_code, stdout, stderr}` — mirrors the http.get_envelope shape so callers decompose via existing Json capability. Backed by NSTask + separate NSPipes so stdout / stderr are physically separated (unlike `.run(cmd)` which combines via popen 2>&1) and the real exit code is surfaced (unlike `.run` which only returned combined text). Verified across three scenarios: normal command with both stdout+stderr output, explicit non-zero exit (42), and command-not-found (127 per sh convention)."
+    (let [{:keys [exit stdout]} (compile-and-run "subprocess-run-full")]
+      (is (zero? exit))
+      (is (str/includes? stdout "ec1: 0"))
+      (is (str/includes? stdout "so1: hello"))
+      (is (str/includes? stdout "se1: err"))
+      (is (str/includes? stdout "ec2: 42"))
+      (is (str/includes? stdout "ec3: 127")))))
+
 (deftest end-to-end-fs-mkdirs-remove
   (testing "2026-09-03 — `FileSystem.mkdirs(path)` (mkdir -p: NSFileManager createDirectoryAtPath withIntermediateDirectories:YES) and `FileSystem.remove(path)` (recursive delete). Round-trip: create a nested dir tree, write a file inside, remove the whole tree, verify absence afterwards. Test cleans its own scratch path (`/tmp/cxc-mkdirs-example`) before running so residue from earlier iterations doesn't spuriously fail the mkdirs return code."
     ;; Best-effort pre-clean so a residual dir from a previous failed

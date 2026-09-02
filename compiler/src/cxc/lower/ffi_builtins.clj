@@ -143,6 +143,63 @@
                         "[" content " writeToFile:" path
                         " atomically:YES encoding:NSUTF8StringEncoding error:nil]) "
                         "? 0 : -1)")))}
+   "native_subprocess_run_full"
+   ;; 2026-09-03 — richer subprocess: NSTask + separate stdout/stderr
+   ;; NSPipes + real exit code. Returns a JSON envelope String shaped
+   ;; `{"exit_code": <int>, "stdout": <string>, "stderr": <string>}`.
+   ;; Callers decompose via existing Json capability
+   ;; (`json.field_int_or(env, "exit_code", -1)` etc.). Mirrors
+   ;; http.get_envelope's envelope pattern for consistency. On task
+   ;; launch failure returns `{"exit_code": -1, "stdout": "",
+   ;; "stderr": <error message>}`. Nil cmd → identical shape.
+   ;; NSTask.launchPath is `/bin/sh -c <cmd>` so shell metacharacters
+   ;; still work (identical to popen's semantics).
+   {:return-kw :string
+    :arity     1
+    :emit-c    (fn [args]
+                 (str "({ NSString *__c = " (first args) "; "
+                      "NSString *__envelope = nil; "
+                      "NSMutableDictionary *__env = "
+                      "[NSMutableDictionary dictionary]; "
+                      "[__env setObject:@(-1) forKey:@\"exit_code\"]; "
+                      "[__env setObject:@\"\" forKey:@\"stdout\"]; "
+                      "[__env setObject:@\"\" forKey:@\"stderr\"]; "
+                      "if (__c) { "
+                      "@try { "
+                      "NSTask *__t = [[NSTask alloc] init]; "
+                      "__t.launchPath = @\"/bin/sh\"; "
+                      "__t.arguments = @[@\"-c\", __c]; "
+                      "NSPipe *__po = [NSPipe pipe]; "
+                      "NSPipe *__pe = [NSPipe pipe]; "
+                      "__t.standardOutput = __po; "
+                      "__t.standardError = __pe; "
+                      "[__t launch]; "
+                      "NSData *__od = [[__po fileHandleForReading] "
+                      "readDataToEndOfFile]; "
+                      "NSData *__ed = [[__pe fileHandleForReading] "
+                      "readDataToEndOfFile]; "
+                      "[__t waitUntilExit]; "
+                      "[__env setObject:@([__t terminationStatus]) "
+                      "forKey:@\"exit_code\"]; "
+                      "NSString *__so = __od ? [[NSString alloc] "
+                      "initWithData:__od encoding:NSUTF8StringEncoding] : @\"\"; "
+                      "NSString *__se = __ed ? [[NSString alloc] "
+                      "initWithData:__ed encoding:NSUTF8StringEncoding] : @\"\"; "
+                      "if (!__so) __so = @\"\"; if (!__se) __se = @\"\"; "
+                      "[__env setObject:__so forKey:@\"stdout\"]; "
+                      "[__env setObject:__se forKey:@\"stderr\"]; "
+                      "} @catch (NSException *__ex) { "
+                      "[__env setObject:[__ex reason] ?: @\"launch failure\" "
+                      "forKey:@\"stderr\"]; } } "
+                      "NSError *__ee = nil; "
+                      "NSData *__ed2 = [NSJSONSerialization "
+                      "dataWithJSONObject:__env "
+                      "options:(NSJSONWritingOptions)0 error:&__ee]; "
+                      "if (__ed2 && !__ee) { "
+                      "__envelope = [[NSString alloc] initWithData:__ed2 "
+                      "encoding:NSUTF8StringEncoding]; } "
+                      "if (!__envelope) __envelope = @\"{}\"; "
+                      "__envelope; })"))}
    "native_subprocess_run"
    ;; 2e (2026-09-02) — run a shell command and capture combined
    ;; stdout+stderr as a String. Uses libc `popen(cmd, "r")` with

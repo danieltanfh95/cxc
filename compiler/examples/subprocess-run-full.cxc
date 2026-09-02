@@ -1,0 +1,22 @@
+def main:
+    use subprocess: Subprocess
+    use json:       Json
+    use console:    Console
+
+    -> running
+        then:
+            let env1: String = subprocess.run_full("echo hello && echo err 1>&2")
+            let ec1: Int = json.field_int_or(env1, "exit_code", -99)
+            let so1: String = json.field_string(env1, "stdout")
+            let se1: String = json.field_string(env1, "stderr")
+            let env2: String = subprocess.run_full("exit 42")
+            let ec2: Int = json.field_int_or(env2, "exit_code", -99)
+            let env3: String = subprocess.run_full("nonexistent-command-xyz-abc-123")
+            let ec3: Int = json.field_int_or(env3, "exit_code", -99)
+            console.write("ec1: " + ec1.to_string())
+            console.write("so1: " + so1.trim())
+            console.write("se1: " + se1.trim())
+            console.write("ec2: " + ec2.to_string())
+            console.write("ec3: " + ec3.to_string())
+
+    -> end
