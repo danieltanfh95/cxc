@@ -16,6 +16,7 @@ Under [resources/prelude/target/macos/](../resources/prelude/target/macos/):
 | [json.cxc](../resources/prelude/target/macos/json.cxc) | `Json` | `encode_str` / `field_string` / `field_int_or` / `field_string_path` / `field_int_or_path` / `field_bool_or` / `array_length_at` | 6b12a7d + c922c06 + a798ab9 + f3c49bd |
 | [http.cxc](../resources/prelude/target/macos/http.cxc) | `Http` | `get` / `post` / `get_envelope` / `post_envelope` / `head_status` / `download_to_file` | 838533a + 0e17b7b + 210a1fa + 40d5786 |
 | [wall_time.cxc](../resources/prelude/target/macos/wall_time.cxc) | `Time` | `now()` + `now_iso()` + `since(t)` + `sleep_ms(ms)` | c3e098e + db01b54 + 97cad99 |
+| [hash.cxc](../resources/prelude/target/macos/hash.cxc) | `Hash` | `sha256_hex(bytes)` — CommonCrypto CC_SHA256 hex | 6cdc733 |
 | [console.cxc](../resources/prelude/target/macos/console.cxc) | `Console` | `write` + `write_raw` + `readln` + `write_err` | da59e95 + ac862c0 + 11155d1 + 6390fa5 |
 
 ## Examples (regression tests + manual demos)
@@ -50,6 +51,7 @@ Under [examples/](./):
 - [subprocess-run-full.cxc](./subprocess-run-full.cxc) — envelope decomposition: normal / exit-42 / not-found (127).
 - [fs-bytes-io.cxc](./fs-bytes-io.cxc) — F37 `.as() -> Bytes` on a record → write_bytes → read_bytes → size + nil-on-miss.
 - [bytes-string-roundtrip.cxc](./bytes-string-roundtrip.cxc) — `String.to_bytes` / `Bytes.to_string` UTF-8 roundtrip, both in-memory and via disk.
+- [hash-sha256.cxc](./hash-sha256.cxc) — SHA-256 of `"hello"` and `""` against known-answer vectors.
 
 ## Non-plugin prelude capabilities enriched this session
 
@@ -110,6 +112,7 @@ Under [examples/](./):
 - `native_http_download_to_file` — NSURLSession dataTask + NSData writeToFile:atomically; binary-safe. (40d5786)
 - `native_subprocess_run_full` — NSTask + separate stdout/stderr pipes; returns `{exit_code, stdout, stderr}` JSON envelope. (358f883)
 - `native_fs_read_bytes` / `native_fs_write_bytes` — NSData dataWithContentsOfFile / writeToFile; Bytes ↔ NSMutableData. (07a5ff9)
+- `native_sha256_hex` — CommonCrypto CC_SHA256 + hex-encode; base-includes adds `<CommonCrypto/CommonDigest.h>`. (6cdc733)
 - `native_http_get` / `native_http_post` — sync NSURLSession dataTask + dispatch_semaphore. (838533a)
 - `native_http_get_envelope` / `native_http_post_envelope` — same with `{status,body}` JSON envelope. (0e17b7b)
 
@@ -120,6 +123,7 @@ Under [examples/](./):
 ## Commit sequence
 
 ```
+6cdc733 Hash capability: sha256_hex via CommonCrypto
 9baf551 String path helpers (.path_join / .basename / .dirname / .extension)
 a501598 String.to_bytes + Bytes.to_string — UTF-8 roundtrip
 07a5ff9 FileSystem.read_bytes + .write_bytes — binary I/O
@@ -175,6 +179,10 @@ The full designed hello-agent (see [design/examples/hello-agent/hello-agent.cxc]
 - `<expr> or T(binding): body` recovery on non-emit expressions (2d-iii(B))
 - Multi-arm transitions with rich `||:` guards on payload fields
 - `Path` distinct-type (NSString path methods available via `String.path_join/basename/dirname/extension` since 9baf551 — a Path newtype would give static-safety; deferred)
+
+## Known compiler gotchas discovered this push
+
+- **`use <name>: T` cannot use identifiers that collide with NSObject methods** — e.g. `use hash: Hash` fails to compile because emit generates `_hash` as the ivar and Objective-C reserves it for NSObject's built-in `-hash` selector. Workaround: rename the binding (`use hasher: Hash`). Same trap for `description`, `class`, `super`, `self`. Real compiler fix is to mangle user-facing names at the ivar emit boundary; not landed here.
 - `ProcResult` as a distinct record type (envelope-shaped `{exit_code, stdout, stderr}` JSON is available via `subprocess.run_full` since 358f883 — richer record-typed return waits on native intrinsics returning records)
 - Nested JSON navigation for anything beyond dot-paths — `field_string_path` / `field_int_or_path` cover `a.b.0.c`-style walks, but not general JSONPath, filters, or wildcards
 - Real subprocess status + stderr separation
