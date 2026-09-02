@@ -1848,7 +1848,24 @@
       (is (clojure.string/includes? stdout "to_int_or 42: 42"))
       (is (clojure.string/includes? stdout "to_int_or abc: -1"))
       (is (clojure.string/includes? stdout "to_int_or ws17: 17"))
-      (is (clojure.string/includes? stdout "to_int_or 42abc: -1")))))
+      (is (clojure.string/includes? stdout "to_int_or 42abc: -1"))
+      (is (clojure.string/includes? stdout "upper: HELLO WORLD"))
+      (is (clojure.string/includes? stdout "lower: hello world")))))
+
+(deftest end-to-end-console-write-err
+  (testing "2026-09-03 — `console.write_err(msg)` writes to stderr with a trailing newline (mirrors puts-to-stdout used by console.write). Verified by running the program with stdout redirected to /dev/null and asserting the message shows up on stderr — a stdout-only capture wouldn't see it. This gives programs a diagnostic channel that won't intermix with pipeable output."
+    (let [src     "def main:\n    use console: Console\n    -> running\n        then:\n            console.write(\"to stdout\")\n            let _: Int = console.write_err(\"to stderr\")\n    -> end\n"
+          out-dir (tmp-dir)
+          {:keys [status stderr bin-path]}
+          (build/compile-source-to-file src "write-err-smoke" (.getPath out-dir))]
+      (is (zero? status) (str "clang failed:\n" stderr))
+      (when (zero? status)
+        (let [{:keys [exit out err]} (shell/sh bin-path)]
+          (is (zero? exit))
+          (is (str/includes? out "to stdout"))
+          (is (str/includes? err "to stderr"))
+          (is (not (str/includes? out "to stderr")))
+          (is (not (str/includes? err "to stdout"))))))))
 
 (deftest end-to-end-fs-mkdirs-remove
   (testing "2026-09-03 — `FileSystem.mkdirs(path)` (mkdir -p: NSFileManager createDirectoryAtPath withIntermediateDirectories:YES) and `FileSystem.remove(path)` (recursive delete). Round-trip: create a nested dir tree, write a file inside, remove the whole tree, verify absence afterwards. Test cleans its own scratch path (`/tmp/cxc-mkdirs-example`) before running so residue from earlier iterations doesn't spuriously fail the mkdirs return code."

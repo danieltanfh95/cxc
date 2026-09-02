@@ -15,3 +15,5 @@ def Console:
     write_raw(text: String) :- native_console_write(text)
 
     readln() :- native_console_readln()
+
+    write_err(text: String) :- native_console_write_err(text)

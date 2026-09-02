@@ -1239,13 +1239,13 @@
       (and (= :string target-ty)
            (contains? #{"length" "contains" "starts_with" "ends_with"
                         "substring" "index_of" "trim" "replace"
-                        "to_int_or"}
+                        "to_int_or" "uppercase" "lowercase"}
                       method-name))
       (case method-name
         "length"    :int
         "index_of"  :int
         "to_int_or" :int
-        ("substring" "trim" "replace") :string
+        ("substring" "trim" "replace" "uppercase" "lowercase") :string
         :bool)
 
       :else
@@ -2384,10 +2384,10 @@
           (and (= :string target-ty)
                (contains? #{"length" "contains" "starts_with" "ends_with"
                             "substring" "index_of" "trim" "replace"
-                            "to_int_or"}
+                            "to_int_or" "uppercase" "lowercase"}
                           method-name))
           (let [want-args (case method-name
-                            ("length" "trim") 0
+                            ("length" "trim" "uppercase" "lowercase") 0
                             ("substring" "replace") 2
                             1)]
             (when-not (= want-args (count arg-exprs))
@@ -2451,6 +2451,14 @@
                             (str "[(" s ") "
                                  "stringByReplacingOccurrencesOfString:(" from ") "
                                  "withString:(" to ")]"))}
+              "uppercase"
+              {:node :ffi-call :name "cxc_string_uppercase"
+               :args [target-lo]
+               :emit-c-fn (fn [[s]] (str "[(" s ") uppercaseString]"))}
+              "lowercase"
+              {:node :ffi-call :name "cxc_string_lowercase"
+               :args [target-lo]
+               :emit-c-fn (fn [[s]] (str "[(" s ") lowercaseString]"))}
               "to_int_or"
               {:node :ffi-call :name "cxc_string_to_int_or"
                :args (into [target-lo] arg-exprs)

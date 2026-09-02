@@ -30,5 +30,8 @@ def main:
             console.write("to_int_or abc: " + n2.to_string())
             console.write("to_int_or ws17: " + n3.to_string())
             console.write("to_int_or 42abc: " + n4.to_string())
+            let mixed: String = "Hello World"
+            console.write("upper: " + mixed.uppercase())
+            console.write("lower: " + mixed.lowercase())
 
     -> end

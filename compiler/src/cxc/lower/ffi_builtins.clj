@@ -44,6 +44,18 @@
     :arity     1
     :emit-c    (fn [args]
                  (str "printf(\"%s\", [" (first args) " UTF8String])"))}
+   "native_console_write_err"
+   ;; 2026-09-03 — write msg to stderr with a trailing newline.
+   ;; Mirrors `puts` for stdout (which Console.write uses), but
+   ;; targets stderr so log messages and diagnostics don't
+   ;; intermix with normal program output. Returns the byte count
+   ;; from fputs+fputc; callers usually discard.
+   {:return-kw :int
+    :arity     1
+    :emit-c    (fn [args]
+                 (str "({ int __r = fputs("
+                      "[" (first args) " UTF8String], stderr); "
+                      "fputc('\\n', stderr); (int64_t)__r; })"))}
    "native_console_readln"
    ;; 2026-09-03 — read one line from stdin. Trailing newline is
    ;; stripped. Returns nil on EOF or read error (empty stdin, EOF
