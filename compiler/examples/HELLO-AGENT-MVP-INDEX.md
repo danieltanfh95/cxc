@@ -16,7 +16,7 @@ Under [resources/prelude/target/macos/](../resources/prelude/target/macos/):
 | [json.cxc](../resources/prelude/target/macos/json.cxc) | `Json` | `encode_str` / `field_string` / `field_int_or` / `field_string_path` / `field_int_or_path` | 6b12a7d + c922c06 + a798ab9 |
 | [http.cxc](../resources/prelude/target/macos/http.cxc) | `Http` | `get` / `post` / `get_envelope` / `post_envelope` | 838533a + 0e17b7b |
 | [wall_time.cxc](../resources/prelude/target/macos/wall_time.cxc) | `Time` | `now() -> Instant` (wall-clock, ms since Unix epoch) | c3e098e |
-| [console.cxc](../resources/prelude/target/macos/console.cxc) | `Console` | `write` + `write_raw` (post-2c-i shape) | da59e95 + ac862c0 |
+| [console.cxc](../resources/prelude/target/macos/console.cxc) | `Console` | `write` + `write_raw` + `readln` | da59e95 + ac862c0 + 11155d1 |
 
 ## Examples (regression tests + manual demos)
 
@@ -69,6 +69,7 @@ Under [examples/](./):
 ## Commit sequence
 
 ```
+11155d1 Console.readln() — stdin line read
 c3e098e Time wall-clock capability + int64_t truncation fix
 b93f385 String.to_int_or(fallback) — NSScanner-based Int parse
 a798ab9 Json.field_int_or_path — numeric dot-path extraction
