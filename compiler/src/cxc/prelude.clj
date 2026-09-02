@@ -147,7 +147,15 @@
    ;; Argc/argv accessed via Darwin's `*_NSGetArgc()` / `*_NSGetArgv()`
    ;; (declared in `<crt_externs.h>` which base-includes auto-adds
    ;; when Foundation is on).
-   {:name :args :kind :target :names ["Args"]}])
+   {:name :args :kind :target :names ["Args"]}
+   ;; 4 (2026-09-03) — `Json` capability. `encode_str(s)` produces
+   ;; a JSON-quoted+escaped String; `field_string(json, key)` reads
+   ;; a top-level string-typed field from a JSON object. Backed by
+   ;; `NSJSONSerialization` (which we use as a correct escaper by
+   ;; wrapping s in a single-element array, serialising, and
+   ;; stripping the `[...]`). Numeric/bool/nested-value field
+   ;; readers wait on richer FFI surface — MVP is string-only.
+   {:name :json :kind :target :names ["Json"]}])
 
 (defn assemble-source
   "Load and concatenate prelude module sources for a given target.
@@ -188,7 +196,7 @@
    cxc.lower compares against these; entries match what the parsed
    AST carries verbatim from prelude source."
   #{"Clock" "Random" "TestKeyboardInput" "Console" "SystemPanic" "Plugin" "OsPrimitive"
-    "FileSystem" "Subprocess" "Env" "Args"})
+    "FileSystem" "Subprocess" "Env" "Args" "Json"})
 
 ;; F5 retirement (2026-08-15): unit-suffix desugaring (`100ms`,
 ;; `2s`, `1.5min` → `Duration(millis: N)`) is retired per spec

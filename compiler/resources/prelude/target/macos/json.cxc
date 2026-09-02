@@ -1,0 +1,8 @@
+def Json:
+    encode_str(s: String) :- native_json_encode_str(s)
+
+    field_string(json: String, key: String) :- native_json_field_string(json, key)
+
+    -> running
+
+    -> end

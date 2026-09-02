@@ -1832,6 +1832,14 @@
         (is (zero? exit))
         (is (= "hello world\n" stdout))))))
 
+(deftest end-to-end-json-roundtrip
+  (testing "4 (2026-09-03) — `Json` prelude capability. `json.encode_str(s)` wraps s in a JSON array via NSJSONSerialization, then strips the `[...]` to leave the quoted-and-escaped String literal. `json.field_string(json, key)` parses the JSON as a top-level dict and returns the String at key (nil on invalid JSON / missing key / non-String value). Round-trip test: encode a bare name into a JSON string literal, embed it in a hand-rolled payload with an escaped quote in another field, extract both fields back — verifies escape output and unescape roundtrip through NSJSONSerialization."
+    (let [{:keys [exit stdout]} (compile-and-run "json-roundtrip")]
+      (is (zero? exit))
+      (is (clojure.string/includes? stdout "encoded: \"cxc\""))
+      (is (clojure.string/includes? stdout "tool: cxc"))
+      (is (clojure.string/includes? stdout "detail: quotes \" and newlines")))))
+
 (deftest end-to-end-mini-agent
   (testing "2026-09-03 — cross-capability composition proof. `mini-agent.cxc` uses Args + FileSystem + Subprocess + Console + Env + Int.to_string + String concat in a single `then:` block: reads argv[1] via `args.get_or(1, fallback)`, otherwise consults `MINI_AGENT_CMD` env var (default `date`); runs the resolved shell command via popen, writes captured output to a file via NSString `writeToFile:`, prints a summary (including argc + write status via `Int.to_string()`). Verifies the six MVP capabilities compose without conflicting on runtime, prelude autoloading, or emit shape. run-binary calls shell/sh with no args, so argc=1 (just the program name) and the env-var fallback wins."
     (let [{:keys [exit stdout]} (compile-and-run "mini-agent")]

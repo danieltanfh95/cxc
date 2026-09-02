@@ -136,6 +136,61 @@
                         "__r = [NSString stringWithUTF8String:__av[__i]]; "
                         "} "
                         "__r; })")))}
+   "native_json_encode_str"
+   ;; 4 (2026-09-03) — take a raw String, produce a JSON-encoded
+   ;; String literal WITH surrounding quotes. `NSJSONSerialization`
+   ;; only encodes top-level arrays/dicts by default, so we wrap
+   ;; the input in a single-element array `[s]`, encode that, and
+   ;; strip the `[...]` wrapper. Handles all mandatory escapes
+   ;; (backslash, quote, control chars, non-BMP surrogates) per
+   ;; RFC 8259. Nil-tolerant: nil input yields "null" (JSON null
+   ;; literal, no quotes) so consumers can still concat safely.
+   {:return-kw :string
+    :arity     1
+    :emit-c    (fn [args]
+                 (str "({ NSString *__s = " (first args) "; "
+                      "NSString *__r = nil; "
+                      "if (__s == nil) { __r = @\"null\"; } "
+                      "else { NSArray *__arr = @[__s]; "
+                      "NSError *__err = nil; "
+                      "NSData *__d = [NSJSONSerialization dataWithJSONObject:__arr "
+                      "options:(NSJSONWritingOptions)0 error:&__err]; "
+                      "if (__d && !__err) { "
+                      "NSString *__wrapped = [[NSString alloc] initWithData:__d "
+                      "encoding:NSUTF8StringEncoding]; "
+                      "if (__wrapped.length >= 2) { "
+                      "__r = [__wrapped substringWithRange:"
+                      "NSMakeRange(1, __wrapped.length - 2)]; } "
+                      "} "
+                      "if (__r == nil) __r = @\"null\"; } "
+                      "__r; })"))}
+   "native_json_field_string"
+   ;; 4 (2026-09-03) — parse `json` as a top-level JSON object,
+   ;; read the value at `key`, and return it as a String. Returns
+   ;; nil when: the JSON is invalid, the top-level isn't an object,
+   ;; the key is missing, or the value at the key isn't a String.
+   ;; Numeric/bool/null/nested values return nil at MVP; callers
+   ;; wanting those shapes need dedicated intrinsics (deferred).
+   {:return-kw :string
+    :arity     2
+    :emit-c    (fn [args]
+                 (let [json-arg (first args)
+                       key-arg  (second args)]
+                   (str "({ NSString *__j = " json-arg "; "
+                        "NSString *__k = " key-arg "; "
+                        "NSString *__r = nil; "
+                        "if (__j && __k) { "
+                        "NSData *__d = [__j dataUsingEncoding:NSUTF8StringEncoding]; "
+                        "NSError *__err = nil; "
+                        "id __o = [NSJSONSerialization JSONObjectWithData:__d "
+                        "options:(NSJSONReadingOptions)0 error:&__err]; "
+                        "if (!__err && [__o isKindOfClass:[NSDictionary class]]) { "
+                        "id __v = [(NSDictionary *)__o objectForKey:__k]; "
+                        "if ([__v isKindOfClass:[NSString class]]) { "
+                        "__r = (NSString *)__v; } "
+                        "} "
+                        "} "
+                        "__r; })")))}
    "native_env_get_or_default"
    ;; 2g (2026-09-02) — read an environment variable, defaulting on
    ;; miss. libc `getenv(name)` returns `const char *`; when the var
