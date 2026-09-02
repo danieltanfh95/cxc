@@ -93,7 +93,17 @@
    ;; Layer 6 Step 12 — escaping-block field type. MVP is zero-arg
    ;; void return only; a future landing generalizes to
    ;; `Block[(params) -> R]` grammar with full signature support.
-   "Block"   "void (^)(void)"})
+   "Block"   "void (^)(void)"
+   ;; FL-2 (2026-09-02) — FFI-primitive aliases for `foreign "...":`
+   ;; signatures. `Byte` = raw byte (uint8_t alias for foreign-boundary
+   ;; use); `SizeT` / `SsizeT` = size_t / ssize_t for libc-style
+   ;; length + return-code slots. Deliberately distinct from UInt8 so
+   ;; the source reads FFI-purposed rather than sized-int-arithmetic.
+   ;; `Ptr of T` parametric container is deferred until a fixture
+   ;; needs it.
+   "Byte"    "uint8_t"
+   "SizeT"   "size_t"
+   "SsizeT"  "ssize_t"})
 
 (declare optional-type-name type-kw->cxc-name-str
          optional-tk? unwrap-tk base-type-name)
@@ -341,6 +351,12 @@
     ;; level so infer-call-type / lower-expr can dispatch on it when
     ;; a self-field-typed callee gets invoked.
     "Block"  :block
+    ;; FL-2 — FFI-primitive aliases. Each carries the target C-type in
+    ;; metadata so `type-kw->c-type`'s width-variants branch recovers it
+    ;; on the emit side.
+    "Byte"   ^{:cxc-c-type "uint8_t"} [:uint 8]
+    "SizeT"  ^{:cxc-c-type "size_t"}  [:uint 64]
+    "SsizeT" ^{:cxc-c-type "ssize_t"} [:int 64]
     (cond
       (contains? record-env cxc-name) {:record cxc-name}
       (contains? atom-env   cxc-name) {:atom   cxc-name}
