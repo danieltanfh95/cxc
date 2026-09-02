@@ -1937,6 +1937,15 @@
           (is (zero? exit))
           (is (str/includes? out "got: hello from stdin")))))))
 
+(deftest end-to-end-time-iso
+  (testing "2026-09-03 — `time.now_iso()` returns a human-readable ISO 8601 UTC timestamp with fractional-second precision (`YYYY-MM-DDTHH:MM:SS.fffZ`, length 24). Uses `NSISO8601DateFormatter` cached under dispatch_once so repeated calls don't reallocate. Shape assertions only (value depends on wall clock)."
+    (let [{:keys [exit stdout]} (compile-and-run "time-iso")]
+      (is (zero? exit))
+      (is (str/includes? stdout "len: 24"))
+      (is (str/includes? stdout "has_T: true"))
+      (is (str/includes? stdout "has_Z: true"))
+      (is (str/includes? stdout "starts_20: true")))))
+
 (deftest end-to-end-time-wall-clock
   (testing "2026-09-03 — `Time` wall-clock capability. `time.now()` returns an `Instant` whose `.millis` field is Unix epoch milliseconds. Backed by `[[NSDate date] timeIntervalSince1970] * 1000` (int64_t; the prior `int` cast in `native_millis_now` silently truncated for any modern timestamp). Verified by asserting the returned millis exceeds 1.7 trillion (Nov 2023 boundary) — proves both non-zero and beyond-int32 range. Kept distinct from `Clock` (periodic-tick stream source); `Time` is a one-shot wall-clock read."
     (let [{:keys [exit stdout]} (compile-and-run "time-wall-clock")]

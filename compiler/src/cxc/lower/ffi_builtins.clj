@@ -679,6 +679,24 @@
                         "__r = setenv([__n UTF8String], [__v UTF8String], 1); "
                         "} "
                         "(int64_t)__r; })")))}
+   "native_time_now_iso"
+   ;; 2026-09-03 — current wall-clock as an ISO 8601 String
+   ;; (YYYY-MM-DDTHH:MM:SS.fffZ, UTC). Backed by
+   ;; `NSISO8601DateFormatter` with fractional-second precision so
+   ;; log entries at millisecond granularity keep ordering.
+   ;; Formatter is stashed statically so repeated calls don't
+   ;; re-allocate a new one per log line.
+   {:return-kw :string
+    :arity     0
+    :emit-c    (fn [_args]
+                 (str "({ static NSISO8601DateFormatter *__fmt = nil; "
+                      "static dispatch_once_t __once; "
+                      "dispatch_once(&__once, ^{ "
+                      "__fmt = [[NSISO8601DateFormatter alloc] init]; "
+                      "__fmt.formatOptions = "
+                      "NSISO8601DateFormatWithInternetDateTime | "
+                      "NSISO8601DateFormatWithFractionalSeconds; }); "
+                      "[__fmt stringFromDate:[NSDate date]]; })"))}
    "native_time_sleep_ms"
    ;; 2026-09-03 — suspend the current thread for `ms` milliseconds.
    ;; libc `usleep(ms * 1000)`. Negative or zero → no-op. Truncates
