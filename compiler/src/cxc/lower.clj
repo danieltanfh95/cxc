@@ -1229,6 +1229,13 @@
       (and (int-family? target-ty) (= "to_string" method-name))
       :string
 
+      ;; 2026-09-03 — `Int.abs() -> Int`, `Int.min(other) -> Int`,
+      ;; `Int.max(other) -> Int`. Compile-time ternaries; no branch
+      ;; on the runtime side of a helper call.
+      (and (int-family? target-ty)
+           (contains? #{"abs" "min" "max"} method-name))
+      :int
+
       ;; 2026-09-03 — `Bool.to_string() -> String`. Renders as
       ;; "true" / "false". Convenient for log message
       ;; interpolation alongside Int.to_string.
@@ -2375,6 +2382,24 @@
                :emit-c-fn (fn [[n]]
                             (str "[NSString stringWithFormat:@\"%lld\", "
                                  "(long long)(" n ")]"))})
+
+          ;; 2026-09-03 — `Int.abs()` / `Int.min(other)` / `Int.max(other)`.
+          ;; Compile-time ternary expansion; no helper call. `abs()` is
+          ;; zero-arg; `min`/`max` take exactly one Int.
+          (and (int-family? target-ty)
+               (contains? #{"abs" "min" "max"} method-name))
+          (let [want-args (if (= "abs" method-name) 0 1)]
+            (when-not (= want-args (count arg-exprs))
+              (fail-user! (str "Int." method-name " takes " want-args
+                               " arg(s), got " (count arg-exprs))
+                          call-node))
+            {:node      :ffi-call
+             :name      (str "cxc_int_" method-name)
+             :args      (into [target-lo] arg-exprs)
+             :emit-c-fn (case method-name
+                          "abs" (fn [[n]]     (str "((" n ") < 0 ? -(" n ") : (" n "))"))
+                          "min" (fn [[a b]]   (str "((" a ") < (" b ") ? (" a ") : (" b "))"))
+                          "max" (fn [[a b]]   (str "((" a ") > (" b ") ? (" a ") : (" b "))")))})
 
           ;; 2026-09-03 — `Bool.to_string()` — literal "true"/"false".
           (and (= :bool target-ty)

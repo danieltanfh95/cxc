@@ -1111,6 +1111,12 @@
       (is (zero? exit))
       (is (= "true\nfalse\ntrue\nfalse\ntrue\nfalse\n" stdout)))))
 
+(deftest end-to-end-int-abs-min-max
+  (testing "int-abs-min-max.cxc — Int method intrinsics `abs()`, `min(other)`, `max(other)`. Compile-time ternary expansion (no helper call). Verifies (-7).abs()=7, 3.abs()=3, (-7).min(3)=-7, (-7).max(3)=3, 3.min(10)=3, 3.max(10)=10."
+    (let [{:keys [exit stdout]} (compile-and-run "int-abs-min-max")]
+      (is (zero? exit))
+      (is (= "7\n3\n-7\n3\n3\n10\n" stdout)))))
+
 (deftest end-to-end-console-hello
   (testing "console-hello.cxc — Layer 6 Step 5. Console prelude atom with `write(msg: String) -> Int` method wrapping the `native_console_write` FFI hatch (printf %s). Main is capability-provisioned (`def main(console: Console)`) and calls `console.write(\"hi\\n\")` in its `-> running do:`. Prints `hi` + newline."
     (let [{:keys [exit stdout]} (compile-and-run "console-hello")]

@@ -58,6 +58,7 @@ Under [examples/](./):
 - [list-at-or.cxc](./list-at-or.cxc) — `List of T .at_or(i, fallback) -> T` random access for T ∈ {Int, String, Bool}: in-range value / past-end fallback / negative-index fallback.
 - [map-int-key.cxc](./map-int-key.cxc) — `Map of (Int, String)`: Int-as-key coverage (HTTP status→reason lookup).
 - [list-contains.cxc](./list-contains.cxc) — `List of T .contains(e) -> Bool` for T ∈ {Int, String, Bool}: NSArray -containsObject: via -isEqual: on each element.
+- [int-abs-min-max.cxc](./int-abs-min-max.cxc) — Int method intrinsics `abs()`, `min(other)`, `max(other)`; compile-time ternaries, no helper call.
 
 ## Non-plugin prelude capabilities enriched this session
 
