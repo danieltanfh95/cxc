@@ -17,6 +17,8 @@ def FileSystem:
 
     size(path: String) :- native_fs_size(path)
 
+    tmp_path(prefix: String) :- native_fs_tmp_path(prefix)
+
     -> running
 
     -> end

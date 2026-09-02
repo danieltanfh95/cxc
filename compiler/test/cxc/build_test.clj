@@ -1902,6 +1902,16 @@
       (is (str/includes? stdout "append_rc2: 0"))
       (is (str/includes? stdout "read_back: line one\nline two")))))
 
+(deftest end-to-end-fs-tmp-path
+  (testing "2026-09-03 — `fs.tmp_path(prefix)` returns a unique scratch path under NSTemporaryDirectory. Two calls with the same prefix return different paths (CSPRNG-strong 16-hex-char suffix via arc4random_buf). Empty prefix omits the leading dash. Does NOT create the file — writing is the caller's job (verified by writing/reading/removing in one flow)."
+    (let [{:keys [exit stdout]} (compile-and-run "fs-tmp-path")]
+      (is (zero? exit))
+      (is (str/includes? stdout "a_ne_b: false"))
+      (is (str/includes? stdout "a_has_agent: true"))
+      (is (str/includes? stdout "c_no_dash: false"))
+      (is (str/includes? stdout "ex_a: 1"))
+      (is (str/includes? stdout "sz_a: 10")))))
+
 (deftest end-to-end-fs-copy-rename-size
   (testing "2026-09-03 — `fs.copy(from, to)`, `fs.rename(from, to)`, `fs.size(path)` via NSFileManager. Verified end-to-end by writing a 10-byte file, copying it (size preserved), renaming the copy (source disappears, target appears with same size), and checking `size` on missing path (→ -1) and on a directory (→ -1; Foundation only returns file size for regular files). Test pre-cleans + post-cleans its scratch paths."
     (doseq [p ["/tmp/cxc-copy-src.txt"

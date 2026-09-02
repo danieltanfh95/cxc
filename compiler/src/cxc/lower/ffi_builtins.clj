@@ -749,6 +749,28 @@
                  (str "((" (first args) " && "
                       "[[NSFileManager defaultManager] fileExistsAtPath:"
                       (first args) "]) ? 1 : 0)"))}
+   "native_fs_tmp_path"
+   ;; 2026-09-03 — build a unique-per-call scratch path under the OS
+   ;; temp directory. Shape: `<tmpdir><prefix>-<16 hex chars>`. Does
+   ;; NOT create the file — callers use it as a destination for
+   ;; write_text / write_binary etc. CSPRNG-strong via arc4random_buf.
+   ;; nil prefix → empty String prefix ("cxc-<hex>" pattern).
+   {:return-kw :string
+    :arity     1
+    :emit-c    (fn [args]
+                 (str "({ NSString *__pre = " (first args) "; "
+                      "if (!__pre) __pre = @\"\"; "
+                      "NSString *__td = NSTemporaryDirectory(); "
+                      "if (!__td) __td = @\"/tmp/\"; "
+                      "unsigned char __buf[8]; "
+                      "arc4random_buf(__buf, 8); "
+                      "NSMutableString *__hex = "
+                      "[NSMutableString stringWithCapacity:16]; "
+                      "for (int __i = 0; __i < 8; __i++) "
+                      "[__hex appendFormat:@\"%02x\", __buf[__i]]; "
+                      "(NSString *)[NSString stringWithFormat:"
+                      "@\"%@%@%s%@\", __td, __pre, "
+                      "([__pre length] > 0 ? \"-\" : \"\"), __hex]; })"))}
    "native_fs_copy"
    ;; 2026-09-03 — copy file/dir tree via NSFileManager copyItemAtPath.
    ;; Returns 0/-1. Fails if dest already exists (Foundation semantics)
