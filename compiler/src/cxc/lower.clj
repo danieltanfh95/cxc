@@ -1649,6 +1649,11 @@
     ;; substitution has already collapsed ObjC-typed slots to `id`.
     :foreign-selector-call
     (foreign-type-node->tk (:return (:signature node)) ctx node)
+    ;; FL-14 (2026-09-02) — resolved class-selector call. Same
+    ;; return-type inference as instance-selectors; only the emit
+    ;; form differs (`[ClassName sel:args]` vs `[recv sel:args]`).
+    :foreign-class-selector-call
+    (foreign-type-node->tk (:return (:signature node)) ctx node)
     (fail-nyi! (str "infer-type " (:node node)) node)))
 
 ;; ---------------------------------------------------------------------------
@@ -2991,6 +2996,23 @@
                           (:args node))]
       {:node     :objc-msg
        :recv     (lower-expr (:receiver node) ctx)
+       :selector (:selector node)
+       :args     arg-exprs})
+
+    ;; FL-14 (2026-09-02) — class-selector call. Same shape as FL-13
+    ;; but the receiver is the manifest-provided ObjC class name,
+    ;; rendered as a bare identifier: `[NSDate date]`, `[NSString
+    ;; stringWithUTF8String:s]`.
+    :foreign-class-selector-call
+    (let [arg-tys   (foreign-signature-arg-types (:signature node))
+          arg-exprs (mapv (fn [i a]
+                            (marshal-foreign-arg
+                              (lower-expr (:value a) ctx)
+                              (nth arg-tys i nil)))
+                          (range (count (:args node)))
+                          (:args node))]
+      {:node     :objc-msg
+       :recv     {:node :name :sym (:cls node)}
        :selector (:selector node)
        :args     arg-exprs})
 

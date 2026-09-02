@@ -281,37 +281,29 @@
    {}
    foreign-blocks))
 
-(defn build-selector-index
-  "FL-13 (2026-09-02). Sibling to `build-foreign-index` but keyed by
-   ObjC selector string. Given a plugin manifest's `:foreign-blocks`
-   vector, return `{sel-str → {:library STR :cls STR :signature <sig>
-   :entry <full-entry>}}`.
-
-   Only `:selector` entries participate (class-side `:class_selector`
-   entries are covered by FL-14). Collision: two `:selector` entries
-   declaring the same SEL string across any of the plugin's blocks —
-   even in different classes — throw at index-build. Selectors are
-   dispatched by name at the C level (`[recv SEL:args]`); two
-   signatures for the same SEL would silently disagree on marshaling,
-   so the compiler forces the author to disambiguate."
-  [foreign-blocks]
+(defn- build-selector-index-of-kind
+  "Shared helper for FL-13 / FL-14. Walk foreign blocks; keep entries
+   whose `:kind` matches `kind`; index by SEL string (second element of
+   `:name-strs`). Collision on SEL throws `:plugin-foreign-<label>-collision`
+   with the two competing (library, class) pairs."
+  [foreign-blocks kind label collision-kind]
   (reduce
    (fn [idx {:keys [library entries]}]
      (reduce
       (fn [idx entry]
-        (if-not (= :selector (:kind entry))
+        (if-not (= kind (:kind entry))
           idx
           (let [[cls sel] (:name-strs entry)]
             (when (contains? idx sel)
               (throw (ex-info
-                      (str "plugin foreign selector `" sel "` declared "
+                      (str "plugin foreign " label " `" sel "` declared "
                            "in both `" (get-in idx [sel :library]) "` (`"
                            (get-in idx [sel :cls]) "`) and `" library
-                           "` (`" cls "`) blocks. Selectors must be "
-                           "unique across a plugin's foreign blocks so "
-                           "`plugin.send(\"" sel "\", ...)` resolves to "
-                           "a single signature.")
-                      {:kind           :plugin-foreign-selector-collision
+                           "` (`" cls "`) blocks. " (str/capitalize label)
+                           "s must be unique across a plugin's foreign "
+                           "blocks so a single call site resolves to one "
+                           "signature.")
+                      {:kind           collision-kind
                        :selector       sel
                        :first-library  (get-in idx [sel :library])
                        :first-class    (get-in idx [sel :cls])
@@ -325,6 +317,27 @@
       entries))
    {}
    foreign-blocks))
+
+(defn build-selector-index
+  "FL-13 (2026-09-02). Instance-selector index keyed by SEL string.
+   Only `:selector` entries participate. Collision throws
+   `:plugin-foreign-selector-collision`."
+  [foreign-blocks]
+  (build-selector-index-of-kind
+    foreign-blocks :selector "selector"
+    :plugin-foreign-selector-collision))
+
+(defn build-class-selector-index
+  "FL-14 (2026-09-02). Class-selector index keyed by SEL string.
+   Only `:class_selector` entries participate. Collision throws
+   `:plugin-foreign-class-selector-collision`. The class name lives on
+   the entry (`:cls`), so at the emit site `plugin.class_send(\"SEL\",
+   ARGS...)` renders as `[ClassName SEL:args]` — receiver is derived,
+   not passed."
+  [foreign-blocks]
+  (build-selector-index-of-kind
+    foreign-blocks :class_selector "class selector"
+    :plugin-foreign-class-selector-collision))
 
 (defn- plugin-method-call?
   "True when `expr` is `plugin.<method>(args...)` for one of the recognized
@@ -415,6 +428,37 @@
                  :selector sel
                  :call     call-node})))))
 
+(defn resolve-plugin-class-send
+  "FL-14 (2026-09-02). Resolve a `plugin.class_send(LIT-STR, ARGS...)`
+   call against a class-selector-index. Validates:
+   - first positional arg is a literal string SEL
+   - SEL resolves in the index
+   Returns the index entry `{:library :cls :signature :entry}`.
+   Throws `:plugin-class-send-non-literal-selector` or
+   `:plugin-class-selector-unresolved`.
+
+   Class selectors have no receiver — the class name comes from the
+   manifest entry — so no missing-receiver check exists."
+  [call-node index]
+  (let [sel (first-string-arg call-node)]
+    (when-not sel
+      (throw (ex-info
+              (str "plugin.class_send expects a literal string selector "
+                   "as its first argument (compile-time selector binding); "
+                   "got " (pr-str (get-in call-node [:args 0 :value :node])))
+              {:kind :plugin-class-send-non-literal-selector
+               :call call-node})))
+    (or (get index sel)
+        (throw (ex-info
+                (str "plugin.class_send(\"" sel "\", ...): class selector "
+                     "not declared in any `foreign \"...\"` block of this "
+                     "plugin's manifest. Add `class_selector \"ClassName\" "
+                     "\"" sel "\" -> <signature>` to a foreign block, or "
+                     "check for a typo.")
+                {:kind     :plugin-class-selector-unresolved
+                 :selector sel
+                 :call     call-node})))))
+
 (defn- walk-plugin-calls
   "Depth-first walk over `x` invoking `f` on every node matching
    `plugin-method-call?`. Pure traversal — `f` returns nothing; used
@@ -447,33 +491,22 @@
    rejected any `use <name>: Plugin` in that case)."
   [top-nodes manifest]
   (when manifest
-    (let [foreign-idx  (build-foreign-index  (:foreign-blocks manifest))
-          selector-idx (build-selector-index (:foreign-blocks manifest))]
+    (let [foreign-idx        (build-foreign-index        (:foreign-blocks manifest))
+          selector-idx       (build-selector-index       (:foreign-blocks manifest))
+          class-selector-idx (build-class-selector-index (:foreign-blocks manifest))]
       (doseq [a (atom-nodes top-nodes)]
         (walk-plugin-calls
          (:body a)
          (fn [call]
            (case (plugin-method call)
-             "get"
-             (resolve-plugin-get call foreign-idx)
-
-             ;; FL-13 (2026-09-02) — `plugin.send` resolves against the
-             ;; per-plugin selector-index built from `:selector` foreign
-             ;; entries. `class_send` still awaits FL-14 (class-side
-             ;; selector index + `[ClassName sel:args]` emit).
-             "send"
-             (resolve-plugin-send call selector-idx)
-
-             "class_send"
-             (throw (ex-info
-                     (str "plugin.class_send is not yet implemented at v1.0. "
-                          "Class-selector resolution against `foreign "
-                          "\"...\": class_selector \"...\"` entries lands "
-                          "in FL-14. Meanwhile, use `plugin.send(\"sel:\", "
-                          "instance, ...)` for instance-selector calls.")
-                     {:kind      :plugin-method-nyi
-                      :method    "class_send"
-                      :atom-name (:name a)})))))))))
+             "get"        (resolve-plugin-get        call foreign-idx)
+             ;; FL-13 — instance-selector resolution against the
+             ;; per-plugin `:selector` entries.
+             "send"       (resolve-plugin-send       call selector-idx)
+             ;; FL-14 — class-selector resolution against
+             ;; `:class_selector` entries. Class name lives on the
+             ;; manifest entry; the call site does not name it.
+             "class_send" (resolve-plugin-class-send call class-selector-idx))))))))
 
 ;; ============================================================================
 ;; FL-1 (2026-09-02) — parse-post rewrite of `plugin.get(LIT)` into
@@ -538,53 +571,80 @@
            :orig-node x})
         x))))
 
+(defn- rewrite-plugin-class-send-node
+  "FL-14 (2026-09-02). If `x` is a `plugin.class_send(LIT-STR, ARGS...)`
+   call and the selector resolves in `cls-sel-index`, return a
+   `:foreign-class-selector-call` node carrying `:library :cls :selector
+   :signature :args :orig-node`. No receiver slot — the class name from
+   the manifest is the receiver at emit time."
+  [x cls-sel-index]
+  (if-not (and (plugin-method-call? x)
+               (= "class_send" (plugin-method x)))
+    x
+    (let [sel (first-string-arg x)]
+      (if-let [entry (get cls-sel-index sel)]
+        {:node      :foreign-class-selector-call
+         :library   (:library entry)
+         :cls       (:cls entry)
+         :selector  sel
+         :signature (:signature entry)
+         :args      (vec (drop 1 (:args x)))
+         :orig-node x}
+        x))))
+
+(def ^:private rewritten-kinds
+  #{:foreign-ref :foreign-selector-call :foreign-class-selector-call})
+
 (defn- rewrite-plugin-refs*
-  "Depth-first postwalk replacing `plugin.get(LIT)` calls with
-   `:foreign-ref` nodes and `plugin.send(LIT, RECV, ...)` calls with
-   `:foreign-selector-call` nodes. Structural — preserves record types,
-   order of maps/vectors, and only touches nodes that match. Skips
-   already-rewritten subtrees to preserve idempotence: the `:orig-node`
-   slot holds the original `:call` and must NOT be re-walked."
-  [x foreign-idx sel-idx]
+  "Depth-first postwalk replacing `plugin.get(LIT)`, `plugin.send(LIT,
+   RECV, ...)`, and `plugin.class_send(LIT, ...)` calls with their
+   respective resolved nodes. Structural — preserves record types,
+   order of maps/vectors. Skips already-rewritten subtrees to preserve
+   idempotence: the `:orig-node` slot holds the original `:call` and
+   must NOT be re-walked."
+  [x foreign-idx sel-idx cls-sel-idx]
   (cond
-    (and (map? x) (contains? #{:foreign-ref :foreign-selector-call} (:node x)))
+    (and (map? x) (contains? rewritten-kinds (:node x)))
     x
 
     (map? x)
     (let [walked (into {}
-                       (map (fn [[k v]] [k (rewrite-plugin-refs* v foreign-idx sel-idx)]))
+                       (map (fn [[k v]] [k (rewrite-plugin-refs* v foreign-idx sel-idx cls-sel-idx)]))
                        x)]
       (-> walked
-          (rewrite-plugin-get-node foreign-idx)
-          (rewrite-plugin-send-node sel-idx)))
+          (rewrite-plugin-get-node        foreign-idx)
+          (rewrite-plugin-send-node       sel-idx)
+          (rewrite-plugin-class-send-node cls-sel-idx)))
 
     (vector? x)
-    (mapv #(rewrite-plugin-refs* % foreign-idx sel-idx) x)
+    (mapv #(rewrite-plugin-refs* % foreign-idx sel-idx cls-sel-idx) x)
 
     (sequential? x)
-    (map #(rewrite-plugin-refs* % foreign-idx sel-idx) x)
+    (map #(rewrite-plugin-refs* % foreign-idx sel-idx cls-sel-idx) x)
 
     :else x))
 
 (defn rewrite-plugin-refs
-  "FL-1 + FL-13 entry point. Given parsed top-nodes and the module's
-   extracted plugin manifest, return a new top-nodes vector with every
-   `plugin.get(LIT)` call replaced by a `:foreign-ref` node and every
-   `plugin.send(LIT, RECV, ARGS...)` call replaced by a
-   `:foreign-selector-call` node. Returns `top-nodes` unchanged when
-   `manifest` is nil (non-plugin module).
+  "FL-1 + FL-13 + FL-14 entry point. Given parsed top-nodes and the
+   module's extracted plugin manifest, return a new top-nodes vector
+   with every plugin-method call replaced by its resolved node:
+   `plugin.get(LIT)` → `:foreign-ref`,
+   `plugin.send(LIT, RECV, ARGS...)` → `:foreign-selector-call`,
+   `plugin.class_send(LIT, ARGS...)` → `:foreign-class-selector-call`.
+   Returns `top-nodes` unchanged when `manifest` is nil (non-plugin
+   module).
 
    Idempotent: running twice produces the same output as running once.
 
    Runs AFTER `validate-plugin-symbol-refs!` — every literal is
-   guaranteed to resolve, so the rewrite is total on plugin.get /
-   plugin.send calls."
+   guaranteed to resolve."
   [top-nodes manifest]
   (if-not manifest
     top-nodes
-    (let [foreign-idx (build-foreign-index  (:foreign-blocks manifest))
-          sel-idx     (build-selector-index (:foreign-blocks manifest))]
-      (mapv #(rewrite-plugin-refs* % foreign-idx sel-idx) top-nodes))))
+    (let [foreign-idx (build-foreign-index        (:foreign-blocks manifest))
+          sel-idx     (build-selector-index       (:foreign-blocks manifest))
+          cls-sel-idx (build-class-selector-index (:foreign-blocks manifest))]
+      (mapv #(rewrite-plugin-refs* % foreign-idx sel-idx cls-sel-idx) top-nodes))))
 
 ;; ============================================================================
 ;; FL-11 (2026-09-02) — foreign-alias field elision.

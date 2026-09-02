@@ -383,21 +383,9 @@ def BCap:
       (is (nil? (pm/validate-plugin-symbol-refs! nodes manifest))
           "sharing a library name (liba) across plugins is fine when symbols disjoint"))))
 
-(deftest resolve-flags-class-send-as-nyi
-  ;; FL-13 landed `plugin.send`; `plugin.class_send` still awaits FL-14.
-  (let [full (str foreign-block-src "
-def Console:
-    use plugin: Plugin
-    x: Int! = plugin.class_send(\"write\")
-")
-        nodes    (parse/parse full)
-        manifest (pm/extract nodes)
-        ex       (try (pm/validate-plugin-symbol-refs! nodes manifest)
-                      nil
-                      (catch clojure.lang.ExceptionInfo e e))]
-    (is (some? ex))
-    (is (= :plugin-method-nyi (:kind (ex-data ex))))
-    (is (= "class_send"       (:method (ex-data ex))))))
+;; NYI holdout retired 2026-09-02: FL-13 landed `plugin.send` and FL-14
+;; landed `plugin.class_send`. Failure modes for both live in the
+;; dedicated FL-13 / FL-14 test sections below.
 
 ;; ============================================================================
 ;; B7 / F77 — .cxc-caps manifest emission
@@ -692,6 +680,171 @@ def MyAtom:
     (is (= "stringByAppendingString:"   (:selector fsc)))
     (is (= 1                            (count (:args fsc)))
         "receiver split off from positional args; only the trailing arg remains")))
+
+;; ---------------------------------------------------------------------------
+;; FL-14 (2026-09-02) — plugin.class_send class-selector resolution + rewrite.
+;; Mirrors FL-13 but keyed by `:class_selector` entries; the receiver is the
+;; class name from the manifest entry (not a call-site arg).
+;; ---------------------------------------------------------------------------
+
+(def fl-14-src
+  "def plugin:
+    name:    String!       = \"fl14\"
+    version: SemVer!       = SemVer(0, 1, 0)
+    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0),
+                                          max: SemVer(2, 0, 0))
+
+    foreign \"Foundation\":
+        type \"NSString\" as NSStr
+        class_selector \"NSString\" \"stringWithUTF8String:\" -> (CString) -> NSStr
+        class_selector \"NSDate\" \"date\" -> () -> NSStr
+")
+
+(deftest fl-14-class-selector-index-collects
+  (let [nodes    (parse/parse fl-14-src)
+        manifest (pm/extract nodes)
+        idx      (pm/build-class-selector-index (:foreign-blocks manifest))]
+    (is (contains? idx "stringWithUTF8String:"))
+    (is (contains? idx "date"))
+    (is (= "NSString" (get-in idx ["stringWithUTF8String:" :cls])))
+    (is (= "NSDate"   (get-in idx ["date" :cls])))))
+
+(deftest fl-14-class-selector-index-rejects-collision
+  (let [src "def plugin:
+    name:    String!       = \"fl14-col\"
+    version: SemVer!       = SemVer(0, 1, 0)
+    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0),
+                                          max: SemVer(2, 0, 0))
+    foreign \"A\":
+        class_selector \"C1\" \"sel:\" -> (Int) -> Int
+    foreign \"B\":
+        class_selector \"C2\" \"sel:\" -> (Int) -> Int
+"
+        nodes    (parse/parse src)
+        manifest (pm/extract nodes)
+        ex       (try (pm/build-class-selector-index (:foreign-blocks manifest))
+                      nil
+                      (catch clojure.lang.ExceptionInfo e e))]
+    (is (some? ex))
+    (is (= :plugin-foreign-class-selector-collision (:kind (ex-data ex))))))
+
+(deftest fl-14-class-selector-index-does-not-see-instance-selectors
+  (let [src "def plugin:
+    name:    String!       = \"fl14-mix\"
+    version: SemVer!       = SemVer(0, 1, 0)
+    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0),
+                                          max: SemVer(2, 0, 0))
+    foreign \"Foundation\":
+        selector \"NSString\" \"length\" -> () -> Int
+        class_selector \"NSDate\" \"date\" -> () -> Int
+"
+        nodes    (parse/parse src)
+        manifest (pm/extract nodes)
+        inst-idx (pm/build-selector-index (:foreign-blocks manifest))
+        cls-idx  (pm/build-class-selector-index (:foreign-blocks manifest))]
+    (is (contains? inst-idx "length"))
+    (is (not (contains? inst-idx "date")))
+    (is (contains? cls-idx "date"))
+    (is (not (contains? cls-idx "length")))
+    ;; No cross-kind collision even when SEL names happen to overlap
+    (let [src2 "def plugin:
+    name:    String!       = \"fl14-sameel\"
+    version: SemVer!       = SemVer(0, 1, 0)
+    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0),
+                                          max: SemVer(2, 0, 0))
+    foreign \"F\":
+        selector       \"NSString\" \"copy\" -> () -> Int
+        class_selector \"NSDate\"   \"copy\" -> () -> Int
+"
+          m2 (pm/extract (parse/parse src2))]
+      (is (contains? (pm/build-selector-index       (:foreign-blocks m2)) "copy"))
+      (is (contains? (pm/build-class-selector-index (:foreign-blocks m2)) "copy")))))
+
+(deftest fl-14-resolve-happy-path
+  (let [full (str fl-14-src "
+def MyAtom:
+    use plugin: Plugin
+    -> ready
+        then:
+            let s = plugin.class_send(\"stringWithUTF8String:\", \"x\")
+")
+        nodes    (parse/parse full)
+        manifest (pm/extract nodes)]
+    (is (nil? (pm/validate-plugin-symbol-refs! nodes manifest))
+        "known class-selector + args validates cleanly")))
+
+(deftest fl-14-resolve-unresolved-fails
+  (let [full (str fl-14-src "
+def MyAtom:
+    use plugin: Plugin
+    -> ready
+        then:
+            let s = plugin.class_send(\"noSuchClsSel\")
+")
+        nodes    (parse/parse full)
+        manifest (pm/extract nodes)
+        ex       (try (pm/validate-plugin-symbol-refs! nodes manifest)
+                      nil
+                      (catch clojure.lang.ExceptionInfo e e))]
+    (is (some? ex))
+    (is (= :plugin-class-selector-unresolved (:kind (ex-data ex))))
+    (is (= "noSuchClsSel" (:selector (ex-data ex))))))
+
+(deftest fl-14-resolve-non-literal-fails
+  (let [full (str fl-14-src "
+def MyAtom:
+    use plugin: Plugin
+    -> ready
+        then:
+            let sel = \"date\"
+            let d = plugin.class_send(sel)
+")
+        nodes    (parse/parse full)
+        manifest (pm/extract nodes)
+        ex       (try (pm/validate-plugin-symbol-refs! nodes manifest)
+                      nil
+                      (catch clojure.lang.ExceptionInfo e e))]
+    (is (some? ex))
+    (is (= :plugin-class-send-non-literal-selector (:kind (ex-data ex))))))
+
+(deftest fl-14-rewrite-produces-foreign-class-selector-call
+  (let [full (str fl-14-src "
+def MyAtom:
+    use plugin: Plugin
+    -> ready
+        then:
+            let s = plugin.class_send(\"stringWithUTF8String:\", \"x\")
+")
+        nodes    (parse/parse full)
+        manifest (pm/extract nodes)
+        out      (pm/rewrite-plugin-refs nodes manifest)
+        find-node (fn walk [x]
+                    (cond
+                      (and (map? x) (= :foreign-class-selector-call (:node x))) x
+                      (map? x)      (some walk (vals x))
+                      (sequential? x) (some walk x)
+                      :else nil))
+        fcsc     (find-node out)]
+    (is (some? fcsc))
+    (is (= "Foundation"             (:library fcsc)))
+    (is (= "NSString"               (:cls fcsc)))
+    (is (= "stringWithUTF8String:"  (:selector fcsc)))
+    (is (= 1                        (count (:args fcsc)))
+        "no receiver split — all args after SEL are call args")))
+
+(deftest fl-14-rewrite-is-idempotent
+  (let [full (str fl-14-src "
+def MyAtom:
+    use plugin: Plugin
+    -> ready
+        then:
+            let s = plugin.class_send(\"date\")
+")
+        nodes    (parse/parse full)
+        manifest (pm/extract nodes)
+        once     (pm/rewrite-plugin-refs nodes manifest)
+        twice    (pm/rewrite-plugin-refs once manifest)]
+    (is (= once twice))))
 
 (deftest fl-13-rewrite-is-idempotent
   (let [full (str fl-13-src "
