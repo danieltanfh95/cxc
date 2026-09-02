@@ -2539,20 +2539,50 @@
               raw-def (cond-> {:node :def-atom :name name :ctor-params ctor
                               :body folded}
                         queue-cfg (assoc :queue-config queue-cfg))
-              ;; F68 L1/L2/L5 (Proposal H) — structural detection dispatch.
-              ;; Order matters: protocol (signature-only members) > enum
-              ;; (case) > class
-              ;; (transition, direct use, or ctor params) > record (fields +
-              ;; observables only, no ctor params). See
-              ;; compiler/design/plans/archive/proposal-h-full-unification-under-
-              ;; def.md § "Structural detection".
-              ;;
-              ;; Ctor params are a class indicator: records auto-derive
-              ;; their ctor from the field list, so an explicit ctor-param
-              ;; list at the def-header is itself an intent signal
-              ;; (preserves pre-F68 atom syntax of `def X(a: T):`).
+              ;; R7 (2026-08-31, decisions-frozen-2026-08-31-plugin-shape) —
+              ;; `def plugin:` at module top-level is the plugin manifest
+              ;; marker (reserved name). Body admits fields (+ nested
+              ;; `foreign "..."` sections landing in PR-4). No ctor
+              ;; params, no transitions, no observables, no `use`
+              ;; declarations; targeted diagnostic on any of those.
+              ;; Emits `:def-plugin` AST node — F75 manifest resolver
+              ;; consumes this.
+              plugin-marker? (= "plugin" name)
               reshaped
               (cond
+                plugin-marker?
+                (do
+                  (when (seq ctor)
+                    (fail! tokens pos
+                           (str "R7: `def plugin:` manifest cannot take ctor params — "
+                                "manifest is data, not a constructor. Delete the "
+                                "`(...)` after `plugin`.")))
+                  (when queue-cfg
+                    (fail! tokens pos
+                           (str "R7: `def plugin:` manifest cannot declare a "
+                                "`queue:` — no mailbox on a manifest record.")))
+                  ;; Body must be fields-only (PR-3 scope). PR-4 will also
+                  ;; admit nested `foreign "..."` sections.
+                  (let [data-fields (vec (mapcat (fn [n]
+                                                   (when (= :data-section (:node n))
+                                                     (:fields n)))
+                                                 folded))
+                        non-field   (first (remove (fn [n] (= :data-section (:node n)))
+                                                   folded))]
+                    (when non-field
+                      (fail! tokens pos
+                             (str "R7: `def plugin:` body admits only fields "
+                                  "(name/version/compat/requires + defaults) at v1.0. "
+                                  "Got node kind `" (:node non-field) "`. Nested "
+                                  "`foreign \"...\"` sections land as PR-4.")))
+                    {:node :def-plugin :name "plugin" :fields data-fields}))
+
+                ;; F68 L1/L2/L5 (Proposal H) — structural detection dispatch.
+                ;; Order matters: protocol (signature-only members) > enum
+                ;; (case) > class
+                ;; (transition, direct use, or ctor params) > record (fields +
+                ;; observables only, no ctor params).
+
                 (def-atom-body-has-signature? folded)
                 (def-atom-signatures->protocol raw-def tokens pos)
 
@@ -2598,9 +2628,11 @@
         (fail! tokens p
                (str "annotation grammar (`@name(...)`) is retired at v1.0 "
                     "(annotation-grammar-retirement 2026-08-30). "
-                    "Plugin manifest → `plugin: Plugin = Plugin(...)` at "
-                    "module-let scope (spec §7.2). Metadata (kind) → body-shape "
-                    "inference (§3.3). Deprecation → comment / user convention."))
+                    "Plugin manifest → `def plugin:` record marker with reserved "
+                    "name at module top-level (R2/R7 2026-08-31 + R11 plugin-only "
+                    "wave 2026-09-01; see spec §7.2.1). "
+                    "Metadata (kind) → body-shape inference (§3.3). "
+                    "Deprecation → comment / user convention."))
 
         ;; L2b — direct def-body proposition (class-level invariant).
         ;; `invariants:` is hard-retired; this is the sole invariant

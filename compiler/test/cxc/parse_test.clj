@@ -987,8 +987,10 @@ def main:
           plugin-def (first (filter #(= "plugin" (:name %)) nodes))]
       (is (some? plugin-def)
           "plugin marker parsed as top-level def with name \"plugin\"")
-      (is (contains? #{:def-atom :record :def} (:node plugin-def))
-          "reshapes via body-shape inference (any of :def-atom / :record / :def acceptable pending F75 landing)"))))
+      (is (= :def-plugin (:node plugin-def))
+          "PR-3 (2026-09-02): reshapes to `:def-plugin` — the reserved-name marker for R7 plugin manifests. F75 introspection consumes this node kind.")
+      (is (vector? (:fields plugin-def))
+          ":def-plugin carries a :fields vector (folded from the data-section) for F75 to inspect."))))
 
 (deftest f9-l3-extend-class-rejects-top-level-fields
   (testing "F9 Landing 3 + F67 L5 — a field declaration inside `extend class` fails at parse per §3.3.2 (extensions cannot add state). Post-L5 the surface is top-level fields (no `data:` header)."
@@ -1555,6 +1557,41 @@ def main:
       (is (= 1 (get-in ex [:arms 0 :body :value])))
       (is (= 2 (get-in ex [:arms 1 :body :value])))
       (is (= 0 (get-in ex [:arms 2 :body :value]))))))
+
+;; ---------------------------------------------------------------------------
+;; R7 (2026-08-31, decisions-frozen-2026-08-31-plugin-shape.md) — `def plugin:`
+;; at module top-level is the plugin manifest marker. Reshapes to :def-plugin
+;; (fields-only body at PR-3; nested `foreign "..."` sections land as PR-4).
+;; Reserved-name discipline: `plugin` (lowercase) is claimed at module scope
+;; for this marker. Ctor params, queue, transitions, `use`, observables are
+;; rejected with targeted R7 diagnostics.
+;; ---------------------------------------------------------------------------
+
+(deftest r7-def-plugin-fields-reshapes-to-def-plugin
+  (testing "R7 PR-3 — `def plugin:` with fields-only body reshapes to :def-plugin AST node"
+    (let [ast (p/parse (str "def plugin:\n"
+                            "    name: String = \"std.env\"\n"
+                            "    version: SemVer = SemVer(0, 1, 0)\n"))
+          plugin-def (first ast)]
+      (is (= :def-plugin (:node plugin-def)))
+      (is (= "plugin"    (:name plugin-def)))
+      (is (= 2 (count (:fields plugin-def))))
+      (is (= "name"    (get-in plugin-def [:fields 0 :name])))
+      (is (= "version" (get-in plugin-def [:fields 1 :name]))))))
+
+(deftest r7-def-plugin-rejects-ctor-params
+  (testing "R7 PR-3 — `def plugin(x: Int):` is a compile error (manifest is data, not a constructor)"
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"R7: `def plugin:` manifest cannot take ctor params"
+         (p/parse "def plugin(x: Int):\n    name: String = \"x\"\n")))))
+
+(deftest r7-def-plugin-rejects-transitions
+  (testing "R7 PR-3 — non-field body content in `def plugin:` is a compile error"
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"R7: `def plugin:` body admits only fields"
+         (p/parse "def plugin:\n    name: String = \"x\"\n    -> ready\n")))))
 
 (deftest r6-multi-arm-dispatch-nested-arm-body
   (testing "R6 — nested `||:` inside an arm body is parsed as a nested :multi-arm-dispatch"
