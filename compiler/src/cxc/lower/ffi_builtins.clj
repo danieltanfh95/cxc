@@ -822,6 +822,52 @@
                  (str "((" (first args) " && "
                       "[[NSFileManager defaultManager] fileExistsAtPath:"
                       (first args) "]) ? 1 : 0)"))}
+   "native_fs_list_dir"
+   ;; 2026-09-03 — list a directory as a newline-separated String
+   ;; (one filename per line, no leading path). Empty String on error
+   ;; (missing / not-a-directory / permission). Names are NOT sorted;
+   ;; callers who need ordering do it themselves. No `.` / `..`
+   ;; entries — Foundation's contentsOfDirectoryAtPath elides them.
+   ;; Interim surface until List of T lands; callers can string-parse
+   ;; with .contains / .index_of / split-by-newline patterns.
+   {:return-kw :string
+    :arity     1
+    :emit-c    (fn [args]
+                 (str "({ NSString *__p = " (first args) "; "
+                      "NSString *__r = @\"\"; "
+                      "if (__p) { NSError *__e = nil; "
+                      "NSArray *__a = [[NSFileManager defaultManager] "
+                      "contentsOfDirectoryAtPath:__p error:&__e]; "
+                      "if (__a && !__e) { "
+                      "__r = [__a componentsJoinedByString:@\"\\n\"]; } } "
+                      "__r; })"))}
+   "native_http_download_to_file"
+   ;; 2026-09-03 — GET the URL and write the raw response bytes to
+   ;; a destination path. Returns 0 on success, -1 on failure
+   ;; (network error, bad URL, write error). Bypasses the String
+   ;; body marshaling so binary payloads (images, archives) don't
+   ;; get corrupted by UTF-8 assumptions. Blocking (dispatch_semaphore).
+   {:return-kw :int
+    :arity     2
+    :emit-c    (fn [args]
+                 (str "({ NSString *__u = " (first args) "; "
+                      "NSString *__dst = " (second args) "; "
+                      "__block int64_t __r = -1; "
+                      "if (__u && __dst) { "
+                      "NSURL *__url = [NSURL URLWithString:__u]; "
+                      "if (__url) { "
+                      "dispatch_semaphore_t __sem = dispatch_semaphore_create(0); "
+                      "NSURLSessionDataTask *__task = "
+                      "[[NSURLSession sharedSession] "
+                      "dataTaskWithURL:__url completionHandler:"
+                      "^(NSData *__d, NSURLResponse *__rsp, NSError *__e) { "
+                      "if (!__e && __d) { "
+                      "if ([__d writeToFile:__dst atomically:YES]) __r = 0; } "
+                      "dispatch_semaphore_signal(__sem); }]; "
+                      "[__task resume]; "
+                      "dispatch_semaphore_wait(__sem, DISPATCH_TIME_FOREVER); "
+                      "} } "
+                      "__r; })"))}
    "native_fs_tmp_path"
    ;; 2026-09-03 — build a unique-per-call scratch path under the OS
    ;; temp directory. Shape: `<tmpdir><prefix>-<16 hex chars>`. Does

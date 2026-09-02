@@ -19,6 +19,8 @@ def FileSystem:
 
     tmp_path(prefix: String) :- native_fs_tmp_path(prefix)
 
+    list_dir(path: String) :- native_fs_list_dir(path)
+
     -> running
 
     -> end

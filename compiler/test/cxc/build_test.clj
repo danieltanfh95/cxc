@@ -1944,6 +1944,23 @@
       (is (str/includes? stdout "append_rc2: 0"))
       (is (str/includes? stdout "read_back: line one\nline two")))))
 
+(deftest end-to-end-fs-list-dir
+  (testing "2026-09-03 — `fs.list_dir(path)` returns a newline-separated String of names in the directory (no `.` / `..`, no path prefix). Empty String on error (missing / not-a-directory / permission). Interim shape until List of T lands — callers parse via `.contains` / `.split` / string surgery. Test creates a temp dir with three named files, asserts each name appears in the joined output, and verifies missing path returns empty."
+    (let [{:keys [exit stdout]} (compile-and-run "fs-list-dir")]
+      (is (zero? exit))
+      (is (str/includes? stdout "has_alpha: true"))
+      (is (str/includes? stdout "has_beta: true"))
+      (is (str/includes? stdout "has_gamma: true"))
+      (is (str/includes? stdout "missing_empty: true")))))
+
+(deftest http-download-compiles-cleanly
+  (testing "2026-09-03 — `http.download_to_file(url, dest)` saves the raw response bytes to a destination path, bypassing String marshaling (so binary payloads round-trip cleanly). Compile-only in CI (would hit the network); manual verification via examples/http-download.cxc."
+    (let [src     (example "http-download")
+          out-dir (tmp-dir)
+          {:keys [status stderr]}
+          (build/compile-source-to-file src "http-download" (.getPath out-dir))]
+      (is (zero? status) (str "clang failed:\n" stderr)))))
+
 (deftest end-to-end-fs-tmp-path
   (testing "2026-09-03 — `fs.tmp_path(prefix)` returns a unique scratch path under NSTemporaryDirectory. Two calls with the same prefix return different paths (CSPRNG-strong 16-hex-char suffix via arc4random_buf). Empty prefix omits the leading dash. Does NOT create the file — writing is the caller's job (verified by writing/reading/removing in one flow)."
     (let [{:keys [exit stdout]} (compile-and-run "fs-tmp-path")]

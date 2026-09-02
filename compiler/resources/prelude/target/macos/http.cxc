@@ -9,6 +9,8 @@ def Http:
 
     head_status(url: String) :- native_http_head_status(url)
 
+    download_to_file(url: String, dest_path: String) :- native_http_download_to_file(url, dest_path)
+
     -> running
 
     -> end
