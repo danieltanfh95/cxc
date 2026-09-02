@@ -42,6 +42,16 @@
          "String" "return __v ? (NSString *)__v : fallback;"
          "Bool"   "return __v ? [(NSNumber *)__v boolValue] : fallback;")))
 
+(defn- list-contains-box-expr
+  "Body of the -containsWithe: method: box e to id and delegate to
+   NSArray's -containsObject: (uses -isEqual: for value equality on
+   NSNumber/NSString)."
+  [ty]
+  (case ty
+    "Int"    "return [_elements containsObject:@(e)] ? 1 : 0;"
+    "String" "return [_elements containsObject:e] ? 1 : 0;"
+    "Bool"   "return [_elements containsObject:@(e)] ? 1 : 0;"))
+
 (defn synthesize-list-container-class
   "Emit-ready :objc-class node for one `_Cxc_ListOf<T>` instantiation.
    Contents:
@@ -185,5 +195,11 @@
                                                {:name "fallback" :c-type (list-at-or-c-type element-name)}]
                                  :return-type (list-at-or-c-type element-name)
                                  :body        [{:node :raw-c
-                                                :text (list-at-or-unbox-expr element-name)}]})))
+                                                :text (list-at-or-unbox-expr element-name)}]}
+                                {:name        "containsWithe"
+                                 :selector    "containsWithe:"
+                                 :params      [{:name "e" :c-type (list-at-or-c-type element-name)}]
+                                 :return-type "int"
+                                 :body        [{:node :raw-c
+                                                :text (list-contains-box-expr element-name)}]})))
      :element-name element-name}))

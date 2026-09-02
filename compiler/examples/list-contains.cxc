@@ -1,0 +1,13 @@
+def main:
+    ns: List of Int    = [10, 20, 30]
+    ss: List of String = ["alpha", "beta"]
+    bs: List of Bool   = [true]
+
+    -> running
+        then:
+            print(ns.contains(20).to_string())
+            print(ns.contains(99).to_string())
+            print(ss.contains("alpha").to_string())
+            print(ss.contains("gamma").to_string())
+            print(bs.contains(true).to_string())
+            print(bs.contains(false).to_string())

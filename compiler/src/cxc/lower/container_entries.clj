@@ -211,7 +211,10 @@
                                      (conj (container-method "at_or"
                                                              [{:name "i"        :cxc-ty "Int"}
                                                               {:name "fallback" :cxc-ty elem}]
-                                                             elem)))]
+                                                             elem)
+                                           (container-method "contains"
+                                                             [{:name "e" :cxc-ty elem}]
+                                                             "Bool")))]
                  [class-name
                   (merge (container-entry-defaults)
                          count-observable-defaults

@@ -1105,6 +1105,12 @@
       (is (zero? exit))
       (is (= "ok\nnot-found\n?\n" stdout)))))
 
+(deftest end-to-end-list-contains
+  (testing "list-contains.cxc — `List of T .contains(e) -> Bool` membership for T ∈ {Int, String, Bool}. Delegates to NSArray's -containsObject: which uses -isEqual: on NSNumber (Int / Bool box path) and NSString (String direct passthrough). Six assertions: three types × present/missing."
+    (let [{:keys [exit stdout]} (compile-and-run "list-contains")]
+      (is (zero? exit))
+      (is (= "true\nfalse\ntrue\nfalse\ntrue\nfalse\n" stdout)))))
+
 (deftest end-to-end-console-hello
   (testing "console-hello.cxc — Layer 6 Step 5. Console prelude atom with `write(msg: String) -> Int` method wrapping the `native_console_write` FFI hatch (printf %s). Main is capability-provisioned (`def main(console: Console)`) and calls `console.write(\"hi\\n\")` in its `-> running do:`. Prints `hi` + newline."
     (let [{:keys [exit stdout]} (compile-and-run "console-hello")]

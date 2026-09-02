@@ -57,6 +57,7 @@ Under [examples/](./):
 - [map-of-bool.cxc](./map-of-bool.cxc) — `Map of (String, Bool)` toggle map: add/get_or with present-key overriding fallback + missing-key falling through both directions.
 - [list-at-or.cxc](./list-at-or.cxc) — `List of T .at_or(i, fallback) -> T` random access for T ∈ {Int, String, Bool}: in-range value / past-end fallback / negative-index fallback.
 - [map-int-key.cxc](./map-int-key.cxc) — `Map of (Int, String)`: Int-as-key coverage (HTTP status→reason lookup).
+- [list-contains.cxc](./list-contains.cxc) — `List of T .contains(e) -> Bool` for T ∈ {Int, String, Bool}: NSArray -containsObject: via -isEqual: on each element.
 
 ## Non-plugin prelude capabilities enriched this session
 
