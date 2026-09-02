@@ -241,6 +241,16 @@
       ;; as List/Map — pointer-typed at C.
       (str (base-type-name ty-node) " *")
 
+      (= "Ptr" (:outer ty-node))
+      ;; FL-7 (2026-09-02) — FFI-only pointer type. `Ptr of T` lowers
+      ;; to `<C-type of T> *` — a raw C pointer, no ObjC / ARC / boxing
+      ;; involved. Meant strictly for `foreign "..."` signature slots
+      ;; and pointer-typed FFI locals; not for ordinary storage. The
+      ;; inner element type must render on its own (primitive, CString,
+      ;; or nested Ptr of T for `Ptr of CString` = `char **`).
+      (str (cxc-type->c (:inner ty-node) record-env atom-env enum-env module-map)
+           " *")
+
       :else
       (fail-nyi! (str "cxc-type->c: `" (:outer ty-node)
                       " of ...` unsupported")
@@ -295,10 +305,21 @@
                      ;; reuses single-type-arg after `of`.
                      (str "_Cxc_SetOf" (base-type-name (:inner ty-node)))
 
+                     (= "Ptr" (:outer ty-node))
+                     ;; FL-7 (2026-09-02) — FFI pointer. Base-type-name
+                     ;; is used to key env lookups and to build mangled
+                     ;; container class names; Ptr has neither (raw C
+                     ;; pointer, no cxc class). Return a stable synthetic
+                     ;; name that won't collide with user decls
+                     ;; (`_Cxc_Ptr_<inner>`) so downstream `contains?`
+                     ;; env checks stay well-defined.
+                     (str "_Cxc_Ptr_" (base-type-name (:inner ty-node)))
+
                      :else
                      (fail-nyi! (str "base-type-name: `" (:outer ty-node)
                                      " of ...` — only `List of T`, "
-                                     "`Map of (K, V)`, and `Set of T` supported")
+                                     "`Map of (K, V)`, `Set of T`, and "
+                                     "`Ptr of T` (FFI) supported")
                                 ty-node))
     (fail-nyi! (str "base-type-name: unknown type-node " (:node ty-node)) ty-node)))
 

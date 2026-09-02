@@ -1200,29 +1200,49 @@
 ;; M1c — enum-payload-call? + record-from-bytes-call? moved to
 ;; cxc.lower.call-shape.
 
+(defn- foreign-type-node->tk
+  "FL-3/FL-7 (2026-09-02) — map a foreign signature type-node to an
+   inference type-kw. Handles:
+   - `:type-ref` — delegates to cxc-type->type-kw by name
+   - `:type-of \"Ptr\"` — synthesizes `[:ptr <inner-tk>]` with
+     `:cxc-c-type` metadata so type-kw->c-type recovers `<T> *`. Only
+     valid in FFI context; ordinary field storage would need its own
+     landing.
+   Throws fail-nyi on unrecognized shapes with a targeted message."
+  [ty-node ctx site]
+  (case (:node ty-node)
+    :type-ref
+    (cxc-type->type-kw (:name ty-node)
+                       (:record-env ctx) (:atom-env ctx)
+                       (:enum-env ctx) site)
+    :type-of
+    (case (:outer ty-node)
+      "Ptr"
+      (let [inner-c (cxc-type->c (:inner ty-node)
+                                 (:record-env ctx) (:atom-env ctx)
+                                 (:enum-env ctx) (:module-map ctx))
+            inner-tk (foreign-type-node->tk (:inner ty-node) ctx site)]
+        (with-meta [:ptr inner-tk] {:cxc-c-type (str inner-c " *")}))
+      (fail-nyi! (str "FL-7: `" (:outer ty-node) " of ...` unsupported in "
+                      "foreign signature position (only `Ptr of T` at v1.0)")
+                 site))
+    (fail-nyi! (str "FL-3: unknown foreign type-node kind " (:node ty-node))
+               site)))
+
 (defn- foreign-ref-return-type
   "FL-3 (2026-09-02) — infer the return type of a `:foreign-ref` symbol
    when it's the callee of a `:call`. Two signature shapes:
    - bare `:type-ref` (`symbol \"foo\" -> Int`) — interpreted as zero-arg
      function returning that type
-   - `:foreign-fn-type` (`symbol \"foo\" -> (A, B) -> C`) — return is `:return`"
+   - `:foreign-fn-type` (`symbol \"foo\" -> (A, B) -> C`) — return is `:return`
+   FL-7: `Ptr of T` return types produce `[:ptr T]` type-kw."
   [foreign-ref ctx]
   (let [sig (:signature foreign-ref)]
     (case (:node sig)
-      :type-ref
-      (cxc-type->type-kw (:name sig)
-                         (:record-env ctx) (:atom-env ctx)
-                         (:enum-env ctx) foreign-ref)
+      :type-ref      (foreign-type-node->tk sig ctx foreign-ref)
+      :type-of       (foreign-type-node->tk sig ctx foreign-ref)
       :foreign-fn-type
-      (let [ret (:return sig)]
-        (case (:node ret)
-          :type-ref (cxc-type->type-kw (:name ret)
-                                       (:record-env ctx) (:atom-env ctx)
-                                       (:enum-env ctx) foreign-ref)
-          (fail-nyi! (str "FL-3: nested `->` in foreign signature not yet "
-                          "supported at v1.0 MVP (return kind "
-                          (:node ret) ")")
-                     foreign-ref)))
+      (foreign-type-node->tk (:return sig) ctx foreign-ref)
       (fail-nyi! (str "FL-3: unknown foreign signature kind " (:node sig))
                  foreign-ref))))
 
@@ -1245,16 +1265,26 @@
     []))
 
 (defn- foreign-arg-needs-cstring-marshal?
-  "FL-6 (2026-09-02) — true when a foreign signature arg position typed
-   `String` needs `NSString → const char *` marshaling. `String` in a
-   foreign context always means C string; explicit `CString` type would
-   be additive (deferred). Matches on the bare `:type-ref` shape; wraps
-   in `:type-nonnil` etc. are unusual for foreign sigs but pass through
-   as no-marshal if seen."
+  "FL-6 (2026-09-02) — true when a foreign signature arg position expects
+   a C-string / byte-buffer at the boundary. Recognized targets:
+   - `String` — libc-style `const char *` parameters (puts, getenv key, etc.)
+   - `CString` — explicit `const char *` (FL-8 distinct primitive)
+   - `Ptr of Byte` / `Ptr of Char` — byte-buffer parameters (write, read).
+     A string literal at such a slot is auto-marshaled via [UTF8String];
+     for genuine binary buffers, callers construct a Ptr explicitly.
+   Matches the bare `:type-ref` shape and `:type-of \"Ptr\"` with a
+   byte-typed inner; other wrappers pass through as no-marshal."
   [ty-node]
-  (and (map? ty-node)
-       (= :type-ref (:node ty-node))
-       (= "String" (:name ty-node))))
+  (or
+    (and (map? ty-node)
+         (= :type-ref (:node ty-node))
+         (contains? #{"String" "CString"} (:name ty-node)))
+    (and (map? ty-node)
+         (= :type-of (:node ty-node))
+         (= "Ptr" (:outer ty-node))
+         (= :type-ref (get-in ty-node [:inner :node]))
+         (contains? #{"Byte" "Char" "UInt8" "Int8"}
+                    (get-in ty-node [:inner :name])))))
 
 (defn- marshal-foreign-arg
   "Given a lowered cxc arg expression and its C-signature type-node,

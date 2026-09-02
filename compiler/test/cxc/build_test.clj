@@ -117,6 +117,29 @@
       (is (zero? exit))
       (is (= "hello via FFI\n42\n" stdout)))))
 
+(deftest ffi-ptr-of-byte-signature-fl-7
+  (testing "FL-7 (2026-09-02) — `Ptr of T` parametric renders as `T *` in foreign signatures. `write -> (Int32, Ptr of Byte, SizeT) -> SsizeT` type-checks, and FL-6 auto-marshaling recognizes String args against `Ptr of Byte` slots (byte-buffer target) same as against `String`. Verifies plugin-draft-realistic write() signature works end-to-end."
+    (let [src (str "def plugin:\n"
+                   "    name:    String!       = \"p\"\n"
+                   "    version: SemVer!       = SemVer(0, 1, 0)\n"
+                   "    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0), max: SemVer(2, 0, 0))\n"
+                   "\n"
+                   "    foreign \"libc\":\n"
+                   "        symbol \"write\" -> (Int32, Ptr of Byte, SizeT) -> SsizeT\n"
+                   "\n"
+                   "def main:\n"
+                   "    use plugin: Plugin\n"
+                   "    -> ready\n"
+                   "        then: print(plugin.get(\"write\")(1, \"hi\\n\", 3))\n")
+          out-dir (tmp-dir)
+          {:keys [status stderr bin-path]}
+          (build/compile-source-to-file src "ffi-ptr" (.getPath out-dir))]
+      (is (zero? status) (str "clang failed:\n" stderr))
+      (when (zero? status)
+        (let [{:keys [exit stdout]} (build/run-binary bin-path)]
+          (is (zero? exit))
+          (is (= "hi\n3\n" stdout)))))))
+
 (deftest ffi-multi-arg-mixed-marshaling
   (testing "FL-3 + FL-6 (2026-09-02) — multi-arg foreign call with mixed types. `write(1, \"hello\\n\", 6)` — fd (Int32) passes through, buf (String) marshals via [UTF8String], nbyte (SizeT) passes through. Verifies FL-6 per-arg marshaling correctly indexes into the signature's `:type-tuple` args and only wraps positions where the signature-C-type is CString."
     (let [src (str "def plugin:\n"
