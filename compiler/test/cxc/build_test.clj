@@ -80,6 +80,60 @@
       (is (zero? exit))
       (is (= "hello, world\n" stdout)))))
 
+(deftest end-to-end-plugin-marker-b8
+  (testing "B8 (2026-09-02) — a source file with `def plugin:` + `def main:` compiles through the full pipeline (parse → B3 manifest resolver → B4 linker gate → B5 symbol resolver → lower elides :def-plugin → emit → clang), the binary runs, and B7 emits a `<binary>.cxc-caps` sidecar with the plugin listed."
+    (let [src     (example "hello-plugin")
+          out-dir (tmp-dir)
+          {:keys [status stderr bin-path]}
+          (build/compile-source-to-file src "hello-plugin" (.getPath out-dir))]
+      (is (zero? status) (str "clang failed:\n" stderr))
+      (when (zero? status)
+        (let [{:keys [exit stdout]} (build/run-binary bin-path)]
+          (is (zero? exit))
+          (is (= "hello from plugin-module\n" stdout)))
+        (let [caps-file (java.io.File. (str bin-path ".cxc-caps"))]
+          (is (.exists caps-file)
+              "B7: .cxc-caps sidecar written next to binary")
+          (let [content (slurp caps-file)]
+            (is (str/includes? content "\"schema\": \"cxc-caps/v1\""))
+            (is (str/includes? content "\"name\": \"hello-plugin\""))
+            (is (str/includes? content "\"version\": \"0.1.0\""))
+            (is (str/includes? content "\"os_primitives\": []"))))))))
+
+(deftest gate-rejects-use-plugin-outside-plugin-module-b4-integration
+  (testing "B4 (2026-09-02) — compile pipeline rejects `use plugin: Plugin` inside an atom when the module has no `def plugin:` marker (R11 plugin-only wave)."
+    (let [out-dir (tmp-dir)]
+      (is (thrown-with-msg?
+            clojure.lang.ExceptionInfo
+            #"plugin capability"
+            (build/compile-source-to-file
+              "def App:\n    use plugin: Plugin\n    x: Int! = 1\n\ndef main:\n    -> ready\n        then: print(1)\n"
+              "gate-check"
+              (.getPath out-dir)))))))
+
+(deftest resolver-rejects-unresolved-plugin-get-b5-integration
+  (testing "B5 (2026-09-02) — compile pipeline rejects `plugin.get(\"nope\")` when the symbol is not declared in any foreign block."
+    (let [src (str "def plugin:\n"
+                   "    name:    String!       = \"p\"\n"
+                   "    version: SemVer!       = SemVer(0, 1, 0)\n"
+                   "    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0), max: SemVer(2, 0, 0))\n"
+                   "\n"
+                   "    foreign \"libc\":\n"
+                   "        symbol \"write\" -> Int32\n"
+                   "\n"
+                   "def MyShim:\n"
+                   "    use plugin: Plugin\n"
+                   "    x: Int! = plugin.get(\"nope\")\n"
+                   "\n"
+                   "def main:\n"
+                   "    -> ready\n"
+                   "        then: print(1)\n")
+          out-dir (tmp-dir)]
+      (is (thrown-with-msg?
+            clojure.lang.ExceptionInfo
+            #"plugin\.get\(\"nope\"\)"
+            (build/compile-source-to-file src "unresolved-check" (.getPath out-dir)))))))
+
 (deftest end-to-end-f52-l4-module-let-basic
   (testing "F52 L4 (2026-08-27) — top-level `let SEED = 41` binds an immutable compile-time constant. Pre-lower `substitute-module-let-refs` postwalks the AST replacing every `SEED` `:ident` node with the `:lit-int` value. `Counter(seed: SEED).bump` constructs with seed=41 and yields 42; program prints `42\\n`."
     (let [{:keys [exit stdout]} (compile-and-run "f52-l4-module-let-basic")]

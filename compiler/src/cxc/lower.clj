@@ -6254,8 +6254,12 @@
         ;; no runtime state, no per-callsite lookup.
         module-lets       (extract-module-lets top-nodes)
         imported-modules  (imported-module-idents top-nodes)
+        ;; B8 (2026-09-02) — `:def-plugin` markers are compile-time-only
+        ;; metadata consumed by cxc.plugin-manifest (B3-B7). Filter them
+        ;; before lowering so no emit rule needs to know about them.
         top-nodes         (->> top-nodes
                                (remove #(= :module-let (:node %)))
+                               (remove #(= :def-plugin (:node %)))
                                vec)
         _                 (reject-module-let-shadowing! top-nodes module-lets)
         top-nodes         (substitute-module-let-refs top-nodes module-lets
