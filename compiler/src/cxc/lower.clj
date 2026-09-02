@@ -1254,16 +1254,18 @@
       (and (= :string target-ty)
            (contains? #{"length" "contains" "starts_with" "ends_with"
                         "substring" "index_of" "trim" "replace"
-                        "to_int_or" "uppercase" "lowercase" "to_bytes"
+                        "to_int_or" "to_bool_or"
+                        "uppercase" "lowercase" "to_bytes"
                         "path_join" "basename" "dirname" "extension"
                         "trim_prefix" "trim_suffix"
                         "repeat" "pad_left" "pad_right"}
                       method-name))
       (case method-name
-        "length"    :int
-        "index_of"  :int
-        "to_int_or" :int
-        "to_bytes"  :bytes
+        "length"     :int
+        "index_of"   :int
+        "to_int_or"  :int
+        "to_bool_or" :bool
+        "to_bytes"   :bytes
         ("substring" "trim" "replace" "uppercase" "lowercase"
          "path_join" "basename" "dirname" "extension"
          "trim_prefix" "trim_suffix"
@@ -2424,7 +2426,8 @@
           (and (= :string target-ty)
                (contains? #{"length" "contains" "starts_with" "ends_with"
                             "substring" "index_of" "trim" "replace"
-                            "to_int_or" "uppercase" "lowercase" "to_bytes"
+                            "to_int_or" "to_bool_or"
+                            "uppercase" "lowercase" "to_bytes"
                             "path_join" "basename" "dirname" "extension"
                             "trim_prefix" "trim_suffix"
                             "repeat" "pad_left" "pad_right"}
@@ -2545,6 +2548,24 @@
                                  "long long __v = 0; "
                                  "if ([__sc scanLongLong:&__v] && [__sc isAtEnd]) "
                                  "{ __r = (int64_t)__v; } } "
+                                 "__r; })"))}
+              "to_bool_or"
+              {:node :ffi-call :name "cxc_string_to_bool_or"
+               :args (into [target-lo] arg-exprs)
+               :emit-c-fn (fn [[s fb]]
+                            (str "({ NSString *__s = (" s "); "
+                                 "BOOL __fb = (BOOL)(" fb "); "
+                                 "BOOL __r = __fb; "
+                                 "if (__s) { "
+                                 "NSString *__l = [__s lowercaseString]; "
+                                 "if ([__l isEqualToString:@\"true\"] "
+                                 "|| [__l isEqualToString:@\"yes\"] "
+                                 "|| [__l isEqualToString:@\"1\"] "
+                                 "|| [__l isEqualToString:@\"on\"]) __r = YES; "
+                                 "else if ([__l isEqualToString:@\"false\"] "
+                                 "|| [__l isEqualToString:@\"no\"] "
+                                 "|| [__l isEqualToString:@\"0\"] "
+                                 "|| [__l isEqualToString:@\"off\"]) __r = NO; } "
                                  "__r; })"))}
               "trim_prefix"
               {:node :ffi-call :name "cxc_string_trim_prefix"

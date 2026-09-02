@@ -1135,6 +1135,12 @@
       (is (zero? exit))
       (is (= "2\n2\ntrue\nfalse\ntrue\nfalse\n1\n1\n" stdout)))))
 
+(deftest end-to-end-string-to-bool-or
+  (testing "string-to-bool-or.cxc — `String.to_bool_or(fallback: Bool) -> Bool`. Recognizes true/false/yes/no/1/0/on/off case-insensitively (lowercase compare); returns fallback for unrecognized/empty. Verifies all-truthy, all-falsy, mixed-case, and fallback-both-directions."
+    (let [{:keys [exit stdout]} (compile-and-run "string-to-bool-or")]
+      (is (zero? exit))
+      (is (= "true\nfalse\ntrue\ntrue\nfalse\ntrue\nfalse\ntrue\nfalse\ntrue\nfalse\ntrue\n" stdout)))))
+
 (deftest end-to-end-console-hello
   (testing "console-hello.cxc — Layer 6 Step 5. Console prelude atom with `write(msg: String) -> Int` method wrapping the `native_console_write` FFI hatch (printf %s). Main is capability-provisioned (`def main(console: Console)`) and calls `console.write(\"hi\\n\")` in its `-> running do:`. Prints `hi` + newline."
     (let [{:keys [exit stdout]} (compile-and-run "console-hello")]
