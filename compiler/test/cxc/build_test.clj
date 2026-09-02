@@ -2039,6 +2039,14 @@
           (build/compile-source-to-file src "logged-fetch" (.getPath out-dir))]
       (is (zero? status) (str "clang failed:\n" stderr)))))
 
+(deftest http-head-status-compiles-cleanly
+  (testing "2026-09-03 — `http.head_status(url)` sends HEAD via NSURLSession, returns the HTTP status Int (or -1 on network/URL error). Body isn't retrieved — useful for connectivity checks + feed validation. Compile-only test to keep CI network-free; manual verification via examples/http-head-status.cxc."
+    (let [src     (example "http-head-status")
+          out-dir (tmp-dir)
+          {:keys [status stderr]}
+          (build/compile-source-to-file src "http-head-status" (.getPath out-dir))]
+      (is (zero? status) (str "clang failed:\n" stderr)))))
+
 (deftest http-compiles-cleanly-5
   (testing "5 (2026-09-03) — `Http` prelude capability compiles cleanly. Does NOT hit the network (would flake in CI); this only asserts a program that uses `use http: Http` + `http.get` + `http.post` clears parse, lower, and clang. Network round-trip verification is manual (examples/http-example-com.cxc)."
     (let [src "def main:\n    use http: Http\n    use console: Console\n    -> running\n        then:\n            let body: String = http.get(\"https://example.com\", \"{}\")\n            let post: String = http.post(\"https://example.com\", \"{}\", \"{}\")\n            console.write(\"compiled ok\")\n    -> end\n"

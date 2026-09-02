@@ -392,6 +392,35 @@
                         "} "
                         "} "
                         "__r; })")))}
+   "native_http_head_status"
+   ;; 2026-09-03 — send a HEAD request to the URL and return the
+   ;; HTTP status code (Int). Returns -1 on network error, nil URL,
+   ;; or non-HTTP response (e.g. a `file://` URL). No body is
+   ;; retrieved. Common shape for connectivity checks + feed
+   ;; validation without paying for response body decode.
+   {:return-kw :int
+    :arity     1
+    :emit-c    (fn [args]
+                 (str "({ NSString *__u = " (first args) "; "
+                      "__block int64_t __r = -1; "
+                      "if (__u) { "
+                      "NSURL *__url = [NSURL URLWithString:__u]; "
+                      "if (__url) { "
+                      "NSMutableURLRequest *__req = "
+                      "[NSMutableURLRequest requestWithURL:__url]; "
+                      "__req.HTTPMethod = @\"HEAD\"; "
+                      "dispatch_semaphore_t __sem = dispatch_semaphore_create(0); "
+                      "NSURLSessionDataTask *__task = [[NSURLSession sharedSession] "
+                      "dataTaskWithRequest:__req completionHandler:"
+                      "^(NSData *__d, NSURLResponse *__rsp, NSError *__e) { "
+                      "if (!__e && __rsp && "
+                      "[__rsp isKindOfClass:[NSHTTPURLResponse class]]) { "
+                      "__r = (int64_t)[(NSHTTPURLResponse *)__rsp statusCode]; } "
+                      "dispatch_semaphore_signal(__sem); }]; "
+                      "[__task resume]; "
+                      "dispatch_semaphore_wait(__sem, DISPATCH_TIME_FOREVER); "
+                      "} } "
+                      "__r; })"))}
    "native_http_get"
    ;; 5 (2026-09-03) — synchronous HTTP GET. Body returned as
    ;; UTF-8 String, nil on failure (network error, non-UTF-8 body,

@@ -7,6 +7,8 @@ def Http:
 
     post_envelope(url: String, headers_json: String, body: String) :- native_http_post_envelope(url, headers_json, body)
 
+    head_status(url: String) :- native_http_head_status(url)
+
     -> running
 
     -> end
