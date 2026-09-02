@@ -548,6 +548,36 @@
                         "dispatch_semaphore_wait(__sem, DISPATCH_TIME_FOREVER); "
                         "} } "
                         "__envelope; })")))}
+   "native_env_remove"
+   ;; 2026-09-03 — remove an environment variable from the current
+   ;; process (libc `unsetenv`). Returns 0 on success (including
+   ;; already-absent), -1 on failure (invalid name / OOM). Nil name → -1.
+   {:return-kw :int
+    :arity     1
+    :emit-c    (fn [args]
+                 (str "({ NSString *__n = " (first args) "; "
+                      "int __r = -1; "
+                      "if (__n) { __r = unsetenv([__n UTF8String]); } "
+                      "(int64_t)__r; })"))}
+   "native_fs_append_text"
+   ;; 2026-09-03 — append (or create+write) UTF-8 text to a file.
+   ;; libc `fopen(path, \"a\") + fputs + fclose`. Returns 0 on
+   ;; success, -1 on failure (open error, disk full, nil arg).
+   ;; Common pattern: log-line writer paired with Time.now for
+   ;; timestamped entries; safe under concurrent appenders on POSIX
+   ;; (append writes < PIPE_BUF are atomic per fs behavior).
+   {:return-kw :int
+    :arity     2
+    :emit-c    (fn [args]
+                 (str "({ NSString *__p = " (first args) "; "
+                      "NSString *__c = " (second args) "; "
+                      "int64_t __r = -1; "
+                      "if (__p && __c) { "
+                      "FILE *__f = fopen([__p UTF8String], \"a\"); "
+                      "if (__f) { "
+                      "if (fputs([__c UTF8String], __f) >= 0) __r = 0; "
+                      "fclose(__f); } } "
+                      "__r; })"))}
    "native_env_set"
    ;; 2026-09-03 — set an environment variable in the current process
    ;; (overwrite existing value). Returns 0 on success, -1 on failure

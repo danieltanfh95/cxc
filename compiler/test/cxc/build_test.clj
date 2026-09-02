@@ -1867,6 +1867,17 @@
           (is (not (str/includes? out "to stderr")))
           (is (not (str/includes? err "to stdout"))))))))
 
+(deftest end-to-end-env-remove-fs-append
+  (testing "2026-09-03 — `env.remove(name)` (libc unsetenv wrapper; verified by round-trip set→get→remove→get returning fallback) + `fs.append_text(path, content)` (fopen `a` mode; verified by appending two lines then reading back). Together these round out Env (get_or / set / remove) and FileSystem (read_text / write_text / append_text / exists / mkdirs / remove). Cleans its own scratch file before + after so residue doesn't skew assertions."
+    (shell/sh "rm" "-f" "/tmp/cxc-append-example.log")
+    (let [{:keys [exit stdout]} (compile-and-run "env-remove-fs-append")]
+      (is (zero? exit))
+      (is (str/includes? stdout "before_rm: temp"))
+      (is (str/includes? stdout "after_rm: GONE"))
+      (is (str/includes? stdout "append_rc1: 0"))
+      (is (str/includes? stdout "append_rc2: 0"))
+      (is (str/includes? stdout "read_back: line one\nline two")))))
+
 (deftest end-to-end-fs-mkdirs-remove
   (testing "2026-09-03 — `FileSystem.mkdirs(path)` (mkdir -p: NSFileManager createDirectoryAtPath withIntermediateDirectories:YES) and `FileSystem.remove(path)` (recursive delete). Round-trip: create a nested dir tree, write a file inside, remove the whole tree, verify absence afterwards. Test cleans its own scratch path (`/tmp/cxc-mkdirs-example`) before running so residue from earlier iterations doesn't spuriously fail the mkdirs return code."
     ;; Best-effort pre-clean so a residual dir from a previous failed

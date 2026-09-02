@@ -3,6 +3,8 @@ def FileSystem:
 
     write_text(path: String, content: String) :- native_fs_write_text(path, content)
 
+    append_text(path: String, content: String) :- native_fs_append_text(path, content)
+
     exists(path: String) :- native_fs_exists(path)
 
     mkdirs(path: String) :- native_fs_mkdirs(path)
