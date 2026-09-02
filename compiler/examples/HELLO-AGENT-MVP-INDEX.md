@@ -11,11 +11,11 @@ Under [resources/prelude/target/macos/](../resources/prelude/target/macos/):
 |------|------------|---------|--------|
 | [fs.cxc](../resources/prelude/target/macos/fs.cxc) | `FileSystem` | `read_text` / `write_text` / `exists` | 47a4c2f |
 | [subprocess.cxc](../resources/prelude/target/macos/subprocess.cxc) | `Subprocess` | `run(cmd)` (combined stdout+stderr via popen) | 07d4994 |
-| [env.cxc](../resources/prelude/target/macos/env.cxc) | `Env` | `get_or(name, fallback)` | c5e2f68 |
+| [env.cxc](../resources/prelude/target/macos/env.cxc) | `Env` | `get_or(name, fallback)` + `set(name, value)` | c5e2f68 + db01b54 |
 | [args.cxc](../resources/prelude/target/macos/args.cxc) | `Args` | `length()` + `get_or(index, fallback)` | 4d6a897 |
 | [json.cxc](../resources/prelude/target/macos/json.cxc) | `Json` | `encode_str` / `field_string` / `field_int_or` / `field_string_path` / `field_int_or_path` | 6b12a7d + c922c06 + a798ab9 |
 | [http.cxc](../resources/prelude/target/macos/http.cxc) | `Http` | `get` / `post` / `get_envelope` / `post_envelope` | 838533a + 0e17b7b |
-| [wall_time.cxc](../resources/prelude/target/macos/wall_time.cxc) | `Time` | `now() -> Instant` (wall-clock, ms since Unix epoch) | c3e098e |
+| [wall_time.cxc](../resources/prelude/target/macos/wall_time.cxc) | `Time` | `now()` + `since(t)` + `sleep_ms(ms)` | c3e098e + db01b54 |
 | [console.cxc](../resources/prelude/target/macos/console.cxc) | `Console` | `write` + `write_raw` + `readln` | da59e95 + ac862c0 + 11155d1 |
 
 ## Examples (regression tests + manual demos)
@@ -59,6 +59,9 @@ Under [examples/](./):
 - `native_json_field_int_or` — numeric field extraction. (c922c06)
 - `native_json_field_string_path` / `native_json_field_int_or_path` — nested walk via dot-path (e.g. `usage.input_tokens`, `content.0.text`). (dot-path variant / a798ab9)
 - `native_millis_now` int64_t fix — was truncating to 32-bit; now returns full epoch millis. Clock.now + Time.now both consume this. (c3e098e)
+- `native_console_readln` — fgets on stdin; strips trailing newline; nil on EOF. (11155d1)
+- `native_env_set` — setenv(name, value, 1); returns 0/-1. (db01b54)
+- `native_time_sleep_ms` — usleep(ms*1000); no-op on non-positive; truncates absurd waits. (db01b54)
 - `native_http_get` / `native_http_post` — sync NSURLSession dataTask + dispatch_semaphore. (838533a)
 - `native_http_get_envelope` / `native_http_post_envelope` — same with `{status,body}` JSON envelope. (0e17b7b)
 
@@ -69,6 +72,7 @@ Under [examples/](./):
 ## Commit sequence
 
 ```
+db01b54 Env.set + Time.since(Instant) + Time.sleep_ms
 11155d1 Console.readln() — stdin line read
 c3e098e Time wall-clock capability + int64_t truncation fix
 b93f385 String.to_int_or(fallback) — NSScanner-based Int parse
