@@ -4,13 +4,14 @@
   (:require [clojure.java.io :as io]
             [clojure.java.shell :as shell]
             [clojure.string :as str]
-            [cxc.parse    :as parse]
-            [cxc.lower    :as lower]
-            [cxc.emit     :as emit]
-            [cxc.manifest :as manifest]
-            [cxc.prelude  :as prelude]
-            [cxc.resolve  :as resolve]
-            [cxc.section  :as section]))
+            [cxc.parse           :as parse]
+            [cxc.lower           :as lower]
+            [cxc.emit            :as emit]
+            [cxc.manifest        :as manifest]
+            [cxc.plugin-manifest :as plugin-manifest]
+            [cxc.prelude         :as prelude]
+            [cxc.resolve         :as resolve]
+            [cxc.section         :as section]))
 
 ;; ---------------------------------------------------------------------------
 ;; Build cache (tier 1: .m → binary)
@@ -237,6 +238,7 @@
         parsed   (parse-fn source)
         _        (validate-imports parsed)
         _        (prelude/validate-no-prelude-collisions! parsed)
+        _        (plugin-manifest/validate-plugin-capability-uses! parsed)
         ;; F51 L3b(b.ii)-5c (2026-08-27) — enrich user AST with
         ;; `:resolves-to` provenance before concatenating with prelude.
         ;; Single-file callers implicitly declare into the `:main`
@@ -785,6 +787,19 @@
                                                  e))))]
                   (try
                     (validate-imports parsed user-modules)
+                    (catch clojure.lang.ExceptionInfo e
+                      (throw (ex-info (str "in " (.getName f)
+                                           ": " (.getMessage e))
+                                      (assoc (ex-data e)
+                                             :file (.getPath f))
+                                      e))))
+                  ;; B4 (F76): per-file linker gate — `use plugin: Plugin`
+                  ;; only legal inside modules carrying a `def plugin:`
+                  ;; marker (R11 plugin-only wave). Runs alongside import
+                  ;; validation so the diagnostic points at the offending
+                  ;; file.
+                  (try
+                    (plugin-manifest/validate-plugin-capability-uses! parsed)
                     (catch clojure.lang.ExceptionInfo e
                       (throw (ex-info (str "in " (.getName f)
                                            ": " (.getMessage e))

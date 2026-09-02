@@ -178,6 +178,58 @@
                       {:kind :plugin-manifest-invalid
                        :count (count ps)})))))
 
+(defn- use-section-caps
+  "Return the `:caps` vector from an atom body's use-section (if
+   present). Empty when the atom has no `use:` block."
+  [atom-node]
+  (or (some (fn [n] (when (= :use-section (:node n)) (:caps n)))
+            (:body atom-node))
+      []))
+
+(defn- plugin-capability-use?
+  "True when a cap declaration binds the `Plugin` prelude capability
+   (`use <name>: Plugin`). The bind-name is irrelevant — spec §7.2.1
+   / R11 gate on the type, not the local ident."
+  [cap]
+  (= "Plugin" (get-in cap [:type :name])))
+
+(defn- atom-nodes
+  "Return top-level nodes that carry a `:body` and could conceivably
+   declare a `use:` (currently only `:def-atom` per parse, but the
+   scan is defensive)."
+  [top-nodes]
+  (filter #(and (map? %) (:body %) (= :def-atom (:node %))) top-nodes))
+
+(defn validate-plugin-capability-uses!
+  "F76 / B4 (2026-09-02) — linker gate. `use <name>: Plugin` inside an
+   atom body is only legal when the enclosing module carries a
+   `def plugin:` marker (spec §7.2.1, R11 plugin-only wave). Enforces
+   the grammatical scope R11 established: only plugin modules can
+   reach the FFI capability.
+
+   Called after parse + prelude-collision check, before lowering.
+   No-op on modules with no plugin uses; throws `ex-info :kind
+   :plugin-capability-outside-plugin-module` on the first violation.
+
+   Non-plugin modules that legitimately want a capability atom import
+   its exports (`use console: Console`) — Console itself lives in a
+   plugin file and holds the `use plugin: Plugin` binding there."
+  [top-nodes]
+  (let [has-plugin? (some? (find-def-plugin top-nodes))]
+    (when-not has-plugin?
+      (doseq [a    (atom-nodes top-nodes)
+              cap  (use-section-caps a)
+              :when (plugin-capability-use? cap)]
+        (throw (ex-info
+                (str "plugin capability: `use " (:name cap) ": Plugin` in atom `"
+                     (:name a) "` requires a `def plugin:` marker at module top-level "
+                     "(spec §7.2.1, R11 plugin-only wave 2026-09-01). "
+                     "Non-plugin modules import capability atoms from plugins "
+                     "instead (`use console: Console`).")
+                {:kind        :plugin-capability-outside-plugin-module
+                 :atom-name   (:name a)
+                 :cap-name    (:name cap)}))))))
+
 (defn extract
   "F75 manifest resolver entry point. Given a parsed top-nodes vector,
    returns the plugin manifest map (see ns docstring) or `nil` when

@@ -155,3 +155,63 @@
 
 (deftest find-def-plugin-nil-when-absent
   (is (nil? (pm/find-def-plugin (parse/parse "def Foo:\n    x: Int! = 1\n")))))
+
+;; ============================================================================
+;; B4 (F76) — linker gate: `use plugin: Plugin` outside plugin modules
+;; ============================================================================
+
+(deftest gate-noop-when-no-plugin-uses
+  (let [nodes (parse/parse "def Foo:\n    x: Int! = 1\n")]
+    (is (nil? (pm/validate-plugin-capability-uses! nodes)))))
+
+(deftest gate-noop-when-plugin-marker-present
+  (let [src   "def plugin:
+    name:    String!       = \"p\"
+    version: SemVer!       = SemVer(0, 1, 0)
+    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0),
+                                          max: SemVer(2, 0, 0))
+
+def Console:
+    use plugin: Plugin
+    x: Int! = 1
+"
+        nodes (parse/parse src)]
+    (is (nil? (pm/validate-plugin-capability-uses! nodes))
+        "atom in plugin file may bind Plugin capability")))
+
+(deftest gate-rejects-plugin-use-without-marker
+  (let [src   "def App:
+    use plugin: Plugin
+    x: Int! = 1
+"
+        nodes (parse/parse src)
+        ex    (try (pm/validate-plugin-capability-uses! nodes)
+                   nil
+                   (catch clojure.lang.ExceptionInfo e e))]
+    (is (some? ex) "expected throw")
+    (is (= :plugin-capability-outside-plugin-module (:kind (ex-data ex))))
+    (is (= "App"    (:atom-name (ex-data ex))))
+    (is (= "plugin" (:cap-name  (ex-data ex))))
+    (is (re-find #"def plugin:" (ex-message ex))
+        "diagnostic points at the missing marker")))
+
+(deftest gate-rejects-any-plugin-bind-name
+  (let [src   "def App:
+    use ext: Plugin
+    x: Int! = 1
+"
+        nodes (parse/parse src)
+        ex    (try (pm/validate-plugin-capability-uses! nodes)
+                   nil
+                   (catch clojure.lang.ExceptionInfo e e))]
+    (is (some? ex) "gate keys off the type `Plugin`, not the bind-name `plugin`")
+    (is (= "ext" (:cap-name (ex-data ex))))))
+
+(deftest gate-allows-non-plugin-capability-imports
+  (let [src   "def App:
+    use console: Console
+    x: Int! = 1
+"
+        nodes (parse/parse src)]
+    (is (nil? (pm/validate-plugin-capability-uses! nodes))
+        "app-side capability atom imports are unaffected")))
