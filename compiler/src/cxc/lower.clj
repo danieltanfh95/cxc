@@ -1824,6 +1824,17 @@
     ;; form differs (`[ClassName sel:args]` vs `[recv sel:args]`).
     :foreign-class-selector-call
     (foreign-type-node->tk (:return (:signature node)) ctx node)
+    ;; 2026-09-03 — `||: <guard>: <body>` chain in expression
+    ;; position (R6 multi-arm-dispatch). All body arms must produce
+    ;; the same type (checked at the C-ternary emit); infer-type
+    ;; peeks at the FIRST arm's body as the representative type.
+    ;; This unblocks composing `||:` inside larger expressions
+    ;; (`"x " + (||: c: "y" ||: else: "z")`) — previously the
+    ;; infer-type fallthrough NYI-erred at any concat / method-call
+    ;; site that carried a `||:` sub-expression.
+    :multi-arm-dispatch
+    (infer-type (get-in node [:arms 0 :body]) ctx)
+
     ;; 2d-iii (2026-09-02) — `raise T(args)` never returns; type it as
     ;; `:any` (id-shaped) so it composes into any expression position.
     ;; The stmt-expr emit ends in `((id)nil)` which the C compiler

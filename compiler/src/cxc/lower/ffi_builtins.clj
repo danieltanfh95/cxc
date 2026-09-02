@@ -317,6 +317,122 @@
                         "dispatch_semaphore_wait(__sem, DISPATCH_TIME_FOREVER); "
                         "} } "
                         "__r; })")))}
+   "native_http_get_envelope"
+   ;; 2026-09-03 — GET returning `{"status": N, "body": "..."}` as
+   ;; JSON String. Users parse via Json.field_int_or / field_string.
+   ;; nil return when: nil URL, invalid URL, transport error before
+   ;; a status was received (DNS fail, connection refused, etc.).
+   ;; Non-2xx status codes still return an envelope — the "error"
+   ;; concept here is transport-level, not HTTP-status-level.
+   {:return-kw :string
+    :arity     2
+    :emit-c    (fn [args]
+                 (let [url-arg     (first args)
+                       headers-arg (second args)]
+                   (str "({ NSString *__u = " url-arg "; "
+                        "NSString *__h = " headers-arg "; "
+                        "__block NSString *__envelope = nil; "
+                        "if (__u) { "
+                        "NSURL *__url = [NSURL URLWithString:__u]; "
+                        "if (__url) { "
+                        "NSMutableURLRequest *__req = [NSMutableURLRequest requestWithURL:__url]; "
+                        "__req.HTTPMethod = @\"GET\"; "
+                        "if (__h) { "
+                        "NSData *__hd = [__h dataUsingEncoding:NSUTF8StringEncoding]; "
+                        "NSError *__he = nil; "
+                        "id __ho = [NSJSONSerialization JSONObjectWithData:__hd "
+                        "options:(NSJSONReadingOptions)0 error:&__he]; "
+                        "if (!__he && [__ho isKindOfClass:[NSDictionary class]]) { "
+                        "[(NSDictionary *)__ho enumerateKeysAndObjectsUsingBlock:"
+                        "^(id __hk, id __hv, BOOL *__stop) { "
+                        "if ([__hk isKindOfClass:[NSString class]] && "
+                        "[__hv isKindOfClass:[NSString class]]) { "
+                        "[__req setValue:(NSString *)__hv forHTTPHeaderField:(NSString *)__hk]; "
+                        "} }]; "
+                        "} } "
+                        "dispatch_semaphore_t __sem = dispatch_semaphore_create(0); "
+                        "NSURLSessionDataTask *__task = [[NSURLSession sharedSession] "
+                        "dataTaskWithRequest:__req completionHandler:"
+                        "^(NSData *__data, NSURLResponse *__resp, NSError *__err) { "
+                        "if (!__err && __resp && "
+                        "[__resp isKindOfClass:[NSHTTPURLResponse class]]) { "
+                        "NSInteger __status = [(NSHTTPURLResponse *)__resp statusCode]; "
+                        "NSString *__body = (__data ? "
+                        "[[NSString alloc] initWithData:__data encoding:NSUTF8StringEncoding] "
+                        ": @\"\"); "
+                        "if (__body == nil) __body = @\"\"; "
+                        "NSDictionary *__env = @{@\"status\": @(__status), @\"body\": __body}; "
+                        "NSError *__ee = nil; "
+                        "NSData *__ed = [NSJSONSerialization dataWithJSONObject:__env "
+                        "options:(NSJSONWritingOptions)0 error:&__ee]; "
+                        "if (__ed && !__ee) { "
+                        "__envelope = [[NSString alloc] initWithData:__ed "
+                        "encoding:NSUTF8StringEncoding]; } "
+                        "} "
+                        "dispatch_semaphore_signal(__sem); }]; "
+                        "[__task resume]; "
+                        "dispatch_semaphore_wait(__sem, DISPATCH_TIME_FOREVER); "
+                        "} } "
+                        "__envelope; })")))}
+   "native_http_post_envelope"
+   ;; 2026-09-03 — POST returning `{"status": N, "body": "..."}` as
+   ;; JSON String. Same shape as native_http_get_envelope; takes
+   ;; a UTF-8 body String appended as HTTPBody.
+   {:return-kw :string
+    :arity     3
+    :emit-c    (fn [args]
+                 (let [url-arg     (first args)
+                       headers-arg (second args)
+                       body-arg    (nth args 2)]
+                   (str "({ NSString *__u = " url-arg "; "
+                        "NSString *__h = " headers-arg "; "
+                        "NSString *__b = " body-arg "; "
+                        "__block NSString *__envelope = nil; "
+                        "if (__u) { "
+                        "NSURL *__url = [NSURL URLWithString:__u]; "
+                        "if (__url) { "
+                        "NSMutableURLRequest *__req = [NSMutableURLRequest requestWithURL:__url]; "
+                        "__req.HTTPMethod = @\"POST\"; "
+                        "if (__h) { "
+                        "NSData *__hd = [__h dataUsingEncoding:NSUTF8StringEncoding]; "
+                        "NSError *__he = nil; "
+                        "id __ho = [NSJSONSerialization JSONObjectWithData:__hd "
+                        "options:(NSJSONReadingOptions)0 error:&__he]; "
+                        "if (!__he && [__ho isKindOfClass:[NSDictionary class]]) { "
+                        "[(NSDictionary *)__ho enumerateKeysAndObjectsUsingBlock:"
+                        "^(id __hk, id __hv, BOOL *__stop) { "
+                        "if ([__hk isKindOfClass:[NSString class]] && "
+                        "[__hv isKindOfClass:[NSString class]]) { "
+                        "[__req setValue:(NSString *)__hv forHTTPHeaderField:(NSString *)__hk]; "
+                        "} }]; "
+                        "} } "
+                        "if (__b) { "
+                        "__req.HTTPBody = [__b dataUsingEncoding:NSUTF8StringEncoding]; "
+                        "} "
+                        "dispatch_semaphore_t __sem = dispatch_semaphore_create(0); "
+                        "NSURLSessionDataTask *__task = [[NSURLSession sharedSession] "
+                        "dataTaskWithRequest:__req completionHandler:"
+                        "^(NSData *__data, NSURLResponse *__resp, NSError *__err) { "
+                        "if (!__err && __resp && "
+                        "[__resp isKindOfClass:[NSHTTPURLResponse class]]) { "
+                        "NSInteger __status = [(NSHTTPURLResponse *)__resp statusCode]; "
+                        "NSString *__body = (__data ? "
+                        "[[NSString alloc] initWithData:__data encoding:NSUTF8StringEncoding] "
+                        ": @\"\"); "
+                        "if (__body == nil) __body = @\"\"; "
+                        "NSDictionary *__env = @{@\"status\": @(__status), @\"body\": __body}; "
+                        "NSError *__ee = nil; "
+                        "NSData *__ed = [NSJSONSerialization dataWithJSONObject:__env "
+                        "options:(NSJSONWritingOptions)0 error:&__ee]; "
+                        "if (__ed && !__ee) { "
+                        "__envelope = [[NSString alloc] initWithData:__ed "
+                        "encoding:NSUTF8StringEncoding]; } "
+                        "} "
+                        "dispatch_semaphore_signal(__sem); }]; "
+                        "[__task resume]; "
+                        "dispatch_semaphore_wait(__sem, DISPATCH_TIME_FOREVER); "
+                        "} } "
+                        "__envelope; })")))}
    "native_env_get_or_default"
    ;; 2g (2026-09-02) — read an environment variable, defaulting on
    ;; miss. libc `getenv(name)` returns `const char *`; when the var
