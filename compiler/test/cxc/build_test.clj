@@ -1952,6 +1952,14 @@
                                          "hello-agent-mini" (.getPath out-dir))]
       (is (zero? status) (str "clang failed:\n" stderr)))))
 
+(deftest logged-fetch-compiles-cleanly
+  (testing "2026-09-03 — six-capability composition (Http + Time + Random + Json + FileSystem + Console). Fetches a URL via `http.get_envelope`, brackets the call with `time.now`/`time.since` for latency, formats a single log line with a `random.hex(16)` correlation ID + epoch timestamp + status + body byte count, appends it via `fs.append_text`, reads it back, cleans up. Compile-only (would hit the network at runtime); manual verification path documented in the example. Validates that the newer prelude capabilities compose cleanly at the type / lowering / clang level."
+    (let [src     (example "logged-fetch")
+          out-dir (tmp-dir)
+          {:keys [status stderr]}
+          (build/compile-source-to-file src "logged-fetch" (.getPath out-dir))]
+      (is (zero? status) (str "clang failed:\n" stderr)))))
+
 (deftest http-compiles-cleanly-5
   (testing "5 (2026-09-03) — `Http` prelude capability compiles cleanly. Does NOT hit the network (would flake in CI); this only asserts a program that uses `use http: Http` + `http.get` + `http.post` clears parse, lower, and clang. Network round-trip verification is manual (examples/http-example-com.cxc)."
     (let [src "def main:\n    use http: Http\n    use console: Console\n    -> running\n        then:\n            let body: String = http.get(\"https://example.com\", \"{}\")\n            let post: String = http.post(\"https://example.com\", \"{}\", \"{}\")\n            console.write(\"compiled ok\")\n    -> end\n"
