@@ -155,7 +155,15 @@
    ;; wrapping s in a single-element array, serialising, and
    ;; stripping the `[...]`). Numeric/bool/nested-value field
    ;; readers wait on richer FFI surface — MVP is string-only.
-   {:name :json :kind :target :names ["Json"]}])
+   {:name :json :kind :target :names ["Json"]}
+   ;; 5 (2026-09-03) — `Http` capability. `get(url, headers_json)`
+   ;; + `post(url, headers_json, body)` block synchronously on
+   ;; NSURLSession sharedSession dataTasks via dispatch_semaphore.
+   ;; Response body returned as UTF-8 String, nil on failure.
+   ;; Headers pass as a JSON String (parsed via NSJSONSerialization);
+   ;; empty `"{}"` sends no custom headers. Sufficient for Claude
+   ;; Messages API + generic REST calls at MVP.
+   {:name :http :kind :target :names ["Http"]}])
 
 (defn assemble-source
   "Load and concatenate prelude module sources for a given target.
@@ -196,7 +204,7 @@
    cxc.lower compares against these; entries match what the parsed
    AST carries verbatim from prelude source."
   #{"Clock" "Random" "TestKeyboardInput" "Console" "SystemPanic" "Plugin" "OsPrimitive"
-    "FileSystem" "Subprocess" "Env" "Args" "Json"})
+    "FileSystem" "Subprocess" "Env" "Args" "Json" "Http"})
 
 ;; F5 retirement (2026-08-15): unit-suffix desugaring (`100ms`,
 ;; `2s`, `1.5min` → `Duration(millis: N)`) is retired per spec

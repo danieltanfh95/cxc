@@ -1,0 +1,8 @@
+def Http:
+    get(url: String, headers_json: String) :- native_http_get(url, headers_json)
+
+    post(url: String, headers_json: String, body: String) :- native_http_post(url, headers_json, body)
+
+    -> running
+
+    -> end

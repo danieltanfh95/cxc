@@ -1832,6 +1832,14 @@
         (is (zero? exit))
         (is (= "hello world\n" stdout))))))
 
+(deftest http-compiles-cleanly-5
+  (testing "5 (2026-09-03) — `Http` prelude capability compiles cleanly. Does NOT hit the network (would flake in CI); this only asserts a program that uses `use http: Http` + `http.get` + `http.post` clears parse, lower, and clang. Network round-trip verification is manual (examples/http-example-com.cxc)."
+    (let [src "def main:\n    use http: Http\n    use console: Console\n    -> running\n        then:\n            let body: String = http.get(\"https://example.com\", \"{}\")\n            let post: String = http.post(\"https://example.com\", \"{}\", \"{}\")\n            console.write(\"compiled ok\")\n    -> end\n"
+          out-dir (tmp-dir)
+          {:keys [status stderr]}
+          (build/compile-source-to-file src "http-smoke" (.getPath out-dir))]
+      (is (zero? status) (str "clang failed:\n" stderr)))))
+
 (deftest end-to-end-json-roundtrip
   (testing "4 (2026-09-03) — `Json` prelude capability. `json.encode_str(s)` wraps s in a JSON array via NSJSONSerialization, then strips the `[...]` to leave the quoted-and-escaped String literal. `json.field_string(json, key)` parses the JSON as a top-level dict and returns the String at key (nil on invalid JSON / missing key / non-String value). Round-trip test: encode a bare name into a JSON string literal, embed it in a hand-rolled payload with an escaped quote in another field, extract both fields back — verifies escape output and unescape roundtrip through NSJSONSerialization."
     (let [{:keys [exit stdout]} (compile-and-run "json-roundtrip")]

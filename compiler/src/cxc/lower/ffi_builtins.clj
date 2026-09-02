@@ -191,6 +191,103 @@
                         "} "
                         "} "
                         "__r; })")))}
+   "native_http_get"
+   ;; 5 (2026-09-03) — synchronous HTTP GET. Body returned as
+   ;; UTF-8 String, nil on failure (network error, non-UTF-8 body,
+   ;; nil URL). Headers passed as a JSON object String (parsed
+   ;; via NSJSONSerialization) — users build with Json.encode_str
+   ;; + concat, or an empty object `"{}"` for none. Async by
+   ;; nature of NSURLSession; MVP blocks on a semaphore for a
+   ;; sync surface.
+   {:return-kw :string
+    :arity     2
+    :emit-c    (fn [args]
+                 (let [url-arg     (first args)
+                       headers-arg (second args)]
+                   (str "({ NSString *__u = " url-arg "; "
+                        "NSString *__h = " headers-arg "; "
+                        "__block NSString *__r = nil; "
+                        "if (__u) { "
+                        "NSURL *__url = [NSURL URLWithString:__u]; "
+                        "if (__url) { "
+                        "NSMutableURLRequest *__req = [NSMutableURLRequest requestWithURL:__url]; "
+                        "__req.HTTPMethod = @\"GET\"; "
+                        "if (__h) { "
+                        "NSData *__hd = [__h dataUsingEncoding:NSUTF8StringEncoding]; "
+                        "NSError *__he = nil; "
+                        "id __ho = [NSJSONSerialization JSONObjectWithData:__hd "
+                        "options:(NSJSONReadingOptions)0 error:&__he]; "
+                        "if (!__he && [__ho isKindOfClass:[NSDictionary class]]) { "
+                        "[(NSDictionary *)__ho enumerateKeysAndObjectsUsingBlock:"
+                        "^(id __hk, id __hv, BOOL *__stop) { "
+                        "if ([__hk isKindOfClass:[NSString class]] && "
+                        "[__hv isKindOfClass:[NSString class]]) { "
+                        "[__req setValue:(NSString *)__hv forHTTPHeaderField:(NSString *)__hk]; "
+                        "} }]; "
+                        "} } "
+                        "dispatch_semaphore_t __sem = dispatch_semaphore_create(0); "
+                        "NSURLSessionDataTask *__task = [[NSURLSession sharedSession] "
+                        "dataTaskWithRequest:__req completionHandler:"
+                        "^(NSData *__data, NSURLResponse *__resp, NSError *__err) { "
+                        "if (!__err && __data) { "
+                        "__r = [[NSString alloc] initWithData:__data "
+                        "encoding:NSUTF8StringEncoding]; "
+                        "} "
+                        "dispatch_semaphore_signal(__sem); }]; "
+                        "[__task resume]; "
+                        "dispatch_semaphore_wait(__sem, DISPATCH_TIME_FOREVER); "
+                        "} } "
+                        "__r; })")))}
+   "native_http_post"
+   ;; 5 (2026-09-03) — synchronous HTTP POST with a String body.
+   ;; Body is UTF-8 encoded and sent as-is (caller sets
+   ;; Content-Type in headers if it matters — JSON APIs typically
+   ;; want `Content-Type: application/json`). Same nil-return
+   ;; failure surface as `native_http_get`.
+   {:return-kw :string
+    :arity     3
+    :emit-c    (fn [args]
+                 (let [url-arg     (first args)
+                       headers-arg (second args)
+                       body-arg    (nth args 2)]
+                   (str "({ NSString *__u = " url-arg "; "
+                        "NSString *__h = " headers-arg "; "
+                        "NSString *__b = " body-arg "; "
+                        "__block NSString *__r = nil; "
+                        "if (__u) { "
+                        "NSURL *__url = [NSURL URLWithString:__u]; "
+                        "if (__url) { "
+                        "NSMutableURLRequest *__req = [NSMutableURLRequest requestWithURL:__url]; "
+                        "__req.HTTPMethod = @\"POST\"; "
+                        "if (__h) { "
+                        "NSData *__hd = [__h dataUsingEncoding:NSUTF8StringEncoding]; "
+                        "NSError *__he = nil; "
+                        "id __ho = [NSJSONSerialization JSONObjectWithData:__hd "
+                        "options:(NSJSONReadingOptions)0 error:&__he]; "
+                        "if (!__he && [__ho isKindOfClass:[NSDictionary class]]) { "
+                        "[(NSDictionary *)__ho enumerateKeysAndObjectsUsingBlock:"
+                        "^(id __hk, id __hv, BOOL *__stop) { "
+                        "if ([__hk isKindOfClass:[NSString class]] && "
+                        "[__hv isKindOfClass:[NSString class]]) { "
+                        "[__req setValue:(NSString *)__hv forHTTPHeaderField:(NSString *)__hk]; "
+                        "} }]; "
+                        "} } "
+                        "if (__b) { "
+                        "__req.HTTPBody = [__b dataUsingEncoding:NSUTF8StringEncoding]; "
+                        "} "
+                        "dispatch_semaphore_t __sem = dispatch_semaphore_create(0); "
+                        "NSURLSessionDataTask *__task = [[NSURLSession sharedSession] "
+                        "dataTaskWithRequest:__req completionHandler:"
+                        "^(NSData *__data, NSURLResponse *__resp, NSError *__err) { "
+                        "if (!__err && __data) { "
+                        "__r = [[NSString alloc] initWithData:__data "
+                        "encoding:NSUTF8StringEncoding]; "
+                        "} "
+                        "dispatch_semaphore_signal(__sem); }]; "
+                        "[__task resume]; "
+                        "dispatch_semaphore_wait(__sem, DISPATCH_TIME_FOREVER); "
+                        "} } "
+                        "__r; })")))}
    "native_env_get_or_default"
    ;; 2g (2026-09-02) — read an environment variable, defaulting on
    ;; miss. libc `getenv(name)` returns `const char *`; when the var
