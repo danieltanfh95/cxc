@@ -1093,6 +1093,12 @@
       (is (zero? exit))
       (is (= "true\nfalse\ntrue\nfalse\n" stdout)))))
 
+(deftest end-to-end-list-at-or
+  (testing "list-at-or.cxc — `List of T .at_or(i, fallback) -> T` random-access lookup for T ∈ {Int, String, Bool}. Verifies: (1) synthesized per-instantiation method `-at_orWithi:fallback:` with C-typed params matching T; (2) bounds check treats both negative and past-end indices as out-of-range (returns fallback); (3) typed unbox — [v intValue] / (NSString *)v / [v boolValue]. Nine assertions across the three element types, in-range / out-of-range / negative crossings."
+    (let [{:keys [exit stdout]} (compile-and-run "list-at-or")]
+      (is (zero? exit))
+      (is (= "10\n30\n-1\n-1\nb\n?\ntrue\nfalse\ntrue\n" stdout)))))
+
 (deftest end-to-end-console-hello
   (testing "console-hello.cxc — Layer 6 Step 5. Console prelude atom with `write(msg: String) -> Int` method wrapping the `native_console_write` FFI hatch (printf %s). Main is capability-provisioned (`def main(console: Console)`) and calls `console.write(\"hi\\n\")` in its `-> running do:`. Prints `hi` + newline."
     (let [{:keys [exit stdout]} (compile-and-run "console-hello")]

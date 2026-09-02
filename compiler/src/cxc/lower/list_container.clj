@@ -16,6 +16,32 @@
                                          stream-selector
                                          stream-emit-selector]]))
 
+(def list-at-or-supported-element-types
+  "Element types whose synthesized _Cxc_ListOfT class ships an
+   `-at_orWithi:fallback:` random-access method. Constrained to
+   the primitives with a well-defined unbox recipe (matches map's
+   get_or supported-val-types)."
+  #{"Int" "String" "Bool"})
+
+(defn- list-at-or-c-type
+  "C-level parameter type for a supported at_or element type."
+  [ty]
+  (case ty
+    "Int"    "int"
+    "String" "NSString *"
+    "Bool"   "BOOL"))
+
+(defn- list-at-or-unbox-expr
+  "Body of the -at_orWithi:fallback: method: bounds-check + typed
+   unbox of the id result, returning fallback on out-of-range."
+  [ty]
+  (str "if (i < 0 || i >= (int)[_elements count]) return fallback; "
+       "id __v = [_elements objectAtIndex:i]; "
+       (case ty
+         "Int"    "return __v ? [(NSNumber *)__v intValue] : fallback;"
+         "String" "return __v ? (NSString *)__v : fallback;"
+         "Bool"   "return __v ? [(NSNumber *)__v boolValue] : fallback;")))
+
 (defn synthesize-list-container-class
   "Emit-ready :objc-class node for one `_Cxc_ListOf<T>` instantiation.
    Contents:
@@ -150,6 +176,14 @@
                           :return-type "void"
                           :body        [{:node :raw-c
                                          :text "for (id _cxc_e in _elements) { block(_cxc_e); }"}]}]
-                        (into (vec forwarding-methods)
-                              (:methods stream-parts)))
+                        (cond-> (into (vec forwarding-methods)
+                                      (:methods stream-parts))
+                          (contains? list-at-or-supported-element-types element-name)
+                          (conj {:name        "at_orWithi_fallback"
+                                 :selector    "at_orWithi:fallback:"
+                                 :params      [{:name "i"        :c-type "int"}
+                                               {:name "fallback" :c-type (list-at-or-c-type element-name)}]
+                                 :return-type (list-at-or-c-type element-name)
+                                 :body        [{:node :raw-c
+                                                :text (list-at-or-unbox-expr element-name)}]})))
      :element-name element-name}))

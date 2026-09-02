@@ -1,0 +1,16 @@
+def main:
+    ns: List of Int    = [10, 20, 30]
+    ss: List of String = ["a", "b", "c"]
+    bs: List of Bool   = [true, false, true]
+
+    -> running
+        then:
+            print(ns.at_or(0, -1).to_string())
+            print(ns.at_or(2, -1).to_string())
+            print(ns.at_or(9, -1).to_string())
+            print(ns.at_or(-1, -1).to_string())
+            print(ss.at_or(1, "?"))
+            print(ss.at_or(9, "?"))
+            print(bs.at_or(0, false).to_string())
+            print(bs.at_or(1, true).to_string())
+            print(bs.at_or(9, true).to_string())

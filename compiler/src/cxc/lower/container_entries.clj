@@ -13,7 +13,8 @@
    `synthesize-list-container-entries` reads the element atom's
    `:stream-order` / `:stream-index` / `:stream-payload-index` and
    prepends `e: <ElementAtom>` to every payload. Map / Set land no
-   fan-in at MVP.")
+   fan-in at MVP."
+  (:require [cxc.lower.list-container :refer [list-at-or-supported-element-types]]))
 
 (defn container-entry-defaults
   "The always-empty keys every synthesized container atom-env entry
@@ -202,10 +203,15 @@
                                              (into [{:name "e"}]
                                                    (:payload entry [])))])
                                 elem-index))
-                     methods       [(container-method "add"
-                                                      [{:name "e" :cxc-ty elem}] nil)
-                                    (container-method "remove"
-                                                      [{:name "e" :cxc-ty elem}] nil)]]
+                     methods       (cond-> [(container-method "add"
+                                                              [{:name "e" :cxc-ty elem}] nil)
+                                            (container-method "remove"
+                                                              [{:name "e" :cxc-ty elem}] nil)]
+                                     (contains? list-at-or-supported-element-types elem)
+                                     (conj (container-method "at_or"
+                                                             [{:name "i"        :cxc-ty "Int"}
+                                                              {:name "fallback" :cxc-ty elem}]
+                                                             elem)))]
                  [class-name
                   (merge (container-entry-defaults)
                          count-observable-defaults
