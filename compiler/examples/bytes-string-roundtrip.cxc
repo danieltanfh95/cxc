@@ -1,0 +1,21 @@
+def main:
+    use fs:      FileSystem
+    use console: Console
+
+    -> running
+        then:
+            let msg: String = "hello utf-8 bytes"
+            let bs: Bytes = msg.to_bytes()
+            let n: Int = bs.length
+            let back: String = bs.to_string()
+            let path: String = "/tmp/cxc-bytes-utf8-example.bin"
+            let _rm0: Int = fs.remove(path)
+            let _wr: Int = fs.write_bytes(path, bs)
+            let rd: Bytes = fs.read_bytes(path)
+            let rd_back: String = rd.to_string()
+            let _rm: Int = fs.remove(path)
+            console.write("bytes_len: " + n.to_string())
+            console.write("roundtrip_eq: " + (msg == back).to_string())
+            console.write("disk_roundtrip_eq: " + (msg == rd_back).to_string())
+
+    -> end

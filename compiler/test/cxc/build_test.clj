@@ -1944,6 +1944,15 @@
       (is (str/includes? stdout "append_rc2: 0"))
       (is (str/includes? stdout "read_back: line one\nline two")))))
 
+(deftest end-to-end-bytes-string-roundtrip
+  (testing "2026-09-03 — `String.to_bytes()` (UTF-8 encode → NSMutableData) + `Bytes.to_string()` (UTF-8 decode → NSString) round-trip cleanly. Verifies both the in-memory conversion and a disk round-trip (String → Bytes → file → Bytes → String). Byte count uses the ASCII-only string \"hello utf-8 bytes\" (17 chars = 17 bytes UTF-8)."
+    (shell/sh "rm" "-f" "/tmp/cxc-bytes-utf8-example.bin")
+    (let [{:keys [exit stdout]} (compile-and-run "bytes-string-roundtrip")]
+      (is (zero? exit))
+      (is (str/includes? stdout "bytes_len: 17"))
+      (is (str/includes? stdout "roundtrip_eq: true"))
+      (is (str/includes? stdout "disk_roundtrip_eq: true")))))
+
 (deftest end-to-end-fs-bytes-io
   (testing "2026-09-03 — `fs.write_bytes(path, data)` (NSData writeToFile:atomically) + `fs.read_bytes(path)` (returns NSMutableData or nil). Bytes value produced via F37 `.as() -> Bytes` on a primitive-field record. Round-trip: encode a 2-Int record (16 bytes big-endian), write to disk, read back, confirm both in-memory `.length` and on-disk `fs.size` match. Missing-file read returns nil (Bytes == nil comparison works). Test pre-cleans + post-cleans its scratch path."
     (shell/sh "rm" "-f" "/tmp/cxc-blob-example.bin")

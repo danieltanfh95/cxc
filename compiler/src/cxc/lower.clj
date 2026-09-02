@@ -1195,6 +1195,14 @@
            (= "slice" method-name))
       :bytes
 
+      ;; 2026-09-03 — `Bytes.to_string() -> String`. UTF-8-decodes the
+      ;; underlying NSData. Nil bytes → nil String; non-UTF-8 bytes
+      ;; → nil (Foundation returns nil from -initWithData:encoding:
+      ;; on invalid sequences). Round-trips `String.to_bytes()`.
+      (and (keyword? target-ty) (= :bytes target-ty)
+           (= "to_string" method-name))
+      :string
+
       ;; FL-15 (2026-09-02) — pointer methods on `Ptr of T`. Type-kw
       ;; shape is `[:ptr <inner-tk>]` (foreign-type-node->tk output).
       ;; `.deref()`  — zero-arg, returns inner-tk (C: `*p`).
@@ -1239,12 +1247,13 @@
       (and (= :string target-ty)
            (contains? #{"length" "contains" "starts_with" "ends_with"
                         "substring" "index_of" "trim" "replace"
-                        "to_int_or" "uppercase" "lowercase"}
+                        "to_int_or" "uppercase" "lowercase" "to_bytes"}
                       method-name))
       (case method-name
         "length"    :int
         "index_of"  :int
         "to_int_or" :int
+        "to_bytes"  :bytes
         ("substring" "trim" "replace" "uppercase" "lowercase") :string
         :bool)
 
@@ -2384,10 +2393,10 @@
           (and (= :string target-ty)
                (contains? #{"length" "contains" "starts_with" "ends_with"
                             "substring" "index_of" "trim" "replace"
-                            "to_int_or" "uppercase" "lowercase"}
+                            "to_int_or" "uppercase" "lowercase" "to_bytes"}
                           method-name))
           (let [want-args (case method-name
-                            ("length" "trim" "uppercase" "lowercase") 0
+                            ("length" "trim" "uppercase" "lowercase" "to_bytes") 0
                             ("substring" "replace") 2
                             1)]
             (when-not (= want-args (count arg-exprs))
@@ -2459,6 +2468,17 @@
               {:node :ffi-call :name "cxc_string_lowercase"
                :args [target-lo]
                :emit-c-fn (fn [[s]] (str "[(" s ") lowercaseString]"))}
+              "to_bytes"
+              {:node :ffi-call :name "cxc_string_to_bytes"
+               :args [target-lo]
+               :emit-c-fn (fn [[s]]
+                            (str "({ NSString *__s = (" s "); "
+                                 "NSMutableData *__r = nil; "
+                                 "if (__s) { "
+                                 "NSData *__d = [__s dataUsingEncoding:"
+                                 "NSUTF8StringEncoding]; "
+                                 "if (__d) __r = [__d mutableCopy]; } "
+                                 "__r; })"))}
               "to_int_or"
               {:node :ffi-call :name "cxc_string_to_int_or"
                :args (into [target-lo] arg-exprs)
@@ -2492,6 +2512,28 @@
                :emit-c-fn (fn [[b s l]]
                             (str "[[" b " subdataWithRange:NSMakeRange("
                                  s ", " l ")] mutableCopy]"))})
+
+          ;; 2026-09-03 — `Bytes.to_string() -> String`. UTF-8-decode
+          ;; the NSData into an NSString. Nil bytes → nil String;
+          ;; non-UTF-8 sequences also return nil (Foundation's
+          ;; -initWithData:encoding: contract). Round-trips
+          ;; `String.to_bytes()`.
+          (and (keyword? target-ty) (= :bytes target-ty)
+               (= "to_string" method-name))
+          (do (when-not (zero? (count arg-exprs))
+                (fail-user! (str "Bytes.to_string() takes no args, got "
+                                 (count arg-exprs))
+                            call-node))
+              {:node      :ffi-call
+               :name      "cxc_bytes_to_string"
+               :args      [target-lo]
+               :emit-c-fn (fn [[b]]
+                            (str "({ NSMutableData *__b = (" b "); "
+                                 "NSString *__r = nil; "
+                                 "if (__b) { __r = [[NSString alloc] "
+                                 "initWithData:(NSData *)__b "
+                                 "encoding:NSUTF8StringEncoding]; } "
+                                 "__r; })"))})
 
           (and (map? target-ty) (:atom target-ty))
           (let [atom-name   (:atom target-ty)
