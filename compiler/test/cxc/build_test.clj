@@ -189,6 +189,42 @@
           (is (= "hello\n6\n" stdout)
               "write(2) drops 'hello\\n' onto stdout and returns 6"))))))
 
+(deftest ffi-selector-call-fl-13
+  (testing "FL-13 (2026-09-02) — plugin.send(SEL, recv, args...) resolves against `foreign \"...\": selector \"cls\" \"sel:\"` entries and emits `[recv sel:args]` via lower's :objc-msg. Zero-arg selector `length` reaches emit as `[recv length]`; one-arg selector `stringByAppendingString:` reaches emit as `[recv stringByAppendingString:arg]`. Verifies end-to-end that (a) B5 accepts .send with a receiver, (b) FL-13 rewrite produces :foreign-selector-call, (c) FL-12 collapses NSString-typed slots to id so the compile succeeds, (d) lower emits :objc-msg with the correct selector-parts interleaving, and (e) the resulting binary computes `[[@\"hello, world\" length] intValue]` = 12."
+    (let [src (str "def plugin:\n"
+                   "    name:    String!       = \"p\"\n"
+                   "    version: SemVer!       = SemVer(0, 1, 0)\n"
+                   "    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0), max: SemVer(2, 0, 0))\n"
+                   "\n"
+                   "    foreign \"Foundation\":\n"
+                   "        type \"NSString\" as NSStr\n"
+                   "        selector \"NSString\" \"stringByAppendingString:\" -> (NSStr) -> NSStr\n"
+                   "        selector \"NSString\" \"length\" -> () -> Int\n"
+                   "\n"
+                   "def main:\n"
+                   "    use plugin: Plugin\n"
+                   "    -> ready\n"
+                   "        then:\n"
+                   "            let greet = \"hello, \"\n"
+                   "            let world = \"world\"\n"
+                   "            let combined = plugin.send(\"stringByAppendingString:\", greet, world)\n"
+                   "            let n = plugin.send(\"length\", combined)\n"
+                   "            print(n)\n")
+          out-dir (tmp-dir)
+          {:keys [status stderr bin-path m-path]}
+          (build/compile-source-to-file src "ffi-selector" (.getPath out-dir))]
+      (is (zero? status) (str "clang failed:\n" stderr))
+      (when (zero? status)
+        (let [emitted (slurp m-path)]
+          (is (re-find #"\[greet stringByAppendingString:world\]" emitted)
+              "one-arg selector emits [recv sel:arg]")
+          (is (re-find #"\[combined length\]" emitted)
+              "zero-arg selector emits [recv sel]"))
+        (let [{:keys [exit stdout]} (build/run-binary bin-path)]
+          (is (zero? exit))
+          (is (= "12\n" stdout)
+              "[@\"hello, world\" length] returns 12"))))))
+
 (deftest ffi-bare-foreign-ref-not-called-rejected
   (testing "FL-3 diagnostic — storing plugin.get(SYM) as a function pointer (not calling it inline) rejected with a fail-nyi pointing at the MVP-supported call form."
     (let [src (str "def plugin:\n"

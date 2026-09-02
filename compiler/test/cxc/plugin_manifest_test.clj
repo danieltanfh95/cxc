@@ -383,22 +383,21 @@ def BCap:
       (is (nil? (pm/validate-plugin-symbol-refs! nodes manifest))
           "sharing a library name (liba) across plugins is fine when symbols disjoint"))))
 
-(deftest resolve-flags-send-and-class-send-as-nyi
-  (doseq [method ["send" "class_send"]]
-    (testing (str "plugin." method " NYI")
-      (let [full (str foreign-block-src "
+(deftest resolve-flags-class-send-as-nyi
+  ;; FL-13 landed `plugin.send`; `plugin.class_send` still awaits FL-14.
+  (let [full (str foreign-block-src "
 def Console:
     use plugin: Plugin
-    x: Int! = plugin." method "(\"write\")
+    x: Int! = plugin.class_send(\"write\")
 ")
-            nodes    (parse/parse full)
-            manifest (pm/extract nodes)
-            ex       (try (pm/validate-plugin-symbol-refs! nodes manifest)
-                          nil
-                          (catch clojure.lang.ExceptionInfo e e))]
-        (is (some? ex))
-        (is (= :plugin-method-nyi (:kind (ex-data ex))))
-        (is (= method (:method (ex-data ex))))))))
+        nodes    (parse/parse full)
+        manifest (pm/extract nodes)
+        ex       (try (pm/validate-plugin-symbol-refs! nodes manifest)
+                      nil
+                      (catch clojure.lang.ExceptionInfo e e))]
+    (is (some? ex))
+    (is (= :plugin-method-nyi (:kind (ex-data ex))))
+    (is (= "class_send"       (:method (ex-data ex))))))
 
 ;; ============================================================================
 ;; B7 / F77 — .cxc-caps manifest emission
@@ -549,6 +548,167 @@ def MyShim:
     (is (= :call (:node deflt)))
     (is (= :foreign-ref (get-in deflt [:args 0 :value :node]))
         "plugin.get inside an outer call is rewritten in place")))
+
+;; ---------------------------------------------------------------------------
+;; FL-13 (2026-09-02) — plugin.send instance-selector resolution + rewrite.
+;; build-selector-index keys by SEL string across all foreign blocks;
+;; validate resolves against the index; rewrite-plugin-refs produces
+;; `:foreign-selector-call` nodes carrying receiver + args separately.
+;; ---------------------------------------------------------------------------
+
+(def fl-13-src
+  "def plugin:
+    name:    String!       = \"fl13\"
+    version: SemVer!       = SemVer(0, 1, 0)
+    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0),
+                                          max: SemVer(2, 0, 0))
+
+    foreign \"Foundation\":
+        type \"NSString\" as NSStr
+        selector \"NSString\" \"stringByAppendingString:\" -> (NSStr) -> NSStr
+        selector \"NSString\" \"length\" -> () -> Int
+")
+
+(deftest fl-13-selector-index-collects-selectors
+  (let [nodes    (parse/parse fl-13-src)
+        manifest (pm/extract nodes)
+        idx      (pm/build-selector-index (:foreign-blocks manifest))]
+    (is (contains? idx "stringByAppendingString:"))
+    (is (contains? idx "length"))
+    (is (= "Foundation" (get-in idx ["length" :library])))
+    (is (= "NSString"   (get-in idx ["length" :cls])))))
+
+(deftest fl-13-selector-index-rejects-collision
+  (let [src "def plugin:
+    name:    String!       = \"fl13\"
+    version: SemVer!       = SemVer(0, 1, 0)
+    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0),
+                                          max: SemVer(2, 0, 0))
+    foreign \"A\":
+        selector \"C1\" \"sel:\" -> (Int) -> Int
+    foreign \"B\":
+        selector \"C2\" \"sel:\" -> (Int) -> Int
+"
+        nodes    (parse/parse src)
+        manifest (pm/extract nodes)
+        ex       (try (pm/build-selector-index (:foreign-blocks manifest))
+                      nil
+                      (catch clojure.lang.ExceptionInfo e e))]
+    (is (some? ex))
+    (is (= :plugin-foreign-selector-collision (:kind (ex-data ex))))
+    (is (= "sel:" (:selector (ex-data ex))))))
+
+(deftest fl-13-resolve-happy-path
+  (let [full (str fl-13-src "
+def MyAtom:
+    use plugin: Plugin
+    -> ready
+        then:
+            let a = \"hi\"
+            let b = \"there\"
+            let c = plugin.send(\"stringByAppendingString:\", a, b)
+")
+        nodes    (parse/parse full)
+        manifest (pm/extract nodes)]
+    (is (nil? (pm/validate-plugin-symbol-refs! nodes manifest))
+        "known selector + receiver + arg validates cleanly")))
+
+(deftest fl-13-resolve-unresolved-selector-fails
+  (let [full (str fl-13-src "
+def MyAtom:
+    use plugin: Plugin
+    -> ready
+        then:
+            let a = \"x\"
+            let b = plugin.send(\"noSuchSelector:\", a, a)
+")
+        nodes    (parse/parse full)
+        manifest (pm/extract nodes)
+        ex       (try (pm/validate-plugin-symbol-refs! nodes manifest)
+                      nil
+                      (catch clojure.lang.ExceptionInfo e e))]
+    (is (some? ex))
+    (is (= :plugin-selector-unresolved (:kind (ex-data ex))))
+    (is (= "noSuchSelector:" (:selector (ex-data ex))))))
+
+(deftest fl-13-resolve-missing-receiver-fails
+  (let [full (str fl-13-src "
+def MyAtom:
+    use plugin: Plugin
+    -> ready
+        then:
+            let n = plugin.send(\"length\")
+")
+        nodes    (parse/parse full)
+        manifest (pm/extract nodes)
+        ex       (try (pm/validate-plugin-symbol-refs! nodes manifest)
+                      nil
+                      (catch clojure.lang.ExceptionInfo e e))]
+    (is (some? ex))
+    (is (= :plugin-send-missing-receiver (:kind (ex-data ex))))))
+
+(deftest fl-13-resolve-non-literal-selector-fails
+  (let [full (str fl-13-src "
+def MyAtom:
+    use plugin: Plugin
+    -> ready
+        then:
+            let s = \"length\"
+            let a = \"x\"
+            let n = plugin.send(s, a)
+")
+        nodes    (parse/parse full)
+        manifest (pm/extract nodes)
+        ex       (try (pm/validate-plugin-symbol-refs! nodes manifest)
+                      nil
+                      (catch clojure.lang.ExceptionInfo e e))]
+    (is (some? ex))
+    (is (= :plugin-send-non-literal-selector (:kind (ex-data ex))))))
+
+(deftest fl-13-rewrite-produces-foreign-selector-call
+  (let [full (str fl-13-src "
+def MyAtom:
+    use plugin: Plugin
+    -> ready
+        then:
+            let a = \"hi\"
+            let b = \"there\"
+            let c = plugin.send(\"stringByAppendingString:\", a, b)
+")
+        nodes    (parse/parse full)
+        manifest (pm/extract nodes)
+        out      (pm/rewrite-plugin-refs nodes manifest)
+        ;; walk to find the :foreign-selector-call node
+        find-fsc (fn walk [x]
+                   (cond
+                     (and (map? x) (= :foreign-selector-call (:node x))) x
+                     (map? x)      (some walk (vals x))
+                     (sequential? x) (some walk x)
+                     :else nil))
+        fsc      (find-fsc out)]
+    (is (some? fsc) ":foreign-selector-call node appears somewhere in rewritten AST")
+    (is (= "Foundation"                 (:library fsc)))
+    (is (= "NSString"                   (:cls fsc)))
+    (is (= "stringByAppendingString:"   (:selector fsc)))
+    (is (= 1                            (count (:args fsc)))
+        "receiver split off from positional args; only the trailing arg remains")))
+
+(deftest fl-13-rewrite-is-idempotent
+  (let [full (str fl-13-src "
+def MyAtom:
+    use plugin: Plugin
+    -> ready
+        then:
+            let a = \"hi\"
+            let b = \"there\"
+            let c = plugin.send(\"stringByAppendingString:\", a, b)
+")
+        nodes    (parse/parse full)
+        manifest (pm/extract nodes)
+        once     (pm/rewrite-plugin-refs nodes manifest)
+        twice    (pm/rewrite-plugin-refs once manifest)]
+    (is (= once twice)
+        "second application is a fixpoint (:foreign-selector-call is not re-walked)")))
 
 ;; ---------------------------------------------------------------------------
 ;; FL-12 (2026-09-02) — `type "NSFoo"` ObjC type alias registration.

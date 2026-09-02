@@ -1644,6 +1644,11 @@
            "storing the resolved symbol as a function pointer waits on a "
            "follow-on landing.")
       node)
+    ;; FL-13 (2026-09-02) — resolved instance-selector call. The
+    ;; signature's return type drives inference; FL-12's `Any`
+    ;; substitution has already collapsed ObjC-typed slots to `id`.
+    :foreign-selector-call
+    (foreign-type-node->tk (:return (:signature node)) ctx node)
     (fail-nyi! (str "infer-type " (:node node)) node)))
 
 ;; ---------------------------------------------------------------------------
@@ -2970,6 +2975,24 @@
            "storing the resolved symbol as a function pointer waits on a "
            "follow-on landing.")
       node)
+
+    ;; FL-13 (2026-09-02) — instance-selector call. Lower the receiver
+    ;; and each positional arg, marshal args per the signature's arg
+    ;; slots (reuses FL-6/FL-10 marshaling), then emit a plain
+    ;; `:objc-msg` — the existing emit interleaves selector parts with
+    ;; args for `[recv sel1:arg1 sel2:arg2]` form.
+    :foreign-selector-call
+    (let [arg-tys   (foreign-signature-arg-types (:signature node))
+          arg-exprs (mapv (fn [i a]
+                            (marshal-foreign-arg
+                              (lower-expr (:value a) ctx)
+                              (nth arg-tys i nil)))
+                          (range (count (:args node)))
+                          (:args node))]
+      {:node     :objc-msg
+       :recv     (lower-expr (:receiver node) ctx)
+       :selector (:selector node)
+       :args     arg-exprs})
 
     (fail-nyi! (str "expression " (:node node)) node)))
 
