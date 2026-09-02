@@ -925,6 +925,35 @@
                       "dispatch_semaphore_wait(__sem, DISPATCH_TIME_FOREVER); "
                       "} } "
                       "__r; })"))}
+   "native_fs_read_bytes"
+   ;; 2026-09-03 — read a file's raw bytes into a Bytes (NSMutableData).
+   ;; Foundation: `+[NSData dataWithContentsOfFile:]` (nil on missing /
+   ;; permission / read error), upcast to NSMutableData via mutableCopy
+   ;; so the value type matches the rest of the Bytes surface
+   ;; (F37 L6a's slice etc. all deal in NSMutableData). Returns nil
+   ;; on any failure so callers can branch cleanly.
+   {:return-kw :bytes
+    :arity     1
+    :emit-c    (fn [args]
+                 (str "({ NSString *__p = " (first args) "; "
+                      "NSMutableData *__r = nil; "
+                      "if (__p) { "
+                      "NSData *__d = [NSData dataWithContentsOfFile:__p]; "
+                      "if (__d) __r = [__d mutableCopy]; } "
+                      "__r; })"))}
+   "native_fs_write_bytes"
+   ;; 2026-09-03 — write raw bytes to a file. NSData writeToFile
+   ;; atomically:YES so partial writes on crash don't leave a
+   ;; truncated file. Returns 0/-1. Nil either arg → -1.
+   {:return-kw :int
+    :arity     2
+    :emit-c    (fn [args]
+                 (str "({ NSString *__p = " (first args) "; "
+                      "NSMutableData *__b = " (second args) "; "
+                      "int64_t __r = -1; "
+                      "if (__p && __b) { "
+                      "if ([(NSData *)__b writeToFile:__p atomically:YES]) __r = 0; } "
+                      "__r; })"))}
    "native_fs_tmp_path"
    ;; 2026-09-03 — build a unique-per-call scratch path under the OS
    ;; temp directory. Shape: `<tmpdir><prefix>-<16 hex chars>`. Does

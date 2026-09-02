@@ -21,6 +21,10 @@ def FileSystem:
 
     list_dir(path: String) :- native_fs_list_dir(path)
 
+    read_bytes(path: String) :- native_fs_read_bytes(path)
+
+    write_bytes(path: String, data: Bytes) :- native_fs_write_bytes(path, data)
+
     -> running
 
     -> end

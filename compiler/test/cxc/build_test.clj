@@ -1944,6 +1944,16 @@
       (is (str/includes? stdout "append_rc2: 0"))
       (is (str/includes? stdout "read_back: line one\nline two")))))
 
+(deftest end-to-end-fs-bytes-io
+  (testing "2026-09-03 — `fs.write_bytes(path, data)` (NSData writeToFile:atomically) + `fs.read_bytes(path)` (returns NSMutableData or nil). Bytes value produced via F37 `.as() -> Bytes` on a primitive-field record. Round-trip: encode a 2-Int record (16 bytes big-endian), write to disk, read back, confirm both in-memory `.length` and on-disk `fs.size` match. Missing-file read returns nil (Bytes == nil comparison works). Test pre-cleans + post-cleans its scratch path."
+    (shell/sh "rm" "-f" "/tmp/cxc-blob-example.bin")
+    (let [{:keys [exit stdout]} (compile-and-run "fs-bytes-io")]
+      (is (zero? exit))
+      (is (str/includes? stdout "wr: 0"))
+      (is (str/includes? stdout "read_len: 16"))
+      (is (str/includes? stdout "disk_size: 16"))
+      (is (str/includes? stdout "miss_nil: true")))))
+
 (deftest end-to-end-fs-list-dir
   (testing "2026-09-03 — `fs.list_dir(path)` returns a newline-separated String of names in the directory (no `.` / `..`, no path prefix). Empty String on error (missing / not-a-directory / permission). Interim shape until List of T lands — callers parse via `.contains` / `.split` / string surgery. Test creates a temp dir with three named files, asserts each name appears in the joined output, and verifies missing path returns empty."
     (let [{:keys [exit stdout]} (compile-and-run "fs-list-dir")]
