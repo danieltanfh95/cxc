@@ -12,9 +12,9 @@ Under [resources/prelude/target/macos/](../resources/prelude/target/macos/):
 | [fs.cxc](../resources/prelude/target/macos/fs.cxc) | `FileSystem` | `read_text` / `write_text` / `append_text` / `exists` / `mkdirs` / `remove` / `copy` / `rename` / `size` / `tmp_path` | 47a4c2f + 2c9d094 + 25cb3bd + 5e10972 + 954b5b7 |
 | [subprocess.cxc](../resources/prelude/target/macos/subprocess.cxc) | `Subprocess` | `run(cmd)` (combined stdout+stderr via popen) | 07d4994 |
 | [env.cxc](../resources/prelude/target/macos/env.cxc) | `Env` | `get_or` + `set` + `remove` + `has` | c5e2f68 + db01b54 + 25cb3bd + 700b377 |
-| [args.cxc](../resources/prelude/target/macos/args.cxc) | `Args` | `length()` + `get_or(index, fallback)` | 4d6a897 |
+| [args.cxc](../resources/prelude/target/macos/args.cxc) | `Args` | `length()` + `get_or` + `all_after` | 4d6a897 + 962108b |
 | [json.cxc](../resources/prelude/target/macos/json.cxc) | `Json` | `encode_str` / `field_string` / `field_int_or` / `field_string_path` / `field_int_or_path` / `field_bool_or` / `array_length_at` | 6b12a7d + c922c06 + a798ab9 + f3c49bd |
-| [http.cxc](../resources/prelude/target/macos/http.cxc) | `Http` | `get` / `post` / `get_envelope` / `post_envelope` | 838533a + 0e17b7b |
+| [http.cxc](../resources/prelude/target/macos/http.cxc) | `Http` | `get` / `post` / `get_envelope` / `post_envelope` / `head_status` | 838533a + 0e17b7b + 210a1fa |
 | [wall_time.cxc](../resources/prelude/target/macos/wall_time.cxc) | `Time` | `now()` + `now_iso()` + `since(t)` + `sleep_ms(ms)` | c3e098e + db01b54 + 97cad99 |
 | [console.cxc](../resources/prelude/target/macos/console.cxc) | `Console` | `write` + `write_raw` + `readln` + `write_err` | da59e95 + ac862c0 + 11155d1 + 6390fa5 |
 
@@ -43,6 +43,8 @@ Under [examples/](./):
 - [fs-tmp-path.cxc](./fs-tmp-path.cxc) — unique-per-call tmp_path (empty prefix omits dash; write-then-read roundtrip).
 - [env-has.cxc](./env-has.cxc) — set-empty vs unset differentiation via has() (PATH positive control).
 - [random-uuid.cxc](./random-uuid.cxc) — v4 UUID shape assertions (len, version nibble, hyphens, non-repeat).
+- [args-all-after.cxc](./args-all-after.cxc) — join trailing argv tokens (empty on out-of-range / negative).
+- [http-head-status.cxc](./http-head-status.cxc) — HEAD status: found / not-found / URL-error. Manual.
 
 ## Non-plugin prelude capabilities enriched this session
 
@@ -94,6 +96,8 @@ Under [examples/](./):
 - `native_fs_tmp_path` — NSTemporaryDirectory + 16-hex CSPRNG suffix; caller writes the file. (954b5b7)
 - `native_env_has` — libc getenv NULL-check; distinguishes set-empty from unset. (700b377)
 - `native_random_uuid` — Foundation NSUUID; lowercased canonical v4. (7021840)
+- `native_args_all_after` — join argv[index..argc] with spaces. (962108b)
+- `native_http_head_status` — sync NSURLSession HEAD; returns status Int or -1. (210a1fa)
 - `native_http_get` / `native_http_post` — sync NSURLSession dataTask + dispatch_semaphore. (838533a)
 - `native_http_get_envelope` / `native_http_post_envelope` — same with `{status,body}` JSON envelope. (0e17b7b)
 
@@ -104,6 +108,8 @@ Under [examples/](./):
 ## Commit sequence
 
 ```
+210a1fa Http.head_status(url)
+962108b Args.all_after(index)
 7021840 Random.uuid() — RFC 4122 v4 UUID
 700b377 Env.has(name) — presence check distinct from get_or fallback
 954b5b7 FileSystem.tmp_path(prefix)
