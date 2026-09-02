@@ -458,3 +458,94 @@ def Console:
     (is (= "a" (:name (nth results 0))))
     (is (nil? (nth results 1)))
     (is (= "b" (:name (nth results 2))))))
+
+;; ============================================================================
+;; FL-1 — parse-post rewrite of plugin.get(LIT) → :foreign-ref
+;; ============================================================================
+
+(def fl-1-src
+  "def plugin:
+    name:    String!       = \"p\"
+    version: SemVer!       = SemVer(0, 1, 0)
+    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0),
+                                          max: SemVer(2, 0, 0))
+
+    foreign \"libc\":
+        symbol \"puts\" -> Int
+
+def MyShim:
+    use plugin: Plugin
+    handle: Int! = plugin.get(\"puts\")
+")
+
+(deftest fl-1-rewrites-plugin-get-to-foreign-ref
+  (let [nodes    (parse/parse fl-1-src)
+        manifest (pm/extract nodes)
+        out      (pm/rewrite-plugin-refs nodes manifest)
+        field    (get-in out [1 :body 1 :fields 0])
+        deflt    (:default field)]
+    (is (= :foreign-ref (:node deflt)))
+    (is (= "libc"       (:library deflt)))
+    (is (= "puts"       (:symbol deflt)))
+    (is (= :symbol      (:sig-kind deflt)))
+    (is (= {:node :type-ref :name "Int"} (:signature deflt)))
+    (testing "preserves the original :call for downstream diagnostics"
+      (is (= :call (get-in deflt [:orig-node :node]))))))
+
+(deftest fl-1-noop-on-non-plugin-module
+  (let [nodes (parse/parse "def Foo:\n    x: Int! = 1\n")]
+    (is (= nodes (pm/rewrite-plugin-refs nodes nil)))))
+
+(deftest fl-1-idempotent
+  (let [nodes    (parse/parse fl-1-src)
+        manifest (pm/extract nodes)
+        once     (pm/rewrite-plugin-refs nodes manifest)
+        twice    (pm/rewrite-plugin-refs once manifest)]
+    (is (= once twice)
+        "rewriting an already-rewritten AST is a no-op")))
+
+(deftest fl-1-leaves-unrelated-calls-alone
+  (let [src   "def plugin:
+    name:    String!       = \"p\"
+    version: SemVer!       = SemVer(0, 1, 0)
+    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0),
+                                          max: SemVer(2, 0, 0))
+
+    foreign \"libc\":
+        symbol \"puts\" -> Int
+
+def MyShim:
+    use plugin: Plugin
+    other: Int! = 42
+    handle: Int! = plugin.get(\"puts\")
+"
+        nodes    (parse/parse src)
+        manifest (pm/extract nodes)
+        out      (pm/rewrite-plugin-refs nodes manifest)
+        other    (get-in out [1 :body 1 :fields 0])]
+    (is (= :field (:node other)))
+    (is (= "other" (:name other)))
+    (is (= :lit-int (get-in other [:default :node]))
+        "non-plugin.get expressions untouched")))
+
+(deftest fl-1-rewrites-nested-inside-call-args
+  (let [src   "def plugin:
+    name:    String!       = \"p\"
+    version: SemVer!       = SemVer(0, 1, 0)
+    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0),
+                                          max: SemVer(2, 0, 0))
+
+    foreign \"libc\":
+        symbol \"puts\" -> Int
+
+def MyShim:
+    use plugin: Plugin
+    handle: Int! = f(plugin.get(\"puts\"), 1)
+"
+        nodes    (parse/parse src)
+        manifest (pm/extract nodes)
+        out      (pm/rewrite-plugin-refs nodes manifest)
+        deflt    (get-in out [1 :body 1 :fields 0 :default])]
+    (is (= :call (:node deflt)))
+    (is (= :foreign-ref (get-in deflt [:args 0 :value :node]))
+        "plugin.get inside an outer call is rewritten in place")))

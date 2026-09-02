@@ -242,8 +242,14 @@
         ;; B5 (2026-09-02): resolve `plugin.get(LIT)` against the
         ;; module's `foreign "..."` blocks. Extract manifest first;
         ;; nil when this module isn't a plugin — resolver no-ops then.
+        module-manifest (plugin-manifest/extract parsed)
         _        (plugin-manifest/validate-plugin-symbol-refs!
-                   parsed (plugin-manifest/extract parsed))
+                   parsed module-manifest)
+        ;; FL-1 (2026-09-02): rewrite `plugin.get(LIT)` calls into
+        ;; `:foreign-ref` AST nodes so lower/emit deal in resolved
+        ;; symbols rather than `plugin.<method>` grammar. Runs after
+        ;; B5 validation — every literal is guaranteed to resolve.
+        parsed   (plugin-manifest/rewrite-plugin-refs parsed module-manifest)
         ;; F51 L3b(b.ii)-5c (2026-08-27) — enrich user AST with
         ;; `:resolves-to` provenance before concatenating with prelude.
         ;; Single-file callers implicitly declare into the `:main`
@@ -826,16 +832,24 @@
                   ;; the file's own foreign blocks. Manifest is
                   ;; module-scoped; cross-plugin symbol reach is
                   ;; grammatically impossible under R11.
-                  (try
-                    (plugin-manifest/validate-plugin-symbol-refs!
-                      parsed (plugin-manifest/extract parsed))
-                    (catch clojure.lang.ExceptionInfo e
-                      (throw (ex-info (str "in " (.getName f)
-                                           ": " (.getMessage e))
-                                      (assoc (ex-data e)
-                                             :file (.getPath f))
-                                      e))))
-                  {:file f :module module :nodes parsed}))
+                  (let [file-manifest
+                        (try
+                          (let [mfst (plugin-manifest/extract parsed)]
+                            (plugin-manifest/validate-plugin-symbol-refs!
+                              parsed mfst)
+                            mfst)
+                          (catch clojure.lang.ExceptionInfo e
+                            (throw (ex-info (str "in " (.getName f)
+                                                 ": " (.getMessage e))
+                                            (assoc (ex-data e)
+                                                   :file (.getPath f))
+                                            e))))
+                        ;; FL-1: rewrite plugin.get(LIT) → :foreign-ref
+                        ;; before lower sees the AST. Idempotent on
+                        ;; non-plugin files.
+                        parsed (plugin-manifest/rewrite-plugin-refs
+                                 parsed file-manifest)]
+                    {:file f :module module :nodes parsed})))
               (map vector files srcs))
         _       (reject-duplicate-declarations-per-module! files-with-nodes)
         ;; F51 L2 — build the module import dep graph, reject self-imports

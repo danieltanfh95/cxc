@@ -387,6 +387,86 @@
                       :method    (plugin-method call)
                       :atom-name (:name a)})))))))))
 
+;; ============================================================================
+;; FL-1 (2026-09-02) — parse-post rewrite of `plugin.get(LIT)` into
+;; `:foreign-ref` AST nodes so lower/emit don't need to understand the
+;; `plugin.<method>` grammar. Runs after B5 validation (so every LIT is
+;; guaranteed to resolve). The rewrite is a whole-AST walk with
+;; substitution in expression position.
+;;
+;; Output shape:
+;;   {:node       :foreign-ref
+;;    :library    "libc"                       ; from manifest's foreign-index
+;;    :symbol     "puts"
+;;    :signature  <parsed signature type-node> ; from the foreign entry
+;;    :sig-kind   :symbol                      ; matches foreign-entry :kind
+;;    :orig-node  <the original :call node>}   ; for diagnostics
+;;
+;; Not rewritten: `plugin.send` / `plugin.class_send` — B5 raises NYI
+;; before this pass runs, so they never reach here.
+;; ============================================================================
+
+(defn- rewrite-plugin-get-node
+  "If `x` is a `plugin.get(LIT-STR)` call and the literal resolves in
+   `index`, return the `:foreign-ref` replacement. Otherwise return `x`
+   unchanged."
+  [x index]
+  (if-not (and (plugin-method-call? x)
+               (= "get" (plugin-method x)))
+    x
+    (let [sym (first-string-arg x)]
+      (if-let [entry (get index sym)]
+        {:node      :foreign-ref
+         :library   (:library entry)
+         :symbol    sym
+         :signature (:signature entry)
+         :sig-kind  (get-in entry [:entry :kind])
+         :orig-node x}
+        x))))
+
+(defn- rewrite-plugin-refs*
+  "Depth-first postwalk replacing `plugin.get(LIT)` calls with
+   `:foreign-ref` nodes. Structural — preserves record types, order of
+   maps/vectors, and only touches nodes that match. Skips already-
+   rewritten `:foreign-ref` subtrees to preserve idempotence: the
+   `:orig-node` slot holds the original `:call` and must NOT be
+   re-walked (that would re-wrap into `:foreign-ref{:orig :foreign-ref{...}}`)."
+  [x index]
+  (cond
+    (and (map? x) (= :foreign-ref (:node x)))
+    x
+
+    (map? x)
+    (let [walked (into {}
+                       (map (fn [[k v]] [k (rewrite-plugin-refs* v index)]))
+                       x)]
+      (rewrite-plugin-get-node walked index))
+
+    (vector? x)
+    (mapv #(rewrite-plugin-refs* % index) x)
+
+    (sequential? x)
+    (map #(rewrite-plugin-refs* % index) x)
+
+    :else x))
+
+(defn rewrite-plugin-refs
+  "FL-1 entry point. Given parsed top-nodes and the module's extracted
+   plugin manifest, return a new top-nodes vector with every
+   `plugin.get(LIT)` call replaced by a `:foreign-ref` node carrying
+   `{:library :symbol :signature :sig-kind :orig-node}`. Returns
+   `top-nodes` unchanged when `manifest` is nil (non-plugin module).
+
+   Idempotent: running twice produces the same output as running once.
+
+   Runs AFTER `validate-plugin-symbol-refs!` — every literal is
+   guaranteed to resolve, so the rewrite is total on plugin.get calls."
+  [top-nodes manifest]
+  (if-not manifest
+    top-nodes
+    (let [index (build-foreign-index (:foreign-blocks manifest))]
+      (mapv #(rewrite-plugin-refs* % index) top-nodes))))
+
 (defn extract
   "F75 manifest resolver entry point. Given a parsed top-nodes vector,
    returns the plugin manifest map (see ns docstring) or `nil` when
