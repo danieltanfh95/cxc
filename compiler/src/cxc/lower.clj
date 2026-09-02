@@ -1200,9 +1200,40 @@
 ;; M1c — enum-payload-call? + record-from-bytes-call? moved to
 ;; cxc.lower.call-shape.
 
+(defn- foreign-ref-return-type
+  "FL-3 (2026-09-02) — infer the return type of a `:foreign-ref` symbol
+   when it's the callee of a `:call`. Two signature shapes:
+   - bare `:type-ref` (`symbol \"foo\" -> Int`) — interpreted as zero-arg
+     function returning that type
+   - `:foreign-fn-type` (`symbol \"foo\" -> (A, B) -> C`) — return is `:return`"
+  [foreign-ref ctx]
+  (let [sig (:signature foreign-ref)]
+    (case (:node sig)
+      :type-ref
+      (cxc-type->type-kw (:name sig)
+                         (:record-env ctx) (:atom-env ctx)
+                         (:enum-env ctx) foreign-ref)
+      :foreign-fn-type
+      (let [ret (:return sig)]
+        (case (:node ret)
+          :type-ref (cxc-type->type-kw (:name ret)
+                                       (:record-env ctx) (:atom-env ctx)
+                                       (:enum-env ctx) foreign-ref)
+          (fail-nyi! (str "FL-3: nested `->` in foreign signature not yet "
+                          "supported at v1.0 MVP (return kind "
+                          (:node ret) ")")
+                     foreign-ref)))
+      (fail-nyi! (str "FL-3: unknown foreign signature kind " (:node sig))
+                 foreign-ref))))
+
 (defn- infer-call-type
   [{:keys [callee] :as node} ctx]
   (case (:node callee)
+    :foreign-ref
+    ;; FL-3 (2026-09-02) — call of a resolved foreign symbol. Infer
+    ;; from the parsed foreign signature.
+    (foreign-ref-return-type callee ctx)
+
     :ident
     (let [nm (:name callee)]
       (cond
@@ -1523,6 +1554,18 @@
         (nil? final-stmt)              :void
         (= :expr-stmt (:node final-stmt)) (infer-type (:expr final-stmt) final-ctx)
         :else                           :void))
+    :foreign-ref
+    ;; FL-3 (2026-09-02) — bare `:foreign-ref` in expression position
+    ;; (not as a call callee). Would need function-pointer typing on the
+    ;; storage slot; deferred until a fixture requires it. Diagnostic
+    ;; points at the immediate call-form workaround.
+    (fail-nyi!
+      (str "FL-3: `plugin.get(\"" (:symbol node) "\")` used as a value "
+           "(not immediately called). MVP FFI lowering only supports the "
+           "call form `plugin.get(\"" (:symbol node) "\")(args...)`; "
+           "storing the resolved symbol as a function pointer waits on a "
+           "follow-on landing.")
+      node)
     (fail-nyi! (str "infer-type " (:node node)) node)))
 
 ;; ---------------------------------------------------------------------------
@@ -2541,6 +2584,22 @@
     :call
     (let [callee (:callee node)]
       (case (:node callee)
+        ;; FL-3 (2026-09-02) — `plugin.get(LIT)(args...)`. FL-1 already
+        ;; rewrote the inner `plugin.get(LIT)` to a `:foreign-ref` node
+        ;; carrying `{:library :symbol :signature :sig-kind}`. The outer
+        ;; `:call` reaches lower with that ref as its callee; emit as a
+        ;; free C function call using the symbol name verbatim. The
+        ;; `:emit-c-fn` closure inlines args via `,`-join, matching the
+        ;; existing `:ffi-call` shape emit already understands.
+        :foreign-ref
+        (let [sym       (:symbol callee)
+              arg-exprs (mapv #(lower-expr (:value %) ctx) (:args node))]
+          {:node      :ffi-call
+           :name      sym
+           :args      arg-exprs
+           :emit-c-fn (fn [rendered]
+                        (str sym "(" (clojure.string/join ", " rendered) ")"))})
+
         :ident
         (let [callee-name (:name callee)]
           (cond
