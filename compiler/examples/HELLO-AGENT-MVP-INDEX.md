@@ -13,7 +13,7 @@ Under [resources/prelude/target/macos/](../resources/prelude/target/macos/):
 | [subprocess.cxc](../resources/prelude/target/macos/subprocess.cxc) | `Subprocess` | `run(cmd)` (combined stdout+stderr via popen) | 07d4994 |
 | [env.cxc](../resources/prelude/target/macos/env.cxc) | `Env` | `get_or(name, fallback)` | c5e2f68 |
 | [args.cxc](../resources/prelude/target/macos/args.cxc) | `Args` | `length()` + `get_or(index, fallback)` | 4d6a897 |
-| [json.cxc](../resources/prelude/target/macos/json.cxc) | `Json` | `encode_str` / `field_string` / `field_int_or` | 6b12a7d + c922c06 |
+| [json.cxc](../resources/prelude/target/macos/json.cxc) | `Json` | `encode_str` / `field_string` / `field_int_or` / `field_string_path` / `field_int_or_path` | 6b12a7d + c922c06 + a798ab9 |
 | [http.cxc](../resources/prelude/target/macos/http.cxc) | `Http` | `get` / `post` / `get_envelope` / `post_envelope` | 838533a + 0e17b7b |
 | [console.cxc](../resources/prelude/target/macos/console.cxc) | `Console` | `write` + `write_raw` (post-2c-i shape) | da59e95 + ac862c0 |
 
@@ -55,6 +55,7 @@ Under [examples/](./):
 - `native_args_length` / `native_args_get_or` — Darwin `_NSGetArgc` / `_NSGetArgv`. (4d6a897)
 - `native_json_encode_str` / `native_json_field_string` — NSJSONSerialization roundtrip. (6b12a7d)
 - `native_json_field_int_or` — numeric field extraction. (c922c06)
+- `native_json_field_string_path` / `native_json_field_int_or_path` — nested walk via dot-path (e.g. `usage.input_tokens`, `content.0.text`). (dot-path variant / a798ab9)
 - `native_http_get` / `native_http_post` — sync NSURLSession dataTask + dispatch_semaphore. (838533a)
 - `native_http_get_envelope` / `native_http_post_envelope` — same with `{status,body}` JSON envelope. (0e17b7b)
 
@@ -65,6 +66,7 @@ Under [examples/](./):
 ## Commit sequence
 
 ```
+a798ab9 Json.field_int_or_path — numeric dot-path extraction
 5b761c5 hello-agent-mini: switch to http.post_envelope
 0e17b7b Http.{get,post}_envelope + :multi-arm-dispatch infer-type
 051228a hello-agent-mini: extract Claude response text + token counts
@@ -97,7 +99,7 @@ The full designed hello-agent (see [design/examples/hello-agent/hello-agent.cxc]
 - Multi-arm transitions with rich `||:` guards on payload fields
 - `Bytes` / `Path` types for binary I/O (2d-ii)
 - `ProcResult { exit_code, stdout, stderr }` — richer subprocess surface
-- Nested JSON navigation (array indices, deep paths) — manual substring works but is fragile
+- Nested JSON navigation for anything beyond dot-paths — `field_string_path` / `field_int_or_path` cover `a.b.0.c`-style walks, but not general JSONPath, filters, or wildcards
 - Real subprocess status + stderr separation
 
 Each is a substantial landing. The MVP validated that the runtime + FFI + prelude autoloading + capability composition all hold up end-to-end and that the seven MVP capabilities compose cleanly. Full agent orchestration composes on top when those features land.
