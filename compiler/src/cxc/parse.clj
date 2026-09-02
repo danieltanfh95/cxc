@@ -2506,6 +2506,88 @@
                 "(followed by more ctor params) or `)` (queue is the "
                 "only entry)."))))
 
+;; ---------------------------------------------------------------------------
+;; R7 (2026-08-31) — nested `foreign "libname":` blocks inside `def plugin:`.
+;; Each block owns one native library / framework; each entry inside the
+;; block declares one importable symbol / selector / class-selector / type
+;; alias. B5 (plugin symbol resolver) consumes these AST nodes.
+;; ---------------------------------------------------------------------------
+
+(defn- parse-foreign-signature
+  "Right-associative function-type parser for foreign entry signatures.
+   Handles `T`, `(args) -> Ret`, and `(args) -> (args2) -> Ret` shapes
+   by recursion on `->`. Terminals delegate to `parse-type`."
+  [tokens pos]
+  (let [[left p] (parse-type tokens pos)]
+    (if (at? tokens p :glyph "->")
+      (let [[right p2] (parse-foreign-signature tokens (inc p))]
+        [{:node :foreign-fn-type :args left :return right} p2])
+      [left p])))
+
+(defn- parse-foreign-entry
+  "Parse one entry inside a `foreign \"libname\":` block. Entry kinds:
+     symbol         \"symname\"  -> <signature>
+     selector       \"cls\" \"sel:\" -> <signature>
+     class_selector \"cls\" \"sel:\" -> <signature>
+     type           \"objc-name\" as <IdentAlias>
+   Returns [{:kind K :name-strs [...] :signature <sig> :alias <ident>?} pos]."
+  [tokens pos]
+  (let [t     (peek-tok tokens pos)
+        _     (when-not (= :ident (t-kind t))
+                (fail! tokens pos
+                       (str "R7 foreign entry expects a kind keyword "
+                            "(`symbol` / `selector` / `class_selector` / "
+                            "`type`), got " (pr-str (t-value t)))))
+        kind  (t-value t)
+        p     (inc pos)
+        _     (when-not (contains? #{"symbol" "selector" "class_selector" "type"} kind)
+                (fail! tokens pos
+                       (str "R7 foreign entry kind must be one of "
+                            "`symbol` / `selector` / `class_selector` / `type`, "
+                            "got `" kind "`.")))]
+    (case kind
+      "symbol"
+      (let [[sym p]  (expect tokens p :string)
+            [_ p]    (expect tokens p :glyph "->")
+            [sig p]  (parse-foreign-signature tokens p)]
+        [{:kind :symbol :name-strs [sym] :signature sig} p])
+
+      ("selector" "class_selector")
+      (let [[cls p] (expect tokens p :string)
+            [sel p] (expect tokens p :string)
+            [_ p]   (expect tokens p :glyph "->")
+            [sig p] (parse-foreign-signature tokens p)]
+        [{:kind (keyword kind) :name-strs [cls sel] :signature sig} p])
+
+      "type"
+      (let [[objc-nm p] (expect tokens p :string)
+            [_ p]       (expect tokens p :kw "as")
+            [alias p]   (expect tokens p :ident)]
+        [{:kind :type :name-strs [objc-nm] :alias alias} p]))))
+
+(defn- parse-foreign-block
+  "Parse a `foreign \"libname\":` block: header line + indented entries.
+   Called from parse-def-atom body when `pos` is at the `foreign` ident
+   (validated by caller). Only legal inside a `def plugin:` body under
+   R7; the caller enforces the plugin-body scope."
+  [tokens pos]
+  (let [[_ p]       (expect tokens pos :ident)   ; "foreign"
+        [libname p] (expect tokens p :string)
+        [_ p]       (expect tokens p :punct ":")
+        [_ p]       (expect tokens p :newline)
+        [_ p]       (expect tokens p :indent)]
+    (loop [entries [] p p]
+      (cond
+        (at? tokens p :dedent)
+        [{:node :foreign-block :library libname :entries entries} (inc p)]
+
+        (at? tokens p :newline)
+        (recur entries (inc p))
+
+        :else
+        (let [[entry p2] (parse-foreign-entry tokens p)]
+          (recur (conj entries entry) (skip-newlines tokens p2)))))))
+
 (defn- parse-def-atom [tokens pos]
   (let [[_ p]      (expect tokens pos :kw "def")
         [name p]   (expect tokens p :ident)
@@ -2541,13 +2623,26 @@
                         queue-cfg (assoc :queue-config queue-cfg))
               ;; R7 (2026-08-31, decisions-frozen-2026-08-31-plugin-shape) —
               ;; `def plugin:` at module top-level is the plugin manifest
-              ;; marker (reserved name). Body admits fields (+ nested
-              ;; `foreign "..."` sections landing in PR-4). No ctor
-              ;; params, no transitions, no observables, no `use`
+              ;; marker (reserved name). Body admits fields + nested
+              ;; `foreign "..."` sections (PR-3 fields, PR-4 foreign).
+              ;; No ctor params, no transitions, no observables, no `use`
               ;; declarations; targeted diagnostic on any of those.
               ;; Emits `:def-plugin` AST node — F75 manifest resolver
               ;; consumes this.
               plugin-marker? (= "plugin" name)
+              ;; PR-4 scope check: `foreign "..."` blocks are only
+              ;; legal inside `def plugin:` bodies (R7 grammatical
+              ;; enforcement + R11 plugin-only wave). Reject earlier
+              ;; than the reshape switch so the diagnostic points at
+              ;; the missing marker, not a misleading downstream kind.
+              _              (when (and (not plugin-marker?)
+                                        (some #(= :foreign-block (:node %)) folded))
+                               (fail! tokens pos
+                                      (str "R7: `foreign \"...\"` blocks are only "
+                                           "legal inside a `def plugin:` module manifest. "
+                                           "Add a `def plugin:` marker at module top-level "
+                                           "(spec §7.2.1, R7 + R11 plugin-only wave 2026-09-01) "
+                                           "or move the block into an actual plugin module.")))
               reshaped
               (cond
                 plugin-marker?
@@ -2561,21 +2656,25 @@
                     (fail! tokens pos
                            (str "R7: `def plugin:` manifest cannot declare a "
                                 "`queue:` — no mailbox on a manifest record.")))
-                  ;; Body must be fields-only (PR-3 scope). PR-4 will also
-                  ;; admit nested `foreign "..."` sections.
-                  (let [data-fields (vec (mapcat (fn [n]
-                                                   (when (= :data-section (:node n))
-                                                     (:fields n)))
-                                                 folded))
-                        non-field   (first (remove (fn [n] (= :data-section (:node n)))
-                                                   folded))]
-                    (when non-field
+                  ;; PR-4 (2026-09-02) — body admits fields + nested
+                  ;; `foreign "..."` sections. Reject anything else with
+                  ;; a targeted R7 diagnostic.
+                  (let [data-fields    (vec (mapcat (fn [n]
+                                                      (when (= :data-section (:node n))
+                                                        (:fields n)))
+                                                    folded))
+                        foreign-blocks (vec (filter #(= :foreign-block (:node %)) folded))
+                        allowed?       #(contains? #{:data-section :foreign-block} (:node %))
+                        non-allowed    (first (remove allowed? folded))]
+                    (when non-allowed
                       (fail! tokens pos
                              (str "R7: `def plugin:` body admits only fields "
-                                  "(name/version/compat/requires + defaults) at v1.0. "
-                                  "Got node kind `" (:node non-field) "`. Nested "
-                                  "`foreign \"...\"` sections land as PR-4.")))
-                    {:node :def-plugin :name "plugin" :fields data-fields}))
+                                  "(name/version/compat/requires + defaults) and "
+                                  "nested `foreign \"libname\":` sections. "
+                                  "Got node kind `" (:node non-allowed) "`.")))
+                    {:node :def-plugin :name "plugin"
+                     :fields data-fields
+                     :foreign-blocks foreign-blocks}))
 
                 ;; F68 L1/L2/L5 (Proposal H) — structural detection dispatch.
                 ;; Order matters: protocol (signature-only members) > enum
@@ -2664,6 +2763,21 @@
         (at? tokens p :glyph "<:")
         (let [[sig p2] (parse-receive-signature tokens p)]
           (recur (conj body sig) (skip-newlines tokens p2)))
+
+        ;; R7 PR-4 (2026-09-02) — nested `foreign "libname":` block.
+        ;; Only legal inside a `def plugin:` body; the plugin-reshape
+        ;; branch enforces that. Parsed here (regardless of enclosing
+        ;; def kind) so we can produce a targeted R7 rejection message
+        ;; at reshape time rather than a generic "expected …" fall-
+        ;; through. `foreign` is a contextual ident, not a reserved
+        ;; keyword — outside plugin bodies, other identifiers named
+        ;; `foreign` still parse as usual.
+        (and (at? tokens p :ident)
+             (= "foreign" (t-value (peek-tok tokens p)))
+             (at? tokens (inc p) :string)
+             (at? tokens (+ p 2) :punct ":"))
+        (let [[blk p2] (parse-foreign-block tokens p)]
+          (recur (conj body blk) (skip-newlines tokens p2)))
 
         ;; F8 L3b.ii.β — behavioral construct dispatch via the registry.
         ;; For `:kw` tokens whose value maps to a `:kind :behavioral`

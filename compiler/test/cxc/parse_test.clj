@@ -1593,6 +1593,53 @@ def main:
          #"R7: `def plugin:` body admits only fields"
          (p/parse "def plugin:\n    name: String = \"x\"\n    -> ready\n")))))
 
+(deftest r7-def-plugin-foreign-block-symbol
+  (testing "R7 PR-4 — `foreign \"libc\":` with `symbol` entry parses into :foreign-blocks"
+    (let [ast (p/parse (str "def plugin:\n"
+                            "    name: String = \"std.env\"\n"
+                            "    foreign \"libc\":\n"
+                            "        symbol \"getenv\" -> (name: CString) -> CString\n"))
+          pd  (first ast)]
+      (is (= :def-plugin (:node pd)))
+      (is (= 1 (count (:fields pd))))
+      (is (= 1 (count (:foreign-blocks pd))))
+      (let [blk (first (:foreign-blocks pd))]
+        (is (= :foreign-block (:node blk)))
+        (is (= "libc"         (:library blk)))
+        (is (= 1 (count (:entries blk))))
+        (let [e (first (:entries blk))]
+          (is (= :symbol      (:kind e)))
+          (is (= ["getenv"]   (:name-strs e)))
+          (is (= :foreign-fn-type (get-in e [:signature :node]))))))))
+
+(deftest r7-def-plugin-multiple-foreign-blocks
+  (testing "R7 PR-4 — multiple `foreign` blocks in one manifest (multi-library) parse in order"
+    (let [ast (p/parse (str "def plugin:\n"
+                            "    name: String = \"x\"\n"
+                            "    foreign \"libc\":\n"
+                            "        symbol \"open\" -> (path: CString, flags: Int32, mode: Int32) -> Int32\n"
+                            "        symbol \"close\" -> (fd: Int32) -> Int32\n"
+                            "    foreign \"Foundation.framework\":\n"
+                            "        class_selector \"NSString\" \"stringWithUTF8String:\" -> NSString\n"))
+          pd  (first ast)]
+      (is (= 2 (count (:foreign-blocks pd))))
+      (is (= "libc" (get-in pd [:foreign-blocks 0 :library])))
+      (is (= 2      (count (get-in pd [:foreign-blocks 0 :entries]))))
+      (is (= "Foundation.framework" (get-in pd [:foreign-blocks 1 :library])))
+      (is (= :class_selector        (get-in pd [:foreign-blocks 1 :entries 0 :kind])))
+      (is (= ["NSString" "stringWithUTF8String:"]
+             (get-in pd [:foreign-blocks 1 :entries 0 :name-strs]))))))
+
+(deftest r7-foreign-outside-plugin-rejected
+  (testing "R7 PR-4 — `foreign \"...\"` outside a `def plugin:` marker is a compile error"
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"R7: `foreign \".*\"` blocks are only legal inside a `def plugin:` module manifest"
+         (p/parse (str "def MyAtom:\n"
+                       "    -> ready\n"
+                       "    foreign \"libc\":\n"
+                       "        symbol \"getenv\" -> (name: CString) -> CString\n"))))))
+
 (deftest r6-multi-arm-dispatch-nested-arm-body
   (testing "R6 — nested `||:` inside an arm body is parsed as a nested :multi-arm-dispatch"
     ;; Inline nested chains are inherently greedy — the inner chain consumes
