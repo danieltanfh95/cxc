@@ -1,43 +1,89 @@
-# Hello-Agent MVP — CXC Files Created
+# Hello-Agent MVP — CXC Files + Landings
 
-Session index of every `.cxc` file created in the 2026-09-02/03 hello-agent
-MVP push. Grouped by role.
+Session index of everything shipped in the 2026-09-02/03 hello-agent MVP
+push. Grouped by artifact and by feature area.
 
 ## Prelude capabilities (compiler-shipped, autoloaded)
 
 Under [resources/prelude/target/macos/](../resources/prelude/target/macos/):
 
-- [fs.cxc](../resources/prelude/target/macos/fs.cxc) — `FileSystem`: `read_text` / `write_text` / `exists` (Foundation NSString file I/O). Landed in [47a4c2f](../../.git).
-- [subprocess.cxc](../resources/prelude/target/macos/subprocess.cxc) — `Subprocess`: `run(cmd)` returns combined stdout+stderr via libc `popen`. Landed in 07d4994.
-- [env.cxc](../resources/prelude/target/macos/env.cxc) — `Env`: `get_or(name, fallback)` wraps libc `getenv`. Landed in c5e2f68.
-- [args.cxc](../resources/prelude/target/macos/args.cxc) — `Args`: `length()` + `get_or(index, fallback)` via Darwin `_NSGetArgc`/`_NSGetArgv`. Landed in 4d6a897.
-- [json.cxc](../resources/prelude/target/macos/json.cxc) — `Json`: `encode_str(s)` + `field_string(json, key)` via NSJSONSerialization. Landed in 6b12a7d.
-- [http.cxc](../resources/prelude/target/macos/http.cxc) — `Http`: synchronous `get(url, headers_json)` + `post(url, headers_json, body)` via NSURLSession + dispatch_semaphore. Landed in 838533a.
-
-Pre-existing prelude file modified this session:
-
-- [console.cxc](../resources/prelude/target/macos/console.cxc) — retired the old prelude Console form (see da59e95).
+| File | Capability | Methods | Landed |
+|------|------------|---------|--------|
+| [fs.cxc](../resources/prelude/target/macos/fs.cxc) | `FileSystem` | `read_text` / `write_text` / `exists` | 47a4c2f |
+| [subprocess.cxc](../resources/prelude/target/macos/subprocess.cxc) | `Subprocess` | `run(cmd)` (combined stdout+stderr via popen) | 07d4994 |
+| [env.cxc](../resources/prelude/target/macos/env.cxc) | `Env` | `get_or(name, fallback)` | c5e2f68 |
+| [args.cxc](../resources/prelude/target/macos/args.cxc) | `Args` | `length()` + `get_or(index, fallback)` | 4d6a897 |
+| [json.cxc](../resources/prelude/target/macos/json.cxc) | `Json` | `encode_str` / `field_string` / `field_int_or` | 6b12a7d + c922c06 |
+| [http.cxc](../resources/prelude/target/macos/http.cxc) | `Http` | `get` / `post` / `get_envelope` / `post_envelope` | 838533a + 0e17b7b |
+| [console.cxc](../resources/prelude/target/macos/console.cxc) | `Console` | `write` + `write_raw` (post-2c-i shape) | da59e95 + ac862c0 |
 
 ## Examples (regression tests + manual demos)
 
 Under [examples/](./):
 
-- [raise-caught-by-or-arm.cxc](./raise-caught-by-or-arm.cxc) — 2d-iii(A) end-to-end. `raise MyError(...)` in a `then:` body caught by sender-side `or MyError(let m):` recovery. Landed in 1a59298.
-- [fs-write-then-read.cxc](./fs-write-then-read.cxc) — 2d roundtrip. Writes then reads a fixed string via `FileSystem`.
-- [subprocess-echo.cxc](./subprocess-echo.cxc) — 2e verification. Runs `echo` and pipes output through `Console`.
-- [mini-agent.cxc](./mini-agent.cxc) — six-capability composition proof. `Args` + `Env` + `FileSystem` + `Subprocess` + `Console` + `Int.to_string` + `String + String` all in one `then:` block. Landed across 2f/2g/2i/2h.
-- [json-roundtrip.cxc](./json-roundtrip.cxc) — 4 verification. Encode + embed + extract with escape handling.
-- [http-example-com.cxc](./http-example-com.cxc) — 5 manual verification (fetches https://example.com and prints HTML). Not run in CI.
-- [hello-agent-mini.cxc](./hello-agent-mini.cxc) — 6 MVP hello-agent shape. Direct Claude Messages API POST composing every stdlib capability. Landed in 603859a.
+- [raise-caught-by-or-arm.cxc](./raise-caught-by-or-arm.cxc) — 2d-iii(A) end-to-end: `raise MyError(...)` in a `then:` body caught by sender-side `or MyError(let m):` recovery. (1a59298)
+- [fs-write-then-read.cxc](./fs-write-then-read.cxc) — FileSystem roundtrip.
+- [subprocess-echo.cxc](./subprocess-echo.cxc) — Subprocess verification.
+- [mini-agent.cxc](./mini-agent.cxc) — six-capability composition (Args + Env + FileSystem + Subprocess + Console + Int.to_string + String concat).
+- [json-roundtrip.cxc](./json-roundtrip.cxc) — Json encode+extract with escape roundtrip.
+- [string-helpers.cxc](./string-helpers.cxc) — String helper surface + Bool.to_string.
+- [http-example-com.cxc](./http-example-com.cxc) — manual HTTP verification (fetches example.com).
+- [hello-agent-mini.cxc](./hello-agent-mini.cxc) — full MVP hello-agent shape: Claude Messages API POST, status discrimination, response text extraction via string surgery. (Manual real-API run needs `ANTHROPIC_API_KEY`.)
 
-## Post-MVP polish (2026-09-03 second-day landings)
+## Language surface added this session
 
-- `Console.write_raw(text)` — no trailing newline; companion to `write` (ac862c0)
-- `Json.field_int_or(json, key, fallback)` — numeric field extraction (c922c06)
-- `String == String` reroutes to `-isEqualToString:` (was pointer-eq before) (5d10ab4)
-- `String.length()` / `.contains(sub)` / `.starts_with(pre)` / `.ends_with(suf)` (5d10ab4)
-- `Bool.to_string()` — literal `"true"` / `"false"` (5d10ab4)
-- `String.substring(start, len)` — nil-safe slice (1319b71)
+### Statement / expression forms
+
+- 2d-iii(A) — `raise T(args)` boxes a record ctor into `_Cxc_R_<T>` and `@throw`s NSException with `userInfo[@"reason"]` set. Wire shape identical to Track A/4 `|: as T(...)` so existing L12c end-catch-wrap + Track B/3 recovery chain catch it. (1a59298)
+- `String + String` concatenation lowering — `-[NSString stringByAppendingString:]` with nil-coalesce on both sides so `X + nil` doesn't crash. (57ab9de + 603859a)
+- `String == String` content-equality — reroutes to `-isEqualToString:` with a leading pointer-eq short-circuit for nil-nil. (5d10ab4)
+- `:multi-arm-dispatch` infer-type — `||: <guard>: <body>` can now sit inside larger expressions (concat, method-call args). (0e17b7b)
+
+### Method intrinsics
+
+- `Int.to_string()` — decimal render via `stringWithFormat:@"%lld"`. (c5e2f68)
+- `Bool.to_string()` — literal `"true"` / `"false"`. (5d10ab4)
+- `String.length()`, `.contains(sub)`, `.starts_with(pre)`, `.ends_with(suf)` — NSString direct methods. (5d10ab4)
+- `String.substring(start, len)` — nil-safe slice. (1319b71)
+- `String.index_of(sub)`, `.trim()`, `.replace(from, to)` — parsing primitives. (dddac82)
+
+### Native intrinsics (backing prelude atoms)
+
+- `native_fs_read_text` / `native_fs_write_text` / `native_fs_exists` — Foundation NSString file I/O. (47a4c2f)
+- `native_subprocess_run` — libc popen with 2>&1. (07d4994)
+- `native_env_get_or_default` — libc getenv with fallback. (c5e2f68)
+- `native_args_length` / `native_args_get_or` — Darwin `_NSGetArgc` / `_NSGetArgv`. (4d6a897)
+- `native_json_encode_str` / `native_json_field_string` — NSJSONSerialization roundtrip. (6b12a7d)
+- `native_json_field_int_or` — numeric field extraction. (c922c06)
+- `native_http_get` / `native_http_post` — sync NSURLSession dataTask + dispatch_semaphore. (838533a)
+- `native_http_get_envelope` / `native_http_post_envelope` — same with `{status,body}` JSON envelope. (0e17b7b)
+
+### Runtime / build
+
+- `<crt_externs.h>` auto-included in Foundation programs (backs `_NSGetArg*`). (4d6a897)
+
+## Commit sequence
+
+```
+5b761c5 hello-agent-mini: switch to http.post_envelope
+0e17b7b Http.{get,post}_envelope + :multi-arm-dispatch infer-type
+051228a hello-agent-mini: extract Claude response text + token counts
+dddac82 String.trim / replace / index_of
+1319b71 String.substring(start, len)
+c922c06 Json.field_int_or
+ac862c0 Console.write_raw
+5d10ab4 String content-equality + helpers + Bool.to_string
+1e61001 Hello-agent MVP index
+603859a hello-agent-mini + nil-safe String concat
+838533a std.http MVP
+6b12a7d std.json MVP
+4d6a897 std.args prelude
+c5e2f68 std.env + Int.to_string
+57ab9de String concat + mini-agent
+07d4994 std.subprocess MVP
+47a4c2f std.fs MVP
+1a59298 raise T(args) statement form
+```
 
 ## What's NOT in the MVP
 
@@ -51,5 +97,7 @@ The full designed hello-agent (see [design/examples/hello-agent/hello-agent.cxc]
 - Multi-arm transitions with rich `||:` guards on payload fields
 - `Bytes` / `Path` types for binary I/O (2d-ii)
 - `ProcResult { exit_code, stdout, stderr }` — richer subprocess surface
+- Nested JSON navigation (array indices, deep paths) — manual substring works but is fragile
+- Real subprocess status + stderr separation
 
-Each is a substantial landing; the MVP path validated that the runtime + FFI + prelude autoloading + capability composition all hold up end-to-end. Full agent orchestration composes on top when those features land.
+Each is a substantial landing. The MVP validated that the runtime + FFI + prelude autoloading + capability composition all hold up end-to-end and that the seven MVP capabilities compose cleanly. Full agent orchestration composes on top when those features land.
