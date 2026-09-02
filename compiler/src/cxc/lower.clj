@@ -1313,6 +1313,50 @@
      :args []}
     lowered-arg))
 
+(defn- validate-stackalloc-args
+  "FL-16 (2026-09-02) — shared shape validator for the `stackalloc`
+   intrinsic. Enforces: exactly 2 args; first is a bare type identifier
+   naming a primitive; second is a positive `:lit-int`. Returns
+   `{:type-name STR :n INT :inner-tk :tk :inner-c \"c-type\"}` on
+   success; throws `fail-user!` with the specific violation otherwise.
+   Called from both `infer-type` (so the diagnostic fires at
+   type-check time regardless of downstream consumers) and
+   `lower-expr` (so the emit closure gets the same guarantees)."
+  [call-node ctx]
+  (let [args (:args call-node)]
+    (when-not (= 2 (count args))
+      (fail-user! (str "stackalloc expects 2 args (TYPE, N-literal), got "
+                       (count args))
+                  call-node))
+    (let [[ty-arg n-arg] args]
+      (when-not (= :ident (get-in ty-arg [:value :node]))
+        (fail-user!
+          (str "stackalloc first arg must be a bare type identifier "
+               "(e.g. `Int32`); got "
+               (pr-str (get-in ty-arg [:value :node])))
+          call-node))
+      (when-not (= :lit-int (get-in n-arg [:value :node]))
+        (fail-user!
+          (str "stackalloc second arg must be a compile-time integer "
+               "literal (fixed array length); got "
+               (pr-str (get-in n-arg [:value :node])))
+          call-node))
+      (let [type-name (get-in ty-arg [:value :name])
+            n         (get-in n-arg [:value :value])]
+        (when-not (and (integer? n) (pos? n))
+          (fail-user!
+            (str "stackalloc length must be a positive integer, got "
+                 (pr-str n))
+            call-node))
+        {:type-name type-name
+         :n         n
+         :inner-tk  (cxc-type->type-kw type-name
+                                       (:record-env ctx) (:atom-env ctx)
+                                       (:enum-env ctx) call-node)
+         :inner-c   (cxc-type->c {:node :type-ref :name type-name}
+                                 (:record-env ctx) (:atom-env ctx)
+                                 (:enum-env ctx) (:module-map ctx))}))))
+
 (defn- infer-call-type
   [{:keys [callee] :as node} ctx]
   (case (:node callee)
@@ -1342,6 +1386,22 @@
             (fail-user! (str "clamp arg must be numeric; got " (pr-str x-ty))
                         node))
           x-ty)
+        ;; FL-16 (2026-09-02) — `stackalloc(TYPE_IDENT, N_LIT) -> Ptr
+        ;; of TYPE`. First arg is a bare identifier naming a primitive
+        ;; type; second is a compile-time integer literal. Returns
+        ;; `Ptr of T` (type-kw `[:ptr <inner-tk>]`) so `.deref()` /
+        ;; `.at(i)` from FL-15 work on the result, and so FL-6 marshal
+        ;; treats the value as a T* at foreign call sites (`pipe(fds)`
+        ;; etc.). The array's lifetime is the enclosing block — writes
+        ;; that must outlive the block are the caller's responsibility.
+        ;;
+        ;; Full shape validation (type ident + int literal + positive
+        ;; length) runs here so the actionable diagnostic fires even
+        ;; when the caller wraps the result (`print(stackalloc(...))`
+        ;; would otherwise reach `print`'s NYI for `[:ptr T]` first).
+        (= "stackalloc" nm)
+        (let [{:keys [inner-tk inner-c]} (validate-stackalloc-args node ctx)]
+          (with-meta [:ptr inner-tk] {:cxc-c-type (str inner-c " *")}))
         (ffi-builtin? nm)                (:return-kw (get ffi-builtins nm))
         ;; Layer 6 Step 12 — bare call on a Block-typed self-field.
         ;; `cb()` where cb is `data: cb: Block` in the enclosing atom
@@ -2810,6 +2870,23 @@
                                    "free(__cxc_sy); } "
                                    "__builtin_trap(); "
                                    "(void)0; })")))})
+
+            (= "stackalloc" callee-name)
+            ;; FL-16 (2026-09-02) — stack-allocated fixed-size array,
+            ;; produced as a `T *`. Emits a GNU stmt-expr:
+            ;;   ({ T __arr[N] = {0}; (T *)__arr; })
+            ;; The array lives for the surrounding block; storing the
+            ;; pointer past scope is UB and the caller's problem —
+            ;; consistent with `Ptr of T` being a raw C pointer.
+            ;; Shape validation is shared with the infer-type branch
+            ;; via `validate-stackalloc-args`.
+            (let [{:keys [n inner-c]} (validate-stackalloc-args node ctx)]
+              {:node      :ffi-call
+               :name      "stackalloc"
+               :args      []
+               :emit-c-fn (fn [_]
+                            (str "({ " inner-c " __cxc_sa[" n "] = {0}; "
+                                 "(" inner-c " *)__cxc_sa; })"))})
 
             (= "clamp" callee-name)
             ;; Polymorphic numeric clamp. F46: bind each arg to a

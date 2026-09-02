@@ -326,6 +326,83 @@
             #"FL-15.*at\(idx\) takes one arg"
             (build/compile-source-to-file bad-at "fl15-bad-at" (.getPath out-dir)))))))
 
+(deftest ffi-stackalloc-out-param-array-fl-16
+  (testing "FL-16 (2026-09-02) — `stackalloc(T, N)` intrinsic yields `Ptr of T` backed by a fixed-size stack array. Enables out-param arrays like `pipe(int[2])`: allocate `stackalloc(Int32, 2)`, hand it to a foreign `pipe -> (Ptr of Int32) -> Int32` symbol, then read back via FL-15 `.at(i)`. Emits a GNU stmt-expr `({ T __cxc_sa[N] = {0}; (T *)__cxc_sa; })`. Verifies (a) the intrinsic type-checks as `Ptr of Int32`, (b) it composes with FL-6/FL-7 marshaling (Ptr of Int32 passes verbatim, no wrap), (c) FL-15 `.at(0)` / `.at(1)` reads the written fds, and (d) `pipe(2)` returns 0 with fds ≥ 3 on macOS."
+    (let [src (str "def plugin:\n"
+                   "    name:    String!       = \"p\"\n"
+                   "    version: SemVer!       = SemVer(0, 1, 0)\n"
+                   "    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0), max: SemVer(2, 0, 0))\n"
+                   "\n"
+                   "    foreign \"libc\":\n"
+                   "        symbol \"pipe\" -> (Ptr of Int32) -> Int32\n"
+                   "\n"
+                   "def main:\n"
+                   "    use plugin: Plugin\n"
+                   "    -> ready\n"
+                   "        then:\n"
+                   "            let fds = stackalloc(Int32, 2)\n"
+                   "            let rc = plugin.get(\"pipe\")(fds)\n"
+                   "            print(rc)\n"
+                   "            print(fds.at(0))\n"
+                   "            print(fds.at(1))\n")
+          out-dir (tmp-dir)
+          {:keys [status stderr bin-path m-path]}
+          (build/compile-source-to-file src "ffi-stackalloc" (.getPath out-dir))]
+      (is (zero? status) (str "clang failed:\n" stderr))
+      (when (zero? status)
+        (let [emitted (slurp m-path)]
+          (is (re-find #"int32_t __cxc_sa\[2\] = \{0\}" emitted)
+              "emit produces `T __cxc_sa[N] = {0}`")
+          (is (re-find #"\(int32_t \*\)__cxc_sa" emitted)
+              "emit yields `(T *)__cxc_sa` as the stmt-expr value")
+          (is (re-find #"pipe\(fds\)" emitted)
+              "foreign call passes the pointer verbatim"))
+        (let [{:keys [exit stdout]} (build/run-binary bin-path)]
+          (is (zero? exit))
+          (let [lines (clojure.string/split stdout #"\n")]
+            (is (>= (count lines) 3))
+            (is (= "0" (first lines))
+                "pipe(2) returns 0 on success")
+            (is (every? (fn [ln] (>= (Integer/parseInt ln) 3))
+                        (take 2 (rest lines)))
+                "read/write fds are ≥ 3 (0/1/2 reserved for stdio)")))))))
+
+(deftest ffi-stackalloc-arity-and-shape-diagnostics-fl-16
+  (testing "FL-16 — arity and shape diagnostics on `stackalloc`. Wrong-arity, non-ident first arg, non-literal second arg, and non-positive length all reject with actionable messages."
+    (let [preamble (str "def plugin:\n"
+                        "    name:    String!       = \"p\"\n"
+                        "    version: SemVer!       = SemVer(0, 1, 0)\n"
+                        "    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0), max: SemVer(2, 0, 0))\n"
+                        "\n"
+                        "def main:\n"
+                        "    use plugin: Plugin\n")
+          out-dir (tmp-dir)]
+      (is (thrown-with-msg?
+            clojure.lang.ExceptionInfo
+            #"stackalloc expects 2 args"
+            (build/compile-source-to-file
+              (str preamble
+                   "    -> ready\n"
+                   "        then: print(stackalloc(Int32))\n")
+              "fl16-arity" (.getPath out-dir))))
+      (is (thrown-with-msg?
+            clojure.lang.ExceptionInfo
+            #"stackalloc first arg must be a bare type identifier"
+            (build/compile-source-to-file
+              (str preamble
+                   "    -> ready\n"
+                   "        then: print(stackalloc(\"Int32\", 2))\n")
+              "fl16-shape-ty" (.getPath out-dir))))
+      (is (thrown-with-msg?
+            clojure.lang.ExceptionInfo
+            #"stackalloc second arg must be a compile-time integer literal"
+            (build/compile-source-to-file
+              (str preamble
+                   "    n: Int! = 2\n"
+                   "    -> ready\n"
+                   "        then: print(stackalloc(Int32, self.n))\n")
+              "fl16-shape-n" (.getPath out-dir)))))))
+
 (deftest ffi-bare-foreign-ref-not-called-rejected
   (testing "FL-3 diagnostic — storing plugin.get(SYM) as a function pointer (not calling it inline) rejected with a fail-nyi pointing at the MVP-supported call form."
     (let [src (str "def plugin:\n"
