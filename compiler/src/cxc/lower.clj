@@ -1782,6 +1782,14 @@
     ;; form differs (`[ClassName sel:args]` vs `[recv sel:args]`).
     :foreign-class-selector-call
     (foreign-type-node->tk (:return (:signature node)) ctx node)
+    ;; 2d-iii (2026-09-02) — `raise T(args)` never returns; type it as
+    ;; `:any` (id-shaped) so it composes into any expression position.
+    ;; The stmt-expr emit ends in `((id)nil)` which the C compiler
+    ;; accepts as `id` — @throw guarantees the trailing dead code is
+    ;; unreachable. Ancillary `or-recovery` type-check special-cases
+    ;; `:any` from a raise so `x or T(let r): raise Y(...)` doesn't
+    ;; fail the arm-body compatibility check.
+    :raise      :any
     (fail-nyi! (str "infer-type " (:node node)) node)))
 
 ;; ---------------------------------------------------------------------------
@@ -3252,6 +3260,50 @@
        :recv     {:node :name :sym (:cls node)}
        :selector (:selector node)
        :args     arg-exprs})
+
+    ;; 2d-iii (2026-09-02) — `raise <TypeName>(<args>)`. Builds a
+    ;; struct-literal payload for the reason record (fields resolved
+    ;; via `resolve-args-against-params` — same discipline as
+    ;; `lower-record-ctor`, but bypassing that helper's strict
+    ;; `:resolves-to` attribution requirement since the `raise` node
+    ;; carries the TypeName ident directly). Emits `:raise-emit`:
+    ;; emit boxes the struct into `_Cxc_R_<TypeName>` and @throws
+    ;; NSException with `userInfo[@"reason"]` pointing at the box —
+    ;; identical shape to the Track A/4 `|: cond as T(...)` throw
+    ;; (see emit.clj:597), so existing L12c end-catch-wrap and
+    ;; `sync-send-with-recovery` recovery paths catch these raises
+    ;; with no new machinery.
+    :raise
+    (let [type-name  (:type-name node)
+          rec        (env/env-lookup ctx :record-env type-name)
+          _          (when-not rec
+                       (fail-user!
+                        (str "raise: unknown record type `" type-name
+                             "` — raise requires a declared record type. "
+                             "Declare it with `def " type-name ":` and give "
+                             "it fields (`msg: String!` etc.), then `raise "
+                             type-name "(msg: \"...\")` boxes an instance "
+                             "into the compiler-synthesized `_Cxc_R_"
+                             (->c-safe type-name) "` reason class and throws.")
+                        node))
+          field-recs (:fields rec)
+          params     (mapv (fn [f] {:name (:name f) :default (:default f)})
+                           field-recs)
+          resolved   (resolve-args-against-params
+                      (str "raise `" type-name "` ctor")
+                      params (:args node))
+          fields     (mapv (fn [{:keys [name value]}]
+                             {:name  name
+                              :value (lower-expr value ctx)})
+                           resolved)
+          box-name   (str "_Cxc_R_" (->c-safe type-name))]
+      {:node        :raise-emit
+       :box-name    box-name
+       :type-name   type-name
+       :record-ctor {:node :struct-lit
+                     :type (->c-safe type-name)
+                     :fields fields}
+       :label       (str "raise " type-name)})
 
     (fail-nyi! (str "expression " (:node node)) node)))
 

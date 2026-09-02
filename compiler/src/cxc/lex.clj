@@ -81,7 +81,13 @@
     ;; `continue`. `loop` (infinite loop with `break value`) is
     ;; F17 L2 — reserving the keyword is safe at L1 to reduce
     ;; parser churn later.
-    "while" "loop" "break" "continue"})
+    "while" "loop" "break" "continue"
+    ;; 2d-iii (2026-09-02) — typed-raise. `raise T(args...)` throws
+    ;; a `_Cxc_R_<T>` boxed reason; recovered by `<expr> or T(let x):`.
+    ;; Reuses existing Track A/4 reason-box synthesis + Track B/3
+    ;; `__cxc_reason` unbox convention. No new runtime; parser +
+    ;; lower + emit only.
+    "raise"})
 
 (def ^:private multi-char-glyphs
   ;; F39 L6 (2026-08-21) — `??` coalesce operator. Landed ahead of

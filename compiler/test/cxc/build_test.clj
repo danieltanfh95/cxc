@@ -1794,6 +1794,12 @@
       (is (zero? exit))
       (is (= "boom\n" stdout)))))
 
+(deftest end-to-end-raise-caught-by-or-arm-2d-iii
+  (testing "2d-iii (2026-09-02) — statement-position `raise MyError(msg: \"boom\")` inside a target's `then:` body throws a `_Cxc_R_MyError` boxed reason via `@throw [NSException ... userInfo:@{@\"reason\": box}]` — identical wire shape to `|: cond as MyError(...)` (Track A/4). The transition's L12c end-catch-wrap catches it; the sender's `or MyError(msg: let m):` arm on the sync `|>` send dispatches through the existing Track B/3 `isKindOfClass:` chain, destructures msg into m, and prints `boom`. Verifies the raise mechanism plugs into the existing typed-recovery pipeline with no new runtime machinery."
+    (let [{:keys [exit stdout]} (compile-and-run "raise-caught-by-or-arm")]
+      (is (zero? exit))
+      (is (= "boom\n" stdout)))))
+
 (deftest f52-l3-source-override-defaults-to-none-when-opts-omit
   (testing "F52 L3 — opts without :source-overrides is a no-op (default `{}`); on-disk sources are used as before. Regression guard for the 3-arity + 4-arity dispatch: existing callers pass no opts (line 613 pattern) or opts without the key (line 615 pattern)."
     (let [src-dir (tmp-dir)

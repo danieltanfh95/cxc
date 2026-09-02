@@ -488,6 +488,27 @@
     ;; the last stmt in the wrapper, its value is the block value.
     :c-expr-stmt (str (emit-expr (:expr node)) ";")
 
+    ;; 2d-iii (2026-09-02) — `raise T(args)` statement form. Constructs
+    ;; a `_Cxc_R_<T>` box, sets its `->value` to the compiled record
+    ;; ctor struct-lit, then @throws NSException with
+    ;; `userInfo[@"reason"]` pointing at the box. Mirrors the Track A/4
+    ;; `|:` proposition-throw shape exactly (see emit.clj:597) so the
+    ;; existing L12c end-catch-wrap and `sync-send-with-recovery` chain
+    ;; can catch these raises with no new machinery. The label is
+    ;; printed to stderr for post-mortem; @throw is control-flow
+    ;; terminating so subsequent stmts in the enclosing block are dead.
+    :raise-emit
+    (let [box  (:box-name node)
+          ctor (:record-ctor node)]
+      (str "{\n"
+           "    fprintf(stderr, \"" (escape-c-string (:label node)) "\\n\");\n"
+           "    " box " *__cxc_r = [[" box " alloc] init];\n"
+           "    __cxc_r->value = " (emit-expr ctor) ";\n"
+           "    @throw [NSException exceptionWithName:@\"CxcReason\" "
+           "reason:@\"" (escape-c-string (:label node))
+           "\" userInfo:@{@\"reason\": __cxc_r}];\n"
+           "}"))
+
     ;; F17 L1 — statement-position while / break / continue. Loop body
     ;; is a flat vector of already-lowered stmts; each terminates itself
     ;; with `;` via emit-stmt so we just newline-join and brace.

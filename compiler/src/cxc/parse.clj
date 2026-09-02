@@ -667,6 +667,26 @@
                 ;; hint here so parse-statement's own `if let` branch
                 ;; is unambiguously the only landing site today.
                 "if"    (parse-if-expr tokens pos)
+                ;; 2d-iii (2026-09-02) — `raise <TypeName>(<args>)` throws
+                ;; a `_Cxc_R_<TypeName>` boxed reason record. TypeName is
+                ;; the identifier of a declared record (verified in lower).
+                ;; Args are the record's ctor args — positional or named,
+                ;; same shape as a plain `T(...)` record construction.
+                "raise"
+                (let [p (inc pos)
+                      _ (when-not (at? tokens p :ident)
+                          (fail! tokens p
+                                 "raise: expected a record TypeName after `raise`"))
+                      type-name (t-value (peek-tok tokens p))
+                      _ (when-not (at? tokens (inc p) :punct "(")
+                          (fail! tokens (inc p)
+                                 "raise: expected `(` after TypeName — raise requires a ctor-call form (`raise T(field: value, ...)`)"))
+                      [args p2] (parse-args-parens tokens (inc p))]
+                  [{:node :raise
+                    :type-name type-name
+                    :args args
+                    :line (:line t) :col (:col t)}
+                   p2])
                 (fail! tokens pos (str "unexpected keyword " (t-value t) " in expression")))
       :ident  ;; ident, maybe followed by lambda arrow => in parse-lambda-or-ident
       (let [ident-node {:node :ident :name (t-value t)}]
