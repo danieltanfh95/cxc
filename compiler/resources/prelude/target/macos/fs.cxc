@@ -11,6 +11,12 @@ def FileSystem:
 
     remove(path: String) :- native_fs_remove(path)
 
+    copy(from_path: String, to_path: String) :- native_fs_copy(from_path, to_path)
+
+    rename(from_path: String, to_path: String) :- native_fs_rename(from_path, to_path)
+
+    size(path: String) :- native_fs_size(path)
+
     -> running
 
     -> end

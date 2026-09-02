@@ -1,0 +1,35 @@
+def main:
+    use fs:      FileSystem
+    use console: Console
+
+    -> running
+        then:
+            let a: String = "/tmp/cxc-copy-src.txt"
+            let b: String = "/tmp/cxc-copy-dst.txt"
+            let c: String = "/tmp/cxc-copy-renamed.txt"
+            let _rma: Int = fs.remove(a)
+            let _rmb: Int = fs.remove(b)
+            let _rmc: Int = fs.remove(c)
+            let _wr: Int = fs.write_text(a, "hello file")
+            let sz1: Int = fs.size(a)
+            let cp: Int = fs.copy(a, b)
+            let sz2: Int = fs.size(b)
+            let rn: Int = fs.rename(b, c)
+            let ex_b: Int = fs.exists(b)
+            let ex_c: Int = fs.exists(c)
+            let sz3: Int = fs.size(c)
+            let missing: Int = fs.size("/tmp/does-not-exist-cxc")
+            let dir_sz: Int = fs.size("/tmp")
+            let _cleanup1: Int = fs.remove(a)
+            let _cleanup2: Int = fs.remove(c)
+            console.write("size_src: " + sz1.to_string())
+            console.write("copy_rc: " + cp.to_string())
+            console.write("size_dst: " + sz2.to_string())
+            console.write("rename_rc: " + rn.to_string())
+            console.write("dst_gone: " + ex_b.to_string())
+            console.write("renamed_exists: " + ex_c.to_string())
+            console.write("size_renamed: " + sz3.to_string())
+            console.write("missing_size: " + missing.to_string())
+            console.write("dir_size: " + dir_sz.to_string())
+
+    -> end

@@ -1902,6 +1902,24 @@
       (is (str/includes? stdout "append_rc2: 0"))
       (is (str/includes? stdout "read_back: line one\nline two")))))
 
+(deftest end-to-end-fs-copy-rename-size
+  (testing "2026-09-03 — `fs.copy(from, to)`, `fs.rename(from, to)`, `fs.size(path)` via NSFileManager. Verified end-to-end by writing a 10-byte file, copying it (size preserved), renaming the copy (source disappears, target appears with same size), and checking `size` on missing path (→ -1) and on a directory (→ -1; Foundation only returns file size for regular files). Test pre-cleans + post-cleans its scratch paths."
+    (doseq [p ["/tmp/cxc-copy-src.txt"
+               "/tmp/cxc-copy-dst.txt"
+               "/tmp/cxc-copy-renamed.txt"]]
+      (shell/sh "rm" "-f" p))
+    (let [{:keys [exit stdout]} (compile-and-run "fs-copy-rename-size")]
+      (is (zero? exit))
+      (is (str/includes? stdout "size_src: 10"))
+      (is (str/includes? stdout "copy_rc: 0"))
+      (is (str/includes? stdout "size_dst: 10"))
+      (is (str/includes? stdout "rename_rc: 0"))
+      (is (str/includes? stdout "dst_gone: 0"))
+      (is (str/includes? stdout "renamed_exists: 1"))
+      (is (str/includes? stdout "size_renamed: 10"))
+      (is (str/includes? stdout "missing_size: -1"))
+      (is (str/includes? stdout "dir_size: -1")))))
+
 (deftest end-to-end-fs-mkdirs-remove
   (testing "2026-09-03 — `FileSystem.mkdirs(path)` (mkdir -p: NSFileManager createDirectoryAtPath withIntermediateDirectories:YES) and `FileSystem.remove(path)` (recursive delete). Round-trip: create a nested dir tree, write a file inside, remove the whole tree, verify absence afterwards. Test cleans its own scratch path (`/tmp/cxc-mkdirs-example`) before running so residue from earlier iterations doesn't spuriously fail the mkdirs return code."
     ;; Best-effort pre-clean so a residual dir from a previous failed

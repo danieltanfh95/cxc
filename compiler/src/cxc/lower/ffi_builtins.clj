@@ -749,6 +749,53 @@
                  (str "((" (first args) " && "
                       "[[NSFileManager defaultManager] fileExistsAtPath:"
                       (first args) "]) ? 1 : 0)"))}
+   "native_fs_copy"
+   ;; 2026-09-03 — copy file/dir tree via NSFileManager copyItemAtPath.
+   ;; Returns 0/-1. Fails if dest already exists (Foundation semantics)
+   ;; so callers who want overwrite must remove first. Nil either arg → -1.
+   {:return-kw :int
+    :arity     2
+    :emit-c    (fn [args]
+                 (str "({ NSString *__s = " (first args) "; "
+                      "NSString *__d = " (second args) "; "
+                      "int64_t __r = -1; "
+                      "if (__s && __d) { NSError *__e = nil; "
+                      "BOOL __ok = [[NSFileManager defaultManager] "
+                      "copyItemAtPath:__s toPath:__d error:&__e]; "
+                      "__r = (__ok && !__e) ? 0 : -1; } __r; })"))}
+   "native_fs_rename"
+   ;; 2026-09-03 — rename/move via NSFileManager moveItemAtPath.
+   ;; Foundation's move is a same-fs atomic-if-possible operation on
+   ;; macOS. Returns 0/-1. Nil either arg → -1. Fails if dest exists.
+   {:return-kw :int
+    :arity     2
+    :emit-c    (fn [args]
+                 (str "({ NSString *__s = " (first args) "; "
+                      "NSString *__d = " (second args) "; "
+                      "int64_t __r = -1; "
+                      "if (__s && __d) { NSError *__e = nil; "
+                      "BOOL __ok = [[NSFileManager defaultManager] "
+                      "moveItemAtPath:__s toPath:__d error:&__e]; "
+                      "__r = (__ok && !__e) ? 0 : -1; } __r; })"))}
+   "native_fs_size"
+   ;; 2026-09-03 — file size in bytes via NSFileManager
+   ;; attributesOfItemAtPath. Returns -1 on any of: nil path, missing
+   ;; file, permission error, directory (dirs have no meaningful
+   ;; file-size in Foundation's model). Callers wanting directory
+   ;; sizes must walk the tree.
+   {:return-kw :int
+    :arity     1
+    :emit-c    (fn [args]
+                 (str "({ NSString *__p = " (first args) "; "
+                      "int64_t __r = -1; "
+                      "if (__p) { NSError *__e = nil; "
+                      "NSDictionary *__a = [[NSFileManager defaultManager] "
+                      "attributesOfItemAtPath:__p error:&__e]; "
+                      "if (__a && !__e) { "
+                      "id __t = [__a objectForKey:NSFileType]; "
+                      "if ([__t isEqualToString:NSFileTypeRegular]) { "
+                      "__r = (int64_t)[[__a objectForKey:NSFileSize] "
+                      "longLongValue]; } } } __r; })"))}
    "native_fs_mkdirs"
    ;; 2026-09-03 — create a directory, plus any missing intermediate
    ;; directories on the way (mkdir -p). Foundation:
