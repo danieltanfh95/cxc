@@ -15,6 +15,7 @@ Under [resources/prelude/target/macos/](../resources/prelude/target/macos/):
 | [args.cxc](../resources/prelude/target/macos/args.cxc) | `Args` | `length()` + `get_or(index, fallback)` | 4d6a897 |
 | [json.cxc](../resources/prelude/target/macos/json.cxc) | `Json` | `encode_str` / `field_string` / `field_int_or` / `field_string_path` / `field_int_or_path` | 6b12a7d + c922c06 + a798ab9 |
 | [http.cxc](../resources/prelude/target/macos/http.cxc) | `Http` | `get` / `post` / `get_envelope` / `post_envelope` | 838533a + 0e17b7b |
+| [wall_time.cxc](../resources/prelude/target/macos/wall_time.cxc) | `Time` | `now() -> Instant` (wall-clock, ms since Unix epoch) | c3e098e |
 | [console.cxc](../resources/prelude/target/macos/console.cxc) | `Console` | `write` + `write_raw` (post-2c-i shape) | da59e95 + ac862c0 |
 
 ## Examples (regression tests + manual demos)
@@ -46,6 +47,7 @@ Under [examples/](./):
 - `String.length()`, `.contains(sub)`, `.starts_with(pre)`, `.ends_with(suf)` — NSString direct methods. (5d10ab4)
 - `String.substring(start, len)` — nil-safe slice. (1319b71)
 - `String.index_of(sub)`, `.trim()`, `.replace(from, to)` — parsing primitives. (dddac82)
+- `String.to_int_or(fallback)` — NSScanner + isAtEnd; fallback on non-integer or partial match. (b93f385)
 
 ### Native intrinsics (backing prelude atoms)
 
@@ -56,6 +58,7 @@ Under [examples/](./):
 - `native_json_encode_str` / `native_json_field_string` — NSJSONSerialization roundtrip. (6b12a7d)
 - `native_json_field_int_or` — numeric field extraction. (c922c06)
 - `native_json_field_string_path` / `native_json_field_int_or_path` — nested walk via dot-path (e.g. `usage.input_tokens`, `content.0.text`). (dot-path variant / a798ab9)
+- `native_millis_now` int64_t fix — was truncating to 32-bit; now returns full epoch millis. Clock.now + Time.now both consume this. (c3e098e)
 - `native_http_get` / `native_http_post` — sync NSURLSession dataTask + dispatch_semaphore. (838533a)
 - `native_http_get_envelope` / `native_http_post_envelope` — same with `{status,body}` JSON envelope. (0e17b7b)
 
@@ -66,6 +69,8 @@ Under [examples/](./):
 ## Commit sequence
 
 ```
+c3e098e Time wall-clock capability + int64_t truncation fix
+b93f385 String.to_int_or(fallback) — NSScanner-based Int parse
 a798ab9 Json.field_int_or_path — numeric dot-path extraction
 5b761c5 hello-agent-mini: switch to http.post_envelope
 0e17b7b Http.{get,post}_envelope + :multi-arm-dispatch infer-type
