@@ -1247,20 +1247,25 @@
                  foreign-ref))))
 
 (defn- foreign-signature-arg-types
-  "FL-6 (2026-09-02) — return the vector of arg type-nodes from a foreign
-   signature. Handles:
+  "FL-6/FL-10 (2026-09-02) — return the vector of arg type-nodes from a
+   foreign signature. Handles:
    - bare `:type-ref` — zero-arg (returns []); signature is treated as
      `-> RetType`
-   - `:foreign-fn-type` with `:args :type-ref` — single-arg (returns [ty])
-   - `:foreign-fn-type` with `:args :type-tuple` — multi-arg
-     (returns each type in the tuple)"
+   - `:foreign-fn-type` with `:args :type-tuple` — anonymous multi-arg
+     (returns each type in `:types`)
+   - `:foreign-fn-type` with `:args :type-named-tuple` — FL-10 named
+     multi-arg (returns each field's `:type`; names are documentation-
+     only at v1.0, discarded here)
+   - `:foreign-fn-type` with any other `:args` node — single-arg
+     (returns [that-node])"
   [sig]
   (case (:node sig)
     :type-ref []
     :foreign-fn-type
     (let [args-node (:args sig)]
       (case (:node args-node)
-        :type-tuple (vec (:types args-node))
+        :type-tuple       (vec (:types args-node))
+        :type-named-tuple (mapv :type (:fields args-node))
         [args-node]))
     []))
 
