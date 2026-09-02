@@ -9,11 +9,11 @@ Under [resources/prelude/target/macos/](../resources/prelude/target/macos/):
 
 | File | Capability | Methods | Landed |
 |------|------------|---------|--------|
-| [fs.cxc](../resources/prelude/target/macos/fs.cxc) | `FileSystem` | `read_text` / `write_text` / `exists` / `mkdirs` / `remove` | 47a4c2f + 2c9d094 |
+| [fs.cxc](../resources/prelude/target/macos/fs.cxc) | `FileSystem` | `read_text` / `write_text` / `append_text` / `exists` / `mkdirs` / `remove` | 47a4c2f + 2c9d094 + 25cb3bd |
 | [subprocess.cxc](../resources/prelude/target/macos/subprocess.cxc) | `Subprocess` | `run(cmd)` (combined stdout+stderr via popen) | 07d4994 |
-| [env.cxc](../resources/prelude/target/macos/env.cxc) | `Env` | `get_or(name, fallback)` + `set(name, value)` | c5e2f68 + db01b54 |
+| [env.cxc](../resources/prelude/target/macos/env.cxc) | `Env` | `get_or` + `set` + `remove` | c5e2f68 + db01b54 + 25cb3bd |
 | [args.cxc](../resources/prelude/target/macos/args.cxc) | `Args` | `length()` + `get_or(index, fallback)` | 4d6a897 |
-| [json.cxc](../resources/prelude/target/macos/json.cxc) | `Json` | `encode_str` / `field_string` / `field_int_or` / `field_string_path` / `field_int_or_path` | 6b12a7d + c922c06 + a798ab9 |
+| [json.cxc](../resources/prelude/target/macos/json.cxc) | `Json` | `encode_str` / `field_string` / `field_int_or` / `field_string_path` / `field_int_or_path` / `field_bool_or` / `array_length_at` | 6b12a7d + c922c06 + a798ab9 + f3c49bd |
 | [http.cxc](../resources/prelude/target/macos/http.cxc) | `Http` | `get` / `post` / `get_envelope` / `post_envelope` | 838533a + 0e17b7b |
 | [wall_time.cxc](../resources/prelude/target/macos/wall_time.cxc) | `Time` | `now()` + `since(t)` + `sleep_ms(ms)` | c3e098e + db01b54 |
 | [console.cxc](../resources/prelude/target/macos/console.cxc) | `Console` | `write` + `write_raw` + `readln` + `write_err` | da59e95 + ac862c0 + 11155d1 + 6390fa5 |
@@ -34,6 +34,15 @@ Under [examples/](./):
 - [console-readln.cxc](./console-readln.cxc) — stdin readln round-trip.
 - [env-set-time-since-sleep.cxc](./env-set-time-since-sleep.cxc) — env.set/get_or round-trip + Time.sleep_ms bracketed by Time.since.
 - [fs-mkdirs-remove.cxc](./fs-mkdirs-remove.cxc) — nested mkdirs / write file / recursive remove.
+- [env-remove-fs-append.cxc](./env-remove-fs-append.cxc) — env.remove round-trip + fs.append_text two-write log.
+- [random-hex.cxc](./random-hex.cxc) — CSPRNG hex length invariants (0 / 1 / 8 / 32 / negative).
+- [json-bool-array.cxc](./json-bool-array.cxc) — strict-Bool + array_length_at walk (nested + numeric-index paths).
+
+## Non-plugin prelude capabilities enriched this session
+
+| File | Capability | Additions this push | Landed |
+|------|------------|---------------------|--------|
+| [random.cxc](../resources/prelude/target/macos/random.cxc) | `Random` | `hex(nybbles)` — CSPRNG hex String for IDs | 38b0774 |
 
 ## Language surface added this session
 
@@ -69,6 +78,11 @@ Under [examples/](./):
 - `native_time_sleep_ms` — usleep(ms*1000); no-op on non-positive; truncates absurd waits. (db01b54)
 - `native_fs_mkdirs` / `native_fs_remove` — NSFileManager createDirectoryAtPath (mkdir -p) + removeItemAtPath (recursive). (2c9d094)
 - `native_console_write_err` — fputs+fputc newline to stderr. (6390fa5)
+- `native_env_remove` — libc unsetenv. (25cb3bd)
+- `native_fs_append_text` — fopen `a` mode + fputs; concurrent-safe for short lines on POSIX. (25cb3bd)
+- `native_random_hex` — arc4random_buf → hex-encode; clamp at 4096 nybbles. (38b0774)
+- `native_json_field_bool_or` — strict-typed Bool extraction (only true/false, numeric 1/0 falls through). (f3c49bd)
+- `native_json_array_length_at` — dot-path walk + NSArray count; supports numeric-index segments. (f3c49bd)
 - `native_http_get` / `native_http_post` — sync NSURLSession dataTask + dispatch_semaphore. (838533a)
 - `native_http_get_envelope` / `native_http_post_envelope` — same with `{status,body}` JSON envelope. (0e17b7b)
 
@@ -79,6 +93,9 @@ Under [examples/](./):
 ## Commit sequence
 
 ```
+f3c49bd Json.field_bool_or + Json.array_length_at
+38b0774 Random.hex(nybbles) — CSPRNG hex String
+25cb3bd Env.remove + FileSystem.append_text
 6390fa5 String.uppercase / lowercase + Console.write_err
 2c9d094 FileSystem.mkdirs + .remove
 253f948 hello-agent-mini: report round-trip latency via Time.since
