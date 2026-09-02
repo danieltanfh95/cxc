@@ -1832,6 +1832,14 @@
         (is (zero? exit))
         (is (= "hello world\n" stdout))))))
 
+(deftest hello-agent-mini-compiles-6
+  (testing "6 (2026-09-03) — MVP hello-agent shape. Composes Args + Env + Http + Json + Console + String concat into a direct Claude Messages API POST. Assembles headers as a JSON String (x-api-key from env, anthropic-version, content-type) and body as a JSON String (model from env, single user message from argv[1] or default) using Json.encode_str for every String-typed value so escaping is correct. Sends via http.post, reads top-level `stop_reason` + `type` fields from the response with Json.field_string, prints everything via Console. This is the maximum agent-shape currently expressible without closures, `List of T`, variant destructuring, or or-recovery on non-emit expressions. Manual network verification only (needs ANTHROPIC_API_KEY); CI-side asserts the compile path clears cleanly."
+    (let [out-dir (tmp-dir)
+          {:keys [status stderr]}
+          (build/compile-source-to-file (slurp "examples/hello-agent-mini.cxc")
+                                         "hello-agent-mini" (.getPath out-dir))]
+      (is (zero? status) (str "clang failed:\n" stderr)))))
+
 (deftest http-compiles-cleanly-5
   (testing "5 (2026-09-03) — `Http` prelude capability compiles cleanly. Does NOT hit the network (would flake in CI); this only asserts a program that uses `use http: Http` + `http.get` + `http.post` clears parse, lower, and clang. Network round-trip verification is manual (examples/http-example-com.cxc)."
     (let [src "def main:\n    use http: Http\n    use console: Console\n    -> running\n        then:\n            let body: String = http.get(\"https://example.com\", \"{}\")\n            let post: String = http.post(\"https://example.com\", \"{}\", \"{}\")\n            console.write(\"compiled ok\")\n    -> end\n"

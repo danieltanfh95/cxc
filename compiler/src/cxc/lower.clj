@@ -2616,17 +2616,26 @@
                    :right (lower-expr (:right node) ctx)}
 
                   ;; 2026-09-02 — `String + String` concatenation.
-                  ;; Emits `[left stringByAppendingString:right]`. Sits
-                  ;; ABOVE the Optional/eq/arith branches so `"a" + "b"`
-                  ;; never falls into numeric widening. Nil-safe by
-                  ;; ObjC nil-messaging (nil recv → nil result).
+                  ;; Emits `[(left ?: @"") stringByAppendingString:
+                  ;; (right ?: @"")]`. Both sides coalesced to empty
+                  ;; on nil: recv-side because a nil recv yields nil
+                  ;; (would cascade further concats to nil), arg-side
+                  ;; because stringByAppendingString: throws on nil
+                  ;; arg. Sits ABOVE the Optional/eq/arith branches so
+                  ;; `"a" + "b"` never falls into numeric widening.
                   (and (= "+" (:op node))
                        (= :string (unwrap-tk (infer-type (:left node) ctx)))
                        (= :string (unwrap-tk (infer-type (:right node) ctx))))
                   {:node     :objc-msg
-                   :recv     (lower-expr (:left node) ctx)
+                   :recv     {:node :c-coalesce
+                              :mode :reference
+                              :left  (lower-expr (:left node) ctx)
+                              :right {:node :objc-str :value ""}}
                    :selector "stringByAppendingString:"
-                   :args     [(lower-expr (:right node) ctx)]}
+                   :args     [{:node :c-coalesce
+                               :mode :reference
+                               :left  (lower-expr (:right node) ctx)
+                               :right {:node :objc-str :value ""}}]}
 
                   ;; F39 L5b-ii-c (Sub-H) — presence check on Optional.
                   ;; `x is nil` / `x == nil` / `x != nil` (or symmetric)

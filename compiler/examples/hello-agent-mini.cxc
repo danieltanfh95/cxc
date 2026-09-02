@@ -1,0 +1,25 @@
+def main:
+    use args:    Args
+    use env:     Env
+    use http:    Http
+    use json:    Json
+    use console: Console
+
+    -> running
+        then:
+            let task: String = args.get_or(1, "Say hello in one word")
+            let key:  String = env.get_or("ANTHROPIC_API_KEY", "")
+            let model: String = env.get_or("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001")
+            let headers: String = "{\"x-api-key\":" + json.encode_str(key) + ",\"anthropic-version\":\"2023-06-01\",\"content-type\":\"application/json\"}"
+            let body: String = "{\"model\":" + json.encode_str(model) + ",\"max_tokens\":128,\"messages\":[{\"role\":\"user\",\"content\":" + json.encode_str(task) + "}]}"
+            let resp: String = http.post("https://api.anthropic.com/v1/messages", headers, body)
+            let stop: String = json.field_string(resp, "stop_reason")
+            let type_field: String = json.field_string(resp, "type")
+            console.write("task: " + task)
+            console.write("model: " + model)
+            console.write("stop_reason: " + stop)
+            console.write("type: " + type_field)
+            console.write("---raw response---")
+            console.write(resp)
+
+    -> end
