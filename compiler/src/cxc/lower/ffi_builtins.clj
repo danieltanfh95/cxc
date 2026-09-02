@@ -193,6 +193,46 @@
                         "} "
                         "} "
                         "__r; })")))}
+   "native_json_field_int_or_path"
+   ;; 2026-09-03 — same dot-path walk as field_string_path, but
+   ;; returns the terminal number as Int (via NSNumber
+   ;; longLongValue). Any break in the walk, or a terminal that
+   ;; isn't an NSNumber, returns the caller's fallback. Common
+   ;; case: `Json.field_int_or_path(claude_resp, "usage.input_tokens", 0)`.
+   {:return-kw :int
+    :arity     3
+    :emit-c    (fn [args]
+                 (let [json-arg (first args)
+                       path-arg (second args)
+                       fb-arg   (nth args 2)]
+                   (str "({ NSString *__j = " json-arg "; "
+                        "NSString *__p = " path-arg "; "
+                        "int64_t __r = (int64_t)(" fb-arg "); "
+                        "if (__j && __p) { "
+                        "NSData *__d = [__j dataUsingEncoding:NSUTF8StringEncoding]; "
+                        "NSError *__err = nil; "
+                        "id __cur = [NSJSONSerialization JSONObjectWithData:__d "
+                        "options:(NSJSONReadingOptions)0 error:&__err]; "
+                        "if (!__err && __cur) { "
+                        "NSArray *__parts = [__p componentsSeparatedByString:@\".\"]; "
+                        "for (NSString *__seg in __parts) { "
+                        "if (__cur == nil) break; "
+                        "NSScanner *__sc = [NSScanner scannerWithString:__seg]; "
+                        "NSInteger __idx = 0; "
+                        "if ([__sc scanInteger:&__idx] && __sc.isAtEnd) { "
+                        "if ([__cur isKindOfClass:[NSArray class]] && "
+                        "__idx >= 0 && (NSUInteger)__idx < [(NSArray *)__cur count]) { "
+                        "__cur = [(NSArray *)__cur objectAtIndex:(NSUInteger)__idx]; "
+                        "} else { __cur = nil; } "
+                        "} else if ([__cur isKindOfClass:[NSDictionary class]]) { "
+                        "__cur = [(NSDictionary *)__cur objectForKey:__seg]; "
+                        "} else { __cur = nil; } "
+                        "} "
+                        "if ([__cur isKindOfClass:[NSNumber class]]) { "
+                        "__r = [(NSNumber *)__cur longLongValue]; } "
+                        "} "
+                        "} "
+                        "__r; })")))}
    "native_json_field_string_path"
    ;; 2026-09-03 — walk a dot-separated path through nested
    ;; NSDictionary / NSArray from JSON and return the terminal

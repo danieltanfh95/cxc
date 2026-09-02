@@ -18,8 +18,8 @@ def main:
             let ok: String = ||: status == 200 : "ok" ||: else : "http " + status.to_string()
             let stop: String = json.field_string(resp, "stop_reason")
             let type_field: String = json.field_string(resp, "type")
-            let in_tok:  Int = json.field_int_or(resp, "input_tokens", 0)
-            let out_tok: Int = json.field_int_or(resp, "output_tokens", 0)
+            let in_tok:  Int = json.field_int_or_path(resp, "usage.input_tokens", 0)
+            let out_tok: Int = json.field_int_or_path(resp, "usage.output_tokens", 0)
             let claude_text: String = json.field_string_path(resp, "content.0.text")
             let text_out: String = ||: claude_text == nil : "(no text)" ||: else : claude_text
             console.write("task: " + task)
