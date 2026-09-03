@@ -1195,6 +1195,12 @@
                   "large[0]:    4\n")
              stdout)))))
 
+(deftest end-to-end-lambda-emit
+  (testing "lambda-emit.cxc — A6 (2026-09-03) — `|>` inside lambda body. Aspirational hello-agent uses `pending.for_each(tc => |> self.exec_tool(tc))` to fan-out tool dispatches. Parser previously rejected `|>` in expression position. Now: expression-position `|> receiver.method(args)` produces an `:emit` node (async?=false, no arms) usable as a lambda body. Fires `s.pulse()` once per element of xs; Sink's transition increments n and prints, giving 1/2/3."
+    (let [{:keys [exit stdout]} (compile-and-run "lambda-emit")]
+      (is (zero? exit))
+      (is (= "1\n2\n3\n" stdout)))))
+
 (deftest end-to-end-console-hello
   (testing "console-hello.cxc — Layer 6 Step 5. Console prelude atom with `write(msg: String) -> Int` method wrapping the `native_console_write` FFI hatch (printf %s). Main is capability-provisioned (`def main(console: Console)`) and calls `console.write(\"hi\\n\")` in its `-> running do:`. Prints `hi` + newline."
     (let [{:keys [exit stdout]} (compile-and-run "console-hello")]

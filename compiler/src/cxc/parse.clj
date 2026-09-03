@@ -719,6 +719,34 @@
                 ;; chain. First truthy guard's body is the value. `else` is
                 ;; the sole catch-all marker. See parse-multi-arm-dispatch.
                 "||:" (parse-multi-arm-dispatch tokens pos)
+                ;; A6 (2026-09-03) — expression-position sync emit:
+                ;; `|> receiver.method(args)` as an expression (value
+                ;; is void; usable inside lambda bodies where the
+                ;; caller wants side-effecting emits). Same lowering
+                ;; as the statement form minus the recovery-arm chain
+                ;; (arms are a statement-level construct).
+                "|>" (let [[e p] (parse-expr tokens (inc pos))]
+                       (cond
+                         (and (= :call (:node e))
+                              (= :dot  (:node (:callee e))))
+                         [{:node :emit
+                           :async? false
+                           :target (:target (:callee e))
+                           :msg    (:field  (:callee e))
+                           :args   (:args e)} p]
+
+                         (and (= :call (:node e))
+                              (= :ident (:node (:callee e))))
+                         [{:node :emit
+                           :async? false
+                           :target nil
+                           :msg    (:name (:callee e))
+                           :args   (:args e)} p]
+
+                         :else
+                         (fail! tokens pos
+                                (str "expression-position `|>` expected "
+                                     "`|> receiver.method(args)`"))))
                 (fail! tokens pos (str "unexpected glyph `" (t-value t) "` in expression")))
       (fail! tokens pos "expected an expression"))))
 

@@ -1,0 +1,17 @@
+def Sink:
+    n: Int = 0
+
+    -> ready
+
+    ready <: pulse -> ready
+        then:
+            n => n + 1
+            print(n)
+
+def main:
+    xs: List of Int = [10, 20, 30]
+    s:  Sink        = Sink()
+
+    -> running
+        then:
+            xs.for_each(_x => |> s.pulse())
