@@ -1213,6 +1213,12 @@
       (is (zero? exit))
       (is (= "hello world\npong\n" stdout)))))
 
+(deftest end-to-end-is-variant-pattern
+  (testing "is-variant-pattern.cxc — A3 (2026-09-03) — `x is .case[(let f, ...)]` at arm-head `|:` position. New parser branch (parse-variant-pattern-rhs) intercepts the RHS of `is` when it starts with `.<case>` (leading-dot) or `<Enum>.<case>` (explicit); binds via `parse-dispatch-payload-binding` (same shape as `<:` payload bindings). Lower produces an `:is-check` expression carrying (a) the tag-equality gate expression and (b) payload binding var-decls; `lower-transition-branch` splices the bindings into the arm body just before then:/do: stmts so subsequent stmts can reference them. Optional-lifted scrutinees (e.g. an atom's nullable field) get an implicit `.present &&` short-circuit around the tag check so a nil scrutinee produces false rather than dereferencing garbage. Verifies both bare `is .ping` guard and `is .text(let s)` positional-binding-auto-named-to-single-field."
+    (let [{:keys [exit stdout]} (compile-and-run "is-variant-pattern")]
+      (is (zero? exit))
+      (is (= "hi from A3\nwas ping\n" stdout)))))
+
 (deftest end-to-end-console-hello
   (testing "console-hello.cxc — Layer 6 Step 5. Console prelude atom with `write(msg: String) -> Int` method wrapping the `native_console_write` FFI hatch (printf %s). Main is capability-provisioned (`def main(console: Console)`) and calls `console.write(\"hi\\n\")` in its `-> running do:`. Prints `hi` + newline."
     (let [{:keys [exit stdout]} (compile-and-run "console-hello")]

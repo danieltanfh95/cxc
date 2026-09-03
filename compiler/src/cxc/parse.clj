@@ -374,14 +374,86 @@
     (let [[prim p] (parse-primary tokens pos)]
       (parse-postfix tokens p prim))))
 
+(declare parse-dispatch-payload-binding)
+
+(defn- variant-pattern-start?
+  "A3 (2026-09-03) — detect the RHS shape of `<lhs> is <pat>` where
+   `<pat>` is a tagged-variant case marker:
+     .<case>[(<bindings>)]        — leading-dot shorthand
+     <Enum>.<case>[(<bindings>)]  — explicit enum name
+   Only fires at RHS of `is`; other binops still take an ordinary
+   expression on the right."
+  [tokens pos]
+  (or (and (at? tokens pos :punct ".")
+           (at? tokens (inc pos) :ident))
+      (and (at? tokens pos :ident)
+           (at? tokens (inc pos) :punct ".")
+           (at? tokens (+ pos 2) :ident))))
+
+(defn- parse-variant-pattern-rhs
+  "Parse the case-marker RHS of an `is` proposition. Returns
+     [{:node :variant-pattern
+       :enum-name STR-or-nil        ; nil for leading-dot form
+       :case-name STR
+       :leading-dot? BOOL
+       :bindings [{:field <str-or-nil> :as <str>} ...]}
+      new-pos]
+   Bindings use `parse-dispatch-payload-binding` (same shape as
+   `<:` dispatch patterns) — either `let x` (positional) or
+   `field: let x` (named)."
+  [tokens pos]
+  (let [leading-dot? (at? tokens pos :punct ".")
+        [enum-name p]
+        (if leading-dot?
+          [nil (inc pos)]
+          (let [nm (t-value (peek-tok tokens pos))
+                _  (when-not (at? tokens (inc pos) :punct ".")
+                     (fail! tokens (inc pos)
+                            (str "expected `.` after `" nm "` in `is` case pattern")))]
+            [nm (+ pos 2)]))
+        _         (when-not (at? tokens p :ident)
+                    (fail! tokens p
+                           "expected a case-name identifier in `is` pattern"))
+        case-name (t-value (peek-tok tokens p))
+        p         (inc p)
+        [bindings p]
+        (if (at? tokens p :punct "(")
+          (loop [bindings [] p (inc p)]
+            (cond
+              (at? tokens p :punct ")")
+              [bindings (inc p)]
+
+              (at? tokens p :punct ",")
+              (recur bindings (inc p))
+
+              :else
+              (let [[b p2] (parse-dispatch-payload-binding tokens p)]
+                (recur (conj bindings b) p2))))
+          [[] p])]
+    [{:node         :variant-pattern
+      :enum-name    enum-name
+      :case-name    case-name
+      :leading-dot? leading-dot?
+      :bindings     bindings}
+     p]))
+
 (defn- parse-binop [tokens pos min-prec]
   (loop [[lhs p] (parse-unary tokens pos)]
     (let [t (peek-tok tokens p)
           v (when t (t-value t))
           prec (glyph-precedence v)]
       (if (and prec (>= prec min-prec) (binary-glyph? tokens p))
-        (let [[rhs p2] (parse-binop tokens (inc p) (inc prec))]
-          (recur [{:node :binop :op v :left lhs :right rhs} p2]))
+        (let [op v
+              rhs-pos (inc p)
+              ;; A3 (2026-09-03) — `is` may take a variant-pattern RHS:
+              ;;   x is .case[(let f)]  or  x is Enum.case[(let f)]
+              ;; Bindings scope to the enclosing arm body (transition-
+              ;; branch lowerer prepends the payload extractors).
+              [rhs p2] (if (and (= "is" op)
+                                (variant-pattern-start? tokens rhs-pos))
+                         (parse-variant-pattern-rhs tokens rhs-pos)
+                         (parse-binop tokens rhs-pos (inc prec)))]
+          (recur [{:node :binop :op op :left lhs :right rhs} p2]))
         [lhs p]))))
 
 ;; ---------------------------------------------------------------------------

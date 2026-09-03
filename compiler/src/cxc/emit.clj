@@ -37,6 +37,30 @@
     ;; `:raw-c`; kept narrow — prefer structured nodes wherever the
     ;; ergonomics allow.
     :raw-c-expr      (:text node)
+    ;; A3 (2026-09-03) — tagged-variant helpers for `is` patterns.
+    ;; `:c-tag-access` reads the discriminator: `(<inner>).tag`.
+    ;; `:c-payload-access` reads a payload field via the tagged-union
+    ;; storage: `(<inner>).data.<case>.<field>`. Only the arm-head
+    ;; lowerer produces these; wrapping the inner in parens keeps
+    ;; grouping safe when `<inner>` is a compound expression.
+    :c-tag-access
+    (if (:optional? node)
+      (str "(" (emit-expr (:inner node)) ").value.tag")
+      (str "(" (emit-expr (:inner node)) ").tag"))
+    :c-payload-access
+    (if (:optional? node)
+      (str "(" (emit-expr (:inner node)) ").value.data."
+           (:case-name node) "." (:field-name node))
+      (str "(" (emit-expr (:inner node)) ").data."
+           (:case-name node) "." (:field-name node)))
+    :c-optional-present
+    (str "(" (emit-expr (:inner node)) ").present")
+    ;; A3 — `:is-check` at expression position emits only the gate.
+    ;; Binding decls are surfaced separately by the transition-branch
+    ;; lowerer (which prepends them to the arm body); nothing at emit
+    ;; time needs them.
+    :is-check
+    (emit-expr (:gate node))
     :binop           (str "(" (emit-expr (:left node))
                           " " (:op node) " "
                           (emit-expr (:right node)) ")")

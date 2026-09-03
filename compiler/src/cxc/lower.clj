@@ -1021,6 +1021,11 @@
 
 (defn- infer-binop-type
   [{:keys [op left right]} ctx]
+  ;; A3 (2026-09-03) — `x is <variant-pattern>` is always :bool;
+  ;; short-circuit before inferring the RHS (which is a syntactic
+  ;; pattern-marker, not a value-yielding expression).
+  (if (and (= "is" op) (= :variant-pattern (:node right)))
+    :bool
   (let [lt (infer-type left  ctx)
         rt (infer-type right ctx)
         ;; F39 L5b-ii-c (Sub-B) — Optional propagation on binops.
@@ -1099,7 +1104,7 @@
             (if any-opt? [:optional r] r))))
 
       :else (fail-user! (str "binop " op " between " lt " and " rt)
-                       {:left lt :right rt}))))
+                       {:left lt :right rt})))))
 
 ;; M1c — F15 L4 (compiler-known-protocol-shapes + protocol-req-matches-
 ;; method? + seed-class-fn-index-from-f37-decode + structurally-
@@ -2990,6 +2995,114 @@
     :binop      (cond
                   (= "in" (:op node))
                   (fail-nyi! "`in` membership operator" node)
+
+                  ;; A3 (2026-09-03) — `x is <variant-pattern>`.
+                  ;; RHS is `.case[(bindings)]` or `Enum.case[(bindings)]`.
+                  ;; Resolves the enum from either the explicit name
+                  ;; on the RHS or (leading-dot) the LHS's inferred
+                  ;; type-kw; emits `:is-check` with a tag-eq gate and
+                  ;; payload bindings the caller (arm-head proposition
+                  ;; lowerer) splices into the arm body.
+                  (and (= "is" (:op node))
+                       (= :variant-pattern (:node (:right node))))
+                  (let [pat        (:right node)
+                        lhs-lo     (lower-expr (:left node) ctx)
+                        lhs-tk-raw (infer-type (:left node) ctx)
+                        lhs-tk     (unwrap-tk lhs-tk-raw)
+                        enum-name  (or (:enum-name pat)
+                                       (when (and (map? lhs-tk) (:enum lhs-tk))
+                                         (:enum lhs-tk))
+                                       (fail-user!
+                                        (str "A3: `is .` leading-dot pattern requires "
+                                             "an enum-typed LHS; got " (pr-str lhs-tk-raw))
+                                        node))
+                        en-info    (env/env-lookup ctx :enum-env enum-name)
+                        _          (when-not en-info
+                                     (fail-user!
+                                      (str "A3: `is` pattern references enum `"
+                                           enum-name "` which is not declared")
+                                      node))
+                        case-nm    (:case-name pat)
+                        payload    (get-in en-info [:payload-index case-nm])
+                        _          (when-not (contains? (:payload-index en-info) case-nm)
+                                     (fail-user!
+                                      (str "A3: enum `" enum-name "` has no case `"
+                                           case-nm "` — known cases: "
+                                           (pr-str (:cases en-info)))
+                                      node))
+                        ;; A3 — if the LHS is Optional-typed (nullable
+                        ;; field storage), unwrap through `.value` and
+                        ;; short-circuit on `.present` so a nil scrutinee
+                        ;; produces `false` rather than dereferencing
+                        ;; garbage. Non-Optional LHS uses the raw lhs-lo.
+                        lhs-opt?   (optional-tk? lhs-tk-raw)
+                        field-idx  (into {} (map (juxt :name identity)) payload)
+                        tag-eq     {:node :binop
+                                    :op   "=="
+                                    :left {:node      :c-tag-access
+                                           :inner     lhs-lo
+                                           :optional? lhs-opt?}
+                                    :right {:node :name
+                                            :sym  (str enum-name "_Tag_" case-nm)}}
+                        gate       (if lhs-opt?
+                                     {:node :binop :op "&&"
+                                      :left  {:node :c-optional-present
+                                              :inner lhs-lo}
+                                      :right tag-eq}
+                                     tag-eq)
+                        ;; A3 — positional binding auto-names against
+                        ;; the single-field case (`is .shell(let cmd)`
+                        ;; where `cmd` is the sole payload field). When
+                        ;; the payload has multiple fields, positional
+                        ;; is ambiguous and the diagnostic requires
+                        ;; explicit `<field>: let name` form.
+                        single-field-name
+                        (when (= 1 (count payload))
+                          (:name (first payload)))
+                        binding-decls
+                        (mapv (fn [b]
+                                (let [fnm    (or (:field b)
+                                                 single-field-name
+                                                 (fail-user!
+                                                  (str "A3: positional binding `let "
+                                                       (:as b) "` in `is " case-nm
+                                                       "(...)` — payload has "
+                                                       (count payload) " fields, so "
+                                                       "positional is ambiguous. Use "
+                                                       "`<field>: let " (:as b) "`.")
+                                                  node))
+                                      fld    (get field-idx fnm)
+                                      _      (when-not fld
+                                               (fail-user!
+                                                (str "A3: unknown payload field `"
+                                                     fnm "` on `" enum-name "."
+                                                     case-nm "` — declared fields: "
+                                                     (pr-str (mapv :name payload)))
+                                                node))]
+                                  {:name    (:as b)
+                                   :c-type  (or (:c-type fld)
+                                                (cxc-type->c (:type fld)
+                                                             (:record-env ctx)
+                                                             (:atom-env ctx)
+                                                             (:enum-env ctx)
+                                                             (:module-map ctx)))
+                                   :type-kw (cxc-type->type-kw
+                                             (base-type-name (:type fld))
+                                             (:record-env ctx)
+                                             (:atom-env ctx)
+                                             (:enum-env ctx)
+                                             (:type fld))
+                                   :init    {:node       :c-payload-access
+                                             :inner      lhs-lo
+                                             :optional?  lhs-opt?
+                                             :case-name  case-nm
+                                             :field-name fnm}}))
+                              (:bindings pat))]
+                    {:node     :is-check
+                     :gate     gate
+                     :bindings binding-decls
+                     :enum-name enum-name
+                     :case-name case-nm})
 
                   ;; F39 L6 — `??` coalesce (reference-nullable case).
                   (= "??" (:op node))
@@ -5079,14 +5192,38 @@
         _            (doseq [g guard-exprs]
                        (assert-not-optional-guard! g (infer-type g ctx')
                                                    "arm-head `|:` proposition" g))
-        guard-lo     (when (seq guard-exprs)
-                       ;; Every proposition at the arm head must hold.
-                       ;; Normalize them to the emitter's single guard.
-                       (reduce (fn [acc e]
+        ;; A3 (2026-09-03) — lower each guard; when the result is an
+        ;; `:is-check` (from `x is .case(let f, ...)`), extract its
+        ;; payload bindings so they can be spliced into the arm body
+        ;; below. The gate stays in the guard chain unchanged; bindings
+        ;; are var-decl stmts prepended to the arm body so subsequent
+        ;; then/do stmts can reference them.
+        lowered-guards (mapv #(lower-expr % ctx') guard-exprs)
+        is-check-bindings
+        (vec (mapcat (fn [g]
+                       (when (= :is-check (:node g))
+                         (:bindings g)))
+                     lowered-guards))
+        gate-of        (fn [g] (if (= :is-check (:node g)) (:gate g) g))
+        guard-lo     (when (seq lowered-guards)
+                       (reduce (fn [acc g]
                                  {:node :binop :op "&&"
-                                  :left acc :right (lower-expr e ctx')})
-                               (lower-expr (first guard-exprs) ctx')
-                               (rest guard-exprs)))
+                                  :left acc :right (gate-of g)})
+                               (gate-of (first lowered-guards))
+                               (rest lowered-guards)))
+        ;; Extend ctx' with the is-check-bound locals so downstream
+        ;; then:/do: expression inference resolves the binding names.
+        ctx'         (reduce (fn [c bd]
+                               (update c :locals assoc (:name bd)
+                                       (:type-kw bd)))
+                             ctx'
+                             is-check-bindings)
+        binding-decls (mapv (fn [bd]
+                              {:node   :var-decl
+                               :name   (:name bd)
+                               :c-type (:c-type bd)
+                               :rhs    (:init bd)})
+                            is-check-bindings)
         then-stmts   (vec (mapcat (fn [c] (mapcat #(lower-then-update % ctx')
                                                   (:updates c)))
                                   then-clauses))
@@ -5225,6 +5362,12 @@
                        ;; F23 — let: bindings sit at the top of the
                        ;; body so they're in scope for propositions+then+do.
                        (seq let-decls)    (into let-decls)
+                       ;; A3 (2026-09-03) — `x is .case(let f, ...)`
+                       ;; payload bindings surface as var-decls at the
+                       ;; top of the arm body (after let: decls; before
+                       ;; wildcard/then/do stmts) so subsequent stmts
+                       ;; can reference the bound names.
+                       (seq binding-decls) (into binding-decls)
                        (seq w-then-stmts) (into w-then-stmts)
                        (seq then-stmts)   (into then-stmts)
                        ;; F33 L3.c: invariant check on bag before commit.
