@@ -1296,7 +1296,7 @@
                    [[] p])]
     [{:msg name :args args} p]))
 
-(declare parse-statement)
+(declare parse-statement parse-or-arms)
 
 (defn- parse-while-statement
   "F17 L1 (spec §3.8.3, §4.20.3) — statement-position `while` loop.
@@ -1334,16 +1334,26 @@
    Distinct from the transition `let:` sub-block (which uses
    `let: <name>: <expr>` — see `parse-let-clause`). This form is
    usable anywhere a statement is accepted (do:/then:-clause bodies,
-   method bodies, function bodies)."
+   method bodies, function bodies).
+
+   A4 (2026-09-03) — accepts an optional `or T(fields): fallback`
+   arm chain following the RHS (NEWLINE + `or` at same indent), so
+   a let can bind either the try's value or an arm body's value
+   without a separate try:/catch: construct. Grammar reuses
+   `parse-or-arms`; lower wraps the RHS in @try/@catch that
+   captures the appropriate value into the binding."
   [tokens pos]
-  (let [[_ p]    (expect tokens pos :kw "let")
-        [nm p]   (expect tokens p :ident)
-        [ty p]   (if (at? tokens p :punct ":")
-                   (parse-type tokens (inc p))
-                   [nil p])
-        [_ p]    (expect tokens p :glyph "=")
-        [rhs p]  (parse-expr tokens p)]
-    [{:node :let-stmt :name nm :type ty :expr rhs} p]))
+  (let [[_ p]     (expect tokens pos :kw "let")
+        [nm p]    (expect tokens p :ident)
+        [ty p]    (if (at? tokens p :punct ":")
+                    (parse-type tokens (inc p))
+                    [nil p])
+        [_ p]     (expect tokens p :glyph "=")
+        [rhs p]   (parse-expr tokens p)
+        [arms p2] (parse-or-arms tokens p)
+        node      (cond-> {:node :let-stmt :name nm :type ty :expr rhs}
+                    (seq arms) (assoc :arms arms))]
+    [node p2]))
 
 (defn- parse-if-let-statement
   "F39 L7 (spec §3.6.1 lines 3693-3705) — scoped unwrap statement.

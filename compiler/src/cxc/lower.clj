@@ -3666,7 +3666,12 @@
           stmt-kinds #{:var-decl :c-while :c-break :c-continue :c-scope
                        :c-if-chain :return :assign :call :objc-msg
                        :ffi-call :c-print-optional :c-on-nil-dispatch
-                       :c-expr-stmt}
+                       :c-expr-stmt
+                       ;; A4-adjacent (2026-09-03) — :raise-emit is
+                       ;; statement-shaped (@throw block); treat as
+                       ;; a stmt when it appears in a stmt-expr body
+                       ;; rather than wrapping in :c-expr-stmt.
+                       :raise-emit}
           wrapped (mapv (fn [n]
                           (if (stmt-kinds (:node n))
                             n
@@ -3932,6 +3937,31 @@
         {:pattern    pat
          :box-name   box-name
          :body       (into var-decls body-lo)}))))
+
+(defn- rewrite-arm-body-last-as-assign
+  "A4 (2026-09-03) — for `let x = expr or T(...): body`, the arm body's
+   terminal expression is the fallback value assigned to `x`. Rewrite
+   the last raw stmt (must be `:expr-stmt`) into an :assign-stmt shape
+   the arm-lowerer can pass through `lower-stmt`. Non-terminal stmts
+   are untouched."
+  [body target-name enclosing-node]
+  (let [n (count body)]
+    (if (zero? n)
+      (fail-user!
+       (str "A4: `or ...:` arm body is empty — needs at least one "
+            "expression to assign to `" target-name "`.")
+       enclosing-node)
+      (let [last-stmt (nth body (dec n))]
+        (if (not= :expr-stmt (:node last-stmt))
+          (fail-user!
+           (str "A4: last statement of an `or ...:` arm body must be a "
+                "value-yielding expression assignable to `" target-name
+                "` (got `" (:node last-stmt) "`).")
+           last-stmt)
+          (conj (subvec body 0 (dec n))
+                {:node :assign-stmt
+                 :target target-name
+                 :expr   (:expr last-stmt)}))))))
 
 (defn- lower-or-arms
   "Lower a full `or:` arm chain. Rejects unreachable arms: a catchall
@@ -4624,6 +4654,14 @@
     :emit      (lower-send node ctx)
     :return    {:node :return :value (lower-expr (:expr node) ctx)}
     :dispatch  (lower-dispatch-stmt node ctx)
+    ;; A4 (2026-09-03) — synthetic node produced by
+    ;; `rewrite-arm-body-last-as-assign` so each `or ...:` arm body's
+    ;; terminal expression assigns into the `let x = ... or ...` target.
+    ;; Emit as `:assign` with :lhs a bare name ref.
+    :assign-stmt
+    {:node :assign
+     :lhs  {:node :name :sym (:target node)}
+     :rhs  (lower-expr (:expr node) ctx)}
 
     :if-let    (lower-if-let-stmt node ctx)
 
@@ -4663,7 +4701,14 @@
    C `:var-decl`. If a type annotation is present, use it authoritatively
    (its type-kw / c-type override inference on the RHS); otherwise infer
    from the RHS expression. Returns `[decl ctx']` where `ctx'` has the
-   new local bound so subsequent statements resolve the name."
+   new local bound so subsequent statements resolve the name.
+
+   A4 (2026-09-03) — when the let carries `:arms` (an `or T(...): body`
+   recovery chain from `parse-or-arms`), emit `:let-with-catch` instead
+   of `:var-decl`: an uninitialized declaration plus `@try/@catch` that
+   assigns the binding from either the successful RHS or the matching
+   arm's body-terminal expression. Reuses `lower-or-arms` for the arm
+   dispatch shape (same as `:sync-send-with-recovery`)."
   [node ctx]
   (let [expr    (:expr node)
         ann     (:type node)
@@ -4679,7 +4724,20 @@
                                (:module-map ctx))
                   (type-kw->c-type tk expr))
         rhs-lo  (lower-expr expr ctx)
-        decl    {:node :var-decl :name (:name node) :c-type ct :rhs rhs-lo}]
+        arms    (:arms node)
+        arms'   (when (seq arms)
+                  (mapv (fn [arm]
+                          (update arm :body
+                                  rewrite-arm-body-last-as-assign
+                                  (:name node) node))
+                        arms))
+        decl    (if (seq arms)
+                  {:node   :let-with-catch
+                   :name   (:name node)
+                   :c-type ct
+                   :rhs    rhs-lo
+                   :arms   (lower-or-arms arms' ctx node)}
+                  {:node :var-decl :name (:name node) :c-type ct :rhs rhs-lo})]
     [decl (update ctx :locals assoc (:name node) tk)]))
 
 (defn- lower-body-stmts
@@ -6303,7 +6361,25 @@
                       :recv {:node :name :sym "self"}
                       :selector "checkInvariants"
                       :args []}
-        return-stmt  {:node :return :value (lower-expr (:expr o) body-ctx)}
+        lowered-body (lower-expr (:expr o) body-ctx)
+        ;; A4-adjacent (2026-09-03) — when the observable body is a
+        ;; bare `raise` (either directly, or as the sole statement of
+        ;; a do-block-expr from A1's multi-line method-body path),
+        ;; the body is control-flow-terminating and has no value.
+        ;; Emit as a statement rather than wrapping in :return so
+        ;; clang doesn't try to compute a value from an @throw.
+        raise-emit?  (fn [n] (= :raise-emit (:node n)))
+        raise-only?  (or (raise-emit? lowered-body)
+                         (and (= :c-stmt-expr (:node lowered-body))
+                              (= 1 (count (:stmts lowered-body)))
+                              (raise-emit? (first (:stmts lowered-body)))))
+        raise-stmt   (when raise-only?
+                       (if (raise-emit? lowered-body)
+                         lowered-body
+                         (first (:stmts lowered-body))))
+        return-stmt  (if raise-only?
+                       raise-stmt
+                       {:node :return :value lowered-body})
         core-stmts   (if has-invariants?
                        [check-stmt check-stmt return-stmt]
                        [return-stmt])
@@ -7090,7 +7166,19 @@
                                     :locals     (assoc param-locals
                                                        "self" {:record rec-name})
                                     :self-fields self-fields}
-                               tk  (infer-type rewritten ctx)]
+                               ;; A4-adjacent (2026-09-03) — when the
+                               ;; observable declares an explicit return
+                               ;; type (`:- T`), that is authoritative.
+                               ;; Body inference can return `:any` for
+                               ;; control-flow-terminating bodies (e.g.
+                               ;; `raise`); trusting inference there
+                               ;; would emit `- (id)m` instead of `- (T)m`.
+                               declared-tk (when-let [rt (:return-type o)]
+                                             (cxc-type->type-kw
+                                              (base-type-name rt)
+                                              record-env atom-env
+                                              enum-env rt))
+                               tk  (or declared-tk (infer-type rewritten ctx))]
                            (assoc o :type-kw tk
                                   :c-type  (type-kw->c-type tk o))))
                        (or (:observables info) []))]
@@ -7131,7 +7219,14 @@
                                    :locals (assoc param-locals
                                                   "self" {:atom atom-name})
                                    :self-fields known}
-                           tk     (infer-type (:expr o) ctx)
+                           ;; A4-adjacent — declared `:- T` overrides
+                           ;; body inference so raise-only observables
+                           ;; still emit `- (T)m`, not `- (id)m`.
+                           declared-tk (when-let [rt (:return-type o)]
+                                         (cxc-type->type-kw
+                                          (base-type-name rt)
+                                          record-env atom-env enum-env rt))
+                           tk     (or declared-tk (infer-type (:expr o) ctx))
                            typed' (assoc o :type-kw tk
                                          :c-type   (type-kw->c-type tk o))]
                        {:typed (conj typed typed')

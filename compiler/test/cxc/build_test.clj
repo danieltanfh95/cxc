@@ -1201,6 +1201,12 @@
       (is (zero? exit))
       (is (= "1\n2\n3\n" stdout)))))
 
+(deftest end-to-end-or-recovery-on-let
+  (testing "or-recovery-on-let.cxc — A4 (2026-09-03) — `let x: T = expr or T(...): body` on a non-emit RHS. Extends the parser's `or` arm chain (previously restricted to `|>` sync sends) to arbitrary let RHS; lower routes into a new `:let-with-catch` emit node that wraps the RHS in @try/@catch and binds `x` from either the successful expression or the matching arm's terminal expression. Also: observables with explicit `:- T` return type now trust the declared type authoritatively (body inference returning `:any` for control-flow-terminating bodies like a bare `raise` no longer clobbers the ObjC method's return signature)."
+    (let [{:keys [exit stdout]} (compile-and-run "or-recovery-on-let")]
+      (is (zero? exit))
+      (is (= "boom-happened\n-1\n" stdout)))))
+
 (deftest end-to-end-console-hello
   (testing "console-hello.cxc — Layer 6 Step 5. Console prelude atom with `write(msg: String) -> Int` method wrapping the `native_console_write` FFI hatch (printf %s). Main is capability-provisioned (`def main(console: Console)`) and calls `console.write(\"hi\\n\")` in its `-> running do:`. Prints `hi` + newline."
     (let [{:keys [exit stdout]} (compile-and-run "console-hello")]

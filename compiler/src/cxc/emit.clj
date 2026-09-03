@@ -490,6 +490,55 @@
     :return   (str "return " (emit-expr (:value node)) ";")
     :assign   (str (emit-expr (:lhs node)) " = " (emit-expr (:rhs node)) ";")
     :var-decl (str (:c-type node) " " (:name node) " = " (emit-expr (:rhs node)) ";")
+    ;; A4 (2026-09-03) — `let x: T = expr or T(...): body` statement.
+    ;; Emits an uninitialized decl followed by `@try/@catch` that
+    ;; assigns `x` from either the successful RHS or the matching arm's
+    ;; body-terminal expression. Arm dispatch mirrors
+    ;; `:sync-send-with-recovery` (isKindOfClass chain, Uncaught synth,
+    ;; @throw on fallthrough when no catchall). Lower has already
+    ;; rewritten each arm body's terminal `:expr-stmt` as `:assign` of
+    ;; the target name (see `rewrite-arm-body-last-as-assign`) so the
+    ;; body stmts emit as ordinary C statements here.
+    :let-with-catch
+    (let [nm        (:name node)
+          ct        (:c-type node)
+          rhs-c     (emit-expr (:rhs node))
+          arms      (:arms node)
+          catchall? (some #(let [p (:pattern %)]
+                             (or (nil? p) (= :bind (:kind p))))
+                          arms)
+          arm-blocks
+          (map-indexed
+           (fn [i arm]
+             (let [pat  (:pattern arm)
+                   body (str/join "\n" (map emit-stmt (:body arm)))
+                   blk  (indent-lines 4 (if (str/blank? body) "(void)0;" body))
+                   head (if (zero? i) "if " "else if ")]
+               (cond
+                 (or (nil? pat) (= :bind (:kind pat)))
+                 (if (zero? i)
+                   (str "{\n" blk "\n}")
+                   (str "else {\n" blk "\n}"))
+
+                 :else
+                 (str head "([__cxc_reason isKindOfClass:["
+                      (:box-name arm) " class]]) {\n"
+                      blk "\n}"))))
+           arms)
+          chain      (str/join " " arm-blocks)
+          fallthrough (if catchall? "" " else { @throw __cxc_or_e; }")]
+      (str ct " " nm ";\n"
+           "@try {\n"
+           "    " nm " = " rhs-c ";\n"
+           "} @catch (NSException *__cxc_or_e) {\n"
+           "    id __cxc_reason = __cxc_or_e.userInfo[@\"reason\"];\n"
+           "    if (__cxc_reason == nil) {\n"
+           "        _Cxc_R__Cxc_Uncaught *__cxc_u = [[_Cxc_R__Cxc_Uncaught alloc] init];\n"
+           "        __cxc_u->value = (_Cxc_Uncaught){.msg = (__cxc_or_e.reason ?: (__cxc_or_e.name ?: @\"unknown\"))};\n"
+           "        __cxc_reason = __cxc_u;\n"
+           "    }\n"
+           (indent-lines 4 (str chain fallthrough))
+           "\n}"))
     ;; F18 L2 — expression-position value wrapped as statement inside a
     ;; :c-stmt-expr (GNU `({ … })`). Rendered as `<expr>;`; when it's
     ;; the last stmt in the wrapper, its value is the block value.
