@@ -1180,6 +1180,12 @@
       (is (zero? exit))
       (is (= "true\ntrue\ntrue\ntrue\n100\n" stdout)))))
 
+(deftest end-to-end-multiline-method-body
+  (testing "multiline-method-body.cxc — A1 (2026-09-03) — observable/method with `sig(...) :- RetType` + indented body block. Body parses as `:do-block-expr` with last-expr-is-value semantics (let bindings then final expression). Verifies both no-ctor-arg (`Formatter().label(...)`) and named-ctor-arg (`Formatter(kind: \"debug\").label(...)`) invocations; prints two lines built via multi-statement body with string concat + field reference + Int.to_string."
+    (let [{:keys [exit stdout]} (compile-and-run "multiline-method-body")]
+      (is (zero? exit))
+      (is (= "[default] count 42\n[debug] n 7\n" stdout)))))
+
 (deftest end-to-end-console-hello
   (testing "console-hello.cxc — Layer 6 Step 5. Console prelude atom with `write(msg: String) -> Int` method wrapping the `native_console_write` FFI hatch (printf %s). Main is capability-provisioned (`def main(console: Console)`) and calls `console.write(\"hi\\n\")` in its `-> running do:`. Prints `hi` + newline."
     (let [{:keys [exit stdout]} (compile-and-run "console-hello")]

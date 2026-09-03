@@ -1887,7 +1887,11 @@
         signature-only?
         (and has-param-list?
              candidate-type
-             (or (at? tokens type-end :newline)
+             (or (and (at? tokens type-end :newline)
+                      ;; A1 — a following INDENT means this is a
+                      ;; bodyful multi-line method, not a bare
+                      ;; signature declaration.
+                      (not (at? tokens (inc type-end) :indent)))
                  (at? tokens type-end :dedent)
                  (at? tokens type-end :eof)))
         proposition-body?
@@ -1897,6 +1901,22 @@
              (at? tokens (inc type-end) :indent)
              (let [body-start (skip-newlines tokens (+ type-end 2))]
                (at? tokens body-start :glyph "|:")))
+        ;; A1 (2026-09-03) — Multi-line method body:
+        ;;   sig(params) :- ReturnType
+        ;;       <stmt>
+        ;;       <stmt>
+        ;;       <final-expr>
+        ;; Body evaluates as a `:do-block-expr` (last-expr-is-value).
+        ;; Distinct from `proposition-body?` (leads with `|:`) and
+        ;; `signature-only?` (no INDENT). Note: does NOT accept `=`
+        ;; between ReturnType and body — that form remains
+        ;; `explicit-inline?`.
+        bodyful-block?
+        (and (not signature-only?)
+             (not proposition-body?)
+             candidate-type
+             (at? tokens type-end :newline)
+             (at? tokens (inc type-end) :indent))
         explicit-inline? (and candidate-type
                               (at? tokens type-end :glyph "="))
         [return-type propositions expr p]
@@ -1929,6 +1949,24 @@
           (let [[_ p] (expect tokens type-end :glyph "=")
                 [body-expr p] (parse-expr tokens p)]
             [candidate-type [] body-expr p])
+
+          bodyful-block?
+          ;; A1 — parse the INDENT block as a sequence of statements;
+          ;; wrap as `:do-block-expr` (last-expr-is-value semantics).
+          (let [[_ p]  (expect tokens type-end :newline)
+                [_ p]  (expect tokens p :indent)]
+            (loop [stmts [] p p]
+              (cond
+                (at? tokens p :dedent)
+                [candidate-type [] {:node :do-block-expr :stmts stmts} (inc p)]
+
+                (at? tokens p :newline)
+                (recur stmts (inc p))
+
+                :else
+                (let [[s p2] (parse-statement tokens p)
+                      p3     (skip-newlines tokens p2)]
+                  (recur (conj stmts s) p3)))))
 
           :else
           (let [[body-expr p] (parse-expr tokens p)]
