@@ -10,6 +10,7 @@
             [cxc.manifest        :as manifest]
             [cxc.plugin-manifest :as plugin-manifest]
             [cxc.prelude         :as prelude]
+            [cxc.project         :as cxc-project]
             [cxc.resolve         :as resolve]
             [cxc.section         :as section]))
 
@@ -383,6 +384,26 @@
                    "the directory (any other name works).")
               {:kind :cxc-f51-reserved-directory-name
                :dir (.getPath d)})))))
+
+(defn- reject-reserved-std-subdir!
+  "A7 (2026-09-03) — `std.*` is the prelude/stdlib namespace. A user
+   directory `<src-dir>/std/` (at src-dir root) would produce a
+   `:std` (or `:std.foo`) user module that collides with the
+   prelude-owned import namespace (`from std.args import Args`,
+   `from std.collections import List`). Reject at compile start with
+   a targeted diagnostic + rename suggestion. Nested `<src-dir>/foo/std/`
+   is fine — the collision is only at the top level."
+  [^java.io.File src-dir]
+  (let [top-std (io/file src-dir "std")]
+    (when (.isDirectory top-std)
+      (throw (ex-info
+              (str "A7: top-level `std/` directory in src-dir would "
+                   "produce a user module in the reserved `std.*` namespace "
+                   "(prelude/stdlib). Rename the directory — any other name "
+                   "works, DNS-reverse (`com.<vendor>.<pkg>/`) or flat "
+                   "(`vendor/<pkg>/`) are the recommended shapes.")
+              {:kind :cxc-a7-reserved-std-namespace
+               :dir (.getPath top-std)})))))
 
 (defn- reject-duplicate-declarations-per-module!
   "F51 L1 — a declared name may appear at most once per module. Fires
@@ -797,10 +818,41 @@
         ;; F51 L1 — refuse `src-dir/main/` up front; it would produce
         ;; a `:main` module colliding with the root's default.
         _       (reject-reserved-main-subdir! dir)
-        files   (->> (file-seq dir)
-                     (filter #(and (.isFile ^java.io.File %)
-                                   (.endsWith (.getName ^java.io.File %) ".cxc")))
-                     (sort-by #(.getPath ^java.io.File %)))
+        ;; A7 (2026-09-03) — refuse `src-dir/std/` up front; user
+        ;; modules must not squat on the prelude namespace.
+        _       (reject-reserved-std-subdir! dir)
+        ;; A7 — read `project.cxc` at src-dir root (if present),
+        ;; fetch any declared deps, then walk src-dir + each cached
+        ;; dep path as extra roots. Files under a dep's cache path
+        ;; derive their module name from THAT cache path (not src-dir),
+        ;; so `<cache>/<sha>/com/acme/http_claude/*.cxc` resolves as
+        ;; module `:com.acme.http_claude` regardless of where the
+        ;; user's src-dir lives.
+        manifest         (cxc-project/read-manifest dir)
+        resolved-deps    (when manifest
+                           (cxc-project/resolve-and-populate! dir manifest))
+        extra-roots      (mapv #(io/file (:cache-path %)) resolved-deps)
+        manifest-file    (cxc-project/manifest-file dir)
+        exclude-file?    (fn [^java.io.File f]
+                           (and manifest-file
+                                (= (.getCanonicalPath f)
+                                   (.getCanonicalPath ^java.io.File manifest-file))))
+        collect-cxc      (fn [^java.io.File root]
+                           (->> (file-seq root)
+                                (filter #(and (.isFile ^java.io.File %)
+                                              (.endsWith (.getName ^java.io.File %) ".cxc")
+                                              (not (exclude-file? %))))))
+        files-with-roots (->> (into [{:root dir :files (collect-cxc dir)}]
+                                    (map (fn [r] {:root r :files (collect-cxc r)}))
+                                    extra-roots)
+                              (mapcat (fn [{:keys [root files]}]
+                                        (map (fn [f] {:root root :file f}) files)))
+                              (sort-by #(.getPath ^java.io.File (:file %)))
+                              vec)
+        files            (mapv :file files-with-roots)
+        root-for-file    (into {} (map (juxt :file :root) files-with-roots))
+        module-of-file   (fn [^java.io.File f]
+                           (derive-module-name (root-for-file f) f))
         ;; F52 L3 — resolve source overrides against discovered modules.
         ;; Keys accept string or keyword; normalize to keyword to match
         ;; `derive-module-name`'s return type. CLI callers pass strings;
@@ -809,7 +861,7 @@
                                       (assoc m (keyword (clojure.core/name k)) v))
                                     {}
                                     (:source-overrides opts {}))
-        discovered-modules (into #{} (map #(derive-module-name dir %)) files)
+        discovered-modules (into #{} (map module-of-file) files)
         _        (doseq [[m _] source-overrides
                          :when (not (contains? discovered-modules m))]
                    (binding [*out* *err*]
@@ -818,19 +870,19 @@
                                    "` targets a module not discovered under "
                                    src-dir " — ignored (F52 L3)."))))
         srcs    (mapv (fn [^java.io.File f]
-                        (let [m (derive-module-name dir f)]
+                        (let [m (module-of-file f)]
                           (if-let [override-path (get source-overrides m)]
                             (slurp override-path)
                             (slurp f))))
                       files)
         ;; F51 L2 — enumerate user modules up-front so per-file import
         ;; validation can accept `from <user-module> import ...`.
-        user-modules (into #{} (map #(derive-module-name dir %)) files)
+        user-modules (into #{} (map module-of-file) files)
         ;; F51 L1 — parse each file separately, tag with derived
         ;; module, and check import validity against prelude + user modules.
         files-with-nodes
         (mapv (fn [[^java.io.File f src]]
-                (let [module (derive-module-name dir f)
+                (let [module (module-of-file f)
                       parsed (try
                                (parse/parse src)
                                (catch clojure.lang.ExceptionInfo e

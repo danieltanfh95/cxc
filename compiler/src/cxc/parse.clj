@@ -3788,7 +3788,15 @@
    Produces a `:module-let` node carrying the ident name, optional
    type annotation, and RHS expression. Value-constness is enforced
    at lower time (same `default-expr-const-shape?` guard F40 uses on
-   default-expressions per spec §3.8.5)."
+   default-expressions per spec §3.8.5).
+
+   A7 (2026-09-03) — the trailing terminator accepts either `:newline`
+   or `:eof`: a multi-line parenthesized RHS (e.g. the A7 manifest's
+   `let project = Project(name: ..., deps: [...])`) tokenizes with
+   bracket-suppression, so no NEWLINE lands between the closing `)`
+   and end-of-file. Prior to this, a top-level module-let as the
+   file's last construct with a multi-line RHS forced a bogus trailing
+   line to appease `expect :newline`."
   [tokens pos]
   (let [[_ p]    (expect tokens pos :kw "let")
         [nm p]   (expect tokens p :ident)
@@ -3797,7 +3805,12 @@
                    [nil p])
         [_ p]    (expect tokens p :glyph "=")
         [rhs p]  (parse-expr tokens p)
-        [_ p]    (expect tokens p :newline)]
+        p        (cond
+                   (at? tokens p :newline) (inc p)
+                   (at? tokens p :eof)     p
+                   :else (fail! tokens p
+                                (str "module-let: expected newline or end-of-file "
+                                     "after RHS; got " (pr-str (peek-tok tokens p)))))]
     [{:node :module-let :name nm :type ty :value rhs} p]))
 
 (defn- parse-top [tokens pos]

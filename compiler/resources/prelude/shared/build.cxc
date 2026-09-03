@@ -1,0 +1,36 @@
+# Build-manifest schema — REFERENCE ONLY, not auto-loaded.
+#
+# The `project.cxc` file at src-dir root declares a project manifest
+# using cxc syntax. The compiler extracts it BEFORE parse+lower —
+# pattern-matches the AST for the field structure documented below.
+# `Project` and `Dep` are NOT prelude types: no user program can
+# import them, and manifest-file authors don't need to import them
+# either (the compiler pattern-matches on the AST regardless of type
+# resolution). This file exists as a canonical reference for the
+# manifest shape at v1.0.
+#
+# Manifest shape (v1.0 field set is deliberately minimal):
+#
+#   # project.cxc
+#   let project = Project(
+#       name:  "hello-agent",
+#       entry: "main",
+#       deps: [
+#           Dep(name: "com.acme.http_claude",
+#               git:  "https://github.com/acme/http-claude",
+#               tag:  "v1.2"),
+#       ])
+#
+# Adding fields later (targets, codegen hooks, validators) is
+# additive — v1 rejects unknown fields so v2-shaped manifests fail
+# cleanly against a v1 compiler rather than silently ignoring them.
+
+def Dep:
+    name: String!
+    git:  String!
+    tag:  String!
+
+def Project:
+    name:  String!
+    entry: String!
+    deps:  List of Dep!

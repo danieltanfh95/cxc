@@ -201,10 +201,9 @@ for the authoritative list.
 - **A4.** Or-recovery on non-emit expressions (was 2d-iii(B)) — e45dcfd
 - **A5.** Immutable `List of T` ops (`.append(v)` / `.filter(pred)`) — 2cc40f9
 - **A6.** `|>` inside lambda body — d2ca9df
+- **A7.** Third-party plugin discovery — DNS-reverse module paths in `src-dir/` (hand-vendored) or via `project.cxc` manifest declaring git-URL + tag deps (fetched into `~/.cxc/cache/<sha>/`, lockfile at `project.lock`). Publishing = `git push origin <tag>`. Zero registry infrastructure. See `compiler/examples/dns-reverse-plugin/`.
 
-**Remaining:**
-
-- **A7.** Third-party plugin discovery (`.cxc-caps` manifest emission + resolver) — the aspirational `from com.acme.http_claude import Claude` has no discovery mechanism today; only first-party stdlib-in-prelude works.
+The full hello-agent example compiles as of A7 landing.
 
 **Wrongly listed as gaps in prior versions of this file — actually landed** (REPL-verified 2026-09-03):
 

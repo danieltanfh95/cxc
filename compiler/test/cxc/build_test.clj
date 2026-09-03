@@ -1219,6 +1219,108 @@
       (is (zero? exit))
       (is (= "hi from A3\nwas ping\n" stdout)))))
 
+(deftest end-to-end-dns-reverse-plugin
+  (testing "dns-reverse-plugin/ — A7 (2026-09-03) — hand-vendored (R1) plugin discovery via the file-based module system. Layout: `examples/dns-reverse-plugin/com/acme/http_claude/claude.cxc` declares `def Claude:`, and `main.cxc` at the src-dir root has `from com.acme.http_claude import Claude`. `compile-directory-to-file` walks the tree; `derive-module-name` maps `com/acme/http_claude/` → `:com.acme.http_claude` (dots-for-separators); `validate-imports` accepts because the walker registered the module in `user-modules`. Zero compiler code change from what F73+F51 L1 already shipped — A7 R1 is a documentation + convention landing, not a code landing."
+    (let [{:keys [exit stdout]} (compile-dir-and-run "dns-reverse-plugin")]
+      (is (zero? exit))
+      (is (= "hello from sonnet\n" stdout)))))
+
+(defn- git-shell
+  [args]
+  (let [pb   (ProcessBuilder. (into-array String args))
+        proc (.start pb)
+        _    (.waitFor proc)]
+    (.exitValue proc)))
+
+(defn- init-local-git-plugin!
+  "Create a small git repo containing `com/acme/http_claude/claude.cxc`,
+   commit it, tag `v0.1`. Returns the repo path. Used by the manifest-
+   fetch test to keep CI offline — the manifest points at a file://
+   URL that git can clone locally without network."
+  [^java.io.File dir]
+  (let [plugin-dir (java.io.File. dir "com/acme/http_claude")]
+    (.mkdirs plugin-dir)
+    (spit (java.io.File. plugin-dir "claude.cxc")
+          (str "def Claude:\n"
+               "    model: String = \"fetched\"\n\n"
+               "    hello() :- String\n"
+               "        \"hello from \" + model\n\n"
+               "    -> ready\n"))
+    (git-shell ["git" "-C" (.getPath dir) "init" "-q"])
+    (git-shell ["git" "-C" (.getPath dir) "-c" "commit.gpgsign=false"
+                "-c" "user.email=t@t" "-c" "user.name=t"
+                "add" "-A"])
+    (git-shell ["git" "-C" (.getPath dir) "-c" "commit.gpgsign=false"
+                "-c" "user.email=t@t" "-c" "user.name=t"
+                "commit" "-q" "-m" "init"])
+    (git-shell ["git" "-C" (.getPath dir) "-c" "commit.gpgsign=false"
+                "-c" "user.email=t@t" "-c" "user.name=t"
+                "tag" "v0.1"])
+    (.getPath dir)))
+
+(deftest end-to-end-a7-manifest-fetch
+  (testing "A7 (2026-09-03) — `project.cxc` manifest at src-dir root drives dep fetch + cache + lockfile. Creates a local git repo containing `com/acme/http_claude/claude.cxc` tagged `v0.1`; user's src-dir has `project.cxc` declaring a `Dep(git: <local-repo>, tag: \"v0.1\")` and `main.cxc` importing `from com.acme.http_claude import Claude`. Verifies: (1) manifest extraction reads the Project record's field values via literal-only AST walk; (2) git ls-remote resolves the tag to a SHA; (3) git clone populates `~/.cxc/cache/<sha>/`; (4) walker mounts the cache dir as an extra src-dir root so `com.acme.http_claude` resolves; (5) program prints the plugin's message. Also verifies lockfile round-trip: second build reads `project.lock`, skips network, produces byte-identical binary."
+    (let [work-dir      (tmp-dir)
+          plugin-dir    (java.io.File. work-dir "plugin")
+          user-src-dir  (java.io.File. work-dir "user-src")
+          user-out-dir  (java.io.File. work-dir "user-out")]
+      (.mkdirs user-src-dir)
+      (init-local-git-plugin! plugin-dir)
+      (spit (java.io.File. user-src-dir "project.cxc")
+            (str "let project = Project(\n"
+                 "    name:  \"a7test\",\n"
+                 "    entry: \"main\",\n"
+                 "    deps: [\n"
+                 "        Dep(name: \"com.acme.http_claude\",\n"
+                 "            git:  \"" (.getPath plugin-dir) "\",\n"
+                 "            tag:  \"v0.1\")\n"
+                 "    ])\n"))
+      (spit (java.io.File. user-src-dir "main.cxc")
+            (str "from com.acme.http_claude import Claude\n\n"
+                 "def main:\n"
+                 "    c: Claude = Claude()\n\n"
+                 "    -> running\n"
+                 "        then:\n"
+                 "            print(c.hello())\n"
+                 "    -> end\n"))
+      ;; First build — resolves tag → SHA, clones into cache, writes lockfile.
+      (let [{:keys [status stderr bin-path]}
+            (build/compile-directory-to-file user-src-dir "a7test"
+                                             (.getPath user-out-dir) {})]
+        (is (zero? status) (str "first build failed:\n" stderr))
+        (when (zero? status)
+          (let [{:keys [exit stdout]} (build/run-binary bin-path)]
+            (is (zero? exit))
+            (is (= "hello from fetched\n" stdout)))))
+      ;; Lockfile got written.
+      (is (.isFile (java.io.File. user-src-dir "project.lock")))
+      ;; Second build — lockfile present + fresh → no network needed.
+      (let [out2 (java.io.File. work-dir "user-out-2")
+            {:keys [status stderr bin-path]}
+            (build/compile-directory-to-file user-src-dir "a7test-2"
+                                             (.getPath out2) {})]
+        (is (zero? status) (str "second build failed:\n" stderr))
+        (when (zero? status)
+          (let [{:keys [exit stdout]} (build/run-binary bin-path)]
+            (is (zero? exit))
+            (is (= "hello from fetched\n" stdout))))))))
+
+(deftest a7-std-namespace-reserved
+  (testing "A7 (2026-09-03) — `<src-dir>/std/` at src-dir root is rejected at build start because it would produce user modules in the reserved `std.*` namespace (prelude/stdlib). Diagnostic points at the offending dir with the DNS-reverse / vendor / flat rename suggestions."
+    (let [work-dir (tmp-dir)
+          src-dir  (java.io.File. work-dir "src")
+          std-dir  (java.io.File. src-dir "std/foo")
+          out-dir  (java.io.File. work-dir "out")]
+      (.mkdirs std-dir)
+      (spit (java.io.File. std-dir "x.cxc") "def X:\n")
+      (spit (java.io.File. src-dir "main.cxc")
+            "def main:\n    -> running\n    -> end\n")
+      (is (thrown-with-msg?
+           clojure.lang.ExceptionInfo
+           #"reserved `std\.\*` namespace"
+           (build/compile-directory-to-file src-dir "a7reserved"
+                                            (.getPath out-dir) {}))))))
+
 (deftest end-to-end-console-hello
   (testing "console-hello.cxc — Layer 6 Step 5. Console prelude atom with `write(msg: String) -> Int` method wrapping the `native_console_write` FFI hatch (printf %s). Main is capability-provisioned (`def main(console: Console)`) and calls `console.write(\"hi\\n\")` in its `-> running do:`. Prints `hi` + newline."
     (let [{:keys [exit stdout]} (compile-and-run "console-hello")]

@@ -44,18 +44,29 @@
   (let [[positional target] (parse-target-flag args)]
     (case (count positional)
       2 (let [[input-path out-dir] positional
-              src   (slurp input-path)
-              name  (-> input-path
-                        io/file
-                        .getName
-                        (str/replace #"\.cxc$" ""))
-              opts  (if target {:target target} {})
+              in-file (io/file input-path)
+              ;; A7 (2026-09-03) — directory arg dispatches to
+              ;; `compile-directory-to-file` so a DNS-reverse
+              ;; plugin tree (`src/com/acme/foo/*.cxc`) can compile
+              ;; end-to-end from the CLI. Single-file mode still
+              ;; works unchanged for `hello.cxc`-style programs.
+              opts    (if target {:target target} {})
+              dir?    (.isDirectory in-file)
+              name    (if dir?
+                        (.getName in-file)
+                        (-> input-path
+                            io/file
+                            .getName
+                            (str/replace #"\.cxc$" "")))
               {:keys [status stderr bin-path]}
-              (build/compile-source-to-file src name out-dir opts)]
+              (if dir?
+                (build/compile-directory-to-file in-file name out-dir opts)
+                (let [src (slurp input-path)]
+                  (build/compile-source-to-file src name out-dir opts)))]
           (if (zero? status)
             (println (str "compiled → " bin-path))
             (do (println "compile failed:")
                 (println stderr)
                 (System/exit status))))
-      (do (println "Usage: clj -M -m cxc.core <input.cxc> <out-dir> [--target=<name>]")
+      (do (println "Usage: clj -M -m cxc.core <input.cxc-or-dir> <out-dir> [--target=<name>]")
           (println "Args received:" (pr-str args))))))
