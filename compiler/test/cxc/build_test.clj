@@ -1207,6 +1207,12 @@
       (is (zero? exit))
       (is (= "boom-happened\n-1\n" stdout)))))
 
+(deftest end-to-end-enum-string-payload
+  (testing "enum-string-payload.cxc — A2 (2026-09-03) — tagged-variant payloads carrying reference-type fields (`NSString *`, `id`, class pointers). Prior emit put a `__strong NSString *` inside the tag union, which ARC rejects because it can't decide which case's payload to retain/release when the outer struct is copy-initialized. Fix: emit those slots as `__unsafe_unretained` so ARC skips lifetime management. MVP lifetime model: the reference must be backed by a strong ref in the enclosing scope (string literals are image-lifetime; other refs must be held elsewhere). Verifies both construction with a string-literal payload and `<:` dispatch binding the string field back out."
+    (let [{:keys [exit stdout]} (compile-and-run "enum-string-payload")]
+      (is (zero? exit))
+      (is (= "hello world\npong\n" stdout)))))
+
 (deftest end-to-end-console-hello
   (testing "console-hello.cxc — Layer 6 Step 5. Console prelude atom with `write(msg: String) -> Int` method wrapping the `native_console_write` FFI hatch (printf %s). Main is capability-provisioned (`def main(console: Console)`) and calls `console.write(\"hi\\n\")` in its `-> running do:`. Prints `hi` + newline."
     (let [{:keys [exit stdout]} (compile-and-run "console-hello")]

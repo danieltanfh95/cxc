@@ -1302,13 +1302,31 @@
                          (map (fn [ce] (str "    " tag-name "_" (:name ce))))
                          (str/join ",\n"))
         tag-typedef (str "typedef enum {\n" tag-members "\n} " tag-name ";")
+        ;; A2 (2026-09-03) — ARC forbids `__strong` ObjC references
+        ;; inside union members because the runtime can't decide which
+        ;; tag's payload to retain/release when the outer struct is
+        ;; copy-initialized. Reference-typed payload fields
+        ;; (`NSString *`, `id`, `<Class> *`, `<Class> **`, etc.) get
+        ;; `__unsafe_unretained` so ARC skips lifetime management on
+        ;; those slots. MVP lifetime model: payloads must be backed by
+        ;; a strong reference in the enclosing scope (string literals
+        ;; are image-lifetime; other refs must be held elsewhere).
+        objc-ref-c-type?
+        (fn [ct]
+          (or (= "id" ct)
+              (and (string? ct) (str/includes? ct "*"))))
+        annotate-c-type
+        (fn [ct]
+          (if (objc-ref-c-type? ct)
+            (str "__unsafe_unretained " ct)
+            ct))
         inner-structs
         (->> entries
              (filter #(seq (:payload %)))
              (map (fn [ce]
                     (let [fields (->> (:payload ce)
                                       (map (fn [f]
-                                             (str "    " (:c-type f) " "
+                                             (str "    " (annotate-c-type (:c-type f)) " "
                                                   (:name f) ";")))
                                       (str/join "\n"))]
                       (str "typedef struct {\n" fields "\n} "
