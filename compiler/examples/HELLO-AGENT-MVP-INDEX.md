@@ -187,15 +187,24 @@ c5e2f68 std.env + Int.to_string
 
 ## What's NOT in the MVP
 
-The full designed hello-agent (see [design/examples/hello-agent/hello-agent.cxc](../../design/examples/hello-agent/hello-agent.cxc)) needs several landings — REPL-verified 2026-09-03 as still missing. See [design/examples/hello-agent/STATUS.md](../../design/examples/hello-agent/STATUS.md) for the authoritative list; brief summary:
+Group A (language / codegen gaps) all landed 2026-09-03. The full
+designed hello-agent still needs one item — third-party plugin
+discovery — before it compiles end-to-end. See
+[design/examples/hello-agent/STATUS.md](../../design/examples/hello-agent/STATUS.md)
+for the authoritative list.
 
-- **A1.** Multi-line method body (`sig :- RetType` + indented body block)
-- **A2.** Tagged-variant codegen for reference-type payloads (ObjC ARC union restriction — Int payloads work, String payloads fail)
-- **A3.** `||: v is .case(let bind) : body` — payload destructure at `is` position
-- **A4.** Or-recovery on non-emit expressions (was 2d-iii(B))
-- **A5.** Immutable `List of T` ops — `.append(v)` / `.filter(pred)` returning new list; only mutating `.add` exists today
-- **A6.** `|>` inside lambda body — parser rejects; `|>` is statement-only
-- **A7.** Third-party plugin discovery (`.cxc-caps` manifest emission + resolver)
+**Landed 2026-09-03:**
+
+- **A1.** Multi-line method body (`sig :- RetType` + indented body block) — f221fe1
+- **A2.** Tagged-variant codegen for reference-type payloads (`__unsafe_unretained` in the tag union) — 44e1f75
+- **A3.** `|: v is .case(let bind)` — payload destructure at arm-head `is` position — 39a7577
+- **A4.** Or-recovery on non-emit expressions (was 2d-iii(B)) — e45dcfd
+- **A5.** Immutable `List of T` ops (`.append(v)` / `.filter(pred)`) — 2cc40f9
+- **A6.** `|>` inside lambda body — d2ca9df
+
+**Remaining:**
+
+- **A7.** Third-party plugin discovery (`.cxc-caps` manifest emission + resolver) — the aspirational `from com.acme.http_claude import Claude` has no discovery mechanism today; only first-party stdlib-in-prelude works.
 
 **Wrongly listed as gaps in prior versions of this file — actually landed** (REPL-verified 2026-09-03):
 
