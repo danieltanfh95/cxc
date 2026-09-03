@@ -185,7 +185,41 @@
                           :params      [{:name "block" :c-type "void (^)(id)"}]
                           :return-type "void"
                           :body        [{:node :raw-c
-                                         :text "for (id _cxc_e in _elements) { block(_cxc_e); }"}]}]
+                                         :text "for (id _cxc_e in _elements) { block(_cxc_e); }"}]}
+                         ;; A5 (2026-09-03) — immutable append.
+                         ;; Constructs a new _Cxc_ListOfT via
+                         ;; initWithelements: (which -arrayWithArray:
+                         ;; copies the source), then adds e on the copy
+                         ;; and returns the new instance. Caller-side
+                         ;; boxing wraps primitives before the id param
+                         ;; sees them (mirrors existing addWithe: shape).
+                         {:name        "appendWithe"
+                          :selector    "appendWithe:"
+                          :params      [{:name "e" :c-type "id"}]
+                          :return-type (str class-name " *")
+                          :body        [{:node :raw-c
+                                         :text (str class-name " *__r = "
+                                                    "[[" class-name " alloc] "
+                                                    "initWithelements:_elements]; "
+                                                    "[__r->_elements addObject:e]; "
+                                                    "return __r;")}]}
+                         ;; A5 — immutable filter. Iterates _elements,
+                         ;; applies the pred block, collects matches
+                         ;; into a fresh NSMutableArray, wraps in a new
+                         ;; _Cxc_ListOfT and returns it. Original list
+                         ;; is untouched.
+                         {:name        "filterWithpred"
+                          :selector    "filterWithpred:"
+                          :params      [{:name "pred" :c-type "BOOL (^)(id)"}]
+                          :return-type (str class-name " *")
+                          :body        [{:node :raw-c
+                                         :text (str "NSMutableArray *__buf = [NSMutableArray array]; "
+                                                    "for (id __e in _elements) { "
+                                                    "if (pred(__e)) [__buf addObject:__e]; } "
+                                                    class-name " *__r = "
+                                                    "[[" class-name " alloc] "
+                                                    "initWithelements:__buf]; "
+                                                    "return __r;")}]}]
                         (cond-> (into (vec forwarding-methods)
                                       (:methods stream-parts))
                           (contains? list-at-or-supported-element-types element-name)

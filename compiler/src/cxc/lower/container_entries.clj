@@ -206,7 +206,28 @@
                      methods       (cond-> [(container-method "add"
                                                               [{:name "e" :cxc-ty elem}] nil)
                                             (container-method "remove"
-                                                              [{:name "e" :cxc-ty elem}] nil)]
+                                                              [{:name "e" :cxc-ty elem}] nil)
+                                            ;; A5 (2026-09-03) — immutable
+                                            ;; append: returns a new
+                                            ;; _Cxc_ListOfT instance with e
+                                            ;; added. No per-element gating —
+                                            ;; append doesn't need typed
+                                            ;; unbox on the return side.
+                                            (container-method "append"
+                                                              [{:name "e" :cxc-ty elem}]
+                                                              class-name)
+                                            ;; A5 — immutable filter: takes
+                                            ;; a `x => bool` lambda, returns
+                                            ;; new _Cxc_ListOfT with only
+                                            ;; matching elements. Call-site
+                                            ;; special-cased in lower.clj
+                                            ;; (mirrors for_each pattern);
+                                            ;; the param cxc-ty is a placeholder
+                                            ;; since the arg-shape check is
+                                            ;; skipped by the special-case.
+                                            (container-method "filter"
+                                                              [{:name "pred" :cxc-ty elem}]
+                                                              class-name)]
                                      (contains? list-at-or-supported-element-types elem)
                                      (conj (container-method "at_or"
                                                              [{:name "i"        :cxc-ty "Int"}

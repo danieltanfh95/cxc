@@ -2114,7 +2114,7 @@
 
 ;; M1c — c-method-name / objc-method-selector moved to cxc.lower.selectors.
 
-(declare lower-for-each-call lambda-body-stmts unbox-prelude-for-element)
+(declare lower-for-each-call lower-filter-call lambda-body-stmts unbox-prelude-for-element)
 
 (defn- lower-method-call
   "`target.method(args)` dispatches on target type:
@@ -2143,6 +2143,15 @@
         for-each-with-lambda?
         (and list-cont?
              (= "for_each" method-name)
+             (= 1 (count args))
+             (= :lambda (get-in args [0 :value :node])))
+        ;; A5 (2026-09-03) — `xs.filter(x => body)` on a List container.
+        ;; Same shape as for_each: lambda body → ObjC block, unbox
+        ;; prelude for typed access to the element. Filter block
+        ;; returns BOOL from the body expression.
+        filter-with-lambda?
+        (and list-cont?
+             (= "filter" method-name)
              (= 1 (count args))
              (= :lambda (get-in args [0 :value :node])))
         method-info
@@ -2212,6 +2221,7 @@
         ordered-args
         (cond
           for-each-with-lambda? args
+          filter-with-lambda?   args
           method-info
           (mapv (fn [{:keys [name value]}] {:kind :positional :name name :value value})
                 (resolve-args-against-params
@@ -2223,6 +2233,8 @@
           :else args)]
     (if for-each-with-lambda?
       (lower-for-each-call target-lo target-ty (get-in args [0 :value]) ctx)
+      (if filter-with-lambda?
+        (lower-filter-call target-lo target-ty (get-in args [0 :value]) ctx)
       ;; F37 Landing 2 — `.as()` on a record with primitive-byte-eligible
       ;; fields dispatches to `<Record>_cxc_as_bytes(target)`. Fires
       ;; only when the user hasn't declared their own `as` method
@@ -2291,13 +2303,13 @@
             ;; and records pass through as-is.
             list-add-or-remove?
             (and list-cont?
-                 (contains? #{"add" "remove"} method-name)
+                 (contains? #{"add" "remove" "append"} method-name)
                  (= 1 (count arg-exprs)))
             arg-exprs
             (if list-add-or-remove?
               (let [elem-ty (infer-type (:value (first ordered-args)) ctx)]
                 (case elem-ty
-                  (:int :float)
+                  (:int :float :bool)
                   [{:node :objc-num-lit :kind :box :expr (first arg-exprs)}]
                   arg-exprs))
               arg-exprs)]
@@ -2710,7 +2722,7 @@
               msg-send))
 
           :else
-          (fail-user! "method call on non-record/non-atom target" call-node))))))))
+          (fail-user! "method call on non-record/non-atom target" call-node)))))))))
 
 (def ^:private statement-node-kinds
   #{:expr-stmt :emit :break-stmt :continue-stmt :while-stmt
@@ -2829,6 +2841,38 @@
      :args [{:node :objc-block-literal
              :params [{:name raw-param-name :c-type "id"}]
              :stmts (into (vec prelude) body-stmts)}]}))
+
+(defn- lower-filter-call
+  "A5 (2026-09-03) — special-case lowering for `xs.filter(x => body)`
+   on a List container atom. Same shape as for_each: build an ObjC
+   block from the lambda, unbox the id param to the element type,
+   lower the body with `x` bound in ctx. The block RETURNS the body
+   expression (BOOL). Class-side -filterWithpred: consumes the block
+   and returns a fresh _Cxc_ListOfT."
+  [target-lo target-ty lambda-node ctx]
+  (let [list-name        (:atom target-ty)
+        element-name     (:element-type (env/env-lookup ctx :atom-env list-name))
+        element-type-kw  (cxc-type->type-kw element-name
+                                            (:record-env ctx)
+                                            (:atom-env ctx)
+                                            (:enum-env ctx)
+                                            lambda-node)
+        user-param-name  (get-in lambda-node [:params 0 :name])
+        raw-param-name   "_cxc_e"
+        prelude          (unbox-prelude-for-element raw-param-name
+                                                    user-param-name
+                                                    element-type-kw)
+        body-ctx         (assoc-in ctx [:locals user-param-name] element-type-kw)
+        body-expr        (:body lambda-node)
+        body-lo          (lower-expr body-expr body-ctx)
+        return-stmt      {:node :return :value body-lo}]
+    {:node :objc-msg
+     :recv target-lo
+     :selector "filterWithpred:"
+     :args [{:node :objc-block-literal
+             :params [{:name raw-param-name :c-type "id"}]
+             :return-c-type "BOOL"
+             :stmts (into (vec prelude) [return-stmt])}]}))
 
 (defn- print-format-string [arg-type]
   (cond

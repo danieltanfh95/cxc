@@ -1186,6 +1186,15 @@
       (is (zero? exit))
       (is (= "[default] count 42\n[debug] n 7\n" stdout)))))
 
+(deftest end-to-end-list-append-filter
+  (testing "list-append-filter.cxc — A5 (2026-09-03) — immutable List ops. `.append(e)` returns a fresh _Cxc_ListOfT with e added, original untouched; `.filter(x => pred)` returns a fresh list with only matching elements via ObjC block dispatch. Verifies: (1) xs.count stays 5 after xs.append(6), ys.count=6; (2) ys[5]=6, xs[5]=-1 (proves independence); (3) evens=[2,4] from filter x%2==0; (4) large=[4,5,6] from ys.filter x>3; (5) filter lambda body types as Bool (return-c-type on the ObjC block literal disambiguates BOOL vs int)."
+    (let [{:keys [exit stdout]} (compile-and-run "list-append-filter")]
+      (is (zero? exit))
+      (is (= (str "xs.count:    5\nys.count:    6\nevens.count: 2\nlarge.count: 3\n"
+                  "ys[5]:       6\nxs[5]:       -1\nevens[0]:    2\nevens[1]:    4\n"
+                  "large[0]:    4\n")
+             stdout)))))
+
 (deftest end-to-end-console-hello
   (testing "console-hello.cxc — Layer 6 Step 5. Console prelude atom with `write(msg: String) -> Int` method wrapping the `native_console_write` FFI hatch (printf %s). Main is capability-provisioned (`def main(console: Console)`) and calls `console.write(\"hi\\n\")` in its `-> running do:`. Prints `hi` + newline."
     (let [{:keys [exit stdout]} (compile-and-run "console-hello")]

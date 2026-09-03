@@ -421,13 +421,19 @@
     (let [stmts    (str/join "\n" (map emit-stmt (:stmts node)))
           indented (indent-lines 4 stmts)
           params   (:params node)
+          ret      (:return-c-type node)
+          ;; A5 (2026-09-03) — optional explicit return type
+          ;; (`^BOOL(id x){...}`) for blocks whose call-site
+          ;; parameter type requires a specific block return type
+          ;; that clang won't infer from the last stmt (BOOL vs int
+          ;; is the common case). Absent → inferred.
           sig      (if (seq params)
-                     (str "^("
+                     (str "^" (or ret "") "("
                           (str/join ", "
                                     (map (fn [p] (str (:c-type p) " " (:name p)))
                                          params))
                           ")")
-                     "^")]
+                     (str "^" (or ret "")))]
       (str sig "{\n" indented "\n}"))
     :objc-cast       (str "(" (:c-type node) ")" (emit-expr (:expr node)))
     :objc-num-lit    (case (:kind node)
