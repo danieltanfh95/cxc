@@ -187,15 +187,26 @@ c5e2f68 std.env + Int.to_string
 
 ## What's NOT in the MVP
 
-The full designed hello-agent (see [design/examples/hello-agent/hello-agent.cxc](../../design/examples/hello-agent/hello-agent.cxc)) needs several language landings that were deliberately deferred:
+The full designed hello-agent (see [design/examples/hello-agent/hello-agent.cxc](../../design/examples/hello-agent/hello-agent.cxc)) needs several landings — REPL-verified 2026-09-03 as still missing. See [design/examples/hello-agent/STATUS.md](../../design/examples/hello-agent/STATUS.md) for the authoritative list; brief summary:
 
-- `List of T` container with `.append` / `.filter` / `.for_each` / `.length`
-- Closures for `.for_each(elem => body)`
-- Variant destructuring: `tc.action is .shell(cmd)` binding
-- `=>` field reassignment shorthand
-- `<expr> or T(binding): body` recovery on non-emit expressions (2d-iii(B))
-- Multi-arm transitions with rich `||:` guards on payload fields
-- `Path` distinct-type (NSString path methods available via `String.path_join/basename/dirname/extension` since 9baf551 — a Path newtype would give static-safety; deferred)
+- **A1.** Multi-line method body (`sig :- RetType` + indented body block)
+- **A2.** Tagged-variant codegen for reference-type payloads (ObjC ARC union restriction — Int payloads work, String payloads fail)
+- **A3.** `||: v is .case(let bind) : body` — payload destructure at `is` position
+- **A4.** Or-recovery on non-emit expressions (was 2d-iii(B))
+- **A5.** Immutable `List of T` ops — `.append(v)` / `.filter(pred)` returning new list; only mutating `.add` exists today
+- **A6.** `|>` inside lambda body — parser rejects; `|>` is statement-only
+- **A7.** Third-party plugin discovery (`.cxc-caps` manifest emission + resolver)
+
+**Wrongly listed as gaps in prior versions of this file — actually landed** (REPL-verified 2026-09-03):
+
+- Variant destructuring (`<: kind(field: let x):`) — works via both `<:` dispatch and `or T(field: let m):` recovery arms
+- `=>` field update — works as field-update-in-transition-body with atomic commit at end of `then:`
+- `List of T` container with `.for_each` / `.count` — landed; `.at_or` / `.contains` added this push (though `.append` / `.filter` (A5 above) still missing)
+
+**Design-deferred (no forcing consumer):**
+
+- `Path` distinct-type — String path helpers via `String.path_join/basename/dirname/extension` (9baf551) are the interim; Path newtype awaits a consumer that needs the type-level distinction
+- `Stream of T` inbound bindings — mechanism-invention-trap guard: waits for first real consumer
 
 ## Compiler-hardening this push
 
