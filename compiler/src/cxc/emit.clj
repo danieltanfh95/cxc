@@ -65,6 +65,15 @@
     ;; is dead code today; slice 2 flips locals and starts firing it.
     :c-optional-unwrap-value
     (str "(" (emit-expr (:inner node)) ").value")
+    ;; 2026-09-04 Path 1 slice 2 — envelope construction shapes. Nil
+    ;; literal → `(T){.present = 0}`; value literal → `(T){.present =
+    ;; 1, .value = <inner>}`. Used by `lower-let-stmt` when the LHS is
+    ;; a bare nullable primitive and the RHS is nil or a raw scalar.
+    :c-envelope-nil
+    (str "(" (:c-type node) "){.present = 0}")
+    :c-envelope-lit
+    (str "(" (:c-type node) "){.present = 1, .value = "
+         (emit-expr (:value node)) "}")
     ;; A3 — `:is-check` at expression position emits only the gate.
     ;; Binding decls are surfaced separately by the transition-branch
     ;; lowerer (which prepends them to the arm body); nothing at emit

@@ -1186,7 +1186,13 @@
    :type-kw directly."
   [call-node ctx]
   (let [dot         (:callee call-node)
-        target-ty   (infer-type (:target dot) ctx)
+        target-ty-raw (infer-type (:target dot) ctx)
+        ;; 2026-09-04 Path 1 slice 2 — envelope-transparency at
+        ;; type-inference: `.method()` on an envelope-typed target
+        ;; resolves the same method table as the raw inner type. Nil-
+        ;; receiver semantics (return nil without dispatching) lives at
+        ;; the lowering layer, not here.
+        target-ty   (unwrap-tk target-ty-raw)
         method-name (:field dot)]
     (cond
       ;; F37 Landing 2 — `.as() -> Bytes` on a record with primitive-only
