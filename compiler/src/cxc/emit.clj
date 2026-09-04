@@ -102,7 +102,13 @@
     ;; coalesce lowering today; a general-purpose expression form
     ;; also usable by any future landing needing conditional-value
     ;; semantics without a full `:c-if-chain` block.
-    :c-ternary       (str "(" (emit-expr (:cond node))
+    ;; 2026-09-04 Gap 6 — bool nil-punning at ternary cond, same
+    ;; discipline as :c-if-chain / :c-while. `-1` (sentinel nil)
+    ;; degrades to false in boolean context; standard 0/1 producers
+    ;; unaffected by the `> 0` wrap. `||:` multi-arm dispatch lowers
+    ;; into a right-fold of :c-ternary chains, so this reaches every
+    ;; guard in the chain.
+    :c-ternary       (str "(((" (emit-expr (:cond node)) ")) > 0"
                           " ? " (emit-expr (:then node))
                           " : " (emit-expr (:else node)) ")")
 
@@ -125,7 +131,15 @@
              "(__cxc_coal != nil) ? __cxc_coal : (" right-c "); })")
         :optional
         (str "({ __typeof__(" left-c ") __cxc_coal = (" left-c "); "
-             "(__cxc_coal.present) ? __cxc_coal.value : (" right-c "); })")))
+             "(__cxc_coal.present) ? __cxc_coal.value : (" right-c "); })")
+        ;; 2026-09-04 Gap 5 — sentinel primitive `??`. Use the
+        ;; type-specific IS_NIL macro (INT64_MIN / -1 / NaN) instead
+        ;; of pointer-comparison; `(INT64_MIN != nil)` in C would
+        ;; yield `true` and keep the sentinel value silently.
+        :primitive
+        (let [chk (:nil-check-macro node)]
+          (str "({ __typeof__(" left-c ") __cxc_coal = (" left-c "); "
+               chk "(__cxc_coal) ? (" right-c ") : __cxc_coal; })"))))
 
     ;; F39 L8 (spec §4.10.9) — nil-receiver dispatch fallback. When the
     ;; callee atom declares an `on_nil:` entry for the selector, the
@@ -157,6 +171,54 @@
           fallback-c (emit-expr (:fallback node))]
       (str "({ __typeof__(" recv-c ") __cxc_recv = (" recv-c "); "
            "(__cxc_recv != nil) ? " send-c " : (" fallback-c "); })"))
+
+    ;; 2026-09-04 Gap 6 — Kleene 3-valued `and` / `or` for nullable
+    ;; Bool operands. Preserves short-circuit on the dominant value
+    ;; (AND short-circuits on false, OR on true) so `x != nil and
+    ;; x.method()` doesn't fire the method on nil. When neither side
+    ;; short-circuits, either operand being nil (-1) yields nil,
+    ;; else both are true/false and the arithmetic C result stands.
+    :c-kleene-bool-op
+    (let [left-c  (emit-expr (:left  node))
+          right-c (emit-expr (:right node))
+          op      (:op node)
+          ;; AND short-circuits on 0 (false), yielding 0.
+          ;; OR  short-circuits on 1 (true),  yielding 1.
+          [sc-val fallback-val]
+          (case op
+            "and" ["0" "1"]
+            "or"  ["1" "0"])]
+      (str "({ __typeof__(" left-c ") __cxc_kl = (" left-c "); "
+           "(__cxc_kl == " sc-val ") ? " sc-val
+           " : ({ __typeof__(" right-c ") __cxc_kr = (" right-c "); "
+           "(__cxc_kr == " sc-val ") ? " sc-val
+           " : ((__cxc_kl == -1 || __cxc_kr == -1) ? -1 : " fallback-val "); }); })"))
+
+    ;; 2026-09-04 Gap 2 — method returning `T!` primitive invoked on
+    ;; a nullable atom receiver. Spec §3.6.1 says the `!` contract
+    ;; MUST hold; ObjC's nil-messaging silently returns 0/false/0.0
+    ;; for primitive returns on nil receivers, which would violate
+    ;; the contract undetected. Fire the warning-grade
+    ;; `cxc_nonnil_violation` diagnostic (same helper as L3 T!
+    ;; enforcement — stderr write, no abort) so the violation is
+    ;; loud, then let the ObjC nil-messaging produce its zero-value
+    ;; (matches L3's non-abort discipline).
+    :c-nonnil-return-guard
+    (let [recv-c    (emit-expr (:recv node))
+          send-node (:send node)
+          rebound   (case (:node send-node)
+                      :objc-msg (assoc send-node :recv
+                                       {:node :name :sym "__cxc_recv"})
+                      :field    (assoc send-node :target
+                                       {:node :name :sym "__cxc_recv"})
+                      send-node)
+          send-c    (emit-expr rebound)
+          label     (:site-label node)]
+      (str "({ __typeof__(" recv-c ") __cxc_recv = (" recv-c "); "
+           "if (__cxc_recv == nil) cxc_nonnil_violation("
+           "\"" (escape-c-string label) "\", "
+           "\"" (escape-c-string "receiver") "\"); "
+           send-c "; })"))
 
     ;; F39 L5b-ii-d — Optional operand feeding a `T!` value-typed
     ;; observation point (field write, ctor bind, method return). GNU
@@ -557,6 +619,7 @@
     ;; discards its value; the fallback is still evaluated but its result
     ;; is dropped — matches ObjC nil-message-return semantics).
     :c-on-nil-dispatch (str (emit-expr node) ";")
+    :c-nonnil-return-guard (str (emit-expr node) ";")
     :return   (str "return " (emit-expr (:value node)) ";")
     :assign   (str (emit-expr (:lhs node)) " = " (emit-expr (:rhs node)) ";")
     :var-decl (str (:c-type node) " " (:name node) " = " (emit-expr (:rhs node)) ";")

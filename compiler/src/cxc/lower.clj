@@ -1067,6 +1067,25 @@
                              [owner :field-index fld-name]))]
       (boolean (:nonnil? fld)))
 
+    :binop
+    ;; Comparisons and logical operators produce 0/1 in C, never the
+    ;; sentinel value. Recognizing this lets Kleene short-circuit
+    ;; upstream skip the wrap on `a == b`, `x and y`, etc. `and`/`or`
+    ;; themselves recurse — if either operand is nullable Bool, that
+    ;; recursion yields false and Kleene fires.
+    (let [op (:op expr)]
+      (cond
+        (contains? #{"==" "!=" "<" "<=" ">" ">=" "is"} op)
+        true
+        (contains? #{"and" "or"} op)
+        (and (expr-nonnil? (:left  expr) ctx)
+             (expr-nonnil? (:right expr) ctx))
+        :else false))
+
+    :unary
+    (or (= "!" (:op expr))                         ; boolean negation, 0/1
+        (expr-nonnil? (:expr expr) ctx))
+
     false))
 
 (defn- infer-binop-type
@@ -2471,12 +2490,22 @@
                 (fail-user! (str "2i: `Int.to_string()` takes no args, "
                                  "got " (count arg-exprs))
                             call-node))
-              {:node      :ffi-call
-               :name      "cxc_int_to_string"
-               :args      [target-lo]
-               :emit-c-fn (fn [[n]]
-                            (str "[NSString stringWithFormat:@\"%lld\", "
-                                 "(long long)(" n ")]"))})
+              ;; 2026-09-04 Gap 8 — sentinel-aware Int.to_string().
+              ;; INT64_MIN (Int nil) renders as "nil" instead of the
+              ;; raw wire value `-9223372036854775808`. Applies
+              ;; uniformly across widths — the type-kw's IS_NIL
+              ;; macro checks the correct sentinel.
+              (let [chk (primitive-nil-check target-ty)]
+                {:node      :ffi-call
+                 :name      "cxc_int_to_string"
+                 :args      [target-lo]
+                 :emit-c-fn (fn [[n]]
+                              (if chk
+                                (str "(" chk "(" n ") ? @\"nil\" "
+                                     ": [NSString stringWithFormat:@\"%lld\", "
+                                     "(long long)(" n ")])")
+                                (str "[NSString stringWithFormat:@\"%lld\", "
+                                     "(long long)(" n ")]")))}))
 
           ;; 2026-09-03 — `Int.abs()` / `Int.min(other)` / `Int.max(other)`.
           ;; Compile-time ternary expansion; no helper call. `abs()` is
@@ -2488,13 +2517,33 @@
               (fail-user! (str "Int." method-name " takes " want-args
                                " arg(s), got " (count arg-exprs))
                           call-node))
-            {:node      :ffi-call
-             :name      (str "cxc_int_" method-name)
-             :args      (into [target-lo] arg-exprs)
-             :emit-c-fn (case method-name
-                          "abs" (fn [[n]]     (str "((" n ") < 0 ? -(" n ") : (" n "))"))
-                          "min" (fn [[a b]]   (str "((" a ") < (" b ") ? (" a ") : (" b "))"))
-                          "max" (fn [[a b]]   (str "((" a ") > (" b ") ? (" a ") : (" b "))")))})
+            ;; 2026-09-04 Gap 8 — sentinel-aware: nil receiver
+            ;; propagates nil through .abs()/.min()/.max(). Raw
+            ;; formulas would misbehave: `abs(INT64_MIN)` is UB in C
+            ;; (-INT64_MIN overflows), `min(nil, 5)` accidentally
+            ;; picks INT64_MIN (correct by luck), `max(nil, 5)`
+            ;; picks 5 (wrong — should propagate nil).
+            (let [chk (primitive-nil-check target-ty)
+                  base-emit (case method-name
+                              "abs" (fn [[n]]     (str "((" n ") < 0 ? -(" n ") : (" n "))"))
+                              "min" (fn [[a b]]   (str "((" a ") < (" b ") ? (" a ") : (" b "))"))
+                              "max" (fn [[a b]]   (str "((" a ") > (" b ") ? (" a ") : (" b "))")))
+                  sentinel  (primitive-nil-sentinel target-ty)]
+              {:node      :ffi-call
+               :name      (str "cxc_int_" method-name)
+               :args      (into [target-lo] arg-exprs)
+               :emit-c-fn (if (and chk sentinel)
+                            (case method-name
+                              "abs" (fn [args]
+                                      (str "(" chk "(" (first args) ") "
+                                           "? " sentinel " : "
+                                           (base-emit args) ")"))
+                              (fn [args]
+                                (str "((" chk "(" (first args) ") || "
+                                     chk "(" (second args) ")) "
+                                     "? " sentinel " : "
+                                     (base-emit args) ")")))
+                            base-emit)}))
 
           ;; 2026-09-03 — `Bool.to_string()` — literal "true"/"false".
           (and (= :bool target-ty)
@@ -2503,11 +2552,18 @@
                 (fail-user! (str "Bool.to_string() takes no args, got "
                                  (count arg-exprs))
                             call-node))
+              ;; 2026-09-04 Gap 6 — sentinel-aware. `-1` (nil) renders
+              ;; as "nil", `1` (true) as "true", `0` (false) as "false".
+              ;; Pre-Gap-6 emit assumed 0/1 storage and used C's raw
+              ;; truthiness, which would silently render nil-Bool as
+              ;; "true" (since -1 is truthy in C).
               {:node      :ffi-call
                :name      "cxc_bool_to_string"
                :args      [target-lo]
                :emit-c-fn (fn [[b]]
-                            (str "((" b ") ? @\"true\" : @\"false\")"))})
+                            (str "({ int __cxc_b = (" b "); "
+                                 "(__cxc_b == -1) ? @\"nil\" "
+                                 ": ((__cxc_b) ? @\"true\" : @\"false\"); })"))})
 
           ;; 2026-09-03 — String helpers. All zero- or one-arg; nil-
           ;; tolerant via ObjC nil-messaging on the receiver (nil recv
@@ -2802,7 +2858,13 @@
                 ;; explicit on_nil: entry exists → wrap with a
                 ;; sentinel-fallback dispatch so `nil_atom.n()` collapses
                 ;; to CXC_INT_NIL, not 0.
+                ;; Method info stores raw `:cxc-return-ty-node`; observables
+                ;; store the raw type as `:return-type` on `o` (parser sets
+                ;; it whenever `:- T` is present). Both preserve the
+                ;; `:type-nonnil` wrap needed to decide the T!-return
+                ;; branch below.
                 ret-node    (or (:cxc-return-ty-node m)
+                                (:return-type o)
                                 (when-let [ty-name (:cxc-return-ty m)]
                                   {:node :type-ref :name ty-name}))
                 ret-nonnil? (= :type-nonnil (:node ret-node))
@@ -2820,13 +2882,43 @@
                               (and o (not m)) (:type-kw o))
                 ret-sentinel (when (and ret-tk (not ret-nonnil?))
                                (primitive-nil-sentinel ret-tk))
-                recv-nonnil? (expr-nonnil? (:target dot) ctx)]
+                recv-nonnil? (expr-nonnil? (:target dot) ctx)
+                ;; 2026-09-04 Gap 2 — a `T!` primitive return on a
+                ;; nullable receiver is a spec §3.6.1 nonnil contract
+                ;; violation: ObjC nil-messaging would silently return
+                ;; 0/false/0.0 for the sentinel primitive types, but
+                ;; the `!` promises never-nil. Emit a runtime check
+                ;; that fires `cxc_nonnil_violation` when receiver is
+                ;; nil. Only for sentinel-lifted primitives (Int/Bool/
+                ;; Float/Double + widths) — non-primitive `!` returns
+                ;; already have their own runtime-binding checks.
+                t-bang-primitive-ret?
+                (and (or m o) ret-nonnil?
+                     (let [inner (:inner ret-node)
+                           ty    (case (:node inner)
+                                   :type-ref (:name inner)
+                                   nil)]
+                       (and ty
+                            (try
+                              (primitive-nil-sentinel
+                                (cxc-type->type-kw
+                                  ty (:record-env ctx) (:atom-env ctx)
+                                  (:enum-env ctx) call-node))
+                              (catch Exception _ nil)))))]
             (cond
               on-nil-expr
               {:node     :c-on-nil-dispatch
                :recv     target-lo
                :send     msg-send
                :fallback (lower-expr on-nil-expr ctx)}
+
+              (and t-bang-primitive-ret? (not recv-nonnil?))
+              {:node       :c-nonnil-return-guard
+               :recv       target-lo
+               :send       msg-send
+               :site-label (str "atom `" atom-name "` method `"
+                                method-name "` non-null primitive return "
+                                "called on nullable receiver")}
 
               (and ret-sentinel (not recv-nonnil?))
               {:node     :c-on-nil-dispatch
@@ -3214,12 +3306,31 @@
                      :enum-name enum-name
                      :case-name case-nm})
 
-                  ;; F39 L6 — `??` coalesce (reference-nullable case).
+                  ;; F39 L6 — `??` coalesce. Two modes today:
+                  ;;   :reference — pointer / id / class instance; guard
+                  ;;                is `t != nil`.
+                  ;;   :primitive — 2026-09-04 Gap 5. Sentinel-lifted
+                  ;;                primitive (Int/Bool/Float/Double +
+                  ;;                widths). Guard is the type-specific
+                  ;;                CXC_*_IS_NIL macro; raw `!= nil`
+                  ;;                would coerce the sentinel value to
+                  ;;                pointer-vs-integer compare and yield
+                  ;;                wrong answers (e.g. INT64_MIN != 0
+                  ;;                is true, so `ni ?? 100` would keep
+                  ;;                the sentinel).
                   (= "??" (:op node))
-                  {:node  :c-coalesce
-                   :mode  :reference
-                   :left  (lower-expr (:left node)  ctx)
-                   :right (lower-expr (:right node) ctx)}
+                  (let [lt        (infer-type (:left node) ctx)
+                        chk-macro (primitive-nil-check lt)]
+                    (if chk-macro
+                      {:node             :c-coalesce
+                       :mode             :primitive
+                       :nil-check-macro  chk-macro
+                       :left             (lower-expr (:left node)  ctx)
+                       :right            (lower-expr (:right node) ctx)}
+                      {:node  :c-coalesce
+                       :mode  :reference
+                       :left  (lower-expr (:left node)  ctx)
+                       :right (lower-expr (:right node) ctx)}))
 
                   ;; 2026-09-02 — `String + String` concatenation.
                   ;; Emits `[(left ?: @"") stringByAppendingString:
@@ -3446,6 +3557,33 @@
                         (if (= "==" (:op node))
                           eq
                           {:node :unary :op "!" :expr eq}))
+                      ;; 2026-09-04 Gap 6 — `and`/`or` on nullable
+                      ;; Bool operands lowers to a Kleene 3-valued
+                      ;; short-circuit expression. Truth tables:
+                      ;;   unknown AND true    = unknown
+                      ;;   unknown AND false   = false
+                      ;;   unknown AND unknown = unknown
+                      ;;   unknown OR  true    = true
+                      ;;   unknown OR  false   = unknown
+                      ;;   unknown OR  unknown = unknown
+                      ;; Consistent with arithmetic nil-propagation:
+                      ;; sentinel flows through the operator unless the
+                      ;; short-circuit dominant value fires. Both sides
+                      ;; proven non-null? skip Kleene and use raw C
+                      ;; `&&` / `||` (no wrap, no perf cost). `lt` / `rt`
+                      ;; in the enclosing `:else` binding are set only
+                      ;; for cmp?; recompute here for bool-op.
+                      (and (contains? #{"and" "or"} (:op node))
+                           (let [andor-lt (infer-type (:left node)  ctx)
+                                 andor-rt (infer-type (:right node) ctx)]
+                             (and (= :bool andor-lt) (= :bool andor-rt)
+                                  (not (and (expr-nonnil? (:left node)  ctx)
+                                            (expr-nonnil? (:right node) ctx))))))
+                      {:node  :c-kleene-bool-op
+                       :op    (:op node)
+                       :left  (lower-expr (:left node)  ctx)
+                       :right (lower-expr (:right node) ctx)}
+
                       :else
                       {:node  :binop
                        :op    (case (:op node)
