@@ -2445,7 +2445,44 @@
                   "nested records / atoms / containers land in later "
                   "landings.")
              call-node)))
-        (let [arg-exprs (mapv #(lower-expr (:value %) ctx) ordered-args)
+        (let [arg-exprs-raw (mapv #(lower-expr (:value %) ctx) ordered-args)
+            ;; 2026-09-04 Path 1 slice 8-B — envelope-to-raw unwrap
+            ;; at method-dispatch arg-pass. Under slice 2e locals are
+            ;; envelope-typed but method params are still compiled
+            ;; raw; passing envelope->raw would fail at C compile
+            ;; ("sending _Cxc_Optional_<T> to parameter of incompatible
+            ;; type"). This pass detects that mismatch and injects a
+            ;; runtime presence-check + `.value` unwrap via the
+            ;; existing L5b-ii-d shape (`:c-value-nonnil-unwrap` —
+            ;; warning-grade `cxc_nonnil_violation` on absent, no
+            ;; abort; matches field-write discipline). Aligned with
+            ;; user-params by position; skipped for the self slot
+            ;; and for prelude synth methods that don't expose
+            ;; user-params.
+            target-display-name
+            (cond
+              (and (map? target-ty) (:record target-ty)) (:record target-ty)
+              (and (map? target-ty) (:atom   target-ty)) (:atom   target-ty)
+              (keyword? target-ty)                       (name   target-ty)
+              :else                                      (pr-str target-ty))
+            arg-exprs
+            (if (and user-params
+                     (= (count user-params) (count ordered-args))
+                     (= (count user-params) (count arg-exprs-raw)))
+              (mapv (fn [i arg-lo param]
+                      (let [arg-tk (infer-type (:value (nth ordered-args i))
+                                               ctx)]
+                        (if (optional-tk? arg-tk)
+                          {:node  :c-value-nonnil-unwrap
+                           :inner arg-lo
+                           :site  (str "method call `" target-display-name
+                                       "." method-name "` arg")
+                           :name  (or (:name param) (str "arg" i))}
+                          arg-lo)))
+                    (range (count arg-exprs-raw))
+                    arg-exprs-raw
+                    user-params)
+              arg-exprs-raw)
             ;; Audit F44 — List container's `add`/`remove` take the
             ;; element as `id`, so primitive callers need boxing at
             ;; the call site. Element type comes from the container's

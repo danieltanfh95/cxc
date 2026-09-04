@@ -2482,13 +2482,21 @@
                   "dead.get_n() == 0: false\n")
              stdout)))))
 
+(deftest end-to-end-nil-lifting-method-arg
+  (testing "nil-lifting-method-arg.cxc — 2026-09-04 Path 1 slice 8-B: envelope-typed local arg passed to a method whose param compiles raw. Pre-slice-8-B, `let n: Int = 21; d.scale(n)` failed at C compile with `sending _Cxc_Optional_Int64 to parameter of incompatible type int64_t`. Post-slice-8-B: envelope arg is auto-unwrapped via `:c-value-nonnil-unwrap` (existing L5b-ii-d shape — warning-grade `cxc_nonnil_violation` on absent, `.value` taken either way, no abort). Method runs with the unwrapped value; the caller's arithmetic gets envelope-typed result via `:c-optional-binop`."
+    (let [{:keys [exit stdout]} (compile-and-run "nil-lifting-method-arg")]
+      (is (zero? exit))
+      (is (= "21 * 2 == 42: true\n" stdout)))))
+
 (deftest end-to-end-nil-lifting-uint
-  (testing "nil-lifting-uint.cxc — 2026-09-04 Path 1 slice 12: `UInt` widths get envelope storage (no sentinel exists for UInt, so pre-Path-1 the case was silently unsupported). `let n: UInt32 = 42` lifts to `_Cxc_Optional_UInt32 {.present = 1, .value = 42}`; `let n: UInt32 = nil` produces `{.present = 0}`. Comparisons against nil check `.present`; comparisons against 0 unwrap `.value`."
+  (testing "nil-lifting-uint.cxc — 2026-09-04 Path 1 slice 12: `UInt` widths (UInt8 / UInt32 / UInt64) all get envelope storage. UInt has no natural sentinel value (the full unsigned range is meaningful data), so pre-Path-1 nullable UInt locals were silently unsupported. Under Path 1 envelope: `let n: UInt<N> = 42` lifts to `_Cxc_Optional_UInt<N> {.present = 1, .value = 42}`; `let n: UInt<N> = nil` produces `{.present = 0}`. Comparisons against nil check `.present`; comparisons against 0 unwrap `.value`."
     (let [{:keys [exit stdout]} (compile-and-run "nil-lifting-uint")]
       (is (zero? exit))
       (is (= (str "42 == nil: false\n"
                   "nil == nil: true\n"
-                  "42 == 0: false\n")
+                  "42 == 0: false\n"
+                  "u8 7 == nil: false\n"
+                  "u64 nil == nil: true\n")
              stdout)))))
 
 (deftest end-to-end-nil-lifting-bool-truthy

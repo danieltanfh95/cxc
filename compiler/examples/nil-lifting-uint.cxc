@@ -5,8 +5,12 @@ def main:
         then:
             let a: UInt32 = 42
             let b: UInt32 = nil
+            let c: UInt8  = 7
+            let d: UInt64 = nil
 
             console.write("42 == nil: " + (a == nil).to_string())
             console.write("nil == nil: " + (b == nil).to_string())
             console.write("42 == 0: " + (a == 0).to_string())
+            console.write("u8 7 == nil: " + (c == nil).to_string())
+            console.write("u64 nil == nil: " + (d == nil).to_string())
     -> end
