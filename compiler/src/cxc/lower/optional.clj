@@ -13,6 +13,21 @@
    built. No lowering-pass helpers touch this file."
   (:require [cxc.type-kw :refer [cxc-type->c optional-type-name]]))
 
+;; 2026-09-04 Path 1 slice 2b — primitive names whose envelope
+;; typedef must be available whenever Path 1 flips a nullable-
+;; primitive local to `_Cxc_Optional_<T>` storage. Unconditional
+;; inclusion is cheap (each typedef is a two-field struct) and
+;; keeps slice 2d's storage-flip a one-line change to lower-let-stmt
+;; without requiring a local-scan pass here.
+(def ^:private primitive-envelope-names
+  ;; Canonical width names only — `Int` aliases `Int64` per §3.1 and
+  ;; both mangle to `_Cxc_Optional_Int64`; including both produces
+  ;; duplicate typedefs. `Double` = 64-bit IEEE 754; `Float` = 32-bit.
+  #{"Int8" "Int16" "Int32" "Int64"
+    "UInt8" "UInt16" "UInt32" "UInt64"
+    "Float" "Double"
+    "Bool"})
+
 (defn collect-optional-types
   "L5b-ii-b (2026-08-22): scan record + atom envs for fields whose
    storage was flipped to `_Cxc_Optional_<T>` (i.e. `:optional? true`)
@@ -21,23 +36,34 @@
    field lands storage. Returned names feed `synth-optional-typedefs`.
 
    Atom envs share the same fields shape when the atom has a
-   data-section — those get their fields via the same helper."
+   data-section — those get their fields via the same helper.
+
+   2026-09-04 Path 1 slice 2b — unconditionally seeds the primitive
+   envelope typedefs so slice 2d's storage flip finds them already
+   declared. Additive: existing field-set semantics unchanged."
   [record-env atom-env _enum-env]
-  (let [rec-fields  (mapcat :fields (vals record-env))
+  (let [;; `Int` is a prelude alias for `Int64`; both mangle to
+        ;; `_Cxc_Optional_Int64`, so a field declared `Int` and
+        ;; primitive-envelope-names' `Int64` would produce duplicate
+        ;; typedefs. Canonicalize on the way in.
+        canonical   #(if (= "Int" %) "Int64" %)
+        rec-fields  (mapcat :fields (vals record-env))
         atom-fields (mapcat (fn [info]
                               (or (:fields info) []))
                             (vals atom-env))
         field-set   (into #{}
                           (comp (filter :optional?)
-                                (map :cxc-ty))
-                          (concat rec-fields atom-fields))]
-    ;; F39 L5b-ii-c — ord binops (`x.n > 0`) on Optional operands produce
-    ;; Optional<Bool>, which needs the `_Cxc_Optional_Bool` typedef even
-    ;; when no field is declared Bool. Cheap to include unconditionally
-    ;; whenever any Optional field exists.
-    (if (seq field-set)
-      (conj field-set "Bool")
-      field-set)))
+                                (map :cxc-ty)
+                                (map canonical))
+                          (concat rec-fields atom-fields))
+        ;; F39 L5b-ii-c — ord binops (`x.n > 0`) on Optional operands
+        ;; produce Optional<Bool>, which needs the `_Cxc_Optional_Bool`
+        ;; typedef even when no field is declared Bool. Cheap to
+        ;; include unconditionally whenever any Optional field exists.
+        with-bool   (if (seq field-set)
+                      (conj field-set "Bool")
+                      field-set)]
+    (into with-bool primitive-envelope-names)))
 
 (defn synth-optional-typedef
   "Produce a `:c-struct` for `_Cxc_Optional_<T>`. Layout is presence-
