@@ -105,6 +105,7 @@
              :refer [primitive-c-type cxc-type->c base-type-name
                      list-container-class-name cxc-type->type-kw
                      int-family? float-family? numeric-family? int-bit-width
+                     primitive-nil-sentinel primitive-nil-check
                      type-kw->c-type
                      optional-tk? unwrap-tk type-kw->cxc-name-str
                      optional-type-name]]
@@ -1019,6 +1020,55 @@
 
 ;; M1b — `optional-tk?` and `unwrap-tk` moved to cxc.type-kw.
 
+(defn- expr-nonnil?
+  "2026-09-04 — conservative compile-time non-null check on a raw
+   parser-AST expression node. Returns true when the expression is
+   provably non-nil at compile time: literal ints/floats/strings/bools,
+   `let x: T! = ...` bindings tracked in `:locals-nonnil?`, and self-
+   field accesses where the field's declared type is wrapped in
+   `:type-nonnil`. Everything else conservatively returns false. Used
+   by the primitive nil-propagating binop decision to skip the runtime
+   nil-guard when the compiler can prove neither operand can be nil
+   at the sentinel value."
+  [expr ctx]
+  (case (:node expr)
+    (:lit-int :lit-float :lit-string :lit-bool)
+    true
+
+    :ident
+    (let [nm (:name expr)]
+      (or (contains? (get ctx :locals-nonnil? #{}) nm)
+          ;; F5/F33 method + transition bodies stash the owning atom's
+          ;; fields under `:self-fields` so bare-ident data-field reads
+          ;; resolve. `fields-from-data-section` populates `:nonnil?`
+          ;; from the declared `Int!` wrap.
+          (boolean (:nonnil? (get (:self-fields ctx) nm)))))
+
+    :call
+    (let [callee (:callee expr)]
+      (and (= :ident (:node callee))
+           (or (contains? (:atom-env   ctx) (:name callee))
+               (contains? (:record-env ctx) (:name callee)))))
+
+    :dot
+    (let [tgt      (:target expr)
+          fld-name (:field expr)
+          ;; F5 method lowering stores `self` in :locals as
+          ;; `{"self" {:atom <atom-name>}}`. Recover the owning atom
+          ;; and consult its :field-index for the raw field record
+          ;; (`fields-from-data-section` populates `:nonnil?` from the
+          ;; declared `:type-nonnil` wrap).
+          self-info (get (:locals ctx) "self")
+          owner    (and (= :self (:node tgt))
+                        (map? self-info)
+                        (:atom self-info))
+          fld      (when owner
+                     (get-in (:atom-env ctx)
+                             [owner :field-index fld-name]))]
+      (boolean (:nonnil? fld)))
+
+    false))
+
 (defn- infer-binop-type
   [{:keys [op left right]} ctx]
   ;; A3 (2026-09-03) — `x is <variant-pattern>` is always :bool;
@@ -1316,6 +1366,14 @@
       (fail-nyi! (str "FL-7: `" (:outer ty-node) " of ...` unsupported in "
                       "foreign signature position (only `Ptr of T` at v1.0)")
                  site))
+    ;; 2026-09-04 — `T!` at FFI position (either user-written or auto-
+    ;; wrapped by parse's `wrap-ffi-primitives-nonnil`). Unwrap and
+    ;; recurse; `T!` at boundary opts out of sentinel-lifting, so the
+    ;; type-kw is the plain inner. The `!` semantics matter at the cxc
+    ;; call site (return isn't wrapped in nil-propagation), not at
+    ;; FFI-signature inference.
+    :type-nonnil
+    (foreign-type-node->tk (:inner ty-node) ctx site)
     (fail-nyi! (str "FL-3: unknown foreign type-node kind " (:node ty-node))
                site)))
 
@@ -2034,13 +2092,27 @@
    by the runtime linker rather than explicitly constructed at the
    call site. Currently: phantom caps (SystemPanic, ...) plus `Plugin`
    (R11 sole FFI capability; auto-provisioned from the enclosing
-   module's plugin marker at construction time).
+   module's plugin marker at construction time), plus prelude
+   capability atoms (Http, Json, Env, Console, Args, Time, Random,
+   Hash, FileSystem, Subprocess) so user-defined capability atoms
+   composing them (e.g. `def Claude: use http: Http`) don't force
+   the caller to hoist those slots up to every construction site.
 
    Used by `lower-atom-ctor` to auto-fill missing ctor-arg values for
    these types before `resolve-args-against-params` runs — closes the
-   depth-2+ case that F50's main-bootstrap handles at depth-1."
+   depth-2+ case that F50's main-bootstrap handles at depth-1.
+
+   A7 (2026-09-03) — prelude caps join the auto-provision set so
+   user-authored capability atoms shipped via a plugin (`def Claude:
+   use http: Http`) construct cleanly without demanding caller-hoisted
+   slots at every construction site. Composition without ceremony is
+   what makes the plugin model usable end-to-end."
   [ty-name]
-  (or (phantom-atom-name? ty-name) (= "Plugin" ty-name)))
+  (or (phantom-atom-name? ty-name)
+      (= "Plugin" ty-name)
+      (contains? #{"Http" "Json" "Env" "Console" "Args"
+                   "Time" "Random" "Hash" "FileSystem" "Subprocess"}
+                 ty-name)))
 
 (defn- lower-atom-ctor
   "`X(a: 1, b: 2)` → ObjC init call. With no ctor params, emits plain
@@ -2718,13 +2790,51 @@
                 ;; the emit shape (:c-on-nil-dispatch), matching L6-ref
                 ;; and L5b-ii-d's single-eval patterns for side-effecting
                 ;; receivers (`Counter().other.method()` chains).
-                on-nil-expr (get-in atom-entry [:on-nil-entries method-name])]
-            (if on-nil-expr
+                on-nil-expr (get-in atom-entry [:on-nil-entries method-name])
+                ;; 2026-09-04 — implicit sentinel fallback for primitive-
+                ;; returning calls on nullable atom receivers. ObjC's
+                ;; nil-messaging returns zero-value primitives (0, false,
+                ;; 0.0) which collide with legitimate non-nil values in
+                ;; the sentinel scheme. When the callee returns a
+                ;; sentinel-lifted primitive (Int/Bool/Float/Double + width
+                ;; variants), the receiver isn't proven non-nil at
+                ;; compile time, the return isn't `T!`-declared, and no
+                ;; explicit on_nil: entry exists → wrap with a
+                ;; sentinel-fallback dispatch so `nil_atom.n()` collapses
+                ;; to CXC_INT_NIL, not 0.
+                ret-node    (or (:cxc-return-ty-node m)
+                                (when-let [ty-name (:cxc-return-ty m)]
+                                  {:node :type-ref :name ty-name}))
+                ret-nonnil? (= :type-nonnil (:node ret-node))
+                ret-tk      (cond
+                              (and m ret-node (not ret-nonnil?))
+                              (try
+                                (cxc-type->type-kw
+                                  (case (:node ret-node)
+                                    :type-ref (:name ret-node)
+                                    :type-of  (:outer ret-node)
+                                    nil)
+                                  (:record-env ctx) (:atom-env ctx)
+                                  (:enum-env ctx) call-node)
+                                (catch Exception _ nil))
+                              (and o (not m)) (:type-kw o))
+                ret-sentinel (when (and ret-tk (not ret-nonnil?))
+                               (primitive-nil-sentinel ret-tk))
+                recv-nonnil? (expr-nonnil? (:target dot) ctx)]
+            (cond
+              on-nil-expr
               {:node     :c-on-nil-dispatch
                :recv     target-lo
                :send     msg-send
                :fallback (lower-expr on-nil-expr ctx)}
-              msg-send))
+
+              (and ret-sentinel (not recv-nonnil?))
+              {:node     :c-on-nil-dispatch
+               :recv     target-lo
+               :send     msg-send
+               :fallback {:node :name :sym ret-sentinel}}
+
+              :else msg-send))
 
           :else
           (fail-user! "method call on non-record/non-atom target" call-node)))))))))
@@ -3154,6 +3264,34 @@
                      :inner   (lower-expr opt-side ctx)
                      :negate? negate?})
 
+                  ;; 2026-09-04 — primitive nil-check. `x == nil` /
+                  ;; `x != nil` / `x is nil` where x is a primitive
+                  ;; type (Int / Int32 / Bool / Float / Double) → route
+                  ;; through the type-specific IS_NIL macro rather than
+                  ;; C's pointer-vs-integer comparison (which would
+                  ;; collapse Int nil to `x == 0`, indistinguishable
+                  ;; from a legitimate zero value). Returns Bool.
+                  (let [op (:op node)
+                        lt (infer-type (:left node)  ctx)
+                        rt (infer-type (:right node) ctx)
+                        left-nil?  (= :nil lt)
+                        right-nil? (= :nil rt)]
+                    (and (contains? #{"is" "==" "!="} op)
+                         (or (and (primitive-nil-check lt) right-nil?)
+                             (and (primitive-nil-check rt) left-nil?))))
+                  (let [op (:op node)
+                        lt (infer-type (:left node) ctx)
+                        prim-side (if (primitive-nil-check lt)
+                                    (:left node)
+                                    (:right node))
+                        prim-tk (infer-type prim-side ctx)
+                        macro   (primitive-nil-check prim-tk)
+                        negate? (= "!=" op)]
+                    {:node    :c-primitive-nil-check
+                     :macro   macro
+                     :inner   (lower-expr prim-side ctx)
+                     :negate? negate?})
+
                   ;; F39 L5b-ii-c (Sub-C) — Optional-binop dispatch.
                   ;; If either operand's inferred type is [:optional _],
                   ;; route to :c-optional-binop. Kinds:
@@ -3193,6 +3331,61 @@
                      :right-opt?         (optional-tk? rt)
                      :result-kind        kind
                      :result-opt-c-type  result-opt-c})
+
+                  ;; 2026-09-04 — primitive nil-propagating arithmetic
+                  ;; and ordering. `x + y` / `x < y` / etc. on SAME-TYPE
+                  ;; nullable primitives (Int + Int, Double + Double,
+                  ;; Bool and Bool). Nil propagates: if either operand
+                  ;; is nil the result is nil (of the appropriate result
+                  ;; type). Arithmetic result mirrors operand type
+                  ;; (Int + Int = Int-nil); ordering result is Bool-nil.
+                  ;;
+                  ;; Mixed-type arithmetic (Int + Double, Int + Int32)
+                  ;; falls through to the raw C binop for now — C's
+                  ;; implicit numeric promotion handles the type widening
+                  ;; and skipping the nil-guard preserves behavior for
+                  ;; time / duration math (Duration.millis / 1000.0 etc.)
+                  ;; while the sentinel model matures.
+                  (let [op (:op node)
+                        lt (infer-type (:left node)  ctx)
+                        rt (infer-type (:right node) ctx)
+                        arith-op? (contains? #{"+" "-" "*" "/" "%"} op)
+                        ord-op?   (contains? #{"<" "<=" ">" ">="} op)
+                        ;; skip the runtime nil-guard when the compiler can
+                        ;; prove both operands are non-nil (Int! locals,
+                        ;; T! self-fields, literals). Wrapping non-nullable
+                        ;; arithmetic in a ternary would be a pure perf
+                        ;; regression with no correctness gain.
+                        both-nonnil? (and (expr-nonnil? (:left node) ctx)
+                                          (expr-nonnil? (:right node) ctx))]
+                    (and (or arith-op? ord-op?)
+                         (primitive-nil-check lt)
+                         (primitive-nil-check rt)
+                         (= lt rt)
+                         (not both-nonnil?)))
+                  (let [op (:op node)
+                        lt (infer-type (:left node) ctx)
+                        arith-op? (contains? #{"+" "-" "*" "/" "%"} op)
+                        result-sentinel (if arith-op?
+                                          (primitive-nil-sentinel lt)
+                                          "CXC_BOOL_NIL")
+                        check-macro (primitive-nil-check lt)
+                        ;; per-operand guard elision: an operand proven
+                        ;; non-nil at compile time doesn't need the
+                        ;; runtime check. Elides the tautological
+                        ;; `CXC_INT_IS_NIL((int64_t)1)` warning on
+                        ;; `n + 1` and shaves a compare per literal.
+                        left-check?  (not (expr-nonnil? (:left node)  ctx))
+                        right-check? (not (expr-nonnil? (:right node) ctx))]
+                    {:node             :binop
+                     :op               op
+                     :left             (lower-expr (:left node) ctx)
+                     :right            (lower-expr (:right node) ctx)
+                     :nil-propagate?   true
+                     :nil-check-macro  check-macro
+                     :nil-check-left?  left-check?
+                     :nil-check-right? right-check?
+                     :nil-sentinel     result-sentinel})
 
                   ;; F37: record-typed `==` / `!=` reroutes through the
                   ;; synthesized `<Record>_cxc_equals` free function.
@@ -4836,7 +5029,15 @@
                                (:enum-env ctx)
                                (:module-map ctx))
                   (type-kw->c-type tk expr))
-        rhs-lo  (lower-expr expr ctx)
+        rhs-lo0 (lower-expr expr ctx)
+        ;; 2026-09-04 — primitive nil-lifting: when the RHS is bare
+        ;; `nil` and the LHS has a primitive annotation, tag the nil
+        ;; with the target type-kw so emit produces the sentinel
+        ;; constant (`CXC_INT_NIL`) instead of the object nil literal.
+        rhs-lo  (if-let [sentinel (and (= :nil (:node rhs-lo0))
+                                       (primitive-nil-sentinel tk))]
+                  (assoc rhs-lo0 :sentinel sentinel)
+                  rhs-lo0)
         arms    (:arms node)
         arms'   (when (seq arms)
                   (mapv (fn [arm]
@@ -4851,7 +5052,13 @@
                    :rhs    rhs-lo
                    :arms   (lower-or-arms arms' ctx node)}
                   {:node :var-decl :name (:name node) :c-type ct :rhs rhs-lo})]
-    [decl (update ctx :locals assoc (:name node) tk)]))
+    [decl (cond-> (update ctx :locals assoc (:name node) tk)
+            ;; 2026-09-04 — track `let x: T! = ...` so downstream
+            ;; nil-propagation knows `x` is guaranteed non-null and
+            ;; skips the nil-guard wrapper in arithmetic that touches
+            ;; it. Bare `T` (nullable) doesn't add to the set.
+            (and ann (= :type-nonnil (:node ann)))
+            (update :locals-nonnil? (fnil conj #{}) (:name node)))]))
 
 (defn- lower-body-stmts
   "Lower a sequence of statements, threading ctx so an F18 L1

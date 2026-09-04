@@ -475,7 +475,9 @@ def MyShim:
     (is (= "libc"       (:library deflt)))
     (is (= "puts"       (:symbol deflt)))
     (is (= :symbol      (:sig-kind deflt)))
-    (is (= {:node :type-ref :name "Int"} (:signature deflt)))
+    (is (= {:node :type-nonnil :inner {:node :type-ref :name "Int"}}
+           (:signature deflt))
+        "2026-09-04 — FFI-position `Int` defaults to `Int!` (non-null); the parser wraps bare primitive :type-refs at foreign-signature positions so the returned wire value opts out of sentinel-lifting.")
     (testing "preserves the original :call for downstream diagnostics"
       (is (= :call (get-in deflt [:orig-node :node]))))))
 
@@ -947,9 +949,12 @@ def MyAtom:
                                  [:foreign-blocks]))
         sym      (first (filter #(= :symbol (:kind %)) entries))
         fields   (get-in sym [:signature :args :fields])]
-    (is (= "Int32"  (get-in (nth fields 0) [:type :name])))
+    ;; 2026-09-04 — FFI-position primitives (Int32/Int64/Bool/…) now
+    ;; default to non-null; parse wraps them in `:type-nonnil`.
+    ;; Non-primitive alias slots (Any / NSURLSession) unchanged.
+    (is (= "Int32"  (get-in (nth fields 0) [:type :inner :name])))
     (is (= "Any"    (get-in (nth fields 1) [:type :name])))
-    (is (= "Int32"  (get-in sym [:signature :return :name]))
+    (is (= "Int32"  (get-in sym [:signature :return :inner :name]))
         "non-alias primitives survive; alias slot alone is collapsed")))
 
 (deftest fl-12-is-idempotent

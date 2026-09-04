@@ -1,0 +1,19 @@
+def main:
+    use console: Console
+
+    -> running
+        then:
+            let n:  Int = nil
+            let r1: Int = n + 1
+            let r2: Int = 1 + n
+            let r3: Int = n + n
+            let r4: Int = 3 + 4
+
+            console.write("nil == nil: " + (n == nil).to_string())
+            console.write("nil + 1 == nil: " + (r1 == nil).to_string())
+            console.write("1 + nil == nil: " + (r2 == nil).to_string())
+            console.write("nil + nil == nil: " + (r3 == nil).to_string())
+            console.write("3 + 4 == 7: " + (r4 == 7).to_string())
+            console.write("3 + 4 == nil: " + (r4 == nil).to_string())
+            console.write("0 == nil: " + (0 == nil).to_string())
+    -> end

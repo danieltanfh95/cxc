@@ -1157,7 +1157,7 @@
              stdout)))))
 
 (deftest end-to-end-env-typed-get
-  (testing "env-typed-get.cxc — `Env.get_or_int(name, fallback)` / `Env.get_or_bool(name, fallback)`. Prelude compositions: `native_env_get_or_default(name, \"\").to_int_or(fallback)` / `.to_bool_or(fallback)`. Verifies parse-success, missing-key fallback, unparseable-value fallback across both Int and Bool."
+  (testing "env-typed-get.cxc — `Env.get_or_int(name, fallback)` / `Env.get_or_bool(name, fallback)`. Prelude compositions: `(plugin.get(\"getenv\")(name).to_string() ?? \"\").to_int_or(fallback)` / `.to_bool_or(fallback)` — routed through the `std.prelude` plugin's `foreign \"libc\"` getenv symbol (2026-09-04 migration off `native_env_*` intrinsics). Verifies parse-success, missing-key fallback, unparseable-value fallback across both Int and Bool."
     (let [{:keys [exit stdout]} (compile-and-run "env-typed-get")]
       (is (zero? exit))
       (is (= "8080\n42\n99\ntrue\ntrue\nfalse\n" stdout)))))
@@ -1332,6 +1332,40 @@
     (let [{:keys [exit stdout]} (compile-dir-and-run "multi-file-demo")]
       (is (zero? exit))
       (is (= "42\n" stdout)))))
+
+(deftest end-to-end-hello-agent
+  (testing "hello-agent/ — A7 (2026-09-03) closing example. Flat local-module project structure: `project.cxc` manifest at src-dir root (empty deps for MVP demonstrating the shape without pulling network), `main.cxc` entry, `claude.cxc` a user-authored `def Claude:` capability atom — all three in module `:main` at src-dir root, no imports needed. Claude composes prelude caps (`use http: Http`, `use json: Json`, `use env: Env`). Verifies the full end-to-end path: (1) manifest read + walker mount of extra roots skipped cleanly for empty deps; (2) multi-file `:main` module compile pulls both files into one program (F51 L1); (3) cross-atom cascading auto-provisioning — main constructs `Claude()` with zero args, and `runtime-auto-provisioned-cap?` now cascades http/json/env from main's scope into Claude's ctor at depth-2. Run-side asserts on the deterministic auth-error branch (`ANTHROPIC_API_KEY` explicitly empty) so the whole pipeline actually executes: args parsing, Claude construction, http.post_envelope firing, json.field_int_or extracting status 401, `|:` arm-dispatch selecting the http-error message."
+    (let [src-dir (java.io.File. "examples/hello-agent")
+          out-dir (tmp-dir)
+          {:keys [status stderr bin-path]}
+          (build/compile-directory-to-file src-dir "hello-agent" (.getPath out-dir))]
+      (is (zero? status) (str "hello-agent compile failed:\n" stderr))
+      (when (zero? status)
+        (let [{:keys [exit out]}
+              (shell/sh bin-path "one-word greeting"
+                        :env {"ANTHROPIC_API_KEY" ""
+                              "PATH" (or (System/getenv "PATH") "")})]
+          (is (zero? exit))
+          (is (str/includes? out "task: one-word greeting"))
+          (is (str/includes? out "claude: [http 401]")))))))
+
+(deftest end-to-end-hello-agent-interactive
+  (testing "hello-agent-interactive/ — 2026-09-03. REPL-shaped variant of hello-agent: phase-decomposed state graph (`-> ready`), self-driven message loop (`self :> read_next()` in each turn's tail), Console.readln() reading one line at a time from stdin, guarded arm-dispatch for terminal conditions (line == nil → EOF exit; line == \"exit\" → user exit; else → API call + emit read_next). Discovery this landing proved: on-enter fires exactly ONCE per initial phase entry — self-transition (`ready <: read_next -> ready`) does NOT re-fire it. Therefore the correct loop shape drives continuation from the arm body itself (`self :> read_next()` at the tail), not from a re-entered on-enter. `|>` sync-emit is forbidden here — spec §1.11 cycle guard rejects self-sync while a prior sync-send to same atom is still awaiting reply; `:>` async-emit is required for self-recursion via the dispatch queue. Test pipes two lines (\"hi\", \"exit\") to stdin with `ANTHROPIC_API_KEY` explicitly empty; asserts the whole pipeline: banner, first-turn read+ask+deterministic 401 branch, second-turn read+exit, clean process termination."
+    (let [src-dir (java.io.File. "examples/hello-agent-interactive")
+          out-dir (tmp-dir)
+          {:keys [status stderr bin-path]}
+          (build/compile-directory-to-file src-dir "hello-agent-interactive" (.getPath out-dir))]
+      (is (zero? status) (str "hello-agent-interactive compile failed:\n" stderr))
+      (when (zero? status)
+        (let [{:keys [exit out]}
+              (shell/sh bin-path
+                        :in "hi\nexit\n"
+                        :env {"ANTHROPIC_API_KEY" ""
+                              "PATH" (or (System/getenv "PATH") "")})]
+          (is (zero? exit))
+          (is (str/includes? out "chat with claude"))
+          (is (str/includes? out "claude> [http 401]"))
+          (is (str/includes? out "bye")))))))
 
 (deftest end-to-end-hello-slice-b8-minimum
   (testing "hello-slice/ — B8 minimum viable (2026-09-02). Two-file program proving cross-module capability propagation for plugin-authored capability atoms end-to-end. `hello_slice/writer.cxc` declares `def plugin:` with a libc `puts` foreign symbol PLUS a peer `def Writer:` capability atom whose body carries `use plugin: Plugin` and a `write(msg) :- plugin.get(\"puts\")(msg)` observable. `main.cxc` at the src-dir root does `from hello_slice import Writer` + `use writer: Writer` and calls `writer.write(\"hello from B8 slice\")`. Verifies the F76-cousin auto-provisioning: main's F50 bootstrap constructs Writer via `Writer()`; Writer's ctor-params include a Plugin cap that main did NOT supply; `lower-atom-ctor` recognizes Plugin as a runtime-auto-provisioned capability and fills the slot inline via a recursive Plugin() construction. Before this landing the same fixture failed with `no value provided for param plugin`. Prints one line to stdout."
@@ -2403,6 +2437,61 @@
       (is (zero? (:status result)))
       (is (zero? exit))
       (is (= "9\n" stdout) "on-disk source used when no override provided"))))
+
+;; ---------------------------------------------------------------------------
+;; 2026-09-04 — primitive nil-lifting via sentinel values. Covers `let x: T
+;; = nil`, `x == nil`, arithmetic nil-propagation, atom-method sentinel
+;; fallback, Int8/16/32 + Float/Double coverage, Bool nil-punning at
+;; control-flow. Regression guard for the sentinel machinery.
+;; ---------------------------------------------------------------------------
+
+(deftest end-to-end-nil-lifting-int
+  (testing "nil-lifting-int.cxc — Int primitives accept nil, arithmetic propagates nil, `== nil` distinguishes from `== 0`."
+    (let [{:keys [exit stdout]} (compile-and-run "nil-lifting-int")]
+      (is (zero? exit))
+      (is (= (str "nil == nil: true\n"
+                  "nil + 1 == nil: true\n"
+                  "1 + nil == nil: true\n"
+                  "nil + nil == nil: true\n"
+                  "3 + 4 == 7: true\n"
+                  "3 + 4 == nil: false\n"
+                  "0 == nil: false\n")
+             stdout)))))
+
+(deftest end-to-end-nil-lifting-widths
+  (testing "nil-lifting-widths.cxc — sentinel coverage across Int8/Int16/Int32 (INT*_MIN) and Float/Double (NaN via __builtin_isnan). Sentinel is distinguishable from zero; Double arithmetic propagates nil."
+    (let [{:keys [exit stdout]} (compile-and-run "nil-lifting-widths")]
+      (is (zero? exit))
+      (is (= (str "i8  nil == nil: true\n"
+                  "i16 nil == nil: true\n"
+                  "i32 nil == nil: true\n"
+                  "f   nil == nil: true\n"
+                  "d   nil == nil: true\n"
+                  "z8  0 == nil: false\n"
+                  "zd  0.0 == nil: false\n"
+                  "d + 1.0 == nil: true\n"
+                  "zd + 1.0 == 1.0: true\n")
+             stdout)))))
+
+(deftest end-to-end-nil-lifting-atom-method
+  (testing "nil-lifting-atom-method.cxc — method call on a nullable atom receiver returning a primitive collapses to sentinel, not 0. ObjC nil-messaging would return 0; the compile-time wrap short-circuits nil receiver to CXC_INT_NIL so `dead.get_n() == nil` is true and `dead.get_n() == 0` is false."
+    (let [{:keys [exit stdout]} (compile-and-run "nil-lifting-atom-method")]
+      (is (zero? exit))
+      (is (= (str "alive.get_n() == 42: true\n"
+                  "dead.get_n() == nil: true\n"
+                  "dead.get_n() == 0: false\n")
+             stdout)))))
+
+(deftest end-to-end-nil-lifting-bool-truthy
+  (testing "nil-lifting-bool-truthy.cxc — Bool sentinel is -1; control-flow (`while (b)`) treats nil as false via emit-side `(cond > 0)` rewrite. Consistent with sentinel-primitive nil-punning stance for arithmetic."
+    (let [{:keys [exit stdout]} (compile-and-run "nil-lifting-bool-truthy")]
+      (is (zero? exit))
+      (is (= (str "n == nil: true\n"
+                  "t == nil: false\n"
+                  "f == nil: false\n"
+                  "while(true) fired once\n"
+                  "post-while OK\n")
+             stdout)))))
 
 (deftest f51-l3b-b-ii-5c-single-file-threads-resolve-references
   (testing "F51 L3b(b.ii)-5c — `compile-source-to-file` runs `resolve/resolve-references` on the parsed user AST before feeding lower. Prevents regression to the pre-71c46c9 shim (reparse of concatenated prelude + user source, which stripped `:resolves-to` metadata). Spy on the resolver call — if a future refactor drops it, this test flags the drop before behavior diverges silently."

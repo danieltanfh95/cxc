@@ -2735,6 +2735,55 @@
         [{:node :foreign-fn-type :args left :return right} p2])
       [left p])))
 
+(def ^:private ffi-default-nonnil-primitives
+  "2026-09-04 — primitive type names that default to `!` (non-null) at
+   FFI-signature positions. Rationale: sentinel-lifted primitives
+   (Int64=INT64_MIN, Bool=-1, Float/Double=NaN) at a foreign
+   boundary conflate the wire-format C value with cxc's nil marker.
+   Foreign symbols rarely, if ever, mean the sentinel value as a
+   legitimate wire-format return; declaring them nullable would
+   sprinkle sentinel-propagation guards on every FFI call site. The
+   pragmatic default is non-null; a user who genuinely needs a
+   nullable-primitive FFI position writes it inside a wrapper method
+   that returns the nil-lifted cxc type explicitly.
+
+   UInt/String/CString/Bytes/Any/Ptr/user types unaffected — they
+   have no sentinel-lifting to lose."
+  #{"Int" "Int8" "Int16" "Int32" "Int64"
+    "Float" "Double" "Bool"})
+
+(defn- wrap-ffi-primitives-nonnil
+  "Rewrite bare `:type-ref` naming an FFI-default-nonnil primitive to
+   `:type-nonnil {:inner <same>}`. Recurses into nested
+   `:foreign-fn-type` / `:type-tuple` shapes so every position in the
+   signature (arg tuple, return type, curried inner functions) picks
+   up the default. Leaves `:type-nonnil` (user wrote `!`) and
+   non-primitive refs untouched."
+  [ty-node]
+  (case (:node ty-node)
+    :type-ref
+    (if (contains? ffi-default-nonnil-primitives (:name ty-node))
+      {:node :type-nonnil :inner ty-node}
+      ty-node)
+
+    :type-tuple
+    (update ty-node :types #(mapv wrap-ffi-primitives-nonnil %))
+
+    :type-named-tuple
+    ;; Named-tuple args like `(fd: Int32, s: NSURLSession)` — fields
+    ;; carry :type refs. Wrap each field's :type recursively so
+    ;; `Int32` becomes `Int32!` at the FFI position.
+    (update ty-node :fields
+            (fn [fields]
+              (mapv #(update % :type wrap-ffi-primitives-nonnil) fields)))
+
+    :foreign-fn-type
+    (-> ty-node
+        (update :args   wrap-ffi-primitives-nonnil)
+        (update :return wrap-ffi-primitives-nonnil))
+
+    ty-node))
+
 (defn- parse-foreign-entry
   "Parse one entry inside a `foreign \"libname\":` block. Entry kinds:
      symbol         \"symname\"  -> <signature>
@@ -2761,14 +2810,16 @@
       (let [[sym p]  (expect tokens p :string)
             [_ p]    (expect tokens p :glyph "->")
             [sig p]  (parse-foreign-signature tokens p)]
-        [{:kind :symbol :name-strs [sym] :signature sig} p])
+        [{:kind :symbol :name-strs [sym]
+          :signature (wrap-ffi-primitives-nonnil sig)} p])
 
       ("selector" "class_selector")
       (let [[cls p] (expect tokens p :string)
             [sel p] (expect tokens p :string)
             [_ p]   (expect tokens p :glyph "->")
             [sig p] (parse-foreign-signature tokens p)]
-        [{:kind (keyword kind) :name-strs [cls sel] :signature sig} p])
+        [{:kind (keyword kind) :name-strs [cls sel]
+          :signature (wrap-ffi-primitives-nonnil sig)} p])
 
       "type"
       ;; FL-12 (2026-09-02) — `as <Alias>` is optional. When absent,

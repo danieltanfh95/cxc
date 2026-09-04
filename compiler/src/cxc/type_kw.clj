@@ -442,6 +442,52 @@
     (and (vector? tk) (int-family? tk))      (second tk)
     :else                                    nil))
 
+(defn primitive-nil-sentinel
+  "2026-09-04 — map a primitive type-kw to the C nil-sentinel constant
+   name (defined in the emit-time preamble via `cxc-nil-sentinels`).
+   Returns nil for non-primitive or unsupported types (uint family
+   omitted at v1.0 — no natural sentinel; boxed representation TBD)."
+  [tk]
+  (cond
+    (= :int    tk) "CXC_INT_NIL"
+    (= :bool   tk) "CXC_BOOL_NIL"
+    (= :float  tk) "CXC_DOUBLE_NIL"          ; bare :float is Double
+    (and (vector? tk) (= :int (first tk)))
+    (case (second tk)
+      64 "CXC_INT_NIL"
+      32 "CXC_INT32_NIL"
+      16 "CXC_INT16_NIL"
+       8 "CXC_INT8_NIL"
+       nil)
+    (and (vector? tk) (= :float (first tk)))
+    (case (second tk)
+      32 "CXC_FLOAT_NIL"
+      64 "CXC_DOUBLE_NIL"
+      nil)
+    :else nil))
+
+(defn primitive-nil-check
+  "2026-09-04 — map a primitive type-kw to the C nil-check macro name.
+   Returns nil for non-primitive or unsupported types."
+  [tk]
+  (cond
+    (= :int    tk) "CXC_INT_IS_NIL"
+    (= :bool   tk) "CXC_BOOL_IS_NIL"
+    (= :float  tk) "CXC_DOUBLE_IS_NIL"
+    (and (vector? tk) (= :int (first tk)))
+    (case (second tk)
+      64 "CXC_INT_IS_NIL"
+      32 "CXC_INT32_IS_NIL"
+      16 "CXC_INT16_IS_NIL"
+       8 "CXC_INT8_IS_NIL"
+       nil)
+    (and (vector? tk) (= :float (first tk)))
+    (case (second tk)
+      32 "CXC_FLOAT_IS_NIL"
+      64 "CXC_DOUBLE_IS_NIL"
+      nil)
+    :else nil))
+
 (defn type-kw->c-type
   "Reverse of cxc-type->type-kw for the C emit side. Observable return
    types are inferred as type-kws directly; this converts them back to
