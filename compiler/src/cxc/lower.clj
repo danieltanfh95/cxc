@@ -2228,11 +2228,24 @@
    both accepted, defaults inserted where callers omit an arg, and
    dup/unknown/surplus/collision all fail at the call site."
   [call-node ctx]
-  (let [dot         (:callee call-node)
-        target-ty   (infer-type (:target dot) ctx)
-        method-name (:field dot)
-        args        (:args call-node)
-        target-lo   (lower-expr (:target dot) ctx)
+  (let [dot           (:callee call-node)
+        target-ty-raw (infer-type (:target dot) ctx)
+        ;; 2026-09-04 Path 1 slice 1 — envelope transparency at method
+        ;; dispatch. When the target is `[:optional inner]` (nullable
+        ;; primitive envelope), unwrap the type-kw for method dispatch
+        ;; and inject `.value` at the C level so the method body sees
+        ;; the raw scalar. Full nil-propagation (nil receiver → nil
+        ;; result) is Path 1 slice 7's concern; slice 1 just makes the
+        ;; unwrap path exist so envelope-typed targets don't
+        ;; dead-end at "method call on non-record/non-atom target".
+        envelope-target? (optional-tk? target-ty-raw)
+        target-ty     (unwrap-tk target-ty-raw)
+        method-name   (:field dot)
+        args          (:args call-node)
+        target-lo0    (lower-expr (:target dot) ctx)
+        target-lo     (if envelope-target?
+                        {:node :c-optional-unwrap-value :inner target-lo0}
+                        target-lo0)
         list-cont?  (and (map? target-ty) (:atom target-ty)
                          (= :list-container
                             (:kind (env/env-lookup ctx :atom-env (:atom target-ty)))))

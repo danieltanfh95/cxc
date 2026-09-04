@@ -55,6 +55,16 @@
            (:case-name node) "." (:field-name node)))
     :c-optional-present
     (str "(" (emit-expr (:inner node)) ").present")
+
+    ;; 2026-09-04 Path 1 slice 1 — bare unwrap `env.value`. Used at
+    ;; method-dispatch sites where the receiver type-kw is envelope
+    ;; but the callee's body expects the raw inner value. No presence
+    ;; check — nil-propagation for method returns is Slice 7's
+    ;; concern; slice 1 just makes the unwrap path exist. Under the
+    ;; current invariant that no local produces envelope, this branch
+    ;; is dead code today; slice 2 flips locals and starts firing it.
+    :c-optional-unwrap-value
+    (str "(" (emit-expr (:inner node)) ").value")
     ;; A3 — `:is-check` at expression position emits only the gate.
     ;; Binding decls are surfaced separately by the transition-branch
     ;; lowerer (which prepends them to the arm body); nothing at emit
