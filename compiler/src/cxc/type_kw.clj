@@ -466,6 +466,20 @@
       nil)
     :else nil))
 
+(defn primitive-envelope-eligible?
+  "2026-09-04 Path 1 slice 12 — predicate for Path 1 envelope
+   storage eligibility. Broader than `primitive-nil-sentinel` (which
+   returns nil for UInt because UInt has no natural sentinel): under
+   the envelope representation every primitive value-type is
+   representable, so UInt joins Int/Bool/Float/Double. Callers
+   deciding whether to lift a nullable-primitive local to envelope
+   storage should consult this predicate, not `primitive-nil-
+   sentinel` (which is specific to the sentinel-lifting fallback)."
+  [tk]
+  (or (= :int tk) (= :bool tk) (= :float tk)
+      (and (vector? tk)
+           (contains? #{:int :uint :float} (first tk)))))
+
 (defn primitive-nil-check
   "2026-09-04 — map a primitive type-kw to the C nil-check macro name.
    Returns nil for non-primitive or unsupported types."

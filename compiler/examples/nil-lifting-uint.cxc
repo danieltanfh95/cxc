@@ -1,0 +1,12 @@
+def main:
+    use console: Console
+
+    -> running
+        then:
+            let a: UInt32 = 42
+            let b: UInt32 = nil
+
+            console.write("42 == nil: " + (a == nil).to_string())
+            console.write("nil == nil: " + (b == nil).to_string())
+            console.write("42 == 0: " + (a == 0).to_string())
+    -> end

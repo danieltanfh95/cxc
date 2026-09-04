@@ -2482,6 +2482,15 @@
                   "dead.get_n() == 0: false\n")
              stdout)))))
 
+(deftest end-to-end-nil-lifting-uint
+  (testing "nil-lifting-uint.cxc — 2026-09-04 Path 1 slice 12: `UInt` widths get envelope storage (no sentinel exists for UInt, so pre-Path-1 the case was silently unsupported). `let n: UInt32 = 42` lifts to `_Cxc_Optional_UInt32 {.present = 1, .value = 42}`; `let n: UInt32 = nil` produces `{.present = 0}`. Comparisons against nil check `.present`; comparisons against 0 unwrap `.value`."
+    (let [{:keys [exit stdout]} (compile-and-run "nil-lifting-uint")]
+      (is (zero? exit))
+      (is (= (str "42 == nil: false\n"
+                  "nil == nil: true\n"
+                  "42 == 0: false\n")
+             stdout)))))
+
 (deftest end-to-end-nil-lifting-bool-truthy
   (testing "nil-lifting-bool-truthy.cxc — Bool sentinel is -1; control-flow (`while (b)`) treats nil as false via emit-side `(cond > 0)` rewrite. Consistent with sentinel-primitive nil-punning stance for arithmetic."
     (let [{:keys [exit stdout]} (compile-and-run "nil-lifting-bool-truthy")]

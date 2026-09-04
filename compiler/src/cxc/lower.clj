@@ -106,6 +106,7 @@
                      list-container-class-name cxc-type->type-kw
                      int-family? float-family? numeric-family? int-bit-width
                      primitive-nil-sentinel primitive-nil-check
+                     primitive-envelope-eligible?
                      type-kw->c-type
                      optional-tk? unwrap-tk type-kw->cxc-name-str
                      optional-type-name]]
@@ -5376,8 +5377,15 @@
         ;;   RHS infers envelope    -> pass-through
         ;;   RHS infers raw scalar  -> `{.present = 1, .value = <raw>}`
         ;; `T!` stays raw (opts out of the envelope per spec §3.6.1).
+        ;;
+        ;; 2026-09-04 Path 1 slice 12 — widen from `primitive-nil-
+        ;; sentinel` (which excludes UInt: UInt has no natural
+        ;; sentinel) to `primitive-envelope-eligible?`, so UInt-family
+        ;; locals join Int/Bool/Float/Double under envelope storage.
+        ;; Envelope encoding does not need a magic value; the presence
+        ;; byte carries nil out-of-band.
         envelope? (and ann (not ann-nonnil?)
-                       (primitive-nil-sentinel ann-kw))
+                       (primitive-envelope-eligible? ann-kw))
         tk      (cond
                   envelope? [:optional ann-kw]
                   ann-kw    ann-kw
