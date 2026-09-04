@@ -3633,6 +3633,30 @@
                        :left  (lower-expr (:left node)  ctx)
                        :right (lower-expr (:right node) ctx)}
 
+                      ;; 2026-09-04 Path 1 slice 6 — envelope-Bool
+                      ;; Kleene `and`/`or`. Either operand envelope
+                      ;; routes here; result is envelope-Bool per
+                      ;; Kleene truth table (short-circuit on
+                      ;; dominant present-value). Dead until slice 2e
+                      ;; produces envelope-Bool locals — no expression
+                      ;; today infers envelope-Bool at logical-op
+                      ;; position.
+                      (and (contains? #{"and" "or"} (:op node))
+                           (let [lt (infer-type (:left node)  ctx)
+                                 rt (infer-type (:right node) ctx)]
+                             (and (or (optional-tk? lt) (optional-tk? rt))
+                                  (= :bool (unwrap-tk lt))
+                                  (= :bool (unwrap-tk rt)))))
+                      (let [lt (infer-type (:left node)  ctx)
+                            rt (infer-type (:right node) ctx)]
+                        {:node      :c-envelope-kleene-op
+                         :op        (:op node)
+                         :left      (lower-expr (:left node)  ctx)
+                         :right     (lower-expr (:right node) ctx)
+                         :left-opt?  (optional-tk? lt)
+                         :right-opt? (optional-tk? rt)
+                         :result-opt-c-type (optional-type-name "Bool")})
+
                       :else
                       {:node  :binop
                        :op    (case (:op node)

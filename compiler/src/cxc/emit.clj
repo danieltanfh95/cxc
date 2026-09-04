@@ -218,6 +218,45 @@
            "(__cxc_kr == " sc-val ") ? " sc-val
            " : ((__cxc_kl == -1 || __cxc_kr == -1) ? -1 : " fallback-val "); }); })"))
 
+    ;; 2026-09-04 Path 1 slice 6 — envelope Kleene AND/OR. Semantics:
+    ;;   L=false → present false (AND short-circuit)
+    ;;   R=false → present false (AND short-circuit)
+    ;;   L present, R present → present true (AND)
+    ;;   otherwise → nil
+    ;; Mirror for OR: short-circuit on present-true, else nil.
+    ;;
+    ;; Mixed operand support (`:left-opt?` / `:right-opt?`): raw side
+    ;; treated as always-present with its literal value; envelope side
+    ;; consults `.present` / `.value`. Result is always envelope-Bool
+    ;; (`_Cxc_Optional_Bool`) — Kleene's third state exists only in
+    ;; the envelope shape.
+    :c-envelope-kleene-op
+    (let [left-c   (emit-expr (:left  node))
+          right-c  (emit-expr (:right node))
+          l-opt?   (:left-opt?  node)
+          r-opt?   (:right-opt? node)
+          opt-c    (:result-opt-c-type node)
+          l-pres   (if l-opt? "__cxc_kl.present" "1")
+          r-pres   (if r-opt? "__cxc_kr.present" "1")
+          l-val    (if l-opt? "__cxc_kl.value"   "__cxc_kl")
+          r-val    (if r-opt? "__cxc_kr.value"   "__cxc_kr")
+          op       (:op node)
+          [dom-val recessive-val]
+          (case op
+            "and" ["0" "1"]  ; false dominates AND
+            "or"  ["1" "0"]) ; true  dominates OR
+          nil-lit    (str "(" opt-c "){.present = 0}")
+          present-t  (str "(" opt-c "){.present = 1, .value = "
+                          recessive-val "}")
+          present-d  (str "(" opt-c "){.present = 1, .value = "
+                          dom-val "}")]
+      (str "({ __typeof__(" left-c ") __cxc_kl = (" left-c "); "
+           "__typeof__(" right-c ") __cxc_kr = (" right-c "); "
+           "(" l-pres " && " l-val " == " dom-val ") ? " present-d " : "
+           "(" r-pres " && " r-val " == " dom-val ") ? " present-d " : "
+           "(" l-pres " && " r-pres ") ? " present-t " : "
+           nil-lit "; })"))
+
     ;; 2026-09-04 Gap 2 — method returning `T!` primitive invoked on
     ;; a nullable atom receiver. Spec §3.6.1 says the `!` contract
     ;; MUST hold; ObjC's nil-messaging silently returns 0/false/0.0
