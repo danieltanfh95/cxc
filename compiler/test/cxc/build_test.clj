@@ -2474,11 +2474,11 @@
              stdout)))))
 
 (deftest end-to-end-nil-lifting-atom-method
-  (testing "nil-lifting-atom-method.cxc — method call on a nullable atom receiver returning a primitive collapses to sentinel, not 0. 2026-09-04 Path 1 slice 2e (wider envelope flip): `let d: Int = dead.get_n()` wraps the raw sentinel return as `{present=1, value=CXC_INT_NIL}` — a semantically confused state that resolves only once slice 1-wider flips method-return declarations to envelope (declared `-> Int` returns `_Cxc_Optional_Int64`, nil-receiver-fallback emits `{.present=0}`). Until then, `dead.get_n() == nil` returns false (envelope's `.present` is 1). Retained as a regression guard so the eventual slice-1-wider landing restores the intended `true`."
+  (testing "nil-lifting-atom-method.cxc — method call on a nullable atom receiver returning a primitive nil-carries via the envelope. 2026-09-04 Path 1: `n: Int = 42` gives Counter a nullable-Int field with envelope storage; `get_n() :- n` inherits envelope return type. `dead.get_n()` on a nil receiver: ObjC nil-messaging returns zero-initialized struct — for `_Cxc_Optional_Int64` that's `{present=0, value=0}` (envelope-nil), so `dead.get_n() == nil` is true naturally without any sentinel fallback."
     (let [{:keys [exit stdout]} (compile-and-run "nil-lifting-atom-method")]
       (is (zero? exit))
       (is (= (str "alive.get_n() == 42: true\n"
-                  "dead.get_n() == nil: false\n"
+                  "dead.get_n() == nil: true\n"
                   "dead.get_n() == 0: false\n")
              stdout)))))
 

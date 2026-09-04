@@ -1,5 +1,5 @@
 def Counter:
-    n: Int! = 42
+    n: Int = 42
 
     get_n() :- n
 
