@@ -3340,12 +3340,28 @@
                   (= "??" (:op node))
                   (let [lt        (infer-type (:left node) ctx)
                         chk-macro (primitive-nil-check lt)]
-                    (if chk-macro
+                    (cond
+                      ;; 2026-09-04 Path 1 slice 2d — envelope LHS
+                      ;; routes to `:mode :optional` (existing emit
+                      ;; path): guard is `.present`, unwrapped value
+                      ;; is `.value`. Checked before the sentinel
+                      ;; branch so `Optional<Int>` doesn't fall into
+                      ;; the sentinel-macro form (which would test
+                      ;; `.present == INT64_MIN`).
+                      (optional-tk? lt)
+                      {:node  :c-coalesce
+                       :mode  :optional
+                       :left  (lower-expr (:left node)  ctx)
+                       :right (lower-expr (:right node) ctx)}
+
+                      chk-macro
                       {:node             :c-coalesce
                        :mode             :primitive
                        :nil-check-macro  chk-macro
                        :left             (lower-expr (:left node)  ctx)
                        :right            (lower-expr (:right node) ctx)}
+
+                      :else
                       {:node  :c-coalesce
                        :mode  :reference
                        :left  (lower-expr (:left node)  ctx)
@@ -5175,26 +5191,54 @@
   [node ctx]
   (let [expr    (:expr node)
         ann     (:type node)
+        ann-nonnil? (and ann (= :type-nonnil (:node ann)))
         ann-kw  (when ann (cxc-type->type-kw (base-type-name ann)
                                              (:record-env ctx)
                                              (:atom-env ctx)
                                              (:enum-env ctx) ann))
-        tk      (or ann-kw (infer-type expr ctx))
-        ct      (if ann
+        rhs-lo0 (lower-expr expr ctx)
+        rhs-tk-inferred (infer-type expr ctx)
+        ;; 2026-09-04 Path 1 slice 2d — envelope-storage flip for
+        ;; nullable-primitive locals. Two triggers, both requiring a
+        ;; nullable-primitive annotation:
+        ;;   (a) RHS is bare `nil`   -> `{.present = 0}` init
+        ;;   (b) RHS infers envelope -> `{.present = 1, .value = ...}`
+        ;;                              or pass-through if RHS already
+        ;;                              produces an envelope
+        ;; Non-nil scalar RHS (`let n: Int = 42`) stays raw so the flip
+        ;; doesn't cascade into every literal-initialized local. `T!`
+        ;; stays raw regardless.
+        envelope? (and ann (not ann-nonnil?)
+                       (primitive-nil-sentinel ann-kw)
+                       (or (= :nil (:node rhs-lo0))
+                           (optional-tk? rhs-tk-inferred)))
+        tk      (cond
+                  envelope? [:optional ann-kw]
+                  ann-kw    ann-kw
+                  :else     rhs-tk-inferred)
+        ct      (cond
+                  envelope?
+                  (optional-type-name (type-kw->cxc-name-str ann-kw))
+                  ann
                   (cxc-type->c ann (:record-env ctx)
                                (:atom-env ctx)
                                (:enum-env ctx)
                                (:module-map ctx))
+                  :else
                   (type-kw->c-type tk expr))
-        rhs-lo0 (lower-expr expr ctx)
-        ;; 2026-09-04 — primitive nil-lifting: when the RHS is bare
-        ;; `nil` and the LHS has a primitive annotation, tag the nil
-        ;; with the target type-kw so emit produces the sentinel
-        ;; constant (`CXC_INT_NIL`) instead of the object nil literal.
-        rhs-lo  (if-let [sentinel (and (= :nil (:node rhs-lo0))
-                                       (primitive-nil-sentinel tk))]
-                  (assoc rhs-lo0 :sentinel sentinel)
-                  rhs-lo0)
+        rhs-lo  (cond
+                  (and envelope? (= :nil (:node rhs-lo0)))
+                  {:node :c-envelope-nil :c-type ct}
+
+                  envelope? rhs-lo0
+
+                  ;; 2026-09-04 — sentinel-lifting fallback for the raw
+                  ;; primitive case (unchanged pre-slice-2 behavior).
+                  (and (= :nil (:node rhs-lo0))
+                       (primitive-nil-sentinel tk))
+                  (assoc rhs-lo0 :sentinel (primitive-nil-sentinel tk))
+
+                  :else rhs-lo0)
         arms    (:arms node)
         arms'   (when (seq arms)
                   (mapv (fn [arm]

@@ -18,8 +18,8 @@ def main:
             while f:
                 console.write("while(false) fired - BUG")
 
-            while n:
-                console.write("while(nil) fired - BUG")
+            while (n ?? false):
+                console.write("while(nil?? false) fired - BUG")
 
             console.write("post-while OK")
     -> end
