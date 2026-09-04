@@ -7901,11 +7901,23 @@
                                ;; control-flow-terminating bodies (e.g.
                                ;; `raise`); trusting inference there
                                ;; would emit `- (id)m` instead of `- (T)m`.
-                               declared-tk (when-let [rt (:return-type o)]
-                                             (cxc-type->type-kw
-                                              (base-type-name rt)
-                                              record-env atom-env
-                                              enum-env rt))
+                               ;;
+                               ;; 2026-09-04 Path 1 slice 1-wider — bare
+                               ;; nullable-primitive return lifts to
+                               ;; envelope tk.
+                               rt (:return-type o)
+                               declared-raw-tk (when rt
+                                                 (cxc-type->type-kw
+                                                  (base-type-name rt)
+                                                  record-env atom-env
+                                                  enum-env rt))
+                               envelope-return?
+                               (and rt
+                                    (not= :type-nonnil (:node rt))
+                                    (primitive-nil-sentinel declared-raw-tk))
+                               declared-tk (cond-> declared-raw-tk
+                                             envelope-return?
+                                             ((fn [t] [:optional t])))
                                tk  (or declared-tk (infer-type rewritten ctx))]
                            (assoc o :type-kw tk
                                   :c-type  (type-kw->c-type tk o))))
@@ -7950,10 +7962,24 @@
                            ;; A4-adjacent — declared `:- T` overrides
                            ;; body inference so raise-only observables
                            ;; still emit `- (T)m`, not `- (id)m`.
-                           declared-tk (when-let [rt (:return-type o)]
-                                         (cxc-type->type-kw
-                                          (base-type-name rt)
-                                          record-env atom-env enum-env rt))
+                           ;;
+                           ;; 2026-09-04 Path 1 slice 1-wider — bare
+                           ;; nullable-primitive return (`:- Int`, not
+                           ;; `:- Int!`) lifts to envelope typedef so
+                           ;; callers see `[:optional inner]`. `T!`
+                           ;; stays raw.
+                           rt (:return-type o)
+                           declared-raw-tk (when rt
+                                             (cxc-type->type-kw
+                                              (base-type-name rt)
+                                              record-env atom-env enum-env rt))
+                           envelope-return?
+                           (and rt
+                                (not= :type-nonnil (:node rt))
+                                (primitive-nil-sentinel declared-raw-tk))
+                           declared-tk (cond-> declared-raw-tk
+                                         envelope-return?
+                                         ((fn [t] [:optional t])))
                            tk     (or declared-tk (infer-type (:expr o) ctx))
                            typed' (assoc o :type-kw tk
                                          :c-type   (type-kw->c-type tk o))]
