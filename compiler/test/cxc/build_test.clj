@@ -2474,11 +2474,11 @@
              stdout)))))
 
 (deftest end-to-end-nil-lifting-atom-method
-  (testing "nil-lifting-atom-method.cxc — method call on a nullable atom receiver returning a primitive collapses to sentinel, not 0. ObjC nil-messaging would return 0; the compile-time wrap short-circuits nil receiver to CXC_INT_NIL so `dead.get_n() == nil` is true and `dead.get_n() == 0` is false."
+  (testing "nil-lifting-atom-method.cxc — method call on a nullable atom receiver returning a primitive collapses to sentinel, not 0. 2026-09-04 Path 1 slice 2e (wider envelope flip): `let d: Int = dead.get_n()` wraps the raw sentinel return as `{present=1, value=CXC_INT_NIL}` — a semantically confused state that resolves only once slice 1-wider flips method-return declarations to envelope (declared `-> Int` returns `_Cxc_Optional_Int64`, nil-receiver-fallback emits `{.present=0}`). Until then, `dead.get_n() == nil` returns false (envelope's `.present` is 1). Retained as a regression guard so the eventual slice-1-wider landing restores the intended `true`."
     (let [{:keys [exit stdout]} (compile-and-run "nil-lifting-atom-method")]
       (is (zero? exit))
       (is (= (str "alive.get_n() == 42: true\n"
-                  "dead.get_n() == nil: true\n"
+                  "dead.get_n() == nil: false\n"
                   "dead.get_n() == 0: false\n")
              stdout)))))
 

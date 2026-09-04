@@ -4418,12 +4418,17 @@ def main:
           "Int inference produces int64_t per F36 L1a"))))
 
 (deftest f18-l1-let-stmt-with-annotation-uses-declared-type
-  (testing "F18 L1 — `let x: Int = 5` uses the annotation authoritatively; annotation-based typing is exercised even when it aligns with inference."
+  (testing "F18 L1 — `let x: Int = 5` uses the annotation authoritatively. 2026-09-04 Path 1 slice 2e: nullable-primitive annotation lifts storage to the Optional envelope; `T!` still lowers raw."
     (let [prog  (lower-src "def main:\n    -> running\n        then:\n            let x: Int = 5\n            print(x)\n")
           stmts (get-in prog [:main :body])
           decl  (first (filter #(= :var-decl (:node %)) stmts))]
+      (is (= "_Cxc_Optional_Int64" (:c-type decl))
+          "annotation `Int` (nullable) lowers to envelope storage"))
+    (let [prog  (lower-src "def main:\n    -> running\n        then:\n            let x: Int! = 5\n            print(x)\n")
+          stmts (get-in prog [:main :body])
+          decl  (first (filter #(= :var-decl (:node %)) stmts))]
       (is (= "int64_t" (:c-type decl))
-          "annotation `Int` lowers to int64_t"))))
+          "annotation `Int!` (non-nil) lowers raw"))))
 
 (deftest f18-l1-let-stmt-visible-to-subsequent-stmts
   (testing "F18 L1 — a `let x = 5; print(x)` sequence resolves `x` in the second stmt via the ctx that lower-body-stmts threads through the reduce. Failure mode pre-L1: `print(x)` would fail ident-lookup because x wasn't in `:locals`."

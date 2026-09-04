@@ -1110,6 +1110,11 @@
       (#{"==" "!="} op) :bool
       (and (#{"<" "<=" ">" ">="} op) any-opt?) [:optional :bool]
       (#{"<" "<=" ">" ">="} op) :bool
+      ;; 2026-09-04 Path 1 slice 6 — envelope-Bool `and`/`or` yields
+      ;; `[:optional :bool]` per Kleene truth table (either operand
+      ;; nil can propagate to a nil result unless a dominant present
+      ;; value short-circuits). Raw-Bool operands stay `:bool`.
+      (and (#{"and" "or"} op) any-opt?) [:optional :bool]
       (#{"and" "or"} op) :bool
       (= "is" op) :bool
       (= "??" op) rt
@@ -1192,8 +1197,20 @@
         ;; resolves the same method table as the raw inner type. Nil-
         ;; receiver semantics (return nil without dispatching) lives at
         ;; the lowering layer, not here.
+        envelope-target? (optional-tk? target-ty-raw)
         target-ty   (unwrap-tk target-ty-raw)
-        method-name (:field dot)]
+        method-name (:field dot)
+        ;; 2026-09-04 Path 1 slice 7 — primitive methods that
+        ;; return an envelope when the target is envelope. `.abs()`,
+        ;; `.min()`, `.max()` propagate nil through. `.to_string()`
+        ;; returns raw String (reference-shaped, nil-carrying) so no
+        ;; envelope wrap needed. Consumers depend on this to route
+        ;; `let r: Int = n.abs()` (envelope RHS) through slice 2e's
+        ;; envelope storage flip.
+        envelope-wrap-int? (and envelope-target?
+                                (int-family? target-ty)
+                                (contains? #{"abs" "min" "max"}
+                                           method-name))]
     (cond
       ;; F37 Landing 2 — `.as() -> Bytes` on a record with primitive-only
       ;; fields. Method isn't user-declared (there'd be an entry in
@@ -1312,9 +1329,12 @@
       ;; 2026-09-03 — `Int.abs() -> Int`, `Int.min(other) -> Int`,
       ;; `Int.max(other) -> Int`. Compile-time ternaries; no branch
       ;; on the runtime side of a helper call.
+      ;;
+      ;; 2026-09-04 Path 1 slice 7 — envelope target propagates
+      ;; envelope through the method (nil in, nil out).
       (and (int-family? target-ty)
            (contains? #{"abs" "min" "max"} method-name))
-      :int
+      (if envelope-wrap-int? [:optional :int] :int)
 
       ;; 2026-09-03 — `Bool.to_string() -> String`. Renders as
       ;; "true" / "false". Convenient for log message
@@ -4970,15 +4990,29 @@
                        (assert-not-optional-guard! guard (infer-type guard ctx)
                                                    "dispatch guard `if`" guard))
         guard-lo    (when guard (lower-expr guard ctx))
+        guard-tk    (when guard (infer-type guard ctx))
+        guard-envelope? (optional-bool-guard? guard-tk)
+        ;; 2026-09-04 Path 1 slice 5c — envelope-Bool guard combined
+        ;; with a pattern-cond via `&&`. The raw `:binop :op "&&"`
+        ;; won't compile on envelope shape. Wrap guard-lo in a
+        ;; presence-check (`.present && .value`) so the combined
+        ;; cond stays a raw int (true when both present-and-true).
+        guard-lo'   (if guard-envelope?
+                      {:node :c-optional-truthy :inner guard-lo}
+                      guard-lo)
         final-cond
         (cond
-          (and pattern-cond guard-lo)
-          {:node :binop :op "&&" :left pattern-cond :right guard-lo}
+          (and pattern-cond guard-lo')
+          {:node :binop :op "&&" :left pattern-cond :right guard-lo'}
 
           pattern-cond pattern-cond
-          guard-lo     guard-lo
+          guard-lo'    guard-lo'
           :else        nil)]
-    {:cond final-cond :body body-stmts}))
+    ;; guard-lo' is already truthy-wrapped when guard-envelope?, so
+    ;; final-cond is always a raw int expr — no envelope flag needed
+    ;; on the branch.
+    {:cond final-cond
+     :body body-stmts}))
 
 ;; M1c — arm-patterns / check-dispatch-exhaustiveness! /
 ;; scrut-ty->c-type / dispatch-scrutinee-supported? moved to
@@ -4995,7 +5029,15 @@
    L4c1 exhaustiveness applies only to tagged-variant scrutinees;
    primitive scrutinees require a `<: *:` wildcard tail (open type)."
   [node ctx]
-  (let [scrut-ty (infer-type (:scrutinee node) ctx)]
+  (let [scrut-ty-raw (infer-type (:scrutinee node) ctx)
+        ;; 2026-09-04 Path 1 slice 3 — envelope-transparency at
+        ;; `<:` dispatch scrutinee. When the scrutinee infers as
+        ;; `[:optional inner]`, unwrap for pattern matching. The
+        ;; scrutinee binding stores raw `.value` so pattern conds
+        ;; compare against the unwrapped scalar. Nil scrutinee →
+        ;; wildcard tail fires (semantic match for open types).
+        envelope-scrut? (optional-tk? scrut-ty-raw)
+        scrut-ty (unwrap-tk scrut-ty-raw)]
     (when-not (dispatch-scrutinee-supported? scrut-ty)
       (fail-nyi!
        (str "F69 L4b: `<:` dispatch scrutinee must be tagged-variant "
@@ -5086,7 +5128,15 @@
                                      "— primitives are open types).")))
                          node)))
           scrut-tmp  "_cxc_scrut"
-          scrut-lo   (lower-expr (:scrutinee node) ctx)
+          scrut-lo0  (lower-expr (:scrutinee node) ctx)
+          ;; Path 1 slice 3 — unwrap envelope to its `.value` so the
+          ;; scrutinee tmp holds the raw scalar (pattern conds
+          ;; compare against literals). A nil scrutinee (present=0)
+          ;; falls through to the wildcard tail via the primitive-
+          ;; open-type exhaustiveness policy already enforced above.
+          scrut-lo   (if envelope-scrut?
+                       {:node :c-optional-unwrap-value :inner scrut-lo0}
+                       scrut-lo0)
           scrut-ct   (scrut-ty->c-type scrut-ty (:scrutinee node))
           arms       (mapv #(lower-dispatch-arm scrut-ty scrut-tmp % ctx)
                            (:arms node))
@@ -5228,9 +5278,33 @@
     ;; terminal expression assigns into the `let x = ... or ...` target.
     ;; Emit as `:assign` with :lhs a bare name ref.
     :assign-stmt
-    {:node :assign
-     :lhs  {:node :name :sym (:target node)}
-     :rhs  (lower-expr (:expr node) ctx)}
+    ;; 2026-09-04 Path 1 slice 2e — when the target local is envelope-
+    ;; typed (`let x: T = ...` on a nullable primitive), a raw RHS
+    ;; (`x = 42` in an `or:` recovery arm) needs to be wrapped as an
+    ;; envelope literal; a nil RHS becomes `{.present = 0}`; an
+    ;; already-envelope RHS passes through.
+    (let [target-tk (get (:locals ctx) (:target node))
+          target-envelope? (optional-tk? target-tk)
+          rhs-lo0   (lower-expr (:expr node) ctx)
+          rhs-tk    (infer-type (:expr node) ctx)
+          ct        (when target-envelope?
+                      (optional-type-name
+                       (type-kw->cxc-name-str (unwrap-tk target-tk))))
+          rhs-lo    (cond
+                      (and target-envelope?
+                           (= :nil (:node rhs-lo0)))
+                      {:node :c-envelope-nil :c-type ct}
+
+                      (and target-envelope? (optional-tk? rhs-tk))
+                      rhs-lo0
+
+                      target-envelope?
+                      {:node :c-envelope-lit :c-type ct :value rhs-lo0}
+
+                      :else rhs-lo0)]
+      {:node :assign
+       :lhs  {:node :name :sym (:target node)}
+       :rhs  rhs-lo})
 
     :if-let    (lower-if-let-stmt node ctx)
 
@@ -5294,20 +5368,16 @@
                                              (:enum-env ctx) ann))
         rhs-lo0 (lower-expr expr ctx)
         rhs-tk-inferred (infer-type expr ctx)
-        ;; 2026-09-04 Path 1 slice 2d — envelope-storage flip for
-        ;; nullable-primitive locals. Two triggers, both requiring a
-        ;; nullable-primitive annotation:
-        ;;   (a) RHS is bare `nil`   -> `{.present = 0}` init
-        ;;   (b) RHS infers envelope -> `{.present = 1, .value = ...}`
-        ;;                              or pass-through if RHS already
-        ;;                              produces an envelope
-        ;; Non-nil scalar RHS (`let n: Int = 42`) stays raw so the flip
-        ;; doesn't cascade into every literal-initialized local. `T!`
-        ;; stays raw regardless.
+        ;; 2026-09-04 Path 1 slice 2d/2e — envelope-storage flip for
+        ;; every nullable-primitive local. `let n: T = ...` on a
+        ;; nullable primitive always lifts to `_Cxc_Optional_<T>`
+        ;; storage regardless of RHS shape:
+        ;;   RHS is bare `nil`      -> `{.present = 0}`
+        ;;   RHS infers envelope    -> pass-through
+        ;;   RHS infers raw scalar  -> `{.present = 1, .value = <raw>}`
+        ;; `T!` stays raw (opts out of the envelope per spec §3.6.1).
         envelope? (and ann (not ann-nonnil?)
-                       (primitive-nil-sentinel ann-kw)
-                       (or (= :nil (:node rhs-lo0))
-                           (optional-tk? rhs-tk-inferred)))
+                       (primitive-nil-sentinel ann-kw))
         tk      (cond
                   envelope? [:optional ann-kw]
                   ann-kw    ann-kw
@@ -5326,7 +5396,14 @@
                   (and envelope? (= :nil (:node rhs-lo0)))
                   {:node :c-envelope-nil :c-type ct}
 
-                  envelope? rhs-lo0
+                  ;; RHS already envelope (method return, another
+                  ;; envelope local) — pass through.
+                  (and envelope? (optional-tk? rhs-tk-inferred))
+                  rhs-lo0
+
+                  ;; RHS is raw scalar — wrap as present envelope.
+                  envelope?
+                  {:node :c-envelope-lit :c-type ct :value rhs-lo0}
 
                   ;; 2026-09-04 — sentinel-lifting fallback for the raw
                   ;; primitive case (unchanged pre-slice-2 behavior).
@@ -5342,12 +5419,16 @@
                                   rewrite-arm-body-last-as-assign
                                   (:name node) node))
                         arms))
+        ;; 2026-09-04 Path 1 slice 2d/2e — thread `x`'s type-kw into
+        ;; ctx before lowering `or:` arms so `:assign-stmt` inside
+        ;; each arm sees the envelope type and can wrap raw RHS.
+        arm-ctx (update ctx :locals assoc (:name node) tk)
         decl    (if (seq arms)
                   {:node   :let-with-catch
                    :name   (:name node)
                    :c-type ct
                    :rhs    rhs-lo
-                   :arms   (lower-or-arms arms' ctx node)}
+                   :arms   (lower-or-arms arms' arm-ctx node)}
                   {:node :var-decl :name (:name node) :c-type ct :rhs rhs-lo})]
     [decl (cond-> (update ctx :locals assoc (:name node) tk)
             ;; 2026-09-04 — track `let x: T! = ...` so downstream

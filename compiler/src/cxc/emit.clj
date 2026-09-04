@@ -65,6 +65,15 @@
     ;; is dead code today; slice 2 flips locals and starts firing it.
     :c-optional-unwrap-value
     (str "(" (emit-expr (:inner node)) ").value")
+    ;; 2026-09-04 Path 1 slice 5c — envelope-Bool as raw truthy:
+    ;; `.present && .value` in a raw-int position. Used at dispatch-
+    ;; arm guard combine sites where an envelope guard is `&&`'d with
+    ;; a pattern-cond (raw int); the wrapper produces 0 for
+    ;; present-false / absent, 1 for present-true.
+    :c-optional-truthy
+    (let [inner-c (emit-expr (:inner node))]
+      (str "({ __typeof__(" inner-c ") __cxc_ot = (" inner-c "); "
+           "__cxc_ot.present && __cxc_ot.value; })"))
     ;; 2026-09-04 Path 1 slice 2 — envelope construction shapes. Nil
     ;; literal → `(T){.present = 0}`; value literal → `(T){.present =
     ;; 1, .value = <inner>}`. Used by `lower-let-stmt` when the LHS is
