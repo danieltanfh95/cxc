@@ -2528,15 +2528,28 @@
               ;; raw wire value `-9223372036854775808`. Applies
               ;; uniformly across widths — the type-kw's IS_NIL
               ;; macro checks the correct sentinel.
+              ;;
+              ;; 2026-09-04 Path 1 slice 7 — envelope target. Use the
+              ;; UNWRAPPED envelope (`target-lo0`, no `.value` inject)
+              ;; so we can check `.present` before formatting; absent →
+              ;; @"nil", present → format `.value`.
               (let [chk (primitive-nil-check target-ty)]
                 {:node      :ffi-call
                  :name      "cxc_int_to_string"
-                 :args      [target-lo]
+                 :args      [(if envelope-target? target-lo0 target-lo)]
                  :emit-c-fn (fn [[n]]
-                              (if chk
+                              (cond
+                                envelope-target?
+                                (str "({ __typeof__(" n ") __cxc_ts = (" n "); "
+                                     "__cxc_ts.present "
+                                     "? [NSString stringWithFormat:@\"%lld\", "
+                                     "(long long)(__cxc_ts.value)] "
+                                     ": @\"nil\"; })")
+                                chk
                                 (str "(" chk "(" n ") ? @\"nil\" "
                                      ": [NSString stringWithFormat:@\"%lld\", "
                                      "(long long)(" n ")])")
+                                :else
                                 (str "[NSString stringWithFormat:@\"%lld\", "
                                      "(long long)(" n ")]")))}))
 
@@ -2556,16 +2569,44 @@
             ;; (-INT64_MIN overflows), `min(nil, 5)` accidentally
             ;; picks INT64_MIN (correct by luck), `max(nil, 5)`
             ;; picks 5 (wrong — should propagate nil).
+            ;;
+            ;; 2026-09-04 Path 1 slice 7 — envelope target: unwrap
+            ;; presence, apply raw formula on `.value`, wrap result
+            ;; back in envelope. Any absent operand → envelope-nil.
             (let [chk (primitive-nil-check target-ty)
                   base-emit (case method-name
                               "abs" (fn [[n]]     (str "((" n ") < 0 ? -(" n ") : (" n "))"))
                               "min" (fn [[a b]]   (str "((" a ") < (" b ") ? (" a ") : (" b "))"))
                               "max" (fn [[a b]]   (str "((" a ") > (" b ") ? (" a ") : (" b "))")))
-                  sentinel  (primitive-nil-sentinel target-ty)]
+                  sentinel  (primitive-nil-sentinel target-ty)
+                  opt-c     (optional-type-name
+                             (type-kw->cxc-name-str target-ty))
+                  ;; second-arg envelope check: `.min()/.max()` accept
+                  ;; a positional arg whose infer-type we haven't stored.
+                  ;; For slice 7 we assume arg is same shape as target
+                  ;; (both envelope or both raw); a mixed case surfaces
+                  ;; at parse-time via type mismatch.
+                  target-emit (if envelope-target? target-lo0 target-lo)]
               {:node      :ffi-call
                :name      (str "cxc_int_" method-name)
-               :args      (into [target-lo] arg-exprs)
-               :emit-c-fn (if (and chk sentinel)
+               :args      (into [target-emit] arg-exprs)
+               :emit-c-fn (cond
+                            envelope-target?
+                            (case method-name
+                              "abs" (fn [[n]]
+                                      (str "({ __typeof__(" n ") __cxc_a = (" n "); "
+                                           "__cxc_a.present "
+                                           "? (" opt-c "){.present = 1, .value = "
+                                           (base-emit ["__cxc_a.value"]) "} "
+                                           ": (" opt-c "){.present = 0}; })"))
+                              (fn [[a b]]
+                                (str "({ __typeof__(" a ") __cxc_al = (" a "); "
+                                     "__typeof__(" b ") __cxc_bl = (" b "); "
+                                     "(__cxc_al.present && __cxc_bl.present) "
+                                     "? (" opt-c "){.present = 1, .value = "
+                                     (base-emit ["__cxc_al.value" "__cxc_bl.value"]) "} "
+                                     ": (" opt-c "){.present = 0}; })")))
+                            (and chk sentinel)
                             (case method-name
                               "abs" (fn [args]
                                       (str "(" chk "(" (first args) ") "
@@ -2576,7 +2617,7 @@
                                      chk "(" (second args) ")) "
                                      "? " sentinel " : "
                                      (base-emit args) ")")))
-                            base-emit)}))
+                            :else base-emit)}))
 
           ;; 2026-09-03 — `Bool.to_string()` — literal "true"/"false".
           (and (= :bool target-ty)
@@ -2590,13 +2631,21 @@
               ;; Pre-Gap-6 emit assumed 0/1 storage and used C's raw
               ;; truthiness, which would silently render nil-Bool as
               ;; "true" (since -1 is truthy in C).
+              ;;
+              ;; 2026-09-04 Path 1 slice 7 — envelope target routes
+              ;; to `.present ? (.value ? "true" : "false") : "nil"`.
               {:node      :ffi-call
                :name      "cxc_bool_to_string"
-               :args      [target-lo]
+               :args      [(if envelope-target? target-lo0 target-lo)]
                :emit-c-fn (fn [[b]]
-                            (str "({ int __cxc_b = (" b "); "
-                                 "(__cxc_b == -1) ? @\"nil\" "
-                                 ": ((__cxc_b) ? @\"true\" : @\"false\"); })"))})
+                            (if envelope-target?
+                              (str "({ __typeof__(" b ") __cxc_bs = (" b "); "
+                                   "__cxc_bs.present "
+                                   "? (__cxc_bs.value ? @\"true\" : @\"false\") "
+                                   ": @\"nil\"; })")
+                              (str "({ int __cxc_b = (" b "); "
+                                   "(__cxc_b == -1) ? @\"nil\" "
+                                   ": ((__cxc_b) ? @\"true\" : @\"false\"); })")))})
 
           ;; 2026-09-03 — String helpers. All zero- or one-arg; nil-
           ;; tolerant via ObjC nil-messaging on the receiver (nil recv
