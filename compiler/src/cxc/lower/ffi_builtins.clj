@@ -837,28 +837,6 @@
                       "if ([__cur isKindOfClass:[NSArray class]]) { "
                       "__r = (int64_t)[(NSArray *)__cur count]; } } } "
                       "__r; })"))}
-   "native_env_has"
-   ;; 2026-09-03 — check whether an environment variable is set.
-   ;; Distinct from `get_or(name, "") == ""`: an env var explicitly
-   ;; set to empty string reads as present here but empty via get_or.
-   ;; Nil name → false.
-   {:return-kw :bool
-    :arity     1
-    :emit-c    (fn [args]
-                 (str "((" (first args) " && "
-                      "getenv([(" (first args) ") UTF8String]) != NULL) "
-                      "? YES : NO)"))}
-   "native_env_remove"
-   ;; 2026-09-03 — remove an environment variable from the current
-   ;; process (libc `unsetenv`). Returns 0 on success (including
-   ;; already-absent), -1 on failure (invalid name / OOM). Nil name → -1.
-   {:return-kw :int
-    :arity     1
-    :emit-c    (fn [args]
-                 (str "({ NSString *__n = " (first args) "; "
-                      "int __r = -1; "
-                      "if (__n) { __r = unsetenv([__n UTF8String]); } "
-                      "(int64_t)__r; })"))}
    "native_fs_append_text"
    ;; 2026-09-03 — append (or create+write) UTF-8 text to a file.
    ;; libc `fopen(path, \"a\") + fputs + fclose`. Returns 0 on
@@ -878,23 +856,6 @@
                       "if (fputs([__c UTF8String], __f) >= 0) __r = 0; "
                       "fclose(__f); } } "
                       "__r; })"))}
-   "native_env_set"
-   ;; 2026-09-03 — set an environment variable in the current process
-   ;; (overwrite existing value). Returns 0 on success, -1 on failure
-   ;; (out-of-memory or invalid name). libc `setenv(name, value, 1)`;
-   ;; nil-guards on both args (either nil → no-op → returns -1).
-   {:return-kw :int
-    :arity     2
-    :emit-c    (fn [args]
-                 (let [name  (first args)
-                       value (second args)]
-                   (str "({ NSString *__n = " name "; "
-                        "NSString *__v = " value "; "
-                        "int __r = -1; "
-                        "if (__n && __v) { "
-                        "__r = setenv([__n UTF8String], [__v UTF8String], 1); "
-                        "} "
-                        "(int64_t)__r; })")))}
    "native_time_now_iso"
    ;; 2026-09-03 — current wall-clock as an ISO 8601 String
    ;; (YYYY-MM-DDTHH:MM:SS.fffZ, UTC). Backed by
@@ -929,28 +890,6 @@
                       "4000000000u : (uint64_t)__ms * 1000u); "
                       "usleep(__us); } "
                       "(int64_t)0; })"))}
-   "native_env_get_or_default"
-   ;; 2g (2026-09-02) — read an environment variable, defaulting on
-   ;; miss. libc `getenv(name)` returns `const char *`; when the var
-   ;; is unset, getenv returns NULL and we fall back to the caller's
-   ;; default. Also nil-guards the name (nil name → default). No
-   ;; distinct "get" (returning nullable String) is exposed at MVP —
-   ;; callers who want nil-on-miss can pass an empty String default
-   ;; and check for empty; nullable-String surface arrives when
-   ;; hello-agent needs it.
-   {:return-kw :string
-    :arity     2
-    :emit-c    (fn [args]
-                 (let [name    (first args)
-                       default (second args)]
-                   (str "({ NSString *__n = " name "; "
-                        "NSString *__d = " default "; "
-                        "NSString *__r = __d; "
-                        "if (__n) { "
-                        "const char *__v = getenv([__n UTF8String]); "
-                        "if (__v) __r = [NSString stringWithUTF8String:__v]; "
-                        "} "
-                        "__r; })")))}
    "native_fs_exists"
    ;; 2d (2026-09-02) — check whether a path resolves to any
    ;; filesystem entry (file, directory, symlink). Returns Int:

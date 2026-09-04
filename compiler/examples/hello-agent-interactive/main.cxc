@@ -1,0 +1,31 @@
+def main:
+    use http:    Http
+    use json:    Json
+    use env:     Env
+    use console: Console
+
+    -> ready
+        then:
+            console.write("hello-agent — chat with claude ('exit' to quit)")
+            self :> read_next()
+
+    ready <: read_next -> ready
+        then:
+            console.write("you> ")
+            let line: String = console.readln()
+            self :> handle(line: line)
+
+    ready <: handle(line: String) -> end
+        |: line == nil
+        then: console.write("bye (eof)")
+
+    ready <: handle(line: String) -> end
+        |: line == "exit"
+        then: console.write("bye")
+
+    ready <: handle(line: String) -> ready
+        then:
+            let c: Claude = Claude()
+            let reply: String = c.ask(line)
+            console.write("claude> " + reply)
+            self :> read_next()

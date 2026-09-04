@@ -1,0 +1,4 @@
+let project = Project(
+    name:  "hello-agent",
+    entry: "main",
+    deps:  [])
