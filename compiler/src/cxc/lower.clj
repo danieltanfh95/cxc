@@ -4117,6 +4117,7 @@
     :if-expr
     {:node :c-ternary
      :cond (lower-expr (:cond node) ctx)
+     :cond-envelope? (optional-bool-guard? (infer-type (:cond node) ctx))
      :then (lower-expr (:then node) ctx)
      :else (lower-expr (:else node) ctx)}
 
@@ -4145,6 +4146,8 @@
           (recur (dec i)
                  {:node :c-ternary
                   :cond (lower-expr (get-in arms [i :guard]) ctx)
+                  :cond-envelope? (optional-bool-guard?
+                                   (infer-type (get-in arms [i :guard]) ctx))
                   :then (lower-expr (get-in arms [i :body])  ctx)
                   :else else}))))
 
