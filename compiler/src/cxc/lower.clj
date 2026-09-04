@@ -1640,13 +1640,18 @@
     (fail-nyi! (str "call with non-ident/non-dot callee " (:node callee)) node)))
 
 (defn- assert-not-optional-guard!
-  "F39 L5b-ii-c (Sub-I) — reject an Optional-typed expression in a
-   boolean guard position (arm-head `|:`, dispatch `if`, `while` cond, etc).
-   Nil-punning stops at control-flow: the user must terminate the
-   Optional with `?? default` or `!= nil`. Dead until Sub-P flips
-   storage — no expression infers Optional today."
+  "F39 L5b-ii-c (Sub-I) — reject an Optional-typed non-Bool expression
+   in a boolean guard position (arm-head `|:`, dispatch `if`, `while`
+   cond, etc). Non-Bool nil-punning stops at control-flow: the user
+   must terminate the Optional with `?? default` or `!= nil`.
+
+   2026-09-04 Path 1 slice 5 — Optional<Bool> in control-flow is
+   allowed and unwrapped as `.present && .value` at emit (nil-Bool
+   degrades to false); only Optional<Int> / <Float> / etc. still
+   trip this guard because their truthiness would be ambiguous."
   [guard-expr guard-tk site node]
-  (when (optional-tk? guard-tk)
+  (when (and (optional-tk? guard-tk)
+             (not= :bool (unwrap-tk guard-tk)))
     (fail-compile!
      :cxc-f39-optional-in-control-flow
      (str "F39 L5b-ii-c: " site " expects a Bool but got an Optional value. "
@@ -1654,6 +1659,15 @@
           "either `<expr> ?? <default>` to coalesce or `<expr> != nil` to test "
           "presence. See spec §3.6.1.")
      (or node guard-expr))))
+
+(defn- optional-bool-guard?
+  "2026-09-04 Path 1 slice 5 — true when a control-flow guard is
+   envelope-typed Bool. Callers stamp `:cond-envelope? true` on the
+   produced :c-while / :c-if-chain / :c-ternary / :c-if-chain-branch
+   node so emit switches from `(cond > 0)` sentinel wrap to
+   `(cond.present && cond.value)` envelope unwrap."
+  [tk]
+  (and (optional-tk? tk) (= :bool (unwrap-tk tk))))
 
 (defn- wrap-field-tk
   "F39 L5b-ii-c — when the field's storage is Optional-boxed
@@ -5151,12 +5165,18 @@
     ;; break/continue can validate they're inside a loop.
     :while-stmt
     (let [body-ctx (assoc ctx :in-loop? true)
+          cond-tk  (infer-type (:cond node) ctx)
           _        (assert-not-optional-guard!
-                    (:cond node) (infer-type (:cond node) ctx)
+                    (:cond node) cond-tk
                     "`while` cond" (:cond node))
           body-stmts (lower-body-stmts (:stmts (:body node)) body-ctx)]
+      ;; 2026-09-04 Path 1 slice 5 — :cond-envelope? flag tells emit
+      ;; to render `(cond.present && cond.value)` instead of the
+      ;; sentinel-degradation `(cond > 0)` wrap. Envelope-Bool nil
+      ;; degrades to false; envelope-Bool true fires the loop.
       {:node :c-while
        :cond (lower-expr (:cond node) ctx)
+       :cond-envelope? (optional-bool-guard? cond-tk)
        :body body-stmts})
 
     :break-stmt

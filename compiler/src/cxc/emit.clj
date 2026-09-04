@@ -127,9 +127,14 @@
     ;; unaffected by the `> 0` wrap. `||:` multi-arm dispatch lowers
     ;; into a right-fold of :c-ternary chains, so this reaches every
     ;; guard in the chain.
-    :c-ternary       (str "(((" (emit-expr (:cond node)) ")) > 0"
-                          " ? " (emit-expr (:then node))
-                          " : " (emit-expr (:else node)) ")")
+    :c-ternary       (let [cond-c (emit-expr (:cond node))
+                           guard  (if (:cond-envelope? node)
+                                    (str "({ __typeof__(" cond-c ") __cxc_tg = ("
+                                         cond-c "); __cxc_tg.present && __cxc_tg.value; })")
+                                    (str "((" cond-c ")) > 0"))]
+                       (str "(" guard
+                            " ? " (emit-expr (:then node))
+                            " : " (emit-expr (:else node)) ")"))
 
     ;; F39 L6 (2026-08-21) — `??` coalesce. Emits a GNU
     ;; statement-expression that binds the LHS to a temporary
@@ -726,9 +731,17 @@
     ;; true(1)→1, false(0)→0, nil(-1)→0 — nil degrades to false in
     ;; boolean context. Semantic no-op for the many 0/1-producing
     ;; conds (ptr-null, int compare) already emitted here.
+    ;;
+    ;; Path 1 slice 5 — `:cond-envelope?` flag switches to envelope
+    ;; unwrap: absent → false, present → the wrapped value. GNU
+    ;; stmt-expr binds cond once so side-effecting cond fires once.
     (let [cond-expr (emit-expr (:cond node))
-          body-lines (mapv emit-stmt (:body node))]
-      (str "while (((" cond-expr ")) > 0) {\n"
+          body-lines (mapv emit-stmt (:body node))
+          guard (if (:cond-envelope? node)
+                  (str "({ __typeof__(" cond-expr ") __cxc_wg = ("
+                       cond-expr "); __cxc_wg.present && __cxc_wg.value; })")
+                  (str "((" cond-expr ")) > 0"))]
+      (str "while (" guard ") {\n"
            (str/join "\n" (map #(str "    " %) body-lines))
            "\n}"))
     :c-break    "break;"
@@ -762,8 +775,14 @@
                                                 (str/join "\n"
                                                           (map #(str "    " %) body-lines))
                                                 "\n}")
-                                cond-c     (when cond-expr
-                                             (str "((" (emit-expr cond-expr) ")) > 0"))]
+                                cond-raw   (when cond-expr (emit-expr cond-expr))
+                                cond-c     (cond
+                                             (nil? cond-expr) nil
+                                             (:cond-envelope? branch)
+                                             (str "({ __typeof__(" cond-raw ") __cxc_bg = ("
+                                                  cond-raw "); __cxc_bg.present && __cxc_bg.value; })")
+                                             :else
+                                             (str "((" cond-raw ")) > 0"))]
                             (cond
                               (and first? cond-expr)
                               (str "if (" cond-c ") " brace-body)
