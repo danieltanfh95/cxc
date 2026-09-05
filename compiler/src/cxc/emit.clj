@@ -89,43 +89,9 @@
     ;; time needs them.
     :is-check
     (emit-expr (:gate node))
-    :binop           (if (:nil-propagate? node)
-                       ;; 2026-09-04 — primitive nil-propagating binop.
-                       ;; Same-type-primitive `x + y` / `x < y` etc.:
-                       ;; either operand nil → result nil (of the
-                       ;; appropriate result type). Single-eval via
-                       ;; `__typeof__` so side-effecting operands fire
-                       ;; once. Lower flips :nil-propagate? true when
-                       ;; both operands are same-type nullable
-                       ;; primitives.
-                       (let [left-c   (emit-expr (:left  node))
-                             right-c  (emit-expr (:right node))
-                             chk      (:nil-check-macro node)
-                             sentinel (:nil-sentinel node)
-                             ;; per-operand guard elision — omit the
-                             ;; runtime check when lower proved the
-                             ;; operand can't be nil. Both suppressed
-                             ;; can't happen (lower's `both-nonnil?`
-                             ;; branch bypasses this shape entirely).
-                             lc? (get node :nil-check-left?  true)
-                             rc? (get node :nil-check-right? true)
-                             guard (cond
-                                     (and lc? rc?)
-                                     (str "(" chk "(__cxc_np_l) || "
-                                          chk "(__cxc_np_r))")
-                                     lc?  (str chk "(__cxc_np_l)")
-                                     rc?  (str chk "(__cxc_np_r)")
-                                     :else "0")]
-                         (str "({ __typeof__(" left-c ") __cxc_np_l = ("
-                              left-c "); "
-                              "__typeof__(" right-c ") __cxc_np_r = ("
-                              right-c "); "
-                              guard
-                              " ? " sentinel " : (__cxc_np_l "
-                              (:op node) " __cxc_np_r); })"))
-                       (str "(" (emit-expr (:left node))
-                            " " (:op node) " "
-                            (emit-expr (:right node)) ")"))
+    :binop           (str "(" (emit-expr (:left node))
+                          " " (:op node) " "
+                          (emit-expr (:right node)) ")")
     ;; F39 L6 (2026-08-21) — C ternary. Emitted only by the `??`
     ;; coalesce lowering today; a general-purpose expression form
     ;; also usable by any future landing needing conditional-value
@@ -327,17 +293,11 @@
       (str "({ __typeof__(" inner-c ") __cxc_pc = (" inner-c "); "
            "(__cxc_pc.present " op " 0); })"))
 
-    ;; 2026-09-04 — primitive nil-check. `x == nil` / `x != nil` /
-    ;; `x is nil` on a primitive-typed x. Emit the type-specific
-    ;; IS_NIL macro from the preamble (INT_MIN for Int64, isnan for
-    ;; Float/Double, etc.) rather than raw C `==` which would
-    ;; compare pointer-to-integer and collapse to `x == 0`.
-    :c-primitive-nil-check
-    (let [inner-c (emit-expr (:inner node))
-          macro   (:macro node)]
-      (if (:negate? node)
-        (str "(!" macro "(" inner-c "))")
-        (str "(" macro "(" inner-c "))")))
+    ;; 2026-09-05 slice 10 — `:c-primitive-nil-check` node retired.
+    ;; Path 1 storage flip means all nullable primitives are envelope;
+    ;; `x == nil` on envelope routes through `:c-optional-nil-check`,
+    ;; while raw-primitive `== nil` is a compile-time constant handled
+    ;; at lower time.
 
     ;; F39 L5b-ii-c (2026-08-21) — nil-punning binop. Arithmetic /
     ;; ordering propagate (return Optional); equality reduces to Bool.
@@ -1855,34 +1815,14 @@
 ;; ---------------------------------------------------------------------------
 
 (def ^:private cxc-nil-sentinels
-  ;; 2026-09-04 — primitive nil-lifting via reserved sentinel values.
-  ;; Every value-typed slot carries a nil-representation distinct from
-  ;; any real value. Reserved bit patterns:
-  ;;   Int / Int64          -> INT64_MIN
-  ;;   Int32                -> INT32_MIN
-  ;;   Int16                -> INT16_MIN
-  ;;   Int8                 -> INT8_MIN
-  ;;   Bool                 -> int8_t -1   (0 = false, 1 = true)
-  ;;   Float / Double       -> IEEE quiet NaN with cxc-specific payload
-  ;; Unconditional preamble: even programs without the actor runtime
-  ;; need these constants because `let n: Int = nil` and `x == nil`
-  ;; compile against them.
+  ;; 2026-09-05 Path 1 slice 10 — the sentinel-lifting macros
+  ;; (CXC_INT_NIL / CXC_INT_IS_NIL / …) are retired. Every nullable
+  ;; primitive value now lives in a `_Cxc_Optional_<T>` envelope
+  ;; (present + value); `<stdint.h>` remains part of the preamble
+  ;; because the envelope typedefs and existing C code still depend
+  ;; on the sized-int types.
   (str "#include <stdint.h>\n"
-       "#include <math.h>\n"
-       "#define CXC_INT_NIL     ((int64_t)INT64_MIN)\n"
-       "#define CXC_INT32_NIL   ((int32_t)INT32_MIN)\n"
-       "#define CXC_INT16_NIL   ((int16_t)INT16_MIN)\n"
-       "#define CXC_INT8_NIL    ((int8_t)INT8_MIN)\n"
-       "#define CXC_BOOL_NIL    ((int8_t)-1)\n"
-       "#define CXC_FLOAT_NIL   (__builtin_nanf(\"cxcnil\"))\n"
-       "#define CXC_DOUBLE_NIL  (__builtin_nan(\"cxcnil\"))\n"
-       "#define CXC_INT_IS_NIL(x)    ((x) == CXC_INT_NIL)\n"
-       "#define CXC_INT32_IS_NIL(x)  ((x) == CXC_INT32_NIL)\n"
-       "#define CXC_INT16_IS_NIL(x)  ((x) == CXC_INT16_NIL)\n"
-       "#define CXC_INT8_IS_NIL(x)   ((x) == CXC_INT8_NIL)\n"
-       "#define CXC_BOOL_IS_NIL(x)   ((x) == CXC_BOOL_NIL)\n"
-       "#define CXC_FLOAT_IS_NIL(x)  (__builtin_isnan(x))\n"
-       "#define CXC_DOUBLE_IS_NIL(x) (__builtin_isnan(x))\n"))
+       "#include <math.h>\n"))
 
 (def ^:private cxc-runtime-helpers
   ;; Header-only runtime (design §22). The CXCAtom protocol declares

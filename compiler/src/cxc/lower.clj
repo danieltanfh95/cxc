@@ -105,7 +105,6 @@
              :refer [primitive-c-type cxc-type->c base-type-name
                      list-container-class-name cxc-type->type-kw
                      int-family? float-family? numeric-family? int-bit-width
-                     primitive-nil-sentinel primitive-nil-check
                      primitive-envelope-eligible?
                      type-kw->c-type
                      optional-tk? unwrap-tk type-kw->cxc-name-str
@@ -2621,35 +2620,28 @@
                 (fail-user! (str "2i: `Int.to_string()` takes no args, "
                                  "got " (count arg-exprs))
                             call-node))
-              ;; 2026-09-04 Gap 8 — sentinel-aware Int.to_string().
-              ;; INT64_MIN (Int nil) renders as "nil" instead of the
-              ;; raw wire value `-9223372036854775808`. Applies
-              ;; uniformly across widths — the type-kw's IS_NIL
-              ;; macro checks the correct sentinel.
-              ;;
               ;; 2026-09-04 Path 1 slice 7 — envelope target. Use the
               ;; UNWRAPPED envelope (`target-lo0`, no `.value` inject)
               ;; so we can check `.present` before formatting; absent →
               ;; @"nil", present → format `.value`.
-              (let [chk (primitive-nil-check target-ty)]
-                {:node      :ffi-call
-                 :name      "cxc_int_to_string"
-                 :args      [(if envelope-target? target-lo0 target-lo)]
-                 :emit-c-fn (fn [[n]]
-                              (cond
-                                envelope-target?
-                                (str "({ __typeof__(" n ") __cxc_ts = (" n "); "
-                                     "__cxc_ts.present "
-                                     "? [NSString stringWithFormat:@\"%lld\", "
-                                     "(long long)(__cxc_ts.value)] "
-                                     ": @\"nil\"; })")
-                                chk
-                                (str "(" chk "(" n ") ? @\"nil\" "
-                                     ": [NSString stringWithFormat:@\"%lld\", "
-                                     "(long long)(" n ")])")
-                                :else
-                                (str "[NSString stringWithFormat:@\"%lld\", "
-                                     "(long long)(" n ")]")))}))
+              ;;
+              ;; 2026-09-05 Path 1 slice 10 — the sentinel fallback
+              ;; (`CXC_INT_IS_NIL(n) ? "nil" : ...`) is dead: under
+              ;; Path 1 raw `:int64` targets are `Int!` non-nil, so
+              ;; the check never fires. Envelope-target and raw-`T!`
+              ;; target are the only reachable shapes.
+              {:node      :ffi-call
+               :name      "cxc_int_to_string"
+               :args      [(if envelope-target? target-lo0 target-lo)]
+               :emit-c-fn (fn [[n]]
+                            (if envelope-target?
+                              (str "({ __typeof__(" n ") __cxc_ts = (" n "); "
+                                   "__cxc_ts.present "
+                                   "? [NSString stringWithFormat:@\"%lld\", "
+                                   "(long long)(__cxc_ts.value)] "
+                                   ": @\"nil\"; })")
+                              (str "[NSString stringWithFormat:@\"%lld\", "
+                                   "(long long)(" n ")]")))})
 
           ;; 2026-09-03 — `Int.abs()` / `Int.min(other)` / `Int.max(other)`.
           ;; Compile-time ternary expansion; no helper call. `abs()` is
@@ -2661,35 +2653,26 @@
               (fail-user! (str "Int." method-name " takes " want-args
                                " arg(s), got " (count arg-exprs))
                           call-node))
-            ;; 2026-09-04 Gap 8 — sentinel-aware: nil receiver
-            ;; propagates nil through .abs()/.min()/.max(). Raw
-            ;; formulas would misbehave: `abs(INT64_MIN)` is UB in C
-            ;; (-INT64_MIN overflows), `min(nil, 5)` accidentally
-            ;; picks INT64_MIN (correct by luck), `max(nil, 5)`
-            ;; picks 5 (wrong — should propagate nil).
-            ;;
             ;; 2026-09-04 Path 1 slice 7 — envelope target: unwrap
             ;; presence, apply raw formula on `.value`, wrap result
             ;; back in envelope. Any absent operand → envelope-nil.
-            (let [chk (primitive-nil-check target-ty)
-                  base-emit (case method-name
+            ;;
+            ;; 2026-09-05 Path 1 slice 10 — sentinel fallback removed:
+            ;; raw `:int64` targets under Path 1 are always `Int!` non-
+            ;; nil, so the nil-propagate branch never fires. Envelope-
+            ;; target and raw-`T!` are the reachable shapes; raw-`T!`
+            ;; uses the naked `base-emit` (no nil check).
+            (let [base-emit (case method-name
                               "abs" (fn [[n]]     (str "((" n ") < 0 ? -(" n ") : (" n "))"))
                               "min" (fn [[a b]]   (str "((" a ") < (" b ") ? (" a ") : (" b "))"))
                               "max" (fn [[a b]]   (str "((" a ") > (" b ") ? (" a ") : (" b "))")))
-                  sentinel  (primitive-nil-sentinel target-ty)
                   opt-c     (optional-type-name
                              (type-kw->cxc-name-str target-ty))
-                  ;; second-arg envelope check: `.min()/.max()` accept
-                  ;; a positional arg whose infer-type we haven't stored.
-                  ;; For slice 7 we assume arg is same shape as target
-                  ;; (both envelope or both raw); a mixed case surfaces
-                  ;; at parse-time via type mismatch.
                   target-emit (if envelope-target? target-lo0 target-lo)]
               {:node      :ffi-call
                :name      (str "cxc_int_" method-name)
                :args      (into [target-emit] arg-exprs)
-               :emit-c-fn (cond
-                            envelope-target?
+               :emit-c-fn (if envelope-target?
                             (case method-name
                               "abs" (fn [[n]]
                                       (str "({ __typeof__(" n ") __cxc_a = (" n "); "
@@ -2704,18 +2687,7 @@
                                      "? (" opt-c "){.present = 1, .value = "
                                      (base-emit ["__cxc_al.value" "__cxc_bl.value"]) "} "
                                      ": (" opt-c "){.present = 0}; })")))
-                            (and chk sentinel)
-                            (case method-name
-                              "abs" (fn [args]
-                                      (str "(" chk "(" (first args) ") "
-                                           "? " sentinel " : "
-                                           (base-emit args) ")"))
-                              (fn [args]
-                                (str "((" chk "(" (first args) ") || "
-                                     chk "(" (second args) ")) "
-                                     "? " sentinel " : "
-                                     (base-emit args) ")")))
-                            :else base-emit)}))
+                            base-emit)}))
 
           ;; 2026-09-03 — `Bool.to_string()` — literal "true"/"false".
           (and (= :bool target-ty)
@@ -3051,17 +3023,12 @@
                 ;; and L5b-ii-d's single-eval patterns for side-effecting
                 ;; receivers (`Counter().other.method()` chains).
                 on-nil-expr (get-in atom-entry [:on-nil-entries method-name])
-                ;; 2026-09-04 — implicit sentinel fallback for primitive-
-                ;; returning calls on nullable atom receivers. ObjC's
-                ;; nil-messaging returns zero-value primitives (0, false,
-                ;; 0.0) which collide with legitimate non-nil values in
-                ;; the sentinel scheme. When the callee returns a
-                ;; sentinel-lifted primitive (Int/Bool/Float/Double + width
-                ;; variants), the receiver isn't proven non-nil at
-                ;; compile time, the return isn't `T!`-declared, and no
-                ;; explicit on_nil: entry exists → wrap with a
-                ;; sentinel-fallback dispatch so `nil_atom.n()` collapses
-                ;; to CXC_INT_NIL, not 0.
+                ;; 2026-09-05 slice 10 — the sentinel-fallback dispatch
+                ;; for primitive-returning nullable-receiver calls is
+                ;; retired. Bare-T primitive returns are envelope now,
+                ;; and ObjC nil-messaging returns a zero-init envelope
+                ;; struct (`{present=0}`) which is *exactly* nil at the
+                ;; envelope semantics — no wrapper required.
                 ;; Method info stores raw `:cxc-return-ty-node`; observables
                 ;; store the raw type as `:return-type` on `o` (parser sets
                 ;; it whenever `:- T` is present). Both preserve the
@@ -3072,20 +3039,6 @@
                                 (when-let [ty-name (:cxc-return-ty m)]
                                   {:node :type-ref :name ty-name}))
                 ret-nonnil? (= :type-nonnil (:node ret-node))
-                ret-tk      (cond
-                              (and m ret-node (not ret-nonnil?))
-                              (try
-                                (cxc-type->type-kw
-                                  (case (:node ret-node)
-                                    :type-ref (:name ret-node)
-                                    :type-of  (:outer ret-node)
-                                    nil)
-                                  (:record-env ctx) (:atom-env ctx)
-                                  (:enum-env ctx) call-node)
-                                (catch Exception _ nil))
-                              (and o (not m)) (:type-kw o))
-                ret-sentinel (when (and ret-tk (not ret-nonnil?))
-                               (primitive-nil-sentinel ret-tk))
                 recv-nonnil? (expr-nonnil? (:target dot) ctx)
                 ;; 2026-09-04 Gap 2 — a `T!` primitive return on a
                 ;; nullable receiver is a spec §3.6.1 nonnil contract
@@ -3097,6 +3050,13 @@
                 ;; Float/Double + widths) — non-primitive `!` returns
                 ;; already have their own runtime-binding checks.
                 t-bang-primitive-ret?
+                ;; 2026-09-05 slice 10 — swapped from `primitive-nil-
+                ;; sentinel` to `primitive-envelope-eligible?` so UInt
+                ;; families are also covered. The property we need is
+                ;; "ObjC nil-messaging returns silent 0 for this
+                ;; primitive C type," which applies uniformly to all
+                ;; scalar families (int/uint/bool/float), not the
+                ;; narrower sentinel-having subset.
                 (and (or m o) ret-nonnil?
                      (let [inner (:inner ret-node)
                            ty    (case (:node inner)
@@ -3104,7 +3064,7 @@
                                    nil)]
                        (and ty
                             (try
-                              (primitive-nil-sentinel
+                              (primitive-envelope-eligible?
                                 (cxc-type->type-kw
                                   ty (:record-env ctx) (:atom-env ctx)
                                   (:enum-env ctx) call-node))
@@ -3123,12 +3083,6 @@
                :site-label (str "atom `" atom-name "` method `"
                                 method-name "` non-null primitive return "
                                 "called on nullable receiver")}
-
-              (and ret-sentinel (not recv-nonnil?))
-              {:node     :c-on-nil-dispatch
-               :recv     target-lo
-               :send     msg-send
-               :fallback {:node :name :sym ret-sentinel}}
 
               :else msg-send))
 
@@ -3523,28 +3477,23 @@
                   ;;                is true, so `ni ?? 100` would keep
                   ;;                the sentinel).
                   (= "??" (:op node))
-                  (let [lt        (infer-type (:left node) ctx)
-                        chk-macro (primitive-nil-check lt)]
+                  (let [lt (infer-type (:left node) ctx)]
+                    ;; 2026-09-04 Path 1 slice 2d — envelope LHS routes
+                    ;; to `:mode :optional`: guard is `.present`, unwrap
+                    ;; is `.value`.
+                    ;;
+                    ;; 2026-09-05 Path 1 slice 10 — the raw-primitive
+                    ;; `:mode :primitive` branch (nil-check-macro) is
+                    ;; gone: Path 1 storage flip means every nullable
+                    ;; primitive is envelope, so `Int? ?? default` hits
+                    ;; the envelope branch. Reference LHS keeps the
+                    ;; `!= nil` shape.
                     (cond
-                      ;; 2026-09-04 Path 1 slice 2d — envelope LHS
-                      ;; routes to `:mode :optional` (existing emit
-                      ;; path): guard is `.present`, unwrapped value
-                      ;; is `.value`. Checked before the sentinel
-                      ;; branch so `Optional<Int>` doesn't fall into
-                      ;; the sentinel-macro form (which would test
-                      ;; `.present == INT64_MIN`).
                       (optional-tk? lt)
                       {:node  :c-coalesce
                        :mode  :optional
                        :left  (lower-expr (:left node)  ctx)
                        :right (lower-expr (:right node) ctx)}
-
-                      chk-macro
-                      {:node             :c-coalesce
-                       :mode             :primitive
-                       :nil-check-macro  chk-macro
-                       :left             (lower-expr (:left node)  ctx)
-                       :right            (lower-expr (:right node) ctx)}
 
                       :else
                       {:node  :c-coalesce
@@ -3595,33 +3544,28 @@
                      :inner   (lower-expr opt-side ctx)
                      :negate? negate?})
 
-                  ;; 2026-09-04 — primitive nil-check. `x == nil` /
-                  ;; `x != nil` / `x is nil` where x is a primitive
-                  ;; type (Int / Int32 / Bool / Float / Double) → route
-                  ;; through the type-specific IS_NIL macro rather than
-                  ;; C's pointer-vs-integer comparison (which would
-                  ;; collapse Int nil to `x == 0`, indistinguishable
-                  ;; from a legitimate zero value). Returns Bool.
+                  ;; 2026-09-05 Path 1 slice 10 — raw-primitive
+                  ;; `x == nil` degrades to a compile-time constant.
+                  ;; Under Path 1 every bare-T nullable primitive is
+                  ;; envelope (routed through `:c-optional-nil-check`
+                  ;; above); a raw primitive that reaches this branch
+                  ;; is `T!` non-nil or a raw literal (`0 == nil`),
+                  ;; which by construction cannot equal nil. Emit
+                  ;; `false` for `==`/`is`, `true` for `!=`. Falls
+                  ;; through to the plain :binop otherwise. Old branch
+                  ;; used `CXC_INT_IS_NIL(x)` to guard against sentinel-
+                  ;; lifted raw nulls — no such storage remains.
                   (let [op (:op node)
                         lt (infer-type (:left node)  ctx)
                         rt (infer-type (:right node) ctx)
                         left-nil?  (= :nil lt)
-                        right-nil? (= :nil rt)]
+                        right-nil? (= :nil rt)
+                        prim-side? #(or (int-family? %) (float-family? %)
+                                        (= :bool %))]
                     (and (contains? #{"is" "==" "!="} op)
-                         (or (and (primitive-nil-check lt) right-nil?)
-                             (and (primitive-nil-check rt) left-nil?))))
-                  (let [op (:op node)
-                        lt (infer-type (:left node) ctx)
-                        prim-side (if (primitive-nil-check lt)
-                                    (:left node)
-                                    (:right node))
-                        prim-tk (infer-type prim-side ctx)
-                        macro   (primitive-nil-check prim-tk)
-                        negate? (= "!=" op)]
-                    {:node    :c-primitive-nil-check
-                     :macro   macro
-                     :inner   (lower-expr prim-side ctx)
-                     :negate? negate?})
+                         (or (and (prim-side? lt) right-nil?)
+                             (and (prim-side? rt) left-nil?))))
+                  {:node :int :value (if (= "!=" (:op node)) 1 0)}
 
                   ;; F39 L5b-ii-c (Sub-C) — Optional-binop dispatch.
                   ;; If either operand's inferred type is [:optional _],
@@ -3663,60 +3607,14 @@
                      :result-kind        kind
                      :result-opt-c-type  result-opt-c})
 
-                  ;; 2026-09-04 — primitive nil-propagating arithmetic
-                  ;; and ordering. `x + y` / `x < y` / etc. on SAME-TYPE
-                  ;; nullable primitives (Int + Int, Double + Double,
-                  ;; Bool and Bool). Nil propagates: if either operand
-                  ;; is nil the result is nil (of the appropriate result
-                  ;; type). Arithmetic result mirrors operand type
-                  ;; (Int + Int = Int-nil); ordering result is Bool-nil.
-                  ;;
-                  ;; Mixed-type arithmetic (Int + Double, Int + Int32)
-                  ;; falls through to the raw C binop for now — C's
-                  ;; implicit numeric promotion handles the type widening
-                  ;; and skipping the nil-guard preserves behavior for
-                  ;; time / duration math (Duration.millis / 1000.0 etc.)
-                  ;; while the sentinel model matures.
-                  (let [op (:op node)
-                        lt (infer-type (:left node)  ctx)
-                        rt (infer-type (:right node) ctx)
-                        arith-op? (contains? #{"+" "-" "*" "/" "%"} op)
-                        ord-op?   (contains? #{"<" "<=" ">" ">="} op)
-                        ;; skip the runtime nil-guard when the compiler can
-                        ;; prove both operands are non-nil (Int! locals,
-                        ;; T! self-fields, literals). Wrapping non-nullable
-                        ;; arithmetic in a ternary would be a pure perf
-                        ;; regression with no correctness gain.
-                        both-nonnil? (and (expr-nonnil? (:left node) ctx)
-                                          (expr-nonnil? (:right node) ctx))]
-                    (and (or arith-op? ord-op?)
-                         (primitive-nil-check lt)
-                         (primitive-nil-check rt)
-                         (= lt rt)
-                         (not both-nonnil?)))
-                  (let [op (:op node)
-                        lt (infer-type (:left node) ctx)
-                        arith-op? (contains? #{"+" "-" "*" "/" "%"} op)
-                        result-sentinel (if arith-op?
-                                          (primitive-nil-sentinel lt)
-                                          "CXC_BOOL_NIL")
-                        check-macro (primitive-nil-check lt)
-                        ;; per-operand guard elision: an operand proven
-                        ;; non-nil at compile time doesn't need the
-                        ;; runtime check. Elides the tautological
-                        ;; `CXC_INT_IS_NIL((int64_t)1)` warning on
-                        ;; `n + 1` and shaves a compare per literal.
-                        left-check?  (not (expr-nonnil? (:left node)  ctx))
-                        right-check? (not (expr-nonnil? (:right node) ctx))]
-                    {:node             :binop
-                     :op               op
-                     :left             (lower-expr (:left node) ctx)
-                     :right            (lower-expr (:right node) ctx)
-                     :nil-propagate?   true
-                     :nil-check-macro  check-macro
-                     :nil-check-left?  left-check?
-                     :nil-check-right? right-check?
-                     :nil-sentinel     result-sentinel})
+                  ;; 2026-09-05 Path 1 slice 10 — raw-primitive nil-
+                  ;; propagating arith/ord branch removed. Same-type
+                  ;; nullable-primitive arithmetic (`x + y` under
+                  ;; sentinel storage) no longer exists: bare-T
+                  ;; nullable primitives are envelope, routed through
+                  ;; the `:c-optional-binop` branch above. Raw `T!`
+                  ;; primitives are non-nil, so the `not both-nonnil?`
+                  ;; gate would always be false anyway.
 
                   ;; F37: record-typed `==` / `!=` reroutes through the
                   ;; synthesized `<Record>_cxc_equals` free function.
@@ -5561,11 +5459,11 @@
                   envelope?
                   {:node :c-envelope-lit :c-type ct :value rhs-lo0}
 
-                  ;; 2026-09-04 — sentinel-lifting fallback for the raw
-                  ;; primitive case (unchanged pre-slice-2 behavior).
-                  (and (= :nil (:node rhs-lo0))
-                       (primitive-nil-sentinel tk))
-                  (assoc rhs-lo0 :sentinel (primitive-nil-sentinel tk))
+                  ;; 2026-09-05 slice 10 — the raw-primitive `= nil`
+                  ;; sentinel-lifting fallback is gone. Every bare-T
+                  ;; nullable primitive now hits `envelope?` above; a
+                  ;; raw-primitive local with an explicit nil RHS is a
+                  ;; type mismatch caught elsewhere.
 
                   :else rhs-lo0)
         arms    (:arms node)
@@ -8225,7 +8123,16 @@
                                envelope-return?
                                (and rt
                                     (not= :type-nonnil (:node rt))
-                                    (primitive-nil-sentinel declared-raw-tk))
+                                    ;; 2026-09-05 slice 10 — align
+                                    ;; observable-return lift with the
+                                    ;; full envelope-eligibility set
+                                    ;; (int/uint/bool/float families).
+                                    ;; `primitive-nil-sentinel` missed
+                                    ;; UInt (no sentinel value), leaving
+                                    ;; bare-T UInt observables raw
+                                    ;; while slice 12 stores UInt fields
+                                    ;; as envelope — inconsistent.
+                                    (primitive-envelope-eligible? declared-raw-tk))
                                declared-tk (cond-> declared-raw-tk
                                              envelope-return?
                                              ((fn [t] [:optional t])))
@@ -8300,7 +8207,11 @@
                            envelope-return?
                            (and rt
                                 (not= :type-nonnil (:node rt))
-                                (primitive-nil-sentinel declared-raw-tk))
+                                ;; 2026-09-05 slice 10 — align atom-
+                                ;; observable env-build with the
+                                ;; record variant: cover the full
+                                ;; envelope-eligible set (adds UInt).
+                                (primitive-envelope-eligible? declared-raw-tk))
                            declared-tk (cond-> declared-raw-tk
                                          envelope-return?
                                          ((fn [t] [:optional t])))
