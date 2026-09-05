@@ -172,7 +172,7 @@
                      default-expr-const-shape?
                      validate-default-is-const!]]
             [cxc.lower.method-entry :as method-entry
-             :refer [handler-decl->method-entry]]
+             :refer [handler-decl->method-entry param-type-name]]
             [cxc.lower.field-normalize :as field-normalize
              :refer [fields-from-data-section]]
             [cxc.lower.extensions :as extensions
@@ -2326,7 +2326,7 @@
                                           :is-self? true}]
                                         (mapv (fn [p]
                                                 {:name  (:name p)
-                                                 :cxc-ty (:name (:type p))
+                                                 :cxc-ty (param-type-name (:type p))
                                                  :default (:default p)})
                                               (:params o)))
                    :cxc-return-ty ret-name
@@ -2351,7 +2351,7 @@
                                           :is-self? true}]
                                         (mapv (fn [p]
                                                 {:name  (:name p)
-                                                 :cxc-ty (:name (:type p))
+                                                 :cxc-ty (param-type-name (:type p))
                                                  :default (:default p)})
                                               (:params o)))
                    :cxc-return-ty ret-name
@@ -6757,7 +6757,7 @@
   (let [param-locals (into {}
                            (map (fn [p]
                                   [(:name p)
-                                   (cxc-type->type-kw (:name (:type p))
+                                   (cxc-type->type-kw (param-type-name (:type p))
                                                       (:record-env ctx)
                                                       (:atom-env ctx)
                                                       (:enum-env ctx)
@@ -7094,7 +7094,7 @@
   (let [param-locals (into {}
                            (map (fn [p]
                                   [(:name p)
-                                   (cxc-type->type-kw (:name (:type p))
+                                   (cxc-type->type-kw (param-type-name (:type p))
                                                       (:record-env ctx)
                                                       (:atom-env ctx)
                                                       (:enum-env ctx)
@@ -7926,7 +7926,7 @@
                                                   (map (fn [p]
                                                          [(:name p)
                                                           (cxc-type->type-kw
-                                                           (:name (:type p))
+                                                           (param-type-name (:type p))
                                                            record-env atom-env
                                                            enum-env p)])
                                                        (:params o)))
@@ -7995,7 +7995,7 @@
                                               (map (fn [p]
                                                      [(:name p)
                                                       (cxc-type->type-kw
-                                                       (:name (:type p))
+                                                       (param-type-name (:type p))
                                                        record-env
                                                        atom-env enum-env p)])
                                                    (:params o)))

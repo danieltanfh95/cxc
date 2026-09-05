@@ -20,16 +20,38 @@
              :refer [validate-defaults-after-required!
                      validate-default-is-const!]]))
 
+(defn param-type-name
+  "Extract the inner type-ref name from a param's `:type` node, unwrapping
+   the `:type-nonnil` (`T!`) wrapper. `(:name (:type p))` alone returns nil
+   for `T!` params because the outer node is `:type-nonnil` (no `:name`
+   key); unwrap first, then read `:name`. Public so `lower.clj` can use
+   the same helper at the observable-param inference sites."
+  [ty]
+  (cond
+    (nil? ty)                       nil
+    (= :type-nonnil (:node ty))     (:name (:inner ty))
+    :else                           (:name ty)))
+
 (defn normalize-method-param
   "Parser hands us `self` as {:node :param :name \"self\"} and typed params
    as {:node :field :name ... :type ...}. Normalize to {:name :cxc-ty
-   :is-self? :default}. `:default` preserves the parser's default-
+   :nonnil? :is-self? :default}. `:default` preserves the parser's default-
    expr node (nil when absent) so `resolve-args-against-params` can
-   insert it at call sites where the arg is omitted (spec §3.8.5)."
+   insert it at call sites where the arg is omitted (spec §3.8.5).
+
+   2026-09-05 Path 1 slice 8-A prep: `:cxc-ty` now unwraps `T!` to the
+   inner type name (previously returned nil for `T!` params, which
+   crashed `cxc-type->c` downstream). New `:nonnil?` flag records
+   whether the parser saw `!` on the type — read by slice 8-A's
+   envelope-eligibility gate at the method-fn synth + call-site
+   auto-unwrap layers, and by slice 9's `T!` contract guards."
   [enclosing-record-name p]
   (if (= "self" (:name p))
-    {:name "self" :cxc-ty enclosing-record-name :is-self? true :default nil}
-    {:name (:name p) :cxc-ty (:name (:type p)) :is-self? false
+    {:name "self" :cxc-ty enclosing-record-name :nonnil? true :is-self? true :default nil}
+    {:name    (:name p)
+     :cxc-ty  (param-type-name (:type p))
+     :nonnil? (= :type-nonnil (:node (:type p)))
+     :is-self? false
      :default (:default p)}))
 
 (defn observable->method-entry
