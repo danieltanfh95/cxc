@@ -95,12 +95,24 @@
 (defn- container-method
   "Build a method-index entry for a synthesized container method.
    `return-ty` is a cxc type-name string (or nil for void); params
-   receive self implicitly prepended."
+   receive self implicitly prepended.
+
+   2026-09-05 Path 1 slice 8-A — container-synth methods (List
+   at_or, Map get_or, Set contains, …) are hand-crafted to take raw
+   C scalars in their ObjC signatures (`(int)i`, `(NSString *)k`).
+   The call-site slice-8-B envelope-arg unwrap only fires when the
+   callee param is marked non-nil (or otherwise not envelope-eligible),
+   so every synthesized-container param is stamped `:nonnil? true`
+   here. Bare-T primitive args to List.at_or get automatically
+   unwrapped envelope→raw at the call site, matching the raw-scalar
+   C sig the container class emits."
   [method-name params return-ty]
-  {:name               method-name
-   :params             (into [{:name "self"}] params)
-   :cxc-return-ty      return-ty
-   :cxc-return-ty-node (when return-ty {:node :type-ref :name return-ty})})
+  (let [stamped-params (mapv #(assoc % :nonnil? true) params)]
+    {:name               method-name
+     :params             (into [{:name "self" :is-self? true :nonnil? true}]
+                               stamped-params)
+     :cxc-return-ty      return-ty
+     :cxc-return-ty-node (when return-ty {:node :type-ref :name return-ty})}))
 
 (defn synthesize-map-container-entries
   "Given {[K V] → map-class-name} produce atom-env entries for each

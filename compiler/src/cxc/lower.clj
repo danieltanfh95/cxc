@@ -1185,6 +1185,12 @@
 ;; method? + seed-class-fn-index-from-f37-decode + structurally-
 ;; satisfies-protocol?) moved to cxc.lower.protocol-shapes.
 
+;; 2026-09-05 Path 1 slice 1-wider full — early forward-decl so the
+;; caller-side dispatch inference below can consult the envelope
+;; return-type lift alongside the full-form helper definitions further
+;; down (near the other slice 8-A helpers).
+(declare method-return-tk)
+
 (defn- infer-method-call-type
   "For `target.method(args)`: infer target-ty, look up method on the
    record OR atom (falling back to observable-index for atoms), return
@@ -1256,9 +1262,10 @@
                        (structurally-satisfies-protocol? info rn "As" :bytes))
               :bytes)]
         (cond
-          m          (cxc-type->type-kw (:cxc-return-ty m)
-                                        (:record-env ctx) (:atom-env ctx)
-                                        (:enum-env ctx) call-node)
+          m          (or (method-return-tk m ctx)
+                         (cxc-type->type-kw (:cxc-return-ty m)
+                                            (:record-env ctx) (:atom-env ctx)
+                                            (:enum-env ctx) call-node))
           ;; F67 L4a — record observables dispatch the same as record
           ;; methods (both lower to `<Rec>_<name>(self, ...)` C
           ;; functions); type-kw was pre-computed at env build.
@@ -2252,6 +2259,8 @@
 ;; M1c — c-method-name / objc-method-selector moved to cxc.lower.selectors.
 
 (declare lower-for-each-call lower-filter-call lambda-body-stmts unbox-prelude-for-element)
+(declare param-envelope-eligible? param-tk param-c-type
+         method-return-envelope? method-return-c-type)
 
 (defn- lower-method-call
   "`target.method(args)` dispatches on target type:
@@ -2447,18 +2456,23 @@
              call-node)))
         (let [arg-exprs-raw (mapv #(lower-expr (:value %) ctx) ordered-args)
             ;; 2026-09-04 Path 1 slice 8-B — envelope-to-raw unwrap
-            ;; at method-dispatch arg-pass. Under slice 2e locals are
-            ;; envelope-typed but method params are still compiled
-            ;; raw; passing envelope->raw would fail at C compile
-            ;; ("sending _Cxc_Optional_<T> to parameter of incompatible
-            ;; type"). This pass detects that mismatch and injects a
-            ;; runtime presence-check + `.value` unwrap via the
-            ;; existing L5b-ii-d shape (`:c-value-nonnil-unwrap` —
-            ;; warning-grade `cxc_nonnil_violation` on absent, no
-            ;; abort; matches field-write discipline). Aligned with
-            ;; user-params by position; skipped for the self slot
-            ;; and for prelude synth methods that don't expose
-            ;; user-params.
+            ;; at method-dispatch arg-pass. Aligned with user-params
+            ;; by position; skipped for the self slot and for prelude
+            ;; synth methods that don't expose user-params.
+            ;;
+            ;; 2026-09-05 slice 8-A — inverse case: raw-to-envelope
+            ;; wrap. When the callee param is now envelope (bare-T
+            ;; primitive param under Path 1) and the caller passes a
+            ;; raw scalar (literal `42`, or another raw), wrap in
+            ;; `:c-envelope-lit` so the C signatures agree. Four
+            ;; matrix cases at each (param, arg) position:
+            ;;
+            ;;   callee param   |  caller arg tk   |  action
+            ;;   ---------------+------------------+---------
+            ;;   envelope       |  envelope        |  pass through
+            ;;   envelope       |  raw scalar      |  wrap :c-envelope-lit
+            ;;   raw (T!/ref)   |  envelope        |  unwrap :c-value-nonnil-unwrap
+            ;;   raw (T!/ref)   |  raw             |  pass through
             target-display-name
             (cond
               (and (map? target-ty) (:record target-ty)) (:record target-ty)
@@ -2470,18 +2484,44 @@
                      (= (count user-params) (count ordered-args))
                      (= (count user-params) (count arg-exprs-raw)))
               (mapv (fn [i arg-lo param]
-                      (let [arg-tk (infer-type (:value (nth ordered-args i))
-                                               ctx)]
-                        (if (optional-tk? arg-tk)
+                      (let [arg-tk   (infer-type (:value (nth ordered-args i))
+                                                 ctx)
+                            arg-opt? (optional-tk? arg-tk)
+                            param-env? (param-envelope-eligible? param ctx)]
+                        (cond
+                          ;; envelope param, envelope arg — pass through
+                          (and param-env? arg-opt?)
+                          arg-lo
+
+                          ;; envelope param, raw scalar arg — wrap
+                          param-env?
+                          {:node   :c-envelope-lit
+                           :c-type (param-c-type param ctx)
+                           :value  arg-lo}
+
+                          ;; raw param, envelope arg — unwrap
+                          arg-opt?
                           {:node  :c-value-nonnil-unwrap
                            :inner arg-lo
                            :site  (str "method call `" target-display-name
                                        "." method-name "` arg")
                            :name  (or (:name param) (str "arg" i))}
+
+                          ;; raw param, raw arg — pass through
+                          :else
                           arg-lo)))
                     (range (count arg-exprs-raw))
                     arg-exprs-raw
                     user-params)
+              ;; 2026-09-05 slice 8-A — with `user-params` absent
+              ;; the primitive-method dispatch below decides per-shape
+              ;; whether the emit template wants envelope or raw args.
+              ;; Envelope-native templates (Int.min/max/abs, Bool.
+              ;; to_string, envelope-target String methods) handle
+              ;; `[:optional :T]` locals in place; raw-template
+              ;; templates (String.to_int_or fallback, container
+              ;; helpers not covered by the synth-container flip)
+              ;; unwrap at their own emit site.
               arg-exprs-raw)
             ;; Audit F44 — List container's `add`/`remove` take the
             ;; element as `id`, so primitive callers need boxing at
@@ -2822,36 +2862,60 @@
                :args [target-lo]
                :emit-c-fn (fn [[s]] (str "[(" s ") pathExtension]"))}
               "to_int_or"
-              {:node :ffi-call :name "cxc_string_to_int_or"
-               :args (into [target-lo] arg-exprs)
-               :emit-c-fn (fn [[s fb]]
-                            (str "({ NSString *__s = (" s "); "
-                                 "int64_t __fb = (int64_t)(" fb "); "
-                                 "int64_t __r = __fb; "
-                                 "if (__s) { "
-                                 "NSScanner *__sc = [NSScanner scannerWithString:__s]; "
-                                 "long long __v = 0; "
-                                 "if ([__sc scanLongLong:&__v] && [__sc isAtEnd]) "
-                                 "{ __r = (int64_t)__v; } } "
-                                 "__r; })"))}
+              ;; 2026-09-05 Path 1 slice 8-A — the `fallback` arg is
+              ;; now envelope under bare-T param flip; the raw-C
+              ;; template splices it into `int64_t __fb = (int64_t)(fb)`
+              ;; which chokes on `_Cxc_Optional_Int64`. Unwrap the
+              ;; envelope in place so the template body stays as the
+              ;; simple scalar-arg shape it was authored against.
+              (let [fb-arg (first arg-exprs)
+                    fb-tk  (try (infer-type (:value (first ordered-args)) ctx)
+                                (catch Exception _ nil))
+                    fb     (if (optional-tk? fb-tk)
+                             {:node  :c-value-nonnil-unwrap
+                              :inner fb-arg
+                              :site  "primitive method `string.to_int_or` arg"
+                              :name  "fallback"}
+                             fb-arg)]
+                {:node :ffi-call :name "cxc_string_to_int_or"
+                 :args [target-lo fb]
+                 :emit-c-fn (fn [[s fb]]
+                              (str "({ NSString *__s = (" s "); "
+                                   "int64_t __fb = (int64_t)(" fb "); "
+                                   "int64_t __r = __fb; "
+                                   "if (__s) { "
+                                   "NSScanner *__sc = [NSScanner scannerWithString:__s]; "
+                                   "long long __v = 0; "
+                                   "if ([__sc scanLongLong:&__v] && [__sc isAtEnd]) "
+                                   "{ __r = (int64_t)__v; } } "
+                                   "__r; })"))})
               "to_bool_or"
-              {:node :ffi-call :name "cxc_string_to_bool_or"
-               :args (into [target-lo] arg-exprs)
-               :emit-c-fn (fn [[s fb]]
-                            (str "({ NSString *__s = (" s "); "
-                                 "BOOL __fb = (BOOL)(" fb "); "
-                                 "BOOL __r = __fb; "
-                                 "if (__s) { "
-                                 "NSString *__l = [__s lowercaseString]; "
-                                 "if ([__l isEqualToString:@\"true\"] "
-                                 "|| [__l isEqualToString:@\"yes\"] "
-                                 "|| [__l isEqualToString:@\"1\"] "
-                                 "|| [__l isEqualToString:@\"on\"]) __r = YES; "
-                                 "else if ([__l isEqualToString:@\"false\"] "
-                                 "|| [__l isEqualToString:@\"no\"] "
-                                 "|| [__l isEqualToString:@\"0\"] "
-                                 "|| [__l isEqualToString:@\"off\"]) __r = NO; } "
-                                 "__r; })"))}
+              (let [fb-arg (first arg-exprs)
+                    fb-tk  (try (infer-type (:value (first ordered-args)) ctx)
+                                (catch Exception _ nil))
+                    fb     (if (optional-tk? fb-tk)
+                             {:node  :c-value-nonnil-unwrap
+                              :inner fb-arg
+                              :site  "primitive method `string.to_bool_or` arg"
+                              :name  "fallback"}
+                             fb-arg)]
+                {:node :ffi-call :name "cxc_string_to_bool_or"
+                 :args [target-lo fb]
+                 :emit-c-fn (fn [[s fb]]
+                              (str "({ NSString *__s = (" s "); "
+                                   "BOOL __fb = (BOOL)(" fb "); "
+                                   "BOOL __r = __fb; "
+                                   "if (__s) { "
+                                   "NSString *__l = [__s lowercaseString]; "
+                                   "if ([__l isEqualToString:@\"true\"] "
+                                   "|| [__l isEqualToString:@\"yes\"] "
+                                   "|| [__l isEqualToString:@\"1\"] "
+                                   "|| [__l isEqualToString:@\"on\"]) __r = YES; "
+                                   "else if ([__l isEqualToString:@\"false\"] "
+                                   "|| [__l isEqualToString:@\"no\"] "
+                                   "|| [__l isEqualToString:@\"0\"] "
+                                   "|| [__l isEqualToString:@\"off\"]) __r = NO; } "
+                                   "__r; })"))})
               "trim_prefix"
               {:node :ffi-call :name "cxc_string_trim_prefix"
                :args [target-lo (first arg-exprs)]
@@ -4143,9 +4207,34 @@
               ;; nodes. We carry the template through unchanged and hand
               ;; it emit-side placeholders {0}, {1}, ... that emit-expr
               ;; substitutes with each argument's rendered form.
+              ;;
+              ;; 2026-09-05 Path 1 slice 8-A — FFI slots always expect
+              ;; raw primitives (parser auto-`T!` wrap). Under slice 8-A
+              ;; method params are envelope, so callers-of-FFI inside
+              ;; prelude wrappers (e.g. `below(n) :- native_random_
+              ;; below(n)` where n is now envelope) must unwrap
+              ;; envelope→raw at the FFI boundary. Mirror slice 8-B's
+              ;; auto-unwrap: envelope arg → `:c-value-nonnil-unwrap`.
               {:node :ffi-call
                :name callee-name
-               :args (mapv #(lower-expr (:value %) ctx) args)
+               :args (mapv (fn [a]
+                             (let [lo (lower-expr (:value a) ctx)
+                                   ;; Guard against contexts where the
+                                   ;; arg's type-kw isn't inferable (e.g.
+                                   ;; a raw `self` inside a prelude
+                                   ;; observable body where `self` isn't
+                                   ;; bound in `:locals`). Non-envelope
+                                   ;; args never need unwrap; a nil `tk`
+                                   ;; is treated the same as raw.
+                                   tk (try (infer-type (:value a) ctx)
+                                           (catch Exception _ nil))]
+                               (if (optional-tk? tk)
+                                 {:node  :c-value-nonnil-unwrap
+                                  :inner lo
+                                  :site  (str "FFI builtin `" callee-name "` arg")
+                                  :name  (or (:name a) "arg")}
+                                 lo)))
+                           args)
                ;; The final emit template — arg positions replaced with
                ;; already-rendered strings from emit-expr. Precomputed
                ;; here so emit stays registry-free.
@@ -5309,7 +5398,29 @@
   (case (:node node)
     :expr-stmt (lower-expr (:expr node) ctx)
     :emit      (lower-send node ctx)
-    :return    {:node :return :value (lower-expr (:expr node) ctx)}
+    :return    (let [expected-tk (:expected-return-tk ctx)
+                     rhs-tk       (when (optional-tk? expected-tk)
+                                    (try (infer-type (:expr node) ctx)
+                                         (catch Exception _ nil)))
+                     value-lo     (lower-expr (:expr node) ctx)]
+                 ;; 2026-09-05 Path 1 slice 1-wider full — when the
+                 ;; enclosing method's return type is envelope but the
+                 ;; return expression is a raw scalar (`return 42` inside
+                 ;; a bare-T primitive return), wrap the value into
+                 ;; `:c-envelope-lit` so the C return-stmt matches the
+                 ;; declared envelope C sig. Envelope-typed return
+                 ;; expressions (`:c-optional-*` node results, envelope
+                 ;; ident reads, nil lit → `:c-envelope-nil`) pass
+                 ;; through unchanged. Detection uses `infer-type` on
+                 ;; the raw AST rather than a lowered-node predicate so
+                 ;; every envelope-producing shape is covered uniformly.
+                 (if (and (optional-tk? expected-tk)
+                          (not (optional-tk? rhs-tk)))
+                   {:node :return
+                    :value {:node   :c-envelope-lit
+                            :c-type (type-kw->c-type expected-tk nil)
+                            :value  value-lo}}
+                   {:node :return :value value-lo}))
     :dispatch  (lower-dispatch-stmt node ctx)
     ;; A4 (2026-09-03) — synthetic node produced by
     ;; `rewrite-arm-body-last-as-assign` so each `or ...:` arm body's
@@ -6682,35 +6793,137 @@
 ;; cxc.lower.optional.
 
 
+(defn- param-envelope-eligible?
+  "2026-09-05 Path 1 slice 8-A — true when a method/ctor param normalizes
+   to a bare (`:nonnil? false`) primitive whose type-kw is envelope-
+   eligible (int/uint/float/bool families). Envelope-eligible params
+   flip their C type to `_Cxc_Optional_<T>` at the param slot and are
+   locally-typed `[:optional inner]` inside the body — mirroring the
+   slice 2e local flip for nullable-primitive `let`s."
+  [p ctx]
+  (and (not (:nonnil? p))
+       (not (:is-self? p))
+       (:cxc-ty p)
+       (let [tk (try (cxc-type->type-kw (:cxc-ty p)
+                                        (:record-env ctx)
+                                        (:atom-env ctx)
+                                        (:enum-env ctx) p)
+                     (catch Exception _ nil))]
+         (primitive-envelope-eligible? tk))))
+
+(defn- param-tk
+  "Return the type-kw a param binds in the body-lowering ctx. Bare-T
+   primitive params (envelope-eligible) get `[:optional inner]`; every
+   other shape (T!, non-primitive, self) gets its raw declared type-kw."
+  [p ctx]
+  (let [raw-tk (cxc-type->type-kw (:cxc-ty p)
+                                  (:record-env ctx)
+                                  (:atom-env ctx)
+                                  (:enum-env ctx) p)]
+    (if (param-envelope-eligible? p ctx)
+      [:optional raw-tk]
+      raw-tk)))
+
+(defn- param-c-type
+  "Return the C type string a param declares at the ObjC method /
+   free-function signature. Bare-T primitive params (envelope-eligible)
+   render as `_Cxc_Optional_<T>`; everything else uses the raw type."
+  [p ctx]
+  (if (param-envelope-eligible? p ctx)
+    (optional-type-name (type-kw->cxc-name-str
+                          (cxc-type->type-kw (:cxc-ty p)
+                                             (:record-env ctx)
+                                             (:atom-env ctx)
+                                             (:enum-env ctx) p)))
+    (cxc-type->c {:node :type-ref :name (:cxc-ty p)
+                  :resolves-to (get (:decl->module ctx) (:cxc-ty p))}
+                 (:record-env ctx)
+                 (:atom-env ctx)
+                 (:enum-env ctx)
+                 (:module-map ctx))))
+
+(defn- method-return-envelope?
+  "2026-09-05 Path 1 slice 1-wider full — true when a method's declared
+   return type is a bare-T primitive-envelope-eligible type (not `T!`,
+   not a non-primitive, not void). Envelope-return methods emit their
+   C sig with `_Cxc_Optional_<T>` and callers infer `[:optional inner]`,
+   matching the storage rule for envelope fields/locals so all four
+   value channels — storage, params, returns, locals — agree."
+  [method ctx]
+  (and (:cxc-return-ty method)
+       (not (:handler? method))
+       (not= :type-nonnil (get-in method [:cxc-return-ty-node :node]))
+       (let [raw-tk (try (cxc-type->type-kw (:cxc-return-ty method)
+                                            (:record-env ctx)
+                                            (:atom-env ctx)
+                                            (:enum-env ctx) nil)
+                         (catch Exception _ nil))]
+         (primitive-envelope-eligible? raw-tk))))
+
+(defn- method-return-tk
+  "Return the type-kw a method's declared return type resolves to.
+   Bare-T primitive returns lift to `[:optional inner]`; `T!`, void,
+   and non-primitive returns pass through."
+  [method ctx]
+  (when (:cxc-return-ty method)
+    (let [raw-tk (cxc-type->type-kw (:cxc-return-ty method)
+                                    (:record-env ctx)
+                                    (:atom-env ctx)
+                                    (:enum-env ctx) nil)]
+      (if (method-return-envelope? method ctx)
+        [:optional raw-tk]
+        raw-tk))))
+
+(defn- method-return-c-type
+  "Return the C type string a method emits at its ObjC / free-function
+   return-type slot. Bare-T primitive returns render as
+   `_Cxc_Optional_<T>`; everything else uses the raw declared type."
+  [method ctx]
+  (cond
+    (nil? (:cxc-return-ty method)) "void"
+    (method-return-envelope? method ctx)
+    (optional-type-name (type-kw->cxc-name-str
+                          (cxc-type->type-kw (:cxc-return-ty method)
+                                             (:record-env ctx)
+                                             (:atom-env ctx)
+                                             (:enum-env ctx) nil)))
+    :else
+    (cxc-type->c {:node :type-ref :name (:cxc-return-ty method)
+                  :resolves-to (get (:decl->module ctx) (:cxc-return-ty method))}
+                 (:record-env ctx)
+                 (:atom-env ctx)
+                 (:enum-env ctx)
+                 (:module-map ctx))))
+
 (defn- lower-method-fn
   "A record method becomes a free C function. `self` and each typed
-   param join the locals env before the body is lowered."
+   param join the locals env before the body is lowered.
+
+   2026-09-05 Path 1 slice 8-A — bare-T primitive params flip to
+   envelope C type + envelope local tk via `param-c-type` /
+   `param-tk`. `T!` primitive params stay raw; non-primitive params
+   unchanged."
   [record-name method ctx]
-  (let [locals   (into {} (map (fn [p]
-                                 [(:name p)
-                                  (cxc-type->type-kw (:cxc-ty p)
-                                                     (:record-env ctx)
-                                                     (:atom-env ctx)
-                                                     (:enum-env ctx)
-                                                     method)])
+  (let [locals   (into {} (map (fn [p] [(:name p) (param-tk p ctx)])
                                (:params method)))
-        ctx'     (assoc ctx :locals locals)
+        ret-tk   (method-return-tk method ctx)
+        ctx'     (-> ctx
+                     (assoc :locals locals)
+                     (assoc :expected-return-tk ret-tk))
         stmts    (lower-body-stmts (:stmts (:body method)) ctx')
         params   (mapv (fn [p]
                          {:name   (:name p)
                           :c-type (if (= "self" (:name p))
                                     (->c-safe record-name)
-                                    (cxc-type->c {:node :type-ref :name (:cxc-ty p)
-                                                  :resolves-to (get (:decl->module ctx) (:cxc-ty p))}
-                                                 (:record-env ctx)
-                                                 (:atom-env ctx)
-                                                 (:enum-env ctx)
-                                                 (:module-map ctx)))})
+                                    (param-c-type p ctx))})
                        (:params method))
-        ret-c    (cxc-type->c {:node :type-ref :name (:cxc-return-ty method)
-                               :resolves-to (get (:decl->module ctx) (:cxc-return-ty method))}
-                              (:record-env ctx) (:atom-env ctx) (:enum-env ctx)
-                              (:module-map ctx))]
+        ;; 2026-09-05 Path 1 slice 1-wider full — bare-T primitive
+        ;; returns lift to envelope C sig; caller-side inference picks
+        ;; up the envelope tk via `method-return-tk` on the dispatch
+        ;; path. Return-stmt raw-scalar → envelope-lit wrap happens
+        ;; inline at `:return` lowering, driven by
+        ;; `:expected-return-tk` on ctx (set above).
+        ret-c    (method-return-c-type method ctx)]
     {:node        :c-function
      :name        (c-method-name record-name (:name method))
      :return-type ret-c
@@ -6752,17 +6965,19 @@
 
    Bare field references in the body are rewritten to `self.<field>`
    so they emit as C struct-pointer access — matching the existing
-   record-method convention (which requires explicit `self.x`)."
+   record-method convention (which requires explicit `self.x`).
+
+   2026-09-05 Path 1 slice 8-A — bare-T primitive observable params
+   flip to envelope C type + envelope local tk via `param-tk` /
+   `param-c-type`. Params are normalized through
+   `normalize-method-param` first so the same envelope-eligibility
+   predicate that `lower-method-fn` uses applies here."
   [record-name obs ctx]
-  (let [param-locals (into {}
-                           (map (fn [p]
-                                  [(:name p)
-                                   (cxc-type->type-kw (param-type-name (:type p))
-                                                      (:record-env ctx)
-                                                      (:atom-env ctx)
-                                                      (:enum-env ctx)
-                                                      p)])
-                                (:params obs)))
+  (let [normed-params (mapv #(method-entry/normalize-method-param record-name %)
+                            (:params obs))
+        param-locals (into {}
+                           (map (fn [p] [(:name p) (param-tk p ctx)]))
+                           normed-params)
         rec           (env/env-lookup ctx :record-env record-name)
         self-fields   (into {} (map (juxt :name identity) (:fields rec)))
         field-names   (set (map :name (:fields rec)))
@@ -6777,18 +6992,15 @@
         ret-c         (type-kw->c-type ret-kw obs)
         body-ctx      (assoc ctx :locals (assoc param-locals "self" {:record record-name}))
         params        (into [{:name "self" :c-type (->c-safe record-name)}]
-                            (mapv (fn [p]
+                            (mapv (fn [p raw-p]
                                     {:name   (:name p)
-                                     :c-type (cxc-type->c (:type p)
-                                                          (:record-env ctx)
-                                                          (:atom-env ctx)
-                                                          (:enum-env ctx)
-                                                          (:module-map ctx))
+                                     :c-type (param-c-type p ctx)
                                      ;; F15 L2.c.iii.c.δ — preserve raw :type
                                      ;; so `collect-shapes` on the lowered
                                      ;; :functions discovers any :type-named-tuple
                                      ;; at a record-observable param position.
-                                     :type   (:type p)})
+                                     :type   (:type raw-p)})
+                                  normed-params
                                   (:params obs)))]
     {:node        :c-function
      :name        (c-method-name record-name (:name obs))
@@ -6984,36 +7196,31 @@
    appended after the last statement."
   [atom-name method ctx]
   (let [self-ty     {:atom atom-name}
+        ;; 2026-09-05 Path 1 slice 8-A — bare-T primitive params get
+        ;; envelope local type-kw + envelope C signature via `param-tk`
+        ;; / `param-c-type` (defined near `lower-method-fn`). Mirrors
+        ;; the record method-fn synth's slice-8-A flip.
         locals      (into {}
                           (map (fn [p]
                                  [(:name p)
                                   (if (= "self" (:name p))
                                     self-ty
-                                    (cxc-type->type-kw (:cxc-ty p)
-                                                       (:record-env ctx)
-                                                       (:atom-env ctx)
-                                                       (:enum-env ctx)
-                                                       method))]))
+                                    (param-tk p ctx))]))
                           (:params method))
-        ctx'        (assoc ctx :locals locals)
+        ret-tk      (method-return-tk method ctx)
+        ctx'        (-> ctx
+                        (assoc :locals locals)
+                        (assoc :expected-return-tk ret-tk))
         stmts       (lower-body-stmts (:stmts (:body method)) ctx')
         args        (rest (:params method))            ; drop self
         param-names (mapv :name args)
         objc-params (mapv (fn [p]
                             {:name   (:name p)
-                             :c-type (cxc-type->c {:node :type-ref :name (:cxc-ty p)
-                                                   :resolves-to (get (:decl->module ctx) (:cxc-ty p))}
-                                                  (:record-env ctx)
-                                                  (:atom-env ctx)
-                                                  (:enum-env ctx)
-                                                  (:module-map ctx))})
+                             :c-type (param-c-type p ctx)})
                           args)
-        ret-c       (if (nil? (:cxc-return-ty method))
-                      "void"
-                      (cxc-type->c {:node :type-ref :name (:cxc-return-ty method)
-                                    :resolves-to (get (:decl->module ctx) (:cxc-return-ty method))}
-                                   (:record-env ctx) (:atom-env ctx) (:enum-env ctx)
-                                   (:module-map ctx)))
+        ;; 2026-09-05 Path 1 slice 1-wider full — envelope return sig
+        ;; via `method-return-c-type` (handles bare-T primitive lift).
+        ret-c       (method-return-c-type method ctx)
         check-stmt  {:node :objc-msg
                      :recv {:node :name :sym "self"}
                      :selector "checkInvariants"
@@ -7091,15 +7298,14 @@
    parametric observables replace reader methods, so the shape must
    accept declared params in addition to the pure-read expression body."
   [o ctx atom-name]
-  (let [param-locals (into {}
-                           (map (fn [p]
-                                  [(:name p)
-                                   (cxc-type->type-kw (param-type-name (:type p))
-                                                      (:record-env ctx)
-                                                      (:atom-env ctx)
-                                                      (:enum-env ctx)
-                                                      p)])
-                                (:params o)))
+  (let [;; 2026-09-05 Path 1 slice 8-A — normalize params through
+        ;; `normalize-method-param` first so envelope-eligibility is
+        ;; consistent with `lower-method-fn` / `lower-atom-method`.
+        normed-params (mapv #(method-entry/normalize-method-param atom-name %)
+                            (:params o))
+        param-locals (into {}
+                           (map (fn [p] [(:name p) (param-tk p ctx)]))
+                           normed-params)
         ;; F32 L4.e.β.2.α (2026-08-24) — thread `:snapshot-name` into
         ;; the observable body ctx so field reads route via the
         ;; snapshot bag (parallel to receive-glyph body ctx). Under
@@ -7109,18 +7315,15 @@
         body-ctx     (-> ctx
                          (update :locals #(merge (or % {}) param-locals))
                          (assoc :snapshot-name "__cxc_snap"))
-        objc-params  (mapv (fn [p]
+        objc-params  (mapv (fn [p raw-p]
                              {:name   (:name p)
-                              :c-type (cxc-type->c (:type p)
-                                                   (:record-env ctx)
-                                                   (:atom-env ctx)
-                                                   (:enum-env ctx)
-                                                   (:module-map ctx))
+                              :c-type (param-c-type p ctx)
                               ;; F15 L2.c.iii.c.δ — preserve raw :type
                               ;; so `collect-shapes` on the lowered
                               ;; :classes discovers any :type-named-tuple
                               ;; at an atom-observable param position.
-                              :type   (:type p)})
+                              :type   (:type raw-p)})
+                           normed-params
                            (:params o))
         ;; F67 L4 — under Proposal G class-body collapse, observables
         ;; are the reader-method surface. Spec §3.4.2 requires
@@ -7702,9 +7905,60 @@
           ;; is held by whatever ivar/leak strategy the FFI hatch uses).
           method-sub-stmts
           (mapv (fn [s]
-                  (let [method-nm (:method-name s)
-                        args-lo   (mapv (fn [a] (lower-expr (:value a) ctx-in-init))
-                                        (:method-args s))
+                  (let [method-nm  (:method-name s)
+                        source-cls (:source-class s)
+                        ;; Method-stream sources include both methods
+                        ;; and observables (`every(rate_ms) :- native_
+                        ;; clock_every(self, rate_ms)` on Clock is an
+                        ;; observable). Consult both indexes so
+                        ;; observables' param shape is available for
+                        ;; the envelope-wrap decision.
+                        m-info     (or (get-in ctx [:atom-env source-cls
+                                                    :method-index method-nm])
+                                       (get-in ctx [:atom-env source-cls
+                                                    :observable-index method-nm]))
+                        ;; Observable-index entries carry parser-shape
+                        ;; params (`{:name :type :default}`) rather than
+                        ;; the normalized method-shape (`{:name :cxc-ty
+                        ;; :nonnil?}`). Normalize on demand so
+                        ;; `param-envelope-eligible?` can consult
+                        ;; `:cxc-ty` / `:nonnil?` uniformly across both
+                        ;; index kinds.
+                        raw-params (when m-info
+                                     (remove #(or (:is-self? %)
+                                                  (= "self" (:name %)))
+                                             (:params m-info)))
+                        u-params (mapv (fn [p]
+                                         (if (:cxc-ty p)
+                                           p
+                                           {:name   (:name p)
+                                            :cxc-ty (param-type-name (:type p))
+                                            :nonnil? (= :type-nonnil
+                                                        (:node (:type p)))}))
+                                       raw-params)
+                        ;; 2026-09-05 Path 1 slice 8-B alignment —
+                        ;; method-stream subscribe site (Layer 5c Step 8)
+                        ;; also honors envelope-param callees. Same
+                        ;; 4-case matrix as the general call-site.
+                        args-lo (mapv (fn [i a]
+                                        (let [raw-lo (lower-expr (:value a) ctx-in-init)
+                                              p      (nth (vec u-params) i nil)
+                                              arg-tk (try (infer-type (:value a) ctx-in-init)
+                                                          (catch Exception _ nil))
+                                              arg-opt? (optional-tk? arg-tk)
+                                              param-env? (and p (param-envelope-eligible? p ctx-in-init))]
+                                          (cond
+                                            (and param-env? arg-opt?)  raw-lo
+                                            param-env?                 {:node   :c-envelope-lit
+                                                                        :c-type (param-c-type p ctx-in-init)
+                                                                        :value  raw-lo}
+                                            arg-opt?                   {:node  :c-value-nonnil-unwrap
+                                                                        :inner raw-lo
+                                                                        :site  (str "method-stream `" source-cls "." method-nm "` arg")
+                                                                        :name  (or (:name a) (str "arg" i))}
+                                            :else                      raw-lo)))
+                                      (range (count (:method-args s)))
+                                      (:method-args s))
                         arg-names (mapv :name (:method-args s))
                         selector  (objc-method-selector method-nm arg-names)]
                     {:node :raw-stream-subscribe
@@ -7922,13 +8176,25 @@
      (let [self-fields (into {} (map (juxt :name identity) (:fields info)))
            field-names (set (map :name (:fields info)))
            typed (mapv (fn [o]
-                         (let [param-locals (into {}
+                         (let [;; 2026-09-05 Path 1 slice 8-A alignment
+                               ;; (record-observable variant) — lift
+                               ;; bare-T primitive params to envelope
+                               ;; so body-inferred return-tk matches
+                               ;; `lower-record-observable-fn`'s emit.
+                               ;; See same shape at atom-observable
+                               ;; env-build inference above.
+                               param-locals (into {}
                                                   (map (fn [p]
-                                                         [(:name p)
-                                                          (cxc-type->type-kw
-                                                           (param-type-name (:type p))
-                                                           record-env atom-env
-                                                           enum-env p)])
+                                                         (let [raw-name (param-type-name (:type p))
+                                                               nonnil?  (= :type-nonnil (:node (:type p)))
+                                                               raw-tk   (cxc-type->type-kw
+                                                                         raw-name record-env
+                                                                         atom-env enum-env p)]
+                                                           [(:name p)
+                                                            (if (and (not nonnil?)
+                                                                     (primitive-envelope-eligible? raw-tk))
+                                                              [:optional raw-tk]
+                                                              raw-tk)]))
                                                        (:params o)))
                                param-names (set (map :name (:params o)))
                                rewritten (rewrite-self-field-refs
@@ -7991,13 +8257,26 @@
      (let [self-fields (into {} (map (juxt :name identity) (:fields info)))
            {:keys [typed]}
            (reduce (fn [{:keys [typed known]} o]
-                     (let [param-locals (into {}
+                     (let [;; 2026-09-05 Path 1 slice 8-A alignment —
+                           ;; env-build param inference must lift bare-T
+                           ;; primitive params to envelope so body-inferred
+                           ;; return-tk matches `lower-record-observable-fn`
+                           ;; / `lower-observable-method` (which use
+                           ;; `param-tk`). Without this, callers see a raw
+                           ;; return-tk while the emit produces envelope,
+                           ;; and clang rejects the sig mismatch.
+                           param-locals (into {}
                                               (map (fn [p]
-                                                     [(:name p)
-                                                      (cxc-type->type-kw
-                                                       (param-type-name (:type p))
-                                                       record-env
-                                                       atom-env enum-env p)])
+                                                     (let [raw-name (param-type-name (:type p))
+                                                           nonnil?  (= :type-nonnil (:node (:type p)))
+                                                           raw-tk   (cxc-type->type-kw
+                                                                     raw-name record-env
+                                                                     atom-env enum-env p)]
+                                                       [(:name p)
+                                                        (if (and (not nonnil?)
+                                                                 (primitive-envelope-eligible? raw-tk))
+                                                          [:optional raw-tk]
+                                                          raw-tk)]))
                                                    (:params o)))
                            ctx    {:record-env record-env :atom-env atom-env
                                    :enum-env enum-env

@@ -629,16 +629,14 @@ def main:
       (is (empty? (:args msg))))))
 
 (deftest atom-observable-multiarg-selector
-  (testing "plus(other: Int) → selector `plusWithother:` and matching call (parametric observable selector construction, F67 L2/L4)."
+  (testing "plus(other: Int) → selector `plusWithother:` and matching call (parametric observable selector construction, F67 L2/L4). 2026-09-05 Path 1 slice 8-A: `other: Int` (bare-T primitive param) lifts to `_Cxc_Optional_Int64` envelope C sig; slice 1-wider full lifts the return to envelope, so `print(Counter().plus(5))` routes through `:c-print-optional` and the objc-msg is nested under `:arg` (not `[:args 1]`) with the raw `5` wrapped in `:c-envelope-lit` at the call site."
     (let [prog (lower-src "def Counter:\n    n: Int! = 10\n\n    plus(other: Int) :- n + other\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        then: print(Counter().plus(5))\n")
           m    (first (filter #(= "plusWithother:" (:selector %))
                               (:methods (first (filter #(= "Counter" (:name %)) (:classes prog))))))
           call (first (main-work-body prog))
-          msg  (get-in call [:args 1])]
+          msg  (:arg call)]
       (is (= "plusWithother:" (:selector m)))
-      ;; F15 L2.c.iii.c.δ — atom-observable params now carry the raw
-      ;; :type node alongside :c-type.
-      (is (= [{:name "other" :c-type "int64_t"
+      (is (= [{:name "other" :c-type "_Cxc_Optional_Int64"
                :type {:node :type-ref :name "Int"}}]
              (:params m)))
       (is (= "plusWithother:" (:selector msg)))
@@ -746,41 +744,41 @@ def main:
 ;; F40 Landing 2 — named args + default insertion on method calls.
 
 (deftest f40-atom-observable-accepts-named-args
-  (testing "counter.plus(other: 7) — named arg on atom observable resolves (F67 L4 parametric observable arg dispatch)."
+  (testing "counter.plus(other: 7) — named arg on atom observable resolves (F67 L4 parametric observable arg dispatch). 2026-09-05 Path 1: bare-T Int return + param lift; msg lives under `:arg` of `:c-print-optional`; call-site slice 8-B wraps raw `7` in `:c-envelope-lit`."
     (let [prog (lower-src "def Counter:\n    n: Int! = 10\n\n    plus(other: Int) :- n + other\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        then: print(Counter().plus(other: 7))\n")
           call (first (main-work-body prog))
-          msg  (get-in call [:args 1])]
+          msg  (:arg call)]
       (is (= "plusWithother:" (:selector msg)))
       (is (= 1 (count (:args msg))))
-      (is (= 7 (get-in msg [:args 0 :value]))))))
+      (is (= 7 (get-in msg [:args 0 :value :value]))))))
 
 (deftest f40-atom-observable-defaults-fill-when-omitted
-  (testing "counter.plus() with other defaulted uses default (F67 L4)."
+  (testing "counter.plus() with other defaulted uses default (F67 L4). 2026-09-05 Path 1: msg lives under `:arg`; default `3` wraps to `:c-envelope-lit`."
     (let [prog (lower-src "def Counter:\n    n: Int! = 10\n\n    plus(other: Int = 3) :- n + other\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        then: print(Counter().plus())\n")
           call (first (main-work-body prog))
-          msg  (get-in call [:args 1])]
+          msg  (:arg call)]
       (is (= "plusWithother:" (:selector msg)))
       (is (= 1 (count (:args msg))))
-      (is (= 3 (get-in msg [:args 0 :value]))))))
+      (is (= 3 (get-in msg [:args 0 :value :value]))))))
 
 (deftest f40-atom-observable-named-out-of-order-reorders
-  (testing "counter.plus3(c: 3, a: 1, b: 2) — reordered to decl order (F67 L4 parametric observable)."
+  (testing "counter.plus3(c: 3, a: 1, b: 2) — reordered to decl order (F67 L4 parametric observable). 2026-09-05 Path 1: msg lives under `:arg`; each raw literal wraps to `:c-envelope-lit`, so `:value` on the arg is the envelope-lit node whose inner `:value` is the int-lit node whose `:value` is the number."
     (let [prog (lower-src "def Counter:\n    n: Int! = 0\n\n    plus3(a: Int, b: Int, c: Int) :- n + a + b + c\n\n    -> running\n\n    -> end\n\ndef main:\n    -> running\n        then: print(Counter().plus3(c: 3, a: 1, b: 2))\n")
           call (first (main-work-body prog))
-          msg  (get-in call [:args 1])
-          arg-values (mapv :value (:args msg))]
+          msg  (:arg call)
+          arg-values (mapv #(get-in % [:value :value]) (:args msg))]
       (is (= [1 2 3] arg-values)))))
 
 (deftest f40-record-observable-defaults-fill-when-omitted
-  (testing "record parametric observable with param default inserts default at call site (F67 L4)."
+  (testing "record parametric observable with param default inserts default at call site (F67 L4). 2026-09-05 Path 1: `scaled` return lifts to envelope, so `print(...)` routes through `:c-print-optional`; inner `:call` sits under `:arg`; default `4` wraps to `:c-envelope-lit` at arg position."
     (let [prog (lower-src "def V:\n    x: Int!\n\n    scaled(factor: Int = 4) :- x * factor\n\ndef main:\n    -> running\n        then: print(V(x: 5).scaled())\n")
           call (first (main-work-body prog))
-          inner (get-in call [:args 1])]
+          inner (:arg call)]
       (is (= :call (:node inner)))
       (is (= "V_scaled" (:fn inner)))
       ;; args = [self, factor]
       (is (= 2 (count (:args inner))))
-      (is (= 4 (get-in inner [:args 1 :value]))))))
+      (is (= 4 (get-in inner [:args 1 :value :value]))))))
 
 (deftest f40-observable-unknown-named-arg-rejected
   (testing "atom observable with unknown named arg fails (F67 L4)."
@@ -3759,7 +3757,11 @@ def main:
           return-stmt (first (filter #(= :return (:node %)) (:body fn)))]
       (is (some? fn)
           "inherited default emits as Widget_m alongside class's own methods")
-      (is (= 42 (get-in return-stmt [:value :value]))
+      ;; 2026-09-05 Path 1 slice 1-wider full — the protocol default
+      ;; `m() :- 42` has a bare-T Int return, so the return-stmt wraps
+      ;; the raw `42` in `:c-envelope-lit` at lower time. Peer one
+      ;; extra `:value` level to reach the underlying int-lit.
+      (is (= 42 (get-in return-stmt [:value :value :value]))
           "inherited body returns 42 (from the protocol default)"))))
 
 (deftest f9-l6-own-method-shadows-default
@@ -3829,7 +3831,12 @@ def main:
           return-stmt (first (filter #(= :return (:node %)) (:body fn)))]
       (is (some? fn)
           "Widget_count_helper lowered via structural conformance to P")
-      (is (= 99 (get-in return-stmt [:value :value]))))))
+      ;; 2026-09-05 Path 1 slice 1-wider full — `count_helper() :- 99`
+      ;; has a bare-T Int return, so the return sig lifts to envelope
+      ;; and the raw scalar `99` is wrapped in `:c-envelope-lit` at the
+      ;; return statement. Peer one extra level into `:value :value` to
+      ;; reach the underlying int-lit's `:value`.
+      (is (= 99 (get-in return-stmt [:value :value :value]))))))
 
 (deftest f9-l6b-protocol-with-no-defaults-not-inherited
   (testing "F9 Landing 6b — a protocol with no defaults produces no inheritance even under structural conformance. Structural-conformance detection is only for inheriting defaults; conforming-without-defaults is a call-site concern (L7+)."
@@ -4323,8 +4330,12 @@ def main:
           "parametric observable carries its declared param (amt: Int)")
       (is (= "amt" (:name (first (:params obs))))
           "param name preserved")
-      (is (= "int64_t" (:return-type obs))
-          "return type inferred from body expression (hp + amt : Int)"))))
+      (is (= "_Cxc_Optional_Int64" (:return-type obs))
+          ;; 2026-09-05 Path 1 slice 1-wider full — `amt: Int` (bare-T
+          ;; primitive param) lifts to envelope, so `hp + amt` (with `hp`
+          ;; raw and `amt` envelope) infers `[:optional :int64]` — the
+          ;; observable's C sig follows suit.
+          "return type inferred from body — envelope under Path 1"))))
 
 (deftest f67-l2-zero-arg-observable-still-lowers
   (testing "F67 L2: zero-arg observable shape is preserved — `<name> :- <expr>` (no parens) still parses and lowers exactly as before. The parametric extension does not require parens on zero-arg observables."
