@@ -96,8 +96,9 @@
 - **Universal implicit phases `init` (constructor) and `end` (deconstructor).** Every atom has both; instantiation fires implicit `init -> [first target phase]`; any transition targeting `end` deconstructs the atom.
 - **Six wiring glyphs, zero overlap.** `->` (transition arrow + return-type marker), `|>` (stream composition in receive-glyph source expression + prefix sync send `|> target.method(args)` inside `then:`), `:-` (observable pull), `:>` (emit async), `<:` (receive async), `<|` (receive sync). Sender-blocking and receiver-blocking are independent axes — any sender glyph pairs with any receiver glyph; the wire is always mailbox-buffered. **Free-standing wires at atom-body top-level do NOT exist**; all subscriptions are receive-glyph transitions whose source expression may compose transformer atoms via `|>`.
 - **Sub-atom-as-state-machine pattern.** State with lifecycle (queueing, interruption, independent concurrent activity) belongs in its own atom, held in a nullable slot on the parent. Union-typed slots for state discrimination are retired.
-- **`use:` block** for env capability declaration with implicit access inside atom bodies.
-- **All OS-adjacent capabilities are atoms** — no `after` primitive, no `print`, no `now()`, no `random()`. Every OS-touching capability at v1.0 is a plugin (R11 plugin-only wave, 2026-09-01): first-party (`std.clock`, `std.fs`, `std.console`, `std.args`, `std.subprocess`, ..., ships-with-compiler) or third-party (`com.acme.*`). Shims request FFI access via `use plugin: Plugin`; the runtime provisions `Plugin` only to shim atoms inside modules that carry a top-level `def plugin:` marker, consuming foreign symbols declared in nested `foreign "..."` sections in that same plugin body. Application code receives no FFI capability. See §1.12, §1.14, §7.2.1.
+- **`use <name>: <Type>` direct-keyword declaration** for env capabilities with implicit access inside atom bodies (F70 / L4, ratified 2026-08-25). The prior `use:` **block** form is retired — the parser rejects it and points at the direct form.
+- **All OS-adjacent capabilities are atoms** — no `after` primitive, no ambient `now()`, no ambient `random()`. Every OS-touching capability at v1.0 is a plugin (R11 plugin-only wave, 2026-09-01): first-party (`std.clock`, `std.fs`, `std.console`, `std.args`, `std.subprocess`, ..., ships-with-compiler) or third-party (`com.acme.*`). Shims request FFI access via `use plugin: Plugin`; the runtime provisions `Plugin` only to shim atoms inside modules that carry a top-level `def plugin:` marker, consuming foreign symbols declared in nested `foreign "..."` sections in that same plugin body. Application code receives no FFI capability. See §1.12, §1.14, §7.2.1.
+  - **`print(...)` is a compiler-provided alias** for `console.write(<x>.to_string())`. Ambient at call sites (no explicit `use console: Console` declaration required) — the compiler routes it through the same stdout primitive `console.write` uses (`puts` via the `std.prelude` `def plugin:` foreign block; `print` uses `printf` today, semantically equivalent at the OS boundary). Preserved as a permanent alias for terse example / diagnostic code; the atom-substrate rule holds because the underlying primitive IS the Console capability's primitive. Auto-format on primitive args (Int / Bool / Float / String) is the alias's ergonomic convenience.
 - **Resource lifecycle** (File, Socket, Process, Thread) as state-machine atoms; RAII via `<phase> -> end` transitions with `then:` cleanup entries (F70 I3 unifies effect clauses).
 - **`of` qualifier for structural type parameters** (retires `<T>`); lowercase names in `of` position are shape variables bound in signature scope by first-mention.
 - **Types-as-atoms unification.** Type-checking is atom-shape-conformance (structural). No refinement types at the signature level — predicates live in `invariants:`/`requires`/`ensures`/predicate atoms.
@@ -1358,7 +1359,7 @@ The atom substrate is the design commitment. §1.11–§1.14 document the substr
 
 - **Types-as-atoms fully unified**: type-checking is atom-shape-conformance (structural). No refinement types at the signature level — no `def Nat: Int where value >= 0` (see §1.3).
 - **`<T>` generic-parameter syntax retired.** Structural type parameters use the **`of` qualifier**:
-  - Concrete element type: `Stream of Bytes`, `List of Int`, `Map of (String, User)`, `Future of File`, `Ptr of Byte`.
+  - Concrete element type: `Stream of Bytes`, `List of Int`, `Map of (String, User)`, `Ptr of Byte`.
   - Variable element type (shape variable): `Stream of s`, `List of a`, `Map of (k, v)`.
   - Case convention IS the type-variable marker: **TitleCase = concrete type reference; lowercase = shape variable**.
 - **Shape variable binding = first-mention in signature scope.** The first appearance of a lowercase name in an atom's signature scope (constructor param types + channel signature + `where` clause + `data:` field types + `use:` types) is the binding site; subsequent appearances refer to the same variable. Compiler check: unresolvable subsequent mention = error ("`z` is unbound; did you mean `s`?"); bound-but-never-referenced = warning.
@@ -1371,7 +1372,7 @@ The atom substrate is the design commitment. §1.11–§1.14 document the substr
   ```
   Bare `Stream of X` for single unnamed channel; `(name: Stream of X, ...)` for named channels. No separate `channels:` section — return type is authoritative.
 
-- **`Stream of T` is the sole channel primitive.** `Future of T` (`emits <= 1`) and `Signal of T` (`emits == 1`) are prelude aliases for `Stream of T where emits <= 1` / `where emits == 1`. Cardinality is a contract, not a type constructor. Operators propagate cardinality via signature contracts (`map: emits(out) == emits(in)`; `filter: emits(out) <= emits(in)`; `debounce(d): emits(out) <= emits(in) + 1`).
+- **`Stream of T` is the sole channel primitive.** No `Future of T` / `Signal of T` / `Promise` / `Task` generic types (D1 ratified 2026-09-07). Asynchronous work is modeled as **atom lifecycles**: a long-running operation returns an atom whose phase transitions signal completion, whose `:>` emissions signal intermediate values, and whose failure phase `raise T(reason)` unwinds to any ancestor's `or T(reason):` recovery arm. Cardinality on Stream is a contract (`emits <= 1`, `emits == 1`, unbounded), not a distinct type constructor. Operators propagate cardinality via signature contracts (`map: emits(out) == emits(in)`; `filter: emits(out) <= emits(in)`; `debounce(d): emits(out) <= emits(in) + 1`). See [[corvid-async-via-lifecycles]] and §1.13 capability catalog for the atom-shape contracts.
 
 **Surface glyphs (six, zero overlap; see the wiring glyphs table above).**
 
@@ -2146,10 +2147,12 @@ def PosixFs:
     native_write: (Int32, Ptr of Byte, SizeT) -> SsizeT  = plugin.get("write")
     native_close: (Int32) -> Int32                        = plugin.get("close")
 
-    -> open(path: Path) -> Future of (File | IOError):
+    # v1.1 handle-based `open` (returns a File atom whose phases signal
+    # completion — atom-lifecycle model per D1 2026-09-07):
+    open(path: Path) :- File
         cpath: CString = path.to_cstring()
         fd:    Int32   = native_open(cpath, O_RDWR, 0)
-        ||: fd < 0 : IOError(errno: current_errno())
+        ||: fd < 0 : raise IOError(errno: current_errno(), path: path)
         ||: else   : File(path: path, handle: NativeHandle(fd))
 
     # read, write, close, seek, ...
@@ -2180,38 +2183,30 @@ The `native def` keyword remains rejected — the current model keeps shim atoms
 
 The v1.0 core capability catalog (§1.12) needs concrete atom-shape signatures — the vocabulary every atom will type against via `use:`. All shapes below reflect the post-audit simplifications (Stream as sole channel primitive with cardinality via contract; all `->` handlers exposed by default; `self` as sole pronoun; no `entrypoints:` / `wires:` / `active`). Fields marked `[DECISION]` where a real fork remains open.
 
-**Stream primitive and cardinality-constrained aliases.**
+**Stream primitive; async via atom lifecycles (D1 ratified 2026-09-07).**
 
-There is one channel primitive: `Stream of T`. Cardinality constraints live in `where` clauses. Two prelude aliases wrap the common cardinalities for readability:
-
-```
-# Prelude:
-alias Future of T = Stream of T where emits <= 1        # zero-or-one emission (may never fire)
-alias Signal of T = Stream of T where emits == 1        # exactly one emission (must fire eventually)
-```
-
-Operators propagate cardinality via contracts on their signatures: `map: emits(out) == emits(in)`, `filter: emits(out) <= emits(in)`, `debounce(d): emits(out) <= emits(in) + 1`. `Future` and `Signal` fall out as the special cases; nothing about them is a distinct type constructor.
+There is one channel primitive: `Stream of T`. Cardinality constraints live in `where` clauses. Operators propagate cardinality via signature contracts: `map: emits(out) == emits(in)`, `filter: emits(out) <= emits(in)`, `debounce(d): emits(out) <= emits(in) + 1`. Prior drafts introduced `Future of T` and `Signal of T` aliases for cardinality-constrained streams; both are retired at v1.0. **Asynchronous work is modeled as atom lifecycles, not as a Future/Signal/Promise generic type** — a long-running operation returns an atom whose phase transitions signal completion, whose `:>` emissions signal intermediate values, and whose failure phase `raise T(reason)` unwinds to any ancestor's `or T(reason):` recovery arm. Cardinality-1 signals become `-> phase` transitions on the returned atom. See [[corvid-async-via-lifecycles]].
 
 **Clock.**
 
 ```
 def Clock:                                        # capability shape (signature-only atom)
-    :- now: Instant                               # current wall time as pull channel
-    :- monotonic_now: Instant                     # monotonic time (non-decreasing) as pull channel
-    
-    -> after(duration: Duration) -> Future of Unit:
-        # Emits once after `duration` elapses. May not fire if the caller unsubscribes.
-    
-    -> every(interval: Duration) -> Stream of Instant:
-        # Emits repeatedly, once per interval. Emission carries the tick's Instant.
-    
-    -> at(deadline: Instant) -> Future of Unit:
-        # Emits once when wall/monotonic time reaches `deadline`.
+    now :- Instant                                # sync observation: current wall time
+    monotonic_now :- Instant                      # sync observation: monotonic (non-decreasing)
+
+    every(rate_ms: Int!) :- Stream of Instant     # tick stream; emits Instant per interval
+                                                  # (Duration-typed rate deferred to v1.1)
+
+    # after/at are atom lifecycles: caller receives phase transitions.
+    # `Clock.after_atom(duration: Duration)` returns a Timer atom in
+    # phase `armed`; transitions to `fired(at: Instant)` when duration
+    # elapses, or to `cancelled` if the atom reaches `end` first.
 ```
 
 Notes:
-- `Instant` = point in time (opaque); `Duration` = span of time (opaque). Both are records.
-- Default plugin: `std.clock` (first-party, `WallClock` atom). Alternatives: `TestClock` (manual `advance_to`), `GameClock` (frame-driven), `RemoteClock` (RPC).
+- `Instant` = point in time (record with `millis: Int!`); `Duration` = span of time (record with `millis: Int!`). Both live in `prelude/shared/time.cxc`.
+- Landed shape at v1.0: `Clock.now` (Instant) + `Clock.every(rate_ms: Int)` (Stream of Instant) — sync observation for now, stream for periodic tick. Timer-atom-shaped `after` / `at` are v1.1 landings (spec is drafted here; consumer forcing function pending).
+- Default plugin: `std.clock` (first-party, `WallClock` atom). Alternatives (v1.1+): `TestClock` (manual `advance_to`), `GameClock` (frame-driven), `RemoteClock` (RPC).
 
 **Random.**
 
@@ -2237,87 +2232,88 @@ Notes:
 **Filesystem.**
 
 ```
-def Filesystem:
-    -> open(path: Path, mode: OpenMode) -> Future of (File | IOError):
-        # Returns a File atom (already in `opened` state) or an IOError.
-    
-    -> stat(path: Path) -> Future of (FileStat | IOError):
-    -> exists(path: Path) -> Future of Bool:
-    
-    -> list_dir(path: Path) -> Stream of (Path | IOError):
-        # Streams directory entries; each item is a Path or an error mid-stream.
-    
-    -> watch(path: Path) -> Stream of FsEvent:
-        # Emits FsEvent (Created/Modified/Deleted/Renamed) as changes happen.
-        # Terminates when the caller unsubscribes or the path is unwatched.
-    
-    -> remove(path: Path) -> Future of (Unit | IOError):
-    -> rename(from: Path, to: Path) -> Future of (Unit | IOError):
-    -> mkdir(path: Path, recursive: Bool) -> Future of (Unit | IOError):
-    
-    :- cwd: Path                                  # current working directory
-    :- separator: String                          # platform path separator
+def Filesystem:                                   # capability shape (signature-only atom)
+    # Sync path-based operations (landed at v1.0 as `FileSystem` prelude cap):
+    read_text(path: String!)  :- String           # nil on failure, or raise IOError(reason)
+    write_text(path: String!, text: String!) :- Unit  # raise IOError on failure
+    append_text(path: String!, text: String!) :- Unit
+    exists(path: String!)     :- Bool
+    is_dir(path: String!)     :- Bool
+    is_file(path: String!)    :- Bool
+    mkdirs(path: String!)     :- Int              # 0 on success; -1 raises IOError
+    remove(path: String!)     :- Int
+    copy(from: String!, to: String!) :- Int
+    rename(from: String!, to: String!) :- Int
+    size(path: String!)       :- Int              # -1 on missing / not-regular
+    tmp_path(prefix: String!) :- String
+    list_dir(path: String!)   :- String           # newline-joined; empty on error
+    read_bytes(path: String!) :- Bytes
+    write_bytes(path: String!, data: Bytes!) :- Int
+
+    # Atom-lifecycle operations (v1.1+): open returns a File atom whose
+    # phases signal completion. `Filesystem.open(path, mode)` returns a
+    # File atom in phase `opening`; transitions to `open(fd: Int)` on
+    # success or raises IOError(reason) via the `error` phase.
+    # `Filesystem.watch(path)` returns a Watcher atom emitting :> event
+    # over its lifetime.
 ```
 
 Notes:
-- `File` is a state-machine atom (§1.12 example); `Filesystem.open` returns a File already transitioned into `opened` state.
-- Fallible operations return `Future of (T | IOError)` — sum type at the boundary, per cxc's failure-via-return-type discipline (§3.5.4).
-- `OpenMode` = enum {`read`, `write`, `append`, `read_write`, `create`}.
-- Default plugin: `std.fs` (first-party; per-target atoms `PosixFs`, `WasiFs`, `BrowserFs` shipped as per-target plugin files `std/fs/darwin.cxc`, `std/fs/wasi.cxc`, ...).
+- Landed at v1.0 is the sync path-based surface (`FileSystem` cap in `compiler/resources/prelude/target/macos/fs.cxc`). Atom-lifecycle-shaped `open` / `watch` are v1.1 landings; the async story stays consistent with [[corvid-async-via-lifecycles]] — return an atom, not a Future.
+- Fallible operations `raise IOError(reason, path)` on failure; callers attach `or IOError(reason: let m):` recovery arms per §3.5.4.
+- `OpenMode` = enum {`read`, `write`, `append`, `read_write`, `create`}. Landed sync surface uses raw path Strings; handle-based `OpenMode` shape lands with atom-lifecycle `open` at v1.1.
+- Default plugin: `std.fs` (first-party; per-target atoms `PosixFs`, `WasiFs`, `BrowserFs` shipped as per-target plugin files `std/fs/darwin.cxc`, `std/fs/wasi.cxc`, ...). v1.0 ships `FileSystem` in `compiler/resources/prelude/target/macos/fs.cxc`.
 
-**Network.**
+**Network (v1.1+ umbrella — v1.0 ships standalone `Http` only).**
 
 ```
-def Network:
-    -> connect_tcp(addr: SocketAddress) -> Future of (Socket | NetError):
-        # Returns a Socket atom (in `connected` state) or a NetError.
-    
-    -> listen_tcp(addr: SocketAddress) -> Future of (Listener | NetError):
-        # Returns a Listener atom that emits accepted Sockets as a stream.
-    
-    -> connect_udp(addr: SocketAddress) -> Future of (UdpSocket | NetError):
-    -> bind_udp(addr: SocketAddress) -> Future of (UdpSocket | NetError):
-    
-    -> resolve(host: String) -> Future of ([SocketAddress] | NetError):
-        # DNS resolution; may return multiple addresses.
-    
-    def http:                                     # nested capability atom: HTTP client
-        -> get(url: Url, headers: {String: String}) -> Future of (HttpResponse | NetError):
-        -> post(url: Url, headers: {String: String}, body: Bytes) -> Future of (HttpResponse | NetError):
-        -> request(req: HttpRequest) -> Future of (HttpResponse | NetError):
-    
-    def http_server:                              # nested capability atom: HTTP server
-        -> bind(addr: SocketAddress, handler: (HttpRequest) -> Future of HttpResponse) -> Future of (HttpServer | NetError):
+def Http:                                         # capability shape (LANDED at v1.0)
+    # Sync (blocking dispatch on a background NSURLSession queue):
+    get(url: String!)              :- String      # response body; nil on network error
+    post(url: String!, headers: String!, body: String!) :- String
+    get_envelope(url: String!)     :- String      # JSON envelope: {status, body}
+    post_envelope(url: String!, headers: String!, body: String!) :- String
+    head_status(url: String!)      :- Int         # HTTP status; -1 on transport failure
+    download_to_file(url: String!, path: String!) :- Int  # 0 success; -1 failure
+
+# v1.1+: Network umbrella capability adds TCP/UDP/DNS/WebSocket + atom-
+# lifecycle handles. Sockets, Listeners, WsConns become state-machine
+# atoms with phase transitions signaling connect/close/error.
+def Network:                                      # DRAFT — v1.1+
+    connect_tcp(addr: SocketAddress) :- Socket    # atom in `connecting` phase; -> `connected(fd)` | raise NetError
+    listen_tcp(addr: SocketAddress)  :- Listener  # atom emitting :> accepted(Socket)
+    resolve(host: String)            :- List of SocketAddress
 ```
 
 Notes:
-- `Socket`, `Listener`, `UdpSocket`, `HttpServer` are state-machine atoms with lifecycles.
-- `Listener` exposes an `.accepted: Stream of Socket` observable that emits new connections.
-- [DECISION] Nested capability atoms (`http`, `http_server` as sub-atoms of `Network`) — right decomposition, or should `HttpClient` and `HttpServer` be top-level env capabilities? Nested reads well when they share the network stack; top-level reads well when a program wants HTTP but not raw sockets.
-- Default plugin: `std.network` (first-party, `TcpNet` atom; uses OS sockets). Alternatives: `InMemoryNet` (for tests), `MockNet(scenarios:)`.
+- v1.0 ships `Http` as a standalone capability, not under a `Network` umbrella. The umbrella lands with TCP/UDP/WebSocket in v1.1.
+- Fallible operations raise typed error records (`HttpError`, `NetError`) per §3.5.4; the current `Http` returns nil / -1 sentinels — migration to typed raise is on the D1(ii) landing sheet.
+- `Socket`, `Listener`, `UdpSocket`, `WsConn` are state-machine atoms with lifecycles per [[corvid-async-via-lifecycles]] — no Future/Promise wrapper.
+- Default plugin: `std.http` at v1.0 (first-party, `Http` atom via NSURLSession). `std.network` at v1.1.
 
 **Console.**
 
 ```
-def Console:
-    :- stdin: Stream of Bytes                     # push channel: bytes as they arrive from stdin
-    -> read_line -> Future of String:              # convenience: buffer stdin until newline
-    -> read_bytes(count: Int) -> Future of Bytes:  # fixed-size read
-    
-    -> write(bytes: Bytes) -> Future of Unit:      # write to stdout
-    -> write_line(s: String) -> Future of Unit:    # write to stdout with newline
-    -> write_err(bytes: Bytes) -> Future of Unit:  # write to stderr
-    -> write_err_line(s: String) -> Future of Unit:
-    
-    :- is_tty: Bool                                # true if stdout is attached to a terminal
-    :- width: Int                                  # terminal width in columns
-    :- height: Int                                 # terminal height in rows
-    
-    -> clear -> Future of Unit:                    # clear terminal (ANSI escape or equivalent)
+def Console:                                      # capability shape
+    # Landed at v1.0 (sync, String-based):
+    write(text: String!)     :- Unit              # stdout + newline
+    write_raw(text: String!) :- Unit              # stdout, no newline
+    write_err(text: String!) :- Unit              # stderr + newline
+    readln()                 :- String            # blocking stdin line read; nil on EOF
+
+    # Atom-lifecycle sync convenience: `console.write` fires the write
+    # eagerly and returns Unit. Consumers needing completion sync via
+    # atom lifecycle receive a separate Writer atom in v1.1+
+    # (`console.write_atom(text)` returns a Writer whose phase transitions
+    # to `written` on success or raises IOError on failure).
+
+    # Landed as `print(x)` alias (§1.11): compiler-provided ambient
+    # alias for `console.write(x.to_string())` with primitive auto-format.
 ```
 
 Notes:
 - Default plugin: `std.console` (first-party, `PosixConsole` atom; uses `stdin/stdout/stderr` fds). `TestConsole(fixture_input: ..., capture_output: true)` for tests.
+- Bytes-typed I/O (`read_bytes`, binary write) is v1.1+ — landed shape at v1.0 is String-only for terminal ergonomics. Binary console I/O in v1.0 uses the raw stdout fd via the `std.prelude` foreign block, not through Console.
 - [DECISION] Terminal control (colors, cursor movement, raw mode) — v1.0 core, or `cxc.tty` extension package? Leaning extension; keep core Console flat.
 
 **Args.**
@@ -2353,9 +2349,11 @@ def Exit:
         # Terminates the program immediately with the given exit code.
         # Return type Never = does not return.
     
-    :- requested: Signal of Int
-        # Push channel that emits when exit has been requested but not yet performed.
-        # Emitted by OS signal handlers or `Exit.now`. Programs subscribe to run cleanup.
+    requested :- Stream of Int where emits <= 1
+        # Push channel that emits at most once when exit has been requested but not yet
+        # performed. Emitted by OS signal handlers or `Exit.now`. Programs subscribe to
+        # run cleanup. `emits <= 1` is a cardinality contract on Stream, not a Future/Signal
+        # generic (D1 2026-09-07).
 ```
 
 Notes:
@@ -2373,8 +2371,8 @@ def Signals:
     
     -> unblock(signal: PosixSignal) -> Unit:
     
-    -> send(pid: ProcessId, signal: PosixSignal) -> Future of (Unit | IOError):
-        # Send a signal to another process.
+    -> send(pid: ProcessId, signal: PosixSignal) :- Unit
+        # Send a signal to another process. Raises IOError(reason) on failure.
 
 def PosixSignal:
     case interrupt        # SIGINT
@@ -2423,25 +2421,29 @@ Notes:
 
 **Cross-cutting notes:**
 
-- **Return types.** Fallible operations return `Future of (T | Error)` — sum type at the boundary. Total operations return `Future of T` (async) or bare `T` (synchronous-when-safe, e.g., `EnvVars.has(name)`).
-- **Channel primitive is `Stream of T` uniformly.** `Future of T` and `Signal of T` are prelude aliases for `Stream of T where emits <= 1` and `Stream of T where emits == 1` respectively — see the primitive-and-aliases block at the top of this section.
+- **Return types.** Fallible operations `raise T(reason, ...)` typed error records; callers use `or T(reason: let m):` recovery arms per §3.5.4. Total operations return bare `T`. Long-running / cancellable / streaming operations return an atom whose phase transitions signal completion — no `Future of T` wrapper (D1 ratified 2026-09-07; see [[corvid-async-via-lifecycles]]).
+- **Channel primitive is `Stream of T` uniformly.** No `Future of T` / `Signal of T` generics — cardinality is a Stream contract (`emits <= 1`, `emits == 1`); single-fire completion is a phase transition on the returned atom, not a wrapping type.
 - **`Ptr of T`.** Used in FFI signatures (`Ptr of Byte`); the atom-shape of Ptr itself is a stdlib primitive (opaque handle to native memory). Only manipulable by shim atoms holding `Plugin` (R11); v1.0 has no `unsafe:` keyword in app source.
 - **Runtime env slot naming.** Each capability's env-slot name in `env` matches its stdlib type name (lowercase snake): `env.clock`, `env.random`, `env.fs` (short for filesystem), `env.net` (short for network), `env.console`, `env.args`, `env.env_vars`, `env.exit`, `env.signals`, `env.log`. Standard convention; users' `use:` blocks default to these names.
 - **All handlers are exposed by default.** No `entrypoints:` section on any capability shape above. External callers, internal wires, and any other message sender all reach handlers the same way.
 
 ### 1.14 Prelude — capability shapes, prelude records, and a worked plugin shim
 
-The prelude (see §4.20 for the general mechanism) is cxc's always-in-scope declaration space. Under R11 (2026-09-01 plugin-only wave) the prelude's responsibility for the OS-boundary machinery collapses to two things: **capability SHAPES** (§1.13 — `Clock`, `Filesystem`, `Network`, `Console`, `KeyboardInput`, `Random` — the interface defs plugins `conforms:` to) and **always-in-scope prelude records** (`SemVer`, `VersionRange`, `Stream`, `Future`, `Signal`, and the `Plugin` capability atom shape). Prelude no longer ships shims and no longer hosts a foreign-symbol registry — that responsibility moved to plugins.
+The prelude (see §4.20 for the general mechanism) is cxc's always-in-scope declaration space. Under R11 (2026-09-01 plugin-only wave) the prelude's responsibility for the OS-boundary machinery collapses to two things: **capability SHAPES** (§1.13 — `Clock`, `Filesystem`, `Http` (v1.0) / `Network` (v1.1+), `Console`, `Random` — the interface defs plugins `conforms:` to) and **always-in-scope prelude records** (`SemVer`, `VersionRange`, `Stream`, `Instant`, `Duration`, and the `Plugin` capability atom shape). Prelude no longer ships shims and no longer hosts a foreign-symbol registry — that responsibility moved to plugins. **No `Future` / `Signal` types** — async is atom lifecycles per D1 (see [[corvid-async-via-lifecycles]]).
 
-**Directory layout** (post-R11, single `shared/` root; per-target `prelude/target/*` subtree retired):
+**Directory layout** (post-R11, single `shared/` root; per-target `prelude/target/*` subtree retirement pending — landed shape still uses `prelude/target/macos/` for v1.0 plugins):
 
 ```
 prelude/
 └── shared/
-    ├── types.cxc              # Duration, Instant, Stream, Future, Signal
-    ├── capabilities.cxc       # Clock, Filesystem, Network, ... capability SHAPES (§1.13)
+    ├── time.cxc               # Duration, Instant records (landed)
+    ├── build.cxc              # Project + Dep records for A7 manifests (landed)
+    ├── geom.cxc               # Position, Rect, Size records
+    ├── input.cxc              # KeyboardEvent, MouseEvent records
+    ├── os_primitive.cxc       # OsPrimitive record for F74/F77 caps manifest
     ├── plugin.cxc             # Plugin capability atom shape (R7 + R11)
     ├── semver.cxc             # SemVer + VersionRange records (R8)
+    ├── system.cxc             # SystemPanic capability shape
 ```
 
 The prelude is target-agnostic. Per-target implementation lives in per-plugin per-target files (`std/clock/darwin.cxc`, `std/clock/linux.cxc`, ...), following the pattern established in R7 for `std/array/darwin.cxc`. The compiler picks the target's plugin file at build time; capability SHAPES are the same across targets.
@@ -2582,7 +2584,7 @@ expander
 self Self return
 section alias
 category objc_exposed
-if else case while break continue
+if else case while break continue raise or
 import from as module of
 true false nil
 Any Effect
@@ -2613,6 +2615,7 @@ Removed from prior drafts: `sealed`, `dynamic`, `open`, `final`, `public`, `priv
 - `conforms` — used in `conforms:` declarations on atoms that implement a capability shape (`conforms: Filesystem`) and in `where` constraints (`s conforms Hashable`).
 - `provides` — reserved for future use; do not use in new code. `use:` covers both inheritance and provision via source expression.
 - `foreign`, `symbol`, `type`, `selector`, `class_selector` — scoped keywords for declaring typed native symbols (see §1.14, §7.2.1). One grammar, one gate: `foreign "..." :` with `type`, `selector`, `class_selector`, `symbol` entries — legal only nested inside a `def plugin:` body (R7, 2026-08-31; sole form post-R11 2026-09-01). Parser rejects `foreign` outside `def plugin:` with a targeted diagnostic. `type`, `selector`, `class_selector` are contextual keywords active only inside `foreign "..."` blocks. Not usable in user code or in application code. `library` (as `foreign library "..."` prefix) is retired at v1.0 along with the prelude-shim tier per R11.
+- `raise`, `or` — typed-failure mechanism per §3.5.4 (Q1 landed 2026-09-02, Q11 rejection ratified 2026-08-29). `raise T(field: value, ...)` at any expression-statement position boxes a record ctor into a typed thrown value; `or T(field: let x): <body>` attaches a recovery arm to a sync send (`|> target.method(...)`) or to a `let x = <expr>` binding. `or` is contextual — outside the recovery-arm position it does not participate in expressions and does not shadow user identifiers.
 
 Note: `else if` is written as two tokens, not one; there is no `elif`.
 
@@ -2860,7 +2863,7 @@ The compiler picks a machine-instruction representation for each numeric field f
 
 4. **No use-based inference.** The compiler reads what's WRITTEN in `invariants:` — nothing more. If the user wants tight representation, they define a domain atom with narrower invariants. If the user writes bare `Int`, they get Int64. This keeps representation choice source-visible: a reader knows what the compiler picked by reading the invariants, not by running an inspection tool. Contracts stay load-bearing (spec §1.3) rather than becoming optional performance hints.
 
-5. **Bit-pattern types (`Int`, sized ints, `Float`, `Double`, `Bool`, user-defined domain atoms wrapping any of these) have no nil representation** — atoms without nil-annotation are non-nil per §3.6.1. Reference-shaped types (`String`, `Bytes`, `Char`, `Any`) get nil-allowed status when annotated as receivers because the runtime carries them via handles.
+5. **Value-typed primitives (`Int`, sized ints/uints, `Float`, `Double`, `Bool`, user-defined domain atoms wrapping any of these) are nil-representable at every nullable position** via the `_Cxc_Optional_<T>` envelope struct (`{ uint8_t present; T value; }`) — nil is `present == 0`, and no primitive value in the type's range is stolen to encode nil. `T!` primitives opt out of the envelope and stay as the raw C scalar (non-nil by contract, checked at each observation point per §3.6.1). Reference-shaped types (`String`, `Bytes`, `Char`, `Any`) carry nil natively as the null pointer under ObjC nil-messaging.
 
 6. **Storage is a compiler specialization invisible to the surface.** Semantically primitives ARE atoms with the derivation in §3.1.1; the compiler emits inline machine words (or a heap handle for reference-shaped types) as an optimization. `.as() -> Bytes` and structural equality synthesize from the atom's `data:` shape via §3.4.6.
 
@@ -3853,15 +3856,16 @@ alias @networked: async, allocates
 
 Parameterized aliases resolve at use site (see §4.16).
 
-#### 3.5.4 Failure Handling — Nil-Punning + Domain Enums, No `throws`
+#### 3.5.4 Failure Handling — Nil-Punning, Domain Enums, Typed `raise` / `or T():`, and `panic`
 
-cxc has **no `throws` effect, no `try` keyword, no `catch` / `finally` construct, and no `Result<T, E>` in the prelude**. Failure is expressed in the return type of the failable operation. Three shapes cover every case:
+cxc has **no `throws` effect annotation, no `try` keyword, no `catch` / `finally` keyword, and no `Result<T, E>` in the prelude** (Q11 rejected 2026-08-29). Failure has four shapes — pick by whether the caller wants to *inspect the outcome inline* or *unwind to a recovery point*:
 
 | Failure shape | Mechanism | When to use |
 |---|---|---|
-| **Uniform failure** — "did we get a value or not" | Return `T` (nullable). Caller uses nil-punning (§3.6.1, §5.7) — `??` for defaults, `if let` to gate, `on_nil` section for typed defaults. | Simple absence: dictionary lookup, integer parsing, cache miss. Only one meaningful failure mode; no discrimination needed. |
-| **Discriminated failure** — "how did we fail" | Return a **domain-specific tagged-variant def** with a case per outcome (success case + one case per failure mode). Caller uses `<:` dispatch on the returned value. | Multiple failure modes, each needing different handling: file open, network request, database write, complex parsing. |
-| **Invariant violation** — "this shouldn't be possible" | `panic("...")`. Halts the process. Not a recoverable failure — a program bug that shouldn't be caught. | Corrupted internal state, contract broken by a caller, unreachable branch. |
+| **Uniform absence** — "did we get a value or not" | Return `T` (nullable). Caller uses nil-punning (§3.6.1, §5.7) — `??` for defaults, `if let` to gate, `on_nil` section for typed defaults. | Simple absence: dictionary lookup, integer parsing, cache miss. Only one meaningful failure mode; no discrimination needed. |
+| **Discriminated outcome, inline dispatch** | Return a **domain-specific tagged-variant def** with a case per outcome. Caller uses `<:` dispatch on the returned value at the call site. | Multiple failure modes handled at each call site, immediate branch on the outcome. |
+| **Typed `raise` + `or T(...):` recovery** | Failing site executes `raise T(field: value, ...)` which throws a boxed typed record; any ancestor call site can attach an `or T(field: let x): <recovery body>` arm to a sync send / a `let x = <expr>` binding to catch that type and bind its fields. Other types propagate. | Cross-cutting failure that unwinds through several call layers to a designated handler; typed-error-with-fields shape rather than variant-tag-on-return. |
+| **Invariant violation** — "this shouldn't be possible" | `panic("...")`. Halts the process. Not recoverable — a program bug that shouldn't be caught. Requires `use panic: SystemPanic` in the enclosing atom (L-panic-cap, 2026-08-26) — capability-gated so applications can't silently opt into process-terminating operations. | Corrupted internal state, contract broken by a caller, unreachable branch. |
 
 **Uniform failure example (nil-punning):**
 
@@ -3902,17 +3906,49 @@ File.open("/config.json"):
         panic("config corrupted: ${details}")
 ```
 
+**Typed `raise` + `or T():` recovery example (cross-cutting unwind):**
+
+```
+def MyError:
+    msg: String
+
+def R:
+    n: Int! = 0
+    |: n < 3 as MyError(msg: "boom")     # invariant violation raises MyError
+
+    -> running
+
+    running <: pulse -> running
+        then: n => n + 1
+
+def main:
+    r: R = R()
+    -> running
+        then:
+            |> r.pulse()
+            |> r.pulse()
+            |> r.pulse()                  # invariant fires here, raises MyError
+            or MyError(msg: let m):       # recovery arm binds the raised record's field
+                print(m)                  # prints "boom"
+```
+
+`raise T(field: value, ...)` boxes a record ctor into a typed thrown value; the recovery site attaches `or T(field: let x): <body>` to a sync send (`|> target.method(...)`) or to a `let x = <expr>` binding. The first matching `or T():` arm up the call stack catches; unmatched types propagate. Multiple `or` arms may follow a single failing expression, each catching a different type. Uses: `raise` inside a `then:` body (executes when the transition runs), `|: <cond> as T(...)` (raises when the invariant fails at pre-store).
+
 **Invariant violation example (panic):**
 
 ```
-function dequeue_next(self) -> Order:
-    requires not self.pending.is_empty
+def Queue:
+    use panic: SystemPanic                 # capability required to call panic()
+    pending: List(Order) = []
 
-    self.pending.pop_first():
-        <: some(let o): return o
-        <: none:
-            # requires said this can't happen; if it did, invariant broke
-            panic("dequeue_next called with empty pending — precondition violated")
+    dequeue_next() :- Order
+        requires not self.pending.is_empty
+
+        self.pending.pop_first():
+            <: some(let o): return o
+            <: none:
+                # requires said this can't happen; if it did, invariant broke
+                panic("dequeue_next called with empty pending — precondition violated")
 ```
 
 **Composition (chaining without try).** Because domain tagged-variant defs are ordinary values, chaining fallible operations is just chaining `<:` dispatch blocks. Leading-dot shorthand (§3.7.2) keeps the case syntax terse:
@@ -3939,11 +3975,11 @@ function process(input: String) -> ProcessOutcome:
 
 **What this closes:**
 
-- `throws` effect (this section) — retired.
-- `try` / `catch` / `finally` — not spec'd; not added.
-- `Result<T, E>` in prelude — not shipped.
-- Ink friction #17 (try semantics) — resolved by dissolution.
-- Ink friction #29 (throws in ensures) — dissolves entirely; ensures apply on `<:`-discriminated cases.
+- `throws` effect annotation — retired; signatures don't declare which types propagate. Callers decide whether to attach `or T():` arms.
+- `try` / `catch` / `finally` keywords — not spec'd; the equivalent mechanism is `raise T(...)` at the throwing site and `or T(field: let x):` arms at the recovery site. No `try` prefix at call sites; no `finally` block (use `with:` §6.10 for scope-exit cleanup regardless of raise / success).
+- `Result<T, E>` in prelude — not shipped (Q11 rejected 2026-08-29). Callers pick between typed `raise` + `or T():` (cross-cutting unwind) and domain tagged-variant return + `<:` dispatch (inline outcome inspection); the shape matches the call-site ergonomics needed.
+- Ink friction #17 (try semantics) — resolved: raise is at the failure site, recovery is at any ancestor, no per-call annotation.
+- Ink friction #29 (throws in ensures) — dissolves entirely; ensures apply on the success path of the transition (typed raise unwinds past the ensures clause without evaluating it).
 
 ### 3.6 Refinement / Precondition Contracts
 
@@ -3974,32 +4010,29 @@ cxc's nullability model inverts Swift's: **every type allows nil by default; non
 | `T!` (via prelude alias) | non-nil contract. Runtime observation at each checkpoint (field write, parameter bind, method return); violation warns per §3.6.1. |
 | `T?` | **banned.** Compile error at every position. Since `T` is already nullable, `?` is redundant surface; the compiler rejects it to keep one canonical spelling. |
 
-Prior drafts split the rule by body-shape (agents nil-allowed, structural/tagged-variant/primitives non-nil). Under F69's body-shape unification the surface collapses: `T` is the single nullable spelling, `T!` the single non-nil contract. Emit shape (handle vs bit-pattern vs tagged union) is orthogonal to surface nullability — the compiler picks the representation from body shape (§3.3) and threads nil through appropriately (nil sentinel for handles, Optional-lift for value types, tag discrimination for variants).
+Prior drafts split the rule by body-shape (agents nil-allowed, structural/tagged-variant/primitives non-nil). Under F69's body-shape unification the surface collapses: `T` is the single nullable spelling, `T!` the single non-nil contract. Emit shape is orthogonal to surface nullability — the compiler picks the representation from body shape (§3.3) and threads nil through appropriately (ObjC nil-messaging for reference/handle types, `_Cxc_Optional_<T>` envelope struct for value/primitive types, tag discrimination for variants). No primitive uses a magic-value sentinel — every nullable primitive is envelope-lifted so nil is never confusable with a legitimate value in the type's range (see §6 memory model).
 
 `T!` desugars via the prelude alias to `T with invariant: value != nil`. The compiler emits a runtime check at each observation point (field write, parameter bind, return); a violation logs a warning in development, configurable action in release. Nil continues to flow through message sends — `T!` documents author expectation, it does not enforce safety.
 
-**Why one uniform rule.** Two suffix positions with shape-conditional legality (the pre-F69 rule) forced the reader to remember which shape `Foo` had before knowing whether `Foo?` was legal. The unified rule collapses that mental step — `T` is nullable, `T!` isn't, and the surface stays the same regardless of what `T`'s body infers to. The emit-layer machinery to make value-type nullability work (Optional-sum for records/enums, sentinel-or-boxed for primitives) is compiler work, not surface work.
+**Why one uniform rule.** Two suffix positions with shape-conditional legality (the pre-F69 rule) forced the reader to remember which shape `Foo` had before knowing whether `Foo?` was legal. The unified rule collapses that mental step — `T` is nullable, `T!` isn't, and the surface stays the same regardless of what `T`'s body infers to. The emit-layer machinery to make value-type nullability work (Optional-sum for records/enums, `_Cxc_Optional_<T>` presence-byte envelope for primitives — no magic sentinel values) is compiler work, not surface work.
 
 **Value-site semantics:**
 
 - **Member access on nil.** `nil.method(args)` is legal. Method-return `T` stays `T` at the call site — return types are already nullable under the unified rule, so a nil receiver simply produces a nil value; method-return `Unit` is a silent no-op. If the receiver's class or a conformed protocol declares `on_nil:` (§4.10.9) with an entry for this method, that entry's value is returned instead of nil.
 - **Nil-coalescing.** `x ?? default` returns `x` if non-nil, else `default`. Types must match; the result type is the non-optional common type.
-- **Explicit panic.** `x ?? panic("reason")` is the sanctioned "die if nil" form. There is no shorter sugar. Verbosity is intentional — panic should look exceptional in source so it stays exceptional in behavior.
-- **Scoped unwrap (single binding).** `if let x = maybe: ...` and `guard let x = maybe else: ...` bind unwrapped `x` for the following scope. Standard patterns from the Swift-family.
-- **Scoped unwrap (multi-binding).** Comma-separated `let` bindings in a single `if let` / `guard let` — all must succeed for the body/continuation to run:
+- **Explicit panic.** `x ?? panic("reason")` is the sanctioned "die if nil" form. There is no shorter sugar. Verbosity is intentional — panic should look exceptional in source so it stays exceptional in behavior. **`panic(...)` requires `use panic: SystemPanic`** in the enclosing atom (L-panic-cap, 2026-08-26) — capability-gated so applications can't silently opt into process-terminating operations. Without the declaration, `panic()` is a compile-time reject.
+- **Scoped unwrap (single binding).** `if let x = maybe: ...` binds unwrapped `x` for the following scope (Swift-family pattern; landed at v1.0). `guard let x = maybe else: ...` is **deferred to v1.1+**; use `if let x = maybe: ... else: ...` or `x ?? panic("...")` at v1.0.
+- **Scoped unwrap (multi-binding).** Comma-separated `let` bindings in a single `if let` — all must succeed for the body/continuation to run:
 
   ```
   if let url = request.url, let parts = url.get_parts():
       # both url and parts are non-nil and bound in this scope
       ...
-
-  guard let host = self.host, let port = self.port else:
-      return .failure(reason: "missing host or port")
   ```
 
-  Semantics: bindings are evaluated left-to-right, short-circuiting on the first nil. In `if let`, the else branch (if present) runs on any failure; in `guard let`, the else branch always runs on any failure and must exit (return / break / continue / panic). No partial binding — either all names are bound in the following scope, or none are.
-- **Arithmetic and ordering on nil are type errors.** `nil + 3`, `nil < 3`, and `nil % 2` do not propagate — the semantics are ambiguous. Unwrap explicitly or coalesce with `??`.
-- **Equality.** `nil == nil` is `true`, `nil == x` (for non-nil `x`) is `false`. `!=` inverts. Ordering operators reject nil operands at compile time.
+  Semantics: bindings are evaluated left-to-right, short-circuiting on the first nil. The else branch (if present) runs on any failure. No partial binding — either all names are bound in the following scope, or none are.
+- **Arithmetic and ordering on envelope-typed operands propagate presence.** `nil + 3 == nil`, `1 + nil == nil`, `nil + nil == nil`, `nil < 3 == nil`, `nil % 2 == nil`. Envelope arithmetic (§3.1 rule 5) tracks a presence bit alongside the value; any nil operand produces an envelope-nil result, same as `nil.method()` returning nil. This mirrors the nil-punning rule for member access: nil in → nil out, uniformly across message sends and binary operators. Use `??` or `if let` at the site where a definite value is required. (Path 1 landing 2026-09-05.) Direct nil-vs-nil literal comparison (`0 == nil` where the LHS is a non-nullable primitive literal) is a compile-time reject with a fix-it — the equality has no meaning at that width.
+- **Equality.** `nil == nil` is `true`, `nil == x` (for non-nil `x`) is `false`. `!=` inverts. Equality on envelope operands returns an envelope: `nil_a == nil_b` where both are envelope-typed produces envelope-nil (present-bit-tracked), consistent with the arithmetic rule above.
 
 **Retired from prior drafts:**
 
@@ -6558,7 +6591,7 @@ alias <T> ! in type_position:
     T with invariant: != nil (enforced at ctor-bind / then: write / method return)
 ```
 
-Under the unified nullability rule (§3.6.1, 2026-08-20), `T!` is meaningful for both reference and value types: reference `T!` is a non-nil pointer contract; value `T!` opts out of the Optional envelope and lowers to raw `T` (no presence byte, C-level bit-pattern). Bare `T` is nil-allowed universally — reference `T` is a nullable pointer (ObjC), value `T` is Optional-boxed (F39 L5 target). The pre-v1.0 `T?` suffix alias was retired; it's now a parse/lower-time reject with a fix-it pointing at bare `T` or `T!`.
+Under the unified nullability rule (§3.6.1, 2026-08-20), `T!` is meaningful for both reference and value types: reference `T!` is a non-nil pointer contract; value `T!` opts out of the `_Cxc_Optional_<T>` envelope and lowers to raw `T` (no presence byte, C-level bit-pattern). Bare `T` is nil-allowed universally — reference `T` is a nullable pointer (ObjC), value `T` is envelope-lifted to `_Cxc_Optional_<T> { uint8_t present; T value; }`. The pre-v1.0 `T?` suffix alias was retired; it's now a parse/lower-time reject with a fix-it pointing at bare `T` or `T!`.
 
 #### 4.16.6 Expression-Position Literal Aliases
 
@@ -9571,6 +9604,15 @@ if_let_expr    := 'if' let_binding_list ':' expr_body ('else' ':' expr_body)?
 guard_let_stmt := 'guard' let_binding_list 'else' ':' INDENT statement* DEDENT
                 # else branch must exit (return / break / continue / panic)
 
+# Typed-failure recovery (§3.5.4). `raise` throws a boxed typed record;
+# `or T(field: let x):` arms recover the named type from a sync send or a
+# `let x = <expr>` binding. Multiple `or` arms may follow one failing expr,
+# each catching a different type; unmatched types propagate.
+raise_stmt      := 'raise' type_ref '(' arg_list? ')'
+or_recovery_arm := 'or' type_ref '(' or_binding_list? ')' ':' INDENT statement* DEDENT
+or_binding_list := or_binding (',' or_binding)*
+or_binding      := identifier ':' 'let' identifier
+
 # Closures (§5.6). Narrow scope at v1.0: arrow lambdas only, non-escaping.
 # Escaping closure machinery (capture lists, function literals, method
 # references, anonymous-class desugaring) retired — see §5.6.4.
@@ -10166,9 +10208,10 @@ ffi_type := 'CString' | 'Int8' | 'Int16' | 'Int32' | 'Int64'
 # `active` pronoun → retired; `self` is the sole atom-self reference.
 #     Compound atoms auto-delegate to the currently-active nested state atom's
 #     method table (see auto-delegation semantics above).
-# `Future<T>` / `Signal<T>` as distinct type constructors → retired.
-#     `Stream of T` is the sole channel primitive; `Future of T` and `Signal of T`
-#     are prelude aliases for `Stream of T where emits <= 1` / `where emits == 1`.
+# `Future<T>` / `Signal<T>` / `Promise` / `Task` as distinct type constructors → retired.
+#     `Stream of T` is the sole channel primitive. Async is atom lifecycles
+#     (D1 ratified 2026-09-07): long-running operations return an atom whose
+#     phase transitions signal completion. See [[corvid-async-via-lifecycles]].
 # `conforms:` as required section → made optional. Structural conformance works
 #     without the declaration; compiler warns on likely-match to suggest the
 #     declaration for documentation. Explicit declaration remains legal.

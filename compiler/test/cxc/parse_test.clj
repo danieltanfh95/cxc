@@ -1212,47 +1212,28 @@ def main:
       (is (= "+" (:op (:expr (nth body 2))))))))
 
 ;; ---------------------------------------------------------------------------
-;; K5 L1 — `if` at expression position (spec §3.8.1)
+;; R6 (2026-08-31) — expression-position `if` retired; multi-arm dispatch `||:`
+;; is the sole expression-position branching form. K5 L1 (`if` at expression
+;; position) retirement diagnostic verified here.
 ;; ---------------------------------------------------------------------------
 
-(deftest k5-l1-inline-if-else-parses-as-if-expr
-  (testing "K5 L1 — `let x = if 1 > 0: 10 else: 20` parses the RHS as `:if-expr` with cond/then/else branches."
-    (let [[s] (do-stmts-from "def main:\n    -> running\n        then:\n            let x = if 1 > 0: 10 else: 20\n            print(x)\n")]
-      (is (= :let-stmt (:node s)))
-      (is (= :if-expr (:node (:expr s))))
-      (is (= :binop (:node (:cond (:expr s)))))
-      (is (= 10 (:value (:then (:expr s)))))
-      (is (= 20 (:value (:else (:expr s))))))))
-
-(deftest k5-l1-else-if-chain-parses-right-associative
-  (testing "K5 L1 — `if a: 1 else if b: 2 else: 3` desugars into a nested :if-expr in the else branch (right-associative). Constructed with actual conds since the parser needs boolean-producing test exprs."
-    (let [[s] (do-stmts-from "def main:\n    -> running\n        then:\n            let x = if 1 > 2: 1 else if 3 > 4: 2 else: 3\n            print(x)\n")
-          ife (:expr s)]
-      (is (= :if-expr (:node ife)))
-      (is (= 1 (:value (:then ife))))
-      (is (= :if-expr (:node (:else ife)))
-          "nested :if-expr in outer's else branch")
-      (is (= 2 (:value (:then (:else ife)))))
-      (is (= 3 (:value (:else (:else ife))))))))
-
-(deftest k5-l1-missing-else-is-compile-error
-  (testing "K5 L1 open-Q1 ratified — missing `else` at expression position is a compile error. Parser diagnostic names K5 L1 so users find the ratified decision."
+(deftest r6-expression-position-if-rejected
+  (testing "R6 (2026-08-31, decisions-frozen-2026-08-31-glyphs.md) — expression-position `if <cond>: <then> else: <else>` retired categorically. Parser rejects with a targeted diagnostic pointing at the `||:` migration form and citing R6."
     (let [ex (try
-               (do-stmts-from "def main:\n    -> running\n        then:\n            let x = if 1 > 0: 10\n            print(x)\n")
+               (do-stmts-from "def main:\n    -> running\n        then:\n            let x = if 1 > 0: 10 else: 20\n            print(x)\n")
                nil
                (catch clojure.lang.ExceptionInfo e e))]
       (is ex "expected fail!")
-      (is (re-find #"K5 L1" (.getMessage ex)))
-      (is (re-find #"`else`" (.getMessage ex))))))
+      (is (re-find #"R6" (.getMessage ex)))
+      (is (re-find #"\|\|:" (.getMessage ex))))))
 
-(deftest k5-l1-if-let-at-expression-position-rejected
-  (testing "K5 L1 — `if let` at expression position is not yet supported. Reject with a targeted diagnostic pointing at F39 L7 (statement-form `if let`)."
+(deftest r6-expression-position-if-let-rejected
+  (testing "R6 — `if let` at expression position is not supported (F39 L7 ships the statement form only). Reject with a targeted diagnostic naming the F39 L7 landing."
     (let [ex (try
                (do-stmts-from "def main:\n    -> running\n        then:\n            let x = if let y = 1: 10 else: 20\n            print(x)\n")
                nil
                (catch clojure.lang.ExceptionInfo e e))]
       (is ex)
-      (is (re-find #"K5 L1" (.getMessage ex)))
       (is (re-find #"F39 L7" (.getMessage ex))))))
 
 (deftest f18-l1prime-landing-2-transition-let-clause-hard-rejected

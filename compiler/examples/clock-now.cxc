@@ -4,7 +4,7 @@ def main:
     alive: Int = 1
 
     -> running
-        then: alive => clock.now > 0
+        then: alive => clock.now.millis > 0
         then: print(alive)
         then: self :> done
 

@@ -277,7 +277,7 @@
       (or (and (= k :glyph) (glyph-precedence v))
           (and (= k :kw) (glyph-precedence v))))))
 
-(declare parse-primary parse-args-parens parse-msg-args-parens parse-list-literal parse-emit-message looks-like-msg-payload-parens? parse-do-block-expr parse-if-expr)
+(declare parse-primary parse-args-parens parse-msg-args-parens parse-list-literal parse-emit-message looks-like-msg-payload-parens? parse-do-block-expr)
 
 (defn- parse-postfix
   "Chain of .field, (args)/(msg-args), :> send suffixes on a primary
@@ -729,16 +729,28 @@
                 ;; Distinct from the retired transition `do:` sub-block
                 ;; (F70 I3 Stage 3, 2026-08-19).
                 "do"    (parse-do-block-expr tokens pos)
-                ;; K5 L1 — `if` at expression position (spec §3.8.1).
-                ;; Requires an `else` branch per open-Q1 ratified
-                ;; decision (missing-else at expression position is a
-                ;; compile error). Also supports `else if` chains via
-                ;; right-recursion into another parse-if-expr.
-                ;; `if let` at expression position is deferred (F39 L7
-                ;; ships the statement form); reject with a targeted
-                ;; hint here so parse-statement's own `if let` branch
-                ;; is unambiguously the only landing site today.
-                "if"    (parse-if-expr tokens pos)
+                ;; R6 (2026-08-31, decisions-frozen-2026-08-31-glyphs.md)
+                ;; retired expression-position `if <cond>: <then> else:
+                ;; <else>` categorically. Use `||: <cond> : <then> ||:
+                ;; else : <else>` — multi-arm dispatch (`||:`) is the sole
+                ;; expression-position branching form at v1.0. `if let`
+                ;; remains as statement-form only (F39 L7).
+                "if"
+                (if (at? tokens (inc pos) :kw "let")
+                  (fail! tokens pos
+                         (str "expression-position `if let ...` is not "
+                              "supported. `if let` ships at statement "
+                              "position only (F39 L7). Rewrite as an outer "
+                              "`if let` statement."))
+                  (fail! tokens pos
+                         (str "expression-position `if <cond>: <then> "
+                              "else: <else>` retired 2026-08-31 (R6). "
+                              "Rewrite as `||: <cond> : <then> ||: else "
+                              ": <else>` — multi-arm dispatch is the sole "
+                              "expression-position branching form at v1.0. "
+                              "For if/else chains use `||: c1 : b1 ||: c2 "
+                              ": b2 ||: else : b3`. See "
+                              "decisions-frozen-2026-08-31-glyphs.md §R6.")))
                 ;; 2d-iii (2026-09-02) — `raise <TypeName>(<args>)` throws
                 ;; a `_Cxc_R_<TypeName>` boxed reason record. TypeName is
                 ;; the identifier of a declared record (verified in lower).
@@ -923,46 +935,6 @@
       :else
       (let [[s p] (parse-statement tokens p)]
         [{:node :do-block-expr :stmts [s]} p]))))
-
-(defn- parse-if-expr
-  "K5 L1 — `if` at expression position (spec §3.8.1). Grammar:
-     if <cond>: <then-body> (else if <cond>: <then-body>)* else: <else-body>
-   `<body>` is a single expression (multi-stmt bodies wrap the branch
-   in an explicit `do:` block). `else` is required per open-Q1
-   ratified decision — missing-else at expression position is a
-   compile error. `else if` desugars right-associatively into a
-   nested :if-expr.
-   Reject `if let ...` at expression position — F39 L7 ships the
-   statement form; expression-position `if let` is deferred."
-  [tokens pos]
-  (let [[_ p]  (expect tokens pos :kw "if")
-        _      (when (at? tokens p :kw "let")
-                 (fail! tokens p
-                        (str "K5 L1: `if let` at expression position is "
-                             "not yet supported — F39 L7 ships the "
-                             "statement form only. Rewrite as an outer "
-                             "`if let` statement whose body binds the "
-                             "value.")))
-        [cnd p]      (parse-expr tokens p)
-        [_ p]        (expect tokens p :punct ":")
-        [then-e p]   (parse-expr tokens p)
-        p            (skip-newlines tokens p)
-        _            (when-not (at? tokens p :kw "else")
-                       (fail! tokens p
-                              (str "K5 L1: `if <cond>: <then>` at expression "
-                                   "position requires an `else` branch "
-                                   "(open-Q1 ratified — missing-else at "
-                                   "expression position is a compile error).")))
-        [_ p]        (expect tokens p :kw "else")
-        ;; `else if …` chain: right-recurse into another parse-if-expr,
-        ;; producing a nested :if-expr as the else-branch. Otherwise
-        ;; expect `:` and parse a single expression body. Local names
-        ;; avoid `cond` — shadowing the Clojure macro is a footgun.
-        [else-e p]   (if (at? tokens p :kw "if")
-                       (parse-if-expr tokens p)
-                       (let [[_ p] (expect tokens p :punct ":")]
-                         (parse-expr tokens p)))]
-    [{:node :if-expr :cond cnd :then then-e :else else-e} p]))
 
 (defn- parse-list-literal [tokens pos]
   ;; assumes at "["

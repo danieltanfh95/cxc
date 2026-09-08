@@ -203,7 +203,7 @@ for the authoritative list.
 - **A6.** `|>` inside lambda body — d2ca9df
 - **A7.** Third-party plugin discovery — DNS-reverse module paths in `src-dir/` (hand-vendored) or via `project.cxc` manifest declaring git-URL + tag deps (fetched into `~/.cxc/cache/<sha>/`, lockfile at `project.lock`). Publishing = `git push origin <tag>`. Zero registry infrastructure. See `compiler/examples/dns-reverse-plugin/`.
 
-The full hello-agent example compiles as of A7 landing.
+The **MVP** hello-agent (`compiler/examples/hello-agent/`) compiles + runs end-to-end as of A7 landing (`end-to-end-hello-agent` in `build_test.clj`). The **aspirational** hello-agent (`design/examples/hello-agent/hello-agent.cxc`) still does NOT compile — it targets capability shapes (`use fs: File`, `use shell: Subprocess` with `timeout_ms:`), a `List(T)` type syntax, and a variant-payload declaration style the parser rejects, and it imports `com.acme.http_claude` types (`Claude, ChatResponse, StopReason, ToolCall, ToolAction`) that no plugin publishes. It stays behind as the L7 forcing function for tool-use loop, structured request/response, and typed-error recovery on capability calls. See `design/examples/hello-agent/STATUS.md` for the current gap list.
 
 **Wrongly listed as gaps in prior versions of this file — actually landed** (REPL-verified 2026-09-03):
 

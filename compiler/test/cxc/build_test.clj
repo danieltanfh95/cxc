@@ -664,9 +664,9 @@
       (is (= "11\n" stdout)))))
 
 
-(deftest end-to-end-k5-if-expression
-  (testing "K5 L1 — `if` at expression position (spec §3.8.1). Uses both simple `if...else` and `if...else if...else` chain. Result flows through `let` bindings. Lowered as C ternary; prints the selected branch value."
-    (let [{:keys [exit stdout]} (compile-and-run "k5-if-expression")]
+(deftest end-to-end-r6-multi-arm-dispatch
+  (testing "R6 (2026-08-31, decisions-frozen-2026-08-31-glyphs.md) — expression-position `||: <cond> : <body>` chain replaces retired `if <cond>: <then> else: <else>` (K5 L1 retirement). Reads the same shape (chained conditional producing a value into `let`) via the ratified multi-arm-dispatch form; lowers to the same C ternary. `let grade = ||: x > 15 : 3 ||: x > 5 : 2 ||: else : 1` with x=10 selects the 2 branch; prints 2."
+    (let [{:keys [exit stdout]} (compile-and-run "r6-multi-arm-dispatch")]
       (is (zero? exit))
       (is (= "2\n" stdout)))))
 
@@ -1304,6 +1304,64 @@
           (let [{:keys [exit stdout]} (build/run-binary bin-path)]
             (is (zero? exit))
             (is (= "hello from fetched\n" stdout))))))))
+
+(defn- copy-tree!
+  "Recursively copy every file under `src-dir` to `dst-dir`, preserving
+   the relative subpath layout. Directories created as needed."
+  [^java.io.File src-dir ^java.io.File dst-dir]
+  (doseq [^java.io.File f (file-seq src-dir) :when (.isFile f)]
+    (let [rel (.relativize (.toPath src-dir) (.toPath f))
+          out (java.io.File. dst-dir (.toString rel))]
+      (.mkdirs (.getParentFile out))
+      (spit out (slurp f)))))
+
+(defn- init-hello-agent-plugin-from-source!
+  "Populate `dir` with the hello-agent-dogfood plugin source
+   (`examples/hello-agent-dogfood-plugin-source/`), then git init +
+   commit + tag v0.1. Returns the repo path. Used by
+   `end-to-end-hello-agent-dogfood-via-r3` — the plugin source lives
+   under version control so it's reviewable, and the git repo itself
+   is created at test time so we don't nest git repos in the outer
+   checkout."
+  [^java.io.File dir]
+  (.mkdirs dir)
+  (copy-tree! (java.io.File. "examples/hello-agent-dogfood-plugin-source") dir)
+  (git-shell ["git" "-C" (.getPath dir) "init" "-q"])
+  (git-shell ["git" "-C" (.getPath dir) "-c" "commit.gpgsign=false"
+              "-c" "user.email=t@t" "-c" "user.name=t"
+              "add" "-A"])
+  (git-shell ["git" "-C" (.getPath dir) "-c" "commit.gpgsign=false"
+              "-c" "user.email=t@t" "-c" "user.name=t"
+              "commit" "-q" "-m" "init"])
+  (git-shell ["git" "-C" (.getPath dir) "-c" "commit.gpgsign=false"
+              "-c" "user.email=t@t" "-c" "user.name=t"
+              "tag" "v0.1"])
+  (.getPath dir))
+
+(deftest end-to-end-hello-agent-dogfood-via-r3
+  (testing "D4 (2026-09-07) — validates A7 R3 end-to-end via a REAL external plugin (not the synthetic stub in `end-to-end-a7-manifest-fetch`). Plugin source under `examples/hello-agent-dogfood-plugin-source/com/acme/http_claude/claude.cxc` (the actual hello-agent Claude atom, not a stub); test copies it into a temp git repo, tags v0.1, and points a `project.cxc` at that repo via `file://`-shaped absolute path. User src-dir uses `examples/hello-agent-dogfood/main.cxc` which does `from com.acme.http_claude import Claude`. Compile-side assert only — running requires ANTHROPIC_API_KEY. This exercises the full R3 path: manifest extraction → git ls-remote (against a local repo) → git clone into `~/.cxc/cache/<sha>/` → walker mount of the cache dir → cross-repo module resolution → compile + link + emit binary."
+    (let [work-dir     (tmp-dir)
+          plugin-dir   (java.io.File. work-dir "plugin")
+          user-src-dir (java.io.File. work-dir "user-src")
+          user-out-dir (java.io.File. work-dir "user-out")]
+      (.mkdirs user-src-dir)
+      (init-hello-agent-plugin-from-source! plugin-dir)
+      (spit (java.io.File. user-src-dir "project.cxc")
+            (str "let project = Project(\n"
+                 "    name:  \"hello-agent-dogfood\",\n"
+                 "    entry: \"main\",\n"
+                 "    deps: [\n"
+                 "        Dep(name: \"com.acme.http_claude\",\n"
+                 "            git:  \"" (.getPath plugin-dir) "\",\n"
+                 "            tag:  \"v0.1\")\n"
+                 "    ])\n"))
+      (spit (java.io.File. user-src-dir "main.cxc")
+            (slurp "examples/hello-agent-dogfood/main.cxc"))
+      (let [{:keys [status stderr]}
+            (build/compile-directory-to-file user-src-dir "hello-agent-dogfood"
+                                             (.getPath user-out-dir) {})]
+        (is (zero? status) (str "dogfood compile failed:\n" stderr)))
+      (is (.isFile (java.io.File. user-src-dir "project.lock"))))))
 
 (deftest a7-std-namespace-reserved
   (testing "A7 (2026-09-03) — `<src-dir>/std/` at src-dir root is rejected at build start because it would produce user modules in the reserved `std.*` namespace (prelude/stdlib). Diagnostic points at the offending dir with the DNS-reverse / vendor / flat rename suggestions."
@@ -2446,7 +2504,7 @@
 ;; ---------------------------------------------------------------------------
 
 (deftest end-to-end-nil-lifting-int
-  (testing "nil-lifting-int.cxc — Int primitives accept nil, arithmetic propagates nil, `== nil` distinguishes from `== 0`."
+  (testing "nil-lifting-int.cxc — Int primitives accept nil, arithmetic propagates nil, `== nil` distinguishes from `== 0`. 2026-09-06 Post-Path-1: dropped the `0 == nil` line — raw-primitive `== nil` is now a compile-time type error, since a raw `Int` literal cannot be nil at the type level; the check is a category mismatch, not a runtime question. Nullable-primitive `== nil` on envelope-typed locals still works via the `:c-optional-nil-check` branch."
     (let [{:keys [exit stdout]} (compile-and-run "nil-lifting-int")]
       (is (zero? exit))
       (is (= (str "nil == nil: true\n"
@@ -2454,9 +2512,13 @@
                   "1 + nil == nil: true\n"
                   "nil + nil == nil: true\n"
                   "3 + 4 == 7: true\n"
-                  "3 + 4 == nil: false\n"
-                  "0 == nil: false\n")
+                  "3 + 4 == nil: false\n")
              stdout)))))
+
+;; Post-Path-1 #1 regression (raw-primitive `x == nil` static error)
+;; lives at [../cxc/lower_test.clj](lower_test.clj)
+;; `raw-primitive-eq-nil-rejected` — lower-time diagnostic, no C
+;; compile needed.
 
 (deftest end-to-end-nil-lifting-widths
   (testing "nil-lifting-widths.cxc — sentinel coverage across Int8/Int16/Int32 (INT*_MIN) and Float/Double (NaN via __builtin_isnan). Sentinel is distinguishable from zero; Double arithmetic propagates nil."

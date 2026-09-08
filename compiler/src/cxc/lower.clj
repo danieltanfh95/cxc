@@ -1925,12 +1925,6 @@
                                node)))
     ;; K5 L1 — `if` at expression position. Both branches unify to a
     ;; common type; L1 takes the then-branch's type as the block type
-    ;; (assume caller-side annotation drives outer typing; a proper
-    ;; unify pass is a follow-on). Optional-lift on branch mismatch
-    ;; is left to F15 L3 (bidirectional inference).
-    :if-expr
-    (infer-type (:then node) ctx)
-
     ;; F18 L2 — `do:` at expression position. Value = last statement's
     ;; expression value; if the final statement is not an :expr-stmt
     ;; (bare let, void call), block has type :void (Unit). Empty body
@@ -2260,6 +2254,21 @@
 (declare lower-for-each-call lower-filter-call lambda-body-stmts unbox-prelude-for-element)
 (declare param-envelope-eligible? param-tk param-c-type
          method-return-envelope? method-return-c-type)
+
+(defn- primitive-raw-c-arg
+  "Raw-C-template FFI calls (String.to_int_or, prelude FFI builtins,
+   ...) expect each arg to already be a scalar; splicing an
+   `_Cxc_Optional_<T>` envelope into a `(int64_t)(...)` cast is a
+   syntax error. If the source arg is envelope-typed, wrap the
+   lowered node in `:c-value-nonnil-unwrap`; otherwise pass through."
+  [lowered source ctx site arg-name]
+  (let [tk (try (infer-type source ctx) (catch Exception _ nil))]
+    (if (optional-tk? tk)
+      {:node  :c-value-nonnil-unwrap
+       :inner lowered
+       :site  site
+       :name  arg-name}
+      lowered)))
 
 (defn- lower-method-call
   "`target.method(args)` dispatches on target type:
@@ -2834,21 +2843,12 @@
                :args [target-lo]
                :emit-c-fn (fn [[s]] (str "[(" s ") pathExtension]"))}
               "to_int_or"
-              ;; 2026-09-05 Path 1 slice 8-A — the `fallback` arg is
-              ;; now envelope under bare-T param flip; the raw-C
-              ;; template splices it into `int64_t __fb = (int64_t)(fb)`
-              ;; which chokes on `_Cxc_Optional_Int64`. Unwrap the
-              ;; envelope in place so the template body stays as the
-              ;; simple scalar-arg shape it was authored against.
-              (let [fb-arg (first arg-exprs)
-                    fb-tk  (try (infer-type (:value (first ordered-args)) ctx)
-                                (catch Exception _ nil))
-                    fb     (if (optional-tk? fb-tk)
-                             {:node  :c-value-nonnil-unwrap
-                              :inner fb-arg
-                              :site  "primitive method `string.to_int_or` arg"
-                              :name  "fallback"}
-                             fb-arg)]
+              (let [fb (primitive-raw-c-arg
+                         (first arg-exprs)
+                         (:value (first ordered-args))
+                         ctx
+                         "primitive method `string.to_int_or` arg"
+                         "fallback")]
                 {:node :ffi-call :name "cxc_string_to_int_or"
                  :args [target-lo fb]
                  :emit-c-fn (fn [[s fb]]
@@ -2862,15 +2862,12 @@
                                    "{ __r = (int64_t)__v; } } "
                                    "__r; })"))})
               "to_bool_or"
-              (let [fb-arg (first arg-exprs)
-                    fb-tk  (try (infer-type (:value (first ordered-args)) ctx)
-                                (catch Exception _ nil))
-                    fb     (if (optional-tk? fb-tk)
-                             {:node  :c-value-nonnil-unwrap
-                              :inner fb-arg
-                              :site  "primitive method `string.to_bool_or` arg"
-                              :name  "fallback"}
-                             fb-arg)]
+              (let [fb (primitive-raw-c-arg
+                         (first arg-exprs)
+                         (:value (first ordered-args))
+                         ctx
+                         "primitive method `string.to_bool_or` arg"
+                         "fallback")]
                 {:node :ffi-call :name "cxc_string_to_bool_or"
                  :args [target-lo fb]
                  :emit-c-fn (fn [[s fb]]
@@ -3544,17 +3541,17 @@
                      :inner   (lower-expr opt-side ctx)
                      :negate? negate?})
 
-                  ;; 2026-09-05 Path 1 slice 10 — raw-primitive
-                  ;; `x == nil` degrades to a compile-time constant.
-                  ;; Under Path 1 every bare-T nullable primitive is
-                  ;; envelope (routed through `:c-optional-nil-check`
-                  ;; above); a raw primitive that reaches this branch
-                  ;; is `T!` non-nil or a raw literal (`0 == nil`),
-                  ;; which by construction cannot equal nil. Emit
-                  ;; `false` for `==`/`is`, `true` for `!=`. Falls
-                  ;; through to the plain :binop otherwise. Old branch
-                  ;; used `CXC_INT_IS_NIL(x)` to guard against sentinel-
-                  ;; lifted raw nulls — no such storage remains.
+                  ;; 2026-09-06 Path 1 post-landing — raw-primitive
+                  ;; `x == nil` is a static type mismatch. Under Path 1
+                  ;; nullable primitives are envelope (routed through
+                  ;; `:c-optional-nil-check` above); a raw primitive
+                  ;; reaching this branch is `T!` or a raw literal
+                  ;; (`0 == nil`), neither of which can be nil at the
+                  ;; type level. Old slice-10 handling silently folded
+                  ;; the comparison to `false` / `true`, which hid
+                  ;; misuse (`if r == nil:` on `r: Int!`). Now fail
+                  ;; with a user error naming both operand types so
+                  ;; the source of the mismatch is obvious.
                   (let [op (:op node)
                         lt (infer-type (:left node)  ctx)
                         rt (infer-type (:right node) ctx)
@@ -3565,7 +3562,19 @@
                     (and (contains? #{"is" "==" "!="} op)
                          (or (and (prim-side? lt) right-nil?)
                              (and (prim-side? rt) left-nil?))))
-                  {:node :int :value (if (= "!=" (:op node)) 1 0)}
+                  (let [op (:op node)
+                        lt (infer-type (:left node)  ctx)
+                        rt (infer-type (:right node) ctx)
+                        prim-ty (if (= :nil rt) lt rt)]
+                    (fail-user!
+                      (str "binop `" op "` between non-nullable primitive `"
+                           (pr-str prim-ty) "` and nil — the left side is a "
+                           "raw primitive value (either a `T!` or a literal), "
+                           "so it cannot be nil at the type level. Drop the "
+                           "`" op " nil` check, or declare the operand as a "
+                           "bare-`T` nullable primitive so it stores as an "
+                           "envelope (`_Cxc_Optional_<T>`) that can carry nil.")
+                      node))
 
                   ;; F39 L5b-ii-c (Sub-C) — Optional-binop dispatch.
                   ;; If either operand's inferred type is [:optional _],
@@ -4106,32 +4115,20 @@
               ;; it emit-side placeholders {0}, {1}, ... that emit-expr
               ;; substitutes with each argument's rendered form.
               ;;
-              ;; 2026-09-05 Path 1 slice 8-A — FFI slots always expect
-              ;; raw primitives (parser auto-`T!` wrap). Under slice 8-A
-              ;; method params are envelope, so callers-of-FFI inside
-              ;; prelude wrappers (e.g. `below(n) :- native_random_
-              ;; below(n)` where n is now envelope) must unwrap
-              ;; envelope→raw at the FFI boundary. Mirror slice 8-B's
-              ;; auto-unwrap: envelope arg → `:c-value-nonnil-unwrap`.
+              ;; FFI slots always expect raw primitives (parser auto-
+              ;; `T!` wrap). Method params are envelope, so callers-of-
+              ;; FFI inside prelude wrappers (e.g. `below(n) :- native_
+              ;; random_below(n)` where n is now envelope) must unwrap
+              ;; envelope→raw at the FFI boundary.
               {:node :ffi-call
                :name callee-name
                :args (mapv (fn [a]
-                             (let [lo (lower-expr (:value a) ctx)
-                                   ;; Guard against contexts where the
-                                   ;; arg's type-kw isn't inferable (e.g.
-                                   ;; a raw `self` inside a prelude
-                                   ;; observable body where `self` isn't
-                                   ;; bound in `:locals`). Non-envelope
-                                   ;; args never need unwrap; a nil `tk`
-                                   ;; is treated the same as raw.
-                                   tk (try (infer-type (:value a) ctx)
-                                           (catch Exception _ nil))]
-                               (if (optional-tk? tk)
-                                 {:node  :c-value-nonnil-unwrap
-                                  :inner lo
-                                  :site  (str "FFI builtin `" callee-name "` arg")
-                                  :name  (or (:name a) "arg")}
-                                 lo)))
+                             (primitive-raw-c-arg
+                               (lower-expr (:value a) ctx)
+                               (:value a)
+                               ctx
+                               (str "FFI builtin `" callee-name "` arg")
+                               (or (:name a) "arg")))
                            args)
                ;; The final emit template — arg positions replaced with
                ;; already-rendered strings from emit-expr. Precomputed
@@ -4229,15 +4226,6 @@
     ;; K5 L1 — `if` at expression position (spec §3.8.1). Lowers to a
     ;; C ternary `(cond ? then : else)` for the single-expression
     ;; branch form. `else if` chains lowered as nested :c-ternary via
-    ;; the recursive parse-side desugar. Both branches lowered as
-    ;; expressions; wrap in :c-ternary node (already emitted by F39
-    ;; L6 for coalesce).
-    :if-expr
-    {:node :c-ternary
-     :cond (lower-expr (:cond node) ctx)
-     :cond-envelope? (optional-bool-guard? (infer-type (:cond node) ctx))
-     :then (lower-expr (:then node) ctx)
-     :else (lower-expr (:else node) ctx)}
 
     ;; R6 (2026-08-31, decisions-frozen-2026-08-31-glyphs) — expression-
     ;; position multi-arm dispatch `||: g1 : b1 ||: g2 : b2 ||: else : bN`.
@@ -6888,7 +6876,19 @@
                        :self-fields self-fields}
         ret-kw        (infer-type rewritten-expr infer-ctx)
         ret-c         (type-kw->c-type ret-kw obs)
-        body-ctx      (assoc ctx :locals (assoc param-locals "self" {:record record-name}))
+        ;; 2026-09-06 Post-Path-1 #3 — observable body may contain a
+        ;; multi-stmt `:do-block-expr` with an explicit `return X`
+        ;; inside. Propagate the observable's inferred return-tk into
+        ;; body-ctx so `lower-stmt :return` fires its envelope-lit
+        ;; wrap on raw-scalar return values, matching what
+        ;; `lower-method-fn` / `lower-atom-method` set for method
+        ;; bodies. Without this, an observable with envelope ret-kw
+        ;; and an inner `return 42` emits raw `int64_t` into a
+        ;; `_Cxc_Optional_Int64` C sig — the exact mismatch slice
+        ;; 1-wider full fixed for methods.
+        body-ctx      (-> ctx
+                          (assoc :locals (assoc param-locals "self" {:record record-name}))
+                          (assoc :expected-return-tk ret-kw))
         params        (into [{:name "self" :c-type (->c-safe record-name)}]
                             (mapv (fn [p raw-p]
                                     {:name   (:name p)
@@ -7210,9 +7210,16 @@
         ;; the default flag the snapshot copies from ivars — same
         ;; values; under concurrent mode L4.e.α's guarded shape
         ;; sources from `_state` so observables read committed state.
+        ;; 2026-09-06 Post-Path-1 #3 — atom-observable variant of the
+        ;; ret-tk propagation shape (see `lower-record-observable-fn`
+        ;; for rationale). Read the observable's stored `:type-kw`
+        ;; from env-build inference so nested `return X` inside a
+        ;; multi-stmt observable body wraps raw scalars into envelope
+        ;; when the declared/inferred return is envelope-typed.
         body-ctx     (-> ctx
                          (update :locals #(merge (or % {}) param-locals))
-                         (assoc :snapshot-name "__cxc_snap"))
+                         (assoc :snapshot-name "__cxc_snap")
+                         (assoc :expected-return-tk (:type-kw o)))
         objc-params  (mapv (fn [p raw-p]
                              {:name   (:name p)
                               :c-type (param-c-type p ctx)
