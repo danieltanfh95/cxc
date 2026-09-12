@@ -1994,7 +1994,7 @@
 ;; Expression lowering (ctx-threaded)
 ;; ---------------------------------------------------------------------------
 
-(declare lower-expr lower-stmt lower-body-stmts)
+(declare lower-expr lower-stmt lower-body-stmts lower-list-literal-init)
 
 (defn- lower-record-ctor
   [callee-node args ctx]
@@ -2021,7 +2021,21 @@
         ;; then-update wrap. Dead until Sub-P flips `:optional?`.
         wrap-value (fn [nm v]
                      (let [f-info (get field-idx nm)
-                           lo     (lower-expr v ctx)]
+                           list-lit? (and (map? v) (= :list (:node v))
+                                          (field-is-list-of? f-info))
+                           lo     (if list-lit?
+                                    ;; Record ctor arg `xs: [e1, e2]` (or
+                                    ;; `xs: []`) for a `List of T` field.
+                                    ;; Same synthesis as atom-side field
+                                    ;; default (`lower-list-literal-init`)
+                                    ;; but returned as an expression value:
+                                    ;; `[[_Cxc_ListOfT alloc]
+                                    ;;   initWithElements:@[<boxed items>]]`.
+                                    ;; Empty items = empty container.
+                                    (let [elem (field-list-element-name f-info)]
+                                      (:rhs (lower-list-literal-init
+                                             f-info elem (:items v) ctx)))
+                                    (lower-expr v ctx))]
                        (if (:optional? f-info)
                          (let [tk       (infer-type v ctx)
                                opt-c    (:c-type f-info)

@@ -33,16 +33,6 @@ def ToolCall:
 def ChatResponse:
     text:        String!
     stop_reason: StopReason!
-    # `tool_calls: List of ToolCall` deferred — records don't yet
-    # auto-init container fields the way atoms do (v1.0 gap), and `[]`
-    # literal lowering isn't landed, so ChatResponse can't carry a
-    # List field until one of those closes. Consumers hit the tool_use
-    # branch via ChatResponseWithTools (below) which carries the field
-    # but only constructs when the compiler surface supports it.
-
-def ChatResponseWithTools:
-    text:        String!
-    stop_reason: StopReason!
     tool_calls:  List of ToolCall
 
 def Claude:
@@ -88,6 +78,6 @@ def Claude:
         let final_text: String = ||: status != 200 : "[http " + status.to_string() + "] " + resp
                                  ||: text == nil   : "(no text)"
                                  ||: else          : text
-        ChatResponse(text: final_text, stop_reason: stop_variant)
+        ChatResponse(text: final_text, stop_reason: stop_variant, tool_calls: [])
 
     -> ready
