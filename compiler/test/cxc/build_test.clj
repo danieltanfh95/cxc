@@ -1362,7 +1362,7 @@
       (is (.isFile (java.io.File. user-src-dir "project.lock"))))))
 
 (deftest end-to-end-hello-agent-full-plugin-compiles
-  (testing "Phase 5 (2026-09-12) — validates the com.acme.http_claude aspirational plugin (`examples/hello-agent-full-plugin-source/com/acme/http_claude/claude.cxc`) parses, lowers, and links via the R3 dep pipeline. Plugin exports Role / Message / StopReason / ToolAction / ToolCall / ChatResponse + the existing `Claude.ask` shape (the transition-based `chat` + response emission lands in a follow-on; MVP is type-surface + `ask` synchronous method). Consumer at `examples/hello-agent-full/main.cxc` imports the six types + Claude and exercises Message record construction with a Role variant. Same compile-only assert as the dogfood test; running requires ANTHROPIC_API_KEY. Exercises: variant enum with payload cases (StopReason.other, ToolAction.shell/read/write/env_var), List of user-record type (ChatResponse.tool_calls: List of ToolCall), and cross-module import of six declarations in one `from ... import` clause."
+  (testing "Phase 5 + Phase 6 (2026-09-12) — validates the com.acme.http_claude aspirational plugin (`examples/hello-agent-full-plugin-source/com/acme/http_claude/claude.cxc`) parses, lowers, and links via the R3 dep pipeline; validates the aspirational hello-agent-full consumer (`examples/hello-agent-full/main.cxc`) compiles and runs. Plugin exports Role / Message / StopReason / ToolAction / ToolCall / ChatResponse + the `Claude.ask` synchronous method (the transition-based `chat` + response emission lands in a follow-on). Consumer defines an AgentTools atom bundling fs / shell / env_vars capability access and an Agent(user_task) atom with `use claude` + `use tools` — main constructs Claude + AgentTools + Agent explicitly (third-party plugin atoms don't auto-provision). Exercises: variant enum with payload cases, List-of-user-record inside a record field (`ChatResponse.tool_calls: List of ToolCall` — the emit-side fix that reorders forward-classes before struct typedefs), and cross-module import of six declarations in one `from ... import` clause. Run-side: bin compiles + launches; without ANTHROPIC_API_KEY the http.post_envelope path returns a non-2xx status and Claude.ask branches to the `[http <status>] <resp>` diagnostic — test asserts binary starts + prints the task line so anyone running with a real key gets a real reply."
     (let [work-dir     (tmp-dir)
           plugin-dir   (java.io.File. work-dir "plugin")
           user-src-dir (java.io.File. work-dir "user-src")
@@ -1380,11 +1380,22 @@
                  "    ])\n"))
       (spit (java.io.File. user-src-dir "main.cxc")
             (slurp "examples/hello-agent-full/main.cxc"))
-      (let [{:keys [status stderr]}
+      (let [{:keys [status stderr bin-path]}
             (build/compile-directory-to-file user-src-dir "hello-agent-full"
                                              (.getPath user-out-dir) {})]
-        (is (zero? status) (str "hello-agent-full compile failed:\n" stderr)))
-      (is (.isFile (java.io.File. user-src-dir "project.lock"))))))
+        (is (zero? status) (str "hello-agent-full compile failed:\n" stderr))
+        (is (.isFile (java.io.File. user-src-dir "project.lock")))
+        (when (zero? status)
+          ;; Run-side smoke: no API key → Claude.ask branches to the
+          ;; `[http <status>]` diagnostic. Assertion only checks that the
+          ;; binary starts + prints its task line — the http status /
+          ;; body varies (401 unauthorized, 400 model-not-found, etc.),
+          ;; so we don't pin to a specific error format.
+          (let [{:keys [exit out]}
+                (shell/sh bin-path :env {"ANTHROPIC_API_KEY" ""
+                                         "PATH"              (System/getenv "PATH")})]
+            (is (zero? exit) (str "binary exit non-zero; out:\n" out))
+            (is (str/includes? out "task: Say hello in one word"))))))))
 
 (deftest a7-std-namespace-reserved
   (testing "A7 (2026-09-03) — `<src-dir>/std/` at src-dir root is rejected at build start because it would produce user modules in the reserved `std.*` namespace (prelude/stdlib). Diagnostic points at the offending dir with the DNS-reverse / vendor / flat rename suggestions."

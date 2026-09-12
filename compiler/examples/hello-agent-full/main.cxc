@@ -1,16 +1,44 @@
 from com.acme.http_claude import Claude, Role, Message, StopReason, ToolAction, ToolCall, ChatResponse
 
-def main:
+def AgentTools:
+    use fs:       FileSystem
+    use shell:    Subprocess
+    use env_vars: EnvVars
+
+    read_file(path: String!) :- String
+        fs.read_text(path)
+
+    write_file(path: String!, content: String!) :- Int!
+        fs.write_text(path, content)
+
+    run_shell(cmd: String!) :- String
+        shell.run(cmd, env: EnvSpec.inherit)
+
+    get_env(name: String!) :- String
+        env_vars.get_or(name, "")
+
+def Agent(user_task: String!):
     use console: Console
-    use args:    Args
+    use claude:  Claude
+    use tools:   AgentTools
+
+    -> planning
+        then:
+            let user: Message = Message(role: Role.user, content: user_task)
+            let reply: String = claude.ask(user.content)
+            console.write("task: " + user_task)
+            console.write("reply: " + reply)
+
+    -> done
+
+def main:
+    use args: Args
 
     -> running
         then:
-            let task: String = args.get_or(1, "hello")
+            let task: String = args.get_or(1, "Say hello in one word")
             let c:    Claude = Claude()
-            let m:    Message = Message(role: Role.user, content: task)
-            let reply: String = c.ask(m.content)
-            console.write("task: " + task)
-            console.write("reply: " + reply)
+            let t:    AgentTools = AgentTools()
+            let a:    Agent = Agent(user_task: task, claude: c, tools: t)
 
     -> end
