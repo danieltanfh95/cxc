@@ -1,7 +1,26 @@
 def Subprocess:
-    run(cmd: String) :- native_subprocess_run(cmd)
+    # R17 (2026-09-01, D1(i) enforcement 2026-09-09): every `run`
+    # variant requires `env: EnvSpec!`. Callers pick `.empty` or
+    # `.inherit` explicitly — no default. `.merge(overlay: {String:
+    # String})` is spec'd but deferred (map-in-variant not landed).
+    # The `env` param is currently threaded through as discipline;
+    # the underlying native runtime always inherits envp — actual
+    # empty-envp semantics land alongside EnvSpec.merge in Phase 7
+    # of the hello-agent completion plan.
+    #
+    # `run_typed` returns a proper `ProcResult` record so callers walk
+    # `.stdout` / `.stderr` / `.exit_code` fields directly instead of
+    # decomposing the JSON envelope via the Json cap at every site.
 
-    run_full(cmd: String) :- native_subprocess_run_full(cmd)
+    run(cmd: String, env: EnvSpec!) :- native_subprocess_run(cmd)
+
+    run_full(cmd: String, env: EnvSpec!) :- native_subprocess_run_full(cmd)
+
+    run_typed(cmd: String, env: EnvSpec!) :- ProcResult
+        let raw: String = native_subprocess_run_full(cmd)
+        ProcResult(stdout:    native_json_field_string_or(raw, "stdout", ""),
+                   stderr:    native_json_field_string_or(raw, "stderr", ""),
+                   exit_code: native_json_field_int_or(raw, "exit_code", -1))
 
     -> running
 

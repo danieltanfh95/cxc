@@ -82,6 +82,18 @@
    {:name :geom    :kind :shared :names ["Position"]}
    {:name :input   :kind :shared :names ["Key" "TestKeyboardInput"]}
    {:name :system  :kind :shared :names ["SystemPanic" "Uncaught"]}
+   ;; D1(ii) 2026-09-08 — typed error records for v1.0 capability
+   ;; failures (IOError, HttpError, ShellError, JsonError, EnvError).
+   ;; Load-order: after `:system` (companion for Uncaught/SystemPanic),
+   ;; before target caps that raise them. See prelude/shared/errors.cxc
+   ;; and [[corvid-cap-typed-errors]] memory.
+   {:name :errors  :kind :shared :names ["IOError" "HttpError" "ShellError" "JsonError" "EnvError"]}
+   ;; Subprocess data types (2026-09-09) — `EnvSpec` variant for
+   ;; R17-required `env:` param; `ProcResult` typed return for
+   ;; `Subprocess.run_full` / future `run_typed`. Loaded shared so
+   ;; user records / aspirational hello-agent can import from a
+   ;; single-source-of-truth prelude module regardless of target.
+   {:name :subprocess_types :kind :shared :names ["EnvSpec" "ProcResult"]}
    ;; SemVer + VersionRange are used by every plugin's `def plugin:`
    ;; manifest (`version: SemVer!` / `compat: VersionRange!` fields).
    ;; Centralized here so plugin authors never import. Landed 2026-08-31
@@ -137,11 +149,12 @@
    ;; `ProcResult{exit_code, stdout, stderr}` shape via NSTask +
    ;; NSPipe once the FFI carries composite return types.
    {:name :subprocess :kind :target :names ["Subprocess"]}
-   ;; 2g (2026-09-02) — `Env` capability. `get_or(name, default)`
-   ;; wraps libc `getenv`; unset vars return the default. Single
-   ;; method at MVP — a distinct `get()` returning nullable String
-   ;; waits on nullable-String surface tightening.
-   {:name :env :kind :target :names ["Env"]}
+   ;; 2g (2026-09-02) — `Env` capability. Split D1(i) 2026-09-08 into
+   ;; `EnvVars` (read-only, total: get_or/get_or_int/get_or_bool/has)
+   ;; and `EnvMut` (mutation, raises EnvError: set/remove). Read
+   ;; consumers `use env_vars: EnvVars`; mutation-capable atoms
+   ;; `use env_mut: EnvMut`. See [[corvid-env-split]] memory.
+   {:name :env :kind :target :names ["EnvVars" "EnvMut"]}
    ;; 2h (2026-09-03) — `Args` capability. `length` (argc as Int)
    ;; + `get_or(index, fallback)` (argv[index] with default).
    ;; Argc/argv accessed via Darwin's `*_NSGetArgc()` / `*_NSGetArgv()`
@@ -220,7 +233,7 @@
    cxc.lower compares against these; entries match what the parsed
    AST carries verbatim from prelude source."
   #{"Clock" "Random" "TestKeyboardInput" "Console" "SystemPanic" "Plugin" "OsPrimitive"
-    "FileSystem" "Subprocess" "Env" "Args" "Json" "Http" "Time" "Hash"})
+    "FileSystem" "Subprocess" "EnvVars" "EnvMut" "Args" "Json" "Http" "Time" "Hash"})
 
 ;; F5 retirement (2026-08-15): unit-suffix desugaring (`100ms`,
 ;; `2s`, `1.5min` → `Duration(millis: N)`) is retired per spec

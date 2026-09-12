@@ -4,7 +4,7 @@ def main:
     use args:    Args
     use http:    Http
     use json:    Json
-    use env:     Env
+    use env_vars: EnvVars
     use time:    Time
     use console: Console
 

@@ -3792,7 +3792,7 @@
 ;;
 ;; - Q10-D `@plugin(...)` on `module <name>` → reversed; F73 (module
 ;;   header retirement) stands unconditionally. Plugin manifest lives
-;;   as `plugin: Plugin = Plugin(...)` module-let (see spec §7.2).
+;;   as `def plugin:` block (see spec §7.2).
 ;; - L3c `@metadata(...)` → retired; kind info via body-shape
 ;;   inference (§3.3). F53 never end-to-end consumed the pipe (drift).
 ;; - L3b `@deprecated(...)` → retired; K3 walker deleted (cxc.build).
@@ -3805,37 +3805,6 @@
 ;; Top-level dispatch
 ;; ---------------------------------------------------------------------------
 
-(defn- parse-module-let
-  "F52 L4 (§7.1) — top-level immutable let-binding.
-     let <NAME> [: <Type>] = <const-expr>
-   Produces a `:module-let` node carrying the ident name, optional
-   type annotation, and RHS expression. Value-constness is enforced
-   at lower time (same `default-expr-const-shape?` guard F40 uses on
-   default-expressions per spec §3.8.5).
-
-   A7 (2026-09-03) — the trailing terminator accepts either `:newline`
-   or `:eof`: a multi-line parenthesized RHS (e.g. the A7 manifest's
-   `let project = Project(name: ..., deps: [...])`) tokenizes with
-   bracket-suppression, so no NEWLINE lands between the closing `)`
-   and end-of-file. Prior to this, a top-level module-let as the
-   file's last construct with a multi-line RHS forced a bogus trailing
-   line to appease `expect :newline`."
-  [tokens pos]
-  (let [[_ p]    (expect tokens pos :kw "let")
-        [nm p]   (expect tokens p :ident)
-        [ty p]   (if (at? tokens p :punct ":")
-                   (parse-type tokens (inc p))
-                   [nil p])
-        [_ p]    (expect tokens p :glyph "=")
-        [rhs p]  (parse-expr tokens p)
-        p        (cond
-                   (at? tokens p :newline) (inc p)
-                   (at? tokens p :eof)     p
-                   :else (fail! tokens p
-                                (str "module-let: expected newline or end-of-file "
-                                     "after RHS; got " (pr-str (peek-tok tokens p)))))]
-    [{:node :module-let :name nm :type ty :value rhs} p]))
-
 (defn- parse-top [tokens pos]
   (let [p (skip-newlines tokens pos)]
     (cond
@@ -3843,7 +3812,16 @@
       (at? tokens p :kw "module")  (reject-module-decl! tokens p)
       (at? tokens p :kw "from")    (parse-from-import tokens p)
       (at? tokens p :kw "import")  (parse-import tokens p)
-      (at? tokens p :kw "let")     (parse-module-let tokens p)
+      (at? tokens p :kw "let")
+      (fail! tokens p
+             (str "module-scope `let` retired 2026-08-31 (R3, "
+                  "decisions-frozen-2026-08-31.md §R3). Module-scope "
+                  "constants live in a `def` record with compile-time-"
+                  "constant field defaults, e.g. `def Constants:\\n"
+                  "    PROTOCOL_VERSION: UInt16! = 13` — consumers "
+                  "reference as `Constants.PROTOCOL_VERSION`. For A7 "
+                  "`project.cxc` manifests, drop the `let project = ` "
+                  "prefix and leave the bare `Project(...)` expression."))
       (at? tokens p :kw "def")     (parse-def-atom tokens p)
 
       ;; F9 L3 / L2b — `extend Foo:` at top level. Extension body is
@@ -3913,6 +3891,30 @@
                   (parse-module-decl-internal tokens pos)
                   (parse-top tokens pos))]
             (recur (conj nodes node) pos')))))))
+
+(defn parse-expression
+  "Parse a cxc source string as a single top-level expression, returning
+   the expression AST node. Used by consumers that read constrained
+   expression-only source (A7 `project.cxc` manifests being the primary
+   caller). Skips leading blank lines / comments; the source must contain
+   exactly one expression followed by EOF (trailing blank lines OK).
+   Throws with a targeted diagnostic on multi-expression source or on
+   any statement-form content."
+  [source]
+  (let [tokens (lex/tokenize source)
+        p0     (skip-newlines tokens 0)
+        _      (when (at? tokens p0 :eof)
+                 (throw (ex-info "parse-expression: source is empty"
+                                 {:kind :cxc-parse-expression-empty})))
+        [expr p] (parse-expr tokens p0)
+        p        (skip-newlines tokens p)
+        _        (when-not (at? tokens p :eof)
+                   (throw (ex-info
+                           (str "parse-expression: expected single expression "
+                                "followed by end-of-file; extra tokens starting "
+                                "at " (pr-str (peek-tok tokens p)))
+                           {:kind :cxc-parse-expression-trailing-tokens})))]
+    expr))
 
 (defn parse
   "Parse a cxc source string into a sequence of top-level AST nodes.

@@ -1,5 +1,22 @@
 def FileSystem:
-    read_text(path: String) :- native_fs_read_text(path)
+    # D1(ii) 2026-09-09: partial typed-raise conversion. Only
+    # `read_text` migrated so far — its nil return is unambiguously an
+    # error path (nil isn't a valid decoded String). Rc-based
+    # operations (`write_text`, `mkdirs`, `remove`, `size`, `copy`,
+    # `rename`, `append_text`, `write_bytes`) keep returning Int
+    # because several tests + users deliberately probe the -1 sentinel
+    # (`size(missing_path) → -1` as a "not regular file" indicator,
+    # `remove(absent) → -1` for idempotent-cleanup callers). `read_bytes`
+    # kept nil-returning because the missing-file → nil contract is
+    # explicitly exercised (bytes-io regression). Full spec-aligned
+    # raise migration for rc-based ops requires either statement-
+    # position `if <cond>: <block>` (parser gap, F39 L7 landed only
+    # `if let`) OR a per-caller opt-in mechanism, both deferred.
+
+    read_text(path: String) :- String!
+        let r: String = native_fs_read_text(path)
+        ||: r == nil : raise IOError(reason: "read_text failed", path: path, err_code: 0)
+        ||: else     : r
 
     write_text(path: String, content: String) :- native_fs_write_text(path, content)
 

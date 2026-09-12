@@ -55,36 +55,64 @@
           acc
           atom-env))
 
+(defn- scan-record-env-fields
+  "Walk every record-env entry's :fields, threading each through `f`.
+   Mirror of `scan-atom-env-fields` — records don't carry ctor-params
+   (their ctor is auto-derived from field order), so only :fields
+   participates. Feeds the container-instantiation collector so a
+   `List of <T>` embedded inside a record field triggers the same
+   `_Cxc_ListOfT` class synthesis that atom-embedded lists do."
+  [record-env acc f]
+  (reduce (fn [acc [_ info]]
+            (reduce f acc (:fields info)))
+          acc
+          record-env))
+
 (defn list-instantiations-from-atom-env
-  "Scan every atom-env entry's fields + ctor-params for `List of T`
-   usages; return a map {element-type-name → list-class-name}. Feeds
-   Step 3 class synthesis: one compiler-generated ObjC class per
-   distinct element type."
-  [atom-env]
-  (scan-atom-env-fields
-   atom-env {}
-   (fn [acc fp]
-     (let [ty (:cxc-ty fp)]
-       ;; Field/ctor-param carries the already-mangled class name in
-       ;; :cxc-ty (see base-type-name), so detect via the `_Cxc_ListOf`
-       ;; prefix and recover the element.
-       (if (and (string? ty) (.startsWith ^String ty "_Cxc_ListOf"))
-         (assoc acc (subs ty (count "_Cxc_ListOf")) ty)
-         acc)))))
+  "Scan every atom-env AND record-env entry's fields + ctor-params for
+   `List of T` usages; return a map {element-type-name → list-class-
+   name}. Feeds Step 3 class synthesis: one compiler-generated ObjC
+   class per distinct element type.
+
+   Records participate 2026-09-12 (Phase 5 follow-on) — previously only
+   atom fields drove synthesis, so `Record { xs: List of Item }` left
+   `_Cxc_ListOfItem` undeclared at C level; now record fields trigger
+   the same synth path. Arity-2 is the current callable; arity-1 kept
+   for callers that haven't threaded record-env through yet (returns
+   the atom-only scan)."
+  ([atom-env] (list-instantiations-from-atom-env atom-env {}))
+  ([atom-env record-env]
+   (let [collect (fn [acc fp]
+                   (let [ty (:cxc-ty fp)]
+                     ;; Field/ctor-param carries the already-mangled
+                     ;; class name in :cxc-ty (see base-type-name), so
+                     ;; detect via the `_Cxc_ListOf` prefix and recover
+                     ;; the element.
+                     (if (and (string? ty) (.startsWith ^String ty "_Cxc_ListOf"))
+                       (assoc acc (subs ty (count "_Cxc_ListOf")) ty)
+                       acc)))]
+     (-> {}
+         (as-> a (scan-atom-env-fields atom-env a collect))
+         (as-> a (scan-record-env-fields record-env a collect))))))
 
 (defn map-instantiations-from-atom-env
-  "Scan every atom-env entry's fields + ctor-params for `Map of (K, V)`
-   usages; return a map {[K-name V-name] → map-class-name}. Feeds
-   Layer 6 Step 8 class synthesis: one compiler-generated ObjC class
-   per distinct (K, V) pair."
-  [atom-env]
-  (scan-atom-env-fields
-   atom-env {}
-   (fn [acc fp]
-     (let [ty (:cxc-ty fp)]
-       (if (and (string? ty) (.startsWith ^String ty "_Cxc_MapOf"))
-         (assoc acc [(:map-key fp) (:map-val fp)] ty)
-         acc)))))
+  "Scan every atom-env AND record-env entry's fields + ctor-params for
+   `Map of (K, V)` usages; return a map {[K-name V-name] → map-class-
+   name}. Feeds Layer 6 Step 8 class synthesis: one compiler-generated
+   ObjC class per distinct (K, V) pair.
+
+   Records participate 2026-09-12 — same rationale as
+   `list-instantiations-from-atom-env`."
+  ([atom-env] (map-instantiations-from-atom-env atom-env {}))
+  ([atom-env record-env]
+   (let [collect (fn [acc fp]
+                   (let [ty (:cxc-ty fp)]
+                     (if (and (string? ty) (.startsWith ^String ty "_Cxc_MapOf"))
+                       (assoc acc [(:map-key fp) (:map-val fp)] ty)
+                       acc)))]
+     (-> {}
+         (as-> a (scan-atom-env-fields atom-env a collect))
+         (as-> a (scan-record-env-fields record-env a collect))))))
 
 (def ^:private count-observable-defaults
   "Every container gains a `count` observable — factored so all three
@@ -148,16 +176,19 @@
              instantiations)))
 
 (defn set-instantiations-from-atom-env
-  "Scan atom-env fields + ctor-params for `Set of T` usages; return
-   {element-name → set-class-name}."
-  [atom-env]
-  (scan-atom-env-fields
-   atom-env {}
-   (fn [acc fp]
-     (let [ty (:cxc-ty fp)]
-       (if (and (string? ty) (.startsWith ^String ty "_Cxc_SetOf"))
-         (assoc acc (subs ty (count "_Cxc_SetOf")) ty)
-         acc)))))
+  "Scan atom-env AND record-env fields + ctor-params for `Set of T`
+   usages; return {element-name → set-class-name}. Records participate
+   2026-09-12 — same rationale as `list-instantiations-from-atom-env`."
+  ([atom-env] (set-instantiations-from-atom-env atom-env {}))
+  ([atom-env record-env]
+   (let [collect (fn [acc fp]
+                   (let [ty (:cxc-ty fp)]
+                     (if (and (string? ty) (.startsWith ^String ty "_Cxc_SetOf"))
+                       (assoc acc (subs ty (count "_Cxc_SetOf")) ty)
+                       acc)))]
+     (-> {}
+         (as-> a (scan-atom-env-fields atom-env a collect))
+         (as-> a (scan-record-env-fields record-env a collect))))))
 
 (defn synthesize-set-container-entries
   "Given {element-name → set-class-name}, produce atom-env entries.

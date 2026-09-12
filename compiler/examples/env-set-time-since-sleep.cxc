@@ -1,13 +1,13 @@
 def main:
-    use env:     Env
-    use time:    Time
-    use console: Console
+    use env_vars: EnvVars
+    use env_mut:  EnvMut
+    use time:     Time
+    use console:  Console
 
     -> running
         then:
-            let set_rc: Int = env.set("CXC_TEST_VAR", "hello-from-cxc")
-            let got: String = env.get_or("CXC_TEST_VAR", "MISSING")
-            console.write("set_rc: " + set_rc.to_string())
+            env_mut.set("CXC_TEST_VAR", "hello-from-cxc")
+            let got: String = env_vars.get_or("CXC_TEST_VAR", "MISSING")
             console.write("env_roundtrip: " + got)
             let t0: Instant = time.now()
             let _: Int = time.sleep_ms(50)

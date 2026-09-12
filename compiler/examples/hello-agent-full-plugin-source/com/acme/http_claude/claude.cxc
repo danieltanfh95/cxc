@@ -1,0 +1,57 @@
+def plugin:
+    name:    String!       = "com.acme.http_claude"
+    version: SemVer!       = SemVer(0, 1, 0)
+    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0),
+                                          max: SemVer(2, 0, 0))
+
+def Role:
+    case system
+    case user
+    case assistant
+    case tool
+
+def Message:
+    role:    Role!
+    content: String!
+
+def StopReason:
+    case end
+    case tool_use
+    case max_tokens
+    case other(reason: String!)
+
+def ToolAction:
+    case shell(cmd: String!)
+    case read(path: String!)
+    case write(path: String!, content: String!)
+    case env_var(name: String!)
+
+def ToolCall:
+    id:     String!
+    action: ToolAction!
+
+def ChatResponse:
+    text:        String!
+    stop_reason: StopReason!
+    tool_calls:  List of ToolCall
+
+def Claude:
+    use http:     Http
+    use json:     Json
+    use env_vars: EnvVars
+
+    model: String = "claude-haiku-4-5-20251001"
+
+    ask(prompt: String) :- String
+        let key: String = env_vars.get_or("ANTHROPIC_API_KEY", "")
+        let headers: String = "{\"x-api-key\":" + json.encode_str(key) + ",\"anthropic-version\":\"2023-06-01\",\"content-type\":\"application/json\"}"
+        let body: String = "{\"model\":" + json.encode_str(model) + ",\"max_tokens\":128,\"messages\":[{\"role\":\"user\",\"content\":" + json.encode_str(prompt) + "}]}"
+        let envelope: String = http.post_envelope("https://api.anthropic.com/v1/messages", headers, body)
+        let status: Int = json.field_int_or(envelope, "status", -1)
+        let resp: String = json.field_string(envelope, "body")
+        let text: String = json.field_string_path(resp, "content.0.text")
+        ||: status != 200 : "[http " + status.to_string() + "] " + resp
+        ||: text == nil   : "(no text)"
+        ||: else          : text
+
+    -> ready

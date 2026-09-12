@@ -113,10 +113,6 @@
              :refer [nonnil-check-stmt capitalize-first]]
             [cxc.lower.ffi-builtins :as ffi
              :refer [ffi-builtins ffi-builtin?]]
-            [cxc.lower.module-lets :as module-lets
-             :refer [extract-module-lets imported-module-idents
-                     substitute-module-let-refs module-let-emit-entries
-                     reject-module-let-shadowing!]]
             [cxc.lower.enum :as lower-enum-ns
              :refer [lower-enum]]
             [cxc.lower.optional :as lower-optional
@@ -2067,7 +2063,7 @@
                          {:name name :value (lower-expr value ctx)})
                        resolved)]
     {:node      :c-tagged-init
-     :enum-name enum-name
+     :enum-name (->c-safe enum-name)
      :case-name case-nm
      :fields    fields}))
 
@@ -2153,8 +2149,8 @@
    call site. Currently: phantom caps (SystemPanic, ...) plus `Plugin`
    (R11 sole FFI capability; auto-provisioned from the enclosing
    module's plugin marker at construction time), plus prelude
-   capability atoms (Http, Json, Env, Console, Args, Time, Random,
-   Hash, FileSystem, Subprocess) so user-defined capability atoms
+   capability atoms (Http, Json, EnvVars, EnvMut, Console, Args, Time,
+   Random, Hash, FileSystem, Subprocess) so user-defined capability atoms
    composing them (e.g. `def Claude: use http: Http`) don't force
    the caller to hoist those slots up to every construction site.
 
@@ -2170,7 +2166,7 @@
   [ty-name]
   (or (phantom-atom-name? ty-name)
       (= "Plugin" ty-name)
-      (contains? #{"Http" "Json" "Env" "Console" "Args"
+      (contains? #{"Http" "Json" "EnvVars" "EnvMut" "Console" "Args"
                    "Time" "Random" "Hash" "FileSystem" "Subprocess"}
                  ty-name)))
 
@@ -3400,7 +3396,7 @@
                                            :inner     lhs-lo
                                            :optional? lhs-opt?}
                                     :right {:node :name
-                                            :sym  (str enum-name "_Tag_" case-nm)}}
+                                            :sym  (str (->c-safe enum-name) "_Tag_" case-nm)}}
                         gate       (if lhs-opt?
                                      {:node :binop :op "&&"
                                       :left  {:node :c-optional-present
@@ -3800,9 +3796,9 @@
                     (some? enum-case)
                     (let [{en :name cs :case info :info} enum-case]
                       (if (:tagged? info)
-                        {:node :c-tagged-init :enum-name en :case-name cs
+                        {:node :c-tagged-init :enum-name (->c-safe en) :case-name cs
                          :fields []}
-                        {:node :name :sym (str en "_" cs)}))
+                        {:node :name :sym (str (->c-safe en) "_" cs)}))
 
                   ;; F67 L4a — zero-arg observable on a record. `V(...).mag`
                   ;; is really `V_mag(V(...))` — a C function call, not
@@ -4249,13 +4245,29 @@
              else (lower-expr (get-in arms [(dec (count arms)) :body]) ctx)]
         (if (neg? i)
           else
-          (recur (dec i)
-                 {:node :c-ternary
-                  :cond (lower-expr (get-in arms [i :guard]) ctx)
-                  :cond-envelope? (optional-bool-guard?
-                                   (infer-type (get-in arms [i :guard]) ctx))
-                  :then (lower-expr (get-in arms [i :body])  ctx)
-                  :else else}))))
+          (let [then-lowered (lower-expr (get-in arms [i :body]) ctx)
+                ;; D1(ii) 2026-09-09 — `raise T(...)` in a `||:` arm body
+                ;; lowers to a stmt-expr whose trailing value is `nil`;
+                ;; ARC rejects the enclosing ternary when the raise arm
+                ;; and the value arm have incompatible types. Attach the
+                ;; peer arm's lowered expression as `:peer-typeof-expr`
+                ;; so emit can render `((__typeof__(<peer>))nil)` as the
+                ;; trailing slot. `__typeof__` doesn't evaluate its
+                ;; argument — safe with side-effecting peers.
+                attach-peer
+                (fn [arm peer]
+                  (if (= :raise-emit (:node arm))
+                    (assoc arm :peer-typeof-expr peer)
+                    arm))
+                then-adj (attach-peer then-lowered else)
+                else-adj (attach-peer else       then-lowered)]
+            (recur (dec i)
+                   {:node :c-ternary
+                    :cond (lower-expr (get-in arms [i :guard]) ctx)
+                    :cond-envelope? (optional-bool-guard?
+                                     (infer-type (get-in arms [i :guard]) ctx))
+                    :then then-adj
+                    :else else-adj})))))
 
     ;; F18 L2 — `do:` at expression position. Lower statements uniformly
     ;; via lower-body-stmts (already threads `let`-binding ctx). Wrap any
@@ -4836,10 +4848,10 @@
         (if tagged?
           {:node :binop :op "=="
            :left  {:node :field :target {:node :name :sym scrut-tmp} :field "tag"}
-           :right {:node :name  :sym    (str enum-name "_Tag_" case-nm)}}
+           :right {:node :name  :sym    (str (->c-safe enum-name) "_Tag_" case-nm)}}
           {:node :binop :op "=="
            :left  {:node :name :sym scrut-tmp}
-           :right {:node :name :sym (str enum-name "_" case-nm)}})))))
+           :right {:node :name :sym (str (->c-safe enum-name) "_" case-nm)}})))))
 
 (defn- lower-dispatch-arm
   "Lower one dispatch arm into a `:c-if-chain` branch.
@@ -8246,10 +8258,6 @@
 ;; moved to cxc.lower.map-set-containers.
 
 
-;; M1c — F52 L4 module-let pipeline (const-shape check,
-;; extract, shadow-reject, substitute, emit-entries)
-;; moved to cxc.lower.module-lets.
-
 (defn- finalize-atom-env-inference
   "M6 — collapses the linear post-shake atom-env pipeline into one
    named step so downstream readers don't have to track three
@@ -8277,23 +8285,25 @@
 
 (defn- synthesize-container-entries
   "M6 — collapses the L5/L6 container-synthesis pipeline. Scans
-   the current atom-env for `List/Map/Set of T` instantiations and
-   merges the synthesized container entries in. Order matters only
-   in that later scans see prior additions — but List/Map/Set
-   registrations are keyed by mangled container class name (which
-   is a deterministic function of the element type) so re-scanning
-   an already-synthesized entry is a no-op merge.
+   the current atom-env AND record-env for `List/Map/Set of T`
+   instantiations and merges the synthesized container entries in.
+   Order matters only in that later scans see prior additions — but
+   List/Map/Set registrations are keyed by mangled container class
+   name (which is a deterministic function of the element type) so
+   re-scanning an already-synthesized entry is a no-op merge.
 
    Runs after inference so observables typed as `List/Map/Set of T`
-   also participate."
-  [atom-env]
+   also participate. Records participate 2026-09-12 — previously
+   only atom fields triggered synth, leaving `Record { xs: List of
+   Item }` with an undeclared `_Cxc_ListOfItem` at C level."
+  [atom-env record-env]
   (let [ae1 (merge atom-env (synthesize-list-container-entries
-                              (list-instantiations-from-atom-env atom-env)
+                              (list-instantiations-from-atom-env atom-env record-env)
                               atom-env))
         ae2 (merge ae1     (synthesize-map-container-entries
-                              (map-instantiations-from-atom-env ae1)))
+                              (map-instantiations-from-atom-env ae1 record-env)))
         ae3 (merge ae2     (synthesize-set-container-entries
-                              (set-instantiations-from-atom-env ae2)))]
+                              (set-instantiations-from-atom-env ae2 record-env)))]
     ae3))
 
 (defn lower
@@ -8315,25 +8325,12 @@
         d->m (env/attribute-modules-to-decls top-nodes)
         module-map (env/module-map-from-attribution d->m)]
    (binding [mangle/*decl->module* d->m]
-   (let [;; F52 L4 — pre-lower constant folding of top-level `let NAME =
-        ;; <const-literal>` bindings. Extract every `:module-let` decl
-        ;; into a name→value-node map, drop the decls from `top-nodes`,
-        ;; and postwalk-substitute every matching `:ident` reference
-        ;; with the constant. Everything below sees a canonical AST
-        ;; with literals in place of module-let refs — no new env slot,
-        ;; no runtime state, no per-callsite lookup.
-        module-lets       (extract-module-lets top-nodes)
-        imported-modules  (imported-module-idents top-nodes)
-        ;; B8 (2026-09-02) — `:def-plugin` markers are compile-time-only
+   (let [;; B8 (2026-09-02) — `:def-plugin` markers are compile-time-only
         ;; metadata consumed by cxc.plugin-manifest (B3-B7). Filter them
         ;; before lowering so no emit rule needs to know about them.
         top-nodes         (->> top-nodes
-                               (remove #(= :module-let (:node %)))
                                (remove #(= :def-plugin (:node %)))
                                vec)
-        _                 (reject-module-let-shadowing! top-nodes module-lets)
-        top-nodes         (substitute-module-let-refs top-nodes module-lets
-                                                       imported-modules)
         main-atom  (first (filter main-def-atom? top-nodes))
         _          (when-not main-atom
                      (throw (ex-info "no `def main` entry point found at top level"
@@ -8443,7 +8440,7 @@
         ;; M6 — L5 Step 3 (List) + L6 Step 8 (Map) + L6 Step 9 (Set)
         ;; instantiation-scan pipeline collapsed into one call. See
         ;; `synthesize-container-entries` above.
-        atom-env   (synthesize-container-entries atom-env)
+        atom-env   (synthesize-container-entries atom-env record-env)
         ;; F9 L3 — collect extension blocks and validate targets against
         ;; the full symbol table. Composition (merging methods,
         ;; applying `replace`, running §3.3.2 rules 1-7) is L4.
@@ -8485,9 +8482,7 @@
         ;; F51 L3b(b.ii)-2 — attribute each user declaration to its
         ;; module (walked at the top of `lower` from raw top-nodes as
         ;; `d->m` / `module-map` above; also `*decl->module*` for F56
-        ;; C-id mangling). Attribution is decl-shaped, not ref-shaped,
-        ;; so the module-let-substitution pass between top and here
-        ;; doesn't affect it — reuse the local instead of recomputing.
+        ;; C-id mangling). Reuse the local instead of recomputing.
         ctx        (mk-ctx {:record-env      record-env
                             :atom-env        atom-env
                             :enum-env        enum-env
@@ -8808,14 +8803,6 @@
      :includes            includes
      :needs-runtime?      needs-runtime?
      :needs-dispatch-loop? needs-dispatch-loop?
-     ;; F52 L4-d — surface each top-level `let NAME = <const>` binding
-     ;; as an emit-side `static const <c-type> <c-name> = <c-literal>;`
-     ;; alongside the constant folding at ref sites. Purely additive:
-     ;; clang DCEs unreferenced statics, so a program that folds every
-     ;; reference sees the const declaration but no runtime cost. The
-     ;; browsable .m surfaces the module-let for LSP hover / debugging
-     ;; without a separate metadata side-channel.
-     :module-lets         (module-let-emit-entries module-lets)
      :enums               c-enums
      :structs             structs
      ;; Track A/2.a (2026-08-26) — reason-box wrapper classes, one per

@@ -1,0 +1,16 @@
+from com.acme.http_claude import Claude, Role, Message, StopReason, ToolAction, ToolCall, ChatResponse
+
+def main:
+    use console: Console
+    use args:    Args
+
+    -> running
+        then:
+            let task: String = args.get_or(1, "hello")
+            let c:    Claude = Claude()
+            let m:    Message = Message(role: Role.user, content: task)
+            let reply: String = c.ask(m.content)
+            console.write("task: " + task)
+            console.write("reply: " + reply)
+
+    -> end

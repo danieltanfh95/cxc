@@ -103,7 +103,7 @@
 - **`of` qualifier for structural type parameters** (retires `<T>`); lowercase names in `of` position are shape variables bound in signature scope by first-mention.
 - **Types-as-atoms unification.** Type-checking is atom-shape-conformance (structural). No refinement types at the signature level — predicates live in `invariants:`/`requires`/`ensures`/predicate atoms.
 - **Named tuple return types** for multi-channel atom outputs.
-- **Stdlib capability catalog** — Clock, Random, Filesystem, Network, Console, Args, EnvVars, Exit, Signals, Log as v1.0 core; Threads, Process, IPC, TimeZone/Locale, Crypto extended.
+- **Stdlib capability catalog** — Clock, Random, Filesystem, Http (v1.0) / Network (v1.1+), Subprocess, Json, Console, Args, EnvVars, EnvMut, Exit, Signals, Log as v1.0 core; Threads, Process, IPC, TimeZone/Locale, Crypto extended.
 
 **What's still open** (does not block v1.0 shape; may block a v1.0 *compiler*):
 
@@ -1822,7 +1822,7 @@ protocol Healable:
   - Construction (`clock: GameClock(tick_ms: 16)`) → construct locally; this compound provides it to children.
   - Expression (`fs: SandboxedFs(inner: fs, ...)`) → evaluate; bare names inside the expression resolve in *enclosing* scope (parent env), enabling wrap-parent-and-reprovide.
 - Children of a compound see the compound's local bindings; whether an entry was inherited or constructed is invisible to them (substitutability).
-- **All OS-adjacent capabilities are atoms.** No language primitives touch the OS. `Clock` (no `after` primitive; delayed dispatch is either `<phase> -> <target>` with `|: clock.after(deadline)` as a time-guarded transition, or a Delay/Throttle transformer in a receive-glyph source expression), `Filesystem`, `Network`, `Console`, `Random`, `Args`, `EnvVars`, `Exit`, `Signals`, `Log`, and (per capability) Threads, Process, Devices, GUI events are all capability atoms in `env`.
+- **All OS-adjacent capabilities are atoms.** No language primitives touch the OS. `Clock` (no `after` primitive; delayed dispatch is either `<phase> -> <target>` with `|: clock.after(deadline)` as a time-guarded transition, or a Delay/Throttle transformer in a receive-glyph source expression), `Filesystem`, `Http` (v1.0) / `Network` (v1.1+), `Subprocess`, `Json`, `Console`, `Random`, `Args`, `EnvVars`, `EnvMut`, `Exit`, `Signals`, `Log`, and (per capability) Threads, Process, Devices, GUI events are all capability atoms in `env`.
 - **Env provisions shim atoms** wrapping OS syscalls — all of them plugin atoms (R11 2026-09-01). Same capability shape has per-target plugin files (`std/fs/darwin.cxc`, `std/fs/wasi.cxc`, ...); the compiler picks per-target at build time.
 - **`use:` declaration IS the effect surface.** An atom's transitive `use:` closure is its effect set. Atoms with no `use:` block are proof-by-signature that they don't touch time, files, network — pure over their inputs.
 
@@ -1842,7 +1842,7 @@ protocol Healable:
 
 **Stdlib catalog (dogfooded).**
 
-- Core (must ship v1.0): Clock, Random, Filesystem, Network, Console, Args, EnvVars, Exit, Signals, Log.
+- Core (must ship v1.0): Clock, Random, Filesystem, Http, Subprocess, Json, Console, Args, EnvVars, EnvMut, Exit, Signals, Log. (Network umbrella lifts Http + TCP/UDP/WebSocket at v1.1+.)
 - Extended (v1.0 if language supports; else v1.1): Threads/Workers, Process, IPC, TimeZone/Locale, Crypto.
 - v1.1+ (device-specific): GUI events, Audio, GPU, Sensors/Devices.
 - Every OS-touching capability is a plugin atom (R11 plugin-only wave, 2026-09-01), built using the `Plugin` FFI capability for the syscall boundary — consuming foreign symbols declared in nested `foreign "..."` sections inside the enclosing `def plugin:` body (see §1.14 / §7.2.1). First-party stdlib capabilities (`std.clock`, `std.fs`, ...) ship with the compiler as plugins; third-party plugins use the same mechanism. If a capability can't be expressed cleanly in cxc, the language has a gap that needs fixing — not a stdlib workaround.
@@ -1988,6 +1988,7 @@ use:
 - **Console** — stdin/stdout/stderr with line/byte modes.
 - **Args** — parsed command-line arguments (with subcommand support).
 - **EnvVars** — environment variables (read-only view).
+- **EnvMut** — environment variables (mutation surface); separate cap so read consumers don't hold mutation authority (D1(i) 2026-09-08).
 - **Exit** — program termination with exit codes.
 - **Signals** — SIGINT/SIGTERM/SIGCHLD/... handler registration.
 - **Log** — structured logging with levels and sinks.
@@ -2052,7 +2053,7 @@ def File(path: Path):                            # constructor param — implici
     -> unopened
         let: fd: Int = native_open(path, O_RDWR)
         |: fd < 0
-        then: :> open_failed(errno: current_errno())
+        then: :> open_failed(err_code: current_errno())
 
     # Reads while opened — sync send to the file's read channel returns the bytes.
     opened <| read(byte_count: Int)
@@ -2152,7 +2153,7 @@ def PosixFs:
     open(path: Path) :- File
         cpath: CString = path.to_cstring()
         fd:    Int32   = native_open(cpath, O_RDWR, 0)
-        ||: fd < 0 : raise IOError(errno: current_errno(), path: path)
+        ||: fd < 0 : raise IOError(reason: "open failed", path: path, err_code: current_errno())
         ||: else   : File(path: path, handle: NativeHandle(fd))
 
     # read, write, close, seek, ...
@@ -2233,22 +2234,24 @@ Notes:
 
 ```
 def Filesystem:                                   # capability shape (signature-only atom)
-    # Sync path-based operations (landed at v1.0 as `FileSystem` prelude cap):
-    read_text(path: String!)  :- String           # nil on failure, or raise IOError(reason)
-    write_text(path: String!, text: String!) :- Unit  # raise IOError on failure
-    append_text(path: String!, text: String!) :- Unit
-    exists(path: String!)     :- Bool
-    is_dir(path: String!)     :- Bool
-    is_file(path: String!)    :- Bool
-    mkdirs(path: String!)     :- Int              # 0 on success; -1 raises IOError
-    remove(path: String!)     :- Int
-    copy(from: String!, to: String!) :- Int
-    rename(from: String!, to: String!) :- Int
-    size(path: String!)       :- Int              # -1 on missing / not-regular
-    tmp_path(prefix: String!) :- String
-    list_dir(path: String!)   :- String           # newline-joined; empty on error
-    read_bytes(path: String!) :- Bytes
-    write_bytes(path: String!, data: Bytes!) :- Int
+    # Sync path-based operations (landed at v1.0 as `FileSystem` prelude cap).
+    # Fallible ops raise IOError(reason, path, err_code); recover via `or IOError(...):`.
+    # Predicates (exists/is_*) are total and never raise.
+    read_text(path: String!)        :- String!    # raises IOError
+    write_text(path: String!, text: String!)  :- Unit  # raises IOError
+    append_text(path: String!, text: String!) :- Unit  # raises IOError
+    exists(path: String!)           :- Bool       # total
+    is_dir(path: String!)           :- Bool       # total
+    is_file(path: String!)          :- Bool       # total
+    mkdirs(path: String!)           :- Unit       # raises IOError
+    remove(path: String!)           :- Unit       # raises IOError
+    copy(from: String!, to: String!)   :- Unit    # raises IOError
+    rename(from: String!, to: String!) :- Unit    # raises IOError
+    size(path: String!)             :- Int!       # raises IOError (missing / not-regular)
+    tmp_path(prefix: String!)       :- String!    # raises IOError
+    list_dir(path: String!)         :- String!    # newline-joined; raises IOError
+    read_bytes(path: String!)       :- Bytes!     # raises IOError
+    write_bytes(path: String!, data: Bytes!) :- Unit  # raises IOError
 
     # Atom-lifecycle operations (v1.1+): open returns a File atom whose
     # phases signal completion. `Filesystem.open(path, mode)` returns a
@@ -2260,7 +2263,7 @@ def Filesystem:                                   # capability shape (signature-
 
 Notes:
 - Landed at v1.0 is the sync path-based surface (`FileSystem` cap in `compiler/resources/prelude/target/macos/fs.cxc`). Atom-lifecycle-shaped `open` / `watch` are v1.1 landings; the async story stays consistent with [[corvid-async-via-lifecycles]] — return an atom, not a Future.
-- Fallible operations `raise IOError(reason, path)` on failure; callers attach `or IOError(reason: let m):` recovery arms per §3.5.4.
+- Fallible operations raise `IOError(reason, path, err_code)` on failure per D1(ii); callers attach `or IOError(reason: let m):` recovery arms per §3.5.4. Predicates (`exists`, `is_dir`, `is_file`) are total and never raise — a missing path yields `false`, not an error.
 - `OpenMode` = enum {`read`, `write`, `append`, `read_write`, `create`}. Landed sync surface uses raw path Strings; handle-based `OpenMode` shape lands with atom-lifecycle `open` at v1.1.
 - Default plugin: `std.fs` (first-party; per-target atoms `PosixFs`, `WasiFs`, `BrowserFs` shipped as per-target plugin files `std/fs/darwin.cxc`, `std/fs/wasi.cxc`, ...). v1.0 ships `FileSystem` in `compiler/resources/prelude/target/macos/fs.cxc`.
 
@@ -2268,13 +2271,17 @@ Notes:
 
 ```
 def Http:                                         # capability shape (LANDED at v1.0)
-    # Sync (blocking dispatch on a background NSURLSession queue):
-    get(url: String!)              :- String      # response body; nil on network error
-    post(url: String!, headers: String!, body: String!) :- String
-    get_envelope(url: String!)     :- String      # JSON envelope: {status, body}
-    post_envelope(url: String!, headers: String!, body: String!) :- String
-    head_status(url: String!)      :- Int         # HTTP status; -1 on transport failure
-    download_to_file(url: String!, path: String!) :- Int  # 0 success; -1 failure
+    # Sync (blocking dispatch on a background NSURLSession queue).
+    # Every method raises HttpError(reason, url, status) on transport failure or
+    # on non-2xx responses. `head_status` is the exception — it returns the raw
+    # status Int for any response and only raises on transport failure (no HTTP
+    # response arrived).
+    get(url: String!, headers: String!)              :- String!  # response body; raises HttpError
+    post(url: String!, headers: String!, body: String!) :- String!  # raises HttpError
+    get_envelope(url: String!, headers: String!)     :- String!  # JSON envelope {status, body}; raises HttpError on transport failure only (non-2xx returns via envelope status)
+    post_envelope(url: String!, headers: String!, body: String!) :- String!  # same shape as get_envelope
+    head_status(url: String!)                        :- Int!     # raw HTTP status; raises HttpError on transport failure
+    download_to_file(url: String!, path: String!)    :- Unit     # raises HttpError (transport) or IOError (write)
 
 # v1.1+: Network umbrella capability adds TCP/UDP/DNS/WebSocket + atom-
 # lifecycle handles. Sockets, Listeners, WsConns become state-machine
@@ -2287,9 +2294,58 @@ def Network:                                      # DRAFT — v1.1+
 
 Notes:
 - v1.0 ships `Http` as a standalone capability, not under a `Network` umbrella. The umbrella lands with TCP/UDP/WebSocket in v1.1.
-- Fallible operations raise typed error records (`HttpError`, `NetError`) per §3.5.4; the current `Http` returns nil / -1 sentinels — migration to typed raise is on the D1(ii) landing sheet.
+- Fallible operations raise typed error records (`HttpError` at v1.0, `NetError` at v1.1+) per §3.5.4 (D1(ii) 2026-09-08). The `_envelope` variants intentionally do NOT raise on non-2xx status — they surface HTTP-layer failure via the response envelope so callers can inspect body-on-error without needing an `or` arm; transport failures (DNS, TCP, TLS handshake) still raise `HttpError` on those variants because there's no envelope to return.
 - `Socket`, `Listener`, `UdpSocket`, `WsConn` are state-machine atoms with lifecycles per [[corvid-async-via-lifecycles]] — no Future/Promise wrapper.
 - Default plugin: `std.http` at v1.0 (first-party, `Http` atom via NSURLSession). `std.network` at v1.1.
+
+**Subprocess.**
+
+```
+def Subprocess:                                   # capability shape (LANDED at v1.0)
+    # Sync (blocks the caller until the child exits).
+    run(cmd: String!, env: EnvSpec!)      :- String!   # combined stdout+stderr; raises ShellError on non-zero exit or spawn failure
+    run_full(cmd: String!, env: EnvSpec!) :- ProcessResult!  # {stdout, stderr, exit_code}; raises ShellError on spawn failure only (non-zero exit surfaces via exit_code)
+
+def ProcessResult:
+    stdout:    String!
+    stderr:    String!
+    exit_code: Int!
+
+def EnvSpec:                                      # R17 (2026-09-04) — explicit env is mandatory
+    case empty                                    # child gets no env vars
+    case inherit                                  # child inherits caller's env verbatim
+    case merge(overlay: {String: String})         # inherit + overlay wins on collision
+```
+
+Notes:
+- `env:` is a required keyword arg (no default) per the capability-model discipline (R17 2026-09-04); silent env inheritance is the exact leak the explicit shape prevents. See [[corvid-subprocess-env-explicit]].
+- `run` folds any non-zero exit into `ShellError` for callers that want short-circuit behavior; `run_full` returns the raw result so callers can inspect exit_code without an `or` arm.
+- Default plugin: `std.subprocess` (first-party, `Subprocess` atom via `posix_spawn`).
+
+**Json.**
+
+```
+def Json:                                         # capability shape (LANDED at v1.0)
+    # Total (fallback-based) extractors — never raise:
+    field_int_or(json: String!, key: String!, fallback: Int) :- Int
+    field_int_or_path(json: String!, path: String!, fallback: Int) :- Int
+    field_string_or(json: String!, key: String!, fallback: String!) :- String
+    field_string_or_path(json: String!, path: String!, fallback: String!) :- String
+    field_bool_or(json: String!, key: String!, fallback: Bool) :- Bool
+    array_length_at(json: String!, path: String!) :- Int  # 0 if absent / not-array
+
+    # Fallible extractors — raise JsonError(reason, at) on parse failure or missing key:
+    field_string(json: String!, key: String!)     :- String!
+    field_string_path(json: String!, path: String!) :- String!
+
+    # Encoder — total (encoding any String is well-defined):
+    encode_str(s: String!)                        :- String!
+```
+
+Notes:
+- `_or` variants are total by construction — the fallback covers every parse / lookup path that could otherwise fail. Callers that don't need a typed error use these; callers that do use the raising variants.
+- User-defined records serialize via `function as(self) -> Json:` (§3.3.2, §3.10.3), not through this cap. This cap covers only string-level query and encode against opaque JSON text; structural encode/decode of user records is per-record author choice.
+- Default plugin: `std.json` (first-party, hand-rolled tokenizer + JSON-pointer walker; no third-party dep at v1.0).
 
 **Console.**
 
@@ -2328,18 +2384,31 @@ Notes:
 - Runtime constructs `Args` from OS-supplied argv at program launch. Just the raw view — parsing (flags, positional, subcommands) lives in `cxc.args` extension package.
 - `ArgSchema` and `declare_schema` mechanisms retired from core shape; the raw interface is sufficient primitive, parsing is user/extension territory.
 
-**EnvVars.**
+**EnvVars.** (Read-only.)
 
 ```
-def EnvVars:
+def EnvVars:                                      # capability shape (LANDED at v1.0)
     :- all: {String: String}                      # snapshot of environment at program launch
-    -> get(name: String) -> String               # nil if unset
-    -> has(name: String) -> Bool
+    get_or(name: String!, fallback: String!) :- String    # total: returns fallback when unset
+    get_or_int(name: String!, fallback: Int)    :- Int    # total: parses value or returns fallback
+    get_or_bool(name: String!, fallback: Bool)  :- Bool   # total: parses value or returns fallback
+    has(name: String!)                          :- Bool   # total
+```
+
+**EnvMut.** (Split from `Env` by D1(i), 2026-09-08.) Separate cap so consumers that only need reads don't hold mutation authority — the same shape as splitting `Filesystem` reads from a hypothetical `FilesystemMut` (which we don't; fs is a single cap because its ops are all localized to explicit paths). Env-var mutation is process-global and unlocalizable, so it earns its own cap and its own env slot.
+
+```
+def EnvMut:                                       # capability shape (LANDED at v1.0)
+    set(name: String!, value: String!) :- Unit   # raises EnvError(reason, name) on failure
+    remove(name: String!)              :- Unit   # raises EnvError(reason, name) on failure
 ```
 
 Notes:
-- Read-only view; environment mutation is a v1.1+ concern if ever (subprocesses inherit at spawn-time).
-- Default plugin: `std.env` (first-party, `PosixEnv` atom; reads `environ`). `FixtureEnv({...})` for tests.
+- The v1.0 prelude ships both `EnvVars` (via `env.cxc` read surface) and `EnvMut` (via `env.cxc` mutation surface) — the current `Env` cap in `compiler/resources/prelude/target/macos/env.cxc` is scheduled to split into two shim atoms in the D1(i)-impl landing (spec-first here per stabilization-stance discipline).
+- Env slot naming: `env.env_vars` for reads, `env.env_mut` for writes. An atom that needs both declares two `use:` slots — visible to review; no ambient escalation.
+- `EnvMut` mutation is process-global and irreversible mid-run; typical use is startup config (setting `TZ`, `LANG`) or test scaffolds. Long-running programs should treat `EnvMut` as a scope-crossing capability and avoid handing it to worker atoms.
+- Subprocess-inherited env is still governed by `subprocess.run(env:)` (R17) — `EnvMut.set` affects the caller's own environment and only leaks to children if they use `EnvSpec.inherit` / `.merge`.
+- Default plugins: `std.env` (first-party, `PosixEnv` atom reading `environ` for `EnvVars`; `PosixEnvMut` atom wrapping `setenv/unsetenv` for `EnvMut`). `FixtureEnv({...})` for tests satisfies `EnvVars` only; test scaffolds needing mutation compose a mutable-map atom conforming to `EnvMut`.
 
 **Exit.**
 
@@ -2419,12 +2488,50 @@ Notes:
 - `with_context` returns a projection view of the same underlying Log — light-weight (same sink, different pre-populated field set), not a new capability atom.
 - Default plugin: `std.log` (first-party, `StderrLog` atom; writes to stderr in text or JSON format). Alternatives: `JsonLog(sink:)`, `SyslogLog`, `NullLog` (drops everything), `CaptureLog(buffer:)` (for tests).
 
+**Typed error records** (D1(ii), ratified 2026-09-08). Cap methods on the fallible surface raise one of the following standard records; recovery attaches via `or T(field: let x): <body>` per §3.5.4. Every record has `reason: String!` (human-readable message) plus per-domain context fields; the fields are additive across versions (adding a nullable field is not a break because `or T(...):` binds only the fields the caller names).
+
+```
+def IOError:                                       # Filesystem, Signals.send, Console-atom-lifecycle
+    reason:   String!                              # human-readable message
+    path:     String                               # filesystem path scope; nil when not path-scoped
+    err_code: Int                                  # POSIX errno value; 0 when not applicable. Field spelled `err_code` not `errno` because `errno` is a POSIX macro that collides with a C field name.
+
+def HttpError:                                     # Http (v1.0), Network (v1.1+ transport layer)
+    reason: String!
+    url:    String!                                # request URL
+    status: Int                                    # HTTP status when a response arrived; -1 on transport failure before any status
+
+def ShellError:                                    # Subprocess.run / run_full
+    reason:    String!
+    cmd:       String!                             # the failing command line
+    exit_code: Int                                 # process exit code; -1 when the child never started
+
+def JsonError:                                     # Json.field_string / field_string_path / (future) decode
+    reason: String!
+    at:     String                                 # JSON path/pointer where parse or extraction failed; nil when unlocalizable
+
+def EnvError:                                      # EnvMut.set / remove (D1(i)); read-only EnvVars is total
+    reason: String!
+    name:   String!                                # env var name that triggered the failure
+```
+
+Recovery example:
+
+```
+let text = fs.read_text("/etc/hosts")
+    or IOError(reason: let m, path: let p):
+        log.warn("read failed: " ++ m ++ " at " ++ (p ?? "<no-path>"))
+        return
+```
+
+The five records live in prelude alongside the capability shapes (§1.14). Third-party plugins declaring domain-specific failure records (`DbError`, `S3Error`, ...) follow the same shape; the prelude set covers only cap surfaces the compiler ships at v1.0.
+
 **Cross-cutting notes:**
 
 - **Return types.** Fallible operations `raise T(reason, ...)` typed error records; callers use `or T(reason: let m):` recovery arms per §3.5.4. Total operations return bare `T`. Long-running / cancellable / streaming operations return an atom whose phase transitions signal completion — no `Future of T` wrapper (D1 ratified 2026-09-07; see [[corvid-async-via-lifecycles]]).
 - **Channel primitive is `Stream of T` uniformly.** No `Future of T` / `Signal of T` generics — cardinality is a Stream contract (`emits <= 1`, `emits == 1`); single-fire completion is a phase transition on the returned atom, not a wrapping type.
 - **`Ptr of T`.** Used in FFI signatures (`Ptr of Byte`); the atom-shape of Ptr itself is a stdlib primitive (opaque handle to native memory). Only manipulable by shim atoms holding `Plugin` (R11); v1.0 has no `unsafe:` keyword in app source.
-- **Runtime env slot naming.** Each capability's env-slot name in `env` matches its stdlib type name (lowercase snake): `env.clock`, `env.random`, `env.fs` (short for filesystem), `env.net` (short for network), `env.console`, `env.args`, `env.env_vars`, `env.exit`, `env.signals`, `env.log`. Standard convention; users' `use:` blocks default to these names.
+- **Runtime env slot naming.** Each capability's env-slot name in `env` matches its stdlib type name (lowercase snake): `env.clock`, `env.random`, `env.fs` (short for filesystem), `env.http` (v1.0) / `env.net` (v1.1+), `env.subprocess`, `env.json`, `env.console`, `env.args`, `env.env_vars`, `env.env_mut`, `env.exit`, `env.signals`, `env.log`. Standard convention; users' `use:` blocks default to these names.
 - **All handlers are exposed by default.** No `entrypoints:` section on any capability shape above. External callers, internal wires, and any other message sender all reach handlers the same way.
 
 ### 1.14 Prelude — capability shapes, prelude records, and a worked plugin shim

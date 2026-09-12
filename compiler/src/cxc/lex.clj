@@ -547,10 +547,9 @@
               (throw (ex-info
                       (str "annotation grammar (`@name(...)`) is retired at "
                            "v1.0 (annotation-grammar-retirement 2026-08-30). "
-                           "Plugin manifest → `plugin: Plugin = Plugin(...)` "
-                           "at module-let scope (spec §7.2). Metadata (kind) "
-                           "→ body-shape inference (§3.3). Deprecation → "
-                           "comment / user convention.")
+                           "Plugin manifest → `def plugin:` block (spec §7.2). "
+                           "Metadata (kind) → body-shape inference (§3.3). "
+                           "Deprecation → comment / user convention.")
                       {:kind :annotation-grammar-retired
                        :line line-no :col (inc i) :char c}))
 

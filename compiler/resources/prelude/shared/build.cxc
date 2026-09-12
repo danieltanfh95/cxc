@@ -12,7 +12,7 @@
 # Manifest shape (v1.0 field set is deliberately minimal):
 #
 #   # project.cxc
-#   let project = Project(
+#   Project(
 #       name:  "hello-agent",
 #       entry: "main",
 #       deps: [

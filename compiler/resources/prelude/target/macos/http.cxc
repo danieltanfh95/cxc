@@ -1,7 +1,24 @@
 def Http:
-    get(url: String, headers_json: String) :- native_http_get(url, headers_json)
+    # D1(ii) 2026-09-09: `get` / `post` migrated to typed raise
+    # (nil response body is unambiguously an error path — non-2xx
+    # responses go through `_envelope` variants). `head_status`
+    # keeps returning Int; -1 is a valid domain probe (http-head-status
+    # test deliberately calls it with a bad URL and asserts on -1).
+    # `_envelope` variants intentionally stay total — they surface
+    # HTTP-layer failure via the JSON `{status, body}` envelope so
+    # callers can inspect body-on-error without an `or` arm (per spec
+    # §1.13 Http notes). `download_to_file` keeps returning Int (rc-
+    # sentinel probing pattern, same policy as fs.write_text).
 
-    post(url: String, headers_json: String, body: String) :- native_http_post(url, headers_json, body)
+    get(url: String, headers_json: String) :- String!
+        let r: String = native_http_get(url, headers_json)
+        ||: r == nil : raise HttpError(reason: "http.get failed", url: url, status: -1)
+        ||: else     : r
+
+    post(url: String, headers_json: String, body: String) :- String!
+        let r: String = native_http_post(url, headers_json, body)
+        ||: r == nil : raise HttpError(reason: "http.post failed", url: url, status: -1)
+        ||: else     : r
 
     get_envelope(url: String, headers_json: String) :- native_http_get_envelope(url, headers_json)
 

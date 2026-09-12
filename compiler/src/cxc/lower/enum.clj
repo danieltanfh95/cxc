@@ -12,7 +12,8 @@
    Emit renders the actual C from these nodes. Consulted by the
    top-level orchestrator in `cxc.lower/lower` — no other lowering
    passes touch this file."
-  (:require [cxc.type-kw :refer [cxc-type->c]]))
+  (:require [cxc.mangle  :refer [->c-safe]]
+            [cxc.type-kw :refer [cxc-type->c]]))
 
 (defn lower-enum
   "Top-level `def Foo:` with case markers.
@@ -32,11 +33,12 @@
   [enum-node record-env atom-env enum-env module-map]
   (let [tagged?    (some #(seq (:payload %)) (:case-entries enum-node))
         raw-values (:raw-values enum-node)
-        raw-type   (:raw-type   enum-node)]
+        raw-type   (:raw-type   enum-node)
+        c-name     (->c-safe (:name enum-node))]
     (cond
       tagged?
       {:node    :c-tagged-enum
-       :name    (:name enum-node)
+       :name    c-name
        :entries (mapv (fn [ce]
                         {:name    (:name ce)
                          :payload (mapv (fn [p]
@@ -51,7 +53,7 @@
 
       raw-values
       {:node       :c-enum
-       :name       (:name enum-node)
+       :name       c-name
        :cases      (:cases enum-node)
        :raw-values raw-values
        :raw-c-type (get {"UInt8" "uint8_t" "UInt16" "uint16_t"
@@ -60,5 +62,5 @@
 
       :else
       {:node  :c-enum
-       :name  (:name enum-node)
+       :name  c-name
        :cases (:cases enum-node)})))

@@ -1,14 +1,15 @@
 def main:
-    use env:     Env
-    use fs:      FileSystem
-    use console: Console
+    use env_vars: EnvVars
+    use env_mut:  EnvMut
+    use fs:       FileSystem
+    use console:  Console
 
     -> running
         then:
-            let _set: Int = env.set("CXC_REMOVE_ME", "temp")
-            let got1: String = env.get_or("CXC_REMOVE_ME", "GONE")
-            let _rm: Int = env.remove("CXC_REMOVE_ME")
-            let got2: String = env.get_or("CXC_REMOVE_ME", "GONE")
+            env_mut.set("CXC_REMOVE_ME", "temp")
+            let got1: String = env_vars.get_or("CXC_REMOVE_ME", "GONE")
+            env_mut.remove("CXC_REMOVE_ME")
+            let got2: String = env_vars.get_or("CXC_REMOVE_ME", "GONE")
             console.write("before_rm: " + got1)
             console.write("after_rm: " + got2)
             let path: String = "/tmp/cxc-append-example.log"

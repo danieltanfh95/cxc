@@ -481,7 +481,7 @@
                                                    case-nm % record-env)
                                                  fields))
                                   "")]
-                    (str "    case " enum-name "_Tag_" case-nm ": {\n"
+                    (str "    case " (->c-safe enum-name) "_Tag_" case-nm ": {\n"
                          (when (seq blocks) (str blocks "\n"))
                          "        break;\n"
                          "    }")))]
@@ -494,7 +494,7 @@
     {:node        :c-function
      :name        (enum-synth-as-bytes-name enum-name)
      :return-type "NSMutableData *"
-     :params      [{:name "a" :c-type enum-name}]
+     :params      [{:name "a" :c-type (->c-safe enum-name)}]
      :body        [{:node :raw-c :text body-src}]}))
 
 (defn enum-eligible-for-as-bytes-synthesis?
@@ -975,6 +975,7 @@
   [record-name f enum-env]
   (let [fname   (:name f)
         cxc-ty  (:cxc-ty f)
+        c-ty    (->c-safe cxc-ty)
         info    (get enum-env cxc-ty)
         entries (:case-entries info)
         n       (count entries)
@@ -1004,7 +1005,7 @@
                                            record-name fname case-nm % bind)
                                          fields))
                           "")]
-            (str "        case " cxc-ty "_Tag_" case-nm ": {\n"
+            (str "        case " c-ty "_Tag_" case-nm ": {\n"
                  (when (seq blocks) (str blocks "\n"))
                  "            break;\n"
                  "        }")))]
@@ -1015,8 +1016,8 @@
          "    if (" raw " >= " n ") return " invalid
          "((int64_t)(__off - " width "), @\"invalid discriminator for "
          "tagged enum field " fname " (" cxc-ty ")\");\n"
-         "    " cxc-ty " " bind ";\n"
-         "    " bind ".tag = (" cxc-ty "_Tag)" raw ";\n"
+         "    " c-ty " " bind ";\n"
+         "    " bind ".tag = (" c-ty "_Tag)" raw ";\n"
          "    switch (" raw ") {\n"
          (str/join "\n" arms) "\n"
          "    }")))
@@ -1171,6 +1172,7 @@
   [record-name f enum-env]
   (let [fname   (:name f)
         cxc-ty  (:cxc-ty f)
+        c-ty    (->c-safe cxc-ty)
         info    (get enum-env cxc-ty)
         entries (:case-entries info)
         n       (count entries)
@@ -1202,7 +1204,7 @@
                                            record-name fname case-nm % inner-bind)
                                          fields))
                           "")]
-            (str "        case " cxc-ty "_Tag_" case-nm ": {\n"
+            (str "        case " c-ty "_Tag_" case-nm ": {\n"
                  (when (seq blocks) (str blocks "\n"))
                  "            break;\n"
                  "        }")))]
@@ -1223,7 +1225,7 @@
          "        if (" raw " >= " n ") return " invalid
          "((int64_t)(__off - " width "), @\"invalid discriminator for "
          "Optional tagged-enum field " fname " (" cxc-ty ")\");\n"
-         "        " inner-bind ".tag = (" cxc-ty "_Tag)" raw ";\n"
+         "        " inner-bind ".tag = (" c-ty "_Tag)" raw ";\n"
          "        switch (" raw ") {\n"
          (str/join "\n" arms) "\n"
          "        }\n"
@@ -1238,6 +1240,7 @@
   [record-name f enum-env]
   (let [fname   (:name f)
         cxc-ty  (:cxc-ty f)
+        c-ty    (->c-safe cxc-ty)
         info    (get enum-env cxc-ty)
         entries (:case-entries info)
         n       (count entries)
@@ -1264,7 +1267,7 @@
          "    if (" raw " >= " n ") return " invalid
          "((int64_t)(__off - " width "), @\"invalid discriminator for enum field "
          fname " (" cxc-ty ")\");\n"
-         "    " cxc-ty " " bind " = (" cxc-ty ")" raw ";")))
+         "    " c-ty " " bind " = (" c-ty ")" raw ";")))
 
 (defn f37-optional-primitive-field-decode-c-src
   "F37 L6 Optional-primitive extension — decode a bare-T value-typed

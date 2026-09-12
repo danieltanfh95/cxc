@@ -9,9 +9,9 @@ from com.acme.http_claude   import Claude, ChatResponse, StopReason, ToolCall, T
 
 # ----- First-party stdlib capabilities ----------------------------------
 from std.console            import Console
-from std.fs                 import File, ReadOnly, ReadWrite, IOError
-from std.subprocess         import Subprocess, ProcResult, ShellError
-from std.env                import Env
+from std.fs                 import FileSystem, IOError
+from std.subprocess         import Subprocess, ProcResult, ShellError, EnvSpec
+from std.env                import EnvVars
 from std.args               import Args
 
 def Role:
@@ -24,41 +24,34 @@ def Message:
     role:    Role!
     content: String!
 
-    system(text: String!) :- Message
-        Message(role: Role.system, content: text)
-
-    user(text: String!) :- Message
-        Message(role: Role.user, content: text)
-
-    assistant(text: String!) :- Message
-        Message(role: Role.assistant, content: text)
-
-    tool_result(id: String!, out: String!) :- Message
-        Message(role: Role.tool,
-                content: "{\"tool_use_id\":\"" + id + "\",\"content\":" + out + "}")
+# Factory helpers on record types (`Message.system(text)` shape) aren't
+# landed at v1.0 — spec-tracked as F37 L6 class-function. Callers below
+# use bare `Message(role: ..., content: ...)` ctors instead. When class-
+# functions land, these move into `def Message:` as `class function
+# system(text) -> Message:` etc.
 
 # ToolCall + ToolAction shapes come from com.acme.http_claude — see README.md.
 
 def AgentTools:
-    use fs:    File
-    use shell: Subprocess
-    use env:   Env
+    use fs:       FileSystem
+    use shell:    Subprocess
+    use env_vars: EnvVars
 
     read_file(path: String!) :- String
-        fs.open(path, ReadOnly).read_all()
+        fs.read_text(path)
 
-    write_file(path: String!, content: String!) :- Unit
-        fs.open(path, ReadWrite).write(content)
+    write_file(path: String!, content: String!) :- Int
+        fs.write_text(path, content)
 
     run_shell(cmd: String!) :- ProcResult
-        shell.run(cmd, timeout_ms: 30000)
+        shell.run_full(cmd, env: EnvSpec.inherit)
 
     get_env(name: String!) :- String
-        env.read(name)
+        env_vars.get_or(name, "")
 
 def Agent(user_task: String!):
-    ctx:       List(Message)  = []
-    pending:   List(ToolCall) = []
+    ctx:       List of Message  = []
+    pending:   List of ToolCall = []
     step:      Int            = 0
     max_steps: Int            = 20
 
@@ -68,8 +61,8 @@ def Agent(user_task: String!):
 
     -> planning
         then:
-            ctx => ctx.append(Message.system(system_prompt()))
-            ctx => ctx.append(Message.user(user_task))
+            ctx => ctx.append(Message(role: Role.system, content: system_prompt()))
+            ctx => ctx.append(Message(role: Role.user, content: user_task))
             |> claude.chat(messages: ctx)
 
     # planning: terminal — stop==end
@@ -89,7 +82,7 @@ def Agent(user_task: String!):
         then:
             step    => step + 1
             pending => r.tool_calls
-            ctx     => ctx.append(r.as_message())
+            ctx     => ctx.append(Message(role: Role.assistant, content: r.text))
             pending.for_each(tc => |> self.exec_tool(tc))
 
     # dispatching → using_tools: pure routing on variant
@@ -134,15 +127,15 @@ def Agent(user_task: String!):
 
     # recording → dispatching (more) or planning (drained → ping claude)
     recording <: result(id: String!, out: String!) -> dispatching
-        |: pending.length > 1
+        |: pending.count > 1
         then:
-            ctx     => ctx.append(Message.tool_result(id: id, out: out))
+            ctx     => ctx.append(Message(role: Role.tool, content: "{\"tool_use_id\":\"" + id + "\",\"content\":" + out + "}"))
             pending => pending.filter(t => t.id != id)
 
     recording <: result(id: String!, out: String!) -> planning
-        |: pending.length == 1
+        |: pending.count == 1
         then:
-            ctx     => ctx.append(Message.tool_result(id: id, out: out))
+            ctx     => ctx.append(Message(role: Role.tool, content: "{\"tool_use_id\":\"" + id + "\",\"content\":" + out + "}"))
             pending => pending.filter(t => t.id != id)
             |> claude.chat(messages: ctx)
 

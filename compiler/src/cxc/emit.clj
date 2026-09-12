@@ -633,6 +633,43 @@
                                           (map (fn [p a] (str p ":" (emit-expr a)))
                                                parts args))
                                 "]"))))
+    ;; D1(ii) 2026-09-09 — `raise T(...)` in expression position
+    ;; (e.g. inside a `||:` arm body of an observation shim like
+    ;; `read_text(path) :- String! ||: r == nil : raise IOError(...) ||: else : r`).
+    ;; The statement handler at emit-stmt renders the same shape.
+    ;; Wrapping here in a GNU stmt-expr (`({ ... ; nil; })`) lets the
+    ;; block sit at expression position; @throw is control-flow
+    ;; terminating, so the trailing value expression never executes.
+    ;; The trailing slot uses `((__typeof__(peer))nil)` when
+    ;; `:peer-typeof-expr` is present (multi-arm-dispatch lowering
+    ;; attaches the peer arm's lowered expression) so ARC's
+    ;; conditional-arm type-compatibility check passes for object /
+    ;; primitive returns alike. Bare `nil` fallback for callers that
+    ;; don't attach a peer (statement-form raise sits at emit-stmt,
+    ;; not here).
+    :raise-emit
+    (let [box   (:box-name node)
+          ctor  (:record-ctor node)
+          ;; Zero-init compound literal: `(__typeof__(peer)){0}` gives
+          ;; NULL for pointer types, 0 for scalars, and all-fields-zero
+          ;; for structs (envelope types like `_Cxc_Optional_Int64`).
+          ;; `((type)nil)` doesn't work for struct types — nil is
+          ;; `(void*)0` which isn't castable to a struct in C. `0` also
+          ;; loses on struct casts, so the compound-literal shape is
+          ;; the only form that satisfies every peer C-type this shim
+          ;; pattern produces.
+          trail (if-let [peer (:peer-typeof-expr node)]
+                  (str "(__typeof__(" (emit-expr peer) ")){0};")
+                  "nil;")]
+      (str "({\n"
+           "    fprintf(stderr, \"" (escape-c-string (:label node)) "\\n\");\n"
+           "    " box " *__cxc_r = [[" box " alloc] init];\n"
+           "    __cxc_r->value = " (emit-expr ctor) ";\n"
+           "    @throw [NSException exceptionWithName:@\"CxcReason\" "
+           "reason:@\"" (escape-c-string (:label node))
+           "\" userInfo:@{@\"reason\": __cxc_r}];\n"
+           "    " trail "\n"
+           "})"))
     (throw (ex-info (str "emit-expr: unknown node " (:node node))
                     {:node node}))))
 
@@ -2273,22 +2310,6 @@
   (let [includes    (str/join "\n"   (map #(str "#import " %) (:includes prog)))
         fanout-cat  (emit-fanout-selector-category prog)
         helpers     (when (:needs-runtime? prog) cxc-runtime-helpers)
-        ;; F52 L4-d — module let-bindings surfaced as file-scope
-        ;; `static const <type> <name> = <literal>;`. Constant folding
-        ;; at ref sites (in `lower`) means most programs won't
-        ;; reference the const symbol; clang DCEs it. The declaration
-        ;; block is emit-only surface for LSP hover / debugging of the
-        ;; generated .m — no semantic effect. Sorted by name for
-        ;; stable output regardless of `extract-module-lets`'s map
-        ;; ordering.
-        module-lets-block
-        (when (seq (:module-lets prog))
-          (str "// module let-bindings (F52 L4-d)\n"
-               (str/join "\n"
-                         (map (fn [{:keys [name c-type c-literal]}]
-                                (str "static const " c-type " " name
-                                     " = " c-literal ";"))
-                              (sort-by :name (:module-lets prog))))))
         enums       (str/join "\n\n" (map emit-any-enum (:enums prog)))
         structs     (str/join "\n\n" (map emit-struct   (:structs prog)))
         ;; Track A/2.a (2026-08-26) — reason-box wrapper classes.
@@ -2338,11 +2359,20 @@
               (remove str/blank? [includes
                                   cxc-nil-sentinels
                                   helpers
-                                  module-lets-block
-                                  enums structs
+                                  enums
+                                  ;; @class forward decls precede struct
+                                  ;; typedefs so a record field carrying a
+                                  ;; pointer-to-container-class (e.g.
+                                  ;; `_Cxc_ListOfToolCall * tool_calls`)
+                                  ;; compiles even when the container's
+                                  ;; @interface lands later in the file.
+                                  ;; Pointer types only need the class
+                                  ;; name in scope — the full @interface
+                                  ;; comes later in the INTERFACES block.
+                                  forward-classes
+                                  structs
                                   reason-boxes
                                   named-tuple-typedefs
                                   fn-prototypes functions
-                                  forward-classes
                                   interfaces fanout-cat impls
                                   main-static main]))))

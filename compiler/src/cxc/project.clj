@@ -3,7 +3,7 @@
 
    User-facing shape (`<src-dir>/project.cxc`):
 
-       let project = Project(
+       Project(
            name:  \"hello-agent\",
            entry: \"main\",
            deps: [
@@ -12,10 +12,13 @@
                    tag:  \"v1.2\"),
            ])
 
-   The compiler special-cases `project.cxc` — it never contributes to
-   the compiled program's namespace. Instead, this namespace parses
-   the file and pattern-matches the AST to extract the field values
-   as pure Clojure data:
+   Manifest source is a bare `Project(...)` expression at file scope —
+   no `let project = ...` prefix (R3 2026-08-31 retired module-scope
+   `let` universally; this namespace consumes the expression form
+   directly via `cxc.parse/parse-expression`). The compiler special-
+   cases `project.cxc` — it never contributes to the compiled program's
+   namespace. Instead, this namespace parses the file and pattern-
+   matches the AST to extract the field values as pure Clojure data:
 
        {:name \"hello-agent\"
         :entry \"main\"
@@ -109,8 +112,8 @@
   (mapv extract-dep-record (:items node)))
 
 (defn- extract-project-record
-  "Value node of the `project` module-let (a `Project(...)` ctor
-   call) → Clojure map with `:name`, `:entry`, `:deps` keys."
+  "Top-level `Project(...)` ctor call node → Clojure map with
+   `:name`, `:entry`, `:deps` keys."
   [node]
   (when-not (= :call (:node node))
     (fail! (str "value must be a `Project(...)` ctor call; got `"
@@ -146,21 +149,14 @@
      :deps  (get @seen "deps")}))
 
 (defn read-manifest
-  "Parse `<src-dir>/project.cxc` and extract the `project` binding's
-   field values as pure Clojure data. Returns nil when the file is
-   absent. Throws with a diagnostic when the file exists but doesn't
-   conform to the v1 shape."
+  "Parse `<src-dir>/project.cxc` as a single `Project(...)` expression
+   and extract its field values as pure Clojure data. Returns nil when
+   the file is absent. Throws with a diagnostic when the file exists
+   but doesn't conform to the v1 shape."
   [^java.io.File src-dir]
   (when-let [f (manifest-file src-dir)]
-    (let [src   (slurp f)
-          nodes (parse/parse src)
-          lets  (filter #(and (= :module-let (:node %))
-                              (= "project" (:name %)))
-                        nodes)]
-      (when-not (= 1 (count lets))
-        (fail! (str "expected exactly one `let project = Project(...)` "
-                    "binding at module scope; found " (count lets) ".")))
-      (extract-project-record (:value (first lets))))))
+    (let [src (slurp f)]
+      (extract-project-record (parse/parse-expression src)))))
 
 ;; ---------------------------------------------------------------------------
 ;; Lockfile — pinned SHAs alongside the manifest.

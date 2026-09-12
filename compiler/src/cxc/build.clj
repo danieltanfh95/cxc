@@ -756,8 +756,8 @@
 ;; annotation-grammar-retirement wave. `:metadata-annotations` no
 ;; longer exists on symbol-table entries (resolve.clj pipe-through
 ;; deleted alongside `@metadata(...)` grammar retirement). When a
-;; replacement user-metadata surface lands (e.g. `meta = Meta(...)`
-;; module-let), a new source function goes here.
+;; replacement user-metadata surface lands, a new source function
+;; goes here.
 
 (defn- emit-module-manifests!
   "F53 L1 — write `<out-dir>/<module>.cxc-manifest.json` for every

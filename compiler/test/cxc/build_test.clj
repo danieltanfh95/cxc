@@ -543,11 +543,9 @@
             #"plugin\.get\(\"nope\"\)"
             (build/compile-source-to-file src "unresolved-check" (.getPath out-dir)))))))
 
-(deftest end-to-end-f52-l4-module-let-basic
-  (testing "F52 L4 (2026-08-27) — top-level `let SEED = 41` binds an immutable compile-time constant. Pre-lower `substitute-module-let-refs` postwalks the AST replacing every `SEED` `:ident` node with the `:lit-int` value. `Counter(seed: SEED).bump` constructs with seed=41 and yields 42; program prints `42\\n`."
-    (let [{:keys [exit stdout]} (compile-and-run "f52-l4-module-let-basic")]
-      (is (zero? exit))
-      (is (= "42\n" stdout)))))
+;; end-to-end-f52-l4-module-let-basic removed (R3, 2026-08-31):
+;; module-scope `let` retired universally; the f52-l4-module-let-basic
+;; example was deleted alongside.
 
 (deftest end-to-end-direct-field-syntax
   (testing "L6 — custom-section.cxc migrated to direct field syntax; the field is folded into :data-section and remains observable end-to-end"
@@ -1157,7 +1155,7 @@
              stdout)))))
 
 (deftest end-to-end-env-typed-get
-  (testing "env-typed-get.cxc — `Env.get_or_int(name, fallback)` / `Env.get_or_bool(name, fallback)`. Prelude compositions: `(plugin.get(\"getenv\")(name).to_string() ?? \"\").to_int_or(fallback)` / `.to_bool_or(fallback)` — routed through the `std.prelude` plugin's `foreign \"libc\"` getenv symbol (2026-09-04 migration off `native_env_*` intrinsics). Verifies parse-success, missing-key fallback, unparseable-value fallback across both Int and Bool."
+  (testing "env-typed-get.cxc — `EnvVars.get_or_int(name, fallback)` / `EnvVars.get_or_bool(name, fallback)` (post D1(i) 2026-09-09 split). Prelude compositions: `(plugin.get(\"getenv\")(name).to_string() ?? \"\").to_int_or(fallback)` / `.to_bool_or(fallback)` — routed through the `std.prelude` plugin's `foreign \"libc\"` getenv symbol. Setup uses `EnvMut.set` for the write side. Verifies parse-success, missing-key fallback, unparseable-value fallback across both Int and Bool."
     (let [{:keys [exit stdout]} (compile-and-run "env-typed-get")]
       (is (zero? exit))
       (is (= "8080\n42\n99\ntrue\ntrue\nfalse\n" stdout)))))
@@ -1267,7 +1265,7 @@
       (.mkdirs user-src-dir)
       (init-local-git-plugin! plugin-dir)
       (spit (java.io.File. user-src-dir "project.cxc")
-            (str "let project = Project(\n"
+            (str "Project(\n"
                  "    name:  \"a7test\",\n"
                  "    entry: \"main\",\n"
                  "    deps: [\n"
@@ -1315,17 +1313,17 @@
       (.mkdirs (.getParentFile out))
       (spit out (slurp f)))))
 
-(defn- init-hello-agent-plugin-from-source!
-  "Populate `dir` with the hello-agent-dogfood plugin source
-   (`examples/hello-agent-dogfood-plugin-source/`), then git init +
-   commit + tag v0.1. Returns the repo path. Used by
-   `end-to-end-hello-agent-dogfood-via-r3` — the plugin source lives
-   under version control so it's reviewable, and the git repo itself
+(defn- init-plugin-from-source!
+  "Populate `dir` with the given plugin source dir, then git init + commit
+   + tag v0.1. Returns the repo path. Used by both dogfood
+   (`hello-agent-dogfood-plugin-source`) and full-aspirational
+   (`hello-agent-full-plugin-source`) end-to-end tests — the plugin source
+   lives under version control so it's reviewable, and the git repo itself
    is created at test time so we don't nest git repos in the outer
    checkout."
-  [^java.io.File dir]
+  [^java.io.File dir ^String source-rel]
   (.mkdirs dir)
-  (copy-tree! (java.io.File. "examples/hello-agent-dogfood-plugin-source") dir)
+  (copy-tree! (java.io.File. source-rel) dir)
   (git-shell ["git" "-C" (.getPath dir) "init" "-q"])
   (git-shell ["git" "-C" (.getPath dir) "-c" "commit.gpgsign=false"
               "-c" "user.email=t@t" "-c" "user.name=t"
@@ -1345,9 +1343,9 @@
           user-src-dir (java.io.File. work-dir "user-src")
           user-out-dir (java.io.File. work-dir "user-out")]
       (.mkdirs user-src-dir)
-      (init-hello-agent-plugin-from-source! plugin-dir)
+      (init-plugin-from-source! plugin-dir "examples/hello-agent-dogfood-plugin-source")
       (spit (java.io.File. user-src-dir "project.cxc")
-            (str "let project = Project(\n"
+            (str "Project(\n"
                  "    name:  \"hello-agent-dogfood\",\n"
                  "    entry: \"main\",\n"
                  "    deps: [\n"
@@ -1361,6 +1359,31 @@
             (build/compile-directory-to-file user-src-dir "hello-agent-dogfood"
                                              (.getPath user-out-dir) {})]
         (is (zero? status) (str "dogfood compile failed:\n" stderr)))
+      (is (.isFile (java.io.File. user-src-dir "project.lock"))))))
+
+(deftest end-to-end-hello-agent-full-plugin-compiles
+  (testing "Phase 5 (2026-09-12) — validates the com.acme.http_claude aspirational plugin (`examples/hello-agent-full-plugin-source/com/acme/http_claude/claude.cxc`) parses, lowers, and links via the R3 dep pipeline. Plugin exports Role / Message / StopReason / ToolAction / ToolCall / ChatResponse + the existing `Claude.ask` shape (the transition-based `chat` + response emission lands in a follow-on; MVP is type-surface + `ask` synchronous method). Consumer at `examples/hello-agent-full/main.cxc` imports the six types + Claude and exercises Message record construction with a Role variant. Same compile-only assert as the dogfood test; running requires ANTHROPIC_API_KEY. Exercises: variant enum with payload cases (StopReason.other, ToolAction.shell/read/write/env_var), List of user-record type (ChatResponse.tool_calls: List of ToolCall), and cross-module import of six declarations in one `from ... import` clause."
+    (let [work-dir     (tmp-dir)
+          plugin-dir   (java.io.File. work-dir "plugin")
+          user-src-dir (java.io.File. work-dir "user-src")
+          user-out-dir (java.io.File. work-dir "user-out")]
+      (.mkdirs user-src-dir)
+      (init-plugin-from-source! plugin-dir "examples/hello-agent-full-plugin-source")
+      (spit (java.io.File. user-src-dir "project.cxc")
+            (str "Project(\n"
+                 "    name:  \"hello-agent-full\",\n"
+                 "    entry: \"main\",\n"
+                 "    deps: [\n"
+                 "        Dep(name: \"com.acme.http_claude\",\n"
+                 "            git:  \"" (.getPath plugin-dir) "\",\n"
+                 "            tag:  \"v0.1\")\n"
+                 "    ])\n"))
+      (spit (java.io.File. user-src-dir "main.cxc")
+            (slurp "examples/hello-agent-full/main.cxc"))
+      (let [{:keys [status stderr]}
+            (build/compile-directory-to-file user-src-dir "hello-agent-full"
+                                             (.getPath user-out-dir) {})]
+        (is (zero? status) (str "hello-agent-full compile failed:\n" stderr)))
       (is (.isFile (java.io.File. user-src-dir "project.lock"))))))
 
 (deftest a7-std-namespace-reserved
@@ -2390,10 +2413,9 @@
       (is (str/includes? stdout "ex_after_rm: 0")))))
 
 (deftest end-to-end-env-set-time-since-sleep
-  (testing "2026-09-03 — three landings verified together. `env.set(name, value)` wraps libc `setenv(...,overwrite=1)` returning 0/-1 (verified by round-tripping through `env.get_or`). `time.since(t)` returns a Duration for wall-clock elapsed since an Instant (uses Int subtraction via `native_millis_now`). `time.sleep_ms(ms)` wraps libc `usleep(ms*1000)` — verified by measuring the elapsed time after a 50ms sleep (lower bound 40ms accommodates coarse scheduler quanta; upper bound 500ms guards against runaway waits)."
+  (testing "2026-09-03 (D1(i) 2026-09-09) — three landings verified together. `env_mut.set(name, value)` wraps libc `setenv(...,overwrite=1)` and raises `EnvError` on non-zero return (verified by round-tripping through `env_vars.get_or` — a raise here would abort the test). `time.since(t)` returns a Duration for wall-clock elapsed since an Instant (uses Int subtraction via `native_millis_now`). `time.sleep_ms(ms)` wraps libc `usleep(ms*1000)` — verified by measuring the elapsed time after a 50ms sleep (lower bound 40ms accommodates coarse scheduler quanta; upper bound 500ms guards against runaway waits)."
     (let [{:keys [exit stdout]} (compile-and-run "env-set-time-since-sleep")]
       (is (zero? exit))
-      (is (str/includes? stdout "set_rc: 0"))
       (is (str/includes? stdout "env_roundtrip: hello-from-cxc"))
       (is (str/includes? stdout "slept_ms_lower: true"))
       (is (str/includes? stdout "slept_ms_upper: true")))))

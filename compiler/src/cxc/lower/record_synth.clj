@@ -72,7 +72,7 @@
                        ;; makes tagged-enum equals deterministic
                        ;; extends into the Optional's inner storage.
                        (str "(memcmp(&" a-val ", &" b-val
-                            ", sizeof(" cxc-ty ")) == 0)")
+                            ", sizeof(" (->c-safe cxc-ty) ")) == 0)")
                        :else
                        (str "(" a-val " == " b-val ")"))]
         (str "((" a-pres " == " b-pres ") && (!" a-pres " || " inner-eq "))"))
@@ -91,7 +91,7 @@
       ;; on the whole struct is deterministic. Bytes-based equality
       ;; matches structural equality when the same ctor path produced
       ;; each value — which is the only way to construct these.
-      (str "(memcmp(&" a-fld ", &" b-fld ", sizeof(" cxc-ty ")) == 0)")
+      (str "(memcmp(&" a-fld ", &" b-fld ", sizeof(" (->c-safe cxc-ty) ")) == 0)")
 
       (contains? (:atom-env ctx) cxc-ty)
       (str "(" a-fld " == " b-fld ")")
@@ -126,7 +126,7 @@
                     ;; so equal Optional<TaggedEnum> values hash equal.
                     (str "({ long __h = 0; const unsigned char *__b = "
                          "(const unsigned char *)&" val "; "
-                         "for (size_t __i = 0; __i < sizeof(" cxc-ty
+                         "for (size_t __i = 0; __i < sizeof(" (->c-safe cxc-ty)
                          "); __i++) __h = __h * 31 + __b[__i]; __h; })")
                     :else                 (str "(long)" val))]
         (str "(" fld ".present ? " inner " : 0)"))
@@ -144,7 +144,7 @@
       ;; `field-equals-c-src` compare struct-equal values correctly.
       (str "({ long __h = 0; const unsigned char *__b = "
            "(const unsigned char *)&" fld "; "
-           "for (size_t __i = 0; __i < sizeof(" cxc-ty "); __i++) "
+           "for (size_t __i = 0; __i < sizeof(" (->c-safe cxc-ty) "); __i++) "
            "__h = __h * 31 + __b[__i]; __h; })")
 
       (contains? (:atom-env ctx) cxc-ty)

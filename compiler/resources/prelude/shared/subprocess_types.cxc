@@ -1,0 +1,24 @@
+# Prelude — Subprocess capability data types.
+#
+# R17 (2026-09-01) mandated `Subprocess.run(cmd, env: EnvSpec!)` with
+# no default env so callers make the leak-vs-inherit decision
+# explicitly. `EnvSpec` lives here as a variant enum so users can
+# spell `.empty` / `.inherit`. `EnvSpec.merge(overlay: {String: String})`
+# per the R17 memory is deferred at v1.0 — map payloads in enum
+# variants aren't landed yet; callers use `.inherit` today and fall
+# back to setting env via `EnvMut.set` before spawn until map-in-
+# variant lands (v1.1+).
+#
+# `ProcResult` is the typed return of `Subprocess.run_full` / future
+# `run_typed` — replaces the JSON-string envelope with a proper
+# record so callers walk `.stdout` / `.stderr` / `.exit_code`
+# directly. Same shape as spec §1.13 Subprocess block.
+
+def EnvSpec:
+    case empty
+    case inherit
+
+def ProcResult:
+    stdout:    String
+    stderr:    String
+    exit_code: Int
