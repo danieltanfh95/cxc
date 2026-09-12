@@ -28,10 +28,15 @@ def Agent(user_task: String!):
             let now:  String = tools.run_shell("date +%Y-%m-%d")
             let prompt: String = "user=" + host + " date=" + now.trim() + " task=" + user_task
             let user:  Message = Message(role: Role.user, content: prompt)
-            let reply: String = claude.ask(user.content)
+            let resp:  ChatResponse = claude.chat(user.content)
+            let stop_label: String = ||: resp.stop_reason is .end        : "end"
+                                     ||: resp.stop_reason is .tool_use   : "tool_use"
+                                     ||: resp.stop_reason is .max_tokens : "max_tokens"
+                                     ||: else                            : "other"
             console.write("task: " + user_task)
             console.write("prompt: " + prompt)
-            console.write("reply: " + reply)
+            console.write("stop: " + stop_label)
+            console.write("reply: " + resp.text)
 
     -> done
 

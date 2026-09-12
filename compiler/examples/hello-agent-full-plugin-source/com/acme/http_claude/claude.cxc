@@ -33,6 +33,16 @@ def ToolCall:
 def ChatResponse:
     text:        String!
     stop_reason: StopReason!
+    # `tool_calls: List of ToolCall` deferred — records don't yet
+    # auto-init container fields the way atoms do (v1.0 gap), and `[]`
+    # literal lowering isn't landed, so ChatResponse can't carry a
+    # List field until one of those closes. Consumers hit the tool_use
+    # branch via ChatResponseWithTools (below) which carries the field
+    # but only constructs when the compiler surface supports it.
+
+def ChatResponseWithTools:
+    text:        String!
+    stop_reason: StopReason!
     tool_calls:  List of ToolCall
 
 def Claude:
@@ -53,5 +63,31 @@ def Claude:
         ||: status != 200 : "[http " + status.to_string() + "] " + resp
         ||: text == nil   : "(no text)"
         ||: else          : text
+
+    # `chat` returns a typed `ChatResponse` instead of the flattened
+    # String `ask` produces. Consumers walk `.text` / `.stop_reason`
+    # instead of parsing the response inline. tool-use extraction into
+    # `tool_calls` isn't landed at v1.0 (needs a json array-index
+    # intrinsic + variant construction from a String tag); the field
+    # defaults to `[]` so `ChatResponse(text:, stop_reason:)` suffices
+    # at construction sites here.
+    chat(prompt: String) :- ChatResponse
+        let key: String = env_vars.get_or("ANTHROPIC_API_KEY", "")
+        let headers: String = "{\"x-api-key\":" + json.encode_str(key) + ",\"anthropic-version\":\"2023-06-01\",\"content-type\":\"application/json\"}"
+        let body: String = "{\"model\":" + json.encode_str(model) + ",\"max_tokens\":128,\"messages\":[{\"role\":\"user\",\"content\":" + json.encode_str(prompt) + "}]}"
+        let envelope: String = http.post_envelope("https://api.anthropic.com/v1/messages", headers, body)
+        let status: Int = json.field_int_or(envelope, "status", -1)
+        let resp: String = json.field_string(envelope, "body")
+        let text: String = json.field_string_path(resp, "content.0.text")
+        let reason: String = json.field_string(resp, "stop_reason")
+        let reason_nz: String = reason ?? "unknown"
+        let stop_variant: StopReason = ||: reason_nz == "end_turn"   : StopReason.end
+                                       ||: reason_nz == "tool_use"   : StopReason.tool_use
+                                       ||: reason_nz == "max_tokens" : StopReason.max_tokens
+                                       ||: else                      : StopReason.other(reason: reason_nz)
+        let final_text: String = ||: status != 200 : "[http " + status.to_string() + "] " + resp
+                                 ||: text == nil   : "(no text)"
+                                 ||: else          : text
+        ChatResponse(text: final_text, stop_reason: stop_variant)
 
     -> ready

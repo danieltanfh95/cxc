@@ -1402,7 +1402,18 @@
             ;; tool-cap bundle fires end-to-end even without a real API
             ;; key.
             (is (str/includes? out "prompt: user=cxctest"))
-            (is (str/includes? out "date="))))))))
+            (is (str/includes? out "date="))
+            ;; Claude.chat returns ChatResponse; Agent dispatches on
+            ;; stop_reason via `is .end` / `.tool_use` / `.max_tokens`
+            ;; variant pattern to synthesize a label. Without a real
+            ;; key the response is empty/malformed → falls to the
+            ;; `other` bucket. Assertion pins that the label surface
+            ;; fires (whichever bucket it lands in).
+            (is (or (str/includes? out "stop: end")
+                    (str/includes? out "stop: tool_use")
+                    (str/includes? out "stop: max_tokens")
+                    (str/includes? out "stop: other"))
+                (str "no `stop: ...` label in output:\n" out))))))))
 
 (deftest a7-std-namespace-reserved
   (testing "A7 (2026-09-03) — `<src-dir>/std/` at src-dir root is rejected at build start because it would produce user modules in the reserved `std.*` namespace (prelude/stdlib). Diagnostic points at the offending dir with the DNS-reverse / vendor / flat rename suggestions."
