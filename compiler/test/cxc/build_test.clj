@@ -1393,9 +1393,16 @@
           ;; so we don't pin to a specific error format.
           (let [{:keys [exit out]}
                 (shell/sh bin-path :env {"ANTHROPIC_API_KEY" ""
+                                         "USER"              "cxctest"
                                          "PATH"              (System/getenv "PATH")})]
             (is (zero? exit) (str "binary exit non-zero; out:\n" out))
-            (is (str/includes? out "task: Say hello in one word"))))))))
+            (is (str/includes? out "task: Say hello in one word"))
+            ;; Agent invokes AgentTools before Claude — env read + shell
+            ;; date call feed the composite prompt. Assertion proves the
+            ;; tool-cap bundle fires end-to-end even without a real API
+            ;; key.
+            (is (str/includes? out "prompt: user=cxctest"))
+            (is (str/includes? out "date="))))))))
 
 (deftest a7-std-namespace-reserved
   (testing "A7 (2026-09-03) — `<src-dir>/std/` at src-dir root is rejected at build start because it would produce user modules in the reserved `std.*` namespace (prelude/stdlib). Diagnostic points at the offending dir with the DNS-reverse / vendor / flat rename suggestions."

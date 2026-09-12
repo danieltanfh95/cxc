@@ -24,9 +24,13 @@ def Agent(user_task: String!):
 
     -> planning
         then:
-            let user: Message = Message(role: Role.user, content: user_task)
+            let host: String = tools.get_env("USER")
+            let now:  String = tools.run_shell("date +%Y-%m-%d")
+            let prompt: String = "user=" + host + " date=" + now.trim() + " task=" + user_task
+            let user:  Message = Message(role: Role.user, content: prompt)
             let reply: String = claude.ask(user.content)
             console.write("task: " + user_task)
+            console.write("prompt: " + prompt)
             console.write("reply: " + reply)
 
     -> done
