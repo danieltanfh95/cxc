@@ -4,6 +4,13 @@ def plugin:
     compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0),
                                           max: SemVer(2, 0, 0))
 
+# Backend: DeepSeek's Anthropic-compatible endpoint (Bearer auth via
+# `Authorization: Bearer <DEEPSEEK_API_KEY>`; request/response bodies
+# identical to Anthropic Messages API). Plugin name kept as
+# `com.acme.http_claude` to avoid re-testing the whole R3 dep-fetch
+# path; the atom name `Claude` is retained for the same reason but
+# stands for "chat capability" here rather than the Anthropic vendor.
+
 def Role:
     case system
     case user
@@ -40,13 +47,15 @@ def Claude:
     use json:     Json
     use env_vars: EnvVars
 
-    model: String = "claude-haiku-4-5-20251001"
+    model:    String = "deepseek-chat"
+    endpoint: String = "https://api.deepseek.com/anthropic/v1/messages"
+    key_var:  String = "DEEPSEEK_API_KEY"
 
     ask(prompt: String) :- String
-        let key: String = env_vars.get_or("ANTHROPIC_API_KEY", "")
-        let headers: String = "{\"x-api-key\":" + json.encode_str(key) + ",\"anthropic-version\":\"2023-06-01\",\"content-type\":\"application/json\"}"
+        let key: String = env_vars.get_or(key_var, "")
+        let headers: String = "{\"authorization\":\"Bearer " + key + "\",\"anthropic-version\":\"2023-06-01\",\"content-type\":\"application/json\"}"
         let body: String = "{\"model\":" + json.encode_str(model) + ",\"max_tokens\":128,\"messages\":[{\"role\":\"user\",\"content\":" + json.encode_str(prompt) + "}]}"
-        let envelope: String = http.post_envelope("https://api.anthropic.com/v1/messages", headers, body)
+        let envelope: String = http.post_envelope(endpoint, headers, body)
         let status: Int = json.field_int_or(envelope, "status", -1)
         let resp: String = json.field_string(envelope, "body")
         let text: String = json.field_string_path(resp, "content.0.text")
@@ -59,13 +68,12 @@ def Claude:
     # instead of parsing the response inline. tool-use extraction into
     # `tool_calls` isn't landed at v1.0 (needs a json array-index
     # intrinsic + variant construction from a String tag); the field
-    # defaults to `[]` so `ChatResponse(text:, stop_reason:)` suffices
-    # at construction sites here.
+    # is constructed as `[]` at every call site.
     chat(prompt: String) :- ChatResponse
-        let key: String = env_vars.get_or("ANTHROPIC_API_KEY", "")
-        let headers: String = "{\"x-api-key\":" + json.encode_str(key) + ",\"anthropic-version\":\"2023-06-01\",\"content-type\":\"application/json\"}"
+        let key: String = env_vars.get_or(key_var, "")
+        let headers: String = "{\"authorization\":\"Bearer " + key + "\",\"anthropic-version\":\"2023-06-01\",\"content-type\":\"application/json\"}"
         let body: String = "{\"model\":" + json.encode_str(model) + ",\"max_tokens\":128,\"messages\":[{\"role\":\"user\",\"content\":" + json.encode_str(prompt) + "}]}"
-        let envelope: String = http.post_envelope("https://api.anthropic.com/v1/messages", headers, body)
+        let envelope: String = http.post_envelope(endpoint, headers, body)
         let status: Int = json.field_int_or(envelope, "status", -1)
         let resp: String = json.field_string(envelope, "body")
         let text: String = json.field_string_path(resp, "content.0.text")

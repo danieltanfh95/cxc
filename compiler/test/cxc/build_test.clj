@@ -1390,11 +1390,15 @@
           ;; `[http <status>]` diagnostic. Assertion only checks that the
           ;; binary starts + prints its task line — the http status /
           ;; body varies (401 unauthorized, 400 model-not-found, etc.),
-          ;; so we don't pin to a specific error format.
+          ;; so we don't pin to a specific error format. Env var is
+          ;; DEEPSEEK_API_KEY because the plugin's endpoint is DeepSeek's
+          ;; Anthropic-compatible surface (`api.deepseek.com/anthropic`,
+          ;; Bearer auth) — same request/response shape as Anthropic
+          ;; Messages API, different backend + auth header.
           (let [{:keys [exit out]}
-                (shell/sh bin-path :env {"ANTHROPIC_API_KEY" ""
-                                         "USER"              "cxctest"
-                                         "PATH"              (System/getenv "PATH")})]
+                (shell/sh bin-path :env {"DEEPSEEK_API_KEY" ""
+                                         "USER"             "cxctest"
+                                         "PATH"             (System/getenv "PATH")})]
             (is (zero? exit) (str "binary exit non-zero; out:\n" out))
             (is (str/includes? out "task: Say hello in one word"))
             ;; Agent invokes AgentTools before Claude — env read + shell
