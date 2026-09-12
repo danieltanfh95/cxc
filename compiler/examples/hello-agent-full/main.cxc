@@ -17,45 +17,85 @@ def AgentTools:
     get_env(name: String!) :- String
         env_vars.get_or(name, "")
 
-def Agent(user_task: String!):
+def Agent:
     use console: Console
     use claude:  Claude
     use tools:   AgentTools
 
-    -> planning
-        then:
-            let host: String = tools.get_env("USER")
-            let now:  String = tools.run_shell("date +%Y-%m-%d")
-            let prompt: String = "user=" + host + " date=" + now.trim() + " task=" + user_task
-            let user:  Message = Message(role: Role.user, content: prompt)
-            let resp:  ChatResponse = claude.chat(user.content)
-            let stop_label: String = ||: resp.stop_reason is .end        : "end"
-                                     ||: resp.stop_reason is .tool_use   : "tool_use"
-                                     ||: resp.stop_reason is .max_tokens : "max_tokens"
-                                     ||: else                            : "other"
-            console.write("task: " + user_task)
-            console.write("prompt: " + prompt)
-            console.write("stop: " + stop_label)
-            console.write("reply: " + resp.text)
+    turn(user_task: String!) :- String
+        # Composite prompt: env context + shell context + user task.
+        # The tool caps run every turn so the LLM sees current state
+        # (date rolls over across a long session, USER can change if
+        # the caller re-exports it).
+        let host: String = tools.get_env("USER")
+        let now:  String = tools.run_shell("date +%Y-%m-%d")
+        let prompt: String = "user=" + host + " date=" + now.trim() + " task=" + user_task
+        console.write("task: " + user_task)
+        console.write("prompt: " + prompt)
+        let user:  Message = Message(role: Role.user, content: prompt)
+        let resp:  ChatResponse = claude.chat(user.content)
+        let stop_label: String = ||: resp.stop_reason is .end        : "end"
+                                 ||: resp.stop_reason is .tool_use   : "tool_use"
+                                 ||: resp.stop_reason is .max_tokens : "max_tokens"
+                                 ||: else                            : "other"
+        console.write("stop: " + stop_label)
+        resp.text
 
-    -> done
+    -> ready
 
 def main:
     use args:    Args
     use console: Console
 
-    -> running
+    # argv[1] = "-" or absent → interactive stdin loop (readln until EOF
+    # or "exit"). argv[1] = anything else → one-shot: run that as the
+    # single task and quit. The one-shot path stays for CI-friendly
+    # non-interactive invocations; the loop is the "play with it" mode.
+    argv_task: String! = args.get_or(1, "-")
+    interactive: Bool! = argv_task == "-"
+
+    claude: Claude     = Claude()
+    tools:  AgentTools = AgentTools()
+    agent:  Agent      = Agent(claude: claude, tools: tools)
+
+    -> starting
+        then: self :> boot()
+
+    starting <: boot -> starting
+        |: interactive
         then:
-            # Task source: argv[1] if present, else readln() from stdin
-            # so both `hello-agent-full "..."` and interactive shells
-            # (`echo "..." | hello-agent-full` or bare invocation → type
-            # then Enter) work. Empty stdin → deterministic default so
-            # test runs are stable.
-            let argv_task: String = args.get_or(1, "")
-            let line:      String = ||: argv_task == "" : console.readln() ?? "Say hello in one word"
-                                    ||: else            : argv_task
-            let c: Claude = Claude()
-            let t: AgentTools = AgentTools()
-            let a: Agent = Agent(user_task: line, claude: c, tools: t)
+            console.write("hello-agent — chat (EOF or 'exit' to quit)")
+            self :> read_next()
+
+    starting <: boot -> starting
+        |: interactive == false
+        then: self :> handle(line: argv_task)
+
+    starting <: read_next -> starting
+        then:
+            console.write("you> ")
+            let line: String = console.readln()
+            self :> handle(line: line)
+
+    starting <: handle(line: String) -> end
+        |: line == nil
+        then: console.write("bye (eof)")
+
+    starting <: handle(line: String) -> end
+        |: line == "exit"
+        then: console.write("bye")
+
+    starting <: handle(line: String) -> starting
+        |: interactive
+        then:
+            let reply: String = agent.turn(line)
+            console.write("agent> " + reply)
+            self :> read_next()
+
+    starting <: handle(line: String) -> end
+        |: interactive == false
+        then:
+            let reply: String = agent.turn(line)
+            console.write("agent> " + reply)
 
     -> end

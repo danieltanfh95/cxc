@@ -1396,9 +1396,10 @@
           ;; Bearer auth) — same request/response shape as Anthropic
           ;; Messages API, different backend + auth header.
           (let [{:keys [exit out]}
-                (shell/sh bin-path :env {"DEEPSEEK_API_KEY" ""
-                                         "USER"             "cxctest"
-                                         "PATH"             (System/getenv "PATH")})]
+                (shell/sh bin-path "Say hello in one word"
+                          :env {"DEEPSEEK_API_KEY" ""
+                                "USER"             "cxctest"
+                                "PATH"             (System/getenv "PATH")})]
             (is (zero? exit) (str "binary exit non-zero; out:\n" out))
             (is (str/includes? out "task: Say hello in one word"))
             ;; Agent invokes AgentTools before Claude — env read + shell
