@@ -12,90 +12,147 @@ def AgentTools:
         fs.write_text(path, content)
 
     run_shell(cmd: String!) :- String
+        # EnvSpec.merge({...}) not landed at v1.0 — .inherit is the
+        # available choice for a shell tool that needs PATH. Compiler
+        # forces the caller to name the tradeoff (.empty vs .inherit)
+        # rather than defaulting silently.
         shell.run(cmd, env: EnvSpec.inherit)
 
     get_env(name: String!) :- String
         env_vars.get_or(name, "")
 
-def Agent:
-    use console: Console
-    use claude:  Claude
-    use tools:   AgentTools
-
-    turn(user_task: String!) :- String
-        # Composite prompt: env context + shell context + user task.
-        # The tool caps run every turn so the LLM sees current state
-        # (date rolls over across a long session, USER can change if
-        # the caller re-exports it).
-        let host: String = tools.get_env("USER")
-        let now:  String = tools.run_shell("date +%Y-%m-%d")
-        let prompt: String = "user=" + host + " date=" + now.trim() + " task=" + user_task
-        console.write("task: " + user_task)
-        console.write("prompt: " + prompt)
-        let user:  Message = Message(role: Role.user, content: prompt)
-        let resp:  ChatResponse = claude.chat(user.content)
-        let stop_label: String = ||: resp.stop_reason is .end        : "end"
-                                 ||: resp.stop_reason is .tool_use   : "tool_use"
-                                 ||: resp.stop_reason is .max_tokens : "max_tokens"
-                                 ||: else                            : "other"
-        console.write("stop: " + stop_label)
-        resp.text
-
-    -> ready
-
 def main:
     use args:    Args
     use console: Console
+    use claude:  Claude
+    use tools:   AgentTools
+    use json:    Json
 
-    # argv[1] = "-" or absent → interactive stdin loop (readln until EOF
-    # or "exit"). argv[1] = anything else → one-shot: run that as the
-    # single task and quit. The one-shot path stays for CI-friendly
-    # non-interactive invocations; the loop is the "play with it" mode.
-    argv_task: String! = args.get_or(1, "-")
-    interactive: Bool! = argv_task == "-"
-
-    claude: Claude     = Claude()
-    tools:  AgentTools = AgentTools()
-    agent:  Agent      = Agent(claude: claude, tools: tools)
+    argv_task:   String! = args.get_or(1, "-")
+    interactive: Bool!   = argv_task == "-"
+    history:     String! = ""
+    turn_steps:  Int!    = 0
+    step_cap:    Int!    = 6
 
     -> starting
         then: self :> boot()
 
-    starting <: boot -> starting
+    starting <: boot -> awaiting
         |: interactive
         then:
             console.write("hello-agent — chat (EOF or 'exit' to quit)")
             self :> read_next()
 
-    starting <: boot -> starting
+    starting <: boot -> awaiting
         |: interactive == false
         then: self :> handle(line: argv_task)
 
-    starting <: read_next -> starting
+    awaiting <: read_next -> awaiting
         then:
             console.write("you> ")
             let line: String = console.readln()
             self :> handle(line: line)
 
-    starting <: handle(line: String) -> end
+    awaiting <: handle(line: String) -> end
         |: line == nil
         then: console.write("bye (eof)")
 
-    starting <: handle(line: String) -> end
+    awaiting <: handle(line: String) -> end
         |: line == "exit"
         then: console.write("bye")
 
-    starting <: handle(line: String) -> starting
-        |: interactive
+    # Real turn: append user message to history, dispatch first ask.
+    awaiting <: handle(line: String) -> thinking
         then:
-            let reply: String = agent.turn(line)
-            console.write("agent> " + reply)
-            self :> read_next()
+            history    => ||: (history == "") ?? true : "{\"role\":\"user\",\"content\":" + json.encode_str(line) + "}"
+                          ||: else                    : history + ",{\"role\":\"user\",\"content\":" + json.encode_str(line) + "}"
+            turn_steps => 0
+            self :> ask()
 
-    starting <: handle(line: String) -> end
-        |: interactive == false
+    thinking <: ask -> thinking
         then:
-            let reply: String = agent.turn(line)
-            console.write("agent> " + reply)
+            let wrapped: String = "[" + history + "]"
+            let resp: ChatResponse = claude.chat_full(wrapped)
+            self :> dispatch(resp: resp)
+
+    thinking <: dispatch(resp: ChatResponse) -> awaiting
+        |: turn_steps >= step_cap
+        then:
+            console.write("agent> [step cap reached]")
+            self :> after_reply()
+
+    thinking <: dispatch(resp: ChatResponse) -> awaiting
+        |: resp.stop_reason is .end
+        then:
+            history => history + ",{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":" + json.encode_str(resp.text) + "}]}"
+            console.write("agent> " + resp.text)
+            self :> after_reply()
+
+    thinking <: dispatch(resp: ChatResponse) -> thinking
+        |: resp.stop_reason is .tool_use
+        then: self :> exec_tool(call_id: resp.tool_id, action: resp.tool_action, preamble: resp.text)
+
+    thinking <: dispatch(resp: ChatResponse) -> awaiting
+        |: true
+        then:
+            console.write("agent> [unexpected stop] " + resp.text)
+            self :> after_reply()
+
+    # Per-variant tool dispatch as transition guards — exercises
+    # variant destructuring in the substrate's proven form (`|:` guard).
+    # text_block is precomputed here (let bindings in field-update RHS
+    # aren't supported yet, so tool_done receives it ready-made).
+    thinking <: exec_tool(call_id: String, action: ToolAction, preamble: String) -> thinking
+        |: action is .shell(let cmd)
+        then:
+            let result:     String  = tools.run_shell(cmd)
+            let tu_json:    String  = "{\"type\":\"tool_use\",\"id\":" + json.encode_str(call_id) + ",\"name\":\"run_shell\",\"input\":{\"cmd\":" + json.encode_str(cmd) + "}}"
+            let safe_pre:   String! = preamble ?? ""
+            let text_block: String! = ||: safe_pre == "" : "" ||: else : "{\"type\":\"text\",\"text\":" + json.encode_str(safe_pre) + "},"
+            self :> tool_done(call_id: call_id, result: result, tu_json: tu_json, text_block: text_block, label: "run_shell " + cmd)
+
+    thinking <: exec_tool(call_id: String, action: ToolAction, preamble: String) -> thinking
+        |: action is .read(let p)
+        then:
+            let result:     String  = tools.read_file(p)
+            let tu_json:    String  = "{\"type\":\"tool_use\",\"id\":" + json.encode_str(call_id) + ",\"name\":\"read_file\",\"input\":{\"path\":" + json.encode_str(p) + "}}"
+            let safe_pre:   String! = preamble ?? ""
+            let text_block: String! = ||: safe_pre == "" : "" ||: else : "{\"type\":\"text\",\"text\":" + json.encode_str(safe_pre) + "},"
+            self :> tool_done(call_id: call_id, result: result, tu_json: tu_json, text_block: text_block, label: "read_file " + p)
+
+    thinking <: exec_tool(call_id: String, action: ToolAction, preamble: String) -> thinking
+        |: action is .write(path: let p, content: let c)
+        then:
+            let n:          Int     = tools.write_file(p, c)
+            let result:     String  = "wrote " + n.to_string() + " bytes to " + p
+            let tu_json:    String  = "{\"type\":\"tool_use\",\"id\":" + json.encode_str(call_id) + ",\"name\":\"write_file\",\"input\":{\"path\":" + json.encode_str(p) + ",\"content\":" + json.encode_str(c) + "}}"
+            let safe_pre:   String! = preamble ?? ""
+            let text_block: String! = ||: safe_pre == "" : "" ||: else : "{\"type\":\"text\",\"text\":" + json.encode_str(safe_pre) + "},"
+            self :> tool_done(call_id: call_id, result: result, tu_json: tu_json, text_block: text_block, label: "write_file " + p)
+
+    thinking <: exec_tool(call_id: String, action: ToolAction, preamble: String) -> thinking
+        |: action is .env_var(let n)
+        then:
+            let result:     String  = tools.get_env(n)
+            let tu_json:    String  = "{\"type\":\"tool_use\",\"id\":" + json.encode_str(call_id) + ",\"name\":\"get_env\",\"input\":{\"name\":" + json.encode_str(n) + "}}"
+            let safe_pre:   String! = preamble ?? ""
+            let text_block: String! = ||: safe_pre == "" : "" ||: else : "{\"type\":\"text\",\"text\":" + json.encode_str(safe_pre) + "},"
+            self :> tool_done(call_id: call_id, result: result, tu_json: tu_json, text_block: text_block, label: "get_env " + n)
+
+    # Append assistant tool_use + user tool_result to history, log, loop.
+    thinking <: tool_done(call_id: String, result: String, tu_json: String, text_block: String, label: String) -> thinking
+        then:
+            history    => history + ",{\"role\":\"assistant\",\"content\":[" + text_block + tu_json + "]},{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":" + json.encode_str(call_id) + ",\"content\":" + json.encode_str(result) + "}]}"
+            turn_steps => turn_steps + 1
+            console.write("tool: " + label + " -> " + result)
+            self :> ask()
+
+    awaiting <: after_reply -> awaiting
+        |: interactive
+        then: self :> read_next()
+
+    awaiting <: after_reply -> end
+        |: interactive == false
+        then: console.write("")
 
     -> end

@@ -1401,24 +1401,14 @@
                                 "USER"             "cxctest"
                                 "PATH"             (System/getenv "PATH")})]
             (is (zero? exit) (str "binary exit non-zero; out:\n" out))
-            (is (str/includes? out "task: Say hello in one word"))
-            ;; Agent invokes AgentTools before Claude — env read + shell
-            ;; date call feed the composite prompt. Assertion proves the
-            ;; tool-cap bundle fires end-to-end even without a real API
-            ;; key.
-            (is (str/includes? out "prompt: user=cxctest"))
-            (is (str/includes? out "date="))
-            ;; Claude.chat returns ChatResponse; Agent dispatches on
-            ;; stop_reason via `is .end` / `.tool_use` / `.max_tokens`
-            ;; variant pattern to synthesize a label. Without a real
-            ;; key the response is empty/malformed → falls to the
-            ;; `other` bucket. Assertion pins that the label surface
-            ;; fires (whichever bucket it lands in).
-            (is (or (str/includes? out "stop: end")
-                    (str/includes? out "stop: tool_use")
-                    (str/includes? out "stop: max_tokens")
-                    (str/includes? out "stop: other"))
-                (str "no `stop: ...` label in output:\n" out))))))))
+            ;; Binary reaches the response-dispatch arms. Without a
+            ;; real key the http.post_envelope path returns 401, the
+            ;; Claude wrapper flattens to `[http 401] ...`, and the
+            ;; agent's dispatch loop falls to the fallback arm.
+            (is (str/includes? out "agent>")
+                (str "no `agent>` line in output:\n" out))
+            (is (str/includes? out "[http ")
+                (str "no http-status diagnostic in output:\n" out))))))))
 
 (deftest a7-std-namespace-reserved
   (testing "A7 (2026-09-03) — `<src-dir>/std/` at src-dir root is rejected at build start because it would produce user modules in the reserved `std.*` namespace (prelude/stdlib). Diagnostic points at the offending dir with the DNS-reverse / vendor / flat rename suggestions."

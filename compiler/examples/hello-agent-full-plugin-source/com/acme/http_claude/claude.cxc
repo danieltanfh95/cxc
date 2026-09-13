@@ -6,10 +6,10 @@ def plugin:
 
 # Backend: DeepSeek's Anthropic-compatible endpoint (Bearer auth via
 # `Authorization: Bearer <DEEPSEEK_API_KEY>`; request/response bodies
-# identical to Anthropic Messages API). Plugin name kept as
-# `com.acme.http_claude` to avoid re-testing the whole R3 dep-fetch
-# path; the atom name `Claude` is retained for the same reason but
-# stands for "chat capability" here rather than the Anthropic vendor.
+# identical to Anthropic Messages API). Plugin name stays as
+# `com.acme.http_claude` to avoid re-testing the R3 dep-fetch path;
+# atom name `Claude` stands for "chat capability" here rather than the
+# Anthropic vendor.
 
 def Role:
     case system
@@ -40,7 +40,13 @@ def ToolCall:
 def ChatResponse:
     text:        String!
     stop_reason: StopReason!
-    tool_calls:  List of ToolCall
+    # First tool call flattened onto the response. `List of ToolCall`
+    # would be more general but List-of-user-record has no accessor
+    # method at v1.0 (no `.at_or`/`.first` synthesized); flatten until
+    # the compiler grows it.
+    has_tool:    Bool!
+    tool_id:     String!
+    tool_action: ToolAction!
 
 def Claude:
     use http:     Http
@@ -50,42 +56,55 @@ def Claude:
     model:    String = "deepseek-chat"
     endpoint: String = "https://api.deepseek.com/anthropic/v1/messages"
     key_var:  String = "DEEPSEEK_API_KEY"
+    # Static Anthropic-shape tool catalog. Names here must match the
+    # dispatch in the response parser below.
+    tools_json: String = "[{\"name\":\"run_shell\",\"description\":\"Execute a shell command and return combined stdout+stderr.\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"cmd\":{\"type\":\"string\"}},\"required\":[\"cmd\"]}},{\"name\":\"read_file\",\"description\":\"Read a text file and return its contents.\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"}},\"required\":[\"path\"]}},{\"name\":\"write_file\",\"description\":\"Write text to a file (overwrites).\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"},\"content\":{\"type\":\"string\"}},\"required\":[\"path\",\"content\"]}},{\"name\":\"get_env\",\"description\":\"Read an environment variable, empty string if unset.\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"name\":{\"type\":\"string\"}},\"required\":[\"name\"]}}]"
 
-    ask(prompt: String) :- String
+    # Multi-turn tool-use entry point. Caller owns the messages array
+    # JSON (agent-side history). Sends the tool catalog every call;
+    # extracts up to one text block and up to one tool_use into the
+    # typed ChatResponse. Body inlined because methods can't call
+    # sibling methods.
+    chat_full(messages_json: String) :- ChatResponse
         let key: String = env_vars.get_or(key_var, "")
         let headers: String = "{\"authorization\":\"Bearer " + key + "\",\"anthropic-version\":\"2023-06-01\",\"content-type\":\"application/json\"}"
-        let body: String = "{\"model\":" + json.encode_str(model) + ",\"max_tokens\":128,\"messages\":[{\"role\":\"user\",\"content\":" + json.encode_str(prompt) + "}]}"
+        let body: String = "{\"model\":" + json.encode_str(model) + ",\"max_tokens\":1024,\"tools\":" + tools_json + ",\"messages\":" + messages_json + "}"
         let envelope: String = http.post_envelope(endpoint, headers, body)
         let status: Int = json.field_int_or(envelope, "status", -1)
         let resp: String = json.field_string(envelope, "body")
-        let text: String = json.field_string_path(resp, "content.0.text")
-        ||: status != 200 : "[http " + status.to_string() + "] " + resp
-        ||: text == nil   : "(no text)"
-        ||: else          : text
-
-    # `chat` returns a typed `ChatResponse` instead of the flattened
-    # String `ask` produces. Consumers walk `.text` / `.stop_reason`
-    # instead of parsing the response inline. tool-use extraction into
-    # `tool_calls` isn't landed at v1.0 (needs a json array-index
-    # intrinsic + variant construction from a String tag); the field
-    # is constructed as `[]` at every call site.
-    chat(prompt: String) :- ChatResponse
-        let key: String = env_vars.get_or(key_var, "")
-        let headers: String = "{\"authorization\":\"Bearer " + key + "\",\"anthropic-version\":\"2023-06-01\",\"content-type\":\"application/json\"}"
-        let body: String = "{\"model\":" + json.encode_str(model) + ",\"max_tokens\":128,\"messages\":[{\"role\":\"user\",\"content\":" + json.encode_str(prompt) + "}]}"
-        let envelope: String = http.post_envelope(endpoint, headers, body)
-        let status: Int = json.field_int_or(envelope, "status", -1)
-        let resp: String = json.field_string(envelope, "body")
-        let text: String = json.field_string_path(resp, "content.0.text")
         let reason: String = json.field_string(resp, "stop_reason")
         let reason_nz: String = reason ?? "unknown"
         let stop_variant: StopReason = ||: reason_nz == "end_turn"   : StopReason.end
                                        ||: reason_nz == "tool_use"   : StopReason.tool_use
                                        ||: reason_nz == "max_tokens" : StopReason.max_tokens
                                        ||: else                      : StopReason.other(reason: reason_nz)
+        # Probe the first two content blocks. No json.array_at
+        # intrinsic yet — dynamic-length iteration lands with
+        # array_at in a follow-on.
+        let t0: String = json.field_string_or_path(resp, "content.0.type", "")
+        let t1: String = json.field_string_or_path(resp, "content.1.type", "")
+        let text: String = ||: t0 == "text" : json.field_string_or_path(resp, "content.0.text", "")
+                           ||: t1 == "text" : json.field_string_or_path(resp, "content.1.text", "")
+                           ||: else         : ""
+        let tu_idx: Int! = ||: t0 == "tool_use" : 0
+                           ||: t1 == "tool_use" : 1
+                           ||: else             : -1
+        let prefix: String = ||: tu_idx == 0 : "content.0."
+                             ||: tu_idx == 1 : "content.1."
+                             ||: else        : ""
+        let tc_id:   String = json.field_string_or_path(resp, prefix + "id", "")
+        let tc_name: String = json.field_string_or_path(resp, prefix + "name", "")
+        let tc_action: ToolAction = ||: tc_name == "run_shell"  : ToolAction.shell(cmd: json.field_string_or_path(resp, prefix + "input.cmd", ""))
+                                    ||: tc_name == "read_file"  : ToolAction.read(path: json.field_string_or_path(resp, prefix + "input.path", ""))
+                                    ||: tc_name == "write_file" : ToolAction.write(path: json.field_string_or_path(resp, prefix + "input.path", ""), content: json.field_string_or_path(resp, prefix + "input.content", ""))
+                                    ||: tc_name == "get_env"    : ToolAction.env_var(name: json.field_string_or_path(resp, prefix + "input.name", ""))
+                                    ||: else                    : ToolAction.shell(cmd: "")
         let final_text: String = ||: status != 200 : "[http " + status.to_string() + "] " + resp
-                                 ||: text == nil   : "(no text)"
                                  ||: else          : text
-        ChatResponse(text: final_text, stop_reason: stop_variant, tool_calls: [])
+        ChatResponse(text: final_text,
+                     stop_reason: stop_variant,
+                     has_tool:    tu_idx >= 0,
+                     tool_id:     tc_id,
+                     tool_action: tc_action)
 
     -> ready
