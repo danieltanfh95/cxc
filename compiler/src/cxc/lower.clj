@@ -3471,34 +3471,36 @@
                      :enum-name enum-name
                      :case-name case-nm})
 
-                  ;; F39 L6 — `??` coalesce. Two modes today:
-                  ;;   :reference — pointer / id / class instance; guard
-                  ;;                is `t != nil`.
-                  ;;   :primitive — 2026-09-04 Gap 5. Sentinel-lifted
-                  ;;                primitive (Int/Bool/Float/Double +
-                  ;;                widths). Guard is the type-specific
-                  ;;                CXC_*_IS_NIL macro; raw `!= nil`
-                  ;;                would coerce the sentinel value to
-                  ;;                pointer-vs-integer compare and yield
-                  ;;                wrong answers (e.g. INT64_MIN != 0
-                  ;;                is true, so `ni ?? 100` would keep
-                  ;;                the sentinel).
+                  ;; F39 L6 — `??` coalesce. Three modes today:
+                  ;;   :optional  — envelope LHS (`_Cxc_Optional_*`);
+                  ;;                guard is `.present`, unwrap is `.value`.
+                  ;;   :reference — pointer / id / class instance / NSString;
+                  ;;                guard is `t != nil`.
+                  ;;   :identity  — 2026-09-14. Bare primitive LHS (int64_t
+                  ;;                from a native FFI call, bool from a
+                  ;;                compare, etc.). Nil-punning: a value that
+                  ;;                can't be nil at the C level survives `??`
+                  ;;                as-is; the fallback branch is dead code
+                  ;;                and never emitted. Prevents the old
+                  ;;                `(int64_t != nil) → (v != 0)` mis-fire
+                  ;;                where a legitimate success return of 0
+                  ;;                fell through to the fallback and cascaded
+                  ;;                broken values into guard chains.
                   (= "??" (:op node))
                   (let [lt (infer-type (:left node) ctx)]
-                    ;; 2026-09-04 Path 1 slice 2d — envelope LHS routes
-                    ;; to `:mode :optional`: guard is `.present`, unwrap
-                    ;; is `.value`.
-                    ;;
-                    ;; 2026-09-05 Path 1 slice 10 — the raw-primitive
-                    ;; `:mode :primitive` branch (nil-check-macro) is
-                    ;; gone: Path 1 storage flip means every nullable
-                    ;; primitive is envelope, so `Int? ?? default` hits
-                    ;; the envelope branch. Reference LHS keeps the
-                    ;; `!= nil` shape.
                     (cond
                       (optional-tk? lt)
                       {:node  :c-coalesce
                        :mode  :optional
+                       :left  (lower-expr (:left node)  ctx)
+                       :right (lower-expr (:right node) ctx)}
+
+                      ;; 2026-09-14 — bare primitive can't be nil; `??` is
+                      ;; identity. Still lower the RHS so it's type-checked
+                      ;; (dead-but-well-typed), then emit picks LHS only.
+                      (primitive-envelope-eligible? lt)
+                      {:node  :c-coalesce
+                       :mode  :identity
                        :left  (lower-expr (:left node)  ctx)
                        :right (lower-expr (:right node) ctx)}
 

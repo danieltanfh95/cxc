@@ -121,6 +121,12 @@
     ;;
     ;; :mode :optional (L5b-ii-b onward) — LHS is `_Cxc_Optional_<T>`.
     ;; Check is `t.present`; unwrapped value is `t.value`.
+    ;;
+    ;; :mode :identity (2026-09-14) — LHS is a bare primitive
+    ;; (int64_t / bool / double / sized variants). Can't be nil at
+    ;; the C level, so `??` collapses to the LHS. RHS lowered for
+    ;; type-check but not emitted. Nil-punning discipline: a value
+    ;; that can't be nil passes through `??` untouched.
     :c-coalesce
     (let [left-c  (emit-expr (:left node))
           right-c (emit-expr (:right node))]
@@ -131,6 +137,8 @@
         :optional
         (str "({ __typeof__(" left-c ") __cxc_coal = (" left-c "); "
              "(__cxc_coal.present) ? __cxc_coal.value : (" right-c "); })")
+        :identity
+        left-c
         ;; 2026-09-04 Gap 5 — sentinel primitive `??`. Use the
         ;; type-specific IS_NIL macro (INT64_MIN / -1 / NaN) instead
         ;; of pointer-comparison; `(INT64_MIN != nil)` in C would
