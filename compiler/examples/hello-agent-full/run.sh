@@ -3,12 +3,11 @@
 # (plugin fetched from a local git repo tagged v0.1) and runs it.
 #
 # Usage:
-#   ./run.sh "your task here"     # one-shot from argv
-#   echo "your task" | ./run.sh   # one-shot from stdin
-#   ./run.sh                      # bare — reads one line from stdin, then Enter
+#   ./run.sh                      # interactive chat (EOF or 'exit' to quit)
+#   echo "your task" | ./run.sh   # scripted: one turn, then EOF ends session
 #
 # Requires DEEPSEEK_API_KEY in the environment for real chat responses;
-# without it the agent still runs (prints [http 401] + stop: other).
+# without it the agent still runs and prints the http-status diagnostic.
 
 set -euo pipefail
 

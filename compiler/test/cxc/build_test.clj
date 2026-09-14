@@ -1396,7 +1396,8 @@
           ;; Bearer auth) — same request/response shape as Anthropic
           ;; Messages API, different backend + auth header.
           (let [{:keys [exit out]}
-                (shell/sh bin-path "Say hello in one word"
+                (shell/sh bin-path
+                          :in "Say hello in one word\n"
                           :env {"DEEPSEEK_API_KEY" ""
                                 "USER"             "cxctest"
                                 "PATH"             (System/getenv "PATH")})]

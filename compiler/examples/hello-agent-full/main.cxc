@@ -22,30 +22,22 @@ def AgentTools:
         env_vars.get_or(name, "")
 
 def main:
-    use args:    Args
     use console: Console
     use claude:  Claude
     use tools:   AgentTools
     use json:    Json
 
-    argv_task:   String! = args.get_or(1, "-")
-    interactive: Bool!   = argv_task == "-"
-    history:     String! = ""
-    turn_steps:  Int!    = 0
-    step_cap:    Int!    = 6
+    history:    String! = ""
+    turn_steps: Int!    = 0
+    step_cap:   Int!    = 6
 
     -> starting
         then: self :> boot()
 
     starting <: boot -> awaiting
-        |: interactive
         then:
             console.write("hello-agent — chat (EOF or 'exit' to quit)")
             self :> read_next()
-
-    starting <: boot -> awaiting
-        |: interactive == false
-        then: self :> handle(line: argv_task)
 
     awaiting <: read_next -> awaiting
         then:
@@ -148,11 +140,6 @@ def main:
             self :> ask()
 
     awaiting <: after_reply -> awaiting
-        |: interactive
         then: self :> read_next()
-
-    awaiting <: after_reply -> end
-        |: interactive == false
-        then: console.write("")
 
     -> end
