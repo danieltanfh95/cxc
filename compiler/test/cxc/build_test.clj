@@ -2414,7 +2414,7 @@
       (is (str/includes? stdout "dir_size: -1")))))
 
 (deftest end-to-end-subprocess-run-full
-  (testing "2026-09-03 — `subprocess.run_full(cmd)` returns a JSON envelope `{exit_code, stdout, stderr}` — mirrors the http.get_envelope shape so callers decompose via existing Json capability. Backed by NSTask + separate NSPipes so stdout / stderr are physically separated (unlike `.run(cmd)` which combines via popen 2>&1) and the real exit code is surfaced (unlike `.run` which only returned combined text). Verified across three scenarios: normal command with both stdout+stderr output, explicit non-zero exit (42), and command-not-found (127 per sh convention)."
+  (testing "2026-09-03 (hickey pass 2026-09-14) — `subprocess.run_full(cmd, env:)` returns a typed `ProcResult` record (`.stdout` / `.stderr` / `.exit_code`) — the raw JSON envelope from `native_subprocess_run_full` is parsed inside the capability so consumers never see it. Backed by NSTask + separate NSPipes so stdout / stderr are physically separated (unlike `.run(cmd)` which combines via popen 2>&1) and the real exit code is surfaced. Verified across three scenarios: normal command with both stdout+stderr output, explicit non-zero exit (42), and command-not-found (127 per sh convention)."
     (let [{:keys [exit stdout]} (compile-and-run "subprocess-run-full")]
       (is (zero? exit))
       (is (str/includes? stdout "ec1: 0"))

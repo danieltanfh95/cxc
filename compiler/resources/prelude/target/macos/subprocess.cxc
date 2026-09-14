@@ -8,15 +8,14 @@ def Subprocess:
     # empty-envp semantics land alongside EnvSpec.merge in Phase 7
     # of the hello-agent completion plan.
     #
-    # `run_typed` returns a proper `ProcResult` record so callers walk
-    # `.stdout` / `.stderr` / `.exit_code` fields directly instead of
-    # decomposing the JSON envelope via the Json cap at every site.
+    # `run_full` returns a `ProcResult` record so callers walk
+    # `.stdout` / `.stderr` / `.exit_code` fields directly. The raw
+    # JSON envelope from `native_subprocess_run_full` is parsed here
+    # so consumers never see it — one typed shape, not two.
 
     run(cmd: String, env: EnvSpec!) :- native_subprocess_run(cmd)
 
-    run_full(cmd: String, env: EnvSpec!) :- native_subprocess_run_full(cmd)
-
-    run_typed(cmd: String, env: EnvSpec!) :- ProcResult
+    run_full(cmd: String, env: EnvSpec!) :- ProcResult
         let raw: String = native_subprocess_run_full(cmd)
         ProcResult(stdout:    native_json_field_string_or(raw, "stdout", ""),
                    stderr:    native_json_field_string_or(raw, "stderr", ""),
