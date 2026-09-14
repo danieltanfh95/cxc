@@ -8,7 +8,7 @@ def main:
             let mk_rc: Int = fs.mkdirs(dir)
             let ex1: Int = fs.exists(dir)
             let wr_rc: Int = fs.write_text(dir + "/hello.txt", "hi")
-            let rm_rc: Int = fs.remove("/tmp/cxc-mkdirs-example")
+            let rm_rc: Bool = fs.remove("/tmp/cxc-mkdirs-example")
             let ex2: Int = fs.exists("/tmp/cxc-mkdirs-example")
             console.write("mk_rc: " + mk_rc.to_string())
             console.write("ex_after_mk: " + ex1.to_string())

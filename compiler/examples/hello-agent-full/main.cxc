@@ -8,7 +8,7 @@ def AgentTools:
     read_file(path: String!) :- String
         fs.read_text(path)
 
-    write_file(path: String!, content: String!) :- Int!
+    write_file(path: String!, content: String!) :- Int
         fs.write_text(path, content)
 
     run_shell(cmd: String!) :- String

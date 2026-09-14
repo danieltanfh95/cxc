@@ -2434,7 +2434,7 @@
       (is (str/includes? stdout "mk_rc: 0"))
       (is (str/includes? stdout "ex_after_mk: 1"))
       (is (str/includes? stdout "wr_rc: 0"))
-      (is (str/includes? stdout "rm_rc: 0"))
+      (is (str/includes? stdout "rm_rc: true"))
       (is (str/includes? stdout "ex_after_rm: 0")))))
 
 (deftest end-to-end-env-set-time-since-sleep

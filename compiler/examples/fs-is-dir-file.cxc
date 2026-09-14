@@ -18,4 +18,4 @@ def main:
             print("missing is_dir: " + fs.is_dir("/nope-cxc-isdir-xyz").to_string())
             print("missing is_file: " + fs.is_file("/nope-cxc-isdir-xyz").to_string())
 
-            let _cleanup: Int = fs.remove(base)
+            let _cleanup: Bool = fs.remove(base)

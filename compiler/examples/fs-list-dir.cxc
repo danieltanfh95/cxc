@@ -11,7 +11,7 @@ def main:
             let _w3: Int = fs.write_text(base + "/gamma.txt", "g")
             let names: String = fs.list_dir(base)
             let missing: String = fs.list_dir("/nope-cxc-listdir-xyz")
-            let _cleanup: Int = fs.remove(base)
+            let _cleanup: Bool = fs.remove(base)
             console.write("has_alpha: " + names.contains("alpha.txt").to_string())
             console.write("has_beta: " + names.contains("beta.txt").to_string())
             console.write("has_gamma: " + names.contains("gamma.txt").to_string())

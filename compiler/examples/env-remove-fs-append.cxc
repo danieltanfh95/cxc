@@ -13,11 +13,11 @@ def main:
             console.write("before_rm: " + got1)
             console.write("after_rm: " + got2)
             let path: String = "/tmp/cxc-append-example.log"
-            let _rm_file: Int = fs.remove(path)
+            let _rm_file: Bool = fs.remove(path)
             let ap1: Int = fs.append_text(path, "line one\n")
             let ap2: Int = fs.append_text(path, "line two\n")
             let contents: String = fs.read_text(path)
-            let _cleanup: Int = fs.remove(path)
+            let _cleanup: Bool = fs.remove(path)
             console.write("append_rc1: " + ap1.to_string())
             console.write("append_rc2: " + ap2.to_string())
             console.write("read_back: " + contents)

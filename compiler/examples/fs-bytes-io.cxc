@@ -11,12 +11,12 @@ def main:
             let b: Blob = Blob(x: 1, y: 2)
             let bs: Bytes = b.as()
             let path: String = "/tmp/cxc-blob-example.bin"
-            let _rm0: Int = fs.remove(path)
+            let _rm0: Bool = fs.remove(path)
             let wr: Int = fs.write_bytes(path, bs)
             let rd: Bytes = fs.read_bytes(path)
             let sz: Int = rd.length
             let ex_sz: Int = fs.size(path)
-            let _rm: Int = fs.remove(path)
+            let _rm: Bool = fs.remove(path)
             let miss: Bytes = fs.read_bytes("/tmp/cxc-bytes-nope-xyz.bin")
             console.write("wr: " + wr.to_string())
             console.write("read_len: " + sz.to_string())
