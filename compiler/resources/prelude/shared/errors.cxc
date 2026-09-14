@@ -49,3 +49,10 @@ def JsonError:
 def EnvError:
     reason: String
     name:   String
+
+# `RandomError` — misuse of a Random cap method, e.g. `between(low, high)`
+# with `high <= low`. Not a runtime-OS failure; a value-level misuse
+# surfaced at the seam instead of forwarded to undefined native
+# behavior.
+def RandomError:
+    reason: String
