@@ -75,8 +75,8 @@ def Claude:
         let body: String = "{\"model\":" + json.encode_str(model) + ",\"max_tokens\":1024,\"tools\":" + tools_json + ",\"messages\":" + messages_json + "}"
         let envelope: String = http.post_envelope(endpoint, headers, body)
         let status: Int = json.field_int_or(envelope, "status", -1)
-        let resp: String = json.field_string(envelope, "body")
-        let reason: String = json.field_string(resp, "stop_reason")
+        let resp: String = json.field_string_or(envelope, "body", "")
+        let reason: String = json.field_string_or(resp, "stop_reason", "")
         let stop_variant: StopReason = ||: reason == "end_turn"   : StopReason.end
                                        ||: reason == "tool_use"   : StopReason.tool_use
                                        ||: reason == "max_tokens" : StopReason.max_tokens

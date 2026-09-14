@@ -11,10 +11,10 @@ def Claude:
         let body: String = "{\"model\":" + json.encode_str(model) + ",\"max_tokens\":128,\"messages\":[{\"role\":\"user\",\"content\":" + json.encode_str(prompt) + "}]}"
         let envelope: String = http.post_envelope("https://api.anthropic.com/v1/messages", headers, body)
         let status: Int = json.field_int_or(envelope, "status", -1)
-        let resp: String = json.field_string(envelope, "body")
-        let text: String = json.field_string_path(resp, "content.0.text")
+        let resp: String = json.field_string_or(envelope, "body", "")
+        let text: String = json.field_string_or_path(resp, "content.0.text", "")
         ||: status != 200 : "[http " + status.to_string() + "] " + resp
-        ||: text == nil   : "(no text)"
+        ||: text == ""    : "(no text)"
         ||: else          : text
 
     -> ready

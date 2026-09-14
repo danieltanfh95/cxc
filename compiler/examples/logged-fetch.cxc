@@ -9,19 +9,19 @@ def main:
     -> running
         then:
             let log_path: String = "/tmp/cxc-logged-fetch.log"
-            let _rm: Int = fs.remove(log_path)
+            let _rm: Bool = fs.remove(log_path)
             let corr:  String = random.hex(16)
             let t0:    Instant = time.now()
             let env:   String = http.get_envelope("https://example.com", "{}")
             let d:     Duration = time.since(t0)
             let stat:  Int = json.field_int_or(env, "status", -1)
-            let body:  String = json.field_string(env, "body")
+            let body:  String = json.field_string_or(env, "body", "")
             let body_len: Int = body.length()
             let ok:    Bool = stat == 200
             let line:  String = "corr=" + corr + " ts_ms=" + t0.millis.to_string() + " latency_ms=" + d.millis.to_string() + " status=" + stat.to_string() + " ok=" + ok.to_string() + " body_bytes=" + body_len.to_string() + "\n"
             let _wr:   Int = fs.append_text(log_path, line)
             let read_back: String = fs.read_text(log_path)
-            let _cleanup: Int = fs.remove(log_path)
+            let _cleanup: Bool = fs.remove(log_path)
             console.write("logline: " + read_back.trim())
             console.write("status: " + stat.to_string())
             console.write("corr_len: " + corr.length().to_string())
