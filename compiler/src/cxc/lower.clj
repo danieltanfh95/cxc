@@ -7028,8 +7028,7 @@
         (fail-nyi!
          (str "F39 L5b-i: value-typed field `" (:name field) ": " ty-nm suffix
               "` cannot take `= nil` default until L5b-ii lands the "
-              "Optional-boxed representation (spec §3.6.1 unified rule "
-              "2026-08-20). See compiler/design/plans/g3-structural-canonical/f39-nullability.md.")
+              "Optional-boxed representation (spec §3.6.1 unified rule).")
          field)))
     (cond
       ;; List of T with a list literal default: synthesize a
@@ -7487,9 +7486,7 @@
                       "parses at v1.0 but lower/emit consumption lands with "
                       "F37 L6 (`class function from(source: Bytes) -> "
                       "DecodeOutcome<Self>` synthesis + `Type.name(args)` "
-                      "call-site dispatch). Track: F37 L6 in "
-                      "compiler/design/plans/g3-structural-canonical/"
-                      "f37-canonical-bytes.md.")
+                      "call-site dispatch).")
                  {:atom atom-name :class-functions cfs}))
     ;; Message-triggered transitions become instance methods (Step 4/7).
     ;; Wildcard on-enter (implicit source): initial-phase wildcards inline

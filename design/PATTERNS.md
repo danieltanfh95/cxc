@@ -18,7 +18,7 @@
 > spellings: `use <name>: <T>` (atom-body keyword, not section),
 > direct fields, and `|:` propositions in place of `invariants:`.
 > (The annotation grammar `@name(args)` was itself retired
-> 2026-08-30 per [decisions-frozen-2026-08-30.md](../compiler/design/decisions-frozen-2026-08-30.md#r1) —
+> 2026-08-30 per decisions-frozen-2026-08-30.md —
 > `@metadata` / `@deprecated` gone; kind info flows through
 > body-shape inference; deprecation is a comment convention.
 > The `@` sigil is a hard lex error at v1.0, which retires the

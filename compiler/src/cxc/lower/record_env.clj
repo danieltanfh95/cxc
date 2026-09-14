@@ -99,9 +99,7 @@
                        "shape parses at v1.0 but lower/emit consumption "
                        "lands with F37 L6 (`class function from(source: "
                        "Bytes) -> DecodeOutcome<Self>` synthesis + "
-                       "`Type.name(args)` call-site dispatch). Track: "
-                       "F37 L6 in compiler/design/plans/g3-structural-"
-                       "canonical/f37-canonical-bytes.md.")
+                       "`Type.name(args)` call-site dispatch).")
                   {:record name :class-functions cfs}))
              fields  (fields-from-data-section dsec env atom-env enum-env module-map)
              site    (str "record `" name "` fields (auto-ctor)")

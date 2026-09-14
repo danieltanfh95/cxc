@@ -5,7 +5,7 @@
 # superseded by I4 (compound source patterns). The old L4d snapshot
 # lives at game-l4d-preview-before.cxc for historical comparison.
 #
-# Improvements applied (from design/improvements.md):
+# Improvements applied:
 #   I1  Phase set inferred from transitions. Only *bodyless* bare
 #       declarations (`-> running` with nothing indented under it)
 #       retire — they're redundant with transition targets. The
@@ -154,7 +154,7 @@ def main:
 
 
 # =====================================================================
-# What lands where (per design/improvements.md):
+# What lands where:
 #
 #   I1 — infer phase set from transitions; keep `-> <phase>` header
 #        with body as the entry-hook shape; retire only bodyless

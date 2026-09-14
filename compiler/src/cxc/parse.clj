@@ -3242,8 +3242,7 @@
 ;; A `def Foo:` body is inspected after parse. If it structurally matches
 ;; a record or protocol shape, the parsed :def-atom node is reshaped into
 ;; the appropriate existing AST kind so downstream env builders keep
-;; working unchanged. See compiler/design/plans/archive/proposal-h-full-unification-
-;; under-def.md.
+;; working unchanged.
 ;; ---------------------------------------------------------------------------
 
 (defn- def-atom-body-has-transition? [body]

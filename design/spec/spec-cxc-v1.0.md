@@ -1,11 +1,13 @@
 # cxc Language Specification — v1.0 Draft
 
-> **v1.0-consolidation supersession banner (updated 2026-08-30).** This
-> document has stale references to retired forms; sweep is in progress
-> and covers the highest-confusion sites first. When any part of the
-> spec below disagrees with a ratification in
-> [`../../compiler/design/decisions-frozen-2026-08-25.md`](../../compiler/design/decisions-frozen-2026-08-25.md)
-> or later, the frozen-decisions doc wins.
+> **v1.0-consolidation supersession banner.** This document has stale
+> references to retired forms; sweep is in progress and covers the
+> highest-confusion sites first. When any part of the spec below
+> disagrees with the shipped compiler surface (see
+> [../../compiler/README.md](../../compiler/README.md) and the twelve
+> prelude capabilities under
+> [../../compiler/resources/prelude/](../../compiler/resources/prelude/)),
+> the shipped surface wins.
 >
 > **Ratified retirements as of 2026-08-30:**
 >
@@ -123,7 +125,7 @@ See `../working-notes.md` for the design-decision journal that led to the curren
 
 **Change log to v1.0 — F69 atom unification (2026-08-18):**
 
-Retire the value/reference substrate divide. All user types declare via `def`; the runtime treatment is inferred from the body's shape rather than declared via `metadata: kind:` selector. See [plans/archive/f69-atom-unification.md](../../compiler/design/plans/archive/f69-atom-unification.md) for the retirement argument and [spec-drift-audit.md](../../compiler/design/spec-drift-audit.md#forward-plans-not-drift--design-retirements-proposed-2026-08-18) for the design-forward context.
+Retire the value/reference substrate divide. All user types declare via `def`; the runtime treatment is inferred from the body's shape rather than declared via `metadata: kind:` selector. See plans/archive/f69-atom-unification.md for the retirement argument and spec-drift-audit.md for the design-forward context.
 
 - **§3.3 rewritten.** Body-shape → runtime-treatment inference table replaces `kind: regular / record / enum` selector. Structural-shape defs (fields-only body), tagged-variant defs (cases-only body), agent defs (transitions-present body). Sum types + structural + agent example blocks migrated to `def X:` shape.
 - **§3.4 opening rewritten.** `protocol` remains a distinct declaration keyword (protocols are contract-only, not instantiated; body-shape inference doesn't apply). §3.4.1 closed-sum-types example migrated to `def X: case ...:` shape.
@@ -139,10 +141,7 @@ Retire the value/reference substrate divide. All user types declare via `def`; t
 
 **Change log to v1.0 — F70 surface facelift (2026-08-19):**
 
-Four small surface unifications land as one bundle. Design in
-[design/improvements.md](../../design/improvements.md) I3/I5/I6;
-landing plan at
-[plans/archive/f70-surface-facelift.md](../../compiler/design/plans/archive/f70-surface-facelift.md).
+Four small surface unifications land as one bundle.
 
 - **I5 payload brackets (§3.7 + §4).** Payload destructure on `<:` /
   `<|` receive-source position uses parens: `<: input.pressed(key: Int)`.
@@ -718,7 +717,7 @@ Session 1 of the post-nil Category 2 backlog. Direct inheritance from C — zero
 - **Character literals (§2.7, §3.1).** `'a'` produces a `Char` (Unicode scalar). Standard C escape sequences (`'\n'`, `'\t'`, `'\\'`, `'\''`, `'\0'`) plus Unicode escape `'\u{1F600}'`.
 - **Bitwise operators (§3.9).** `&`, `|`, `^`, `~`, `<<`, `>>` with C precedence. Compound-assignment forms `&=`, `|=`, `^=`, `<<=`, `>>=`. Legal on integer types (including unsigned); rejected on floats.
 - **Modulo operator (§3.9).** `%` for integer remainder (C99 truncated semantics — result sign matches dividend). `%=` compound form. Not defined on floats (use `Double.remainder(_:)` for float modulo).
-- **`let` at module scope (§7.1).** Top-level immutable binding: `let PI: Double = 3.14159`. Same shape as function-scope `let`. Evaluated at module-load time; type annotation required. *(RETIRED 2026-08-31 per [decisions-frozen-2026-08-31.md §R3](../../compiler/design/decisions-frozen-2026-08-31.md#r3--module-let-let-name-type--value-at-module-scope-retires-universally). Module-scope constants belong in a `def` record (fields with compile-time-constant defaults) or a plugin manifest (`def plugin:`, §7.2.1). Function-scope `let` remains.)*
+- **`let` at module scope (§7.1).** Top-level immutable binding: `let PI: Double = 3.14159`. Same shape as function-scope `let`. Evaluated at module-load time; type annotation required. *(RETIRED 2026-08-31 per decisions-frozen-2026-08-31.md §R3. Module-scope constants belong in a `def` record (fields with compile-time-constant defaults) or a plugin manifest (`def plugin:`, §7.2.1). Function-scope `let` remains.)*
 - **`sizeof` (§9.2).** `sizeof(T)` returns `Int` — the size in bytes of type `T` under its natural layout. For C interop only; not idiomatic in pure cxc code. `alignof(T)` and `offsetof(Struct, field)` complete the trio.
 - **`else if`** — statement-form `if / else if / else` chains remain legal; §2.5 keyword note reaffirms `else if` is written as two tokens, not one (`elif` is not a keyword). *(For expression-position multi-arm dispatch, use `||:` chains per §3.8.1 R6 2026-08-31; `if / else if` is statement-form only at v1.0.)*
 - **Grammar (§10).** Literal productions extended; operator table added.
@@ -1803,7 +1802,7 @@ protocol Healable:
     accepts heal(amt: Int)          # transition accept (void)
 ```
 
-**Cross-refs.** F67 audit entry + `compiler/design/plans/archive/proposal-g-class-body-collapse.md` for the five-landing execution sequence (L1 design → L2 parametric observable syntax → L3 retire `-> handler:` → L4 retire `methods:` **[landed 2026-08-17, revised L4b same day]** → L5 retire `data:` header). F14 handler-decl (landed 2026-08-16) retires at F67 L3. F33 rewrite (Proposal C+C1, landed 2026-08-17) is compatible — atomic-transition contract spans the entire class body uniformly. Observables carry no return-type annotation; return type is inferred from the body expression (F67 L4b) — the receive-glyph method-stream resolver sources the parametric `Stream of T` shape from the wrapped ffi-builtin's declared return-type node.
+**Cross-refs.** F14 handler-decl (landed 2026-08-16) retires at F67 L3. F33 rewrite (Proposal C+C1, landed 2026-08-17) is compatible — atomic-transition contract spans the entire class body uniformly. Observables carry no return-type annotation; return type is inferred from the body expression (F67 L4b) — the receive-glyph method-stream resolver sources the parametric `Stream of T` shape from the wrapped ffi-builtin's declared return-type node.
 
 **Capabilities and OS boundary.**
 
@@ -2978,7 +2977,7 @@ The compiler picks a machine-instruction representation for each numeric field f
 
 **Arithmetic across mixed widths.** Arithmetic between values of different sized atoms (e.g. `x: UInt8 + y: UInt16`) requires explicit widening at the call site — user calls a widening constructor (`UInt16.from(x)`) or a widen operator per §3.11. No implicit promotion. Arithmetic between two same-width sized atoms produces a value of that width (with overflow contract per the operation chosen — `plus` with `requires` for no-overflow, `wrapping_plus` for mod-2^N, `saturating_plus` for clamped).
 
-**Escape hatches deferred to v1.1+.** Explicit representation pins (`Int as i64` etc.), full use-based / whole-graph representation inference (Julia-style), and prelude-shipped `Nat`/`Port`/etc. domain atoms are v1.1+ work. v1.0 ships the concrete substrate + invariant-driven picker for user-defined domain atoms only. See design/working-notes for the design horizon.
+**Escape hatches deferred to v1.1+.** Explicit representation pins (`Int as i64` etc.), full use-based / whole-graph representation inference (Julia-style), and prelude-shipped `Nat`/`Port`/etc. domain atoms are v1.1+ work. v1.0 ships the concrete substrate + invariant-driven picker for user-defined domain atoms only.
 
 #### 3.1.3 The Any Type
 
@@ -3319,7 +3318,7 @@ extend NSString:
     replace shout() :- self.upper_case + "!"     # explicit intent: shadow the prior shout
 ```
 
-**Post-collapse form (F67 L4c).** `replace` is a *prefix keyword* on the observable or wildcard self-transition it modifies. It is legal *only* inside an `extend class` body — a plain class body has no shadow target and rejects `replace` at parse time (§3.3.2 rule 4 requires an extension context). The examples earlier in this section using pre-collapse `methods:` / `function` bodies remain semantically accurate but are being migrated to the post-collapse form during the F67 landing sequence (see `compiler/design/plans/archive/proposal-g-class-body-collapse.md`).
+**Post-collapse form (F67 L4c).** `replace` is a *prefix keyword* on the observable or wildcard self-transition it modifies. It is legal *only* inside an `extend class` body — a plain class body has no shadow target and rejects `replace` at parse time (§3.3.2 rule 4 requires an extension context). The examples earlier in this section using pre-collapse `methods:` / `function` bodies remain semantically accurate but are being migrated to the post-collapse form.
 
 `replace` is *optional* — without it the composition still succeeds (with a warning), and the deterministic resolution rule picks the winner. With `replace` present, the warning is suppressed for that site (author signaled intent) and `replace` further enforces that *some* method is actually being shadowed (see rule 3 below).
 
@@ -3469,7 +3468,7 @@ Under uniform visibility (§7.7), all top-level protocols are part of the module
 
 #### 3.4.2 Class-Level Contracts (Invariants)
 
-> **v1.0 surface note (2026-08-25 user-surface consolidation).** The `invariants:` section header is retired at v1.0. Class-level invariants are now expressed as def-body `|:` propositions on their own lines (four-position unification, ratified 2026-08-25 L2b, commit `5e90cff` — see [decisions-frozen-2026-08-25.md](../../compiler/design/decisions-frozen-2026-08-25.md) §L2b). The semantic meaning is unchanged: predicate expressions that must hold at every observable point. The examples below still show the retired `invariants:` block form — read those as historical illustrations; the current form is `|:` propositions at def body top level, adjacent to fields.
+> **v1.0 surface note (2026-08-25 user-surface consolidation).** The `invariants:` section header is retired at v1.0. Class-level invariants are now expressed as def-body `|:` propositions on their own lines (four-position unification, ratified 2026-08-25 L2b, commit `5e90cff` — see decisions-frozen-2026-08-25.md §L2b). The semantic meaning is unchanged: predicate expressions that must hold at every observable point. The examples below still show the retired `invariants:` block form — read those as historical illustrations; the current form is `|:` propositions at def body top level, adjacent to fields.
 >
 > Migration:
 > ```
@@ -4171,7 +4170,7 @@ Users needing richer nil-related contracts (e.g., "not nil AND not empty") write
 
 Pattern matching is expression-position **receive-glyph dispatch** — the same `<:` mechanism used for message-receive on agent-shape defs (§4), applied inline at any expression position. The scrutinee's shape (tagged-variant def / agent def / primitive / string) determines the emit: tagged-variant scrutinees inline to a tag-switch (zero allocation, sync); agent scrutinees compile to actual subscription (queued).
 
-**F69 unification (2026-08-18).** Previous drafts (v0.7 through v0.11) shipped `switch` as a distinct pattern-matching construct with `case` sub-clauses. F69 retired `switch` — pattern-matched dispatch is one primitive with two substrates (value shape / agent shape), and the surface spells the primitive once. See [plans/archive/f69-atom-unification.md](../../compiler/design/plans/archive/f69-atom-unification.md).
+**F69 unification (2026-08-18).** Previous drafts (v0.7 through v0.11) shipped `switch` as a distinct pattern-matching construct with `case` sub-clauses. F69 retired `switch` — pattern-matched dispatch is one primitive with two substrates (value shape / agent shape), and the surface spells the primitive once. See plans/archive/f69-atom-unification.md.
 
 **Expression form:**
 
@@ -4357,7 +4356,7 @@ category = ||: code < 400 : "success"
            ||: else       : "server_error"
 ```
 
-**Rationale (R6, 2026-08-31).** An earlier draft allowed `if X: Y else: Z` in expression position ("everything is an expression"). R6 retired that form because it gave `if` two grammatical roles (statement + expression) with position-sensitive disambiguation. `||:` is the sole expression-position multi-arm construct; `if` remains a statement-form keyword. See [decisions-frozen-2026-08-31-glyphs.md §R6](../../compiler/design/decisions-frozen-2026-08-31-glyphs.md#r6--multi-arm-dispatch--).
+**Rationale (R6, 2026-08-31).** An earlier draft allowed `if X: Y else: Z` in expression position ("everything is an expression"). R6 retired that form because it gave `if` two grammatical roles (statement + expression) with position-sensitive disambiguation. `||:` is the sole expression-position multi-arm construct; `if` remains a statement-form keyword. See decisions-frozen-2026-08-31-glyphs.md §R6.
 
 **No expression-form `if`.** `let x = if cond: y else: z` is a parse error at v1.0. Rewrite as `let x = ||: cond : y ||: else : z`. `if` for side-effect-only statement position remains legal: `if cond: run_side_effect()`.
 
@@ -5053,7 +5052,7 @@ let parser = PegParser("expr <- term ('+' term)*")
 s.first_match(matching: FuzzyPattern("apple"))
 ```
 
-See §4.16.17 for the current prefix-literal alias declaration rules (prelude-only) and [decisions-frozen-2026-08-30.md §R1](../../compiler/design/decisions-frozen-2026-08-30.md#r1) for the retirement rationale.
+See §4.16.17 for the current prefix-literal alias declaration rules (prelude-only) and decisions-frozen-2026-08-30.md §R1 for the retirement rationale.
 
 ##### 3.10.9.6 Named Captures Only
 
@@ -5372,12 +5371,12 @@ Sugar accessors: `Double.infinity`, `Double.nan`, `Double.epsilon`.
 > - `handlers:` as grouping container — the `-> handler:` prefix IS the declaration.
 > - `metadata:` / `computed:` / `deprecated:` / `accepts:` — retired as user-facing section headers by the 2026-08-25 user-surface consolidation.
 >
-> **Additionally retired 2026-08-25** (user-surface consolidation, [decisions-frozen-2026-08-25.md](../../compiler/design/decisions-frozen-2026-08-25.md) §L2b / §L3c):
+> **Additionally retired 2026-08-25** (user-surface consolidation, decisions-frozen-2026-08-25.md §L2b / §L3c):
 > - `invariants:` section header — replaced by def-body `|:` propositions (four-position unification, L2b commit `5e90cff`).
 > - `metadata:` / `constructor:` / `contracts:` / `execution:` — initially replaced by `@metadata(...)` annotation (L3c 2026-08-25); the annotation form itself then retired 2026-08-30 with the annotation-grammar-retirement wave. Kind info flows through body-shape inference (§3.3); per-type constructor synthesis + explicit factories cover constructors; `|:` propositions cover invariants/contracts.
 > - `requires` / `ensures` — folded into `|:` propositions (same L3c ratification).
 >
-> **Additionally retired 2026-08-30** (annotation-grammar-retirement, [decisions-frozen-2026-08-30.md](../../compiler/design/decisions-frozen-2026-08-30.md)):
+> **Additionally retired 2026-08-30** (annotation-grammar-retirement, decisions-frozen-2026-08-30.md):
 > - `@name(args)` annotation grammar — universal retirement. `@metadata(...)`, `@deprecated(...)`, `@plugin(...)` all gone. `@` sigil rejected at lex time.
 > - `module <name>` header — Q10-D carve-out reversed; F73 stands unconditionally. Plugin manifest is a `def plugin:` record marker (§7.2.1).
 > - Deprecation — no language surface at v1.0; expressed as comment or user convention.
@@ -5388,7 +5387,7 @@ Sugar accessors: `Double.infinity`, `Double.nan`, `Double.epsilon`.
 >
 > **Compiler-vs-spec drift note (2026-08-30 audit).** `compiler/src/cxc/lex.clj` still lists `invariants` in its reserved-keyword table. Either the compiler retains lex-level recognition solely as a diagnostic anchor (rejecting the retired header with a rewrite hint), or L2b's downstream cleanup is not yet complete. This is a compiler-side follow-up, not a spec-side ambiguity — the ratified state is retirement.
 >
-> See §10 grammar for the authoritative parsed shape. Descriptions in §4.10 built-in section classes below and elsewhere in this document that reference retired sections should be read as historical unless they explicitly note post-2026-08-25 status. Ratifications: class-body-collapse frozen at [decisions-frozen-2026-08-25.md](../../compiler/design/decisions-frozen-2026-08-25.md); user-surface consolidation frozen in the same file under §L5.
+> See §10 grammar for the authoritative parsed shape. Descriptions in §4.10 built-in section classes below and elsewhere in this document that reference retired sections should be read as historical unless they explicitly note post-2026-08-25 status. Ratifications: class-body-collapse frozen at decisions-frozen-2026-08-25.md; user-surface consolidation frozen in the same file under §L5.
 
 The **section mechanism** is the language's general form for labeled semantic blocks. A section is a labeled, indented block whose contents are governed by a section class. Sections appear across scopes:
 
@@ -5877,9 +5876,9 @@ These section classes ship with the language and are available in every module. 
 > **Status note (revised 2026-08-31, superseding the 2026-08-30 note).** Four waves of retirement collapsed the class body vocabulary:
 >
 > - **Wave 1 — class-body-collapse (2026-08-17, Proposal G / F67 L3/L4/L5)** — vocabulary collapsed to two glyphs (`:-` observable, `<:` transition) with top-level fields and no `data:` / `methods:` sections.
-> - **Wave 2 — user-surface consolidation (2026-08-25, L2b + L3c)** — retired the remaining user-facing configuration section headers: `invariants:` (→ `|:` propositions, L2b), `metadata:` / `constructor:` / `contracts:` / `execution:` / `requires` / `ensures` (initially → `@metadata(...)` annotation + per-type ctor synthesis + `|:` propositions, L3c). Also retired user-facing `section class Name:` declarations (F8 L4). See [decisions-frozen-2026-08-25.md](../../compiler/design/decisions-frozen-2026-08-25.md) for the frozen state.
-> - **Wave 3 — annotation-grammar-retirement (2026-08-30)** — retired `@name(args)` grammar entirely. `@metadata` / `@deprecated` / `@plugin` all gone. Kind info flows through body-shape inference (§3.3); plugin manifest interim landed on module-let (`let plugin: Plugin = Plugin(...)`); deprecation is a comment/user-convention at v1.0. See [decisions-frozen-2026-08-30.md](../../compiler/design/decisions-frozen-2026-08-30.md).
-> - **Wave 4 — plugin-abi-shape (2026-08-31)** — module-let mechanism retires universally; plugin manifest becomes `def plugin:` record marker with reserved name; plugin system committed compile-time-only at v1.0 (no runtime plugin loading, no lifecycle, no HostAPI injection); ObjC class registration via emitted `+load` methods. See [decisions-frozen-2026-08-31.md](../../compiler/design/decisions-frozen-2026-08-31.md).
+> - **Wave 2 — user-surface consolidation (2026-08-25, L2b + L3c)** — retired the remaining user-facing configuration section headers: `invariants:` (→ `|:` propositions, L2b), `metadata:` / `constructor:` / `contracts:` / `execution:` / `requires` / `ensures` (initially → `@metadata(...)` annotation + per-type ctor synthesis + `|:` propositions, L3c). Also retired user-facing `section class Name:` declarations (F8 L4). See decisions-frozen-2026-08-25.md for the frozen state.
+> - **Wave 3 — annotation-grammar-retirement (2026-08-30)** — retired `@name(args)` grammar entirely. `@metadata` / `@deprecated` / `@plugin` all gone. Kind info flows through body-shape inference (§3.3); plugin manifest interim landed on module-let (`let plugin: Plugin = Plugin(...)`); deprecation is a comment/user-convention at v1.0. See decisions-frozen-2026-08-30.md.
+> - **Wave 4 — plugin-abi-shape (2026-08-31)** — module-let mechanism retires universally; plugin manifest becomes `def plugin:` record marker with reserved name; plugin system committed compile-time-only at v1.0 (no runtime plugin loading, no lifecycle, no HostAPI injection); ObjC class registration via emitted `+load` methods. See decisions-frozen-2026-08-31.md.
 >
 > Post-Wave-3, the sole surviving user-facing configuration surface is `use <name>: <Type>` (capability declarations, L4 direct-keyword). Everything §4.10 says about `data:` / `state:` / `methods:` / `-> handler(args):` / `invariants:` / `metadata:` / `contracts:` / user-defined `section class` — read as **historical illustrations of the underlying section-class mechanism**, which survives as compiler-internal machinery. The current authoritative class-body vocabulary is in §1.11 (class-body-collapse addendum) and the §1.1 top-of-file supersession banner.
 
@@ -6355,7 +6354,7 @@ section class Platform:
 >
 > `protocol` and `section` remain distinct declaration keywords — protocols are contract-only (never instantiated; body-shape inference doesn't apply), sections are compile-time metaprogramming machinery.
 >
-> Sugar keywords `record` / `enum` retire in the same pass. Write `def X:` for every class; the body tells the compiler what the class IS. See §3.3 and [plans/archive/f69-atom-unification.md](../../compiler/design/plans/archive/f69-atom-unification.md).
+> Sugar keywords `record` / `enum` retire in the same pass. Write `def X:` for every class; the body tells the compiler what the class IS. See §3.3 and plans/archive/f69-atom-unification.md.
 
 **`Protocol`** — named contracts, no instantiation.
 
@@ -6454,7 +6453,7 @@ def UserList:
 
 ### 4.11 User-Defined Section Classes
 
-> **v1.0 surface note (2026-08-25 user-surface consolidation).** User-defined `section class Name:` syntax is retired as a user-facing construct (F8 L4, ratified 2026-08-25 — see [decisions-frozen-2026-08-25.md](../../compiler/design/decisions-frozen-2026-08-25.md) §L4 and the memory rule [[corvid-pipe-colon-unification]]). The section-class mechanism is retained as **compiler-internal machinery** — the compiler still resolves built-in section headers (`use:`, historically `data:` / `metadata:` / `invariants:` / etc.) via section classes, but the ability for users to declare new `section class Foo:` is retired. Prior use cases that motivated user-defined section classes fold into: body-shape inference (§3.3) for classification, `|:` propositions (four-position unification, L2b) for constraints and invariants, and the class-body-collapse vocabulary (fields / `:-` / `<:`) for structure. The interim `@metadata(...)` annotation migration target (L3c 2026-08-25) retired same-day + 5 days later (2026-08-30) with the annotation-grammar-retirement wave. Read this section as documenting the compiler-internal mechanism that survives; the user-facing declaration form does not.
+> **v1.0 surface note (2026-08-25 user-surface consolidation).** User-defined `section class Name:` syntax is retired as a user-facing construct (F8 L4, ratified 2026-08-25 — see decisions-frozen-2026-08-25.md §L4 and the memory rule [[corvid-pipe-colon-unification]]). The section-class mechanism is retained as **compiler-internal machinery** — the compiler still resolves built-in section headers (`use:`, historically `data:` / `metadata:` / `invariants:` / etc.) via section classes, but the ability for users to declare new `section class Foo:` is retired. Prior use cases that motivated user-defined section classes fold into: body-shape inference (§3.3) for classification, `|:` propositions (four-position unification, L2b) for constraints and invariants, and the class-body-collapse vocabulary (fields / `:-` / `<:`) for structure. The interim `@metadata(...)` annotation migration target (L3c 2026-08-25) retired same-day + 5 days later (2026-08-30) with the annotation-grammar-retirement wave. Read this section as documenting the compiler-internal mechanism that survives; the user-facing declaration form does not.
 
 Users define section classes using the same syntax as built-in ones. Example — an `Channel` section:
 
@@ -6765,7 +6764,7 @@ alias not <expr> precedence: 2 in expression_position:
 
 Prefix and suffix aliases carry precedence for parser disambiguation but their associativity is fixed (prefix = right, suffix = left).
 
-**User-defined operators — RETIRED (R9, 2026-08-31).** At v1.0 user code cannot declare its own operator aliases (infix, prefix, or suffix). The former `@`-prefixed grammar (`@|>`, `@!`, etc.) is retired along with the general operator-observation form; see [decisions-frozen-2026-08-31-plugin-shape.md §R9](../../compiler/design/decisions-frozen-2026-08-31-plugin-shape.md#r9--no-user-defined-operator-overloading). Compose behavior via named methods instead:
+**User-defined operators — RETIRED (R9, 2026-08-31).** At v1.0 user code cannot declare its own operator aliases (infix, prefix, or suffix). The former `@`-prefixed grammar (`@|>`, `@!`, etc.) is retired along with the general operator-observation form; see decisions-frozen-2026-08-31-plugin-shape.md §R9. Compose behavior via named methods instead:
 
 ```
 # Pre-R9 (retired):
@@ -7035,7 +7034,7 @@ alias literal"<content>" raw = Literal(<content>)        # §3.10.9.3
 
 These are the entire user-visible prefix-literal surface at v1.0.
 
-**No user-declarable prefix-literal aliases.** The prior `alias @peg"..." raw = PegParser(...)` / `alias @fuzzy"..." raw = FuzzyPattern(...)` etc. forms retired 2026-08-30 with the rest of the `@`-marker mechanism (R1). New pattern types must ship via the prelude — or be constructed directly at call sites, e.g. `PegParser("expr <- term ('+' term)*")`, `FuzzyPattern("aplle")`. See §4.16.16 banner and [decisions-frozen-2026-08-30.md §R1](../../compiler/design/decisions-frozen-2026-08-30.md#r1).
+**No user-declarable prefix-literal aliases.** The prior `alias @peg"..." raw = PegParser(...)` / `alias @fuzzy"..." raw = FuzzyPattern(...)` etc. forms retired 2026-08-30 with the rest of the `@`-marker mechanism (R1). New pattern types must ship via the prelude — or be constructed directly at call sites, e.g. `PegParser("expr <- term ('+' term)*")`, `FuzzyPattern("aplle")`. See §4.16.16 banner and decisions-frozen-2026-08-30.md §R1.
 
 **Why raw is opt-in, not default.** Cooked content is the more common case — string interpolation, config values, human-readable messages. Raw content is specific to pattern languages (regex, PEG, path globs, format strings with their own escape rules) where the constructor's grammar overlaps with the host language's escape syntax. Making cooked the default preserves consistency with §2.7 string literals; the `raw` marker makes the deviation visible at the alias declaration site.
 
@@ -7612,7 +7611,7 @@ Rationale: optimization policy is a deployment decision, not a semantic property
 
 ### 5.6 Closures (Narrow, Non-Escaping)
 
-Corvid supports inline arrow-lambda literals for higher-order collection operations and a narrow zero-arg `Block` type for local deferred work. **Escaping closures — closures stored in fields, returned from functions, or handed to callees that outlive the caller's frame — are not part of the language surface.** Callback patterns that use escaping closures in mainstream languages use actor subscriptions (§1.11 receive-glyph transitions) in Corvid. See [plans/g4-actor-integrity/f45-closure-scope.md](../../compiler/design/plans/g4-actor-integrity/f45-closure-scope.md) for the retirement rationale and per-case actor-substrate mappings.
+Corvid supports inline arrow-lambda literals for higher-order collection operations and a narrow zero-arg `Block` type for local deferred work. **Escaping closures — closures stored in fields, returned from functions, or handed to callees that outlive the caller's frame — are not part of the language surface.** Callback patterns that use escaping closures in mainstream languages use actor subscriptions (§1.11 receive-glyph transitions) in Corvid. See plans/g4-actor-integrity/f45-closure-scope.md for the retirement rationale and per-case actor-substrate mappings.
 
 #### 5.6.1 Arrow Lambda Literals
 
@@ -7700,7 +7699,7 @@ The transition fires when the clock capability's `after` observable becomes true
 
 #### 5.6.4 Retired From Pre-v1.0 Spec
 
-The following mechanisms were previously spec-committed and are retired at v1.0. No user code depends on them — the compiler impl never landed them ([spec-drift-audit-landed.md#F45](../../compiler/design/spec-drift-audit-landed.md#f45-block-invented-type-closure-support-narrow--re-framed-2026-08-18-spec-56-overreaches-narrow-impl-is-correct-scope)).
+The following mechanisms were previously spec-committed and are retired at v1.0. No user code depends on them — the compiler impl never landed them (spec-drift-audit-landed.md#F45).
 
 - **First-class `Callable of (Args, Return)` type** for user signatures. The compiler retains `Callable` internally as a type hint for inlinable higher-order call sites; users do not write it in field or parameter types. The prelude alias `(Args) -> R = Callable<(Args,), R>` remains defined but has no supported user-facing use — declaring a data field of that shape is rejected with a diagnostic pointing at actor subscriptions.
 - **Explicit `function(x: T) -> R:` closure literals** as expressions. The arrow form (§5.6.1) covers the same ground without the ceremony.
@@ -8280,7 +8279,7 @@ function main():
 
 Invoked as `oc5 hello.cxc`. No manifest required; no module declaration required (the source is treated as its own implicit module). Standard library available implicitly.
 
-**Module-level declarations.** Sources contain `def` declarations (§4 — atoms, records, enums, protocols, plugins), `from <mod> import <name>` statements (§7.2), and comments. Module-level `let` is RETIRED (R3, 2026-08-31 — see [decisions-frozen-2026-08-31.md §R3](../../compiler/design/decisions-frozen-2026-08-31.md#r3--module-let-let-name-type--value-at-module-scope-retires-universally)). Module-scope constants live in a `def` record whose fields carry compile-time-constant defaults, or in the plugin-manifest `def plugin:` record (§7.2.1) when they configure a plugin module:
+**Module-level declarations.** Sources contain `def` declarations (§4 — atoms, records, enums, protocols, plugins), `from <mod> import <name>` statements (§7.2), and comments. Module-level `let` is RETIRED (R3, 2026-08-31 — see decisions-frozen-2026-08-31.md §R3). Module-scope constants live in a `def` record whose fields carry compile-time-constant defaults, or in the plugin-manifest `def plugin:` record (§7.2.1) when they configure a plugin module:
 
 ```
 def Constants:
@@ -8331,8 +8330,8 @@ The F73 retirement of `module <name>` headers stands **unconditionally** at v1.0
 
 > **Supersedes:**
 > - The Q10-D carve-out (2026-08-30, first form: `@plugin(...) module <name>` annotation) — retired same-day as part of the annotation-grammar-retirement wave.
-> - The interim `let plugin: Plugin = Plugin(...)` module-let form (2026-08-30, second form) — reopened 2026-08-31 once the compile-time-vs-runtime ABI question surfaced. Module-let mechanism retires universally in the same wave (see [decisions-frozen-2026-08-31.md](../../compiler/design/decisions-frozen-2026-08-31.md) §R3).
-> - The R2 fields-only-body invariant + 9-integer version fields (2026-08-31 first wave). Body admits nested `foreign "..."` sections (R7); manifest fields collapse to structured `SemVer` / `VersionRange` records (R8). See [decisions-frozen-2026-08-31-plugin-shape.md](../../compiler/design/decisions-frozen-2026-08-31-plugin-shape.md) §R7 + §R8.
+> - The interim `let plugin: Plugin = Plugin(...)` module-let form (2026-08-30, second form) — reopened 2026-08-31 once the compile-time-vs-runtime ABI question surfaced. Module-let mechanism retires universally in the same wave (see decisions-frozen-2026-08-31.md §R3).
+> - The R2 fields-only-body invariant + 9-integer version fields (2026-08-31 first wave). Body admits nested `foreign "..."` sections (R7); manifest fields collapse to structured `SemVer` / `VersionRange` records (R8). See decisions-frozen-2026-08-31-plugin-shape.md §R7 + §R8.
 
 **Canonical form:**
 
@@ -8374,7 +8373,7 @@ def HttpClient:
 - **Presence gates `Plugin` visibility** (R11 plugin-only wave, 2026-09-01). Modules that carry a valid `def plugin:` record are the sole recipients of `use plugin: Plugin` on their peer defs; `plugin.get` / `plugin.send` / `plugin.class_send` in those defs resolve only against the enclosing `def plugin:` body's nested `foreign "..."` sections. `Plugin` is the sole FFI capability at v1.0 — the pre-R11 prelude-shim tier and its `Extern` capability retire under R11. See §1.12, §1.14.
 - **Regular modules define nothing at that name.** A module with no `def plugin:` is a regular application module; its identity is the file path, no FFI capability widening, no manifest emission. Not-plugin is the default.
 
-**Plugin system is compile-time only at v1.0.** cxc has no runtime plugin loading. Plugin modules link statically into the consuming binary. No `dlopen`, no `plugin_init` lifecycle, no HostAPI injection, no unload, no hot reload. The plugin system exists to let the compiler consume trusted foreign-interfacing code with capability discipline — it is not a runtime extension mechanism. Users wanting a runtime plugin system can build one on top of cxc; the compiler doesn't provide one at v1.0. See [decisions-frozen-2026-08-31.md](../../compiler/design/decisions-frozen-2026-08-31.md) §R1.
+**Plugin system is compile-time only at v1.0.** cxc has no runtime plugin loading. Plugin modules link statically into the consuming binary. No `dlopen`, no `plugin_init` lifecycle, no HostAPI injection, no unload, no hot reload. The plugin system exists to let the compiler consume trusted foreign-interfacing code with capability discipline — it is not a runtime extension mechanism. Users wanting a runtime plugin system can build one on top of cxc; the compiler doesn't provide one at v1.0. See decisions-frozen-2026-08-31.md §R1.
 
 **Why the record-marker form (not module-let, not annotation).** The design terrain was traversed in three ratifications on three consecutive days:
 - 2026-08-30 first form (Q10-D): `@plugin(...) module <name>` annotation — retired same-day with the annotation-grammar-retirement wave (`@name(args)` gone universally).

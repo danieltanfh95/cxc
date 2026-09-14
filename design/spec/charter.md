@@ -12,14 +12,13 @@
 > user-section-class syntax, F10/F11/F12 dedicated section
 > headers all retired. (The `@name(args)` annotation grammar
 > once cited above as ratified was itself retired 2026-08-30
-> per [decisions-frozen-2026-08-30.md §R1](../../compiler/design/decisions-frozen-2026-08-30.md#r1)
+> per decisions-frozen-2026-08-30.md §R1
 > — kind info flows through body-shape inference; deprecation is
 > a comment convention.) The premises' INTENT (correctness by
 > construction, first-class contracts, orthogonal mechanisms)
 > survives; the specific implementation vocabulary described here
 > does not. Authoritative current surface:
-> [spec-cxc-v1.0.md](spec-cxc-v1.0.md). Retirement table:
-> [../../compiler/design/plans/archive/v1-user-surface-retirement-landed.md](../../compiler/design/plans/archive/v1-user-surface-retirement-landed.md).
+> [spec-cxc-v1.0.md](spec-cxc-v1.0.md).
 
 The nine design premises below constitute the philosophical foundation of Corvid. Every subsequent design decision in the full specification (§2-§14) descends from these premises. Any change to a decision should first check whether it violates a premise; if it does, the premise should be either revised deliberately or preserved as a constraint.
 

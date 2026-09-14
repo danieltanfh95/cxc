@@ -15,14 +15,12 @@
      cxc.emit     — ObjC AST → .m source string
      cxc.build    — write .m, invoke clang, produce binary
 
-   Runtime deps at link time: libobjc2 · libdispatch · libuv · cxc runtime lib
-   (per Phase 6 decisions in design/working-notes.md).
+   Runtime deps at link time: libobjc2 · libdispatch · libuv · cxc runtime lib.
 
    Coverage: v1.0 language surface — records / def-atom actors /
    enums / capabilities / F9 extensions / F32 concurrent atoms /
    F37 canonical bytes / F51 module scope / F52 imports and let-
-   bindings / F56 emit-boundary mangling. See spec + plans/g*/ for
-   the feature-by-feature status. Entry point is `def main`
+   bindings / F56 emit-boundary mangling. Entry point is `def main`
    (lowercase) by naming convention — no `program` keyword (retired
    at v1.0, see spec §1.11)."
   (:require [clojure.java.io :as io]

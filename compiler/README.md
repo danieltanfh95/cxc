@@ -6,7 +6,7 @@ Clojure implementation of the cxc compiler. Emits ObjC source; clang produces th
 
 **Not distributable.** This is a bootstrap. There is no `cxc` binary — you invoke via `clj`, JVM starts each time. macOS only. No LSP, no IDE plugin, no package manager. Everything under [`examples/`](examples/) works; anything past it may hit `fail-nyi`. See [What you don't get](#what-you-dont-get) below.
 
-Feature-level tracking: [`design/spec-drift-audit.md`](design/spec-drift-audit.md) (per-item landing status), [`design/plans/`](design/plans/) (per-feature landing plans), [`design/loop-status-2026-08-26.md`](design/loop-status-2026-08-26.md) (weekly working ledger).
+Feature-level landing status lives in [CHANGELOG.md](../CHANGELOG.md) and the git log.
 
 ## Shape
 
@@ -82,7 +82,7 @@ replsh eval --name cxc '(require (quote [cxc.core :as core]) :reload) (core/-mai
 
 ## Language mental model, in one paragraph
 
-cxc programs are graphs of *atoms* (`def <Name>:`). An atom is a class-with-a-state-machine: fields + methods + phases + transitions. Transitions (`<phase> <: <msg>(...) -> <phase>`) carry `then:` clauses that update fields, `:>` clauses that emit events, and `<:` clauses that subscribe to other atoms' events. Records (`def R: x: Int` — inferred kind: value type) and enums (`case a; case b` — inferred kind: tagged variant) fall out of the same `def` opener via structural body inference. `main` is a distinguished atom that boots the program. Everything else — streams, invariants, observables, capabilities — hangs off the atom substrate. See [`../design/positioning/overview.md`](../design/positioning/overview.md) for the design bet, [`../design/spec/spec-cxc-v1.0.md`](../design/spec/spec-cxc-v1.0.md) for the full spec (note: §3-§9 still describe the v0.11 `class`/`record`/`enum`/`protocol` shape; F66 pass-2 editorial rewrite pending — the compiler implements the `def`-with-body-inference shape from §1.11).
+cxc programs are graphs of *atoms* (`def <Name>:`). An atom is a class-with-a-state-machine: fields + methods + phases + transitions. Transitions (`<phase> <: <msg>(...) -> <phase>`) carry `then:` clauses that update fields, `:>` clauses that emit events, and `<:` clauses that subscribe to other atoms' events. Records (`def R: x: Int` — inferred kind: value type) and enums (`case a; case b` — inferred kind: tagged variant) fall out of the same `def` opener via structural body inference. `main` is a distinguished atom that boots the program. Everything else — streams, invariants, observables, capabilities — hangs off the atom substrate. See [`../design/positioning/overview.md`](../design/positioning/overview.md) for the design bet and [`../design/spec/spec-cxc-v1.0.md`](../design/spec/spec-cxc-v1.0.md) §1.11 for the atom-substrate shape the compiler implements. (Spec §3–§9 still describe an earlier `class`/`record`/`enum`/`protocol` shape; editorial rewrite pending.)
 
 ## Reading order for first-time users
 
@@ -98,7 +98,7 @@ cxc programs are graphs of *atoms* (`def <Name>:`). An atom is a class-with-a-st
 
 Every example in [`examples/`](examples/) compiles + runs + matches expected stdout under [`test/cxc/build_test.clj`](test/cxc/build_test.clj). Landed coverage includes: single-file + multi-file builds, records/enums/atoms, transitions, streams, invariants, ctor-params, use-caps, list/map/set containers, twelve prelude capabilities with typed raise (see [`resources/prelude/`](resources/prelude/)), F16 tagged-variant enums, F37 canonical bytes, F39 nullability, F49 pre-store invariant checks, F51 module scoping, F52 module let-bindings, F56 emit-boundary C-id mangling, F76 third-party plugin manifests.
 
-Beyond those examples, you're gambling on `fail-nyi`. The compiler is honest — anything it can't lower raises `:not-yet-implemented` with a specific message pointing at the plan doc that will land it. Feature status is tracked in [`design/loop-status-2026-08-26.md`](design/loop-status-2026-08-26.md) (rolling ledger) and per-feature under [`design/plans/`](design/plans/).
+Beyond those examples, you're gambling on `fail-nyi`. The compiler is honest — anything it can't lower raises `:not-yet-implemented` with a specific message.
 
 Notable gaps: F9 protocol dispatch beyond L6; F15 L4+ structural conformance beyond monomorphic; F32 L4.e.γ concurrent-queue optionality (single-main-queue is the shipping mode); F42 collection literals; F53 L4 LSP.
 
@@ -110,7 +110,7 @@ Notable gaps: F9 protocol dispatch beyond L6; F15 L4+ structural conformance bey
 - **macOS-only capabilities.** The twelve prelude capabilities ship for macOS/Foundation only. Linux (seccomp-bpf) and OpenBSD (pledge) enforcement paths are spec'd but not implemented. Windows is manifest-only.
 - **No debugger, no source maps.** Failures come out of clang or the emitted ObjC. Cache the `.m` at `compiler/.cxc-cache/last/` and read it to see what happened.
 - **No package system.** No registry, no dep resolver, no versioning story.
-- **Spec drift.** Language spec §3-§9 describes the v0.11 shape (`class`/`record`/`enum`/`protocol` as primary forms), not the atom-substrate `def` opener the compiler implements. F66 pass-2 editorial rewrite pending — the spec you'd read to learn the language currently doesn't match what the compiler accepts.
+- **Spec drift.** Language spec §3–§9 still describes an earlier `class`/`record`/`enum`/`protocol` shape, not the atom-substrate `def` opener the compiler implements. Editorial rewrite pending — the spec you'd read to learn the language currently doesn't match what the compiler accepts.
 
 ## Runtime dependencies
 
@@ -122,11 +122,10 @@ At link time, cxc binaries depend on:
 
 ## Emission target
 
-ObjC source, not LLVM IR. Rationale: cxc's design is isomorphic to ObjC runtime semantics (nil-punning = ObjC nil-messaging, message dispatch = `objc_msgSend`, ARC = ARC, closures = blocks). Emitting ObjC lets clang do all lowering / optimization / platform work; saves ~40–80k LOC of LLVM backend and ~12–18 months of engineering. See `../design/working-notes.md` Phase 6 session note for the full argument.
+ObjC source, not LLVM IR. Rationale: cxc's design is isomorphic to ObjC runtime semantics (nil-punning = ObjC nil-messaging, message dispatch = `objc_msgSend`, ARC = ARC, closures = blocks). Emitting ObjC lets clang do all lowering / optimization / platform work; saves ~40–80k LOC of LLVM backend and ~12–18 months of engineering.
 
 ## Design references
 
 - Language spec: [`../design/spec/spec-cxc-v1.0.md`](../design/spec/spec-cxc-v1.0.md)
-- Design log: [`../design/working-notes.md`](../design/working-notes.md) (Phase 6 session note has compiler decisions)
 - Onboarding: [`../design/PATTERNS.md`](../design/PATTERNS.md)
 - Positioning: [`../design/positioning/overview.md`](../design/positioning/overview.md)

@@ -1,7 +1,7 @@
 # hello-agent — minimum viable agent harness
 
 **Purpose.** Demonstrate what an LLM agent looks like in cxc. Used
-as a forcing function for [Layer 7 (effects + plugins)](../../../compiler/design/layer-7-effects-and-plugins.md)
+as a forcing function for Layer 7 (effects + plugins)
 — every L7 landing (F74–F80) is checked against "does this let
 hello-agent.cxc parse and lower?"
 

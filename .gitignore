@@ -26,3 +26,19 @@ dist/
 raw/
 compiler/research/
 design/docs/
+
+# Internal design ledgers — dated decision addenda, per-feature landing
+# plans, session-scoped audits, WIP planning docs. Kept locally under
+# `raw/scrubbed-from-history/` for reference; never re-enter the public
+# tree.
+compiler/design/
+design/plans/
+design/validation/
+design/historical/
+design/archive/
+design/working-notes.md
+design/improvements.md
+design/examples/hello-agent/COMPLETION-PLAN.md
+design/examples/hello-agent/STATUS.md
+design/examples/hello-agent/hello-agent.decisions.md
+design/examples/hello-agent/hello-agent.graphs.md
