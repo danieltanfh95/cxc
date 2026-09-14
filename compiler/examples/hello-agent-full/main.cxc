@@ -1,4 +1,4 @@
-from com.acme.http_claude import Claude, Role, Message, StopReason, ToolAction, ToolCall, ChatResponse
+from com.acme.http_claude import Claude, StopReason, ToolAction, ChatResponse
 
 def AgentTools:
     use fs:       FileSystem
@@ -31,6 +31,10 @@ def main:
     turn_steps: Int!    = 0
     step_cap:   Int!    = 6
 
+    # `starting` is not one-hop ceremony — it separates first-entry
+    # (fire greeting once) from re-entry into `awaiting` after each
+    # turn (no greeting). Moving the greeting to `-> awaiting then:`
+    # would fire it on every round-trip.
     -> starting
         then: self :> boot()
 
@@ -56,8 +60,8 @@ def main:
     # Real turn: append user message to history, dispatch first ask.
     awaiting <: handle(line: String) -> thinking
         then:
-            history    => ||: (history == "") ?? true : "{\"role\":\"user\",\"content\":" + json.encode_str(line) + "}"
-                          ||: else                    : history + ",{\"role\":\"user\",\"content\":" + json.encode_str(line) + "}"
+            history    => ||: history == "" : "{\"role\":\"user\",\"content\":" + json.encode_str(line) + "}"
+                          ||: else          : history + ",{\"role\":\"user\",\"content\":" + json.encode_str(line) + "}"
             turn_steps => 0
             self :> ask()
 
@@ -131,6 +135,15 @@ def main:
             let text_block: String! = ||: safe_pre == "" : "" ||: else : "{\"type\":\"text\",\"text\":" + json.encode_str(safe_pre) + "},"
             self :> tool_done(call_id: call_id, result: result, tu_json: tu_json, text_block: text_block, label: "get_env " + n)
 
+    thinking <: exec_tool(call_id: String, action: ToolAction, preamble: String) -> thinking
+        |: action is .unknown(let n)
+        then:
+            let result:     String  = "error: unknown tool '" + n + "'"
+            let tu_json:    String  = "{\"type\":\"tool_use\",\"id\":" + json.encode_str(call_id) + ",\"name\":" + json.encode_str(n) + ",\"input\":{}}"
+            let safe_pre:   String! = preamble ?? ""
+            let text_block: String! = ||: safe_pre == "" : "" ||: else : "{\"type\":\"text\",\"text\":" + json.encode_str(safe_pre) + "},"
+            self :> tool_done(call_id: call_id, result: result, tu_json: tu_json, text_block: text_block, label: "unknown " + n)
+
     # Append assistant tool_use + user tool_result to history, log, loop.
     thinking <: tool_done(call_id: String, result: String, tu_json: String, text_block: String, label: String) -> thinking
         then:
@@ -141,5 +154,3 @@ def main:
 
     awaiting <: after_reply -> awaiting
         then: self :> read_next()
-
-    -> end

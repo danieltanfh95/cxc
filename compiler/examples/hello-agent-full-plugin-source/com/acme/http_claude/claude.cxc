@@ -32,6 +32,10 @@ def ToolAction:
     case read(path: String!)
     case write(path: String!, content: String!)
     case env_var(name: String!)
+    # Explicit fallthrough for a tool name the plugin does not recognize —
+    # keeps the consumer from silently running .shell(cmd: "") when the
+    # model emits something outside the catalog.
+    case unknown(name: String!)
 
 def ToolCall:
     id:     String!
@@ -40,11 +44,11 @@ def ToolCall:
 def ChatResponse:
     text:        String!
     stop_reason: StopReason!
-    # First tool call flattened onto the response. `List of ToolCall`
-    # would be more general but List-of-user-record has no accessor
-    # method at v1.0 (no `.at_or`/`.first` synthesized); flatten until
-    # the compiler grows it.
-    has_tool:    Bool!
+    # First tool call flattened onto the response — `List of ToolCall`
+    # would be more general but List-of-user-record has no `.at_or` /
+    # `.first` synthesized at v1.0. When `stop_reason is .end` these
+    # slots carry sentinel values (id: "", action: .unknown(name: "")).
+    # Consumer dispatches on `stop_reason`, not on a redundant flag.
     tool_id:     String!
     tool_action: ToolAction!
 
@@ -73,11 +77,10 @@ def Claude:
         let status: Int = json.field_int_or(envelope, "status", -1)
         let resp: String = json.field_string(envelope, "body")
         let reason: String = json.field_string(resp, "stop_reason")
-        let reason_nz: String = reason ?? "unknown"
-        let stop_variant: StopReason = ||: reason_nz == "end_turn"   : StopReason.end
-                                       ||: reason_nz == "tool_use"   : StopReason.tool_use
-                                       ||: reason_nz == "max_tokens" : StopReason.max_tokens
-                                       ||: else                      : StopReason.other(reason: reason_nz)
+        let stop_variant: StopReason = ||: reason == "end_turn"   : StopReason.end
+                                       ||: reason == "tool_use"   : StopReason.tool_use
+                                       ||: reason == "max_tokens" : StopReason.max_tokens
+                                       ||: else                   : StopReason.other(reason: reason ?? "unknown")
         # Probe the first two content blocks. No json.array_at
         # intrinsic yet — dynamic-length iteration lands with
         # array_at in a follow-on.
@@ -98,12 +101,11 @@ def Claude:
                                     ||: tc_name == "read_file"  : ToolAction.read(path: json.field_string_or_path(resp, prefix + "input.path", ""))
                                     ||: tc_name == "write_file" : ToolAction.write(path: json.field_string_or_path(resp, prefix + "input.path", ""), content: json.field_string_or_path(resp, prefix + "input.content", ""))
                                     ||: tc_name == "get_env"    : ToolAction.env_var(name: json.field_string_or_path(resp, prefix + "input.name", ""))
-                                    ||: else                    : ToolAction.shell(cmd: "")
+                                    ||: else                    : ToolAction.unknown(name: tc_name ?? "")
         let final_text: String = ||: status != 200 : "[http " + status.to_string() + "] " + resp
                                  ||: else          : text
         ChatResponse(text: final_text,
                      stop_reason: stop_variant,
-                     has_tool:    tu_idx >= 0,
                      tool_id:     tc_id,
                      tool_action: tc_action)
 
