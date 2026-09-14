@@ -2,32 +2,34 @@
 
 Clojure implementation of the cxc compiler. Emits ObjC source; clang produces the binary.
 
-**Status (2026-08-28).** Bootstrap compiler under active development on `main`. Pipeline `lex → parse → resolve → lower → emit → build` is wired end-to-end; **929 tests / 2486 assertions passing**. Coverage spans the v1.0 atom-substrate surface: `def <Name>:` with body-shape inference (F69), transitions + `then:` (F70), observables (`:<`), invariants, extensions, container atoms, streams, ObjC-inheriting runtime, multi-file build. F51 module-scope terminal shape (strict-hinted `resolve-decl-lookup` + two-primitive lookup split + `:cxc-f51-unresolved-name` diagnostic) landed 2026-08-28.
+**Status.** Bootstrap compiler on `main`, tagged v0.1.0-alpha. Pipeline `lex → parse → resolve → lower → emit → build` is wired end-to-end; **1053 tests / 2927 assertions passing**. Coverage spans the v1.0 atom-substrate surface: `def <Name>:` with body-shape inference (F69), transitions + `then:` (F70), observables (`:-`), invariants, extensions, container atoms, streams, ObjC-inheriting runtime, multi-file build. Twelve prelude capabilities (FileSystem, Http, Json, Subprocess, EnvVars, EnvMut, Args, Random, Time, Hash, Console, Clock) with typed raise on fallible methods.
 
-**Not distributable.** This is a bootstrap. There is no `cxc` binary — you invoke via `clj`, JVM starts each time. macOS only. No LSP, no IDE plugin, no package manager, no stdlib beyond a ~9-type prelude. Everything under [`examples/`](examples/) works; anything past it may hit `fail-nyi`. See [What you don't get](#what-you-dont-get) below.
+**Not distributable.** This is a bootstrap. There is no `cxc` binary — you invoke via `clj`, JVM starts each time. macOS only. No LSP, no IDE plugin, no package manager. Everything under [`examples/`](examples/) works; anything past it may hit `fail-nyi`. See [What you don't get](#what-you-dont-get) below.
 
 Feature-level tracking: [`design/spec-drift-audit.md`](design/spec-drift-audit.md) (per-item landing status), [`design/plans/`](design/plans/) (per-feature landing plans), [`design/loop-status-2026-08-26.md`](design/loop-status-2026-08-26.md) (weekly working ledger).
 
 ## Shape
 
-~22k lines of Clojure across 12 files. Deps: Clojure 1.12 + instaparse 1.5.0. No native components. Runs anywhere the JVM does.
+~28k lines of Clojure across 18 top-level files plus a `lower/` subdirectory. Deps: Clojure 1.12 + instaparse 1.5.0. No native components. Runs anywhere the JVM does.
+
+Biggest files (run `wc -l src/cxc/*.clj` for the full list):
 
 | File | LOC | Role |
 |---|---:|---|
-| [`src/cxc/lex.clj`](src/cxc/lex.clj) | 728 | Layout-aware tokenizer. Bracket-suppressed newlines. |
-| [`src/cxc/parse.clj`](src/cxc/parse.clj) | 3,475 | Hand-rolled recursive-descent. `def` opener → body-shape inference (F69). (instaparse dep is legacy/unused today.) |
-| [`src/cxc/resolve.clj`](src/cxc/resolve.clj) | 813 | Symbol table + module attribution + `resolve-references` (stamps `:resolves-to` on ref nodes per F51). |
-| [`src/cxc/section.clj`](src/cxc/section.clj) | 376 | Section machinery (spec §4). |
-| [`src/cxc/prelude.clj`](src/cxc/prelude.clj) | 221 | Prelude module registry + assembly. Loads `.cxc` from [`resources/prelude/`](resources/prelude/). |
+| [`src/cxc/lower.clj`](src/cxc/lower.clj) | 8,862 | The big one. cxc AST → ObjC AST + every semantic check. |
+| [`src/cxc/parse.clj`](src/cxc/parse.clj) | 3,933 | Hand-rolled recursive-descent. `def` opener → body-shape inference (F69). |
+| [`src/cxc/emit.clj`](src/cxc/emit.clj) | 2,386 | ObjC AST → `.m` source string. Ships inline runtime helpers per-program. |
+| [`src/cxc/build.clj`](src/cxc/build.clj) | 1,017 | Multi-file build, prelude enrichment, invoke clang, manifest emission. |
+| [`src/cxc/plugin_manifest.clj`](src/cxc/plugin_manifest.clj) | 944 | Third-party plugin manifest parse + validation (F76). |
+| [`src/cxc/resolve.clj`](src/cxc/resolve.clj) | 803 | Symbol table + module attribution + reference stamping (F51). |
+| [`src/cxc/lex.clj`](src/cxc/lex.clj) | 755 | Layout-aware tokenizer. Bracket-suppressed newlines. |
+| [`src/cxc/type_kw.clj`](src/cxc/type_kw.clj) | 564 | Type-kw vocabulary + Optional-boxing helpers. |
 | [`src/cxc/named_tuple.clj`](src/cxc/named_tuple.clj) | 488 | Structural named-tuple conformance (F15). |
-| [`src/cxc/lower.clj`](src/cxc/lower.clj) | **12,372** | The big one. cxc AST → ObjC AST + every semantic check. Env-builders, `decl-lookup`/`env-lookup` primitives, all lowering. |
-| [`src/cxc/emit.clj`](src/cxc/emit.clj) | 2,052 | ObjC AST → `.m` source string. Ships inline runtime helpers per-program. |
-| [`src/cxc/build.clj`](src/cxc/build.clj) | 923 | Multi-file build, prelude enrichment, invoke clang, manifest emission. |
-| [`src/cxc/manifest.clj`](src/cxc/manifest.clj) | 344 | Per-module `.cxc-manifest.json` + program-wide `cxc-deps.json` (F53 L1/L2). |
-| [`src/cxc/incremental.clj`](src/cxc/incremental.clj) | 145 | Incremental-rebuild scaffolding. |
-| [`src/cxc/core.clj`](src/cxc/core.clj) | 61 | CLI entry point. |
+| [`src/cxc/prelude.clj`](src/cxc/prelude.clj) | 330 | Prelude module registry + assembly. Loads `.cxc` from [`resources/prelude/`](resources/prelude/). |
 
-Tests: 10 files, ~12k lines under [`test/cxc/`](test/cxc/) — [`build_test.clj`](test/cxc/build_test.clj) is the end-to-end harness that compiles every file under [`examples/`](examples/) and asserts on the produced binary's stdout.
+Balance: `project.clj`, `manifest.clj`, `section.clj`, `env.clj`, `incremental.clj`, `core.clj`, `mangle.clj`, `diagnostics.clj`, and the small `lower/` split-outs.
+
+Tests: 11 files, ~14k lines under [`test/cxc/`](test/cxc/) — [`build_test.clj`](test/cxc/build_test.clj) is the end-to-end harness that compiles every file under [`examples/`](examples/) and asserts on the produced binary's stdout.
 
 ## Getting started
 
@@ -41,7 +43,7 @@ clj -M -m cxc.core examples/hello.cxc /tmp
 /tmp/hello        # → hello, world
 ```
 
-That's [`core/-main`](src/cxc/core.clj#L42) → `build/compile-source-to-file` → parse → resolve → lower → emit → clang → binary at `<out-dir>/<name>`. Point at any of the 82 files in [`examples/`](examples/) — every one runs end-to-end under the test suite ([`examples/README.md`](examples/README.md) has a per-file capsule + expected stdout).
+That's [`core/-main`](src/cxc/core.clj#L42) → `build/compile-source-to-file` → parse → resolve → lower → emit → clang → binary at `<out-dir>/<name>`. Point at any of the 159 files in [`examples/`](examples/) — every one runs end-to-end under the test suite ([`examples/README.md`](examples/README.md) has a per-file capsule + expected stdout).
 
 **Compile a multi-file project.** No CLI wrapper yet — go through Clojure:
 
@@ -58,7 +60,7 @@ Layout expected: one `.cxc` per module, each with a `module <name>` header, impo
 **Dev loop.**
 
 ```
-clj -M:test                              # full test suite (~30s cold)
+clj -M:test                              # full test suite (~2 minutes)
 clj -M:nrepl -m nrepl.cmdline            # REPL for iterative dev
 ```
 
@@ -87,14 +89,14 @@ cxc programs are graphs of *atoms* (`def <Name>:`). An atom is a class-with-a-st
 1. [`examples/hello.cxc`](examples/hello.cxc) — one-line `print`. The minimum surface.
 2. [`examples/atom-simple.cxc`](examples/atom-simple.cxc) — `def Counter:` with a data field. Introduces the atom (spec §1.11).
 3. [`examples/atom-methods.cxc`](examples/atom-methods.cxc) — methods on atoms, ObjC selector emission.
-4. [`examples/observable-simple.cxc`](examples/observable-simple.cxc) — `:<` observable syntax.
+4. [`examples/observable-simple.cxc`](examples/observable-simple.cxc) — `:-` observable syntax.
 5. [`examples/invariant-pass.cxc`](examples/invariant-pass.cxc) — `|:` invariant contract.
 6. [`examples/stream-simple.cxc`](examples/stream-simple.cxc) — `:>` fanout + subscribe.
 7. [`examples/multi-file-demo/`](examples/multi-file-demo/) — multi-module program layout.
 
 ## What the pipeline covers today
 
-Every example in [`examples/`](examples/) compiles + runs + matches expected stdout under [`test/cxc/build_test.clj`](test/cxc/build_test.clj). Landed coverage includes: single-file + multi-file builds, records/enums/atoms, transitions, streams, invariants, ctor-params, use-caps, list/map/set containers, prelude (Duration, Instant, Position, Clock, Random, TestKeyboardInput, Console, SystemPanic, Uncaught, Key), F16 tagged-variant enums, F37 canonical bytes, F39 nullability, F49 pre-store invariant checks, F51 module scoping (strict-hinted resolution — 2026-08-28), F52 module let-bindings, F56 emit-boundary C-id mangling.
+Every example in [`examples/`](examples/) compiles + runs + matches expected stdout under [`test/cxc/build_test.clj`](test/cxc/build_test.clj). Landed coverage includes: single-file + multi-file builds, records/enums/atoms, transitions, streams, invariants, ctor-params, use-caps, list/map/set containers, twelve prelude capabilities with typed raise (see [`resources/prelude/`](resources/prelude/)), F16 tagged-variant enums, F37 canonical bytes, F39 nullability, F49 pre-store invariant checks, F51 module scoping, F52 module let-bindings, F56 emit-boundary C-id mangling, F76 third-party plugin manifests.
 
 Beyond those examples, you're gambling on `fail-nyi`. The compiler is honest — anything it can't lower raises `:not-yet-implemented` with a specific message pointing at the plan doc that will land it. Feature status is tracked in [`design/loop-status-2026-08-26.md`](design/loop-status-2026-08-26.md) (rolling ledger) and per-feature under [`design/plans/`](design/plans/).
 
@@ -105,7 +107,7 @@ Notable gaps: F9 protocol dispatch beyond L6; F15 L4+ structural conformance bey
 - **No `cxc` binary.** Invoke via `clj`; JVM starts each time.
 - **No LSP, no IDE plugin.** Errors show up at clang or `fail-nyi`. Autocomplete, jump-to-def, rename: all absent.
 - **macOS only.** `:target :macos` is the only working prelude target.
-- **Stdlib is ~9 types.** Duration, Instant, Position, Clock, Random, TestKeyboardInput, Console, SystemPanic, Uncaught, Key. No filesystem I/O, no networking, no HTTP, no JSON, no argv, no calendar, no env vars.
+- **macOS-only capabilities.** The twelve prelude capabilities ship for macOS/Foundation only. Linux (seccomp-bpf) and OpenBSD (pledge) enforcement paths are spec'd but not implemented. Windows is manifest-only.
 - **No debugger, no source maps.** Failures come out of clang or the emitted ObjC. Cache the `.m` at `compiler/.cxc-cache/last/` and read it to see what happened.
 - **No package system.** No registry, no dep resolver, no versioning story.
 - **Spec drift.** Language spec §3-§9 describes the v0.11 shape (`class`/`record`/`enum`/`protocol` as primary forms), not the atom-substrate `def` opener the compiler implements. F66 pass-2 editorial rewrite pending — the spec you'd read to learn the language currently doesn't match what the compiler accepts.

@@ -13,7 +13,7 @@ Requires macOS with `clang` (from Xcode command-line tools) and a Clojure CLI (`
 ```
 git clone https://github.com/danieltanfh/corvid
 cd corvid/compiler
-clojure -M:test           # 1053 tests, ~90s. all green means the pipeline works.
+clojure -M:test           # 1053 tests, ~2 minutes. all green means the pipeline works.
 ```
 
 To compile and run one program:
@@ -45,6 +45,8 @@ Prints `hello, world`. Every `.cxc` under [compiler/examples/](compiler/examples
 ## Design notes (historical)
 
 The sections below are the design-handoff narrative that predates the alpha release. Kept for anyone tracing decisions back through v0.10 → v1.0. Skip if you just want to use the language.
+
+**Every specific number, date, or "as of" reference below is a snapshot from the drafting date.** Current test count, capability list, and landing status live in [CHANGELOG.md](CHANGELOG.md) and [compiler/README.md](compiler/README.md), not here.
 
 ---
 
