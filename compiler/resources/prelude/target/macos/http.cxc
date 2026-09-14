@@ -1,28 +1,27 @@
 def Http:
-    # D1(ii) 2026-09-09: `get` / `post` migrated to typed raise
-    # (nil response body is unambiguously an error path — non-2xx
-    # responses go through `_envelope` variants). `head_status`
-    # keeps returning Int; -1 is a valid domain probe (http-head-status
-    # test deliberately calls it with a bad URL and asserts on -1).
-    # `_envelope` variants intentionally stay total — they surface
-    # HTTP-layer failure via the JSON `{status, body}` envelope so
-    # callers can inspect body-on-error without an `or` arm (per spec
-    # §1.13 Http notes). `download_to_file` keeps returning Int (rc-
+    # D1(ii) 2026-09-09 (hickey pass phase C 2026-09-14): `get` / `post`
+    # return a typed `HttpResponse` record with `.status` / `.body`
+    # fields — the JSON envelope from `native_http_*_envelope` is parsed
+    # inside the capability so consumers never see it. `status == -1`
+    # signals transport-layer failure before any HTTP response arrived
+    # (DNS, TCP, TLS); `body` is empty in that case. Non-2xx statuses
+    # populate `body` normally so callers can inspect error payloads
+    # without an `or` arm.
+    #
+    # `head_status` keeps returning Int; -1 is a valid domain probe
+    # (http-head-status test deliberately calls it with a bad URL and
+    # asserts on -1). `download_to_file` keeps returning Int (rc-
     # sentinel probing pattern, same policy as fs.write_text).
 
-    get(url: String, headers_json: String) :- String!
-        let r: String = native_http_get(url, headers_json)
-        ||: r == nil : raise HttpError(reason: "http.get failed", url: url, status: -1)
-        ||: else     : r
+    get(url: String, headers_json: String) :- HttpResponse
+        let raw: String = native_http_get_envelope(url, headers_json)
+        HttpResponse(status: native_json_field_int_or(raw, "status", -1),
+                     body:   native_json_field_string_or(raw, "body", ""))
 
-    post(url: String, headers_json: String, body: String) :- String!
-        let r: String = native_http_post(url, headers_json, body)
-        ||: r == nil : raise HttpError(reason: "http.post failed", url: url, status: -1)
-        ||: else     : r
-
-    get_envelope(url: String, headers_json: String) :- native_http_get_envelope(url, headers_json)
-
-    post_envelope(url: String, headers_json: String, body: String) :- native_http_post_envelope(url, headers_json, body)
+    post(url: String, headers_json: String, body: String) :- HttpResponse
+        let raw: String = native_http_post_envelope(url, headers_json, body)
+        HttpResponse(status: native_json_field_int_or(raw, "status", -1),
+                     body:   native_json_field_string_or(raw, "body", ""))
 
     head_status(url: String) :- native_http_head_status(url)
 

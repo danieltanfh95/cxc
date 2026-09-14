@@ -4,8 +4,8 @@ def main:
 
     -> running
         then:
-            let body: String = http.get("https://example.com", "{}")
+            let resp: HttpResponse = http.get("https://example.com", "{}")
             console.write("got a body")
-            console.write(body)
+            console.write(resp.body)
 
     -> end

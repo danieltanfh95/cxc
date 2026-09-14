@@ -22,3 +22,12 @@ def ProcResult:
     stdout:    String
     stderr:    String
     exit_code: Int
+
+# `HttpResponse` — typed return of `Http.get` / `Http.post`. Replaces
+# the JSON-string envelope so callers walk `.status` / `.body` directly
+# instead of `json.field_int_or(env, "status", -1)` / `json.field_string_or(env, "body", "")`
+# at every site. `status` is -1 when the transport failed before any
+# HTTP response arrived (DNS/TCP/TLS); `body` is empty in that case.
+def HttpResponse:
+    status: Int
+    body:   String

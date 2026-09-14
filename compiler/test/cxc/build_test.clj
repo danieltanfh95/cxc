@@ -2506,7 +2506,7 @@
 
 (deftest http-compiles-cleanly-5
   (testing "5 (2026-09-03) — `Http` prelude capability compiles cleanly. Does NOT hit the network (would flake in CI); this only asserts a program that uses `use http: Http` + `http.get` + `http.post` clears parse, lower, and clang. Network round-trip verification is manual (examples/http-example-com.cxc)."
-    (let [src "def main:\n    use http: Http\n    use console: Console\n    -> running\n        then:\n            let body: String = http.get(\"https://example.com\", \"{}\")\n            let post: String = http.post(\"https://example.com\", \"{}\", \"{}\")\n            console.write(\"compiled ok\")\n    -> end\n"
+    (let [src "def main:\n    use http: Http\n    use console: Console\n    -> running\n        then:\n            let body: HttpResponse = http.get(\"https://example.com\", \"{}\")\n            let post: HttpResponse = http.post(\"https://example.com\", \"{}\", \"{}\")\n            console.write(\"compiled ok\")\n    -> end\n"
           out-dir (tmp-dir)
           {:keys [status stderr]}
           (build/compile-source-to-file src "http-smoke" (.getPath out-dir))]

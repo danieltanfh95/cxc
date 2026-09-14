@@ -9,12 +9,10 @@ def Claude:
         let key: String = env_vars.get_or("ANTHROPIC_API_KEY", "")
         let headers: String = "{\"x-api-key\":" + json.encode_str(key) + ",\"anthropic-version\":\"2023-06-01\",\"content-type\":\"application/json\"}"
         let body: String = "{\"model\":" + json.encode_str(model) + ",\"max_tokens\":128,\"messages\":[{\"role\":\"user\",\"content\":" + json.encode_str(prompt) + "}]}"
-        let envelope: String = http.post_envelope("https://api.anthropic.com/v1/messages", headers, body)
-        let status: Int = json.field_int_or(envelope, "status", -1)
-        let resp: String = json.field_string_or(envelope, "body", "")
-        let text: String = json.field_string_or_path(resp, "content.0.text", "")
-        ||: status != 200 : "[http " + status.to_string() + "] " + resp
-        ||: text == ""    : "(no text)"
-        ||: else          : text
+        let envelope: HttpResponse = http.post("https://api.anthropic.com/v1/messages", headers, body)
+        let text: String = json.field_string_or_path(envelope.body, "content.0.text", "")
+        ||: envelope.status != 200 : "[http " + envelope.status.to_string() + "] " + envelope.body
+        ||: text == ""             : "(no text)"
+        ||: else                   : text
 
     -> ready

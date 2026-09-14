@@ -93,7 +93,7 @@
    ;; `Subprocess.run_full` / future `run_typed`. Loaded shared so
    ;; user records / aspirational hello-agent can import from a
    ;; single-source-of-truth prelude module regardless of target.
-   {:name :subprocess_types :kind :shared :names ["EnvSpec" "ProcResult"]}
+   {:name :subprocess_types :kind :shared :names ["EnvSpec" "ProcResult" "HttpResponse"]}
    ;; SemVer + VersionRange are used by every plugin's `def plugin:`
    ;; manifest (`version: SemVer!` / `compat: VersionRange!` fields).
    ;; Centralized here so plugin authors never import. Landed 2026-08-31

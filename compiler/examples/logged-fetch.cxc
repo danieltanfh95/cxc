@@ -12,10 +12,10 @@ def main:
             let _rm: Bool = fs.remove(log_path)
             let corr:  String = random.hex(16)
             let t0:    Instant = time.now()
-            let env:   String = http.get_envelope("https://example.com", "{}")
+            let env:   HttpResponse = http.get("https://example.com", "{}")
             let d:     Duration = time.since(t0)
-            let stat:  Int = json.field_int_or(env, "status", -1)
-            let body:  String = json.field_string_or(env, "body", "")
+            let stat:  Int = env.status
+            let body:  String = env.body
             let body_len: Int = body.length()
             let ok:    Bool = stat == 200
             let line:  String = "corr=" + corr + " ts_ms=" + t0.millis.to_string() + " latency_ms=" + d.millis.to_string() + " status=" + stat.to_string() + " ok=" + ok.to_string() + " body_bytes=" + body_len.to_string() + "\n"
