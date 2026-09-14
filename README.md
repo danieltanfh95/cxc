@@ -1,3 +1,53 @@
+# cxc
+
+An atom-substrate language for the Apple ecosystem. Emits Objective-C; clang produces the binary.
+
+**Public alpha.** Bootstrap compiler works end-to-end for the atom-substrate surface described in the v1.0 spec. Design is stable; the surface will shift as feedback lands. Do not depend on it for production.
+
+License: [MIT](LICENSE).
+
+## Try it
+
+Requires macOS with `clang` (from Xcode command-line tools) and a Clojure CLI (`brew install clojure/tools/clojure`).
+
+```
+git clone https://github.com/danieltanfh/corvid
+cd corvid/compiler
+clojure -M:test           # 1053 tests, ~90s. all green means the pipeline works.
+```
+
+To compile and run one program:
+
+```
+clojure -M -e "
+(require '[cxc.build :as b])
+(let [src (slurp \"examples/hello.cxc\")
+      out \"/tmp/cxc-hello\"]
+  (clojure.java.io/make-parents (str out \"/x\"))
+  (let [r (b/compile-source-to-file src \"hello\" out)]
+    (when (zero? (:status r))
+      (println (:stdout (b/run-binary (:bin-path r)))))))
+"
+```
+
+Prints `hello, world`. Every `.cxc` under [compiler/examples/](compiler/examples/) is compiled and run by the test suite — start there for what the language currently expresses. [compiler/examples/README.md](compiler/examples/README.md) is the coverage index.
+
+## Where things live
+
+- [design/spec/spec-cxc-v1.0.md](design/spec/spec-cxc-v1.0.md) — the language spec.
+- [design/PATTERNS.md](design/PATTERNS.md) — onboarding by translation from other languages.
+- [compiler/](compiler/) — the bootstrap compiler in Clojure. Reads `.cxc`, emits `.m`, drives clang.
+- [compiler/resources/prelude/](compiler/resources/prelude/) — the stdlib capabilities (FileSystem, Http, Json, Subprocess, EnvVars, EnvMut, Random, Time, Hash, Console, Args, Clock).
+- [design/examples/](design/examples/) — aspirational programs beyond current compiler coverage.
+
+---
+
+## Design notes (historical)
+
+The sections below are the design-handoff narrative that predates the alpha release. Kept for anyone tracing decisions back through v0.10 → v1.0. Skip if you just want to use the language.
+
+---
+
 # cxc Language Design — Handoff Bundle
 
 **Name.** cxc — **channels-C**, positioned in the naming lineage of **objc** (objective-C). Just as objc added object-orientation on top of C, cxc adds channels / CSP / an atom substrate on top of the C-family systems lineage. Originally codenamed **Corvid** (2026-08); the codename persists in directory paths, historical design notes, and repo infrastructure. Both names refer to the same language.

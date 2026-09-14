@@ -15,3 +15,14 @@ dist/
 # cxc build cache — content-hashed clang output + last-emitted .m per
 # example, kept between test runs to skip clang on unchanged emit
 .cxc-cache/
+
+# Local session state — agent transcripts, scratch notes, in-progress
+# handoffs. Never committed; kept per-clone.
+.claude/
+.manual.md
+.succession/
+
+# Local research/exploration scratch — not part of the public surface.
+raw/
+compiler/research/
+design/docs/
