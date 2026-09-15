@@ -81,6 +81,12 @@
       (is (zero? exit))
       (is (= "hello, world\n" stdout)))))
 
+(deftest end-to-end-cancel-token
+  (testing "cancel-token.cxc — CancelToken from std.async prelude: `cancelled` field starts false, `|> cancel()` flips it to true."
+    (let [{:keys [exit stdout]} (compile-and-run "cancel-token")]
+      (is (zero? exit))
+      (is (= "0\n1\n" stdout)))))
+
 (deftest end-to-end-plugin-marker-b8
   (testing "B8 (2026-09-02) — a source file with `def plugin:` + `def main:` compiles through the full pipeline (parse → B3 manifest resolver → B4 linker gate → B5 symbol resolver → lower elides :def-plugin → emit → clang), the binary runs, and B7 emits a `<binary>.cxc-caps` sidecar with the plugin listed."
     (let [src     (example "hello-plugin")

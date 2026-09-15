@@ -88,6 +88,12 @@
    ;; before target caps that raise them. See prelude/shared/errors.cxc
    ;; and [[corvid-cap-typed-errors]] memory.
    {:name :errors  :kind :shared :names ["IOError" "HttpError" "ShellError" "JsonError" "EnvError"]}
+   ;; std.async — sane-default async lifecycle primitives (2026-09-15).
+   ;; MVP ships `CancelToken` — cooperative cancellation. The substrate
+   ;; is unaware; atoms opt in by reading the token in transition
+   ;; guards or receiving `<: token.cancel`. See §1.11 "Async lifecycle
+   ;; policies" for the design rationale.
+   {:name :async   :kind :shared :names ["CancelToken"]}
    ;; Subprocess data types (2026-09-09) — `EnvSpec` variant for
    ;; R17-required `env:` param; `ProcResult` typed return for
    ;; `Subprocess.run_full` / future `run_typed`. Loaded shared so

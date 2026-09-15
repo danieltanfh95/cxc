@@ -1,0 +1,17 @@
+def CancelToken:
+    # Cooperative cancellation primitive. Atoms opt in by reading
+    # `token.cancelled` in a transition guard, or by receiving the
+    # token's own `cancel` message via `<: token.cancel`. The
+    # substrate does not interrupt running transitions; a transition
+    # body that never observes the token cannot be cancelled.
+    #
+    # One-way: `cancel` sets `cancelled => true` and it stays true.
+
+    cancelled: Bool! = false
+
+    -> active
+
+    active <: cancel -> active
+        then: cancelled => true
+
+    -> end

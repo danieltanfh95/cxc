@@ -964,18 +964,174 @@ Rejected: `native def` keyword splits the type system into two atom categories. 
 
 ### "I need `Future<T>` / `Signal<T>` / `Promise<T>` for one-shot async values"
 
-There is one channel primitive: `Stream of T`. Cardinality lives in `where` clauses. Prelude ships aliases for the common cases:
+There aren't any. Async values are atoms whose lifecycle carries the "not ready → ready" transition; the atom holding the eventual value IS the shape. A caller who wants the value observes the atom (waits for a `:> completed(result)` emission, or reads a `result` field after the atom transitions to a done phase).
 
 ```
-# Prelude:
-alias Future of T = Stream of T where emits <= 1        # zero-or-one emission
-alias Signal of T = Stream of T where emits == 1        # exactly one emission
+def Fetch:
+    result: String! = nil
 
-# Use in signatures — reads the same as if they were primitive types:
--> after(duration: Duration) -> Future of Unit:
+    -> loading
+        then:
+            # ... do the fetch ...
+            self :> arrived(text)
+
+    loading <: arrived(text: String) -> ready
+        then: result => text
+
+def main:
+    fetch: Fetch = Fetch()
+    -> waiting
+    waiting <: fetch.arrived(text: String) -> done
+        then: print(text)
 ```
 
-Cardinality propagates via operator contracts: `map: emits(out) == emits(in)`, `filter: emits(out) <= emits(in)`. Every operator works on Stream; Future and Signal shapes are just the constrained cases. No separate primitive to teach. See §1.13 stdlib capability shapes.
+No `Future[T]` type, no `await` keyword. The atom's phase IS the "is it ready" bit; the atom's emission IS the "here's the value" delivery. See §1.11 "Async lifecycle policies" for the nine-axis mapping.
+
+### "I need to cancel a long-running operation"
+
+Corvid does not preempt running transitions. Cancellation is cooperative: use `CancelToken` from the async prelude, and check it in your transition guards.
+
+```
+def Work(token: CancelToken):
+    steps_done: Int! = 0
+
+    -> running
+        then: self :> step
+
+    running <: step -> running
+        |: not token.cancelled
+        then:
+            steps_done => steps_done + 1
+            self :> step
+
+    running <: step -> end
+        |: token.cancelled
+
+def main:
+    token: CancelToken = CancelToken()
+    worker: Work = Work(token: token)
+
+    -> running
+        then:
+            # ... work runs concurrently ...
+            |> token.cancel()
+```
+
+`CancelToken` has a `cancelled: Bool` field and a `cancel` message; sending the message flips the field. Every transition guard that reads `token.cancelled` gives the transition a chance to bail. A transition body that never reads it cannot be cancelled — this is the price of cooperative cancellation and the reason it never corrupts mid-write state.
+
+Top-down (parent-held token, children observe), bottom-up (each child's own token, parent joins), and simultaneous (shared token graph) are all compositions of the same `CancelToken` — the library doesn't need three variants. See §1.11 "Async lifecycle policies" for the design rationale.
+
+### "I need a `Deadline` — cancel after N milliseconds"
+
+Compose `Clock` and `CancelToken`. Not a shipped atom — the composition is short enough to write per use case.
+
+```
+def Deadline:
+    timer: Clock = Clock(ticks: 1)
+    elapsed: Bool! = false
+
+    -> waiting
+        then: timer.every(delay_ms)
+
+    waiting <: timer.tick -> waiting
+        then: elapsed => true
+
+    -> end
+```
+
+Constructor param `delay_ms: Int!` fills in via the same shape as any atom ctor. Callers read `deadline.elapsed` from a transition guard, just like `token.cancelled`. A worker that respects both:
+
+```
+running <: step -> end
+    |: token.cancelled or deadline.elapsed
+```
+
+If a first-class Deadline shipped in the prelude, this is the shape it would have. It's small enough that leaving it in user code (or per-project) trades one indirection for zero library surface.
+
+### "I need `Future<T>` result — start work, await value"
+
+The pattern: a task atom does the work, publishes the result via a companion `:> completed(r: T)` emission, and terminates. The waiter subscribes to the emission.
+
+```
+def Task:
+    result: Int! = 0
+
+    -> running
+        then: self :> compute
+
+    running <: compute -> running
+        then:
+            result => 42
+            :> completed(r: 42)
+
+    -> end
+
+def main:
+    task: Task = Task()
+
+    -> waiting
+
+    waiting <: task.completed(r: Int) -> end
+        then: print(r)
+```
+
+Two things worth calling out. **Payload args must be named** at both emit and receive: `:> completed(r: 42)` matches `<: task.completed(r: Int)`. Positional emit is a lower-time rejection. And **the atom holding the Task is the "future"** — there is no separate `Future[T]` type; the atom shape carries the "not ready → ready → value delivered" progression via its phase transitions and companion emissions.
+
+For work that raises, no separate machinery: the transition body raises, the substrate fires the `<msg>_failed(reason:)` companion (§1.11 propagation rules), and the atom auto-nils in its slot. Subscribers observe both the success companion and the failure companion.
+
+### "My program does its work and prints, but never exits"
+
+Every atom's lifetime is scoped to its containing atom; `def main` is scoped to the program. **The process exits when `main` transitions to `end`, not when its `-> running then:` block finishes.** If `main` never reaches `end`, `dispatch_main()` keeps running forever — that's the actor-system model, not a bug.
+
+Two common shapes:
+
+```
+# Exits on its own — main's -> running then: is the whole program.
+# No message-triggered transitions on main, so no dispatch_main loop
+# is emitted; main() returns normally after the then: block.
+def main:
+    token: CancelToken = CancelToken()
+    -> running
+        then:
+            |> token.cancel()
+            print(token.cancelled)
+
+# Exits when the awaited event arrives. main has a message-triggered
+# transition, so dispatch_main runs; the -> end target routes through
+# -transitionToEnd which fires cxc_shutdown() → exit(0).
+def main:
+    task: Task = Task()
+    -> waiting
+    waiting <: task.completed(r: Int) -> end
+        then: print(r)
+```
+
+If your program prints "done" and hangs, look for a message-triggered transition on main with no path to `-> end`. Add one — often via observing the completion emission of a sub-atom, or via a `CancelToken` combined with a `<: token.cancel -> end` transition.
+
+### "I need a `Scope` / `Nursery` for structured concurrency"
+
+Hold children as fields (static shape) or as a `List of Worker` (dynamic membership). Cascade destruction (§1.11) already ends them when the parent ends — post-order, synchronous.
+
+```
+# Static shape: fixed set of children.
+def Boss:
+    a: Worker = Worker(id: 1)
+    b: Worker = Worker(id: 2)
+
+    -> running
+    -> end       # cascade: b ends, a ends, Boss ends
+
+# Dynamic shape: variable-count children.
+def Team:
+    workers: List of Worker = [Worker(id: 1), Worker(id: 2), Worker(id: 3)]
+
+    -> running
+    -> end       # cascade: each worker ends in list order, Team ends
+```
+
+No shipped `Scope` atom. The substrate answer is: the parent atom IS the scope. `end` is the scope-exit point. Cascade IS the destruction policy — currently "cancelled destruction" in the Brown taxonomy (mid-transition work in children is dropped when cascade fires). If you need "awaited destruction" (parent waits for children to complete their in-flight work), the children have to cooperate: parent signals via a `CancelToken`, children finish their unit of work and self-transition to `end`, parent observes the slot going nil before its own `-> end`.
+
+Trio-style nurseries (spawn tasks inside a `with` block, aggregate exceptions on exit) don't exist as a first-class construct because the mechanism is already there — a compound atom with sub-atom slots is a nursery. See §1.11 "Async lifecycle policies" for the destruction axis and the rationale for cooperative vs. preemptive teardown.
 
 ### "I need an `entrypoints:` section to declare my public API"
 
@@ -1374,7 +1530,6 @@ Explicit `constructor:` section remains legal when custom logic is needed (valid
 
 ## Cross-references
 
-- **Full spec:** `spec/spec-v0.11.md`
-- **Design decisions log:** `working-notes.md`
-- **Positioning docs:** `positioning/overview.md`, `positioning/game-of-life.md`, `positioning/ecosystem.md`
-- **Empirical validation:** `validation/README.md` and per-parity friction logs
+- **Full spec:** `spec/spec-cxc-v1.0.md`
+- **Positioning:** `positioning/overview.md`
+- **Examples:** `examples/README.md`

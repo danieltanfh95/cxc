@@ -1886,6 +1886,28 @@ cxc is an **atom-substrate reactive language with Swift-shaped surface, CSP + co
 
 The Swift-shaped surface stays (ObjC interop, familiar syntax patterns for developers migrating from Swift/Kotlin/TypeScript). The atom substrate is what the surface desugars into — the design commitment.
 
+**Async lifecycle policies.**
+
+The async/await design space (Brown CS taxonomy) identifies nine axes on which languages take positions. Corvid does not ship async/await; async is atom lifecycles. But the nine axes still apply — a substrate that runs transitions concurrently must commit to answers on each. The commitments below are promises, cross-referenced to the mechanisms that carry them.
+
+| Axis | Commitment | Where it lives |
+|---|---|---|
+| **Eagerness** | Eager on construction. | `init` phase runs on instantiation; no lazy coroutine object. Sub-atom slots stay nil until a `then:` assigns them. |
+| **Suspension** | Explicit per glyph pair. | `<:` / `<|` / `:>` / `|>` — the sender/receiver combinations (§1.11 "Send/receive glyph semantics") declare suspension per endpoint. No implicit yield points. |
+| **Extent** | Scoped to containing atom. | Sub-atoms live as long as their parent's slot holds them; `def main` lives as long as the program. |
+| **Reference Strength** | Parent-owns-child via slot. | The slot holds the sub-atom. On sub-atom `end` the slot auto-nils; parents observe end via `slot is nil` or via a `:> completed` emission from the sub-atom's end transition. |
+| **Destruction** | Cascade — synchronous, post-order, no mid-transition cancel. | On parent `end`: (1) parent `then:` runs; (2) each sub-atom cascades to `end` in declaration order (each runs its own `then:` side-effects); (3) sub-atoms destroyed; (4) parent destroyed. Any async work not landed by the time the child hits `end` is dropped — the child's mailbox is not drained. |
+| **Propagation** | Typed on raise; async-orphan-visible via companion. | A raise inside a transition body: (a) logs failure, (b) fires the companion `<msg>_failed(reason:)` emission if any observer subscribed, (c) transitions the atom to `end` (slot auto-nils), (d) re-raises. Sync senders (`\|>`) catch the re-raise and dispatch their `or:` arms; async senders (`:>`) log-and-continue at the boundary but the failed atom still ends and its slot auto-nils. **No raise is silently swallowed** — either a caller sees it, or an observer sees the companion, or the parent sees the slot go nil. |
+| **Cancellation awareness** | Substrate-unaware; cooperative via library. | The runtime does not send a cancel signal into a running transition body. Cooperative cancellation is provided by the `std.async` library via `CancelToken` — atoms opt in by observing a token in their transition guards. |
+| **Cancellation direction** | Library convention. | `std.async` documents top-down (parent-held token, children observe), bottom-up (children hold tokens, parent joins), and simultaneous (shared token graph). Not a substrate axis. |
+| **Cancellation persistence** | Library convention. | `CancelToken`'s `active → cancelled` transition is one-way. Alternative variants are library work if a use case demands them. |
+
+**Design implication.** Corvid has no `async` keyword and no `await`. It has a substrate that makes each of the nine axes an explicit choice — at the glyph level (`<:` / `<|` / `|>` / `:>`), at the atom-composition level (slot scoping, cascade), or via library atoms (`CancelToken`, `Deadline`, `Scope`, `Task` in `std.async`). Users pick their async model by picking their glyphs, their atom shapes, and their library imports.
+
+**Rationale for library-shaped cancellation.** Preemptive cancellation (interrupting a running transition) requires either a compiler-inserted check-yield in every transition body (paying a per-transition cost even where nothing cancels), or OS-level signal machinery (`pthread_cancel`, etc.) which is unsafe for mid-write operations. Cooperative cancellation via observed tokens costs nothing for atoms that don't use it, and makes the "am I still supposed to be running?" question visible in source. This matches the substrate's stance: mechanism in library, not mechanism in language.
+
+**No `Future[T]` / `Promise[T]` / `Signal[T]` types.** These are async/await's data-shaped answers to "a value that will eventually exist." In Corvid, the atom holding the eventual value IS the shape: `Task[T]` is an atom whose observable `.result` reads only after the atom transitions to `done`; a caller wanting the value sync-sends and waits. Ratified 2026-09-07.
+
 ### 1.12 The OS boundary — capabilities as atoms
 
 The atom substrate commits to a single mechanism (atom composition) for every operation the language supports. The OS boundary — time, filesystem, network, console, random, etc. — receives no special-case machinery. Every OS-adjacent capability is an ordinary atom, provided by the runtime, accessible via the `use:` block.
