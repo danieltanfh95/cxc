@@ -753,10 +753,48 @@
                          (update acc :fields conj f)))
                      {:fields [] :ctor-params []}
                      (or (:fields dsec) []))
+             ;; Mirror of F41 for raw parenthesized ctor-params.
+             ;; `def X(a: T):` promotes `a` to a persistent field with
+             ;; `:default = ident(a)` — the ctor-param initializes the
+             ;; ivar during construction, and the ivar carries the value
+             ;; for reads in any later transition body. Without this,
+             ;; ctor-params were only in scope inside the initial-phase
+             ;; wildcard body, forcing users to write `raw_a: T = a`
+             ;; boilerplate. Matches PATTERNS.md "constructor params
+             ;; ARE data fields" commitment and spec §1.11.
+             ;;
+             ;; Skipped for:
+             ;; - container-shaped types (same rule as F41)
+             ;; - `main` atom (same rule as F41)
+             ;; - ctor-param whose name collides with an explicit data
+             ;;   field: the user already declared their own storage
+             ;;   (typical: `def X(a: T): raw_a: T = a`); mirror would
+             ;;   dupe. The existing data field's default captures the
+             ;;   ctor-param via ident.
+             ;; - ctor-param whose name collides with an observable:
+             ;;   the observable is the user's chosen external read
+             ;;   surface (typical: `def X(v: T): raw: T = v; v :- ...`);
+             ;;   mirror would trip the F8 L3a observable-vs-field
+             ;;   collision guard.
+             existing-field-names (set (map :name (or (:fields dsec) [])))
+             observable-names     (set (map :name observables))
+             raw-ctor-eligible?
+             (fn [p] (and (not (container-field? p))
+                          (not= "main" name)
+                          (not (contains? existing-field-names (:name p)))
+                          (not (contains? observable-names (:name p)))))
+             raw-ctor-as-fields
+             (mapv (fn [p]
+                     {:name    (:name p)
+                      :type    (:type p)
+                      :default {:node :ident :name (:name p)}
+                      :cxc-f41-synthesized true})
+                   (filter raw-ctor-eligible? (:ctor-params a)))
              merged-ctor    (-> (vec (:ctor-params a))
                                 (into (:ctor-params f41-transform))
                                 (into cap-as-params))
              merged-fields  (-> (:fields f41-transform)
+                                (into raw-ctor-as-fields)
                                 (into cap-as-fields))
              _             (let [n->count (frequencies (map :name merged-ctor))
                                  dupes    (filter #(> (val %) 1) n->count)]
@@ -7497,11 +7535,35 @@
     (let [unhandled (remove #(or (message-triggered? %)
                                  (wildcard-on-enter? %))
                             transitions)]
-      (when (seq unhandled)
-        (fail-nyi! (str "def-atom `" atom-name "` has transitions Layer 4 "
-                        "doesn't handle yet (sync-receive `<|` → Layer 4b): "
-                        (mapv #(select-keys % [:source :receive :target]) unhandled))
-                   {:atom atom-name :unhandled unhandled})))
+      (when-let [t (first unhandled)]
+        ;; Split the pre-2026-09-15 catch-all "Layer 4b" error into
+        ;; the actual shapes it was hiding. Under this classifier the
+        ;; remaining transitions are all `X -> Y` explicit-source
+        ;; with no `<:`/`<|` receive glyph (sync-receive `<|` reaches
+        ;; here via message-triggered? and hits a later layer). Two
+        ;; sub-cases distinguished by whether `|:` propositions
+        ;; (guards) are present.
+        (let [src        (or (get-in t [:source :name]) "?")
+              tgt        (:target t)
+              has-guard? (boolean (some #(= :proposition (:node %)) (:body t)))]
+          (if has-guard?
+            (fail-nyi!
+             (str "def-atom `" atom-name "` has a guard-only state-triggered "
+                  "transition `" src " -> " tgt "` with `|:` guards but no "
+                  "receive-glyph trigger. State-triggered transitions "
+                  "(re-evaluated when the guard's inputs change) aren't "
+                  "implemented — that's Layer 4b work. Workaround: give the "
+                  "transition an explicit trigger — either receive a message "
+                  "(`" src " <: some_msg -> " tgt "`) and self-send from "
+                  "wherever the guard's inputs change, or fold the transition "
+                  "into a message-triggered branch on the same phase.")
+             {:atom atom-name :transition t})
+            (fail-user!
+             (str "def-atom `" atom-name "` has an unreachable transition "
+                  "`" src " -> " tgt "` — no `<:` / `<|` receive-glyph and "
+                  "no `|:` guard, so nothing can fire it. Remove the "
+                  "transition, add a receive-glyph, or add a `|:` guard.")
+             {:atom atom-name :transition t})))))
     (let [phase-names     (collect-phase-names transitions)
           slot-names      (set (:slot-names rec))
           queue-init-stmt {:node :queue-init :ivar "_own_queue"}

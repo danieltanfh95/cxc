@@ -570,9 +570,17 @@ def main:
         (is (= [{:name "initial" :c-type "int64_t"}] (:params state)))
         ;; F39 L5b-ii-c — `n: Int` field storage is Optional-boxed; the
         ;; scalar ctor-param `initial` gets auto-wrapped at the assign
-        ;; boundary (Sub-J).
+        ;; boundary (Sub-J). Raw ctor-param mirror (2026-09-15) also
+        ;; adds an `_initial` ivar so later transition bodies can read
+        ;; the value; `initial-state-commit` covers both fields.
         (is (= [{:node :assign
                  :lhs  {:node :name :sym "_n"}
+                 :rhs  {:node :struct-lit
+                        :type "_Cxc_Optional_Int64"
+                        :fields [{:name "present" :value {:node :int :value 1}}
+                                 {:name "value"   :value {:node :name :sym "initial"}}]}}
+                {:node :assign
+                 :lhs  {:node :name :sym "_initial"}
                  :rhs  {:node :struct-lit
                         :type "_Cxc_Optional_Int64"
                         :fields [{:name "present" :value {:node :int :value 1}}
@@ -581,6 +589,8 @@ def main:
                 {:node        :initial-state-commit
                  :class-name  "Counter"
                  :data-fields [{:name "n" :c-type "_Cxc_Optional_Int64"
+                                :attrs ["readonly" "assign"]}
+                               {:name "initial" :c-type "_Cxc_Optional_Int64"
                                 :attrs ["readonly" "assign"]}]}]
                (:body state))))
       (is (= :objc-init-with (:node ctor)))
