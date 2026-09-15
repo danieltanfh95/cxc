@@ -87,6 +87,12 @@
       (is (zero? exit))
       (is (= "0\n1\n" stdout)))))
 
+(deftest end-to-end-ctor-param-as-field
+  (testing "ctor-param-as-field.cxc — 2026-09-15 raw parenthesized ctor-param mirror. `def Counter(start: Int!):` makes `start` a persistent field; the guard `|: n < start + 3` reads it inside a message-triggered transition (pre-mirror path failed with `no local-binding env yet`), and `c.start` externally-reads it after construction."
+    (let [{:keys [exit stdout]} (compile-and-run "ctor-param-as-field")]
+      (is (zero? exit))
+      (is (= "13\n10\n" stdout)))))
+
 (deftest end-to-end-plugin-marker-b8
   (testing "B8 (2026-09-02) — a source file with `def plugin:` + `def main:` compiles through the full pipeline (parse → B3 manifest resolver → B4 linker gate → B5 symbol resolver → lower elides :def-plugin → emit → clang), the binary runs, and B7 emits a `<binary>.cxc-caps` sidecar with the plugin listed."
     (let [src     (example "hello-plugin")
