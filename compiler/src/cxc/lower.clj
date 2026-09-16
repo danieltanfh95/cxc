@@ -7802,9 +7802,23 @@
           ;; passed for a `T!` param logs even if invariants would also
           ;; catch it (they cover different failure modes: `T!` is a
           ;; boundary contract, invariants are a state predicate).
+          ;;
+          ;; 2026-09-16 — skip the check when the param's storage is a
+          ;; C scalar (Int/UInt/Float/Bool families). `x == nil` in C
+          ;; is `x == 0`, which fires spuriously on legitimate zero
+          ;; values (e.g. `attack: 0` on item cards). Same class of bug
+          ;; as the pre-2026-09-14 nullcoalesce-on-natives bug — nil
+          ;; isn't representable on these types, so the runtime check
+          ;; can't distinguish "the user passed 0" from "nil".
+          ;; String / records-as-value-type-via-Optional / atoms /
+          ;; other pointer-shaped storage still get the guard.
+          scalar-c-nonnil? #{"Int" "Int8" "Int16" "Int32" "Int64"
+                             "UInt8" "UInt16" "UInt32" "UInt64"
+                             "Float" "Double" "Bool"}
           nonnil-ctor-check-stmts
           (vec (keep (fn [p]
-                       (when (:nonnil? p)
+                       (when (and (:nonnil? p)
+                                  (not (scalar-c-nonnil? (:cxc-ty p))))
                          (nonnil-check-stmt
                           (:name p)
                           (str "def-atom `" atom-name "` ctor param")
