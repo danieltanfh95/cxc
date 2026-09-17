@@ -94,6 +94,12 @@
    ;; guards or receiving `<: token.cancel`. See §1.11 "Async lifecycle
    ;; policies" for the design rationale.
    {:name :async   :kind :shared :names ["CancelToken"]}
+   ;; SeededPrng (2026-09-16) — deterministic non-crypto PRNG. Runs in
+   ;; the shared prelude because its state lives in cxc-runtime-helpers
+   ;; (int64 table indexed by handle) — no per-target OS call. Distinct
+   ;; from `Random` (CSPRNG): a `SeededPrng` cannot flow into a `Random`
+   ;; slot. See [[corvid-random-cryptographic]].
+   {:name :seeded_prng :kind :shared :names ["SeededPrng"]}
    ;; Subprocess data types (2026-09-09) — `EnvSpec` variant for
    ;; R17-required `env:` param; `ProcResult` typed return for
    ;; `Subprocess.run_full` / future `run_typed`. Loaded shared so

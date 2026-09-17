@@ -1,0 +1,22 @@
+def Pair:
+    x: Int!
+    y: Int!
+
+def main:
+    xs: List of Int  = [10, 20, 30]
+    ps: List of Pair = [Pair(x: 1, y: 10), Pair(x: 2, y: 20)]
+
+    -> running
+        then:
+            # In-range lookups.
+            print(xs.at(0) ?? -1)
+            print(xs.at(2) ?? -1)
+
+            let p0 = ps.at(0) ?? Pair(x: 0, y: 0)
+            print(p0.x + p0.y)
+
+            # Out-of-range: nil envelope → fallback fires.
+            print(xs.at(99) ?? -1)
+
+            let miss = ps.at(99) ?? Pair(x: -1, y: -1)
+            print(miss.x)

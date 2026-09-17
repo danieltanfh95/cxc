@@ -415,6 +415,19 @@
       (str/starts-with? cxc-name "_Cxc_NT")
       {:named-tuple cxc-name}
 
+      ;; 2026-09-17 — mangled container-class names (List/Map/Set of T
+      ;; land as atoms in atom-env by the time transitions get lowered,
+      ;; but the raw `List of Card` type node at a transition-param
+      ;; site passes through `base-type-name` which produces the
+      ;; `_Cxc_ListOfCard` mangled form. Since the container class IS
+      ;; a synthesized atom, treat these prefixes as atom types so
+      ;; type resolution succeeds. Same pattern as the F15 named-tuple
+      ;; case above.
+      (or (str/starts-with? cxc-name "_Cxc_ListOf")
+          (str/starts-with? cxc-name "_Cxc_MapOf")
+          (str/starts-with? cxc-name "_Cxc_SetOf"))
+      {:atom cxc-name}
+
       :else (fail-nyi! (str "unresolved type name `" cxc-name "`") node))))
 
 (defn int-family?

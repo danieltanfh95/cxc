@@ -619,6 +619,16 @@
     ;; Used by List of T initializers to feed the container class'
     ;; -initWithElements:(NSArray *) constructor.
     (str "@[" (str/join ", " (map emit-expr (:items node))) "]")
+    :objc-nsvalue-box
+    ;; NSValue wrap around a C struct value (List-of-record boxing).
+    ;; `:inner` is the struct expression (typically a `:struct-lit`
+    ;; rendered as `((T){...})`). Take its address, then hand
+    ;; NSValue+@encode(T) the byte-copy — the compound literal has
+    ;; block lifetime and NSValue copies at call time, so lifetime
+    ;; is safe. Downstream unbox uses -getValue:size: (see
+    ;; unbox-prelude-for-element).
+    (str "[NSValue valueWithBytes:&" (emit-expr (:inner node))
+         " objCType:@encode(" (:c-type node) ")]")
     :ffi-call
     ;; Compiler-recognized native call (Layer 5b Step A). The lower
     ;; pass attached `:emit-c-fn`, a fn taking rendered arg strings
@@ -1886,7 +1896,38 @@
   ;; cycle-detection scaffolding — the emit site is the single hook that
   ;; substitutes when the runtime toggle flips. See
   ;; plans/g4-actor-integrity/f31-f35-concurrency.md L1.
-  (str "@protocol CXCAtom\n"
+  (str
+       ;; 2026-09-16 — SeededPrng runtime state table. Park-Miller
+       ;; minimal-standard LCG (a=16807, m=2^31-1). State lives here
+       ;; as int64_t so multiplication stays inside int64 range
+       ;; without UB (16807 * 2^31 fits in ~45 bits). Not thread-safe;
+       ;; matches cxc's single-main-queue default. Cap of 128 concurrent
+       ;; instances is a soft ceiling — game usage typically needs 1.
+       "#define CXC_PRNG_MAX 128\n"
+       "static int64_t cxc_prng_state[CXC_PRNG_MAX];\n"
+       "static int64_t cxc_prng_count = 0;\n"
+       "static inline int64_t cxc_prng_new(int64_t seed) {\n"
+       "    if (cxc_prng_count >= CXC_PRNG_MAX) return -1;\n"
+       "    int64_t h = cxc_prng_count++;\n"
+       ;; Fold seed into [1, m-1]. seed=0 would fix state at 0
+       ;; (LCG absorbing); remap to avoid the degenerate case.
+       "    int64_t s = seed % 2147483646;\n"
+       "    if (s < 0) s += 2147483646;\n"
+       "    cxc_prng_state[h] = s + 1;\n"
+       "    return h;\n"
+       "}\n"
+       "static inline int64_t cxc_prng_next(int64_t h) {\n"
+       "    if (h < 0 || h >= cxc_prng_count) return 0;\n"
+       "    int64_t s = cxc_prng_state[h];\n"
+       "    s = (16807 * s) % 2147483647;\n"
+       "    cxc_prng_state[h] = s;\n"
+       "    return s;\n"
+       "}\n"
+       "static inline int64_t cxc_prng_below(int64_t h, int64_t n) {\n"
+       "    if (n <= 0) return 0;\n"
+       "    return cxc_prng_next(h) % n;\n"
+       "}\n\n"
+       "@protocol CXCAtom\n"
        "@property (nonatomic, strong) dispatch_queue_t own_queue;\n"
        ;; Layer 5c lifecycle cleanup — atoms carry an NSMutableArray of
        ;; resources (dispatch timers, CxcStreams) they must release on

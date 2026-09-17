@@ -133,6 +133,33 @@
     :emit-c    (fn [args]
                  (str "((int)arc4random_uniform((uint32_t)("
                       (first args) ")))"))}
+   "native_seeded_prng_new"
+   ;; 2026-09-16 — Park-Miller minimal-standard LCG state allocator.
+   ;; Runtime maintains a small static table of int64 states indexed
+   ;; by handle (see cxc-runtime-helpers `cxc_prng_*`). Returns the
+   ;; allocated handle; -1 sentinel if the table is full (default cap
+   ;; 128 concurrent instances per process, plenty for game use).
+   ;; The seed is folded into the state modulo (m-1)+1 so zero seeds
+   ;; map to a legal Park-Miller state in [1, 2^31-2].
+   {:return-kw :int
+    :arity     1
+    :emit-c    (fn [args]
+                 (str "cxc_prng_new((int64_t)(" (first args) "))"))}
+   "native_seeded_prng_next_u31"
+   ;; Advance the PRNG at `handle` and return the new state as
+   ;; Int in [1, 2^31-2]. Park-Miller: state = (16807 * state) % (2^31-1).
+   {:return-kw :int
+    :arity     1
+    :emit-c    (fn [args]
+                 (str "cxc_prng_next((int64_t)(" (first args) "))"))}
+   "native_seeded_prng_below"
+   ;; Advance the PRNG at `handle` and return the new state modulo n
+   ;; (Int, in [0, n)). n <= 0 returns 0 as a defensive sentinel.
+   {:return-kw :int
+    :arity     2
+    :emit-c    (fn [args]
+                 (str "cxc_prng_below((int64_t)(" (first args)
+                      "), (int64_t)(" (second args) "))"))}
    "native_fs_read_text"
    ;; 2d (2026-09-02) — read a UTF-8 file into a String. Returns
    ;; `nil` on failure (missing file, permission denied, non-UTF-8

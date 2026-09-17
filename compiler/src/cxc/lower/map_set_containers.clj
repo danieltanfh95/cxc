@@ -11,7 +11,8 @@
 
    Called from `synthesize-container-entries` in the top-level `lower`
    orchestrator, one per instantiation the atom-env scan surfaces."
-  (:require [cxc.diagnostics :refer [fail-user!]]))
+  (:require [cxc.diagnostics :refer [fail-user!]]
+            [cxc.mangle :refer [->c-safe]]))
 
 (def map-supported-key-types #{"String" "Int"})
 (def map-supported-val-types #{"String" "Int" "Bool"})
@@ -84,21 +85,41 @@
                                                    :recv {:node :name :sym "_elements"}
                                                    :selector "count"
                                                    :args []}}}]}
-                   {:name        "addWithk_v"
-                    :selector    "addWithk:v:"
+                   ;; 2026-09-16 — imperative `.add(k, v)` / `.remove(k)`
+                   ;; retired. Users compose via `m => m.assoc(k, v)` and
+                   ;; `m => m.dissoc(k)` at a field site inside a
+                   ;; transition. See [[corvid-no-imperative-container-mutation]].
+                   ;;
+                   ;; A5-mirror — immutable assoc: allocates a fresh
+                   ;; _Cxc_MapOfKV instance, copies _elements into its
+                   ;; ivar via addEntriesFromDictionary:, sets the new
+                   ;; entry on the copy, returns the new instance.
+                   ;; Original map untouched.
+                   {:name        "assocWithk_v"
+                    :selector    "assocWithk:v:"
                     :params      [{:name "k" :c-type k-c}
                                   {:name "v" :c-type v-c}]
-                    :return-type "void"
+                    :return-type (str class-name " *")
                     :body        [{:node :raw-c
-                                   :text (str "[_elements setObject:" box-v
-                                              " forKey:" box-k "];")}]}
-                   {:name        "removeWithk"
-                    :selector    "removeWithk:"
+                                   :text (str class-name " *__r = "
+                                              "[[" class-name " alloc] init]; "
+                                              "[__r->_elements addEntriesFromDictionary:_elements]; "
+                                              "[__r->_elements setObject:" box-v
+                                              " forKey:" box-k "]; "
+                                              "return __r;")}]}
+                   ;; A5-mirror — immutable dissoc: same copy-and-modify
+                   ;; shape as assoc, removes the key on the copy.
+                   {:name        "dissocWithk"
+                    :selector    "dissocWithk:"
                     :params      [{:name "k" :c-type k-c}]
-                    :return-type "void"
+                    :return-type (str class-name " *")
                     :body        [{:node :raw-c
-                                   :text (str "[_elements removeObjectForKey:"
-                                              box-k "];")}]}
+                                   :text (str class-name " *__r = "
+                                              "[[" class-name " alloc] init]; "
+                                              "[__r->_elements addEntriesFromDictionary:_elements]; "
+                                              "[__r->_elements removeObjectForKey:"
+                                              box-k "]; "
+                                              "return __r;")}]}
                    {:name        "containsWithk"
                     :selector    "containsWithk:"
                     :params      [{:name "k" :c-type k-c}]
@@ -106,17 +127,30 @@
                     :body        [{:node :raw-c
                                    :text (str "return ([_elements objectForKey:"
                                               box-k "] != nil) ? 1 : 0;")}]}
-                   {:name        "get_orWithk_fallback"
-                    :selector    "get_orWithk:fallback:"
-                    :params      [{:name "k"        :c-type k-c}
-                                  {:name "fallback" :c-type v-c}]
-                    :return-type v-c
+                   ;; 2026-09-16 — `.get(k) :- V` (nullable-V) replaces
+                   ;; the retired `.get_or(k, fallback)`. Callers coalesce
+                   ;; via `m.get(k) ?? fallback` — one nil-punned shape
+                   ;; across all container reads. Envelope construction
+                   ;; mirrors List `.at(i)`: NSNumber / NSString unbox
+                   ;; into the `_Cxc_Optional_<V>` `.value` slot.
+                   {:name        "getWithk"
+                    :selector    "getWithk:"
+                    :params      [{:name "k" :c-type k-c}]
+                    :return-type (str "_Cxc_Optional_"
+                                      (->c-safe (if (= "Int" v-name) "Int64" v-name)))
                     :body        [{:node :raw-c
                                    :text (str "id __v = [_elements objectForKey:" box-k "]; "
+                                              "if (__v == nil) return (_Cxc_Optional_"
+                                              (->c-safe (if (= "Int" v-name) "Int64" v-name))
+                                              "){.present = 0}; "
+                                              "return (_Cxc_Optional_"
+                                              (->c-safe (if (= "Int" v-name) "Int64" v-name))
+                                              "){.present = 1, .value = "
                                               (case v-name
-                                                "Int"    "return __v ? [(NSNumber *)__v intValue] : fallback;"
-                                                "String" "return __v ? (NSString *)__v : fallback;"
-                                                "Bool"   "return __v ? [(NSNumber *)__v boolValue] : fallback;"))}]}]}))
+                                                "Int"    "[(NSNumber *)__v longLongValue]"
+                                                "String" "(NSString *)__v"
+                                                "Bool"   "[(NSNumber *)__v boolValue]")
+                                              "};")}]}]}))
 
 (defn synthesize-set-container-class
   "Emit-ready :objc-class node for one `_Cxc_SetOf<T>` instantiation.
@@ -163,18 +197,36 @@
                                                    :recv {:node :name :sym "_elements"}
                                                    :selector "count"
                                                    :args []}}}]}
-                   {:name        "addWithe"
-                    :selector    "addWithe:"
+                   ;; 2026-09-16 — imperative `.add(e)` / `.remove(e)`
+                   ;; retired for Set (parallels Map + List retirement).
+                   ;; Users compose via `s => s.insert(e)` / `s => s.without(e)`.
+                   ;;
+                   ;; A5-mirror — immutable insert: allocates a fresh
+                   ;; _Cxc_SetOfT instance, copies _elements via
+                   ;; unionSet:, adds the element to the copy, returns
+                   ;; the new instance. Original set untouched.
+                   {:name        "insertWithe"
+                    :selector    "insertWithe:"
                     :params      [{:name "e" :c-type e-c}]
-                    :return-type "void"
+                    :return-type (str class-name " *")
                     :body        [{:node :raw-c
-                                   :text (str "[_elements addObject:" box-e "];")}]}
-                   {:name        "removeWithe"
-                    :selector    "removeWithe:"
+                                   :text (str class-name " *__r = "
+                                              "[[" class-name " alloc] init]; "
+                                              "[__r->_elements unionSet:_elements]; "
+                                              "[__r->_elements addObject:" box-e "]; "
+                                              "return __r;")}]}
+                   ;; A5-mirror — immutable without: same copy-and-modify
+                   ;; shape as insert, removes the element on the copy.
+                   {:name        "withoutWithe"
+                    :selector    "withoutWithe:"
                     :params      [{:name "e" :c-type e-c}]
-                    :return-type "void"
+                    :return-type (str class-name " *")
                     :body        [{:node :raw-c
-                                   :text (str "[_elements removeObject:" box-e "];")}]}
+                                   :text (str class-name " *__r = "
+                                              "[[" class-name " alloc] init]; "
+                                              "[__r->_elements unionSet:_elements]; "
+                                              "[__r->_elements removeObject:" box-e "]; "
+                                              "return __r;")}]}
                    {:name        "containsWithe"
                     :selector    "containsWithe:"
                     :params      [{:name "e" :c-type e-c}]

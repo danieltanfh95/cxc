@@ -3,10 +3,7 @@ def main:
 
     -> running
         then:
-            s.add("alpha")
-            s.add("beta")
-            s.add("alpha")
-            s.remove("beta")
+            s => s.insert("alpha").insert("beta").insert("alpha").without("beta")
             print(s.count)
             print(s.contains("alpha"))
             print(s.contains("beta"))

@@ -995,17 +995,11 @@
       (is (zero? exit))
       (is (= "4\n" stdout)))))
 
-(deftest end-to-end-list-add
-  (testing "list-add.cxc — audit F44 landing: `then: xs.add(e)` on a List-typed field dispatches through the container's method-index (name `add` → selector `addWithe:`), lowering to `[_xs addWithe:@(e)]` with call-site NSNumber boxing for primitive elements. Retires the former `then: xs => xs + e` pattern-match (which violated spec §3.9 arithmetic-only + / - and spec §1.11 pure-then: rule). Initial [1,2].add(3) → count=3."
-    (let [{:keys [exit stdout]} (compile-and-run "list-add")]
-      (is (zero? exit))
-      (is (= "3\n" stdout)))))
-
-(deftest end-to-end-list-remove
-  (testing "list-remove.cxc — mirror of list-add under audit F44: `then: xs.remove(e)` routes to `-removeWithe:` → `[_elements removeObject:@(e)]`. NSMutableArray isEqual: matches boxed NSNumber, so removing 20 from [10,20,30] leaves count=2."
-    (let [{:keys [exit stdout]} (compile-and-run "list-remove")]
-      (is (zero? exit))
-      (is (= "2\n" stdout)))))
+;; 2026-09-16 — `end-to-end-list-add` / `end-to-end-list-remove` retired
+;; alongside List's `.add(e)` / `.remove(e)` method-index entries.
+;; Imperative container mutation bypassed the "state lives on an atom,
+;; mutation via `=>` in a transition" rule. Replacement shape:
+;; `xs => xs.append(e)` and `xs => xs.filter(x => x != e)`.
 
 (deftest end-to-end-list-for-each
   (testing "list-for-each.cxc — Layer 5 Step 5. `xs.for_each(e => print(e))` lowers to `[xs cxc_for_each:^(id _cxc_e) { int e = [_cxc_e intValue]; ... }]` on a List container. Element unboxed per element-type (Int→intValue). Prints 7 11 13. (F20 REJECTED 2026-08-18 — the `for e in xs:` sugar retired; iteration is method dispatch.)"
@@ -1085,32 +1079,22 @@
       (is (zero? exit))
       (is (= "1\n0\n1\n" stdout)))))
 
-(deftest end-to-end-map-get-or
-  (testing "map-get-or.cxc — Layer 6 Step 8 extension. `Map of (String, Int)` with `.get_or(k, fallback) -> V` lookup. Present key returns the value (apples → 3); missing key returns the fallback (cherries → -1). Verifies the synthesized `-get_orWithk:fallback:` method on _Cxc_MapOfStringInt: `id v = [_elements objectForKey:box(k)]; return v ? [v intValue] : fallback;`. Method-index registers cxc-return-ty=V so infer-method-call-type resolves the call as an Int expression suitable for chaining `.to_string()`."
-    (let [{:keys [exit stdout]} (compile-and-run "map-get-or")]
-      (is (zero? exit))
-      (is (= "3\n-1\n" stdout)))))
-
-(deftest end-to-end-map-get-or-string
-  (testing "map-get-or-string.cxc — `Map of (String, String)` with `.get_or(k, fallback) -> String`. Exercises the String branch of the synthesized get_or: return v ? (NSString *)v : fallback. Present key `host` → `example.com`; missing key `port` → `unknown`."
-    (let [{:keys [exit stdout]} (compile-and-run "map-get-or-string")]
-      (is (zero? exit))
-      (is (= "example.com\nunknown\n" stdout)))))
+;; 2026-09-16 — `end-to-end-map-get-or` / `-map-get-or-string` /
+;; `-list-at-or` retired: `.get_or` and `.at_or` collapsed into the
+;; nil-punned surfaces `m.get(k) ?? fallback` / `xs.at(i) ?? fallback`.
+;; The example programs were deleted; the FP-shape usage stays covered
+;; by `end-to-end-map-of-bool`, `end-to-end-map-int-key`, and
+;; `end-to-end-list-append-filter` (each rewritten to `.get`/`.at` +
+;; `??`).
 
 (deftest end-to-end-map-of-bool
-  (testing "map-of-bool.cxc — `Map of (String, Bool)` toggle-map with add / get_or. Verifies Bool as V: BOOL c-type + NSNumber @(v) boxing + [v boolValue] unbox in get_or's synthesized body. verbose=true, dry_run=false stored; present-key returns stored value regardless of fallback (verbose→true even with fallback=false); missing keys fall through (missing→true with fallback=true, missing→false with fallback=false)."
+  (testing "map-of-bool.cxc — `Map of (String, Bool)` toggle-map. Post-2026-09-16: uses `.get(k) ?? fallback` (nil-punned) after `.get_or` retirement. Verifies Bool as V: BOOL c-type + NSNumber @(v) boxing (still on `.add`, deferred) + envelope-wrapped `.get` return via `_Cxc_Optional_Bool`. Present-key returns stored value regardless of fallback (verbose→true even with fallback=false); missing keys fall through."
     (let [{:keys [exit stdout]} (compile-and-run "map-of-bool")]
       (is (zero? exit))
       (is (= "true\nfalse\ntrue\nfalse\n" stdout)))))
 
-(deftest end-to-end-list-at-or
-  (testing "list-at-or.cxc — `List of T .at_or(i, fallback) -> T` random-access lookup for T ∈ {Int, String, Bool}. Verifies: (1) synthesized per-instantiation method `-at_orWithi:fallback:` with C-typed params matching T; (2) bounds check treats both negative and past-end indices as out-of-range (returns fallback); (3) typed unbox — [v intValue] / (NSString *)v / [v boolValue]. Nine assertions across the three element types, in-range / out-of-range / negative crossings."
-    (let [{:keys [exit stdout]} (compile-and-run "list-at-or")]
-      (is (zero? exit))
-      (is (= "10\n30\n-1\n-1\nb\n?\ntrue\nfalse\ntrue\n" stdout)))))
-
 (deftest end-to-end-map-int-key
-  (testing "map-int-key.cxc — `Map of (Int, String)`. Verifies Int-as-key: `@(k)` NSNumber boxing on both add and get_or lookup, forKey: NSNumber equality resolves via -isEqual: on the numeric value. HTTP-status→reason lookup: 200/404 present, 418 falls through to fallback."
+  (testing "map-int-key.cxc — `Map of (Int, String)`. Verifies Int-as-key: `@(k)` NSNumber boxing on both add and get lookup, forKey: NSNumber equality resolves via -isEqual: on the numeric value. Post-2026-09-16: uses `m.get(k) ?? \"?\"` (nil-punned) after `.get_or` retirement. HTTP-status→reason lookup: 200/404 present, 418 falls through to fallback."
     (let [{:keys [exit stdout]} (compile-and-run "map-int-key")]
       (is (zero? exit))
       (is (= "ok\nnot-found\n?\n" stdout)))))
@@ -2531,6 +2515,49 @@
       (is (clojure.string/includes? stdout "encoded: \"cxc\""))
       (is (clojure.string/includes? stdout "tool: cxc"))
       (is (clojure.string/includes? stdout "detail: quotes \" and newlines")))))
+
+(deftest end-to-end-list-at
+  (testing "2026-09-16 — `.at(i) :- T` on List containers. Nullable-T return per nil-punning: OOB → nil envelope, in-range → present envelope. Works uniformly across primitives (List of Int) and records (List of Pair) via NSNumber unbox / NSValue getValue:size:. Downstream `??` folds envelope back to raw T with the caller's fallback."
+    (let [{:keys [exit stdout]} (compile-and-run "list-at")]
+      (is (zero? exit))
+      (is (= (str "10\n"          ; xs.at(0) → 10
+                  "30\n"          ; xs.at(2) → 30
+                  "11\n"          ; ps.at(0).x + .y → 1 + 10
+                  "-1\n"          ; xs.at(99) OOB → fallback -1
+                  "-1\n")         ; ps.at(99) OOB → fallback Pair(-1,-1).x
+             stdout)))))
+
+(deftest end-to-end-seeded-prng
+  (testing "2026-09-16 — `SeededPrng` prelude cap. Park-Miller LCG (a=16807, m=2^31-1) with C-level state table indexed by handle. Verifies same seed produces identical output across runs (determinism); values are the fixed Park-Miller sequence for seed=42→state=43. `below(n)` returns `next_u31() % n`; here mod 10 lands on 1 for the fourth draw."
+    (let [{:keys [exit stdout]} (compile-and-run "seeded-prng")
+          {exit2 :exit stdout2 :stdout} (compile-and-run "seeded-prng")]
+      (is (zero? exit))
+      (is (= stdout stdout2) "same seed → identical output across runs")
+      (is (= (str "722701\n"
+                  "1409017472\n"
+                  "1054476435\n"
+                  "1\n")
+             stdout)))))
+
+(deftest end-to-end-list-of-record
+  (testing "2026-09-16 — `List of T` where T is a record. Box side wraps each struct value in an NSValue via `[NSValue valueWithBytes:&((T){...}) objCType:@encode(T)]`; for_each unbox declares a stack-local T and copies bytes back via `-getValue:size:`. Verifies record field access on the unpacked local works (`.x + .y`)."
+    (let [{:keys [exit stdout]} (compile-and-run "list-of-record")]
+      (is (zero? exit))
+      (is (= (str "3\n"
+                  "11\n"
+                  "22\n"
+                  "33\n")
+             stdout)))))
+
+(deftest end-to-end-list-append-record
+  (testing "2026-09-17 — `.append(<record>)` on `List of <Record>`. The append selector param is `(id)e`; caller-side must NSValue-box the struct-typed record arg so it flows into the id slot. Extends the primitive-boxing path at the container arg-wrap site. Also exercises the return path (each `.append` returns a fresh `_Cxc_ListOfPair *`, chainable). Regression guard for the 'sending Card to parameter of incompatible type id' error surfaced during the pocket-moba port."
+    (let [{:keys [exit stdout]} (compile-and-run "list-append-record")]
+      (is (zero? exit))
+      (is (= (str "3\n"
+                  "11\n"
+                  "22\n"
+                  "33\n")
+             stdout)))))
 
 (deftest end-to-end-mini-agent
   (testing "2026-09-03 — cross-capability composition proof. `mini-agent.cxc` uses Args + FileSystem + Subprocess + Console + Env + Int.to_string + String concat in a single `then:` block: reads argv[1] via `args.get_or(1, fallback)`, otherwise consults `MINI_AGENT_CMD` env var (default `date`); runs the resolved shell command via popen, writes captured output to a file via NSString `writeToFile:`, prints a summary (including argc + write status via `Int.to_string()`). Verifies the six MVP capabilities compose without conflicting on runtime, prelude autoloading, or emit shape. run-binary calls shell/sh with no args, so argc=1 (just the program name) and the env-var fallback wins."

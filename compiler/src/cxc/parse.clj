@@ -2245,6 +2245,23 @@
         (and (at? tokens p :ident)
              (at? tokens (inc p) :glyph "=>"))
         (let [[name p2] (expect tokens p :ident)
+              _         ;; 2026-09-17 — `=>` is a one-shot transformation
+                        ;; per field per transition (see
+                        ;; [[corvid-transition-arrow-one-shot]] memory).
+                        ;; Reject a second `field =>` on the same field
+                        ;; in the same then: block — that would be
+                        ;; smuggled sequential assignment. Users compose
+                        ;; via one `=>` with the whole transformation
+                        ;; chained (`xs => xs.insert(a).without(b)`)
+                        ;; or split intermediate steps into `let`
+                        ;; bindings, only the last one committed via `=>`.
+                        (when (some #(= name (:field %)) ups)
+                          (fail! tokens p
+                                 (str "duplicate `" name " =>` in this then: block. "
+                                      "`=>` is a one-shot transformation — one commit "
+                                      "per field per transition. Compose the whole "
+                                      "chain in one `=>`, or split intermediate values "
+                                      "into `let` bindings.")))
               [_ p3]    (expect tokens p2 :glyph "=>")
               [rhs p4]  (parse-expr tokens p3)
               p5        (skip-newlines tokens p4)]

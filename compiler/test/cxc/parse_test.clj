@@ -17,6 +17,38 @@
 ;; language surface (express as comment or convention).
 ;; ---------------------------------------------------------------------------
 
+(deftest transition-arrow-one-shot
+  (testing "2026-09-17 — `field =>` is a one-shot transformation per field per transition. Writing two `field =>` on the same field in one then: block is smuggled sequential assignment; parser rejects with a targeted diagnostic pointing at either the one-composition or the `let`-split fix. See [[corvid-transition-arrow-one-shot]] memory."
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"duplicate `xs =>` in this then: block"
+         (p/parse (str "def main:\n"
+                       "    xs: Set of String\n"
+                       "\n"
+                       "    -> running\n"
+                       "        then:\n"
+                       "            xs => xs.insert(\"a\")\n"
+                       "            xs => xs.without(\"a\")\n"))))
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"one commit per field per transition"
+         (p/parse (str "def main:\n"
+                       "    xs: Set of String\n"
+                       "\n"
+                       "    -> running\n"
+                       "        then:\n"
+                       "            xs => xs.insert(\"a\")\n"
+                       "            xs => xs.insert(\"b\")\n")))))
+  (testing "different fields in the same then: block are unaffected — the rule is per-field."
+    (is (some? (p/parse (str "def main:\n"
+                             "    xs: Set of String\n"
+                             "    ys: Set of Int\n"
+                             "\n"
+                             "    -> running\n"
+                             "        then:\n"
+                             "            xs => xs.insert(\"a\")\n"
+                             "            ys => ys.insert(1)\n"))))))
+
 (deftest annotation-grammar-retired
   (testing "annotation-grammar-retirement (2026-08-30) — `@name(args)` at top level rejects with a targeted migration pointer"
     (is (thrown-with-msg?

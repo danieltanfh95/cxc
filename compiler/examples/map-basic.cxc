@@ -3,9 +3,7 @@ def main:
 
     -> running
         then:
-            m.add("apples", 3)
-            m.add("pears", 7)
-            m.remove("apples")
+            m => m.assoc("apples", 3).assoc("pears", 7).dissoc("apples")
             print(m.count)
             print(m.contains("apples"))
             print(m.contains("pears"))

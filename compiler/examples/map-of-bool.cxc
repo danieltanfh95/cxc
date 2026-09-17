@@ -3,11 +3,10 @@ def main:
 
     -> running
         then:
-            flags.add("verbose", true)
-            flags.add("dry_run", false)
-            print(flags.get_or("verbose", false).to_string())
-            print(flags.get_or("dry_run", true).to_string())
-            print(flags.get_or("missing", true).to_string())
-            print(flags.get_or("missing", false).to_string())
+            flags => flags.assoc("verbose", true).assoc("dry_run", false)
+            print((flags.get("verbose") ?? false).to_string())
+            print((flags.get("dry_run") ?? true).to_string())
+            print((flags.get("missing") ?? true).to_string())
+            print((flags.get("missing") ?? false).to_string())
 
     -> end

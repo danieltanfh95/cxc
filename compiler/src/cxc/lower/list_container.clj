@@ -12,6 +12,8 @@
    the per-fan-in-stream data from the element's own `:stream-order`
    / `:stream-payload-index` in atom-env."
   (:require [clojure.string :as str]
+            [cxc.mangle :refer [->c-safe]]
+            [cxc.type-kw :refer [optional-type-name]]
             [cxc.lower.selectors :refer [stream-source-methods
                                          stream-selector
                                          stream-emit-selector]]))
@@ -23,6 +25,74 @@
    get_or supported-val-types)."
   #{"Int" "String" "Bool"})
 
+;; 2026-09-16 — `.at(i) :- T` support: primitives via NSNumber
+;; unbox, String via id-cast, records via NSValue-copy into a
+;; stack local. Everything else (Bytes, atoms) fails to synth
+;; the method with a clear diagnostic — extend when a slice needs
+;; those element kinds at .at.
+(def list-at-supported-primitives
+  #{"Int" "Int8" "Int16" "Int32" "Int64"
+    "UInt8" "UInt16" "UInt32" "UInt64"
+    "Float" "Double"
+    "Bool" "String"})
+
+(defn- list-at-envelope-c-type
+  "The `_Cxc_Optional_<T>` envelope C name for the element type."
+  [ty]
+  (str "_Cxc_Optional_" (->c-safe (if (= "Int" ty) "Int64" ty))))
+
+(defn- list-at-primitive-unbox
+  "NSNumber / NSString unpack expression for a primitive element type."
+  [ty raw-name]
+  (case ty
+    "String"                  (str "(NSString *)" raw-name)
+    "Bool"                    (str "[" raw-name " boolValue]")
+    ("Float")                 (str "[" raw-name " floatValue]")
+    ("Double")                (str "[" raw-name " doubleValue]")
+    ("Int8")                  (str "[" raw-name " charValue]")
+    ("Int16")                 (str "[" raw-name " shortValue]")
+    ("Int32")                 (str "[" raw-name " intValue]")
+    ("Int" "Int64")           (str "[" raw-name " longLongValue]")
+    ("UInt8")                 (str "[" raw-name " unsignedCharValue]")
+    ("UInt16")                (str "[" raw-name " unsignedShortValue]")
+    ("UInt32")                (str "[" raw-name " unsignedIntValue]")
+    ("UInt64")                (str "[" raw-name " unsignedLongLongValue]")))
+
+(defn- list-at-body
+  "Method body for `.at(i)` synthesized on `_Cxc_ListOf<T>`. Bounds
+   check first (OOB → nil envelope). Primitives + String unbox from
+   NSNumber/NSString; records copy bytes out of NSValue into a stack
+   local. Element types outside both allowlists render a raw-c call
+   to a helper that will fail cleanly at compile time — the caller
+   guards via `list-at-eligible?` before deciding to synthesize."
+  [element-name is-record?]
+  (let [env-ty (list-at-envelope-c-type element-name)
+        oob    (str "if (i < 0 || i >= (int)[_elements count]) return ("
+                    env-ty "){.present = 0}; ")]
+    (cond
+      is-record?
+      (str oob
+           element-name " __v; "
+           "[(NSValue *)[_elements objectAtIndex:i] getValue:&__v "
+           "size:sizeof(" element-name ")]; "
+           "return (" env-ty "){.present = 1, .value = __v};")
+
+      (contains? list-at-supported-primitives element-name)
+      (str oob
+           "id __raw = [_elements objectAtIndex:i]; "
+           "return (" env-ty "){.present = 1, .value = "
+           (list-at-primitive-unbox element-name "__raw") "};"))))
+
+(defn list-at-eligible?
+  "True when `.at(i)` can be synthesized on `List of <element-name>`.
+   Primitives + String live in the allowlist; records are always
+   eligible (identified via a caller-supplied predicate). Other kinds
+   (atoms, Bytes, tagged enums) are skipped at MVP — extend when a
+   slice needs them."
+  [element-name is-record?]
+  (or is-record?
+      (contains? list-at-supported-primitives element-name)))
+
 (defn- list-at-or-c-type
   "C-level parameter type for a supported at_or element type."
   [ty]
@@ -30,17 +100,6 @@
     "Int"    "int"
     "String" "NSString *"
     "Bool"   "BOOL"))
-
-(defn- list-at-or-unbox-expr
-  "Body of the -at_orWithi:fallback: method: bounds-check + typed
-   unbox of the id result, returning fallback on out-of-range."
-  [ty]
-  (str "if (i < 0 || i >= (int)[_elements count]) return fallback; "
-       "id __v = [_elements objectAtIndex:i]; "
-       (case ty
-         "Int"    "return __v ? [(NSNumber *)__v intValue] : fallback;"
-         "String" "return __v ? (NSString *)__v : fallback;"
-         "Bool"   "return __v ? [(NSNumber *)__v boolValue] : fallback;")))
 
 (defn- list-contains-box-expr
   "Body of the -containsWithe: method: box e to id and delegate to
@@ -75,7 +134,7 @@
      - Per-element-stream forwarding methods
        `-cxc_stream_<name>_from_<Element>...` that receive an event
        and re-emit on the container with `e` prepended to payload."
-  [class-name element-name & {:keys [fanin-streams fanin-payloads]}]
+  [class-name element-name & {:keys [fanin-streams fanin-payloads is-record?]}]
   ;; T1 — the caller (list-container-classes site in `lower`) reaches
   ;; `(:stream-order entry)` / `(:stream-payload-index entry)` which
   ;; can be nil for atoms without any streams. Sanitize once at the
@@ -105,29 +164,7 @@
                                   :args     (into [{:node :name :sym "sender"}]
                                                   (map #(hash-map :node :name :sym %)
                                                        elem-keys))}]}))
-              fanin-streams)
-        add-body (into
-                  [{:node :objc-msg
-                    :recv {:node :name :sym "_elements"}
-                    :selector "addObject:"
-                    :args [{:node :name :sym "e"}]}]
-                  (map (fn [nm]
-                         {:node :objc-msg
-                          :recv {:node :name :sym "e"}
-                          :selector (str "cxc_addSubscriberFor_" nm ":")
-                          :args [{:node :name :sym "self"}]})
-                       fanin-streams))
-        remove-body (into
-                     (mapv (fn [nm]
-                             {:node :objc-msg
-                              :recv {:node :name :sym "e"}
-                              :selector (str "cxc_removeSubscriberFor_" nm ":")
-                              :args [{:node :name :sym "self"}]})
-                           fanin-streams)
-                     [{:node :objc-msg
-                       :recv {:node :name :sym "_elements"}
-                       :selector "removeObject:"
-                       :args [{:node :name :sym "e"}]}])]
+              fanin-streams)]
     {:node        :objc-class
      :name        class-name
      :superclass  "NSObject"
@@ -170,16 +207,15 @@
                                                          :recv {:node :name :sym "_elements"}
                                                          :selector "count"
                                                          :args []}}}]}
-                         {:name        "addWithe"
-                          :selector    "addWithe:"
-                          :params      [{:name "e" :c-type "id"}]
-                          :return-type "void"
-                          :body        add-body}
-                         {:name        "removeWithe"
-                          :selector    "removeWithe:"
-                          :params      [{:name "e" :c-type "id"}]
-                          :return-type "void"
-                          :body        remove-body}
+                         ;; 2026-09-16 — user-facing `addWithe:` /
+                         ;; `removeWithe:` retired. See the container-
+                         ;; entries note for the model rationale (bypass
+                         ;; of `=>` transitions). Users now compose via
+                         ;; `xs => xs.append(e)` and `xs => xs.filter(...)`.
+                         ;; The internal `add-body` / `remove-body`
+                         ;; scaffolding (fan-in subscribe/unsubscribe) is
+                         ;; still built above for the init-time auto-
+                         ;; subscribe loop, but no selector exposes it.
                          {:name        "cxc_for_each"
                           :selector    "cxc_for_each:"
                           :params      [{:name "block" :c-type "void (^)(id)"}]
@@ -222,15 +258,24 @@
                                                     "return __r;")}]}]
                         (cond-> (into (vec forwarding-methods)
                                       (:methods stream-parts))
-                          (contains? list-at-or-supported-element-types element-name)
-                          (conj {:name        "at_orWithi_fallback"
-                                 :selector    "at_orWithi:fallback:"
-                                 :params      [{:name "i"        :c-type "int"}
-                                               {:name "fallback" :c-type (list-at-or-c-type element-name)}]
-                                 :return-type (list-at-or-c-type element-name)
+                          ;; 2026-09-16 — `.at(i) :- T` (nullable T).
+                          ;; Universally synthesized when the element
+                          ;; type has an unbox recipe (primitives, String,
+                          ;; records). Complements the raw-scalar `at_or`
+                          ;; convenience for primitives.
+                          (list-at-eligible? element-name is-record?)
+                          (conj {:name        "atWithi"
+                                 :selector    "atWithi:"
+                                 :params      [{:name "i" :c-type "int"}]
+                                 :return-type (list-at-envelope-c-type element-name)
                                  :body        [{:node :raw-c
-                                                :text (list-at-or-unbox-expr element-name)}]}
-                                {:name        "containsWithe"
+                                                :text (list-at-body element-name is-record?)}]})
+                          ;; 2026-09-16 — `.at_or(i, fallback)` retired
+                          ;; in favor of `xs.at(i) ?? fallback`. `.contains`
+                          ;; stays: it's a pure query, not imperative
+                          ;; mutation.
+                          (contains? list-at-or-supported-element-types element-name)
+                          (conj {:name        "containsWithe"
                                  :selector    "containsWithe:"
                                  :params      [{:name "e" :c-type (list-at-or-c-type element-name)}]
                                  :return-type "int"

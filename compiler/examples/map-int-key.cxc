@@ -3,9 +3,7 @@ def main:
 
     -> running
         then:
-            m.add(200, "ok")
-            m.add(404, "not-found")
-            m.add(500, "error")
-            print(m.get_or(200, "?"))
-            print(m.get_or(404, "?"))
-            print(m.get_or(418, "?"))
+            m => m.assoc(200, "ok").assoc(404, "not-found").assoc(500, "error")
+            print(m.get(200) ?? "?")
+            print(m.get(404) ?? "?")
+            print(m.get(418) ?? "?")

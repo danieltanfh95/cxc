@@ -14,7 +14,8 @@
    `:stream-order` / `:stream-index` / `:stream-payload-index` and
    prepends `e: <ElementAtom>` to every payload. Map / Set land no
    fan-in at MVP."
-  (:require [cxc.lower.list-container :refer [list-at-or-supported-element-types]]))
+  (:require [cxc.lower.list-container :refer [list-at-or-supported-element-types
+                                                list-at-eligible?]]))
 
 (defn container-entry-defaults
   "The always-empty keys every synthesized container atom-env entry
@@ -133,14 +134,21 @@
    so every synthesized-container param is stamped `:nonnil? true`
    here. Bare-T primitive args to List.at_or get automatically
    unwrapped envelope→raw at the call site, matching the raw-scalar
-   C sig the container class emits."
-  [method-name params return-ty]
+   C sig the container class emits.
+
+   2026-09-16 — `:return-optional?` flag (opt-in) tells
+   infer-method-call-type to lift the return type-kw into
+   `[:optional inner]` so downstream `??` / `.field` see the
+   envelope. Used by `.at(i)`; leave nil for methods returning
+   raw types."
+  [method-name params return-ty & {:keys [return-optional?]}]
   (let [stamped-params (mapv #(assoc % :nonnil? true) params)]
     {:name               method-name
      :params             (into [{:name "self" :is-self? true :nonnil? true}]
                                stamped-params)
      :cxc-return-ty      return-ty
-     :cxc-return-ty-node (when return-ty {:node :type-ref :name return-ty})}))
+     :cxc-return-ty-node (when return-ty {:node :type-ref :name return-ty})
+     :return-optional?   return-optional?}))
 
 (defn synthesize-map-container-entries
   "Given {[K V] → map-class-name} produce atom-env entries for each
@@ -151,20 +159,25 @@
   [instantiations]
   (into {}
         (map (fn [[[k v] class-name]]
-               (let [methods [(container-method "add"
+               ;; 2026-09-16 — Full FP surface. `.add`/`.remove`/`.get_or`
+               ;; retired; users compose via `m => m.assoc(k, v)` /
+               ;; `m => m.dissoc(k)` at a field site, and read via
+               ;; `m.get(k) ?? fallback`. See
+               ;; [[corvid-no-imperative-container-mutation]].
+               (let [methods [(container-method "assoc"
                                                 [{:name "k" :cxc-ty k}
                                                  {:name "v" :cxc-ty v}]
-                                                nil)
-                              (container-method "remove"
+                                                class-name)
+                              (container-method "dissoc"
                                                 [{:name "k" :cxc-ty k}]
-                                                nil)
+                                                class-name)
                               (container-method "contains"
                                                 [{:name "k" :cxc-ty k}]
                                                 "Bool")
-                              (container-method "get_or"
-                                                [{:name "k"        :cxc-ty k}
-                                                 {:name "fallback" :cxc-ty v}]
-                                                v)]]
+                              (container-method "get"
+                                                [{:name "k" :cxc-ty k}]
+                                                v
+                                                :return-optional? true)]]
                  [class-name
                   (merge (container-entry-defaults)
                          count-observable-defaults
@@ -197,10 +210,13 @@
   [instantiations]
   (into {}
         (map (fn [[elem class-name]]
-               (let [methods [(container-method "add"
-                                                [{:name "e" :cxc-ty elem}] nil)
-                              (container-method "remove"
-                                                [{:name "e" :cxc-ty elem}] nil)
+               ;; 2026-09-16 — Full FP surface. `.add`/`.remove`
+               ;; retired; users compose via `s => s.insert(e)` /
+               ;; `s => s.without(e)` at a field site.
+               (let [methods [(container-method "insert"
+                                                [{:name "e" :cxc-ty elem}] class-name)
+                              (container-method "without"
+                                                [{:name "e" :cxc-ty elem}] class-name)
                               (container-method "contains"
                                                 [{:name "e" :cxc-ty elem}] "Bool")]]
                  [class-name
@@ -224,7 +240,7 @@
        cloned from element atom, each payload prepended with
        `e: <ElementAtom>` so the container's emit signature carries
        the element identity"
-  [instantiations atom-env]
+  [instantiations atom-env record-env]
   (into {}
         (map (fn [[elem class-name]]
                (let [elem-info      (get atom-env elem)
@@ -246,39 +262,31 @@
                                              (into [{:name "e"}]
                                                    (:payload entry [])))])
                                 elem-index))
-                     methods       (cond-> [(container-method "add"
-                                                              [{:name "e" :cxc-ty elem}] nil)
-                                            (container-method "remove"
-                                                              [{:name "e" :cxc-ty elem}] nil)
-                                            ;; A5 (2026-09-03) — immutable
-                                            ;; append: returns a new
-                                            ;; _Cxc_ListOfT instance with e
-                                            ;; added. No per-element gating —
-                                            ;; append doesn't need typed
-                                            ;; unbox on the return side.
-                                            (container-method "append"
+                     ;; 2026-09-16 — imperative `.add(e)` / `.remove(e)`
+                     ;; retired from user surface (audit note: they
+                     ;; bypass `=>`-based field mutation and skip the
+                     ;; atom's serial queue, breaking cxc's "state lives
+                     ;; on an atom, mutation via `=>` in a transition"
+                     ;; rule). Users compose via `xs => xs.append(e)`
+                     ;; and `xs => xs.filter(x => x != e)` at a field
+                     ;; site instead. `.at_or` also retired — the
+                     ;; nil-punned surface is `xs.at(i) ?? fallback`
+                     ;; which composes with `??` uniformly.
+                     methods       (cond-> [(container-method "append"
                                                               [{:name "e" :cxc-ty elem}]
                                                               class-name)
-                                            ;; A5 — immutable filter: takes
-                                            ;; a `x => bool` lambda, returns
-                                            ;; new _Cxc_ListOfT with only
-                                            ;; matching elements. Call-site
-                                            ;; special-cased in lower.clj
-                                            ;; (mirrors for_each pattern);
-                                            ;; the param cxc-ty is a placeholder
-                                            ;; since the arg-shape check is
-                                            ;; skipped by the special-case.
                                             (container-method "filter"
                                                               [{:name "pred" :cxc-ty elem}]
                                                               class-name)]
                                      (contains? list-at-or-supported-element-types elem)
-                                     (conj (container-method "at_or"
-                                                             [{:name "i"        :cxc-ty "Int"}
-                                                              {:name "fallback" :cxc-ty elem}]
-                                                             elem)
-                                           (container-method "contains"
+                                     (conj (container-method "contains"
                                                              [{:name "e" :cxc-ty elem}]
-                                                             "Bool")))]
+                                                             "Bool"))
+                                     (list-at-eligible? elem (contains? record-env elem))
+                                     (conj (container-method "at"
+                                                             [{:name "i" :cxc-ty "Int"}]
+                                                             elem
+                                                             :return-optional? true)))]
                  [class-name
                   (merge (container-entry-defaults)
                          count-observable-defaults

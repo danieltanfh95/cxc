@@ -23,10 +23,15 @@
   ;; Canonical width names only — `Int` aliases `Int64` per §3.1 and
   ;; both mangle to `_Cxc_Optional_Int64`; including both produces
   ;; duplicate typedefs. `Double` = 64-bit IEEE 754; `Float` = 32-bit.
+  ;; 2026-09-16 — `String` joins the set so `List of String .at(i)`
+  ;; can return `_Cxc_Optional_String` uniformly with the rest. NSString*
+  ;; is natively nullable, but the envelope shape stays consistent
+  ;; across all element types so downstream `??` / `.field` route
+  ;; through one machinery.
   #{"Int8" "Int16" "Int32" "Int64"
     "UInt8" "UInt16" "UInt32" "UInt64"
     "Float" "Double"
-    "Bool"})
+    "Bool" "String"})
 
 (defn collect-optional-types
   "L5b-ii-b (2026-08-22): scan record + atom envs for fields whose
@@ -56,6 +61,17 @@
                                 (map :cxc-ty)
                                 (map canonical))
                           (concat rec-fields atom-fields))
+        ;; 2026-09-16 — `.at(i) :- T` on List containers returns
+        ;; `_Cxc_Optional_<T>`. Guarantee the typedef for every
+        ;; record element type that appears in a List (primitives
+        ;; are already covered by `primitive-envelope-names`).
+        list-elem-records (into #{}
+                                (comp (filter #(= :list-container
+                                                  (:kind %)))
+                                      (map :element-type)
+                                      (filter #(contains? record-env %))
+                                      (map canonical))
+                                (vals atom-env))
         ;; F39 L5b-ii-c — ord binops (`x.n > 0`) on Optional operands
         ;; produce Optional<Bool>, which needs the `_Cxc_Optional_Bool`
         ;; typedef even when no field is declared Bool. Cheap to
@@ -63,7 +79,9 @@
         with-bool   (if (seq field-set)
                       (conj field-set "Bool")
                       field-set)]
-    (into with-bool primitive-envelope-names)))
+    (-> with-bool
+        (into primitive-envelope-names)
+        (into list-elem-records))))
 
 (defn synth-optional-typedef
   "Produce a `:c-struct` for `_Cxc_Optional_<T>`. Layout is presence-

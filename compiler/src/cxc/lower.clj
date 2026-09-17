@@ -1312,8 +1312,16 @@
             m  (get-in (:atom-env ctx) [an :method-index method-name])
             o  (get-in (:atom-env ctx) [an :observable-index method-name])]
         (cond
-          m (cxc-type->type-kw (:cxc-return-ty m)
-                               (:record-env ctx) (:atom-env ctx) (:enum-env ctx) call-node)
+          m (let [raw-tk (cxc-type->type-kw (:cxc-return-ty m)
+                                            (:record-env ctx) (:atom-env ctx)
+                                            (:enum-env ctx) call-node)]
+              ;; 2026-09-16 — container-synth methods opt-in to Optional
+              ;; return via `:return-optional?`. Used by List `.at(i)`
+              ;; so callers see `[:optional T]` and downstream `??`
+              ;; / `.field` route through envelope machinery.
+              (if (:return-optional? m)
+                [:optional raw-tk]
+                raw-tk))
           o (:type-kw o)
           :else (fail-user! (str "method/observable `" method-name "` on atom `" an "`")
                            call-node)))
@@ -2590,11 +2598,21 @@
                  (= 1 (count arg-exprs)))
             arg-exprs
             (if list-add-or-remove?
-              (let [elem-ty (infer-type (:value (first ordered-args)) ctx)]
-                (case elem-ty
-                  (:int :float :bool)
+              (let [arg-tk    (infer-type (:value (first ordered-args)) ctx)
+                    unwrapped (unwrap-tk arg-tk)]
+                (cond
+                  (contains? #{:int :float :bool} unwrapped)
                   [{:node :objc-num-lit :kind :box :expr (first arg-exprs)}]
-                  arg-exprs))
+
+                  ;; 2026-09-17 — record args need NSValue-boxing at the
+                  ;; call site so they flow into the `(id)e` container
+                  ;; slot. Mirrors the list-literal record-boxing path.
+                  (and (map? unwrapped) (:record unwrapped))
+                  [{:node :objc-nsvalue-box
+                    :inner (first arg-exprs)
+                    :c-type (->c-safe (:record unwrapped))}]
+
+                  :else arg-exprs))
               arg-exprs)]
         (cond
           (and (map? target-ty) (:record target-ty))
@@ -3212,6 +3230,18 @@
     [{:node :raw-c
       :text (str "NSMutableData *" user-name " = (NSMutableData *)"
                  raw-name ";")}]
+
+    ;; 2026-09-16 — Record: unwrap the NSValue by copying bytes into a
+    ;; fresh stack-local struct. `-getValue:size:` (macOS 10.13+) is
+    ;; the non-deprecated form and gives a size assertion at runtime.
+    ;; Downstream `.field` reads on the user-name resolve as C struct
+    ;; member access.
+    (and (map? element-type-kw) (:record element-type-kw))
+    (let [c-ty (->c-safe (:record element-type-kw))]
+      [{:node :raw-c
+        :text (str c-ty " " user-name "; "
+                   "[(NSValue *)" raw-name " getValue:&" user-name
+                   " size:sizeof(" c-ty ")];")}])
 
     :else
     ;; id-typed pass-through: just alias user-name to raw
@@ -5728,6 +5758,15 @@
     (if (field-nonnil? (:field update) ctx)
       (let [self-info (get-in ctx [:locals "self"])
             atom-name (or (and (map? self-info) (:atom self-info)) "?")
+            ;; 2026-09-17 — record-typed fields lower to C structs
+            ;; (value types), which can never be nil. The `if (_f == nil)`
+            ;; post-store check makes sense only for pointer-typed
+            ;; storage (id / NSObject *); comparing a struct to nil
+            ;; produces `error: invalid operands to binary expression`.
+            ;; Skip the check for value-typed record fields — non-nilness
+            ;; is guaranteed by construction (no way to assign nil to a
+            ;; struct-typed field).
+            record?     (contains? (:record-env ctx) (:cxc-ty f-info))
             ;; The nonnil check needs to see the value we just wrote.
             ;; Under L3.b bag-writes, the ivar is stale until commit —
             ;; read the bag field so the check reflects the intended
@@ -5736,10 +5775,12 @@
             checked-expr (if bag-write?
                            (str "__cxc_next._" (:field update))
                            (str "_" (:field update)))]
-        [primary
-         (nonnil-check-stmt checked-expr
-                            (str "def-atom `" atom-name "` field write")
-                            (:field update))])
+        (if record?
+          [primary]
+          [primary
+           (nonnil-check-stmt checked-expr
+                              (str "def-atom `" atom-name "` field write")
+                              (:field update))]))
       [primary])))
 
 (defn- lower-on-enter-body
@@ -7036,6 +7077,18 @@
                          ;; the block-body entry (below).
                          (= :bytes ty)
                          (lower-expr item-node ctx)
+                         ;; 2026-09-16 — Record elements: records lower
+                         ;; to C typedef structs which aren't id-compatible.
+                         ;; Wrap each struct value in an NSValue via the
+                         ;; :objc-nsvalue-box emit node (`[NSValue
+                         ;; valueWithBytes:&((T){...}) objCType:@encode(T)]`).
+                         ;; NSValue copies the bytes, so lifetime of the
+                         ;; compound literal is safe. Unboxes at
+                         ;; unbox-prelude-for-element via -getValue:size:.
+                         (and (map? ty) (:record ty))
+                         {:node :objc-nsvalue-box
+                          :inner (lower-expr item-node ctx)
+                          :c-type (->c-safe (:record ty))}
                          :else
                          (fail-nyi! (str "List of `" element-name "` literal — "
                                          "element type " (pr-str ty) " not "
@@ -8388,7 +8441,8 @@
   [atom-env record-env]
   (let [ae1 (merge atom-env (synthesize-list-container-entries
                               (list-instantiations-from-atom-env atom-env record-env)
-                              atom-env))
+                              atom-env
+                              record-env))
         ae2 (merge ae1     (synthesize-map-container-entries
                               (map-instantiations-from-atom-env ae1 record-env)))
         ae3 (merge ae2     (synthesize-set-container-entries
@@ -8719,12 +8773,15 @@
                                       (lower-atom nm ctx :is-main? (= "main" nm)))
                                     real-atom-names)
         list-container-classes (mapv (fn [nm]
-                                       (let [entry (env/env-lookup ctx :atom-env nm)]
+                                       (let [entry     (env/env-lookup ctx :atom-env nm)
+                                             elem      (:element-type entry)
+                                             is-rec?   (contains? (:record-env ctx) elem)]
                                          (synthesize-list-container-class
                                           nm
-                                          (:element-type entry)
+                                          elem
                                           :fanin-streams  (:stream-order entry)
-                                          :fanin-payloads (:stream-payload-index entry))))
+                                          :fanin-payloads (:stream-payload-index entry)
+                                          :is-record?     is-rec?)))
                                      container-atom-names)
         map-container-classes (mapv (fn [nm]
                                       (let [entry (env/env-lookup ctx :atom-env nm)]
