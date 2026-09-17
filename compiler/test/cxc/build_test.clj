@@ -1481,6 +1481,12 @@
       (is (zero? exit))
       (is (= "30\n" stdout)))))
 
+(deftest end-to-end-list-atom-fan-in-dynamic-append
+  (testing "list-atom-fan-in-dynamic-append.cxc — 2026-09-17 landing. `appendWithe:` now runs `[e cxc_addSubscriberFor_<stream>:__r]` for each fan-in stream so runtime-appended atoms wire into the container's stream table too. Prior to this landing, `initWithelements:` only iterated the initial literal elements — atoms appended later via `xs => xs.append(...)` were never subscribed, and their fan-in emits silently disappeared. Program appends two Bumper atoms into an initially-empty `List of Bumper` in main's on-enter, then fires each via `.for_each(b => |> b.fire(v: 5))` on the first clock tick. Each fire emits `:> beep(v: 5)`; main accumulates via `<: xs.beep(e: Bumper, v: Int)`. Second tick ends. Total = 5 + 5 = 10."
+    (let [{:keys [exit stdout]} (compile-and-run "list-atom-fan-in-dynamic-append")]
+      (is (zero? exit))
+      (is (= "10\n" stdout)))))
+
 (deftest end-to-end-clock-every-typed
   (testing "clock-every-typed.cxc — method-stream typed payload. Extends clock-every.cxc by reading `t.millis` in the subscriber body (`then: got_millis => t.millis`). Verifies the whole typed-payload chain: `method-stream-payload-shapes` registry entry for `[_Cxc_Clock every]` declaring `t: Instant`, receive-side validation matching the declared shape, selector `cxc_stream_every_from__Cxc_ClockWithsender:t:` synthesized on both fanout and receive sides, and native_clock_every's specialized event handler building a fresh `_Cxc_Instant` per fire and dispatching via `((void(*)(id,SEL,id,_Cxc_Instant))objc_msgSend)` cast. `got_millis > 0` at end because timeIntervalSince1970 is always positive on any live system. Prints 1."
     (let [{:keys [exit stdout]} (compile-and-run "clock-every-typed")]

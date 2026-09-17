@@ -238,7 +238,17 @@
                                                     "[[" class-name " alloc] "
                                                     "initWithelements:_elements]; "
                                                     "[__r->_elements addObject:e]; "
-                                                    "return __r;")}]}
+                                                    ;; Dynamic-append fan-in: `initWithelements:`
+                                                    ;; only subscribes elements present at ctor
+                                                    ;; time, so the newly-appended `e` needs its
+                                                    ;; own subscribe calls. Mirrors the ctor
+                                                    ;; loop's per-stream subscribe list.
+                                                    (str/join " "
+                                                              (map (fn [nm]
+                                                                     (str "[e cxc_addSubscriberFor_"
+                                                                          nm ":__r];"))
+                                                                   fanin-streams))
+                                                    " return __r;")}]}
                          ;; A5 — immutable filter. Iterates _elements,
                          ;; applies the pred block, collects matches
                          ;; into a fresh NSMutableArray, wraps in a new
