@@ -8139,8 +8139,17 @@
                                          "updates are meaningless. See spec "
                                          "§1.11.")
                                     {:kind :compile-error :node w})))
-          end-wildcard-then (inline-wildcard-then-stmts end-wildcards ctx-in-init)
-          end-wildcard-do   (inline-wildcard-do-stmts   end-wildcards ctx-in-init)
+          ;; `-> end` on-enter runs from -transitionToEnd, not from
+          ;; cxc_stateInit — so ctor-param locals are OUT of scope
+          ;; here. If we leave them in, `lower-expr :ident` prefers
+          ;; the local over the F41-mirrored self-field and emits a
+          ;; bare `card` reference where the ivar `_card` was meant
+          ;; (undeclared-identifier at compile time). Drop them to
+          ;; the `self` local only, mirroring `ctx-for` at the
+          ;; stream-payload inference pass (line ~6744).
+          ctx-in-end       (update ctx-in-init :locals select-keys ["self"])
+          end-wildcard-then (inline-wildcard-then-stmts end-wildcards ctx-in-end)
+          end-wildcard-do   (inline-wildcard-do-stmts   end-wildcards ctx-in-end)
           cascade-stmts   (mapv (fn [slot-name]
                                   {:node :end-cascade-child :slot-name slot-name})
                                 (:slot-names rec))
