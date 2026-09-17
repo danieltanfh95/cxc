@@ -830,7 +830,15 @@
              ;; checked above), and any default on a field runs in the
              ;; field initializer, not at the ctor call site. Spec
              ;; §3.8.5 governs param defaults, so no const-check here.
-             ctor-params   (ctor-params-normalized merged-ctor {} env enum-env module-map)
+             ;; build-record-env runs after build-atom-env, so we can't
+             ;; thread the full record-env in. But ctor-param type
+             ;; lowering only needs a truthy env-hit for `T` to resolve
+             ;; to a record c-type (see `cxc-type->c` :type-ref branch:
+             ;; the entry itself is not read, only `resolve-decl-lookup`'s
+             ;; boolean answer). A name-keyed sentinel env is sufficient
+             ;; and lets `def Atom(x: SomeRecord)` compile.
+             ctor-record-env (zipmap record-name-set (repeat {}))
+             ctor-params   (ctor-params-normalized merged-ctor ctor-record-env env enum-env module-map)
              ;; F67 L4 — atom bodies no longer carry `methods:` (retired
              ;; under Proposal G class-body collapse); observables +
              ;; wildcard-self-transitions provide the callable surface.
@@ -7912,10 +7920,18 @@
           scalar-c-nonnil? #{"Int" "Int8" "Int16" "Int32" "Int64"
                              "UInt8" "UInt16" "UInt32" "UInt64"
                              "Float" "Double" "Bool"}
+          ;; Also skip records + enums: both lower to C value types
+          ;; (struct / int enum), so `x == nil` is invalid C. Same
+          ;; class of bug as the pre-2026-09-16 scalar skip. Records
+          ;; use envelope-boxing at the nullable-storage layer (F39
+          ;; L5b-ii); for T! ctor params the value is unwrapped and
+          ;; there's nothing to nil-check.
           nonnil-ctor-check-stmts
           (vec (keep (fn [p]
                        (when (and (:nonnil? p)
-                                  (not (scalar-c-nonnil? (:cxc-ty p))))
+                                  (not (scalar-c-nonnil? (:cxc-ty p)))
+                                  (not (contains? (:record-env ctx) (:cxc-ty p)))
+                                  (not (contains? (:enum-env ctx)   (:cxc-ty p))))
                          (nonnil-check-stmt
                           (:name p)
                           (str "def-atom `" atom-name "` ctor param")
