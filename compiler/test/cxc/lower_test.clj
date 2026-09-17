@@ -347,6 +347,12 @@
           ;; State-init runs data defaults then the initial-phase on-enter body.
           ;; Structural setup owns queue + phase = initial constant.
           state (first (filter #(= "cxc_stateInit" (:selector %)) (:methods cls)))]
+      ;; The F39 L3 post-store nonnil check is skipped for value-typed
+      ;; T! fields (primitives, records, enums) as of 2026-09-17 — see
+      ;; `lower-then-update` in lower.clj. Same rationale as the ctor-
+      ;; param T! skip: comparing a struct or scalar to nil is invalid
+      ;; C (struct: error; scalar: -Wpointer-integer-compare warning).
+      ;; Non-nilness is guaranteed by construction at the C storage level.
       (is (= [{:node :assign
                :lhs  {:node :name :sym "_n"}
                :rhs  {:node :int  :value 0}}
@@ -355,8 +361,6 @@
                :rhs  {:node :binop :op "+"
                       :left  {:node :name :sym "_n"}
                       :right {:node :int  :value 1}}}
-              {:node :raw-c
-               :text "if ((_n) == nil) cxc_nonnil_violation(\"def-atom `Ticker` field write\", \"n\");"}
               ;; F32 L4.d.β.α — concurrent-mode `_state` seed.
               {:node        :initial-state-commit
                :class-name  "Ticker"
@@ -1044,10 +1048,15 @@ def main:
         (is (= :transition-branch (:node branch)))
         (is (= "kCounter_phase_alive" (:source-phase-const branch)))
         (is (= :end-catch-wrap (:node wrap)))
-        ;; Inside the try body (post F33 L3.c):
+        ;; Inside the try body (post F33 L3.c + 2026-09-17):
         ;;   1. write to `__cxc_next._n` (bag write; RHS reads snapshot via L2.c)
-        ;;   2. nonnil check against the just-written bag field
-        ;;   3. commit-next-state (bag → live ivars)
+        ;;   2. commit-next-state (bag → live ivars)
+        ;; The F39 L3 post-store nonnil check is skipped for value-typed
+        ;; T! fields (primitives, records, enums) as of 2026-09-17 — the
+        ;; C-level storage is a scalar/struct that cannot hold nil, so
+        ;; the check emitted invalid C (`if (int64_t == nil)` → warning /
+        ;; `if (Struct == nil)` → error). Pointer-typed T! fields still
+        ;; get the check; see field-storage-value-typed?.
         ;; Post-commit `[self checkInvariants]` is suppressed under
         ;; F33 L3.c when snapshot is active — pre-commit inline
         ;; checks would take its place if any invariants existed,
@@ -1061,8 +1070,6 @@ def main:
                                 :target {:node :name :sym "__cxc_snap"}
                                 :field  "_n"}
                         :right {:node :int  :value 1}}}
-                {:node :raw-c
-                 :text "if ((__cxc_next._n) == nil) cxc_nonnil_violation(\"def-atom `Counter` field write\", \"n\");"}
                 {:node        :commit-next-state
                  :atom-name   "Counter"
                  ;; F32 L4.c fix — `:class-name` on the commit node so

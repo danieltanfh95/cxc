@@ -277,6 +277,14 @@
                                                               class-name)
                                             (container-method "filter"
                                                               [{:name "pred" :cxc-ty elem}]
+                                                              class-name)
+                                            ;; 2026-09-17 — `.sort_by(f: T -> Int)`.
+                                            ;; Python-shape key-fn sort matching
+                                            ;; `sorted(xs, key=fn)`. Returns a
+                                            ;; new sorted list; caller-compose
+                                            ;; via `xs => xs.sort_by(c => c.coin)`.
+                                            (container-method "sort_by"
+                                                              [{:name "keyfn" :cxc-ty elem}]
                                                               class-name)]
                                      (contains? list-at-or-supported-element-types elem)
                                      (conj (container-method "contains"

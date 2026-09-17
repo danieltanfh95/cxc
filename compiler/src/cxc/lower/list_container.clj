@@ -255,6 +255,31 @@
                                                     class-name " *__r = "
                                                     "[[" class-name " alloc] "
                                                     "initWithelements:__buf]; "
+                                                    "return __r;")}]}
+                         ;; 2026-09-17 — immutable sort by Int key.
+                         ;; Wraps the user's key-fn (int64_t (^)(id)) in
+                         ;; an NSComparator that computes keys per pair
+                         ;; and returns ascending / descending / same.
+                         ;; NSMutableArray sortUsingComparator is stable.
+                         ;; Two key-fn calls per compare (n log n × 2);
+                         ;; game-sized lists (dozens) — non-issue.
+                         {:name        "sort_byWithkeyfn"
+                          :selector    "sort_byWithkeyfn:"
+                          :params      [{:name "keyfn" :c-type "int64_t (^)(id)"}]
+                          :return-type (str class-name " *")
+                          :body        [{:node :raw-c
+                                         :text (str "NSMutableArray *__buf = [NSMutableArray "
+                                                    "arrayWithArray:_elements]; "
+                                                    "[__buf sortUsingComparator:"
+                                                    "^NSComparisonResult(id __a, id __b) { "
+                                                    "int64_t __ka = keyfn(__a); "
+                                                    "int64_t __kb = keyfn(__b); "
+                                                    "if (__ka < __kb) return NSOrderedAscending; "
+                                                    "if (__ka > __kb) return NSOrderedDescending; "
+                                                    "return NSOrderedSame; }]; "
+                                                    class-name " *__r = "
+                                                    "[[" class-name " alloc] "
+                                                    "initWithelements:__buf]; "
                                                     "return __r;")}]}]
                         (cond-> (into (vec forwarding-methods)
                                       (:methods stream-parts))

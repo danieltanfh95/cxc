@@ -2559,6 +2559,17 @@
                   "33\n")
              stdout)))))
 
+(deftest end-to-end-list-sort-by
+  (testing "2026-09-17 — `.sort_by(f: T -> Int)` on `List of T`. Python-shape key-fn sort matching `sorted(xs, key=fn)`. Wraps user key-fn in NSComparator computing keys per pair, uses NSMutableArray sortUsingComparator (stable). Verifies with a `List of Card` (records) sorted by `.coin` ascending — element-unbox prelude declares the stack-local Card, key-fn reads `.coin`, sort orders."
+    (let [{:keys [exit stdout]} (compile-and-run "list-sort-by")]
+      (is (zero? exit))
+      (is (= (str "Tiny\n"
+                  "Small\n"
+                  "Medium\n"
+                  "Large\n"
+                  "Big\n")
+             stdout)))))
+
 (deftest end-to-end-mini-agent
   (testing "2026-09-03 — cross-capability composition proof. `mini-agent.cxc` uses Args + FileSystem + Subprocess + Console + Env + Int.to_string + String concat in a single `then:` block: reads argv[1] via `args.get_or(1, fallback)`, otherwise consults `MINI_AGENT_CMD` env var (default `date`); runs the resolved shell command via popen, writes captured output to a file via NSString `writeToFile:`, prints a summary (including argc + write status via `Int.to_string()`). Verifies the six MVP capabilities compose without conflicting on runtime, prelude autoloading, or emit shape. run-binary calls shell/sh with no args, so argc=1 (just the program name) and the env-var fallback wins."
     (let [{:keys [exit stdout]} (compile-and-run "mini-agent")]

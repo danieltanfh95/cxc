@@ -2307,7 +2307,7 @@
 
 ;; M1c — c-method-name / objc-method-selector moved to cxc.lower.selectors.
 
-(declare lower-for-each-call lower-filter-call lambda-body-stmts unbox-prelude-for-element)
+(declare lower-for-each-call lower-filter-call lower-sort-by-call lambda-body-stmts unbox-prelude-for-element)
 (declare param-envelope-eligible? param-tk param-c-type
          method-return-envelope? method-return-c-type)
 
@@ -2375,6 +2375,13 @@
         filter-with-lambda?
         (and list-cont?
              (= "filter" method-name)
+             (= 1 (count args))
+             (= :lambda (get-in args [0 :value :node])))
+        ;; 2026-09-17 — `xs.sort_by(x => x.field)` mirror of filter,
+        ;; returning int64_t sort keys instead of BOOL.
+        sort-by-with-lambda?
+        (and list-cont?
+             (= "sort_by" method-name)
              (= 1 (count args))
              (= :lambda (get-in args [0 :value :node])))
         method-info
@@ -2445,6 +2452,7 @@
         (cond
           for-each-with-lambda? args
           filter-with-lambda?   args
+          sort-by-with-lambda?  args
           method-info
           (mapv (fn [{:keys [name value]}] {:kind :positional :name name :value value})
                 (resolve-args-against-params
@@ -2458,6 +2466,8 @@
       (lower-for-each-call target-lo target-ty (get-in args [0 :value]) ctx)
       (if filter-with-lambda?
         (lower-filter-call target-lo target-ty (get-in args [0 :value]) ctx)
+      (if sort-by-with-lambda?
+        (lower-sort-by-call target-lo target-ty (get-in args [0 :value]) ctx)
       ;; F37 Landing 2 — `.as()` on a record with primitive-byte-eligible
       ;; fields dispatches to `<Record>_cxc_as_bytes(target)`. Fires
       ;; only when the user hasn't declared their own `as` method
@@ -3150,7 +3160,7 @@
               :else msg-send))
 
           :else
-          (fail-user! "method call on non-record/non-atom target" call-node)))))))))
+          (fail-user! "method call on non-record/non-atom target" call-node))))))))))
 
 (def ^:private statement-node-kinds
   #{:expr-stmt :emit :break-stmt :continue-stmt :while-stmt
@@ -3312,6 +3322,38 @@
      :args [{:node :objc-block-literal
              :params [{:name raw-param-name :c-type "id"}]
              :return-c-type "BOOL"
+             :stmts (into (vec prelude) [return-stmt])}]}))
+
+(defn- lower-sort-by-call
+  "2026-09-17 — special-case lowering for `xs.sort_by(x => x.field)`
+   on a List container atom. Same shape as filter: build an ObjC
+   block from the lambda, unbox the id param to the element type,
+   lower the body with `x` bound in ctx. The block returns int64_t
+   (a sort key). Class-side -sort_byWithkeyfn: consumes the block and
+   returns a fresh sorted _Cxc_ListOfT."
+  [target-lo target-ty lambda-node ctx]
+  (let [list-name        (:atom target-ty)
+        element-name     (:element-type (env/env-lookup ctx :atom-env list-name))
+        element-type-kw  (cxc-type->type-kw element-name
+                                            (:record-env ctx)
+                                            (:atom-env ctx)
+                                            (:enum-env ctx)
+                                            lambda-node)
+        user-param-name  (get-in lambda-node [:params 0 :name])
+        raw-param-name   "_cxc_e"
+        prelude          (unbox-prelude-for-element raw-param-name
+                                                    user-param-name
+                                                    element-type-kw)
+        body-ctx         (assoc-in ctx [:locals user-param-name] element-type-kw)
+        body-expr        (:body lambda-node)
+        body-lo          (lower-expr body-expr body-ctx)
+        return-stmt      {:node :return :value body-lo}]
+    {:node :objc-msg
+     :recv target-lo
+     :selector "sort_byWithkeyfn:"
+     :args [{:node :objc-block-literal
+             :params [{:name raw-param-name :c-type "id"}]
+             :return-c-type "int64_t"
              :stmts (into (vec prelude) [return-stmt])}]}))
 
 (defn- print-format-string [arg-type]
@@ -5758,15 +5800,17 @@
     (if (field-nonnil? (:field update) ctx)
       (let [self-info (get-in ctx [:locals "self"])
             atom-name (or (and (map? self-info) (:atom self-info)) "?")
-            ;; 2026-09-17 — record-typed fields lower to C structs
-            ;; (value types), which can never be nil. The `if (_f == nil)`
-            ;; post-store check makes sense only for pointer-typed
-            ;; storage (id / NSObject *); comparing a struct to nil
-            ;; produces `error: invalid operands to binary expression`.
-            ;; Skip the check for value-typed record fields — non-nilness
-            ;; is guaranteed by construction (no way to assign nil to a
-            ;; struct-typed field).
-            record?     (contains? (:record-env ctx) (:cxc-ty f-info))
+            ;; 2026-09-17 — value-typed fields (primitives, records,
+            ;; enums) lower to C structs / scalars which can never
+            ;; hold nil. The `if (_f == nil)` post-store check makes
+            ;; sense only for pointer-typed storage (id / NSObject *);
+            ;; comparing a struct to nil is a compile error, and
+            ;; comparing a scalar (int64_t / BOOL / double) to nil
+            ;; emits a `-Wpointer-integer-compare` warning. Same class
+            ;; of bug as the pre-2026-09-14 nullcoalesce-on-natives
+            ;; fix and the ctor-param T! check skip. Skip here — the
+            ;; storage type itself guarantees non-nilness by construction.
+            value-typed? (field-storage-value-typed? f-info ctx)
             ;; The nonnil check needs to see the value we just wrote.
             ;; Under L3.b bag-writes, the ivar is stale until commit —
             ;; read the bag field so the check reflects the intended
@@ -5775,7 +5819,7 @@
             checked-expr (if bag-write?
                            (str "__cxc_next._" (:field update))
                            (str "_" (:field update)))]
-        (if record?
+        (if value-typed?
           [primary]
           [primary
            (nonnil-check-stmt checked-expr

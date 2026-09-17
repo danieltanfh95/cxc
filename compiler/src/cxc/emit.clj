@@ -621,14 +621,16 @@
     (str "@[" (str/join ", " (map emit-expr (:items node))) "]")
     :objc-nsvalue-box
     ;; NSValue wrap around a C struct value (List-of-record boxing).
-    ;; `:inner` is the struct expression (typically a `:struct-lit`
-    ;; rendered as `((T){...})`). Take its address, then hand
-    ;; NSValue+@encode(T) the byte-copy — the compound literal has
-    ;; block lifetime and NSValue copies at call time, so lifetime
-    ;; is safe. Downstream unbox uses -getValue:size: (see
-    ;; unbox-prelude-for-element).
-    (str "[NSValue valueWithBytes:&" (emit-expr (:inner node))
-         " objCType:@encode(" (:c-type node) ")]")
+    ;; `:inner` is the struct expression. Materialize to a named local
+    ;; via GCC statement-expression so `&__cxc_nv` is always an lvalue
+    ;; — the address form works whether inner is a compound literal
+    ;; (lvalue) or a nested stmt-expr / ternary / call (rvalue, e.g.
+    ;; the `??`-coalesced record produced by `remaining.at(i) ?? sentinel`).
+    ;; NSValue copies the bytes at call time so lifetime is safe.
+    ;; Downstream unbox uses -getValue:size: (see unbox-prelude-for-element).
+    (str "({ " (:c-type node) " __cxc_nv = " (emit-expr (:inner node))
+         "; [NSValue valueWithBytes:&__cxc_nv objCType:@encode("
+         (:c-type node) ")]; })")
     :ffi-call
     ;; Compiler-recognized native call (Layer 5b Step A). The lower
     ;; pass attached `:emit-c-fn`, a fn taking rendered arg strings
