@@ -1,0 +1,2 @@
+# trace-view launcher copies the traced file here so the browser can fetch it
+.current-trace.jsonl
