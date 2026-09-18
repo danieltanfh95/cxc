@@ -1718,9 +1718,19 @@
 (defn- emit-method-impl [m]
   (let [prelude (:prelude m)
         body    (:body m)
+        ;; When the body dispatches via transition-branches, emit a
+        ;; tail `CXC_TRACE_EX("no_arm", ...)` before the implicit
+        ;; return so the trace records phase-mismatched or
+        ;; guard-missed messages that would otherwise silently drop
+        ;; (methods without `:coverage-abort` return silently when no
+        ;; arm's `if(guard){...}` matches). Zero cost under !CXC_TRACE_ENABLED.
+        dispatcher?  (some #(= :transition-branch (:node %)) body)
+        tail-trace   (when dispatcher?
+                       "    CXC_TRACE_EX(\"no_arm\", nil, self, [NSStringFromSelector(_cmd) UTF8String], \"tail\");")
         parts   (cond-> []
                   (seq prelude) (conj (emit-body 4 prelude))
-                  (seq body)    (conj (emit-body 4 body)))]
+                  (seq body)    (conj (emit-body 4 body))
+                  tail-trace    (conj tail-trace))]
     (str (method-signature m) " {\n"
          (str/join "\n" parts)
          "\n}")))
