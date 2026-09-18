@@ -100,8 +100,8 @@
       <label>
         aggregate:
         <select id="graph-aggregate">
-          <option value="class">by class</option>
           <option value="instance">by instance</option>
+          <option value="class">by class</option>
         </select>
       </label>
       <label>
@@ -163,6 +163,13 @@ function loadTrace(text, name) {
   filtered = events.slice();
   $('status').textContent = `${name || 'trace'} — ${events.length} events`;
   _analysis = null;
+  // Reset instance-label cache; recomputed lazily on first buildGraph.
+  _instanceLabels.clear();
+  // Smart default: instance mode is unreadable past ~20 atoms — fall back
+  // to class aggregation. Below that, keep instances (differentiates
+  // e.g. Player[seat0] vs Player[seat1] on small programs).
+  const atomCount = new Set(events.map(e => e.target)).size;
+  $('graph-aggregate').value = atomCount > 20 ? 'class' : 'instance';
   renderStats();
   renderFilters();
   renderUnclosed();
@@ -305,30 +312,50 @@ function showDetail(e) {
 // ===== GRAPH VIEW =====
 // Build a directed multigraph: nodes = atoms (aggregated by class or by
 // instance), edges = message flows sender→receiver with count.
+//
+// Instance mode: raw target pointers are unreadable (huge integers), so
+// we assign short 0-based indices per class in first-seen order:
+//   Player[43393498...] → Player#0
+//   Player[43393511...] → Player#1
+// The mapping is computed over the ENTIRE trace (not just `filtered`) so
+// instance labels stay stable when the user narrows the seq range.
+const _instanceLabels = new Map(); // target-pointer → "Class#N"
+function computeInstanceLabels() {
+  _instanceLabels.clear();
+  const perClass = new Map(); // class → next index
+  for (const e of events) {
+    if (_instanceLabels.has(e.target)) continue;
+    const cls = e.target_cls || '?';
+    const idx = perClass.get(cls) || 0;
+    _instanceLabels.set(e.target, cls + '#' + idx);
+    perClass.set(cls, idx + 1);
+  }
+}
+
 function buildGraph(mode) {
   // mode: 'class' → aggregate all instances of a class into one node
-  //       'instance' → each atom instance is a node
-  const nodes = new Map(); // id → {id, label, size (# events on it)}
-  const edges = new Map(); // key = src|dst → {src, dst, msgs: {msg → count}, total}
+  //       'instance' → each atom instance is its own node
+  if (!_instanceLabels.size) computeInstanceLabels();
+  const nodes = new Map(); // id → {id, label, cls, size}
+  const edges = new Map(); // key = src|dst → {src, dst, msgs, total, sync}
   const nodeId = (e) => mode === 'class'
     ? e.target_cls
-    : e.target_cls + '#' + (e.target || 0);
-  const senderId = (e) => {
-    if (mode === 'class') return e._inferredSenderCls || null;
-    return e._inferredSenderCls ? (e._inferredSenderCls + '#' + (e._inferredSender || 0)) : null;
+    : (_instanceLabels.get(e.target) || (e.target_cls + '#?'));
+  const senderIdForEvent = (e) => {
+    if (!e._inferredSenderCls) return null;
+    return mode === 'class'
+      ? e._inferredSenderCls
+      : (_instanceLabels.get(e._inferredSender) || (e._inferredSenderCls + '#?'));
   };
-  // Nodes: any target appearing in filtered
   for (const e of filtered) {
     const id = nodeId(e);
     if (!nodes.has(id)) nodes.set(id, {id, label: id, cls: e.target_cls, size: 0});
     nodes.get(id).size++;
   }
-  // Edges: send/send_sync events
   for (const e of filtered) {
     if (e.kind !== 'send' && e.kind !== 'send_sync') continue;
-    const src = senderId(e) || '(root)';
+    const src = senderIdForEvent(e) || '(root)';
     const dst = nodeId(e);
-    // Ensure src node exists (for the (root) entry point)
     if (!nodes.has(src)) nodes.set(src, {id: src, label: src, cls: 'root', size: 0});
     const key = src + '|' + dst;
     if (!edges.has(key)) edges.set(key, {src, dst, msgs: new Map(), total: 0, sync: 0});
@@ -501,9 +528,10 @@ function renderGraph() {
     t.setAttribute('y', n.y + 3);
     t.setAttribute('class', 'graph-node-label');
     t.setAttribute('fill', 'white');
-    // Split "Class#id" so long labels don't overflow
-    const short = n.id === '(root)' ? 'root' : n.label.split('#')[0];
-    t.textContent = short;
+    // Show the full label. Instance labels are "Class#N" with a short
+    // per-class index (Player#0, Player#1), which fits on the node and
+    // is the whole point of instance mode.
+    t.textContent = n.id === '(root)' ? 'root' : n.label;
     nodeG.appendChild(t);
     if (n.size > 0 && n.id !== '(root)') {
       const t2 = document.createElementNS('http://www.w3.org/2000/svg', 'text');

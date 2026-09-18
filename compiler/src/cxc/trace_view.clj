@@ -96,11 +96,17 @@
                    (println (str "trace-viewer.html not found under " (.getPath root))))
                  (throw (ex-info "no viewer" {:exit 2})))
           query (if-let [trace (first @positional)]
-                  (let [src (io/file trace)]
+                  (let [src  (io/file trace)
+                        dest (io/file root ".current-trace.jsonl")]
                     (when-not (.exists src)
                       (binding [*out* *err*] (println (str "no such file: " trace)))
                       (throw (ex-info "not found" {:exit 2})))
-                    (io/copy src (io/file root ".current-trace.jsonl"))
+                    ;; Guard: if the caller pointed at the already-mirrored
+                    ;; file, io/copy would truncate it (open-for-write on
+                    ;; dest happens before the read from src). Skip in that
+                    ;; case; the file is already in place.
+                    (when-not (= (.getCanonicalPath src) (.getCanonicalPath dest))
+                      (io/copy src dest))
                     "?trace=.current-trace.jsonl")
                   "")
           port (:port @opts)
