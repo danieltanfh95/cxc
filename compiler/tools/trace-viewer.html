@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>cxc trace viewer</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font: 12px -apple-system, "SF Mono", Menlo, monospace; margin: 0; background: #fafafa; color: #222; }
+  header { padding: 8px 12px; background: #2a2a2a; color: white; display: flex; align-items: center; gap: 12px; }
+  header h1 { margin: 0; font-size: 14px; font-weight: 600; }
+  header .status { color: #aaa; }
+  #layout { display: flex; height: calc(100vh - 32px); }
+  #sidebar { width: 280px; background: #f0f0f0; border-right: 1px solid #ddd; overflow-y: auto; padding: 12px; flex-shrink: 0; }
+  #stage { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+  #stage-toolbar { padding: 6px 10px; background: white; border-bottom: 1px solid #ddd; display: flex; gap: 8px; align-items: center; }
+  #stage-toolbar button { padding: 4px 10px; border: 1px solid #ccc; background: white; cursor: pointer; border-radius: 3px; font: inherit; }
+  #stage-toolbar button.on { background: #4a90d9; color: white; border-color: #3a7db0; }
+  #stage-main { flex: 1; overflow: auto; background: white; }
+  #stage-detail { max-height: 240px; overflow-y: auto; border-top: 1px solid #ddd; background: #fafafa; padding: 10px; }
+  #stage-detail:empty { display: none; }
+  #drop { border: 3px dashed #999; padding: 40px; text-align: center; color: #666; cursor: pointer; background: white; border-radius: 6px; }
+  #drop.hover { border-color: #4a90d9; background: #eaf3fb; color: #333; }
+  h4 { margin: 12px 0 6px; font-size: 11px; text-transform: uppercase; color: #555; }
+  label { display: block; padding: 2px 0; cursor: pointer; }
+  label input { margin-right: 6px; }
+  .stat-row { display: flex; justify-content: space-between; padding: 2px 0; }
+  .stat-row .k { color: #555; }
+  .stat-row .v { font-variant-numeric: tabular-nums; }
+  .warn { color: #c33; font-weight: 600; }
+  .lane { fill: #fafafa; stroke: #eee; }
+  .lane-alt { fill: #f4f4f4; stroke: #eee; }
+  .lane-label { font-size: 11px; fill: #333; }
+  .evt-send   { fill: #4a90d9; }
+  .evt-recv   { fill: #7fbf7f; }
+  .evt-arm    { fill: #d99a4a; }
+  .evt-no_arm { fill: #d95a5a; }
+  .evt-send_sync { fill: #6666dd; }
+  .evt-recv_sync { fill: #66aa66; }
+  .evt-send_dropped { fill: #999; }
+  .evt-unclosed { fill: none; stroke: #d95a5a; stroke-width: 2; }
+  .arrow { stroke: rgba(74,144,217,0.35); stroke-width: 1; fill: none; }
+  .arrow-unclosed { stroke: #d95a5a; stroke-width: 1.5; fill: none; stroke-dasharray: 3,2; }
+  input[type="text"] { width: 100%; padding: 4px 6px; border: 1px solid #ccc; border-radius: 3px; font: inherit; }
+  pre { margin: 0; font: 11px "SF Mono", Menlo, monospace; }
+  .unclosed-item { padding: 4px 6px; margin: 2px 0; background: #fde8e8; border-left: 3px solid #d95a5a; cursor: pointer; font-size: 11px; }
+  .unclosed-item:hover { background: #fbd7d7; }
+</style>
+</head>
+<body>
+<header>
+  <h1>cxc trace viewer</h1>
+  <span class="status" id="status">no trace loaded</span>
+</header>
+<div id="layout">
+  <div id="sidebar">
+    <div id="drop">drop trace.jsonl here<br><span style="font-size:10px;color:#888">or click to browse</span></div>
+    <input type="file" id="file" accept=".jsonl,.json,.log" style="display:none">
+    <div id="stats"></div>
+    <div id="unclosed-panel"></div>
+    <div id="filters"></div>
+  </div>
+  <div id="stage">
+    <div id="stage-toolbar">
+      <button id="view-timeline" class="on">timeline</button>
+      <button id="view-sequence">sequence</button>
+      <button id="view-inbox">per-atom inbox</button>
+      <span style="flex:1"></span>
+      <label style="display:inline-block; font-size:11px;">
+        <input type="checkbox" id="show-arrows" checked>
+        show msg arrows (sequence view)
+      </label>
+      <label style="display:inline-block; font-size:11px;">
+        seq range:
+        <input type="text" id="seq-range" placeholder="e.g. 0-500" style="width:100px; display:inline-block">
+      </label>
+    </div>
+    <div id="stage-main">
+      <svg id="canvas"></svg>
+    </div>
+    <div id="stage-detail"></div>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+let events = [];
+let filtered = [];
+let currentView = 'timeline';
+
+const $ = (id) => document.getElementById(id);
+const escapeHtml = (s) => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
+
+function parseJSONL(text) {
+  const out = [];
+  const lines = text.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+    try { out.push(JSON.parse(line)); }
+    catch (e) { console.warn('bad line', i, e.message); }
+  }
+  return out;
+}
+
+function loadTrace(text, name) {
+  events = parseJSONL(text);
+  events.sort((a, b) => a.seq - b.seq);
+  filtered = events.slice();
+  $('status').textContent = `${name || 'trace'} — ${events.length} events`;
+  renderStats();
+  renderFilters();
+  renderUnclosed();
+  applyFilters();
+}
+
+function renderStats() {
+  const kinds = {};
+  events.forEach(e => { kinds[e.kind] = (kinds[e.kind]||0) + 1; });
+  const atoms = new Set(events.map(e => e.target)).size;
+  const dur = events.length ? (events[events.length-1].t - events[0].t) : 0;
+  let html = '<h4>overview</h4>';
+  html += `<div class="stat-row"><span class="k">events</span><span class="v">${events.length}</span></div>`;
+  html += `<div class="stat-row"><span class="k">atoms</span><span class="v">${atoms}</span></div>`;
+  html += `<div class="stat-row"><span class="k">duration</span><span class="v">${dur.toFixed(2)} ms</span></div>`;
+  html += '<h4>by kind</h4>';
+  for (const k of Object.keys(kinds).sort()) {
+    html += `<div class="stat-row"><span class="k">${escapeHtml(k)}</span><span class="v">${kinds[k]}</span></div>`;
+  }
+  $('stats').innerHTML = html;
+}
+
+// Pair up send events with matching recv events (by target + msg, in seq order).
+// Anything left unmatched is a suspected drop / hang.
+// Also detect "silent drops": recv fires but no arm event on same target
+// follows within a short window. That's the shape of a phase-mismatched
+// dispatch — the method dispatcher ran but no `deploying <:` arm matched
+// in the atom's current phase and no coverage_abort was emitted.
+function computePairs() {
+  const pending = new Map(); // key = target+"|"+msg → queue of send seqs
+  const pairs = []; // [{send, recv}]
+  const unclosed = []; // send events with no recv
+  const silentDrops = []; // recv with no matching arm shortly after
+  const SILENT_WINDOW = 6; // events after recv to scan for arm on same target
+  for (let i = 0; i < events.length; i++) {
+    const e = events[i];
+    const key = e.target + '|' + e.msg;
+    if (e.kind === 'send' || e.kind === 'send_sync') {
+      if (!pending.has(key)) pending.set(key, []);
+      pending.get(key).push(e);
+    } else if (e.kind === 'recv' || e.kind === 'recv_sync') {
+      const q = pending.get(key);
+      if (q && q.length) {
+        pairs.push({send: q.shift(), recv: e});
+      }
+      // Silent-drop check: scan forward for an arm on this atom
+      // where the selector matches the recv msg.
+      // Skip stream fan-out sends (`self.cxc_emit_*`) — those enqueue
+      // on the source atom's own queue solely to defer the fan-out;
+      // the arm-side firing happens on downstream subscribers via
+      // `cxc_stream_*` methods, not on the source, so no arm on the
+      // source is expected.
+      const msg = e.msg || '';
+      if (msg.startsWith('self.cxc_emit_')) continue;
+      const recvBase = msg.split('.').pop();
+      let hit = false;
+      for (let j = i + 1; j < Math.min(events.length, i + 1 + SILENT_WINDOW); j++) {
+        const nxt = events[j];
+        if (nxt.kind !== 'arm') continue;
+        if (nxt.target !== e.target) continue;
+        const armBase = (nxt.msg || '').split(/[.:With]/)[0];
+        if (armBase === recvBase || (nxt.msg || '').startsWith(recvBase)) { hit = true; break; }
+      }
+      if (!hit) silentDrops.push(e);
+    }
+  }
+  for (const q of pending.values()) {
+    for (const s of q) unclosed.push(s);
+  }
+  return {pairs, unclosed, silentDrops};
+}
+
+let _analysis = null;
+function analysis() {
+  if (_analysis === null) _analysis = computePairs();
+  return _analysis;
+}
+
+function renderUnclosed() {
+  _analysis = null;
+  const {unclosed, silentDrops} = analysis();
+  const el = $('unclosed-panel');
+  let html = '';
+  if (!unclosed.length && !silentDrops.length) {
+    html = '<h4>diagnostics</h4><div style="color:#080">all sends closed, no silent drops ✓</div>';
+    el.innerHTML = html;
+    return;
+  }
+  if (unclosed.length) {
+    html += `<h4 class="warn">unclosed sends (${unclosed.length})</h4>`;
+    html += '<div style="max-height:130px; overflow-y:auto;">';
+    for (const s of unclosed.slice(0, 20)) {
+      html += `<div class="unclosed-item" data-seq="${s.seq}">seq ${s.seq}: ${escapeHtml(s.msg)} → ${escapeHtml(s.target_cls)}[${s.target}]</div>`;
+    }
+    if (unclosed.length > 20) html += `<div style="padding:4px; color:#888;">…${unclosed.length - 20} more</div>`;
+    html += '</div>';
+  }
+  if (silentDrops.length) {
+    // Prioritize non-Clock drops — Clock ticks that go unconsumed are
+    // background noise (periodic emit, may have no listener), while
+    // e.g. deploy_p1 dropping in the wrong phase is a real bug.
+    const sorted = silentDrops.slice().sort((a,b) => {
+      const aClock = /^Clock\.|_Cxc_Clock/.test(a.msg + a.target_cls) ? 1 : 0;
+      const bClock = /^Clock\.|_Cxc_Clock/.test(b.msg + b.target_cls) ? 1 : 0;
+      if (aClock !== bClock) return aClock - bClock;
+      return a.seq - b.seq;
+    });
+    html += `<h4 class="warn">silent drops (${silentDrops.length})</h4>`;
+    html += '<div style="font-size:10px; color:#666; margin-bottom:4px;">recv with no matching arm — dispatcher returned without firing (phase mismatch, missing case). Non-Clock first.</div>';
+    html += '<div style="max-height:130px; overflow-y:auto;">';
+    for (const s of sorted.slice(0, 20)) {
+      html += `<div class="unclosed-item" data-seq="${s.seq}">seq ${s.seq}: ${escapeHtml(s.msg)} → ${escapeHtml(s.target_cls)}[${s.target}]</div>`;
+    }
+    if (sorted.length > 20) html += `<div style="padding:4px; color:#888;">…${sorted.length - 20} more</div>`;
+    html += '</div>';
+  }
+  el.innerHTML = html;
+  el.querySelectorAll('.unclosed-item').forEach(item => {
+    item.addEventListener('click', () => {
+      const s = events.find(e => e.seq == item.dataset.seq);
+      showDetail(s);
+    });
+  });
+}
+
+function renderFilters() {
+  const kinds = [...new Set(events.map(e => e.kind))].sort();
+  const cls = [...new Set(events.map(e => e.target_cls))].sort();
+  let html = '<h4>kinds</h4>';
+  kinds.forEach(k => html += `<label><input type="checkbox" checked data-fkind="${escapeHtml(k)}"> ${escapeHtml(k)}</label>`);
+  html += '<h4>target class</h4>';
+  cls.forEach(c => html += `<label><input type="checkbox" checked data-fcls="${escapeHtml(c)}"> ${escapeHtml(c)}</label>`);
+  html += '<h4>msg contains</h4><input type="text" id="msg-filter" placeholder="filter substring">';
+  $('filters').innerHTML = html;
+  document.querySelectorAll('#filters input').forEach(i => i.addEventListener('input', applyFilters));
+  $('seq-range').addEventListener('input', applyFilters);
+}
+
+function applyFilters() {
+  const okKinds = new Set([...document.querySelectorAll('[data-fkind]:checked')].map(i => i.dataset.fkind));
+  const okCls   = new Set([...document.querySelectorAll('[data-fcls]:checked')].map(i => i.dataset.fcls));
+  const msgQ    = ($('msg-filter')?.value || '').toLowerCase();
+  const rangeS  = $('seq-range').value.trim();
+  let seqLo = -Infinity, seqHi = Infinity;
+  if (rangeS) {
+    const m = rangeS.match(/^\s*(\d+)\s*-\s*(\d+)\s*$/);
+    if (m) { seqLo = parseInt(m[1]); seqHi = parseInt(m[2]); }
+  }
+  filtered = events.filter(e => okKinds.has(e.kind) && okCls.has(e.target_cls)
+    && (!msgQ || (e.msg||'').toLowerCase().includes(msgQ))
+    && e.seq >= seqLo && e.seq <= seqHi);
+  render();
+}
+
+function showDetail(e) {
+  if (!e) { $('stage-detail').innerHTML = ''; return; }
+  $('stage-detail').innerHTML = `<pre>${escapeHtml(JSON.stringify(e, null, 2))}</pre>`;
+}
+
+function render() {
+  if (currentView === 'timeline') renderTimeline();
+  else if (currentView === 'sequence') renderSequence();
+  else if (currentView === 'inbox') renderInbox();
+}
+
+// ---------------- Timeline view ----------------
+function renderTimeline() {
+  const svg = $('canvas');
+  svg.innerHTML = '';
+  if (!filtered.length) return;
+  const targets = [...new Set(filtered.map(e => e.target))];
+  const targetIndex = new Map(targets.map((t, i) => [t, i]));
+  const targetCls = new Map();
+  filtered.forEach(e => { if (!targetCls.has(e.target)) targetCls.set(e.target, e.target_cls); });
+  const laneH = 30;
+  const leftPad = 160;
+  const totalH = targets.length * laneH + 24;
+  const minT = filtered[0].t;
+  const maxT = filtered[filtered.length-1].t;
+  const width = Math.max(1400, filtered.length * 3);
+  const xForT = t => leftPad + (t - minT) / Math.max(1e-6, maxT - minT) * (width - leftPad - 20);
+  svg.setAttribute('width', width);
+  svg.setAttribute('height', totalH);
+  let parts = [];
+  targets.forEach((tgt, i) => {
+    const y = 12 + i * laneH;
+    parts.push(`<rect class="${i%2 ? 'lane-alt' : 'lane'}" x="0" y="${y}" width="${width}" height="${laneH-2}"></rect>`);
+    parts.push(`<text class="lane-label" x="4" y="${y+18}">${escapeHtml(targetCls.get(tgt) || '?')}[${tgt}]</text>`);
+  });
+  filtered.forEach(e => {
+    const laneI = targetIndex.get(e.target);
+    const y = 12 + laneI * laneH + 16;
+    const x = xForT(e.t);
+    parts.push(`<circle class="evt-${escapeHtml(e.kind)}" cx="${x}" cy="${y}" r="3.5" data-seq="${e.seq}"><title>seq ${e.seq} ${escapeHtml(e.kind)}: ${escapeHtml(e.msg)}</title></circle>`);
+  });
+  svg.innerHTML = parts.join('');
+  wireCanvasClicks(svg);
+}
+
+// ---------------- Sequence-diagram view ----------------
+function renderSequence() {
+  const svg = $('canvas');
+  svg.innerHTML = '';
+  if (!filtered.length) return;
+  const targets = [...new Set(filtered.map(e => e.target))];
+  const targetIndex = new Map(targets.map((t, i) => [t, i]));
+  const targetCls = new Map();
+  filtered.forEach(e => { if (!targetCls.has(e.target)) targetCls.set(e.target, e.target_cls); });
+  const colW = 200;
+  const rowH = 26;
+  const topPad = 40;
+  const totalW = targets.length * colW + 40;
+  const totalH = topPad + filtered.length * rowH + 20;
+  svg.setAttribute('width', totalW);
+  svg.setAttribute('height', totalH);
+  let parts = [];
+  // Column headers + lifelines
+  targets.forEach((t, i) => {
+    const cx = 20 + i * colW + colW/2;
+    parts.push(`<line x1="${cx}" y1="${topPad}" x2="${cx}" y2="${totalH-10}" stroke="#ddd"></line>`);
+    parts.push(`<text class="lane-label" x="${cx}" y="20" text-anchor="middle">${escapeHtml(targetCls.get(t)||'?')}</text>`);
+    parts.push(`<text class="lane-label" x="${cx}" y="34" text-anchor="middle" style="fill:#888;">[${t}]</text>`);
+  });
+  // Events
+  const seqPos = new Map();
+  filtered.forEach((e, i) => {
+    const y = topPad + i * rowH + rowH/2;
+    const cx = 20 + targetIndex.get(e.target) * colW + colW/2;
+    parts.push(`<circle class="evt-${escapeHtml(e.kind)}" cx="${cx}" cy="${y}" r="4" data-seq="${e.seq}"><title>seq ${e.seq} ${escapeHtml(e.kind)}: ${escapeHtml(e.msg)}</title></circle>`);
+    parts.push(`<text x="${cx+8}" y="${y+4}" style="font-size:10px; fill:#555;">${escapeHtml(e.msg)}</text>`);
+    seqPos.set(e.seq, {x: cx, y});
+  });
+  // Arrows for send→recv pairs (subset within filter)
+  if ($('show-arrows').checked) {
+    const {pairs, unclosed} = analysis();
+    const inFilter = new Set(filtered.map(e => e.seq));
+    pairs.forEach(({send, recv}) => {
+      if (!inFilter.has(send.seq) || !inFilter.has(recv.seq)) return;
+      const s = seqPos.get(send.seq), r = seqPos.get(recv.seq);
+      if (!s || !r) return;
+      parts.push(`<path class="arrow" d="M${s.x},${s.y} L${r.x},${r.y}"></path>`);
+    });
+    // Unclosed sends: red dashed arrow going nowhere (down 40px)
+    unclosed.forEach(s => {
+      if (!inFilter.has(s.seq)) return;
+      const p = seqPos.get(s.seq);
+      if (!p) return;
+      parts.push(`<path class="arrow-unclosed" d="M${p.x},${p.y} L${p.x+30},${p.y+40}"></path>`);
+      parts.push(`<text x="${p.x+34}" y="${p.y+44}" style="fill:#d95a5a; font-size:10px;">✗ no recv</text>`);
+    });
+  }
+  svg.innerHTML = parts.join('');
+  wireCanvasClicks(svg);
+}
+
+// ---------------- Per-atom inbox view ----------------
+function renderInbox() {
+  const svg = $('canvas');
+  svg.innerHTML = '';
+  const container = document.createElement('div');
+  container.style.padding = '12px';
+  container.style.fontFamily = 'inherit';
+  const byTarget = new Map();
+  filtered.forEach(e => {
+    if (!byTarget.has(e.target)) byTarget.set(e.target, {cls: e.target_cls, evs: []});
+    byTarget.get(e.target).evs.push(e);
+  });
+  const html = ['<table style="width:100%; border-collapse:collapse;">'];
+  html.push('<tr><th style="text-align:left; padding:4px; border-bottom:1px solid #ccc;">atom</th><th style="text-align:right;">sends in</th><th style="text-align:right;">recvs</th><th style="text-align:right;">arms fired</th><th style="text-align:right;">no_arm</th><th style="text-align:right;">imbalance</th></tr>');
+  const rows = [];
+  for (const [tgt, {cls, evs}] of byTarget) {
+    const c = {send: 0, recv: 0, arm: 0, no_arm: 0, send_sync: 0, recv_sync: 0, send_dropped: 0};
+    evs.forEach(e => { c[e.kind] = (c[e.kind]||0)+1; });
+    const sendTot = (c.send||0) + (c.send_sync||0);
+    const recvTot = (c.recv||0) + (c.recv_sync||0);
+    const imbal = sendTot - recvTot;
+    rows.push({tgt, cls, sendTot, recvTot, arm: c.arm||0, no_arm: c.no_arm||0, imbal});
+  }
+  rows.sort((a,b) => b.imbal - a.imbal);
+  for (const r of rows) {
+    const warn = r.imbal !== 0 ? ' style="color:#c33; font-weight:600;"' : '';
+    html.push(`<tr style="border-bottom:1px solid #eee;"><td style="padding:4px;">${escapeHtml(r.cls)}[${r.tgt}]</td><td style="text-align:right;">${r.sendTot}</td><td style="text-align:right;">${r.recvTot}</td><td style="text-align:right;">${r.arm}</td><td style="text-align:right;">${r.no_arm}</td><td style="text-align:right;"${warn}>${r.imbal}</td></tr>`);
+  }
+  html.push('</table>');
+  container.innerHTML = html.join('');
+  svg.parentNode.replaceChild(container, svg);
+  const nsvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  nsvg.id = 'canvas';
+  container._svg = nsvg;
+}
+
+function wireCanvasClicks(svg) {
+  svg.addEventListener('click', (ev) => {
+    const t = ev.target;
+    if (t.dataset && t.dataset.seq) {
+      const e = events.find(x => x.seq == t.dataset.seq);
+      showDetail(e);
+    }
+  });
+}
+
+// Ensure canvas element exists after inbox view swap
+function ensureSVG() {
+  if (!$('canvas')) {
+    const nsvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    nsvg.id = 'canvas';
+    const stage = $('stage-main');
+    stage.innerHTML = '';
+    stage.appendChild(nsvg);
+  } else if ($('canvas').tagName.toLowerCase() !== 'svg') {
+    const nsvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    nsvg.id = 'canvas';
+    const cur = $('canvas');
+    cur.parentNode.replaceChild(nsvg, cur);
+  }
+}
+
+// View switching
+function setView(view) {
+  currentView = view;
+  ['timeline','sequence','inbox'].forEach(v => {
+    $('view-' + v).classList.toggle('on', v === view);
+  });
+  ensureSVG();
+  render();
+}
+$('view-timeline').addEventListener('click', () => setView('timeline'));
+$('view-sequence').addEventListener('click', () => setView('sequence'));
+$('view-inbox').addEventListener('click', () => setView('inbox'));
+$('show-arrows').addEventListener('change', render);
+
+// Drop-target wiring
+const drop = $('drop');
+drop.addEventListener('click', () => $('file').click());
+$('file').addEventListener('change', (e) => {
+  const f = e.target.files[0];
+  if (f) f.text().then(t => loadTrace(t, f.name));
+});
+drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('hover'); });
+drop.addEventListener('dragleave', () => drop.classList.remove('hover'));
+drop.addEventListener('drop', (e) => {
+  e.preventDefault();
+  drop.classList.remove('hover');
+  const f = e.dataTransfer.files[0];
+  if (f) f.text().then(t => loadTrace(t, f.name));
+});
+// Also accept drop anywhere on the page
+document.addEventListener('dragover', e => e.preventDefault());
+document.addEventListener('drop', (e) => {
+  e.preventDefault();
+  const f = e.dataTransfer.files[0];
+  if (f) f.text().then(t => loadTrace(t, f.name));
+});
+
+// URL param support: ?trace=/path/to/file.jsonl fetches automatically
+const params = new URLSearchParams(window.location.search);
+if (params.has('trace')) {
+  fetch(params.get('trace')).then(r => r.text()).then(t => loadTrace(t, params.get('trace')));
+}
+</script>
+</body>
+</html>
