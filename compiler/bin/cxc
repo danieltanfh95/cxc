@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# cxc — unified entry point for the cxc toolchain.
+#
+#   cxc compile <input.cxc-or-dir> <out-dir> [--target=<name>] [--trace]
+#   cxc trace   <file.jsonl> [--top=N] [--silent-clock]
+#   cxc view    [<trace.jsonl>] [--port=N]
+#   cxc help    [<subcommand>]
+#
+# Runs `clj -M -m cxc.core "$@"` from the compiler directory so that
+# resources/prelude, deps.edn, etc. resolve regardless of where you
+# invoke `cxc` from. Absolute-path any positional args pointing at
+# files so they still resolve after we cd.
+
+set -euo pipefail
+HERE="$(cd "$(dirname "$0")" && pwd)"
+COMPILER_DIR="$(cd "$HERE/.." && pwd)"
+
+# Rewrite existing-file positional args to absolute paths, so `cxc` works
+# from any cwd. Flags (--target=..., --trace, etc.) pass through unchanged.
+rewritten=()
+for arg in "$@"; do
+  if [[ "$arg" == --* ]] || [[ "$arg" == -* ]]; then
+    rewritten+=("$arg")
+  elif [ -e "$arg" ]; then
+    rewritten+=("$(cd "$(dirname "$arg")" && pwd)/$(basename "$arg")")
+  else
+    rewritten+=("$arg")
+  fi
+done
+
+cd "$COMPILER_DIR"
+exec clj -M -m cxc.core "${rewritten[@]}"
