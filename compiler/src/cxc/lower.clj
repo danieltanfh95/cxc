@@ -4577,6 +4577,7 @@
       {:node :call
        :fn "cxc_send_async"
        :args [{:node :name :sym "self"}
+              {:node :str :value (str "self.cxc_emit_" (:msg node))}
               {:node :objc-block-literal
                :params []
                :stmts [direct-send]}]}
@@ -4795,10 +4796,13 @@
                      :recv target-lo
                      :selector "cxc_mailbox_sem"
                      :args []})
+        msg-name-arg {:node :str
+                      :value (str atom-name "." msg-name)}
         send-call {:node :call
                    :fn   helper
                    :args (cond-> [target-lo]
                            bounded-target? (conj sem-arg)
+                           :always (conj msg-name-arg)
                            :always (conj {:node :objc-block-literal
                                           :stmts [{:node :objc-msg
                                                    :recv target-lo
@@ -8844,13 +8848,15 @@
         list-container-classes (mapv (fn [nm]
                                        (let [entry     (env/env-lookup ctx :atom-env nm)
                                              elem      (:element-type entry)
-                                             is-rec?   (contains? (:record-env ctx) elem)]
+                                             is-rec?   (contains? (:record-env ctx) elem)
+                                             is-atom?  (contains? atom-env elem)]
                                          (synthesize-list-container-class
                                           nm
                                           elem
                                           :fanin-streams  (:stream-order entry)
                                           :fanin-payloads (:stream-payload-index entry)
-                                          :is-record?     is-rec?)))
+                                          :is-record?     is-rec?
+                                          :is-atom?       is-atom?)))
                                      container-atom-names)
         map-container-classes (mapv (fn [nm]
                                       (let [entry (env/env-lookup ctx :atom-env nm)]

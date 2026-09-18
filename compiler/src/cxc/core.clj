@@ -37,18 +37,21 @@
                  (keyword (subs f (count "--target="))))]
     [(vec positional) target]))
 
+(defn- parse-trace-flag
+  [args]
+  (let [[flag positional] ((juxt filter remove) #{"--trace"} args)]
+    [(vec positional) (boolean (seq flag))]))
+
 (defn -main
   [& args]
-  (let [[positional target] (parse-target-flag args)]
+  (let [[positional target] (parse-target-flag args)
+        [positional trace?] (parse-trace-flag positional)]
     (case (count positional)
       2 (let [[input-path out-dir] positional
               in-file (io/file input-path)
-              ;; A7 (2026-09-03) — directory arg dispatches to
-              ;; `compile-directory-to-file` so a DNS-reverse
-              ;; plugin tree (`src/com/acme/foo/*.cxc`) can compile
-              ;; end-to-end from the CLI. Single-file mode still
-              ;; works unchanged for `hello.cxc`-style programs.
-              opts    (if target {:target target} {})
+              opts    (cond-> {}
+                        target (assoc :target target)
+                        trace? (assoc :trace? true))
               dir?    (.isDirectory in-file)
               name    (if dir?
                         (.getName in-file)
@@ -66,5 +69,5 @@
             (do (println "compile failed:")
                 (println stderr)
                 (System/exit status))))
-      (do (println "Usage: clj -M -m cxc.core <input.cxc-or-dir> <out-dir> [--target=<name>]")
+      (do (println "Usage: clj -M -m cxc.core <input.cxc-or-dir> <out-dir> [--target=<name>] [--trace]")
           (println "Args received:" (pr-str args))))))

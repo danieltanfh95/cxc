@@ -1228,7 +1228,7 @@
                         ;; Hop to subscriber via cxc_send_async so
                         ;; the msg lands on the subscriber's own_queue
                         ;; — same delivery model as generic cxc_emit.
-                        "cxc_send_async(sub, ^{ "
+                        "cxc_send_async(sub, \"Clock.every_tick\", ^{ "
                         "((void (*)(id, SEL, id, _Cxc_Instant))objc_msgSend)"
                         "(sub, __cxc_sel, __cxc_src, __cxc_inst); "
                         "}); "

@@ -145,7 +145,7 @@
    Returns the same shape as the public entrypoints:
    `{:m-path :bin-path :status :stdout :stderr :cache-hit?}`."
   [{:keys [user-parsed full-parsed]} name out-dir
-   {:keys [single-queue?] :or {single-queue? true}}]
+   {:keys [single-queue? trace?] :or {single-queue? true trace? false}}]
   (let [_        (io/make-parents (io/file out-dir "placeholder"))
         ;; Behavioral-walker dispatch — reads `section/behavioral-walkers`
         ;; (registry-provided walker vars, keyed by seed name). Post
@@ -170,7 +170,10 @@
         ;; the compiled binary's runtime behavior. Fold it into the SHA
         ;; input so single-queue and concurrent builds don't collide.
         cxc-mq   (if single-queue? "1" "0")
-        sha      (sha256-hex (str m-src "\n;; CXC_SINGLE_MAIN_QUEUE=" cxc-mq))
+        cxc-tr   (if trace? "1" "0")
+        sha      (sha256-hex (str m-src
+                                  "\n;; CXC_SINGLE_MAIN_QUEUE=" cxc-mq
+                                  "\n;; CXC_TRACE=" cxc-tr))
         cache-bin (io/file cache-bin-dir sha)]
     (if (.exists cache-bin)
       (do (copy-file cache-bin bin-file)
@@ -182,10 +185,12 @@
            :stderr     ""
            :cache-hit? true})
       (let [{:keys [exit out err]}
-            (shell/sh "clang" "-fobjc-arc"
-                      "-framework" "Foundation"
-                      (str "-DCXC_SINGLE_MAIN_QUEUE=" cxc-mq)
-                      "-o" (.getPath bin-file) (.getPath m-file))]
+            (apply shell/sh
+                   (cond-> ["clang" "-fobjc-arc"
+                            "-framework" "Foundation"
+                            (str "-DCXC_SINGLE_MAIN_QUEUE=" cxc-mq)]
+                     trace? (conj "-DCXC_TRACE_ENABLED=1")
+                     :always (conj "-o" (.getPath bin-file) (.getPath m-file))))]
         (when (zero? exit)
           (copy-file bin-file cache-bin))
         {:m-path     (.getPath m-file)

@@ -3169,7 +3169,7 @@ def main:
 (deftest q2-unbounded-target-keeps-pre-q2-shape
   (testing "Q2 (2026-08-26) — sync `|>` to an unbounded (default) target emits the pre-Q2 unchanged `cxc_wait_for_processing` shape. No sem accessor, no bounded helper. Zero-cost for the default case: unbounded atoms carry no extra ivar, no extra helper call, no extra bytes of runtime."
     (let [emitted (emit/emit (lower-src "def A:\n    n: Int! = 0\n    * <: bump -> self\n        then: n => n + 1\n\ndef main:\n    a: A = A()\n    -> running\n        then: |> a.bump()\n"))]
-      (is (str/includes? emitted "cxc_wait_for_processing(_a, ^")
+      (is (str/includes? emitted "cxc_wait_for_processing(_a, \"A.bump\", ^")
           "unbounded target keeps direct cxc_wait_for_processing call")
       (is (not (str/includes? emitted "cxc_wait_for_processing_bounded(_a"))
           "no bounded-helper CALL when target is unbounded (helper definition is header-only, always present)")

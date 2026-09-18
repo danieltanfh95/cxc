@@ -1206,8 +1206,10 @@
                         (:guard node)           (emit-expr (:guard node))
                         :else                   "1")
           body        (str/join "\n" (map emit-stmt (:body node)))
-          block       (indent-lines 4 (if (str/blank? body) "return;"
-                                        (str body "\nreturn;")))]
+          trace-line  "CXC_TRACE(\"arm\", nil, self, [NSStringFromSelector(_cmd) UTF8String]);\n"
+          block       (indent-lines 4 (if (str/blank? body)
+                                        (str trace-line "return;")
+                                        (str trace-line body "\nreturn;")))]
       (str "if (" guard ") {\n" block "\n}"))
     :coverage-abort
     ;; L13 (2026-08-25) — runtime fallback for the transition-arm
@@ -1217,7 +1219,9 @@
     ;; missing arm without instrumentation.
     (let [sel   (:msg-selector node)
           phase (:phase-const node)]
-      (str "fprintf(stderr, \"cxc coverage: no arm's `|:` held for `"
+      (str "CXC_TRACE_EX(\"no_arm\", nil, self, \"" (escape-c-string sel)
+           "\", \"phase=" (escape-c-string phase) "\");\n"
+           "fprintf(stderr, \"cxc coverage: no arm's `|:` held for `"
            (escape-c-string sel) "` in phase " (escape-c-string phase)
            " on %s\\n\", "
            "[NSStringFromClass([self class]) UTF8String]);\n"
@@ -1396,7 +1400,7 @@
                                             parts keys))
                              "]")))]
       (str "for (id sub in " ivar ") {\n"
-           "    cxc_send_async(sub, ^{ " send-expr "; });\n"
+           "    cxc_send_async(sub, \"" (escape-c-string sel) "\", ^{ " send-expr "; });\n"
            "}"))
     :stream-add-sub
     ;; Per-stream `-cxc_addSubscriberFor_<name>:` body. Direct
@@ -1899,6 +1903,57 @@
   ;; substitutes when the runtime toggle flips. See
   ;; plans/g4-actor-integrity/f31-f35-concurrency.md L1.
   (str
+       ;; Trace runtime — behind CXC_TRACE build flag (added via --trace
+       ;; CLI). Zero cost when the flag is off (macros expand to
+       ;; ((void)0), unused params elided). When on: every send/recv/arm
+       ;; event writes a JSONL line to CXC_TRACE_FD (fd number in env)
+       ;; or CXC_TRACE_PATH (file path), else stderr. Sink is swappable
+       ;; via env var — no re-instrumentation to switch modes.
+       "#ifdef CXC_TRACE_ENABLED\n"
+       "#include <stdio.h>\n"
+       "#include <sys/time.h>\n"
+       "#include <stdatomic.h>\n"
+       "static FILE *cxc_trace_fp = NULL;\n"
+       "static _Atomic uint64_t cxc_trace_seq = 0;\n"
+       "static inline void cxc_trace_init(void) {\n"
+       "    if (cxc_trace_fp) return;\n"
+       "    const char *fd_env = getenv(\"CXC_TRACE_FD\");\n"
+       "    if (fd_env && *fd_env) {\n"
+       "        int fd = atoi(fd_env);\n"
+       "        if (fd > 0) cxc_trace_fp = fdopen(fd, \"w\");\n"
+       "    }\n"
+       "    if (!cxc_trace_fp) {\n"
+       "        const char *path_env = getenv(\"CXC_TRACE_PATH\");\n"
+       "        if (path_env && *path_env) cxc_trace_fp = fopen(path_env, \"w\");\n"
+       "    }\n"
+       "    if (!cxc_trace_fp) cxc_trace_fp = stderr;\n"
+       "}\n"
+       "static inline double cxc_trace_now_ms(void) {\n"
+       "    struct timeval tv; gettimeofday(&tv, NULL);\n"
+       "    return tv.tv_sec * 1000.0 + tv.tv_usec / 1000.0;\n"
+       "}\n"
+       "static inline void cxc_trace_event(const char *kind, id sender, id target, const char *msg, const char *extra) {\n"
+       "    cxc_trace_init();\n"
+       "    uint64_t seq = atomic_fetch_add(&cxc_trace_seq, 1);\n"
+       "    const char *scls = sender ? [NSStringFromClass([sender class]) UTF8String] : \"-\";\n"
+       "    const char *tcls = target ? [NSStringFromClass([target class]) UTF8String] : \"-\";\n"
+       "    fprintf(cxc_trace_fp,\n"
+       "        \"{\\\"seq\\\":%llu,\\\"t\\\":%.3f,\\\"kind\\\":\\\"%s\\\",\\\"sender_cls\\\":\\\"%s\\\",\\\"sender\\\":%llu,\\\"target_cls\\\":\\\"%s\\\",\\\"target\\\":%llu,\\\"msg\\\":\\\"%s\\\"%s%s%s}\\n\",\n"
+       "        (unsigned long long)seq, cxc_trace_now_ms(),\n"
+       "        kind ? kind : \"-\", scls, (unsigned long long)(uintptr_t)sender,\n"
+       "        tcls, (unsigned long long)(uintptr_t)target,\n"
+       "        msg ? msg : \"-\",\n"
+       "        extra && *extra ? \",\\\"extra\\\":\\\"\" : \"\",\n"
+       "        extra && *extra ? extra : \"\",\n"
+       "        extra && *extra ? \"\\\"\" : \"\");\n"
+       "    fflush(cxc_trace_fp);\n"
+       "}\n"
+       "#define CXC_TRACE(kind, sender, target, msg) cxc_trace_event((kind), (sender), (target), (msg), \"\")\n"
+       "#define CXC_TRACE_EX(kind, sender, target, msg, extra) cxc_trace_event((kind), (sender), (target), (msg), (extra))\n"
+       "#else\n"
+       "#define CXC_TRACE(kind, sender, target, msg) ((void)(sender), (void)(target), (void)(msg))\n"
+       "#define CXC_TRACE_EX(kind, sender, target, msg, extra) ((void)(sender), (void)(target), (void)(msg))\n"
+       "#endif\n\n"
        ;; 2026-09-16 — SeededPrng runtime state table. Park-Miller
        ;; minimal-standard LCG (a=16807, m=2^31-1). State lives here
        ;; as int64_t so multiplication stays inside int64 range
@@ -1966,9 +2021,11 @@
        ;; contract. The exception's userInfo[@"reason"] is already
        ;; delivered to subscribers via the companion emit fired by
        ;; F48 before the re-throw — the log is for oncall visibility.
-       "static inline void cxc_send_async(id target, void (^block)(void)) {\n"
+       "static inline void cxc_send_async(id target, const char *msg_name, void (^block)(void)) {\n"
        "    if (target == nil) return;\n"
+       "    CXC_TRACE(\"send\", nil, target, msg_name);\n"
        "    dispatch_async([(id<CXCAtom>)target own_queue], ^{\n"
+       "        CXC_TRACE(\"recv\", nil, target, msg_name);\n"
        "        @try { block(); }\n"
        "        @catch (NSException *e) {\n"
        "            NSLog(@\"[cxc async unhandled] %@[%p] %@ %@\", NSStringFromClass([target class]), target, e.name, e.reason ?: @\"\");\n"
@@ -2005,8 +2062,9 @@
        ;; undefined behavior). Sender's emit inspects the return: bare
        ;; `|>` re-throws (its own F48 catches); `|>` with `or:` arms
        ;; dispatches on `userInfo[@"reason"]`.
-       "static inline NSException *cxc_wait_for_processing(id target, void (^block)(void)) {\n"
+       "static inline NSException *cxc_wait_for_processing(id target, const char *msg_name, void (^block)(void)) {\n"
        "    if (target == nil) return nil;\n"
+       "    CXC_TRACE(\"send_sync\", nil, target, msg_name);\n"
        "    NSMutableDictionary *__td = [[NSThread currentThread] threadDictionary];\n"
        "    NSMutableSet *__sending = __td[@\"_cxc_sending_to\"];\n"
        "    if (__sending == nil) {\n"
@@ -2021,6 +2079,7 @@
        "    [__sending addObject:__key];\n"
        "    __block NSException *__captured = nil;\n"
        "    void (^__wrapped)(void) = ^{\n"
+       "        CXC_TRACE(\"recv_sync\", nil, target, msg_name);\n"
        "        @try { block(); }\n"
        "        @catch (NSException *e) { __captured = e; }\n"
        "    };\n"
@@ -2050,15 +2109,18 @@
        ;; dispatch) — the emit site knows the target class statically
        ;; and threads the sem via direct-ivar access; zero cost for
        ;; unbounded targets (helper never invoked).
-       "static inline void cxc_send_async_bounded(id target, dispatch_semaphore_t sem, void (^block)(void)) {\n"
+       "static inline void cxc_send_async_bounded(id target, dispatch_semaphore_t sem, const char *msg_name, void (^block)(void)) {\n"
        "    if (target == nil) return;\n"
        "    if (dispatch_semaphore_wait(sem, DISPATCH_TIME_NOW) != 0) {\n"
+       "        CXC_TRACE(\"send_dropped\", nil, target, msg_name);\n"
        "#ifdef DEBUG\n"
        "        NSLog(@\"[cxc bounded drop] %@[%p] mailbox full — dropping :> message\", NSStringFromClass([target class]), target);\n"
        "#endif\n"
        "        return;\n"
        "    }\n"
+       "    CXC_TRACE(\"send\", nil, target, msg_name);\n"
        "    dispatch_async([(id<CXCAtom>)target own_queue], ^{\n"
+       "        CXC_TRACE(\"recv\", nil, target, msg_name);\n"
        "        @try { block(); }\n"
        "        @catch (NSException *e) {\n"
        "            NSLog(@\"[cxc async unhandled] %@[%p] %@ %@\", NSStringFromClass([target class]), target, e.name, e.reason ?: @\"\");\n"
@@ -2066,10 +2128,10 @@
        "        dispatch_semaphore_signal(sem);\n"
        "    });\n"
        "}\n\n"
-       "static inline NSException *cxc_wait_for_processing_bounded(id target, dispatch_semaphore_t sem, void (^block)(void)) {\n"
+       "static inline NSException *cxc_wait_for_processing_bounded(id target, dispatch_semaphore_t sem, const char *msg_name, void (^block)(void)) {\n"
        "    if (target == nil) return nil;\n"
        "    dispatch_semaphore_wait(sem, DISPATCH_TIME_FOREVER);\n"
-       "    NSException *__result = cxc_wait_for_processing(target, block);\n"
+       "    NSException *__result = cxc_wait_for_processing(target, msg_name, block);\n"
        "    dispatch_semaphore_signal(sem);\n"
        "    return __result;\n"
        "}\n\n"
@@ -2280,7 +2342,7 @@
        ;; static receiver type at compile time; the NSObject fanout
        ;; category already declares it for the specific method streams
        ;; the program uses, but this generic path handles any.
-       "        cxc_send_async(sub, ^{\n"
+       "        cxc_send_async(sub, _fanoutSelector ? [_fanoutSelector UTF8String] : \"cxc_stream_value\", ^{\n"
        "            ((void (*)(id, SEL, id))objc_msgSend)(sub, sel, src);\n"
        "        });\n"
        "    }\n"

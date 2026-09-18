@@ -271,7 +271,7 @@
                :classes []
                :main {:body []}}
           s   (emit/emit ast)]
-      (is (str/includes? s "static inline NSException *cxc_wait_for_processing(id target, void (^block)(void))")
+      (is (str/includes? s "static inline NSException *cxc_wait_for_processing(id target, const char *msg_name, void (^block)(void))")
           "cxc_wait_for_processing signature returns NSException* (Q1 2026-08-26: F48 re-throws; sync helper captures on sender's frame and returns to caller for `or:` arm dispatch)")
       (is (str/includes? s "NSMutableSet *__sending = __td[@\"_cxc_sending_to\"];")
           "per-thread sending set stored in -threadDictionary under `_cxc_sending_to` key")
