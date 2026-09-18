@@ -5,31 +5,38 @@
 <title>cxc trace viewer</title>
 <style>
   * { box-sizing: border-box; }
-  body { font: 12px -apple-system, "SF Mono", Menlo, monospace; margin: 0; background: #fafafa; color: #222; }
-  header { padding: 8px 12px; background: #2a2a2a; color: white; display: flex; align-items: center; gap: 12px; }
+  html, body { height: 100%; margin: 0; }
+  body { font: 12px -apple-system, "SF Mono", Menlo, monospace; background: #fafafa; color: #222; }
+  header { padding: 8px 12px; background: #2a2a2a; color: white; display: flex; align-items: center; gap: 12px; height: 34px; flex-shrink: 0; }
   header h1 { margin: 0; font-size: 14px; font-weight: 600; }
-  header .status { color: #aaa; }
-  #layout { display: flex; height: calc(100vh - 32px); }
-  #sidebar { width: 280px; background: #f0f0f0; border-right: 1px solid #ddd; overflow-y: auto; padding: 12px; flex-shrink: 0; }
-  #stage { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
-  #stage-toolbar { padding: 6px 10px; background: white; border-bottom: 1px solid #ddd; display: flex; gap: 8px; align-items: center; }
+  header .status { color: #aaa; font-size: 11px; }
+  #layout { display: flex; height: calc(100vh - 34px); overflow: hidden; }
+  #sidebar { width: 280px; background: #f0f0f0; border-right: 1px solid #ddd; display: flex; flex-direction: column; flex-shrink: 0; overflow: hidden; }
+  #sidebar-scroll { flex: 1; overflow-y: auto; padding: 12px; }
+  #stage { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
+  #stage-toolbar { padding: 6px 10px; background: white; border-bottom: 1px solid #ddd; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; flex-shrink: 0; }
   #stage-toolbar button { padding: 4px 10px; border: 1px solid #ccc; background: white; cursor: pointer; border-radius: 3px; font: inherit; }
   #stage-toolbar button.on { background: #4a90d9; color: white; border-color: #3a7db0; }
-  #stage-main { flex: 1; overflow: auto; background: white; }
-  #stage-detail { max-height: 240px; overflow-y: auto; border-top: 1px solid #ddd; background: #fafafa; padding: 10px; }
-  #stage-detail:empty { display: none; }
-  #drop { border: 3px dashed #999; padding: 40px; text-align: center; color: #666; cursor: pointer; background: white; border-radius: 6px; }
+  #stage-toolbar label { font-size: 11px; display: inline-flex; align-items: center; gap: 4px; }
+  #stage-toolbar input[type="text"], #stage-toolbar select { padding: 3px 5px; border: 1px solid #ccc; border-radius: 3px; font: inherit; }
+  #stage-main { flex: 1; overflow: auto; background: white; position: relative; }
+  #stage-detail { height: 160px; overflow-y: auto; border-top: 1px solid #ddd; background: #fafafa; padding: 10px; flex-shrink: 0; font-size: 11px; }
+  #stage-detail.empty { display: none; }
+  #drop { border: 2px dashed #999; padding: 20px; text-align: center; color: #666; cursor: pointer; background: white; border-radius: 6px; font-size: 11px; }
   #drop.hover { border-color: #4a90d9; background: #eaf3fb; color: #333; }
+  details { margin: 6px 0; }
+  summary { cursor: pointer; padding: 4px 0; font-size: 11px; text-transform: uppercase; color: #555; font-weight: 600; }
+  summary::-webkit-details-marker { color: #999; }
   h4 { margin: 12px 0 6px; font-size: 11px; text-transform: uppercase; color: #555; }
-  label { display: block; padding: 2px 0; cursor: pointer; }
-  label input { margin-right: 6px; }
-  .stat-row { display: flex; justify-content: space-between; padding: 2px 0; }
+  label.filter { display: block; padding: 2px 0; cursor: pointer; font-size: 11px; }
+  label.filter input { margin-right: 6px; }
+  .stat-row { display: flex; justify-content: space-between; padding: 2px 0; font-size: 11px; }
   .stat-row .k { color: #555; }
   .stat-row .v { font-variant-numeric: tabular-nums; }
   .warn { color: #c33; font-weight: 600; }
   .lane { fill: #fafafa; stroke: #eee; }
   .lane-alt { fill: #f4f4f4; stroke: #eee; }
-  .lane-label { font-size: 11px; fill: #333; }
+  .lane-label { font-size: 10px; fill: #333; }
   .evt-send   { fill: #4a90d9; }
   .evt-recv   { fill: #7fbf7f; }
   .evt-arm    { fill: #d99a4a; }
@@ -37,13 +44,23 @@
   .evt-send_sync { fill: #6666dd; }
   .evt-recv_sync { fill: #66aa66; }
   .evt-send_dropped { fill: #999; }
-  .evt-unclosed { fill: none; stroke: #d95a5a; stroke-width: 2; }
   .arrow { stroke: rgba(74,144,217,0.35); stroke-width: 1; fill: none; }
   .arrow-unclosed { stroke: #d95a5a; stroke-width: 1.5; fill: none; stroke-dasharray: 3,2; }
   input[type="text"] { width: 100%; padding: 4px 6px; border: 1px solid #ccc; border-radius: 3px; font: inherit; }
-  pre { margin: 0; font: 11px "SF Mono", Menlo, monospace; }
-  .unclosed-item { padding: 4px 6px; margin: 2px 0; background: #fde8e8; border-left: 3px solid #d95a5a; cursor: pointer; font-size: 11px; }
+  pre { margin: 0; font: 11px "SF Mono", Menlo, monospace; white-space: pre-wrap; word-break: break-all; }
+  .unclosed-item { padding: 4px 6px; margin: 2px 0; background: #fde8e8; border-left: 3px solid #d95a5a; cursor: pointer; font-size: 10px; }
   .unclosed-item:hover { background: #fbd7d7; }
+  /* Graph view */
+  .graph-node { fill: #4a90d9; stroke: white; stroke-width: 2; cursor: pointer; }
+  .graph-node.selected { stroke: #d95a5a; stroke-width: 3; }
+  .graph-node-label { font-size: 11px; fill: #222; pointer-events: none; text-anchor: middle; font-weight: 600; }
+  .graph-node-count { font-size: 9px; fill: #777; pointer-events: none; text-anchor: middle; }
+  .graph-edge { fill: none; stroke: rgba(74,144,217,0.5); stroke-linecap: round; }
+  .graph-edge:hover { stroke: #d95a5a; stroke-width: 4; }
+  .graph-edge-label { font-size: 10px; fill: #333; pointer-events: none; text-anchor: middle; }
+  .graph-edge-label-bg { fill: white; opacity: 0.85; pointer-events: none; }
+  /* Empty state */
+  #empty-state { text-align: center; padding: 60px; color: #999; font-size: 14px; }
 </style>
 </head>
 <body>
@@ -53,31 +70,53 @@
 </header>
 <div id="layout">
   <div id="sidebar">
-    <div id="drop">drop trace.jsonl here<br><span style="font-size:10px;color:#888">or click to browse</span></div>
-    <input type="file" id="file" accept=".jsonl,.json,.log" style="display:none">
-    <div id="stats"></div>
-    <div id="unclosed-panel"></div>
-    <div id="filters"></div>
+    <div id="sidebar-scroll">
+      <div id="drop">drop trace.jsonl<br><span style="font-size:10px;color:#888">or click to browse</span></div>
+      <input type="file" id="file" accept=".jsonl,.json,.log" style="display:none">
+
+      <details open>
+        <summary>overview</summary>
+        <div id="stats"></div>
+      </details>
+
+      <details open>
+        <summary>diagnostics</summary>
+        <div id="unclosed-panel"></div>
+      </details>
+
+      <details>
+        <summary>filters</summary>
+        <div id="filters"></div>
+      </details>
+    </div>
   </div>
   <div id="stage">
     <div id="stage-toolbar">
-      <button id="view-timeline" class="on">timeline</button>
+      <button id="view-graph" class="on">graph</button>
+      <button id="view-timeline">timeline</button>
       <button id="view-sequence">sequence</button>
-      <button id="view-inbox">per-atom inbox</button>
+      <button id="view-inbox">inbox</button>
       <span style="flex:1"></span>
-      <label style="display:inline-block; font-size:11px;">
-        <input type="checkbox" id="show-arrows" checked>
-        show msg arrows (sequence view)
+      <label>
+        aggregate:
+        <select id="graph-aggregate">
+          <option value="class">by class</option>
+          <option value="instance">by instance</option>
+        </select>
       </label>
-      <label style="display:inline-block; font-size:11px;">
+      <label>
+        <input type="checkbox" id="show-arrows" checked>
+        arrows
+      </label>
+      <label>
         seq range:
-        <input type="text" id="seq-range" placeholder="e.g. 0-500" style="width:100px; display:inline-block">
+        <input type="text" id="seq-range" placeholder="e.g. 0-500" style="width:90px">
       </label>
     </div>
     <div id="stage-main">
-      <svg id="canvas"></svg>
+      <div id="empty-state">Load a trace to begin — drag a .jsonl onto the left panel, or click "drop trace.jsonl".</div>
     </div>
-    <div id="stage-detail"></div>
+    <div id="stage-detail" class="empty"></div>
   </div>
 </div>
 
@@ -86,7 +125,9 @@
 
 let events = [];
 let filtered = [];
-let currentView = 'timeline';
+let currentView = 'graph';
+let selectedNode = null;
+let _analysis = null;
 
 const $ = (id) => document.getElementById(id);
 const escapeHtml = (s) => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
@@ -98,7 +139,7 @@ function parseJSONL(text) {
     const line = lines[i].trim();
     if (!line) continue;
     try { out.push(JSON.parse(line)); }
-    catch (e) { console.warn('bad line', i, e.message); }
+    catch (e) { /* skip malformed */ }
   }
   return out;
 }
@@ -106,8 +147,22 @@ function parseJSONL(text) {
 function loadTrace(text, name) {
   events = parseJSONL(text);
   events.sort((a, b) => a.seq - b.seq);
+  // Infer sender: sender for a send/send_sync is the atom whose arm most
+  // recently fired before this send (single-queue mode: arm bodies run
+  // to completion; sends inside them belong to that arm's atom).
+  let lastArmAtom = null, lastArmCls = null;
+  for (const e of events) {
+    if (e.kind === 'arm') {
+      lastArmAtom = e.target;
+      lastArmCls = e.target_cls;
+    } else if ((e.kind === 'send' || e.kind === 'send_sync') && (!e.sender || e.sender === 0)) {
+      e._inferredSender = lastArmAtom;
+      e._inferredSenderCls = lastArmCls;
+    }
+  }
   filtered = events.slice();
   $('status').textContent = `${name || 'trace'} — ${events.length} events`;
+  _analysis = null;
   renderStats();
   renderFilters();
   renderUnclosed();
@@ -118,30 +173,26 @@ function renderStats() {
   const kinds = {};
   events.forEach(e => { kinds[e.kind] = (kinds[e.kind]||0) + 1; });
   const atoms = new Set(events.map(e => e.target)).size;
+  const classes = new Set(events.map(e => e.target_cls)).size;
   const dur = events.length ? (events[events.length-1].t - events[0].t) : 0;
-  let html = '<h4>overview</h4>';
+  let html = '';
   html += `<div class="stat-row"><span class="k">events</span><span class="v">${events.length}</span></div>`;
   html += `<div class="stat-row"><span class="k">atoms</span><span class="v">${atoms}</span></div>`;
+  html += `<div class="stat-row"><span class="k">classes</span><span class="v">${classes}</span></div>`;
   html += `<div class="stat-row"><span class="k">duration</span><span class="v">${dur.toFixed(2)} ms</span></div>`;
-  html += '<h4>by kind</h4>';
+  html += `<div style="margin-top:6px; padding-top:6px; border-top:1px solid #ddd; font-size:10px; color:#666;">by kind</div>`;
   for (const k of Object.keys(kinds).sort()) {
     html += `<div class="stat-row"><span class="k">${escapeHtml(k)}</span><span class="v">${kinds[k]}</span></div>`;
   }
   $('stats').innerHTML = html;
 }
 
-// Pair up send events with matching recv events (by target + msg, in seq order).
-// Anything left unmatched is a suspected drop / hang.
-// Also detect "silent drops": recv fires but no arm event on same target
-// follows within a short window. That's the shape of a phase-mismatched
-// dispatch — the method dispatcher ran but no `deploying <:` arm matched
-// in the atom's current phase and no coverage_abort was emitted.
 function computePairs() {
-  const pending = new Map(); // key = target+"|"+msg → queue of send seqs
-  const pairs = []; // [{send, recv}]
-  const unclosed = []; // send events with no recv
-  const silentDrops = []; // recv with no matching arm shortly after
-  const SILENT_WINDOW = 6; // events after recv to scan for arm on same target
+  const pending = new Map();
+  const pairs = [];
+  const unclosed = [];
+  const silentDrops = [];
+  const SILENT_WINDOW = 6;
   for (let i = 0; i < events.length; i++) {
     const e = events[i];
     const key = e.target + '|' + e.msg;
@@ -150,16 +201,7 @@ function computePairs() {
       pending.get(key).push(e);
     } else if (e.kind === 'recv' || e.kind === 'recv_sync') {
       const q = pending.get(key);
-      if (q && q.length) {
-        pairs.push({send: q.shift(), recv: e});
-      }
-      // Silent-drop check: scan forward for an arm on this atom
-      // where the selector matches the recv msg.
-      // Skip stream fan-out sends (`self.cxc_emit_*`) — those enqueue
-      // on the source atom's own queue solely to defer the fan-out;
-      // the arm-side firing happens on downstream subscribers via
-      // `cxc_stream_*` methods, not on the source, so no arm on the
-      // source is expected.
+      if (q && q.length) pairs.push({send: q.shift(), recv: e});
       const msg = e.msg || '';
       if (msg.startsWith('self.cxc_emit_')) continue;
       const recvBase = msg.split('.').pop();
@@ -174,52 +216,44 @@ function computePairs() {
       if (!hit) silentDrops.push(e);
     }
   }
-  for (const q of pending.values()) {
-    for (const s of q) unclosed.push(s);
-  }
+  for (const q of pending.values()) for (const s of q) unclosed.push(s);
   return {pairs, unclosed, silentDrops};
 }
 
-let _analysis = null;
 function analysis() {
   if (_analysis === null) _analysis = computePairs();
   return _analysis;
 }
 
 function renderUnclosed() {
-  _analysis = null;
   const {unclosed, silentDrops} = analysis();
   const el = $('unclosed-panel');
-  let html = '';
   if (!unclosed.length && !silentDrops.length) {
-    html = '<h4>diagnostics</h4><div style="color:#080">all sends closed, no silent drops ✓</div>';
-    el.innerHTML = html;
+    el.innerHTML = '<div style="color:#080; padding:4px 0;">all sends closed ✓</div>';
     return;
   }
+  let html = '';
   if (unclosed.length) {
-    html += `<h4 class="warn">unclosed sends (${unclosed.length})</h4>`;
-    html += '<div style="max-height:130px; overflow-y:auto;">';
+    html += `<div class="warn" style="margin:4px 0;">unclosed sends: ${unclosed.length}</div>`;
+    html += '<div style="max-height:120px; overflow-y:auto;">';
     for (const s of unclosed.slice(0, 20)) {
-      html += `<div class="unclosed-item" data-seq="${s.seq}">seq ${s.seq}: ${escapeHtml(s.msg)} → ${escapeHtml(s.target_cls)}[${s.target}]</div>`;
+      html += `<div class="unclosed-item" data-seq="${s.seq}">seq ${s.seq}: ${escapeHtml(s.msg)}<br><span style="color:#888">→ ${escapeHtml(s.target_cls)}</span></div>`;
     }
     if (unclosed.length > 20) html += `<div style="padding:4px; color:#888;">…${unclosed.length - 20} more</div>`;
     html += '</div>';
   }
   if (silentDrops.length) {
-    // Prioritize non-Clock drops — Clock ticks that go unconsumed are
-    // background noise (periodic emit, may have no listener), while
-    // e.g. deploy_p1 dropping in the wrong phase is a real bug.
     const sorted = silentDrops.slice().sort((a,b) => {
-      const aClock = /^Clock\.|_Cxc_Clock/.test(a.msg + a.target_cls) ? 1 : 0;
-      const bClock = /^Clock\.|_Cxc_Clock/.test(b.msg + b.target_cls) ? 1 : 0;
+      const aClock = /Clock/.test(a.msg + a.target_cls) ? 1 : 0;
+      const bClock = /Clock/.test(b.msg + b.target_cls) ? 1 : 0;
       if (aClock !== bClock) return aClock - bClock;
       return a.seq - b.seq;
     });
-    html += `<h4 class="warn">silent drops (${silentDrops.length})</h4>`;
-    html += '<div style="font-size:10px; color:#666; margin-bottom:4px;">recv with no matching arm — dispatcher returned without firing (phase mismatch, missing case). Non-Clock first.</div>';
-    html += '<div style="max-height:130px; overflow-y:auto;">';
+    html += `<div class="warn" style="margin:8px 0 4px;">silent drops: ${silentDrops.length}</div>`;
+    html += '<div style="font-size:10px; color:#666; margin-bottom:4px;">recv with no arm — phase mismatch or missing case</div>';
+    html += '<div style="max-height:160px; overflow-y:auto;">';
     for (const s of sorted.slice(0, 20)) {
-      html += `<div class="unclosed-item" data-seq="${s.seq}">seq ${s.seq}: ${escapeHtml(s.msg)} → ${escapeHtml(s.target_cls)}[${s.target}]</div>`;
+      html += `<div class="unclosed-item" data-seq="${s.seq}">seq ${s.seq}: ${escapeHtml(s.msg)}<br><span style="color:#888">→ ${escapeHtml(s.target_cls)}</span></div>`;
     }
     if (sorted.length > 20) html += `<div style="padding:4px; color:#888;">…${sorted.length - 20} more</div>`;
     html += '</div>';
@@ -236,14 +270,13 @@ function renderUnclosed() {
 function renderFilters() {
   const kinds = [...new Set(events.map(e => e.kind))].sort();
   const cls = [...new Set(events.map(e => e.target_cls))].sort();
-  let html = '<h4>kinds</h4>';
-  kinds.forEach(k => html += `<label><input type="checkbox" checked data-fkind="${escapeHtml(k)}"> ${escapeHtml(k)}</label>`);
-  html += '<h4>target class</h4>';
-  cls.forEach(c => html += `<label><input type="checkbox" checked data-fcls="${escapeHtml(c)}"> ${escapeHtml(c)}</label>`);
-  html += '<h4>msg contains</h4><input type="text" id="msg-filter" placeholder="filter substring">';
+  let html = '<div style="font-size:10px; color:#555; margin:4px 0;">kinds</div>';
+  kinds.forEach(k => html += `<label class="filter"><input type="checkbox" checked data-fkind="${escapeHtml(k)}"> ${escapeHtml(k)}</label>`);
+  html += '<div style="font-size:10px; color:#555; margin:6px 0 4px;">target class</div>';
+  cls.forEach(c => html += `<label class="filter"><input type="checkbox" checked data-fcls="${escapeHtml(c)}"> ${escapeHtml(c)}</label>`);
+  html += '<div style="font-size:10px; color:#555; margin:6px 0 4px;">msg contains</div><input type="text" id="msg-filter" placeholder="substring">';
   $('filters').innerHTML = html;
   document.querySelectorAll('#filters input').forEach(i => i.addEventListener('input', applyFilters));
-  $('seq-range').addEventListener('input', applyFilters);
 }
 
 function applyFilters() {
@@ -263,140 +296,415 @@ function applyFilters() {
 }
 
 function showDetail(e) {
-  if (!e) { $('stage-detail').innerHTML = ''; return; }
-  $('stage-detail').innerHTML = `<pre>${escapeHtml(JSON.stringify(e, null, 2))}</pre>`;
+  const el = $('stage-detail');
+  if (!e) { el.className = 'empty'; el.innerHTML = ''; return; }
+  el.className = '';
+  el.innerHTML = `<pre>${escapeHtml(JSON.stringify(e, null, 2))}</pre>`;
 }
 
-function render() {
-  if (currentView === 'timeline') renderTimeline();
-  else if (currentView === 'sequence') renderSequence();
-  else if (currentView === 'inbox') renderInbox();
+// ===== GRAPH VIEW =====
+// Build a directed multigraph: nodes = atoms (aggregated by class or by
+// instance), edges = message flows sender→receiver with count.
+function buildGraph(mode) {
+  // mode: 'class' → aggregate all instances of a class into one node
+  //       'instance' → each atom instance is a node
+  const nodes = new Map(); // id → {id, label, size (# events on it)}
+  const edges = new Map(); // key = src|dst → {src, dst, msgs: {msg → count}, total}
+  const nodeId = (e) => mode === 'class'
+    ? e.target_cls
+    : e.target_cls + '#' + (e.target || 0);
+  const senderId = (e) => {
+    if (mode === 'class') return e._inferredSenderCls || null;
+    return e._inferredSenderCls ? (e._inferredSenderCls + '#' + (e._inferredSender || 0)) : null;
+  };
+  // Nodes: any target appearing in filtered
+  for (const e of filtered) {
+    const id = nodeId(e);
+    if (!nodes.has(id)) nodes.set(id, {id, label: id, cls: e.target_cls, size: 0});
+    nodes.get(id).size++;
+  }
+  // Edges: send/send_sync events
+  for (const e of filtered) {
+    if (e.kind !== 'send' && e.kind !== 'send_sync') continue;
+    const src = senderId(e) || '(root)';
+    const dst = nodeId(e);
+    // Ensure src node exists (for the (root) entry point)
+    if (!nodes.has(src)) nodes.set(src, {id: src, label: src, cls: 'root', size: 0});
+    const key = src + '|' + dst;
+    if (!edges.has(key)) edges.set(key, {src, dst, msgs: new Map(), total: 0, sync: 0});
+    const ed = edges.get(key);
+    const msgLabel = (e.msg || '?').split('.').pop();
+    ed.msgs.set(msgLabel, (ed.msgs.get(msgLabel) || 0) + 1);
+    ed.total++;
+    if (e.kind === 'send_sync') ed.sync++;
+  }
+  return {nodes: [...nodes.values()], edges: [...edges.values()]};
 }
 
-// ---------------- Timeline view ----------------
+function renderGraph() {
+  const stage = $('stage-main');
+  stage.innerHTML = '';
+  const mode = $('graph-aggregate').value;
+  const {nodes, edges} = buildGraph(mode);
+  if (!nodes.length) { stage.innerHTML = '<div id="empty-state">No events after filters.</div>'; return; }
+  const W = stage.clientWidth;
+  const H = stage.clientHeight;
+  const cx = W / 2, cy = H / 2;
+  const R = Math.min(W, H) * 0.36;
+  // Sort nodes: put "(root)" at top, then by size desc
+  nodes.sort((a, b) => {
+    if (a.id === '(root)') return -1;
+    if (b.id === '(root)') return 1;
+    return b.size - a.size;
+  });
+  // Circular layout
+  const N = nodes.length;
+  const nodePos = new Map();
+  nodes.forEach((n, i) => {
+    const angle = -Math.PI / 2 + 2 * Math.PI * i / N;
+    n.x = cx + R * Math.cos(angle);
+    n.y = cy + R * Math.sin(angle);
+    n.angle = angle;
+    nodePos.set(n.id, n);
+  });
+  // Node radius by size (log scale)
+  const maxSize = Math.max(1, ...nodes.map(n => n.size));
+  const nodeR = n => 14 + 22 * Math.sqrt((n.size || 1) / maxSize);
+  // Edge weight by count (log scale)
+  const maxCount = Math.max(1, ...edges.map(e => e.total));
+  const edgeW = e => 1 + 6 * Math.log(1 + e.total) / Math.log(1 + maxCount);
+
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('width', W);
+  svg.setAttribute('height', H);
+  svg.setAttribute('style', 'width:100%;height:100%');
+
+  // Defs for arrowheads
+  const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+  defs.innerHTML = `
+    <marker id="arrowhead" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,2 L10,6 L0,10 z" fill="rgba(74,144,217,0.7)"></path>
+    </marker>
+    <marker id="arrowhead-self" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,1 L8,5 L0,9 z" fill="rgba(217,154,74,0.8)"></path>
+    </marker>
+  `;
+  svg.appendChild(defs);
+
+  // Group edges by (src,dst) pair — already are; render edges first (behind nodes)
+  const edgeG = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+  edgeG.setAttribute('class', 'edges');
+  for (const e of edges) {
+    const src = nodePos.get(e.src);
+    const dst = nodePos.get(e.dst);
+    if (!src || !dst) continue;
+    const srcR = nodeR(src), dstR = nodeR(dst);
+    let path;
+    if (src === dst) {
+      // Self-loop: arc bulging outward from the node, tangent to it
+      const ax = src.x + srcR * Math.cos(src.angle);
+      const ay = src.y + srcR * Math.sin(src.angle);
+      const bx = src.x + srcR * Math.cos(src.angle + 0.5);
+      const by = src.y + srcR * Math.sin(src.angle + 0.5);
+      const mx = src.x + (srcR + 40) * Math.cos(src.angle + 0.25);
+      const my = src.y + (srcR + 40) * Math.sin(src.angle + 0.25);
+      path = `M${ax},${ay} Q${mx},${my} ${bx},${by}`;
+    } else {
+      // Curved edge between two nodes; offset so bidirectional pairs don't overlap
+      const dx = dst.x - src.x, dy = dst.y - src.y;
+      const dist = Math.hypot(dx, dy);
+      const ux = dx / dist, uy = dy / dist;
+      const sx = src.x + srcR * ux, sy = src.y + srcR * uy;
+      const ex = dst.x - dstR * ux, ey = dst.y - dstR * uy;
+      // Perpendicular offset for curve
+      const px = -uy, py = ux;
+      const curve = Math.min(80, dist * 0.15);
+      const mx = (sx + ex) / 2 + px * curve;
+      const my = (sy + ey) / 2 + py * curve;
+      path = `M${sx},${sy} Q${mx},${my} ${ex},${ey}`;
+    }
+    const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    p.setAttribute('d', path);
+    p.setAttribute('class', 'graph-edge');
+    p.setAttribute('stroke-width', edgeW(e));
+    p.setAttribute('marker-end', src === dst ? 'url(#arrowhead-self)' : 'url(#arrowhead)');
+    if (src === dst) p.setAttribute('stroke', 'rgba(217,154,74,0.7)');
+    // Tooltip: list top messages
+    const msgList = [...e.msgs.entries()].sort((a,b) => b[1]-a[1]);
+    const msgSummary = msgList.slice(0, 5).map(([m,c]) => `${m}(${c})`).join(', ')
+      + (msgList.length > 5 ? `, +${msgList.length - 5} more` : '');
+    p.innerHTML = `<title>${e.src} → ${e.dst}\n${e.total} messages (${e.sync} sync)\n${msgSummary}</title>`;
+    p.addEventListener('click', () => {
+      showEdgeDetail(e);
+    });
+    p.style.cursor = 'pointer';
+    edgeG.appendChild(p);
+
+    // Label the edge with total count (only if edge is thick enough)
+    if (edgeW(e) >= 2.5) {
+      const midT = 0.5;
+      let lx, ly;
+      if (src === dst) {
+        lx = src.x + (srcR + 55) * Math.cos(src.angle + 0.25);
+        ly = src.y + (srcR + 55) * Math.sin(src.angle + 0.25);
+      } else {
+        const dx = dst.x - src.x, dy = dst.y - src.y;
+        const dist = Math.hypot(dx, dy);
+        const ux = dx / dist, uy = dy / dist;
+        const sx = src.x + srcR * ux, sy = src.y + srcR * uy;
+        const ex = dst.x - dstR * ux, ey = dst.y - dstR * uy;
+        const px = -uy, py = ux;
+        const curve = Math.min(80, dist * 0.15);
+        const mx = (sx + ex) / 2 + px * curve;
+        const my = (sy + ey) / 2 + py * curve;
+        lx = (sx + 2*mx + ex) / 4;
+        ly = (sy + 2*my + ey) / 4;
+      }
+      const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+      const label = String(e.total);
+      const w = label.length * 6 + 6, h = 12;
+      bg.setAttribute('x', lx - w/2); bg.setAttribute('y', ly - h/2);
+      bg.setAttribute('width', w); bg.setAttribute('height', h);
+      bg.setAttribute('class', 'graph-edge-label-bg');
+      bg.setAttribute('rx', 2);
+      edgeG.appendChild(bg);
+      const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      t.setAttribute('x', lx); t.setAttribute('y', ly + 3);
+      t.setAttribute('class', 'graph-edge-label');
+      t.textContent = label;
+      edgeG.appendChild(t);
+    }
+  }
+  svg.appendChild(edgeG);
+
+  // Nodes
+  const nodeG = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+  for (const n of nodes) {
+    const c = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    c.setAttribute('cx', n.x);
+    c.setAttribute('cy', n.y);
+    c.setAttribute('r', nodeR(n));
+    c.setAttribute('class', 'graph-node' + (selectedNode === n.id ? ' selected' : ''));
+    c.setAttribute('fill', n.id === '(root)' ? '#999' : n.cls === 'CxcMain' ? '#d99a4a' : '#4a90d9');
+    c.addEventListener('click', () => {
+      selectedNode = selectedNode === n.id ? null : n.id;
+      showNodeDetail(n, edges);
+      renderGraph();
+    });
+    c.innerHTML = `<title>${n.id}\n${n.size} events</title>`;
+    nodeG.appendChild(c);
+    const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    t.setAttribute('x', n.x);
+    t.setAttribute('y', n.y + 3);
+    t.setAttribute('class', 'graph-node-label');
+    t.setAttribute('fill', 'white');
+    // Split "Class#id" so long labels don't overflow
+    const short = n.id === '(root)' ? 'root' : n.label.split('#')[0];
+    t.textContent = short;
+    nodeG.appendChild(t);
+    if (n.size > 0 && n.id !== '(root)') {
+      const t2 = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      t2.setAttribute('x', n.x);
+      t2.setAttribute('y', n.y + nodeR(n) + 12);
+      t2.setAttribute('class', 'graph-node-count');
+      t2.textContent = n.size + ' events';
+      nodeG.appendChild(t2);
+    }
+  }
+  svg.appendChild(nodeG);
+  stage.appendChild(svg);
+}
+
+function showNodeDetail(n, edges) {
+  const inc = edges.filter(e => e.dst === n.id).sort((a,b) => b.total - a.total);
+  const out = edges.filter(e => e.src === n.id).sort((a,b) => b.total - a.total);
+  let html = `<div style="font-weight:600; margin-bottom:6px;">${escapeHtml(n.id)} — ${n.size} events</div>`;
+  const fmtEdge = (e, dir) => {
+    const other = dir === 'in' ? e.src : e.dst;
+    const msgs = [...e.msgs.entries()].sort((a,b) => b[1]-a[1]).map(([m,c]) => `${escapeHtml(m)} × ${c}`).join(', ');
+    return `<div style="padding:2px 0;"><b>${e.total}</b> ${dir === 'in' ? '←' : '→'} ${escapeHtml(other)}: ${msgs}</div>`;
+  };
+  html += '<div style="display:flex; gap:20px;">';
+  html += `<div style="flex:1; min-width:0;"><div style="color:#666; font-size:10px; text-transform:uppercase;">incoming (${inc.length})</div>${inc.map(e => fmtEdge(e, 'in')).join('')}</div>`;
+  html += `<div style="flex:1; min-width:0;"><div style="color:#666; font-size:10px; text-transform:uppercase;">outgoing (${out.length})</div>${out.map(e => fmtEdge(e, 'out')).join('')}</div>`;
+  html += '</div>';
+  $('stage-detail').className = '';
+  $('stage-detail').innerHTML = html;
+}
+
+function showEdgeDetail(e) {
+  const msgs = [...e.msgs.entries()].sort((a,b) => b[1]-a[1]);
+  let html = `<div style="font-weight:600; margin-bottom:6px;">${escapeHtml(e.src)} → ${escapeHtml(e.dst)} — ${e.total} messages (${e.sync} sync)</div>`;
+  html += '<table style="width:100%; border-collapse:collapse;">';
+  html += '<tr><th style="text-align:left; padding:2px 6px; border-bottom:1px solid #ccc;">message</th><th style="text-align:right; padding:2px 6px; border-bottom:1px solid #ccc;">count</th></tr>';
+  for (const [m, c] of msgs) {
+    html += `<tr><td style="padding:2px 6px;">${escapeHtml(m)}</td><td style="text-align:right; padding:2px 6px;">${c}</td></tr>`;
+  }
+  html += '</table>';
+  $('stage-detail').className = '';
+  $('stage-detail').innerHTML = html;
+}
+
+// ===== TIMELINE VIEW (seq-based x-axis) =====
 function renderTimeline() {
-  const svg = $('canvas');
-  svg.innerHTML = '';
-  if (!filtered.length) return;
+  const stage = $('stage-main');
+  stage.innerHTML = '';
+  if (!filtered.length) { stage.innerHTML = '<div id="empty-state">No events after filters.</div>'; return; }
   const targets = [...new Set(filtered.map(e => e.target))];
   const targetIndex = new Map(targets.map((t, i) => [t, i]));
   const targetCls = new Map();
   filtered.forEach(e => { if (!targetCls.has(e.target)) targetCls.set(e.target, e.target_cls); });
-  const laneH = 30;
-  const leftPad = 160;
+  const laneH = 28;
+  const leftPad = 200;
   const totalH = targets.length * laneH + 24;
-  const minT = filtered[0].t;
-  const maxT = filtered[filtered.length-1].t;
-  const width = Math.max(1400, filtered.length * 3);
-  const xForT = t => leftPad + (t - minT) / Math.max(1e-6, maxT - minT) * (width - leftPad - 20);
+  // Seq-based x: equal spacing per event, cap at stage width * 3
+  const stageW = stage.clientWidth;
+  const perEventPx = Math.max(2, Math.min(6, (stageW * 3 - leftPad - 20) / filtered.length));
+  const width = Math.max(stageW, leftPad + 20 + filtered.length * perEventPx);
+  const xForSeq = i => leftPad + i * perEventPx;
+
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   svg.setAttribute('width', width);
   svg.setAttribute('height', totalH);
   let parts = [];
   targets.forEach((tgt, i) => {
     const y = 12 + i * laneH;
     parts.push(`<rect class="${i%2 ? 'lane-alt' : 'lane'}" x="0" y="${y}" width="${width}" height="${laneH-2}"></rect>`);
-    parts.push(`<text class="lane-label" x="4" y="${y+18}">${escapeHtml(targetCls.get(tgt) || '?')}[${tgt}]</text>`);
+    const cls = targetCls.get(tgt) || '?';
+    parts.push(`<text class="lane-label" x="4" y="${y+16}">${escapeHtml(cls)} <tspan fill="#999">[${tgt}]</tspan></text>`);
   });
-  filtered.forEach(e => {
+  filtered.forEach((e, i) => {
     const laneI = targetIndex.get(e.target);
-    const y = 12 + laneI * laneH + 16;
-    const x = xForT(e.t);
-    parts.push(`<circle class="evt-${escapeHtml(e.kind)}" cx="${x}" cy="${y}" r="3.5" data-seq="${e.seq}"><title>seq ${e.seq} ${escapeHtml(e.kind)}: ${escapeHtml(e.msg)}</title></circle>`);
+    const y = 12 + laneI * laneH + 14;
+    const x = xForSeq(i);
+    parts.push(`<circle class="evt-${escapeHtml(e.kind)}" cx="${x}" cy="${y}" r="3" data-seq="${e.seq}"><title>seq ${e.seq} ${escapeHtml(e.kind)}: ${escapeHtml(e.msg)}</title></circle>`);
   });
   svg.innerHTML = parts.join('');
   wireCanvasClicks(svg);
+  stage.appendChild(svg);
 }
 
-// ---------------- Sequence-diagram view ----------------
+// ===== SEQUENCE VIEW (compacted) =====
+// Instead of one row per event, one row per contiguous run of events
+// on the same atom. Each run condenses to `<atom> [msg1, msg2, ...]`.
 function renderSequence() {
-  const svg = $('canvas');
-  svg.innerHTML = '';
-  if (!filtered.length) return;
+  const stage = $('stage-main');
+  stage.innerHTML = '';
+  if (!filtered.length) { stage.innerHTML = '<div id="empty-state">No events after filters.</div>'; return; }
+  // Group into runs
+  const runs = [];
+  for (const e of filtered) {
+    const last = runs[runs.length - 1];
+    if (last && last.target === e.target) {
+      last.events.push(e);
+    } else {
+      runs.push({target: e.target, target_cls: e.target_cls, events: [e]});
+    }
+  }
   const targets = [...new Set(filtered.map(e => e.target))];
   const targetIndex = new Map(targets.map((t, i) => [t, i]));
   const targetCls = new Map();
   filtered.forEach(e => { if (!targetCls.has(e.target)) targetCls.set(e.target, e.target_cls); });
-  const colW = 200;
-  const rowH = 26;
+  const colW = Math.max(140, Math.min(220, (stage.clientWidth - 40) / targets.length));
+  const rowH = 24;
   const topPad = 40;
   const totalW = targets.length * colW + 40;
-  const totalH = topPad + filtered.length * rowH + 20;
+  const totalH = topPad + runs.length * rowH + 20;
+
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   svg.setAttribute('width', totalW);
   svg.setAttribute('height', totalH);
   let parts = [];
-  // Column headers + lifelines
   targets.forEach((t, i) => {
     const cx = 20 + i * colW + colW/2;
     parts.push(`<line x1="${cx}" y1="${topPad}" x2="${cx}" y2="${totalH-10}" stroke="#ddd"></line>`);
-    parts.push(`<text class="lane-label" x="${cx}" y="20" text-anchor="middle">${escapeHtml(targetCls.get(t)||'?')}</text>`);
-    parts.push(`<text class="lane-label" x="${cx}" y="34" text-anchor="middle" style="fill:#888;">[${t}]</text>`);
+    parts.push(`<text class="lane-label" x="${cx}" y="18" text-anchor="middle" style="font-weight:600;">${escapeHtml(targetCls.get(t)||'?')}</text>`);
+    parts.push(`<text class="lane-label" x="${cx}" y="32" text-anchor="middle" style="fill:#888; font-size:9px;">[${t}]</text>`);
   });
-  // Events
-  const seqPos = new Map();
-  filtered.forEach((e, i) => {
+  const runPos = new Map(); // for arrow drawing: first event seq → pos
+  runs.forEach((run, i) => {
     const y = topPad + i * rowH + rowH/2;
-    const cx = 20 + targetIndex.get(e.target) * colW + colW/2;
-    parts.push(`<circle class="evt-${escapeHtml(e.kind)}" cx="${cx}" cy="${y}" r="4" data-seq="${e.seq}"><title>seq ${e.seq} ${escapeHtml(e.kind)}: ${escapeHtml(e.msg)}</title></circle>`);
-    parts.push(`<text x="${cx+8}" y="${y+4}" style="font-size:10px; fill:#555;">${escapeHtml(e.msg)}</text>`);
-    seqPos.set(e.seq, {x: cx, y});
+    const cx = 20 + targetIndex.get(run.target) * colW + colW/2;
+    // A compact horizontal cluster of dots for the run
+    const evs = run.events;
+    const spread = Math.min(colW - 40, evs.length * 6);
+    evs.forEach((e, j) => {
+      const dx = evs.length === 1 ? 0 : (-spread/2 + (j / (evs.length - 1)) * spread);
+      const ex = cx + dx;
+      parts.push(`<circle class="evt-${escapeHtml(e.kind)}" cx="${ex}" cy="${y}" r="3.5" data-seq="${e.seq}"><title>seq ${e.seq} ${escapeHtml(e.kind)}: ${escapeHtml(e.msg)}</title></circle>`);
+      runPos.set(e.seq, {x: ex, y});
+    });
+    // Label: first msg + count
+    const firstMsg = (evs[0].msg || '').split('.').pop();
+    const label = evs.length === 1 ? firstMsg : `${firstMsg} (+${evs.length - 1})`;
+    parts.push(`<text x="${cx + spread/2 + 6}" y="${y + 3}" style="font-size:10px; fill:#555;">${escapeHtml(label)}</text>`);
   });
-  // Arrows for send→recv pairs (subset within filter)
+  // Arrows for send→recv within filter
   if ($('show-arrows').checked) {
     const {pairs, unclosed} = analysis();
     const inFilter = new Set(filtered.map(e => e.seq));
     pairs.forEach(({send, recv}) => {
       if (!inFilter.has(send.seq) || !inFilter.has(recv.seq)) return;
-      const s = seqPos.get(send.seq), r = seqPos.get(recv.seq);
+      const s = runPos.get(send.seq), r = runPos.get(recv.seq);
       if (!s || !r) return;
       parts.push(`<path class="arrow" d="M${s.x},${s.y} L${r.x},${r.y}"></path>`);
     });
-    // Unclosed sends: red dashed arrow going nowhere (down 40px)
     unclosed.forEach(s => {
       if (!inFilter.has(s.seq)) return;
-      const p = seqPos.get(s.seq);
+      const p = runPos.get(s.seq);
       if (!p) return;
-      parts.push(`<path class="arrow-unclosed" d="M${p.x},${p.y} L${p.x+30},${p.y+40}"></path>`);
-      parts.push(`<text x="${p.x+34}" y="${p.y+44}" style="fill:#d95a5a; font-size:10px;">✗ no recv</text>`);
+      parts.push(`<path class="arrow-unclosed" d="M${p.x},${p.y} L${p.x+30},${p.y+30}"></path>`);
     });
   }
   svg.innerHTML = parts.join('');
   wireCanvasClicks(svg);
+  stage.appendChild(svg);
 }
 
-// ---------------- Per-atom inbox view ----------------
+// ===== PER-ATOM INBOX =====
 function renderInbox() {
-  const svg = $('canvas');
-  svg.innerHTML = '';
-  const container = document.createElement('div');
-  container.style.padding = '12px';
-  container.style.fontFamily = 'inherit';
+  const stage = $('stage-main');
+  stage.innerHTML = '';
   const byTarget = new Map();
   filtered.forEach(e => {
     if (!byTarget.has(e.target)) byTarget.set(e.target, {cls: e.target_cls, evs: []});
     byTarget.get(e.target).evs.push(e);
   });
-  const html = ['<table style="width:100%; border-collapse:collapse;">'];
-  html.push('<tr><th style="text-align:left; padding:4px; border-bottom:1px solid #ccc;">atom</th><th style="text-align:right;">sends in</th><th style="text-align:right;">recvs</th><th style="text-align:right;">arms fired</th><th style="text-align:right;">no_arm</th><th style="text-align:right;">imbalance</th></tr>');
   const rows = [];
   for (const [tgt, {cls, evs}] of byTarget) {
     const c = {send: 0, recv: 0, arm: 0, no_arm: 0, send_sync: 0, recv_sync: 0, send_dropped: 0};
     evs.forEach(e => { c[e.kind] = (c[e.kind]||0)+1; });
     const sendTot = (c.send||0) + (c.send_sync||0);
     const recvTot = (c.recv||0) + (c.recv_sync||0);
-    const imbal = sendTot - recvTot;
-    rows.push({tgt, cls, sendTot, recvTot, arm: c.arm||0, no_arm: c.no_arm||0, imbal});
+    rows.push({tgt, cls, sendTot, recvTot, arm: c.arm||0, no_arm: c.no_arm||0, imbal: sendTot - recvTot});
   }
-  rows.sort((a,b) => b.imbal - a.imbal);
+  rows.sort((a,b) => Math.abs(b.imbal) - Math.abs(a.imbal) || b.arm - a.arm);
+  const container = document.createElement('div');
+  container.style.padding = '12px';
+  let html = '<table style="width:100%; border-collapse:collapse;">';
+  html += '<thead style="position:sticky; top:0; background:white; z-index:1;"><tr>';
+  html += '<th style="text-align:left; padding:6px; border-bottom:2px solid #333;">atom</th>';
+  html += '<th style="text-align:right; padding:6px; border-bottom:2px solid #333;">sends in</th>';
+  html += '<th style="text-align:right; padding:6px; border-bottom:2px solid #333;">recvs</th>';
+  html += '<th style="text-align:right; padding:6px; border-bottom:2px solid #333;">arms fired</th>';
+  html += '<th style="text-align:right; padding:6px; border-bottom:2px solid #333;">no_arm</th>';
+  html += '<th style="text-align:right; padding:6px; border-bottom:2px solid #333;">imbalance</th>';
+  html += '</tr></thead><tbody>';
   for (const r of rows) {
     const warn = r.imbal !== 0 ? ' style="color:#c33; font-weight:600;"' : '';
-    html.push(`<tr style="border-bottom:1px solid #eee;"><td style="padding:4px;">${escapeHtml(r.cls)}[${r.tgt}]</td><td style="text-align:right;">${r.sendTot}</td><td style="text-align:right;">${r.recvTot}</td><td style="text-align:right;">${r.arm}</td><td style="text-align:right;">${r.no_arm}</td><td style="text-align:right;"${warn}>${r.imbal}</td></tr>`);
+    const noArmWarn = r.no_arm > 0 ? ' style="color:#c33; font-weight:600;"' : '';
+    html += `<tr style="border-bottom:1px solid #eee;">
+      <td style="padding:6px;">${escapeHtml(r.cls)} <span style="color:#999;">[${r.tgt}]</span></td>
+      <td style="text-align:right; padding:6px;">${r.sendTot}</td>
+      <td style="text-align:right; padding:6px;">${r.recvTot}</td>
+      <td style="text-align:right; padding:6px;">${r.arm}</td>
+      <td style="text-align:right; padding:6px;"${noArmWarn}>${r.no_arm}</td>
+      <td style="text-align:right; padding:6px;"${warn}>${r.imbal}</td>
+    </tr>`;
   }
-  html.push('</table>');
-  container.innerHTML = html.join('');
-  svg.parentNode.replaceChild(container, svg);
-  const nsvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  nsvg.id = 'canvas';
-  container._svg = nsvg;
+  html += '</tbody></table>';
+  container.innerHTML = html;
+  stage.appendChild(container);
 }
 
 function wireCanvasClicks(svg) {
@@ -409,37 +717,31 @@ function wireCanvasClicks(svg) {
   });
 }
 
-// Ensure canvas element exists after inbox view swap
-function ensureSVG() {
-  if (!$('canvas')) {
-    const nsvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    nsvg.id = 'canvas';
-    const stage = $('stage-main');
-    stage.innerHTML = '';
-    stage.appendChild(nsvg);
-  } else if ($('canvas').tagName.toLowerCase() !== 'svg') {
-    const nsvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    nsvg.id = 'canvas';
-    const cur = $('canvas');
-    cur.parentNode.replaceChild(nsvg, cur);
-  }
+function render() {
+  if (!events.length) return;
+  if (currentView === 'graph') renderGraph();
+  else if (currentView === 'timeline') renderTimeline();
+  else if (currentView === 'sequence') renderSequence();
+  else if (currentView === 'inbox') renderInbox();
 }
 
-// View switching
 function setView(view) {
   currentView = view;
-  ['timeline','sequence','inbox'].forEach(v => {
+  ['graph','timeline','sequence','inbox'].forEach(v => {
     $('view-' + v).classList.toggle('on', v === view);
   });
-  ensureSVG();
   render();
 }
-$('view-timeline').addEventListener('click', () => setView('timeline'));
-$('view-sequence').addEventListener('click', () => setView('sequence'));
-$('view-inbox').addEventListener('click', () => setView('inbox'));
-$('show-arrows').addEventListener('change', render);
 
-// Drop-target wiring
+['graph','timeline','sequence','inbox'].forEach(v => {
+  $('view-' + v).addEventListener('click', () => setView(v));
+});
+$('show-arrows').addEventListener('change', render);
+$('graph-aggregate').addEventListener('change', render);
+$('seq-range').addEventListener('input', applyFilters);
+window.addEventListener('resize', () => render());
+
+// Drop wiring
 const drop = $('drop');
 drop.addEventListener('click', () => $('file').click());
 $('file').addEventListener('change', (e) => {
@@ -454,7 +756,6 @@ drop.addEventListener('drop', (e) => {
   const f = e.dataTransfer.files[0];
   if (f) f.text().then(t => loadTrace(t, f.name));
 });
-// Also accept drop anywhere on the page
 document.addEventListener('dragover', e => e.preventDefault());
 document.addEventListener('drop', (e) => {
   e.preventDefault();
@@ -462,7 +763,6 @@ document.addEventListener('drop', (e) => {
   if (f) f.text().then(t => loadTrace(t, f.name));
 });
 
-// URL param support: ?trace=/path/to/file.jsonl fetches automatically
 const params = new URLSearchParams(window.location.search);
 if (params.has('trace')) {
   fetch(params.get('trace')).then(r => r.text()).then(t => loadTrace(t, params.get('trace')));
