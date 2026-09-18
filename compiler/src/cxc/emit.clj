@@ -570,6 +570,55 @@
                                        :float  (fn [s] (str "(double)(" s ")"))
                                        :string (fn [s] (str "[" s " UTF8String]"))
                                        nil)
+                           ;; 2026-09-18 — Async-send arg snapshot.
+                           ;; `cxc_send_async(target, name, ^{ [target selWith:<expr>]; })`
+                           ;; runs the block at dispatch time, so `<expr>`
+                           ;; re-evaluates against post-mutation ivars
+                           ;; (e.g. `p0.hand.at(0)` reads the current top
+                           ;; card, not the top at enqueue). Snapshot each
+                           ;; msg-send arg into a `__typeof__`-inferred
+                           ;; local BEFORE the block; block refers to the
+                           ;; local. Matches the sender-site "capture by
+                           ;; copy" comment on :objc-block-literal below.
+                           async-send-fn? (contains?
+                                            #{"cxc_send_async"
+                                              "cxc_send_async_bounded"}
+                                            (:fn node))
+                           last-arg       (last args)
+                           block-arg?     (and async-send-fn?
+                                               (map? last-arg)
+                                               (= :objc-block-literal
+                                                  (:node last-arg))
+                                               (= 1 (count (:stmts last-arg)))
+                                               (= :objc-msg
+                                                  (get-in last-arg [:stmts 0 :node]))
+                                               (seq (get-in last-arg [:stmts 0 :args])))
+                           snap-form      (when block-arg?
+                                            (let [inner (get-in last-arg [:stmts 0])
+                                                  inner-args (:args inner)
+                                                  snap-names (mapv #(str "__cxc_snap" %)
+                                                                   (range (count inner-args)))
+                                                  snap-decls (str/join
+                                                               " "
+                                                               (map (fn [nm a]
+                                                                      (let [e (emit-expr a)]
+                                                                        (str "__typeof__(" e ") "
+                                                                             nm " = (" e ");")))
+                                                                    snap-names inner-args))
+                                                  new-inner  (assoc inner :args
+                                                                    (mapv (fn [nm]
+                                                                            {:node :raw-c-expr
+                                                                             :text nm})
+                                                                          snap-names))
+                                                  new-block  (assoc last-arg :stmts [new-inner])
+                                                  head-args  (butlast args)
+                                                  head-strs  (map emit-expr head-args)
+                                                  send-str   (str (:fn node) "("
+                                                                  (str/join ", "
+                                                                            (concat head-strs
+                                                                                    [(emit-expr new-block)]))
+                                                                  ")")]
+                                              (str "({ " snap-decls " " send-str "; })")))
                            arg-strs  (map-indexed
                                        (fn [i a]
                                          (let [s (emit-expr a)]
@@ -577,10 +626,11 @@
                                              (wrap-arg s)
                                              s)))
                                        args)]
-                       (str (:fn node)
-                            "("
-                            (str/join ", " arg-strs)
-                            ")"))
+                       (or snap-form
+                           (str (:fn node)
+                                "("
+                                (str/join ", " arg-strs)
+                                ")")))
     :objc-block-literal
     ;; `^{ stmt; stmt; }` (or `^(T1 a, T2 b) { ... }` when :params
     ;; present) — an ObjC block literal. Used both to wrap message-
@@ -2496,6 +2546,17 @@
                                   structs
                                   reason-boxes
                                   named-tuple-typedefs
+                                  ;; 2026-09-18 — interfaces must precede
+                                  ;; free-function bodies. Record observable
+                                  ;; bodies (emitted as C functions of
+                                  ;; `self`) can now dispatch container
+                                  ;; methods (`hand.at(0)`); the receiver
+                                  ;; type is a container class whose full
+                                  ;; @interface must be visible at the
+                                  ;; call site or clang can't type the
+                                  ;; ObjC message send. Pre-fix order was
+                                  ;; fn-prototypes → functions → interfaces.
+                                  interfaces
                                   fn-prototypes functions
-                                  interfaces fanout-cat impls
+                                  fanout-cat impls
                                   main-static main]))))

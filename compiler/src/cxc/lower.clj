@@ -452,6 +452,33 @@
         (throw e))
       nil)))
 
+(defn- container-method-not-yet-registered?
+  "2026-09-18 — true when a `:cxc-user-error` describes a method lookup
+   on a synthesized container atom (`_Cxc_ListOf...`, `_Cxc_MapOf...`,
+   `_Cxc_SetOf...`) that hasn't been populated yet. Observation-body
+   inference runs BEFORE container synthesis registers `at`/`count`/
+   `filter`/`get` on those container atoms, so an observation like
+   `top_hand(s: Card) :- hand.at(0) ?? s` hits this transiently. The
+   post-synth re-inference pass retries with a full atom-env."
+  [ex]
+  (let [d (ex-data ex)
+        what (str (:what d))]
+    (and (= :cxc-user-error (:kind d))
+         (re-find #"on atom `_Cxc_(ListOf|MapOf|SetOf)" what))))
+
+(defn- try-infer-observation-body
+  "Infer an observation body's type-kw; on the FIRST env pass, tolerate
+   container-method-lookup failures (container synthesis hasn't landed
+   yet). Any other failure — including from a re-inference pass with
+   `defer?` false — propagates."
+  [expr ctx defer?]
+  (try
+    (infer-type expr ctx)
+    (catch clojure.lang.ExceptionInfo e
+      (if (and defer? (container-method-not-yet-registered? e))
+        nil
+        (throw e)))))
+
 (defn- infer-protocol-defaults
   "F67 L4b — post-pass over protocol-env: for each default observable
    whose `:cxc-return-ty` is still nil (helper default with no matching
@@ -617,29 +644,47 @@
        (let [name          (:name a)
              dsec          (def-atom-effective-data-section a)
              raw-txns      (def-atom-transitions a)
-             ;; L10 (2026-08-25) — two wildcard-source arms on the same
-             ;; message name is a static error per the ratified precedence
-             ;; rule (01 doc §Transitions). Handler-shape dup is caught
-             ;; later by the handler-decl name-uniqueness check; this
-             ;; catches the remaining case: `* <: msg -> concrete-phase`
-             ;; declared twice (or once alongside a `* <: msg -> *`),
-             ;; where both would fire ambiguously.
+             ;; L10 (2026-08-25) — reject wildcard-source arms that are
+             ;; GENUINELY ambiguous: >1 arms on the same message where at
+             ;; least one arm has no guard (unguarded arm matches every
+             ;; time, so a second arm couldn't differentiate itself).
+             ;;
+             ;; 2026-09-18 relaxation — when every wildcard arm on the
+             ;; same message carries a `|:` pattern guard, dispatch by
+             ;; guard at runtime (same shape as concrete-source arms
+             ;; with guards). This unblocks the `* <: msg(seat: Int!) ->
+             ;; self |: seat == 0 then: …` / `|: seat == 1 then: …`
+             ;; consolidation pattern for fan-in handlers routed via
+             ;; `self :>` where source atoms aren't distinguishable.
              _             (let [wildcard-txns (filterv #(= :wildcard (get-in % [:source :kind]))
                                                         raw-txns)
                                  by-msg (group-by (fn [t]
                                                     (get-in t [:receive :msg :source :name]))
                                                   wildcard-txns)
-                                 dup    (some (fn [[msg ts]] (when (and msg (> (count ts) 1)) msg))
+                                 unguarded? (fn [t]
+                                              ;; Arm has no `|:` proposition
+                                              ;; in its body (propositions are
+                                              ;; parsed as `:node :proposition`
+                                              ;; body-clauses; see
+                                              ;; `parse-transition-body`).
+                                              (not-any? #(= :proposition (:node %))
+                                                        (:body t)))
+                                 dup    (some (fn [[msg ts]]
+                                                (when (and msg
+                                                           (> (count ts) 1)
+                                                           (some unguarded? ts))
+                                                  msg))
                                               by-msg)]
                              (when dup
                                (fail-compile!
                                 :cxc-l10-duplicate-wildcard-source-arm
                                 (str "atom `" name "` declares two wildcard-source "
                                      "arms `* <: " dup " ... -> ...` on the same "
-                                     "message; the ratified precedence rule "
-                                     "(concrete-phase arm wins in its own phase; "
-                                     "`*` arm fires everywhere else) rejects two "
-                                     "wildcard arms on the same message as ambiguous.")
+                                     "message and at least one arm has no `|:` "
+                                     "guard, so the guarded arm can never fire. "
+                                     "Add a guard to every wildcard arm on this "
+                                     "message, or fold the unguarded arm's body "
+                                     "into an `else` guard.")
                                 (first raw-txns))))
              ;; L10.b (2026-08-25) — concrete-over-`*` precedence: when a
              ;; handler-shape arm (`* <: msg(args) -> *`) shares its
@@ -651,6 +696,14 @@
              ;; Isolated handler-shape arms (no concrete overlap) still
              ;; route through the handler-decl path — that shape is a
              ;; distinct concept for side-effect-only side channels.
+             ;;
+             ;; 2026-09-18 — same reclassification for the "multiple
+             ;; guarded wildcard arms" case: if two or more handler-shape
+             ;; arms share a message name and each has a `|:` guard, we
+             ;; reclassify them as wildcard-source phase-transitions so
+             ;; guard-dispatch fires at runtime (same shape as concrete-
+             ;; source multi-arm dispatch). Otherwise the handler-decl
+             ;; uniqueness check below rejects them.
              concrete-msg-names
              (set (keep #(when (and (:receive %)
                                     (= "<:" (get-in % [:receive :glyph]))
@@ -658,11 +711,26 @@
                                     (= :ident (get-in % [:receive :msg :source :node])))
                            (get-in % [:receive :msg :source :name]))
                         raw-txns))
+             ;; Names of `* <: msg -> self` handler-shape arms that appear
+             ;; more than once AND every occurrence has a `|:` guard.
+             ;; Same reclassification path as L10.b.
+             guarded? (fn [t]
+                        (some #(= :proposition (:node %)) (:body t)))
+             multi-guarded-handler-names
+             (let [hs   (filter transition-is-handler-shape? raw-txns)
+                   grp  (group-by #(get-in % [:receive :msg :source :name]) hs)]
+               (set (keep (fn [[nm ts]]
+                            (when (and (> (count ts) 1)
+                                       (every? guarded? ts))
+                              nm))
+                          grp)))
              overlapping-wildcard?
              (fn [t]
                (and (transition-is-handler-shape? t)
-                    (contains? concrete-msg-names
-                               (get-in t [:receive :msg :source :name]))))
+                    (or (contains? concrete-msg-names
+                                   (get-in t [:receive :msg :source :name]))
+                        (contains? multi-guarded-handler-names
+                                   (get-in t [:receive :msg :source :name])))))
              ;; F67 L3 — split handler-shape (`* <: msg(args) -> *`) from
              ;; real phase transitions. Handler-shape lower via the
              ;; handler-decl path (see below); real transitions keep
@@ -8301,8 +8369,14 @@
 
    Bare field references get rewritten to `self.<field>` before
    inference so the type walker resolves them as record-field access
-   (record-method convention; see `lower-record-observable-fn`)."
-  [record-env atom-env enum-env]
+   (record-method convention; see `lower-record-observable-fn`).
+
+   2026-09-18 — `defer?` (default true) tolerates container-method-not-
+   yet-registered failures on the first pass; the post-container-synth
+   re-inference pass drives it false to surface any surviving failure."
+  ([record-env atom-env enum-env]
+   (infer-observables-in-record-env record-env atom-env enum-env true))
+  ([record-env atom-env enum-env defer?]
   (reduce-kv
    (fn [env rec-name info]
      (let [self-fields (into {} (map (juxt :name identity) (:fields info)))
@@ -8370,15 +8444,19 @@
                                declared-tk (cond-> declared-raw-tk
                                              envelope-return?
                                              ((fn [t] [:optional t])))
-                               tk  (or declared-tk (infer-type rewritten ctx))]
+                               already-tk (:type-kw o)
+                               tk  (or already-tk
+                                       declared-tk
+                                       (try-infer-observation-body
+                                        rewritten ctx defer?))]
                            (assoc o :type-kw tk
-                                  :c-type  (type-kw->c-type tk o))))
+                                  :c-type  (when tk (type-kw->c-type tk o)))))
                        (or (:observables info) []))]
        (assoc env rec-name
               (assoc info
                      :observables-typed typed
                      :observable-index  (into {} (map (juxt :name identity) typed))))))
-   record-env record-env))
+   record-env record-env)))
 
 (defn- infer-observables-in-atom-env
   "Second pass: with the atom-env already built (so cross-atom types
@@ -8391,11 +8469,27 @@
    becomes a local (its type-kw resolved from the param TypeRef) during
    inference of the body expression. Args shadow self-field names if
    they collide (transient scope; consistent with method-param
-   behavior)."
-  [atom-env record-env enum-env]
+   behavior).
+
+   2026-09-18 — `defer?` (default true) tolerates container-method-not-
+   yet-registered failures on the first pass; the post-container-synth
+   re-inference call passes `defer? false` so any surviving failure
+   propagates. Observations that defer keep :type-kw nil until the
+   second pass fills them in."
+  ([atom-env record-env enum-env]
+   (infer-observables-in-atom-env atom-env record-env enum-env true))
+  ([atom-env record-env enum-env defer?]
   (reduce-kv
    (fn [env atom-name info]
-     (let [self-fields (into {} (map (juxt :name identity) (:fields info)))
+     ;; 2026-09-18 — skip synthesized container entries. Their observables
+     ;; (`count`) live in :observables-typed / :observable-index only,
+     ;; not :observables — running the standard reduce over the empty
+     ;; :observables would wipe both indexes. Container synth is the
+     ;; source of truth for these.
+     (if (contains? #{:list-container :map-container :set-container}
+                    (:kind info))
+       env
+       (let [self-fields (into {} (map (juxt :name identity) (:fields info)))
            {:keys [typed]}
            (reduce (fn [{:keys [typed known]} o]
                      (let [;; 2026-09-05 Path 1 slice 8-A alignment —
@@ -8449,9 +8543,19 @@
                            declared-tk (cond-> declared-raw-tk
                                          envelope-return?
                                          ((fn [t] [:optional t])))
-                           tk     (or declared-tk (infer-type (:expr o) ctx))
+                           ;; 2026-09-18 — first pass defers container-
+                           ;; method-lookup failures so observation bodies
+                           ;; like `top(s: T) :- hand.at(0) ?? s` type-
+                           ;; check on the post-container-synth re-pass
+                           ;; instead of hard-failing here.
+                           already-tk (:type-kw o)
+                           tk     (or already-tk
+                                      declared-tk
+                                      (try-infer-observation-body
+                                       (:expr o) ctx defer?))
                            typed' (assoc o :type-kw tk
-                                         :c-type   (type-kw->c-type tk o))]
+                                         :c-type   (when tk
+                                                     (type-kw->c-type tk o)))]
                        {:typed (conj typed typed')
                         :known (assoc known (:name o) typed')}))
                    {:typed [] :known self-fields}
@@ -8459,8 +8563,8 @@
        (assoc env atom-name
               (assoc info
                      :observables-typed typed
-                     :observable-index  (into {} (map (juxt :name identity) typed))))))
-   atom-env atom-env))
+                     :observable-index  (into {} (map (juxt :name identity) typed)))))))
+   atom-env atom-env)))
 
 ;; M1c — names-mentioned-in + reachable-prelude-atoms moved to
 ;; cxc.lower.tree-shake.
@@ -8657,6 +8761,17 @@
         ;; instantiation-scan pipeline collapsed into one call. See
         ;; `synthesize-container-entries` above.
         atom-env   (synthesize-container-entries atom-env record-env)
+        ;; 2026-09-18 — re-run observation inference now that synthesized
+        ;; container atoms (`_Cxc_ListOfCard.at/count/filter`, Map/Set)
+        ;; are registered in atom-env. Both atom-side and record-side
+        ;; first passes defer container-method-lookup failures; these
+        ;; passes finish typing them, with defer=false so any surviving
+        ;; failure surfaces (real user error, not just a pass-ordering
+        ;; artifact). Records also participate — an observation body
+        ;; can call `.at`/`.count`/`.filter` on a record's container
+        ;; field just as an atom body can.
+        record-env (infer-observables-in-record-env record-env atom-env enum-env false)
+        atom-env   (infer-observables-in-atom-env atom-env record-env enum-env false)
         ;; F9 L3 — collect extension blocks and validate targets against
         ;; the full symbol table. Composition (merging methods,
         ;; applying `replace`, running §3.3.2 rules 1-7) is L4.
