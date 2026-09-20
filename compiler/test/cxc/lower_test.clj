@@ -1110,16 +1110,19 @@ def main:
       (is (some? die))
       (is (= "kEnemy_phase_alive" (:source-phase-const branch)))
       ;; Branch body is wrapped in :end-catch-wrap (Step 15).
-      ;; F33 L3.b: commit-next-state fires first (no writes in this
-      ;; transition, so commit is a no-op copy), then the phase assign.
+      ;; F33 L3.d (transaction model, 2026-09-20): body's `then:`
+      ;; :stmts (here the `print(0)` call) fire FIRST — against the
+      ;; pre-transition snapshot — then commit-next-state, then the
+      ;; phase assign. Prior mid-commit order (commit before stmts)
+      ;; retired with the snapshot-consistent design.
       (let [wrap (first (:body branch))
             body (:body wrap)]
         (is (= :end-catch-wrap (:node wrap)))
-        (is (= :commit-next-state (:node (first body))))
+        (is (= :commit-next-state (:node (second body))))
         (is (= {:node :assign
                 :lhs  {:node :name :sym "_phase"}
                 :rhs  {:node :name :sym "kEnemy_phase_dead"}}
-               (second body)))))))
+               (nth body 2)))))))
 
 (deftest multiple-transitions-same-selector-different-phases-group-into-one-method
   (testing "`alive <: die` and `dying <: die` share selector `die` → one method, two branches in source order"
@@ -5481,15 +5484,18 @@ def main:
       (is (str/includes? c-src "@property (nonatomic, strong) dispatch_queue_t own_queue;")
           "protocol-injected `own_queue` stays readwrite (runtime writes to it)"))))
 ;; ---------------------------------------------------------------------------
-;; F33 L3.d — `do:` clauses run post-commit; their ident reads should route
-;; to live ivars, not the pre-transition snapshot, since the commit has
-;; already landed by the time `do:` fires. Semantic flip achieved by
-;; dropping `:snapshot-name` from the ctx passed to `lower-do-clause` /
-;; `lower-body-stmts` (for :then-clause :stmts under F70 I3).
+;; F33 L3.d (revised 2026-09-20) — TRANSACTION MODEL: the `then:` body is
+;; one atomic step. `=>` updates stage to `__cxc_next` but DO NOT commit
+;; mid-body; the body's `:stmts` read the same `__cxc_snap` snapshot the
+;; `=>` RHS sees, so every read (bare-field, observation call, `|>` /
+;; `:>` arg) inside a body observes a consistent pre-transition image.
+;; Commit fires after all stmts, before phase-update. Prior mid-commit
+;; design (imperative reads) surprised users when a stmt called an
+;; observation whose body reads a field that an earlier `=>` staged.
 ;; ---------------------------------------------------------------------------
 
-(deftest f33-l3d-do-clause-reads-live-ivar-not-snapshot
-  (testing "F33 L3.d — a `then:` `:stmts` block on a receive-glyph transition (post-F70 unified surface — side-effect stmts after field updates) reads live ivars (post-commit), not the pre-transition snapshot. Under `then: n => n + 1  print(n)`, the commit sequence lands the bag write onto `_n` BEFORE the print stmt fires; the read must see the new value."
+(deftest f33-l3d-then-stmts-read-snapshot-not-live-ivar
+  (testing "F33 L3.d (transaction model) — a `then:` `:stmts` block on a receive-glyph transition reads the pre-transition snapshot, not live ivars. Under `then: n => n + 1  print(n)`, the `=>` stages to `__cxc_next._n`; commit runs AFTER the print stmt, so `print(n)` sees the pre-transition value via `__cxc_snap._n`. Users wanting the new value inside the same body write `print(n + 1)` (or split into a follow-up arm)."
     (let [prog  (lower-src (str "def Counter:\n"
                                 "    n: Int! = 0\n\n"
                                 "    -> running\n\n"
@@ -5500,14 +5506,10 @@ def main:
                                 "def main:\n"
                                 "    -> running\n        then: print(0)\n"))
           c-src (emit/emit prog)]
-      ;; Side-effect print reads `n` as a bare ident — L3.d makes this
-      ;; route to `_n` (live ivar), NOT `__cxc_snap._n`. Commit runs
-      ;; earlier so `_n` holds the new value at print time. The print
-      ;; lowers via `printf("%lld\n", (long long)(_n));`.
-      (is (str/includes? c-src "(long long)(_n)")
-          "post-commit stmt reads live ivar (_n)")
-      (is (not (str/includes? c-src "(long long)(__cxc_snap._n)"))
-          "post-commit stmt does NOT route through the pre-transition snapshot"))))
+      (is (str/includes? c-src "(long long)(__cxc_snap._n)")
+          "then-stmt read of `n` routes through the pre-transition snapshot")
+      (is (not (str/includes? c-src "printf(\"%lld\\n\", (long long)(_n))"))
+          "then-stmt read does NOT bypass the snapshot to hit the live ivar"))))
 
 ;; ---------------------------------------------------------------------------
 ;; F33 L2.d — snapshot reroute already covers on-enter bodies:

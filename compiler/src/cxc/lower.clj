@@ -6085,23 +6085,36 @@
         then-stmts   (vec (mapcat (fn [c] (mapcat #(lower-then-update % ctx')
                                                   (:updates c)))
                                   then-clauses))
-        ;; F70 I3 — post-commit side-effect stmts come from BOTH
-        ;; `:do-clause` bodies (legacy) and `:then-clause` `:stmts`
-        ;; (I3 unified). Walk body-clauses in source order so
-        ;; ordering across the two kinds is preserved.
+        ;; F70 I3 — side-effect stmts come from BOTH `:do-clause`
+        ;; bodies (legacy) and `:then-clause` `:stmts` (I3 unified).
+        ;; Walk body-clauses in source order so ordering across the
+        ;; two kinds is preserved.
         ;;
-        ;; F33 L3.d — `do:` runs after the commit. Its reads should
-        ;; observe the just-committed live ivars, not the pre-
-        ;; transition snapshot. Drop `:snapshot-name` from the ctx
-        ;; passed to `lower-do-clause` / `lower-body-stmts` for
-        ;; :then-clause `:stmts` so bare-ident reads fall back to
-        ;; raw ivars. `then:` `:updates` above still use ctx' (with
-        ;; snapshot) since they compute against pre-transition state.
+        ;; F33 L3.d (revised 2026-09-20) — TRANSACTION MODEL: `then:`
+        ;; is one atomic step. `=>` updates stage to `__cxc_next` but
+        ;; DO NOT commit mid-body; the body's stmts read the same
+        ;; pre-transition snapshot the `=>` RHS sees, so the whole
+        ;; body observes a consistent pre-image. Commit happens at
+        ;; end (see raw-body order below). Keep `:snapshot-name`
+        ;; through stmts so bare-ident reads route to `__cxc_snap`
+        ;; instead of raw (unchanged) ivars — same value, but
+        ;; consistent with `=>` RHS reads and with the intended
+        ;; declarative semantics of `=>` ("next-state value is X",
+        ;; not "assign X now"). Prior mid-commit behavior surprised
+        ;; users mixing `hand => filter` with `|> lane.place(top_hero())`
+        ;; because top_hero read post-commit ivars (see the cards.cxc
+        ;; Phase 4 case).
+        ;;
+        ;; Wildcard-on-enter `do:` stmts are conceptually a separate
+        ;; unit that fires at phase entry — they run AFTER commit +
+        ;; phase-update and should observe the newly-committed state,
+        ;; so their ctx drops `:snapshot-name` (kept as ctx-post-commit
+        ;; below).
         ctx-post-commit (dissoc ctx' :snapshot-name)
         do-stmts     (vec (mapcat (fn [c]
                                     (case (:node c)
-                                      :do-clause   (lower-do-clause c ctx-post-commit)
-                                      :then-clause (lower-body-stmts (:stmts c) ctx-post-commit)
+                                      :do-clause   (lower-do-clause c ctx')
+                                      :then-clause (lower-body-stmts (:stmts c) ctx')
                                       nil))
                                   body-clauses))
         ;; Audit F24: `-> self` means self-transition, no phase change
@@ -6228,12 +6241,23 @@
                        (seq binding-decls) (into binding-decls)
                        (seq w-then-stmts) (into w-then-stmts)
                        (seq then-stmts)   (into then-stmts)
+                       ;; F33 L3.d (revised 2026-09-20) — TRANSACTION
+                       ;; ORDER: `=>` staged; body's own `do:` /
+                       ;; then-clause `:stmts` execute against the
+                       ;; snapshot (pre-image); THEN pre-commit
+                       ;; invariants on the bag; THEN commit; THEN
+                       ;; phase-update + wildcard on-enter do:. This
+                       ;; makes `then:` one atomic step — external
+                       ;; observers never see a partially-mutated
+                       ;; atom, and a stmt calling `top_hero()` after
+                       ;; a `hand => filter` in the same body sees the
+                       ;; pre-image hand consistently.
+                       (seq do-stmts)     (into do-stmts)
                        ;; F33 L3.c: invariant check on bag before commit.
                        (seq pre-commit-invariants) (into pre-commit-invariants)
                        commit-stmt        (conj commit-stmt)
                        phase-update       (conj phase-update)
                        (seq w-do-stmts)   (into w-do-stmts)
-                       (seq do-stmts)     (into do-stmts)
                        ;; F33 L3.c: post-commit `[self checkInvariants]`
                        ;; only when no snapshot (atoms without
                        ;; data-fields fall back to the old path; the
@@ -6792,7 +6816,16 @@
   [atom-env record-env enum-env]
   (reduce-kv
    (fn [env atom-name info]
-     (let [self-fields (into {} (map (juxt :name identity) (:fields info)))
+     ;; 2026-09-20 — skip synthesized container entries. Their
+     ;; `:stream-payload-index` is populated by
+     ;; `synthesize-list-container-entries` with fan-in (`e:` prepended
+     ;; to element's payload); walking them here would replace that
+     ;; hand-crafted index with `{}` (no user transitions on a
+     ;; container atom) and break downstream emit-selector synth.
+     (if (contains? #{:list-container :map-container :set-container}
+                    (:kind info))
+       env
+       (let [self-fields (into {} (map (juxt :name identity) (:fields info)))
            self-plus-obs (into self-fields
                                (map (juxt :name identity)
                                     (:observables-typed info)))
@@ -6824,13 +6857,23 @@
            sites (mapcat
                   (fn [t]
                     (let [ctx (ctx-for t)]
-                      (map (fn [e]
-                             {:stream (:msg e)
-                              :emit   e
-                              :args   (mapv (fn [a]
-                                              {:name (:name a)
-                                               :type-kw (infer-type (:value a) ctx)})
-                                            (:args e))})
+                      (keep (fn [e]
+                              ;; 2026-09-20 — DEFER emit sites whose args
+                              ;; reference an observable whose body isn't
+                              ;; typed yet (container-method NYI on this
+                              ;; pass; typed after synth). Only that shape
+                              ;; produces a silent nil from `infer-type`
+                              ;; — all other unresolved refs would throw.
+                              ;; Deferred sites are picked up by the re-run
+                              ;; of this pass after obs re-inference (see
+                              ;; caller in `lower`).
+                              (let [args (mapv (fn [a]
+                                                 {:name (:name a)
+                                                  :type-kw (infer-type (:value a) ctx)})
+                                               (:args e))]
+                                (when (every? (fn [a] (some? (:type-kw a)))
+                                              args)
+                                  {:stream (:msg e) :emit e :args args})))
                            (emit-nodes-in [t]))))
                   (:transitions info))
            typed (reduce
@@ -6859,7 +6902,7 @@
                   {}
                   sites)]
        (assoc env atom-name
-              (assoc info :stream-payload-index typed))))
+              (assoc info :stream-payload-index typed)))))
    atom-env atom-env))
 
 ;; M1c — stream-source-methods + stream-subscribers-{ivar-name,prop}
@@ -8772,6 +8815,22 @@
         ;; field just as an atom body can.
         record-env (infer-observables-in-record-env record-env atom-env enum-env false)
         atom-env   (infer-observables-in-atom-env atom-env record-env enum-env false)
+        ;; 2026-09-20 — re-run stream-payload inference AFTER the
+        ;; post-container-synth observable re-run. The earlier
+        ;; `finalize-atom-env-inference` call above types streams
+        ;; before observations depending on container methods are
+        ;; typed, so a `:> foo(x: self.top_hand(sentinel))` where
+        ;; `top_hand :- hand.at(0) ?? sentinel` would hit an
+        ;; "unrepresentable observable type nil" NYI because the
+        ;; observable's `:type-kw` was still `nil` at first-pass
+        ;; stream inference. Re-running once observables are fully
+        ;; typed resolves the arg's type-kw + c-type properly, and
+        ;; the broadcast-emit callsite compiles. Companion augmentation
+        ;; also re-runs to layer companion streams back on top of the
+        ;; freshly rebuilt payload index (finalize wiped anything that
+        ;; wasn't in its first pass).
+        atom-env   (infer-streams-in-atom-env atom-env record-env enum-env)
+        atom-env   (augment-atom-env-with-companions atom-env record-env enum-env)
         ;; F9 L3 — collect extension blocks and validate targets against
         ;; the full symbol table. Composition (merging methods,
         ;; applying `replace`, running §3.3.2 rules 1-7) is L4.

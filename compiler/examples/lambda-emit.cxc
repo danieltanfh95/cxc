@@ -6,7 +6,7 @@ def Sink:
     ready <: pulse -> ready
         then:
             n => n + 1
-            print(n)
+            print(n + 1)
 
 def main:
     xs: List of Int = [10, 20, 30]
