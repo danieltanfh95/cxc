@@ -1489,11 +1489,12 @@ function renderShape() {
   const g = new dagre.graphlib.Graph({ multigraph: true, compound: false, directed: true });
   g.setGraph({
     rankdir: orient === 'lr' ? 'LR' : 'TB',
-    nodesep: expand ? 60 : 46,
-    ranksep: expand ? 140 : 100,
-    edgesep: 24,
+    nodesep: expand ? 70 : 56,
+    ranksep: expand ? 160 : 130,
+    edgesep: 40,
     marginx: 40,
     marginy: 40,
+    ranker: 'tight-tree',
   });
   g.setDefaultEdgeLabel(() => ({}));
   for (const n of nodes) {
