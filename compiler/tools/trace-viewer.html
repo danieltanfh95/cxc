@@ -1498,7 +1498,12 @@ function renderShape() {
   });
   g.setDefaultEdgeLabel(() => ({}));
   for (const n of nodes) {
-    g.setNode(n.id, { width: blockW, height: blockHFor(n), label: n.label || n.id });
+    const isRoot = n.id === '(root)';
+    g.setNode(n.id, {
+      width: isRoot ? 90 : blockW,
+      height: isRoot ? 30 : blockHFor(n),
+      label: n.label || n.id,
+    });
   }
   // Compute ownership: for each atom-typed field NOT in the ctor param
   // list, the owner-atom class owns the field-type class. Used below,
