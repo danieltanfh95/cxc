@@ -89,6 +89,10 @@
   .shape-block { fill: #4a90d9; stroke: #2a6ea8; stroke-width: 1.5; cursor: pointer; }
   .shape-block.root { fill: #999; stroke: #666; }
   .shape-block.main { fill: #d99a4a; stroke: #a86e2a; }
+  .shape-block.owner { stroke: #c47a20; stroke-width: 3; }
+  .shape-block.owner.main { stroke: #8a4e10; stroke-width: 3; }
+  .shape-owner-label-bg { fill: rgba(255,246,220,0.95); stroke: rgba(196,122,32,0.6); stroke-width: 1; }
+  .shape-owner-label { font-size: 12px; fill: #7a4a10; font-weight: 700; pointer-events: none; letter-spacing: 0.2px; }
   /* Selection: TWO visible cues so it survives raster/headless render where
      filter:drop-shadow can silently drop. A thick red stroke on the block
      PLUS a companion halo rect drawn behind it (see JS). Opacity stays
@@ -1477,13 +1481,11 @@ function renderShape() {
   // as brackets on the block's trailing side — Dagre's self-loop routing
   // is visually messy for our block-with-attached-label idiom.
   //
-  // We DON'T use Dagre's `compound: true` because 0.8.5's compound
-  // layout + multigraph combination throws inside `initRank` on graphs
-  // with fan-in / (root) edges. Instead, we compute ownership from
-  // shape.json below and, after layout, draw a decorative bounding-box
-  // around each owner + its owned children as a background rectangle
-  // (rendered before the nodes so it sits behind). Same visual signal
-  // (Hand is inside Player's group), no compound-layout landmine.
+  // We DON'T use Dagre's `compound: true` — 0.8.5's compound layout
+  // (a) throws with multigraph edges and (b) silently drops the shape
+  // enrichment when it succeeds. Ownership is drawn as decorative
+  // bounding boxes + owner→child tethers post-layout, and the owner's
+  // pill gets a distinct gold outline so parent/child is unambiguous.
   const g = new dagre.graphlib.Graph({ multigraph: true, compound: false, directed: true });
   g.setGraph({
     rankdir: orient === 'lr' ? 'LR' : 'TB',
@@ -1529,27 +1531,24 @@ function renderShape() {
       ownerOf.set(childId, n.id);
     }
   }
-  // Add non-self edges. Multigraph name = a stable per-edge id so parallel
-  // edges between the same pair are laid out as siblings.
-  let edgeSeq = 0;
-  const edgeMeta = new Map(); // dagre edge name -> our edge object
+  // Add non-self edges. One edge per (src, dst) since buildGraph
+  // already consolidated parallel msgs into a msgs map. Key by
+  // src|dst so the render loop can look each edge up.
+  const edgeMeta = new Map();
   for (const e of edges) {
     if (e.src === e.dst) continue;
-    const name = `e${edgeSeq++}`;
     // Weight edges by traffic volume so hot paths get straighter routes.
-    // minlen: 1 keeps every edge one rank apart minimum.
-    g.setEdge(e.src, e.dst, { minlen: 1, weight: Math.max(1, Math.log2(e.total + 2)) }, name);
-    edgeMeta.set(name, e);
+    g.setEdge(e.src, e.dst, { minlen: 1, weight: Math.max(1, Math.log2(e.total + 2)) });
+    edgeMeta.set(e.src + '|' + e.dst, e);
   }
-  // Invisible ownership pull-edges: give Dagre a very strong bias so
-  // owned atoms lay out close to their owner (Player↔Hand end up nearby,
-  // not on opposite sides of the canvas). High weight, minlen 0, marked
-  // as ownership edges so the render step doesn't draw them.
+  // Bias layout with high-weight invisible pull-edges owner→child so
+  // children land in adjacent ranks and the decorative ownership boxes
+  // below stay tight. NOT using dagre `setParent` — compound mode in
+  // 0.8.5 is fragile (see dagre issues #236/#238, d2 #448) and mutates
+  // parent width/height, which invalidates our shape-render pipeline.
   for (const [childId, parentId] of ownerOf) {
     if (childId === parentId) continue;
-    const name = `own_${edgeSeq++}`;
-    g.setEdge(parentId, childId, { minlen: 0, weight: 200 }, name);
-    edgeMeta.set(name, { __ownership: true, src: parentId, dst: childId });
+    g.setEdge(parentId, childId, { minlen: 1, weight: 12, style: 'invis' }, 'own');
   }
   dagre.layout(g);
 
@@ -1731,15 +1730,27 @@ function renderShape() {
         ownerG.appendChild(dot);
       }
     }
+    const labelText = ownerName + ' owns → ' + childNames.join(', ');
+    const lblW = labelText.length * 7 + 14;
+    const lblH = 20;
+    const lblX = xmin - pad + 6;
+    const lblY = ymin - pad - 4;
+    const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    bg.setAttribute('x', lblX);
+    bg.setAttribute('y', lblY - lblH + 4);
+    bg.setAttribute('width', lblW);
+    bg.setAttribute('height', lblH);
+    bg.setAttribute('rx', 4);
+    bg.setAttribute('class', 'shape-owner-label-bg');
+    bg.setAttribute('pointer-events', 'none');
+    ownerG.appendChild(bg);
     const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-    label.setAttribute('x', xmin - pad + 8);
-    label.setAttribute('y', ymin - pad + 14);
-    label.setAttribute('fill', 'rgba(74,144,217,0.9)');
+    label.setAttribute('x', lblX + 7);
+    label.setAttribute('y', lblY - 4);
+    label.setAttribute('class', 'shape-owner-label');
     label.setAttribute('font-family', '-apple-system,Segoe UI,Roboto,sans-serif');
-    label.setAttribute('font-size', '10');
-    label.setAttribute('font-weight', '600');
-    label.setAttribute('pointer-events', 'none');
-    label.textContent = ownerName + ' owns → ' + childNames.join(', ');
+    label.setAttribute('dominant-baseline', 'ideographic');
+    label.textContent = labelText;
     ownerG.appendChild(label);
   }
   svg.appendChild(ownerG);
@@ -1802,15 +1813,14 @@ function renderShape() {
     return best;
   }
   for (const eKey of g.edges()) {
-    const e = edgeMeta.get(eKey.name);
+    const e = edgeMeta.get(eKey.v + '|' + eKey.w);
     if (!e) continue;
-    if (e.__ownership) continue;  // invisible pull-only edge for layout
     const dagreEdge = g.edge(eKey);
     if (!dagreEdge || !dagreEdge.points) continue;
     const pts = dagreEdge.points.map(pt => ({ x: pt.x + dxCenter, y: pt.y + dyCenter }));
     const isSync = e.sync === e.total && e.total > 0;
     const path = pointsToPath(pts);
-    const edgeId = `edge-${e.src}--${e.dst}--${eKey.name}`.replace(/[^a-zA-Z0-9-]/g, '_');
+    const edgeId = `edge-${e.src}--${e.dst}`.replace(/[^a-zA-Z0-9-]/g, '_');
     const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
     p.setAttribute('d', path);
     p.setAttribute('class', 'shape-edge' + (isSync ? ' sync' : ''));
@@ -1982,9 +1992,11 @@ function renderShape() {
     // Dim unrelated blocks whenever a phase graph is open so the reader
     // sees the topology → detail relationship at a glance.
     const dimForSelection = selectedNode && !isSelected && n.id !== '(root)';
+    const isOwner = childrenOf.has(n.id) && n.id !== mainNodeId;
     const clsAttr = 'shape-block' +
       (n.id === '(root)' ? ' root' : '') +
       (isMain ? ' main' : '') +
+      (isOwner ? ' owner' : '') +
       (isSelected ? ' selected' : '') +
       (dimForSelection ? ' dim-when-selected' : '');
     const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
