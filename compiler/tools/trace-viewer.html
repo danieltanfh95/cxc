@@ -1476,6 +1476,14 @@ function renderShape() {
   // routing. Self-loops are excluded from the graph and drawn manually
   // as brackets on the block's trailing side — Dagre's self-loop routing
   // is visually messy for our block-with-attached-label idiom.
+  //
+  // We DON'T use Dagre's `compound: true` because 0.8.5's compound
+  // layout + multigraph combination throws inside `initRank` on graphs
+  // with fan-in / (root) edges. Instead, we compute ownership from
+  // shape.json below and, after layout, draw a decorative bounding-box
+  // around each owner + its owned children as a background rectangle
+  // (rendered before the nodes so it sits behind). Same visual signal
+  // (Hand is inside Player's group), no compound-layout landmine.
   const g = new dagre.graphlib.Graph({ multigraph: true, compound: false, directed: true });
   g.setGraph({
     rankdir: orient === 'lr' ? 'LR' : 'TB',
@@ -1489,6 +1497,38 @@ function renderShape() {
   for (const n of nodes) {
     g.setNode(n.id, { width: blockW, height: blockHFor(n), label: n.label || n.id });
   }
+  // Compute ownership: for each atom-typed field NOT in the ctor param
+  // list, the owner-atom class owns the field-type class. Used below,
+  // after layout, to draw bounding-box background rectangles that
+  // group each owner + its owned children visually.
+  const nodeIds = new Set(nodes.map(n => n.id));
+  const clsToId = new Map();
+  for (const n of nodes) {
+    if (n.shape) clsToId.set(n.shape.name, n.id);
+    clsToId.set(n.id, n.id);
+  }
+  const stripContainer = (t) => {
+    let s = String(t || '');
+    s = s.replace(/^Map of \([^,]+,\s*/, '').replace(/\)$/, '');
+    s = s.replace(/^(List|Set) of /, '');
+    s = s.replace(/[!?]$/, '');
+    return s.trim();
+  };
+  // ownerOf[childId] = parentId. First owner wins for shared classes
+  // (e.g. main.p0:Player and main.p1:Player both parent Player once).
+  const ownerOf = new Map();
+  for (const n of nodes) {
+    if (!n.shape) continue;
+    const ctorNames = new Set((n.shape.ctor_params || []).map(p => p.name));
+    for (const f of (n.shape.fields || [])) {
+      if (ctorNames.has(f.name)) continue;
+      const childCls = stripContainer(f.type);
+      const childId = clsToId.get(childCls);
+      if (!childId || !nodeIds.has(childId) || childId === n.id) continue;
+      if (ownerOf.has(childId)) continue;
+      ownerOf.set(childId, n.id);
+    }
+  }
   // Add non-self edges. Multigraph name = a stable per-edge id so parallel
   // edges between the same pair are laid out as siblings.
   let edgeSeq = 0;
@@ -1500,6 +1540,16 @@ function renderShape() {
     // minlen: 1 keeps every edge one rank apart minimum.
     g.setEdge(e.src, e.dst, { minlen: 1, weight: Math.max(1, Math.log2(e.total + 2)) }, name);
     edgeMeta.set(name, e);
+  }
+  // Invisible ownership pull-edges: give Dagre a very strong bias so
+  // owned atoms lay out close to their owner (Player↔Hand end up nearby,
+  // not on opposite sides of the canvas). High weight, minlen 0, marked
+  // as ownership edges so the render step doesn't draw them.
+  for (const [childId, parentId] of ownerOf) {
+    if (childId === parentId) continue;
+    const name = `own_${edgeSeq++}`;
+    g.setEdge(parentId, childId, { minlen: 0, weight: 200 }, name);
+    edgeMeta.set(name, { __ownership: true, src: parentId, dst: childId });
   }
   dagre.layout(g);
 
@@ -1570,6 +1620,69 @@ function renderShape() {
     svg.appendChild(rect);
   });
 
+  // Ownership bounding boxes — draw a tinted rectangle behind each
+  // owner atom that encloses its DIRECT children only. Transitive
+  // hierarchy reads via nested boxes (LaneSide's box is inside Lane's
+  // box because LaneSide's position is inside Lane's bbox). Skip main's
+  // top-level box — main owns everything, so its box just encloses the
+  // whole canvas and adds noise without signal.
+  const childrenOf = new Map();
+  for (const [child, parent] of ownerOf) {
+    if (!childrenOf.has(parent)) childrenOf.set(parent, []);
+    childrenOf.get(parent).push(child);
+  }
+  const depthOf = (id) => {
+    let d = 0, cur = id;
+    while (ownerOf.has(cur)) { d++; cur = ownerOf.get(cur); }
+    return d;
+  };
+  const mainNodeId = (nodes.find(n => n.shape && n.shape.name === _shape?.main_atom) || {}).id;
+  const owners = [...childrenOf.keys()]
+    .filter(o => o !== mainNodeId)
+    .sort((a, b) => depthOf(a) - depthOf(b));
+  const ownerG = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+  ownerG.setAttribute('class', 'shape-owner-groups');
+  for (const owner of owners) {
+    const ids = [owner, ...(childrenOf.get(owner) || [])];
+    let xmin = Infinity, ymin = Infinity, xmax = -Infinity, ymax = -Infinity;
+    let any = false;
+    for (const id of ids) {
+      const p = pos.get(id);
+      if (!p) continue;
+      any = true;
+      xmin = Math.min(xmin, p.x);
+      ymin = Math.min(ymin, p.y);
+      xmax = Math.max(xmax, p.x + p.w);
+      ymax = Math.max(ymax, p.y + p.h);
+    }
+    if (!any) continue;
+    const pad = 14;
+    const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    rect.setAttribute('x', xmin - pad);
+    rect.setAttribute('y', ymin - pad);
+    rect.setAttribute('width',  (xmax - xmin) + pad * 2);
+    rect.setAttribute('height', (ymax - ymin) + pad * 2);
+    rect.setAttribute('rx', 12);
+    const d = depthOf(owner);
+    const alpha = 0.06 + d * 0.03;
+    rect.setAttribute('fill', `rgba(74,144,217,${alpha.toFixed(2)})`);
+    rect.setAttribute('stroke', 'rgba(74,144,217,0.4)');
+    rect.setAttribute('stroke-width', '1');
+    rect.setAttribute('stroke-dasharray', '4,3');
+    ownerG.appendChild(rect);
+    const ownerName = (nodes.find(n => n.id === owner)?.label) || owner;
+    const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    label.setAttribute('x', xmin - pad + 8);
+    label.setAttribute('y', ymin - pad + 14);
+    label.setAttribute('fill', 'rgba(74,144,217,0.9)');
+    label.setAttribute('font-family', '-apple-system,Segoe UI,Roboto,sans-serif');
+    label.setAttribute('font-size', '10');
+    label.setAttribute('font-weight', '600');
+    label.textContent = ownerName + ' owns';
+    ownerG.appendChild(label);
+  }
+  svg.appendChild(ownerG);
+
   // Edges: draw Dagre's routed polylines. Each Dagre edge exposes a
   // `points` array of {x, y} bend points from source-boundary to
   // destination-boundary. We convert those into an SVG path with softly
@@ -1630,6 +1743,7 @@ function renderShape() {
   for (const eKey of g.edges()) {
     const e = edgeMeta.get(eKey.name);
     if (!e) continue;
+    if (e.__ownership) continue;  // invisible pull-only edge for layout
     const dagreEdge = g.edge(eKey);
     if (!dagreEdge || !dagreEdge.points) continue;
     const pts = dagreEdge.points.map(pt => ({ x: pt.x + dxCenter, y: pt.y + dyCenter }));
