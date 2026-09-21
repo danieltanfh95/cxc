@@ -1731,11 +1731,12 @@ function renderShape() {
         ownerG.appendChild(dot);
       }
     }
-    const labelText = ownerName + ' owns → ' + childNames.join(', ');
+    const labelText = ownerName + ' → ' + childNames.join(', ');
     const lblW = labelText.length * 7 + 14;
-    const lblH = 20;
+    const lblH = 16;
+    const groupW = (xmax - xmin) + pad * 2;
     const lblX = xmin - pad + 6;
-    const lblY = ymin - pad - 4;
+    const lblY = ymin - 3;
     const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
     bg.setAttribute('x', lblX);
     bg.setAttribute('y', lblY - lblH + 4);

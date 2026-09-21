@@ -1,3 +1,6 @@
 # trace-view launcher copies the traced file here so the browser can fetch it
 .current-trace.jsonl
 .current-trace.shape.json
+# muse-driven visual polish loop scratch
+.trace-viewer-polish.md
+.trace-viewer-loop/
