@@ -20,7 +20,9 @@
   #stage-toolbar button.on { background: #4a90d9; color: white; border-color: #3a7db0; }
   #stage-toolbar label { font-size: 11px; display: inline-flex; align-items: center; gap: 4px; }
   #stage-toolbar input[type="text"], #stage-toolbar select { padding: 3px 5px; border: 1px solid #ccc; border-radius: 3px; font: inherit; }
-  #stage-main { flex: 1; overflow: auto; background: white; position: relative; min-height: 0; }
+  #stage-main { flex: 1; overflow: auto; background: white; position: relative; min-height: 0; cursor: grab; }
+  #stage-main.panning { cursor: grabbing; user-select: none; }
+  #stage-main.panning * { pointer-events: none; }
   #stage-detail { height: 180px; overflow-y: auto; border-top: 1px solid #ddd; background: #fafafa; padding: 10px; flex-shrink: 0; font-size: 12px; }
   #stage-detail.empty { display: none; }
   #stage-detail.expanded { height: 55vh; min-height: 420px; }
@@ -2508,6 +2510,40 @@ if (params.has('trace')) {
   splitter.addEventListener('dblclick', () => {
     detail.style.height = '';   // fall back to CSS default (55vh)
     localStorage.removeItem('cxc-phase-pane-h');
+  });
+})();
+
+// Left-drag on empty canvas pans the stage. Click-through targets (pill
+// rects, edge paths, labels, legend) preserve their own handlers via an
+// early exit; drag starts only when the mousedown lands on stage/SVG
+// background. Drag threshold of 4px prevents this from swallowing clicks.
+(function wirePan() {
+  const stage = document.getElementById('stage-main');
+  if (!stage) return;
+  let active = false, sx = 0, sy = 0, sl = 0, st = 0, moved = false;
+  const isBackground = (t) => t === stage || t.tagName === 'svg' || t.tagName === 'SVG'
+    || t.classList?.contains('shape-layer-band')
+    || t.classList?.contains('shape-owner-groups');
+  stage.addEventListener('mousedown', (ev) => {
+    if (ev.button !== 0) return;
+    if (!isBackground(ev.target)) return;
+    active = true; moved = false;
+    sx = ev.clientX; sy = ev.clientY;
+    sl = stage.scrollLeft; st = stage.scrollTop;
+    ev.preventDefault();
+  });
+  window.addEventListener('mousemove', (ev) => {
+    if (!active) return;
+    const dx = ev.clientX - sx, dy = ev.clientY - sy;
+    if (!moved && Math.hypot(dx, dy) < 4) return;
+    if (!moved) { moved = true; stage.classList.add('panning'); }
+    stage.scrollLeft = sl - dx;
+    stage.scrollTop  = st - dy;
+  });
+  window.addEventListener('mouseup', () => {
+    if (!active) return;
+    active = false;
+    stage.classList.remove('panning');
   });
 })();
 </script>
