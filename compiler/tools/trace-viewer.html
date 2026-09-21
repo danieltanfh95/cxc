@@ -43,6 +43,10 @@
   #shape-legend-close { position: absolute; top: 4px; right: 6px; background: none; border: none; cursor: pointer; color: #999; font-size: 14px; line-height: 1; padding: 2px 4px; }
   #shape-legend-close:hover { color: #333; }
   #shape-legend-reopen { position: absolute; bottom: 12px; left: 12px; background: rgba(255,255,255,0.94); border: 1px solid #ddd; border-radius: 4px; padding: 4px 8px; font-size: 11px; cursor: pointer; box-shadow: 0 1px 4px rgba(0,0,0,0.08); pointer-events: auto; z-index: 5; }
+  #shape-zoom { position: absolute; top: 12px; right: 12px; display: flex; align-items: center; gap: 4px; background: rgba(255,255,255,0.94); border: 1px solid #ddd; border-radius: 6px; padding: 3px 6px; font-size: 12px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); z-index: 5; }
+  #shape-zoom button { width: 22px; height: 22px; padding: 0; border: 1px solid #ccc; background: #fafafa; border-radius: 4px; cursor: pointer; font-size: 13px; line-height: 1; color: #333; }
+  #shape-zoom button:hover { background: #eee; }
+  #shape-zoom #shape-zoom-level { min-width: 40px; text-align: center; color: #555; font-variant-numeric: tabular-nums; }
   #shape-legend-reopen:hover { border-color: #999; }
   #shape-hint { position: absolute; top: 12px; left: 12px; background: rgba(255,255,255,0.92); border: 1px solid #ddd; border-radius: 4px; padding: 4px 10px; font-size: 11px; color: #555; pointer-events: auto; z-index: 5; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
   #shape-hint b { color: #333; }
@@ -1438,6 +1442,45 @@ function renderShape() {
   }
   mountLegend();
 
+  // Zoom controls — pill in top-right (bottom-left is taken by legend).
+  // Rescales the shape SVG's rendered width/height; viewBox stays at native
+  // dimensions so contents scale crisply. Persists per session.
+  if (!document.getElementById('shape-zoom')) {
+    const zctl = document.createElement('div');
+    zctl.id = 'shape-zoom';
+    zctl.innerHTML = `
+      <button id="shape-zoom-out" title="zoom out (ctrl+scroll)">−</button>
+      <span id="shape-zoom-level">100%</span>
+      <button id="shape-zoom-in" title="zoom in (ctrl+scroll)">+</button>
+      <button id="shape-zoom-reset" title="reset to 100%">⟲</button>
+    `;
+    stage.appendChild(zctl);
+    const applyZoom = (newZoom) => {
+      const clamped = Math.max(0.25, Math.min(3, newZoom));
+      localStorage.setItem('cxc-shape-zoom', String(clamped));
+      const svgEl = stage.querySelector('svg');
+      if (svgEl && svgEl.dataset.nativeW) {
+        svgEl.setAttribute('width', +svgEl.dataset.nativeW * clamped);
+        svgEl.setAttribute('height', +svgEl.dataset.nativeH * clamped);
+      }
+      const lvl = document.getElementById('shape-zoom-level');
+      if (lvl) lvl.textContent = Math.round(clamped * 100) + '%';
+    };
+    const step = (delta) => {
+      const cur = parseFloat(localStorage.getItem('cxc-shape-zoom')) || 1;
+      applyZoom(cur + delta);
+    };
+    document.getElementById('shape-zoom-out').addEventListener('click', () => step(-0.1));
+    document.getElementById('shape-zoom-in').addEventListener('click', () => step(0.1));
+    document.getElementById('shape-zoom-reset').addEventListener('click', () => applyZoom(1));
+    stage.addEventListener('wheel', (ev) => {
+      if (!ev.ctrlKey && !ev.metaKey) return;
+      ev.preventDefault();
+      step(ev.deltaY < 0 ? 0.1 : -0.1);
+    }, { passive: false });
+    applyZoom(parseFloat(localStorage.getItem('cxc-shape-zoom')) || 1);
+  }
+
   // Onboarding hint — first-time only. localStorage tracks dismissal.
   if (localStorage.getItem('cxc-shape-hint-dismissed') !== '1') {
     const hint = document.createElement('div');
@@ -1580,8 +1623,12 @@ function renderShape() {
   }
 
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  svg.setAttribute('width', W);
-  svg.setAttribute('height', H);
+  const shapeZoom = Math.max(0.25, Math.min(3, parseFloat(localStorage.getItem('cxc-shape-zoom')) || 1));
+  svg.setAttribute('width', W * shapeZoom);
+  svg.setAttribute('height', H * shapeZoom);
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  svg.dataset.nativeW = W;
+  svg.dataset.nativeH = H;
 
   const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
   defs.innerHTML = `
