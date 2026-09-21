@@ -109,7 +109,7 @@
   .shape-block-badge { fill: rgba(255,255,255,0.18); }
   .shape-block-badge-label { font-size: 11px; fill: white; font-weight: 600; pointer-events: none; text-anchor: middle; font-variant-numeric: tabular-nums; }
   .shape-edge { stroke: #666; stroke-width: 1.4; fill: none; }
-  .shape-edge.sync { stroke: #6a5acd; stroke-dasharray: 4,2; }
+  .shape-edge.sync { stroke: #5340b0; stroke-width: 2; stroke-dasharray: none; }
   .shape-edge.self { stroke: #d99a4a; }
   .shape-edge:hover, .shape-edge.shape-edge-hover { stroke: #d95a5a; stroke-width: 3; }
   .shape-edge-label-bg.shape-edge-hover { fill: #ffe8d0; opacity: 1; }
@@ -1415,7 +1415,7 @@ function renderShape() {
       <div class="legend-group">
         <h5>edges</h5>
         <div class="legend-row"><span class="legend-line" style="border-top:1.6px solid #333;"></span>async send</div>
-        <div class="legend-row"><span class="legend-line" style="border-top:1.6px dashed #6a5acd;"></span>sync only</div>
+        <div class="legend-row"><span class="legend-line" style="border-top:2px solid #5340b0;"></span>sync only</div>
         <div class="legend-row"><span class="legend-line" style="border-top:1.6px solid #c47a20;"></span>self-loop</div>
         <div class="legend-row" title="label 'foo +N' = top message plus N others on same edge — hover for full list"><span style="display:inline-block; width:22px; text-align:center; color:#666; font-family:'SF Mono',Menlo,monospace; font-size:10px;">+N</span>= more msgs</div>
       </div>
