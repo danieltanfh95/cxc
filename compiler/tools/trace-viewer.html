@@ -6,7 +6,8 @@
 <style>
   * { box-sizing: border-box; }
   html, body { height: 100%; margin: 0; }
-  body { font: 12px -apple-system, "SF Mono", Menlo, monospace; background: #fafafa; color: #222; }
+  body { font: 13px -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif; background: #fafafa; color: #222; }
+  code, .mono { font-family: "SF Mono", Menlo, Consolas, monospace; }
   header { padding: 8px 12px; background: #2a2a2a; color: white; display: flex; align-items: center; gap: 12px; height: 34px; flex-shrink: 0; }
   header h1 { margin: 0; font-size: 14px; font-weight: 600; }
   header .status { color: #aaa; font-size: 11px; }
@@ -19,9 +20,34 @@
   #stage-toolbar button.on { background: #4a90d9; color: white; border-color: #3a7db0; }
   #stage-toolbar label { font-size: 11px; display: inline-flex; align-items: center; gap: 4px; }
   #stage-toolbar input[type="text"], #stage-toolbar select { padding: 3px 5px; border: 1px solid #ccc; border-radius: 3px; font: inherit; }
-  #stage-main { flex: 1; overflow: auto; background: white; position: relative; }
-  #stage-detail { height: 160px; overflow-y: auto; border-top: 1px solid #ddd; background: #fafafa; padding: 10px; flex-shrink: 0; font-size: 11px; }
+  #stage-main { flex: 1; overflow: auto; background: white; position: relative; min-height: 0; }
+  #stage-detail { height: 180px; overflow-y: auto; border-top: 1px solid #ddd; background: #fafafa; padding: 10px; flex-shrink: 0; font-size: 12px; }
   #stage-detail.empty { display: none; }
+  #stage-detail.expanded { height: 55vh; min-height: 420px; }
+  #stage-splitter { display: none; height: 8px; background: #e2e2e2; cursor: row-resize; flex-shrink: 0; border-top: 1px solid #ccc; border-bottom: 1px solid #ccc; position: relative; }
+  #stage-splitter::before { content: ''; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 40px; height: 4px; background-image: radial-gradient(circle, #888 1px, transparent 1.2px); background-size: 6px 4px; background-repeat: repeat-x; opacity: 0.7; }
+  #stage-splitter:hover, #stage-splitter.dragging { background: #b3d4f0; }
+  #stage-splitter:hover::before, #stage-splitter.dragging::before { opacity: 1; }
+  #stage-detail.expanded + #stage-splitter, #stage-detail:not(.empty) ~ #stage-splitter { display: block; }
+  /* The splitter sits BEFORE #stage-detail in DOM, so we anchor its
+     visibility on #stage-detail not being empty via a body-scope class
+     toggled from JS. */
+  body.phase-panel-open #stage-splitter { display: block; }
+  /* Legend — floating card in the top-right of the stage */
+  #shape-legend { position: absolute; top: 12px; right: 12px; background: rgba(255,255,255,0.94); border: 1px solid #ddd; border-radius: 6px; padding: 8px 12px 8px 12px; font-size: 11px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); pointer-events: auto; z-index: 5; }
+  #shape-legend h5 { margin: 0 0 4px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: #666; font-weight: 600; }
+  #shape-legend .legend-row { display: flex; align-items: center; gap: 6px; padding: 2px 0; }
+  #shape-legend .legend-swatch { width: 14px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+  #shape-legend .legend-line { width: 22px; height: 0; flex-shrink: 0; }
+  #shape-legend .legend-group + .legend-group { margin-top: 6px; padding-top: 6px; border-top: 1px solid #eee; }
+  #shape-legend-close { position: absolute; top: 4px; right: 6px; background: none; border: none; cursor: pointer; color: #999; font-size: 14px; line-height: 1; padding: 2px 4px; }
+  #shape-legend-close:hover { color: #333; }
+  #shape-legend-reopen { position: absolute; top: 12px; right: 12px; background: rgba(255,255,255,0.94); border: 1px solid #ddd; border-radius: 4px; padding: 4px 8px; font-size: 11px; cursor: pointer; box-shadow: 0 1px 4px rgba(0,0,0,0.08); pointer-events: auto; z-index: 5; }
+  #shape-legend-reopen:hover { border-color: #999; }
+  #shape-hint { position: absolute; top: 12px; left: 12px; background: rgba(255,255,255,0.92); border: 1px solid #ddd; border-radius: 4px; padding: 4px 10px; font-size: 11px; color: #555; pointer-events: auto; z-index: 5; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
+  #shape-hint b { color: #333; }
+  #shape-hint .dismiss { color: #999; cursor: pointer; margin-left: 8px; }
+  #shape-hint .dismiss:hover { color: #333; }
   #drop { border: 2px dashed #999; padding: 20px; text-align: center; color: #666; cursor: pointer; background: white; border-radius: 6px; font-size: 11px; }
   #drop.hover { border-color: #4a90d9; background: #eaf3fb; color: #333; }
   details { margin: 6px 0; }
@@ -33,7 +59,7 @@
   .stat-row { display: flex; justify-content: space-between; padding: 2px 0; font-size: 11px; }
   .stat-row .k { color: #555; }
   .stat-row .v { font-variant-numeric: tabular-nums; }
-  .warn { color: #c33; font-weight: 600; }
+  .warn { color: #a94442; font-weight: 500; font-size: 11px; }
   .lane { fill: #fafafa; stroke: #eee; }
   .lane-alt { fill: #f4f4f4; stroke: #eee; }
   .lane-label { font-size: 10px; fill: #333; }
@@ -59,6 +85,68 @@
   .graph-edge:hover { stroke: #d95a5a; stroke-width: 4; }
   .graph-edge-label { font-size: 10px; fill: #333; pointer-events: none; text-anchor: middle; }
   .graph-edge-label-bg { fill: white; opacity: 0.85; pointer-events: none; }
+  /* Shape view — layered class diagram of the program's cascade topology */
+  .shape-block { fill: #4a90d9; stroke: #2a6ea8; stroke-width: 1.5; cursor: pointer; }
+  .shape-block.root { fill: #999; stroke: #666; }
+  .shape-block.main { fill: #d99a4a; stroke: #a86e2a; }
+  /* Selection: TWO visible cues so it survives raster/headless render where
+     filter:drop-shadow can silently drop. A thick red stroke on the block
+     PLUS a companion halo rect drawn behind it (see JS). Opacity stays
+     opaque so the fill color stays vivid on the selected atom. */
+  /* Selection cue — calm, not alarmed. A single solid accent stroke on the
+     block plus a soft warm glow behind it. No dashed rings (they read as
+     validation errors), no red (same). */
+  .shape-block.selected { stroke: #2a5a8a; stroke-width: 3; }
+  .shape-block.main.selected { stroke: #7a4a10; }
+  .shape-block-halo-outer { fill: none; stroke: #ffe4a3; stroke-width: 8; pointer-events: none; opacity: 0.9; }
+  .shape-block.dim-when-selected { opacity: 0.5; }
+  .shape-block-label { font-size: 16px; fill: white; font-weight: 700; pointer-events: none; text-anchor: middle; letter-spacing: 0.2px; font-family: "SF Mono", Menlo, Consolas, monospace; }
+  .shape-block-sub { font-size: 12px; fill: rgba(255,255,255,0.92); pointer-events: none; text-anchor: middle; font-variant-numeric: tabular-nums; }
+  .shape-block-badge { fill: rgba(255,255,255,0.18); }
+  .shape-block-badge-label { font-size: 11px; fill: white; font-weight: 600; pointer-events: none; text-anchor: middle; font-variant-numeric: tabular-nums; }
+  .shape-edge { stroke: #666; stroke-width: 1.4; fill: none; }
+  .shape-edge.sync { stroke: #6a5acd; stroke-dasharray: 4,2; }
+  .shape-edge.self { stroke: #d99a4a; }
+  .shape-edge:hover, .shape-edge.shape-edge-hover { stroke: #d95a5a; stroke-width: 3; }
+  .shape-edge-label-bg.shape-edge-hover { fill: #ffe8d0; opacity: 1; }
+  rect.shape-edge-label-bg { pointer-events: all; cursor: default; }
+  .shape-edge-label { font-size: 13px; fill: #222; pointer-events: none; font-weight: 500; font-family: "SF Mono", Menlo, Consolas, monospace; paint-order: stroke fill; stroke: #ffffff; stroke-width: 3px; stroke-linejoin: round; }
+  .shape-edge-label-bg { fill: white; opacity: 0.95; pointer-events: none; }
+  .shape-layer-band { fill: #f4f4f4; }
+  .shape-layer-band.alt { fill: #f9f9f9; }
+  /* Shape-view interactive extras */
+  .shape-pill { fill: #e0ecf7; stroke: #4a90d9; stroke-width: 0.8; }
+  .shape-pill-label { font-size: 10px; fill: #1a4d7d; pointer-events: none; text-anchor: middle; font-weight: 500; }
+  .shape-block.dim { opacity: 0.25; }
+  .shape-edge.dim { opacity: 0.15; }
+  .shape-block.hover { stroke: #d95a5a; stroke-width: 2.4; }
+  /* [duplicate overridden by the 55vh rule above; kept to preserve line
+     numbering in comments — actual value is 55vh / min-height 420px] */
+  .phase-node { fill: #b3d4f0; stroke: #2a6ea8; stroke-width: 1.4; }
+  .phase-node.initial { fill: #ffd580; stroke: #b8792b; }
+  .phase-node.end { fill: #ccc; stroke: #666; }
+  /* Declared-but-unobserved terminal phase: dashed stroke + reduced opacity
+     so readers see "no observed transition reaches this" instead of "the
+     renderer forgot an edge". Hover shows a plain-language tooltip. */
+  .phase-node.unreached { stroke-dasharray: 4,3; opacity: 0.55; }
+  .phase-label { font-size: 13px; fill: #222; text-anchor: middle; font-weight: 600; pointer-events: none; font-family: "SF Mono", Menlo, Consolas, monospace; }
+  .phase-label.unreached { opacity: 0.55; }
+  .phase-unreached-caption { font-size: 10px; fill: #888; text-anchor: middle; pointer-events: none; font-style: italic; }
+  .phase-arc { stroke: #666; stroke-width: 1.4; fill: none; }
+  .phase-arc.self-loop { stroke: #d99a4a; }
+  .phase-arc.guarded { stroke-dasharray: 5,3; }
+  .phase-arc.primary { stroke: #2a6ea8; stroke-width: 2.4; }
+  .phase-arc-label { font-size: 12px; fill: #222; pointer-events: none; font-family: "SF Mono", Menlo, Consolas, monospace; font-weight: 500; paint-order: stroke fill; stroke: #ffffff; stroke-width: 3px; stroke-linejoin: round; }
+  /* Force a persistent horizontal scrollbar in the phase pane — Mac's
+     overlay scrollbars disappear when idle, killing the affordance. */
+  #phase-graph-svg-wrap::-webkit-scrollbar { height: 12px; background: #eee; }
+  #phase-graph-svg-wrap::-webkit-scrollbar-thumb { background: #b0b0b0; border-radius: 6px; border: 2px solid #eee; }
+  #phase-graph-svg-wrap::-webkit-scrollbar-thumb:hover { background: #888; }
+  .phase-arc-label-bg { fill: white; opacity: 0.95; pointer-events: none; }
+  .phase-arc-leader { stroke: #666; stroke-width: 1; stroke-dasharray: 3,2; pointer-events: none; opacity: 0.8; }
+  .phase-arc-dot { cursor: pointer; }
+  .phase-self-badge { fill: #d99a4a; cursor: pointer; }
+  .phase-self-badge-label { font-size: 11px; fill: white; font-weight: 700; text-anchor: middle; pointer-events: none; }
   /* Empty state */
   #empty-state { text-align: center; padding: 60px; color: #999; font-size: 14px; }
 </style>
@@ -79,7 +167,7 @@
         <div id="stats"></div>
       </details>
 
-      <details open>
+      <details>
         <summary>diagnostics</summary>
         <div id="unclosed-panel"></div>
       </details>
@@ -92,7 +180,8 @@
   </div>
   <div id="stage">
     <div id="stage-toolbar">
-      <button id="view-graph" class="on">graph</button>
+      <button id="view-graph">graph</button>
+      <button id="view-shape" class="on">shape</button>
       <button id="view-timeline">timeline</button>
       <button id="view-sequence">sequence</button>
       <button id="view-inbox">inbox</button>
@@ -108,6 +197,22 @@
         <input type="checkbox" id="show-arrows" checked>
         arrows
       </label>
+      <span id="shape-controls" style="display:none; gap:6px; align-items:center;">
+        <!-- L→R was retired; TB is the only supported orientation. Kept a
+             hidden select so JS references resolve without an old-URL param
+             breaking the load. -->
+        <select id="shape-orient" style="display:none;">
+          <option value="tb" selected>T → B</option>
+        </select>
+        <label>
+          <input type="checkbox" id="shape-expand">
+          expand
+        </label>
+        <label>
+          <input type="checkbox" id="shape-show-containers">
+          show containers
+        </label>
+      </span>
       <label>
         seq range:
         <input type="text" id="seq-range" placeholder="e.g. 0-500" style="width:90px">
@@ -116,18 +221,39 @@
     <div id="stage-main">
       <div id="empty-state">Load a trace to begin — drag a .jsonl onto the left panel, or click "drop trace.jsonl".</div>
     </div>
+    <div id="stage-splitter" title="Drag to resize · double-click to reset"></div>
     <div id="stage-detail" class="empty"></div>
   </div>
 </div>
 
+<script src="vendor/dagre.min.js"></script>
 <script>
 "use strict";
 
 let events = [];
 let filtered = [];
-let currentView = 'graph';
+let currentView = 'shape';
 let selectedNode = null;
 let _analysis = null;
+// class-name (from atom_init) → user-chosen name (from send.msg prefix).
+// Populated by loadTrace; e.g. CxcMain → main because the user wrote
+// `def main:`. Lets the shape view label blocks with the source-visible
+// name, not the compiler-mangled class.
+const _userNames = new Map();
+// Classes matching this pattern are auto-synthesized containers /
+// capability wrappers (List/Map/Set of T; SeededPrng; …). Hidden from
+// the shape view by default — they're compiler plumbing, not program
+// topology. Toggle in the toolbar to expose them.
+const CONTAINER_RE = /^_Cxc_/;
+// Compiler-emitted shape sidecar (see cxc.shape-sidecar / build.clj —
+// `<binary>.shape.json`). When present, gives us source-truth: phases,
+// transitions, initial phase, container-typed fields per atom. The
+// shape view uses it as topology truth (blocks = shape.atoms) and
+// overlays trace-derived edge counts on top. `null` = no shape loaded;
+// viewer falls back to trace-derived topology (Phase 1 behavior).
+let _shape = null;
+// Currently-expanded atom's name; the detail pane shows its phase graph.
+let _expandedAtom = null;
 
 const $ = (id) => document.getElementById(id);
 const escapeHtml = (s) => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
@@ -159,6 +285,20 @@ function loadTrace(text, name) {
       e._inferredSender = lastArmAtom;
       e._inferredSenderCls = lastArmCls;
     }
+  }
+  // Build class → user-name map. `send.msg` payloads look like
+  // `main.kickoff` / `Player.record_and_next` — the user's chosen field
+  // name for the atom instance. Match against target_cls to recover it.
+  // First occurrence wins so a class always maps to a single user name.
+  _userNames.clear();
+  for (const e of events) {
+    if (e.kind !== 'send' && e.kind !== 'send_sync') continue;
+    const dot = (e.msg || '').indexOf('.');
+    if (dot <= 0) continue;
+    const userName = e.msg.slice(0, dot);
+    if (userName.startsWith('cxc_')) continue; // internal stream plumbing
+    if (!e.target_cls || _userNames.has(e.target_cls)) continue;
+    _userNames.set(e.target_cls, userName);
   }
   filtered = events.slice();
   $('status').textContent = `${name || 'trace'} — ${events.length} events`;
@@ -332,12 +472,57 @@ function computeInstanceLabels() {
   }
 }
 
+// Strip auto-synthesized noise from a message label so shape edges read as
+// the intent of the send, not the compiler plumbing.
+//   cxc_stream_deploy_done_from_PlayerWithsender:seat: → deploy_done
+//   cxc_stream_combat_done_from__Cxc_ListOfLaneWithsender:e: → combat_done
+//   cxc_emit_card_deployed → card_deployed
+//   main.kickoff → kickoff
+// Everything else falls back to the last `.`-segment (existing behavior).
+function prettifyMsg(raw) {
+  if (!raw) return '?';
+  const streamMatch = raw.match(/^cxc_stream_(.+?)_from_/);
+  if (streamMatch) return streamMatch[1];
+  const emitMatch = raw.match(/^cxc_emit_(.+)$/);
+  if (emitMatch) return emitMatch[1];
+  return raw.split('.').pop();
+}
+
+// Auto-container names appear in three flavors:
+//   _Cxc_ListOfCard   → List of Card
+//   _Cxc_MapOfStringInt → Map of (String, Int)
+//   _Cxc_SeededPrng   → SeededPrng
+function prettifyContainerName(cls) {
+  let m = cls.match(/^_Cxc_ListOf(.+)$/);
+  if (m) return 'List of ' + m[1].replace(/^_Cxc_/, '');
+  m = cls.match(/^_Cxc_SetOf(.+)$/);
+  if (m) return 'Set of ' + m[1].replace(/^_Cxc_/, '');
+  m = cls.match(/^_Cxc_MapOf([A-Z][a-z]+)([A-Z].+)$/);
+  if (m) return `Map of (${m[1]}, ${m[2]})`;
+  return cls.replace(/^_Cxc_/, '');
+}
+
+// Look up a shape.atoms entry for a given class name. Match on user-facing
+// name (main not CxcMain) — that's what _shape.atoms uses.
+function atomShapeForClass(cls) {
+  if (!_shape || !cls) return null;
+  const uname = _userNames.get(cls) || cls;
+  return _shape.atoms.find(a => a.name === uname) || null;
+}
+
 function buildGraph(mode) {
   // mode: 'class' → aggregate all instances of a class into one node
   //       'instance' → each atom instance is its own node
   if (!_instanceLabels.size) computeInstanceLabels();
-  const nodes = new Map(); // id → {id, label, cls, size}
-  const edges = new Map(); // key = src|dst → {src, dst, msgs, total, sync}
+  const showContainers = $('shape-show-containers')?.checked;
+  // Only the shape view respects container-hiding. graph/timeline/sequence
+  // still need the full multigraph.
+  const hideContainers = currentView === 'shape' && !showContainers;
+  const isContainer = (cls) => CONTAINER_RE.test(cls || '');
+  const displayLabel = (cls) => _userNames.get(cls) || prettifyContainerName(cls);
+
+  const nodes = new Map();
+  const edges = new Map();
   const nodeId = (e) => mode === 'class'
     ? e.target_cls
     : (_instanceLabels.get(e.target) || (e.target_cls + '#?'));
@@ -348,19 +533,25 @@ function buildGraph(mode) {
       : (_instanceLabels.get(e._inferredSender) || (e._inferredSenderCls + '#?'));
   };
   for (const e of filtered) {
+    if (hideContainers && isContainer(e.target_cls)) continue;
     const id = nodeId(e);
-    if (!nodes.has(id)) nodes.set(id, {id, label: id, cls: e.target_cls, size: 0});
+    if (!nodes.has(id)) {
+      nodes.set(id, {id, label: displayLabel(e.target_cls) || id, cls: e.target_cls, size: 0});
+    }
     nodes.get(id).size++;
   }
   for (const e of filtered) {
     if (e.kind !== 'send' && e.kind !== 'send_sync') continue;
+    if (hideContainers && (isContainer(e.target_cls) || isContainer(e._inferredSenderCls))) continue;
     const src = senderIdForEvent(e) || '(root)';
     const dst = nodeId(e);
-    if (!nodes.has(src)) nodes.set(src, {id: src, label: src, cls: 'root', size: 0});
+    if (!nodes.has(src)) {
+      nodes.set(src, {id: src, label: src === '(root)' ? 'root' : (displayLabel(src) || src), cls: src === '(root)' ? 'root' : src, size: 0});
+    }
     const key = src + '|' + dst;
     if (!edges.has(key)) edges.set(key, {src, dst, msgs: new Map(), total: 0, sync: 0});
     const ed = edges.get(key);
-    const msgLabel = (e.msg || '?').split('.').pop();
+    const msgLabel = prettifyMsg(e.msg);
     ed.msgs.set(msgLabel, (ed.msgs.get(msgLabel) || 0) + 1);
     ed.total++;
     if (e.kind === 'send_sync') ed.sync++;
@@ -546,6 +737,563 @@ function renderGraph() {
   stage.appendChild(svg);
 }
 
+// Draw the phase state-machine for one atom in the stage-detail pane.
+// Layout strategy:
+//   - Primary lifecycle = longest simple path from initial phase. Rendered
+//     as a strong, straight L→R spine with a thicker/coloured stroke.
+//   - Secondary / back arcs = routed above (backward: dst.x < src.x) or
+//     below (forward but off-spine) so they don't crash the spine text.
+//   - Self-loops = collapsed to a single `⟳ N` badge above the node. Hover
+//     shows the message list.
+// Sizes are fit to the available pane width so scroll only happens for
+// very deep lifecycles (main has 13 phases).
+function renderPhaseGraph(atom) {
+  const el = $('stage-detail');
+  el.className = 'expanded';
+  document.body.classList.add('phase-panel-open');
+  const phases = atom.phases.length ? atom.phases : [atom.initial_phase].filter(Boolean);
+
+  // Adjacency of non-self, in-set edges
+  const adj = new Map();
+  phases.forEach(p => adj.set(p, []));
+  for (const t of atom.transitions) {
+    if (t.from === t.to) continue;
+    if (adj.has(t.from) && phases.includes(t.to)) adj.get(t.from).push(t.to);
+  }
+
+  // Primary path = longest simple path from initial phase (DFS). Falls back
+  // to BFS order when the initial phase is missing.
+  function longestPathFrom(start) {
+    let best = [];
+    const seen = new Set();
+    function dfs(p, path) {
+      if (seen.has(p)) return;
+      seen.add(p);
+      path.push(p);
+      if (path.length > best.length) best = path.slice();
+      for (const nxt of adj.get(p) || []) dfs(nxt, path);
+      path.pop();
+      seen.delete(p);
+    }
+    if (start) dfs(start, []);
+    return best;
+  }
+  let spine = longestPathFrom(atom.initial_phase);
+  // Append any phases the spine missed, in first-reached BFS order
+  const spineSet = new Set(spine);
+  const remaining = [];
+  const bfsSeen = new Set(spineSet);
+  const q = [...spine];
+  while (q.length) {
+    const p = q.shift();
+    for (const nxt of adj.get(p) || []) if (!bfsSeen.has(nxt)) { bfsSeen.add(nxt); remaining.push(nxt); q.push(nxt); }
+  }
+  phases.forEach(p => { if (!bfsSeen.has(p)) { bfsSeen.add(p); remaining.push(p); } });
+  const ordered = [...spine, ...remaining];
+
+  // Header — compact so the state-machine graph gets maximum vertical
+  // space. Domain terms get inline title tooltips so a first-time viewer
+  // can decode `phases/arms/observations` without leaving the panel.
+  const wrap = $('stage-detail');
+  wrap.innerHTML = `
+    <div style="display:flex; align-items:baseline; gap:12px; margin-bottom:4px;">
+      <div style="font-size:14px; font-weight:700; font-family:'SF Mono',Menlo,Consolas,monospace;">${escapeHtml(atom.name)}</div>
+      <div style="color:#666; font-size:11px;">
+        <span title="Named states in the atom's lifecycle">${atom.phases.length} phases</span> ·
+        <span title="Transition arms (message handlers) that move the atom between phases; includes self-forwarded arms">${atom.transitions.length + (atom.self_transitions?.length || 0)} arms</span> ·
+        <span title="Pure derivations of state — read-only computed values">${atom.observations.length} observations</span> ·
+        initial <b title="The phase the atom enters when constructed">${escapeHtml(atom.initial_phase || '?')}</b>
+      </div>
+      <div style="flex:1"></div>
+      <div style="color:#666; font-size:10px; display:flex; align-items:center; gap:8px;" title="Phase-pill color key. Full legend in the topology pane.">
+        <span style="display:inline-flex; align-items:center; gap:3px;"><span style="width:10px; height:10px; background:#ffd580; border-radius:2px; display:inline-block;"></span>initial</span>
+        <span style="display:inline-flex; align-items:center; gap:3px;"><span style="width:10px; height:10px; background:#b3d4f0; border-radius:2px; display:inline-block;"></span>reached</span>
+        <span style="display:inline-flex; align-items:center; gap:3px;"><span style="width:10px; height:10px; background:#ccc; border-radius:2px; display:inline-block; border:1px dashed #888; box-sizing:border-box;"></span>unreached</span>
+      </div>
+      <button id="phase-graph-close" style="padding:3px 9px; font-size:11px; cursor:pointer; border:1px solid #ccc; background:white; border-radius:3px;">close</button>
+    </div>
+    <div id="phase-graph-wrap-outer" style="position:relative; height:calc(100% - 30px);">
+      <div id="phase-graph-svg-wrap" style="overflow-x:scroll; overflow-y:auto; height:100%; display:flex; align-items:center; justify-content:flex-start; padding-right:60px; box-sizing:border-box;"></div>
+      <div id="phase-scroll-fade-right" style="display:none; position:absolute; top:0; right:56px; bottom:14px; width:64px; pointer-events:none; background:linear-gradient(to left, rgba(240,240,240,1), rgba(240,240,240,0));"></div>
+      <button id="phase-scroll-hint-right" title="Scroll phase graph right (shows how much more is off-screen)" style="display:none; position:absolute; top:calc(50% - 7px); right:6px; transform:translateY(-50%); min-width:44px; height:52px; padding:2px 6px; border:1px solid #bbb; border-radius:5px; background:rgba(255,255,255,0.95); font-size:11px; color:#333; cursor:pointer; box-shadow:0 1px 3px rgba(0,0,0,0.1); flex-direction:column; align-items:center; justify-content:center; line-height:1; font-family:'SF Mono',Menlo,Consolas,monospace;"><span style="font-size:22px; font-weight:700; line-height:1;">›</span><span id="phase-scroll-pos" style="margin-top:2px; color:#666;"></span></button>
+    </div>`;
+  $('phase-graph-close').addEventListener('click', () => {
+    _expandedAtom = null; selectedNode = null;
+    wrap.className = 'empty'; wrap.innerHTML = '';
+    document.body.classList.remove('phase-panel-open');
+    renderShape();
+  });
+
+  // Fit width to pane. Nodes are width-aware pills (rounded rects), so
+  // cellW must be at least maxPillW + inner gap. This lets long phase
+  // names (`resolving_round`) fit inside a pill without clipping.
+  const paneW = $('phase-graph-svg-wrap').clientWidth || 900;
+  const paneH = $('phase-graph-svg-wrap').clientHeight || 320;
+  const pillH = 40;
+  const phaseW = new Map();
+  for (const p of ordered) {
+    const chars = (p || '').length;
+    phaseW.set(p, Math.max(60, Math.round(chars * 8.4 + 22)));
+  }
+  const maxPillW = Math.max(...phaseW.values());
+  const minCellW = maxPillW + 30;
+  // Extra right padding so labels finish before the fade+chevron zone
+  // (fade is 64px wide + chevron button 44px wide = ~120px).
+  const padL = 30, padR = 120;
+  const availW = Math.max(paneW - padL - padR, 200);
+  const fitCellW = Math.floor(availW / Math.max(ordered.length, 1));
+  // Fit-to-width when the graph is small enough that pills won't collide.
+  // Long chains (main's 13 phases) fall through to the scroll path.
+  let cellW, svgW;
+  if (fitCellW >= minCellW) {
+    cellW = fitCellW;
+    svgW = paneW;
+  } else {
+    cellW = minCellW;
+    svgW = padL + padR + ordered.length * cellW;
+  }
+  // Provisional layout dimensions. Real svgH depends on the number of
+  // back-arc / forward-skip lanes we end up scheduling, so we compute it
+  // twice: an initial guess (below) and a final pass after assignLanes()
+  // has run. Everything downstream reads spineY / svgH from the
+  // final values.
+  let svgH = Math.max(paneH - 24, 320);
+  let spineY = Math.round(svgH / 2);
+
+  // Each pill is a width-aware rounded rect centered on (cx, spineY).
+  // Its own w/h are stored so arc endpoints hit the pill boundary and the
+  // collision pass knows the pill footprint.
+  const nodePos = new Map();
+  ordered.forEach((p, i) => {
+    const w = phaseW.get(p);
+    const cx = padL + cellW * i + cellW / 2;
+    nodePos.set(p, { x: cx, y: spineY, w, h: pillH, cx, cy: spineY });
+  });
+
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('width', svgW);
+  svg.setAttribute('height', svgH);
+  // Flex parents shrink children by default — that ate the overflow so the
+  // scroll affordance couldn't detect overflow. Lock the SVG's rendered
+  // width to its intrinsic size.
+  svg.style.flexShrink = '0';
+  const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+  defs.innerHTML = `
+    <marker id="phase-arrow" markerWidth="12" markerHeight="12" refX="11" refY="6" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0,1 L11,6 L0,11 z" fill="#444"></path>
+    </marker>
+    <marker id="phase-arrow-primary" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0,1 L9,5 L0,9 z" fill="#2a6ea8"></path>
+    </marker>`;
+  svg.appendChild(defs);
+
+  // Consolidate arcs by (from, to, msg). Self-loops group separately so we
+  // can render a single count badge instead of stacking N labels.
+  const nonSelfGroups = new Map();
+  const selfPerPhase = new Map();
+  for (const t of atom.transitions) {
+    if (!nodePos.has(t.from) || !nodePos.has(t.to)) continue;
+    if (t.from === t.to) {
+      if (!selfPerPhase.has(t.from)) selfPerPhase.set(t.from, []);
+      selfPerPhase.get(t.from).push(t);
+      continue;
+    }
+    const k = t.from + '||' + t.to + '||' + (t.msg || '');
+    if (!nonSelfGroups.has(k)) nonSelfGroups.set(k, {from: t.from, to: t.to, msg: t.msg, arms: [], guarded: false});
+    const g = nonSelfGroups.get(k);
+    g.arms.push(t);
+    if (t.has_guard) g.guarded = true;
+  }
+
+  // Group by (from, to) for parallel-arc stacking layout
+  const parallelGroups = new Map();
+  for (const g of nonSelfGroups.values()) {
+    const k = g.from + '||' + g.to;
+    if (!parallelGroups.has(k)) parallelGroups.set(k, []);
+    parallelGroups.get(k).push(g);
+  }
+
+  // Spine index for classifying arcs. Spine edges = adjacent-in-spine same-
+  // direction; back edges = to earlier spine index; forward-skip = to later
+  // spine index but not adjacent.
+  const spineIdx = new Map();
+  spine.forEach((p, i) => spineIdx.set(p, i));
+
+  // Pass 1a: classify arcs and assign lanes via greedy interval scheduling.
+  // Back-arcs curve ABOVE the spine, forward-skips BELOW. Within each band,
+  // arcs with overlapping X-spans go in different lanes so they don't share
+  // the same Y bump — that was the "indistinct bundle" codex flagged.
+  const arcSpecs = [];
+  for (const [k, arcs] of parallelGroups) {
+    arcs.forEach((g, arcIdx) => {
+      const src = nodePos.get(g.from), dst = nodePos.get(g.to);
+      const si = spineIdx.get(g.from);
+      const di = spineIdx.get(g.to);
+      const isSpineFwd = si !== undefined && di !== undefined && di === si + 1;
+      const isBack = si !== undefined && di !== undefined && di < si;
+      const isPrimary = isSpineFwd && arcIdx === 0;
+      let category;
+      if (isPrimary)       category = 'primary';
+      else if (isSpineFwd) category = 'parallel-spine';   // parallel-arc siblings on adjacent nodes
+      else if (isBack)     category = 'back';
+      else                 category = 'fwdSkip';
+      arcSpecs.push({g, src, dst, arcIdx, isSpineFwd, isBack, isPrimary, category,
+                     spanLeft: Math.min(src.x, dst.x), spanRight: Math.max(src.x, dst.x)});
+    });
+  }
+  function assignLanes(specs) {
+    // Longest span first — long arcs get outer lanes; short arcs slide in
+    // beneath. Prevents a long back-arc from stealing a low lane and forcing
+    // every crossing short arc into distant lanes.
+    specs.sort((a, b) => (b.spanRight - b.spanLeft) - (a.spanRight - a.spanLeft));
+    const lanes = []; // each entry = array of {L, R} intervals occupied at that Y level
+    for (const s of specs) {
+      let chosen = -1;
+      for (let i = 0; i < lanes.length; i++) {
+        const overlap = lanes[i].some(iv => !(s.spanRight + 12 < iv.L || s.spanLeft - 12 > iv.R));
+        if (!overlap) { chosen = i; break; }
+      }
+      if (chosen === -1) { chosen = lanes.length; lanes.push([]); }
+      lanes[chosen].push({ L: s.spanLeft, R: s.spanRight });
+      s.laneIdx = chosen;
+    }
+    return lanes.length;
+  }
+  const backLaneCount     = assignLanes(arcSpecs.filter(s => s.category === 'back'));
+  const fwdSkipLaneCount  = assignLanes(arcSpecs.filter(s => s.category === 'fwdSkip'));
+  const parallelSpineLaneCount = assignLanes(arcSpecs.filter(s => s.category === 'parallel-spine'));
+
+  // Now that we know how many lanes each side needs, size the SVG so all
+  // arcs + their labels fit without clipping. Each lane needs bump + label
+  // room (~46px per lane). Add a safe pad above the topmost lane so leader
+  // lines and self-loop badges don't get cut.
+  const abovePad = 60;
+  const belowPad = 60;
+  const abovePillEdge = pillH / 2;
+  const laneStep = 34;
+  const bumpBase = 44;
+  const aboveLanes = Math.max(backLaneCount, parallelSpineLaneCount);
+  const aboveSpineSpace = abovePillEdge + bumpBase + aboveLanes * laneStep + abovePad;
+  const belowSpineSpace = abovePillEdge + bumpBase + fwdSkipLaneCount * laneStep + belowPad;
+  // Size to what the graph actually needs — small graphs no longer stretch
+  // to fill the pane. Wrap flex-centers the svg vertically (see wrap css).
+  svgH = aboveSpineSpace + belowSpineSpace;
+  spineY = aboveSpineSpace;
+  // Update pill positions to sit on the new spineY.
+  for (const p of ordered) {
+    const np = nodePos.get(p);
+    np.y = spineY;
+    np.cy = spineY;
+  }
+  // Recompute spanLeft/spanRight now that positions may have shifted along y.
+  for (const s of arcSpecs) {
+    s.spanLeft  = Math.min(s.src.cx, s.dst.cx);
+    s.spanRight = Math.max(s.src.cx, s.dst.cx);
+  }
+  // Update the SVG element with the now-final height. `spineY` shifted
+  // above too so pills and arc endpoints below use the corrected value.
+  svg.setAttribute('height', svgH);
+
+  // Parallel-group size per (from, to). Used to horizontally spread labels
+  // for parallel arcs (same src, same dst, different msg) so they don't
+  // stack in a column.
+  const parallelGroupSize = new Map();
+  for (const [k, arcs] of parallelGroups) parallelGroupSize.set(k, arcs.length);
+
+  // Pass 1b: turn specs into concrete geometry + label anchor per arc.
+  const arcRenders = []; // {g, path, isSpineFwd, isPrimary, anchor:{x,y,above}, tooltip, lbl}
+  for (const s of arcSpecs) {
+    const {g, src, dst} = s;
+    let path, ax, ay, above;
+    if (s.isPrimary) {
+      // Primary spine: exit right edge of src at cy, enter left edge of dst.
+      const sx = src.cx + src.w / 2, sy = src.cy;
+      const ex = dst.cx - dst.w / 2, ey = dst.cy;
+      path = `M${sx},${sy} L${ex},${ey}`;
+      ax = (sx + ex) / 2; ay = sy - 12; above = true;
+    } else {
+      // Off-spine: exit top-center (back/parallel) or bottom-center (fwd-skip)
+      // of src, enter top or bottom center of dst. Curves through a control
+      // point at (midX, spineY ± bump) so the arc bulges into its lane band.
+      const routeAbove = s.category === 'back' || s.category === 'parallel-spine';
+      // Wider vertical spacing for below-spine fwdSkip arcs so a 4-way
+      // fan-out (Player's alive → hand_cap/tower_quota × 2 arms) puts each
+      // label on its own row instead of a tight bundle.
+      const laneStep = routeAbove ? 34 : 44;
+      const bump = 44 + s.laneIdx * laneStep;
+      // Offset the arc's exit point on the source pill by lane index — arcs
+      // that all leave the same phase (Player's `alive` fan-out) no longer
+      // converge into a single tangent, so a viewer can trace label→arc→dst
+      // without the leftmost cluster.
+      const srcHalfW = Math.min(src.w / 2 - 6, 24);
+      const dstHalfW = Math.min(dst.w / 2 - 6, 24);
+      const sxOffset = (s.laneIdx - 1) * (srcHalfW / 2);
+      const exOffset = -(s.laneIdx - 1) * (dstHalfW / 2);
+      const midX = (src.cx + dst.cx) / 2;
+      const yEdge = pillH / 2;
+      const sx = src.cx + sxOffset, ex = dst.cx + exOffset;
+      const sy = routeAbove ? src.cy - yEdge : src.cy + yEdge;
+      const ey = routeAbove ? dst.cy - yEdge : dst.cy + yEdge;
+      const midY = routeAbove ? src.cy - bump : src.cy + bump;
+      path = `M${sx},${sy} Q${midX},${midY} ${ex},${ey}`;
+      // Spread parallel-arc labels along the Bezier so they don't align in
+      // a vertical column when multiple messages route between the same
+      // pair of phases. Also bias off-spine labels toward the destination
+      // (t = 0.7) so a fan-out from one source (Player's `alive`) makes each
+      // label sit near its own target pill rather than clustering at src.
+      const gk = g.from + '||' + g.to;
+      const gSize = parallelGroupSize.get(gk) || 1;
+      const baseT = 0.7;
+      const t = gSize > 1 ? (0.5 + (s.arcIdx / (gSize - 1)) * 0.4) : baseT;
+      const oneMinusT = 1 - t;
+      ax = oneMinusT * oneMinusT * sx + 2 * oneMinusT * t * midX + t * t * ex;
+      const bezY = oneMinusT * oneMinusT * sy + 2 * oneMinusT * t * midY + t * t * ey;
+      ay = bezY + (routeAbove ? -6 : 12);
+      above = routeAbove;
+    }
+    const armCount = g.arms.length;
+    const lbl = (g.msg || '?') + (armCount > 1 ? ` ×${armCount}` : '') + (g.guarded ? ' |:' : '');
+    const armLines = g.arms.map(a => `line ${a.line ?? '?'}${a.has_guard ? ' [guard]' : ''}`).join('\n  ');
+    const tooltip = `${g.from} <: ${g.msg} → ${g.to}\n  ${armLines}`;
+    arcRenders.push({g, path, isSpineFwd: s.isSpineFwd, isPrimary: s.isPrimary, anchor:{x:ax, y:ay, above}, tooltip, lbl});
+  }
+
+  // Draw the arcs first so labels sit on top.
+  for (const r of arcRenders) {
+    const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    p.setAttribute('d', r.path);
+    p.setAttribute('class', 'phase-arc' + (r.isPrimary ? ' primary' : '') + (r.g.guarded ? ' guarded' : ''));
+    p.setAttribute('marker-end', r.isPrimary ? 'url(#phase-arrow-primary)' : 'url(#phase-arrow)');
+    p.innerHTML = `<title>${r.tooltip}</title>`;
+    r._pathEl = p;
+    svg.appendChild(p);
+  }
+
+  // Pass 2: collision-aware label placement. Start at anchor; if overlaps a
+  // phase circle or a previously-placed label, push away in the arc's
+  // preferred direction (up for back-arcs, down for forward-skips). Draw
+  // a leader line whenever the label moves >6px from its anchor so the
+  // reader still knows which arc it belongs to.
+  const placed = []; // {x,y,w,h}
+  const nodeRects = ordered.map(p => {
+    const pos = nodePos.get(p);
+    // Pill footprint + 6px slack: labels shouldn't land inside or grazing
+    // the pill boundary.
+    return { x: pos.cx - pos.w/2 - 6, y: pos.cy - pos.h/2 - 6, w: pos.w + 12, h: pos.h + 12 };
+  });
+  // Self-transition badge footprints — the badge sits below the pill on the
+  // right; labels routed below the spine must avoid landing on it.
+  for (const p of ordered) {
+    if (!selfPerPhase.has(p) || selfPerPhase.get(p).length === 0) continue;
+    const pos = nodePos.get(p);
+    const halfW = pos.w / 2, halfH = pos.h / 2;
+    nodeRects.push({ x: pos.cx + halfW - 38, y: pos.cy + halfH + 2, w: 44, h: 22 });
+  }
+  // Spine strip — the horizontal band the primary spine passes through.
+  // Labels on the spine make transitions unreadable; treat the spine as
+  // an obstacle so the collision pass pushes labels off it.
+  const spineStripHalfH = 6;
+  const spineStrip = { x: 0, y: spineY - spineStripHalfH, w: svgW, h: spineStripHalfH * 2 };
+  function overlaps(a, b) {
+    return !(a.x + a.w < b.x || b.x + b.w < a.x || a.y + a.h < b.y || b.y + b.h < a.y);
+  }
+  function collides(rect) {
+    if (overlaps(rect, spineStrip)) return true;
+    for (const r of nodeRects) if (overlaps(rect, r)) return true;
+    for (const r of placed) if (overlaps(rect, r)) return true;
+    return false;
+  }
+  // Sort primary arcs first (they own their preferred label spots), then
+  // shorter arcs before longer ones so short-span labels claim tight slots
+  // first and long-span labels overflow to fringes.
+  const sortOrder = arcRenders.map((r, i) => ({r, i, len: Math.hypot(
+    (nodePos.get(r.g.to).x - nodePos.get(r.g.from).x),
+    (nodePos.get(r.g.to).y - nodePos.get(r.g.from).y))}))
+    .sort((a, b) => (b.r.isPrimary?1:0) - (a.r.isPrimary?1:0) || a.len - b.len);
+
+  for (const {r} of sortOrder) {
+    const textW = r.lbl.length * 7.2 + 10;
+    const textH = 15;
+    const dy = r.anchor.above ? -1 : 1;
+    let placedRect = null;
+    for (let step = 0; step < 20; step++) {
+      const y = r.anchor.y + step * dy * 12;
+      const rect = { x: r.anchor.x - textW/2, y: y - 8, w: textW, h: textH };
+      if (!collides(rect)) { placedRect = rect; break; }
+    }
+    if (!placedRect) {
+      // Ran out of vertical slots — drop to a tiny dot marker with tooltip.
+      const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      dot.setAttribute('cx', r.anchor.x); dot.setAttribute('cy', r.anchor.y);
+      dot.setAttribute('r', 3);
+      dot.setAttribute('fill', '#666');
+      dot.setAttribute('class', 'phase-arc-dot');
+      dot.innerHTML = `<title>${r.lbl}\n${r.tooltip}</title>`;
+      svg.appendChild(dot);
+      continue;
+    }
+    placed.push(placedRect);
+    // Leader line — thin dashed line from arc anchor to label edge.
+    // Draw whenever displacement > 4px so the eye always connects a
+    // label to its owning arc, even for small shoves.
+    const labelMidY = placedRect.y + placedRect.h / 2;
+    const displacement = Math.abs(labelMidY - r.anchor.y);
+    if (displacement > 4) {
+      const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      line.setAttribute('x1', r.anchor.x); line.setAttribute('y1', r.anchor.y);
+      const targetY = placedRect.y + (dy > 0 ? 0 : placedRect.h);
+      line.setAttribute('x2', r.anchor.x); line.setAttribute('y2', targetY);
+      line.setAttribute('class', 'phase-arc-leader');
+      svg.appendChild(line);
+    }
+    const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    bg.setAttribute('x', placedRect.x); bg.setAttribute('y', placedRect.y);
+    bg.setAttribute('width', textW); bg.setAttribute('height', textH);
+    bg.setAttribute('rx', 3);
+    bg.setAttribute('class', 'phase-arc-label-bg');
+    svg.appendChild(bg);
+    const tt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    tt.setAttribute('x', r.anchor.x); tt.setAttribute('y', placedRect.y + 11);
+    tt.setAttribute('text-anchor', 'middle');
+    tt.setAttribute('class', 'phase-arc-label');
+    tt.innerHTML = `<title>${r.tooltip}</title>`;
+    tt.textContent = r.lbl;
+    svg.appendChild(tt);
+  }
+
+  // Phase pills — width-aware rounded rects. Rendered above the arcs so
+  // arcs terminate cleanly at pill edges. Long names like `resolving_round`
+  // fit without touching the pill boundary.
+  // Precompute "has incoming transition" per phase — a phase declared in
+  // source but never a `to:` target reads as visually broken (e.g. Player's
+  // `end`). Dim + tooltip so first-time viewers see intent, not a bug.
+  const hasIncoming = new Set();
+  for (const t of atom.transitions) {
+    if (t.from !== t.to && phases.includes(t.to)) hasIncoming.add(t.to);
+  }
+  for (const p of ordered) {
+    const pos = nodePos.get(p);
+    const isInit = p === atom.initial_phase;
+    const isEnd = p === 'end';
+    const isUnreached = !isInit && !hasIncoming.has(p);
+    const halfW = pos.w / 2, halfH = pos.h / 2;
+    const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    rect.setAttribute('x', pos.cx - halfW);
+    rect.setAttribute('y', pos.cy - halfH);
+    rect.setAttribute('width', pos.w);
+    rect.setAttribute('height', pos.h);
+    rect.setAttribute('rx', halfH);
+    rect.setAttribute('class', 'phase-node' + (isInit ? ' initial' : '') + (isEnd ? ' end' : '') + (isUnreached ? ' unreached' : ''));
+    if (isUnreached) rect.innerHTML = `<title>${p} — declared but not reached by any observed transition</title>`;
+    svg.appendChild(rect);
+    const tx = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    tx.setAttribute('x', pos.cx); tx.setAttribute('y', pos.cy + 5);
+    tx.setAttribute('class', 'phase-label' + (isUnreached ? ' unreached' : ''));
+    tx.textContent = p;
+    svg.appendChild(tx);
+    if (isUnreached) {
+      // Small caption under the pill so a first-time reader knows the dashed
+      // stroke is intentional (declared terminal, unobserved in this trace).
+      const cap = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      cap.setAttribute('x', pos.cx); cap.setAttribute('y', pos.cy + pillH / 2 + 14);
+      cap.setAttribute('class', 'phase-unreached-caption');
+      cap.textContent = '(unreached)';
+      svg.appendChild(cap);
+    }
+    if (isInit) {
+      const s = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      const startX = pos.cx - halfW - 28;
+      const tipX = pos.cx - halfW - 4;
+      s.setAttribute('d', `M${startX},${pos.cy} L${tipX},${pos.cy}`);
+      s.setAttribute('stroke', '#b8792b'); s.setAttribute('stroke-width', 2);
+      s.setAttribute('marker-end', 'url(#phase-arrow)');
+      svg.appendChild(s);
+    }
+    // Self-loop badge — collapse N self-transitions into one orange pill
+    // above the phase. Anchored to pill's top-right corner.
+    const selfArms = selfPerPhase.get(p);
+    if (selfArms && selfArms.length) {
+      // Sit BELOW the pill on the right corner — above-pill has both spine
+      // arc labels and forward-skip labels competing for the same strip,
+      // and any y-offset picked there hits one or the other. Below-right is
+      // dead space (forward-skip labels get pushed further down by the
+      // collision placer) so the badge stops competing with anything.
+      const bx = pos.cx + halfW - 34;
+      const by = pos.cy + halfH + 4;
+      const bw = 40, bh = 18;
+      const badge = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+      badge.setAttribute('x', bx); badge.setAttribute('y', by);
+      badge.setAttribute('width', bw); badge.setAttribute('height', bh);
+      badge.setAttribute('rx', 9);
+      badge.setAttribute('class', 'phase-self-badge');
+      const msgSummary = selfArms.map(a => `  ${a.msg}${a.has_guard ? ' |:' : ''} (line ${a.line ?? '?'})`).join('\n');
+      badge.innerHTML = `<title>${selfArms.length} self-transition${selfArms.length > 1 ? 's' : ''} on ${p}\n${msgSummary}</title>`;
+      svg.appendChild(badge);
+      const bt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      bt.setAttribute('x', bx + bw / 2); bt.setAttribute('y', by + 13);
+      bt.setAttribute('class', 'phase-self-badge-label');
+      bt.textContent = `self ${selfArms.length}`;
+      svg.appendChild(bt);
+    }
+  }
+  $('phase-graph-svg-wrap').appendChild(svg);
+  // Scroll-fade + hint: reveal only when the SVG overflows the wrap
+  // horizontally and there's more content to scroll to. Updates on scroll.
+  const wrapEl = $('phase-graph-svg-wrap');
+  const fadeR = $('phase-scroll-fade-right');
+  const hintR = $('phase-scroll-hint-right');
+  function updateScrollAffordance() {
+    if (!wrapEl || !fadeR) return;
+    // Show the affordance only when a real pill is hidden — the wrap's
+    // padding-right can inflate scrollWidth past clientWidth by a few dozen
+    // pixels even when every pill fits in view. Count pills against the
+    // visible x-range and gate on that.
+    const wrapW = wrapEl.clientWidth;
+    const visibleLeft  = wrapEl.scrollLeft;
+    const visibleRight = wrapEl.scrollLeft + wrapW;
+    let visibleCount = 0;
+    for (const [, np] of nodePos) {
+      if (np.cx >= visibleLeft && np.cx <= visibleRight) visibleCount++;
+    }
+    const show = visibleCount < ordered.length;
+    fadeR.style.display = show ? 'block' : 'none';
+    hintR.style.display = show ? 'flex'  : 'none';
+    if (show) {
+      const posEl = document.getElementById('phase-scroll-pos');
+      if (posEl) posEl.textContent = `${visibleCount} of ${ordered.length}`;
+    }
+  }
+  wrapEl.addEventListener('scroll', updateScrollAffordance);
+  // Clicking the chevron scrolls by ~80% of the viewport — one screen at a
+  // time, so the reader can page through long phase spines with the mouse.
+  hintR.addEventListener('click', () => {
+    wrapEl.scrollBy({ left: Math.max(200, wrapEl.clientWidth * 0.8), behavior: 'smooth' });
+  });
+  // Defer once so layout has settled.
+  requestAnimationFrame(updateScrollAffordance);
+}
+
+// Every detail-pane populator wraps its body in this so a `close` button
+// always sits in the top-right and reliably restores the empty state.
+function _detailWrap(bodyHtml) {
+  return `<div style="position:relative; padding-right:60px;">
+    <button class="detail-close-btn" style="position:absolute; top:0; right:0; padding:3px 9px; font-size:11px; cursor:pointer; border:1px solid #ccc; background:white; border-radius:3px;">close</button>
+    ${bodyHtml}
+  </div>`;
+}
+function _closeDetail() {
+  _expandedAtom = null; selectedNode = null;
+  const el = $('stage-detail');
+  el.className = 'empty';
+  el.innerHTML = '';
+  document.body.classList.remove('phase-panel-open');
+  renderShape();
+}
+function _wireDetailClose() {
+  const btn = $('stage-detail').querySelector('.detail-close-btn');
+  if (btn) btn.addEventListener('click', _closeDetail);
+}
+
 function showNodeDetail(n, edges) {
   const inc = edges.filter(e => e.dst === n.id).sort((a,b) => b.total - a.total);
   const out = edges.filter(e => e.src === n.id).sort((a,b) => b.total - a.total);
@@ -560,7 +1308,8 @@ function showNodeDetail(n, edges) {
   html += `<div style="flex:1; min-width:0;"><div style="color:#666; font-size:10px; text-transform:uppercase;">outgoing (${out.length})</div>${out.map(e => fmtEdge(e, 'out')).join('')}</div>`;
   html += '</div>';
   $('stage-detail').className = '';
-  $('stage-detail').innerHTML = html;
+  $('stage-detail').innerHTML = _detailWrap(html);
+  _wireDetailClose();
 }
 
 function showEdgeDetail(e) {
@@ -573,7 +1322,646 @@ function showEdgeDetail(e) {
   }
   html += '</table>';
   $('stage-detail').className = '';
-  $('stage-detail').innerHTML = html;
+  $('stage-detail').innerHTML = _detailWrap(html);
+  _wireDetailClose();
+}
+
+// ===== SHAPE VIEW (layered class diagram — program cascade topology) =====
+// Answers "what shape is this program?" — rectangular blocks per atom class,
+// arranged top-down in cascade layers (BFS depth from `(root)`), with
+// straight edges labeled by the messages that flow between them. Distinct
+// from the `graph` view, which is instance-scale and weighted by message
+// counts; `shape` is class-scale and topology-first.
+function assignLayers(nodes, edges) {
+  // BFS shortest-path from a synthetic source (`(root)` if present, else
+  // the highest-out-degree node). Cascade depth = fewest hops from the
+  // initial trigger, which is what a program-shape diagram wants;
+  // longest-path over a cyclic multigraph inflates depth without meaning
+  // because reciprocal edges (e.g. Player→CxcMain deploy_done) keep
+  // pushing nodes down through the cycle.
+  const adj = new Map();
+  nodes.forEach(n => adj.set(n.id, []));
+  for (const e of edges) if (e.src !== e.dst) adj.get(e.src).push(e.dst);
+  const layer = new Map();
+  const rootId = nodes.some(n => n.id === '(root)')
+    ? '(root)'
+    : (() => {
+        const outDeg = new Map();
+        nodes.forEach(n => outDeg.set(n.id, 0));
+        edges.forEach(e => { if (e.src !== e.dst) outDeg.set(e.src, (outDeg.get(e.src) || 0) + 1); });
+        return [...outDeg.entries()].sort((a, b) => b[1] - a[1])[0][0];
+      })();
+  const queue = [rootId];
+  layer.set(rootId, 0);
+  while (queue.length) {
+    const id = queue.shift();
+    for (const nxt of (adj.get(id) || [])) {
+      if (layer.has(nxt)) continue;
+      layer.set(nxt, layer.get(id) + 1);
+      queue.push(nxt);
+    }
+  }
+  // Unreached nodes (isolated container atoms with only inbound edges from
+  // still-unreached senders, or fully-disconnected): pin to the deepest
+  // occupied layer so they render as bottom-row leaves rather than layer 0.
+  const maxL = Math.max(0, ...[...layer.values()]);
+  nodes.forEach(n => { if (!layer.has(n.id)) layer.set(n.id, maxL + 1); });
+  return layer;
+}
+
+function renderShape() {
+  const stage = $('stage-main');
+  stage.innerHTML = '';
+  // Legend — floating card so first-time readers can decode colors/dashes
+  // without hunting through docs. Closeable; a compact "legend" chip
+  // reopens it. Preference persists in localStorage so returning users
+  // keep their chosen state across reloads.
+  // When a phase panel is open, the legend covers a shrinking topology viewport
+  // and its content is no longer load-bearing (the reader has already decoded
+  // the colors). Auto-collapse to the small "legend" chip; user can reopen.
+  const phasePanelOpen = document.body.classList.contains('phase-panel-open');
+  const legendHidden = localStorage.getItem('cxc-shape-legend-hidden') === '1' || phasePanelOpen;
+  function mountLegend() {
+    const existing = document.getElementById('shape-legend');
+    if (existing) existing.remove();
+    const reopenExisting = document.getElementById('shape-legend-reopen');
+    if (reopenExisting) reopenExisting.remove();
+    const phaseOpenNow = document.body.classList.contains('phase-panel-open');
+    if (localStorage.getItem('cxc-shape-legend-hidden') === '1' || phaseOpenNow) {
+      const btn = document.createElement('button');
+      btn.id = 'shape-legend-reopen';
+      btn.textContent = 'legend';
+      btn.addEventListener('click', () => {
+        localStorage.setItem('cxc-shape-legend-hidden', '0');
+        mountLegend();
+      });
+      stage.appendChild(btn);
+      return;
+    }
+    const legend = document.createElement('div');
+    legend.id = 'shape-legend';
+    legend.innerHTML = `
+      <button id="shape-legend-close" title="hide legend">×</button>
+      <div class="legend-group">
+        <h5>atoms</h5>
+        <div class="legend-row"><span class="legend-swatch" style="background:#d99a4a;"></span>main</div>
+        <div class="legend-row"><span class="legend-swatch" style="background:#4a90d9;"></span>user atom</div>
+        <div class="legend-row"><span class="legend-swatch" style="background:#999;"></span>root / end</div>
+      </div>
+      <div class="legend-group">
+        <h5>edges</h5>
+        <div class="legend-row"><span class="legend-line" style="border-top:1.6px solid #333;"></span>async send</div>
+        <div class="legend-row"><span class="legend-line" style="border-top:1.6px dashed #6a5acd;"></span>sync only</div>
+        <div class="legend-row"><span class="legend-line" style="border-top:1.6px solid #c47a20;"></span>self-loop</div>
+        <div class="legend-row" title="label 'foo +N' = top message plus N others on same edge — hover for full list"><span style="display:inline-block; width:22px; text-align:center; color:#666; font-family:'SF Mono',Menlo,monospace; font-size:10px;">+N</span>= more msgs</div>
+      </div>
+      <div class="legend-group">
+        <h5>phases</h5>
+        <div class="legend-row"><span class="legend-swatch" style="background:#ffd580;"></span>initial</div>
+        <div class="legend-row"><span class="legend-swatch" style="background:#b3d4f0;"></span>intermediate</div>
+        <div class="legend-row"><span class="legend-swatch" style="background:#ccc;"></span>end</div>
+        <div class="legend-row"><span class="legend-swatch" style="background:#d99a4a;"></span>badge <b style="color:#fff; font-size:9px; padding:0 3px; background:#d99a4a; border-radius:2px; margin-left:2px;">self N</b> = N self-transitions</div>
+      </div>
+      <div class="legend-group">
+        <h5>layout</h5>
+        <div class="legend-row" style="color:#666; font-size:10px;">alternating bands = cascade layers (BFS depth from root)</div>
+      </div>`;
+    stage.appendChild(legend);
+    document.getElementById('shape-legend-close').addEventListener('click', () => {
+      localStorage.setItem('cxc-shape-legend-hidden', '1');
+      mountLegend();
+    });
+  }
+  mountLegend();
+
+  // Onboarding hint — first-time only. localStorage tracks dismissal.
+  if (localStorage.getItem('cxc-shape-hint-dismissed') !== '1') {
+    const hint = document.createElement('div');
+    hint.id = 'shape-hint';
+    hint.innerHTML = `Click any atom for its <b>phase graph</b>. Hover an edge for its message list. <span class="dismiss" title="dismiss hint">×</span>`;
+    stage.appendChild(hint);
+    hint.querySelector('.dismiss').addEventListener('click', () => {
+      localStorage.setItem('cxc-shape-hint-dismissed', '1');
+      hint.remove();
+    });
+  }
+  let {nodes, edges} = buildGraph('class');
+  if (!nodes.length) { stage.innerHTML = '<div id="empty-state">No events after filters.</div>'; return; }
+  const orient = $('shape-orient').value;   // 'lr' | 'tb'
+  const expand = $('shape-expand').checked; // compact by default
+
+  // When the compiler shape sidecar is loaded, restrict blocks to atoms
+  // the source declares (user atoms + main), and enrich each node with
+  // its shape entry so we can draw pills and expand a phase graph. Any
+  // trace-observed target class without a shape entry (auto containers,
+  // synthesized fan-in atoms) is dropped from the topology; its edges
+  // are dropped too so we don't leave dangling arrows to nowhere.
+  if (_shape) {
+    const kept = new Map();
+    for (const n of nodes) {
+      if (n.id === '(root)') { kept.set(n.id, n); continue; }
+      const s = atomShapeForClass(n.cls);
+      if (s) { n.shape = s; n.label = s.name; kept.set(n.id, n); }
+    }
+    nodes = [...kept.values()];
+    const keepId = (id) => kept.has(id);
+    edges = edges.filter(e => keepId(e.src) && keepId(e.dst));
+  }
+  // Block sizes
+  const blockW = expand ? 210 : 180;
+  const blockHFor = (n) => n.shape ? 78 : 58;
+
+  // Layered layout via Dagre (Sugiyama). Dagre picks layer assignment,
+  // within-layer ordering (crossing-minimization), and orthogonal edge
+  // routing. Self-loops are excluded from the graph and drawn manually
+  // as brackets on the block's trailing side — Dagre's self-loop routing
+  // is visually messy for our block-with-attached-label idiom.
+  const g = new dagre.graphlib.Graph({ multigraph: true, compound: false, directed: true });
+  g.setGraph({
+    rankdir: orient === 'lr' ? 'LR' : 'TB',
+    nodesep: expand ? 60 : 46,
+    ranksep: expand ? 140 : 100,
+    edgesep: 24,
+    marginx: 40,
+    marginy: 40,
+  });
+  g.setDefaultEdgeLabel(() => ({}));
+  for (const n of nodes) {
+    g.setNode(n.id, { width: blockW, height: blockHFor(n), label: n.label || n.id });
+  }
+  // Add non-self edges. Multigraph name = a stable per-edge id so parallel
+  // edges between the same pair are laid out as siblings.
+  let edgeSeq = 0;
+  const edgeMeta = new Map(); // dagre edge name -> our edge object
+  for (const e of edges) {
+    if (e.src === e.dst) continue;
+    const name = `e${edgeSeq++}`;
+    // Weight edges by traffic volume so hot paths get straighter routes.
+    // minlen: 1 keeps every edge one rank apart minimum.
+    g.setEdge(e.src, e.dst, { minlen: 1, weight: Math.max(1, Math.log2(e.total + 2)) }, name);
+    edgeMeta.set(name, e);
+  }
+  dagre.layout(g);
+
+  const graphInfo = g.graph();
+  // Right-pad the SVG so self-loop labels (`commit_draw +10`,
+  // `try_place +8`, `filter_dead +7`) that Dagre plants beyond the node's
+  // own bounding box don't get clipped by the stage.
+  const rightLabelPad = 80;
+  const W = Math.max(stage.clientWidth, (graphInfo.width || 800) + rightLabelPad);
+  const H = Math.max(stage.clientHeight, graphInfo.height || 400);
+
+  // Convert Dagre's node (center x/y, width/height) to our pos map (top-left).
+  // Center horizontally in the stage when Dagre's layout is narrower than
+  // the viewport, so the graph doesn't crowd the left edge.
+  const dxCenter = graphInfo.width < W ? (W - graphInfo.width) / 2 : 0;
+  const dyCenter = graphInfo.height < H ? (H - graphInfo.height) / 2 : 0;
+  const pos = new Map();
+  for (const id of g.nodes()) {
+    const dn = g.node(id);
+    const x = dn.x - dn.width / 2 + dxCenter;
+    const y = dn.y - dn.height / 2 + dyCenter;
+    pos.set(id, { x, y, w: dn.width, h: dn.height, cx: dn.x + dxCenter, cy: dn.y + dyCenter });
+  }
+
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('width', W);
+  svg.setAttribute('height', H);
+
+  const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+  defs.innerHTML = `
+    <marker id="shape-arrow" markerWidth="12" markerHeight="12" refX="11" refY="6" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0,1 L11,6 L0,11 z" fill="#333"></path>
+    </marker>
+    <marker id="shape-arrow-self" markerWidth="11" markerHeight="11" refX="10" refY="5.5" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0,1 L10,5.5 L0,10 z" fill="#c47a20"></path>
+    </marker>
+  `;
+  svg.appendChild(defs);
+
+  // Layer bands — group Dagre nodes by rank position and draw alternating
+  // stripes so the reader sees the cascade structure without an axis
+  // ladder. In TB, "rank" reads along y; in LR, along x.
+  const rankAxis = orient === 'lr' ? 'cx' : 'cy';
+  const rankSizes = new Map();
+  for (const id of g.nodes()) {
+    const p = pos.get(id);
+    const r = Math.round(p[rankAxis]);
+    if (!rankSizes.has(r)) rankSizes.set(r, { min: r, max: r });
+  }
+  const rankPositions = [...rankSizes.keys()].sort((a, b) => a - b);
+  rankPositions.forEach((r, idx) => {
+    if (idx % 2 !== 0) return;
+    const prev = idx > 0 ? (rankPositions[idx - 1] + r) / 2 : r - 60;
+    const next = idx < rankPositions.length - 1 ? (rankPositions[idx + 1] + r) / 2 : r + 60;
+    const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    if (orient === 'lr') {
+      rect.setAttribute('x', prev);
+      rect.setAttribute('y', 0);
+      rect.setAttribute('width', next - prev);
+      rect.setAttribute('height', H);
+    } else {
+      rect.setAttribute('x', 0);
+      rect.setAttribute('y', prev);
+      rect.setAttribute('width', W);
+      rect.setAttribute('height', next - prev);
+    }
+    rect.setAttribute('class', 'shape-layer-band');
+    svg.appendChild(rect);
+  });
+
+  // Edges: draw Dagre's routed polylines. Each Dagre edge exposes a
+  // `points` array of {x, y} bend points from source-boundary to
+  // destination-boundary. We convert those into an SVG path with softly
+  // rounded corners. Self-loops are excluded from Dagre and rendered
+  // manually below (Dagre's default self-loop routing is messy for our
+  // block-with-attached-label idiom).
+  const edgeG = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+  function pointsToPath(pts) {
+    if (!pts || pts.length === 0) return '';
+    if (pts.length === 1) return `M${pts[0].x},${pts[0].y}`;
+    let d = `M${pts[0].x},${pts[0].y}`;
+    for (let i = 1; i < pts.length - 1; i++) {
+      const prev = pts[i - 1], cur = pts[i], next = pts[i + 1];
+      const midPrevX = (prev.x + cur.x) / 2, midPrevY = (prev.y + cur.y) / 2;
+      const midNextX = (cur.x + next.x) / 2, midNextY = (cur.y + next.y) / 2;
+      d += ` L${midPrevX},${midPrevY} Q${cur.x},${cur.y} ${midNextX},${midNextY}`;
+    }
+    const last = pts[pts.length - 1];
+    d += ` L${last.x},${last.y}`;
+    return d;
+  }
+  // Precompute node bboxes so labels can be shoved off any block they'd
+  // otherwise land on. Blocks render after edges, so a label inside a
+  // block gets clipped; we treat blocks as obstacles for label placement.
+  const blockRects = [...pos.values()].map(b => ({ x: b.x - 4, y: b.y - 4, w: b.w + 8, h: b.h + 8 }));
+  // Track already-placed edge label rects so a new candidate that overlaps
+  // an existing label gets rejected. This kills the "two labels on one
+  // row" bug muse flagged (`dea combat_done +2`).
+  const placedLabels = [];
+  function rectsOverlap(a, b) {
+    return !(a.x + a.w < b.x || b.x + b.w < a.x || a.y + a.h < b.y || b.y + b.h < a.y);
+  }
+  function pointInAnyBlock(x, y) {
+    return blockRects.some(b => x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h);
+  }
+  function labelRectClears(cx, cy, w, h) {
+    const rect = { x: cx - w/2, y: cy - h/2, w, h };
+    // Reject if inside any block, or overlaps a previously-placed label.
+    const corners = [
+      [rect.x, rect.y], [rect.x + w, rect.y],
+      [rect.x, rect.y + h], [rect.x + w, rect.y + h],
+      [cx, cy],
+    ];
+    if (corners.some(([x, y]) => pointInAnyBlock(x, y))) return false;
+    if (placedLabels.some(pl => rectsOverlap(rect, pl))) return false;
+    return true;
+  }
+  function bestLabelAnchor(pts) {
+    let best = { x: pts[0].x, y: pts[0].y, len: 0 };
+    for (let i = 1; i < pts.length; i++) {
+      const a = pts[i - 1], b = pts[i];
+      const dx = b.x - a.x, dy = b.y - a.y;
+      const len = Math.hypot(dx, dy);
+      if (len > best.len) best = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, len };
+    }
+    return best;
+  }
+  for (const eKey of g.edges()) {
+    const e = edgeMeta.get(eKey.name);
+    if (!e) continue;
+    const dagreEdge = g.edge(eKey);
+    if (!dagreEdge || !dagreEdge.points) continue;
+    const pts = dagreEdge.points.map(pt => ({ x: pt.x + dxCenter, y: pt.y + dyCenter }));
+    const isSync = e.sync === e.total && e.total > 0;
+    const path = pointsToPath(pts);
+    const edgeId = `edge-${e.src}--${e.dst}--${eKey.name}`.replace(/[^a-zA-Z0-9-]/g, '_');
+    const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    p.setAttribute('d', path);
+    p.setAttribute('class', 'shape-edge' + (isSync ? ' sync' : ''));
+    p.setAttribute('marker-end', 'url(#shape-arrow)');
+    p.dataset.src = e.src;
+    p.dataset.dst = e.dst;
+    p.dataset.edgeId = edgeId;
+    const msgList = [...e.msgs.entries()].sort((a, b) => b[1] - a[1]);
+    const msgSummary = msgList.slice(0, 8).map(([m, c]) => `${m} × ${c}`).join('\n')
+      + (msgList.length > 8 ? `\n… +${msgList.length - 8} more` : '');
+    const extraCount = msgList.length - 1;
+    const extraHint = extraCount > 0 ? `\n\n"+${extraCount}" = ${extraCount} additional message name${extraCount > 1 ? 's' : ''} routed through this edge` : '';
+    p.innerHTML = `<title>${e.src} → ${e.dst}\n${e.total} messages (${e.sync} sync)\n\n${msgSummary}${extraHint}</title>`;
+    p.style.cursor = 'pointer';
+    p.addEventListener('click', () => showEdgeDetail(e));
+    edgeG.appendChild(p);
+
+    // Label on the longest polyline segment; walk along polyline anchors
+    // until we find a position that clears every block. This kills the
+    // "dea combat_done +2" mid-word clip Muse flagged (block edges cut
+    // labels that Dagre placed in a corner near a block).
+    const topMsg = msgList[0] ? msgList[0][0] : '?';
+    const lbl = topMsg + (msgList.length > 1 ? ` +${extraCount}` : '');
+    const textW = lbl.length * 7.6 + 12;
+    const textH = 16;
+    const candidates = [];
+    // Best-anchor first, then sample along every interior segment at
+    // midpoint, 1/4, 3/4 for fallbacks.
+    candidates.push(bestLabelAnchor(pts));
+    for (let i = 1; i < pts.length; i++) {
+      const a = pts[i - 1], b = pts[i];
+      for (const t of [0.5, 0.25, 0.75, 0.15, 0.85]) {
+        candidates.push({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+      }
+    }
+    // Try each candidate at its natural Y first; if none clears blocks +
+    // other labels, try small perpendicular offsets so the label peels
+    // slightly off the polyline. Last-resort: keep the natural anchor.
+    let anchor = candidates[0];
+    let found = false;
+    for (const cand of candidates) {
+      if (labelRectClears(cand.x, cand.y, textW, textH)) { anchor = cand; found = true; break; }
+    }
+    if (!found) {
+      outer: for (const cand of candidates) {
+        for (const dy of [-12, 12, -24, 24, -36, 36]) {
+          if (labelRectClears(cand.x, cand.y + dy, textW, textH)) {
+            anchor = { x: cand.x, y: cand.y + dy }; found = true; break outer;
+          }
+        }
+      }
+    }
+    placedLabels.push({ x: anchor.x - textW/2, y: anchor.y - 9, w: textW, h: textH });
+    const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    bg.setAttribute('x', anchor.x - textW / 2);
+    bg.setAttribute('y', anchor.y - 9);
+    bg.setAttribute('width', textW);
+    bg.setAttribute('height', textH);
+    bg.setAttribute('rx', 3);
+    bg.setAttribute('class', 'shape-edge-label-bg');
+    bg.dataset.edgeId = edgeId;
+    edgeG.appendChild(bg);
+    const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    t.setAttribute('x', anchor.x);
+    t.setAttribute('y', anchor.y + 3);
+    t.setAttribute('class', 'shape-edge-label');
+    t.setAttribute('text-anchor', 'middle');
+    t.dataset.edgeId = edgeId;
+    if (msgList.length > 1) {
+      t.innerHTML = `<title>${e.src} → ${e.dst}\ntop: ${topMsg}\n+${extraCount} additional message name${extraCount > 1 ? 's' : ''} routed through this edge</title>`;
+    }
+    t.textContent = lbl;
+    const highlightPair = (on) => {
+      const q = `[data-edge-id="${edgeId}"]`;
+      svg.querySelectorAll(q).forEach(el => {
+        if (on) el.classList.add('shape-edge-hover');
+        else    el.classList.remove('shape-edge-hover');
+      });
+    };
+    p.addEventListener('mouseenter', () => highlightPair(true));
+    p.addEventListener('mouseleave', () => highlightPair(false));
+    bg.addEventListener('mouseenter', () => highlightPair(true));
+    bg.addEventListener('mouseleave', () => highlightPair(false));
+    edgeG.appendChild(t);
+  }
+
+  // Self-loops: bracket on the trailing-across side of the block (right in
+  // TB, bottom in LR). Rendered manually because Dagre's self-loop routing
+  // produces crossings.
+  for (const e of edges) {
+    if (e.src !== e.dst) continue;
+    const src = pos.get(e.src);
+    if (!src) continue;
+    const isTB = orient !== 'lr';
+    const trailingC = isTB ? src.x + src.w : src.y + src.h;
+    const midA = isTB ? src.cy : src.cx;
+    const bump = trailingC + 20;
+    const halfA = (isTB ? src.h : src.w) * 0.35;
+    const leftA = midA - halfA, rightA = midA + halfA;
+    const mk = (a, c) => isTB ? `${c},${a}` : `${a},${c}`;
+    const path = `M${mk(leftA, trailingC)} L${mk(leftA, bump)} L${mk(rightA, bump)} L${mk(rightA, trailingC + 2)}`;
+    const edgeId = `edge-self-${e.src}`.replace(/[^a-zA-Z0-9-]/g, '_');
+    const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    p.setAttribute('d', path);
+    p.setAttribute('class', 'shape-edge self');
+    p.setAttribute('marker-end', 'url(#shape-arrow-self)');
+    p.dataset.edgeId = edgeId;
+    const msgList = [...e.msgs.entries()].sort((a, b) => b[1] - a[1]);
+    const msgSummary = msgList.slice(0, 8).map(([m, c]) => `${m} × ${c}`).join('\n');
+    p.innerHTML = `<title>${e.src} → ${e.src} (self)\n${e.total} messages\n\n${msgSummary}</title>`;
+    p.style.cursor = 'pointer';
+    p.addEventListener('click', () => showEdgeDetail(e));
+    // Hover on the self-loop arrow, its bg, or its label lights up the trio
+    // together — matches the behavior of cross-atom edges above and lets the
+    // user find self-flows the same way they find inbound flows.
+    const highlightSelf = (on) => {
+      const q = `[data-edge-id="${edgeId}"]`;
+      svg.querySelectorAll(q).forEach(el => {
+        if (on) el.classList.add('shape-edge-hover');
+        else    el.classList.remove('shape-edge-hover');
+      });
+    };
+    p.addEventListener('mouseenter', () => highlightSelf(true));
+    p.addEventListener('mouseleave', () => highlightSelf(false));
+    edgeG.appendChild(p);
+    const topMsg = msgList[0] ? msgList[0][0] : '?';
+    const lbl = topMsg + (msgList.length > 1 ? ` +${msgList.length - 1}` : '');
+    const textW = lbl.length * 7.6 + 12;
+    const lx = isTB ? bump + 6 : midA;
+    const ly = isTB ? midA : bump + 12;
+    const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    bg.setAttribute('x', isTB ? lx : lx - textW / 2);
+    bg.setAttribute('y', ly - 9);
+    bg.setAttribute('width', textW);
+    bg.setAttribute('height', 16);
+    bg.setAttribute('rx', 3);
+    bg.setAttribute('class', 'shape-edge-label-bg');
+    bg.dataset.edgeId = edgeId;
+    bg.style.cursor = 'pointer';
+    bg.addEventListener('mouseenter', () => highlightSelf(true));
+    bg.addEventListener('mouseleave', () => highlightSelf(false));
+    bg.addEventListener('click', () => showEdgeDetail(e));
+    edgeG.appendChild(bg);
+    const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    t.setAttribute('x', isTB ? lx + 6 : lx);
+    t.setAttribute('y', ly + 3);
+    t.setAttribute('class', 'shape-edge-label');
+    t.setAttribute('text-anchor', isTB ? 'start' : 'middle');
+    t.dataset.edgeId = edgeId;
+    t.textContent = lbl;
+    edgeG.appendChild(t);
+  }
+  svg.appendChild(edgeG);
+
+  // Blocks. When shape is loaded, each block reads as a source card:
+  //   name (bold) · <M phases, N transitions> · one row per container field.
+  // Container fields render as pills ("hand: List of Card") inside the block
+  // so the topology graph doesn't split them out as sibling atoms. Clicking
+  // a block expands its phase graph in the detail pane.
+  const blockG = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+  for (const n of nodes) {
+    const p = pos.get(n.id);
+    if (!p) continue;
+    const isMain = n.cls === 'CxcMain' || (n.shape && n.shape.name === _shape?.main_atom);
+    // Selection may be seeded either as the node id (from a click) or as the
+    // atom name (from `?expand=…`). Match both so URL-seeded selection lights
+    // up the halo without needing a click.
+    const isSelected = selectedNode === n.id || (n.shape && selectedNode === n.shape.name);
+    // Dim unrelated blocks whenever a phase graph is open so the reader
+    // sees the topology → detail relationship at a glance.
+    const dimForSelection = selectedNode && !isSelected && n.id !== '(root)';
+    const clsAttr = 'shape-block' +
+      (n.id === '(root)' ? ' root' : '') +
+      (isMain ? ' main' : '') +
+      (isSelected ? ' selected' : '') +
+      (dimForSelection ? ' dim-when-selected' : '');
+    const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    rect.setAttribute('x', p.x); rect.setAttribute('y', p.y);
+    rect.setAttribute('width', p.w); rect.setAttribute('height', p.h);
+    rect.setAttribute('rx', 5);
+    rect.setAttribute('class', clsAttr);
+    rect.dataset.nodeId = n.id;
+    // Selection halo — outer glow (pale yellow) + dashed red ring. Rendered
+    // behind the block. Survives headless raster (drop-shadow filters get
+    // dropped). Halo + rect for the selected node are also re-appended to
+    // blockG at the end so they paint above neighbors.
+    if (isSelected) {
+      const pad = 6;
+      const glow = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+      glow.setAttribute('x', p.x - pad); glow.setAttribute('y', p.y - pad);
+      glow.setAttribute('width', p.w + pad*2); glow.setAttribute('height', p.h + pad*2);
+      glow.setAttribute('rx', 10);
+      glow.setAttribute('class', 'shape-block-halo-outer');
+      blockG.appendChild(glow);
+    }
+    rect.addEventListener('click', () => {
+      selectedNode = selectedNode === n.id ? null : n.id;
+      _expandedAtom = n.shape ? n.shape.name : null;
+      showNodeDetail(n, edges);
+      renderShape();
+    });
+    rect.addEventListener('mouseenter', () => highlightShape(n.id));
+    rect.addEventListener('mouseleave', () => highlightShape(null));
+    rect.innerHTML = `<title>${n.shape ? n.shape.name : n.id}\n${n.size} trace events</title>`;
+    blockG.appendChild(rect);
+
+    // Title line — atom name (bold, monospace, white)
+    const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    label.setAttribute('x', p.cx);
+    label.setAttribute('y', p.y + 24);
+    label.setAttribute('class', 'shape-block-label');
+    label.textContent = n.id === '(root)' ? 'root' : n.label;
+    blockG.appendChild(label);
+
+    if (n.id === '(root)') continue;
+
+    // Subtitle — shape summary or bare event count
+    const sub = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    sub.setAttribute('x', p.cx);
+    sub.setAttribute('y', p.y + 42);
+    sub.setAttribute('class', 'shape-block-sub');
+    if (n.shape) {
+      const nPhases = n.shape.phases.length;
+      const nTxns = n.shape.transitions.length + n.shape.self_transitions.length;
+      sub.textContent = `${nPhases} phases · ${nTxns} arms`;
+    } else {
+      sub.textContent = n.size + ' events';
+    }
+    blockG.appendChild(sub);
+
+    // Compact fields badge — one strip inside the block instead of a pill
+    // grid. Click opens the detail pane, which lists every field with its
+    // type. Hover highlights any container-linked target atoms.
+    if (n.shape) {
+      const containerFields = n.shape.fields.filter(f => f.container_kind);
+      const nContainers = containerFields.length;
+      const nAtomLinks = n.shape.fields.filter(f => nodes.some(nn => nn.shape && nn.shape.name === f.type)).length;
+      const nOther = n.shape.fields.length - nContainers - nAtomLinks;
+      if (n.shape.fields.length > 0) {
+        const badgeW = p.w - 20;
+        const badgeX = p.x + 10;
+        const badgeY = p.y + 52;
+        const badge = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        badge.setAttribute('x', badgeX); badge.setAttribute('y', badgeY);
+        badge.setAttribute('width', badgeW); badge.setAttribute('height', 16);
+        badge.setAttribute('rx', 3);
+        badge.setAttribute('class', 'shape-block-badge');
+        blockG.appendChild(badge);
+        const bt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        bt.setAttribute('x', badgeX + badgeW / 2);
+        bt.setAttribute('y', badgeY + 12);
+        bt.setAttribute('class', 'shape-block-badge-label');
+        // Compact form: "N fields (M refs)". Refs = containers + direct
+        // atom-typed fields — the hover-highlightable subset. Tooltip
+        // spells out the breakdown; the visual stays block-wide-safe.
+        const nFields = n.shape.fields.length;
+        const nRefs = nContainers + nAtomLinks;
+        bt.textContent = nRefs > 0
+          ? `${nFields} field${nFields > 1 ? 's' : ''} · ${nRefs} ref${nRefs > 1 ? 's' : ''}`
+          : `${nFields} field${nFields > 1 ? 's' : ''}`;
+        const tip = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+        tip.textContent = [
+          nContainers ? `${nContainers} container field${nContainers > 1 ? 's' : ''}` : null,
+          nAtomLinks  ? `${nAtomLinks} atom-typed field${nAtomLinks > 1 ? 's' : ''}` : null,
+          nOther      ? `${nOther} scalar field${nOther > 1 ? 's' : ''}` : null,
+        ].filter(Boolean).join(' · ');
+        badge.appendChild(tip);
+        blockG.appendChild(bt);
+        // Hover on badge highlights every atom this block references via
+        // its List-of / Set-of / atom-typed fields. Fills in for the pill
+        // hover we lose by collapsing to a summary.
+        const linkedIds = new Set([n.id]);
+        for (const f of n.shape.fields) {
+          const inner = /^(?:List|Set) of (.+)$/.exec(f.type);
+          const targetName = inner ? inner[1] : f.type;
+          const target = nodes.find(nn => nn.shape && nn.shape.name === targetName);
+          if (target) linkedIds.add(target.id);
+        }
+        if (linkedIds.size > 1) {
+          badge.style.cursor = 'pointer';
+          badge.addEventListener('mouseenter', () => highlightShape([...linkedIds]));
+          badge.addEventListener('mouseleave', () => highlightShape(null));
+        }
+      }
+    }
+  }
+  svg.appendChild(blockG);
+  stage.appendChild(svg);
+
+  // If a block is selected, render its phase graph in the detail pane and
+  // scroll the topology so the selected node sits in view — otherwise the
+  // "which atom is this?" question is answered only by the panel header.
+  if (_expandedAtom && _shape) {
+    const atomShape = _shape.atoms.find(a => a.name === _expandedAtom);
+    if (atomShape) renderPhaseGraph(atomShape);
+    if (selectedNode) {
+      // Selection may be a node id (from click) or an atom name (from ?expand).
+      // Try id first, then walk nodes for the atom-name match.
+      let selEl = stage.querySelector(`.shape-block[data-node-id="${CSS.escape(selectedNode)}"]`);
+      if (!selEl) {
+        const atomNode = nodes.find(nn => nn.shape && nn.shape.name === selectedNode);
+        if (atomNode) selEl = stage.querySelector(`.shape-block[data-node-id="${CSS.escape(atomNode.id)}"]`);
+      }
+      if (selEl && typeof selEl.scrollIntoView === 'function') {
+        requestAnimationFrame(() => selEl.scrollIntoView({ block: 'center', inline: 'center', behavior: 'smooth' }));
+      }
+    }
+  }
+}
+
+function highlightShape(hoverIds) {
+  const stage = $('stage-main');
+  if (!stage) return;
+  const svg = stage.querySelector('svg');
+  if (!svg) return;
+  svg.querySelectorAll('.shape-block').forEach(el => el.classList.remove('dim', 'hover'));
+  svg.querySelectorAll('.shape-edge').forEach(el => el.classList.remove('dim'));
+  if (!hoverIds) return;
+  const set = new Set(Array.isArray(hoverIds) ? hoverIds : [hoverIds]);
+  svg.querySelectorAll('.shape-block').forEach(el => {
+    if (set.has(el.dataset.nodeId)) el.classList.add('hover');
+    else el.classList.add('dim');
+  });
+  svg.querySelectorAll('.shape-edge').forEach(el => {
+    if (!set.has(el.dataset.src) && !set.has(el.dataset.dst)) el.classList.add('dim');
+  });
 }
 
 // ===== TIMELINE VIEW (seq-based x-axis) =====
@@ -751,6 +2139,7 @@ function wireCanvasClicks(svg) {
 function render() {
   if (!events.length) return;
   if (currentView === 'graph') renderGraph();
+  else if (currentView === 'shape') renderShape();
   else if (currentView === 'timeline') renderTimeline();
   else if (currentView === 'sequence') renderSequence();
   else if (currentView === 'inbox') renderInbox();
@@ -758,17 +2147,21 @@ function render() {
 
 function setView(view) {
   currentView = view;
-  ['graph','timeline','sequence','inbox'].forEach(v => {
+  ['graph','shape','timeline','sequence','inbox'].forEach(v => {
     $('view-' + v).classList.toggle('on', v === view);
   });
+  $('shape-controls').style.display = view === 'shape' ? 'inline-flex' : 'none';
   render();
 }
 
-['graph','timeline','sequence','inbox'].forEach(v => {
+['graph','shape','timeline','sequence','inbox'].forEach(v => {
   $('view-' + v).addEventListener('click', () => setView(v));
 });
 $('show-arrows').addEventListener('change', render);
 $('graph-aggregate').addEventListener('change', render);
+$('shape-orient').addEventListener('change', render);
+$('shape-expand').addEventListener('change', render);
+$('shape-show-containers').addEventListener('change', render);
 $('seq-range').addEventListener('input', applyFilters);
 window.addEventListener('resize', () => render());
 
@@ -795,9 +2188,87 @@ document.addEventListener('drop', (e) => {
 });
 
 const params = new URLSearchParams(window.location.search);
-if (params.has('trace')) {
-  fetch(params.get('trace')).then(r => r.text()).then(t => loadTrace(t, params.get('trace')));
+const viewParam = params.get('view');
+if (viewParam && ['graph','shape','timeline','sequence','inbox'].includes(viewParam)) {
+  setView(viewParam);
 }
+if (params.get('shape-orient')) $('shape-orient').value = params.get('shape-orient');
+if (params.get('shape-expand') === '1') $('shape-expand').checked = true;
+if (params.get('shape-show-containers') === '1') $('shape-show-containers').checked = true;
+if (!viewParam) setView('shape');
+// `?expand=<atom-name>` opens the phase graph for that atom on load — useful
+// for screenshots, bookmarks, and deep-linking a specific lifecycle. When set
+// we also seed `selectedNode` so the topology halo lights up; loadShape's
+// render pass resolves the node id via the atom-name match.
+const expandParam = params.get('expand');
+if (expandParam) { _expandedAtom = expandParam; selectedNode = expandParam; }
+
+// Try to load a companion shape sidecar. Precedence:
+//   1. explicit ?shape=<path> — user pins a specific sidecar
+//   2. derived from the trace path — swap `.trace.jsonl`/`.jsonl` for
+//      `.shape.json`; matches the cxc build output layout
+//   3. `<trace-basename>.shape.json` — for `.current-trace.jsonl` etc.
+// A 404 is fine — the viewer degrades to Phase 1 topology inference.
+function deriveShapePath(tracePath) {
+  if (!tracePath) return null;
+  if (tracePath.endsWith('.trace.jsonl')) return tracePath.replace(/\.trace\.jsonl$/, '.shape.json');
+  if (tracePath.endsWith('.jsonl'))       return tracePath.replace(/\.jsonl$/, '.shape.json');
+  return tracePath + '.shape.json';
+}
+function loadShape(url) {
+  return fetch(url, {cache: 'no-store'})
+    .then(r => r.ok ? r.json() : null)
+    .then(j => { _shape = j; if (j) { $('status').textContent += ` · shape: ${j.atoms.length} atoms`; } render(); })
+    .catch(() => { _shape = null; });
+}
+if (params.has('trace')) {
+  const tp = params.get('trace');
+  fetch(tp).then(r => r.text()).then(t => {
+    loadTrace(t, tp);
+    const shapeUrl = params.get('shape') || deriveShapePath(tp);
+    if (shapeUrl) loadShape(shapeUrl);
+  });
+}
+
+// Draggable splitter between #stage-main and #stage-detail. Only usable
+// while the phase panel is open (splitter is display:none otherwise).
+// Persists user-chosen height to localStorage so the pane stays where the
+// user left it across reloads. Double-click resets to 55vh default.
+(function wireSplitter() {
+  const splitter = document.getElementById('stage-splitter');
+  const detail = document.getElementById('stage-detail');
+  if (!splitter || !detail) return;
+  // Restore persisted height on open.
+  const saved = localStorage.getItem('cxc-phase-pane-h');
+  if (saved) detail.style.height = saved + 'px';
+  let dragging = false;
+  splitter.addEventListener('mousedown', (e) => {
+    if (!document.body.classList.contains('phase-panel-open')) return;
+    dragging = true;
+    splitter.classList.add('dragging');
+    document.body.style.cursor = 'row-resize';
+    document.body.style.userSelect = 'none';
+    e.preventDefault();
+  });
+  window.addEventListener('mousemove', (e) => {
+    if (!dragging) return;
+    const wh = window.innerHeight;
+    const newH = Math.max(200, Math.min(wh - 120, wh - e.clientY - 3));
+    detail.style.height = newH + 'px';
+    localStorage.setItem('cxc-phase-pane-h', String(newH));
+  });
+  window.addEventListener('mouseup', () => {
+    if (!dragging) return;
+    dragging = false;
+    splitter.classList.remove('dragging');
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+  });
+  splitter.addEventListener('dblclick', () => {
+    detail.style.height = '';   // fall back to CSS default (55vh)
+    localStorage.removeItem('cxc-phase-pane-h');
+  });
+})();
 </script>
 </body>
 </html>
