@@ -1,0 +1,96 @@
+# Minimal repro (v8): body reads observations, filters list, mutates
+# multiple own fields — matches the shape of Player.tower_quota exactly.
+
+def Leaf:
+    flag_a: Bool! = false
+    flag_b: Bool! = false
+    -> alive
+    alive <: set(who: Int!) -> alive
+        |: who == 0 and flag_a == false
+        then: flag_a => true
+    alive <: set(who: Int!) -> alive
+        |: who == 1 and flag_b == false
+        then: flag_b => true
+    alive <: set(who: Int!) -> alive
+
+def Card:
+    name: String
+    kind: Int!
+
+def Middle:
+    a: Leaf = Leaf()
+    b: Leaf = Leaf()
+    c: Leaf = Leaf()
+    pick(idx: Int) :- ||: idx == 0 : a ||: idx == 1 : b ||: else : c
+    -> alive
+
+    alive <: set_at(idx: Int!, who: Int!) -> alive
+        then: |> self.pick(idx).set(who: who)
+
+def Watcher(who: Int!, m: Middle):
+    hand:      List of Card = []
+    iters:     Int!         = 0
+    accum:     Int!         = 0
+
+    a_mine :- ||: who == 0 : m.a.flag_a ||: else : m.a.flag_b
+    b_mine :- ||: who == 0 : m.b.flag_a ||: else : m.b.flag_b
+    c_mine :- ||: who == 0 : m.c.flag_a ||: else : m.c.flag_b
+
+    placed     :- (||: a_mine : 1 ||: else : 0) + (||: b_mine : 1 ||: else : 0) + (||: c_mine : 1 ||: else : 0)
+    first_open :- ||: a_mine == false : 0 ||: b_mine == false : 1 ||: c_mine == false : 2 ||: else : -1
+
+    # Body-side observation like `top_hero(sentinel)`.
+    hand_size :- hand.count
+    first_card(default: Card) :- hand.at(0) ?? default
+
+    -> alive
+
+    alive <: begin(seed: Card) -> running
+        then:
+            hand => hand.append(seed).append(seed).append(seed).append(seed)
+            self :> step
+
+    running <: step -> running
+        |: placed < 3 and iters < 10 and first_open >= 0 and hand_size > 0
+        then:
+            print("who=" + who.to_string() + " iter=" + iters.to_string() + " placed=" + placed.to_string() + " first_open=" + first_open.to_string() + " hand_size=" + hand_size.to_string())
+            |> m.set_at(idx: first_open, who: who)
+            hand  => hand.filter(x => x.name != self.first_card(x).name)
+            iters => iters + 1
+            accum => accum + 1
+            self :> step
+
+    running <: step -> done
+        then: :> done_event(who: who)
+
+    -> done
+        then: print("who=" + who.to_string() + " done iters=" + iters.to_string() + " placed=" + placed.to_string() + " accum=" + accum.to_string())
+
+def main:
+    m:      Middle  = Middle()
+    w0:     Watcher = Watcher(who: 0, m: m)
+    w1:     Watcher = Watcher(who: 1, m: m)
+    seed:   Card    = Card(name: "s", kind: 0)
+    dones:  Int!    = 0
+
+    -> running
+        then:
+            print("main start")
+            |> w0.begin(seed: seed)
+            |> w1.begin(seed: seed)
+
+    * <: w0.done_event(who: Int!) -> self
+        then:
+            dones => dones + 1
+            self :> maybe_end
+
+    * <: w1.done_event(who: Int!) -> self
+        then:
+            dones => dones + 1
+            self :> maybe_end
+
+    running <: maybe_end -> end
+        |: dones + 1 >= 2
+        then: print("main end")
+
+    running <: maybe_end -> running

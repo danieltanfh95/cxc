@@ -2,10 +2,12 @@
   "cxc compiler entry point + subcommand dispatch.
 
    Usage:
-     cxc compile <input.cxc-or-dir> <out-dir> [--target=<name>] [--trace]
-     cxc trace   <file.jsonl> [--top=N] [--silent-clock]
-     cxc view    [<trace.jsonl>] [--port=N]
-     cxc help    [<subcommand>]
+     cxc compile      <input.cxc-or-dir> <out-dir> [--target=<name>] [--trace]
+     cxc trace        <file.jsonl> [--top=N] [--silent-clock]
+     cxc trace-filter <file.jsonl> [--kinds=...] [--atom=...] [--selector=...] [--seq=lo-hi]
+     cxc trace-diff   <a.jsonl> <b.jsonl>
+     cxc view         [<trace.jsonl>] [--port=N]
+     cxc help         [<subcommand>]
 
    For backward compatibility with the pre-subcommand invocation, if the
    first argument looks like a path (file or directory that exists), we
@@ -66,14 +68,22 @@
 (defn run-view [args]
   ((requiring-resolve 'cxc.trace-view/run) args))
 
+(defn run-trace-filter [args]
+  ((requiring-resolve 'cxc.trace-filter/run) args))
+
+(defn run-trace-diff [args]
+  ((requiring-resolve 'cxc.trace-diff/run) args))
+
 (defn- top-usage []
   (println "Usage: cxc <subcommand> [args...]")
   (println "")
   (println "Subcommands:")
-  (println "  compile  compile a .cxc source or plugin directory to a binary")
-  (println "  trace    print CLI diagnostics for a --trace JSONL dump")
-  (println "  view     open the browser-based trace viewer")
-  (println "  help     show this help, or `cxc help <subcommand>`"))
+  (println "  compile       compile a .cxc source or plugin directory to a binary")
+  (println "  trace         print CLI diagnostics for a --trace JSONL dump")
+  (println "  trace-filter  filter a JSONL trace by kind/atom/selector/seq range")
+  (println "  trace-diff    canonicalize ptrs, report first divergence between two traces")
+  (println "  view          open the browser-based trace viewer")
+  (println "  help          show this help, or `cxc help <subcommand>`"))
 
 (defn run-help [args]
   (case (first args)
@@ -88,7 +98,8 @@
           ;; Backward compat: if first arg is a path that exists (or looks
           ;; like a .cxc file), treat as `compile`.
           legacy-compile? (and sub
-                               (not (#{"compile" "trace" "view" "help"
+                               (not (#{"compile" "trace" "trace-filter"
+                                       "trace-diff" "view" "help"
                                        "-h" "--help"} sub))
                                (or (str/ends-with? sub ".cxc")
                                    (.exists (io/file sub))))]
@@ -98,11 +109,21 @@
         (#{"-h" "--help"} sub)    (top-usage)
         (= sub "compile")         (run-compile (vec rest))
         (= sub "trace")           (run-trace (vec rest))
+        (= sub "trace-filter")    (run-trace-filter (vec rest))
+        (= sub "trace-diff")      (run-trace-diff (vec rest))
         (= sub "view")            (run-view (vec rest))
         (= sub "help")            (run-help (vec rest))
         :else (do (println (str "unknown subcommand: " sub))
                   (top-usage)
                   (System/exit 2))))
     (catch clojure.lang.ExceptionInfo ex
-      (let [exit (:exit (ex-data ex) 1)]
+      (let [exit (:exit (ex-data ex) 1)
+            msg  (.getMessage ex)]
+        ;; Only surface the message when it isn't the run-compile
+        ;; sentinel (which already printed "compile failed:" + stderr).
+        (when-not (= msg "compile failed")
+          (binding [*out* *err*]
+            (println msg)
+            (when-let [node (:node (ex-data ex))]
+              (println "  at node:" (pr-str (select-keys node [:node :name :sym]))))))
         (System/exit exit)))))

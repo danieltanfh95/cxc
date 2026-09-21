@@ -41,6 +41,14 @@
   [ty]
   (str "_Cxc_Optional_" (->c-safe (if (= "Int" ty) "Int64" ty))))
 
+(defn- list-at-return-c-type
+  "C return type for `.at(i)`. Atoms return raw pointers (nullable by
+   nature); records + primitives use the Optional envelope."
+  [element-name is-atom?]
+  (if is-atom?
+    (str (->c-safe element-name) " *")
+    (list-at-envelope-c-type element-name)))
+
 (defn- list-at-primitive-unbox
   "NSNumber / NSString unpack expression for a primitive element type."
   [ty raw-name]
@@ -60,16 +68,22 @@
 
 (defn- list-at-body
   "Method body for `.at(i)` synthesized on `_Cxc_ListOf<T>`. Bounds
-   check first (OOB → nil envelope). Primitives + String unbox from
-   NSNumber/NSString; records copy bytes out of NSValue into a stack
-   local. Element types outside both allowlists render a raw-c call
-   to a helper that will fail cleanly at compile time — the caller
-   guards via `list-at-eligible?` before deciding to synthesize."
-  [element-name is-record?]
+   check first (OOB → nil envelope for value-typed, nil for atoms).
+   Primitives + String unbox from NSNumber/NSString; records copy
+   bytes out of NSValue into a stack local; atoms cast the id
+   directly (element identity preserved). Element types outside
+   these categories are skipped at synthesis time via
+   `list-at-eligible?`."
+  [element-name is-record? is-atom?]
   (let [env-ty (list-at-envelope-c-type element-name)
         oob    (str "if (i < 0 || i >= (int)[_elements count]) return ("
                     env-ty "){.present = 0}; ")]
     (cond
+      is-atom?
+      (str "if (i < 0 || i >= (int)[_elements count]) return nil; "
+           "return (" (->c-safe element-name) " *)"
+           "[_elements objectAtIndex:i];")
+
       is-record?
       (str oob
            element-name " __v; "
@@ -85,12 +99,11 @@
 
 (defn list-at-eligible?
   "True when `.at(i)` can be synthesized on `List of <element-name>`.
-   Primitives + String live in the allowlist; records are always
-   eligible (identified via a caller-supplied predicate). Other kinds
-   (atoms, Bytes, tagged enums) are skipped at MVP — extend when a
-   slice needs them."
-  [element-name is-record?]
+   Records + primitives + atoms are eligible; other kinds (Bytes,
+   tagged enums) are skipped at MVP — extend when a slice needs them."
+  [element-name is-record? is-atom?]
   (or is-record?
+      is-atom?
       (contains? list-at-supported-primitives element-name)))
 
 (defn- list-at-or-c-type
@@ -134,7 +147,7 @@
      - Per-element-stream forwarding methods
        `-cxc_stream_<name>_from_<Element>...` that receive an event
        and re-emit on the container with `e` prepended to payload."
-  [class-name element-name & {:keys [fanin-streams fanin-payloads is-record?]}]
+  [class-name element-name & {:keys [fanin-streams fanin-payloads is-record? is-atom?]}]
   ;; T1 — the caller (list-container-classes site in `lower`) reaches
   ;; `(:stream-order entry)` / `(:stream-payload-index entry)` which
   ;; can be nil for atoms without any streams. Sanitize once at the
@@ -266,6 +279,19 @@
                                                     "[[" class-name " alloc] "
                                                     "initWithelements:__buf]; "
                                                     "return __r;")}]}
+                         ;; 2026-09-20 — fresh empty `List of T`. Instance
+                         ;; method (receiver carries T); returns a new
+                         ;; container backed by an empty NSMutableArray.
+                         ;; Ignores _elements — replaces the retired
+                         ;; `xs.filter(x => false)` idiom.
+                         {:name        "empty"
+                          :selector    "empty"
+                          :params      []
+                          :return-type (str class-name " *")
+                          :body        [{:node :raw-c
+                                         :text (str "return [[" class-name " alloc] "
+                                                    "initWithelements:"
+                                                    "[NSMutableArray array]];")}]}
                          ;; 2026-09-17 — immutable sort by Int key.
                          ;; Wraps the user's key-fn (int64_t (^)(id)) in
                          ;; an NSComparator that computes keys per pair
@@ -298,13 +324,13 @@
                           ;; type has an unbox recipe (primitives, String,
                           ;; records). Complements the raw-scalar `at_or`
                           ;; convenience for primitives.
-                          (list-at-eligible? element-name is-record?)
+                          (list-at-eligible? element-name is-record? is-atom?)
                           (conj {:name        "atWithi"
                                  :selector    "atWithi:"
                                  :params      [{:name "i" :c-type "int"}]
-                                 :return-type (list-at-envelope-c-type element-name)
+                                 :return-type (list-at-return-c-type element-name is-atom?)
                                  :body        [{:node :raw-c
-                                                :text (list-at-body element-name is-record?)}]})
+                                                :text (list-at-body element-name is-record? is-atom?)}]})
                           ;; 2026-09-16 — `.at_or(i, fallback)` retired
                           ;; in favor of `xs.at(i) ?? fallback`. `.contains`
                           ;; stays: it's a pure query, not imperative

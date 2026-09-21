@@ -54,7 +54,7 @@
     "accepts"
     "extend" "replace"
     "deprecated"
-    "then" "do" "when" "let"
+    "then" "do" "when" "let" "alias"
     "self" "nil" "true" "false"
     "and" "or" "not" "is" "in" "of"
     ;; `match` retired 2026-08-18 — never dispatched by parser and
@@ -685,13 +685,38 @@
     [[:eof nil 1 1]]
     (let [source (strip-block-comments source)
           lines (str/split-lines source)
-          n     (count lines)]
+          n     (count lines)
+          ;; 2026-09-20 — anon-def layout escape. When we're inside a
+          ;; bracket-continuation and the flat token stream ends with
+          ;; `=> def :`, subsequent lines with deeper indent get
+          ;; layout markers (INDENT/NEWLINE/DEDENT) as if brackets
+          ;; were closed for that block. Restores flat continuation
+          ;; when indent returns to the `def:` line's baseline. This
+          ;; is the only way multi-statement lambda bodies can be
+          ;; spelled inside method-call args (the default rule
+          ;; suppresses all layout inside brackets so statement
+          ;; boundaries would be indistinguishable).
+          def-frame-trigger?
+          (fn [out-transient]
+            (let [snap (persistent! out-transient)
+                  c    (count snap)]
+              [(when (>= c 3)
+                 (let [t1 (nth snap (- c 3))
+                       t2 (nth snap (- c 2))
+                       t3 (nth snap (- c 1))]
+                   (and (= [:glyph "=>"] [(nth t1 0) (nth t1 1)])
+                        (= [:kw "def"]   [(nth t2 0) (nth t2 1)])
+                        (= [:punct ":"]  [(nth t3 0) (nth t3 1)]))))
+               (transient snap)]))]
     (loop [i 0
            indent-stack [0]
            bracket-depth 0                     ; unmatched open brackets from prior lines
+           def-frame     nil                    ; nil, or {:baseline int :seen? bool}
            out (transient [])]
       (if (>= i n)
-        (let [out (reduce (fn [acc _] (conj! acc [:dedent nil (inc n) 1]))
+        (let [out (cond-> out
+                    def-frame (conj! [:dedent nil (inc n) 1]))
+              out (reduce (fn [acc _] (conj! acc [:dedent nil (inc n) 1]))
                           out
                           (rest indent-stack))]
           (persistent! (conj! out [:eof nil (inc n) 1])))
@@ -700,20 +725,52 @@
           (cond
             ;; blank / comment-only line — skip entirely
             (nil? indent)
-            (recur (inc i) indent-stack bracket-depth out)
+            (recur (inc i) indent-stack bracket-depth def-frame out)
+
+            ;; Anon-def layout escape active AND this line stays in the block.
+            (and def-frame (> indent (:baseline def-frame)))
+            (let [line-toks (tokenize-line content (inc i))
+                  new-depth (+ bracket-depth (bracket-delta line-toks))
+                  first?    (not (:seen? def-frame))
+                  out'      (-> out
+                                (conj! (if first?
+                                         [:indent nil (inc i) 1]
+                                         [:newline nil (inc i) 1]))
+                                (as-> o (reduce conj! o line-toks)))]
+              (recur (inc i) indent-stack new-depth
+                     (assoc def-frame :seen? true) out'))
+
+            (and def-frame (<= indent (:baseline def-frame)))
+            ;; Close the anon-def block. Emit trailing NEWLINE + DEDENT
+            ;; so the last stmt terminates, clear the frame, and REPROCESS
+            ;; the current line under normal bracket-continuation rules.
+            (let [out' (-> out
+                           (conj! [:newline nil (inc i) 1])
+                           (conj! [:dedent nil (inc i) 1]))]
+              (recur i indent-stack bracket-depth nil out'))
 
             ;; still inside brackets from prior line(s) — continuation:
-            ;; append this line's tokens without layout markers or newline
+            ;; append this line's tokens without layout markers or newline.
+            ;; After appending, check whether the flat token stream now
+            ;; ends with `=> def :`; if so, arm the anon-def frame for
+            ;; the NEXT line at this line's indent as baseline.
             (pos? bracket-depth)
             (let [line-toks (tokenize-line content (inc i))
                   new-depth (+ bracket-depth (bracket-delta line-toks))
-                  out'      (reduce conj! out line-toks)]
-              (recur (inc i) indent-stack new-depth out'))
+                  out'      (reduce conj! out line-toks)
+                  [trigger? out''] (def-frame-trigger? out')]
+              (recur (inc i) indent-stack new-depth
+                     (when trigger? {:baseline indent :seen? false})
+                     out''))
 
             :else
             (let [top (peek indent-stack)
                   line-toks (tokenize-line content (inc i))
                   new-depth (+ bracket-depth (bracket-delta line-toks))]
+              ;; When a top-level line opens brackets AND ends with
+              ;; `=> def :`, arm the anon-def frame on this line's
+              ;; indent so the following deeper-indent lines get
+              ;; layout markers despite being inside the bracket.
               (cond
                 (> indent top)
                 (let [out' (-> out
@@ -721,15 +778,23 @@
                                (as-> o (reduce conj! o line-toks))
                                (as-> o (if (zero? new-depth)
                                          (conj! o [:newline nil (inc i) 1])
-                                         o)))]
-                  (recur (inc i) (conj indent-stack indent) new-depth out'))
+                                         o)))
+                      [trigger? out''] (def-frame-trigger? out')]
+                  (recur (inc i) (conj indent-stack indent) new-depth
+                         (when (and (pos? new-depth) trigger?)
+                           {:baseline indent :seen? false})
+                         out''))
 
                 (= indent top)
                 (let [out' (reduce conj! out line-toks)
                       out' (if (zero? new-depth)
                              (conj! out' [:newline nil (inc i) 1])
-                             out')]
-                  (recur (inc i) indent-stack new-depth out'))
+                             out')
+                      [trigger? out''] (def-frame-trigger? out')]
+                  (recur (inc i) indent-stack new-depth
+                         (when (and (pos? new-depth) trigger?)
+                           {:baseline indent :seen? false})
+                         out''))
 
                 :else                                       ; indent < top → dedent(s)
                 (let [[stack' out']
@@ -751,5 +816,9 @@
                       out' (reduce conj! out' line-toks)
                       out' (if (zero? new-depth)
                              (conj! out' [:newline nil (inc i) 1])
-                             out')]
-                  (recur (inc i) stack' new-depth out')))))))))))
+                             out')
+                      [trigger? out''] (def-frame-trigger? out')]
+                  (recur (inc i) stack' new-depth
+                         (when (and (pos? new-depth) trigger?)
+                           {:baseline indent :seen? false})
+                         out'')))))))))))

@@ -22,6 +22,90 @@
       (str/replace "\t" "\\t")
       (str/replace "\r" "\\r")))
 
+(def ^:private int-c-types
+  #{"int64_t" "int32_t" "int16_t" "int8_t"
+    "uint64_t" "uint32_t" "uint16_t" "uint8_t"
+    "int" "long" "short" "char" "_Bool" "BOOL"
+    "long long" "unsigned int" "unsigned long"})
+
+(defn- fmt-value-expr
+  "Return [printf-fmt-fragment argument-exprs] for one field of type ct
+   read from an lvalue like `__cxc_snap._foo`. Fragments concatenate
+   into a single snprintf format string; args become the tail arguments.
+   Returned args are a vector so struct types can produce multiple."
+  [ct lvalue]
+  (cond
+    (or (= ct "id") (and (string? ct) (.contains ^String ct "*")))
+    ["%p" [(str "(__bridge void *)(" lvalue ")")]]
+
+    (contains? int-c-types ct)
+    ["%lld" [(str "(long long)(" lvalue ")")]]
+
+    (= ct "_Cxc_Optional_Int64")
+    ["{p=%d,v=%lld}"
+     [(str "(int)(" lvalue ".present)") (str "(long long)(" lvalue ".value)")]]
+
+    (= ct "_Cxc_Optional_Bool")
+    ["{p=%d,v=%d}"
+     [(str "(int)(" lvalue ".present)") (str "(int)(" lvalue ".value)")]]
+
+    :else
+    ["?" []]))
+
+(defn- field-write-trace
+  "Emit a CXC_TRACE_ENABLED-guarded field_write event for one data-field
+   commit at :commit-next-state. Fires only when the ivar's current
+   value differs from __cxc_next's value, so no-op commits stay silent.
+
+   Dispatch on c-type:
+   - integer/bool                 → old=N,new=N
+   - pointer (`id`, `X *`)        → old=%p,new=%p (ARC-bridged)
+   - `_Cxc_Optional_Int64/Bool`   → present+value pair
+   - other struct                 → memcmp, log `type=X,changed`
+
+   All comparisons use `!=` for scalars/pointers and `memcmp` for
+   structs so block-typed fields (whose type name splices in the field
+   name) stay well-formed without a saved old-local."
+  [f]
+  (let [ct   (:c-type f)
+        nm   (:name f)
+        ivar (str "_" nm)
+        nxt  (str "__cxc_next._" nm)
+        opt-int?  (= ct "_Cxc_Optional_Int64")
+        opt-bool? (= ct "_Cxc_Optional_Bool")
+        [cmp fmt-args]
+        (cond
+          (or (= ct "id") (and (string? ct) (.contains ^String ct "*")))
+          [(str ivar " != " nxt)
+           (str "\"old=%p,new=%p\", (__bridge void *)(" ivar "), (__bridge void *)(" nxt ")")]
+
+          (contains? int-c-types ct)
+          [(str ivar " != " nxt)
+           (str "\"old=%lld,new=%lld\", (long long)(" ivar "), (long long)(" nxt ")")]
+
+          opt-int?
+          [(str "memcmp(&" ivar ", &" nxt ", sizeof(" ivar ")) != 0")
+           (str "\"old={p=%d,v=%lld},new={p=%d,v=%lld}\", "
+                "(int)(" ivar ".present), (long long)(" ivar ".value), "
+                "(int)(" nxt ".present), (long long)(" nxt ".value)")]
+
+          opt-bool?
+          [(str "memcmp(&" ivar ", &" nxt ", sizeof(" ivar ")) != 0")
+           (str "\"old={p=%d,v=%d},new={p=%d,v=%d}\", "
+                "(int)(" ivar ".present), (int)(" ivar ".value), "
+                "(int)(" nxt ".present), (int)(" nxt ".value)")]
+
+          :else
+          [(str "memcmp(&" ivar ", &" nxt ", sizeof(" ivar ")) != 0")
+           (str "\"type=" (escape-c-string (or ct "?")) ",changed\"")])]
+    (str "#ifdef CXC_TRACE_ENABLED\n"
+         "if (" cmp ") {\n"
+         "    char __cxc_fw[192];\n"
+         "    snprintf(__cxc_fw, sizeof(__cxc_fw), " fmt-args ");\n"
+         "    CXC_TRACE_EX(\"field_write\", nil, self, \"" nm "\", __cxc_fw);\n"
+         "}\n"
+         "#endif\n")))
+
 (defn- emit-expr [node]
   (case (:node node)
     :str             (str "\"" (escape-c-string (:value node)) "\"")
@@ -760,6 +844,30 @@
     :c-on-nil-dispatch (str (emit-expr node) ";")
     :c-nonnil-return-guard (str (emit-expr node) ";")
     :return   (str "return " (emit-expr (:value node)) ";")
+    :observable-return
+    ;; obs_return trace at observable-method exit. Evaluate the body
+    ;; into a temp so the trace call sees the same value as the
+    ;; return. Format follows the same int/ptr/other dispatch as
+    ;; field_write. Zero-cost under !CXC_TRACE_ENABLED.
+    (let [ct     (:c-type node)
+          nm     (:observable-name node)
+          v-expr (emit-expr (:value node))
+          [fmt-args]
+          (cond
+            (or (= ct "id") (and (string? ct) (.contains ^String ct "*")))
+            [(str "\"obs=" nm ",ret=%p\", (__bridge void *)(__cxc_ov)")]
+            (contains? int-c-types ct)
+            [(str "\"obs=" nm ",ret=%lld\", (long long)(__cxc_ov)")]
+            :else
+            [(str "\"obs=" nm ",ret=?\"")])]
+      (str "{ " ct " __cxc_ov = (" v-expr ");\n"
+           "#ifdef CXC_TRACE_ENABLED\n"
+           "  char __cxc_or[192];\n"
+           "  snprintf(__cxc_or, sizeof(__cxc_or), " fmt-args ");\n"
+           "  CXC_TRACE_EX(\"obs_return\", nil, self, "
+           "[NSStringFromSelector(_cmd) UTF8String], __cxc_or);\n"
+           "#endif\n"
+           "return __cxc_ov; }"))
     :assign   (str (emit-expr (:lhs node)) " = " (emit-expr (:rhs node)) ";")
     :var-decl (str (:c-type node) " " (:name node) " = " (emit-expr (:rhs node)) ";")
     ;; A4 (2026-09-03) — `let x: T = expr or T(...): body` statement.
@@ -1256,11 +1364,33 @@
                         (:guard node)           (emit-expr (:guard node))
                         :else                   "1")
           body        (str/join "\n" (map emit-stmt (:body node)))
-          trace-line  "CXC_TRACE(\"arm\", nil, self, [NSStringFromSelector(_cmd) UTF8String]);\n"
-          block       (indent-lines 4 (if (str/blank? body)
-                                        (str trace-line "return;")
-                                        (str trace-line body "\nreturn;")))]
-      (str "if (" guard ") {\n" block "\n}"))
+          arm-idx     (or (:arm-index node) 0)
+          src-line    (:src-line node)
+          extra       (str "arm=" arm-idx
+                           (when src-line (str ",line=" src-line)))
+          trace-line  (str "CXC_TRACE_EX(\"arm\", nil, self, "
+                           "[NSStringFromSelector(_cmd) UTF8String], \""
+                           extra "\");\n")
+          ;; Evaluate guard into a temp so trace + `if` share one
+          ;; evaluation and short-circuit ordering across arms is
+          ;; preserved. Guard exprs are pure per spec, so the temp
+          ;; is behavior-equivalent. Trace fires unconditionally
+          ;; (regardless of result) so we can tell "guard evaluated
+          ;; to false" from "an earlier arm returned first" in the
+          ;; log.
+          guard-eval-trace
+          (str "CXC_TRACE_EX(\"guard_eval\", nil, self, "
+               "[NSStringFromSelector(_cmd) UTF8String], "
+               "__cxc_g ? \"" extra ",result=1\" : \""
+               extra ",result=0\");")]
+      (str "{ BOOL __cxc_g = (" guard ");\n"
+           "#ifdef CXC_TRACE_ENABLED\n"
+           "  " guard-eval-trace "\n"
+           "#endif\n"
+           "if (__cxc_g) {\n" (indent-lines 4 (if (str/blank? body)
+                                                (str trace-line "return;")
+                                                (str trace-line body "\nreturn;")))
+           "\n} }"))
     :coverage-abort
     ;; L13 (2026-08-25) — runtime fallback for the transition-arm
     ;; coverage requirement (Option B). Fires when the receiver's
@@ -1299,7 +1429,32 @@
           inits  (->> fields
                       (map (fn [f]
                              (str "._" (:name f) " = _" (:name f))))
-                      (str/join ", "))]
+                      (str/join ", "))
+          ;; state_snap trace, gated at runtime by cxc_trace_full (set
+          ;; from CXC_TRACE_LEVEL=full env var) so default trace stays
+          ;; lean. Per-field format follows the int/ptr dispatch used
+          ;; by field_write / obs_return; unknown types render as `?`.
+          per-field (->> fields
+                         (map (fn [f]
+                                (let [lv (str "__cxc_snap._" (:name f))
+                                      [frag arg-vec] (fmt-value-expr (:c-type f) lv)]
+                                  {:pair (str (:name f) "=" frag)
+                                   :args arg-vec})))
+                         (into []))
+          fmt-str (str/join "," (map :pair per-field))
+          args    (->> per-field (mapcat :args) (str/join ", "))
+          snap-trace
+          (str "#ifdef CXC_TRACE_ENABLED\n"
+               "cxc_trace_init();\n"
+               "if (cxc_trace_full) {\n"
+               "    char __cxc_sn[1024];\n"
+               "    snprintf(__cxc_sn, sizeof(__cxc_sn), \"" fmt-str "\""
+               (when (seq args) (str ", " args))
+               ");\n"
+               "    CXC_TRACE_EX(\"state_snap\", nil, self, "
+               "[NSStringFromSelector(_cmd) UTF8String], __cxc_sn);\n"
+               "}\n"
+               "#endif")]
       (str "#if !CXC_SINGLE_MAIN_QUEUE\n"
            cn "_State *__cxc_snap_src = ("
            cn "_State *)_cxc_atom_state_ptr(&_state);\n"
@@ -1307,7 +1462,8 @@
            cn "_State){0};\n"
            "#else\n"
            cn "_State __cxc_snap = { " inits " };\n"
-           "#endif"))
+           "#endif\n"
+           snap-trace))
     :next-state-init
     ;; F33 L3.a — next-state bag init as copy of the entry snapshot.
     ;; Emits `<Atom>_State __cxc_next = __cxc_snap;`. L3.b redirects
@@ -1371,7 +1527,8 @@
           cls-name  (or (:class-name node) (:atom-name node))
           ivar-commits (->> fields
                             (map (fn [f]
-                                   (str "_" (:name f) " = __cxc_next._" (:name f) ";")))
+                                   (str (field-write-trace f)
+                                        "_" (:name f) " = __cxc_next._" (:name f) ";")))
                             (str/join "\n"))]
       (str "#if CXC_SINGLE_MAIN_QUEUE\n"
            ivar-commits "\n"
@@ -1767,7 +1924,17 @@
 
 (defn- emit-method-impl [m]
   (let [prelude (:prelude m)
-        body    (:body m)
+        ;; Assign :arm-index by position within the dispatch group so
+        ;; two arms on the same selector (guarded + fallthrough) can be
+        ;; told apart in the trace. Non-branch statements pass through
+        ;; unchanged; arm-index only lands on :transition-branch nodes.
+        body    (loop [acc [] i 0 xs (:body m)]
+                  (if (empty? xs)
+                    acc
+                    (let [x (first xs)]
+                      (if (= :transition-branch (:node x))
+                        (recur (conj acc (assoc x :arm-index i)) (inc i) (rest xs))
+                        (recur (conj acc x) i (rest xs))))))
         ;; When the body dispatches via transition-branches, emit a
         ;; tail `CXC_TRACE_EX("no_arm", ...)` before the implicit
         ;; return so the trace records phase-mismatched or
@@ -1791,9 +1958,12 @@
         init-stmts    (if (seq init-body)
                         (str "\n" (emit-body 8 init-body))
                         "")
+        atom-init-trace (str "\n        CXC_TRACE(\"atom_init\", nil, self, "
+                             "\"" (:name cls) "\");")
         init-block    (str (init-signature init-params) " {\n"
                            "    self = [super init];\n"
                            "    if (self) {"
+                           atom-init-trace
                            init-stmts
                            "\n    }\n"
                            "    return self;\n"
@@ -1975,6 +2145,7 @@
        "#include <stdatomic.h>\n"
        "static FILE *cxc_trace_fp = NULL;\n"
        "static _Atomic uint64_t cxc_trace_seq = 0;\n"
+       "static int cxc_trace_full = 0;\n"
        "static inline void cxc_trace_init(void) {\n"
        "    if (cxc_trace_fp) return;\n"
        "    const char *fd_env = getenv(\"CXC_TRACE_FD\");\n"
@@ -1987,6 +2158,8 @@
        "        if (path_env && *path_env) cxc_trace_fp = fopen(path_env, \"w\");\n"
        "    }\n"
        "    if (!cxc_trace_fp) cxc_trace_fp = stderr;\n"
+       "    const char *level = getenv(\"CXC_TRACE_LEVEL\");\n"
+       "    if (level && strcmp(level, \"full\") == 0) cxc_trace_full = 1;\n"
        "}\n"
        "static inline double cxc_trace_now_ms(void) {\n"
        "    struct timeval tv; gettimeofday(&tv, NULL);\n"
@@ -2081,10 +2254,27 @@
        ;; contract. The exception's userInfo[@"reason"] is already
        ;; delivered to subscribers via the companion emit fired by
        ;; F48 before the re-throw — the log is for oncall visibility.
+       ;; 2026-09-21 — program-global `_cxc_send_group` tracks every
+       ;; outstanding async send so the shutdown path can wait for
+       ;; cascade quiescence before `exit(0)`. `dispatch_group_async`
+       ;; enters the group at enqueue and leaves at block completion;
+       ;; cxc_shutdown registers a `dispatch_group_notify` on main that
+       ;; runs `exit(0)` once every enqueued block has drained. Under
+       ;; single-queue mode this replaces the source-side settle-spin
+       ;; workaround (Clock.every polling with a settle_ticks counter)
+       ;; that atoms with async :> fanout previously needed at shutdown.
+       "static dispatch_group_t _cxc_send_group;\n"
+       "static dispatch_once_t _cxc_send_group_once;\n"
+       "static inline dispatch_group_t cxc_send_group(void) {\n"
+       "    dispatch_once(&_cxc_send_group_once, ^{\n"
+       "        _cxc_send_group = dispatch_group_create();\n"
+       "    });\n"
+       "    return _cxc_send_group;\n"
+       "}\n\n"
        "static inline void cxc_send_async(id target, const char *msg_name, void (^block)(void)) {\n"
        "    if (target == nil) return;\n"
        "    CXC_TRACE(\"send\", nil, target, msg_name);\n"
-       "    dispatch_async([(id<CXCAtom>)target own_queue], ^{\n"
+       "    dispatch_group_async(cxc_send_group(), [(id<CXCAtom>)target own_queue], ^{\n"
        "        CXC_TRACE(\"recv\", nil, target, msg_name);\n"
        "        @try { block(); }\n"
        "        @catch (NSException *e) {\n"
@@ -2208,11 +2398,21 @@
        ;; L5-L7 sync cascade already guarantees children complete
        ;; before main's -transitionToEnd returns, so single-queue mode
        ;; has no gap to close.
+       ;; 2026-09-21 — quiescence-await shutdown. `dispatch_group_notify`
+       ;; runs the exit block on main WHEN every outstanding cxc_send_async
+       ;; enqueue has completed (see `cxc_send_group` above). If the group
+       ;; is already empty, the notify block enqueues immediately and fires
+       ;; once main returns to its runloop; otherwise it fires after the
+       ;; last in-flight block drains. Callers (main atom's `-> end` body)
+       ;; return normally from -transitionToEnd; the process stays alive
+       ;; on dispatch_main() until notify runs exit(0).
        "static inline void cxc_shutdown(void) {\n"
        "#if !CXC_SINGLE_MAIN_QUEUE\n"
        "    dispatch_barrier_sync(dispatch_get_global_queue(QOS_CLASS_DEFAULT, 0), ^{});\n"
        "#endif\n"
-       "    exit(0);\n"
+       "    dispatch_group_notify(cxc_send_group(), dispatch_get_main_queue(), ^{\n"
+       "        exit(0);\n"
+       "    });\n"
        "}\n\n"
        ;; F32 L4.a (2026-08-24) — atomic-pointer-swap storage-flip
        ;; infrastructure, sub-landing 1 of N per the storage-flip

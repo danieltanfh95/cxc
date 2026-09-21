@@ -542,6 +542,72 @@
 ;; cxc-tys data) moved to cxc.lower.int-picker.
 
 
+(defn- expand-phase-swallow-arms
+  "2026-09-20 — expand `phase <: * -> phase` shorthand into per-message
+   swallow arms. For each phase-swallow declaration, iterate over
+   messages the atom accepts elsewhere and synthesize a `phase <:
+   <msg>(<payload>) -> <target>` arm with an empty body for each
+   (phase, msg) pair not already covered by an explicit arm.
+
+   Kills the boilerplate cluster on terminal phases:
+
+       dead <: take_damage(amount: Int!) -> dead
+       dead <: heal(amount: Int!) -> dead
+       dead <: silence -> dead
+       dead <: buff_atk(amount: Int!) -> dead
+       dead <: attach_thorn -> dead
+
+   collapses to
+
+       dead <: * -> dead
+
+   Explicit opt-out only — silent drops in unspecified phases still
+   abort (F3 coverage guarantee is preserved because the expansion
+   only adds arms; it never suppresses missing-arm errors)."
+  [txns]
+  (let [swallow?      (fn [t]
+                        (and (:phase-swallow? t)
+                             (= :wildcard-msg
+                                (get-in t [:receive :msg :source :node]))))
+        swallow-arms  (filterv swallow? txns)
+        regular-arms  (filterv (complement swallow?) txns)
+        ident-msg?    (fn [t]
+                        (and (:receive t)
+                             (= "<:" (get-in t [:receive :glyph]))
+                             (= :ident (get-in t [:receive :msg :source :node]))))
+        msg-payloads  (reduce (fn [acc t]
+                                (let [nm      (get-in t [:receive :msg :source :name])
+                                      payload (get-in t [:receive :msg :payload])]
+                                  (if (contains? acc nm) acc (assoc acc nm payload))))
+                              {}
+                              (filter ident-msg? regular-arms))
+        covered       (into #{}
+                            (keep (fn [t]
+                                    (when (and (ident-msg? t)
+                                               (= :phase (get-in t [:source :kind])))
+                                      [(get-in t [:source :name])
+                                       (get-in t [:receive :msg :source :name])])))
+                            regular-arms)
+        synthesized
+        (mapcat (fn [t]
+                  (let [phase  (get-in t [:source :name])
+                        target (:target t)]
+                    (keep (fn [[msg-name payload]]
+                            (when-not (contains? covered [phase msg-name])
+                              {:node :transition
+                               :source (:source t)
+                               :receive {:glyph "<:"
+                                         :msg {:source {:node :ident :name msg-name}
+                                               :payload payload
+                                               :params nil}}
+                               :target target
+                               :src-line (:src-line t)
+                               :body []
+                               :phase-swallow-synth? true}))
+                          msg-payloads)))
+                swallow-arms)]
+    (into regular-arms synthesized)))
+
 (defn- build-atom-env
   "Build the atom-env from every top-level `def X:` — includes `main`
    whenever the program has any other user-declared atoms (so main can
@@ -643,7 +709,8 @@
      (fn [env a]
        (let [name          (:name a)
              dsec          (def-atom-effective-data-section a)
-             raw-txns      (def-atom-transitions a)
+             raw-txns      (expand-phase-swallow-arms
+                            (def-atom-transitions a))
              ;; L10 (2026-08-25) — reject wildcard-source arms that are
              ;; GENUINELY ambiguous: >1 arms on the same message where at
              ;; least one arm has no guard (unguarded arm matches every
@@ -1021,7 +1088,12 @@
                                      "those); got `" (:node v) "` node.")
                                 {:atom name :method m :value v})))
              on-nil-entries (into {} (map (juxt :method :value) on-nil-raw))
-             message-index (collect-message-shapes name transitions)
+             ;; Include handler-shape arms (`* <: msg -> self`) in the
+             ;; message-index so senders can send to atoms whose only
+             ;; arm on that message is a wildcard-source one. Without
+             ;; this, a sole wildcard arm would leave the message
+             ;; unregistered even though it clearly responds to it.
+             message-index (collect-message-shapes name (into (vec transitions) handler-txns))
              companion-index (collect-companion-shapes name transitions)
              ;; L-panic-cap (2026-08-26) — thread the raw `use:` cap
              ;; list onto atom-env so `panic(...)` at a call site can
@@ -2063,6 +2135,9 @@
                                                (:enum-env c) ann))
                             tk      (or ann-kw (infer-type (:expr s) c))]
                         [(update c :locals assoc (:name s) tk) s])
+                      :alias-stmt
+                      (let [tk (infer-type (:expr s) c)]
+                        [(update c :locals assoc (:name s) tk) s])
                       [c s]))
                   [ctx nil] stmts)]
       (cond
@@ -2504,10 +2579,11 @@
                                  :else (str tk))]
                   {:name          method-name
                    :params        (into [{:name "self" :cxc-ty (:atom target-ty)
-                                          :is-self? true}]
+                                          :is-self? true :nonnil? true}]
                                         (mapv (fn [p]
-                                                {:name  (:name p)
-                                                 :cxc-ty (param-type-name (:type p))
+                                                {:name    (:name p)
+                                                 :cxc-ty  (param-type-name (:type p))
+                                                 :nonnil? (= :type-nonnil (:node (:type p)))
                                                  :default (:default p)})
                                               (:params o)))
                    :cxc-return-ty ret-name
@@ -3246,6 +3322,11 @@
   "Extract the sequence of body statements from a lambda AST node.
    `body` may be:
    - a `:block` wrapping multi-statement form → return its stmts
+   - a `:do-block-expr` (from `l => def: <indent-block>` per the
+     2026-09-20 multi-stmt lambda landing) → return its stmts
+     directly; wrapping as `:expr-stmt` would round-trip through
+     lower-expr's `:c-stmt-expr` which the emitter doesn't accept
+     as a stmt
    - a bare statement node → wrap in a single-element vector
    - a bare expression (post-F20 REJECTED: `xs.for_each(e =>
      print(e))` gives lambda body as raw `:call`) → wrap in
@@ -3255,6 +3336,7 @@
     (cond
       (nil? body) []
       (and (map? body) (= :block (:node body))) (:stmts body)
+      (and (map? body) (= :do-block-expr (:node body))) (:stmts body)
       (and (map? body) (contains? statement-node-kinds (:node body))) [body]
       :else [{:node :expr-stmt :expr body}])))
 
@@ -5698,16 +5780,64 @@
             (and ann (= :type-nonnil (:node ann)))
             (update :locals-nonnil? (fnil conj #{}) (:name node)))]))
 
+(defn- lower-alias-stmt
+  "Local alias binding: `alias <name> :- <expr>` — evaluate `expr` once
+   at declaration point, bind `name` for the enclosing block, treat as
+   a name for a pure named computation (not assignment; not
+   re-targetable). Semantics-equivalent to Clojure `let`; naming
+   avoids the Algol/JS/Rust `let-is-mutable` prior.
+
+   Lowered as `:var-decl` with type taken directly from RHS inference
+   (no envelope-storage flip — the alias's type IS the RHS's type).
+   Bound in ctx `:locals` so subsequent statements resolve the name;
+   registered in `:alias-names` so a downstream `=>` target check can
+   reject attempts to write through the alias slot.
+
+   RHS is expression-position only (`parse-alias-statement` gates on
+   `parse-expr`, so sends and other statement-only forms don't get
+   here); the inferred type-kw + C-type must be non-nil for the decl
+   to compile (a void-typed RHS would produce nonsense)."
+  [node ctx]
+  (let [nm      (:name node)
+        _       (when (contains? (:alias-names ctx) nm)
+                  (fail-nyi!
+                   (str "`alias " nm "` is already bound in this scope. "
+                        "Aliases are hoist-once names, not reassignable "
+                        "bindings — pick a different name.")
+                   node))
+        _       (when (contains? (:locals ctx) nm)
+                  (fail-nyi!
+                   (str "`alias " nm "` shadows an existing local `" nm
+                        "` (param/let/enclosing bind). Aliases must not "
+                        "shadow to keep source-level lookup unambiguous.")
+                   node))
+        expr    (:expr node)
+        rhs-lo  (lower-expr expr ctx)
+        rhs-tk  (infer-type expr ctx)
+        ct      (type-kw->c-type rhs-tk expr)
+        decl    {:node :var-decl :name nm :c-type ct :rhs rhs-lo}
+        ctx'    (-> ctx
+                    (update :locals assoc nm rhs-tk)
+                    (update :alias-names (fnil conj #{}) nm))]
+    [decl ctx']))
+
 (defn- lower-body-stmts
   "Lower a sequence of statements, threading ctx so an F18 L1
    `:let-stmt` mid-sequence becomes visible to subsequent stmts.
    Shared by lower-do-clause and method-body / lambda-body lowering
-   so `let` is uniformly available anywhere a statement is."
+   so `let` is uniformly available anywhere a statement is.
+
+   `:alias-stmt` uses the same threading path — the alias name binds
+   in ctx and later statements resolve it."
   [stmts ctx]
   (first
    (reduce (fn [[acc c] node]
-             (if (= :let-stmt (:node node))
+             (case (:node node)
+               :let-stmt
                (let [[decl c'] (lower-let-stmt node c)]
+                 [(conj acc decl) c'])
+               :alias-stmt
+               (let [[decl c'] (lower-alias-stmt node c)]
                  [(conj acc decl) c'])
                [(conj acc (lower-stmt node c)) c]))
            [[] ctx]
@@ -5733,10 +5863,31 @@
               ;; (side-effect stmts — same shape as retired `do:`).
               ;; Emit updates first, then stmts (updates are "state
               ;; changes"; stmts are "side effects").
+              ;;
+              ;; `alias <name> :- <expr>` at the head of `:stmts` hoists
+              ;; into ctx BEFORE `:updates` lowering so `=> rhs` may
+              ;; reference the alias. Aliases must appear at head (no
+              ;; alias after a non-alias stmt) — the pure-syntactic
+              ;; contract makes ordering interleaving confusing.
               :then-clause
-              [(-> out
-                   (into (mapcat #(lower-then-update % c) (:updates clause)))
-                   (into (lower-body-stmts (:stmts clause) c))) c]
+              (let [stmts0    (:stmts clause)
+                    head-alias (take-while #(= :alias-stmt (:node %)) stmts0)
+                    rest-stmts (drop (count head-alias) stmts0)
+                    _         (when-let [stray (some #(when (= :alias-stmt (:node %)) %) rest-stmts)]
+                                (fail-nyi!
+                                 (str "`alias " (:name stray) " :- ...` must appear at the "
+                                      "head of the `then:` block, before any non-alias stmt")
+                                 stray))
+                    [alias-decls c-alias]
+                    (reduce (fn [[decls ctx-acc] node]
+                              (let [[decl ctx'] (lower-alias-stmt node ctx-acc)]
+                                [(conj decls decl) ctx']))
+                            [[] c]
+                            head-alias)]
+                [(-> out
+                     (into alias-decls)
+                     (into (mapcat #(lower-then-update % c-alias) (:updates clause)))
+                     (into (lower-body-stmts rest-stmts c-alias))) c])
 
               ;; `:let-clause` retired (F18 L1' Landing 2, 2026-08-24).
               ;; The parser can no longer produce it — statement-form
@@ -5919,10 +6070,26 @@
           (fn [[out c] clause]
             (case (:node clause)
               ;; F70 I3 — see lower-transition-body comment for split.
+              ;; Alias hoist mirrors lower-transition-body's :then-clause.
               :then-clause
-              [(-> out
-                   (into (mapcat #(lower-then-update % c) (:updates clause)))
-                   (into (lower-body-stmts (:stmts clause) c))) c]
+              (let [stmts0    (:stmts clause)
+                    head-alias (take-while #(= :alias-stmt (:node %)) stmts0)
+                    rest-stmts (drop (count head-alias) stmts0)
+                    _         (when-let [stray (some #(when (= :alias-stmt (:node %)) %) rest-stmts)]
+                                (fail-nyi!
+                                 (str "`alias " (:name stray) " :- ...` must appear at the "
+                                      "head of the `then:` block, before any non-alias stmt")
+                                 stray))
+                    [alias-decls c-alias]
+                    (reduce (fn [[decls ctx-acc] node]
+                              (let [[decl ctx'] (lower-alias-stmt node ctx-acc)]
+                                [(conj decls decl) ctx']))
+                            [[] c]
+                            head-alias)]
+                [(-> out
+                     (into alias-decls)
+                     (into (mapcat #(lower-then-update % c-alias) (:updates clause)))
+                     (into (lower-body-stmts rest-stmts c-alias))) c])
 
               (fail-nyi! (str "on-enter body clause " (:node clause)) clause)))
           [[] ctx]
@@ -6082,6 +6249,35 @@
                                :c-type (:c-type bd)
                                :rhs    (:init bd)})
                             is-check-bindings)
+        ;; `alias <name> :- <expr>` at the head of a `then:` `:stmts`
+        ;; hoists into ctx BEFORE update RHS + do-stmt lowering so the
+        ;; alias name is visible in `=> rhs`, sync/async sends, and
+        ;; subsequent side-effect stmts. Aliases must appear at head
+        ;; (before any non-alias stmt) — the pure-syntactic contract
+        ;; makes interleaved ordering confusing.
+        alias-heads (mapv (fn [tc]
+                            (let [head (take-while #(= :alias-stmt (:node %))
+                                                   (:stmts tc))
+                                  tail (drop (count head) (:stmts tc))]
+                              {:tc tc :head head :tail tail}))
+                          then-clauses)
+        _           (doseq [{:keys [tail]} alias-heads
+                            :let [stray (some #(when (= :alias-stmt (:node %)) %)
+                                              tail)]]
+                      (when stray
+                        (fail-nyi!
+                         (str "`alias " (:name stray) " :- ...` must appear at the "
+                              "head of the `then:` block, before any non-alias stmt")
+                         stray)))
+        [alias-decls ctx']
+        (reduce (fn [[decls ctx-acc] node]
+                  (let [[decl ctx-next] (lower-alias-stmt node ctx-acc)]
+                    [(conj decls decl) ctx-next]))
+                [[] ctx']
+                (mapcat :head alias-heads))
+        then-clauses (mapv (fn [{:keys [tc tail]}]
+                             (assoc tc :stmts (vec tail)))
+                           alias-heads)
         then-stmts   (vec (mapcat (fn [c] (mapcat #(lower-then-update % ctx')
                                                   (:updates c)))
                                   then-clauses))
@@ -6111,10 +6307,16 @@
         ;; so their ctx drops `:snapshot-name` (kept as ctx-post-commit
         ;; below).
         ctx-post-commit (dissoc ctx' :snapshot-name)
+        ;; Replace each original :then-clause with its alias-stripped
+        ;; variant so do-stmts doesn't re-emit the head-aliases we
+        ;; already hoisted above.
+        stripped-then-by-orig (zipmap (map :tc alias-heads) then-clauses)
         do-stmts     (vec (mapcat (fn [c]
                                     (case (:node c)
                                       :do-clause   (lower-do-clause c ctx')
-                                      :then-clause (lower-body-stmts (:stmts c) ctx')
+                                      :then-clause (lower-body-stmts
+                                                    (:stmts (get stripped-then-by-orig c c))
+                                                    ctx')
                                       nil))
                                   body-clauses))
         ;; Audit F24: `-> self` means self-transition, no phase change
@@ -6239,6 +6441,10 @@
                        ;; wildcard/then/do stmts) so subsequent stmts
                        ;; can reference the bound names.
                        (seq binding-decls) (into binding-decls)
+                       ;; Alias hoists sit above the wildcard/then/do
+                       ;; stmts so their names resolve for all of them
+                       ;; (see `alias-heads` computation above).
+                       (seq alias-decls)  (into alias-decls)
                        (seq w-then-stmts) (into w-then-stmts)
                        (seq then-stmts)   (into then-stmts)
                        ;; F33 L3.d (revised 2026-09-20) — TRANSACTION
@@ -6287,6 +6493,7 @@
                            (phase-constant-name atom-name source-name))
      :wildcard-source? wildcard-source?
      :guard       guard-lo
+     :src-line    (:src-line t)
      :body        body}))
 
 (defn- resolve-stream-source
@@ -6854,22 +7061,57 @@
                       (merge self-local
                              (transition-payload-locals
                               t record-env atom-env enum-env)))))
+           ;; Fold alias-stmts at the head of each `then:` clause into
+           ;; ctx BEFORE walking emit sites so `:> foo(x: alias-name)`
+           ;; can infer alias-name's type at env-build time. Mirrors
+           ;; the alias-hoist done in lower-transition-branch.
+           ;;
+           ;; Alias RHS type inference may fail on this pass when the
+           ;; RHS calls a container method (`.at`/`.count`/`.filter`)
+           ;; on a synthesized List/Map/Set atom — those methods are
+           ;; typed after container synth. Swallow the throw and skip
+           ;; folding; the emit site's arg-infer then yields nil for
+           ;; the alias ref and the whole site defers to the re-run
+           ;; per the DEFER comment below.
+           fold-alias-heads
+           (fn [t ctx]
+             (reduce
+              (fn [c clause]
+                (if (= :then-clause (:node clause))
+                  (reduce (fn [c2 s]
+                            (if (= :alias-stmt (:node s))
+                              (let [tk (try (infer-type (:expr s) c2)
+                                            (catch Exception _ nil))]
+                                (if tk
+                                  (update c2 :locals assoc (:name s) tk)
+                                  c2))
+                              (reduced c2)))
+                          c
+                          (:stmts clause))
+                  c))
+              ctx
+              (:body t)))
            sites (mapcat
                   (fn [t]
-                    (let [ctx (ctx-for t)]
+                    (let [ctx (fold-alias-heads t (ctx-for t))]
                       (keep (fn [e]
                               ;; 2026-09-20 — DEFER emit sites whose args
                               ;; reference an observable whose body isn't
                               ;; typed yet (container-method NYI on this
-                              ;; pass; typed after synth). Only that shape
-                              ;; produces a silent nil from `infer-type`
-                              ;; — all other unresolved refs would throw.
-                              ;; Deferred sites are picked up by the re-run
-                              ;; of this pass after obs re-inference (see
-                              ;; caller in `lower`).
+                              ;; pass; typed after synth). Original code
+                              ;; relied on silent nil; extended 2026-09-20
+                              ;; (alias landing) to also treat any thrown
+                              ;; NYI as "defer" so an alias whose RHS
+                              ;; hasn't been typable this pass propagates
+                              ;; through as nil rather than aborting the
+                              ;; whole env-build. Deferred sites are picked
+                              ;; up by the re-run of this pass after obs
+                              ;; re-inference (see caller in `lower`).
                               (let [args (mapv (fn [a]
                                                  {:name (:name a)
-                                                  :type-kw (infer-type (:value a) ctx)})
+                                                  :type-kw (try
+                                                             (infer-type (:value a) ctx)
+                                                             (catch Exception _ nil))})
                                                (:args e))]
                                 (when (every? (fn [a] (some? (:type-kw a)))
                                               args)
@@ -7502,7 +7744,8 @@
         ;; multi-stmt observable body wraps raw scalars into envelope
         ;; when the declared/inferred return is envelope-typed.
         body-ctx     (-> ctx
-                         (update :locals #(merge (or % {}) param-locals))
+                         (update :locals #(merge (or % {}) param-locals
+                                                 {"self" {:atom atom-name}}))
                          (assoc :snapshot-name "__cxc_snap")
                          (assoc :expected-return-tk (:type-kw o)))
         objc-params  (mapv (fn [p raw-p]
@@ -7545,7 +7788,10 @@
                          (first (:stmts lowered-body))))
         return-stmt  (if raise-only?
                        raise-stmt
-                       {:node :return :value lowered-body})
+                       {:node :observable-return
+                        :value lowered-body
+                        :observable-name (:name o)
+                        :c-type (:c-type o)})
         core-stmts   (if has-invariants?
                        [check-stmt check-stmt return-stmt]
                        [return-stmt])

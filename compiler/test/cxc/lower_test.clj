@@ -1544,7 +1544,9 @@ def main:
                           %1)
                        body)
           return-idx (first (keep-indexed
-                              #(when (= :return (:node %2)) %1)
+                              #(when (contains? #{:return :observable-return}
+                                                (:node %2))
+                                 %1)
                               body))]
       (is (= 2 (count check-idxs))
           "entry AND exit checks emitted")
@@ -5126,7 +5128,7 @@ def main:
           "snapshot-init is the first stmt in the observable body")
       (is (= "Counter" (:class-name (first body)))
           "snapshot-init carries the atom's class name for the state struct")
-      (is (str/includes? c-src "return (__cxc_snap._n + 1);")
+      (is (str/includes? c-src "((__cxc_snap._n + 1))")
           "bare-field read inside observable body routes via __cxc_snap._n"))))
 
 (deftest f32-l4e-beta-3-check-invariants-body-uses-snapshot-when-invariants-present

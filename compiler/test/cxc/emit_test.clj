@@ -490,8 +490,10 @@
                        :atom-name "Counter"
                        :data-fields [{:name "n"}]}
           s (#'cxc.emit/emit-stmt commit-node)]
-      (is (str/includes? s "#if CXC_SINGLE_MAIN_QUEUE\n_n = __cxc_next._n;\n#else\n")
-          "per-field ivar assignment guards under CXC_SINGLE_MAIN_QUEUE (single-queue-only path)")
+      (is (str/includes? s "#if CXC_SINGLE_MAIN_QUEUE\n")
+          "single-queue branch opens the emit")
+      (is (str/includes? s "_n = __cxc_next._n;")
+          "per-field ivar assignment fires in the single-queue path (may be preceded by a CXC_TRACE_ENABLED field_write emit)")
       (is (str/includes? s "#else\n_cxc_state_commit(&_state, &__cxc_next, sizeof(Counter_State));\n#endif")
           "state-commit fires in the #else branch under concurrent mode with the atom's state-struct size")
       (is (< (str/index-of s "_n = __cxc_next._n;")

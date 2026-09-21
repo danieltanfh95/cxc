@@ -278,6 +278,18 @@
                                             (container-method "filter"
                                                               [{:name "pred" :cxc-ty elem}]
                                                               class-name)
+                                            ;; 2026-09-20 — `.empty()` factory.
+                                            ;; Returns a fresh empty `List of T`
+                                            ;; using the receiver's element type;
+                                            ;; caller compose via `xs => xs.empty()`
+                                            ;; instead of `xs.filter(x => false)`.
+                                            ;; Instance-shape (not class-shape)
+                                            ;; because Corvid has no first-class
+                                            ;; type names in expression position —
+                                            ;; the receiver carries the T.
+                                            (container-method "empty"
+                                                              []
+                                                              class-name)
                                             ;; 2026-09-17 — `.sort_by(f: T -> Int)`.
                                             ;; Python-shape key-fn sort matching
                                             ;; `sorted(xs, key=fn)`. Returns a
@@ -290,11 +302,17 @@
                                      (conj (container-method "contains"
                                                              [{:name "e" :cxc-ty elem}]
                                                              "Bool"))
-                                     (list-at-eligible? elem (contains? record-env elem))
+                                     (list-at-eligible? elem
+                                                        (contains? record-env elem)
+                                                        (contains? atom-env elem))
                                      (conj (container-method "at"
                                                              [{:name "i" :cxc-ty "Int"}]
                                                              elem
-                                                             :return-optional? true)))]
+                                                             ;; Atoms are already
+                                                             ;; nullable pointers;
+                                                             ;; skip envelope wrap.
+                                                             :return-optional?
+                                                             (not (contains? atom-env elem)))))]
                  [class-name
                   (merge (container-entry-defaults)
                          count-observable-defaults

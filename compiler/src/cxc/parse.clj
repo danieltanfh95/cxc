@@ -698,13 +698,41 @@
                (str "F69 L4: expected `<: <pattern>: <body>` arm or dedent "
                     "inside a dispatch block."))))))
 
-(declare parse-multi-arm-dispatch)
+(declare parse-multi-arm-dispatch parse-statement)
 
 (defn- parse-expr [tokens pos]
   (let [[e p] (parse-binop tokens pos 1)]
     (if (looks-like-dispatch-tail? tokens p)
       (parse-dispatch-block e tokens p)
       [e p])))
+
+(defn- parse-lambda-body
+  "RHS of `=>` in a lambda position. Two shapes:
+     `<expr>`               — single expression body (default)
+     `def: <indent-block>`  — multi-statement body, `:do-block-expr`
+                              (last-stmt-is-value; same shape as observation
+                              `bodyful-block?`). The lexer opens the block by
+                              re-enabling layout despite bracket-continuation
+                              (see `def-frame-trigger?` in cxc.lex)."
+  [tokens pos]
+  (if (and (at? tokens pos :kw "def")
+           (at? tokens (inc pos) :punct ":"))
+    (let [[_ p] (expect tokens (+ pos 2) :indent)
+          [stmts p]
+          (loop [stmts [] p p]
+            (cond
+              (at? tokens p :dedent)
+              [stmts (inc p)]
+
+              (at? tokens p :newline)
+              (recur stmts (inc p))
+
+              :else
+              (let [[s p2] (parse-statement tokens p)
+                    p3     (skip-newlines tokens p2)]
+                (recur (conj stmts s) p3))))]
+      [{:node :do-block-expr :stmts stmts} p])
+    (parse-expr tokens pos)))
 
 (defn- parse-primary [tokens pos]
   (let [t (peek-tok tokens pos)]
@@ -775,7 +803,7 @@
       :ident  ;; ident, maybe followed by lambda arrow => in parse-lambda-or-ident
       (let [ident-node {:node :ident :name (t-value t)}]
         (if (at? tokens (inc pos) :glyph "=>")
-          (let [[body p] (parse-expr tokens (+ pos 2))]
+          (let [[body p] (parse-lambda-body tokens (+ pos 2))]
             [{:node :lambda :params [{:name (t-value t)}] :body body} p])
           [ident-node (inc pos)]))
       :punct  (case (t-value t)
@@ -787,7 +815,7 @@
                       ;; return, so a zero-param lambda is what matches.
                       (and (at? tokens (inc pos) :punct ")")
                            (at? tokens (+ pos 2) :glyph "=>"))
-                      (let [[body p] (parse-expr tokens (+ pos 3))]
+                      (let [[body p] (parse-lambda-body tokens (+ pos 3))]
                         [{:node :lambda :params [] :body body} p])
 
                       :else
@@ -833,8 +861,6 @@
                                      "`|> receiver.method(args)`"))))
                 (fail! tokens pos (str "unexpected glyph `" (t-value t) "` in expression")))
       (fail! tokens pos "expected an expression"))))
-
-(declare parse-statement)
 
 (defn- parse-multi-arm-arm
   "Parse one `||: <guard>: <body>` arm. `<guard>` is either the `else`
@@ -1371,6 +1397,25 @@
                      [{:node :block :stmts [s]} p2]))]
     [{:node :while-stmt :cond cnd :body body} p]))
 
+(defn- parse-alias-statement
+  "Local alias binding at statement position:
+     alias <ident> :- <expr>
+
+   Semantics: a name for a pure expression, evaluated once at the
+   declaration site (like Clojure `let`) and reused at every reference
+   inside the enclosing block. Not assignment — there is no slot to
+   re-target. `<ident>` must not appear as a `=>` target or be
+   re-aliased in the same scope. RHS type is inferred; no annotation
+   accepted (an aliased pure expression already has one type). The
+   `:-` glyph echoes the observation-body syntax so top-level obs and
+   inner alias share one 'pure named computation' idiom."
+  [tokens pos]
+  (let [[_ p]   (expect tokens pos :kw "alias")
+        [nm p]  (expect tokens p :ident)
+        [_ p]   (expect tokens p :glyph ":-")
+        [rhs p] (parse-expr tokens p)]
+    [{:node :alias-stmt :name nm :expr rhs} p]))
+
 (defn- parse-let-statement
   "F18 L1 (spec §2.5) — local `let` binding at statement position.
      let <ident> = <expr>
@@ -1590,6 +1635,12 @@
     (and (at? tokens pos :kw "let")
          (at? tokens (inc pos) :ident))
     (parse-let-statement tokens pos)
+
+    ;; `alias <ident> :- <expr>` — pure syntactic aliasing (hoist-once
+    ;; semantics; not assignment; not re-targetable). See parse-alias-
+    ;; statement docstring for the semantic contract.
+    (at? tokens pos :kw "alias")
+    (parse-alias-statement tokens pos)
 
     (at? tokens pos :glyph ":>")
     ;; `:>` is always self-broadcast — no receiver. Keep the bespoke
@@ -2093,7 +2144,7 @@
              (at? tokens (inc p) :punct ":")))))
 
 (defn- parse-msg-pattern
-  "Parse a receive-glyph source pattern. Two shapes:
+  "Parse a receive-glyph source pattern. Three shapes:
 
      1. Payload destructure (from streams/observables):
           tick{dt: Duration}
@@ -2107,9 +2158,21 @@
           fire(target: Enemy, dmg: Int)
         Distinguished by parens holding typed params (not expressions).
         Under `* <: msg(args) -> *`, this lowers to a handler-shaped
-        method entry (spec §1265 semantics) — see lower-def-atom."
+        method entry (spec §1265 semantics) — see lower-def-atom.
+
+     3. 2026-09-20 — phase-swallow shorthand: `<: *`. Signals a
+        catch-all for any message on the source phase. Expanded post-
+        parse (see `expand-phase-swallow-arms`) into one arm per
+        message the atom accepts elsewhere that isn't already covered
+        in the source phase — a targeted retirement of the boilerplate
+        `dead <: msg1 -> dead / dead <: msg2 -> dead / ...` cluster
+        for terminal phases."
   [tokens pos]
   (cond
+    ;; Phase-swallow shorthand: `<: *`.
+    (at? tokens pos :glyph "*")
+    [{:source {:node :wildcard-msg} :payload [] :params nil} (inc pos)]
+
     ;; F67 L3 — typed-params form: `<ident>(<params>)`.
     ;; F70 I5 — also populate `:payload` so non-handler-shape
     ;; transitions (which read `:payload` for message-shape
@@ -2381,7 +2444,8 @@
    we're expecting, so both single-line and two-line shapes parse the
    same AST."
   [tokens pos]
-  (let [[source receive p] (parse-source-and-receive tokens pos)
+  (let [entry-line (t-line (peek-tok tokens pos))
+        [source receive p] (parse-source-and-receive tokens pos)
         p (skip-newlines tokens p)              ; allow newline before ->
         [_ p]      (expect tokens p :glyph "->")
         [target p] (cond
@@ -2403,12 +2467,42 @@
 
                      (at? tokens p :ident)     [(t-value (peek-tok tokens p)) (inc p)]
                      :else (fail! tokens p "expected target phase or `self` after `->`"))
-        [body p]   (parse-transition-body tokens p)]
+        [body p]   (parse-transition-body tokens p)
+        ;; 2026-09-20 — phase-swallow validation. `<: *` requires:
+        ;;   - source is a specific phase (not `*` / `self` / implicit)
+        ;;   - target equals source (or `self`) — no phase change
+        ;;   - body is empty (no `then:` / propositions — the whole
+        ;;     point is "silently drop")
+        wildcard-msg?
+        (= :wildcard-msg (get-in receive [:msg :source :node]))
+        _ (when wildcard-msg?
+            (when-not (= :phase (:kind source))
+              (fail! tokens pos
+                     (str "phase-swallow shorthand `<phase> <: * -> <phase>` "
+                          "requires a specific source phase; got source `"
+                          (:kind source) "`")))
+            (when-not (or (= target "self")
+                          (= target (:name source)))
+              (fail! tokens pos
+                     (str "phase-swallow shorthand `" (:name source)
+                          " <: * -> " (:name source) "` must have the target "
+                          "phase equal to the source (or `self`); got `-> "
+                          target "`")))
+            (when (seq body)
+              (fail! tokens pos
+                     (str "phase-swallow shorthand `" (:name source)
+                          " <: * -> " target "` must have an empty body — "
+                          "the whole point is 'silently drop any message', "
+                          "so `then:` / `|:` / etc. are rejected. Use a "
+                          "concrete `" (:name source) " <: <msg> -> ...` "
+                          "arm instead if you need per-message logic."))))]
     [{:node :transition
       :source source
       :receive receive
       :target target
-      :body body} p]))
+      :src-line entry-line
+      :body body
+      :phase-swallow? wildcard-msg?} p]))
 
 ;; ---------------------------------------------------------------------------
 ;; def-atom top-level form

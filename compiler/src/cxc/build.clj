@@ -12,7 +12,8 @@
             [cxc.prelude         :as prelude]
             [cxc.project         :as cxc-project]
             [cxc.resolve         :as resolve]
-            [cxc.section         :as section]))
+            [cxc.section         :as section]
+            [cxc.shape-sidecar   :as shape-sidecar]))
 
 ;; ---------------------------------------------------------------------------
 ;; Build cache (tier 1: .m → binary)
@@ -145,7 +146,8 @@
    Returns the same shape as the public entrypoints:
    `{:m-path :bin-path :status :stdout :stderr :cache-hit?}`."
   [{:keys [user-parsed full-parsed]} name out-dir
-   {:keys [single-queue? trace?] :or {single-queue? true trace? false}}]
+   {:keys [single-queue? trace? source-path]
+    :or {single-queue? true trace? false}}]
   (let [_        (io/make-parents (io/file out-dir "placeholder"))
         ;; Behavioral-walker dispatch — reads `section/behavioral-walkers`
         ;; (registry-provided walker vars, keyed by seed name). Post
@@ -178,6 +180,12 @@
     (if (.exists cache-bin)
       (do (copy-file cache-bin bin-file)
           (ensure-executable bin-file)
+          ;; Always regenerate the shape sidecar even on a cache hit —
+          ;; the .m -> binary cache guarantees identical executables, but
+          ;; the shape sidecar is a viewer aid derived from the user AST,
+          ;; not the binary, so a stale sidecar from a prior build would
+          ;; mislead the viewer if we skipped this step.
+          (shape-sidecar/write-shape! user-parsed source-path (.getPath bin-file))
           {:m-path     (.getPath m-file)
            :bin-path   (.getPath bin-file)
            :status     0
@@ -192,7 +200,8 @@
                      trace? (conj "-DCXC_TRACE_ENABLED=1")
                      :always (conj "-o" (.getPath bin-file) (.getPath m-file))))]
         (when (zero? exit)
-          (copy-file bin-file cache-bin))
+          (copy-file bin-file cache-bin)
+          (shape-sidecar/write-shape! user-parsed source-path (.getPath bin-file)))
         {:m-path     (.getPath m-file)
          :bin-path   (.getPath bin-file)
          :status     exit
@@ -305,7 +314,8 @@
         full-parsed   (into (vec prelude-nodes) enriched-parsed)
         result        (compile-parsed-to-file
                         {:user-parsed enriched-parsed :full-parsed full-parsed}
-                        name out-dir opts)]
+                        name out-dir
+                        (assoc opts :source-path (or (:source-path opts) name)))]
     ;; B7 / F77 — emit `<binary>.cxc-caps` on successful compile. Single-
     ;; file entry has at most one plugin manifest (the source itself if it
     ;; carries `def plugin:`).
@@ -993,7 +1003,8 @@
         full-parsed      (into (vec prelude-nodes) user-parsed)
         result           (compile-parsed-to-file
                            {:user-parsed user-parsed :full-parsed full-parsed}
-                           name out-dir opts)]
+                           name out-dir
+                           (assoc opts :source-path (or (:source-path opts) name)))]
     ;; F53 L1 — emit one `<module>.cxc-manifest.json` per user module.
     ;; F53 L2 — emit `cxc-deps.json` at out-dir root capturing the
     ;; program-wide module dependency graph.

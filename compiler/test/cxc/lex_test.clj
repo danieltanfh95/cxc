@@ -22,9 +22,9 @@
     (is (= [[:kw "def"] [:ident "foo"] [:punct ":"] [:ident "x"] [:glyph "="] [:int 1]]
            (vals-of (lex/tokenize "def foo:\n    x = 1\n"))))))
 
-(deftest retired-alias-word-is-an-identifier
-  (testing "L6 — the retired F7 declaration opener is no longer reserved"
-    (is (= [[:ident "alias"]]
+(deftest alias-is-a-keyword
+  (testing "`alias` is reserved for local binding syntax (`alias name :- expr`)"
+    (is (= [[:kw "alias"]]
            (vals-of (lex/tokenize "alias"))))))
 
 (deftest multi-char-glyphs
