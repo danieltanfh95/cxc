@@ -1445,8 +1445,9 @@ function renderShape() {
   mountLegend();
 
   // Zoom controls — pill in top-right (bottom-left is taken by legend).
-  // Rescales the shape SVG's rendered width/height; viewBox stays at native
-  // dimensions so contents scale crisply. Persists per session.
+  // Updates the shape SVG's viewBox: smaller viewBox = zoomed in. Pan
+  // shares state via localStorage keys cxc-shape-{zoom,panx,pany}. Ctrl+
+  // scroll zooms around the cursor position.
   if (!document.getElementById('shape-zoom')) {
     const zctl = document.createElement('div');
     zctl.id = 'shape-zoom';
@@ -1454,33 +1455,62 @@ function renderShape() {
       <button id="shape-zoom-out" title="zoom out (ctrl+scroll)">−</button>
       <span id="shape-zoom-level">100%</span>
       <button id="shape-zoom-in" title="zoom in (ctrl+scroll)">+</button>
-      <button id="shape-zoom-reset" title="reset to 100%">⟲</button>
+      <button id="shape-zoom-reset" title="reset to 100% and centre">⟲</button>
     `;
     stage.appendChild(zctl);
-    const applyZoom = (newZoom) => {
-      const clamped = Math.max(0.25, Math.min(3, newZoom));
-      localStorage.setItem('cxc-shape-zoom', String(clamped));
-      const svgEl = stage.querySelector('svg');
-      if (svgEl && svgEl.dataset.nativeW) {
-        svgEl.setAttribute('width', +svgEl.dataset.nativeW * clamped);
-        svgEl.setAttribute('height', +svgEl.dataset.nativeH * clamped);
-      }
+    const svgSel = () => stage.querySelector('svg');
+    const updateVB = (z, px, py) => {
+      const svgEl = svgSel();
+      if (!svgEl || !svgEl.dataset.nativeW) return;
+      const nW = +svgEl.dataset.nativeW, nH = +svgEl.dataset.nativeH;
+      svgEl.setAttribute('viewBox', `${px} ${py} ${nW / z} ${nH / z}`);
+      localStorage.setItem('cxc-shape-zoom', String(z));
+      localStorage.setItem('cxc-shape-panx', String(px));
+      localStorage.setItem('cxc-shape-pany', String(py));
       const lvl = document.getElementById('shape-zoom-level');
-      if (lvl) lvl.textContent = Math.round(clamped * 100) + '%';
+      if (lvl) lvl.textContent = Math.round(z * 100) + '%';
     };
-    const step = (delta) => {
-      const cur = parseFloat(localStorage.getItem('cxc-shape-zoom')) || 1;
-      applyZoom(cur + delta);
+    const readState = () => ({
+      z: Math.max(0.15, Math.min(4, parseFloat(localStorage.getItem('cxc-shape-zoom')) || 1)),
+      px: parseFloat(localStorage.getItem('cxc-shape-panx')) || 0,
+      py: parseFloat(localStorage.getItem('cxc-shape-pany')) || 0,
+    });
+    const zoomAround = (newZoom, cx, cy) => {
+      const svgEl = svgSel();
+      if (!svgEl || !svgEl.dataset.nativeW) return;
+      const s = readState();
+      const clamped = Math.max(0.15, Math.min(4, newZoom));
+      const nW = +svgEl.dataset.nativeW;
+      const rect = svgEl.getBoundingClientRect();
+      const fx = (cx - rect.left) / rect.width;
+      const fy = (cy - rect.top) / rect.height;
+      const vbWNew = nW / clamped;
+      const vbHNew = (+svgEl.dataset.nativeH) / clamped;
+      const vbWOld = nW / s.z;
+      const vbHOld = (+svgEl.dataset.nativeH) / s.z;
+      const px = s.px + fx * (vbWOld - vbWNew);
+      const py = s.py + fy * (vbHOld - vbHNew);
+      updateVB(clamped, px, py);
     };
-    document.getElementById('shape-zoom-out').addEventListener('click', () => step(-0.1));
-    document.getElementById('shape-zoom-in').addEventListener('click', () => step(0.1));
-    document.getElementById('shape-zoom-reset').addEventListener('click', () => applyZoom(1));
+    const stepCentered = (delta) => {
+      const svgEl = svgSel();
+      if (!svgEl) return;
+      const rect = svgEl.getBoundingClientRect();
+      const s = readState();
+      zoomAround(s.z + delta, rect.left + rect.width / 2, rect.top + rect.height / 2);
+    };
+    document.getElementById('shape-zoom-out').addEventListener('click', () => stepCentered(-0.1));
+    document.getElementById('shape-zoom-in').addEventListener('click', () => stepCentered(0.1));
+    document.getElementById('shape-zoom-reset').addEventListener('click', () => updateVB(1, 0, 0));
     stage.addEventListener('wheel', (ev) => {
       if (!ev.ctrlKey && !ev.metaKey) return;
       ev.preventDefault();
-      step(ev.deltaY < 0 ? 0.1 : -0.1);
+      const s = readState();
+      zoomAround(s.z + (ev.deltaY < 0 ? 0.1 : -0.1), ev.clientX, ev.clientY);
     }, { passive: false });
-    applyZoom(parseFloat(localStorage.getItem('cxc-shape-zoom')) || 1);
+    // Initial sync so the level indicator matches persisted state.
+    const s0 = readState();
+    updateVB(s0.z, s0.px, s0.py);
   }
 
   // Onboarding hint — first-time only. localStorage tracks dismissal.
@@ -1625,10 +1655,17 @@ function renderShape() {
   }
 
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  const shapeZoom = Math.max(0.25, Math.min(3, parseFloat(localStorage.getItem('cxc-shape-zoom')) || 1));
-  svg.setAttribute('width', W * shapeZoom);
-  svg.setAttribute('height', H * shapeZoom);
-  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  // Pan+zoom via SVG viewBox — the SVG fills the stage viewport (100%);
+  // zoom scales the viewBox size, pan shifts its origin. Works at any
+  // zoom level (including <100%) because we're not relying on the
+  // browser's scrollbars.
+  const shapeZoom = Math.max(0.15, Math.min(4, parseFloat(localStorage.getItem('cxc-shape-zoom')) || 1));
+  const panX0 = parseFloat(localStorage.getItem('cxc-shape-panx')) || 0;
+  const panY0 = parseFloat(localStorage.getItem('cxc-shape-pany')) || 0;
+  svg.setAttribute('width', '100%');
+  svg.setAttribute('height', '100%');
+  svg.setAttribute('viewBox', `${panX0} ${panY0} ${W / shapeZoom} ${H / shapeZoom}`);
+  svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
   svg.dataset.nativeW = W;
   svg.dataset.nativeH = H;
 
@@ -2513,31 +2550,58 @@ if (params.has('trace')) {
   });
 })();
 
-// Left-drag anywhere pans the stage. Interactive descendants (legend,
-// zoom UI, hint, close buttons, splitter) skip pan and keep their own
-// handlers. On any element: drag <4px passes through as a click (atom
-// selection, edge tooltip); drag >=4px pans, and the trailing click is
-// swallowed so a pan never accidentally opens a phase graph.
+// Left-drag anywhere pans the shape SVG by shifting its viewBox origin.
+// Works at any zoom level — including <100% where the SVG fits inside
+// the stage and scroll bars wouldn't help. On non-shape views (timeline,
+// sequence, phase graph SVGs without dataset.nativeW), pan falls back
+// to scrollLeft/scrollTop so those still pan when zoomed to overflow.
+// Interactive descendants (legend, zoom UI, hint, close, splitter) skip
+// pan. Drag <4px = click passthrough; >=4px pans and swallows the click.
 (function wirePan() {
   const stage = document.getElementById('stage-main');
   if (!stage) return;
-  let active = false, sx = 0, sy = 0, sl = 0, st = 0, moved = false;
+  let active = false, sx = 0, sy = 0, moved = false;
+  let initSL = 0, initST = 0;
+  let initPX = 0, initPY = 0, initZ = 1;
+  let viewBoxMode = false;
   const skipSel = '#shape-legend, #shape-zoom, #shape-hint, #stage-splitter, .detail-close-btn';
+  const svgSel = () => stage.querySelector('svg');
   const swallowNextClick = (ev) => { ev.stopPropagation(); ev.preventDefault(); stage.removeEventListener('click', swallowNextClick, true); };
   stage.addEventListener('mousedown', (ev) => {
     if (ev.button !== 0) return;
     if (ev.target.closest && ev.target.closest(skipSel)) return;
     active = true; moved = false;
     sx = ev.clientX; sy = ev.clientY;
-    sl = stage.scrollLeft; st = stage.scrollTop;
+    const svgEl = svgSel();
+    viewBoxMode = !!(svgEl && svgEl.dataset.nativeW);
+    if (viewBoxMode) {
+      initZ = parseFloat(localStorage.getItem('cxc-shape-zoom')) || 1;
+      initPX = parseFloat(localStorage.getItem('cxc-shape-panx')) || 0;
+      initPY = parseFloat(localStorage.getItem('cxc-shape-pany')) || 0;
+    } else {
+      initSL = stage.scrollLeft; initST = stage.scrollTop;
+    }
   });
   window.addEventListener('mousemove', (ev) => {
     if (!active) return;
     const dx = ev.clientX - sx, dy = ev.clientY - sy;
     if (!moved && Math.hypot(dx, dy) < 4) return;
     if (!moved) { moved = true; stage.classList.add('panning'); }
-    stage.scrollLeft = sl - dx;
-    stage.scrollTop  = st - dy;
+    if (viewBoxMode) {
+      const svgEl = svgSel();
+      if (!svgEl || !svgEl.dataset.nativeW) return;
+      const nW = +svgEl.dataset.nativeW, nH = +svgEl.dataset.nativeH;
+      const rect = svgEl.getBoundingClientRect();
+      const vbW = nW / initZ, vbH = nH / initZ;
+      const newPX = initPX - dx * (vbW / rect.width);
+      const newPY = initPY - dy * (vbH / rect.height);
+      svgEl.setAttribute('viewBox', `${newPX} ${newPY} ${vbW} ${vbH}`);
+      localStorage.setItem('cxc-shape-panx', String(newPX));
+      localStorage.setItem('cxc-shape-pany', String(newPY));
+    } else {
+      stage.scrollLeft = initSL - dx;
+      stage.scrollTop  = initST - dy;
+    }
     ev.preventDefault();
   });
   window.addEventListener('mouseup', () => {
