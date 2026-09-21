@@ -556,7 +556,7 @@ function buildGraph(mode) {
     const src = senderIdForEvent(e) || '(root)';
     const dst = nodeId(e);
     if (!nodes.has(src)) {
-      nodes.set(src, {id: src, label: src === '(root)' ? 'root' : (displayLabel(src) || src), cls: src === '(root)' ? 'root' : src, size: 0});
+      nodes.set(src, {id: src, label: src === '(root)' ? 'init' : (displayLabel(src) || src), cls: src === '(root)' ? 'root' : src, size: 0});
     }
     const key = src + '|' + dst;
     if (!edges.has(key)) edges.set(key, {src, dst, msgs: new Map(), total: 0, sync: 0});
@@ -1416,7 +1416,7 @@ function renderShape() {
         <h5>atoms</h5>
         <div class="legend-row"><span class="legend-swatch" style="background:#d99a4a;"></span>main</div>
         <div class="legend-row"><span class="legend-swatch" style="background:#4a90d9;"></span>user atom</div>
-        <div class="legend-row"><span class="legend-swatch" style="background:#999;"></span>root / end</div>
+        <div class="legend-row" title="synthetic origin for sends that happened before any arm fired: atom constructors + the first kickoff into main"><span class="legend-swatch" style="background:#999;"></span>init / end</div>
       </div>
       <div class="legend-group">
         <h5>edges</h5>
@@ -2090,7 +2090,7 @@ function renderShape() {
     label.setAttribute('x', p.cx);
     label.setAttribute('y', p.y + 24);
     label.setAttribute('class', 'shape-block-label');
-    label.textContent = n.id === '(root)' ? 'root' : n.label;
+    label.textContent = n.id === '(root)' ? 'init' : n.label;
     blockG.appendChild(label);
 
     if (n.id === '(root)') continue;
@@ -2513,24 +2513,23 @@ if (params.has('trace')) {
   });
 })();
 
-// Left-drag on empty canvas pans the stage. Click-through targets (pill
-// rects, edge paths, labels, legend) preserve their own handlers via an
-// early exit; drag starts only when the mousedown lands on stage/SVG
-// background. Drag threshold of 4px prevents this from swallowing clicks.
+// Left-drag anywhere pans the stage. Interactive descendants (legend,
+// zoom UI, hint, close buttons, splitter) skip pan and keep their own
+// handlers. On any element: drag <4px passes through as a click (atom
+// selection, edge tooltip); drag >=4px pans, and the trailing click is
+// swallowed so a pan never accidentally opens a phase graph.
 (function wirePan() {
   const stage = document.getElementById('stage-main');
   if (!stage) return;
   let active = false, sx = 0, sy = 0, sl = 0, st = 0, moved = false;
-  const isBackground = (t) => t === stage || t.tagName === 'svg' || t.tagName === 'SVG'
-    || t.classList?.contains('shape-layer-band')
-    || t.classList?.contains('shape-owner-groups');
+  const skipSel = '#shape-legend, #shape-zoom, #shape-hint, #stage-splitter, .detail-close-btn';
+  const swallowNextClick = (ev) => { ev.stopPropagation(); ev.preventDefault(); stage.removeEventListener('click', swallowNextClick, true); };
   stage.addEventListener('mousedown', (ev) => {
     if (ev.button !== 0) return;
-    if (!isBackground(ev.target)) return;
+    if (ev.target.closest && ev.target.closest(skipSel)) return;
     active = true; moved = false;
     sx = ev.clientX; sy = ev.clientY;
     sl = stage.scrollLeft; st = stage.scrollTop;
-    ev.preventDefault();
   });
   window.addEventListener('mousemove', (ev) => {
     if (!active) return;
@@ -2539,11 +2538,14 @@ if (params.has('trace')) {
     if (!moved) { moved = true; stage.classList.add('panning'); }
     stage.scrollLeft = sl - dx;
     stage.scrollTop  = st - dy;
+    ev.preventDefault();
   });
   window.addEventListener('mouseup', () => {
     if (!active) return;
-    active = false;
+    const wasMoved = moved;
+    active = false; moved = false;
     stage.classList.remove('panning');
+    if (wasMoved) stage.addEventListener('click', swallowNextClick, true);
   });
 })();
 </script>
