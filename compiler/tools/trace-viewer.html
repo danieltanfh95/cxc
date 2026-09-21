@@ -1643,10 +1643,10 @@ function renderShape() {
   const ownerG = document.createElementNS('http://www.w3.org/2000/svg', 'g');
   ownerG.setAttribute('class', 'shape-owner-groups');
   for (const owner of owners) {
-    const ids = [owner, ...(childrenOf.get(owner) || [])];
+    const memberIds = [owner, ...(childrenOf.get(owner) || [])];
     let xmin = Infinity, ymin = Infinity, xmax = -Infinity, ymax = -Infinity;
     let any = false;
-    for (const id of ids) {
+    for (const id of memberIds) {
       const p = pos.get(id);
       if (!p) continue;
       any = true;
@@ -1665,12 +1665,37 @@ function renderShape() {
     rect.setAttribute('rx', 12);
     const d = depthOf(owner);
     const alpha = 0.06 + d * 0.03;
-    rect.setAttribute('fill', `rgba(74,144,217,${alpha.toFixed(2)})`);
+    const baseFill = `rgba(74,144,217,${alpha.toFixed(2)})`;
+    const hoverFill = `rgba(74,144,217,${(alpha + 0.14).toFixed(2)})`;
+    rect.setAttribute('fill', baseFill);
     rect.setAttribute('stroke', 'rgba(74,144,217,0.4)');
     rect.setAttribute('stroke-width', '1');
     rect.setAttribute('stroke-dasharray', '4,3');
-    ownerG.appendChild(rect);
+    rect.style.cursor = 'pointer';
+    rect.style.pointerEvents = 'all';
     const ownerName = (nodes.find(n => n.id === owner)?.label) || owner;
+    const childNames = (childrenOf.get(owner) || []).map(c => (nodes.find(n => n.id === c)?.label) || c);
+    const titleEl = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+    titleEl.textContent = `${ownerName} owns ${childNames.length} atom(s): ${childNames.join(', ')}`;
+    rect.appendChild(titleEl);
+    // Hover: highlight member atoms via the existing highlightShape
+    // pipeline (dims non-members, adds .hover to members), and
+    // intensify the group's own fill + stroke.
+    rect.addEventListener('mouseenter', () => {
+      rect.setAttribute('fill', hoverFill);
+      rect.setAttribute('stroke', 'rgba(74,144,217,0.85)');
+      rect.setAttribute('stroke-width', '2');
+      rect.setAttribute('stroke-dasharray', '5,2');
+      highlightShape(memberIds);
+    });
+    rect.addEventListener('mouseleave', () => {
+      rect.setAttribute('fill', baseFill);
+      rect.setAttribute('stroke', 'rgba(74,144,217,0.4)');
+      rect.setAttribute('stroke-width', '1');
+      rect.setAttribute('stroke-dasharray', '4,3');
+      highlightShape(null);
+    });
+    ownerG.appendChild(rect);
     const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
     label.setAttribute('x', xmin - pad + 8);
     label.setAttribute('y', ymin - pad + 14);
@@ -1678,6 +1703,7 @@ function renderShape() {
     label.setAttribute('font-family', '-apple-system,Segoe UI,Roboto,sans-serif');
     label.setAttribute('font-size', '10');
     label.setAttribute('font-weight', '600');
+    label.setAttribute('pointer-events', 'none');
     label.textContent = ownerName + ' owns';
     ownerG.appendChild(label);
   }
