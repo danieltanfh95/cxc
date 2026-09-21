@@ -1696,6 +1696,41 @@ function renderShape() {
       highlightShape(null);
     });
     ownerG.appendChild(rect);
+    // Tether lines: owner center → each direct child center. Reads
+    // unambiguously as "this pill owns these pills." Thin, dashed,
+    // group-tinted; behind the message-edge layer so it doesn't
+    // compete visually, but above the group's fill.
+    const ownerPos = pos.get(owner);
+    if (ownerPos) {
+      for (const cId of (childrenOf.get(owner) || [])) {
+        const cp = pos.get(cId);
+        if (!cp) continue;
+        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        line.setAttribute('x1', ownerPos.cx);
+        line.setAttribute('y1', ownerPos.cy);
+        line.setAttribute('x2', cp.cx);
+        line.setAttribute('y2', cp.cy);
+        line.setAttribute('stroke', 'rgba(74,144,217,0.55)');
+        line.setAttribute('stroke-width', '1.5');
+        line.setAttribute('stroke-dasharray', '2,3');
+        line.setAttribute('pointer-events', 'none');
+        // Small filled circle at the child end so the direction is
+        // legible even when the line passes behind a pill.
+        ownerG.appendChild(line);
+        const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        // Push the dot toward the child's edge (not deep inside it).
+        const dx = cp.cx - ownerPos.cx, dy = cp.cy - ownerPos.cy;
+        const dist = Math.hypot(dx, dy) || 1;
+        const px = cp.cx - (dx / dist) * (cp.h / 2 + 2);
+        const py = cp.cy - (dy / dist) * (cp.h / 2 + 2);
+        dot.setAttribute('cx', px);
+        dot.setAttribute('cy', py);
+        dot.setAttribute('r', 3);
+        dot.setAttribute('fill', 'rgba(74,144,217,0.9)');
+        dot.setAttribute('pointer-events', 'none');
+        ownerG.appendChild(dot);
+      }
+    }
     const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
     label.setAttribute('x', xmin - pad + 8);
     label.setAttribute('y', ymin - pad + 14);
@@ -1704,7 +1739,7 @@ function renderShape() {
     label.setAttribute('font-size', '10');
     label.setAttribute('font-weight', '600');
     label.setAttribute('pointer-events', 'none');
-    label.textContent = ownerName + ' owns';
+    label.textContent = ownerName + ' owns → ' + childNames.join(', ');
     ownerG.appendChild(label);
   }
   svg.appendChild(ownerG);
