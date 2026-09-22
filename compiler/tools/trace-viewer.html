@@ -1432,9 +1432,10 @@ async function elkShapeLayout(nodes, edges, ownerOf, opts) {
       const topPad = hasNestedContainer ? 60 : 24;
       en.children = kids.map(k => buildElkNode(nodeMap.get(k)));
       en.layoutOptions = {
-        'elk.padding': `[top=${topPad},left=20,bottom=20,right=20]`,
-        'elk.spacing.nodeNode': String(opts.nodesep),
+        'elk.padding': `[top=${topPad},left=32,bottom=24,right=32]`,
+        'elk.spacing.nodeNode': String(opts.nodesep * 1.5),
         'elk.layered.spacing.nodeNodeBetweenLayers': String(opts.ranksep * 0.7),
+        'elk.aspectRatio': '1.6',
       };
     }
     return en;
@@ -1446,12 +1447,17 @@ async function elkShapeLayout(nodes, edges, ownerOf, opts) {
       'elk.algorithm': 'layered',
       'elk.direction': opts.orient === 'lr' ? 'RIGHT' : 'DOWN',
       'elk.hierarchyHandling': 'INCLUDE_CHILDREN',
-      // Leave room for title tabs (38px) + gutter attached above top-level containers.
-      'elk.padding': '[top=50,left=12,bottom=12,right=12]',
-      'elk.spacing.nodeNode': String(opts.nodesep),
+      // Room for title tabs (38px) attached above top-level containers.
+      'elk.padding': '[top=50,left=20,bottom=20,right=20]',
+      // Bump sibling spacing a lot — the compact default packs everything
+      // into a narrow column that reads unreadable at any zoom level.
+      'elk.spacing.nodeNode': String(opts.nodesep * 2),
       'elk.layered.spacing.nodeNodeBetweenLayers': String(opts.ranksep),
       'elk.spacing.edgeNode': String(opts.edgesep),
-      'elk.spacing.edgeEdge': '20',
+      'elk.spacing.edgeEdge': '24',
+      // Encourage a wider layout: default aspect is ~1.6; 2.5 tells ELK to
+      // spread ranks horizontally instead of stacking into a tall column.
+      'elk.aspectRatio': '2.5',
       'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
       'elk.edgeRouting': 'ORTHOGONAL',
     },
