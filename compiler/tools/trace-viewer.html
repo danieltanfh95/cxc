@@ -1416,10 +1416,12 @@ async function elkShapeLayout(nodes, edges, ownerOf, opts) {
     if (kids.length) {
       en.children = kids.map(k => buildElkNode(nodeMap.get(k)));
       en.layoutOptions = {
-        // Room at the top of a parent for its own label/subtitle to sit
-        // above the first child row.
-        'elk.padding': '[top=54,left=14,bottom=14,right=14]',
-        'elk.spacing.nodeNode': String(opts.nodesep * 0.6),
+        // Top gets the most padding — label + subtitle live above the
+        // first child row. Sides breathe so nested containers aren't
+        // flush against the parent's border.
+        'elk.padding': '[top=64,left=28,bottom=28,right=28]',
+        'elk.spacing.nodeNode': String(opts.nodesep),
+        'elk.layered.spacing.nodeNodeBetweenLayers': String(opts.ranksep * 0.7),
       };
     }
     return en;
@@ -1771,142 +1773,16 @@ async function renderShape() {
     svg.appendChild(rect);
   });
 
-  // Ownership bounding boxes — draw a tinted rectangle behind each
-  // owner atom that encloses its DIRECT children only. Transitive
-  // hierarchy reads via nested boxes (LaneSide's box is inside Lane's
-  // box because LaneSide's position is inside Lane's bbox). Skip main's
-  // top-level box — main owns everything, so its box just encloses the
-  // whole canvas and adds noise without signal.
+  // Ownership now reads directly from ELK's compound containment — the
+  // parent pill physically encloses its children. Still need childrenOf
+  // and mainNodeId downstream for the pill styling (isContainer / isOwner)
+  // and the layer-band skip logic.
   const childrenOf = new Map();
   for (const [child, parent] of ownerOf) {
     if (!childrenOf.has(parent)) childrenOf.set(parent, []);
     childrenOf.get(parent).push(child);
   }
-  const depthOf = (id) => {
-    let d = 0, cur = id;
-    while (ownerOf.has(cur)) { d++; cur = ownerOf.get(cur); }
-    return d;
-  };
   const mainNodeId = (nodes.find(n => n.shape && n.shape.name === _shape?.main_atom) || {}).id;
-  const owners = [...childrenOf.keys()]
-    .filter(o => o !== mainNodeId)
-    .sort((a, b) => depthOf(a) - depthOf(b));
-  const ownerG = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-  ownerG.setAttribute('class', 'shape-owner-groups');
-  for (const owner of owners) {
-    const memberIds = [owner, ...(childrenOf.get(owner) || [])];
-    let xmin = Infinity, ymin = Infinity, xmax = -Infinity, ymax = -Infinity;
-    let any = false;
-    for (const id of memberIds) {
-      const p = pos.get(id);
-      if (!p) continue;
-      any = true;
-      xmin = Math.min(xmin, p.x);
-      ymin = Math.min(ymin, p.y);
-      xmax = Math.max(xmax, p.x + p.w);
-      ymax = Math.max(ymax, p.y + p.h);
-    }
-    if (!any) continue;
-    const pad = 14;
-    const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-    rect.setAttribute('x', xmin - pad);
-    rect.setAttribute('y', ymin - pad);
-    rect.setAttribute('width',  (xmax - xmin) + pad * 2);
-    rect.setAttribute('height', (ymax - ymin) + pad * 2);
-    rect.setAttribute('rx', 12);
-    const d = depthOf(owner);
-    const alpha = 0.06 + d * 0.03;
-    const baseFill = `rgba(74,144,217,${alpha.toFixed(2)})`;
-    const hoverFill = `rgba(74,144,217,${(alpha + 0.14).toFixed(2)})`;
-    rect.setAttribute('fill', baseFill);
-    rect.setAttribute('stroke', 'rgba(74,144,217,0.4)');
-    rect.setAttribute('stroke-width', '1');
-    rect.setAttribute('stroke-dasharray', '4,3');
-    rect.style.cursor = 'pointer';
-    rect.style.pointerEvents = 'all';
-    const ownerName = (nodes.find(n => n.id === owner)?.label) || owner;
-    const childNames = (childrenOf.get(owner) || []).map(c => (nodes.find(n => n.id === c)?.label) || c);
-    const titleEl = document.createElementNS('http://www.w3.org/2000/svg', 'title');
-    titleEl.textContent = `${ownerName} owns ${childNames.length} atom(s): ${childNames.join(', ')}`;
-    rect.appendChild(titleEl);
-    // Hover: highlight member atoms via the existing highlightShape
-    // pipeline (dims non-members, adds .hover to members), and
-    // intensify the group's own fill + stroke.
-    rect.addEventListener('mouseenter', () => {
-      rect.setAttribute('fill', hoverFill);
-      rect.setAttribute('stroke', 'rgba(74,144,217,0.85)');
-      rect.setAttribute('stroke-width', '2');
-      rect.setAttribute('stroke-dasharray', '5,2');
-      highlightShape(memberIds);
-    });
-    rect.addEventListener('mouseleave', () => {
-      rect.setAttribute('fill', baseFill);
-      rect.setAttribute('stroke', 'rgba(74,144,217,0.4)');
-      rect.setAttribute('stroke-width', '1');
-      rect.setAttribute('stroke-dasharray', '4,3');
-      highlightShape(null);
-    });
-    ownerG.appendChild(rect);
-    // Tether lines: owner center → each direct child center. Reads
-    // unambiguously as "this pill owns these pills." Thin, dashed,
-    // group-tinted; behind the message-edge layer so it doesn't
-    // compete visually, but above the group's fill.
-    const ownerPos = pos.get(owner);
-    if (ownerPos) {
-      for (const cId of (childrenOf.get(owner) || [])) {
-        const cp = pos.get(cId);
-        if (!cp) continue;
-        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-        line.setAttribute('x1', ownerPos.cx);
-        line.setAttribute('y1', ownerPos.cy);
-        line.setAttribute('x2', cp.cx);
-        line.setAttribute('y2', cp.cy);
-        line.setAttribute('stroke', 'rgba(74,144,217,0.55)');
-        line.setAttribute('stroke-width', '1.5');
-        line.setAttribute('stroke-dasharray', '2,3');
-        line.setAttribute('pointer-events', 'none');
-        // Small filled circle at the child end so the direction is
-        // legible even when the line passes behind a pill.
-        ownerG.appendChild(line);
-        const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-        // Push the dot toward the child's edge (not deep inside it).
-        const dx = cp.cx - ownerPos.cx, dy = cp.cy - ownerPos.cy;
-        const dist = Math.hypot(dx, dy) || 1;
-        const px = cp.cx - (dx / dist) * (cp.h / 2 + 2);
-        const py = cp.cy - (dy / dist) * (cp.h / 2 + 2);
-        dot.setAttribute('cx', px);
-        dot.setAttribute('cy', py);
-        dot.setAttribute('r', 3);
-        dot.setAttribute('fill', 'rgba(74,144,217,0.9)');
-        dot.setAttribute('pointer-events', 'none');
-        ownerG.appendChild(dot);
-      }
-    }
-    const labelText = ownerName + ' → ' + childNames.join(', ');
-    const lblW = labelText.length * 7 + 14;
-    const lblH = 16;
-    const groupW = (xmax - xmin) + pad * 2;
-    const lblX = xmin - pad + 6;
-    const lblY = ymin - 3;
-    const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-    bg.setAttribute('x', lblX);
-    bg.setAttribute('y', lblY - lblH + 4);
-    bg.setAttribute('width', lblW);
-    bg.setAttribute('height', lblH);
-    bg.setAttribute('rx', 4);
-    bg.setAttribute('class', 'shape-owner-label-bg');
-    bg.setAttribute('pointer-events', 'none');
-    ownerG.appendChild(bg);
-    const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-    label.setAttribute('x', lblX + 7);
-    label.setAttribute('y', lblY - 4);
-    label.setAttribute('class', 'shape-owner-label');
-    label.setAttribute('font-family', '-apple-system,Segoe UI,Roboto,sans-serif');
-    label.setAttribute('dominant-baseline', 'ideographic');
-    label.textContent = labelText;
-    ownerG.appendChild(label);
-  }
-  svg.appendChild(ownerG);
 
   // Edges: draw Dagre's routed polylines. Each Dagre edge exposes a
   // `points` array of {x, y} bend points from source-boundary to
