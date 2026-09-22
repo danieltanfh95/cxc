@@ -1424,15 +1424,17 @@ async function elkShapeLayout(nodes, edges, ownerOf, opts) {
       height: isRoot(n.id) ? 30 : opts.blockHFor(n),
     };
     if (kids.length) {
-      // Reserve top space for our OWN tab (38px) + a 12px gap + any
-      // nested-child tab that might sit inside us (another 38+12).
+      // Tab clearance math: our OWN tab is ABOVE our container, so it
+      // consumes ROOT-graph padding, not our internal padding. What we
+      // DO need internal space for is a nested child tab (38px above
+      // the child's border) + a small gap.
       const hasNestedContainer = kids.some(k => (childrenOf.get(k) || []).length > 0);
-      const topPad = hasNestedContainer ? 130 : 80;
+      const topPad = hasNestedContainer ? 60 : 24;
       en.children = kids.map(k => buildElkNode(nodeMap.get(k)));
       en.layoutOptions = {
-        'elk.padding': `[top=${topPad},left=40,bottom=40,right=40]`,
-        'elk.spacing.nodeNode': String(opts.nodesep + 20),
-        'elk.layered.spacing.nodeNodeBetweenLayers': String(opts.ranksep),
+        'elk.padding': `[top=${topPad},left=20,bottom=20,right=20]`,
+        'elk.spacing.nodeNode': String(opts.nodesep),
+        'elk.layered.spacing.nodeNodeBetweenLayers': String(opts.ranksep * 0.7),
       };
     }
     return en;
@@ -2144,9 +2146,6 @@ async function renderShape() {
         showNodeDetail(n, edges);
         renderShape();
       });
-      const tabTitle = document.createElementNS('http://www.w3.org/2000/svg', 'title');
-      tabTitle.textContent = `${n.shape ? n.shape.name : n.id}\n${n.size} trace events`;
-      tab.appendChild(tabTitle);
       containerTabBounds.push({ id: n.id, x: p.x, y: p.y - 38, w: tabW, h: 26 });
       sub.setAttribute('x', p.x + tabW - 14);
       sub.setAttribute('text-anchor', 'end');
