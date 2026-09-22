@@ -108,9 +108,9 @@
   .shape-container-tab.owner.main { stroke: #8a4e10; }
   .shape-container-tab.selected { stroke: #2a5a8a; stroke-width: 3; }
   .shape-container-tab.main.selected { stroke: #7a4a10; }
-  .shape-block-label.container { text-anchor: start; fill: #2a5a8a; font-size: 14px; }
+  .shape-block-label.container { text-anchor: start; fill: #2a5a8a; font-size: 16px; font-weight: 700; }
   .shape-block-label.container.main { fill: #7a4a10; }
-  .shape-block-sub.container { text-anchor: start; fill: rgba(42,90,138,0.75); }
+  .shape-block-sub.container { text-anchor: start; fill: rgba(42,90,138,0.75); font-size: 12px; }
   .shape-block-sub.container.main { fill: rgba(122,74,16,0.75); }
   .shape-owner-label-bg { fill: rgba(255,246,220,0.95); stroke: rgba(196,122,32,0.6); stroke-width: 1; }
   .shape-owner-label { font-size: 12px; fill: #7a4a10; font-weight: 700; pointer-events: none; letter-spacing: 0.2px; }
@@ -1439,8 +1439,8 @@ async function elkShapeLayout(nodes, edges, ownerOf, opts) {
       'elk.algorithm': 'layered',
       'elk.direction': opts.orient === 'lr' ? 'RIGHT' : 'DOWN',
       'elk.hierarchyHandling': 'INCLUDE_CHILDREN',
-      // Leave room for title tabs attached above top-level containers.
-      'elk.padding': '[top=30,left=12,bottom=12,right=12]',
+      // Leave room for title tabs (30px) attached above top-level containers.
+      'elk.padding': '[top=36,left=12,bottom=12,right=12]',
       'elk.spacing.nodeNode': String(opts.nodesep),
       'elk.layered.spacing.nodeNodeBetweenLayers': String(opts.ranksep),
       'elk.spacing.edgeNode': String(opts.edgesep),
@@ -2075,7 +2075,7 @@ async function renderShape() {
     // placement inside the pill.
     const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
     label.setAttribute('x', isContainer ? p.x + 10 : p.cx);
-    label.setAttribute('y', isContainer ? p.y - 10 : p.y + 24);
+    label.setAttribute('y', isContainer ? p.y - 8 : p.y + 24);
     label.setAttribute('class', 'shape-block-label' + (isContainer ? ' container' : '') + (isMain && isContainer ? ' main' : ''));
     label.textContent = n.id === '(root)' ? 'init' : n.label;
 
@@ -2087,7 +2087,7 @@ async function renderShape() {
     // Subtitle — shape summary or bare event count
     const sub = document.createElementNS('http://www.w3.org/2000/svg', 'text');
     sub.setAttribute('x', isContainer ? p.x + 10 : p.cx);
-    sub.setAttribute('y', isContainer ? p.y - 11 : p.y + 42);
+    sub.setAttribute('y', isContainer ? p.y - 9 : p.y + 42);
     sub.setAttribute('class', 'shape-block-sub' + (isContainer ? ' container' : '') + (isMain && isContainer ? ' main' : ''));
     if (n.shape) {
       const nPhases = n.shape.phases.length;
@@ -2102,10 +2102,10 @@ async function renderShape() {
       // leave a small gutter between them and 10px padding at each end.
       const labelW = label.textContent.length * 8.6;
       const subW = sub.textContent.length * 6.4;
-      const tabW = Math.ceil(labelW + subW + 32);
+      const tabW = Math.ceil(labelW + subW + 40);
       const tab = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-      tab.setAttribute('x', p.x); tab.setAttribute('y', p.y - 26);
-      tab.setAttribute('width', tabW); tab.setAttribute('height', 22);
+      tab.setAttribute('x', p.x); tab.setAttribute('y', p.y - 30);
+      tab.setAttribute('width', tabW); tab.setAttribute('height', 26);
       tab.setAttribute('rx', 5);
       tab.setAttribute('class', 'shape-container-tab container' +
         (isMain ? ' main' : '') +
@@ -2116,7 +2116,7 @@ async function renderShape() {
       // SVG-level hit testing below handles real pointer movement.
       tab.addEventListener('mouseenter', () => highlightShape(n.id));
       tab.addEventListener('mouseleave', () => highlightShape(null));
-      containerTabBounds.push({ id: n.id, x: p.x, y: p.y - 26, w: tabW, h: 22 });
+      containerTabBounds.push({ id: n.id, x: p.x, y: p.y - 30, w: tabW, h: 26 });
       sub.setAttribute('x', p.x + tabW - 10);
       sub.setAttribute('text-anchor', 'end');
       blockG.appendChild(tab);
