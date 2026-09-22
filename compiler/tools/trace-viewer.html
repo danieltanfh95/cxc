@@ -1425,17 +1425,17 @@ async function elkShapeLayout(nodes, edges, ownerOf, opts) {
     };
     if (kids.length) {
       // Tab clearance math: our OWN tab is ABOVE our container, so it
-      // consumes ROOT-graph padding, not our internal padding. What we
-      // DO need internal space for is a nested child tab (38px above
-      // the child's border) + a small gap.
+      // consumes the enclosing scope's padding. Internal top space is
+      // just for any nested child's tab (38px above child border + gap).
       const hasNestedContainer = kids.some(k => (childrenOf.get(k) || []).length > 0);
-      const topPad = hasNestedContainer ? 60 : 24;
+      const topPad = hasNestedContainer ? 72 : 24;
       en.children = kids.map(k => buildElkNode(nodeMap.get(k)));
       en.layoutOptions = {
         'elk.padding': `[top=${topPad},left=32,bottom=24,right=32]`,
         'elk.spacing.nodeNode': String(opts.nodesep * 1.5),
-        'elk.layered.spacing.nodeNodeBetweenLayers': String(opts.ranksep * 0.7),
-        'elk.aspectRatio': '1.6',
+        // Extra between-layer spacing so a child container's tab clears
+        // its predecessor's bottom border with room to breathe.
+        'elk.layered.spacing.nodeNodeBetweenLayers': String(opts.ranksep),
       };
     }
     return en;
@@ -1449,15 +1449,13 @@ async function elkShapeLayout(nodes, edges, ownerOf, opts) {
       'elk.hierarchyHandling': 'INCLUDE_CHILDREN',
       // Room for title tabs (38px) attached above top-level containers.
       'elk.padding': '[top=50,left=20,bottom=20,right=20]',
-      // Bump sibling spacing a lot — the compact default packs everything
-      // into a narrow column that reads unreadable at any zoom level.
+      // Horizontal breathing (siblings on the same rank).
       'elk.spacing.nodeNode': String(opts.nodesep * 2),
-      'elk.layered.spacing.nodeNodeBetweenLayers': String(opts.ranksep),
+      // Vertical breathing between ranks so containers don't crash into
+      // the tab of the next rank down.
+      'elk.layered.spacing.nodeNodeBetweenLayers': String(opts.ranksep * 1.4),
       'elk.spacing.edgeNode': String(opts.edgesep),
       'elk.spacing.edgeEdge': '24',
-      // Encourage a wider layout: default aspect is ~1.6; 2.5 tells ELK to
-      // spread ranks horizontally instead of stacking into a tall column.
-      'elk.aspectRatio': '2.5',
       'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
       'elk.edgeRouting': 'ORTHOGONAL',
     },
