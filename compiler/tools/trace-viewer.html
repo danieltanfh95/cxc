@@ -1424,12 +1424,13 @@ async function elkShapeLayout(nodes, edges, ownerOf, opts) {
       height: isRoot(n.id) ? 30 : opts.blockHFor(n),
     };
     if (kids.length) {
+      // Nested container? Its own 30px tab lives inside our top padding,
+      // so bump our top from 64 → 100 to clear the child tab + gutter.
+      const hasNestedContainer = kids.some(k => (childrenOf.get(k) || []).length > 0);
+      const topPad = hasNestedContainer ? 100 : 64;
       en.children = kids.map(k => buildElkNode(nodeMap.get(k)));
       en.layoutOptions = {
-        // Top gets the most padding so routed edges and the first child row
-        // have room inside the container. Sides breathe so nested containers
-        // aren't flush against the parent's border.
-        'elk.padding': '[top=64,left=28,bottom=28,right=28]',
+        'elk.padding': `[top=${topPad},left=28,bottom=28,right=28]`,
         'elk.spacing.nodeNode': String(opts.nodesep),
         'elk.layered.spacing.nodeNodeBetweenLayers': String(opts.ranksep * 0.7),
       };
