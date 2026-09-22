@@ -1424,15 +1424,15 @@ async function elkShapeLayout(nodes, edges, ownerOf, opts) {
       height: isRoot(n.id) ? 30 : opts.blockHFor(n),
     };
     if (kids.length) {
-      // Nested container? Its own 30px tab lives inside our top padding,
-      // so bump our top from 64 → 100 to clear the child tab + gutter.
+      // Reserve top space for our OWN tab (38px) + a 12px gap + any
+      // nested-child tab that might sit inside us (another 38+12).
       const hasNestedContainer = kids.some(k => (childrenOf.get(k) || []).length > 0);
-      const topPad = hasNestedContainer ? 100 : 64;
+      const topPad = hasNestedContainer ? 130 : 80;
       en.children = kids.map(k => buildElkNode(nodeMap.get(k)));
       en.layoutOptions = {
-        'elk.padding': `[top=${topPad},left=28,bottom=28,right=28]`,
-        'elk.spacing.nodeNode': String(opts.nodesep),
-        'elk.layered.spacing.nodeNodeBetweenLayers': String(opts.ranksep * 0.7),
+        'elk.padding': `[top=${topPad},left=40,bottom=40,right=40]`,
+        'elk.spacing.nodeNode': String(opts.nodesep + 20),
+        'elk.layered.spacing.nodeNodeBetweenLayers': String(opts.ranksep),
       };
     }
     return en;
@@ -1444,8 +1444,8 @@ async function elkShapeLayout(nodes, edges, ownerOf, opts) {
       'elk.algorithm': 'layered',
       'elk.direction': opts.orient === 'lr' ? 'RIGHT' : 'DOWN',
       'elk.hierarchyHandling': 'INCLUDE_CHILDREN',
-      // Leave room for title tabs (30px) attached above top-level containers.
-      'elk.padding': '[top=36,left=12,bottom=12,right=12]',
+      // Leave room for title tabs (38px) + gutter attached above top-level containers.
+      'elk.padding': '[top=50,left=12,bottom=12,right=12]',
       'elk.spacing.nodeNode': String(opts.nodesep),
       'elk.layered.spacing.nodeNodeBetweenLayers': String(opts.ranksep),
       'elk.spacing.edgeNode': String(opts.edgesep),
@@ -2089,8 +2089,8 @@ async function renderShape() {
     // above the container border; leaf titles keep their original centered
     // placement inside the pill.
     const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-    label.setAttribute('x', isContainer ? p.x + 10 : p.cx);
-    label.setAttribute('y', isContainer ? p.y - 8 : p.y + 24);
+    label.setAttribute('x', isContainer ? p.x + 14 : p.cx);
+    label.setAttribute('y', isContainer ? p.y - 19 : p.y + 24);
     label.setAttribute('class', 'shape-block-label' + (isContainer ? ' container' : '') + (isMain && isContainer ? ' main' : ''));
     label.textContent = n.id === '(root)' ? 'init' : n.label;
 
@@ -2101,8 +2101,8 @@ async function renderShape() {
 
     // Subtitle — shape summary or bare event count
     const sub = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-    sub.setAttribute('x', isContainer ? p.x + 10 : p.cx);
-    sub.setAttribute('y', isContainer ? p.y - 9 : p.y + 42);
+    sub.setAttribute('x', isContainer ? p.x + 14 : p.cx);
+    sub.setAttribute('y', isContainer ? p.y - 19 : p.y + 42);
     sub.setAttribute('class', 'shape-block-sub' + (isContainer ? ' container' : '') + (isMain && isContainer ? ' main' : ''));
     if (n.shape) {
       const nPhases = n.shape.phases.length;
@@ -2113,13 +2113,17 @@ async function renderShape() {
     }
 
     if (isContainer) {
-      // Approximate the two text runs using their rendered font sizes, then
-      // leave a small gutter between them and 10px padding at each end.
-      const labelW = label.textContent.length * 8.6;
-      const subW = sub.textContent.length * 6.4;
-      const tabW = Math.ceil(labelW + subW + 40);
+      // Overshoot the actual char widths so the tab has real padding
+      // instead of touching the label glyphs. 16px bold ~= 10px/char,
+      // 12px regular ~= 7px/char, plus a 20px gutter between the two
+      // runs and 14px padding at each end.
+      const labelW = label.textContent.length * 10;
+      const subW = sub.textContent.length * 7;
+      const tabW = Math.max(200, Math.ceil(labelW + subW + 48));
       const tab = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-      tab.setAttribute('x', p.x); tab.setAttribute('y', p.y - 30);
+      // Push the tab 12px above the container border (was 4) so the two
+      // rects don't visually merge into one thick line.
+      tab.setAttribute('x', p.x); tab.setAttribute('y', p.y - 38);
       tab.setAttribute('width', tabW); tab.setAttribute('height', 26);
       tab.setAttribute('rx', 5);
       tab.setAttribute('class', 'shape-container-tab container' +
@@ -2143,8 +2147,8 @@ async function renderShape() {
       const tabTitle = document.createElementNS('http://www.w3.org/2000/svg', 'title');
       tabTitle.textContent = `${n.shape ? n.shape.name : n.id}\n${n.size} trace events`;
       tab.appendChild(tabTitle);
-      containerTabBounds.push({ id: n.id, x: p.x, y: p.y - 30, w: tabW, h: 26 });
-      sub.setAttribute('x', p.x + tabW - 10);
+      containerTabBounds.push({ id: n.id, x: p.x, y: p.y - 38, w: tabW, h: 26 });
+      sub.setAttribute('x', p.x + tabW - 14);
       sub.setAttribute('text-anchor', 'end');
       blockG.appendChild(tab);
     }
