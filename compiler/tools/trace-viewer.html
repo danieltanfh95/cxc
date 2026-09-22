@@ -237,6 +237,10 @@
           <input type="checkbox" id="shape-show-containers">
           show containers
         </label>
+        <label>
+          <input type="checkbox" id="shape-show-init">
+          show init
+        </label>
       </span>
       <label>
         seq range:
@@ -1638,6 +1642,11 @@ async function renderShape() {
     });
   }
   let {nodes, edges} = buildGraph('class');
+  const showInit = document.getElementById('shape-show-init')?.checked;
+  if (!showInit) {
+    nodes = nodes.filter(n => n.id !== '(root)');
+    edges = edges.filter(e => e.src !== '(root)' && e.dst !== '(root)');
+  }
   if (!nodes.length) { stage.innerHTML = '<div id="empty-state">No events after filters.</div>'; return; }
   const orient = $('shape-orient').value;   // 'lr' | 'tb'
   const expand = $('shape-expand').checked; // compact by default
@@ -2454,6 +2463,12 @@ $('graph-aggregate').addEventListener('change', render);
 $('shape-orient').addEventListener('change', render);
 $('shape-expand').addEventListener('change', render);
 $('shape-show-containers').addEventListener('change', render);
+const shapeShowInit = $('shape-show-init');
+shapeShowInit.checked = localStorage.getItem('cxc-shape-show-init') === '1';
+shapeShowInit.addEventListener('change', () => {
+  localStorage.setItem('cxc-shape-show-init', shapeShowInit.checked ? '1' : '0');
+  renderShape();
+});
 $('seq-range').addEventListener('input', applyFilters);
 window.addEventListener('resize', () => render());
 
