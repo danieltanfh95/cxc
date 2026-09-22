@@ -97,6 +97,15 @@
   .shape-block.main { fill: #d99a4a; stroke: #a86e2a; }
   .shape-block.owner { stroke: #c47a20; stroke-width: 3; }
   .shape-block.owner.main { stroke: #8a4e10; stroke-width: 3; }
+  /* Container pills (parents in the ELK-compound hierarchy) — subtle
+     tint + heavy stroke, label anchored top-left so children below aren't
+     obscured by a centered title. */
+  .shape-block.container { fill: rgba(74,144,217,0.12); stroke: #2a6ea8; stroke-width: 2; }
+  .shape-block.container.main { fill: rgba(217,154,74,0.14); stroke: #a86e2a; stroke-width: 2; }
+  .shape-block-label.container { text-anchor: start; fill: #2a5a8a; font-size: 14px; }
+  .shape-block-label.container.main { fill: #7a4a10; }
+  .shape-block-sub.container { text-anchor: start; fill: rgba(42,90,138,0.75); }
+  .shape-block-sub.container.main { fill: rgba(122,74,16,0.75); }
   .shape-owner-label-bg { fill: rgba(255,246,220,0.95); stroke: rgba(196,122,32,0.6); stroke-width: 1; }
   .shape-owner-label { font-size: 12px; fill: #7a4a10; font-weight: 700; pointer-events: none; letter-spacing: 0.2px; }
   /* Selection: TWO visible cues so it survives raster/headless render where
@@ -237,7 +246,11 @@
 </div>
 
 <script src="vendor/dagre.min.js"></script>
+<script src="vendor/elk.bundled.js"></script>
 <script>
+// ELK.js instance for compound layout; shape view uses this instead of
+// Dagre because Dagre 0.8.5 `compound: true` is broken (issues #236, #238).
+const _elk = (typeof ELK !== 'undefined') ? new ELK() : null;
 "use strict";
 
 let events = [];
@@ -1379,9 +1392,99 @@ function assignLayers(nodes, edges) {
   return layer;
 }
 
-function renderShape() {
+// ELK adapter: builds a compound (hierarchical) graph and runs ELK's
+// layered algorithm. Returns the same shape the render loop expects
+// (pos map + edge list) so downstream code doesn't care which layout
+// engine ran. Compound layout means owner atoms literally CONTAIN their
+// owned children — no decorative overlay needed.
+async function elkShapeLayout(nodes, edges, ownerOf, opts) {
+  if (!_elk) throw new Error('elkjs not loaded');
+  const nodeMap = new Map(nodes.map(n => [n.id, n]));
+  const childrenOf = new Map();
+  for (const [c, p] of ownerOf) {
+    if (!childrenOf.has(p)) childrenOf.set(p, []);
+    childrenOf.get(p).push(c);
+  }
+  const isRoot = (id) => id === '(root)';
+  const buildElkNode = (n) => {
+    const kids = childrenOf.get(n.id) || [];
+    const en = {
+      id: n.id,
+      width: isRoot(n.id) ? 90 : opts.blockW,
+      height: isRoot(n.id) ? 30 : opts.blockHFor(n),
+    };
+    if (kids.length) {
+      en.children = kids.map(k => buildElkNode(nodeMap.get(k)));
+      en.layoutOptions = {
+        // Room at the top of a parent for its own label/subtitle to sit
+        // above the first child row.
+        'elk.padding': '[top=54,left=14,bottom=14,right=14]',
+        'elk.spacing.nodeNode': String(opts.nodesep * 0.6),
+      };
+    }
+    return en;
+  };
+  const topLevel = nodes.filter(n => !ownerOf.has(n.id));
+  const elkGraph = {
+    id: 'root',
+    layoutOptions: {
+      'elk.algorithm': 'layered',
+      'elk.direction': opts.orient === 'lr' ? 'RIGHT' : 'DOWN',
+      'elk.hierarchyHandling': 'INCLUDE_CHILDREN',
+      'elk.spacing.nodeNode': String(opts.nodesep),
+      'elk.layered.spacing.nodeNodeBetweenLayers': String(opts.ranksep),
+      'elk.spacing.edgeNode': String(opts.edgesep),
+      'elk.spacing.edgeEdge': '20',
+      'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
+      'elk.edgeRouting': 'ORTHOGONAL',
+    },
+    children: topLevel.map(buildElkNode),
+    edges: edges.filter(e => e.src !== e.dst).map(e => ({
+      id: e.src + '__' + e.dst,
+      sources: [e.src],
+      targets: [e.dst],
+    })),
+  };
+  const result = await _elk.layout(elkGraph);
+  const pos = new Map();
+  const parentOf = new Map();  // childId → parentId (for label placement)
+  const walkNodes = (node, ox, oy, parentId) => {
+    const ax = ox + (node.x || 0);
+    const ay = oy + (node.y || 0);
+    if (node.id !== 'root') {
+      pos.set(node.id, {
+        x: ax, y: ay, w: node.width, h: node.height,
+        cx: ax + node.width / 2, cy: ay + node.height / 2,
+      });
+      if (parentId) parentOf.set(node.id, parentId);
+    }
+    for (const c of (node.children || [])) {
+      walkNodes(c, ax, ay, node.id === 'root' ? null : node.id);
+    }
+  };
+  walkNodes(result, 0, 0, null);
+  const layoutEdges = [];
+  const walkEdges = (node, ax, ay) => {
+    for (const e of (node.edges || [])) {
+      const pts = (e.sections || []).flatMap(s => {
+        const raw = [s.startPoint, ...(s.bendPoints || []), s.endPoint];
+        return raw.map(p => ({ x: p.x + ax, y: p.y + ay }));
+      });
+      layoutEdges.push({ src: e.sources[0], dst: e.targets[0], points: pts });
+    }
+    for (const c of (node.children || [])) {
+      walkEdges(c, ax + (c.x || 0), ay + (c.y || 0));
+    }
+  };
+  walkEdges(result, 0, 0);
+  return { pos, layoutEdges, parentOf, W: result.width || 800, H: result.height || 400 };
+}
+
+let _renderShapeToken = 0;
+async function renderShape() {
   const stage = $('stage-main');
   stage.innerHTML = '';
+  const myToken = ++_renderShapeToken;
   // Legend — floating card so first-time readers can decode colors/dashes
   // without hunting through docs. Closeable; a compact "legend" chip
   // reopens it. Preference persists in localStorage so returning users
@@ -1550,40 +1653,9 @@ function renderShape() {
   const blockW = expand ? 210 : 180;
   const blockHFor = (n) => n.shape ? 78 : 58;
 
-  // Layered layout via Dagre (Sugiyama). Dagre picks layer assignment,
-  // within-layer ordering (crossing-minimization), and orthogonal edge
-  // routing. Self-loops are excluded from the graph and drawn manually
-  // as brackets on the block's trailing side — Dagre's self-loop routing
-  // is visually messy for our block-with-attached-label idiom.
-  //
-  // We DON'T use Dagre's `compound: true` — 0.8.5's compound layout
-  // (a) throws with multigraph edges and (b) silently drops the shape
-  // enrichment when it succeeds. Ownership is drawn as decorative
-  // bounding boxes + owner→child tethers post-layout, and the owner's
-  // pill gets a distinct gold outline so parent/child is unambiguous.
-  const g = new dagre.graphlib.Graph({ multigraph: true, compound: false, directed: true });
-  g.setGraph({
-    rankdir: orient === 'lr' ? 'LR' : 'TB',
-    nodesep: expand ? 70 : 56,
-    ranksep: expand ? 160 : 130,
-    edgesep: 40,
-    marginx: 40,
-    marginy: 40,
-    ranker: 'tight-tree',
-  });
-  g.setDefaultEdgeLabel(() => ({}));
-  for (const n of nodes) {
-    const isRoot = n.id === '(root)';
-    g.setNode(n.id, {
-      width: isRoot ? 90 : blockW,
-      height: isRoot ? 30 : blockHFor(n),
-      label: n.label || n.id,
-    });
-  }
   // Compute ownership: for each atom-typed field NOT in the ctor param
-  // list, the owner-atom class owns the field-type class. Used below,
-  // after layout, to draw bounding-box background rectangles that
-  // group each owner + its owned children visually.
+  // list, the owner-atom class owns the field-type class. Used below to
+  // build a compound graph so owners literally contain their children.
   const nodeIds = new Set(nodes.map(n => n.id));
   const clsToId = new Map();
   for (const n of nodes) {
@@ -1612,47 +1684,34 @@ function renderShape() {
       ownerOf.set(childId, n.id);
     }
   }
-  // Add non-self edges. One edge per (src, dst) since buildGraph
-  // already consolidated parallel msgs into a msgs map. Key by
-  // src|dst so the render loop can look each edge up.
+  // Metadata for the edge render loop (msgs list, sync count, total).
   const edgeMeta = new Map();
   for (const e of edges) {
     if (e.src === e.dst) continue;
-    // Weight edges by traffic volume so hot paths get straighter routes.
-    g.setEdge(e.src, e.dst, { minlen: 1, weight: Math.max(1, Math.log2(e.total + 2)) });
     edgeMeta.set(e.src + '|' + e.dst, e);
   }
-  // Bias layout with high-weight invisible pull-edges owner→child so
-  // children land in adjacent ranks and the decorative ownership boxes
-  // below stay tight. NOT using dagre `setParent` — compound mode in
-  // 0.8.5 is fragile (see dagre issues #236/#238, d2 #448) and mutates
-  // parent width/height, which invalidates our shape-render pipeline.
-  for (const [childId, parentId] of ownerOf) {
-    if (childId === parentId) continue;
-    g.setEdge(parentId, childId, { minlen: 1, weight: 12, style: 'invis' }, 'own');
+  // Compound layered layout via ELK — parents literally contain their
+  // owned children (Lane wraps LaneSide wraps PlayableUnit), so
+  // ownership reads without decorative dashed overlays. Async because
+  // ELK computes in a Web Worker; the render token guards against a
+  // superseded render mutating stage after a newer render started.
+  let elkResult;
+  try {
+    elkResult = await elkShapeLayout(nodes, edges, ownerOf, {
+      orient, blockW, blockHFor,
+      nodesep: expand ? 70 : 56,
+      ranksep: expand ? 160 : 130,
+      edgesep: 40,
+    });
+  } catch (err) {
+    stage.innerHTML = `<div id="empty-state">Layout failed: ${escapeHtml(String(err.message || err))}</div>`;
+    return;
   }
-  dagre.layout(g);
-
-  const graphInfo = g.graph();
-  // Right-pad the SVG so self-loop labels (`commit_draw +10`,
-  // `try_place +8`, `filter_dead +7`) that Dagre plants beyond the node's
-  // own bounding box don't get clipped by the stage.
+  if (myToken !== _renderShapeToken) return;
+  const { pos, layoutEdges, parentOf } = elkResult;
   const rightLabelPad = 80;
-  const W = Math.max(stage.clientWidth, (graphInfo.width || 800) + rightLabelPad);
-  const H = Math.max(stage.clientHeight, graphInfo.height || 400);
-
-  // Convert Dagre's node (center x/y, width/height) to our pos map (top-left).
-  // Center horizontally in the stage when Dagre's layout is narrower than
-  // the viewport, so the graph doesn't crowd the left edge.
-  const dxCenter = graphInfo.width < W ? (W - graphInfo.width) / 2 : 0;
-  const dyCenter = graphInfo.height < H ? (H - graphInfo.height) / 2 : 0;
-  const pos = new Map();
-  for (const id of g.nodes()) {
-    const dn = g.node(id);
-    const x = dn.x - dn.width / 2 + dxCenter;
-    const y = dn.y - dn.height / 2 + dyCenter;
-    pos.set(id, { x, y, w: dn.width, h: dn.height, cx: dn.x + dxCenter, cy: dn.y + dyCenter });
-  }
+  const W = Math.max(stage.clientWidth, elkResult.W + rightLabelPad);
+  const H = Math.max(stage.clientHeight, elkResult.H + 40);
 
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   // Pan+zoom via SVG viewBox — the SVG fills the stage viewport (100%);
@@ -1680,14 +1739,15 @@ function renderShape() {
   `;
   svg.appendChild(defs);
 
-  // Layer bands — group Dagre nodes by rank position and draw alternating
-  // stripes so the reader sees the cascade structure without an axis
-  // ladder. In TB, "rank" reads along y; in LR, along x.
+  // Layer bands — group leaf nodes by rank position (skip owners since
+  // ELK-compound sizes them to enclose their children, so their center
+  // isn't a meaningful rank position).
+  const parentIds = new Set(ownerOf.values());
   const rankAxis = orient === 'lr' ? 'cx' : 'cy';
   const rankSizes = new Map();
-  for (const id of g.nodes()) {
-    const p = pos.get(id);
-    const r = Math.round(p[rankAxis]);
+  for (const [id, p] of pos) {
+    if (parentIds.has(id)) continue;
+    const r = Math.round(p[rankAxis] / 40) * 40;
     if (!rankSizes.has(r)) rankSizes.set(r, { min: r, max: r });
   }
   const rankPositions = [...rankSizes.keys()].sort((a, b) => a - b);
@@ -1905,12 +1965,11 @@ function renderShape() {
     }
     return best;
   }
-  for (const eKey of g.edges()) {
-    const e = edgeMeta.get(eKey.v + '|' + eKey.w);
+  for (const layoutEdge of layoutEdges) {
+    const e = edgeMeta.get(layoutEdge.src + '|' + layoutEdge.dst);
     if (!e) continue;
-    const dagreEdge = g.edge(eKey);
-    if (!dagreEdge || !dagreEdge.points) continue;
-    const pts = dagreEdge.points.map(pt => ({ x: pt.x + dxCenter, y: pt.y + dyCenter }));
+    if (!layoutEdge.points || !layoutEdge.points.length) continue;
+    const pts = layoutEdge.points;
     const isSync = e.sync === e.total && e.total > 0;
     const path = pointsToPath(pts);
     const edgeId = `edge-${e.src}--${e.dst}`.replace(/[^a-zA-Z0-9-]/g, '_');
@@ -2086,10 +2145,14 @@ function renderShape() {
     // sees the topology → detail relationship at a glance.
     const dimForSelection = selectedNode && !isSelected && n.id !== '(root)';
     const isOwner = childrenOf.has(n.id) && n.id !== mainNodeId;
+    // isContainer: owns children in the ELK-compound hierarchy.
+    // Main is always a container (it wraps everything else).
+    const isContainer = childrenOf.has(n.id) || isMain;
     const clsAttr = 'shape-block' +
       (n.id === '(root)' ? ' root' : '') +
       (isMain ? ' main' : '') +
       (isOwner ? ' owner' : '') +
+      (isContainer ? ' container' : '') +
       (isSelected ? ' selected' : '') +
       (dimForSelection ? ' dim-when-selected' : '');
     const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
@@ -2122,11 +2185,12 @@ function renderShape() {
     rect.innerHTML = `<title>${n.shape ? n.shape.name : n.id}\n${n.size} trace events</title>`;
     blockG.appendChild(rect);
 
-    // Title line — atom name (bold, monospace, white)
+    // Title line — atom name. For containers, anchor top-left so
+    // children below aren't obscured by a centered title.
     const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-    label.setAttribute('x', p.cx);
-    label.setAttribute('y', p.y + 24);
-    label.setAttribute('class', 'shape-block-label');
+    label.setAttribute('x', isContainer ? p.x + 12 : p.cx);
+    label.setAttribute('y', p.y + (isContainer ? 22 : 24));
+    label.setAttribute('class', 'shape-block-label' + (isContainer ? ' container' : '') + (isMain && isContainer ? ' main' : ''));
     label.textContent = n.id === '(root)' ? 'init' : n.label;
     blockG.appendChild(label);
 
@@ -2134,9 +2198,9 @@ function renderShape() {
 
     // Subtitle — shape summary or bare event count
     const sub = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-    sub.setAttribute('x', p.cx);
-    sub.setAttribute('y', p.y + 42);
-    sub.setAttribute('class', 'shape-block-sub');
+    sub.setAttribute('x', isContainer ? p.x + 12 : p.cx);
+    sub.setAttribute('y', p.y + (isContainer ? 40 : 42));
+    sub.setAttribute('class', 'shape-block-sub' + (isContainer ? ' container' : '') + (isMain && isContainer ? ' main' : ''));
     if (n.shape) {
       const nPhases = n.shape.phases.length;
       const nTxns = n.shape.transitions.length + n.shape.self_transitions.length;
@@ -2146,10 +2210,10 @@ function renderShape() {
     }
     blockG.appendChild(sub);
 
-    // Compact fields badge — one strip inside the block instead of a pill
-    // grid. Click opens the detail pane, which lists every field with its
-    // type. Hover highlights any container-linked target atoms.
-    if (n.shape) {
+    // Compact fields badge — one strip inside the block. Skipped for
+    // ELK containers because the strip would obstruct the child pills
+    // that sit inside the container's own bounds.
+    if (n.shape && !isContainer) {
       const containerFields = n.shape.fields.filter(f => f.container_kind);
       const nContainers = containerFields.length;
       const nAtomLinks = n.shape.fields.filter(f => nodes.some(nn => nn.shape && nn.shape.name === f.type)).length;
