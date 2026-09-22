@@ -102,7 +102,7 @@
      container so routed edges inside it cannot obscure the text. */
   .shape-block.container { fill: rgba(74,144,217,0.12); stroke: #2a6ea8; stroke-width: 2; }
   .shape-block.container.main { fill: rgba(217,154,74,0.14); stroke: #a86e2a; stroke-width: 2; }
-  .shape-container-tab { fill: rgba(74,144,217,0.12); stroke: #2a6ea8; stroke-width: 2; pointer-events: none; }
+  .shape-container-tab { fill: rgba(74,144,217,0.12); stroke: #2a6ea8; stroke-width: 2; cursor: pointer; }
   .shape-container-tab.main { fill: rgba(217,154,74,0.14); stroke: #a86e2a; }
   .shape-container-tab.owner { stroke: #c47a20; stroke-width: 3; }
   .shape-container-tab.owner.main { stroke: #8a4e10; }
@@ -2130,11 +2130,19 @@ async function renderShape() {
         const d = depthOf(n.id);
         if (d > 0) tab.setAttribute('fill', `rgba(74,144,217,${(0.06 + d * 0.05).toFixed(2)})`);
       }
-      // The tab itself stays click-through. These listeners also preserve
-      // the established hover contract for synthetic/programmatic events;
-      // SVG-level hit testing below handles real pointer movement.
+      // Tab shares the container's click / hover contract: clicking opens
+      // its phase graph, hovering lights up the container + descendants.
       tab.addEventListener('mouseenter', () => highlightShape(n.id));
       tab.addEventListener('mouseleave', () => highlightShape(null));
+      tab.addEventListener('click', () => {
+        selectedNode = selectedNode === n.id ? null : n.id;
+        _expandedAtom = n.shape ? n.shape.name : null;
+        showNodeDetail(n, edges);
+        renderShape();
+      });
+      const tabTitle = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+      tabTitle.textContent = `${n.shape ? n.shape.name : n.id}\n${n.size} trace events`;
+      tab.appendChild(tabTitle);
       containerTabBounds.push({ id: n.id, x: p.x, y: p.y - 30, w: tabW, h: 26 });
       sub.setAttribute('x', p.x + tabW - 10);
       sub.setAttribute('text-anchor', 'end');
@@ -2200,40 +2208,6 @@ async function renderShape() {
     }
   }
   svg.appendChild(blockG);
-
-  // Title tabs deliberately ignore pointer events so they never steal a
-  // click from the container or anything beneath them. Track pointer motion
-  // in SVG coordinates to retain the same node-highlight behavior on tabs.
-  let hoveredContainerTab = null;
-  svg.addEventListener('mousemove', (ev) => {
-    const ctm = svg.getScreenCTM();
-    if (!ctm) return;
-    const point = svg.createSVGPoint();
-    point.x = ev.clientX;
-    point.y = ev.clientY;
-    const local = point.matrixTransform(ctm.inverse());
-    let tabId = null;
-    for (let i = containerTabBounds.length - 1; i >= 0; i--) {
-      const b = containerTabBounds[i];
-      if (local.x >= b.x && local.x <= b.x + b.w &&
-          local.y >= b.y && local.y <= b.y + b.h) {
-        tabId = b.id;
-        break;
-      }
-    }
-    if (tabId === hoveredContainerTab) return;
-    hoveredContainerTab = tabId;
-    if (tabId) {
-      highlightShape(tabId);
-      return;
-    }
-    const block = ev.target.closest && ev.target.closest('.shape-block');
-    highlightShape(block ? block.dataset.nodeId : null);
-  });
-  svg.addEventListener('mouseleave', () => {
-    if (hoveredContainerTab) highlightShape(null);
-    hoveredContainerTab = null;
-  });
   stage.appendChild(svg);
 
   // If a block is selected, render its phase graph in the detail pane and
