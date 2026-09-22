@@ -2028,6 +2028,7 @@ async function renderShape() {
   // a block expands its phase graph in the detail pane.
   const blockG = document.createElementNS('http://www.w3.org/2000/svg', 'g');
   const containerTabBounds = [];
+  const depthOf = (id) => { let d = 0, cur = id; while (ownerOf.has(cur)) { d++; cur = ownerOf.get(cur); } return d; };
   for (const n of nodes) {
     const p = pos.get(n.id);
     if (!p) continue;
@@ -2056,6 +2057,10 @@ async function renderShape() {
     rect.setAttribute('rx', 5);
     rect.setAttribute('class', clsAttr);
     rect.dataset.nodeId = n.id;
+    if (isContainer && !isMain) {
+      const d = depthOf(n.id);
+      if (d > 0) rect.setAttribute('fill', `rgba(74,144,217,${(0.06 + d * 0.05).toFixed(2)})`);
+    }
     // Selection halo — outer glow (pale yellow) + dashed red ring. Rendered
     // behind the block. Survives headless raster (drop-shadow filters get
     // dropped). Halo + rect for the selected node are also re-appended to
@@ -2121,6 +2126,10 @@ async function renderShape() {
         (isMain ? ' main' : '') +
         (isOwner ? ' owner' : '') +
         (isSelected ? ' selected' : ''));
+      if (!isMain) {
+        const d = depthOf(n.id);
+        if (d > 0) tab.setAttribute('fill', `rgba(74,144,217,${(0.06 + d * 0.05).toFixed(2)})`);
+      }
       // The tab itself stays click-through. These listeners also preserve
       // the established hover contract for synthetic/programmatic events;
       // SVG-level hit testing below handles real pointer movement.
