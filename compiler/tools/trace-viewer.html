@@ -98,10 +98,16 @@
   .shape-block.owner { stroke: #c47a20; stroke-width: 3; }
   .shape-block.owner.main { stroke: #8a4e10; stroke-width: 3; }
   /* Container pills (parents in the ELK-compound hierarchy) — subtle
-     tint + heavy stroke, label anchored top-left so children below aren't
-     obscured by a centered title. */
+     tint + heavy stroke. Their titles live in attached tabs above the
+     container so routed edges inside it cannot obscure the text. */
   .shape-block.container { fill: rgba(74,144,217,0.12); stroke: #2a6ea8; stroke-width: 2; }
   .shape-block.container.main { fill: rgba(217,154,74,0.14); stroke: #a86e2a; stroke-width: 2; }
+  .shape-container-tab { fill: rgba(74,144,217,0.12); stroke: #2a6ea8; stroke-width: 2; pointer-events: none; }
+  .shape-container-tab.main { fill: rgba(217,154,74,0.14); stroke: #a86e2a; }
+  .shape-container-tab.owner { stroke: #c47a20; stroke-width: 3; }
+  .shape-container-tab.owner.main { stroke: #8a4e10; }
+  .shape-container-tab.selected { stroke: #2a5a8a; stroke-width: 3; }
+  .shape-container-tab.main.selected { stroke: #7a4a10; }
   .shape-block-label.container { text-anchor: start; fill: #2a5a8a; font-size: 14px; }
   .shape-block-label.container.main { fill: #7a4a10; }
   .shape-block-sub.container { text-anchor: start; fill: rgba(42,90,138,0.75); }
@@ -1416,9 +1422,9 @@ async function elkShapeLayout(nodes, edges, ownerOf, opts) {
     if (kids.length) {
       en.children = kids.map(k => buildElkNode(nodeMap.get(k)));
       en.layoutOptions = {
-        // Top gets the most padding — label + subtitle live above the
-        // first child row. Sides breathe so nested containers aren't
-        // flush against the parent's border.
+        // Top gets the most padding so routed edges and the first child row
+        // have room inside the container. Sides breathe so nested containers
+        // aren't flush against the parent's border.
         'elk.padding': '[top=64,left=28,bottom=28,right=28]',
         'elk.spacing.nodeNode': String(opts.nodesep),
         'elk.layered.spacing.nodeNodeBetweenLayers': String(opts.ranksep * 0.7),
@@ -1433,6 +1439,8 @@ async function elkShapeLayout(nodes, edges, ownerOf, opts) {
       'elk.algorithm': 'layered',
       'elk.direction': opts.orient === 'lr' ? 'RIGHT' : 'DOWN',
       'elk.hierarchyHandling': 'INCLUDE_CHILDREN',
+      // Leave room for title tabs attached above top-level containers.
+      'elk.padding': '[top=30,left=12,bottom=12,right=12]',
       'elk.spacing.nodeNode': String(opts.nodesep),
       'elk.layered.spacing.nodeNodeBetweenLayers': String(opts.ranksep),
       'elk.spacing.edgeNode': String(opts.edgesep),
@@ -2009,6 +2017,7 @@ async function renderShape() {
   // so the topology graph doesn't split them out as sibling atoms. Clicking
   // a block expands its phase graph in the detail pane.
   const blockG = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+  const containerTabBounds = [];
   for (const n of nodes) {
     const p = pos.get(n.id);
     if (!p) continue;
@@ -2061,21 +2070,24 @@ async function renderShape() {
     rect.innerHTML = `<title>${n.shape ? n.shape.name : n.id}\n${n.size} trace events</title>`;
     blockG.appendChild(rect);
 
-    // Title line — atom name. For containers, anchor top-left so
-    // children below aren't obscured by a centered title.
+    // Title line — atom name. Container titles sit in a folder-style tab
+    // above the container border; leaf titles keep their original centered
+    // placement inside the pill.
     const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-    label.setAttribute('x', isContainer ? p.x + 12 : p.cx);
-    label.setAttribute('y', p.y + (isContainer ? 22 : 24));
+    label.setAttribute('x', isContainer ? p.x + 10 : p.cx);
+    label.setAttribute('y', isContainer ? p.y - 10 : p.y + 24);
     label.setAttribute('class', 'shape-block-label' + (isContainer ? ' container' : '') + (isMain && isContainer ? ' main' : ''));
     label.textContent = n.id === '(root)' ? 'init' : n.label;
-    blockG.appendChild(label);
 
-    if (n.id === '(root)') continue;
+    if (n.id === '(root)') {
+      blockG.appendChild(label);
+      continue;
+    }
 
     // Subtitle — shape summary or bare event count
     const sub = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-    sub.setAttribute('x', isContainer ? p.x + 12 : p.cx);
-    sub.setAttribute('y', p.y + (isContainer ? 40 : 42));
+    sub.setAttribute('x', isContainer ? p.x + 10 : p.cx);
+    sub.setAttribute('y', isContainer ? p.y - 11 : p.y + 42);
     sub.setAttribute('class', 'shape-block-sub' + (isContainer ? ' container' : '') + (isMain && isContainer ? ' main' : ''));
     if (n.shape) {
       const nPhases = n.shape.phases.length;
@@ -2084,6 +2096,32 @@ async function renderShape() {
     } else {
       sub.textContent = n.size + ' events';
     }
+
+    if (isContainer) {
+      // Approximate the two text runs using their rendered font sizes, then
+      // leave a small gutter between them and 10px padding at each end.
+      const labelW = label.textContent.length * 8.6;
+      const subW = sub.textContent.length * 6.4;
+      const tabW = Math.ceil(labelW + subW + 32);
+      const tab = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+      tab.setAttribute('x', p.x); tab.setAttribute('y', p.y - 26);
+      tab.setAttribute('width', tabW); tab.setAttribute('height', 22);
+      tab.setAttribute('rx', 5);
+      tab.setAttribute('class', 'shape-container-tab container' +
+        (isMain ? ' main' : '') +
+        (isOwner ? ' owner' : '') +
+        (isSelected ? ' selected' : ''));
+      // The tab itself stays click-through. These listeners also preserve
+      // the established hover contract for synthetic/programmatic events;
+      // SVG-level hit testing below handles real pointer movement.
+      tab.addEventListener('mouseenter', () => highlightShape(n.id));
+      tab.addEventListener('mouseleave', () => highlightShape(null));
+      containerTabBounds.push({ id: n.id, x: p.x, y: p.y - 26, w: tabW, h: 22 });
+      sub.setAttribute('x', p.x + tabW - 10);
+      sub.setAttribute('text-anchor', 'end');
+      blockG.appendChild(tab);
+    }
+    blockG.appendChild(label);
     blockG.appendChild(sub);
 
     // Compact fields badge — one strip inside the block. Skipped for
@@ -2143,6 +2181,40 @@ async function renderShape() {
     }
   }
   svg.appendChild(blockG);
+
+  // Title tabs deliberately ignore pointer events so they never steal a
+  // click from the container or anything beneath them. Track pointer motion
+  // in SVG coordinates to retain the same node-highlight behavior on tabs.
+  let hoveredContainerTab = null;
+  svg.addEventListener('mousemove', (ev) => {
+    const ctm = svg.getScreenCTM();
+    if (!ctm) return;
+    const point = svg.createSVGPoint();
+    point.x = ev.clientX;
+    point.y = ev.clientY;
+    const local = point.matrixTransform(ctm.inverse());
+    let tabId = null;
+    for (let i = containerTabBounds.length - 1; i >= 0; i--) {
+      const b = containerTabBounds[i];
+      if (local.x >= b.x && local.x <= b.x + b.w &&
+          local.y >= b.y && local.y <= b.y + b.h) {
+        tabId = b.id;
+        break;
+      }
+    }
+    if (tabId === hoveredContainerTab) return;
+    hoveredContainerTab = tabId;
+    if (tabId) {
+      highlightShape(tabId);
+      return;
+    }
+    const block = ev.target.closest && ev.target.closest('.shape-block');
+    highlightShape(block ? block.dataset.nodeId : null);
+  });
+  svg.addEventListener('mouseleave', () => {
+    if (hoveredContainerTab) highlightShape(null);
+    hoveredContainerTab = null;
+  });
   stage.appendChild(svg);
 
   // If a block is selected, render its phase graph in the detail pane and
