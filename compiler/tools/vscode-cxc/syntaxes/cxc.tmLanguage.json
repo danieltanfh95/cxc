@@ -139,7 +139,7 @@
     "case-decl": {
       "match": "^\\s*(case)\\s+([a-z_][A-Za-z0-9_]*)",
       "captures": {
-        "1": { "name": "keyword.control.case.cxc" },
+        "1": { "name": "keyword.declaration.case.cxc" },
         "2": { "name": "entity.name.tag.enum-case.cxc" }
       }
     },
