@@ -85,12 +85,26 @@
    i.e. wildcard source, wildcard target, typed-params receive.
 
    These lower to handler-shaped method entries (spec §1265 semantics),
-   subsuming the retired `-> name(args):` sugar."
+   subsuming the retired `-> name(args):` sugar.
+
+   2026-09-24 — an arm carrying `=>` field updates in any `:then-clause`
+   is NOT handler-shape. Handler-decls emit as void ObjC methods with
+   no snapshot/commit machinery, so `:updates` on that path used to be
+   silently dropped (see the older `transition->handler-decl` comment).
+   Routing such arms through the ordinary transition-branch path
+   preserves the `=>` semantics — the zero-arg case (`* <: msg -> self`,
+   `:params nil`) already went that way, so this makes the parametric
+   case match. Isolated stmts-only handler-shape arms continue to
+   become handler-decls."
   [txn]
   (and (= :wildcard (get-in txn [:source :kind]))
        (= "self"    (:target txn))
        (= "<:"      (get-in txn [:receive :glyph]))
-       (some?       (get-in txn [:receive :msg :params]))))
+       (some?       (get-in txn [:receive :msg :params]))
+       (not (some (fn [c]
+                    (and (= :then-clause (:node c))
+                         (seq (:updates c))))
+                  (:body txn)))))
 
 (defn transition->handler-decl
   "F67 L3 — convert a handler-shape transition into a synthetic

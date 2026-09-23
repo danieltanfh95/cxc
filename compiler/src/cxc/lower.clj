@@ -459,12 +459,21 @@
    inference runs BEFORE container synthesis registers `at`/`count`/
    `filter`/`get` on those container atoms, so an observation like
    `top_hand(s: Card) :- hand.at(0) ?? s` hits this transiently. The
-   post-synth re-inference pass retries with a full atom-env."
+   post-synth re-inference pass retries with a full atom-env.
+
+   2026-09-24 — also treats `observation-body-deferred:` errors and
+   plain `method/observable X on atom A` misses as deferrable. Those
+   fire when an obs body calls another obs whose body itself deferred
+   on pass 1, so the callee never landed in the atom's index. Same
+   swallow-on-pass-1, propagate-on-pass-2 story — pass 2 rebuilds a
+   full index and the second attempt succeeds or fails for real."
   [ex]
   (let [d (ex-data ex)
         what (str (:what d))]
     (and (= :cxc-user-error (:kind d))
-         (re-find #"on atom `_Cxc_(ListOf|MapOf|SetOf)" what))))
+         (or (re-find #"on atom `_Cxc_(ListOf|MapOf|SetOf)" what)
+             (re-find #"^observation-body-deferred:" what)
+             (re-find #"^method/observable `[^`]+` on atom `" what)))))
 
 (defn- try-infer-observation-body
   "Infer an observation body's type-kw; on the FIRST env pass, tolerate
@@ -1902,9 +1911,16 @@
     ;; in Optional (nil-punning propagation). Recurse with the inner
     ;; record type; outer wrap always yields Optional regardless of
     ;; whether the inner field was itself Optional (nil-flow).
+    ;;
+    ;; 2026-09-24 — same rule for Optional<Atom>: field / observable
+    ;; access on an atom that arrived through a nullable slot (`List of
+    ;; Atom`.at(i), a nullable field) propagates Optional through. The
+    ;; user code shape is `self.some_parametric_obs(x).field` where the
+    ;; parametric obs returns an atom envelope; without this the dot-
+    ;; access hits the non-aggregate branch and fails.
     (and (vector? owner-ty) (= :optional (first owner-ty))
          (let [inner (second owner-ty)]
-           (and (map? inner) (:record inner))))
+           (and (map? inner) (or (:record inner) (:atom inner)))))
     (let [inner-ty (second owner-ty)
           inner-tk (field-type-for-owner inner-ty ctx field-name node)]
       [:optional (unwrap-tk inner-tk)])
@@ -2064,6 +2080,19 @@
                    ;; :type-kw directly (already Optional-aware if
                    ;; their body reads an Optional field via Sub-A).
                    (or (:type-kw f)
+                       ;; 2026-09-24 — an observation whose body deferred
+                       ;; on pass 1 has :type-kw nil and no :cxc-ty (obs
+                       ;; entries never carry :cxc-ty). If a later obs
+                       ;; on the same atom reads it via ident, we used to
+                       ;; NPE inside cxc-type->type-kw. Throw a defer-
+                       ;; classifiable error instead so pass 1 can swallow
+                       ;; it (via `try-infer-observation-body`) and pass 2
+                       ;; retries with the fully-typed obs known.
+                       (when (nil? (:cxc-ty f))
+                         (fail-user!
+                          (str "observation-body-deferred: self-observation `"
+                               (:name node) "` was not typed yet in this pass")
+                          node))
                        (wrap-field-tk
                         f
                         (cxc-type->type-kw (:cxc-ty f)
@@ -8779,8 +8808,14 @@
                     (:kind info))
        env
        (let [self-fields (into {} (map (juxt :name identity) (:fields info)))
+           ;; 2026-09-24 — before typing this atom's observables,
+           ;; strip any stale `:observables-typed` / `:observable-index`
+           ;; entries so a pass 1 → pass 2 re-run rebuilds cleanly
+           ;; (the accumulator below is initialised from :fields, not
+           ;; from the previous pass's obs index).
+           atom-env0 (assoc-in atom-env [atom-name :observable-index] {})
            {:keys [typed]}
-           (reduce (fn [{:keys [typed known]} o]
+           (reduce (fn [{:keys [typed known atom-env-in]} o]
                      (let [;; 2026-09-05 Path 1 slice 8-A alignment —
                            ;; env-build param inference must lift bare-T
                            ;; primitive params to envelope so body-inferred
@@ -8795,14 +8830,14 @@
                                                            nonnil?  (= :type-nonnil (:node (:type p)))
                                                            raw-tk   (cxc-type->type-kw
                                                                      raw-name record-env
-                                                                     atom-env enum-env p)]
+                                                                     atom-env-in enum-env p)]
                                                        [(:name p)
                                                         (if (and (not nonnil?)
                                                                  (primitive-envelope-eligible? raw-tk))
                                                           [:optional raw-tk]
                                                           raw-tk)]))
                                                    (:params o)))
-                           ctx    {:record-env record-env :atom-env atom-env
+                           ctx    {:record-env record-env :atom-env atom-env-in
                                    :enum-env enum-env
                                    :locals (assoc param-locals
                                                   "self" {:atom atom-name})
@@ -8846,8 +8881,29 @@
                                          :c-type   (when tk
                                                      (type-kw->c-type tk o)))]
                        {:typed (conj typed typed')
-                        :known (assoc known (:name o) typed')}))
-                   {:typed [] :known self-fields}
+                        :known (assoc known (:name o) typed')
+                        ;; 2026-09-24 — thread the just-typed obs into
+                        ;; the atom's `:observable-index` so the NEXT
+                        ;; obs body's `self.obs(args)` call resolves via
+                        ;; `infer-method-call-type`'s atom-env lookup.
+                        ;; The identifier-lookup path already sees it
+                        ;; through `:self-fields` above; the method-
+                        ;; call path needs the atom-env update.
+                        ;;
+                        ;; Only install when `:type-kw` is non-nil.
+                        ;; A pass 1 defer (container-method-not-yet-
+                        ;; registered) leaves `tk` nil; installing that
+                        ;; would leak the nil into a later obs body's
+                        ;; `.field` access and hit the non-aggregate
+                        ;; failure. Leaving it out means the follow-on
+                        ;; obs also defers via the same predicate.
+                        :atom-env-in
+                        (if tk
+                          (assoc-in atom-env-in
+                                    [atom-name :observable-index (:name o)]
+                                    typed')
+                          atom-env-in)}))
+                   {:typed [] :known self-fields :atom-env-in atom-env0}
                    (:observables info))]
        (assoc env atom-name
               (assoc info

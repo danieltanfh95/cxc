@@ -6379,3 +6379,117 @@ def main:
       (is (re-find #"tally.*non-null primitive return"
                    (:site-label (first guards)))
           "guard's site-label names the method and the guard reason"))))
+
+;; ── 2026-09-24: observation and wildcard-self arm fixes ────────────
+
+(deftest wildcard-self-parametric-arm-with-updates-emits-body
+  (testing "2026-09-24 — a `* <: msg(p: T) -> self` arm carrying `=>` field updates keeps those updates in the emitted method body. Prior behavior: `transition-is-handler-shape?` classified any parametric wildcard-self arm as a handler-decl, and `transition->handler-decl` silently dropped `:updates`, leaving an empty method that ran only `[self checkInvariants]` twice. Zero-arg wildcard-self arms already routed through the transition-branch path (params `nil` skipped the classifier), so their updates landed; this test locks parity for the parametric case."
+    (let [lowered (lower-src "def A:
+    n: Int! = 0
+
+    -> phase_a
+
+    phase_a <: swap -> phase_b
+
+    phase_b <: swap -> phase_a
+
+    * <: bump(delta: Int!) -> self
+        then: n => n + delta
+
+    -> end
+
+def main:
+    a: A = A()
+
+    -> running
+        then: |> a.bump(delta: 3)
+")
+          a-cls  (first (filter #(= "A" (:name %)) (:classes lowered)))
+          bump   (first (filter #(re-find #"^bump" (or (:selector %) ""))
+                                (:methods a-cls)))
+          body-nodes (tree-seq coll? seq (:body bump))
+          branches   (filter #(and (map? %) (= :transition-branch (:node %)))
+                             body-nodes)
+          commits    (filter #(and (map? %) (= :commit-next-state (:node %)))
+                             body-nodes)
+          n-assigns  (filter #(and (map? %)
+                                   (= :assign (:node %))
+                                   (= "_n" (get-in % [:lhs :field])))
+                             body-nodes)]
+      (is (some? bump) "bump method present on A")
+      (is (seq branches)
+          "wildcard-self parametric arm routes through the transition-branch path")
+      (is (seq n-assigns)
+          "the `n => n + delta` update becomes an `__cxc_next._n =` assign")
+      (is (seq commits)
+          "and the snapshot machinery commits _cxc_next back to storage")))
+  (testing "handler-shape stmts-only arms remain handler-decls: no updates, no snapshot machinery, the emitted body still runs the user statements. Locks the migration story — pure side-effect handlers keep their small footprint."
+    (let [lowered (lower-src "def A:
+    n: Int! = 0
+
+    -> running
+
+    * <: log_it(msg: Int) -> self
+        then: print(msg.to_string())
+
+def main:
+    a: A = A()
+
+    -> running
+        then: |> a.log_it(msg: 42)
+")
+          a-cls  (first (filter #(= "A" (:name %)) (:classes lowered)))
+          log-it (first (filter #(re-find #"^log_it" (or (:selector %) ""))
+                                (:methods a-cls)))]
+      (is (some? log-it) "log_it method emitted"))))
+
+(deftest observation-body-can-call-earlier-parametric-observation-on-self
+  (testing "2026-09-24 — an observation body may call `self.other(args)` when `other` is a parametric observation declared earlier on the same atom. Prior behavior: `infer-observables-in-atom-env`'s reduce threaded `known` (typed obs so far) into `:self-fields` only; `infer-method-call-type` looked up on the outer atom-env's `:observable-index`, which didn't yet contain the peer obs. The declaration-order call failed with `method/observable X on atom A`."
+    (let [lowered (lower-src "def A:
+    n: Int! = 0
+
+    -> running
+
+    pick(k: Int) :- ||: k == 0 : n ||: else : 0
+    first        :- self.pick(0)
+
+    -> end
+
+def main:
+    a: A = A()
+
+    -> running
+        then: print(a.first.to_string())
+")
+          a-cls    (first (filter #(= "A" (:name %)) (:classes lowered)))
+          first-m  (first (filter #(= "first" (:selector %))
+                                  (:methods a-cls)))]
+      (is (some? first-m) "`first` observation lowered to a method on A")
+      (is (= "int64_t" (:return-type first-m))
+          "return type resolved through the peer call to `self.pick(0)`"))))
+
+(deftest observation-body-deferred-does-not-npe-on-peer-read
+  (testing "2026-09-24 — when observation A's body defers on pass 1 (a container method not yet synthesized), a peer observation B that reads A via a plain ident used to NPE inside `cxc-type->type-kw` (A had `:type-kw nil` and no `:cxc-ty`, so `wrap-field-tk` called cxc-type->type-kw on nil). B now throws a `observation-body-deferred:` `:cxc-user-error` that `try-infer-observation-body` swallows on pass 1; pass 2 (post-container-synth) re-types both without incident."
+    (let [lowered (lower-src "def A:
+    xs: List of Int = []
+
+    -> running
+
+    heroes :- xs.filter(v => v > 0)
+    tally  :- heroes.count
+
+    -> end
+
+def main:
+    a: A = A()
+
+    -> running
+        then: print(a.tally.to_string())
+")
+          a-cls   (first (filter #(= "A" (:name %)) (:classes lowered)))
+          heroes  (first (filter #(= "heroes" (:selector %)) (:methods a-cls)))
+          tally   (first (filter #(= "tally"  (:selector %)) (:methods a-cls)))]
+      (is (some? heroes) "heroes obs lowered (defers on pass 1, types on pass 2)")
+      (is (some? tally)  "tally obs lowered — no NPE reading heroes on pass 1")
+      (is (= "int64_t" (:return-type tally))
+          "tally's `.count` chain typed to Int"))))
