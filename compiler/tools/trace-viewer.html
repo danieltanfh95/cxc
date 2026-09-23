@@ -535,15 +535,19 @@ function computeInstanceLabels() {
 //   cxc_stream_deploy_done_from_PlayerWithsender:seat: → deploy_done
 //   cxc_stream_combat_done_from__Cxc_ListOfLaneWithsender:e: → combat_done
 //   cxc_emit_card_deployed → card_deployed
+//   self.cxc_emit_p_draw_done → p_draw_done
 //   main.kickoff → kickoff
 // Everything else falls back to the last `.`-segment (existing behavior).
 function prettifyMsg(raw) {
   if (!raw) return '?';
-  const streamMatch = raw.match(/^cxc_stream_(.+?)_from_/);
+  // `self.` prefix appears on self-directed fanout emits; strip before
+  // matching so the cxc_emit_/cxc_stream_ regexes below don't miss.
+  const bare = raw.startsWith('self.') ? raw.slice(5) : raw;
+  const streamMatch = bare.match(/^cxc_stream_(.+?)_from_/);
   if (streamMatch) return streamMatch[1];
-  const emitMatch = raw.match(/^cxc_emit_(.+)$/);
+  const emitMatch = bare.match(/^cxc_emit_(.+)$/);
   if (emitMatch) return emitMatch[1];
-  return raw.split('.').pop();
+  return bare.split('.').pop();
 }
 
 // Auto-container names appear in three flavors:
