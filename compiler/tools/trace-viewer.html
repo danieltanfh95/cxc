@@ -223,11 +223,12 @@
         arrows
       </label>
       <span id="shape-controls" style="display:none; gap:6px; align-items:center;">
-        <!-- L→R was retired; TB is the only supported orientation. Kept a
-             hidden select so JS references resolve without an old-URL param
-             breaking the load. -->
+        <!-- Top to bottom by default. ELK reserves a slot per edge label,
+             which costs a label's height in TB and its width in LR. LR
+             stays reachable through ?shape-orient=lr. -->
         <select id="shape-orient" style="display:none;">
           <option value="tb" selected>T → B</option>
+          <option value="lr">L → R</option>
         </select>
         <label>
           <input type="checkbox" id="shape-expand">
@@ -260,7 +261,31 @@
 <script>
 // ELK.js instance for compound layout; shape view uses this instead of
 // Dagre because Dagre 0.8.5 `compound: true` is broken (issues #236, #238).
+const _traceViewerParams = new URLSearchParams(window.location.search);
+const _elkSyncMode = _traceViewerParams.getAll('sync').includes('1');
 const _elk = (typeof ELK !== 'undefined') ? new ELK() : null;
+let _elkSyncEnabled = false;
+// Last shape layout, keyed on the serialized ELK input. ELK is deterministic
+// for a given input, so clicks and resizes, which re-render without changing
+// the graph, reuse it. Callers must not mutate the result.
+let _elkLayoutMemo = null;
+function enableSynchronousElk() {
+  if (!_elkSyncMode || _elkSyncEnabled) return;
+  // elk.bundled.js keeps a worker-shaped facade even when its layout code is
+  // bundled into the page, and bypassing both of its timer hops stops
+  // headless Chrome's virtual-time budget from running out before the layout
+  // reaches the DOM. The fields are private, but the vendored build pins them.
+  const promisedWorker = _elk && _elk.worker;
+  const inlineWorker = promisedWorker && promisedWorker.worker;
+  if (!inlineWorker || !inlineWorker.dispatcher ||
+      typeof inlineWorker.dispatcher.saveDispatch !== 'function' ||
+      typeof promisedWorker.receive !== 'function') {
+    throw new Error('synchronous ELK mode is unavailable for this elkjs build');
+  }
+  inlineWorker.onmessage = answer => promisedWorker.receive(promisedWorker, answer);
+  inlineWorker.postMessage = message => inlineWorker.dispatcher.saveDispatch({data: message});
+  _elkSyncEnabled = true;
+}
 "use strict";
 
 let events = [];
@@ -1345,26 +1370,30 @@ function showNodeDetail(n, edges) {
   _wireDetailClose();
 }
 
-function showEdgeDetail(e) {
-  const msgs = [...e.msgs.entries()].sort((a,b) => b[1]-a[1]);
-  let html = `<div style="font-weight:600; margin-bottom:6px;">${escapeHtml(e.src)} → ${escapeHtml(e.dst)} — ${e.total} messages (${e.sync} sync)</div>`;
-  html += '<table style="width:100%; border-collapse:collapse;">';
-  html += '<tr><th style="text-align:left; padding:2px 6px; border-bottom:1px solid #ccc;">message</th><th style="text-align:right; padding:2px 6px; border-bottom:1px solid #ccc;">count</th></tr>';
-  for (const [m, c] of msgs) {
-    html += `<tr><td style="padding:2px 6px;">${escapeHtml(m)}</td><td style="text-align:right; padding:2px 6px;">${c}</td></tr>`;
+// rev is the reverse direction of a two-way shape-view line. Other callers
+// omit it.
+function showEdgeDetail(e, rev) {
+  let html = '';
+  for (const d of rev ? [e, rev] : [e]) {
+    const msgs = [...d.msgs.entries()].sort((a,b) => b[1]-a[1]);
+    html += `<div style="font-weight:600; margin:${html ? '14px' : '0'} 0 6px;">${escapeHtml(d.src)} → ${escapeHtml(d.dst)} — ${d.total} messages (${d.sync} sync)</div>`;
+    html += '<table style="width:100%; border-collapse:collapse;">';
+    html += '<tr><th style="text-align:left; padding:2px 6px; border-bottom:1px solid #ccc;">message</th><th style="text-align:right; padding:2px 6px; border-bottom:1px solid #ccc;">count</th></tr>';
+    for (const [m, c] of msgs) {
+      html += `<tr><td style="padding:2px 6px;">${escapeHtml(m)}</td><td style="text-align:right; padding:2px 6px;">${c}</td></tr>`;
+    }
+    html += '</table>';
   }
-  html += '</table>';
   $('stage-detail').className = '';
   $('stage-detail').innerHTML = _detailWrap(html);
   _wireDetailClose();
 }
 
-// ===== SHAPE VIEW (layered class diagram — program cascade topology) =====
-// Answers "what shape is this program?" — rectangular blocks per atom class,
-// arranged top-down in cascade layers (BFS depth from `(root)`), with
-// straight edges labeled by the messages that flow between them. Distinct
-// from the `graph` view, which is instance-scale and weighted by message
-// counts; `shape` is class-scale and topology-first.
+// ===== SHAPE VIEW (class diagram of the program's message topology) =====
+// One box per atom class, nested inside the atom that owns it, with lines
+// labelled by the messages that flow between classes. The `graph` view is
+// instance-scale and weighted by message counts, while `shape` is
+// class-scale and topology-first.
 function assignLayers(nodes, edges) {
   // BFS shortest-path from a synthetic source (`(root)` if present, else
   // the highest-out-degree node). Cascade depth = fewest hops from the
@@ -1402,13 +1431,57 @@ function assignLayers(nodes, edges) {
   return layer;
 }
 
-// ELK adapter: builds a compound (hierarchical) graph and runs ELK's
-// layered algorithm. Returns the same shape the render loop expects
-// (pos map + edge list) so downstream code doesn't care which layout
-// engine ran. Compound layout means owner atoms literally CONTAIN their
-// owned children — no decorative overlay needed.
-async function elkShapeLayout(nodes, edges, ownerOf, opts) {
+// Edge label text is the busiest message name, plus "+N" for the other names
+// on the same edge. The width estimate (13px monospace at ~7.6px a
+// character, plus padding) is also the drawn chip width, so ELK reserves
+// what gets drawn.
+function edgeLabelText(e) {
+  const msgList = [...e.msgs.entries()].sort((a, b) => b[1] - a[1]);
+  const top = msgList[0] ? msgList[0][0] : '?';
+  return top + (msgList.length > 1 ? ` +${msgList.length - 1}` : '');
+}
+function edgeLabelWidth(text) { return text.length * 7.6 + 12; }
+// Pairs A->B with B->A into one link, drawn as one line with an arrowhead at
+// each end and a label per direction. A layered layout has to draw one edge
+// of every two-way pair against the flow, and merging removes those back
+// edges. The heavier direction orients the ELK edge and owns the first
+// label. Returns [{ e, rev }], where rev is the reverse edge or null.
+function pairEdges(edges) {
+  const byPair = new Map();
+  const links = [];
+  for (const e of edges) {
+    if (e.src === e.dst) { links.push({ e, rev: null }); continue; }
+    const k = e.src < e.dst ? e.src + '|' + e.dst : e.dst + '|' + e.src;
+    const link = byPair.get(k);
+    if (!link) { const l = { e, rev: null }; byPair.set(k, l); links.push(l); continue; }
+    if (e.total > link.e.total) { link.rev = link.e; link.e = e; } else link.rev = e;
+  }
+  return links;
+}
+// Arrow for the direction of travel along pts (first point to last) at the
+// point nearest (x, y). Two-way labels use it to show which way their
+// messages go.
+const flipGlyph = { '▼': '▲', '▲': '▼', '▶': '◀', '◀': '▶' };
+function travelGlyph(pts, x, y) {
+  let best = null, bestD = Infinity;
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1], b = pts[i];
+    const dx = b.x - a.x, dy = b.y - a.y, L = dx * dx + dy * dy;
+    if (!L) continue;
+    const t = Math.max(0, Math.min(1, ((x - a.x) * dx + (y - a.y) * dy) / L));
+    const d = Math.hypot(x - (a.x + t * dx), y - (a.y + t * dy));
+    if (d < bestD) { bestD = d; best = { dx, dy }; }
+  }
+  if (!best) return '▼';
+  return Math.abs(best.dy) >= Math.abs(best.dx) ? (best.dy > 0 ? '▼' : '▲') : (best.dx > 0 ? '▶' : '◀');
+}
+
+// Lays out the shape view with ELK's layered algorithm on a compound graph,
+// so an owner atom's box contains the atoms it owns. Returns node positions
+// (pos), routed edges with label positions (layoutEdges), and the bounds.
+async function elkShapeLayout(nodes, links, ownerOf, opts) {
   if (!_elk) throw new Error('elkjs not loaded');
+  enableSynchronousElk();
   const nodeMap = new Map(nodes.map(n => [n.id, n]));
   const childrenOf = new Map();
   for (const [c, p] of ownerOf) {
@@ -1416,6 +1489,49 @@ async function elkShapeLayout(nodes, edges, ownerOf, opts) {
     childrenOf.get(p).push(c);
   }
   const isRoot = (id) => id === '(root)';
+  // Every compound gets a self-pill (id + '__self'), a node inside it that
+  // stands for the owner atom itself. The atom's edges, self-loops included,
+  // end on the pill instead of the compound's border.
+  const selfSuffix = '__self';
+  const compoundIds = new Set();
+  for (const n of nodes) if ((childrenOf.get(n.id) || []).length > 0) compoundIds.add(n.id);
+  const compoundsNeedingSelf = compoundIds;
+  const selfIdFor = (compoundId) => compoundId + selfSuffix;
+  const elkEnd = (id) => compoundsNeedingSelf.has(id) ? selfIdFor(id) : id;
+  const sp = {
+    pad: 24,
+    nodeNode: opts.nodesep,
+    layer: Math.round(opts.ranksep * 0.35),
+    edgeLayer: 16,
+    edgeNode: 16,
+    // edgeEdge also sets the gap between labels that share a row. Much below
+    // 20 the gap is close to a word space, and neighbouring labels read as
+    // one phrase.
+    edgeEdge: 20,
+    edgeEdgeLayer: 10,
+  };
+  // With INCLUDE_CHILDREN, ELK reads spacing and crossing-minimisation
+  // options from each nested graph, not from the root, so the root and
+  // every compound get the same set.
+  const nestedOptions = {
+    'elk.padding': `[top=${sp.pad},left=${sp.pad},bottom=${sp.pad},right=${sp.pad}]`,
+    // nodeNode: between nodes in one layer (horizontal in TB).
+    // nodeNodeBetweenLayers: between layers (vertical in TB). Labels have
+    // their own slots, so these only set breathing room.
+    'elk.spacing.nodeNode': String(sp.nodeNode),
+    'elk.layered.spacing.nodeNodeBetweenLayers': String(sp.layer),
+    'elk.layered.spacing.edgeNodeBetweenLayers': String(sp.edgeLayer),
+    'elk.layered.spacing.edgeEdgeBetweenLayers': String(sp.edgeEdgeLayer),
+    'elk.spacing.edgeNode': String(sp.edgeNode),
+    'elk.spacing.edgeEdge': String(sp.edgeEdge),
+    'elk.spacing.edgeLabel': '2',
+    'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
+    // Crossing-minimisation passes (ELK's default is 7). 100 removed a
+    // crossing on every seed tried, for about three times the layout time,
+    // which _elkLayoutMemo limits to graph changes.
+    'elk.layered.thoroughness': '100',
+    'elk.edgeRouting': 'ORTHOGONAL',
+  };
   const buildElkNode = (n) => {
     const kids = childrenOf.get(n.id) || [];
     const en = {
@@ -1424,19 +1540,15 @@ async function elkShapeLayout(nodes, edges, ownerOf, opts) {
       height: isRoot(n.id) ? 30 : opts.blockHFor(n),
     };
     if (kids.length) {
-      // Tab clearance math: our OWN tab is ABOVE our container, so it
-      // consumes the enclosing scope's padding. Internal top space is
-      // just for any nested child's tab (38px above child border + gap).
-      const hasNestedContainer = kids.some(k => (childrenOf.get(k) || []).length > 0);
-      const topPad = hasNestedContainer ? 72 : 24;
       en.children = kids.map(k => buildElkNode(nodeMap.get(k)));
-      en.layoutOptions = {
-        'elk.padding': `[top=${topPad},left=32,bottom=24,right=32]`,
-        'elk.spacing.nodeNode': String(opts.nodesep * 1.5),
-        // Extra between-layer spacing so a child container's tab clears
-        // its predecessor's bottom border with room to breathe.
-        'elk.layered.spacing.nodeNodeBetweenLayers': String(opts.ranksep),
-      };
+      if (compoundsNeedingSelf.has(n.id)) {
+        en.children.push({
+          id: selfIdFor(n.id),
+          width: opts.blockW,
+          height: opts.blockHFor(n),
+        });
+      }
+      en.layoutOptions = { ...nestedOptions };
     }
     return en;
   };
@@ -1447,25 +1559,54 @@ async function elkShapeLayout(nodes, edges, ownerOf, opts) {
       'elk.algorithm': 'layered',
       'elk.direction': opts.orient === 'lr' ? 'RIGHT' : 'DOWN',
       'elk.hierarchyHandling': 'INCLUDE_CHILDREN',
-      // Room for title tabs (38px) attached above top-level containers.
-      'elk.padding': '[top=50,left=20,bottom=20,right=20]',
-      // Horizontal breathing (siblings on the same rank).
-      'elk.spacing.nodeNode': String(opts.nodesep * 2),
-      // Vertical breathing between ranks so containers don't crash into
-      // the tab of the next rank down.
-      'elk.layered.spacing.nodeNodeBetweenLayers': String(opts.ranksep * 1.4),
-      'elk.spacing.edgeNode': String(opts.edgesep),
-      'elk.spacing.edgeEdge': '24',
-      'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
-      'elk.edgeRouting': 'ORTHOGONAL',
+      // Edge sections come back relative to the endpoints' lowest common
+      // ancestor by default, not to the node the edge is declared in.
+      // ROOT makes every edge root-relative, matching walkEdges below.
+      'elk.json.edgeCoords': 'ROOT',
+      ...nestedOptions,
     },
     children: topLevel.map(buildElkNode),
-    edges: edges.filter(e => e.src !== e.dst).map(e => ({
-      id: e.src + '__' + e.dst,
-      sources: [e.src],
-      targets: [e.dst],
-    })),
+    // Labels go to ELK at their drawn size, so the layout places them clear
+    // of nodes and other labels. ELK routes self-loops too.
+    edges: links.map(({ e, rev }) => {
+      // ELK ignores these options on the graph, so they sit on each label.
+      // CENTER gives the label its own slot mid-edge, and inline puts it on
+      // the line rather than beside it. Two-way labels reserve room for a
+      // direction arrow.
+      const label = (d, i) => {
+        const text = (rev ? '▼ ' : '') + edgeLabelText(d);
+        return {
+          id: e.src + '__' + e.dst + '__label' + i, text,
+          width: edgeLabelWidth(text), height: 16,
+          layoutOptions: { 'elk.edgeLabels.placement': 'CENTER', 'elk.edgeLabels.inline': 'true' },
+        };
+      };
+      return {
+        id: e.src + '__' + e.dst,
+        sources: [elkEnd(e.src)],
+        targets: [elkEnd(e.dst)],
+        labels: (rev ? [e, rev] : [e]).map(label),
+      };
+    }),
   };
+  // Headless tuning hook for tools/layout-metrics.py sweeps. With ?sync=1,
+  // elkopt=key:value,key:value overrides options on the root and on every
+  // compound (see nestedOptions).
+  if (_elkSyncMode) {
+    const overrides = (_traceViewerParams.get('elkopt') || '').split(',').filter(Boolean);
+    const apply = (en) => {
+      if (en !== elkGraph && !en.children) return;
+      en.layoutOptions = en.layoutOptions || {};
+      for (const kv of overrides) {
+        const i = kv.indexOf(':');
+        if (i > 0) en.layoutOptions[kv.slice(0, i)] = kv.slice(i + 1);
+      }
+      for (const c of (en.children || [])) apply(c);
+    };
+    if (overrides.length) apply(elkGraph);
+  }
+  const layoutKey = JSON.stringify(elkGraph);
+  if (_elkLayoutMemo && _elkLayoutMemo.key === layoutKey) return _elkLayoutMemo.value;
   const result = await _elk.layout(elkGraph);
   const pos = new Map();
   const parentOf = new Map();  // childId → parentId (for label placement)
@@ -1491,17 +1632,121 @@ async function elkShapeLayout(nodes, edges, ownerOf, opts) {
         const raw = [s.startPoint, ...(s.bendPoints || []), s.endPoint];
         return raw.map(p => ({ x: p.x + ax, y: p.y + ay }));
       });
-      layoutEdges.push({ src: e.sources[0], dst: e.targets[0], points: pts });
+      const stripSelf = (id) => id.endsWith(selfSuffix) ? id.slice(0, -selfSuffix.length) : id;
+      layoutEdges.push({
+        src: stripSelf(e.sources[0]), dst: stripSelf(e.targets[0]),
+        elkSrc: e.sources[0], elkDst: e.targets[0],
+        points: pts,
+        // Primary direction first, then reverse, as sent to ELK.
+        labels: (e.labels || []).map(lab => lab.x != null
+          ? { x: lab.x + ax, y: lab.y + ay, w: lab.width, h: lab.height, text: lab.text }
+          : null),
+      });
     }
     for (const c of (node.children || [])) {
       walkEdges(c, ax + (c.x || 0), ay + (c.y || 0));
     }
   };
   walkEdges(result, 0, 0);
-  return { pos, layoutEdges, parentOf, W: result.width || 800, H: result.height || 400 };
+  // Content bounds cover node rects and edge points. ELK's width and height
+  // start at (0,0) and ignore edges routed outside the root frame, whose
+  // bend points can be negative.
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const p of pos.values()) {
+    if (p.x < minX) minX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.x + p.w > maxX) maxX = p.x + p.w;
+    if (p.y + p.h > maxY) maxY = p.y + p.h;
+  }
+  for (const e of layoutEdges) {
+    for (const pt of e.points) {
+      if (pt.x < minX) minX = pt.x;
+      if (pt.y < minY) minY = pt.y;
+      if (pt.x > maxX) maxX = pt.x;
+      if (pt.y > maxY) maxY = pt.y;
+    }
+  }
+  if (!isFinite(minX)) { minX = 0; minY = 0; maxX = result.width || 800; maxY = result.height || 400; }
+  const value = {
+    pos, layoutEdges, parentOf,
+    W: result.width || 800, H: result.height || 400,
+    minX, minY, maxX, maxY,
+  };
+  _elkLayoutMemo = { key: layoutKey, value };
+  return value;
 }
 
 let _renderShapeToken = 0;
+
+// Shape-view camera. scale is CSS px per SVG unit, so 1 is actual size and a
+// 13px label renders at 13px. (cx, cy) is the SVG point at the stage centre.
+// The camera resets when the content box changes, since a view of another
+// layout points at nothing useful.
+let _shapeView = null;
+let _shapeViewFor = null;
+function shapeSvg() {
+  const st = document.getElementById('stage-main');
+  return st && st.querySelector('svg[data-shape-view]');
+}
+function shapeContentBox(svg) {
+  return { x: +svg.dataset.contentX, y: +svg.dataset.contentY, w: +svg.dataset.contentW, h: +svg.dataset.contentH };
+}
+function shapeFitScale(svg) {
+  const b = shapeContentBox(svg);
+  return Math.min(svg.clientWidth / b.w, svg.clientHeight / b.h);
+}
+function shapeFitView(svg) {
+  const b = shapeContentBox(svg);
+  return { scale: shapeFitScale(svg), cx: b.x + b.w / 2, cy: b.y + b.h / 2 };
+}
+// Show the whole graph when it fits at actual size or larger (capped at 1.5x
+// so a small graph doesn't balloon). Otherwise start at actual size from the
+// top and let the reader pan, since fitting a large graph to the stage
+// shrinks its text below reading size.
+function shapeDefaultView(svg) {
+  const b = shapeContentBox(svg);
+  const fit = shapeFitScale(svg);
+  if (fit >= 1) return { scale: Math.min(fit, 1.5), cx: b.x + b.w / 2, cy: b.y + b.h / 2 };
+  const halfW = svg.clientWidth / 2, halfH = svg.clientHeight / 2;
+  return {
+    scale: 1,
+    cx: b.w <= svg.clientWidth ? b.x + b.w / 2 : b.x + halfW,
+    cy: b.h <= svg.clientHeight ? b.y + b.h / 2 : b.y + halfH,
+  };
+}
+function applyShapeView() {
+  const svg = shapeSvg();
+  if (!svg || !svg.clientWidth) return;
+  if (!_shapeView) _shapeView = shapeDefaultView(svg);
+  const v = _shapeView;
+  const vw = svg.clientWidth / v.scale, vh = svg.clientHeight / v.scale;
+  svg.setAttribute('viewBox', `${v.cx - vw / 2} ${v.cy - vh / 2} ${vw} ${vh}`);
+  const lvl = document.getElementById('shape-zoom-level');
+  if (lvl) lvl.textContent = Math.round(v.scale * 100) + '%';
+}
+function zoomShapeAt(factor, clientX, clientY) {
+  const svg = shapeSvg();
+  if (!svg || !_shapeView) return;
+  const r = svg.getBoundingClientRect();
+  const v = _shapeView;
+  const ns = Math.max(0.1, Math.min(4, v.scale * factor));
+  const ox = clientX - (r.left + r.width / 2), oy = clientY - (r.top + r.height / 2);
+  // Keep the SVG point under the cursor fixed while the scale changes.
+  const ux = v.cx + ox / v.scale, uy = v.cy + oy / v.scale;
+  v.scale = ns;
+  v.cx = ux - ox / ns;
+  v.cy = uy - oy / ns;
+  applyShapeView();
+}
+function zoomShapeCentred(factor) {
+  const svg = shapeSvg();
+  if (!svg) return;
+  const r = svg.getBoundingClientRect();
+  zoomShapeAt(factor, r.left + r.width / 2, r.top + r.height / 2);
+}
+// Earlier versions kept shape zoom and pan in localStorage with a different
+// meaning. Clear them.
+['cxc-shape-zoom', 'cxc-shape-panx', 'cxc-shape-pany'].forEach(k => localStorage.removeItem(k));
 async function renderShape() {
   const stage = $('stage-main');
   stage.innerHTML = '';
@@ -1521,7 +1766,9 @@ async function renderShape() {
     const reopenExisting = document.getElementById('shape-legend-reopen');
     if (reopenExisting) reopenExisting.remove();
     const phaseOpenNow = document.body.classList.contains('phase-panel-open');
-    if (localStorage.getItem('cxc-shape-legend-hidden') === '1' || phaseOpenNow) {
+    // Collapsed unless the reader opened it, since at actual size the
+    // drawing fills the stage and an open legend covers part of it.
+    if (localStorage.getItem('cxc-shape-legend-hidden') !== '0' || phaseOpenNow) {
       const btn = document.createElement('button');
       btn.id = 'shape-legend-reopen';
       btn.textContent = 'legend';
@@ -1547,6 +1794,7 @@ async function renderShape() {
         <div class="legend-row"><span class="legend-line" style="border-top:1.6px solid #333;"></span>async send</div>
         <div class="legend-row"><span class="legend-line" style="border-top:2px solid #5340b0;"></span>sync only</div>
         <div class="legend-row"><span class="legend-line" style="border-top:1.6px solid #c47a20;"></span>self-loop</div>
+        <div class="legend-row" title="atoms that message each other share one line with an arrowhead at each end; each label's arrow is the direction its messages travel along the line"><span style="display:inline-block; width:22px; text-align:center; color:#333; font-size:10px;">▲▼</span>two-way: label arrow = its direction</div>
         <div class="legend-row" title="label 'foo +N' = top message plus N others on same edge — hover for full list"><span style="display:inline-block; width:22px; text-align:center; color:#666; font-family:'SF Mono',Menlo,monospace; font-size:10px;">+N</span>= more msgs</div>
       </div>
       <div class="legend-group">
@@ -1558,7 +1806,7 @@ async function renderShape() {
       </div>
       <div class="legend-group">
         <h5>layout</h5>
-        <div class="legend-row" style="color:#666; font-size:10px;">alternating bands = cascade layers (BFS depth from root)</div>
+        <div class="legend-row" style="color:#666; font-size:10px;">box around atoms = owner holds them in (non-ctor) fields</div>
       </div>`;
     stage.appendChild(legend);
     document.getElementById('shape-legend-close').addEventListener('click', () => {
@@ -1568,73 +1816,30 @@ async function renderShape() {
   }
   mountLegend();
 
-  // Zoom controls — pill in top-right (bottom-left is taken by legend).
-  // Updates the shape SVG's viewBox: smaller viewBox = zoomed in. Pan
-  // shares state via localStorage keys cxc-shape-{zoom,panx,pany}. Ctrl+
-  // scroll zooms around the cursor position.
-  if (!document.getElementById('shape-zoom')) {
+  // Zoom controls sit top right, since the legend has bottom left. They are
+  // rebuilt with the stage on every render and hold only buttons, while the
+  // wheel, pinch and drag listeners are wired once at the bottom of the file.
+  {
     const zctl = document.createElement('div');
     zctl.id = 'shape-zoom';
     zctl.innerHTML = `
-      <button id="shape-zoom-out" title="zoom out (ctrl+scroll)">−</button>
-      <span id="shape-zoom-level">100%</span>
-      <button id="shape-zoom-in" title="zoom in (ctrl+scroll)">+</button>
-      <button id="shape-zoom-reset" title="reset to 100% and centre">⟲</button>
+      <button id="shape-zoom-out" title="zoom out (ctrl/⌘ + scroll, or pinch)">−</button>
+      <span id="shape-zoom-level" title="100% = actual size">100%</span>
+      <button id="shape-zoom-in" title="zoom in (ctrl/⌘ + scroll, or pinch)">+</button>
+      <button id="shape-zoom-reset" title="readable default: actual size from the top (scroll to pan)">⟲</button>
+      <button id="shape-zoom-fit" title="fit the whole graph (overview)">fit</button>
     `;
     stage.appendChild(zctl);
-    const svgSel = () => stage.querySelector('svg');
-    const updateVB = (z, px, py) => {
-      const svgEl = svgSel();
-      if (!svgEl || !svgEl.dataset.nativeW) return;
-      const nW = +svgEl.dataset.nativeW, nH = +svgEl.dataset.nativeH;
-      svgEl.setAttribute('viewBox', `${px} ${py} ${nW / z} ${nH / z}`);
-      localStorage.setItem('cxc-shape-zoom', String(z));
-      localStorage.setItem('cxc-shape-panx', String(px));
-      localStorage.setItem('cxc-shape-pany', String(py));
-      const lvl = document.getElementById('shape-zoom-level');
-      if (lvl) lvl.textContent = Math.round(z * 100) + '%';
-    };
-    const readState = () => ({
-      z: Math.max(0.15, Math.min(4, parseFloat(localStorage.getItem('cxc-shape-zoom')) || 1)),
-      px: parseFloat(localStorage.getItem('cxc-shape-panx')) || 0,
-      py: parseFloat(localStorage.getItem('cxc-shape-pany')) || 0,
+    zctl.querySelector('#shape-zoom-out').addEventListener('click', () => zoomShapeCentred(1 / 1.25));
+    zctl.querySelector('#shape-zoom-in').addEventListener('click', () => zoomShapeCentred(1.25));
+    zctl.querySelector('#shape-zoom-reset').addEventListener('click', () => {
+      const svg = shapeSvg(); if (!svg) return;
+      _shapeView = shapeDefaultView(svg); applyShapeView();
     });
-    const zoomAround = (newZoom, cx, cy) => {
-      const svgEl = svgSel();
-      if (!svgEl || !svgEl.dataset.nativeW) return;
-      const s = readState();
-      const clamped = Math.max(0.15, Math.min(4, newZoom));
-      const nW = +svgEl.dataset.nativeW;
-      const rect = svgEl.getBoundingClientRect();
-      const fx = (cx - rect.left) / rect.width;
-      const fy = (cy - rect.top) / rect.height;
-      const vbWNew = nW / clamped;
-      const vbHNew = (+svgEl.dataset.nativeH) / clamped;
-      const vbWOld = nW / s.z;
-      const vbHOld = (+svgEl.dataset.nativeH) / s.z;
-      const px = s.px + fx * (vbWOld - vbWNew);
-      const py = s.py + fy * (vbHOld - vbHNew);
-      updateVB(clamped, px, py);
-    };
-    const stepCentered = (delta) => {
-      const svgEl = svgSel();
-      if (!svgEl) return;
-      const rect = svgEl.getBoundingClientRect();
-      const s = readState();
-      zoomAround(s.z + delta, rect.left + rect.width / 2, rect.top + rect.height / 2);
-    };
-    document.getElementById('shape-zoom-out').addEventListener('click', () => stepCentered(-0.1));
-    document.getElementById('shape-zoom-in').addEventListener('click', () => stepCentered(0.1));
-    document.getElementById('shape-zoom-reset').addEventListener('click', () => updateVB(1, 0, 0));
-    stage.addEventListener('wheel', (ev) => {
-      if (!ev.ctrlKey && !ev.metaKey) return;
-      ev.preventDefault();
-      const s = readState();
-      zoomAround(s.z + (ev.deltaY < 0 ? 0.1 : -0.1), ev.clientX, ev.clientY);
-    }, { passive: false });
-    // Initial sync so the level indicator matches persisted state.
-    const s0 = readState();
-    updateVB(s0.z, s0.px, s0.py);
+    zctl.querySelector('#shape-zoom-fit').addEventListener('click', () => {
+      const svg = shapeSvg(); if (!svg) return;
+      _shapeView = shapeFitView(svg); applyShapeView();
+    });
   }
 
   // Onboarding hint — first-time only. localStorage tracks dismissal.
@@ -1710,20 +1915,15 @@ async function renderShape() {
       ownerOf.set(childId, n.id);
     }
   }
-  // Metadata for the edge render loop (msgs list, sync count, total).
-  const edgeMeta = new Map();
-  for (const e of edges) {
-    if (e.src === e.dst) continue;
-    edgeMeta.set(e.src + '|' + e.dst, e);
-  }
-  // Compound layered layout via ELK — parents literally contain their
-  // owned children (Lane wraps LaneSide wraps PlayableUnit), so
-  // ownership reads without decorative dashed overlays. Async because
-  // ELK computes in a Web Worker; the render token guards against a
-  // superseded render mutating stage after a newer render started.
+  // One link per atom pair, keyed by its primary direction (the ELK edge's
+  // direction).
+  const links = pairEdges(edges);
+  const linkOf = new Map(links.map(l => [l.e.src + '|' + l.e.dst, l]));
+  // ELK runs asynchronously in a Web Worker. The render token stops a
+  // superseded render from touching the stage after a newer one started.
   let elkResult;
   try {
-    elkResult = await elkShapeLayout(nodes, edges, ownerOf, {
+    elkResult = await elkShapeLayout(nodes, links, ownerOf, {
       orient, blockW, blockHFor,
       nodesep: expand ? 70 : 56,
       ranksep: expand ? 160 : 130,
@@ -1735,28 +1935,35 @@ async function renderShape() {
   }
   if (myToken !== _renderShapeToken) return;
   const { pos, layoutEdges, parentOf } = elkResult;
-  const rightLabelPad = 80;
-  const W = Math.max(stage.clientWidth, elkResult.W + rightLabelPad);
-  const H = Math.max(stage.clientHeight, elkResult.H + 40);
+  // Content box is the drawing plus a margin, so labels at the outer edge
+  // don't touch the stage border. The camera frames this box.
+  const marginX = 100;
+  const marginY = 60;
+  const contentX = elkResult.minX - marginX;
+  const contentY = elkResult.minY - marginY;
+  const W = (elkResult.maxX - elkResult.minX) + marginX * 2;
+  const H = (elkResult.maxY - elkResult.minY) + marginY * 2;
 
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  // Pan+zoom via SVG viewBox — the SVG fills the stage viewport (100%);
-  // zoom scales the viewBox size, pan shifts its origin. Works at any
-  // zoom level (including <100%) because we're not relying on the
-  // browser's scrollbars.
-  const shapeZoom = Math.max(0.15, Math.min(4, parseFloat(localStorage.getItem('cxc-shape-zoom')) || 1));
-  const panX0 = parseFloat(localStorage.getItem('cxc-shape-panx')) || 0;
-  const panY0 = parseFloat(localStorage.getItem('cxc-shape-pany')) || 0;
+  // Fills the stage. applyShapeView() sets the viewBox from the camera once
+  // the svg is mounted and has a size.
   svg.setAttribute('width', '100%');
   svg.setAttribute('height', '100%');
-  svg.setAttribute('viewBox', `${panX0} ${panY0} ${W / shapeZoom} ${H / shapeZoom}`);
   svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
-  svg.dataset.nativeW = W;
-  svg.dataset.nativeH = H;
+  svg.dataset.shapeView = '1';
+  svg.dataset.contentX = contentX;
+  svg.dataset.contentY = contentY;
+  svg.dataset.contentW = W;
+  svg.dataset.contentH = H;
+  const contentKey = `${Math.round(contentX)},${Math.round(contentY)},${Math.round(W)},${Math.round(H)}`;
+  if (_shapeViewFor !== contentKey) { _shapeView = null; _shapeViewFor = contentKey; }
 
   const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
   defs.innerHTML = `
     <marker id="shape-arrow" markerWidth="12" markerHeight="12" refX="11" refY="6" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0,1 L11,6 L0,11 z" fill="#333"></path>
+    </marker>
+    <marker id="shape-arrow-start" markerWidth="12" markerHeight="12" refX="11" refY="6" orient="auto-start-reverse" markerUnits="userSpaceOnUse">
       <path d="M0,1 L11,6 L0,11 z" fill="#333"></path>
     </marker>
     <marker id="shape-arrow-self" markerWidth="11" markerHeight="11" refX="10" refY="5.5" orient="auto" markerUnits="userSpaceOnUse">
@@ -1765,42 +1972,9 @@ async function renderShape() {
   `;
   svg.appendChild(defs);
 
-  // Layer bands — group leaf nodes by rank position (skip owners since
-  // ELK-compound sizes them to enclose their children, so their center
-  // isn't a meaningful rank position).
-  const parentIds = new Set(ownerOf.values());
-  const rankAxis = orient === 'lr' ? 'cx' : 'cy';
-  const rankSizes = new Map();
-  for (const [id, p] of pos) {
-    if (parentIds.has(id)) continue;
-    const r = Math.round(p[rankAxis] / 40) * 40;
-    if (!rankSizes.has(r)) rankSizes.set(r, { min: r, max: r });
-  }
-  const rankPositions = [...rankSizes.keys()].sort((a, b) => a - b);
-  rankPositions.forEach((r, idx) => {
-    if (idx % 2 !== 0) return;
-    const prev = idx > 0 ? (rankPositions[idx - 1] + r) / 2 : r - 60;
-    const next = idx < rankPositions.length - 1 ? (rankPositions[idx + 1] + r) / 2 : r + 60;
-    const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-    if (orient === 'lr') {
-      rect.setAttribute('x', prev);
-      rect.setAttribute('y', 0);
-      rect.setAttribute('width', next - prev);
-      rect.setAttribute('height', H);
-    } else {
-      rect.setAttribute('x', 0);
-      rect.setAttribute('y', prev);
-      rect.setAttribute('width', W);
-      rect.setAttribute('height', next - prev);
-    }
-    rect.setAttribute('class', 'shape-layer-band');
-    svg.appendChild(rect);
-  });
-
-  // Ownership now reads directly from ELK's compound containment — the
-  // parent pill physically encloses its children. Still need childrenOf
-  // and mainNodeId downstream for the pill styling (isContainer / isOwner)
-  // and the layer-band skip logic.
+  // childrenOf and mainNodeId drive the box styling (isContainer, isOwner).
+  // There are no layer bands, because a second kind of enclosing region
+  // would compete with the ownership boxes as a grouping cue.
   const childrenOf = new Map();
   for (const [child, parent] of ownerOf) {
     if (!childrenOf.has(parent)) childrenOf.set(parent, []);
@@ -1808,34 +1982,36 @@ async function renderShape() {
   }
   const mainNodeId = (nodes.find(n => n.shape && n.shape.name === _shape?.main_atom) || {}).id;
 
-  // Edges: draw Dagre's routed polylines. Each Dagre edge exposes a
-  // `points` array of {x, y} bend points from source-boundary to
-  // destination-boundary. We convert those into an SVG path with softly
-  // rounded corners. Self-loops are excluded from Dagre and rendered
-  // manually below (Dagre's default self-loop routing is messy for our
-  // block-with-attached-label idiom).
   const edgeG = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-  function pointsToPath(pts) {
+  // Orthogonal route with small fixed-radius corners. The radius is capped
+  // at half of each adjacent segment, so short jogs stay sharp and the path
+  // stays within about r of ELK's route.
+  function pointsToPath(pts, r = 8) {
     if (!pts || pts.length === 0) return '';
     if (pts.length === 1) return `M${pts[0].x},${pts[0].y}`;
     let d = `M${pts[0].x},${pts[0].y}`;
     for (let i = 1; i < pts.length - 1; i++) {
       const prev = pts[i - 1], cur = pts[i], next = pts[i + 1];
-      const midPrevX = (prev.x + cur.x) / 2, midPrevY = (prev.y + cur.y) / 2;
-      const midNextX = (cur.x + next.x) / 2, midNextY = (cur.y + next.y) / 2;
-      d += ` L${midPrevX},${midPrevY} Q${cur.x},${cur.y} ${midNextX},${midNextY}`;
+      const lin = Math.hypot(cur.x - prev.x, cur.y - prev.y);
+      const lout = Math.hypot(next.x - cur.x, next.y - cur.y);
+      const rr = Math.min(r, lin / 2, lout / 2);
+      if (rr < 0.5) { d += ` L${cur.x},${cur.y}`; continue; }
+      const ax = cur.x - (cur.x - prev.x) / lin * rr, ay = cur.y - (cur.y - prev.y) / lin * rr;
+      const bx = cur.x + (next.x - cur.x) / lout * rr, by = cur.y + (next.y - cur.y) / lout * rr;
+      d += ` L${ax},${ay} Q${cur.x},${cur.y} ${bx},${by}`;
     }
     const last = pts[pts.length - 1];
     d += ` L${last.x},${last.y}`;
     return d;
   }
-  // Precompute node bboxes so labels can be shoved off any block they'd
-  // otherwise land on. Blocks render after edges, so a label inside a
-  // block gets clipped; we treat blocks as obstacles for label placement.
-  const blockRects = [...pos.values()].map(b => ({ x: b.x - 4, y: b.y - 4, w: b.w + 8, h: b.h + 8 }));
-  // Track already-placed edge label rects so a new candidate that overlaps
-  // an existing label gets rejected. This kills the "two labels on one
-  // row" bug muse flagged (`dea combat_done +2`).
+  // Obstacles for the fallback label search. Pills paint over edges, so a
+  // label under one would be hidden. Containers are left out because their
+  // box covers the whole subtree and would block every position inside it.
+  const blockRects = [...pos.entries()]
+    .filter(([id]) => id.endsWith('__self') || !childrenOf.has(id))
+    .map(([, b]) => ({ x: b.x - 4, y: b.y - 4, w: b.w + 8, h: b.h + 8 }));
+  // Labels placed so far. The fallback search rejects positions that overlap
+  // them, and the headless dump reports them.
   const placedLabels = [];
   function rectsOverlap(a, b) {
     return !(a.x + a.w < b.x || b.x + b.w < a.x || a.y + a.h < b.y || b.y + b.h < a.y);
@@ -1865,86 +2041,38 @@ async function renderShape() {
     }
     return best;
   }
+  const dirSummary = (d) => {
+    const msgList = [...d.msgs.entries()].sort((a, b) => b[1] - a[1]);
+    return `${d.src} → ${d.dst}\n${d.total} messages (${d.sync} sync)\n\n`
+      + msgList.slice(0, 8).map(([m, c]) => `${m} × ${c}`).join('\n')
+      + (msgList.length > 8 ? `\n… +${msgList.length - 8} more` : '');
+  };
   for (const layoutEdge of layoutEdges) {
-    const e = edgeMeta.get(layoutEdge.src + '|' + layoutEdge.dst);
-    if (!e) continue;
+    const link = linkOf.get(layoutEdge.src + '|' + layoutEdge.dst);
+    if (!link) continue;
     if (!layoutEdge.points || !layoutEdge.points.length) continue;
+    const { e, rev } = link;
+    const dirs = rev ? [e, rev] : [e];
     const pts = layoutEdge.points;
-    const isSync = e.sync === e.total && e.total > 0;
+    // "sync only" means every message on the line, in both directions.
+    const isSync = dirs.every(d => d.total > 0 && d.sync === d.total);
+    const isSelfLoop = e.src === e.dst;
     const path = pointsToPath(pts);
     const edgeId = `edge-${e.src}--${e.dst}`.replace(/[^a-zA-Z0-9-]/g, '_');
     const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
     p.setAttribute('d', path);
-    p.setAttribute('class', 'shape-edge' + (isSync ? ' sync' : ''));
-    p.setAttribute('marker-end', 'url(#shape-arrow)');
+    p.setAttribute('class', 'shape-edge' + (isSelfLoop ? ' self' : isSync ? ' sync' : ''));
+    p.setAttribute('marker-end', isSelfLoop ? 'url(#shape-arrow-self)' : 'url(#shape-arrow)');
+    if (rev) p.setAttribute('marker-start', 'url(#shape-arrow-start)');
     p.dataset.src = e.src;
     p.dataset.dst = e.dst;
     p.dataset.edgeId = edgeId;
-    const msgList = [...e.msgs.entries()].sort((a, b) => b[1] - a[1]);
-    const msgSummary = msgList.slice(0, 8).map(([m, c]) => `${m} × ${c}`).join('\n')
-      + (msgList.length > 8 ? `\n… +${msgList.length - 8} more` : '');
-    const extraCount = msgList.length - 1;
-    const extraHint = extraCount > 0 ? `\n\n"+${extraCount}" = ${extraCount} additional message name${extraCount > 1 ? 's' : ''} routed through this edge` : '';
-    p.innerHTML = `<title>${e.src} → ${e.dst}\n${e.total} messages (${e.sync} sync)\n\n${msgSummary}${extraHint}</title>`;
+    const plusHint = dirs.some(d => d.msgs.size > 1)
+      ? `\n\n"+N" on a label = N more message names in that direction` : '';
+    p.innerHTML = `<title>${dirs.map(dirSummary).join('\n\n')}${plusHint}</title>`;
     p.style.cursor = 'pointer';
-    p.addEventListener('click', () => showEdgeDetail(e));
+    p.addEventListener('click', () => showEdgeDetail(e, rev));
     edgeG.appendChild(p);
-
-    // Label on the longest polyline segment; walk along polyline anchors
-    // until we find a position that clears every block. This kills the
-    // "dea combat_done +2" mid-word clip Muse flagged (block edges cut
-    // labels that Dagre placed in a corner near a block).
-    const topMsg = msgList[0] ? msgList[0][0] : '?';
-    const lbl = topMsg + (msgList.length > 1 ? ` +${extraCount}` : '');
-    const textW = lbl.length * 7.6 + 12;
-    const textH = 16;
-    const candidates = [];
-    // Best-anchor first, then sample along every interior segment at
-    // midpoint, 1/4, 3/4 for fallbacks.
-    candidates.push(bestLabelAnchor(pts));
-    for (let i = 1; i < pts.length; i++) {
-      const a = pts[i - 1], b = pts[i];
-      for (const t of [0.5, 0.25, 0.75, 0.15, 0.85]) {
-        candidates.push({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
-      }
-    }
-    // Try each candidate at its natural Y first; if none clears blocks +
-    // other labels, try small perpendicular offsets so the label peels
-    // slightly off the polyline. Last-resort: keep the natural anchor.
-    let anchor = candidates[0];
-    let found = false;
-    for (const cand of candidates) {
-      if (labelRectClears(cand.x, cand.y, textW, textH)) { anchor = cand; found = true; break; }
-    }
-    if (!found) {
-      outer: for (const cand of candidates) {
-        for (const dy of [-12, 12, -24, 24, -36, 36]) {
-          if (labelRectClears(cand.x, cand.y + dy, textW, textH)) {
-            anchor = { x: cand.x, y: cand.y + dy }; found = true; break outer;
-          }
-        }
-      }
-    }
-    placedLabels.push({ x: anchor.x - textW/2, y: anchor.y - 9, w: textW, h: textH });
-    const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-    bg.setAttribute('x', anchor.x - textW / 2);
-    bg.setAttribute('y', anchor.y - 9);
-    bg.setAttribute('width', textW);
-    bg.setAttribute('height', textH);
-    bg.setAttribute('rx', 3);
-    bg.setAttribute('class', 'shape-edge-label-bg');
-    bg.dataset.edgeId = edgeId;
-    edgeG.appendChild(bg);
-    const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-    t.setAttribute('x', anchor.x);
-    t.setAttribute('y', anchor.y + 3);
-    t.setAttribute('class', 'shape-edge-label');
-    t.setAttribute('text-anchor', 'middle');
-    t.dataset.edgeId = edgeId;
-    if (msgList.length > 1) {
-      t.innerHTML = `<title>${e.src} → ${e.dst}\ntop: ${topMsg}\n+${extraCount} additional message name${extraCount > 1 ? 's' : ''} routed through this edge</title>`;
-    }
-    t.textContent = lbl;
     const highlightPair = (on) => {
       const q = `[data-edge-id="${edgeId}"]`;
       svg.querySelectorAll(q).forEach(el => {
@@ -1954,77 +2082,78 @@ async function renderShape() {
     };
     p.addEventListener('mouseenter', () => highlightPair(true));
     p.addEventListener('mouseleave', () => highlightPair(false));
-    bg.addEventListener('mouseenter', () => highlightPair(true));
-    bg.addEventListener('mouseleave', () => highlightPair(false));
-    edgeG.appendChild(t);
+
+    dirs.forEach((d, i) => {
+      // ELK positions the label. The polyline search below only runs if ELK
+      // returned a label without a position.
+      const base = edgeLabelText(d);
+      const textW = edgeLabelWidth(rev ? '▼ ' + base : base);
+      const textH = 16;
+      const lab = layoutEdge.labels[i];
+      let anchor = null;
+      let found = false;
+      if (lab) {
+        anchor = { x: lab.x + lab.w / 2, y: lab.y + 9 };
+        found = true;
+      }
+      const candidates = [];
+      if (!found) {
+        candidates.push(bestLabelAnchor(pts));
+        for (let k = 1; k < pts.length; k++) {
+          const a = pts[k - 1], b = pts[k];
+          for (const t of [0.5, 0.25, 0.75, 0.15, 0.85]) {
+            candidates.push({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+          }
+        }
+        anchor = candidates[0];
+        for (const cand of candidates) {
+          if (labelRectClears(cand.x, cand.y, textW, textH)) { anchor = cand; found = true; break; }
+        }
+      }
+      if (!found) {
+        outer: for (const cand of candidates) {
+          for (const dy of [-12, 12, -24, 24, -36, 36]) {
+            if (labelRectClears(cand.x, cand.y + dy, textW, textH)) {
+              anchor = { x: cand.x, y: cand.y + dy }; found = true; break outer;
+            }
+          }
+        }
+      }
+      let lbl = base;
+      if (rev) {
+        const g = travelGlyph(pts, anchor.x, anchor.y - 1);
+        lbl = (i === 0 ? g : flipGlyph[g]) + ' ' + base;
+      }
+      placedLabels.push({ x: anchor.x - textW/2, y: anchor.y - 9, w: textW, h: textH, edgeId, text: lbl, kind: isSelfLoop ? 'self' : 'edge' });
+      const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+      bg.setAttribute('x', anchor.x - textW / 2);
+      bg.setAttribute('y', anchor.y - 9);
+      bg.setAttribute('width', textW);
+      bg.setAttribute('height', textH);
+      bg.setAttribute('rx', 3);
+      bg.setAttribute('class', 'shape-edge-label-bg');
+      bg.dataset.edgeId = edgeId;
+      bg.innerHTML = `<title>${dirSummary(d)}</title>`;
+      bg.addEventListener('mouseenter', () => highlightPair(true));
+      bg.addEventListener('mouseleave', () => highlightPair(false));
+      edgeG.appendChild(bg);
+      const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      t.setAttribute('x', anchor.x);
+      t.setAttribute('y', anchor.y + 3);
+      t.setAttribute('class', 'shape-edge-label');
+      t.setAttribute('text-anchor', 'middle');
+      t.dataset.edgeId = edgeId;
+      t.textContent = lbl;
+      edgeG.appendChild(t);
+    });
   }
 
-  // Self-loops: bracket on the trailing-across side of the block (right in
-  // TB, bottom in LR). Rendered manually because Dagre's self-loop routing
-  // produces crossings.
-  for (const e of edges) {
-    if (e.src !== e.dst) continue;
-    const src = pos.get(e.src);
-    if (!src) continue;
-    const isTB = orient !== 'lr';
-    const trailingC = isTB ? src.x + src.w : src.y + src.h;
-    const midA = isTB ? src.cy : src.cx;
-    const bump = trailingC + 20;
-    const halfA = (isTB ? src.h : src.w) * 0.35;
-    const leftA = midA - halfA, rightA = midA + halfA;
-    const mk = (a, c) => isTB ? `${c},${a}` : `${a},${c}`;
-    const path = `M${mk(leftA, trailingC)} L${mk(leftA, bump)} L${mk(rightA, bump)} L${mk(rightA, trailingC + 2)}`;
-    const edgeId = `edge-self-${e.src}`.replace(/[^a-zA-Z0-9-]/g, '_');
-    const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    p.setAttribute('d', path);
-    p.setAttribute('class', 'shape-edge self');
-    p.setAttribute('marker-end', 'url(#shape-arrow-self)');
-    p.dataset.edgeId = edgeId;
-    const msgList = [...e.msgs.entries()].sort((a, b) => b[1] - a[1]);
-    const msgSummary = msgList.slice(0, 8).map(([m, c]) => `${m} × ${c}`).join('\n');
-    p.innerHTML = `<title>${e.src} → ${e.src} (self)\n${e.total} messages\n\n${msgSummary}</title>`;
-    p.style.cursor = 'pointer';
-    p.addEventListener('click', () => showEdgeDetail(e));
-    // Hover on the self-loop arrow, its bg, or its label lights up the trio
-    // together — matches the behavior of cross-atom edges above and lets the
-    // user find self-flows the same way they find inbound flows.
-    const highlightSelf = (on) => {
-      const q = `[data-edge-id="${edgeId}"]`;
-      svg.querySelectorAll(q).forEach(el => {
-        if (on) el.classList.add('shape-edge-hover');
-        else    el.classList.remove('shape-edge-hover');
-      });
-    };
-    p.addEventListener('mouseenter', () => highlightSelf(true));
-    p.addEventListener('mouseleave', () => highlightSelf(false));
-    edgeG.appendChild(p);
-    const topMsg = msgList[0] ? msgList[0][0] : '?';
-    const lbl = topMsg + (msgList.length > 1 ? ` +${msgList.length - 1}` : '');
-    const textW = lbl.length * 7.6 + 12;
-    const lx = isTB ? bump + 6 : midA;
-    const ly = isTB ? midA : bump + 12;
-    const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-    bg.setAttribute('x', isTB ? lx : lx - textW / 2);
-    bg.setAttribute('y', ly - 9);
-    bg.setAttribute('width', textW);
-    bg.setAttribute('height', 16);
-    bg.setAttribute('rx', 3);
-    bg.setAttribute('class', 'shape-edge-label-bg');
-    bg.dataset.edgeId = edgeId;
-    bg.style.cursor = 'pointer';
-    bg.addEventListener('mouseenter', () => highlightSelf(true));
-    bg.addEventListener('mouseleave', () => highlightSelf(false));
-    bg.addEventListener('click', () => showEdgeDetail(e));
-    edgeG.appendChild(bg);
-    const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-    t.setAttribute('x', isTB ? lx + 6 : lx);
-    t.setAttribute('y', ly + 3);
-    t.setAttribute('class', 'shape-edge-label');
-    t.setAttribute('text-anchor', isTB ? 'start' : 'middle');
-    t.dataset.edgeId = edgeId;
-    t.textContent = lbl;
-    edgeG.appendChild(t);
-  }
+  // Container boxes with a self-pill are drawn under the edges and ignore the
+  // pointer, because the pill inside handles the atom's name, clicks and
+  // hover. Edges and labels inside a box stay clickable, and dragging on
+  // empty space inside it pans.
+  const containerG = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+  svg.appendChild(containerG);
   svg.appendChild(edgeG);
 
   // Blocks. When shape is loaded, each block reads as a source card:
@@ -2050,6 +2179,8 @@ async function renderShape() {
     // isContainer: owns children in the ELK-compound hierarchy.
     // Main is always a container (it wraps everything else).
     const isContainer = childrenOf.has(n.id) || isMain;
+    // With a self-pill, the container is only a region (see containerG).
+    const hasSelfPill = isContainer && pos.has(n.id + '__self');
     const clsAttr = 'shape-block' +
       (n.id === '(root)' ? ' root' : '') +
       (isMain ? ' main' : '') +
@@ -2078,7 +2209,12 @@ async function renderShape() {
       glow.setAttribute('width', p.w + pad*2); glow.setAttribute('height', p.h + pad*2);
       glow.setAttribute('rx', 10);
       glow.setAttribute('class', 'shape-block-halo-outer');
-      blockG.appendChild(glow);
+      (hasSelfPill ? containerG : blockG).appendChild(glow);
+    }
+    if (hasSelfPill) {
+      rect.style.pointerEvents = 'none';
+      containerG.appendChild(rect);
+      continue;
     }
     rect.addEventListener('click', () => {
       selectedNode = selectedNode === n.id ? null : n.id;
@@ -2214,8 +2350,86 @@ async function renderShape() {
       }
     }
   }
+  // Self-pills: each compound's own atom, drawn as a full atom card (name,
+  // phase and arm counts) that handles clicks and hover for the atom.
+  const nodeById = new Map(nodes.map(n => [n.id, n]));
+  for (const [id, p] of pos.entries()) {
+    if (!id.endsWith('__self')) continue;
+    const parentId = id.slice(0, -'__self'.length);
+    const parent = nodeById.get(parentId);
+    if (!parent) continue;
+    const isMain = parent.cls === 'CxcMain' || (parent.shape && parent.shape.name === _shape?.main_atom);
+    const isSelected = selectedNode === parentId || (parent.shape && selectedNode === parent.shape.name);
+    const dimForSelection = selectedNode && !isSelected;
+    const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    rect.setAttribute('x', p.x); rect.setAttribute('y', p.y);
+    rect.setAttribute('width', p.w); rect.setAttribute('height', p.h);
+    rect.setAttribute('rx', 5);
+    rect.setAttribute('class', 'shape-block' +
+      (isMain ? ' main' : '') +
+      (isSelected ? ' selected' : '') +
+      (dimForSelection ? ' dim-when-selected' : ''));
+    rect.dataset.nodeId = parentId;
+    rect.addEventListener('click', () => {
+      selectedNode = selectedNode === parentId ? null : parentId;
+      _expandedAtom = parent.shape ? parent.shape.name : null;
+      showNodeDetail(parent, edges);
+      renderShape();
+    });
+    rect.addEventListener('mouseenter', () => highlightShape(parentId));
+    rect.addEventListener('mouseleave', () => highlightShape(null));
+    rect.innerHTML = `<title>${parent.shape ? parent.shape.name : parentId}\n${parent.size} trace events</title>`;
+    g.appendChild(rect);
+    const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    label.setAttribute('x', p.cx);
+    label.setAttribute('y', p.y + 24);
+    label.setAttribute('class', 'shape-block-label');
+    label.textContent = parent.label;
+    g.appendChild(label);
+    const sub = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    sub.setAttribute('x', p.cx);
+    sub.setAttribute('y', p.y + 42);
+    sub.setAttribute('class', 'shape-block-sub');
+    if (parent.shape) {
+      const nPhases = parent.shape.phases.length;
+      const nTxns = parent.shape.transitions.length + parent.shape.self_transitions.length;
+      sub.textContent = `${nPhases} phases · ${nTxns} arms`;
+    } else {
+      sub.textContent = parent.size + ' events';
+    }
+    g.appendChild(sub);
+    blockG.appendChild(g);
+  }
   svg.appendChild(blockG);
   stage.appendChild(svg);
+  applyShapeView();
+
+  // Headless-only geometry dump for tools/layout-metrics.py, in the SVG user
+  // space the paths and rects are drawn in.
+  if (_elkSyncMode) {
+    const dbg = {
+      nodes: [...pos.entries()].map(([id, p]) => ({
+        id, x: p.x, y: p.y, w: p.w, h: p.h,
+        parent: parentOf.get(id) || null,
+        kind: id.endsWith('__self') ? 'self' : (childrenOf.has(id) ? 'container' : 'leaf'),
+      })),
+      edges: layoutEdges.map(le => ({
+        src: le.src, dst: le.dst, elkSrc: le.elkSrc, elkDst: le.elkDst,
+        points: le.points.map(q => [q.x, q.y]),
+      })),
+      labels: placedLabels,
+      view: { stageW: svg.clientWidth, stageH: svg.clientHeight, scale: _shapeView ? _shapeView.scale : null, fit: shapeFitScale(svg) },
+    };
+    let el = document.getElementById('layout-debug');
+    if (!el) {
+      el = document.createElement('script');
+      el.type = 'application/json';
+      el.id = 'layout-debug';
+      document.body.appendChild(el);
+    }
+    el.textContent = JSON.stringify(dbg);
+  }
 
   // If a block is selected, render its phase graph in the detail pane and
   // scroll the topology so the selected node sits in view — otherwise the
@@ -2231,8 +2445,15 @@ async function renderShape() {
         const atomNode = nodes.find(nn => nn.shape && nn.shape.name === selectedNode);
         if (atomNode) selEl = stage.querySelector(`.shape-block[data-node-id="${CSS.escape(atomNode.id)}"]`);
       }
-      if (selEl && typeof selEl.scrollIntoView === 'function') {
-        requestAnimationFrame(() => selEl.scrollIntoView({ block: 'center', inline: 'center', behavior: 'smooth' }));
+      // The svg fills the stage, so scrollIntoView can't move it. Centre the
+      // camera on the pill instead when it is out of view.
+      const selId = selEl && selEl.dataset.nodeId;
+      const sp = selId && pos.get(selId + '__self') || (selId && pos.get(selId));
+      if (sp && _shapeView) {
+        const vw = svg.clientWidth / _shapeView.scale, vh = svg.clientHeight / _shapeView.scale;
+        const inView = sp.x >= _shapeView.cx - vw / 2 && sp.x + sp.w <= _shapeView.cx + vw / 2
+                    && sp.y >= _shapeView.cy - vh / 2 && sp.y + sp.h <= _shapeView.cy + vh / 2;
+        if (!inView) { _shapeView.cx = sp.cx; _shapeView.cy = sp.cy; applyShapeView(); }
       }
     }
   }
@@ -2485,7 +2706,7 @@ document.addEventListener('drop', (e) => {
   if (f) f.text().then(t => loadTrace(t, f.name));
 });
 
-const params = new URLSearchParams(window.location.search);
+const params = _traceViewerParams;
 const viewParam = params.get('view');
 if (viewParam && ['graph','shape','timeline','sequence','inbox'].includes(viewParam)) {
   setView(viewParam);
@@ -2568,19 +2789,42 @@ if (params.has('trace')) {
   });
 })();
 
-// Left-drag anywhere pans the shape SVG by shifting its viewBox origin.
-// Works at any zoom level — including <100% where the SVG fits inside
-// the stage and scroll bars wouldn't help. On non-shape views (timeline,
-// sequence, phase graph SVGs without dataset.nativeW), pan falls back
-// to scrollLeft/scrollTop so those still pan when zoomed to overflow.
-// Interactive descendants (legend, zoom UI, hint, close, splitter) skip
-// pan. Drag <4px = click passthrough; >=4px pans and swallows the click.
+// Wheel over the shape view pans on a plain scroll (trackpads give both
+// axes, and shift+wheel scrolls sideways on a mouse) and zooms at the cursor
+// on ctrl/⌘+scroll or a trackpad pinch, which arrives as ctrl+wheel. It is
+// wired once because the zoom widget is rebuilt on every render.
+(function wireShapeWheel() {
+  const stage = document.getElementById('stage-main');
+  if (!stage) return;
+  stage.addEventListener('wheel', (ev) => {
+    if (!shapeSvg() || !_shapeView) return;
+    if (ev.target.closest && ev.target.closest('#shape-legend')) return;
+    ev.preventDefault();
+    const unit = ev.deltaMode === 1 ? 16 : ev.deltaMode === 2 ? stage.clientHeight : 1;
+    if (ev.ctrlKey || ev.metaKey) {
+      zoomShapeAt(Math.exp(-ev.deltaY * unit * 0.0025), ev.clientX, ev.clientY);
+    } else {
+      _shapeView.cx += ev.deltaX * unit / _shapeView.scale;
+      _shapeView.cy += ev.deltaY * unit / _shapeView.scale;
+      applyShapeView();
+    }
+  }, { passive: false });
+  // The viewBox size follows the stage size, so recompute it when the stage
+  // resizes (window resize, detail-pane splitter).
+  if (typeof ResizeObserver === 'function') new ResizeObserver(() => applyShapeView()).observe(stage);
+})();
+
+// Left-drag moves the camera on the shape view at any zoom, and falls back to
+// scrollLeft/scrollTop on other views (timeline, sequence, phase-graph SVGs
+// without data-shape-view). Interactive descendants (legend, zoom UI, hint,
+// close, splitter) don't start a pan, and a drag under 4px passes through as
+// a click while a longer one pans and swallows the click.
 (function wirePan() {
   const stage = document.getElementById('stage-main');
   if (!stage) return;
   let active = false, sx = 0, sy = 0, moved = false;
   let initSL = 0, initST = 0;
-  let initPX = 0, initPY = 0, initZ = 1;
+  let initCX = 0, initCY = 0;
   let viewBoxMode = false;
   const skipSel = '#shape-legend, #shape-zoom, #shape-hint, #stage-splitter, .detail-close-btn';
   const svgSel = () => stage.querySelector('svg');
@@ -2591,11 +2835,10 @@ if (params.has('trace')) {
     active = true; moved = false;
     sx = ev.clientX; sy = ev.clientY;
     const svgEl = svgSel();
-    viewBoxMode = !!(svgEl && svgEl.dataset.nativeW);
+    viewBoxMode = !!(svgEl && svgEl.dataset.shapeView && _shapeView);
     if (viewBoxMode) {
-      initZ = parseFloat(localStorage.getItem('cxc-shape-zoom')) || 1;
-      initPX = parseFloat(localStorage.getItem('cxc-shape-panx')) || 0;
-      initPY = parseFloat(localStorage.getItem('cxc-shape-pany')) || 0;
+      initCX = _shapeView.cx;
+      initCY = _shapeView.cy;
     } else {
       initSL = stage.scrollLeft; initST = stage.scrollTop;
     }
@@ -2606,16 +2849,10 @@ if (params.has('trace')) {
     if (!moved && Math.hypot(dx, dy) < 4) return;
     if (!moved) { moved = true; stage.classList.add('panning'); }
     if (viewBoxMode) {
-      const svgEl = svgSel();
-      if (!svgEl || !svgEl.dataset.nativeW) return;
-      const nW = +svgEl.dataset.nativeW, nH = +svgEl.dataset.nativeH;
-      const rect = svgEl.getBoundingClientRect();
-      const vbW = nW / initZ, vbH = nH / initZ;
-      const newPX = initPX - dx * (vbW / rect.width);
-      const newPY = initPY - dy * (vbH / rect.height);
-      svgEl.setAttribute('viewBox', `${newPX} ${newPY} ${vbW} ${vbH}`);
-      localStorage.setItem('cxc-shape-panx', String(newPX));
-      localStorage.setItem('cxc-shape-pany', String(newPY));
+      if (!_shapeView) return;
+      _shapeView.cx = initCX - dx / _shapeView.scale;
+      _shapeView.cy = initCY - dy / _shapeView.scale;
+      applyShapeView();
     } else {
       stage.scrollLeft = initSL - dx;
       stage.scrollTop  = initST - dy;
