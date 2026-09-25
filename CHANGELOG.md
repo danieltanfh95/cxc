@@ -2,6 +2,12 @@
 
 Format: date · tag · summary.
 
+## 2026-09-25 · examples · cocoa-viewer + cxc-cleanup-audit skill
+
+Adds `compiler/examples/cocoa-viewer/`: a Corvid plugin that FFIs to a Cocoa drawing wrapper (`libcocoa_viewer.m`) and renders a static dota2-simulator frame in a native macOS NSWindow. Uses the v1.0 `def plugin: ... foreign "cocoa_viewer":` shape. Working proof of concept; visual verification of the window is a manual step (`./build.sh && /tmp/cocoa-viewer-out/dota2_frame`). Documents a compiler gap: user-plugin FFI symbols don't currently get extern declarations in the emit, so `build.sh` re-links the .m with `-Wno-implicit-function-declaration`. Wiring to a live sim is left as a next step.
+
+Adds `.claude/skills/cxc-cleanup-audit/`: a portable Claude Code skill packaging the 25 anti-patterns from `docs/writing-corvid/` as a mechanical checklist for auditing existing `.cxc` files. Sits next to `cxc-authoring`.
+
 ## 2026-09-25 · docs · public authoring guide
 
 Adds `docs/writing-corvid/`: an opinionated authoring guide for humans and AI agents writing Corvid source. Six files: primer, language tour, design patterns, common mistakes, worked example, and index. Compile-verified examples (`counter` and `task-queue.cxc`). Also adds `.claude/skills/cxc-authoring/` as a Claude Code skill wrapper for agent-driven authoring, and `AGENTS.md` at repo root for codex/opencode discovery. README.md gains a "Writing Corvid" section linking the guide.
