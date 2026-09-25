@@ -831,6 +831,14 @@
                 ;; chain. First truthy guard's body is the value. `else` is
                 ;; the sole catch-all marker. See parse-multi-arm-dispatch.
                 "||:" (parse-multi-arm-dispatch tokens pos)
+                ;; Expression-position bare `:>` — self-broadcast emit
+                ;; from inside a lambda body (or any expression position
+                ;; that will re-wrap it as a stmt via statement-node-kinds).
+                ;; Same AST shape as the parse-statement branch (target=nil).
+                ;; Mirrors the A6 (2026-09-03) `|>` expression extension.
+                ":>" (let [[m p] (parse-emit-message tokens (inc pos))]
+                       [{:node :emit :async? true :target nil
+                         :msg (:msg m) :args (:args m)} p])
                 ;; A6 (2026-09-03) — expression-position sync emit:
                 ;; `|> receiver.method(args)` as an expression (value
                 ;; is void; usable inside lambda bodies where the
