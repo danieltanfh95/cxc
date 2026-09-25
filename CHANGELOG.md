@@ -2,6 +2,10 @@
 
 Format: date · tag · summary.
 
+## 2026-09-25 · docs · public authoring guide
+
+Adds `docs/writing-corvid/`: an opinionated authoring guide for humans and AI agents writing Corvid source. Six files: primer, language tour, design patterns, common mistakes, worked example, and index. Compile-verified examples (`counter` and `task-queue.cxc`). Also adds `.claude/skills/cxc-authoring/` as a Claude Code skill wrapper for agent-driven authoring, and `AGENTS.md` at repo root for codex/opencode discovery. README.md gains a "Writing Corvid" section linking the guide.
+
 ## 2026-09-14 · v0.1.0-alpha · initial public release
 
 First public tag. Bootstrap compiler passes 1053 tests / 2927 assertions on macOS.
