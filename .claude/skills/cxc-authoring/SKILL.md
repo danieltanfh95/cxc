@@ -6,10 +6,10 @@ description: Guidelines for writing Corvid (`.cxc`) source. Invoke before author
 # cxc-authoring
 
 Load this skill before writing or refactoring Corvid source. The
-canonical authoring guide lives in `docs/writing-corvid/` in
-the corvid repo. This skill points at it, then surfaces the highest-leverage
-rules and patterns inline so you don't have to context-switch for
-common cases.
+authoring guide lives in `docs/writing-corvid/` in the corvid repo.
+This skill points at it, then surfaces the highest-leverage rules
+and patterns inline so you don't have to context-switch for common
+cases.
 
 ## When to invoke
 
@@ -107,7 +107,7 @@ If you find yourself reaching for one of these, look for the shape it's meant to
 ## Compile-verify discipline
 
 Verify against the compiler, not the spec, when writing anything
-non-trivial. The pipeline:
+beyond a one-liner. The pipeline:
 
 ```
 cd compiler
@@ -125,12 +125,12 @@ clojure -M -e "
 
 Every example in the writing-corvid guide is verified this way
 before it ships. When you propose Corvid code in a review or a
-generated snippet, either compile it yourself or say clearly that
+generated snippet, either compile it yourself or say up-front that
 you haven't.
 
 ## Companion skills
 
 None currently. If you're doing a bulk audit or refactor of an
 existing `.cxc` file, an "cxc-cleanup-audit" skill would sit here
-next to this one; the authoring guide's patterns become the audit's
-checklist. Not yet built.
+next to this one, and the authoring guide's patterns would become
+the audit's checklist. Not yet built.

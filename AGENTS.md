@@ -4,16 +4,16 @@ Guidance for AI agents (codex, opencode, etc.) working in this repository.
 
 ## What this repo is
 
-An atom-substrate language ("cxc" on disk, "Corvid" in prose) with a
-bootstrap compiler in Clojure. Compiler reads `.cxc`, emits
-Objective-C, drives clang, produces macOS binaries. See
-[README.md](README.md) for the public overview.
+An atom-based language ("cxc" on disk, "Corvid" in prose), with a
+bootstrap compiler in Clojure that reads `.cxc`, emits Objective-C,
+drives clang, and produces macOS binaries. See [README.md](README.md)
+for the public overview.
 
 ## Writing Corvid code (`.cxc` files)
 
 **Read the authoring guide first.** [docs/writing-corvid/](docs/writing-corvid/)
-contains an opinionated guide for humans and AI agents. Six files;
-read the ones matching your task:
+contains an opinionated guide for humans and AI agents, in six files.
+Read the ones matching your task:
 
 - **Writing a new `.cxc` file from scratch**: start at [docs/writing-corvid/01-your-first-atom.md](docs/writing-corvid/01-your-first-atom.md).
 - **Refactoring existing `.cxc` code**: [docs/writing-corvid/03-design-patterns.md](docs/writing-corvid/03-design-patterns.md) names the shapes to reach for.
@@ -29,7 +29,7 @@ short version:
 - `=>` is snapshot-staged, not incremental. One `=>` per field per path.
 - Containers are FP-only: `.append`, `.filter`, `.assoc`, `.dissoc`, `.insert`, `.without`.
 - Sync send `|>` cannot loop back to the same atom. Use `self :> msg`.
-- No `Result[T, E]`; no `switch/case`; no `try/catch`. Raise + `or T(...)` recovery.
+- No `Result[T, E]`, no `switch/case`, no `try/catch`. Raise + `or T(...)` recovery.
 
 ## Working on the compiler (Clojure under `compiler/`)
 
@@ -51,8 +51,8 @@ output), compile it first. The pipeline is in
 [README.md](README.md#try-it). Do not ship untested Corvid code.
 
 Every example in [docs/writing-corvid/](docs/writing-corvid/) is
-verified against the compiler before commit; the pattern is worth
-following.
+verified against the compiler before commit, and the pattern is
+worth following.
 
 ## What to leave alone
 

@@ -18,7 +18,7 @@ you meant. Either declare `T!`, or use `?? fallback` at every read.
 ## Forward-reference in record definitions
 
 Records lower to C struct typedefs, in file order. A record that
-references another record must come *after* the record it references:
+references another record must come after the record it references:
 
 ```
 # Wrong: Card sees Effect before Effect is defined.
@@ -56,8 +56,8 @@ target arm doesn't need to call back.
 ## `=>` in `then:` is snapshot-staged, not incremental
 
 The body of `then:` reads the pre-transition snapshot of every
-field, throughout. `=>` stages the new value; the commit happens at
-the *end* of the body.
+field, throughout. `=>` stages the new value, and the commit happens
+at the end of the body.
 
 ```
 idle <: increment -> idle
@@ -70,7 +70,7 @@ To print the new value: `print(count + 1)`. To reuse the new value
 in the body: bind a `let` local first.
 
 Also: **one `=>` per field per transition path.** Multiple `=>` on
-the same field on one path is smuggled assignment; the compiler
+the same field on one path is smuggled assignment, and the compiler
 rejects it. Fold into one expression or split via `let`.
 
 ## Same-atom sync-send between guarded arms
@@ -125,15 +125,15 @@ Reads on List/Map that might miss: `.at(i) ?? fallback`,
 
 ## Ability-flag enum trap
 
-If you find yourself with an enum whose cases describe *what a
-specific entity does* (`Ability.axe_king_bonus`,
+If you find yourself with an enum whose cases describe what a
+specific entity does (`Ability.axe_king_bonus`,
 `Ability.marksman_pierce`), you're in the enum-of-behaviours trap.
 See [03-design-patterns.md](03-design-patterns.md#effect-as-data-over-enum-of-behaviours).
 
 ## Parametric state via parallel fields
 
 If you catch yourself declaring `count_0`, `count_1`, `count_2` for
-"one per lane," stop. `=>` is compile-time; you can't pick which
+"one per lane," stop. `=>` is compile-time, so you can't pick which
 field to stage at runtime. Model as a sub-atom instead. See
 [03-design-patterns.md](03-design-patterns.md#parametric-state-via-sub-atoms-not-n-parallel-fields).
 
@@ -161,29 +161,30 @@ the sentinel-field pattern in [03-design-patterns.md](03-design-patterns.md#sent
 
 ## Wildcard on-enter doesn't fire on self-loops
 
-A wildcard arm `-> phase then: body` fires on *phase change*, not on
-self-loops within the same phase. If an arm does `phase <: msg ->
-phase`, the wildcard doesn't re-fire. This is deliberate (prevents
-recursion) but occasionally surprises when you want the wildcard's
-side effect after every message.
+A wildcard arm `-> phase then: body` fires on phase change, never on
+self-loops within the same phase. Given `phase <: msg -> phase`, the
+wildcard doesn't re-fire. That's deliberate: re-firing would recurse
+whenever an arm targets its own source phase. The occasional surprise
+is when you want the wildcard's side effect after every message.
 
 Fix: move the side effect into the specific arm's `then:` body.
 
 ## `??` on a bare non-nullable value
 
-`native_fn() ?? default` is safe: the compiler recognises the LHS is
+`native_fn() ?? default` is safe. The compiler recognises the LHS is
 non-nullable and compiles the fallback as dead code. `??` is a
-non-error when the LHS can't be nil, but you should still audit for
-places where you *thought* the LHS was nullable and wasn't.
+non-error when the LHS can't be nil, but you should still audit
+places where you thought the LHS was nullable and it wasn't.
 
 ## Subprocess env, Random, and other capabilities
 
-- `subprocess.run(cmd, env: .empty)` (or `.inherit` / `.merge({...})`). There is no default env; you must specify.
-- `Random` is CSPRNG-only. For fast non-crypto RNG use `SeededPrng(seed:)` which does *not* conform to `Random`.
+- `subprocess.run(cmd, env: .empty)` (or `.inherit` / `.merge({...})`). There is no default env, and you must specify.
+- `Random` is CSPRNG-only. For fast non-crypto RNG use `SeededPrng(seed:)`, which does not conform to `Random`.
 - `EnvVars` (read-only, total) and `EnvMut` (write, raises `EnvError`) are separate capabilities. Don't pass `EnvMut` to consumers that only need to read.
 
 ## Comment discipline for AI/LLM handoff
 
 If you're passing Corvid source to an external LLM for review, strip
 the comments first. Comments carry framing that biases the reviewer
-toward your interpretation; you want unbiased second-pass analysis.
+toward your interpretation, and you want unbiased second-pass
+analysis.

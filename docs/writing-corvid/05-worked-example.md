@@ -96,11 +96,11 @@ def Task:
     payload: String
 ```
 
-A task is a data value. Not an atom: no phases, no mailbox. It
-carries the kind (which routes dispatch) and the payload (which the
-behavior consumes). This is the **effect-as-data** shape: the task
-type is a lightweight envelope, and its `.kind` field is what the
-worker dispatches on.
+A task is a data value rather than an atom, with no phases and no
+mailbox, carrying only the kind (which routes dispatch) and the
+payload (which the behavior consumes). This is the **effect-as-data**
+shape: the task type is a lightweight envelope, and its `.kind`
+field is what the worker dispatches on.
 
 Compare to the shape we could have written:
 
@@ -150,7 +150,7 @@ transition back to `idle`, then print the payload and stage a
 processed++.
 
 Three arms match `submit` on different kinds. The compiler tries
-each in source order; the first whose guard is true fires. Fall-through
+each in source order, and the first whose guard is true fires. Fall-through
 (the third arm, unguarded) catches every kind not matched above:
 `discard_it` today, any new kind tomorrow.
 
@@ -166,8 +166,8 @@ then:
     print(processed)      # prints OLD processed
 ```
 
-the print would show the value *before* the increment. To print the
-new: `print(processed + 1)`, or hoist to a `let`.
+the print would show the pre-image value, not the incremented one.
+To print the new value: `print(processed + 1)`, or hoist to a `let`.
 
 ### Flush arm
 
@@ -176,9 +176,9 @@ idle <: flush -> idle
     then: buffered.for_each(s => print(s))
 ```
 
-A separate message on the same source phase. Iterates the buffered
-list via `.for_each` (there's no `for x in xs:` loop; iteration is
-method dispatch on the container).
+A separate message on the same source phase, iterating the buffered
+list via `.for_each` because there's no `for x in xs:` loop in Corvid,
+since iteration is method dispatch on the container.
 
 ### Main
 
@@ -199,8 +199,8 @@ worker.submit(...)` is a synchronous send: main blocks on the arm
 completing before continuing.
 
 The final `print(worker.total_processed)` reads worker's observation
-directly. Observations are safe to read from outside; they compose
-purely.
+directly. Observations are safe to read from outside because they
+compose purely.
 
 ## What this example exercises
 
@@ -231,14 +231,13 @@ purely.
 ## Try it yourself
 
 The verified source is at [task-queue.cxc](task-queue.cxc). Compile
-and run per the pipeline in the main
-[README.md](../../README.md). Point at
-`docs/writing-corvid/task-queue.cxc` instead of
-`examples/hello.cxc`. Then modify:
+and run per the pipeline in the main [README.md](../../README.md),
+pointing at `docs/writing-corvid/task-queue.cxc` instead of
+`examples/hello.cxc`, then modify:
 
 1. Add a new `TaskKind` case (`count_it`) that increments a
    counter but doesn't print or buffer. What arm structure does that
-   need? (Answer: a new guarded arm; the fall-through would also
+   need? (Answer: a new guarded arm. The fall-through would also
    work but would lump `count_it` in with `discard_it`.)
 2. Move `Task` from a record to an atom (give it phases). What
    breaks? (Answer: everything. A task-as-atom would need its own

@@ -32,7 +32,7 @@ Now walk through it line by line.
 
 ## Records vs. atoms
 
-`def X:` defines *something*. The compiler infers what kind of thing
+`def X:` defines something. The compiler infers what kind of thing
 from the shape of the body:
 
 - A body of `field: Type = default` lines → a **record** (a plain data value).
@@ -50,11 +50,11 @@ n: Int = 0
 ```
 
 A field is a name, a type, and an optional default. If a field has
-a default, callers can omit it; if it doesn't, callers must pass it.
+a default, callers can omit it. Without a default, callers must pass it.
 That's how `Counter()` above is allowed to have no arguments: every
 field has a default.
 
-If you *want* the caller to pass `n`, either drop the default or use
+If you want the caller to pass `n`, either drop the default or use
 a constructor parameter:
 
 ```
@@ -108,7 +108,7 @@ def Counter:
 ```
 
 Explicit initial phases become necessary when an atom has arms on
-multiple source phases and it's not obvious which is initial, or
+multiple source phases and inference is ambiguous, or
 when the initial phase has an on-enter body:
 
 ```
@@ -132,7 +132,7 @@ Two send glyphs:
 
 In `main` above we used `|>` three times, so each `increment` completes
 before the next fires, so by the time `print` runs the counter has
-seen all three. Using `:>` would enqueue but not wait; the print
+seen all three. Using `:>` would enqueue but not wait, and the print
 might see any intermediate state.
 
 The one gotcha: you can't `|>` yourself if the caller and callee are

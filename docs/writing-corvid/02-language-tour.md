@@ -1,8 +1,8 @@
 # Language tour
 
-Reference-density. Everything you need to read Corvid; enough to
-write basic Corvid. For normative detail, the
-[v1.0 spec](../../design/spec/spec-cxc-v1.0.md) is authoritative.
+A reference-density tour: enough to read Corvid and enough to write
+basic Corvid, with the [v1.0 spec](../../design/spec/spec-cxc-v1.0.md)
+as the normative source when this guide and the spec disagree.
 
 ## Definitions
 
@@ -21,7 +21,7 @@ They act as required arguments and are also readable as fields.
 
 ## Nullability
 
-Three surface forms; only two are legal:
+Three surface forms. Only two are legal:
 
 | Form | Meaning | Legal? |
 |---|---|---|
@@ -29,8 +29,8 @@ Three surface forms; only two are legal:
 | `T!` | non-nil, the compiler enforces | yes |
 | `T?` | (banned everywhere) | **no** |
 
-Rule: reach for `T!` when the field/parameter must hold a value; use
-plain `T` when `nil` is a legitimate state. Never write `T?`.
+Rule: reach for `T!` when the field must hold a value, and plain `T`
+when `nil` is a legitimate state. Never write `T?`.
 
 ## Records
 
@@ -62,8 +62,9 @@ The `-> idle` line declares the initial phase. Every atom needs one.
 
 ## Phases
 
-Named states. An atom is always in exactly one phase. Transitions
-move between phases. Common naming (not enforced but conventional):
+A phase is a named state. An atom is always in exactly one of them,
+and transitions move between phases as messages arrive. Common naming
+(not enforced but conventional):
 
 - `idle`: passive, waiting for messages
 - `<verb>ing`: actively doing something (`deploying`, `combatting`, `drawing`)
@@ -91,7 +92,7 @@ Read as: while in `running`, when a `fire(shot:)` arrives whose
 ### `<:` versus `<|`
 
 - **`<:`**: normal transition. Runs on the atom's mailbox thread.
-- **`<|`**: sync-receive. Same lowering under the single-thread substrate; reserved semantics for the concurrent runtime.
+- **`<|`**: sync-receive. Same lowering under the single-thread substrate, with reserved semantics for the concurrent runtime.
 
 For now use `<:` unless you're consciously stress-testing sync-receive shape.
 
@@ -106,10 +107,10 @@ idle <: place_hero(card: Card, team: Int!) -> idle
     then: ...
 ```
 
-Multiple arms with `|:` guards on the same `phase <: msg` are legal;
-the compiler tries each in source order and fires the first whose
-guard is true. A trailing unguarded arm is the vanilla case (see
-[03-design-patterns.md](03-design-patterns.md#fall-through-arm)).
+Multiple arms with `|:` guards on the same `phase <: msg` are legal,
+and the compiler tries each in source order and fires the first
+whose guard is true. A trailing unguarded arm is the vanilla case
+(see [03-design-patterns.md](03-design-patterns.md#fall-through-arm)).
 
 `|:` also serves in three other positions: as record/protocol
 invariant declarations, as record `requires`/`ensures` obligations,
@@ -127,12 +128,12 @@ then:
     total => total + 1
 ```
 
-`=>` is **not** assignment. It's a staged declaration. All `=>`
-updates in the body commit together at the end, against the
+The `=>` glyph is not assignment but a staged declaration, and every
+`=>` update in the body commits together at the end against the
 pre-transition snapshot. This has two consequences:
 
 - Only one `=>` per field per transition path (spec §1.11). Multiple `=>` on the same field on one path is smuggled assignment.
-- The body reads pre-image values throughout. `n => n + 1; print(n)` prints the **old** `n`.
+- The body reads pre-image values throughout. Given `n => n + 1` followed by `print(n)`, the print shows the **old** `n`.
 
 To print the new value: `print(n + 1)`. To compose two updates: use
 `let` or fold them into one expression.
@@ -149,18 +150,18 @@ Callers read as `c.doubled`. Observations can call other
 observations, take arguments (`plus(other: Int) :- n + other`), and
 dispatch container methods on List/Map/Set fields.
 
-The glyph is **`:-`** at v1.0. Prior drafts used `:<`; retired
+The glyph is **`:-`** at v1.0. Prior drafts used `:<`, retired
 because it visually mirrored `<:` transitions.
 
 ## Sends: `|>` and `:>`
 
-- **`|>`**: sync send. Blocks until the receiver finishes the arm. Cannot loop back to the same atom on the same thread (rejected at runtime).
-- **`:>`**: async send. Enqueues; returns immediately.
+- **`|>`**: sync send. Blocks until the receiver finishes the arm, and cannot loop back to the same atom on the same thread (rejected at runtime).
+- **`:>`**: async send. Enqueues and returns immediately.
 - **`self :> msg`**: the standard self-send. Use this for iteration and for staged multi-message flows.
 
-Emit (broadcast) is bare `:> msg(args)` on a body. Every subscriber
-receives it. Subscribers register by having an arm on the source's
-message: `running <: source.tick -> running`.
+Emit (broadcast) is bare `:> msg(args)` on a body, and every
+subscriber receives it. Subscribers register by writing an arm on
+the source's message, as in `running <: source.tick -> running`.
 
 ## Multi-arm dispatch: `||:`
 
@@ -177,8 +178,8 @@ catch-all.
 
 ## Containers
 
-`List of T`, `Map[K, V]`, `Set of T`. FP-only, no imperative
-mutation. Every mutation returns a new container:
+`List of T`, `Map[K, V]`, `Set of T`. Mutation is FP-only, and every
+mutation returns a new container:
 
 ```
 cards => cards.append(card: c)         # List
@@ -193,9 +194,9 @@ lookups can miss:
 top :- cards.at(0) ?? _sentinel_card
 ```
 
-Iteration: `xs.for_each(x => print(x))` or the aggregate methods
-(`.count`, `.filter`, `.sort_by`, etc.). No `for x in xs:` loop.
-Iteration is method dispatch.
+Iteration uses `xs.for_each(x => print(x))` or the aggregate methods
+(`.count`, `.filter`, `.sort_by`, etc.). There is no `for x in xs:`
+loop, since iteration is method dispatch.
 
 ## Enums
 
@@ -205,8 +206,8 @@ def Direction:
     case down
 ```
 
-Referenced as `Direction.up`. Enum values lower to C typedef enums;
-dispatch is via `|:` guards on `x == Direction.up` or via the
+Referenced as `Direction.up`. Enum values lower to C typedef enums,
+and dispatch is via `|:` guards on `x == Direction.up` or via the
 `x: <: case_name: body` pattern-match dispatch (which still uses
 `when:` for guards, not `|:`).
 
@@ -242,7 +243,7 @@ See [design/spec/spec-cxc-v1.0.md](../../design/spec/spec-cxc-v1.0.md) §
 
 - **No `Result[T, E]`**. Use raise + `or T(field: let x): <body>` recovery.
 - **No `switch`/`case`**. Use transitions + `|:` guards + variant patterns.
-- **No `try/catch`**. Fallible methods raise typed records; recovery is at the call site via `or`.
+- **No `try/catch`**. Fallible methods raise typed records, and recovery lands at the call site via `or`.
 
 Example:
 
@@ -253,10 +254,10 @@ alias content :- fs.read_string(path: p)
 
 ## What Corvid does not have
 
-Not because it's small. Because these are deliberately absent:
+These are absent by design:
 
 - **User-defined operators.** `+`, `[]`, `==` on user types are compiler-blessed only. Use named methods: `.concat(other)`, `.at(idx)`, `.equals(other)`.
-- **Annotations / decorators.** No `@name(args)` grammar. Kind information is inferred from body shape; deprecation goes in comments.
+- **Annotations / decorators.** No `@name(args)` grammar. Kind information is inferred from body shape, and deprecation goes in comments.
 - **Shape variables / generics on user types.** Containers monomorphize at instantiation (`List of Int` and `List of String` are distinct types).
 - **Async promises / futures.** Async flows through atom lifecycles: `fs.open` returns a `File` atom whose phases signal completion. `Future[T]` is not a type.
 - **Global mutable state.** All mutation lives inside an atom's fields, staged through `=>`.

@@ -1,11 +1,11 @@
 # Writing Corvid
 
-An opinionated authoring guide. Not a spec; for the normative surface, see
+An opinionated authoring guide. Not a spec. For the normative surface, see
 [design/spec/spec-cxc-v1.0.md](../../design/spec/spec-cxc-v1.0.md).
 
 Corvid ("cxc" on disk) is a small language: atoms, phases, messages,
 records, observations. Once the vocabulary lands, the whole thing fits
-in your head. What takes longer is the *taste*: knowing which shape a
+in your head. What takes longer is the taste of knowing which shape a
 piece of behaviour wants, and which shapes to reach for last. This
 guide is that taste, written down.
 
@@ -32,7 +32,7 @@ are the ones you'll come back to.
 **Data before code.** Corvid's grammar is small enough that a design
 without a data shape has nowhere to hide. Before you write a
 transition, name the record. Before you write a guard, name the
-field. When the shape is wrong the code always looks wrong; when the
+field. When the shape is wrong the code always looks wrong. When the
 shape is right the code writes itself.
 
 If a doc in this guide feels dense, that's usually because it's

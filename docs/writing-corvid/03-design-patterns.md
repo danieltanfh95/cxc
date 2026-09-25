@@ -44,12 +44,12 @@ running <: play(card: Card) -> running
 # ...one arm per case
 ```
 
-Every new entity behaviour adds a case *and* an arm. The enum
+Every new entity behaviour adds both a case and an arm. The enum
 inflates, and every consumer of `Card` grows a parallel switch.
 
 **Pattern.** Collapse the enum into a data record on the entity. The
-enum shrinks to *kinds of effect*, not *kinds of card*. One arm per
-kind, not per card:
+enum shrinks to kinds of effect, not kinds of card, and you get one
+arm per kind rather than one arm per card:
 
 ```
 def EffectKind:
@@ -77,14 +77,16 @@ running <: play(card: Card) -> running
     then: |> own_side(card.on_deploy.scope).heal(amount: card.on_deploy.amount)
 ```
 
-Each new card is a data row. Each new *shape of effect* is one new
-EffectKind + one arm. The scaling asymmetry is the point.
+Each new card is a data row, and each new shape of effect is one
+EffectKind and one arm. The scaling asymmetry is the point.
 
-**Why.** Enum-of-behaviours conflates two axes (*entity identity*
-and *behaviour kind*) and forces one arm per (identity, kind)
-combination. Effect-as-data separates them: entity holds effect
-values; arms dispatch on kind. New entities cost data; new behaviours
-cost code. This matches the shape of how the two typically evolve.
+**Why.** Enum-of-behaviours conflates two axes (entity identity and
+behaviour kind) and forces one arm per (identity, kind) combination,
+so every new card that behaves adds an arm to every consumer of the
+enum. Effect-as-data separates the axes: the entity holds effect
+values, and arms dispatch on kind. New entities cost data, new
+behaviours cost code, and data typically grows faster than code
+does, which matches how the two axes actually evolve.
 
 ## Sentinel/default records as atom fields
 
@@ -106,13 +108,13 @@ def Player(...):
 ```
 
 Every downstream reference is `_no_effect` or `_sentinel_card`. The
-default lives in one place; changing it changes every use.
+default lives in one place, and changing it changes every use.
 
 **Why.** Inline default records duplicate a piece of design intent
-across the file. When the default changes (a new field, a new
-default value, a rename) the churn touches every use. A hoisted
-field consolidates the intent, and the compiler's type checker keeps
-the references honest.
+across the file, so when the default changes (a new field, a new
+default value, a rename) the churn touches every use. Hoisting
+consolidates the intent into one place, and the compiler's type
+checker keeps every downstream reference honest against it.
 
 ## Fall-through arm as extension point
 
@@ -143,9 +145,9 @@ New EffectKinds land on the fall-through until they justify their
 own arm. Adding a new kind becomes an additive change to the enum,
 not a code change at every dispatch site.
 
-**Why.** Guards on the target consumer are a slow-changing surface.
-Kinds are a fast-changing surface. Sinking the extension point into
-the consumer means kind additions don't ripple.
+**Why.** Guards on the target consumer are a slow-changing surface,
+while kinds are a fast-changing surface. Sinking the extension point
+into the consumer means kind additions don't ripple.
 
 ## Format at the boundary
 
@@ -153,33 +155,33 @@ the consumer means kind additions don't ripple.
 `unit_name_short: String` (precomputed presentation strings) on a
 record or atom.
 
-**Pattern.** Keep the data in canonical form. Format at the print or
-serialize boundary via observations:
+**Pattern.** Store the data raw. Format at the print or serialize
+boundary via observations:
 
 ```
 def Lane:
     tower_hp: Int = 20
 
-    # Presentational: reads canonical field, formats on demand.
+    # Presentational: reads the raw field, formats on demand.
     tower_hp_str :- tower_hp.to_string()  # or a richer formatter
 ```
 
-Callers reach for `.tower_hp_str` when they want the string form;
-`.tower_hp` when they want the number.
+Callers reach for `.tower_hp_str` when they want the string form,
+and `.tower_hp` when they want the number.
 
-**Why.** Precomputed presentation is redundant with the canonical
-field and rots on schedule mismatch (you update `tower_hp` but forget
+**Why.** Precomputed presentation is redundant with the raw field
+and rots on schedule mismatch (you update `tower_hp` but forget
 `tower_hp_display`). Observations compute on read, so they can't
 drift. The tradeoff (recomputing on every read) is negligible
 compared to the correctness win.
 
 ## Split a record when a field is dead in a slot
 
-**Problem shape.** A record has field `X`, but in *some* consumer
-slots, `X` is always the default / never read. E.g., `Effect.scope`
-is meaningful for a deploy effect that targets a side of the lane,
-but meaningless for a combat-time effect that modifies the card
-itself.
+**Problem shape.** A record has field `X`, but in some consumer
+slots `X` is always the default and never read. As a concrete case:
+`Effect.scope` is meaningful for a deploy effect that targets a
+side of the lane, but meaningless for a combat-time effect that
+modifies the card itself.
 
 **Pattern.** Split the record type by slot semantics:
 
@@ -202,9 +204,10 @@ Each slot's type carries exactly the fields that are meaningful at
 that slot.
 
 **Why.** A field that's always the default is a lie in the type
-signature: it suggests optionality that doesn't exist. Splitting
-narrows the shape to what's really there. If two slots then need
-similar fields, extract a shared record and compose.
+signature: it suggests an optionality that doesn't exist in fact.
+Splitting narrows the shape to what's really there, and if two
+slots then need similar fields, extract a shared record and
+compose.
 
 ## Verify slot semantics from consumer code, not from the slot name
 
@@ -216,15 +219,15 @@ checked what "deploy" means for cards that don't land as units.
 consumers of that slot. Read what actually fires.
 
 Concrete example: `on_deploy` in the dota2 simulator sounded like
-"fires after the unit lands." Items and scrolls never land as
-units, but they *do* have `on_deploy` effects that fire when
+"fires after the unit lands." Items and scrolls never land as units,
+yet they carry `on_deploy` effects that fire when
 played. So the actual semantics is "fires when the card is played,"
 not "fires after landing." Any new effect that fires-when-played
 belongs on `on_deploy` regardless of whether the card lands.
 
-**Why.** Slot names are convenient labels; consumer code is the
+**Why.** Slot names are convenient labels, but consumer code is the
 ground truth. Naming-first design ends up creating a new slot for
-each near-synonym, and behavior spreads across slots for accidental
+each near-synonym, and behaviour spreads across slots for accidental
 reasons.
 
 ## Phase-name standardisation
@@ -237,11 +240,11 @@ another's `waiting` is another's `alive` for the same intent
 
 - **`idle`** for the passive-waiting state that most atoms have.
 - **`<verb>ing`** for actively doing something (`deploying`, `drawing`, `combatting`).
-- **`alive` / `dead`** *only* for atoms that model a real entity lifecycle where death is a state to observe (e.g., a unit on a lane). Don't use `alive`/`dead` for passive/active states of atoms that aren't modeling entity death.
+- **`alive` / `dead`** for atoms that model a real entity lifecycle where death is a state to observe (a unit on a lane, say). Don't use `alive`/`dead` for passive/active states of atoms that aren't modelling entity death.
 
 **Why.** Consistent phase names let a reader pattern-match across
 atoms without cross-referencing definitions. `alive`/`dead` earn
-their weight when death is externally observable; using them as
+their weight when death is externally observable, and using them as
 passive/active flags dilutes the signal.
 
 ## Parametric state via sub-atoms, not N parallel fields
@@ -294,21 +297,22 @@ reading <: file.read_done(content: String) -> done
 about via `<:` arms on the sub-atom's messages/streams.
 
 **Why.** Future/Promise is a value-typed handle that outlives its
-producer, which fights the substrate's actor model. Atoms *are* the
-substrate's async unit. Modelling completion as a phase transition
-keeps the flow inside the substrate's guarantees.
+producer, which fights the substrate's actor model. Atoms are the
+substrate's async unit, and modelling completion as a phase
+transition keeps the flow inside the substrate's guarantees.
 
 ## Envelope over sentinel for missing / optional
 
 **Problem shape.** You need to encode "value present or absent" and
-you're reaching for a sentinel: a magic value (`-1`, empty string,
-`NaN`) that means "absent."
+you're reaching for a sentinel value (`-1`, empty string, `NaN`)
+that means "absent."
 
 **Pattern.** Use a wrapper (record with a `present: Bool` field) or
 a nullable slot with `??` fallback. Reserve sentinels for cases
 where the sentinel is genuinely out-of-band (a value the domain
 can't produce).
 
-**Why.** Sentinels rot: today `-1` means "absent" but tomorrow the
-domain admits negative values. Envelopes carry presence explicitly
-and can't lie about it.
+**Why.** Sentinels rot when the domain grows to admit the sentinel
+value as legitimate. Today `-1` means "absent," but if tomorrow the
+domain admits negative values, every read site has to be audited
+for the collision. Envelopes carry presence explicitly and can't lie.

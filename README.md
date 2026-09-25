@@ -1,8 +1,8 @@
 # cxc
 
-An atom-substrate language for the Apple ecosystem. Emits Objective-C; clang produces the binary.
+An atom-based language for the Apple ecosystem. It emits Objective-C, and clang produces the binary.
 
-**Public alpha.** Bootstrap compiler works end-to-end for the atom-substrate surface described in the v1.0 spec. Design is stable; the surface will shift as feedback lands. Do not depend on it for production.
+**Public alpha.** The bootstrap compiler works end-to-end for the atom surface named in the v1.0 spec. The design is stable, but the surface will shift as feedback lands, so do not depend on it for production.
 
 License: [MIT](LICENSE).
 
@@ -30,7 +30,7 @@ clojure -M -e "
 "
 ```
 
-Prints `hello, world`. Every `.cxc` under [compiler/examples/](compiler/examples/) is compiled and run by the test suite; start there for what the language currently expresses. [compiler/examples/README.md](compiler/examples/README.md) is the coverage index.
+Prints `hello, world`. Every `.cxc` under [compiler/examples/](compiler/examples/) is compiled and run by the test suite, and is the best starting point for what the language currently expresses. [compiler/examples/README.md](compiler/examples/README.md) is the coverage index.
 
 ## Writing Corvid
 
