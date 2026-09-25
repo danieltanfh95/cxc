@@ -130,7 +130,9 @@ you haven't.
 
 ## Companion skills
 
-None currently. If you're doing a bulk audit or refactor of an
-existing `.cxc` file, an "cxc-cleanup-audit" skill would sit here
-next to this one, and the authoring guide's patterns would become
-the audit's checklist. Not yet built.
+- [cxc-cleanup-audit](../cxc-cleanup-audit/SKILL.md) walks an
+  existing `.cxc` file against the 25 anti-patterns catalogued in
+  the writing-corvid guide. Invoke it before a landing PR, or when
+  a file has grown large enough that stale patterns may have
+  accumulated. Where this skill tells you what to write, cleanup-audit
+  tells you what to look for and remove.

@@ -43,7 +43,13 @@ New to the language? Read [docs/writing-corvid/](docs/writing-corvid/).
 - [Worked example](docs/writing-corvid/05-worked-example.md): a task queue, annotated.
 
 If you're an AI agent writing Corvid, the guide is also packaged as
-a Claude Code skill at [.claude/skills/cxc-authoring/SKILL.md](.claude/skills/cxc-authoring/SKILL.md).
+two Claude Code skills:
+
+- [cxc-authoring](.claude/skills/cxc-authoring/SKILL.md): rules and
+  patterns for writing new `.cxc` code.
+- [cxc-cleanup-audit](.claude/skills/cxc-cleanup-audit/SKILL.md):
+  a checklist walk for auditing an existing `.cxc` file against the
+  25 anti-patterns from the guide.
 
 ## Where things live
 

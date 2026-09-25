@@ -23,6 +23,7 @@ dist/
 !.claude/skills/
 .claude/skills/*
 !.claude/skills/cxc-authoring/
+!.claude/skills/cxc-cleanup-audit/
 .manual.md
 .succession/
 
