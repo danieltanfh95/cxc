@@ -84,9 +84,8 @@ EffectKind and one arm. The scaling asymmetry is the point.
 behaviour kind) and forces one arm per (identity, kind) combination,
 so every new card that behaves adds an arm to every consumer of the
 enum. Effect-as-data separates the axes: the entity holds effect
-values, and arms dispatch on kind. New entities cost data, new
-behaviours cost code, and data typically grows faster than code
-does, which matches how the two axes actually evolve.
+values, and arms dispatch on kind. New entities cost data while new
+behaviours cost code, and data grows faster than code does.
 
 ## Sentinel/default records as atom fields
 
