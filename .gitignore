@@ -17,8 +17,12 @@ dist/
 .cxc-cache/
 
 # Local session state — agent transcripts, scratch notes, in-progress
-# handoffs. Never committed; kept per-clone.
-.claude/
+# handoffs. Never committed; kept per-clone. Public agent-facing skills
+# under `.claude/skills/` are the sole exception (see below).
+.claude/*
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/cxc-authoring/
 .manual.md
 .succession/
 
