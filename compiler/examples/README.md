@@ -115,3 +115,13 @@ compiler-source change skips clang entirely on cache hit. Nuke
 If the program should NOT compile yet (i.e. it stresses a feature the
 lowering doesn't cover), put it under `../../design/examples/` instead
 with a note about what blocks it.
+
+## Non-test examples
+
+These sit outside the stdout-verify test loop because they open a
+window or require external state:
+
+- [cocoa-viewer/](cocoa-viewer/) — Corvid plugin FFI to a Cocoa
+  drawing wrapper, renders a dota2-simulator frame in a native
+  NSWindow. See [cocoa-viewer/README.md](cocoa-viewer/README.md) for
+  the build + run instructions.
