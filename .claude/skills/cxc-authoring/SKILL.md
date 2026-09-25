@@ -19,17 +19,17 @@ common cases.
 - Answering "how do I express X in Corvid" for a specific X.
 
 Do **not** invoke for pure compiler-internals work (Clojure code
-under `compiler/src/`) — that's a separate concern with its own
+under `compiler/src/`). That's a separate concern with its own
 conventions.
 
 ## Reading order for a fresh session
 
 For a first-time reader (agent or human):
 
-1. [docs/writing-corvid/01-your-first-atom.md](../../../docs/writing-corvid/01-your-first-atom.md) — the vocabulary.
-2. [docs/writing-corvid/02-language-tour.md](../../../docs/writing-corvid/02-language-tour.md) — the reference.
-3. [docs/writing-corvid/03-design-patterns.md](../../../docs/writing-corvid/03-design-patterns.md) — architectural patterns to reach for.
-4. [docs/writing-corvid/04-common-mistakes.md](../../../docs/writing-corvid/04-common-mistakes.md) — what to avoid and why.
+1. [docs/writing-corvid/01-your-first-atom.md](../../../docs/writing-corvid/01-your-first-atom.md): the vocabulary.
+2. [docs/writing-corvid/02-language-tour.md](../../../docs/writing-corvid/02-language-tour.md): the reference.
+3. [docs/writing-corvid/03-design-patterns.md](../../../docs/writing-corvid/03-design-patterns.md): architectural patterns to reach for.
+4. [docs/writing-corvid/04-common-mistakes.md](../../../docs/writing-corvid/04-common-mistakes.md): what to avoid and why.
 
 For an experienced author looking for a specific answer, jump
 straight to (2) or (4).
@@ -71,7 +71,7 @@ open the linked doc section.
 
 - `|:` for transition guards, protocol invariants, `requires`/`ensures`. Pattern-match dispatch still uses `when:`.
 - Multiple guarded arms on the same `phase <: msg` are legal. A trailing unguarded arm is the vanilla case.
-- Prefer a fall-through arm to exhaustive-guard listing — additive extension. See [03-design-patterns.md#fall-through-arm-as-extension-point](../../../docs/writing-corvid/03-design-patterns.md).
+- Prefer a fall-through arm to exhaustive-guard listing (additive extension). See [03-design-patterns.md#fall-through-arm-as-extension-point](../../../docs/writing-corvid/03-design-patterns.md).
 
 ### Containers
 
@@ -95,14 +95,14 @@ open the linked doc section.
 
 If you find yourself reaching for one of these, look for the shape it's meant to replace:
 
-- **User-defined operators** — use named methods.
-- **Annotations `@name(args)`** — inferred from body shape; deprecation goes in comments.
-- **Shape variables / generics on user types** — containers monomorphize.
-- **Global mutable state** — mutation lives in atoms.
-- **`if X: Y else: Z` as expression** — use `||: guard : body` chains.
-- **`switch` / `case`** — use transitions + `|:` + variant patterns.
-- **`for x in xs:`** — use `xs.for_each(...)`.
-- **Imperative container mutation** — FP methods only.
+- **User-defined operators**: use named methods.
+- **Annotations `@name(args)`**: inferred from body shape; deprecation goes in comments.
+- **Shape variables / generics on user types**: containers monomorphize.
+- **Global mutable state**: mutation lives in atoms.
+- **`if X: Y else: Z` as expression**: use `||: guard : body` chains.
+- **`switch` / `case`**: use transitions + `|:` + variant patterns.
+- **`for x in xs:`**: use `xs.for_each(...)`.
+- **Imperative container mutation**: FP methods only.
 
 ## Compile-verify discipline
 
@@ -132,5 +132,5 @@ you haven't.
 
 None currently. If you're doing a bulk audit or refactor of an
 existing `.cxc` file, an "cxc-cleanup-audit" skill would sit here
-next to this one — the authoring guide's patterns become the audit's
+next to this one; the authoring guide's patterns become the audit's
 checklist. Not yet built.

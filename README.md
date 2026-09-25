@@ -30,27 +30,27 @@ clojure -M -e "
 "
 ```
 
-Prints `hello, world`. Every `.cxc` under [compiler/examples/](compiler/examples/) is compiled and run by the test suite — start there for what the language currently expresses. [compiler/examples/README.md](compiler/examples/README.md) is the coverage index.
+Prints `hello, world`. Every `.cxc` under [compiler/examples/](compiler/examples/) is compiled and run by the test suite; start there for what the language currently expresses. [compiler/examples/README.md](compiler/examples/README.md) is the coverage index.
 
 ## Writing Corvid
 
 New to the language? Read [docs/writing-corvid/](docs/writing-corvid/).
 
-- [Your first atom](docs/writing-corvid/01-your-first-atom.md) — a counter, end to end.
-- [Language tour](docs/writing-corvid/02-language-tour.md) — syntax quick-reference.
-- [Design patterns](docs/writing-corvid/03-design-patterns.md) — shapes worth reaching for.
-- [Common mistakes](docs/writing-corvid/04-common-mistakes.md) — what to avoid.
-- [Worked example](docs/writing-corvid/05-worked-example.md) — a task queue, annotated.
+- [Your first atom](docs/writing-corvid/01-your-first-atom.md): a counter, end to end.
+- [Language tour](docs/writing-corvid/02-language-tour.md): syntax quick-reference.
+- [Design patterns](docs/writing-corvid/03-design-patterns.md): shapes worth reaching for.
+- [Common mistakes](docs/writing-corvid/04-common-mistakes.md): what to avoid.
+- [Worked example](docs/writing-corvid/05-worked-example.md): a task queue, annotated.
 
 If you're an AI agent writing Corvid, the guide is also packaged as
 a Claude Code skill at [.claude/skills/cxc-authoring/SKILL.md](.claude/skills/cxc-authoring/SKILL.md).
 
 ## Where things live
 
-- [docs/writing-corvid/](docs/writing-corvid/) — authoring guide for humans and agents.
-- [design/spec/spec-cxc-v1.0.md](design/spec/spec-cxc-v1.0.md) — the language spec (normative).
-- [design/PATTERNS.md](design/PATTERNS.md) — onboarding by translation from other languages.
-- [compiler/](compiler/) — the bootstrap compiler in Clojure. Reads `.cxc`, emits `.m`, drives clang.
-- [compiler/resources/prelude/](compiler/resources/prelude/) — the stdlib capabilities (FileSystem, Http, Json, Subprocess, EnvVars, EnvMut, Random, Time, Hash, Console, Args, Clock).
-- [design/examples/](design/examples/) — aspirational programs beyond current compiler coverage.
+- [docs/writing-corvid/](docs/writing-corvid/): authoring guide for humans and agents.
+- [design/spec/spec-cxc-v1.0.md](design/spec/spec-cxc-v1.0.md): the language spec (normative).
+- [design/PATTERNS.md](design/PATTERNS.md): onboarding by translation from other languages.
+- [compiler/](compiler/): the bootstrap compiler in Clojure. Reads `.cxc`, emits `.m`, drives clang.
+- [compiler/resources/prelude/](compiler/resources/prelude/): the stdlib capabilities (FileSystem, Http, Json, Subprocess, EnvVars, EnvMut, Random, Time, Hash, Console, Args, Clock).
+- [design/examples/](design/examples/): aspirational programs beyond current compiler coverage.
 

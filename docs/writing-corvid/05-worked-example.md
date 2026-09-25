@@ -42,7 +42,7 @@ def Worker:
             buffered => buffered.append(t.payload)
             processed => processed + 1
 
-    # Fall-through arm — vanilla case for TaskKind.discard_it and
+    # Fall-through arm: vanilla case for TaskKind.discard_it and
     # any future kind that lands here without its own arm.
     idle <: submit(t: Task) -> idle
         then: processed => processed + 1
@@ -96,7 +96,7 @@ def Task:
     payload: String
 ```
 
-A task is a data value. Not an atom — no phases, no mailbox. It
+A task is a data value. Not an atom: no phases, no mailbox. It
 carries the kind (which routes dispatch) and the payload (which the
 behavior consumes). This is the **effect-as-data** shape: the task
 type is a lightweight envelope, and its `.kind` field is what the
@@ -105,7 +105,7 @@ worker dispatches on.
 Compare to the shape we could have written:
 
 ```
-# NOT what we did — anti-pattern.
+# NOT what we did (anti-pattern).
 def Task:
     do_it: TaskAction
 ```
@@ -151,12 +151,12 @@ processed++.
 
 Three arms match `submit` on different kinds. The compiler tries
 each in source order; the first whose guard is true fires. Fall-through
-(the third arm, unguarded) catches every kind not matched above —
+(the third arm, unguarded) catches every kind not matched above:
 `discard_it` today, any new kind tomorrow.
 
 Note the two `then:` statements on the first arm:
-- `print(t.payload)` — a side effect. Runs during body execution.
-- `processed => processed + 1` — a staged update. Commits at end of body.
+- `print(t.payload)`: a side effect. Runs during body execution.
+- `processed => processed + 1`: a staged update. Commits at end of body.
 
 The `=>` reads pre-image throughout the body. If we wrote:
 
@@ -177,7 +177,7 @@ idle <: flush -> idle
 ```
 
 A separate message on the same source phase. Iterates the buffered
-list via `.for_each` (there's no `for x in xs:` loop — iteration is
+list via `.for_each` (there's no `for x in xs:` loop; iteration is
 method dispatch on the container).
 
 ### Main
@@ -195,7 +195,7 @@ def main:
 
 `main` is itself an atom. `worker: Worker = Worker()` declares a
 sub-atom field, self-constructed in main's init. Each `|>
-worker.submit(...)` is a synchronous send — main blocks on the arm
+worker.submit(...)` is a synchronous send: main blocks on the arm
 completing before continuing.
 
 The final `print(worker.total_processed)` reads worker's observation
@@ -232,20 +232,20 @@ purely.
 
 The verified source is at [task-queue.cxc](task-queue.cxc). Compile
 and run per the pipeline in the main
-[README.md](../../README.md) — just point at
+[README.md](../../README.md). Point at
 `docs/writing-corvid/task-queue.cxc` instead of
 `examples/hello.cxc`. Then modify:
 
-1. Add a new `TaskKind` case — `count_it` — that increments a
+1. Add a new `TaskKind` case (`count_it`) that increments a
    counter but doesn't print or buffer. What arm structure does that
    need? (Answer: a new guarded arm; the fall-through would also
    work but would lump `count_it` in with `discard_it`.)
 2. Move `Task` from a record to an atom (give it phases). What
-   breaks? (Answer: everything — a task-as-atom would need its own
+   breaks? (Answer: everything. A task-as-atom would need its own
    mailbox, and the `submit(t:)` payload type changes semantics from
    "a value we pass" to "a reference to a live actor.")
-3. Add a second Worker. Do the two share `buffered`? (Answer: no —
-   each atom has its own state.)
+3. Add a second Worker. Do the two share `buffered`? (Answer: no.
+   Each atom has its own state.)
 
 These are the kind of shape-questions Corvid is designed to make
 easy to answer. When the shape is right, the modification is small.

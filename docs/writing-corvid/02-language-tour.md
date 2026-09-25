@@ -25,8 +25,8 @@ Three surface forms; only two are legal:
 
 | Form | Meaning | Legal? |
 |---|---|---|
-| `T`  | nullable — may be `nil` | yes |
-| `T!` | non-nil — the compiler enforces | yes |
+| `T`  | nullable, may be `nil` | yes |
+| `T!` | non-nil, the compiler enforces | yes |
 | `T?` | (banned everywhere) | **no** |
 
 Rule: reach for `T!` when the field/parameter must hold a value; use
@@ -65,9 +65,9 @@ The `-> idle` line declares the initial phase. Every atom needs one.
 Named states. An atom is always in exactly one phase. Transitions
 move between phases. Common naming (not enforced but conventional):
 
-- `idle` — passive, waiting for messages
-- `<verb>ing` — actively doing something (`deploying`, `combatting`, `drawing`)
-- `alive` / `dead` — reserved for atoms that model literal entity lifecycle (units that can die). Don't use for passive/active states.
+- `idle`: passive, waiting for messages
+- `<verb>ing`: actively doing something (`deploying`, `combatting`, `drawing`)
+- `alive` / `dead`: reserved for atoms that model literal entity lifecycle (units that can die). Don't use for passive/active states.
 
 An atom can have as many phases as it needs, but a small phase count
 is usually a good sign.
@@ -90,8 +90,8 @@ Read as: while in `running`, when a `fire(shot:)` arrives whose
 
 ### `<:` versus `<|`
 
-- **`<:`** — normal transition. Runs on the atom's mailbox thread.
-- **`<|`** — sync-receive. Same lowering under the single-thread substrate; reserved semantics for the concurrent runtime.
+- **`<:`**: normal transition. Runs on the atom's mailbox thread.
+- **`<|`**: sync-receive. Same lowering under the single-thread substrate; reserved semantics for the concurrent runtime.
 
 For now use `<:` unless you're consciously stress-testing sync-receive shape.
 
@@ -154,11 +154,11 @@ because it visually mirrored `<:` transitions.
 
 ## Sends: `|>` and `:>`
 
-- **`|>`** — sync send. Blocks until the receiver finishes the arm. Cannot loop back to the same atom on the same thread (rejected at runtime).
-- **`:>`** — async send. Enqueues; returns immediately.
-- **`self :> msg`** — the standard self-send. Use this for iteration and for staged multi-message flows.
+- **`|>`**: sync send. Blocks until the receiver finishes the arm. Cannot loop back to the same atom on the same thread (rejected at runtime).
+- **`:>`**: async send. Enqueues; returns immediately.
+- **`self :> msg`**: the standard self-send. Use this for iteration and for staged multi-message flows.
 
-Emit (broadcast) is bare `:> msg(args)` on a body — every subscriber
+Emit (broadcast) is bare `:> msg(args)` on a body. Every subscriber
 receives it. Subscribers register by having an arm on the source's
 message: `running <: source.tick -> running`.
 
@@ -177,7 +177,7 @@ catch-all.
 
 ## Containers
 
-`List of T`, `Map[K, V]`, `Set of T`. FP-only — no imperative
+`List of T`, `Map[K, V]`, `Set of T`. FP-only, no imperative
 mutation. Every mutation returns a new container:
 
 ```
@@ -194,8 +194,8 @@ top :- cards.at(0) ?? _sentinel_card
 ```
 
 Iteration: `xs.for_each(x => print(x))` or the aggregate methods
-(`.count`, `.filter`, `.sort_by`, etc.). No `for x in xs:` loop —
-iteration is method dispatch.
+(`.count`, `.filter`, `.sort_by`, etc.). No `for x in xs:` loop.
+Iteration is method dispatch.
 
 ## Enums
 
@@ -253,7 +253,7 @@ alias content :- fs.read_string(path: p)
 
 ## What Corvid does not have
 
-Not because it's small — because these are deliberately absent:
+Not because it's small. Because these are deliberately absent:
 
 - **User-defined operators.** `+`, `[]`, `==` on user types are compiler-blessed only. Use named methods: `.concat(other)`, `.at(idx)`, `.equals(other)`.
 - **Annotations / decorators.** No `@name(args)` grammar. Kind information is inferred from body shape; deprecation goes in comments.

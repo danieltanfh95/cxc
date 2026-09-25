@@ -14,9 +14,9 @@ hold, who produces those fields, who consumes them, what does each
 consumer read? If you can't answer, the shape isn't ready to write
 code against.
 
-**How this cashes out in Corvid.** Records first, then observations,
+**How this plays out in Corvid.** Records first, then observations,
 then transitions. If a transition body reaches for a value that
-isn't on a record yet, stop and put it there — don't compute it
+isn't on a record yet, stop and put it there. Don't compute it
 locally each time.
 
 ## Effect-as-data over enum-of-behaviours
@@ -80,8 +80,8 @@ running <: play(card: Card) -> running
 Each new card is a data row. Each new *shape of effect* is one new
 EffectKind + one arm. The scaling asymmetry is the point.
 
-**Why.** Enum-of-behaviours conflates two axes — *entity identity*
-and *behaviour kind* — and forces one arm per (identity, kind)
+**Why.** Enum-of-behaviours conflates two axes (*entity identity*
+and *behaviour kind*) and forces one arm per (identity, kind)
 combination. Effect-as-data separates them: entity holds effect
 values; arms dispatch on kind. New entities cost data; new behaviours
 cost code. This matches the shape of how the two typically evolve.
@@ -109,8 +109,8 @@ Every downstream reference is `_no_effect` or `_sentinel_card`. The
 default lives in one place; changing it changes every use.
 
 **Why.** Inline default records duplicate a piece of design intent
-across the file. When the default changes — a new field, a new
-default value, a rename — the churn touches every use. A hoisted
+across the file. When the default changes (a new field, a new
+default value, a rename) the churn touches every use. A hoisted
 field consolidates the intent, and the compiler's type checker keeps
 the references honest.
 
@@ -120,8 +120,8 @@ the references honest.
 EffectKind.X` for specific kinds. When a new kind lands, you have to
 find every place that dispatches on `.kind` and add a new arm.
 
-**Pattern.** Terminate the dispatch with an unguarded arm — the
-vanilla case:
+**Pattern.** Terminate the dispatch with an unguarded arm: the
+vanilla case.
 
 ```
 idle <: place_hero(card: Card, team: Int!) -> idle
@@ -150,7 +150,7 @@ the consumer means kind additions don't ripple.
 ## Format at the boundary
 
 **Problem shape.** You're storing `tower_hp_display: String` or
-`unit_name_short: String` — precomputed presentation strings — on a
+`unit_name_short: String` (precomputed presentation strings) on a
 record or atom.
 
 **Pattern.** Keep the data in canonical form. Format at the print or
@@ -160,7 +160,7 @@ serialize boundary via observations:
 def Lane:
     tower_hp: Int = 20
 
-    # Presentational — reads canonical field, formats on demand.
+    # Presentational: reads canonical field, formats on demand.
     tower_hp_str :- tower_hp.to_string()  # or a richer formatter
 ```
 
@@ -170,7 +170,7 @@ Callers reach for `.tower_hp_str` when they want the string form;
 **Why.** Precomputed presentation is redundant with the canonical
 field and rots on schedule mismatch (you update `tower_hp` but forget
 `tower_hp_display`). Observations compute on read, so they can't
-drift. The tradeoff — recomputing on every read — is negligible
+drift. The tradeoff (recomputing on every read) is negligible
 compared to the correctness win.
 
 ## Split a record when a field is dead in a slot
@@ -202,7 +202,7 @@ Each slot's type carries exactly the fields that are meaningful at
 that slot.
 
 **Why.** A field that's always the default is a lie in the type
-signature — it suggests optionality that doesn't exist. Splitting
+signature: it suggests optionality that doesn't exist. Splitting
 narrows the shape to what's really there. If two slots then need
 similar fields, extract a shared record and compose.
 
@@ -246,8 +246,8 @@ passive/active flags dilutes the signal.
 
 ## Parametric state via sub-atoms, not N parallel fields
 
-**Problem shape.** You want state parameterised by a runtime index —
-e.g., "one counter per lane" for three lanes. You're tempted to
+**Problem shape.** You want state parameterised by a runtime index,
+e.g. "one counter per lane" for three lanes. You're tempted to
 declare `count_0: Int`, `count_1: Int`, `count_2: Int`.
 
 **Pattern.** Model it as a sub-atom, not parallel fields:
@@ -264,7 +264,7 @@ def Board:
         then: |> lanes.at(lane).bump()
 ```
 
-**Why.** `=>` staging targets a compile-time field name — you can't
+**Why.** `=>` staging targets a compile-time field name. You can't
 `counts[i] => ...` at runtime. If you tried to parameterise by index,
 you'd end up with a switch on `lane` and one arm per index. A
 sub-atom sidesteps this by moving the mutation into the sub-atom's
@@ -301,7 +301,7 @@ keeps the flow inside the substrate's guarantees.
 ## Envelope over sentinel for missing / optional
 
 **Problem shape.** You need to encode "value present or absent" and
-you're reaching for a sentinel — a magic value (`-1`, empty string,
+you're reaching for a sentinel: a magic value (`-1`, empty string,
 `NaN`) that means "absent."
 
 **Pattern.** Use a wrapper (record with a `present: Bool` field) or

@@ -6,9 +6,9 @@ Failure modes worth naming, each with the shape that catches them.
 
 `T`, `T!`, and (banned) `T?`.
 
-- `T` — nullable. May be `nil`. Reads may need `?? fallback`.
-- `T!` — non-nil. The compiler enforces. Passing `nil` is a compile error.
-- `T?` — **not a legal form.** Never write it.
+- `T`: nullable. May be `nil`. Reads may need `?? fallback`.
+- `T!`: non-nil. The compiler enforces. Passing `nil` is a compile error.
+- `T?`: **not a legal form.** Never write it.
 
 The trap: reading `T` (nullable) as if it were `T!`. If a field is
 nullable and you dereference `.field` on it, that read is guarded by
@@ -21,7 +21,7 @@ Records lower to C struct typedefs, in file order. A record that
 references another record must come *after* the record it references:
 
 ```
-# Wrong — Card sees Effect before Effect is defined.
+# Wrong: Card sees Effect before Effect is defined.
 def Card:
     on_deploy: Effect!
 
@@ -31,7 +31,7 @@ def Effect:
 ```
 
 ```
-# Right — Effect above Card.
+# Right: Effect above Card.
 def Effect:
     kind: EffectKind
     ...
@@ -156,15 +156,15 @@ types differ (say, one emits `payload: Card`, another emits
 `payload: Card?`), subscribers can't be typed consistently. The
 compiler will reject the emit-site with a type mismatch. Fix by
 making the payload uniformly nullable or uniformly non-nil across
-all arms — typically by using a sentinel record instead of `nil` (see
+all arms, typically by using a sentinel record instead of `nil` (see
 the sentinel-field pattern in [03-design-patterns.md](03-design-patterns.md#sentineldefault-records-as-atom-fields)).
 
 ## Wildcard on-enter doesn't fire on self-loops
 
 A wildcard arm `-> phase then: body` fires on *phase change*, not on
 self-loops within the same phase. If an arm does `phase <: msg ->
-phase`, the wildcard doesn't re-fire. This is deliberate — prevents
-recursion — but occasionally surprises when you want the wildcard's
+phase`, the wildcard doesn't re-fire. This is deliberate (prevents
+recursion) but occasionally surprises when you want the wildcard's
 side effect after every message.
 
 Fix: move the side effect into the specific arm's `then:` body.
@@ -173,12 +173,12 @@ Fix: move the side effect into the specific arm's `then:` body.
 
 `native_fn() ?? default` is safe: the compiler recognises the LHS is
 non-nullable and compiles the fallback as dead code. `??` is a
-non-error when the LHS can't be nil — but you should still audit for
+non-error when the LHS can't be nil, but you should still audit for
 places where you *thought* the LHS was nullable and wasn't.
 
 ## Subprocess env, Random, and other capabilities
 
-- `subprocess.run(cmd, env: .empty)` (or `.inherit` / `.merge({...})`). There is no default env — you must specify.
+- `subprocess.run(cmd, env: .empty)` (or `.inherit` / `.merge({...})`). There is no default env; you must specify.
 - `Random` is CSPRNG-only. For fast non-crypto RNG use `SeededPrng(seed:)` which does *not* conform to `Random`.
 - `EnvVars` (read-only, total) and `EnvMut` (write, raises `EnvError`) are separate capabilities. Don't pass `EnvMut` to consumers that only need to read.
 
