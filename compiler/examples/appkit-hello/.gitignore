@@ -1,0 +1,4 @@
+libappkit.dylib
+libappkit.o
+harness_smoke
+harness_smoke.dSYM/
