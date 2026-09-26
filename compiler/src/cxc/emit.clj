@@ -2040,19 +2040,33 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- emit-main
-  "C main() function. Two shapes:
-     - No dispatch loop: run body inside @autoreleasepool, return 0.
-       Fits programs with no message-triggered transitions (their work
-       runs synchronously during init and completes before return).
-     - Dispatch loop: run bootstrap (Main atom construction) inside
-       @autoreleasepool, then call dispatch_main() which never returns.
-       cxc_shutdown() from a `-> end` transition on the main atom is
-       the termination path (design §19)."
-  [main-node needs-dispatch-loop?]
+  "C main() function. Three shapes:
+     - `:dispatch-main` with no async sends: run body inside
+       @autoreleasepool, return 0. Fits programs with no message-
+       triggered transitions (their work runs synchronously during
+       init and completes before return).
+     - `:dispatch-main` with async sends: run bootstrap (Main atom
+       construction) inside @autoreleasepool, then call
+       dispatch_main() which never returns. cxc_shutdown() from a
+       `-> end` transition on the main atom is the termination path
+       (design §19).
+     - `:main-runloop`: run bootstrap inside @autoreleasepool, then
+       call `[NSApp run]` which never returns. AppKit owns the main
+       thread's CFRunLoop; atoms use dispatch_async on main to touch
+       AppKit. `[NSApp terminate:]` from event handlers or window
+       delegate is the termination path. Prototype A of the runtime-
+       shape landing (docs/design/runtime-shape.md, 2026-09-26)."
+  [main-node needs-dispatch-loop? runtime-shape]
   (let [body (emit-body 4 (:body main-node))
-        dispatch-suffix (if needs-dispatch-loop?
-                          "\n    dispatch_main();\n    return 0;   /* unreachable */"
-                          "")]
+        dispatch-suffix (case runtime-shape
+                          :main-runloop
+                          (str "\n    [NSApplication sharedApplication];"
+                               "\n    [NSApp run];"
+                               "\n    return 0;   /* unreachable */")
+                          ;; :dispatch-main (default)
+                          (if needs-dispatch-loop?
+                            "\n    dispatch_main();\n    return 0;   /* unreachable */"
+                            ""))]
     (if (:autorelease? main-node)
       (str "int main(int argc, char *argv[]) {\n"
            "    @autoreleasepool {\n"
@@ -2727,7 +2741,8 @@
         ;; isn't released before the queue starts draining.
         main-static (when (some #(= "CxcMain" (:name %)) (:classes prog))
                       "static CxcMain *cxc_main_atom = nil;")
-        main        (emit-main (:main prog) (:needs-dispatch-loop? prog))]
+        main        (emit-main (:main prog) (:needs-dispatch-loop? prog)
+                                (:runtime-shape prog :dispatch-main))]
     (str/join "\n\n"
               (remove str/blank? [includes
                                   cxc-nil-sentinels
