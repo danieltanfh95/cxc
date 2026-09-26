@@ -2,3 +2,7 @@ libappkit.dylib
 libappkit.o
 harness_smoke
 harness_smoke.dSYM/
+mechanism_B
+mechanism_B.dSYM/
+mechanism_C
+mechanism_C.dSYM/
