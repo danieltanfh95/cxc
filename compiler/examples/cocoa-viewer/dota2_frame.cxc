@@ -1,59 +1,56 @@
-# dota2_frame.cxc — renders one dota2-simulator frame via a Cocoa
-# plugin. Demonstrates the plugin FFI pipeline against a native
-# macOS drawing library.
+# dota2_frame.cxc — one static dota2-simulator frame rendered offscreen
+# to a PNG via the cocoa_viewer plugin. Useful as a minimal FFI demo:
+# no atoms beyond `main`, no sim, just a manifest + plugin.get calls.
 #
-# Build:
-#   1. clang -dynamiclib libcocoa_viewer.m -framework Cocoa -o libcocoa_viewer.dylib
-#   2. (from compiler/) compile this file with CV_DYLIB_PATH in the
-#      linker path.
+# Build:  ./build.sh dota2_frame.cxc
+# Run:    /tmp/cocoa-viewer-out/dota2_frame
+# Result: /tmp/dota2_frame.png
+#
+# For the live sim view, see dota2_live.cxc.
 
 def plugin:
     name:    String!       = "cocoa_viewer"
-    version: SemVer!       = SemVer(0, 1, 0)
+    version: SemVer!       = SemVer(0, 2, 0)
     compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0),
                                           max: SemVer(2, 0, 0))
 
     foreign "cocoa_viewer":
-        symbol "cv_open"    -> (Int32, Int32, CString) -> Int32
-        symbol "cv_clear"   -> (Int32, Int32, Int32) -> Int32
-        symbol "cv_rect"    -> (Int32, Int32, Int32, Int32, Int32, Int32, Int32) -> Int32
-        symbol "cv_line"    -> (Int32, Int32, Int32, Int32, Int32, Int32, Int32) -> Int32
-        symbol "cv_text"    -> (Int32, Int32, CString, Int32, Int32, Int32, Int32) -> Int32
-        symbol "cv_present" -> () -> Int32
-        symbol "cv_run"     -> () -> Int32
+        symbol "cv_open_offscreen" -> (Int32, Int32) -> Int32
+        symbol "cv_clear"          -> (Int32, Int32, Int32) -> Int32
+        symbol "cv_rect"           -> (Int32, Int32, Int32, Int32, Int32, Int32, Int32) -> Int32
+        symbol "cv_text"           -> (Int32, Int32, CString, Int32, Int32, Int32, Int32) -> Int32
+        symbol "cv_snapshot"       -> (CString) -> Int32
 
 def main:
     use plugin: Plugin
 
     -> running
         then:
-            plugin.get("cv_open")(720, 480, "dota2 — turn 3")
+            alias _op   :- plugin.get("cv_open_offscreen")(720, 480)
+            alias _clr  :- plugin.get("cv_clear")(24, 26, 32)
 
-            plugin.get("cv_clear")(24, 26, 32)
+            alias _t0   :- plugin.get("cv_text")(20, 20, "turn 3", 22, 220, 220, 220)
+            alias _t1   :- plugin.get("cv_text")(20, 52, "you: 20 hp    hand: 4    deck: 12", 14, 180, 180, 180)
 
-            plugin.get("cv_text")(20, 20, "turn 3", 22, 220, 220, 220)
-            plugin.get("cv_text")(20, 52, "you: 20 hp    hand: 4    deck: 12", 14, 180, 180, 180)
+            alias _r0   :- plugin.get("cv_rect")(20, 90, 680, 100, 40, 44, 56)
+            alias _l0h  :- plugin.get("cv_text")(28, 96, "lane 1  tower 18", 12, 200, 200, 200)
+            alias _u01  :- plugin.get("cv_rect")(28, 116, 60, 60, 90, 130, 200)
+            alias _u01n :- plugin.get("cv_text")(34, 138, "axe 6/6", 10, 240, 240, 240)
+            alias _u02  :- plugin.get("cv_rect")(96, 116, 60, 60, 90, 130, 200)
+            alias _u02n :- plugin.get("cv_text")(100, 138, "cm 4/4", 10, 240, 240, 240)
+            alias _u03  :- plugin.get("cv_rect")(620, 116, 60, 60, 200, 90, 90)
+            alias _u03n :- plugin.get("cv_text")(626, 138, "sk 5/5", 10, 240, 240, 240)
 
-            plugin.get("cv_rect")(20, 90, 680, 100, 40, 44, 56)
-            plugin.get("cv_text")(28, 96, "lane 1  tower 18", 12, 200, 200, 200)
-            plugin.get("cv_rect")(28, 116, 60, 60, 90, 130, 200)
-            plugin.get("cv_text")(34, 138, "axe 6/6", 10, 240, 240, 240)
-            plugin.get("cv_rect")(96, 116, 60, 60, 90, 130, 200)
-            plugin.get("cv_text")(100, 138, "cm 4/4", 10, 240, 240, 240)
-            plugin.get("cv_rect")(620, 116, 60, 60, 200, 90, 90)
-            plugin.get("cv_text")(626, 138, "sk 5/5", 10, 240, 240, 240)
+            alias _r1   :- plugin.get("cv_rect")(20, 210, 680, 100, 40, 44, 56)
+            alias _l1h  :- plugin.get("cv_text")(28, 216, "lane 2  tower 20", 12, 200, 200, 200)
+            alias _u11  :- plugin.get("cv_rect")(28, 236, 60, 60, 90, 130, 200)
+            alias _u11n :- plugin.get("cv_text")(34, 258, "cm 4/4", 10, 240, 240, 240)
+            alias _u12  :- plugin.get("cv_rect")(620, 236, 60, 60, 200, 90, 90)
+            alias _u12n :- plugin.get("cv_text")(626, 258, "wr 3/3", 10, 240, 240, 240)
 
-            plugin.get("cv_rect")(20, 210, 680, 100, 40, 44, 56)
-            plugin.get("cv_text")(28, 216, "lane 2  tower 20", 12, 200, 200, 200)
-            plugin.get("cv_rect")(28, 236, 60, 60, 90, 130, 200)
-            plugin.get("cv_text")(34, 258, "cm 4/4", 10, 240, 240, 240)
-            plugin.get("cv_rect")(620, 236, 60, 60, 200, 90, 90)
-            plugin.get("cv_text")(626, 258, "wr 3/3", 10, 240, 240, 240)
+            alias _r2   :- plugin.get("cv_rect")(20, 330, 680, 100, 40, 44, 56)
+            alias _l2h  :- plugin.get("cv_text")(28, 336, "lane 3  tower 12", 12, 200, 200, 200)
+            alias _u21  :- plugin.get("cv_rect")(620, 356, 60, 60, 200, 90, 90)
+            alias _u21n :- plugin.get("cv_text")(626, 378, "ph 7/7", 10, 240, 240, 240)
 
-            plugin.get("cv_rect")(20, 330, 680, 100, 40, 44, 56)
-            plugin.get("cv_text")(28, 336, "lane 3  tower 12", 12, 200, 200, 200)
-            plugin.get("cv_rect")(620, 356, 60, 60, 200, 90, 90)
-            plugin.get("cv_text")(626, 378, "ph 7/7", 10, 240, 240, 240)
-
-            plugin.get("cv_present")()
-            plugin.get("cv_run")()
+            alias _snap :- plugin.get("cv_snapshot")("/tmp/dota2_frame.png")

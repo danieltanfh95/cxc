@@ -1,28 +1,46 @@
-// libcocoa_viewer.m — minimal Cocoa wrapper for Corvid FFI drawing.
+// libcocoa_viewer.m — snapshot-only Cocoa wrapper for Corvid FFI drawing.
 //
 // Compile:
 //   clang -dynamiclib libcocoa_viewer.m -framework Cocoa -o libcocoa_viewer.dylib
 //
 // FFI surface (C-callable):
-//   void cv_open(int w, int h, const char* title);
+//   void cv_open_offscreen(int w, int h);
 //   void cv_clear(int r, int g, int b);
 //   void cv_rect(int x, int y, int w, int h, int r, int g, int b);
 //   void cv_text(int x, int y, const char* s, int size, int r, int g, int b);
 //   void cv_line(int x1, int y1, int x2, int y2, int r, int g, int b);
-//   void cv_present(void);
-//   void cv_run(void);
+//   int  cv_snapshot(const char* path);
 //
-// Coordinates: top-left origin (Cocoa native is bottom-left; the view
-// flips its coord space so callers can pass screen-natural values).
-// Colors: 0-255 per channel.
+// Coordinates: top-left origin. Colors: 0-255 per channel.
+//
+// Note on windowed modes: an earlier iteration exposed cv_open /
+// cv_present / cv_next_key / cv_run so a Corvid sim could drive a
+// live NSWindow. That path is not workable in-process with the
+// current Corvid runtime. Corvid's generated `main()` calls
+// `dispatch_main()` which pumps the main queue but never runs a
+// CFRunLoop, and its SINGLE_MAIN_QUEUE runtime routes atom sync
+// sends inline on the caller's thread — typically a libdispatch
+// worker, not the main thread. Every hop back to main fails:
+//   • inline AppKit: NSInternalInconsistencyException (AppKit checks
+//     the running thread, not queue ownership).
+//   • dispatch_sync(main_queue): libdispatch traps because we
+//     transitively own main queue via the target chain.
+//   • dispatch_async + semaphore: deadlocks — main queue can't drain
+//     while a caller-chain block is still executing.
+//   • performSelectorOnMainThread: NSDestinationInvalidException
+//     because main thread has no NSRunLoop.
+// The dylib is therefore snapshot-only: draw ops accumulate in
+// memory and cv_snapshot renders them offscreen to a PNG. The
+// `watch` shell wrapper launches Preview.app on the frames dir —
+// Preview supports arrow-key stepping between images.
 
 #import <Cocoa/Cocoa.h>
 
 typedef enum {
     OP_CLEAR = 0,
-    OP_RECT = 1,
-    OP_TEXT = 2,
-    OP_LINE = 3,
+    OP_RECT  = 1,
+    OP_TEXT  = 2,
+    OP_LINE  = 3,
 } DrawOpKind;
 
 @interface DrawOp : NSObject {
@@ -37,24 +55,18 @@ typedef enum {
 @implementation DrawOp
 @end
 
-@interface CanvasView : NSView
-@property (nonatomic, strong) NSMutableArray<DrawOp*>* ops;
-@end
+static int g_width  = 720;
+static int g_height = 480;
+static NSMutableArray<DrawOp*>* g_pending = nil;
 
-@implementation CanvasView
-
-- (BOOL)isFlipped { return YES; }
-
-- (instancetype)initWithFrame:(NSRect)frame {
-    if ((self = [super initWithFrame:frame])) {
-        _ops = [NSMutableArray new];
-    }
-    return self;
+static void ensure_pending(void) {
+    if (!g_pending) g_pending = [NSMutableArray new];
 }
 
-- (void)drawRect:(NSRect)dirtyRect {
-    NSGraphicsContext* ctx = [NSGraphicsContext currentContext];
-    for (DrawOp* op in _ops) {
+// Paints a stream of DrawOp's into the current NSGraphicsContext.
+// Called from CanvasView's drawRect via cacheDisplayInRect.
+static void paint_ops(NSArray<DrawOp*>* ops, NSRect bounds) {
+    for (DrawOp* op in ops) {
         NSColor* color = [NSColor colorWithSRGBRed:op->r/255.0
                                             green:op->g/255.0
                                              blue:op->b/255.0
@@ -62,7 +74,7 @@ typedef enum {
         switch (op->kind) {
             case OP_CLEAR: {
                 [color setFill];
-                NSRectFill(self.bounds);
+                NSRectFill(bounds);
                 break;
             }
             case OP_RECT: {
@@ -90,48 +102,37 @@ typedef enum {
             }
         }
     }
-    (void)ctx;
 }
 
+// A flipped-coordinate view that just replays draw ops. Only used as
+// the target of cacheDisplayInRect for snapshot rendering — never
+// attached to a live window.
+@interface CanvasView : NSView
+@property (nonatomic, strong) NSMutableArray<DrawOp*>* ops;
 @end
 
-static NSApplication* g_app = nil;
-static NSWindow* g_window = nil;
-static CanvasView* g_view = nil;
-static NSMutableArray<DrawOp*>* g_pending = nil;
-
-static void ensure_app(void) {
-    if (g_app) return;
-    g_app = [NSApplication sharedApplication];
-    [g_app setActivationPolicy:NSApplicationActivationPolicyRegular];
-    g_pending = [NSMutableArray new];
-}
-
-void cv_open(int w, int h, const char* title) {
-    @autoreleasepool {
-        ensure_app();
-        NSRect frame = NSMakeRect(100, 100, w, h);
-        NSUInteger style = NSWindowStyleMaskTitled
-                         | NSWindowStyleMaskClosable
-                         | NSWindowStyleMaskMiniaturizable
-                         | NSWindowStyleMaskResizable;
-        g_window = [[NSWindow alloc] initWithContentRect:frame
-                                               styleMask:style
-                                                 backing:NSBackingStoreBuffered
-                                                   defer:NO];
-        NSString* nsTitle = title
-            ? [NSString stringWithUTF8String:title]
-            : @"Corvid Cocoa Viewer";
-        [g_window setTitle:nsTitle];
-        g_view = [[CanvasView alloc] initWithFrame:NSMakeRect(0, 0, w, h)];
-        [g_window setContentView:g_view];
-        [g_window makeKeyAndOrderFront:nil];
-        [g_app activateIgnoringOtherApps:YES];
+@implementation CanvasView
+- (BOOL)isFlipped { return YES; }
+- (instancetype)initWithFrame:(NSRect)frame {
+    if ((self = [super initWithFrame:frame])) {
+        _ops = [NSMutableArray new];
     }
+    return self;
+}
+- (void)drawRect:(NSRect)dirtyRect {
+    paint_ops(_ops, self.bounds);
+}
+@end
+
+// Remembers dimensions for cv_snapshot without opening a window.
+// Headless — no NSApp, no CFRunLoop.
+void cv_open_offscreen(int w, int h) {
+    g_width = w; g_height = h;
+    ensure_pending();
 }
 
 void cv_clear(int r, int g, int b) {
-    ensure_app();
+    ensure_pending();
     [g_pending removeAllObjects];
     DrawOp* op = [DrawOp new];
     op->kind = OP_CLEAR;
@@ -140,7 +141,7 @@ void cv_clear(int r, int g, int b) {
 }
 
 void cv_rect(int x, int y, int w, int h, int r, int g, int b) {
-    ensure_app();
+    ensure_pending();
     DrawOp* op = [DrawOp new];
     op->kind = OP_RECT;
     op->x = x; op->y = y; op->w = w; op->h = h;
@@ -149,7 +150,7 @@ void cv_rect(int x, int y, int w, int h, int r, int g, int b) {
 }
 
 void cv_line(int x1, int y1, int x2, int y2, int r, int g, int b) {
-    ensure_app();
+    ensure_pending();
     DrawOp* op = [DrawOp new];
     op->kind = OP_LINE;
     op->x = x1; op->y = y1;
@@ -159,7 +160,7 @@ void cv_line(int x1, int y1, int x2, int y2, int r, int g, int b) {
 }
 
 void cv_text(int x, int y, const char* s, int size, int r, int g, int b) {
-    ensure_app();
+    ensure_pending();
     DrawOp* op = [DrawOp new];
     op->kind = OP_TEXT;
     op->x = x; op->y = y;
@@ -169,21 +170,24 @@ void cv_text(int x, int y, const char* s, int size, int r, int g, int b) {
     [g_pending addObject:op];
 }
 
-void cv_present(void) {
-    if (!g_view) return;
-    g_view.ops = [g_pending mutableCopy];
-    [g_view setNeedsDisplay:YES];
-    NSEvent* ev;
-    while ((ev = [g_app nextEventMatchingMask:NSEventMaskAny
-                                    untilDate:[NSDate distantPast]
-                                       inMode:NSDefaultRunLoopMode
-                                      dequeue:YES])) {
-        [g_app sendEvent:ev];
+// Renders pending ops to a top-left-origin PNG at `path`. Reuses a
+// fresh CanvasView (isFlipped=YES) so text baselines match the
+// bottom-left NSBitmapImageRep native orientation — a raw CTM flip
+// would invert text.
+int cv_snapshot(const char* path) {
+    if (!path) return 0;
+    ensure_pending();
+    @autoreleasepool {
+        NSRect frame = NSMakeRect(0, 0, g_width, g_height);
+        CanvasView* view = [[CanvasView alloc] initWithFrame:frame];
+        view.ops = [g_pending mutableCopy];
+        NSBitmapImageRep* rep =
+            [view bitmapImageRepForCachingDisplayInRect:frame];
+        [view cacheDisplayInRect:frame toBitmapImageRep:rep];
+        NSData* png = [rep representationUsingType:NSBitmapImageFileTypePNG
+                                        properties:@{}];
+        NSString* nsPath = [NSString stringWithUTF8String:path];
+        BOOL ok = [png writeToFile:nsPath atomically:YES];
+        return ok ? 1 : 0;
     }
-    [g_view displayIfNeeded];
-}
-
-void cv_run(void) {
-    if (!g_app) return;
-    [g_app run];
 }

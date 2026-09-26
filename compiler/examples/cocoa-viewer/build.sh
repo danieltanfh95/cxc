@@ -26,6 +26,12 @@ clang -dynamiclib \
     -framework Cocoa \
     -o "$HERE/libcocoa_viewer.dylib"
 
+echo "==> building viewerd"
+clang -fobjc-arc \
+    "$HERE/viewerd.m" \
+    -framework Cocoa \
+    -o "$HERE/viewerd"
+
 echo "==> compiling Corvid → Objective-C"
 mkdir -p "$OUT_DIR"
 cd "$COMPILER_DIR"
