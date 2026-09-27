@@ -445,6 +445,20 @@
       (if (and prec (>= prec min-prec) (binary-glyph? tokens p))
         (let [op v
               rhs-pos (inc p)
+              ;; 2026-09-27 — targeted diagnostic when a binary op sits
+              ;; at end of line WITHOUT paren-wrap. This is the most
+              ;; common way agents write multi-line arithmetic (Python
+              ;; style, `+` trailing) but Corvid only continues lines
+              ;; inside brackets. Point at the trailing operator so the
+              ;; fix (wrap the whole expression in parens) is obvious.
+              _ (when (at? tokens rhs-pos :newline)
+                  (fail! tokens p
+                         (str "binary operator `" op "` at end of line "
+                              "without a right-hand operand. Corvid does"
+                              " NOT continue expressions across newlines"
+                              " outside brackets. Wrap the whole"
+                              " expression in parens to continue on the"
+                              " next line: `(a\n    + b\n    + c)`.")))
               ;; A3 (2026-09-03) — `is` may take a variant-pattern RHS:
               ;;   x is .case[(let f)]  or  x is Enum.case[(let f)]
               ;; Bindings scope to the enclosing arm body (transition-
