@@ -1357,11 +1357,22 @@
     ;; concrete-over-* precedence.
     (let [phase-const (:source-phase-const node)
           phase-eq    (when phase-const (str "_phase == " phase-const))
+          ;; 2026-09-27 — arm-head guards whose inferred type is
+          ;; Optional<Bool> (e.g. `|: x < limit` on nullable numeric
+          ;; fields) wrap as `.present && .value` so a nil operand
+          ;; degrades to `false` in guard position rather than leaking
+          ;; a _Cxc_Optional_Bool into a BOOL context.
+          arm-guard-c (when (:guard node)
+                        (if (:guard-cond-envelope? node)
+                          (str "({ _Cxc_Optional_Bool __cxc_ag = ("
+                               (emit-expr (:guard node))
+                               "); __cxc_ag.present && __cxc_ag.value; })")
+                          (emit-expr (:guard node))))
           guard       (cond
-                        (and phase-eq (:guard node))
-                        (str "(" phase-eq ") && (" (emit-expr (:guard node)) ")")
+                        (and phase-eq arm-guard-c)
+                        (str "(" phase-eq ") && (" arm-guard-c ")")
                         phase-eq                phase-eq
-                        (:guard node)           (emit-expr (:guard node))
+                        arm-guard-c             arm-guard-c
                         :else                   "1")
           body        (str/join "\n" (map emit-stmt (:body node)))
           arm-idx     (or (:arm-index node) 0)

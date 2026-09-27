@@ -11,7 +11,8 @@
    Fired at the sites that own a params/fields collection: observable
    entries, handler-decl entries, record-env builds, and ctor-param
    merging in `lower-def-atom`."
-  (:require [cxc.diagnostics :refer [fail-user!]]))
+  (:require [cxc.diagnostics :refer [fail-user!]]
+            [clojure.string :as str]))
 
 (defn validate-defaults-after-required!
   "Spec §3.8.5 rule 3: in any parameter list, all defaulted params must
@@ -27,10 +28,20 @@
     (when ps
       (let [p (first ps)]
         (if (and seen-default? (nil? (:default p)))
-          (fail-user! (str "required param `" (:name p) "` follows a defaulted "
-                           "param on " site " — spec §3.8.5 requires "
-                           "defaulted params to come last")
-                      {:site site :param (:name p)})
+          (let [defaulted (filter :default params)
+                required  (filter #(nil? (:default %)) params)
+                order-hint (str "Reorder: put all required params ("
+                                (str/join ", "
+                                                     (map #(str "`" (:name %) "`") required))
+                                ") FIRST, then defaulted params ("
+                                (str/join ", "
+                                                     (map #(str "`" (:name %) "`") defaulted))
+                                ").")]
+            (fail-user! (str "required param `" (:name p) "` follows a defaulted "
+                             "param on " site " — spec §3.8.5 requires "
+                             "defaulted params to come last. " order-hint)
+                        (merge {:site site :param (:name p)}
+                               (select-keys p [:line :col]))))
           (recur (or seen-default? (some? (:default p)))
                  (next ps)))))))
 

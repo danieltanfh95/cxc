@@ -3,9 +3,10 @@ def main:
 
     -> running
         then:
-            s => s.insert("alpha").insert("beta").insert("alpha").without("beta")
-            print(s.count)
-            print(s.contains("alpha"))
-            print(s.contains("beta"))
+            alias s2 :- s.insert("alpha").insert("beta").insert("alpha").without("beta")
+            s => s2
+            print(s2.count)
+            print(s2.contains("alpha"))
+            print(s2.contains("beta"))
 
     -> end

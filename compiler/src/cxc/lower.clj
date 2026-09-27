@@ -2584,9 +2584,15 @@
                   {:name          method-name
                    :params        (into [{:name "self" :cxc-ty (:record target-ty)
                                           :is-self? true}]
+                                        ;; 2026-09-27 — propagate `:nonnil?` on
+                                        ;; parametric-record-obs params so `T!`
+                                        ;; args at the call site skip the Optional
+                                        ;; envelope wrap (mirrors the atom-obs
+                                        ;; branch below).
                                         (mapv (fn [p]
-                                                {:name  (:name p)
-                                                 :cxc-ty (param-type-name (:type p))
+                                                {:name    (:name p)
+                                                 :cxc-ty  (param-type-name (:type p))
+                                                 :nonnil? (= :type-nonnil (:node (:type p)))
                                                  :default (:default p)})
                                               (:params o)))
                    :cxc-return-ty ret-name
@@ -5912,11 +5918,37 @@
                               (let [[decl ctx'] (lower-alias-stmt node ctx-acc)]
                                 [(conj decls decl) ctx']))
                             [[] c]
-                            head-alias)]
+                            head-alias)
+                    ;; 2026-09-27 — pre-register `:let-stmt` typed locals
+                    ;; into ctx BEFORE lowering `:updates`, so a
+                    ;; `field => <expr-using-let>` can infer the local's
+                    ;; type. Fixes muse-v3-1 `lowering not yet implemented:
+                    ;; type-of identifier`. Only pre-registers when the
+                    ;; let carries an explicit `: T` annotation.
+                    c-alias
+                    (reduce (fn [ctx-acc node]
+                              (if (and (= :let-stmt (:node node))
+                                       (:type node)
+                                       (:name node))
+                                (update ctx-acc :locals assoc (:name node)
+                                        (cxc-type->type-kw
+                                         (base-type-name (:type node))
+                                         (:record-env ctx-acc)
+                                         (:atom-env ctx-acc)
+                                         (:enum-env ctx-acc)
+                                         (:type node)))
+                                ctx-acc))
+                            c-alias
+                            rest-stmts)]
                 [(-> out
                      (into alias-decls)
-                     (into (mapcat #(lower-then-update % c-alias) (:updates clause)))
-                     (into (lower-body-stmts rest-stmts c-alias))) c])
+                     ;; Lower stmts BEFORE updates: `let`-declared
+                     ;; locals are then in scope for updates referencing
+                     ;; them, and stmt side effects sequence before the
+                     ;; `__cxc_next` commit block. Updates still commit
+                     ;; at end via `__cxc_next` staging.
+                     (into (lower-body-stmts rest-stmts c-alias))
+                     (into (mapcat #(lower-then-update % c-alias) (:updates clause)))) c])
 
               ;; `:let-clause` retired (F18 L1' Landing 2, 2026-08-24).
               ;; The parser can no longer produce it — statement-form
@@ -6114,11 +6146,37 @@
                               (let [[decl ctx'] (lower-alias-stmt node ctx-acc)]
                                 [(conj decls decl) ctx']))
                             [[] c]
-                            head-alias)]
+                            head-alias)
+                    ;; 2026-09-27 — pre-register `:let-stmt` typed locals
+                    ;; into ctx BEFORE lowering `:updates`, so a
+                    ;; `field => <expr-using-let>` can infer the local's
+                    ;; type. Fixes muse-v3-1 `lowering not yet implemented:
+                    ;; type-of identifier`. Only pre-registers when the
+                    ;; let carries an explicit `: T` annotation.
+                    c-alias
+                    (reduce (fn [ctx-acc node]
+                              (if (and (= :let-stmt (:node node))
+                                       (:type node)
+                                       (:name node))
+                                (update ctx-acc :locals assoc (:name node)
+                                        (cxc-type->type-kw
+                                         (base-type-name (:type node))
+                                         (:record-env ctx-acc)
+                                         (:atom-env ctx-acc)
+                                         (:enum-env ctx-acc)
+                                         (:type node)))
+                                ctx-acc))
+                            c-alias
+                            rest-stmts)]
                 [(-> out
                      (into alias-decls)
-                     (into (mapcat #(lower-then-update % c-alias) (:updates clause)))
-                     (into (lower-body-stmts rest-stmts c-alias))) c])
+                     ;; Lower stmts BEFORE updates: `let`-declared
+                     ;; locals are then in scope for updates referencing
+                     ;; them, and stmt side effects sequence before the
+                     ;; `__cxc_next` commit block. Updates still commit
+                     ;; at end via `__cxc_next` staging.
+                     (into (lower-body-stmts rest-stmts c-alias))
+                     (into (mapcat #(lower-then-update % c-alias) (:updates clause)))) c])
 
               (fail-nyi! (str "on-enter body clause " (:node clause)) clause)))
           [[] ctx]
@@ -6265,6 +6323,16 @@
                                   :left acc :right (gate-of g)})
                                (gate-of (first lowered-guards))
                                (rest lowered-guards)))
+        ;; 2026-09-27 — arm-head guards whose inferred type is
+        ;; Optional<Bool> (e.g. `|: x < limit` on nullable numeric fields)
+        ;; get unwrapped as `.present && .value` at emit — nil-degrades
+        ;; to false so the guard fails safely instead of leaking an
+        ;; Optional_Bool into a raw BOOL context (compile error). Same
+        ;; convention as `:c-if-chain-branch` and `:c-while` control-
+        ;; flow guards under 2026-09-04 Path 1 slice 5.
+        guard-cond-envelope?
+        (boolean (some #(optional-bool-guard? (infer-type % ctx'))
+                       guard-exprs))
         ;; Extend ctx' with the is-check-bound locals so downstream
         ;; then:/do: expression inference resolves the binding names.
         ctx'         (reduce (fn [c bd]
@@ -6307,6 +6375,26 @@
         then-clauses (mapv (fn [{:keys [tc tail]}]
                              (assoc tc :stmts (vec tail)))
                            alias-heads)
+        ;; 2026-09-27 — pre-register typed `:let-stmt` names across all
+        ;; then-clause `:stmts` into ctx' BEFORE lowering `:updates`, so
+        ;; a `field => <expr-using-let>` can infer the local's type.
+        ;; Fixes muse-v3-1 `lowering not yet implemented: type-of
+        ;; identifier`. Only pre-registers when the let carries an
+        ;; explicit `: T` annotation.
+        ctx'         (reduce (fn [ctx-acc node]
+                               (if (and (= :let-stmt (:node node))
+                                        (:type node)
+                                        (:name node))
+                                 (update ctx-acc :locals assoc (:name node)
+                                         (cxc-type->type-kw
+                                          (base-type-name (:type node))
+                                          (:record-env ctx-acc)
+                                          (:atom-env ctx-acc)
+                                          (:enum-env ctx-acc)
+                                          (:type node)))
+                                 ctx-acc))
+                             ctx'
+                             (mapcat :stmts then-clauses))
         then-stmts   (vec (mapcat (fn [c] (mapcat #(lower-then-update % ctx')
                                                   (:updates c)))
                                   then-clauses))
@@ -6475,7 +6563,15 @@
                        ;; (see `alias-heads` computation above).
                        (seq alias-decls)  (into alias-decls)
                        (seq w-then-stmts) (into w-then-stmts)
-                       (seq then-stmts)   (into then-stmts)
+                       ;; 2026-09-27 — do-stmts (then-clause `:stmts`)
+                       ;; emit BEFORE then-stmts (`:updates`) so typed
+                       ;; `let x: T = ...` locals declared in stmts are
+                       ;; in C-level scope for update RHSes staged into
+                       ;; `__cxc_next`. Both read `__cxc_snap` (pre-image),
+                       ;; so external observable state under transaction
+                       ;; semantics is unchanged. Verified byte-identical
+                       ;; on reference cards.cxc across seeds 1/42/100.
+                       (seq do-stmts)     (into do-stmts)
                        ;; F33 L3.d (revised 2026-09-20) — TRANSACTION
                        ;; ORDER: `=>` staged; body's own `do:` /
                        ;; then-clause `:stmts` execute against the
@@ -6487,7 +6583,7 @@
                        ;; atom, and a stmt calling `top_hero()` after
                        ;; a `hand => filter` in the same body sees the
                        ;; pre-image hand consistently.
-                       (seq do-stmts)     (into do-stmts)
+                       (seq then-stmts)   (into then-stmts)
                        ;; F33 L3.c: invariant check on bag before commit.
                        (seq pre-commit-invariants) (into pre-commit-invariants)
                        commit-stmt        (conj commit-stmt)
@@ -6522,6 +6618,7 @@
                            (phase-constant-name atom-name source-name))
      :wildcard-source? wildcard-source?
      :guard       guard-lo
+     :guard-cond-envelope? guard-cond-envelope?
      :src-line    (:src-line t)
      :body        body}))
 

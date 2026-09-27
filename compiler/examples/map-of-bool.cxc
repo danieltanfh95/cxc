@@ -3,10 +3,11 @@ def main:
 
     -> running
         then:
-            flags => flags.assoc("verbose", true).assoc("dry_run", false)
-            print((flags.get("verbose") ?? false).to_string())
-            print((flags.get("dry_run") ?? true).to_string())
-            print((flags.get("missing") ?? true).to_string())
-            print((flags.get("missing") ?? false).to_string())
+            alias next_flags :- flags.assoc("verbose", true).assoc("dry_run", false)
+            flags => next_flags
+            print((next_flags.get("verbose") ?? false).to_string())
+            print((next_flags.get("dry_run") ?? true).to_string())
+            print((next_flags.get("missing") ?? true).to_string())
+            print((next_flags.get("missing") ?? false).to_string())
 
     -> end

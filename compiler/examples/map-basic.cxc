@@ -3,9 +3,10 @@ def main:
 
     -> running
         then:
-            m => m.assoc("apples", 3).assoc("pears", 7).dissoc("apples")
-            print(m.count)
-            print(m.contains("apples"))
-            print(m.contains("pears"))
+            alias m2 :- m.assoc("apples", 3).assoc("pears", 7).dissoc("apples")
+            m => m2
+            print(m2.count)
+            print(m2.contains("apples"))
+            print(m2.contains("pears"))
 
     -> end

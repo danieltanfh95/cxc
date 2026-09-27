@@ -182,6 +182,81 @@ places where you thought the LHS was nullable and it wasn't.
 - `Random` is CSPRNG-only. For fast non-crypto RNG use `SeededPrng(seed:)`, which does not conform to `Random`.
 - `EnvVars` (read-only, total) and `EnvMut` (write, raises `EnvError`) are separate capabilities. Don't pass `EnvMut` to consumers that only need to read.
 
+## SeededPrng is Park-Miller LCG, not MT19937
+
+`SeededPrng(seed: N)` uses the Park-Miller minimal-standard linear congruential generator (multiplier `a=16807`, modulus `m=2^31-1`). Same seed produces the same stream across runs and machines.
+
+This is **not** Python's `random`, which uses Mersenne Twister (MT19937) with rejection sampling in `randbelow` and Fisher-Yates for `random.shuffle`. Corvid's PRNG stream has entirely different statistical shape and produces entirely different draws for the same seed. If you are translating a Python program that depends on `random.*` behaviour and want byte-parity output, you cannot use `SeededPrng` — you would need a Corvid impl of MT19937 or a different comparison target.
+
+Common Python-to-Corvid RNG translations:
+
+| Python | Corvid |
+|---|---|
+| `random.seed(N)` | `SeededPrng(seed: N)` (as a field, not a statement) |
+| `random.randrange(n)` | `prng.below(n)` |
+| `random.random()` | `prng.next_u31()` (returns Int in `[1, 2^31-2]`, not Float in `[0, 1)`) |
+| `random.shuffle(xs)` | manually via sort-by-random-key, OR use `xs.shuffle(prng: prng)` if available |
+| `random.choice(xs)` | `xs.at(prng.below(xs.count)) ?? _sentinel` |
+
+## Reserved words — do not use as identifiers or enum cases
+
+The lexer classifies the following as reserved keywords. Using any as a variable name, field name, or `case` label triggers a parse error:
+
+```
+module from import as
+def use invariants accepts extend replace deprecated
+then do when let alias
+self nil true false
+and or not is in of
+if else return case function for
+weak unowned
+while loop break continue
+raise
+```
+
+Common surprise: `weak` and `unowned` are reserved because they modify reference semantics on data fields (`name: weak T`, `name: unowned T`). You cannot use `case weak` in an enum or `let weak: Card` inside a body.
+
+## `let` vs `alias` inside `then:` and observation bodies
+
+Both introduce a local name for an expression, but they lower differently and have different scopes.
+
+- `let x: T = expr` is a runtime binding. Full support inside module-level scope and inside `then:` blocks at the statement level. Some contexts (nested expression position, chained let inside pattern arms) are not yet supported by the lowering pass and produce `lowering not yet implemented` errors. When in doubt, prefer `alias`.
+- `alias name :- expr` is a compile-time name for a pure expression, evaluated wherever it's referenced. Preferred inside observation bodies (`name :- expr`) and inside `then:` bodies when you just need to name a subexpression for readability. Cannot be reassigned; the RHS must be a pure expression (no `=>`, no message send).
+
+Guideline: reach for `alias` first inside `then:` and `:-` bodies. Reach for `let` only when you need a real runtime binding (e.g., you want to capture the value of an expression at a specific evaluation point).
+
+## Top-level `def name(args): T :- body` is not a free function
+
+Only these top-level `def` shapes exist at v1.0:
+
+- `def <AtomName>:` — an atom
+- `def <RecordName>:` — a record
+- `def <EnumName>:` — an enum
+- `def main:` — the entry-point atom
+- `def plugin:` — the plugin marker inside a plugin capability file
+
+Writing a top-level helper function like:
+
+```
+def min_int(x: Int!, y: Int!): Int! :- ||: x < y : x
+                                       ||: else : y
+```
+
+is a parse error at the second type annotation: `parse error: expected :newline (got :ident "Int")`. The parser reads `def min_int(` as opening an atom or record body and rejects the first parenthesized type it sees.
+
+Fix: hoist the helper into the atom that needs it as an observation:
+
+```
+def main:
+    -> running
+        then:
+            print(min_of(3, 7).to_string())
+    min_of(x: Int!, y: Int!): Int! :- ||: x < y : x
+                                      ||: else : y
+```
+
+Or inline the `||: guard : body` chain at each call site. Corvid has no top-level free-function primitive at v1.0; every callable lives on an atom (as an observation or a method) or is inlined.
+
 ## Comment discipline for AI/LLM handoff
 
 If you're passing Corvid source to an external LLM for review, strip

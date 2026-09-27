@@ -15,17 +15,27 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 COMPILER_DIR="$(cd "$HERE/.." && pwd)"
 
-# Rewrite existing-file positional args to absolute paths, so `cxc` works
-# from any cwd. Flags (--target=..., --trace, etc.) pass through unchanged.
+# Rewrite positional args to absolute paths, so `cxc` works from any cwd.
+# Existing files are absolute-ized against their directory; not-yet-existing
+# positional PATHS (e.g. the output directory for `cxc compile <in> <out-dir>`)
+# are absolute-ized against the invoking cwd so `cxc compile in.cxc out`
+# lands `out/` under the caller's cwd, not under $COMPILER_DIR.
+# Flags (--target=..., --trace, etc.) pass through unchanged.
+# The first arg (subcommand: compile/trace/view/help) always passes through.
+INVOKING_CWD="$(pwd)"
 rewritten=()
+argi=0
 for arg in "$@"; do
-  if [[ "$arg" == --* ]] || [[ "$arg" == -* ]]; then
+  if [[ "$argi" -eq 0 ]] || [[ "$arg" == --* ]] || [[ "$arg" == -* ]]; then
     rewritten+=("$arg")
   elif [ -e "$arg" ]; then
     rewritten+=("$(cd "$(dirname "$arg")" && pwd)/$(basename "$arg")")
-  else
+  elif [[ "$arg" == /* ]]; then
     rewritten+=("$arg")
+  else
+    rewritten+=("$INVOKING_CWD/$arg")
   fi
+  argi=$((argi+1))
 done
 
 cd "$COMPILER_DIR"

@@ -809,10 +809,21 @@
                             [stack out]
 
                             :else
-                            (throw (ex-info "inconsistent dedent"
-                                            {:line (inc i)
-                                             :indent indent
-                                             :stack indent-stack})))))
+                            (throw (ex-info
+                                    (str "inconsistent dedent at line " (inc i)
+                                         ": this line's indent (" indent
+                                         " column" (if (= 1 indent) "" "s")
+                                         ") does not match any enclosing block's"
+                                         " indent level (open blocks are at "
+                                         (pr-str (vec (reverse indent-stack)))
+                                         "). Fix: align this line with one of"
+                                         " those indents, or make the parent"
+                                         " block consistent (typically means"
+                                         " mixing tabs and spaces or a stray"
+                                         " half-indent).")
+                                    {:line (inc i)
+                                     :indent indent
+                                     :stack indent-stack})))))
                       out' (reduce conj! out' line-toks)
                       out' (if (zero? new-depth)
                              (conj! out' [:newline nil (inc i) 1])

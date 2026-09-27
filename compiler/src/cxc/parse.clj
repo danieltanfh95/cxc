@@ -1211,6 +1211,17 @@
                         (let [[e p2] (parse-expr tokens (inc p))]
                           [e p2])
                         [nil p])
+        _             (when (at? tokens p :glyph ":-")
+                        (fail! tokens p
+                               (str "`" fname ": <Type> :- <body>` is not a valid "
+                                    "observation shape at v1.0. The `:Type` "
+                                    "annotation belongs AFTER `:-`, not before it. "
+                                    "Rewrite as one of:\n\n"
+                                    "    " fname " :- <body>              # inferred return type\n"
+                                    "    " fname " :- <Type> = <body>     # explicit return type on one line\n"
+                                    "    " fname "(args) :- <Type>        # parametric obs, return type after :-\n"
+                                    "        <body>                       # body on the next indented line\n\n"
+                                    "See docs/writing-corvid/04-common-mistakes.md.")))
         base-field    {:node :field :name fname :type ty :default dflt}]
     [(cond-> base-field
        modifier (assoc :modifier modifier)) p]))
@@ -1643,6 +1654,21 @@
     (and (at? tokens pos :kw "let")
          (at? tokens (inc pos) :ident))
     (parse-let-statement tokens pos)
+
+    ;; 2026-09-27 — a `let` followed by a RESERVED KEYWORD (`weak`,
+    ;; `unowned`, `case`, etc) surfaces a targeted diagnostic instead
+    ;; of falling through to expression parsing (which gives the
+    ;; unhelpful "unexpected keyword let in expression" error). The
+    ;; user meant to bind a name; the name they picked is reserved.
+    (and (at? tokens pos :kw "let")
+         (at? tokens (inc pos) :kw))
+    (let [reserved (t-value (peek-tok tokens (inc pos)))]
+      (fail! tokens (inc pos)
+             (str "`let " reserved " ...` — `" reserved "` is a reserved "
+                  "keyword in Corvid and cannot be used as a binding name. "
+                  "Rename the binding (e.g. `" reserved "_val`, `" reserved
+                  "_card`, `low_" reserved "`) or pick a different identifier. "
+                  "See docs/writing-corvid/02-language-tour.md for the reserved-word list.")))
 
     ;; `alias <ident> :- <expr>` — pure syntactic aliasing (hoist-once
     ;; semantics; not assignment; not re-targetable). See parse-alias-
@@ -2100,6 +2126,30 @@
               (cond
                 (at? tokens p :dedent)
                 [candidate-type [] {:node :do-block-expr :stmts stmts} (inc p)]
+
+                (at? tokens p :newline)
+                (recur stmts (inc p))
+
+                :else
+                (let [[s p2] (parse-statement tokens p)
+                      p3     (skip-newlines tokens p2)]
+                  (recur (conj stmts s) p3)))))
+
+          ;; 2026-09-27 — allow `name :- <NEWLINE> <INDENT> <expr>` for
+          ;; inferred-type observations with multi-line expression bodies.
+          ;; Same shape as `bodyful-block?` above but without a declared
+          ;; return type. Parses as a `:do-block-expr` so a multi-statement
+          ;; body degenerates to last-expr-is-value, and a single-expression
+          ;; body still works as the sole stmt.
+          (and (nil? candidate-type)
+               (at? tokens p :newline)
+               (at? tokens (inc p) :indent))
+          (let [[_ p]  (expect tokens p :newline)
+                [_ p]  (expect tokens p :indent)]
+            (loop [stmts [] p p]
+              (cond
+                (at? tokens p :dedent)
+                [nil [] {:node :do-block-expr :stmts stmts} (inc p)]
 
                 (at? tokens p :newline)
                 (recur stmts (inc p))
@@ -2969,7 +3019,34 @@
               (let [[ctor pp2] (parse-param-list-parens tokens p)]
                 [nil ctor pp2]))))
         [_ p]      (expect tokens p :punct ":")
-        [_ p]      (expect tokens p :newline)
+        ;; Targeted diagnostic for a common agent-authoring failure mode
+        ;; (2026-09-26 benchmark playtest): models write top-level free
+        ;; functions as `def helper(x: T, y: T): T :- body`, treating the
+        ;; second `:` as a return-type annotation. Corvid has no top-level
+        ;; free functions at v1.0. Emit a fix-it before falling through to
+        ;; the generic `expected :newline` error.
+        _          (when (and (at? tokens p :ident)
+                              (Character/isLowerCase (first name)))
+                     (fail! tokens pos
+                            (str "top-level free function `def " name "(...): T :- body`"
+                                 " does not exist at v1.0. Only `def <AtomName>:`,"
+                                 " `def <RecordName>:`, `def <EnumName>:`, `def main:`, and"
+                                 " `def plugin:` are legal at module scope. Hoist this helper"
+                                 " into the atom that uses it as an observation:\n\n"
+                                 "    def main:\n"
+                                 "        -> running\n"
+                                 "            then: print(" name "(3, 7))\n"
+                                 "        " name "(x: Int, y: Int) :- Int\n"
+                                 "            ||: x < y : x\n"
+                                 "            ||: else : y\n\n"
+                                 "Note: the return type goes AFTER `:-`, not before it.")))
+        ;; 2026-09-27 — accept `):` followed by INDENT with no intervening
+        ;; NEWLINE when the ctor param list spanned multiple physical lines
+        ;; (bracket-continuation swallowed the end-of-`):` newline). Fixes
+        ;; multi-line ctor headers like `def Card(\n    a: Int!,\n    b: Int!\n):`.
+        [_ p]      (if (at? tokens p :newline)
+                     (expect tokens p :newline)
+                     [nil p])
         [_ p]      (expect tokens p :indent)]
     (loop [body [] p p]
       (cond
