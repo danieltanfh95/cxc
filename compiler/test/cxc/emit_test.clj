@@ -584,3 +584,92 @@
           "single-queue branch keeps Layer 4 main-target behavior")
       (is (str/includes? impl "#endif")
           "guard closes"))))
+
+;; ---------------------------------------------------------------------------
+;; runtime_shape emit — 2026-09-27 landing.
+;; emit-main dispatches on the :runtime-shape key of the program AST.
+;; :dispatch-main (default) preserves the today shape; :main-runloop
+;; substitutes [NSApp run] and pulls in Cocoa (added by lower, not
+;; asserted here since the include list is upstream of emit).
+;; ---------------------------------------------------------------------------
+
+(deftest runtime-shape-dispatch-main-emits-dispatch-main
+  (let [ast (assoc (hello-program-ast)
+                   :needs-dispatch-loop? true
+                   :runtime-shape        :dispatch-main)
+        s   (emit/emit ast)]
+    (is (str/includes? s "dispatch_main();")
+        "default shape emits dispatch_main()")
+    (is (not (str/includes? s "[NSApp run]"))
+        "default shape does NOT emit NSApp run")))
+
+(deftest runtime-shape-main-runloop-emits-nsapp-run
+  (let [ast (assoc (hello-program-ast)
+                   :needs-dispatch-loop? true
+                   :runtime-shape        :main-runloop)
+        s   (emit/emit ast)]
+    (is (str/includes? s "[NSApplication sharedApplication];")
+        "main-runloop primes NSApplication before running")
+    (is (str/includes? s "[NSApp run];")
+        "main-runloop tail is [NSApp run]")
+    (is (not (str/includes? s "dispatch_main();"))
+        "main-runloop replaces dispatch_main entirely")))
+
+(deftest runtime-shape-default-preserves-today-behavior
+  ;; Regression: an AST with no :runtime-shape key at all must emit
+  ;; the today shape. This is what all existing tests + all existing
+  ;; programs rely on.
+  (let [ast (assoc (hello-program-ast) :needs-dispatch-loop? true)
+        s   (emit/emit ast)]
+    (is (str/includes? s "dispatch_main();"))
+    (is (not (str/includes? s "[NSApp run]")))))
+
+(deftest runtime-shape-main-runloop-with-no-async-still-runs-nsapp
+  ;; :main-runloop overrides the "no async sends → no dispatch loop"
+  ;; optimization. A window-owning program has no async sends until
+  ;; user input arrives, but the run loop still has to be there for
+  ;; the window to exist at all.
+  (let [ast (assoc (hello-program-ast)
+                   :needs-dispatch-loop? false
+                   :runtime-shape        :main-runloop)
+        s   (emit/emit ast)]
+    (is (str/includes? s "[NSApp run];")
+        ":main-runloop emits [NSApp run] even when :needs-dispatch-loop? is false")))
+
+;; Shutdown gating under :main-runloop.
+;;
+;; cxc_shutdown() traditionally calls exit(0) via dispatch_group_notify
+;; once the send group drains. Under [NSApp run] that race-terminates
+;; AppKit before the window's delegate can drive the process lifecycle.
+;; The fix: preprocessor-gate the exit(0) branch behind CXC_MAIN_RUNLOOP,
+;; and emit the define at the top of the source when runtime shape is
+;; :main-runloop. Under dispatch_main() nothing changes.
+(deftest runtime-shape-main-runloop-defines-cxc-main-runloop
+  (let [ast {:node :objc-program
+             :includes []
+             :needs-runtime? true
+             :structs []
+             :classes []
+             :main {:body []}
+             :runtime-shape :main-runloop}
+        s   (emit/emit ast)]
+    (is (str/includes? s "#define CXC_MAIN_RUNLOOP 1")
+        ":main-runloop emits the CXC_MAIN_RUNLOOP define at file top")
+    (is (str/includes? s "#if CXC_MAIN_RUNLOOP")
+        "shutdown emit gates its exit path on CXC_MAIN_RUNLOOP")))
+
+(deftest runtime-shape-dispatch-main-omits-cxc-main-runloop-define
+  ;; Under :dispatch-main (default) the exit(0) branch is the intended
+  ;; termination path — no define, so preprocessor picks the #else
+  ;; branch of the gate.
+  (let [ast {:node :objc-program
+             :includes []
+             :needs-runtime? true
+             :structs []
+             :classes []
+             :main {:body []}}
+        s   (emit/emit ast)]
+    (is (not (str/includes? s "#define CXC_MAIN_RUNLOOP"))
+        "default runtime shape does NOT emit CXC_MAIN_RUNLOOP define")
+    (is (str/includes? s "exit(0);")
+        "default runtime shape still emits the exit(0) shutdown body")))

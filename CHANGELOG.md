@@ -2,6 +2,16 @@
 
 Format: date · tag · summary.
 
+## 2026-09-27 · language · runtime-shape manifest field + appkit-viewer example (in-process live window)
+
+Adds `runtime_shape:` to the `def plugin:` manifest and wires it end-to-end from parse to emit. A plugin manifest declaring `runtime_shape: RuntimeShape.main_runloop` causes `emit-main` to end `main()` with `[NSApplication sharedApplication]; [NSApp run];` instead of `dispatch_main()`, and gates `cxc_shutdown()`'s `exit(0)` behind `#if CXC_MAIN_RUNLOOP` so the atom hierarchy tearing down mid-run no longer race-terminates AppKit. Full test suite (1070 tests / 2971 assertions) plus 6 new manifest tests + 6 new emit tests, all pass.
+
+Adds `compiler/examples/appkit-viewer/`: `libappkit.m` (Cocoa FFI plugin exposing `ak_clear`/`ak_gradient`/`ak_rect`/`ak_round_rect`/`ak_line`/`ak_text`/`ak_text_bold`/`ak_image`/`ak_present`/`ak_prep`/`ak_window_open`/`ak_run`/`ak_quit`/`ak_subscribe_key`/`ak_subscribe_close`), `hello_window.cxc` (minimal — a window with two rectangles and a title, drawn from Corvid source with zero ObjC), and `dota2.cxc` (the pocket-MOBA sim rendered to a 1280x800 window with card art, HUD, three lane panels, and a `GAME OVER` banner). Both link against the same dylib and use the same `runtime_shape:` field to opt in.
+
+Retires the "no live window" workaround from the cocoa-viewer example. That path (offscreen PNG snapshots + out-of-process `viewerd`) was the only viable shape while Corvid's `main()` ran `dispatch_main()`; it stays in the corvid repo as a reference for what the constraint required, but the appkit-viewer example is the recommended shape going forward.
+
+Design in `docs/design/runtime-shape.md` and `docs/design/runtime-shape-prototypes.md` (three prototypes considered — manifest / dylib constructor / weak-linked symbol — with the manifest shape winning on source-level discoverability, compile-time conflict detection, and cross-platform generalisation).
+
 ## 2026-09-26 · examples · cocoa-viewer · live dota2 view (out-of-process viewer)
 
 Turns `compiler/examples/cocoa-viewer/` from a static-frame demo into a live view of the pocket-MOBA sim. Adds `dota2_live.cxc` (sim body copied from `cards/dota2/cxc/cards.cxc` with byte-parity preserved on seed-42) plus a `Renderer` sub-atom that walks lane/player state each phase boundary and issues plugin draw calls. The sim runs headless, writing one PNG per phase under `/tmp/dota2-frames/f{0..N}.png` via `cv_open_offscreen` + `cv_snapshot`. Playback is out-of-process: a shell wrapper `watch` chooses between `viewerd` (a standalone Cocoa app with auto-advance / step / play-pause), Preview.app (sidebar + arrow keys), and ffmpeg → QuickTime (looping auto-play). `libcocoa_viewer.m` is snapshot-only — `cv_clear` / `cv_rect` / `cv_line` / `cv_text` / `cv_snapshot`; the sim never opens a window itself.
