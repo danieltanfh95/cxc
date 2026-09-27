@@ -973,3 +973,76 @@ def MyAtom:
     (is (= once twice)
         "second application is a fixpoint (alias set is empty on rewritten shape)")))
 
+
+;; ---------------------------------------------------------------------------
+;; runtime_shape — 2026-09-27 landing (docs/design/runtime-shape.md).
+;; Optional plugin manifest field. `.dispatch_main` (default) keeps the
+;; today shape; `.main_runloop` swaps in `[NSApp run]` at the tail of
+;; main(). The field defaults to `:dispatch-main` when absent, so
+;; existing plugin definitions require no change.
+;; ---------------------------------------------------------------------------
+
+(def rt-shape-base
+  "def plugin:
+    name:    String!       = \"appkit\"
+    version: SemVer!       = SemVer(0, 1, 0)
+    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0),
+                                          max: SemVer(2, 0, 0))
+")
+
+(deftest runtime-shape-defaults-to-dispatch-main-when-absent
+  (let [nodes (parse/parse rt-shape-base)
+        m     (pm/extract nodes)]
+    (is (= :dispatch-main (:runtime-shape m))
+        "no runtime_shape field → :dispatch-main default")))
+
+(deftest runtime-shape-parses-dispatch-main-explicit
+  (let [src   (str rt-shape-base
+                   "    runtime_shape: RuntimeShape! = RuntimeShape.dispatch_main\n")
+        nodes (parse/parse src)
+        m     (pm/extract nodes)]
+    (is (= :dispatch-main (:runtime-shape m)))))
+
+(deftest runtime-shape-parses-main-runloop
+  (let [src   (str rt-shape-base
+                   "    runtime_shape: RuntimeShape! = RuntimeShape.main_runloop\n")
+        nodes (parse/parse src)
+        m     (pm/extract nodes)]
+    (is (= :main-runloop (:runtime-shape m)))))
+
+(deftest runtime-shape-rejects-unknown-case
+  (let [src   (str rt-shape-base
+                   "    runtime_shape: RuntimeShape! = RuntimeShape.gtk_main\n")
+        nodes (parse/parse src)
+        ex    (try (pm/extract nodes) nil
+                   (catch clojure.lang.ExceptionInfo e e))]
+    (is (some? ex) "unknown RuntimeShape case must throw")
+    (is (= :plugin-manifest-invalid (:kind (ex-data ex))))
+    (is (re-find #"gtk_main" (ex-message ex))
+        (str "diagnostic should name the offending case; got: " (ex-message ex)))))
+
+(deftest runtime-shape-rejects-wrong-namespace
+  (let [src   (str rt-shape-base
+                   "    runtime_shape: RuntimeShape! = SomethingElse.main_runloop\n")
+        nodes (parse/parse src)
+        ex    (try (pm/extract nodes) nil
+                   (catch clojure.lang.ExceptionInfo e e))]
+    (is (some? ex) "wrong namespace must throw")
+    (is (= :plugin-manifest-invalid (:kind (ex-data ex))))))
+
+(deftest runtime-shape-appears-in-allowed-fields-diagnostic
+  ;; Regression: adding runtime_shape to the allowed set should be
+  ;; reflected in the "unknown manifest field(s)" diagnostic so a
+  ;; typo like `runtime_shpe:` reads as an unknown field, not as a
+  ;; silent no-op.
+  (let [src   (str rt-shape-base
+                   "    runtime_shpe: RuntimeShape! = RuntimeShape.main_runloop\n")
+        nodes (parse/parse src)
+        ex    (try (pm/extract nodes) nil
+                   (catch clojure.lang.ExceptionInfo e e))]
+    (is (some? ex) "typo in field name must throw")
+    (is (re-find #"runtime_shpe" (ex-message ex))
+        "diagnostic should name the unknown field")
+    (is (re-find #"runtime_shape" (ex-message ex))
+        (str "diagnostic should list runtime_shape as an allowed field; "
+             "got: " (ex-message ex)))))

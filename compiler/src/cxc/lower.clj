@@ -9190,7 +9190,27 @@
         d->m (env/attribute-modules-to-decls top-nodes)
         module-map (env/module-map-from-attribution d->m)]
    (binding [mangle/*decl->module* d->m]
-   (let [;; B8 (2026-09-02) — `:def-plugin` markers are compile-time-only
+   (let [;; Prototype A (2026-09-26, runtime-shape landing) — pull the
+        ;; `:runtime-shape` off any `def-plugin` in the module BEFORE
+        ;; filtering def-plugin nodes out. Same-file plugin+main
+        ;; declaration is the prototype-A shape; cross-module
+        ;; propagation via .cxc-caps is prototype B.
+        runtime-shape    (or (some (fn [n]
+                                     (when (= :def-plugin (:node n))
+                                       (some (fn [f]
+                                               (when (and (= "runtime_shape" (:name f))
+                                                          (:default f))
+                                                 (let [d (:default f)]
+                                                   (when (and (= :dot (:node d))
+                                                              (= "RuntimeShape"
+                                                                 (get-in d [:target :name])))
+                                                     (keyword
+                                                       (clojure.string/replace
+                                                         (:field d) \_ \-))))))
+                                             (:fields n))))
+                                   top-nodes)
+                             :dispatch-main)
+        ;; B8 (2026-09-02) — `:def-plugin` markers are compile-time-only
         ;; metadata consumed by cxc.plugin-manifest (B3-B7). Filter them
         ;; before lowering so no emit rule needs to know about them.
         top-nodes         (->> top-nodes
@@ -9632,7 +9652,13 @@
                                                     "<string.h>")
                             ;; F31/F35 L2 — panic()'s inline backtrace
                             ;; pulls in execinfo.h + stdlib.h (free()).
-                            needs-panic?   (conj "<stdlib.h>" "<execinfo.h>"))
+                            needs-panic?   (conj "<stdlib.h>" "<execinfo.h>")
+                            ;; Prototype A (2026-09-26, runtime-shape landing) —
+                            ;; `:main-runloop` shape emits `[NSApp run]` at
+                            ;; the tail of main(), which needs Cocoa (AppKit
+                            ;; transitively). Foundation alone lacks NSApp.
+                            (= :main-runloop runtime-shape)
+                            (conj "<Cocoa/Cocoa.h>"))
         ;; FL-18 (2026-09-02) — foreign-symbol-driven include
         ;; augmentation. `_NSGetArgv`/`_NSGetArgc` (std.args plugin)
         ;; live in `<crt_externs.h>`, outside cxc's default include
@@ -9700,6 +9726,7 @@
      :includes            includes
      :needs-runtime?      needs-runtime?
      :needs-dispatch-loop? needs-dispatch-loop?
+     :runtime-shape       runtime-shape
      :enums               c-enums
      :structs             structs
      ;; Track A/2.a (2026-08-26) — reason-box wrapper classes, one per

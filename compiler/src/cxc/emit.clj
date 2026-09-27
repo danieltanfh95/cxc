@@ -2065,19 +2065,33 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- emit-main
-  "C main() function. Two shapes:
-     - No dispatch loop: run body inside @autoreleasepool, return 0.
-       Fits programs with no message-triggered transitions (their work
-       runs synchronously during init and completes before return).
-     - Dispatch loop: run bootstrap (Main atom construction) inside
-       @autoreleasepool, then call dispatch_main() which never returns.
-       cxc_shutdown() from a `-> end` transition on the main atom is
-       the termination path (design §19)."
-  [main-node needs-dispatch-loop?]
+  "C main() function. Three shapes:
+     - `:dispatch-main` with no async sends: run body inside
+       @autoreleasepool, return 0. Fits programs with no message-
+       triggered transitions (their work runs synchronously during
+       init and completes before return).
+     - `:dispatch-main` with async sends: run bootstrap (Main atom
+       construction) inside @autoreleasepool, then call
+       dispatch_main() which never returns. cxc_shutdown() from a
+       `-> end` transition on the main atom is the termination path
+       (design §19).
+     - `:main-runloop`: run bootstrap inside @autoreleasepool, then
+       call `[NSApp run]` which never returns. AppKit owns the main
+       thread's CFRunLoop; atoms use dispatch_async on main to touch
+       AppKit. `[NSApp terminate:]` from event handlers or window
+       delegate is the termination path. Prototype A of the runtime-
+       shape landing (docs/design/runtime-shape.md, 2026-09-26)."
+  [main-node needs-dispatch-loop? runtime-shape]
   (let [body (emit-body 4 (:body main-node))
-        dispatch-suffix (if needs-dispatch-loop?
-                          "\n    dispatch_main();\n    return 0;   /* unreachable */"
-                          "")]
+        dispatch-suffix (case runtime-shape
+                          :main-runloop
+                          (str "\n    [NSApplication sharedApplication];"
+                               "\n    [NSApp run];"
+                               "\n    return 0;   /* unreachable */")
+                          ;; :dispatch-main (default)
+                          (if needs-dispatch-loop?
+                            "\n    dispatch_main();\n    return 0;   /* unreachable */"
+                            ""))]
     (if (:autorelease? main-node)
       (str "int main(int argc, char *argv[]) {\n"
            "    @autoreleasepool {\n"
@@ -2435,9 +2449,18 @@
        "#if !CXC_SINGLE_MAIN_QUEUE\n"
        "    dispatch_barrier_sync(dispatch_get_global_queue(QOS_CLASS_DEFAULT, 0), ^{});\n"
        "#endif\n"
+       "#if CXC_MAIN_RUNLOOP\n"
+       "    /* Runtime shape :main-runloop — AppKit owns the process. The\n"
+       "       atom hierarchy has torn down but [NSApp run] is still\n"
+       "       driving events; the window keeps its last drawn frame\n"
+       "       until the user closes it, at which point the window\n"
+       "       delegate calls [NSApp terminate:nil]. exit(0) would race\n"
+       "       AppKit teardown. */\n"
+       "#else\n"
        "    dispatch_group_notify(cxc_send_group(), dispatch_get_main_queue(), ^{\n"
        "        exit(0);\n"
        "    });\n"
+       "#endif\n"
        "}\n\n"
        ;; F32 L4.a (2026-08-24) — atomic-pointer-swap storage-flip
        ;; infrastructure, sub-landing 1 of N per the storage-flip
@@ -2705,7 +2728,10 @@
    an `id`-typed subscriber needs the subscriber-class's @interface to
    be in scope when the source's fanout body compiles."
   [prog]
-  (let [includes    (str/join "\n"   (map #(str "#import " %) (:includes prog)))
+  (let [runtime-shape (:runtime-shape prog :dispatch-main)
+        runtime-shape-defines (when (= runtime-shape :main-runloop)
+                                "#define CXC_MAIN_RUNLOOP 1")
+        includes    (str/join "\n"   (map #(str "#import " %) (:includes prog)))
         fanout-cat  (emit-fanout-selector-category prog)
         helpers     (when (:needs-runtime? prog) cxc-runtime-helpers)
         enums       (str/join "\n\n" (map emit-any-enum (:enums prog)))
@@ -2752,9 +2778,11 @@
         ;; isn't released before the queue starts draining.
         main-static (when (some #(= "CxcMain" (:name %)) (:classes prog))
                       "static CxcMain *cxc_main_atom = nil;")
-        main        (emit-main (:main prog) (:needs-dispatch-loop? prog))]
+        main        (emit-main (:main prog) (:needs-dispatch-loop? prog)
+                                runtime-shape)]
     (str/join "\n\n"
-              (remove str/blank? [includes
+              (remove str/blank? [runtime-shape-defines
+                                  includes
                                   cxc-nil-sentinels
                                   helpers
                                   enums

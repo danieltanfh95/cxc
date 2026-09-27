@@ -1,0 +1,40 @@
+# hello_window.cxc — Prototype A: manifest-declared runtime shape.
+#
+# The `def plugin:` block declares `runtime_shape: RuntimeShape.main_runloop`.
+# The compiler sees that and emits `main()` ending with `[NSApp run]`
+# instead of `dispatch_main()`. AppKit owns the main thread's CFRunLoop
+# and drains dispatch_get_main_queue() as part of its event pump, so
+# atom code that hops to main via dispatch_async still runs.
+#
+# Build:  ./build.sh
+# Run:    /tmp/appkit-out/hello_window
+
+def plugin:
+    name:           String!       = "appkit"
+    version:        SemVer!       = SemVer(0, 1, 0)
+    compat:         VersionRange! = VersionRange(min: SemVer(1, 0, 0),
+                                                 max: SemVer(2, 0, 0))
+    runtime_shape:  RuntimeShape! = RuntimeShape.main_runloop
+
+    foreign "appkit":
+        symbol "ak_prep"         -> () -> Int32
+        symbol "ak_window_open"  -> (Int32, Int32, CString) -> Int32
+        symbol "ak_clear"        -> (Int32, Int32, Int32) -> Int32
+        symbol "ak_rect"         -> (Int32, Int32, Int32, Int32, Int32, Int32, Int32) -> Int32
+        symbol "ak_text"         -> (Int32, Int32, CString, Int32, Int32, Int32, Int32) -> Int32
+        symbol "ak_present"      -> () -> Int32
+
+def main:
+    use plugin: Plugin
+
+    -> running
+        then:
+            alias _prep   :- plugin.get("ak_prep")()
+            alias _win    :- plugin.get("ak_window_open")(720, 480, "hello from corvid")
+
+            alias _clr    :- plugin.get("ak_clear")(24, 26, 32)
+            alias _r0     :- plugin.get("ak_rect")(40, 40, 200, 80, 90, 130, 200)
+            alias _r1     :- plugin.get("ak_rect")(260, 40, 200, 80, 200, 90, 90)
+            alias _t0     :- plugin.get("ak_text")(40, 160, "hello from corvid", 22, 220, 220, 220)
+            alias _t1     :- plugin.get("ak_text")(40, 200, "close window to quit", 14, 140, 140, 140)
+            alias _pres   :- plugin.get("ak_present")()

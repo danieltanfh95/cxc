@@ -118,6 +118,34 @@
            expr))
   (:value expr))
 
+(defn- eval-runtime-shape
+  "Accept a `RuntimeShape.<case>` dot expression, return the case as a
+   keyword. Legal cases: `:dispatch-main` (default), `:main-runloop`.
+
+   Prototype note (2026-09-26): this is Prototype A of the
+   runtime-shape landing (docs/design/runtime-shape.md). Compile-time
+   selection via a plugin manifest field. The compiler reads this
+   value and emits `main()` accordingly:
+   `.dispatch_main` → today's `dispatch_main()` shape;
+   `.main_runloop` → `[NSApp run]` shape for AppKit ownership.
+
+   Only one non-default value per binary is permitted (F76 linker gate
+   enforces uniqueness across imported plugins)."
+  [expr field-name]
+  (let [known #{"dispatch_main" "main_runloop"}]
+    (when-not (and (= :dot (:node expr))
+                   (= :ident (get-in expr [:target :node]))
+                   (= "RuntimeShape" (get-in expr [:target :name])))
+      (fail! (str field-name " default must be `RuntimeShape.<case>`; "
+                  "got " (pr-str (:node expr)))
+             expr))
+    (when-not (contains? known (:field expr))
+      (fail! (str field-name " RuntimeShape.<case> must be one of "
+                  (str/join ", " (sort known))
+                  "; got `" (:field expr) "`.")
+             expr))
+    (keyword (str/replace (:field expr) \_ \-))))
+
 (defn- eval-os-primitive-set
   "Accept a set-literal `{OsPrimitive.stdio, OsPrimitive.fs_read, ...}`
    and return `#{:stdio :fs_read ...}` — bare snake_case case-names.
@@ -844,12 +872,12 @@
   [top-nodes]
   (when-let [dp (find-def-plugin top-nodes)]
     (let [by-name (fields->map (:fields dp))
-          allowed #{"name" "version" "compat" "requires"}
+          allowed #{"name" "version" "compat" "requires" "runtime_shape"}
           unknown (remove allowed (keys by-name))]
       (when (seq unknown)
         (fail! (str "unknown manifest field(s): "
                     (str/join ", " (map #(str "`" % ":`") (sort unknown)))
-                    ". R7 v1.0 admits name/version/compat/requires only "
+                    ". R7 v1.0 admits name/version/compat/requires/runtime_shape only "
                     "(exports/targets deferred to L6).")
                dp))
       (doseq [fname ["name" "version" "compat"]
@@ -870,6 +898,9 @@
        :requires       (extract-optional by-name "requires"
                                          eval-os-primitive-set
                                          #{})
+       :runtime-shape  (extract-optional by-name "runtime_shape"
+                                         eval-runtime-shape
+                                         :dispatch-main)
        :foreign-blocks (mapv (fn [b]
                                {:library (:library b)
                                 :entries (:entries b)})
