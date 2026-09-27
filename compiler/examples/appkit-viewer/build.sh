@@ -1,37 +1,43 @@
 #!/usr/bin/env bash
-# build.sh — build the AppKit plugin dylib + the hello_window Corvid demo.
+# build.sh — build the AppKit plugin dylib + the Corvid demo.
 #
-# Prototype A of the runtime-shape landing. The plugin manifest in
-# hello_window.cxc declares `runtime_shape: RuntimeShape.main_runloop`,
-# and the (modified) compiler emits `[NSApp run]` at the tail of main()
-# instead of `dispatch_main()`.
+# Multi-file compile: `appkit/window.cxc` declares the plugin manifest
+# (including `runtime_shape: RuntimeShape.main_runloop`) and a `Window`
+# capability atom; `main.cxc` does `from appkit import Window` and
+# never touches the FFI or the manifest directly. The compiler routes
+# the runtime shape from the imported module through emit so main()
+# still ends in `[NSApp run]` under the hood.
 #
-# Usage:  ./build.sh [<demo.cxc>]
+# The native side of the plugin (libappkit.m) lives in appkit/
+# alongside the Corvid module. Built into libappkit.dylib in the same
+# dir.
+#
+# Usage:  ./build.sh
 
 set -euo pipefail
 
 HERE="$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 COMPILER_DIR="$( cd "$HERE/../.." && pwd )"
-DEMO="${1:-$HERE/hello_window.cxc}"
-DEMO_NAME="$( basename "$DEMO" .cxc )"
+APPKIT_DIR="$HERE/appkit"
+BIN_NAME="dota2"
 OUT_DIR="/tmp/appkit-out"
 
 echo "==> building libappkit.dylib"
 clang -dynamiclib -fobjc-arc \
     -install_name "@rpath/libappkit.dylib" \
-    "$HERE/libappkit.m" \
+    "$APPKIT_DIR/libappkit.m" \
     -framework Cocoa \
-    -o "$HERE/libappkit.dylib"
+    -o "$APPKIT_DIR/libappkit.dylib"
 
-echo "==> compiling Corvid → Objective-C"
+echo "==> compiling Corvid → Objective-C (multi-file)"
 mkdir -p "$OUT_DIR"
 cd "$COMPILER_DIR"
 clojure -M -e "
 (require '[cxc.build :as b])
-(let [src (slurp \"$DEMO\")
-      out \"$OUT_DIR\"]
+(let [src-dir \"$HERE\"
+      out     \"$OUT_DIR\"]
   (clojure.java.io/make-parents (str out \"/x\"))
-  (let [r (b/compile-source-to-file src \"$DEMO_NAME\" out)]
+  (let [r (b/compile-directory-to-file src-dir \"$BIN_NAME\" out)]
     (when (seq (:stderr r)) (println \"COMPILER STDERR:\") (println (:stderr r)))
     (println \"status:\" (:status r))))
 "
@@ -40,11 +46,11 @@ echo "==> linking against libappkit.dylib"
 clang -fobjc-arc \
     -Wno-implicit-function-declaration \
     -framework Foundation -framework Cocoa \
-    -L"$HERE" \
-    -Wl,-rpath,"$HERE" \
+    -L"$APPKIT_DIR" \
+    -Wl,-rpath,"$APPKIT_DIR" \
     -lappkit \
-    "$OUT_DIR/$DEMO_NAME.m" \
-    -o "$OUT_DIR/$DEMO_NAME"
+    "$OUT_DIR/$BIN_NAME.m" \
+    -o "$OUT_DIR/$BIN_NAME"
 
-echo "==> built: $OUT_DIR/$DEMO_NAME"
-echo "run it: $OUT_DIR/$DEMO_NAME"
+echo "==> built: $OUT_DIR/$BIN_NAME"
+echo "run it: $OUT_DIR/$BIN_NAME"

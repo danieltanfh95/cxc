@@ -1,42 +1,34 @@
 # appkit-viewer
 
-A native AppKit window driven from Corvid source. No Objective-C in
-the sim code, no out-of-process viewer, no PNG snapshotting hop. The
-`.cxc` file describes both the simulation and the rendering, the
-compiler emits a `main()` that hands the main thread to AppKit's
-CFRunLoop, and the atom lifecycle drives draw calls onto the window
-through a small FFI plugin.
+The pocket-MOBA sim from `cards/dota2/cxc/cards.cxc` rendered live to
+a native AppKit window. Sim, rendering, card-art layout — all in
+Corvid source. `main.cxc` does `from appkit import Window`; the
+plugin manifest and the FFI symbol table live in the sibling `appkit`
+module (`appkit/window.cxc`).
 
-Two demos share the same [libappkit.m](libappkit.m) plugin substrate:
+Screenshot: [screenshots/dota2-game-over.png](screenshots/dota2-game-over.png).
 
-- [hello_window.cxc](hello_window.cxc): opens a native window, draws
-  two coloured rectangles and two text lines. Minimal shape.
-- [dota2.cxc](dota2.cxc): the pocket-MOBA sim, rendered live to a
-  1280x800 window with card art, HUD, three lane panels, and a
-  centered `GAME OVER` banner on the final frame. Screenshot below.
-
-## Screenshots
-
-[hello_window](screenshots/hello-window.png): the smallest useful
-program. Two rectangles, a header, and a hint that closing the window
-quits the process.
-
-[dota2](screenshots/dota2-game-over.png): the sim after `p1 wins`
-plays out. Card art loaded from `cards/dota2/card-art-feathered/`,
-lane panels drawn from live atom state.
+For the smallest self-contained AppKit demo (one window, two rects,
+some text) see [../appkit-hello/](../appkit-hello/).
 
 ## What this demonstrates
 
-- `def plugin:` with `runtime_shape: RuntimeShape.main_runloop` — a
-  manifest field the compiler reads at compile time to decide the
-  shape of `main()`.
-- A user-mode Corvid file that opens a native window and draws to it,
-  with zero Objective-C or Cocoa in the `.cxc` source.
-- The `Renderer` sub-atom idiom: rendering is a plugin call chain
-  fanned out from a `draw_frame` transition; the sim body is
-  unaware of AppKit.
-- Compile-time image loading: `plugin.get("ak_image")(...)` accepts
-  absolute paths; missing files print once and become no-ops.
+- The multi-file compile shape: `main.cxc` at src-dir root imports
+  `Window` from the `appkit` module. The user's demo never sees the
+  plugin manifest or the `ak_*` FFI symbols — the module hides them.
+- `runtime_shape: RuntimeShape.main_runloop` declared once in the
+  imported plugin, threaded through the multi-file compile to change
+  `main()`'s tail from `dispatch_main()` to `[NSApp run]` without the
+  consumer knowing anything about it.
+- `def Window:` as a capability atom: a facade whose methods
+  (`window.rect(...)` / `window.text(...)` / `window.image(...)`)
+  wrap `plugin.get("ak_...")(...)` calls one level down. Consumers
+  work with named methods, not stringly-typed FFI dispatch.
+- A `Renderer` sub-atom that walks live sim state via chained
+  observations and drives the AppKit draw calls. The sim body is
+  a byte-parity copy of `cards/dota2/cxc/cards.cxc`.
+- Compile-time image loading via `window.image(x, y, w, h, path)`.
+  Missing files print once and become no-ops.
 
 ## What made this possible
 
@@ -58,8 +50,9 @@ raised `NSDestinationInvalidException` (no NSRunLoop on main). The
 runtime_shape: RuntimeShape! = RuntimeShape.main_runloop
 ```
 
-The compiler sees this in the plugin manifest, threads it onto the
-program AST, and swaps `emit-main`'s tail from `dispatch_main()` to
+The compiler sees this in the plugin manifest (in any module the
+build sees, including imported ones), threads it onto the program
+AST, and swaps `emit-main`'s tail from `dispatch_main()` to
 `[NSApp run]`. Full design in
 [docs/design/runtime-shape.md](../../../docs/design/runtime-shape.md);
 the three prototypes considered are in
@@ -78,39 +71,46 @@ Two things get gated on the same `:main-runloop` value:
 
 ## Files
 
-- [libappkit.m](libappkit.m): the AppKit FFI plugin. Exposes drawing
-  primitives (`ak_clear`, `ak_gradient`, `ak_rect`, `ak_round_rect`,
-  `ak_line`, `ak_text`, `ak_text_bold`, `ak_image`), a window
-  (`ak_prep`, `ak_window_open`, `ak_present`, `ak_run`), and
-  subscription hooks (`ak_subscribe_key`, `ak_subscribe_close`). All
-  drawing calls marshal to main via `dispatch_async` internally, so
-  the sim can call them from any queue.
-- [hello_window.cxc](hello_window.cxc): the smallest demo.
-- [dota2.cxc](dota2.cxc): the pocket-MOBA demo. Body copied from
-  `cards/dota2/cxc/cards.cxc`; `def Renderer:` and the `def plugin:`
-  block are the additions.
-- [build.sh](build.sh): builds the dylib, compiles the Corvid source,
-  re-links against the dylib.
+- [main.cxc](main.cxc): the demo — sim + `from appkit import Window`
+  + Renderer sub-atom. `def main:` at the root. Compiles to the
+  `dota2` binary.
+- [appkit/window.cxc](appkit/window.cxc): the plugin module. Declares
+  `def plugin:` (with `runtime_shape:` and every `ak_*` FFI symbol)
+  and `def Window:` (the capability atom wrapping them).
+- [appkit/libappkit.m](appkit/libappkit.m): the AppKit-facing C side.
+  Exposes drawing primitives, window management, and subscription
+  hooks. All drawing calls marshal to main via `dispatch_async`
+  internally.
+- [build.sh](build.sh): builds `libappkit.dylib`, runs the multi-file
+  Corvid compile (`compile-directory-to-file`), links against the
+  dylib.
 
 ## Building
 
 ```
-./build.sh                     # builds hello_window
-./build.sh $(pwd)/dota2.cxc    # builds dota2
+./build.sh
 ```
 
-Produces `/tmp/appkit-out/<demo>` alongside `libappkit.dylib` in this
-directory.
+Produces `/tmp/appkit-out/dota2` (an executable) alongside
+`appkit/libappkit.dylib` in this directory.
+
+The Corvid compiler currently emits FFI calls without extern
+declarations for user-supplied libraries, so `build.sh` re-links the
+emitted `.m` with `-Wno-implicit-function-declaration` and the
+correct `-L` / `-rpath` / `-l` flags. This is a known gap; when the
+compiler learns to emit externs from `foreign` blocks, the recovery
+flag drops out.
 
 ## Running
 
 ```
-/tmp/appkit-out/hello_window
 /tmp/appkit-out/dota2
 ```
 
-A native macOS window opens. Close it with the red button (or ⌘Q)
-to quit.
+The sim plays through to completion (about 22 frames), then the
+window holds the final frame — the atom hierarchy has torn down but
+AppKit keeps its run loop alive. Close the window with the red
+button (or ⌘Q) to quit.
 
 ## Threading contract
 
@@ -127,10 +127,11 @@ to quit.
 - Multi-window: today's plugin holds a single global `NSWindow`. A
   window-atom shape that pairs one Corvid atom with one NSWindow is
   the natural next step.
-- Cross-file plugin visibility: the `runtime_shape` field is currently
-  only checked at same-file scope. When a plugin ships in one `.cxc`
-  and a consumer imports it from another, `.cxc-caps` propagation
-  needs to carry the field.
+- `.cxc-caps` propagation across project boundaries. Within one
+  program (this directory), imports carry the `runtime_shape` field
+  along with the rest of the manifest. Across published packages
+  (`project.cxc` deps) the mechanism needs a serialised caps
+  artifact.
 - `linux-gtk` and `windows-win32` runtime shapes: the `RuntimeShape`
   enum grows a case, `emit-main` grows a branch, and the same
   `def plugin:` shape covers each platform's main-loop mechanic.

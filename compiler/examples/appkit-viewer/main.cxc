@@ -6,34 +6,16 @@
 # up after the sim finishes so you can inspect the final state; close
 # it to quit.
 #
-# Runtime shape: the `runtime_shape: RuntimeShape.main_runloop` field
-# tells the compiler to emit `[NSApp run]` at the tail of main()
-# instead of `dispatch_main()`. AppKit owns the main thread; atoms
-# reach main via `dispatch_async(dispatch_get_main_queue(), ...)`,
-# which the AppKit run loop drains.
+# The `appkit` module (appkit/window.cxc) hides both the plugin
+# manifest and the ak_* FFI symbols behind a `Window` capability atom.
+# Its `runtime_shape: RuntimeShape.main_runloop` still flows through
+# the multi-file compile to change `main()`'s tail from
+# `dispatch_main()` to `[NSApp run]`.
 #
-# Build:  ./build.sh dota2.cxc
-# Run:    /tmp/appkit-out/dota2
+# Build (run from this dir):  ./build.sh
+# Run:                        /tmp/appkit-out/dota2
 
-def plugin:
-    name:          String!       = "appkit"
-    version:       SemVer!       = SemVer(0, 1, 0)
-    compat:        VersionRange! = VersionRange(min: SemVer(1, 0, 0),
-                                                max: SemVer(2, 0, 0))
-    runtime_shape: RuntimeShape! = RuntimeShape.main_runloop
-
-    foreign "appkit":
-        symbol "ak_prep"        -> () -> Int32
-        symbol "ak_window_open" -> (Int32, Int32, CString) -> Int32
-        symbol "ak_clear"       -> (Int32, Int32, Int32) -> Int32
-        symbol "ak_gradient"    -> (Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int32) -> Int32
-        symbol "ak_rect"        -> (Int32, Int32, Int32, Int32, Int32, Int32, Int32) -> Int32
-        symbol "ak_round_rect"  -> (Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int32) -> Int32
-        symbol "ak_line"        -> (Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int32) -> Int32
-        symbol "ak_text"        -> (Int32, Int32, CString, Int32, Int32, Int32, Int32) -> Int32
-        symbol "ak_text_bold"   -> (Int32, Int32, CString, Int32, Int32, Int32, Int32) -> Int32
-        symbol "ak_image"       -> (Int32, Int32, Int32, Int32, CString) -> Int32
-        symbol "ak_present"     -> () -> Int32
+from appkit import Window
 
 def CardType:
     case hero
@@ -760,7 +742,7 @@ def Deck(prng: SeededPrng):
 # they're overwritten in the command buffer before the first
 # repaint.)
 def Renderer(lane_0: Lane, lane_1: Lane, lane_2: Lane, p0: Player, p1: Player, deck: Deck):
-    use plugin: Plugin
+    use window: Window
     frame_no: Int!    = 0
     # Absolute path to the dota2 card-art dir. The public dota2 repo
     # ships the art at cards/dota2/card-art-feathered/; adjust if
@@ -786,36 +768,36 @@ def Renderer(lane_0: Lane, lane_1: Lane, lane_2: Lane, p0: Player, p1: Player, d
             alias is_final :- phase == "p0 wins" or phase == "p1 wins" or phase == "draw"
 
             # Backdrop and header bar.
-            alias _bg    :- plugin.get("ak_gradient")(0, 0, 1280, 800, 16, 20, 32, 22, 28, 44)
-            alias _hbg   :- plugin.get("ak_gradient")(0, 0, 1280, 92, 28, 34, 56, 20, 24, 40)
-            alias _hb    :- plugin.get("ak_line")(0, 92, 1280, 92, 1, 60, 68, 92)
-            alias _rd    :- plugin.get("ak_text_bold")(40, 24, "Round " + round.to_string(), 28, 245, 246, 252)
-            alias _ph    :- plugin.get("ak_text")(210, 34, phase, 20, 155, 168, 205)
-            alias _fn    :- plugin.get("ak_text")(1180, 40, "frame " + frame_no.to_string(), 11, 90, 102, 128)
+            alias _bg    :- window.gradient(0, 0, 1280, 800, 16, 20, 32, 22, 28, 44)
+            alias _hbg   :- window.gradient(0, 0, 1280, 92, 28, 34, 56, 20, 24, 40)
+            alias _hb    :- window.line(0, 92, 1280, 92, 1, 60, 68, 92)
+            alias _rd    :- window.text_bold(40, 24, "Round " + round.to_string(), 28, 245, 246, 252)
+            alias _ph    :- window.text(210, 34, phase, 20, 155, 168, 205)
+            alias _fn    :- window.text(1180, 40, "frame " + frame_no.to_string(), 11, 90, 102, 128)
 
             # Scoreboard strip: P0 panel · deck/discard · P1 panel.
-            alias _p0bg  :- plugin.get("ak_round_rect")(24, 108, 380, 48, 10, 28, 42, 66)
-            alias _p0lb  :- plugin.get("ak_text_bold")(44, 122, "P0", 15, 120, 175, 245)
-            alias _p0h   :- plugin.get("ak_text")(96, 124, "hand", 12, 140, 152, 180)
-            alias _p0hv  :- plugin.get("ak_text_bold")(140, 122, p0.hand.cards.count.to_string(), 14, 230, 236, 246)
-            alias _p0t   :- plugin.get("ak_text")(180, 124, "towers lost", 12, 140, 152, 180)
-            alias _p0tv  :- plugin.get("ak_text_bold")(270, 122, p0.towers_lost.to_string(), 14, 230, 236, 246)
-            alias _p0w   :- plugin.get("ak_text")(298, 124, "wins", 12, 140, 152, 180)
-            alias _p0wv  :- plugin.get("ak_text_bold")(340, 122, p0.total_auction_wins.to_string(), 14, 230, 236, 246)
+            alias _p0bg  :- window.round_rect(24, 108, 380, 48, 10, 28, 42, 66)
+            alias _p0lb  :- window.text_bold(44, 122, "P0", 15, 120, 175, 245)
+            alias _p0h   :- window.text(96, 124, "hand", 12, 140, 152, 180)
+            alias _p0hv  :- window.text_bold(140, 122, p0.hand.cards.count.to_string(), 14, 230, 236, 246)
+            alias _p0t   :- window.text(180, 124, "towers lost", 12, 140, 152, 180)
+            alias _p0tv  :- window.text_bold(270, 122, p0.towers_lost.to_string(), 14, 230, 236, 246)
+            alias _p0w   :- window.text(298, 124, "wins", 12, 140, 152, 180)
+            alias _p0wv  :- window.text_bold(340, 122, p0.total_auction_wins.to_string(), 14, 230, 236, 246)
 
-            alias _dkc   :- plugin.get("ak_text")(490, 118, "deck", 12, 130, 140, 165)
-            alias _dkv   :- plugin.get("ak_text_bold")(530, 116, deck.cards.count.to_string(), 16, 220, 226, 240)
-            alias _dsc   :- plugin.get("ak_text")(580, 118, "discard", 12, 130, 140, 165)
-            alias _dsv   :- plugin.get("ak_text_bold")(640, 116, deck.discard.count.to_string(), 16, 220, 226, 240)
+            alias _dkc   :- window.text(490, 118, "deck", 12, 130, 140, 165)
+            alias _dkv   :- window.text_bold(530, 116, deck.cards.count.to_string(), 16, 220, 226, 240)
+            alias _dsc   :- window.text(580, 118, "discard", 12, 130, 140, 165)
+            alias _dsv   :- window.text_bold(640, 116, deck.discard.count.to_string(), 16, 220, 226, 240)
 
-            alias _p1bg  :- plugin.get("ak_round_rect")(876, 108, 380, 48, 10, 66, 30, 42)
-            alias _p1lb  :- plugin.get("ak_text_bold")(896, 122, "P1", 15, 245, 130, 130)
-            alias _p1h   :- plugin.get("ak_text")(944, 124, "hand", 12, 175, 145, 152)
-            alias _p1hv  :- plugin.get("ak_text_bold")(988, 122, p1.hand.cards.count.to_string(), 14, 246, 232, 232)
-            alias _p1t   :- plugin.get("ak_text")(1028, 124, "towers lost", 12, 175, 145, 152)
-            alias _p1tv  :- plugin.get("ak_text_bold")(1118, 122, p1.towers_lost.to_string(), 14, 246, 232, 232)
-            alias _p1w   :- plugin.get("ak_text")(1146, 124, "wins", 12, 175, 145, 152)
-            alias _p1wv  :- plugin.get("ak_text_bold")(1188, 122, p1.total_auction_wins.to_string(), 14, 246, 232, 232)
+            alias _p1bg  :- window.round_rect(876, 108, 380, 48, 10, 66, 30, 42)
+            alias _p1lb  :- window.text_bold(896, 122, "P1", 15, 245, 130, 130)
+            alias _p1h   :- window.text(944, 124, "hand", 12, 175, 145, 152)
+            alias _p1hv  :- window.text_bold(988, 122, p1.hand.cards.count.to_string(), 14, 246, 232, 232)
+            alias _p1t   :- window.text(1028, 124, "towers lost", 12, 175, 145, 152)
+            alias _p1tv  :- window.text_bold(1118, 122, p1.towers_lost.to_string(), 14, 246, 232, 232)
+            alias _p1w   :- window.text(1146, 124, "wins", 12, 175, 145, 152)
+            alias _p1wv  :- window.text_bold(1188, 122, p1.total_auction_wins.to_string(), 14, 246, 232, 232)
 
             # Three lane panels. Layout per lane:
             #   x=24    P0 tower slot (110x110 card art)
@@ -824,71 +806,71 @@ def Renderer(lane_0: Lane, lane_1: Lane, lane_2: Lane, p0: Player, p1: Player, d
             #   x=650   P1 unit slots (4 x 90 wide)
             #   x=1100  P1 tower slot
             # combat_idx / overkill on the bottom edge, dim.
-            alias _l0bg  :- plugin.get("ak_round_rect")(24, 172, 1232, 190, 12, 26, 32, 50)
-            alias _l0lb  :- plugin.get("ak_text_bold")(44, 184, "Lane 1", 12, 150, 162, 190)
-            alias _l0cs  :- plugin.get("ak_text")(44, 340, "combat " + lane_0.combat_idx.to_string() + "   overkill " + lane_0.overkill_0.to_string() + "/" + lane_0.overkill_1.to_string(), 10, 100, 112, 138)
-            alias _l0ta  :- plugin.get("ak_image")(38, 202, 110, 110, self.card_art(lane_0.side_0.tower_card.name ?? ""))
-            alias _l0tv  :- plugin.get("ak_text_bold")(70, 320, ||: lane_0.side_0.tower_placed : "HP " + lane_0.side_0.tower_hp.to_string() ||: else : "—", 13, 130, 178, 240)
-            alias _l0tb  :- plugin.get("ak_image")(1132, 202, 110, 110, self.card_art(lane_0.side_1.tower_card.name ?? ""))
-            alias _l0tbv :- plugin.get("ak_text_bold")(1164, 320, ||: lane_0.side_1.tower_placed : "HP " + lane_0.side_1.tower_hp.to_string() ||: else : "—", 13, 240, 130, 130)
-            alias _l0u00 :- plugin.get("ak_image")(170, 216, 90, 90, self.card_art((lane_0.side_0.units.at(0) ?? lane_0.side_0._sentinel_unit).card.name))
-            alias _l0u01 :- plugin.get("ak_image")(266, 216, 90, 90, self.card_art((lane_0.side_0.units.at(1) ?? lane_0.side_0._sentinel_unit).card.name))
-            alias _l0u02 :- plugin.get("ak_image")(362, 216, 90, 90, self.card_art((lane_0.side_0.units.at(2) ?? lane_0.side_0._sentinel_unit).card.name))
-            alias _l0u03 :- plugin.get("ak_image")(458, 216, 90, 90, self.card_art((lane_0.side_0.units.at(3) ?? lane_0.side_0._sentinel_unit).card.name))
-            alias _l0vs  :- plugin.get("ak_line")(624, 216, 624, 306, 1, 70, 78, 100)
-            alias _l0vsl :- plugin.get("ak_text_bold")(608, 254, "vs", 12, 120, 130, 155)
-            alias _l0u10 :- plugin.get("ak_image")(650, 216, 90, 90, self.card_art((lane_0.side_1.units.at(0) ?? lane_0.side_1._sentinel_unit).card.name))
-            alias _l0u11 :- plugin.get("ak_image")(746, 216, 90, 90, self.card_art((lane_0.side_1.units.at(1) ?? lane_0.side_1._sentinel_unit).card.name))
-            alias _l0u12 :- plugin.get("ak_image")(842, 216, 90, 90, self.card_art((lane_0.side_1.units.at(2) ?? lane_0.side_1._sentinel_unit).card.name))
-            alias _l0u13 :- plugin.get("ak_image")(938, 216, 90, 90, self.card_art((lane_0.side_1.units.at(3) ?? lane_0.side_1._sentinel_unit).card.name))
+            alias _l0bg  :- window.round_rect(24, 172, 1232, 190, 12, 26, 32, 50)
+            alias _l0lb  :- window.text_bold(44, 184, "Lane 1", 12, 150, 162, 190)
+            alias _l0cs  :- window.text(44, 340, "combat " + lane_0.combat_idx.to_string() + "   overkill " + lane_0.overkill_0.to_string() + "/" + lane_0.overkill_1.to_string(), 10, 100, 112, 138)
+            alias _l0ta  :- window.image(38, 202, 110, 110, self.card_art(lane_0.side_0.tower_card.name ?? ""))
+            alias _l0tv  :- window.text_bold(70, 320, ||: lane_0.side_0.tower_placed : "HP " + lane_0.side_0.tower_hp.to_string() ||: else : "—", 13, 130, 178, 240)
+            alias _l0tb  :- window.image(1132, 202, 110, 110, self.card_art(lane_0.side_1.tower_card.name ?? ""))
+            alias _l0tbv :- window.text_bold(1164, 320, ||: lane_0.side_1.tower_placed : "HP " + lane_0.side_1.tower_hp.to_string() ||: else : "—", 13, 240, 130, 130)
+            alias _l0u00 :- window.image(170, 216, 90, 90, self.card_art((lane_0.side_0.units.at(0) ?? lane_0.side_0._sentinel_unit).card.name))
+            alias _l0u01 :- window.image(266, 216, 90, 90, self.card_art((lane_0.side_0.units.at(1) ?? lane_0.side_0._sentinel_unit).card.name))
+            alias _l0u02 :- window.image(362, 216, 90, 90, self.card_art((lane_0.side_0.units.at(2) ?? lane_0.side_0._sentinel_unit).card.name))
+            alias _l0u03 :- window.image(458, 216, 90, 90, self.card_art((lane_0.side_0.units.at(3) ?? lane_0.side_0._sentinel_unit).card.name))
+            alias _l0vs  :- window.line(624, 216, 624, 306, 1, 70, 78, 100)
+            alias _l0vsl :- window.text_bold(608, 254, "vs", 12, 120, 130, 155)
+            alias _l0u10 :- window.image(650, 216, 90, 90, self.card_art((lane_0.side_1.units.at(0) ?? lane_0.side_1._sentinel_unit).card.name))
+            alias _l0u11 :- window.image(746, 216, 90, 90, self.card_art((lane_0.side_1.units.at(1) ?? lane_0.side_1._sentinel_unit).card.name))
+            alias _l0u12 :- window.image(842, 216, 90, 90, self.card_art((lane_0.side_1.units.at(2) ?? lane_0.side_1._sentinel_unit).card.name))
+            alias _l0u13 :- window.image(938, 216, 90, 90, self.card_art((lane_0.side_1.units.at(3) ?? lane_0.side_1._sentinel_unit).card.name))
 
-            alias _l1bg  :- plugin.get("ak_round_rect")(24, 378, 1232, 190, 12, 26, 32, 50)
-            alias _l1lb  :- plugin.get("ak_text_bold")(44, 390, "Lane 2", 12, 150, 162, 190)
-            alias _l1cs  :- plugin.get("ak_text")(44, 546, "combat " + lane_1.combat_idx.to_string() + "   overkill " + lane_1.overkill_0.to_string() + "/" + lane_1.overkill_1.to_string(), 10, 100, 112, 138)
-            alias _l1ta  :- plugin.get("ak_image")(38, 408, 110, 110, self.card_art(lane_1.side_0.tower_card.name ?? ""))
-            alias _l1tv  :- plugin.get("ak_text_bold")(70, 526, ||: lane_1.side_0.tower_placed : "HP " + lane_1.side_0.tower_hp.to_string() ||: else : "—", 13, 130, 178, 240)
-            alias _l1tb  :- plugin.get("ak_image")(1132, 408, 110, 110, self.card_art(lane_1.side_1.tower_card.name ?? ""))
-            alias _l1tbv :- plugin.get("ak_text_bold")(1164, 526, ||: lane_1.side_1.tower_placed : "HP " + lane_1.side_1.tower_hp.to_string() ||: else : "—", 13, 240, 130, 130)
-            alias _l1u00 :- plugin.get("ak_image")(170, 422, 90, 90, self.card_art((lane_1.side_0.units.at(0) ?? lane_1.side_0._sentinel_unit).card.name))
-            alias _l1u01 :- plugin.get("ak_image")(266, 422, 90, 90, self.card_art((lane_1.side_0.units.at(1) ?? lane_1.side_0._sentinel_unit).card.name))
-            alias _l1u02 :- plugin.get("ak_image")(362, 422, 90, 90, self.card_art((lane_1.side_0.units.at(2) ?? lane_1.side_0._sentinel_unit).card.name))
-            alias _l1u03 :- plugin.get("ak_image")(458, 422, 90, 90, self.card_art((lane_1.side_0.units.at(3) ?? lane_1.side_0._sentinel_unit).card.name))
-            alias _l1vs  :- plugin.get("ak_line")(624, 422, 624, 512, 1, 70, 78, 100)
-            alias _l1vsl :- plugin.get("ak_text_bold")(608, 460, "vs", 12, 120, 130, 155)
-            alias _l1u10 :- plugin.get("ak_image")(650, 422, 90, 90, self.card_art((lane_1.side_1.units.at(0) ?? lane_1.side_1._sentinel_unit).card.name))
-            alias _l1u11 :- plugin.get("ak_image")(746, 422, 90, 90, self.card_art((lane_1.side_1.units.at(1) ?? lane_1.side_1._sentinel_unit).card.name))
-            alias _l1u12 :- plugin.get("ak_image")(842, 422, 90, 90, self.card_art((lane_1.side_1.units.at(2) ?? lane_1.side_1._sentinel_unit).card.name))
-            alias _l1u13 :- plugin.get("ak_image")(938, 422, 90, 90, self.card_art((lane_1.side_1.units.at(3) ?? lane_1.side_1._sentinel_unit).card.name))
+            alias _l1bg  :- window.round_rect(24, 378, 1232, 190, 12, 26, 32, 50)
+            alias _l1lb  :- window.text_bold(44, 390, "Lane 2", 12, 150, 162, 190)
+            alias _l1cs  :- window.text(44, 546, "combat " + lane_1.combat_idx.to_string() + "   overkill " + lane_1.overkill_0.to_string() + "/" + lane_1.overkill_1.to_string(), 10, 100, 112, 138)
+            alias _l1ta  :- window.image(38, 408, 110, 110, self.card_art(lane_1.side_0.tower_card.name ?? ""))
+            alias _l1tv  :- window.text_bold(70, 526, ||: lane_1.side_0.tower_placed : "HP " + lane_1.side_0.tower_hp.to_string() ||: else : "—", 13, 130, 178, 240)
+            alias _l1tb  :- window.image(1132, 408, 110, 110, self.card_art(lane_1.side_1.tower_card.name ?? ""))
+            alias _l1tbv :- window.text_bold(1164, 526, ||: lane_1.side_1.tower_placed : "HP " + lane_1.side_1.tower_hp.to_string() ||: else : "—", 13, 240, 130, 130)
+            alias _l1u00 :- window.image(170, 422, 90, 90, self.card_art((lane_1.side_0.units.at(0) ?? lane_1.side_0._sentinel_unit).card.name))
+            alias _l1u01 :- window.image(266, 422, 90, 90, self.card_art((lane_1.side_0.units.at(1) ?? lane_1.side_0._sentinel_unit).card.name))
+            alias _l1u02 :- window.image(362, 422, 90, 90, self.card_art((lane_1.side_0.units.at(2) ?? lane_1.side_0._sentinel_unit).card.name))
+            alias _l1u03 :- window.image(458, 422, 90, 90, self.card_art((lane_1.side_0.units.at(3) ?? lane_1.side_0._sentinel_unit).card.name))
+            alias _l1vs  :- window.line(624, 422, 624, 512, 1, 70, 78, 100)
+            alias _l1vsl :- window.text_bold(608, 460, "vs", 12, 120, 130, 155)
+            alias _l1u10 :- window.image(650, 422, 90, 90, self.card_art((lane_1.side_1.units.at(0) ?? lane_1.side_1._sentinel_unit).card.name))
+            alias _l1u11 :- window.image(746, 422, 90, 90, self.card_art((lane_1.side_1.units.at(1) ?? lane_1.side_1._sentinel_unit).card.name))
+            alias _l1u12 :- window.image(842, 422, 90, 90, self.card_art((lane_1.side_1.units.at(2) ?? lane_1.side_1._sentinel_unit).card.name))
+            alias _l1u13 :- window.image(938, 422, 90, 90, self.card_art((lane_1.side_1.units.at(3) ?? lane_1.side_1._sentinel_unit).card.name))
 
-            alias _l2bg  :- plugin.get("ak_round_rect")(24, 584, 1232, 190, 12, 26, 32, 50)
-            alias _l2lb  :- plugin.get("ak_text_bold")(44, 596, "Lane 3", 12, 150, 162, 190)
-            alias _l2cs  :- plugin.get("ak_text")(44, 752, "combat " + lane_2.combat_idx.to_string() + "   overkill " + lane_2.overkill_0.to_string() + "/" + lane_2.overkill_1.to_string(), 10, 100, 112, 138)
-            alias _l2ta  :- plugin.get("ak_image")(38, 614, 110, 110, self.card_art(lane_2.side_0.tower_card.name ?? ""))
-            alias _l2tv  :- plugin.get("ak_text_bold")(70, 732, ||: lane_2.side_0.tower_placed : "HP " + lane_2.side_0.tower_hp.to_string() ||: else : "—", 13, 130, 178, 240)
-            alias _l2tb  :- plugin.get("ak_image")(1132, 614, 110, 110, self.card_art(lane_2.side_1.tower_card.name ?? ""))
-            alias _l2tbv :- plugin.get("ak_text_bold")(1164, 732, ||: lane_2.side_1.tower_placed : "HP " + lane_2.side_1.tower_hp.to_string() ||: else : "—", 13, 240, 130, 130)
-            alias _l2u00 :- plugin.get("ak_image")(170, 628, 90, 90, self.card_art((lane_2.side_0.units.at(0) ?? lane_2.side_0._sentinel_unit).card.name))
-            alias _l2u01 :- plugin.get("ak_image")(266, 628, 90, 90, self.card_art((lane_2.side_0.units.at(1) ?? lane_2.side_0._sentinel_unit).card.name))
-            alias _l2u02 :- plugin.get("ak_image")(362, 628, 90, 90, self.card_art((lane_2.side_0.units.at(2) ?? lane_2.side_0._sentinel_unit).card.name))
-            alias _l2u03 :- plugin.get("ak_image")(458, 628, 90, 90, self.card_art((lane_2.side_0.units.at(3) ?? lane_2.side_0._sentinel_unit).card.name))
-            alias _l2vs  :- plugin.get("ak_line")(624, 628, 624, 718, 1, 70, 78, 100)
-            alias _l2vsl :- plugin.get("ak_text_bold")(608, 666, "vs", 12, 120, 130, 155)
-            alias _l2u10 :- plugin.get("ak_image")(650, 628, 90, 90, self.card_art((lane_2.side_1.units.at(0) ?? lane_2.side_1._sentinel_unit).card.name))
-            alias _l2u11 :- plugin.get("ak_image")(746, 628, 90, 90, self.card_art((lane_2.side_1.units.at(1) ?? lane_2.side_1._sentinel_unit).card.name))
-            alias _l2u12 :- plugin.get("ak_image")(842, 628, 90, 90, self.card_art((lane_2.side_1.units.at(2) ?? lane_2.side_1._sentinel_unit).card.name))
-            alias _l2u13 :- plugin.get("ak_image")(938, 628, 90, 90, self.card_art((lane_2.side_1.units.at(3) ?? lane_2.side_1._sentinel_unit).card.name))
+            alias _l2bg  :- window.round_rect(24, 584, 1232, 190, 12, 26, 32, 50)
+            alias _l2lb  :- window.text_bold(44, 596, "Lane 3", 12, 150, 162, 190)
+            alias _l2cs  :- window.text(44, 752, "combat " + lane_2.combat_idx.to_string() + "   overkill " + lane_2.overkill_0.to_string() + "/" + lane_2.overkill_1.to_string(), 10, 100, 112, 138)
+            alias _l2ta  :- window.image(38, 614, 110, 110, self.card_art(lane_2.side_0.tower_card.name ?? ""))
+            alias _l2tv  :- window.text_bold(70, 732, ||: lane_2.side_0.tower_placed : "HP " + lane_2.side_0.tower_hp.to_string() ||: else : "—", 13, 130, 178, 240)
+            alias _l2tb  :- window.image(1132, 614, 110, 110, self.card_art(lane_2.side_1.tower_card.name ?? ""))
+            alias _l2tbv :- window.text_bold(1164, 732, ||: lane_2.side_1.tower_placed : "HP " + lane_2.side_1.tower_hp.to_string() ||: else : "—", 13, 240, 130, 130)
+            alias _l2u00 :- window.image(170, 628, 90, 90, self.card_art((lane_2.side_0.units.at(0) ?? lane_2.side_0._sentinel_unit).card.name))
+            alias _l2u01 :- window.image(266, 628, 90, 90, self.card_art((lane_2.side_0.units.at(1) ?? lane_2.side_0._sentinel_unit).card.name))
+            alias _l2u02 :- window.image(362, 628, 90, 90, self.card_art((lane_2.side_0.units.at(2) ?? lane_2.side_0._sentinel_unit).card.name))
+            alias _l2u03 :- window.image(458, 628, 90, 90, self.card_art((lane_2.side_0.units.at(3) ?? lane_2.side_0._sentinel_unit).card.name))
+            alias _l2vs  :- window.line(624, 628, 624, 718, 1, 70, 78, 100)
+            alias _l2vsl :- window.text_bold(608, 666, "vs", 12, 120, 130, 155)
+            alias _l2u10 :- window.image(650, 628, 90, 90, self.card_art((lane_2.side_1.units.at(0) ?? lane_2.side_1._sentinel_unit).card.name))
+            alias _l2u11 :- window.image(746, 628, 90, 90, self.card_art((lane_2.side_1.units.at(1) ?? lane_2.side_1._sentinel_unit).card.name))
+            alias _l2u12 :- window.image(842, 628, 90, 90, self.card_art((lane_2.side_1.units.at(2) ?? lane_2.side_1._sentinel_unit).card.name))
+            alias _l2u13 :- window.image(938, 628, 90, 90, self.card_art((lane_2.side_1.units.at(3) ?? lane_2.side_1._sentinel_unit).card.name))
 
             # Endgame banner. Centered rounded rect on top of everything.
-            alias _end_bg :- ||: is_final : plugin.get("ak_round_rect")(340, 350, 600, 100, 16, 230, 180, 80) ||: else : 0
-            alias _end_tx :- ||: is_final : plugin.get("ak_text_bold")(408, 380, "GAME OVER · " + phase, 32, 30, 22, 12) ||: else : 0
+            alias _end_bg :- ||: is_final : window.round_rect(340, 350, 600, 100, 16, 230, 180, 80) ||: else : 0
+            alias _end_tx :- ||: is_final : window.text_bold(408, 380, "GAME OVER · " + phase, 32, 30, 22, 12) ||: else : 0
 
-            alias _present :- plugin.get("ak_present")()
+            alias _present :- window.present()
             frame_no => frame_no + 1
 
     -> end
 
 def main(args: Args):
-    use plugin: Plugin
+    use window: Window
 
     # Effect-record shorthands: each card lists its pre- and on-deploy
     # side-effects as data. `_no_effect` stands for "no side-effect at
@@ -962,7 +944,7 @@ def main(args: Args):
     # Renderer walks lane/player/deck state at each phase boundary and
     # writes a PNG per frame under /tmp/dota2-frames/.
     renderer: Renderer = Renderer(lane_0: lane0, lane_1: lane1, lane_2: lane2,
-                                  p0: p0, p1: p1, deck: deck)
+                                  p0: p0, p1: p1, deck: deck, window: window)
 
     at_seat(seat: Int) :- ||: seat == 0 : p0 ||: else : p1
     # The winning seat, or -1 for a draw when both players lose their
@@ -977,8 +959,8 @@ def main(args: Args):
 
     -> idle
         then:
-            alias _prep :- plugin.get("ak_prep")()
-            alias _win  :- plugin.get("ak_window_open")(1280, 800, "Corvid · Pocket MOBA")
+            alias _prep :- window.prep()
+            alias _win  :- window.open(1280, 800, "Corvid · Pocket MOBA")
             |> deck.seed(initial: initial_deck)
             self :> kickoff
 

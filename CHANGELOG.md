@@ -2,6 +2,19 @@
 
 Format: date · tag · summary.
 
+## 2026-09-28 · examples · appkit-viewer + appkit-hello · cross-file plugin import shape
+
+Restructures the appkit example to import the plugin from a sibling module instead of declaring it inline. `main.cxc` now says `from appkit import Window` and never mentions the plugin manifest or the `ak_*` FFI symbols. Same shape as the B8 `hello-slice` fixture (2026-09-02) — the runtime-shape landing (2026-09-27, previous entry) is what let it apply to a full-fat GUI plugin, not a printing capability.
+
+Two examples:
+
+- `compiler/examples/appkit-hello/` — the minimal demo. One 720x480 window, two rects, two lines of text. Uses `compile-directory-to-file` to bring in the sibling `appkit` module.
+- `compiler/examples/appkit-viewer/` — the pocket-MOBA sim as before, restructured to the same import shape. Renderer and main both do `use window: Window`. The `Window` capability atom lives in `appkit/window.cxc` alongside the plugin manifest and a `libappkit.m` that both examples share as source.
+
+The `runtime_shape: RuntimeShape.main_runloop` field declared in the imported plugin still routes through `compile-directory-to-file`'s multi-file scan and reaches `emit-main` correctly; nothing new in the compiler for this restructuring. The change is entirely example shape + build script move to `compile-directory-to-file`. Full test suite (1072 tests / 2975 assertions) still passes.
+
+Retires `hello_window.cxc` from `appkit-viewer/` (its role — proving the mechanism — is folded into `appkit-hello/main.cxc` as the smallest useful demo).
+
 ## 2026-09-27 · language · runtime-shape manifest field + appkit-viewer example (in-process live window)
 
 Adds `runtime_shape:` to the `def plugin:` manifest and wires it end-to-end from parse to emit. A plugin manifest declaring `runtime_shape: RuntimeShape.main_runloop` causes `emit-main` to end `main()` with `[NSApplication sharedApplication]; [NSApp run];` instead of `dispatch_main()`, and gates `cxc_shutdown()`'s `exit(0)` behind `#if CXC_MAIN_RUNLOOP` so the atom hierarchy tearing down mid-run no longer race-terminates AppKit. Full test suite (1070 tests / 2971 assertions) plus 6 new manifest tests + 6 new emit tests, all pass.
