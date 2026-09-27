@@ -457,6 +457,20 @@
              "? (" opt-c "){.present = 1, .value = __cxc_od.value." fname "} "
              ": (" opt-c "){0}; })")))
 
+    ;; 2026-09-27 — observation on Optional-record. `x.n` where
+    ;; x: Record? and `n :- ...` is an observation returning T. Lowers
+    ;; to `if x.present then Optional{Record_n(x.value)} else Optional{0}`.
+    ;; Distinct from :c-optional-dot because the RHS is a C function
+    ;; call (`Record_n(x.value)`) not a struct-field read.
+    :c-optional-obs-call
+    (let [target-c (emit-expr (:target node))
+          method-c (:method-c-name node)
+          opt-c    (:result-opt-c-type node)]
+      (str "({ __typeof__(" target-c ") __cxc_od = (" target-c "); "
+           "__cxc_od.present "
+           "? (" opt-c "){.present = 1, .value = " method-c "(__cxc_od.value)} "
+           ": (" opt-c "){0}; })"))
+
     ;; F39 L5b-ii-c — print of Optional arg. Present → format inner;
     ;; nil → "nil\n". Matches ObjC's reference-nil `print(nil)` convention.
     :c-print-optional

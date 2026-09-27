@@ -4384,10 +4384,10 @@ def main:
 
 (deftest f13-l1-weak-on-atom-accepted
   (testing "F13 L1 — `weak <AtomName>` on an atom-typed data field passes env-time validation; the modifier flows through to the lowered field entry so L2 can pick the ObjC property attrs."
-    (let [prog (lower-src "def Parent:\n    -> alive\n\ndef Child:\n    parent: weak Parent\n\n    -> alive\n\ndef main:\n    -> running\n        then: print(0)\n")
+    (let [prog (lower-src "def Parent:\n    -> alive\n\ndef Child:\n    dad: weak Parent\n\n    -> alive\n\ndef main:\n    -> running\n        then: print(0)\n")
           child (first (filter #(= "Child" (:name %)) (:classes prog)))
-          f     (first (filter #(= "parent" (:name %)) (:properties child)))]
-      (is (some? f) "Child.parent lowered as an ObjC property")
+          f     (first (filter #(= "dad" (:name %)) (:properties child)))]
+      (is (some? f) "Child.dad lowered as an ObjC property")
       ;; Storage class is verified in L2; here we assert env-time
       ;; validation didn't reject the field.
       (is (= :objc-program (:node prog))))))
@@ -4408,7 +4408,7 @@ def main:
 
 (deftest f13-l1-unowned-on-atom-accepted
   (testing "F13 L1 — `unowned <AtomName>` on an atom-typed data field passes env-time validation."
-    (let [prog (lower-src "def Parent:\n    -> alive\n\ndef Child:\n    parent: unowned Parent\n\n    -> alive\n\ndef main:\n    -> running\n        then: print(0)\n")]
+    (let [prog (lower-src "def Parent:\n    -> alive\n\ndef Child:\n    dad: unowned Parent\n\n    -> alive\n\ndef main:\n    -> running\n        then: print(0)\n")]
       (is (= :objc-program (:node prog))))))
 
 ;; ---------------------------------------------------------------------------

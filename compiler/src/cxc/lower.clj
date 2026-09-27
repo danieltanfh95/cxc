@@ -341,6 +341,7 @@
   (cond
     (not (map? node)) false
     (contains? #{:c-optional-binop :c-optional-unary :c-optional-dot
+                 :c-optional-obs-call
                  :c-optional-chained-cmp :c-optional-nil-check
                  :c-value-nonnil-unwrap :c-print-optional
                  :c-optional-cond}
@@ -956,6 +957,31 @@
                                      "` (collision between data:/use:): "
                                      (mapv key dupes))
                                 {:atom name :dupes (mapv key dupes)})))
+             ;; 2026-09-27 — reserved runtime property collision.
+             ;; The atom emit unconditionally declares @property phase
+             ;; (NSString for state-machine phase), own_queue, parent,
+             ;; parent_slot_name, cxc_owned_resources. A user-defined
+             ;; field with any of these names produces a duplicate
+             ;; @property declaration in the generated .m and fails at
+             ;; C compile ("property has a previous declaration").
+             ;; Reject at lower time with a targeted diagnostic naming
+             ;; the collision and a rename suggestion.
+             _             (let [reserved #{"phase" "own_queue" "parent"
+                                            "parent_slot_name"
+                                            "cxc_owned_resources"}
+                                 hits (filter #(contains? reserved (:name %))
+                                              merged-fields)]
+                             (when (seq hits)
+                               (fail-user!
+                                (str "field name `" (:name (first hits))
+                                     "` on def-atom `" name "` collides"
+                                     " with a reserved atom-runtime"
+                                     " property. Reserved names: "
+                                     (str/join ", " (sort reserved))
+                                     ". Rename the field (e.g. `" (:name (first hits))
+                                     "_v` or a domain-specific name like"
+                                     " `stage` for `phase`).")
+                                {:atom name :field (:name (first hits))})))
              merged-dsec   (assoc (or dsec {:node :data-section}) :fields merged-fields)
              fields        (-> (fields-from-data-section merged-dsec record-name-set env enum-env module-map)
                                ;; F36 Landing 2a: invariant-driven picker
@@ -4162,20 +4188,54 @@
                       (let [inner-rec (:record (unwrap-tk target-ty))
                             f-info    (get-in (:record-env ctx)
                                               [inner-rec :field-index (:field node)])
+                            ;; 2026-09-27 — observation-on-Optional-record.
+                            ;; If `.field` isn't a struct field, check
+                            ;; whether it's an observation. `x.n` where
+                            ;; x: Record? and Record has `n :- ...` lowers
+                            ;; to `if x.present then Optional{Record_n(x.value)}
+                            ;; else Optional{0}`. Without this branch the
+                            ;; :c-optional-dot path emits `(){...}` compound
+                            ;; literals with no type (bug found via mimo-2).
+                            obs-info  (when-not f-info
+                                        (get-in (:record-env ctx)
+                                                [inner-rec :observable-index (:field node)]))
                             inner-opt? (:optional? f-info)
                             field-tk  (when f-info
                                         (cxc-type->type-kw (:cxc-ty f-info)
                                                            (:record-env ctx)
                                                            (:atom-env ctx)
                                                            (:enum-env ctx) node))
-                            opt-c     (when field-tk
+                            obs-tk    (when obs-info
+                                        (or (:type-kw obs-info)
+                                            (when-let [ct (:cxc-ty obs-info)]
+                                              (cxc-type->type-kw ct
+                                                                 (:record-env ctx)
+                                                                 (:atom-env ctx)
+                                                                 (:enum-env ctx) node))))
+                            tk        (or field-tk obs-tk)
+                            opt-c     (when tk
                                         (optional-type-name
-                                         (type-kw->cxc-name-str field-tk)))]
-                        {:node               :c-optional-dot
-                         :target             (lower-expr (:target node) ctx)
-                         :field              (:field node)
-                         :inner-already-opt? inner-opt?
-                         :result-opt-c-type  opt-c})
+                                         (type-kw->cxc-name-str tk)))]
+                        (cond
+                          obs-info
+                          {:node               :c-optional-obs-call
+                           :target             (lower-expr (:target node) ctx)
+                           :method-c-name      (c-method-name inner-rec (:field node))
+                           :result-opt-c-type  opt-c}
+
+                          f-info
+                          {:node               :c-optional-dot
+                           :target             (lower-expr (:target node) ctx)
+                           :field              (:field node)
+                           :inner-already-opt? inner-opt?
+                           :result-opt-c-type  opt-c}
+
+                          :else
+                          (fail-user!
+                           (str "no field or observation `" (:field node)
+                                "` on record `" inner-rec "` (accessed via"
+                                " nullable receiver)")
+                           {:record inner-rec :field (:field node)})))
 
                       :else
                       (let [target-lo (lower-expr (:target node) ctx)
@@ -4559,7 +4619,50 @@
               (fail-nyi! (str "R6 MVP: `||:` chain must terminate with an "
                               "`||: else : <body>` arm — no-else fallthrough "
                               "requires MultiArmNoMatch runtime type (deferred)")
-                         node))]
+                         node))
+          ;; 2026-09-27 — pre-lower type-check: arms of a `||:` chain
+          ;; must all return the same concrete kind. Without this check
+          ;; the emit produces `?:` on incompatible C types (e.g.
+          ;; `_Cxc_ListOfInt *` vs `Filt`) that fails cryptically at
+          ;; the C-compiler stage. Bug uncovered by mimo-2 on Filt.
+          ;; Compare arm-to-arm so we don't reach outside the chain
+          ;; (an outer method's return type may differ from the chain's
+          ;; own let-declared type). Optional-wrapping is a legitimate
+          ;; mismatch (raw T vs Optional T merge to Optional T), so
+          ;; tolerate that pair by stripping.
+          strip-opt (fn [t]
+                      (if (and (vector? t) (= :optional (first t)))
+                        (second t)
+                        t))
+          kind-of   (fn [t]
+                      (when (map? t)
+                        (cond (:record t) :record
+                              (:atom t)   :atom
+                              (:list t)   :list
+                              (:map t)    :map
+                              (:set t)    :set
+                              (:enum t)   :enum
+                              :else       nil)))
+          arm-kinds (map-indexed
+                     (fn [i arm]
+                       (let [tk (try (infer-type (:body arm) ctx)
+                                     (catch Exception _ nil))]
+                         [i tk (kind-of (strip-opt tk))]))
+                     arms)
+          concrete  (filter (fn [[_ _ k]] (some? k)) arm-kinds)
+          _ (when (> (count (set (map #(nth % 2) concrete))) 1)
+              (let [[i0 tk0 k0] (first concrete)
+                    [i1 tk1 _] (first (filter (fn [[_ _ k]] (not= k k0))
+                                              (rest concrete)))]
+                (fail-user!
+                 (str "type mismatch in `||:` chain: arm " i0
+                      " body returns " (pr-str (strip-opt tk0))
+                      " but arm " i1 " body returns "
+                      (pr-str (strip-opt tk1))
+                      ". Every arm must return the same type"
+                      " (Optional-wrapping is OK).")
+                 {:arm-a i0 :type-a (strip-opt tk0)
+                  :arm-b i1 :type-b (strip-opt tk1)})))]
       (loop [i    (- (count arms) 2)
              else (lower-expr (get-in arms [(dec (count arms)) :body]) ctx)]
         (if (neg? i)
