@@ -41,11 +41,18 @@ lane panels drawn from live atom state.
 ## What made this possible
 
 Corvid's `main()` historically ended with `dispatch_main()`, which
-pumps the main queue but never installs a CFRunLoop. AppKit needs
-a CFRunLoop on the actual main thread to be useful (see the older
-[cocoa-viewer README](../../../../corvid/compiler/examples/cocoa-viewer/README.md)'s
-"Why no live window" section for the failure modes). The 2026-09-26
-runtime-shape landing added a single field to `def plugin:`:
+pumps the main queue but never installs a CFRunLoop. AppKit needs a
+CFRunLoop on the actual main thread to be useful — every hop back to
+main from an atom under the old shape failed one of four ways:
+inline AppKit tripped `NSInternalInconsistencyException` (AppKit's
+thread check is `pthread_main_np()`, not queue ownership),
+`dispatch_sync(main)` trapped (caller chain transitively owned the
+main queue via the target chain), `dispatch_async + semaphore`
+deadlocked (main queue couldn't drain while the semaphore-waiting
+block still executed on it), and `performSelectorOnMainThread:`
+raised `NSDestinationInvalidException` (no NSRunLoop on main). The
+2026-09-27 runtime-shape landing added a single field to
+`def plugin:`:
 
 ```corvid
 runtime_shape: RuntimeShape! = RuntimeShape.main_runloop

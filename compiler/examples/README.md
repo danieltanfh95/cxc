@@ -121,7 +121,10 @@ with a note about what blocks it.
 These sit outside the stdout-verify test loop because they open a
 window or require external state:
 
-- [cocoa-viewer/](cocoa-viewer/) — Corvid plugin FFI to a Cocoa
-  drawing wrapper, renders a dota2-simulator frame in a native
-  NSWindow. See [cocoa-viewer/README.md](cocoa-viewer/README.md) for
-  the build + run instructions.
+- [appkit-viewer/](appkit-viewer/) — native AppKit window driven
+  from Corvid source. Two demos share a `libappkit.m` plugin:
+  `hello_window.cxc` (minimal — two rects + text) and `dota2.cxc`
+  (the pocket-MOBA sim rendered live to a 1280x800 window with card
+  art and a HUD). Uses `def plugin: runtime_shape: RuntimeShape.main_runloop`
+  so `main()` ends in `[NSApp run]` instead of `dispatch_main()`.
+  See [appkit-viewer/README.md](appkit-viewer/README.md).

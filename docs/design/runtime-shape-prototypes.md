@@ -233,10 +233,10 @@ runtime-shape selection; A doesn't preclude it.
   runtime_shape" at build-caps time.
 - Grow `RuntimeShape` beyond `.dispatch_main` / `.main_runloop` when
   the next platform lands (`.gtk_main`, `.qt_exec`, `.custom(entry:)`).
-- Retire the `corvid-appkit-out-of-process` memory rule; replace with
-  a `corvid-runtime-shape` rule pointing at the manifest field.
-- Move the cocoa-viewer example to appkit-viewer, fold viewerd's
-  window/event loop into a Corvid source using this mechanism.
+- ~~Retire the `corvid-appkit-out-of-process` memory rule; replace with
+  a `corvid-runtime-shape` rule pointing at the manifest field.~~ **DONE 2026-09-27.**
+- ~~Move the cocoa-viewer example to appkit-viewer, fold viewerd's
+  window/event loop into a Corvid source using this mechanism.~~ **DONE 2026-09-27.**
 
 ## Files touched
 
