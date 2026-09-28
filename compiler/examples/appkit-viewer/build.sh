@@ -44,7 +44,6 @@ clojure -M -e "
 
 echo "==> linking against libappkit.dylib"
 clang -fobjc-arc \
-    -Wno-implicit-function-declaration \
     -framework Foundation -framework Cocoa \
     -L"$APPKIT_DIR" \
     -Wl,-rpath,"$APPKIT_DIR" \

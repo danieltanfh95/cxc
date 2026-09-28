@@ -6493,3 +6493,67 @@ def main:
       (is (some? tally)  "tally obs lowered — no NPE reading heroes on pass 1")
       (is (= "int64_t" (:return-type tally))
           "tally's `.count` chain typed to Int"))))
+
+;; ---------------------------------------------------------------------------
+;; Multi-plugin runtime_shape conflict detection (2026-09-28).
+;;
+;; The runtime-shape extractor in lower.clj walks every :def-plugin node
+;; in top-nodes (which, under compile-directory-to-file, includes every
+;; imported module's plugin manifest). Prior to 2026-09-28 the extractor
+;; used `some` and took the first hit; two plugins declaring conflicting
+;; non-default shapes silently picked one. The 2026-09-28 landing walks
+;; every def-plugin, collects distinct non-default shapes, and raises
+;; :cxc-runtime-shape-conflict when >1 distinct value survives.
+;;
+;; Test uses a hand-constructed AST because the parser's runtime-shape
+;; whitelist only accepts .dispatch_main and .main_runloop today; a real
+;; future conflict would involve a second non-default value like
+;; .gtk_main which isn't a parseable variant yet.
+;; ---------------------------------------------------------------------------
+
+(defn- fake-def-plugin [plugin-name shape-field]
+  {:node :def-plugin :name "plugin"
+   :fields [{:node :field :name "name"
+             :default {:node :lit-string :value plugin-name}}
+            {:node :field :name "runtime_shape"
+             :default {:node :dot
+                       :target {:node :ident :name "RuntimeShape"}
+                       :field  shape-field}}]
+   :foreign-blocks []})
+
+(defn- parsed-def-main []
+  (first (p/parse "def main:\n    -> ready\n        then: print(1)\n")))
+
+(deftest runtime-shape-two-conflicting-non-default-plugins-rejected
+  (testing "Two plugins each declaring a different non-default runtime_shape raise :cxc-runtime-shape-conflict at lower time."
+    (let [nodes [(fake-def-plugin "a" "main_runloop")
+                 (fake-def-plugin "b" "gtk_main")
+                 (parsed-def-main)]]
+      (is (thrown-with-msg?
+           clojure.lang.ExceptionInfo
+           #"conflicting `runtime_shape` declarations"
+           (lower/lower nodes))))))
+
+(deftest runtime-shape-two-same-non-default-plugins-accepted
+  (testing "Two plugins both declaring the SAME non-default runtime_shape are fine — they cooperate on the same runloop authority. No exception; :runtime-shape resolves to that shape."
+    (let [nodes [(fake-def-plugin "a" "main_runloop")
+                 (fake-def-plugin "b" "main_runloop")
+                 (parsed-def-main)]
+          prog  (lower/lower nodes)]
+      (is (= :main-runloop (:runtime-shape prog))))))
+
+(deftest runtime-shape-mixed-default-and-non-default-picks-non-default
+  (testing "A plugin declaring dispatch_main (the default) alongside a plugin declaring main_runloop is not a conflict — the default is a valid abstain, not a competing claim."
+    (let [nodes [(fake-def-plugin "silent"    "dispatch_main")
+                 (fake-def-plugin "gui-owner" "main_runloop")
+                 (parsed-def-main)]
+          prog  (lower/lower nodes)]
+      (is (= :main-runloop (:runtime-shape prog))))))
+
+(deftest runtime-shape-all-default-resolves-to-dispatch-main
+  (testing "Every plugin declaring dispatch_main (or omitting) leaves the program on the default shape."
+    (let [nodes [(fake-def-plugin "a" "dispatch_main")
+                 (fake-def-plugin "b" "dispatch_main")
+                 (parsed-def-main)]
+          prog  (lower/lower nodes)]
+      (is (= :dispatch-main (:runtime-shape prog))))))

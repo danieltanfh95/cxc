@@ -17,6 +17,12 @@
            "cxc-test-" (into-array java.nio.file.attribute.FileAttribute []))]
     (.toFile d)))
 
+(defn- write-file! [^java.io.File dir rel-path content]
+  (let [f (java.io.File. dir rel-path)]
+    (.mkdirs (.getParentFile f))
+    (spit f content)
+    f))
+
 (defn- example [name] (slurp (str "examples/" name ".cxc")))
 
 (defn- compile-and-run
@@ -1475,6 +1481,150 @@
       (is (zero? exit))
       (is (= "hello from B8 slice\n" stdout)))))
 
+(deftest cross-file-runtime-shape-reaches-emit
+  (testing "2026-09-28 correctness slice. A plugin declaring `runtime_shape: RuntimeShape.main_runloop` in one file must cause `emit-main` to end main() with `[NSApp run]` when the consumer imports it from another file. Previously verified only by running the appkit-viewer demo; now a fixture-free build test."
+    (let [src-dir (tmp-dir)
+          out-dir (tmp-dir)
+          _       (write-file! src-dir "appkit_stub/window.cxc"
+                               (str "def plugin:\n"
+                                    "    name:          String!       = \"appkit_stub\"\n"
+                                    "    version:       SemVer!       = SemVer(0, 1, 0)\n"
+                                    "    compat:        VersionRange! = VersionRange(min: SemVer(1, 0, 0), max: SemVer(2, 0, 0))\n"
+                                    "    runtime_shape: RuntimeShape! = RuntimeShape.main_runloop\n"
+                                    "\n"
+                                    "    foreign \"libc\":\n"
+                                    "        symbol \"puts\" -> (CString) -> Int\n"
+                                    "\n"
+                                    "def Window:\n"
+                                    "    use plugin: Plugin\n"
+                                    "\n"
+                                    "    ping(msg: String) :- plugin.get(\"puts\")(msg)\n"))
+          _       (write-file! src-dir "main.cxc"
+                               (str "from appkit_stub import Window\n"
+                                    "\n"
+                                    "def main:\n"
+                                    "    use window: Window\n"
+                                    "\n"
+                                    "    -> ready\n"
+                                    "        then: window.ping(\"hi\")\n"))
+          {:keys [m-path stderr]}
+          (build/compile-directory-to-file (.getPath src-dir) "prog"
+                                           (.getPath out-dir))
+          m (slurp m-path)]
+      (is (str/includes? m "[NSApp run];")
+          "imported plugin's :main-runloop reaches emit-main")
+      (is (str/includes? m "#define CXC_MAIN_RUNLOOP 1")
+          "the CXC_MAIN_RUNLOOP define is emitted so cxc_shutdown's exit(0) is gated")
+      (is (not (str/includes? m "dispatch_main();"))
+          ":main-runloop replaces dispatch_main entirely, even under cross-file import")
+      (is (not (re-find #"type-ref .RuntimeShape. in module" (or stderr "")))
+          "`RuntimeShape` doesn't surface as an unscoped-type warning (it's in the always-in-scope builtin set)")
+      (is (not (re-find #"type-ref .CString. in module" (or stderr "")))
+          "`CString` doesn't surface as an unscoped-type warning either"))))
+
+(deftest cross-file-runtime-shape-default-preserves-dispatch-main
+  (testing "2026-09-28. Consumer imports a plugin that does NOT declare `runtime_shape` — the program should stay on `dispatch_main()`. Guards against accidental main_runloop leakage from the extractor."
+    (let [src-dir (tmp-dir)
+          out-dir (tmp-dir)
+          _       (write-file! src-dir "hello_slice/writer.cxc"
+                               (str "def plugin:\n"
+                                    "    name:    String!       = \"hello_slice\"\n"
+                                    "    version: SemVer!       = SemVer(0, 1, 0)\n"
+                                    "    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0), max: SemVer(2, 0, 0))\n"
+                                    "\n"
+                                    "    foreign \"libc\":\n"
+                                    "        symbol \"puts\" -> (CString) -> Int\n"
+                                    "\n"
+                                    "def Writer:\n"
+                                    "    use plugin: Plugin\n"
+                                    "    write(msg: String) :- plugin.get(\"puts\")(msg)\n"))
+          _       (write-file! src-dir "main.cxc"
+                               (str "from hello_slice import Writer\n"
+                                    "\n"
+                                    "def main:\n"
+                                    "    use writer: Writer\n"
+                                    "\n"
+                                    "    -> ready\n"
+                                    "        then: writer.write(\"hi\")\n"))
+          {:keys [m-path]}
+          (build/compile-directory-to-file (.getPath src-dir) "prog"
+                                           (.getPath out-dir))
+          m (slurp m-path)]
+      (is (not (str/includes? m "[NSApp run];"))
+          "no plugin declared main_runloop → no NSApp run")
+      (is (not (str/includes? m "#define CXC_MAIN_RUNLOOP"))
+          "no CXC_MAIN_RUNLOOP define"))))
+
+(deftest foreign-extern-emit-user-library-non-skip
+  (testing "2026-09-28 correctness slice. Symbols declared under a non-libc `foreign \"libname\":` block must surface as `extern <ret> <sym>(<args>);` forward declarations at the top of the emitted .m so clang doesn't need `-Wno-implicit-function-declaration`. Positive case: appkit-style plugin with a made-up library name."
+    (let [src-dir (tmp-dir)
+          out-dir (tmp-dir)
+          _       (write-file! src-dir "gfx/gfx.cxc"
+                               (str "def plugin:\n"
+                                    "    name:    String!       = \"gfx\"\n"
+                                    "    version: SemVer!       = SemVer(0, 1, 0)\n"
+                                    "    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0), max: SemVer(2, 0, 0))\n"
+                                    "\n"
+                                    "    foreign \"libgfx\":\n"
+                                    "        symbol \"gfx_open\"  -> (Int32!, Int32!) -> Int32!\n"
+                                    "        symbol \"gfx_close\" -> ()             -> Int32!\n"
+                                    "\n"
+                                    "def Gfx:\n"
+                                    "    use plugin: Plugin\n"
+                                    "    open(w: Int32!, h: Int32!) :- plugin.get(\"gfx_open\")(w, h)\n"
+                                    "    close()                    :- plugin.get(\"gfx_close\")()\n"))
+          _       (write-file! src-dir "main.cxc"
+                               (str "from gfx import Gfx\n"
+                                    "\n"
+                                    "def main:\n"
+                                    "    use gfx: Gfx\n"
+                                    "\n"
+                                    "    -> ready\n"
+                                    "        then:\n"
+                                    "            gfx.open(w: 640, h: 480)\n"
+                                    "            gfx.close()\n"))
+          {:keys [m-path]}
+          (build/compile-directory-to-file (.getPath src-dir) "prog"
+                                           (.getPath out-dir))
+          m (slurp m-path)]
+      (is (re-find #"^extern int32_t gfx_open\(int32_t, int32_t\);$"
+                   (or (some #(when (re-find #"gfx_open" %) %) (str/split-lines m)) ""))
+          "gfx_open extern surfaces with resolved arg + return C types")
+      (is (re-find #"^extern int32_t gfx_close\(void\);$"
+                   (or (some #(when (re-find #"gfx_close" %) %) (str/split-lines m)) ""))
+          "gfx_close extern surfaces with void arg list for zero-arg signature"))))
+
+(deftest foreign-extern-emit-skips-libc-family
+  (testing "2026-09-28 correctness slice. Symbols under `foreign \"libc\":` (and \"libSystem\", \"libpthread\", \"libm\") already come from system headers we include; emitting our own `extern int puts(...)` risks colliding with the platform prototype. `collect-foreign-externs` filters the extern-skip-libraries set."
+    (let [src-dir (tmp-dir)
+          out-dir (tmp-dir)
+          _       (write-file! src-dir "shell/shell.cxc"
+                               (str "def plugin:\n"
+                                    "    name:    String!       = \"shell\"\n"
+                                    "    version: SemVer!       = SemVer(0, 1, 0)\n"
+                                    "    compat:  VersionRange! = VersionRange(min: SemVer(1, 0, 0), max: SemVer(2, 0, 0))\n"
+                                    "\n"
+                                    "    foreign \"libc\":\n"
+                                    "        symbol \"puts\" -> (CString) -> Int\n"
+                                    "\n"
+                                    "def Shell:\n"
+                                    "    use plugin: Plugin\n"
+                                    "    say(msg: String) :- plugin.get(\"puts\")(msg)\n"))
+          _       (write-file! src-dir "main.cxc"
+                               (str "from shell import Shell\n"
+                                    "\n"
+                                    "def main:\n"
+                                    "    use shell: Shell\n"
+                                    "\n"
+                                    "    -> ready\n"
+                                    "        then: shell.say(\"hi\")\n"))
+          {:keys [m-path]}
+          (build/compile-directory-to-file (.getPath src-dir) "prog"
+                                           (.getPath out-dir))
+          m (slurp m-path)]
+      (is (not (re-find #"(?m)^extern .* puts\(" m))
+          "no user-emitted `extern` for `puts` (libc symbols come from system headers)"))))
+
 (deftest end-to-end-list-atom-fan-in
   (testing "list-atom-fan-in.cxc — F62-migrated. `List of AtomType` fan-in with element identity. Container holds a `List of Emitter` populated by a literal `[Emitter(seed: 10), Emitter(seed: 20)]`. Each Emitter emits `beep(v: val)` on its `-> running do:`. Main subscribes via `<: xs.beep(e: Emitter, v: Int)` and accumulates `v` into total; a Clock.every(50) receive-side count bound (single tick) fires `-> end` after both beeps arrive. Verifies three landing pieces: (1) atom-typed elements accepted in list literals (previously fail-nyi as `not boxable`); (2) container auto-subscribes to each element's fan-in stream at `-initWithElements:` for literal-loaded elements (runtime `cxc_add:` path already did this; init-load path was silently unhooked); (3) untargeted `:>` in transition then: blocks defers via `cxc_send_async(self, ...)` so subscribers registered in later init phases (container init, main runtimeBinding) are hooked up when the fanout runs on dispatch_main. Total = 10 + 20 = 30."
     (let [{:keys [exit stdout]} (compile-and-run "list-atom-fan-in")]
@@ -1636,12 +1786,6 @@
 ;; ---------------------------------------------------------------------------
 ;; F51 L1 — module identity + provenance at compile-directory entry.
 ;; ---------------------------------------------------------------------------
-
-(defn- write-file! [^java.io.File dir rel-path content]
-  (let [f (java.io.File. dir rel-path)]
-    (.mkdirs (.getParentFile f))
-    (spit f content)
-    f))
 
 (deftest f73-user-module-header-rejected-with-fix-it
   (testing "F73 (2026-08-20, supersedes F51 L1) — a `module <name>` header at the top of any source file is a hard error at parse time. Module identity is the file path relative to the source root; the resolver walks the tree. Diagnostic names the retirement and points at the fix (delete the line)."

@@ -379,16 +379,21 @@
   "Type names built into the language grammar — always in scope, no
    import required. Includes numeric widths (spec §3.1), non-numeric
    substrate (§3.1.3 Any/Never/Unit), reference-shaped primitives
-   (String/Bytes/Block), and the parametric containers (List/Map/Set/
-   Array/Optional). Mirrors the primitive maps in `lower/cxc-type->c`
-   and `parse/known-primitive-value-type-names`; if either grows a new
-   type here should follow."
+   (String/Bytes/Block), the parametric containers (List/Map/Set/
+   Array/Optional), FFI boundary types (CString), and plugin-manifest
+   marker types (RuntimeShape). Mirrors the primitive maps in
+   `lower/cxc-type->c` and `parse/known-primitive-value-type-names`;
+   if either grows a new type here should follow."
   #{"Int" "Int8" "Int16" "Int32" "Int64"
     "UInt" "UInt8" "UInt16" "UInt32" "UInt64"
     "Float" "Double" "Bool" "Char" "Byte"
     "String" "Bytes" "Block"
     "Any" "Unit" "Never"
-    "List" "Map" "Set" "Array" "Optional"})
+    "List" "Map" "Set" "Array" "Optional"
+    ;; FFI boundary — `foreign "libc": symbol "puts" -> (CString) -> Int`.
+    "CString"
+    ;; Plugin manifest marker — `runtime_shape: RuntimeShape! = ...`.
+    "RuntimeShape"})
 
 (def ^:private prelude-name-set
   "Every user-visible name declared in the prelude plus every builtin

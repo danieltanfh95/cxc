@@ -1713,6 +1713,62 @@
   {"_NSGetArgv" "<crt_externs.h>"
    "_NSGetArgc" "<crt_externs.h>"})
 
+(def ^:private extern-skip-libraries
+  "2026-09-28. Libraries whose symbols are already prototyped by the
+   base include set (Foundation transitively pulls in `<stdio.h>` /
+   `<stdlib.h>` / `<string.h>` / `<pthread.h>` / `<math.h>` on macOS).
+   Emitting our own `extern` for a symbol declared by these headers
+   would either duplicate the declaration or, worse, disagree on
+   return type (cxc's `Int` is `int64_t`; libc's `int` is `int32_t`).
+
+   Foreign symbols from OTHER libraries — user plugins, third-party
+   dylibs — get externs emitted from the manifest signature so the
+   emitted .m compiles without `-Wno-implicit-function-declaration`."
+  #{"libc" "libSystem" "libpthread" "libm"})
+
+(defn- foreign-signature-c-type
+  "Return the C type string for a foreign-signature type node, or nil
+   when the node isn't a plain primitive/CString we can extern safely.
+   `Ptr of T` and other wrapper types are conservatively skipped —
+   they'd need explicit extern-boundary handling. `T!` (type-nonnil)
+   wrappers are unwrapped — non-nil-ness is a source-level annotation,
+   not a C-level type distinction."
+  [ty-node]
+  (let [inner (if (and (map? ty-node) (= :type-nonnil (:node ty-node)))
+                (:inner ty-node)
+                ty-node)]
+    (when (and (map? inner) (= :type-ref (:node inner)))
+      (primitive-c-type (:name inner)))))
+
+(defn- foreign-ref->extern-decl
+  "Format a `extern <ret> <sym>(<params>);` declaration for a foreign
+   symbol, or nil if the signature has any unprintable type. Emitted
+   at the top of the .m so the plugin's FFI call sites compile without
+   `-Wno-implicit-function-declaration`."
+  [foreign-ref]
+  (let [sig     (:signature foreign-ref)
+        ret-ty  (case (:node sig)
+                  :type-ref        sig
+                  :type-of         sig
+                  :foreign-fn-type (:return sig)
+                  nil)
+        arg-tys (case (:node sig)
+                  :type-ref        []
+                  :foreign-fn-type
+                  (let [args-node (:args sig)]
+                    (case (:node args-node)
+                      :type-tuple       (vec (:types args-node))
+                      :type-named-tuple (mapv :type (:fields args-node))
+                      [args-node]))
+                  [])
+        ret-c   (foreign-signature-c-type ret-ty)
+        arg-cs  (mapv foreign-signature-c-type arg-tys)]
+    (when (and ret-c (every? some? arg-cs))
+      (str "extern " ret-c " " (:symbol foreign-ref)
+           "("
+           (if (empty? arg-cs) "void" (clojure.string/join ", " arg-cs))
+           ");"))))
+
 (defn- collect-foreign-refs
   "Walk `nodes` (arbitrary nested map/vector tree) and return a vec of
    unique `:foreign-ref` nodes, dedup by (library, symbol) — first
@@ -1734,6 +1790,18 @@
                  (run! walk x)))]
     (walk nodes)
     @out))
+
+(defn- collect-foreign-externs
+  "Collect extern declarations for every non-system foreign symbol
+   referenced in `top-nodes`. Symbols whose library is in
+   `extern-skip-libraries` (already prototyped by base includes) get
+   skipped. Symbols whose signature isn't purely primitive+CString
+   get skipped too (they'd need a marshal shim to extern safely)."
+  [top-nodes]
+  (->> (collect-foreign-refs top-nodes)
+       (remove #(contains? extern-skip-libraries (:library %)))
+       (keep foreign-ref->extern-decl)
+       vec))
 
 (defn- extra-includes-for-foreign-symbols
   "FL-18 (2026-09-02) — return the additional header include strings
@@ -9191,25 +9259,69 @@
         module-map (env/module-map-from-attribution d->m)]
    (binding [mangle/*decl->module* d->m]
    (let [;; Prototype A (2026-09-26, runtime-shape landing) — pull the
-        ;; `:runtime-shape` off any `def-plugin` in the module BEFORE
+        ;; `:runtime-shape` off every `def-plugin` in the program BEFORE
         ;; filtering def-plugin nodes out. Same-file plugin+main
-        ;; declaration is the prototype-A shape; cross-module
-        ;; propagation via .cxc-caps is prototype B.
-        runtime-shape    (or (some (fn [n]
-                                     (when (= :def-plugin (:node n))
-                                       (some (fn [f]
-                                               (when (and (= "runtime_shape" (:name f))
-                                                          (:default f))
-                                                 (let [d (:default f)]
-                                                   (when (and (= :dot (:node d))
-                                                              (= "RuntimeShape"
-                                                                 (get-in d [:target :name])))
-                                                     (keyword
-                                                       (clojure.string/replace
-                                                         (:field d) \_ \-))))))
-                                             (:fields n))))
-                                   top-nodes)
-                             :dispatch-main)
+        ;; declaration is the prototype-A shape; cross-file propagation
+        ;; via `compile-directory-to-file`'s multi-module scan works
+        ;; because every module's def-plugin shows up in `top-nodes`
+        ;; here.
+        ;;
+        ;; 2026-09-28 — multi-plugin conflict detection. Multiple
+        ;; imported plugins may each declare `runtime_shape`. The rule
+        ;; is "at most one non-default runtime_shape per program"; two
+        ;; plugins declaring different non-default shapes is a
+        ;; compile-time error (the pre-2026-09-28 code silently took
+        ;; the first hit — the exact failure mode the design doc
+        ;; claimed the manifest approach protected against).
+        plugin-runtime-shape
+        (fn [n]
+          (some (fn [f]
+                  (when (and (= "runtime_shape" (:name f))
+                             (:default f))
+                    (let [d (:default f)]
+                      (when (and (= :dot (:node d))
+                                 (= "RuntimeShape"
+                                    (get-in d [:target :name])))
+                        (keyword
+                          (clojure.string/replace
+                            (:field d) \_ \-))))))
+                (:fields n)))
+        plugin-declared-name
+        (fn [n]
+          (some (fn [f]
+                  (when (and (= "name" (:name f))
+                             (= :lit-string (get-in f [:default :node])))
+                    (get-in f [:default :value])))
+                (:fields n)))
+        plugin-shapes    (->> top-nodes
+                              (filter #(= :def-plugin (:node %)))
+                              (keep (fn [n]
+                                      (when-let [s (plugin-runtime-shape n)]
+                                        {:name  (plugin-declared-name n)
+                                         :shape s}))))
+        non-default      (filter #(not= :dispatch-main (:shape %))
+                                 plugin-shapes)
+        distinct-shapes  (distinct (map :shape non-default))
+        _                (when (> (count distinct-shapes) 1)
+                           (throw (ex-info
+                                   (str "conflicting `runtime_shape` declarations "
+                                        "across plugins: "
+                                        (clojure.string/join
+                                          ", "
+                                          (map (fn [p]
+                                                 (str (or (:name p) "<unnamed>")
+                                                      " → RuntimeShape."
+                                                      (clojure.string/replace
+                                                        (name (:shape p))
+                                                        \- \_)))
+                                               non-default))
+                                        ". At most one non-default runtime_shape "
+                                        "is allowed per program; each shape owns "
+                                        "the main thread differently and they can "
+                                        "not coexist. See design/runtime-shape.md.")
+                                   {:kind    :cxc-runtime-shape-conflict
+                                    :plugins non-default})))
+        runtime-shape    (or (first distinct-shapes) :dispatch-main)
         ;; B8 (2026-09-02) — `:def-plugin` markers are compile-time-only
         ;; metadata consumed by cxc.plugin-manifest (B3-B7). Filter them
         ;; before lowering so no emit rule needs to know about them.
@@ -9724,6 +9836,9 @@
                                 :functions functions})]
     {:node                :objc-program
      :includes            includes
+     ;; 2026-09-28 — extern decls for non-system foreign symbols so
+     ;; the emitted .m compiles without `-Wno-implicit-function-declaration`.
+     :foreign-externs     (collect-foreign-externs top-nodes)
      :needs-runtime?      needs-runtime?
      :needs-dispatch-loop? needs-dispatch-loop?
      :runtime-shape       runtime-shape

@@ -2732,6 +2732,15 @@
         runtime-shape-defines (when (= runtime-shape :main-runloop)
                                 "#define CXC_MAIN_RUNLOOP 1")
         includes    (str/join "\n"   (map #(str "#import " %) (:includes prog)))
+        ;; 2026-09-28 — extern declarations for non-system foreign
+        ;; symbols. lower/collect-foreign-externs stashes these as
+        ;; prepared C snippets; emit slots them right after includes so
+        ;; every FFI call site further down in the file sees a proper
+        ;; prototype. Kills the `-Wno-implicit-function-declaration`
+        ;; band-aid user plugins previously needed at link time.
+        foreign-externs (when (seq (:foreign-externs prog))
+                          (str "// forward decls for plugin foreign symbols\n"
+                               (str/join "\n" (:foreign-externs prog))))
         fanout-cat  (emit-fanout-selector-category prog)
         helpers     (when (:needs-runtime? prog) cxc-runtime-helpers)
         enums       (str/join "\n\n" (map emit-any-enum (:enums prog)))
@@ -2783,6 +2792,7 @@
     (str/join "\n\n"
               (remove str/blank? [runtime-shape-defines
                                   includes
+                                  foreign-externs
                                   cxc-nil-sentinels
                                   helpers
                                   enums
