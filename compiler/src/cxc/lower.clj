@@ -935,11 +935,27 @@
              literal-default?
              (fn [d]
                (and (map? d)
-                    (contains? #{:lit-int :lit-float :lit-string
-                                 :lit-bool :lit-nil}
-                               (:node d))))
-             f41-promotable? (fn [f] (and (not (container-field? f))
-                                          (not= "main" name)))
+                    (or (contains? #{:lit-int :lit-float :lit-string
+                                     :lit-bool :lit-nil}
+                                   (:node d))
+                        ;; 2026-10-02 — empty collection literals also
+                        ;; qualify. `deck: List of Card = []` promotes
+                        ;; so `Enc(deck: d)` can override the default
+                        ;; without rewriting the field as a header
+                        ;; ctor param.
+                        (and (= :list (:node d))
+                             (empty? (:items d)))
+                        (and (= :map  (:node d))
+                             (empty? (:pairs d)))
+                        (and (= :set  (:node d))
+                             (empty? (:items d))))))
+             ;; 2026-10-02 — container fields now also promote so that
+             ;; `def Enc: deck: List of Card = []` accepts `Enc(deck: d)`
+             ;; override. The field keeps its empty-list default; the
+             ;; ctor param defaults to that default and can be overridden
+             ;; by named arg at construction. Mirrors the raw-ctor-eligible?
+             ;; relaxation on the ctor-header path.
+             f41-promotable? (fn [f] (not= "main" name))
              f41-eligible? (fn [f] (and (f41-promotable? f)
                                         (nil? (:default f))))
              f41-transform
@@ -996,9 +1012,17 @@
              ;;   collision guard.
              existing-field-names (set (map :name (or (:fields dsec) [])))
              observable-names     (set (map :name observables))
+             ;; 2026-10-02 — container ctor params (`def X(deck: List of T):`)
+             ;; previously excluded because "no literal syntax exists for
+             ;; passing containers as ctor args". Users do pass them as
+             ;; variables (`Enc(deck: d)`), and without the mirror the
+             ;; ctor param disappears from any later transition body
+             ;; context, surfacing as "type-of identifier `deck` (no
+             ;; local-binding env yet)". Mirror container ctor params
+             ;; to fields too, matching the Int!/String ctor-param
+             ;; behavior.
              raw-ctor-eligible?
-             (fn [p] (and (not (container-field? p))
-                          (not= "main" name)
+             (fn [p] (and (not= "main" name)
                           (not (contains? existing-field-names (:name p)))
                           (not (contains? observable-names (:name p)))))
              raw-ctor-as-fields
