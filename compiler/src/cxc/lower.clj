@@ -122,6 +122,7 @@
              :refer [record-synth-as-bytes-name record-has-user-as-method?
                      f37-bytes-encodable-field?
                      enum-synth-as-bytes-name
+                     enum-synth-to-string-name
                      enum-eligible-for-as-bytes-synthesis?
                      record-synth-from-bytes-name
                      record-eligible-for-from-bytes-synthesis?
@@ -763,6 +764,37 @@
                                      "message, or fold the unguarded arm's body "
                                      "into an `else` guard.")
                                 (first raw-txns))))
+             ;; D2 2026-10-02 — duplicate CONCRETE-source arms on same
+             ;; (phase, msg): if TWO OR MORE unguarded arms share a
+             ;; (phase, msg) pair, the first fires every time and the
+             ;; rest are dead code. One unguarded + N guarded is the
+             ;; legal "catch-all" pattern (see pattern 04-enum-record-
+             ;; dispatch). Mirrors L10's shape for wildcard arms but
+             ;; relaxed to allow the fallback-arm idiom.
+             _             (let [concrete-txns (filterv #(= :phase (get-in % [:source :kind]))
+                                                        raw-txns)
+                                 by-pm  (group-by (fn [t]
+                                                    [(get-in t [:source :name])
+                                                     (get-in t [:receive :msg :source :name])])
+                                                  concrete-txns)
+                                 unguarded? (fn [t]
+                                              (not-any? #(= :proposition (:node %))
+                                                        (:body t)))
+                                 dup    (some (fn [[[phase msg] ts]]
+                                                (let [u (count (filter unguarded? ts))]
+                                                  (when (and phase msg (> u 1))
+                                                    [phase msg u])))
+                                              by-pm)]
+                             (when dup
+                               (let [[phase msg u] dup]
+                                 (fail-user!
+                                  (str "atom `" name "` declares " u
+                                       " unguarded arms on `" phase " <: " msg
+                                       "`, so arms after the first are dead code. "
+                                       "Add a `|: <guard>` to all but at most one, "
+                                       "or merge the bodies into one arm.")
+                                  (first raw-txns)))))
+
              ;; L10.b (2026-08-25) — concrete-over-`*` precedence: when a
              ;; handler-shape arm (`* <: msg(args) -> *`) shares its
              ;; message name with a concrete-source arm on the same atom,
@@ -880,12 +912,40 @@
              container-field?
              (fn [f] (and (= :type-of (get-in f [:type :node]))
                           (container-outer? (get-in f [:type :outer]))))
-             f41-eligible? (fn [f] (and (nil? (:default f))
-                                        (not (container-field? f))
-                                        (not= "main" name)))
+             ;; 2026-10-02 — defaulted data fields with a LITERAL default
+             ;; (`hp: Int! = 50`, `tag: String = "hero"`) also promote to
+             ;; ctor params; the literal default rides on the synthesized
+             ;; param, so `Entity()` keeps the default and
+             ;; `Entity(hp: 100)` overrides. Previously only no-default
+             ;; fields were promoted, forcing the user to write the
+             ;; `def Entity(hp_init: Int!): hp: Int! = hp_init` aliased-
+             ;; head boilerplate for every defaulted field they wanted
+             ;; constructible.
+             ;;
+             ;; Scope: literal defaults only (`:lit-int / :lit-float /
+             ;; :lit-string / :lit-bool / :lit-nil` and enum-access
+             ;; `.<case>` on a known enum). Non-literal defaults
+             ;; (`size: Int! = width * height`, `prng: SeededPrng =
+             ;; SeededPrng(seed: seed)`) reference other ctor params
+             ;; and MUST evaluate inside the init body where those
+             ;; params are in scope. Promoting them to the ctor surface
+             ;; would ask resolve-args-against-params to type-check an
+             ;; expr with no local binding — the "no local-binding env
+             ;; yet" error path.
+             literal-default?
+             (fn [d]
+               (and (map? d)
+                    (contains? #{:lit-int :lit-float :lit-string
+                                 :lit-bool :lit-nil}
+                               (:node d))))
+             f41-promotable? (fn [f] (and (not (container-field? f))
+                                          (not= "main" name)))
+             f41-eligible? (fn [f] (and (f41-promotable? f)
+                                        (nil? (:default f))))
              f41-transform
              (reduce (fn [acc f]
-                       (if (f41-eligible? f)
+                       (cond
+                         (f41-eligible? f)
                          (-> acc
                              (update :fields conj
                                      (assoc f
@@ -895,6 +955,19 @@
                                      {:name (:name f) :type (:type f)
                                       :default nil
                                       :cxc-f41-synthesized true}))
+
+                         (and (f41-promotable? f) (literal-default? (:default f)))
+                         (-> acc
+                             (update :fields conj
+                                     (assoc f
+                                            :default {:node :ident :name (:name f)}
+                                            :cxc-f41-synthesized true))
+                             (update :ctor-params conj
+                                     {:name (:name f) :type (:type f)
+                                      :default (:default f)
+                                      :cxc-f41-synthesized true}))
+
+                         :else
                          (update acc :fields conj f)))
                      {:fields [] :ctor-params []}
                      (or (:fields dsec) []))
@@ -1432,7 +1505,9 @@
         ;; envelope storage flip.
         envelope-wrap-int? (and envelope-target?
                                 (int-family? target-ty)
-                                (contains? #{"abs" "min" "max"}
+                                (contains? #{"abs" "min" "max"
+                                             "bitand" "bitor" "bitxor"
+                                             "shl" "shr"}
                                            method-name))]
     (cond
       ;; F37 Landing 2 — `.as() -> Bytes` on a record with primitive-only
@@ -1456,6 +1531,14 @@
            (= "as" method-name)
            (empty? (:args call-node)))
       :bytes
+
+      ;; 2026-10-02 — `.to_string() -> String!` on any enum. Returns
+      ;; the case name as an NSString, no payload formatting. Payload
+      ;; details, if the user wants them, require manual code.
+      (and (map? target-ty) (:enum target-ty)
+           (= "to_string" method-name)
+           (empty? (:args call-node)))
+      :string
 
       (and (map? target-ty) (:record target-ty))
       (let [rn   (:record target-ty)
@@ -1487,8 +1570,32 @@
           ;; functions); type-kw was pre-computed at env build.
           o          (:type-kw o)
           struct-hit struct-hit
-          :else (fail-user! (str "method/observable `" method-name "` on record `" rn "`")
-                           call-node)))
+          :else
+          (let [methods (sort (concat (keys (:method-index info))
+                                      (keys (:observable-index info))))
+                hint    (when (seq methods)
+                          (str " — available: "
+                               (str/join ", " methods)))]
+            (fail-user! (str "method/observable `" method-name "` on record `" rn "`"
+                             hint)
+                        call-node))))
+
+      ;; 2026-10-01 — list sugars: min_by/max_by/first on List of T return
+      ;; [:optional T]. Must be registered in infer-type so let-binding
+      ;; type-checks don't dead-end at the method-index miss. Actual AST
+      ;; rewrite happens in lower-method-call.
+      (and (map? target-ty) (:atom target-ty)
+           (= :list-container
+              (:kind (env/env-lookup ctx :atom-env (:atom target-ty))))
+           (contains? #{"min_by" "max_by" "first"} method-name)
+           (= 1 (count (:args call-node)))
+           (= :lambda (get-in (:args call-node) [0 :value :node])))
+      (let [elem-name (:element-type (env/env-lookup ctx :atom-env
+                                                     (:atom target-ty)))
+            elem-tk   (cxc-type->type-kw elem-name
+                                         (:record-env ctx) (:atom-env ctx)
+                                         (:enum-env ctx) call-node)]
+        [:optional elem-tk])
 
       (and (map? target-ty) (:atom target-ty))
       (let [an (:atom target-ty)
@@ -1506,8 +1613,19 @@
                 [:optional raw-tk]
                 raw-tk))
           o (:type-kw o)
-          :else (fail-user! (str "method/observable `" method-name "` on atom `" an "`")
-                           call-node)))
+          :else
+          (let [entry   (get (:atom-env ctx) an)
+                list?   (= :list-container (:kind entry))
+                base    (concat (keys (:method-index entry))
+                                (keys (:observable-index entry)))
+                sugars  (when list? ["min_by" "max_by" "first"])
+                methods (sort (distinct (concat base sugars)))
+                hint    (when (seq methods)
+                          (str " — available: "
+                               (str/join ", " methods)))]
+            (fail-user! (str "method/observable `" method-name "` on atom `" an "`"
+                             hint)
+                        call-node))))
 
       ;; F37 L6a — primitive-method dispatch on `:bytes` values.
       ;; `.at(offset) -> Int` returns a widened byte; `.slice(start,
@@ -1565,7 +1683,8 @@
       ;; 2026-09-04 Path 1 slice 7 — envelope target propagates
       ;; envelope through the method (nil in, nil out).
       (and (int-family? target-ty)
-           (contains? #{"abs" "min" "max"} method-name))
+           (contains? #{"abs" "min" "max"
+                        "bitand" "bitor" "bitxor" "shl" "shr"} method-name))
       (if envelope-wrap-int? [:optional :int] :int)
 
       ;; 2026-09-03 — `Bool.to_string() -> String`. Renders as
@@ -2308,6 +2427,19 @@
     ;; `:any` from a raise so `x or T(let r): raise Y(...)` doesn't
     ;; fail the arm-body compatibility check.
     :raise      :any
+    :list
+    (if (empty? (:items node))
+      (fail-compile! :empty-list-no-element-type
+        (str "Empty list literal `[]` in expression position has no element type. "
+             "Corvid needs an element-type context for `[]`, and only field-default "
+             "position (`xs: List of T = []`) supplies one. In a transition update "
+             "(`xs => []`), a `let` RHS (`let ys: List of T = []`), or any other "
+             "assignment position, the parser has no type to attach. "
+             "Rewrite: use `<field>.empty()` to build a same-typed empty container "
+             "(e.g. `xs => xs.empty()`; same for `m => m.empty()` on Map and "
+             "`s => s.empty()` on Set).")
+        node)
+      (fail-nyi! (str "infer-type :list (non-empty) at this position") node))
     (fail-nyi! (str "infer-type " (:node node)) node)))
 
 ;; ---------------------------------------------------------------------------
@@ -2616,6 +2748,51 @@
    both accepted, defaults inserted where callers omit an arg, and
    dup/unknown/surplus/collision all fail at the call site."
   [call-node ctx]
+  (if-let [sugar
+           ;; 2026-10-01 — three list sugars that rewrite to existing
+           ;; primitives (sort_by / filter + at(0)), removing the
+           ;; sort_by(λ).at(0) ?? fallback boilerplate common in
+           ;; translated code.
+           ;;   xs.min_by(f) → xs.sort_by(f).at(0)
+           ;;   xs.max_by(f) → xs.sort_by(x => 0 - f(x)).at(0)
+           ;;   xs.first(p)  → xs.filter(p).at(0)
+           ;; max_by negates the key so the smallest-after-sort is the
+           ;; max original. All three return `T` (nullable) because
+           ;; .at(0) returns nullable; caller uses `?? default`.
+           (let [dot         (:callee call-node)
+                 method-name (:field dot)
+                 args        (:args call-node)]
+             (when (and (= 1 (count args))
+                        (= :lambda (get-in args [0 :value :node]))
+                        (contains? #{"min_by" "max_by" "first"} method-name))
+               (let [tty  (unwrap-tk (infer-type (:target dot) ctx))
+                     lcnt (and (map? tty) (:atom tty)
+                               (= :list-container
+                                  (:kind (env/env-lookup ctx :atom-env (:atom tty)))))]
+                 (when lcnt
+                   (let [lam     (get-in args [0 :value])
+                         prim    (if (= method-name "first") "filter" "sort_by")
+                         lam-arg (if (= method-name "max_by")
+                                   (let [xparam    (get-in lam [:params 0 :name])
+                                         orig-body (:body lam)]
+                                     {:kind :positional
+                                      :value {:node :lambda
+                                              :params [{:name xparam}]
+                                              :body {:node :binop :op "-"
+                                                     :left {:node :lit-int :value 0}
+                                                     :right orig-body}}})
+                                   {:kind :positional :value lam})]
+                     {:node :call
+                      :callee {:node :dot
+                               :target {:node :call
+                                        :callee {:node :dot
+                                                 :target (:target dot)
+                                                 :field prim}
+                                        :args [lam-arg]}
+                               :field "at"}
+                      :args [{:kind :positional
+                              :value {:node :lit-int :value 0}}]})))))]
+    (lower-expr sugar ctx)
   (let [dot           (:callee call-node)
         target-ty-raw (infer-type (:target dot) ctx)
         ;; 2026-09-04 Path 1 slice 1 — envelope transparency at method
@@ -2790,7 +2967,17 @@
                     "Bytes:` on the record to override.")
                call-node))))
       (if (and (map? target-ty) (:enum target-ty)
-               (= "as" method-name) (empty? args))
+               (= "to_string" method-name) (empty? args))
+        ;; 2026-10-02 — enum `.to_string()` dispatch to the synthesized
+        ;; `<Enum>_cxc_to_string(a) -> NSString *` free function.
+        ;; Target-lo is the lowered enum value (int for value-only,
+        ;; tagged struct for payload cases). Function body switches
+        ;; over the discriminator and returns the case name verbatim.
+        {:node :call
+         :fn   (enum-synth-to-string-name (:enum target-ty))
+         :args [target-lo]}
+        (if (and (map? target-ty) (:enum target-ty)
+                 (= "as" method-name) (empty? args))
         ;; F37 Landing 5 — enum canonical bytes. Value-only enums are
         ;; always eligible (single discriminator byte). Payload cases
         ;; must have all-encodable fields; a targeted fail-nyi names
@@ -3012,8 +3199,18 @@
           ;; 2026-09-03 — `Int.abs()` / `Int.min(other)` / `Int.max(other)`.
           ;; Compile-time ternary expansion; no helper call. `abs()` is
           ;; zero-arg; `min`/`max` take exactly one Int.
+          ;;
+          ;; 2026-10-01 — `Int.bitand/bitor/bitxor/shl/shr(other)` added.
+          ;; Compile-time to C bitwise operators. One-arg; both operands
+          ;; treated as signed 64-bit (`int64_t`). Required by MT19937
+          ;; and other bit-level protocols; before this, users wrote
+          ;; recursive bit-by-bit observations. Spec §3.9 names these
+          ;; as `Numeric.bitand` etc; module-dispatch for the `Numeric.`
+          ;; prefix isn't landed yet, so the method form on `Int!` is
+          ;; the available surface.
           (and (int-family? target-ty)
-               (contains? #{"abs" "min" "max"} method-name))
+               (contains? #{"abs" "min" "max"
+                            "bitand" "bitor" "bitxor" "shl" "shr"} method-name))
           (let [want-args (if (= "abs" method-name) 0 1)]
             (when-not (= want-args (count arg-exprs))
               (fail-user! (str "Int." method-name " takes " want-args
@@ -3029,9 +3226,14 @@
             ;; target and raw-`T!` are the reachable shapes; raw-`T!`
             ;; uses the naked `base-emit` (no nil check).
             (let [base-emit (case method-name
-                              "abs" (fn [[n]]     (str "((" n ") < 0 ? -(" n ") : (" n "))"))
-                              "min" (fn [[a b]]   (str "((" a ") < (" b ") ? (" a ") : (" b "))"))
-                              "max" (fn [[a b]]   (str "((" a ") > (" b ") ? (" a ") : (" b "))")))
+                              "abs"    (fn [[n]]     (str "((" n ") < 0 ? -(" n ") : (" n "))"))
+                              "min"    (fn [[a b]]   (str "((" a ") < (" b ") ? (" a ") : (" b "))"))
+                              "max"    (fn [[a b]]   (str "((" a ") > (" b ") ? (" a ") : (" b "))"))
+                              "bitand" (fn [[a b]]   (str "((" a ") & (" b "))"))
+                              "bitor"  (fn [[a b]]   (str "((" a ") | (" b "))"))
+                              "bitxor" (fn [[a b]]   (str "((" a ") ^ (" b "))"))
+                              "shl"    (fn [[a b]]   (str "((" a ") << (" b "))"))
+                              "shr"    (fn [[a b]]   (str "((" a ") >> (" b "))")))
                   opt-c     (optional-type-name
                              (type-kw->cxc-name-str target-ty))
                   target-emit (if envelope-target? target-lo0 target-lo)]
@@ -3350,8 +3552,16 @@
                 m           (get-in atom-entry [:method-index method-name])
                 o           (get-in atom-entry [:observable-index method-name])
                 _           (when (and (nil? m) (nil? o))
-                              (fail-user! (str "method/observable `" method-name "` on atom `"
-                                              atom-name "`") call-node))
+                              (let [list?   (= :list-container (:kind atom-entry))
+                                    base    (concat (keys (:method-index atom-entry))
+                                                    (keys (:observable-index atom-entry)))
+                                    sugars  (when list? ["min_by" "max_by" "first"])
+                                    methods (sort (distinct (concat base sugars)))
+                                    hint    (when (seq methods)
+                                              (str " — available: "
+                                                   (str/join ", " methods)))]
+                                (fail-user! (str "method/observable `" method-name "` on atom `"
+                                                atom-name "`" hint) call-node)))
                 ;; F67 L2: parametric observables carry `:params`; a call
                 ;; with args must supply exactly those params.
                 _           (when (and o (seq arg-exprs)
@@ -3441,7 +3651,7 @@
               :else msg-send))
 
           :else
-          (fail-user! "method call on non-record/non-atom target" call-node))))))))))
+          (fail-user! "method call on non-record/non-atom target" call-node))))))))))))
 
 (def ^:private statement-node-kinds
   #{:expr-stmt :emit :break-stmt :continue-stmt :while-stmt
@@ -4229,6 +4439,27 @@
                    :fn   (c-method-name (:record (infer-type (:target node) ctx))
                                         (:field node))
                    :args [(lower-expr (:target node) ctx)]}
+
+                  ;; 2026-10-02 — zero-arg observable on an atom via bare
+                  ;; `self.obs_name` (no parens). Without this branch the
+                  ;; `:else` fall-through at line ~4483 reroutes `self.X`
+                  ;; through `:snapshot-name`, emitting `__cxc_snap._X` —
+                  ;; which is a nonexistent instance var when X is an
+                  ;; observation, not a field. Dispatch to the ObjC
+                  ;; message selector instead, same path as the explicit
+                  ;; call form `self.obs_name()`. Only fires when obs
+                  ;; declares zero params; a bare `self.parametric_obs`
+                  ;; without parens is a user error caught upstream.
+                  (let [target-ty (infer-type (:target node) ctx)]
+                    (and (map? target-ty) (:atom target-ty)
+                         (let [o (get-in (:atom-env ctx)
+                                         [(:atom target-ty)
+                                          :observable-index (:field node)])]
+                           (and o (empty? (:params o))))))
+                  {:node     :objc-msg
+                   :recv     (lower-expr (:target node) ctx)
+                   :selector (objc-method-selector (:field node) [])
+                   :args     []}
 
                   :else
                   (let [target-ty (infer-type (:target node) ctx)]
@@ -5849,6 +6080,19 @@
 
     :if-let    (lower-if-let-stmt node ctx)
 
+    ;; 2026-10-01 — bare `if <cond>: <then> [else: <else>]` statement.
+    ;; Pure branching; nil-unwrap stays on `if let`. Reuses :c-if-chain
+    ;; (also emitted by `if let`).
+    :if-stmt
+    (let [cond-lo  (lower-expr (:cond node) ctx)
+          then-lo  (lower-body-stmts (:stmts (:then node)) ctx)
+          else-blk (:else node)
+          else-lo  (when else-blk
+                     (lower-body-stmts (:stmts else-blk) ctx))
+          branches (cond-> [{:cond cond-lo :body then-lo}]
+                     else-lo (conj {:cond nil :body else-lo}))]
+      {:node :c-if-chain :branches branches})
+
     ;; F17 L1 — statement-position `while <cond>: <body>`. Body lowers
     ;; as a stmt sequence via `lower-body-stmts` so nested `let`
     ;; bindings inside the loop scope through the reduce. Loop-depth
@@ -5909,6 +6153,27 @@
                                              (:enum-env ctx) ann))
         rhs-lo0 (lower-expr expr ctx)
         rhs-tk-inferred (infer-type expr ctx)
+        ;; D1 2026-10-02 — Optional-leak-into-nonnil-let diagnostic.
+        ;; `let v: Int! = xs.at(0)` where `.at` returns `Int?` leaks an
+        ;; Optional into a non-nil slot; clang would emit an "initializing
+        ;; int64_t with _Cxc_Optional_Int64" error pointing at the lowered
+        ;; `[__cxc_snap._xs atWithi:0LL]`. Catch at type-check with the
+        ;; standard `?? default` fix in the message.
+        _ (when (and ann-nonnil?
+                     ann-kw
+                     rhs-tk-inferred
+                     (optional-tk? rhs-tk-inferred)
+                     (not (optional-tk? ann-kw)))
+            (let [cxc-ty (type-kw->cxc-name-str ann-kw)]
+              (fail-user!
+                (str "`let " (:name node) ": " cxc-ty "!` is non-nullable, "
+                     "but the right-hand side returns a nullable "
+                     cxc-ty "?. "
+                     "Fix: `let " (:name node) ": " cxc-ty
+                     "! = <rhs> ?? <default>` to unwrap with a fallback, "
+                     "or declare `" (:name node) ": " cxc-ty
+                     "` to keep it nullable.")
+                node)))
         ;; 2026-09-04 Path 1 slice 2d/2e — envelope-storage flip for
         ;; every nullable-primitive local. `let n: T = ...` on a
         ;; nullable primitive always lifts to `_Cxc_Optional_<T>`
@@ -6182,6 +6447,30 @@
                           "to `data:` if you need a storage-backed field, "
                           "or remove the assignment.")
                      update))
+        ;; D3 2026-10-02 — `=>` with unknown LHS. Common cause: user
+        ;; writes `let x = 5` then `x => 42` thinking the let binding is
+        ;; writable; `=>` only stages atom fields. Clang previously said
+        ;; `no member named '_x' in '<Atom>_State'` pointing at the
+        ;; synthesized next-bag field. Catch at type-check with the
+        ;; actual atom's field list in the message.
+        _         (when (and atom-name atom-entry
+                              (not obs-info)
+                              (not field-in-atom-index))
+                    (let [known-fields (vec (sort (keys (:field-index atom-entry))))
+                          field-list   (if (seq known-fields)
+                                         (str/join ", " known-fields)
+                                         "(none)")]
+                      (fail-user!
+                        (str "`=>` can only stage fields declared on atom `"
+                             atom-name "`, got `" (:field update) "`. "
+                             (if (seq known-fields)
+                               (str "Known fields: " field-list ". ")
+                               "This atom has no stageable fields. ")
+                             "If `" (:field update) "` is a `let`-local, "
+                             "note that locals are not staged across "
+                             "transitions, see "
+                             "[[corvid-transition-arrow-one-shot]].")
+                        update)))
         ;; F39 L5b-ii-c (Sub-K) — when the target field's storage is
         ;; Optional-boxed, wrap a scalar RHS in `{present:1, .value:x}`.
         ;; If RHS is already Optional-typed, pass through unchanged
@@ -6198,6 +6487,49 @@
         rhs-tk        (infer-type rhs-expr ctx)
         rhs-nil?      (= :nil rhs-tk)
         rhs-opt?      (optional-tk? rhs-tk)
+        ;; D4 2026-10-02 — type-mismatched `=>` RHS. When field tk is a
+        ;; concrete primitive and RHS tk is a different concrete
+        ;; primitive, clang would say "incompatible pointer to integer
+        ;; conversion assigning to int64_t from NSString *". Catch at
+        ;; type-check with field name, declared type, and RHS type.
+        ;; Skip when either side is Optional (L5b-ii-d handles unwrap),
+        ;; nil (nil-to-nullable is defined), or non-primitive (records /
+        ;; atoms / containers have their own compatibility rules).
+        _ (let [field-tk (when (:cxc-ty f-info)
+                           (try (cxc-type->type-kw (:cxc-ty f-info)
+                                                   (:record-env ctx)
+                                                   (:atom-env ctx)
+                                                   (:enum-env ctx)
+                                                   (:type f-info))
+                                (catch Exception _ nil)))
+                ;; Primitive categories. Within a category, assignment
+                ;; is allowed (Int ← Int32, Bool ← Int, etc. — matches
+                ;; the C integer-coercion semantics the backend already
+                ;; emits). Cross-category assignment is a hard error
+                ;; because clang's error is unreadable: category = the
+                ;; shape of the C storage, not the cxc type name.
+                category   (fn [tk]
+                             (cond
+                               (#{:int :int32 :uint :uint32 :uint64
+                                  :bool :float :double} tk) :numeric
+                               (= :string tk)               :string
+                               :else                        nil))
+                f-cat (category field-tk)
+                r-cat (category rhs-tk)]
+            (when (and f-cat r-cat
+                       (not rhs-nil?)
+                       (not rhs-opt?)
+                       (not (optional-tk? field-tk))
+                       (not= f-cat r-cat))
+              (let [self-info (get-in ctx [:locals "self"])
+                    atom-name (or (and (map? self-info) (:atom self-info)) "?")]
+                (fail-user!
+                  (str "field `" (:field update) "` on atom `" atom-name
+                       "` is " (type-kw->cxc-name-str field-tk)
+                       (if (:nonnil? f-info) "!" "")
+                       ", cannot stage " (type-kw->cxc-name-str rhs-tk)
+                       " value.")
+                  update))))
         lowered       (lower-expr rhs-expr ctx)
         value-nonnil? (and (:nonnil? f-info)
                            (not (:optional? f-info))
@@ -8067,6 +8399,42 @@
                       :recv {:node :name :sym "self"}
                       :selector "checkInvariants"
                       :args []}
+        ;; 2026-10-02 — Optional-leak-into-nonnil-return diagnostic.
+        ;; If the body's inferred type is `[:optional T]` but the
+        ;; declared return is bare `T!`, clang would otherwise emit a
+        ;; 2000-char `__typeof__` chain error pointing at the lowered
+        ;; `_Cxc_Optional_T` → `int64_t` initializer. Catch it here
+        ;; with a readable diagnostic naming the common cause: a
+        ;; nullable param (`x: Int`) in Optional-propagating arithmetic
+        ;; (`x * 10`) whose result flows into a non-nil return slot.
+        body-inferred-tk (try (infer-type (:expr o) body-ctx)
+                              (catch Exception _ nil))
+        _ (when (and body-inferred-tk
+                     (optional-tk? body-inferred-tk)
+                     (:type-kw o)
+                     (not (optional-tk? (:type-kw o))))
+            (let [nullable-params (filter (fn [p]
+                                            (optional-tk? (param-tk p ctx)))
+                                          normed-params)]
+              (fail-user!
+                (str "observation `" (:name o) "` body infers as nullable "
+                     "but return type is `" (type-kw->cxc-name-str (:type-kw o))
+                     "!` (non-nil). "
+                     (if (seq nullable-params)
+                       (str "Likely cause: param"
+                            (when (> (count nullable-params) 1) "s")
+                            " "
+                            (str/join ", "
+                                      (map #(str "`" (:name %) "`") nullable-params))
+                            " declared with nullable type (bare `T`); "
+                            "arithmetic or method dispatch on nullable values "
+                            "propagates Optional. "
+                            "Fix: declare param"
+                            (when (> (count nullable-params) 1) "s")
+                            " as `T!` (non-nil).")
+                       (str "A nullable field or `.at(i)` read in the body is leaking. "
+                            "Coalesce with `?? fallback` or hoist via `let`.")))
+                o)))
         lowered-body (lower-expr (:expr o) body-ctx)
         ;; A4-adjacent (2026-09-03) — when the observable body is a
         ;; bare `raise` (either directly, or as the sole statement of

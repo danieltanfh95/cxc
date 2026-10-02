@@ -76,10 +76,48 @@
         "compiler/tools")))
 
 (defn- usage []
-  (println "Usage: cxc view [<trace.jsonl>] [--port=N]")
+  (println "Usage: cxc view [<trace.jsonl>] [--port=N] [--shape=<path>]")
   (println "  Opens the browser-based viewer. If a trace file is given,")
   (println "  it's copied to compiler/tools/.current-trace.jsonl and")
-  (println "  auto-loaded via ?trace=... in the URL."))
+  (println "  auto-loaded via ?trace=... in the URL. The sidecar")
+  (println "  <trace>.shape.json (or --shape=<path>) is copied to")
+  (println "  compiler/tools/.current-trace.shape.json, or a stale")
+  (println "  copy is cleared if no sidecar is available."))
+
+(defn- resolve-shape-sidecar
+  "Pick the shape.json file that should accompany `trace-file`. Precedence:
+    1. explicit --shape=<path>
+    2. sibling named `<trace-basename-sans-.jsonl>.shape.json`
+    3. sibling named `<trace-basename>.shape.json` (treats trace as prefix)
+    4. a single `*.shape.json` in the same directory as the trace
+   Returns a java.io.File that exists, or nil."
+  [trace-file explicit-path]
+  (let [try-file (fn [p] (let [f (io/file p)] (when (.exists f) f)))]
+    (or (when explicit-path
+          (or (try-file explicit-path)
+              (do (binding [*out* *err*]
+                    (println (str "warning: --shape=" explicit-path
+                                  " not found; shape view will be unavailable")))
+                  nil)))
+        (let [name (.getName trace-file)
+              dir  (.getParentFile trace-file)
+              stem (if (str/ends-with? name ".jsonl")
+                     (subs name 0 (- (count name) 6))
+                     name)]
+          (or (try-file (io/file dir (str stem ".shape.json")))
+              (try-file (io/file dir (str name ".shape.json")))
+              (let [sibs (when dir
+                           (filter #(str/ends-with? (.getName %) ".shape.json")
+                                   (.listFiles dir)))]
+                (when (= 1 (count sibs))
+                  (first sibs))))))))
+
+(defn- clear-shape-sidecar!
+  "Delete a stale .current-trace.shape.json so the viewer falls back to
+   trace-only mode instead of serving a shape doc from a prior run."
+  [root]
+  (let [f (io/file root ".current-trace.shape.json")]
+    (when (.exists f) (.delete f))))
 
 (defn run [args]
   (let [opts (atom {:port 8765})
@@ -88,6 +126,8 @@
       (cond
         (str/starts-with? a "--port=")
         (swap! opts assoc :port (Integer/parseInt (subs a (count "--port="))))
+        (str/starts-with? a "--shape=")
+        (swap! opts assoc :shape (subs a (count "--shape=")))
         (#{"-h" "--help"} a) (do (usage) (throw (ex-info "help" {:exit 0})))
         :else (swap! positional conj a)))
     (let [root (io/file (tools-dir))
@@ -107,8 +147,23 @@
                     ;; case; the file is already in place.
                     (when-not (= (.getCanonicalPath src) (.getCanonicalPath dest))
                       (io/copy src dest))
+                    ;; Shape sidecar sync. The .shape.json is produced by
+                    ;; `cxc compile` next to the binary; the viewer loads it
+                    ;; from .current-trace.shape.json. Without this step the
+                    ;; sidecar persists across runs and the shape view
+                    ;; silently uses stale topology from a prior compile.
+                    (let [shape-src (resolve-shape-sidecar src (:shape @opts))
+                          shape-dst (io/file root ".current-trace.shape.json")]
+                      (if shape-src
+                        (do (when-not (= (.getCanonicalPath shape-src)
+                                         (.getCanonicalPath shape-dst))
+                              (io/copy shape-src shape-dst))
+                            (println (str "shape sidecar: " (.getPath shape-src))))
+                        (do (clear-shape-sidecar! root)
+                            (println "shape sidecar: none found (shape view disabled)"))))
                     "?trace=.current-trace.jsonl")
-                  "")
+                  (do (clear-shape-sidecar! root)
+                      ""))
           port (:port @opts)
           url  (str "http://localhost:" port "/trace-viewer.html" query)
           srv  (start-server root port)]

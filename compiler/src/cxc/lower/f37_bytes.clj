@@ -388,6 +388,37 @@
 (defn enum-synth-as-bytes-name [enum-name]
   (str (->c-safe enum-name) "_cxc_as_bytes"))
 
+(defn enum-synth-to-string-name [enum-name]
+  (str (->c-safe enum-name) "_cxc_to_string"))
+
+(defn synthesize-enum-to-string-fn
+  "2026-10-02 — produce a `:c-function` node implementing
+   `<Enum>_cxc_to_string(<Enum> a) -> NSString *`. Switch over the
+   case tag (value-only enums switch on the enum value directly;
+   tagged enums switch on `a.tag`). Each arm returns an interned
+   `@\"<case-name>\"` NSString. Payload values are not formatted —
+   just the case name — matching Python / Clojure keyword semantics."
+  [enum-name info]
+  (let [entries   (:case-entries info)
+        tagged?   (:tagged? info)
+        disc-expr (if tagged? "a.tag" "a")
+        safe-en   (->c-safe enum-name)
+        arms      (for [ce entries]
+                    (let [case-nm (:name ce)
+                          tag-c   (if tagged?
+                                    (str safe-en "_Tag_" case-nm)
+                                    (str safe-en "_" case-nm))]
+                      (str "    case " tag-c ": return @\"" case-nm "\";")))
+        body-src  (str "    switch (" disc-expr ") {\n"
+                       (str/join "\n" arms) "\n"
+                       "    }\n"
+                       "    return @\"?\";")]
+    {:node        :c-function
+     :name        (enum-synth-to-string-name enum-name)
+     :return-type "NSString *"
+     :params      [{:name "a" :c-type safe-en}]
+     :body        [{:node :raw-c :text body-src}]}))
+
 (defn f37-enum-discriminator-width
   "F37 L5 — discriminator width in bytes per §3.10.10: ≤256 → 1, ≤65536
    → 2, otherwise 4. Case count is total, not tag-value range — a
@@ -1479,5 +1510,12 @@
         enum-fns
         (vec (for [[en-name info] enum-env
                    :when          (enum-eligible-for-as-bytes-synthesis? info record-env)]
-               (synthesize-enum-as-bytes-fn en-name info record-env)))]
-    (into (into record-fns decode-fns) enum-fns)))
+               (synthesize-enum-as-bytes-fn en-name info record-env)))
+        ;; 2026-10-02 — every enum gets `<Enum>_cxc_to_string` so the
+        ;; `.to_string()` method intercept has a target. Unconditional:
+        ;; the body only reads the discriminator, no payload-encoding
+        ;; eligibility to check.
+        enum-to-string-fns
+        (vec (for [[en-name info] enum-env]
+               (synthesize-enum-to-string-fn en-name info)))]
+    (into (into (into record-fns decode-fns) enum-fns) enum-to-string-fns)))

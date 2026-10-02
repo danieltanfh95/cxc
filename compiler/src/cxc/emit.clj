@@ -110,7 +110,11 @@
   (case (:node node)
     :str             (str "\"" (escape-c-string (:value node)) "\"")
     :objc-str        (str "@\"" (escape-c-string (:value node)) "\"")
-    :int             (str (:value node))
+    ;; 2026-10-02 — emit integer literals as 64-bit (`LL` suffix) so
+    ;; expressions like `(1).shl(40)` operate on int64_t instead of C's
+    ;; default int32. Prevents silent overflow on bit ops with large
+    ;; shift amounts.
+    :int             (str (:value node) "LL")
     :float           (str (:value node))
     :nil             (or (:sentinel node) "nil")
     :name            (:sym node)

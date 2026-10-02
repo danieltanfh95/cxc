@@ -395,6 +395,18 @@
     ;; dispatch on it.
     "CString" ^{:cxc-c-type "const char *"} [:cstring]
     (cond
+      ;; 2026-10-01 — guard nil cxc-name. Reached when an upstream pass
+      ;; (observation param, container-of-record scan) produces a
+      ;; type-ref node whose name is unresolved. Pre-guard NPE'd at the
+      ;; `str/starts-with?` call below. Opus-v26p3 interrogation flagged
+      ;; this; the symptom was "daemon NPE on observation taking a
+      ;; `List of Int` param".
+      (nil? cxc-name)
+      (fail-nyi! (str "unresolved type name `nil`; the type-ref node "
+                      "is missing or wasn't resolved by an earlier pass. "
+                      "Common cause: `List of <Atom>` as a `def Atom(args):` "
+                      "constructor param (not yet supported).")
+                 node)
       (contains? record-env cxc-name) {:record cxc-name}
       (contains? atom-env   cxc-name) {:atom   cxc-name}
       (contains? enum-env   cxc-name) {:enum   cxc-name}

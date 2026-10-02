@@ -126,4 +126,8 @@
             (println msg)
             (when-let [node (:node (ex-data ex))]
               (println "  at node:" (pr-str (select-keys node [:node :name :sym]))))))
-        (System/exit exit)))))
+        (System/exit exit))))
+  ;; Success path falls through here. clojure.java.shell/sh spawns futures on
+  ;; the agent soloExecutor whose pool keeps the JVM alive for its 60s idle
+  ;; timeout. Shut agents down so the JVM exits promptly.
+  (shutdown-agents))

@@ -316,6 +316,47 @@
                                                     class-name " *__r = "
                                                     "[[" class-name " alloc] "
                                                     "initWithelements:__buf]; "
+                                                    "return __r;")}]}
+                         ;; 2026-10-01 — `.concat(other)` returns a new
+                         ;; List containing self's elements followed by
+                         ;; other's elements. Both must share element
+                         ;; type (compiler enforces via method dispatch).
+                         {:name        "concatWithother"
+                          :selector    "concatWithother:"
+                          :params      [{:name "other" :c-type (str class-name " *")}]
+                          :return-type (str class-name " *")
+                          :body        [{:node :raw-c
+                                         :text (str "NSMutableArray *__buf = "
+                                                    "[NSMutableArray arrayWithArray:_elements]; "
+                                                    "if (other) [__buf addObjectsFromArray:"
+                                                    "[other elements]]; "
+                                                    class-name " *__r = "
+                                                    "[[" class-name " alloc] "
+                                                    "initWithelements:__buf]; "
+                                                    "return __r;")}]}
+                         ;; 2026-10-01 — `.slice(start, end)` returns a new
+                         ;; List with elements in [start, end). End is
+                         ;; exclusive. Out-of-bound ranges are clamped to
+                         ;; [0, count]; a reversed/empty range yields an
+                         ;; empty List. Matches Python / Rust slice.
+                         {:name        "sliceWithstart_end"
+                          :selector    "sliceWithstart:end:"
+                          :params      [{:name "start" :c-type "int64_t"}
+                                        {:name "end"   :c-type "int64_t"}]
+                          :return-type (str class-name " *")
+                          :body        [{:node :raw-c
+                                         :text (str "int64_t __n = (int64_t)[_elements count]; "
+                                                    "int64_t __s = start < 0 ? 0 : (start > __n ? __n : start); "
+                                                    "int64_t __e = end < 0 ? 0 : (end > __n ? __n : end); "
+                                                    "if (__e < __s) __e = __s; "
+                                                    "NSArray *__sub = [_elements "
+                                                    "subarrayWithRange:NSMakeRange((NSUInteger)__s, "
+                                                    "(NSUInteger)(__e - __s))]; "
+                                                    "NSMutableArray *__buf = "
+                                                    "[NSMutableArray arrayWithArray:__sub]; "
+                                                    class-name " *__r = "
+                                                    "[[" class-name " alloc] "
+                                                    "initWithelements:__buf]; "
                                                     "return __r;")}]}]
                         (cond-> (into (vec forwarding-methods)
                                       (:methods stream-parts))

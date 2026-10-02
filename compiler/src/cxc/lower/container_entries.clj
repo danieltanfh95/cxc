@@ -297,6 +297,25 @@
                                             ;; via `xs => xs.sort_by(c => c.coin)`.
                                             (container-method "sort_by"
                                                               [{:name "keyfn" :cxc-ty elem}]
+                                                              class-name)
+                                            ;; 2026-10-01 — `.slice(start, end)`
+                                            ;; returns elements in [start, end).
+                                            ;; End exclusive, out-of-bound ends
+                                            ;; are clamped. Matches Python/Rust.
+                                            (container-method "slice"
+                                                              [{:name "start" :cxc-ty "Int"}
+                                                               {:name "end"   :cxc-ty "Int"}]
+                                                              class-name)
+                                            ;; 2026-10-01 — `.concat(other)`
+                                            ;; appends another List of the
+                                            ;; same element type. The param
+                                            ;; type is the container class
+                                            ;; itself, not `elem` — carrier
+                                            ;; type matches the receiver.
+                                            (container-method "concat"
+                                                              [{:name "other"
+                                                                :cxc-ty class-name
+                                                                :c-type (str class-name " *")}]
                                                               class-name)]
                                      (contains? list-at-or-supported-element-types elem)
                                      (conj (container-method "contains"

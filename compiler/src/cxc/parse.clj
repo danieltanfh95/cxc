@@ -882,7 +882,24 @@
                                 (str "expression-position `|>` expected "
                                      "`|> receiver.method(args)`"))))
                 (fail! tokens pos (str "unexpected glyph `" (t-value t) "` in expression")))
-      (fail! tokens pos "expected an expression"))))
+      (fail! tokens pos
+        (let [t (peek-tok tokens pos)]
+          (cond
+            (nil? t)
+            "expected an expression, reached end of input"
+
+            (= :newline (t-kind t))
+            (str "expected an expression, got a newline. Corvid does not continue "
+                 "expressions across newlines outside brackets. Common causes: "
+                 "(a) `let x: T =` followed by a newline before the RHS — keep the "
+                 "RHS on the same line as `=`, or hoist the value into an atom "
+                 "observation and read it here as `self.<obs>`; "
+                 "(b) a `||:` chain starting on its own line — hoist it into an "
+                 "observation body (`v :- Type = (||: g1 : b1 ||: else : b2)`) "
+                 "rather than embedding as a bare RHS.")
+
+            :else
+            "expected an expression"))))))
 
 (defn- parse-multi-arm-arm
   "Parse one `||: <guard>: <body>` arm. `<guard>` is either the `else`
@@ -1654,12 +1671,67 @@
     (at? tokens pos :kw "if")
     (if (at? tokens (inc pos) :kw "let")
       (parse-if-let-statement tokens pos)
+      ;; 2026-10-01 — bare `if <cond>: <block> [else: <block>]` statement
+      ;; form. Lowers to a C `if (cond) { then } else { else }`. Reserved
+      ;; for pure branching; nil-unwrap still goes through `if let` for
+      ;; the scoped binding.
+      (let [[_ p]   [nil (inc pos)]
+            [cond-e p] (parse-expr tokens p)
+            [_ p]   (expect tokens p :punct ":")
+            [then p] (if (at? tokens p :newline)
+                       (let [[_ p] (expect tokens p :newline)
+                             [_ p] (expect tokens p :indent)]
+                         (loop [stmts [] p p]
+                           (cond
+                             (at? tokens p :dedent)
+                             [{:node :block :stmts stmts} (inc p)]
+                             (at? tokens p :newline)
+                             (recur stmts (inc p))
+                             :else
+                             (let [[s p2] (parse-statement tokens p)
+                                   p3     (skip-newlines tokens p2)]
+                               (recur (conj stmts s) p3)))))
+                       (let [[s p2] (parse-statement tokens p)]
+                         [{:node :block :stmts [s]} p2]))
+            p        (skip-newlines tokens p)
+            [else-blk p]
+            (if (and (at? tokens p :kw "else")
+                     (at? tokens (inc p) :punct ":"))
+              (let [p (+ p 2)]
+                (if (at? tokens p :newline)
+                  (let [[_ p] (expect tokens p :newline)
+                        [_ p] (expect tokens p :indent)]
+                    (loop [stmts [] p p]
+                      (cond
+                        (at? tokens p :dedent)
+                        [{:node :block :stmts stmts} (inc p)]
+                        (at? tokens p :newline)
+                        (recur stmts (inc p))
+                        :else
+                        (let [[s p2] (parse-statement tokens p)
+                              p3     (skip-newlines tokens p2)]
+                          (recur (conj stmts s) p3)))))
+                  (let [[s p2] (parse-statement tokens p)]
+                    [{:node :block :stmts [s]} p2])))
+              [nil p])]
+        [{:node :if-stmt :cond cond-e :then then :else else-blk} p]))
+
+    ;; 2026-10-01 — `<ident> => <expr>` at a statement position that is NOT
+    ;; inside a `then:` block (e.g. inside a bare `if`, `else`, loop body)
+    ;; is a staged-update attempt that doesn't type-check — `=>` only has
+    ;; meaning in `then:`. The parser otherwise falls through to parse-expr
+    ;; which reads it as a lambda, producing an unhelpful "lambda with 1
+    ;; params" error from the lowerer. Catch and redirect here.
+    (and (at? tokens pos :ident)
+         (at? tokens (inc pos) :glyph "=>"))
+    (let [name (t-value (peek-tok tokens pos))]
       (fail! tokens pos
-             (str "F39 L7: only `if let <ident> = <expr>: <block>` is supported at "
-                  "statement position today. Bare `if <cond>: <block>` (K5 statement "
-                  "form) is not yet landed. Rewrite via `if let` (nil-guarded unwrap), "
-                  "an own-line `|:` proposition on a transition arm, or an expression-position `<:` "
-                  "dispatch block for pattern-matched branching.")))
+             (str "`" name " => <expr>` is a staged field update, legal only "
+                  "directly inside a `then:` block (or an inline transition "
+                  "arm). Inside `if`, `else`, loop bodies, or any nested "
+                  "block, use an async self-send: `self :> set_" name "(v)` "
+                  "with a handler on the atom. For expression-position "
+                  "selection, use `||: cond : X ||: else : Y`.")))
 
     ;; F18 L1 — a `let` at statement position followed by `<ident> [: T] =`
     ;; is the local-binding form. Distinct from the transition `let:` sub-

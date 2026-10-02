@@ -30,10 +30,15 @@
     "Bool"   (str "@(" raw-name ")")))
 
 (defn map-c-type
-  "C-level parameter type for a supported K or V map type."
+  "C-level parameter type for a supported K or V map type.
+   2026-10-01 — Int is int64_t, not int. Corvid Int! is 64-bit; the read
+   side already uses longLongValue (line ~150). The write side was passing
+   values through `int` selector params, truncating anything > 2^31 silently
+   (e.g. 5_000_000_000 → 705_032_704). Found during MT19937 debug on
+   opus-v26p3 (opus self-interrogation 2026-10-01)."
   [ty]
   (case ty
-    "Int"    "int"
+    "Int"    "int64_t"
     "String" "NSString *"                   ; F65 §3.10.5
     "Bool"   "BOOL"))
 
