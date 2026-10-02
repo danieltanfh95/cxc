@@ -39,4 +39,32 @@ for arg in "$@"; do
 done
 
 cd "$COMPILER_DIR"
+
+# Try the persistent compile daemon for `cxc compile ...` when the socket is
+# live. Falls back to a cold `clj` on any error so correctness never depends
+# on the daemon being up. Opt out with CXC_NO_DAEMON=1.
+SOCK="${CXC_DAEMON_SOCK:-/tmp/cxc-daemon.sock}"
+if [[ "${rewritten[0]:-}" == "compile" ]] \
+   && [[ "${CXC_NO_DAEMON:-0}" != "1" ]] \
+   && [ -S "$SOCK" ]; then
+  # Build JSON request. args[] excludes the "compile" subcommand itself.
+  payload=$(python3 - "${rewritten[@]:1}" <<'PY' 2>/dev/null
+import json, sys
+print(json.dumps({"cmd": "compile", "args": sys.argv[1:]}))
+PY
+)
+  if [ -n "$payload" ]; then
+    resp=$(printf '%s\n' "$payload" | nc -U "$SOCK" 2>/dev/null)
+    if [ -n "$resp" ]; then
+      # Parse { exit, stdout, stderr }
+      exit_code=$(python3 -c "import json,sys; d=json.loads(sys.argv[1]); print(d.get('exit',1))" "$resp" 2>/dev/null)
+      if [ -n "$exit_code" ]; then
+        python3 -c "import json,sys; d=json.loads(sys.argv[1]); sys.stdout.write(d.get('stdout','')); sys.stderr.write(d.get('stderr',''))" "$resp"
+        exit "$exit_code"
+      fi
+    fi
+    # If we reach here, daemon call failed. Fall through to cold start below.
+  fi
+fi
+
 exec clj -M -m cxc.core "${rewritten[@]}"
