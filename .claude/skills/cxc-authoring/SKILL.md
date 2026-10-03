@@ -146,9 +146,9 @@ def main:
 
 ### Data before code
 
-- Define the record before writing the transition.
-- If a transition body reaches for a value not on any record, stop and put it on one.
-- Multi-layer data-contract changes lead with a "before/after data shapes" table, then implementation.
+- Define the record before writing the transition that produces or consumes it.
+- If a transition body reaches for a DOMAIN FACT or an EXCHANGED CONTRACT value that lives on no record, stop and put it on one. Derived or temporary values stay as observations or local bindings (Zen 3).
+- Multi-layer data-contract changes lead with a "before/after data shapes" table for the stored and exchanged shapes, then implementation.
 
 ### Readable names
 
