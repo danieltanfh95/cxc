@@ -1,0 +1,52 @@
+# Self-host port of cxc.mangle/->c-safe.
+#
+# Contract. Given an ambient `*decl->mod_name*` map and a user-visible
+# declared name, return the C-safe mangled identifier. The ambient
+# is a two-column file at argv[1], one row per line in the form
+# `<name>|<mod_name>`. The query name is argv[2]. If the name is not
+# in the ambient, return the name verbatim. If the name is in the
+# ambient, apply the `mangled-name-for` rule to (mod_name, name).
+#
+# Clojure source. compiler/src/cxc/mangle.clj L46 to L54 plus
+# compiler/src/cxc/resolve.clj L257 to L281 for the mangled-name-for
+# delegation.
+#
+# Argv shape. argv[1] = table file path, argv[2] = query name.
+# Writes the mangled name as a single stdout line.
+#
+# Oracle. compiler/self_host/oracle/mangle_c_safe.clj which requires
+# cxc.resolve and reads the same table file to build an in-memory
+# map, then applies the live cxc.resolve/mangled-name-for.
+#
+# Lookup. The port scans the table content as a flat string. For a
+# query `q`, build the marker `\n<q>|`, prepend `\n` to the content
+# so the leading row uses the same marker shape, then index_of the
+# marker. Hit yields the mod_name as the substring from marker-end to
+# the next `\n`. Miss returns the query verbatim via the first ||:
+# arm so the hit-not-found path short-circuits before any substring
+# computation would misread. Lambda-capture of locals is not used
+# anywhere in this slice per the chapter 2 blocker.
+
+def main:
+    use args:    Args
+    use fs:      FileSystem
+    use console: Console
+
+    -> running
+        then:
+            let table_path: String! = args.get_or(1, "")
+            let query: String! = args.get_or(2, "")
+            let raw: String! = fs.read_text(table_path)
+            let normalized: String! = ||: raw.ends_with("\n") : raw ||: else : raw + "\n"
+            let augmented: String! = "\n" + normalized
+            let marker: String! = "\n" + query + "|"
+            let hit_idx: Int! = augmented.index_of(marker)
+            let mod_name_start: Int! = hit_idx + marker.length()
+            let tail_len: Int! = augmented.length() - mod_name_start
+            let tail: String! = augmented.substring(mod_name_start, tail_len)
+            let end_rel: Int! = tail.index_of("\n")
+            let mod_name: String! = tail.substring(0, end_rel)
+            let result: String! = ||: hit_idx == -1 : query ||: mod_name == "" : query ||: mod_name.starts_with("std.") : "_Cxc_" + query ||: mod_name == "main" : query ||: else : mod_name.replace(".", "_") + "_" + query
+            console.write(result)
+
+    -> end

@@ -1,0 +1,16 @@
+Duration|std.prelude
+Instant|std.prelude
+FileSystem|std.fs
+Console|std.console
+Clock|std.clock
+HttpError|std.net
+Game|main
+Player|main
+Card|main
+Lane|main
+Hero|user.myapp
+Button|com.acme.widgets
+Thing|org.example
+Baz|user.foo.bar
+Leaf|user.foo.bar.deep.nest
+Simple|singleword
