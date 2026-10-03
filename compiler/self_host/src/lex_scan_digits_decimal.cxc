@@ -1,0 +1,42 @@
+# Self-host port of cxc.lex/scan-digits, decimal path, WELL-FORMED
+# subset. The slice is intentionally scoped tight. For a well-formed
+# decimal digit run possibly separated by legal underscores (no
+# leading, no trailing, no underscores adjacent to a non-digit),
+# the Clojure scan-digits returns [digits end-index] where digits
+# is the underscore-stripped sequence and end-index is len(input).
+# The port returns just the digits string. The caller or the oracle
+# derives end-index as len(input) separately.
+#
+# Out of scope. Hex, octal, binary. Any malformed underscore. Any
+# input containing non-ASCII characters or non-digit letters. For
+# those, Clojure either throws or returns a prefix, and the port
+# does not match. The corpus avoids them.
+#
+# Approach. Strip underscores via `.replace("_", "")` and verify the
+# stripped tail parses as a non-negative decimal integer via
+# `.to_int_or(-1)`. Positive digit runs never hit the -1 sentinel so
+# the sentinel is a clean miss-marker. Empty input returns empty.
+#
+# Argv shape. argv[1] = input string. One stdout line.
+#
+# Oracle. compiler/self_host/oracle/lex_scan_digits_decimal.clj which
+# requires cxc.lex, derefs the private scan-digits var, calls it
+# with (ln, 0, len, 10, 1) and prints the first element of the
+# returned vector.
+#
+# Clojure source. compiler/src/cxc/lex.clj L283 to L312 as of
+# 2026-10-04.
+
+def main:
+    use args:    Args
+    use console: Console
+
+    -> running
+        then:
+            let input: String! = args.get_or(1, "")
+            let stripped: String! = input.replace("_", "")
+            let as_int: Int! = stripped.to_int_or(-1)
+            let digits: String! = ||: stripped == "" : "" ||: as_int == -1 : "INVALID" ||: else : stripped
+            console.write(digits)
+
+    -> end

@@ -34,7 +34,9 @@ Byte-for-byte diff is the only accepted exit condition. If a layer's parity hing
 2. **lex::classify-word** — 2 LOC, pure, lookup against a 40-entry cxc reserved-word set. Second slice. STATUS landed. 54 inputs parity-equal.
 3. **lex::match-multi-glyph** — 7 LOC, pure, longest-first match against a 16-entry glyph table. Third slice. STATUS landed. 37 inputs parity-equal.
 4. **resolve::mangled-name-for** — 15 LOC, pure, four-case module-plus-name mangler. Fourth slice. STATUS landed. 25 inputs parity-equal across nil / std.* / main / dotted-user-module cases.
-5. **mangle::->c-safe** — 10 LOC, consults `*decl->module*` ambient and delegates to `mangled-name-for`. Can now be built on top of slice 4, but still needs a Map-of-String-to-String binding to stand in for the ambient. Deferred until List-of-String harness patterns settle.
+5. **mangle::->c-safe** — 15 LOC, composes slice 4 with a file-based ambient-map lookup via index_of + substring. Fifth slice. STATUS landed. 22 queries against a 16-row ambient table parity-equal across hit and miss cases.
+6. **ASCII char predicates** — 15 LOC, four kinds (digit10, digit16, digit2, whitespace) matching Clojure Character/digit and Character/isWhitespace on 0 to 127. Sixth slice. STATUS landed. 44 inputs parity-equal.
+7. **lex::scan-digits (decimal, well-formed)** — 5 LOC, strips underscores via `.replace("_", "")` and verifies via `.to_int_or`. Seventh slice. STATUS landed. 22 inputs parity-equal on the well-formed subset.
 4. **diagnostics** — 38 LOC, three throw helpers. Can be ported but there is no byte output to compare, only error-shape at the ex-info boundary. Low-priority.
 5. **lex sub-functions** — scan-digits, scan-string, scan-char. Each is a pure string to value function. Need cxc stdlib additions for character predicates (see Blockers).
 6. **lex (full)** — 835 LOC. ASCII-safe subset is portable today, Unicode identifiers break on `Character/isUnicodeIdentifierStart` which has no cxc analogue.
@@ -90,14 +92,17 @@ Each layer's cxc port is a `def main:` program that reads one positional arg (`a
 
 If you are picking this up next session, start here.
 
-- Last-landed layers. Four parity-confirmed byte-equal slices, `mangle::c-safe-param-name` with 93-input corpus, `lex::classify-word` with 54, `lex::match-multi-glyph` with 37, `resolve::mangled-name-for` with 25.
-- Compiler landing. `String.split(sep) -> String` (newline-joined, interim) landed in commit `438e40b`. cards.m baseline byte-identical before and after. New blocker surface for later slices that need to split a file into lines.
-- Reusable corpus-driven slice pattern. Each slice is a function with a stable `String -> String` or `(String, Int) -> String` or `(String, String) -> String` contract. The cxc port and the clj oracle emit newline-terminated output on the same corpus, and the harness `diff -q`s the two output files. New slices follow the same four-file shape (src, oracle, corpus, harness).
+- Last-landed layers. Seven parity-confirmed byte-equal slices covering mangle (c-safe-param-name, ->c-safe), lex (classify-word, match-multi-glyph, scan-digits decimal), resolve (mangled-name-for), and ASCII char predicates. See the layer order list above for per-slice corpus sizes.
+- Compiler landings. `String.split(sep) -> String` (newline-joined, interim) in commit `438e40b`. `fs.read_lines(path) -> String` (same interim shape) in commit `3489ea3`. Both verified cards.m baseline byte-identical before and after.
+- Reusable corpus-driven slice pattern. Each slice is a function with a stable scalar-input to scalar-output contract. For slices that need multi-row ambient state, pass the state as a file path in argv and read via `fs.read_text`. The cxc port and the clj oracle emit newline-terminated output on the same corpus, and the harness `diff -q`s the two output files. New slices follow the four-file shape (src, oracle, corpus, harness).
 - Delimiter convention for multi-field corpora. Use `|` not `\t`. Bash `IFS=$'\t' read -r a b` collapses a leading tab, which turns `\tX` into `a=X b=""` instead of `a="" b=X`. The pipe is not a whitespace char so empty leading fields round-trip correctly. The two-arg glyph harness uses tab and happens to parity by coincidence (its empty-source rows have no match either way), the pipe is now the recommended delimiter for new slices.
 - Idioms learned.
   - Always annotate primitive locals as `T!` (`let i: Int! = ...`) when the value will cross into an ObjC cast or substring index.
   - Avoid lambda capture of local Int bindings. Either inline the function with `||:` chains or hoist the local to an atom field.
   - Keep `||:` chains on one physical line even if long.
   - Use `args.get_or_int(index, fallback)` not `??`-coalesced int. `??` on a non-nullable primitive storage widens it back to Optional per the gap documented above.
-- Next viable layer with no stdlib blockers. `diagnostics` as a shape-only port, or `mangle::->c-safe` once a Map-of-String-to-String corpus input shape is designed (slice 4 covers the delegate function; the ambient-map part is still a cxc gap).
-- First layer with a hard blocker. Full `lex` on Unicode source. The ASCII subset can land first, Unicode identifiers need a cxc stdlib code-point iterator.
+  - `module` is a reserved keyword, use `mod_name` or similar.
+  - For ambient-table slices, pass the table file path in argv and scan via `fs.read_text` plus `index_of` + `substring`. No lambda capture needed, matches the ->c-safe shape.
+- Daemon caveat. `compiler/bin/cxc` fronts a long-lived Clojure daemon that caches loaded source. Any edit to compiler source (lower.clj, prelude cxc files) requires killing the daemon, `pkill -f cxc.daemon` or `kill <pid>`, else `bin/cxc` serves stale behavior. Direct `clj -M -m cxc.core compile ...` always reads fresh.
+- Next viable layer with no stdlib blockers. `diagnostics` as a shape-only port, or a scan-string / escape-sequence slice that reuses the ASCII char predicates. Both are small.
+- First layer with a hard blocker. Full `lex` on Unicode source. The ASCII subset can land first, Unicode identifiers need a cxc stdlib code-point iterator. Full `scan-digits` with underscore-malformed error reporting needs a loop idiom beyond `.replace`.

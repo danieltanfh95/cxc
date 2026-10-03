@@ -1,0 +1,41 @@
+# Self-host port of the ASCII subset of Clojure's Character/digit and
+# Character/isWhitespace predicates. Enough to drive scan-digits and
+# scan-string on ASCII source without a Unicode code-point iterator.
+#
+# Contract. Given a predicate name and a code point as an Int, return
+# the predicate's result as a stdout line.
+#   kind == "digit10"    -> Character/digit(c, 10) as string (-1 miss)
+#   kind == "digit16"    -> Character/digit(c, 16) as string (-1 miss)
+#   kind == "digit2"     -> Character/digit(c, 2)  as string (-1 miss)
+#   kind == "whitespace" -> Character/isWhitespace(c) as "true"/"false"
+#
+# ASCII whitespace per Clojure JDK semantics. 9 \t, 10 \n, 11 \v,
+# 12 \f, 13 \r, 28 FS, 29 GS, 30 RS, 31 US, 32 SPACE. Other code
+# points inside 0 to 127 are false.
+#
+# Argv shape. argv[1] = predicate kind, argv[2] = char code.
+#
+# Oracle. compiler/self_host/oracle/ascii_predicates.clj which calls
+# Character/digit and Character/isWhitespace against the same inputs.
+
+def main:
+    use args:    Args
+    use console: Console
+
+    -> running
+        then:
+            let kind: String! = args.get_or(1, "")
+            let c: Int! = args.get_or_int(2, 0)
+            let is_dec: Bool! = c >= 48 and c <= 57
+            let is_hex_lower: Bool! = c >= 97 and c <= 102
+            let is_hex_upper: Bool! = c >= 65 and c <= 70
+            let is_bin: Bool! = c >= 48 and c <= 49
+            let is_ws: Bool! = c == 9 or c == 10 or c == 11 or c == 12 or c == 13 or c == 28 or c == 29 or c == 30 or c == 31 or c == 32
+            let dec_val: Int! = ||: is_dec : c - 48 ||: else : -1
+            let hex_val: Int! = ||: is_dec : c - 48 ||: is_hex_lower : c - 87 ||: is_hex_upper : c - 55 ||: else : -1
+            let bin_val: Int! = ||: is_bin : c - 48 ||: else : -1
+            let ws_str: String! = ||: is_ws : "true" ||: else : "false"
+            let result: String! = ||: kind == "digit10" : dec_val.to_string() ||: kind == "digit16" : hex_val.to_string() ||: kind == "digit2" : bin_val.to_string() ||: kind == "whitespace" : ws_str ||: else : "ERROR"
+            console.write(result)
+
+    -> end
