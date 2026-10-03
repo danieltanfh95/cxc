@@ -5,6 +5,7 @@
             [cxc.parse :as p]
             [cxc.prelude :as prelude]
             [cxc.lower :as lower]
+            [cxc.mangle :as mangle]
             cxc.lower.shape-collection
             cxc.lower.ctor-params
             cxc.lower.protocol-shapes
@@ -12,6 +13,54 @@
             [cxc.emit :as emit]))
 
 (defn- lower-src [src] (lower/lower (p/parse src)))
+
+(deftest c-safe-param-names-escape-reserved-words
+  (doseq [nm ["default" "auto" "break" "case" "char" "const" "continue" "do"
+              "double" "else" "enum" "extern" "float" "for" "goto" "if" "inline"
+              "int" "long" "register" "restrict" "return" "short" "signed" "sizeof"
+              "static" "struct" "switch" "typedef" "union" "unsigned" "void"
+              "volatile" "while" "_Bool" "_Complex" "_Imaginary"
+              "id" "super" "nil" "SEL" "Class" "BOOL" "YES" "NO"]]
+    (is (= (str nm "_") (mangle/c-safe-param-name nm)) nm)
+    (is (= (mangle/c-safe-param-name nm)
+           (mangle/c-safe-param-name (mangle/c-safe-param-name nm))) nm))
+  (doseq [nm ["fallback" "default_" "id_" "self" "Default" "auto_value"]]
+    (is (= nm (mangle/c-safe-param-name nm)) nm)))
+
+(deftest reserved-params-lower-in-observables-and-methods
+  (let [prog (lower-src (str "def Value:\n"
+                             "    n: Int! = 0\n"
+                             "    pick(default: Int!, id: Int!) :- default + id\n"
+                             "extend Value:\n"
+                             "    extra(default: Int!, id: Int!) :- default + id\n"
+                             "def Actor:\n"
+                             "    n: Int! = 0\n"
+                             "    pick(default: Int!, id: Int!) :- default + id\n"
+                             "    -> idle\n"
+                             "    * <: extra(default: Int!, id: Int!) -> self\n"
+                             "        then: print(default + id)\n"
+                             "def main:\n"
+                             "    -> running\n"
+                             "        then:\n"
+                             "            let id: Int! = 7\n"
+                             "            print(id)\n"))
+        actor (first (filter #(= "Actor" (:name %)) (:classes prog)))]
+    (doseq [fn-name ["Value_pick" "Value_extra"]]
+      (let [f (first (filter #(= fn-name (:name %)) (:functions prog)))]
+        (is (= ["self" "default_" "id_"] (mapv :name (:params f))) fn-name)
+        (is (= #{{:node :name :sym "default_"} {:node :name :sym "id_"}}
+               (set (filter #(and (map? %) (= :name (:node %)))
+                            (tree-seq coll? seq (:body f))))) fn-name)))
+    (doseq [selector ["pickWithdefault:id:" "extraWithdefault:id:"]]
+      (let [m (first (filter #(= selector (:selector %)) (:methods actor)))
+            refs (filter #(and (map? %) (= :name (:node %)))
+                         (tree-seq coll? seq (:body m)))]
+        (is (= ["default_" "id_"] (mapv :name (:params m))) selector)
+        (is (some #(= "default_" (:sym %)) refs) selector)
+        (is (some #(= "id_" (:sym %)) refs) selector)))
+    (is (some #(= {:node :name :sym "id"} %)
+              (tree-seq coll? seq prog))
+        "ordinary locals retain their existing C names")))
 
 (defn- lower-src+prelude
   "Test helper that mirrors build.clj's parse pipeline: prepends the

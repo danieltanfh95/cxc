@@ -18,7 +18,7 @@
    No lowering-pass helpers touch this file — pure name builders +
    node factories."
   (:require [clojure.string :as str]
-            [cxc.mangle :refer [->c-safe]]))
+            [cxc.mangle :refer [->c-safe c-safe-param-name]]))
 
 (defn c-method-name
   "Free-function name for a record's method: `<Record>_<method>`.
@@ -99,7 +99,7 @@
                   (let [payload (get typed-payloads nm [])
                         keys    (mapv :name payload)
                         c-types (mapv :c-type payload)
-                        method-params (mapv (fn [p] {:name (:name p)
+                        method-params (mapv (fn [p] {:name (c-safe-param-name (:name p))
                                                      :c-type (:c-type p)})
                                             payload)]
                     {:node        :objc-method
@@ -113,7 +113,7 @@
                      :body        [{:node        :stream-fanout
                                     :ivar        (stream-subscribers-ivar-name nm)
                                     :selector    (stream-selector source-class nm keys)
-                                    :arg-names   (into ["sender"] keys)
+                                    :arg-names   (into ["sender"] (map c-safe-param-name keys))
                                     :arg-c-types (into ["id"] c-types)
                                     :prepend-self? true}]}))
                 stream-order)

@@ -87,6 +87,65 @@
       (is (zero? exit))
       (is (= "hello, world\n" stdout)))))
 
+(deftest end-to-end-reserved-observation-params
+  (testing "reserved parameter names are safe in C while source argument labels and ObjC selectors stay unchanged"
+    (let [src (str "def Card:\n"
+                   "    id: Int!\n"
+                   "    dmg: Int!\n"
+                   "def Bag:\n"
+                   "    cards: List of Card = []\n"
+                   "    best(default: Card) :- cards.sort_by(c => -c.dmg).at(0) ?? default\n"
+                   "    captured(default: Card) :- cards.filter(id => id.dmg > default.dmg).at(0) ?? default\n"
+                   "extend Bag:\n"
+                   "    fallback(default: Card) :- default\n"
+                   "def Picker:\n"
+                   "    best(default: Card) :- default\n"
+                   "    -> idle\n"
+                   "    * <: fallback(default: Card) -> self\n"
+                   "        then: print(default.id)\n"
+                   "def main:\n"
+                   "    s: Card! = Card(id: -1, dmg: 0)\n"
+                   "    b: Bag! = Bag()\n"
+                   "    p: Picker! = Picker()\n"
+                   "    -> boot\n"
+                   "        then:\n"
+                   "            print(\"best id=\" + b.best(default: s).id.to_string())\n"
+                   "            print(b.captured(default: s).id)\n"
+                   "            print(b.fallback(default: s).id)\n"
+                   "            print(p.best(default: s).id)\n"
+                   "            p.fallback(default: s)\n"
+                   "    -> end\n")
+          out-dir (tmp-dir)
+          {:keys [status stderr bin-path]}
+          (build/compile-source-to-file src "reserved-observation-params" (.getPath out-dir))]
+      (is (zero? status) (str "clang failed:\n" stderr))
+      (when (zero? status)
+        (let [{:keys [exit stdout]} (build/run-binary bin-path)]
+          (is (zero? exit))
+          (is (= "best id=-1\n-1\n-1\n-1\n-1\n" stdout)))))))
+
+(deftest end-to-end-reserved-constructor-and-message-params
+  (let [src (str "def Emitter(id: String!):\n"
+                 "    -> idle\n"
+                 "    idle <: fire(default: Int!) -> idle\n"
+                 "        then: :> value(default: default)\n"
+                 "def main:\n"
+                 "    source: Emitter! = Emitter(id: \"ready\")\n"
+                 "    -> running\n"
+                 "        then:\n"
+                 "            print(source.id)\n"
+                 "            |> source.fire(default: 7)\n"
+                 "    running <: source.value(default: Int!) -> end\n"
+                 "        then: print(default)\n")
+        out-dir (tmp-dir)
+        {:keys [status stderr bin-path]}
+        (build/compile-source-to-file src "reserved-constructor-and-message-params" (.getPath out-dir))]
+    (is (zero? status) (str "clang failed:\n" stderr))
+    (when (zero? status)
+      (let [{:keys [exit stdout]} (build/run-binary bin-path)]
+        (is (zero? exit))
+        (is (= "ready\n7\n" stdout))))))
+
 (deftest end-to-end-cancel-token
   (testing "cancel-token.cxc — CancelToken from std.async prelude: `cancelled` field starts false, `|> cancel()` flips it to true."
     (let [{:keys [exit stdout]} (compile-and-run "cancel-token")]

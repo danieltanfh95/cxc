@@ -4,7 +4,8 @@
    Output is a single `.m` string per :objc-program. Grown feature by
    feature alongside the lower pass."
   (:require [clojure.string :as str]
-            [clojure.walk :as walk]))
+            [clojure.walk :as walk]
+            [cxc.mangle :refer [c-safe-param-name]]))
 
 (declare emit-expr emit-stmt emit-class emit-struct indent-lines)
 
@@ -1963,10 +1964,11 @@
     (let [first-p     (first init-params)
           rest-ps     (rest init-params)
           first-part  (str "initWith" (:name first-p) ":("
-                           (:c-type first-p) ")" (:name first-p))
+                           (:c-type first-p) ")" (c-safe-param-name (:name first-p)))
           rest-parts  (str/join " "
                                 (map (fn [p]
-                                       (str (:name p) ":(" (:c-type p) ")" (:name p)))
+                                       (str (:name p) ":(" (:c-type p) ")"
+                                            (c-safe-param-name (:name p))))
                                      rest-ps))]
       (str "- (instancetype)" first-part
            (when-not (str/blank? rest-parts) (str " " rest-parts))))))

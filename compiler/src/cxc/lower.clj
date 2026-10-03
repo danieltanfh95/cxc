@@ -72,6 +72,8 @@
      :locals           <name -> ty>                       ; may be {}
 
    SCOPE-SCOPED (added by a specific lowering frame; absent otherwise):
+     :c-param-names       source names bound as parameters in this scope;
+                          only their C variable names are mangled.
      :self-fields         set by atom-body method lowering (F5 methods
                           reading own fields via `self.x`).
      :snapshot-name       set by then: bag / pre-store invariant / F49
@@ -97,7 +99,7 @@
             [clojure.walk :as walk]
             [cxc.diagnostics :refer [fail-nyi! fail-user! fail-compile!]]
             [cxc.env :as env]
-            [cxc.mangle :as mangle :refer [->c-safe]]
+            [cxc.mangle :as mangle :refer [->c-safe c-safe-param-name]]
             [cxc.named-tuple :as named-tuple]
             [cxc.prelude :as prelude]
             [cxc.resolve :as resolve]
@@ -249,8 +251,8 @@
    installs every BASE key so downstream `(get ctx :foo)` never
    silently returns nil for one of them. Scope-scoped keys
    (`:self-fields`, `:snapshot-name`, `:field-substitutions`,
-   `:in-loop?`, `:companion-receive`) are added by their owning
-   lowering frame via `assoc`, not here.
+   `:in-loop?`, `:companion-receive`, `:c-param-names`) are added by their
+   owning lowering frame via `assoc`, not here.
 
    All base keys are required. A missing arg indicates a caller bug
    (env-builder pipeline shortcut, test harness bypassing an env);
@@ -3814,9 +3816,11 @@
         user-param-name  (get-in lambda-node [:params 0 :name])
         raw-param-name   "_cxc_e"
         prelude          (unbox-prelude-for-element raw-param-name
-                                                    user-param-name
+                                                    (c-safe-param-name user-param-name)
                                                     element-type-kw)
-        body-ctx         (assoc-in ctx [:locals user-param-name] element-type-kw)
+        body-ctx         (-> ctx
+                             (assoc-in [:locals user-param-name] element-type-kw)
+                             (update :c-param-names (fnil conj #{}) user-param-name))
         body-nodes       (lambda-body-stmts lambda-node)
         body-stmts       (lower-body-stmts body-nodes body-ctx)]
     {:node :objc-msg
@@ -3844,9 +3848,11 @@
         user-param-name  (get-in lambda-node [:params 0 :name])
         raw-param-name   "_cxc_e"
         prelude          (unbox-prelude-for-element raw-param-name
-                                                    user-param-name
+                                                    (c-safe-param-name user-param-name)
                                                     element-type-kw)
-        body-ctx         (assoc-in ctx [:locals user-param-name] element-type-kw)
+        body-ctx         (-> ctx
+                             (assoc-in [:locals user-param-name] element-type-kw)
+                             (update :c-param-names (fnil conj #{}) user-param-name))
         body-expr        (:body lambda-node)
         body-lo          (lower-expr body-expr body-ctx)
         return-stmt      {:node :return :value body-lo}]
@@ -3876,9 +3882,11 @@
         user-param-name  (get-in lambda-node [:params 0 :name])
         raw-param-name   "_cxc_e"
         prelude          (unbox-prelude-for-element raw-param-name
-                                                    user-param-name
+                                                    (c-safe-param-name user-param-name)
                                                     element-type-kw)
-        body-ctx         (assoc-in ctx [:locals user-param-name] element-type-kw)
+        body-ctx         (-> ctx
+                             (assoc-in [:locals user-param-name] element-type-kw)
+                             (update :c-param-names (fnil conj #{}) user-param-name))
         body-expr        (:body lambda-node)
         body-lo          (lower-expr body-expr body-ctx)
         return-stmt      {:node :return :value body-lo}]
@@ -3970,7 +3978,10 @@
                     fsub
 
                     (contains? (:locals ctx) n)
-                    {:node :name :sym n}
+                    {:node :name
+                     :sym (if (contains? (:c-param-names ctx) n)
+                            (c-safe-param-name n)
+                            n)}
 
                     (:expr sf)
                     ;; Observable — dispatch through the synthesized getter.
@@ -6825,7 +6836,8 @@
                :reason-types (:reason-types comp-entry)})))
         ;; `self` + payload names in the branch body — infer-type needs
         ;; them for guard/then/do expressions that reference payload.
-        ctx'         (cond-> (assoc ctx :locals
+        ctx'         (cond-> (assoc ctx :c-param-names (set (map :name payload))
+                                    :locals
                                     (merge (:locals ctx)
                                            payload-locals
                                            {"self" {:atom atom-name}}))
@@ -7492,7 +7504,7 @@
                            payload (:payload first-d)
                            user-params (mapv
                                         (fn [p]
-                                          {:name   (:name p)
+                                          {:name   (c-safe-param-name (:name p))
                                            :c-type (cxc-type->c
                                                     (:type p)
                                                     (:record-env ctx)
@@ -7977,10 +7989,11 @@
         ret-tk   (method-return-tk method ctx)
         ctx'     (-> ctx
                      (assoc :locals locals)
+                     (assoc :c-param-names (set (map :name (:params method))))
                      (assoc :expected-return-tk ret-tk))
         stmts    (lower-body-stmts (:stmts (:body method)) ctx')
         params   (mapv (fn [p]
-                         {:name   (:name p)
+                         {:name   (c-safe-param-name (:name p))
                           :c-type (if (= "self" (:name p))
                                     (->c-safe record-name)
                                     (param-c-type p ctx))})
@@ -8070,10 +8083,11 @@
         ;; 1-wider full fixed for methods.
         body-ctx      (-> ctx
                           (assoc :locals (assoc param-locals "self" {:record record-name}))
+                          (assoc :c-param-names param-names)
                           (assoc :expected-return-tk ret-kw))
         params        (into [{:name "self" :c-type (->c-safe record-name)}]
                             (mapv (fn [p raw-p]
-                                    {:name   (:name p)
+                                    {:name   (c-safe-param-name (:name p))
                                      :c-type (param-c-type p ctx)
                                      ;; F15 L2.c.iii.c.δ — preserve raw :type
                                      ;; so `collect-shapes` on the lowered
@@ -8301,12 +8315,13 @@
         ret-tk      (method-return-tk method ctx)
         ctx'        (-> ctx
                         (assoc :locals locals)
+                        (assoc :c-param-names (set (map :name (:params method))))
                         (assoc :expected-return-tk ret-tk))
         stmts       (lower-body-stmts (:stmts (:body method)) ctx')
         args        (rest (:params method))            ; drop self
         param-names (mapv :name args)
         objc-params (mapv (fn [p]
-                            {:name   (:name p)
+                            {:name   (c-safe-param-name (:name p))
                              :c-type (param-c-type p ctx)})
                           args)
         ;; 2026-09-05 Path 1 slice 1-wider full — envelope return sig
@@ -8412,10 +8427,11 @@
         body-ctx     (-> ctx
                          (update :locals #(merge (or % {}) param-locals
                                                  {"self" {:atom atom-name}}))
+                         (assoc :c-param-names (set (map :name (:params o))))
                          (assoc :snapshot-name "__cxc_snap")
                          (assoc :expected-return-tk (:type-kw o)))
         objc-params  (mapv (fn [p raw-p]
-                             {:name   (:name p)
+                             {:name   (c-safe-param-name (:name p))
                               :c-type (param-c-type p ctx)
                               ;; F15 L2.c.iii.c.δ — preserve raw :type
                               ;; so `collect-shapes` on the lowered
@@ -8512,7 +8528,7 @@
                        core-stmts)]
     {:node        :objc-method
      :selector    (if (seq objc-params)
-                    (objc-method-selector (:name o) (mapv :name objc-params))
+                    (objc-method-selector (:name o) (mapv :name (:params o)))
                     (:name o))
      :return-type (:c-type o)
      :params      objc-params
@@ -8675,6 +8691,7 @@
         ctx-with-self (assoc ctx :self-fields self-plus-obs)
         ;; `self` visible in on-enter bodies for `self :> foo` / `self.x`.
         ctx-in-init   (assoc ctx-with-self
+                             :c-param-names (set (map :name ctor-params))
                              :locals (assoc locals "self" {:atom atom-name}))]
     (when (seq extras)
       (fail-user! (str "def-atom `" atom-name "` has body items beyond `data:`/`methods:`"
@@ -8819,7 +8836,8 @@
                            (when (lowerable-default? d)
                              [(:name f) (lower-expr d ctx-in-init)])))
                        (:fields rec))
-                 (map (fn [p] [(:name p) {:node :name :sym (:name p)}])
+                 (map (fn [p]
+                        [(:name p) {:node :name :sym (c-safe-param-name (:name p))}])
                       ctor-params)))
           pre-store-invariant-stmts
           (vec (keep-indexed
@@ -8910,7 +8928,8 @@
           state-init-msg  {:node :objc-msg
                            :recv {:node :name :sym "self"}
                            :selector state-selector
-                           :args (mapv (fn [p] {:node :name :sym (:name p)})
+                           :args (mapv (fn [p]
+                                         {:node :name :sym (c-safe-param-name (:name p))})
                                        ctor-params)}
           ;; Step 13 stream-source infrastructure. Every atom that
           ;; emits any `:>` gets per-stream ivars, a hashtable init in
@@ -9009,7 +9028,7 @@
                                   (not (contains? (:record-env ctx) (:cxc-ty p)))
                                   (not (contains? (:enum-env ctx)   (:cxc-ty p))))
                          (nonnil-check-stmt
-                          (:name p)
+                          (c-safe-param-name (:name p))
                           (str "def-atom `" atom-name "` ctor param")
                           (:name p))))
                      ctor-params))
@@ -9031,7 +9050,9 @@
              :data-fields data-props})
           state-method    {:node :objc-method :selector state-selector
                            :return-type "void"
-                           :params (mapv (fn [p] {:name (:name p) :c-type (:c-type p)})
+                           :params (mapv (fn [p]
+                                           {:name (c-safe-param-name (:name p))
+                                            :c-type (:c-type p)})
                                          ctor-params)
                            ;; F49 Landing A: pre-store invariant checks
                            ;; run first so ctor-param / default values

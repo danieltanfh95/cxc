@@ -12,7 +12,7 @@
    the per-fan-in-stream data from the element's own `:stream-order`
    / `:stream-payload-index` in atom-env."
   (:require [clojure.string :as str]
-            [cxc.mangle :refer [->c-safe]]
+            [cxc.mangle :refer [->c-safe c-safe-param-name]]
             [cxc.type-kw :refer [optional-type-name]]
             [cxc.lower.selectors :refer [stream-source-methods
                                          stream-selector
@@ -163,7 +163,7 @@
         (mapv (fn [nm]
                 (let [elem-keys   (mapv :name (rest (get fanin-payloads nm [])))
                       elem-params (into [{:name "sender" :c-type "id"}]
-                                        (mapv (fn [p] {:name (:name p)
+                                        (mapv (fn [p] {:name (c-safe-param-name (:name p))
                                                        :c-type (:c-type p)})
                                               (rest (get fanin-payloads nm []))))
                       cont-keys   (into ["e"] elem-keys)]
@@ -175,7 +175,7 @@
                                   :recv     {:node :name :sym "self"}
                                   :selector (stream-emit-selector nm cont-keys)
                                   :args     (into [{:node :name :sym "sender"}]
-                                                  (map #(hash-map :node :name :sym %)
+                                                  (map #(hash-map :node :name :sym (c-safe-param-name %))
                                                        elem-keys))}]}))
               fanin-streams)]
     {:node        :objc-class

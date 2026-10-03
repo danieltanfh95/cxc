@@ -20,6 +20,22 @@
    is what the M5 Hickey-review landing separated it into."
   (:require [cxc.resolve :as resolve]))
 
+(def ^:private c-reserved-param-names
+  #{"default" "auto" "break" "case" "char" "const" "continue" "do"
+    "double" "else" "enum" "extern" "float" "for" "goto" "if" "inline"
+    "int" "long" "register" "restrict" "return" "short" "signed" "sizeof"
+    "static" "struct" "switch" "typedef" "union" "unsigned" "void"
+    "volatile" "while" "_Bool" "_Complex" "_Imaginary"
+    "id" "super" "nil" "SEL" "Class" "BOOL" "YES" "NO"})
+
+(defn c-safe-param-name
+  "Append an underscore to C/ObjC reserved parameter names at the emit
+   boundary. Other names, including already-mangled names, pass through."
+  [nm]
+  (if (contains? c-reserved-param-names nm)
+    (str nm "_")
+    nm))
+
 (def ^:dynamic *decl->module*
   "F56 ambient — bound at the top of `cxc.lower/lower` from
    `attribute-modules-to-decls`. Consumed only by `->c-safe` below;
