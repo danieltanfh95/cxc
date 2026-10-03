@@ -66,7 +66,11 @@ open the linked doc section.
 
 - `T` = nullable, `T!` = non-nil, `T?` is **banned everywhere**.
 - Reach for `T!` unless `nil` is a legitimate state of the field.
-- **Numeric fields used in arithmetic or comparison are safest as `T!`.** Comparison of nullable `Int` in a guard position (`|: i < limit`) is supported as of 2026-09-27: the compiler unwraps the resulting Optional<Bool> as `.present && .value`, so a nil operand degrades the guard to `false`. Arithmetic on nullable Ints still produces `_Cxc_Optional_Int`, which callers must terminate with `?? default` before comparing. Prefer `T!` when you never intend nil; use `T` when a field is legitimately absent-until-first-write.
+- Guard semantics on nullable operands: `|: i < limit` is supported, the compiler unwraps the Optional<Bool> as `.present && .value`, so a nil operand degrades the guard to `false`. This is a defined semantics, use it when "missing operand treated as non-matching" is what you want.
+
+### Nullable arithmetic
+
+Arithmetic on nullable Ints produces `_Cxc_Optional_Int` which callers must terminate with `?? default` before comparing. The default is NOT free, `?? 0` smashes a missing operand into a valid in-range value, which usually loses caller meaning. Prefer `T!` for numeric fields used in arithmetic. If the field must be nullable, pick a `??` fallback that encodes "missing" (a sentinel like `-1` or a per-domain out-of-range marker), not an in-range value like `0`.
 
 ### Reserved words (do not use as identifiers or enum cases)
 
@@ -111,7 +115,7 @@ min_of(x: Int, y: Int) :- Int
 
 **Also illegal**: `name: Type :- body`. Adding a `:Type` annotation to a nullary observation without an arg list conflates it with a field-decl `name: Type = default`. Either use the inline explicit form (`name :- Type = expr`) or drop the type.
 
-**Compiler limitation**: observation args declared as `Int!` currently lower with `int64_t` params but call sites pass `_Cxc_Optional_Int64`, producing a C-level type-mismatch. If the args are numeric, declare them `Int` (nullable) and unwrap with `?? 0` at the use site.
+**Compiler limitation (transient)**: observation args declared as `Int!` currently lower with `int64_t` params but call sites pass `_Cxc_Optional_Int64`, producing a C-level type-mismatch. Workaround until the fix lands, declare args as `Int` (nullable) and unwrap at the use site with the fallback discipline from "Nullable arithmetic" above (pick a sentinel that encodes missing, not an in-range value).
 
 Also illegal: observations inside `def Record` bodies. Records hold data, atoms hold behavior. If you find yourself wanting a derived value on a record, either (a) move the record to be an atom's field and define the observation on the atom, or (b) inline the derivation at each call site.
 
