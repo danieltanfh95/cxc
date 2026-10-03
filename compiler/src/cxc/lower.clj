@@ -935,20 +935,25 @@
              literal-default?
              (fn [d]
                (and (map? d)
-                    (or (contains? #{:lit-int :lit-float :lit-string
-                                     :lit-bool :lit-nil}
-                                   (:node d))
-                        ;; 2026-10-02 — empty collection literals also
-                        ;; qualify. `deck: List of Card = []` promotes
-                        ;; so `Enc(deck: d)` can override the default
-                        ;; without rewriting the field as a header
-                        ;; ctor param.
-                        (and (= :list (:node d))
-                             (empty? (:items d)))
-                        (and (= :map  (:node d))
-                             (empty? (:pairs d)))
-                        (and (= :set  (:node d))
-                             (empty? (:items d))))))
+                    (contains? #{:lit-int :lit-float :lit-string
+                                 :lit-bool :lit-nil}
+                               (:node d))))
+             ;; 2026-10-02 — empty collection literals (`List of T = []`,
+             ;; `Map of (K,V) = {}`, `Set of T = #{}`) used to qualify
+             ;; here so `Enc(deck: d)` ctor-arg override would work on a
+             ;; `deck: List of Card = []` body field. That extension is
+             ;; retired because the promotion carries the raw `:list`/
+             ;; `:map`/`:set` AST as the ctor param's default, which
+             ;; `resolve-args-against-params` hands to `lower-expr` at
+             ;; call-site; `lower-expr` has no arm for those nodes
+             ;; (the empty-container case lives on the field-init side
+             ;; via `default-init-stmt-for` → `lower-list-literal-init`).
+             ;; Pattern 05, v27d1 cards, and any `List of X = []` field
+             ;; with an atom that triggered F41 synth were silently
+             ;; routing through the broken path. Reverted; container
+             ;; ctor-override now requires the header form
+             ;; (`def Enc(deck: List of Card):`) which the raw-ctor
+             ;; path covers correctly.
              ;; 2026-10-02 — container fields now also promote so that
              ;; `def Enc: deck: List of Card = []` accepts `Enc(deck: d)`
              ;; override. The field keeps its empty-list default; the
@@ -956,8 +961,16 @@
              ;; by named arg at construction. Mirrors the raw-ctor-eligible?
              ;; relaxation on the ctor-header path.
              f41-promotable? (fn [f] (not= "main" name))
+             ;; 2026-10-02 — a container field with NO default stays as a
+             ;; plain field (initialized to empty via default-init-stmt-for).
+             ;; Promoting it would make it a REQUIRED ctor param, which
+             ;; can violate spec §3.8.5 ordering when defaulted fields come
+             ;; first in source. Containers with an empty-literal default
+             ;; still promote via the arm below (DEFAULTED param, no ordering
+             ;; issue), keeping the `deck: List of Card = []` + override win.
              f41-eligible? (fn [f] (and (f41-promotable? f)
-                                        (nil? (:default f))))
+                                        (nil? (:default f))
+                                        (not (container-field? f))))
              f41-transform
              (reduce (fn [acc f]
                        (cond
@@ -8921,17 +8934,30 @@
           ;; both branches safe on the nil case (start-nil or transition
           ;; -to-nil), so no explicit guards are needed.
           slot-setter-methods
-          (mapv (fn [[field-name streams]]
-                  (let [field-info (get-in rec [:field-index field-name])
-                        c-type     (:c-type field-info)]
-                    {:node        :objc-method
-                     :selector    (str "set" (capitalize-first field-name) ":")
-                     :return-type "void"
-                     :params      [{:name "newValue" :c-type c-type}]
-                     :body        [{:node    :slot-setter-body
-                                    :ivar    (str "_" field-name)
-                                    :streams streams}]}))
-                (:subscription-map rec))
+          (let [atom-slot-names (set (:slot-names rec))]
+            (mapv (fn [[field-name streams]]
+                    (let [field-info (get-in rec [:field-index field-name])
+                          c-type     (:c-type field-info)
+                          ;; 2026-10-03 — slot-name threads through
+                          ;; ONLY for direct atom-typed data fields
+                          ;; (members of :slot-names). Container-typed
+                          ;; fields (`xs: List of Emitter`) also reach
+                          ;; the slot-setter path when they carry
+                          ;; stream subscriptions, but containers don't
+                          ;; implement cxc_installParent:inSlot: — that
+                          ;; is an atom-protocol method. Omitting
+                          ;; slot-name on containers skips the
+                          ;; parent-install line in emit.
+                          atom-slot?  (contains? atom-slot-names field-name)]
+                      {:node        :objc-method
+                       :selector    (str "set" (capitalize-first field-name) ":")
+                       :return-type "void"
+                       :params      [{:name "newValue" :c-type c-type}]
+                       :body        [(cond-> {:node    :slot-setter-body
+                                              :ivar    (str "_" field-name)
+                                              :streams streams}
+                                       atom-slot? (assoc :slot-name field-name))]}))
+                  (:subscription-map rec)))
           ;; Q2 (2026-08-26) — bounded(N) mailbox sem init. Allocated
           ;; in structuralSetup at capacity N; consumed by the bounded
           ;; runtime helpers (cxc_send_async_bounded /

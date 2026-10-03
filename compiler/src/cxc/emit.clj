@@ -1658,12 +1658,23 @@
     :slot-setter-body
     ;; Layer 4b slot setter for a nullable atom field that is a
     ;; subscription root. Sequence: early-return on identity match,
-    ;; unsubscribe self from each stream on the OLD value (nil-message
-    ;; -safe), assign the ivar, subscribe self to each stream on the
-    ;; NEW value (also nil-message-safe). No explicit nil check needed
-    ;; because Cocoa nil-messaging returns 0/nil.
-    (let [ivar    (:ivar node)
-          streams (:streams node)
+    ;; clear parent-linkage on the OLD value so its teardown won't
+    ;; nilSlot: our fresh slot, unsubscribe self from each stream on
+    ;; the OLD value (nil-message-safe), assign the ivar, install
+    ;; parent-linkage on the NEW value so its `:>` emits route back
+    ;; to us, subscribe self to each stream on the NEW value (also
+    ;; nil-message-safe). No explicit nil check needed because Cocoa
+    ;; nil-messaging returns 0/nil.
+    ;;
+    ;; 2026-10-03 — the parent-clear/install pair was missing before;
+    ;; `c => Child(...)` rebinds left the new child orphaned so its
+    ;; `:> encounter_done` style emits never reached the owning atom
+    ;; (BOARD 2026-10-02 rebind-drops-routing item). Clearing the old
+    ;; child's parent/slot linkage also prevents its later teardown
+    ;; from calling `nilSlot:` on us against the fresh slot.
+    (let [ivar      (:ivar node)
+          streams   (:streams node)
+          slot-name (:slot-name node)
           unsub-lines (->> streams
                            (map (fn [s]
                                   (str "[" ivar " cxc_removeSubscriberFor_" s ":self];")))
@@ -1671,10 +1682,19 @@
           sub-lines   (->> streams
                            (map (fn [s]
                                   (str "[newValue cxc_addSubscriberFor_" s ":self];")))
-                           (str/join "\n    "))]
+                           (str/join "\n    "))
+          clear-parent-line  (when slot-name
+                               (str "[" ivar " cxc_installParent:nil inSlot:nil];"))
+          install-parent-line (when slot-name
+                                (str "[newValue cxc_installParent:self inSlot:@\""
+                                     (escape-c-string slot-name) "\"];"))]
       (str "if (" ivar " == newValue) return;\n"
+           (when clear-parent-line
+             (str "    " clear-parent-line "\n"))
            "    " unsub-lines "\n"
            "    " ivar " = newValue;\n"
+           (when install-parent-line
+             (str "    " install-parent-line "\n"))
            "    " sub-lines))
     :stream-add-sub-dispatch
     ;; Generic `-cxc_addSubscriberToStream:sub:` body. If-chain over the
