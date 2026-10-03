@@ -224,8 +224,9 @@ If the compiler message is unclear on a specific case, the shape is probably nov
 
 ## Compile-verify discipline
 
-Verify against the compiler, not the spec, when writing anything
-beyond a one-liner. The pipeline:
+Verify compilable code against the compiler, not against your memory
+of the spec, when writing anything beyond a one-liner. If the compiler
+disagrees with the spec, that's an implementation gap, file it. The pipeline:
 
 ```bash
 cxc compile path/to/your.cxc /tmp/out && /tmp/out/<binname>
@@ -242,7 +243,7 @@ cxc compile /tmp/s8.cxc /tmp/out && /tmp/out/cards > /tmp/mine.out
 diff /path/to/reference/seed-8.out /tmp/mine.out | head
 ```
 
-Iterate until the diff is empty on 3+ non-verifier seeds before emitting. Reading the compiler internals or the reference implementation to derive the trace format is a failure mode. The oracle diff *is* the spec.
+Iterate until the diff is empty on 3+ non-verifier seeds before emitting. Reading the compiler internals or the reference implementation to derive the trace format is a failure mode. The oracle diff IS the task's acceptance test, not the language spec.
 
 Every example in the writing-corvid guide is verified this way
 before it ships. When you propose Corvid code in a review or a
