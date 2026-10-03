@@ -1,0 +1,40 @@
+# Self-host port of cxc.lex/classify-word.
+#
+# Contract. Given a bare identifier-shaped word, return "kw" when the
+# word is reserved, "ident" otherwise. Emits a single line per input.
+#
+# Oracle. compiler/self_host/oracle/lex_classify_word.clj which
+# requires cxc.lex and accesses the private classify-word via var.
+#
+# Reserved set source. compiler/src/cxc/lex.clj L28 to L90. Keep the
+# two lists in sync by hand until a shared data file is extracted.
+
+def main:
+    reserved: List of String = [
+        "module", "from", "import", "as",
+        "def",
+        "use", "invariants",
+        "accepts",
+        "extend", "replace",
+        "deprecated",
+        "then", "do", "when", "let", "alias",
+        "self", "nil", "true", "false",
+        "and", "or", "not", "is", "in", "of",
+        "if", "else", "return", "case",
+        "function",
+        "for",
+        "weak", "unowned",
+        "while", "loop", "break", "continue",
+        "raise"
+    ]
+
+    use args:    Args
+    use console: Console
+
+    -> running
+        then:
+            let input: String = args.get_or(1, "")
+            let kind: String = ||: reserved.contains(input) : "kw" ||: else : "ident"
+            console.write(kind)
+
+    -> end

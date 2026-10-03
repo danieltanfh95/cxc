@@ -1,0 +1,36 @@
+# Self-host port of cxc.mangle/c-safe-param-name.
+#
+# Contract. Given a parameter name as a string, return the same name
+# verbatim unless it collides with a C or ObjC reserved identifier,
+# in which case append one underscore. Idempotent on already-mangled
+# input, which falls through the reserved-word check since the
+# underscore suffix removes membership.
+#
+# Oracle. compiler/self_host/oracle/c_safe_param.clj which drives
+# cxc.mangle/c-safe-param-name on the same stdin corpus.
+#
+# Reserved set source. compiler/src/cxc/mangle.clj L23 to L29. Keep
+# the two lists in sync by hand until a shared data file is extracted.
+
+def main:
+    reserved: List of String = [
+        "default", "auto", "break", "case", "char", "const",
+        "continue", "do", "double", "else", "enum", "extern",
+        "float", "for", "goto", "if", "inline", "int", "long",
+        "register", "restrict", "return", "short", "signed",
+        "sizeof", "static", "struct", "switch", "typedef", "union",
+        "unsigned", "void", "volatile", "while",
+        "_Bool", "_Complex", "_Imaginary",
+        "id", "super", "nil", "SEL", "Class", "BOOL", "YES", "NO"
+    ]
+
+    use args:    Args
+    use console: Console
+
+    -> running
+        then:
+            let input: String = args.get_or(1, "")
+            let mangled: String = ||: reserved.contains(input) : input + "_" ||: else : input
+            console.write(mangled)
+
+    -> end
