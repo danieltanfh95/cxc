@@ -7,6 +7,11 @@
 
 set -euo pipefail
 
+# Chapter 4 (2026-10-04): kill any stale cxc-daemon before this harness
+# builds. The daemon caches loaded source and does not auto-reload on
+# compiler-side edits; see memory corvid-stale-daemon-bites-parity.
+pkill -f cxc.daemon >/dev/null 2>&1 || true
+
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SELF_HOST="$(cd "$HERE/.." && pwd)"
 COMPILER_DIR="$(cd "$SELF_HOST/.." && pwd)"
