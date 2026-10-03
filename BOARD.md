@@ -34,10 +34,6 @@ _(new items from the human, not yet picked up)_
   repro, `~/Projects/g-daniel/game/match3-roguelike-deckbuilder/cxc` scratch, swap `sentinel: Card` for `default: Card` in `/tmp/match3-sim-tests/t_at3.cxc` to reproduce. Same shape as the existing `cross-atom-obs-stale-repro.cxc`'s `first_card(default: Card)` which does NOT currently fail only because that example calls the obs from `self.first_card(x)` inside the same atom, not from a cross-atom callsite.
   acceptance, EITHER emit the selector with the same renamed identifier (`bestWithsentinel:` after escape) OR add a type-check-time ban on reserved-word parameter names with suggested rename in the diagnostic. First path preserves user-chosen names at the cxc source level.
 
-- [2026-10-03 @me] cxc-authoring SKILL.md Hickey-lens review surfaced 11 structural defects
-  context: codex 6.1 sol reviewed `.claude/skills/cxc-authoring/SKILL.md` through Hickey framings. Three high-impact findings. (a) Internal contradiction, Zen 6 forbids record observations (line 46), the Observations section forbids them again (line 111), the `Records hold data` paragraph (line 86) permits them, and the language tour permits them. Spec + compiler tests side with permit. (b) Zen 4+5 bundle persistent-state, lifecycle, and capability-scope into one atom-split prescription with a three-transition threshold that is a mechanism, not a policy. (c) Zen 7 phrases "write a plugin" as the mechanism when the policy is enumerable capabilities; standard caps already satisfy it. Also, Zen 10 (compile before you commit) is a verification procedure, not a value, and should move out of the Zen block. Full codex output at [/tmp/hickey-review/final-answer.md](/tmp/hickey-review/final-answer.md). Three candidates flagged for prose-to-table conversion, nullability behavior matrix, atom-split decision tree, failure handling outcome table.
-  acceptance, pick 3 of the 11 findings per housekeeping pass. First pass priority, resolve the record-observation legality contradiction (one authoritative place, derive the others), collapse Zen 10 out of the Zen block into a verification note, decouple Zen 4+5+9-architecture into independent ownership/lifecycle/capability axes.
-
 - [2026-10-02 @dan] parking lot — lower-priority improvement candidates
   context: brainstorm captured 2026-10-02 for later triage. Not committed to.
     - trace viewer: fill the sequence / inbox / timeline tabs (shape works, those are stubs)
@@ -54,20 +50,7 @@ _(new items from the human, not yet picked up)_
 ## Active
 _(in flight right now; may have in-session threads below each)_
 
-- [2026-10-02 @me] opus-corvid translate v27d1 — measure diagnostic uplift
-  context: baseline for post-D1-D4 diagnostic landing (commit `853fb63`). D1-D4 add readable error messages for `.at` without `??`, duplicate unguarded arms, `=>` with non-field LHS, cross-category `=>` RHS. Hypothesis: fewer agent iterations because each error now carries the fix. Previous floor on same task: v26p15 i2 20.42m, mean clean ~26.3m.
-  acceptance: run lands metrics.json. If wall < 20.42m (improves floor) OR mean of 3+ runs < 25m, diagnostic uplift validated. Otherwise diagnostics are not on the critical path for this task's wall time.
-  thread:
-  - 2026-10-02 15:58 — launched. Daemon pid 56427 serving. Prompt 91845 bytes, sandbox `/tmp/lang-bench-sandbox-RTTCpO`.
-
-- [2026-10-01 @me] v26p1 pocket_moba runs
-  context: v26 (both sonnet + opus) failed with no_extract. opus self-scheduled a seed sweep via `ScheduleWakeup` then returned; sonnet wrote binary to `./builds/out_restore/` which the allowlist did not cover, then asked for permission that never resolved. v26p1 patches the bundle with session-shape constraints (no scheduling, no permission requests, output to `/tmp/out` only) and widens the runner allowlist to tolerate `./builds/*` and `timeout *`.
-  acceptance: both runs land `pass=true, byte_parity=19/19`. Target wall: opus < 70m, sonnet < 180m.
-  thread:
-  - 2026-10-01 11:28 — opus at 42m, sandbox `xMwPKh`, 140 turns, 14 cxc compiles, cards.cxc at 1221 LOC (close to final).
-  - 2026-10-01 11:28 — sonnet at 42m, sandbox `3f9KCw`, 198 turns, 49 cxc compiles, still in probe phase.
-  - 2026-10-01 12:35 — both still active at 1h20m. Opus running sequential verify.sh sweep (long bash call blocks ~15 min internally). Sonnet still rewriting + full-emit compiling (22 compiles at 60-120s each).
-
+- (empty)
 
 ## Blocked
 _(waiting on a human decision or external event)_
@@ -77,7 +60,13 @@ _(waiting on a human decision or external event)_
 ## Done
 _(summary rows only; link to commit SHA or report when relevant; rotate out when file grows)_
 
-- 2026-10-03 — re-assigning a child-atom slot via `=>` now re-installs parent linkage AND re-subscribes streams. Fix (option (a) from the acceptance), [lower.clj:8936-8956](compiler/src/cxc/lower.clj#L8936-L8956) extends `slot-setter-methods` with `:slot-name` on atom-slot fields, and [emit.clj:1658-1700](compiler/src/cxc/emit.clj#L1658-L1700) emits `cxc_installParent:nil inSlot:nil` on the OLD value plus `cxc_installParent:self inSlot:@"<name>"` on the NEW value, bracketing the existing unsub/sub pair. Verified on [/tmp/match3-sim-tests/t_rebind_routing2.cxc](/tmp/match3-sim-tests/t_rebind_routing2.cxc), parent receives `:> did_pong(tag: 1, n: 7)` from the rebound child. Pattern suite 5/5 unchanged. Not yet committed, dirty tree.
+- 2026-10-03 — cxc-authoring SKILL.md Hickey-lens review closed. 10 commits iter-1 through iter-10, `7393db3` record-observation legality, `4c167a0` Zen 10 moved to Verification workflow, `2f027ab` Zen 4 decoupled into ownership/lifecycle/capability axes + Zen 9 deleted, `3310faf` Zen 7 policy-first, `a201e27` spec stays authoritative and oracle is task acceptance, `d07a9eb` data-before-code scoped to domain facts, `c2cb6e3` nullability decomplected into four axes, `58d8ef8` let-vs-alias around value-model axes, `694800d` reading-order Zen-as-default-stance, `f7b2e5b` Capabilities table. State file at [/tmp/hickey-review/state.md](/tmp/hickey-review/state.md), 11 of 11 findings addressed (finding 7 absorbed into iter-3). Pattern suite 5/5 unchanged throughout.
+
+- 2026-10-03 — opus-corvid v27d1 diagnostic-uplift measurement retired. Sandbox `/tmp/lang-bench-sandbox-RTTCpO` gone (TMPREAPER'd between sessions), no metrics.json landed. Refile as a fresh Inbox item next time the measurement matters.
+
+- 2026-10-03 — v26p1 pocket_moba runs retired. Both sandboxes (xMwPKh, 3f9KCw) gone, no metrics landed. v26p15 i2 (20.42m / 976 LoC) now stands as the floor in the wall-gap measurement report at [bench/cxc-agent-baseline/report/corvid-wall-gap-measurement.md](bench/cxc-agent-baseline/report/corvid-wall-gap-measurement.md). Refile if a specific hypothesis needs retesting.
+
+- 2026-10-03 — re-assigning a child-atom slot via `=>` now re-installs parent linkage AND re-subscribes streams. Commit `a466b44`, [lower.clj:8936-8956](compiler/src/cxc/lower.clj#L8936-L8956) extends `slot-setter-methods` with `:slot-name` on atom-slot fields, [emit.clj:1658-1700](compiler/src/cxc/emit.clj#L1658-L1700) emits `cxc_installParent:nil inSlot:nil` on the OLD value plus `cxc_installParent:self inSlot:@"<name>"` on the NEW value, bracketing the existing unsub/sub pair. Verified on [/tmp/match3-sim-tests/t_rebind_routing2.cxc](/tmp/match3-sim-tests/t_rebind_routing2.cxc), parent receives `:> did_pong(tag: 1, n: 7)` from the rebound child. Pattern suite 5/5 unchanged.
 
 - 2026-10-03 — error-first diagnostic coverage expansion closed as a tracking item. Four verified gaps (D1, D2, D3, D4) landed in commit `853fb63` and the enumeration note at [compiler/research/diagnostic-coverage.md](compiler/research/diagnostic-coverage.md) is up to date with the four unverified candidates for later. Future diagnostic additions file as their own board items instead of re-opening this one.
 
