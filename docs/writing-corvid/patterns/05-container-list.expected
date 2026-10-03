@@ -1,0 +1,7 @@
+add 5: count=1
+add 12: count=2
+add 3: count=3
+add 20: count=4
+report: count=2
+  5
+  3

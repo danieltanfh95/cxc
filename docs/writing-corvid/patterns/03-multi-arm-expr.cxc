@@ -1,0 +1,24 @@
+def Aggregator:
+    total: Int! = 0
+    count: Int! = 0
+
+    idle <: add(v: Int) -> idle
+        then:
+            total => total + v
+            count => count + 1
+
+    idle <: report -> idle
+        then:
+            let avg: Int! = ||: count > 0 : total / count
+                            ||: else    : 0
+            print("count=" + count.to_string() + " total=" + total.to_string() + " avg=" + avg.to_string())
+
+def main:
+    a: Aggregator! = Aggregator()
+
+    -> running
+        then:
+            |> a.add(v: 10)
+            |> a.add(v: 20)
+            |> a.add(v: 30)
+            |> a.report()
