@@ -2718,6 +2718,23 @@ if (viewParam && ['graph','shape','timeline','sequence','inbox'].includes(viewPa
 if (params.get('shape-orient')) $('shape-orient').value = params.get('shape-orient');
 if (params.get('shape-expand') === '1') $('shape-expand').checked = true;
 if (params.get('shape-show-containers') === '1') $('shape-show-containers').checked = true;
+// 2026-10-03 — chrome-free screenshot mode for embedding in compare.html
+// and similar panels. Hides the left overview sidebar and the tab bar so
+// the stage fills the frame. Pure visual knob; no interaction effect.
+if (params.get('hide-sidebar') === '1') {
+  const s = document.getElementById('sidebar');
+  if (s) s.style.display = 'none';
+}
+if (params.get('hide-chrome') === '1') {
+  const sb = document.getElementById('sidebar');
+  if (sb) sb.style.display = 'none';
+  const hdr = document.querySelector('header');
+  if (hdr) hdr.style.display = 'none';
+  const tb = document.getElementById('stage-toolbar');
+  if (tb) tb.style.display = 'none';
+  const sh = document.getElementById('shape-hint');
+  if (sh) sh.style.display = 'none';
+}
 if (!viewParam) setView('shape');
 // `?expand=<atom-name>` opens the phase graph for that atom on load — useful
 // for screenshots, bookmarks, and deep-linking a specific lifecycle. When set
