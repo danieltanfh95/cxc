@@ -2888,6 +2888,14 @@
                   "post-while OK\n")
              stdout)))))
 
+(deftest end-to-end-string-code-at
+  (testing "string-code-at.cxc — 2026-10-04. `.code_at(i) -> Int` returns the UTF-16 code unit at index i widened to Int, ASCII-safe (coincides with the byte for 0 to 127). Returns -1 for a nil receiver or an out-of-range index. Covers each byte of a 7-char ASCII string, a boundary out-of-range read, a negative index, and an empty-string read."
+    (let [{:keys [exit stdout]} (compile-and-run "string-code-at")]
+      (is (zero? exit))
+      (is (= (str "65\n66\n67\n95\n49\n50\n51\n"
+                  "-1\n-1\n-1\n")
+             stdout)))))
+
 (deftest end-to-end-fs-read-lines
   (testing "fs-read-lines.cxc — 2026-10-04. `fs.read_lines(path)` returns the file content transformed through `.split(\"\\n\")`. Interim surface mirroring native_fs_list_dir and String.split, becomes a real List of String when native-List returns land. Writes a three-line payload, reads it back via read_lines, asserts the pass-through."
     (let [{:keys [exit stdout]} (compile-and-run "fs-read-lines")]
