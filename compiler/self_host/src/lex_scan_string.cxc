@@ -1,0 +1,57 @@
+# Self-host port of cxc.lex/scan-string, ASCII subset, NO escapes.
+#
+# Contract. Given a string literal source of the form `"<body>"`
+# starting at offset 0, return the body plus the end index as a
+# single stdout line in `<body>|<end>` format. End index points
+# just past the closing double quote, matching Clojure's `(inc j)`
+# return.
+#
+# Out of scope. Escape sequences (`\n`, `\t`, `\xNN`, `\u{...}`,
+# etc.), unterminated strings, non-ASCII body characters. For those
+# Clojure either throws or expands the escape, and the port does
+# not match. The corpus avoids them.
+#
+# Argv shape. argv[1] = the full source literal including the two
+# surrounding double quotes.
+#
+# Shape. Atom-loop idiom. The main atom holds `input`, `cursor`,
+# and `acc` fields. Entry to running stages argv input, initialises
+# cursor to 1 (past the opening quote), and self-sends `step`. Each
+# step advances cursor by one and appends the current char to acc
+# while in the body (cursor inside input and current char not a
+# double quote). On the closing-quote arm the atom transitions to
+# end which writes the accumulated body plus cursor+1.
+#
+# Clojure source. compiler/src/cxc/lex.clj L209 to L228.
+
+def main:
+    input:  String! = ""
+    cursor: Int!    = 1
+    acc:    String! = ""
+
+    use args:    Args
+    use console: Console
+
+    # True while we are inside the string body. Short-circuits on
+    # cursor >= length so the closing-quote probe never reads past
+    # end-of-input (which would in the well-formed subset mean an
+    # unterminated string; out of scope).
+    in_body :- (cursor < input.length()) and (input.substring(cursor, 1) != "\"")
+
+    -> running
+        then:
+            input => args.get_or(1, "")
+            self :> step
+
+    -> end
+        then: console.write(acc + "|" + (cursor + 1).to_string())
+
+    running <: step -> running
+        |: in_body
+        then:
+            acc => acc + input.substring(cursor, 1)
+            cursor => cursor + 1
+            self :> step
+
+    running <: step -> end
+        |: not in_body

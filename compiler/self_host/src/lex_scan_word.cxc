@@ -1,0 +1,54 @@
+# Self-host port of cxc.lex/scan-word, ASCII identifier path.
+#
+# Contract. Given an input string, scan the longest ASCII identifier
+# prefix starting at offset 0. Return the identifier plus the end
+# index as a single stdout line in `<word>|<end>` format.
+#
+# ASCII id-continue is letter (A-Z, a-z), digit (0-9), or underscore.
+# Non-ASCII inputs are out of scope; the Clojure
+# Character/isUnicodeIdentifierPart predicate returns true for many
+# categories the port's ASCII-only guard rejects.
+#
+# Argv shape. argv[1] = input string.
+#
+# Shape. Atom-loop idiom per corvid-atom-loop-idiom memory. The
+# main atom holds `input`, `cursor`, and `acc` fields. Entry to
+# running stages the argv input and self-sends `step`. Each step
+# receive advances cursor by one and appends the current char to
+# acc when the ASCII id-continue guard holds; otherwise transitions
+# to end which writes the accumulated word plus the stop index.
+# Clojure's scan-word returns [word end-index] so the format
+# follows the same split.
+#
+# Clojure source. compiler/src/cxc/lex.clj L496 to L501.
+
+def main:
+    input:  String! = ""
+    cursor: Int!    = 0
+    acc:    String! = ""
+
+    use args:    Args
+    use console: Console
+
+    # ASCII id-continue predicate on the byte at the current cursor.
+    # Short-circuits on cursor >= length so the Bytes.at never reads
+    # out of range.
+    is_cont :- (cursor < input.length()) and ((input.to_bytes().at(cursor) >= 48 and input.to_bytes().at(cursor) <= 57) or (input.to_bytes().at(cursor) >= 65 and input.to_bytes().at(cursor) <= 90) or (input.to_bytes().at(cursor) >= 97 and input.to_bytes().at(cursor) <= 122) or (input.to_bytes().at(cursor) == 95))
+
+    -> running
+        then:
+            input => args.get_or(1, "")
+            self :> step
+
+    -> end
+        then: console.write(acc + "|" + cursor.to_string())
+
+    running <: step -> running
+        |: is_cont
+        then:
+            acc => acc + input.substring(cursor, 1)
+            cursor => cursor + 1
+            self :> step
+
+    running <: step -> end
+        |: not is_cont

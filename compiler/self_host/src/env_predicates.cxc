@@ -1,0 +1,60 @@
+# Self-host port of the pure predicate surface in cxc.env.
+#
+# Three predicates in one program, selected by argv[1].
+#
+#   synth   | <kind>       -> "true" if kind is in the synthesized
+#                             atom kinds set, else "false".
+#                             (cxc.env/synthesized-atom-kind?)
+#   phantom | <name>       -> "true" if name is a phantom cap atom
+#                             (SystemPanic at v1.0), else "false".
+#                             (cxc.env/phantom-atom-name?)
+#   lookup  | <name> | <f> -> look up the given name in a two-column
+#                             env file (one `<name>|<kind>` row per
+#                             line) via index_of + substring. Returns
+#                             the kind on hit, empty on miss.
+#                             (cxc.env/env-lookup, flattened)
+#
+# Argv shape. argv[1] = predicate name, argv[2] = primary arg,
+# argv[3] = env file path (only used for the lookup predicate).
+#
+# Oracle. compiler/self_host/oracle/env_predicates.clj invokes the
+# live cxc.env predicates against the same inputs, builds a map
+# from the env file for lookup.
+#
+# Clojure source. compiler/src/cxc/env.clj L49 to L69 (predicates)
+# and L155 to L164 (env-lookup).
+
+def main:
+    use args:    Args
+    use fs:      FileSystem
+    use console: Console
+
+    -> running
+        then:
+            let kind:    String! = args.get_or(1, "")
+            let a1:      String! = args.get_or(2, "")
+            let a3:      String! = args.get_or(3, "")
+            let is_synth:   Bool! = a1 == "runtime-provided" or a1 == "list-container" or a1 == "map-container" or a1 == "set-container"
+            let is_phantom: Bool! = a1 == "SystemPanic"
+            let raw:        String! = ||: kind == "lookup" : fs.read_text(a3) ||: else : ""
+            let normalized: String! = ||: raw.ends_with("\n") : raw ||: else : raw + "\n"
+            let augmented:  String! = "\n" + normalized
+            let marker:     String! = "\n" + a1 + "|"
+            let hit_idx:    Int!    = augmented.index_of(marker)
+            # When hit_idx == -1 we still want all intermediate let
+            # bindings to produce legal values (cxc evaluates eagerly
+            # and NSString substring with a wrapped-negative length
+            # crashes). Clamp module_start and tail_len to a safe
+            # window; the final ||: short-circuits on hit_idx == -1
+            # so these garbage substrings are never read.
+            let module_start: Int!  = (hit_idx + marker.length()).max(0).min(augmented.length())
+            let tail_len:   Int!    = (augmented.length() - module_start).max(0)
+            let tail:       String! = augmented.substring(module_start, tail_len)
+            let end_rel_raw: Int!   = tail.index_of("\n")
+            let end_rel:    Int!    = end_rel_raw.max(0)
+            let lookup_val: String! = tail.substring(0, end_rel)
+            let lookup_result: String! = ||: hit_idx == -1 : "" ||: else : lookup_val
+            let result: String! = ||: kind == "synth" : is_synth.to_string() ||: kind == "phantom" : is_phantom.to_string() ||: kind == "lookup" : lookup_result ||: else : "ERROR"
+            console.write(result)
+
+    -> end

@@ -1,0 +1,12 @@
+Clock|runtime-provided
+Console|runtime-provided
+FileSystem|runtime-provided
+Game|def-atom
+Player|def-atom
+Card|def-atom
+Lane|def-atom
+_Cxc_ListOfString|list-container
+_Cxc_ListOfInt|list-container
+_Cxc_MapOfStringInt|map-container
+_Cxc_SetOfString|set-container
+SystemPanic|runtime-provided
