@@ -6800,7 +6800,7 @@ result = data.pipe(filter_valid).pipe(normalize)
 result = normalize(filter_valid(data))
 ```
 
-Bootstrap operators (`+`, `-`, `*`, `/`, `%`, `<`, `<=`, `>`, `>=`, `==`, `!=`, `and`, `or`, `not`) and prelude-declared operators (`&`, `|`, `^`, `~`, `<<`, `>>`, `??`, `..<`, `...`) remain compiler/prelude-blessed on their designated primitive types. Only these are operator-shaped; user types (records, atoms, enums, plugin-exported capabilities) expose behavior exclusively through named observations and transitions.
+Bootstrap operators (`+`, `-`, `*`, `/`, `%`, `<`, `<=`, `>`, `>=`, `==`, `!=`, `and`, `or`, `not`) and prelude-declared operators (`&`, `|`, `^`, `~`, `<<`, `>>`, `??`, `..<`, `...`) remain compiler/prelude-blessed on their designated primitive types. Only these are operator-shaped; at v1.0, records are data-only, while atoms, enums, and plugin-exported capabilities expose behavior exclusively through named observations and transitions. Record observations are deferred post-v1.0 because record identity-mangling blocks the current Hashable synthesis path.
 
 **`|>` is deliberately not in the prelude.** Method chaining (`x.f().g().h()`) covers every case pipe would in cxc's class-based, universally-dispatched, openly-extensible model; shipping `|>` would create two idioms for the same operation and pull users toward free functions instead of extension methods (§4.20.3). Under R9 there is no project-local `@|>` escape hatch either — projects that want pipe-shaped composition build it as a named `.pipe(f)` method.
 

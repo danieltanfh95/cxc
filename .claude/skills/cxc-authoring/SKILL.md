@@ -83,7 +83,7 @@ Common trap: `weak` and `unowned` are reserved (data-field reference modifiers).
 
 ### Observations (`:-`) are atom-only, and never carry a `:Type` before `:-`
 
-Observations live inside `def <AtomName>:` or `def <RecordName>:` bodies. They read pre-image state and return a value on demand. Legal shapes as of v1.0 (all compile-verified):
+Observations live only inside atom bodies (`def <AtomName>:` or `def main:`). They read pre-image state and return a value on demand. Legal shapes as of v1.0 (all compile-verified):
 
 ```corvid
 # nullary observation, inferred return type
