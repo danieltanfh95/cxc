@@ -1,0 +1,354 @@
+# Self-host port of cxc.lex/tokenize-line — full composition slice.
+#
+# Chapter-11 composition slice pulling eight prior slices together:
+#   2  classify-word       (reserved-word → :kw / :ident)
+#   3  match-multi-glyph   (longest-first glyph match)
+#   8  scan-word           (identifier run)
+#  13  scan-char           (char literal, LITERAL form preserved)
+#  20  scan-string-escape  (string literal, LITERAL form preserved)
+#  24  scan-number int     (decimal int path, no underscores for
+#                           simplicity — the full slice-24 underscore
+#                           path lives in lex_scan_number.cxc)
+#  29  scan-decimal-number (float path — fractional + exponent)
+#
+# Clojure source. compiler/src/cxc/lex.clj L510 to L564 (tokenize-
+# line) + the per-token scanners around L139 to L503.
+#
+# Scope. SINGLE-LINE input, no indent/dedent/newline/eof layout.
+# Layout preprocessing is the chapter-12 (or later) slice. `#` ends
+# the token stream for the line (comment-to-EOL per Clojure
+# tokenize-line L522-523). Hex integers, binary, octal deferred —
+# the corpus only exercises decimals.
+#
+# String / char LITERAL form. The port keeps the entire literal
+# including quotes AND unprocessed escape sequences; the oracle
+# calls Clojure scan-string / scan-char and extracts the matching
+# substring from the source using the returned end-index. Both
+# sides emit the same byte sequence per token.
+#
+# Argv. argv[1] = source line.
+#
+# Output. One token per output line, format `<kind>|<value>|<col>`.
+#   kw      value = word
+#   ident   value = word
+#   int     value = decimal rendering of parsed int (matches
+#           Clojure's `(Long/parseLong ...)` behavior for the
+#           decimal subset the port handles)
+#   float   value = literal substring from input (shape-matches
+#           chapter-10 slice 29)
+#   string  value = literal substring INCLUDING quotes
+#   char    value = literal substring INCLUDING quotes
+#   glyph   value = glyph text (one char or multi)
+#   punct   value = single char
+# `<col>` is the 1-based column of the token's first character.
+#
+# Error path. Encountering `@` (retired annotation prefix) or any
+# unknown single char emits `ERR` and stops. Blank input emits an
+# empty output line.
+
+def main:
+    use args:    Args
+    use console: Console
+
+    input:              String! = ""
+    cursor:             Int!    = 0
+    col:                Int!    = 1
+    out:                String! = ""
+    token_start_cur:    Int!    = 0
+    token_start_col:    Int!    = 0
+    word_acc:           String! = ""
+    int_value:          Int!    = 0
+    error:              Bool!   = false
+
+    reserved: List of String = [
+        "module", "from", "import", "as",
+        "def",
+        "use", "invariants",
+        "accepts",
+        "extend", "replace",
+        "deprecated",
+        "then", "do", "when", "let", "alias",
+        "self", "nil", "true", "false",
+        "and", "or", "not", "is", "in", "of",
+        "if", "else", "return", "case",
+        "function",
+        "for",
+        "weak", "unowned",
+        "while", "loop", "break", "continue",
+        "raise"
+    ]
+
+    at_end       :- cursor >= input.length()
+    cur          :- ||: at_end : -1 ||: else : input.code_at(cursor)
+    is_ws        :- cur == 9 or cur == 10 or cur == 11 or cur == 12 or cur == 13 or cur == 28 or cur == 29 or cur == 30 or cur == 31 or cur == 32
+    is_digit     :- cur >= 48 and cur <= 57
+    is_id_start  :- (cur >= 65 and cur <= 90) or (cur >= 97 and cur <= 122) or cur == 95
+    is_id_cont   :- is_id_start or is_digit
+    is_hash      :- cur == 35
+    is_dquote    :- cur == 34
+    is_squote    :- cur == 39
+    is_at        :- cur == 64
+    is_reserved  :- reserved.contains(word_acc)
+
+    is_punct_c   :- cur == 40 or cur == 41 or cur == 91 or cur == 93 or cur == 123 or cur == 125 or cur == 44 or cur == 58 or cur == 46 or cur == 59 or cur == 63 or cur == 33
+    is_single_g  :- cur == 43 or cur == 45 or cur == 42 or cur == 47 or cur == 37 or cur == 61 or cur == 60 or cur == 62 or cur == 33 or cur == 38 or cur == 124
+
+    # Multi-glyph lookahead. Mirrors slice 3's physical-line chain so
+    # the capture-widening gap stays sidestepped.
+    multi_glyph :- ||: input.substring(cursor, 2) == "<:" : "<:" ||: input.substring(cursor, 2) == "<|" : "<|" ||: input.substring(cursor, 2) == "|>" : "|>" ||: input.substring(cursor, 3) == "||:" : "||:" ||: input.substring(cursor, 2) == "|:" : "|:" ||: input.substring(cursor, 2) == ":>" : ":>" ||: input.substring(cursor, 2) == ":-" : ":-" ||: input.substring(cursor, 2) == "->" : "->" ||: input.substring(cursor, 2) == "=>" : "=>" ||: input.substring(cursor, 2) == "==" : "==" ||: input.substring(cursor, 2) == "!=" : "!=" ||: input.substring(cursor, 2) == "<=" : "<=" ||: input.substring(cursor, 2) == ">=" : ">=" ||: input.substring(cursor, 2) == "//" : "//" ||: input.substring(cursor, 2) == "**" : "**" ||: input.substring(cursor, 2) == "??" : "??" ||: else : ""
+
+    emit(kind: String!, value: String!, startcol: Int!) :- String!
+        alias sep :- ||: out.length() == 0 : "" ||: else : "\n"
+        out + sep + kind + "|" + value + "|" + startcol.to_string()
+
+    -> stepping
+        then:
+            input => args.get_or(1, "")
+            self :> tick
+
+    -> end
+        then:
+            let final: String! = ||: error : "ERR" ||: else : out
+            console.write(final)
+
+    stepping <: tick -> end
+        |: error or at_end or is_hash
+
+    stepping <: tick -> stepping
+        |: not error and not at_end and is_ws
+        then:
+            cursor => cursor + 1
+            col => col + 1
+            self :> tick
+
+    stepping <: tick -> in_string
+        |: not error and not at_end and is_dquote
+        then:
+            token_start_cur => cursor
+            token_start_col => col
+            cursor => cursor + 1
+            col => col + 1
+            self :> step
+
+    stepping <: tick -> in_char
+        |: not error and not at_end and is_squote
+        then:
+            token_start_cur => cursor
+            token_start_col => col
+            cursor => cursor + 1
+            col => col + 1
+            self :> step
+
+    stepping <: tick -> in_int
+        |: not error and not at_end and is_digit
+        then:
+            token_start_cur => cursor
+            token_start_col => col
+            int_value => 0
+            self :> step
+
+    stepping <: tick -> in_word
+        |: not error and not at_end and is_id_start
+        then:
+            token_start_cur => cursor
+            token_start_col => col
+            word_acc => ""
+            self :> step
+
+    stepping <: tick -> stepping
+        |: not error and not at_end and is_at
+        then:
+            error => true
+            self :> tick
+
+    stepping <: tick -> stepping
+        |: not error and not at_end and not is_ws and not is_hash and not is_dquote and not is_squote and not is_digit and not is_id_start and not is_at and multi_glyph.length() > 0
+        then:
+            out => self.emit("glyph", multi_glyph, col)
+            cursor => cursor + multi_glyph.length()
+            col => col + multi_glyph.length()
+            self :> tick
+
+    stepping <: tick -> stepping
+        |: not error and not at_end and not is_ws and not is_hash and not is_dquote and not is_squote and not is_digit and not is_id_start and not is_at and multi_glyph.length() == 0 and is_punct_c
+        then:
+            out => self.emit("punct", input.substring(cursor, 1), col)
+            cursor => cursor + 1
+            col => col + 1
+            self :> tick
+
+    stepping <: tick -> stepping
+        |: not error and not at_end and not is_ws and not is_hash and not is_dquote and not is_squote and not is_digit and not is_id_start and not is_at and multi_glyph.length() == 0 and not is_punct_c and is_single_g
+        then:
+            out => self.emit("glyph", input.substring(cursor, 1), col)
+            cursor => cursor + 1
+            col => col + 1
+            self :> tick
+
+    stepping <: tick -> stepping
+        |: not error and not at_end and not is_ws and not is_hash and not is_dquote and not is_squote and not is_digit and not is_id_start and not is_at and multi_glyph.length() == 0 and not is_punct_c and not is_single_g
+        then:
+            error => true
+            self :> tick
+
+    in_word <: step -> in_word
+        |: not error and not at_end and is_id_cont
+        then:
+            word_acc => word_acc + input.substring(cursor, 1)
+            cursor => cursor + 1
+            col => col + 1
+            self :> step
+
+    in_word <: step -> stepping
+        |: not error and (at_end or not is_id_cont)
+        then:
+            let kind: String! = ||: is_reserved : "kw" ||: else : "ident"
+            out => self.emit(kind, word_acc, token_start_col)
+            self :> tick
+
+    in_int <: step -> in_int
+        |: not error and not at_end and is_digit
+        then:
+            int_value => int_value * 10 + cur - 48
+            cursor => cursor + 1
+            col => col + 1
+            self :> step
+
+    in_int <: step -> in_float_frac
+        |: not error and not at_end and cur == 46 and cursor + 1 < input.length() and input.code_at(cursor + 1) >= 48 and input.code_at(cursor + 1) <= 57
+        then:
+            cursor => cursor + 1
+            col => col + 1
+            self :> step
+
+    in_int <: step -> in_float_exp
+        |: not error and not at_end and (cur == 101 or cur == 69)
+        then:
+            cursor => cursor + 1
+            col => col + 1
+            self :> step
+
+    in_int <: step -> stepping
+        |: not error and (at_end or (cur != 46 and cur != 101 and cur != 69 and not is_digit))
+        then:
+            out => self.emit("int", int_value.to_string(), token_start_col)
+            self :> tick
+
+    in_float_frac <: step -> in_float_frac
+        |: not error and not at_end and is_digit
+        then:
+            cursor => cursor + 1
+            col => col + 1
+            self :> step
+
+    in_float_frac <: step -> in_float_exp
+        |: not error and not at_end and (cur == 101 or cur == 69)
+        then:
+            cursor => cursor + 1
+            col => col + 1
+            self :> step
+
+    in_float_frac <: step -> stepping
+        |: not error and (at_end or (not is_digit and cur != 101 and cur != 69))
+        then:
+            let lit: String! = input.substring(token_start_cur, (cursor - token_start_cur).max(0))
+            out => self.emit("float", lit, token_start_col)
+            self :> tick
+
+    in_float_exp <: step -> in_float_exp
+        |: not error and not at_end and (cur == 43 or cur == 45)
+        then:
+            cursor => cursor + 1
+            col => col + 1
+            self :> step
+
+    in_float_exp <: step -> in_float_exp
+        |: not error and not at_end and is_digit
+        then:
+            cursor => cursor + 1
+            col => col + 1
+            self :> step
+
+    in_float_exp <: step -> stepping
+        |: not error and (at_end or (not is_digit and cur != 43 and cur != 45))
+        then:
+            let lit: String! = input.substring(token_start_cur, (cursor - token_start_cur).max(0))
+            out => self.emit("float", lit, token_start_col)
+            self :> tick
+
+    # String body: accumulate chars until unescaped closing `"`. A
+    # `\` consumes the next byte without closing the string. The
+    # literal substring (including both quotes) is emitted at close.
+    in_string <: step -> in_string
+        |: not error and at_end
+        then:
+            error => true
+            self :> step
+
+    in_string <: step -> stepping
+        |: not error and not at_end and is_dquote
+        then:
+            # then: executes against the pre-image, so `cursor` here
+            # still points AT the closing quote; `cursor + 1 -
+            # token_start_cur` is the inclusive length.
+            cursor => cursor + 1
+            col => col + 1
+            let lit: String! = input.substring(token_start_cur, (cursor + 1 - token_start_cur).max(0))
+            out => self.emit("string", lit, token_start_col)
+            self :> tick
+
+    in_string <: step -> in_string
+        |: not error and not at_end and cur == 92 and cursor + 1 < input.length()
+        then:
+            cursor => cursor + 2
+            col => col + 2
+            self :> step
+
+    in_string <: step -> in_string
+        |: not error and not at_end and cur == 92 and cursor + 1 >= input.length()
+        then:
+            error => true
+            self :> step
+
+    in_string <: step -> in_string
+        |: not error and not at_end and cur != 34 and cur != 92
+        then:
+            cursor => cursor + 1
+            col => col + 1
+            self :> step
+
+    # Char body: same `\`-swallow discipline, close on unescaped `'`.
+    in_char <: step -> in_char
+        |: not error and at_end
+        then:
+            error => true
+            self :> step
+
+    in_char <: step -> stepping
+        |: not error and not at_end and is_squote
+        then:
+            cursor => cursor + 1
+            col => col + 1
+            let lit: String! = input.substring(token_start_cur, (cursor + 1 - token_start_cur).max(0))
+            out => self.emit("char", lit, token_start_col)
+            self :> tick
+
+    in_char <: step -> in_char
+        |: not error and not at_end and cur == 92 and cursor + 1 < input.length()
+        then:
+            cursor => cursor + 2
+            col => col + 2
+            self :> step
+
+    in_char <: step -> in_char
+        |: not error and not at_end and cur == 92 and cursor + 1 >= input.length()
+        then:
+            error => true
+            self :> step
+
+    in_char <: step -> in_char
+        |: not error and not at_end and cur != 39 and cur != 92
+        then:
+            cursor => cursor + 1
+            col => col + 1
+            self :> step

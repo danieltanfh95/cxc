@@ -1,0 +1,47 @@
+abc
+abc 42 let
+foo 100 bar
+0
+1 2 3
+let x = 1
+counter counter counter
+module def
+nil true false
+if then else
+and or not is in of
+_leading
+a1b2c3
+one   two
+foo + bar
+x <: y
+a == b
+c != d
+x <= y
+a => b
+x -> y
+a |> b
+f(x, y)
+let xs: List of Int = []
+foo.bar
+map[key]
+"hello"
+"a b c"
+"with \"quote\""
+"with \n esc"
+'a'
+'\''
+'\n'
+1.5
+3.14
+1e2
+1.5e-3
+0.1
+x = 1.5e+2
+a + b * c
+"string" + "ing"
+return 42
+let x = foo(1, 2)
+# comment stripped
+x # trailing comment
+let a: Int! = 42
+Map of (K, V)
