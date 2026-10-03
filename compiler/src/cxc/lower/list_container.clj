@@ -73,8 +73,20 @@
    bytes out of NSValue into a stack local; atoms cast the id
    directly (element identity preserved). Element types outside
    these categories are skipped at synthesis time via
-   `list-at-eligible?`."
-  [element-name is-record? is-atom?]
+   `list-at-eligible?`.
+
+   Chapter-16 fix for record elements with reference-typed fields
+   (NSString, container pointers, atom pointers): `[nsvalue
+   getValue:&__v]` memcpy's bytes into a stack local, bypassing
+   ARC's retain hooks on strong-typed fields. ARC's scope-end
+   destructor then over-releases the fields, which crashes once a
+   field value escapes NSTaggedPointerString's inline encoding
+   (10+ char idents of mixed content). Fix: declare the stack
+   local as a plain byte buffer (unretained), then re-materialize
+   each field via ARC-visible stores into the typed Token, so
+   __strong fields are retained normally. See `design/ten-char-
+   ident-segfault.md` for the hypothesis trail."
+  [element-name is-record? is-atom? & [record-fields]]
   (let [env-ty (list-at-envelope-c-type element-name)
         oob    (str "if (i < 0 || i >= (int)[_elements count]) return ("
                     env-ty "){.present = 0}; ")]
@@ -85,11 +97,33 @@
            "[_elements objectAtIndex:i];")
 
       is-record?
-      (str oob
-           element-name " __v; "
-           "[(NSValue *)[_elements objectAtIndex:i] getValue:&__v "
-           "size:sizeof(" element-name ")]; "
-           "return (" env-ty "){.present = 1, .value = __v};")
+      (let [ref-fields (filter (fn [f] (str/includes? (:c-type f "") "*"))
+                               (or record-fields []))
+            ;; Pointer-shaped shadow struct so ARC does NOT emit
+            ;; destructors for the raw bytes.
+            raw-struct-fields (str/join " "
+                                        (map (fn [f]
+                                               (if (str/includes? (:c-type f "") "*")
+                                                 (str (:c-type f) " __unsafe_unretained "
+                                                      (:name f) "; ")
+                                                 (str (:c-type f) " " (:name f) "; ")))
+                                             (or record-fields [])))
+            field-copy (str/join " "
+                                 (map (fn [f] (str "__v." (:name f) " = __raw." (:name f) ";"))
+                                      (or record-fields [])))]
+        (if (seq ref-fields)
+          (str oob
+               "struct __cxc_raw { " raw-struct-fields "} __raw; "
+               "[(NSValue *)[_elements objectAtIndex:i] getValue:&__raw "
+               "size:sizeof(__raw)]; "
+               element-name " __v = {0}; "
+               field-copy " "
+               "return (" env-ty "){.present = 1, .value = __v};")
+          (str oob
+               element-name " __v; "
+               "[(NSValue *)[_elements objectAtIndex:i] getValue:&__v "
+               "size:sizeof(" element-name ")]; "
+               "return (" env-ty "){.present = 1, .value = __v};")))
 
       (contains? list-at-supported-primitives element-name)
       (str oob
@@ -147,7 +181,7 @@
      - Per-element-stream forwarding methods
        `-cxc_stream_<name>_from_<Element>...` that receive an event
        and re-emit on the container with `e` prepended to payload."
-  [class-name element-name & {:keys [fanin-streams fanin-payloads is-record? is-atom?]}]
+  [class-name element-name & {:keys [fanin-streams fanin-payloads is-record? is-atom? record-fields]}]
   ;; T1 — the caller (list-container-classes site in `lower`) reaches
   ;; `(:stream-order entry)` / `(:stream-payload-index entry)` which
   ;; can be nil for atoms without any streams. Sanitize once at the
@@ -371,7 +405,7 @@
                                  :params      [{:name "i" :c-type "int"}]
                                  :return-type (list-at-return-c-type element-name is-atom?)
                                  :body        [{:node :raw-c
-                                                :text (list-at-body element-name is-record? is-atom?)}]})
+                                                :text (list-at-body element-name is-record? is-atom? record-fields)}]})
                           ;; 2026-09-16 — `.at_or(i, fallback)` retired
                           ;; in favor of `xs.at(i) ?? fallback`. `.contains`
                           ;; stays: it's a pure query, not imperative

@@ -29,12 +29,12 @@ from X import
 unknown
 def Agent:\n    use console: Console\n    name: String!
 def Env:\n    use env: EnvVars\n    use args: Args\n    x: Int!\n    y: Int
-def Di:\n    count: Int = 0\n    size: Int = 100
-def Ds:\n    label: String = "hi"\n    name: String = ""
-def Dc:\n    c: Char = 'a'
-def Db:\n    on: Bool = true\n    off: Bool = false
-def Dx:\n    y: Int = x\n    z: String = other
-def Dm:\n    a: Int = 1\n    b: String = "two"\n    c: Bool = false\n    d: Int\n    e: Int!
+def DefaultsInt:\n    count: Int = 0\n    size: Int = 100
+def DefaultsStr:\n    label: String = "hi"\n    name: String = ""
+def DefaultsChar:\n    c: Char = 'a'
+def DefaultsBool:\n    on: Bool = true\n    off: Bool = false
+def DefaultsIdent:\n    y: Int = x\n    z: String = other
+def DefaultsMixed:\n    a: Int = 1\n    b: String = "two"\n    c: Bool = false\n    d: Int\n    e: Int!
 def A:\n    x: Int\ndef B:\n    y: String
 from X import a\ndef Y:\n    z: Int
 def A:\n    x: Int!\n\ndef B:\n    y: String!

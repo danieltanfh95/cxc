@@ -10245,14 +10245,20 @@
                                        (let [entry     (env/env-lookup ctx :atom-env nm)
                                              elem      (:element-type entry)
                                              is-rec?   (contains? (:record-env ctx) elem)
-                                             is-atom?  (contains? atom-env elem)]
+                                             is-atom?  (contains? atom-env elem)
+                                             rec-fields (when is-rec?
+                                                          (mapv (fn [f]
+                                                                  {:name (:name f)
+                                                                   :c-type (:c-type f)})
+                                                                (:fields (get (:record-env ctx) elem))))]
                                          (synthesize-list-container-class
                                           nm
                                           elem
                                           :fanin-streams  (:stream-order entry)
                                           :fanin-payloads (:stream-payload-index entry)
                                           :is-record?     is-rec?
-                                          :is-atom?       is-atom?)))
+                                          :is-atom?       is-atom?
+                                          :record-fields  rec-fields)))
                                      container-atom-names)
         map-container-classes (mapv (fn [nm]
                                       (let [entry (env/env-lookup ctx :atom-env nm)]

@@ -1,8 +1,18 @@
 # 10-char-ident lex segfault — compiler bug surfaced by chapter 14
 
-Design note. Chapter 15 isolation of the chapter-14-flagged segfault
-that bit the slice-33 standalone tokenize and the parse-layer
-bootstrap when any input ident was ≥ 10 chars of mixed-content.
+Design note. Chapter 15 isolation + chapter 16 compiler fix of the
+chapter-14-flagged segfault that bit the slice-33 standalone
+tokenize and the parse-layer bootstrap when any input ident was
+≥ 10 chars of mixed-content.
+
+## Status
+
+- **Chapter 15.** Isolated, probable cause identified. Workaround at
+  the port layer: ≤ 9-char idents in corpus.
+- **Chapter 16.** Compiler fix landed in
+  `compiler/src/cxc/lower/list_container.clj`. Workaround lifted;
+  natural identifiers restored in parse-layer bootstrap corpus.
+  Cards.m behavioral output byte-identical before and after.
 
 ## Minimal reproduction
 
@@ -114,21 +124,70 @@ copy by value, but the compiler emit for record fields that are
 String! must retain each field across copies. The bug is on the
 emit layer, not on the value-type contract itself.
 
-## Fix path
+## Fix landed in chapter 16
 
-Not land here. Chapter-cadence rule applies — compiler landings
-go in dedicated chapters. Surface this to the main thread as a
-chapter-16 compiler landing candidate.
+Fix location: `compiler/src/cxc/lower/list_container.clj`
+function `list-at-body`. The old emit was:
 
-Compiler-side investigation starts in `compiler/src/cxc/lower.clj`
-or `compiler/src/cxc/emit.clj`. The emit code for record-field
-read on String! fields should be checked for ARC retain balance
-when the record is a value-typed temporary returned from a
-collection access (`List.at`). Hypothesis to verify: the generated
-code for `tokens.at(idx)` returns a Token struct by value, and
-accessing `.kind` extracts the String! pointer without a retain,
-leaving the field underretained after the first access and
-dangling for the second.
+```c
+Token __v;
+[(NSValue *)[_elements objectAtIndex:i] getValue:&__v size:sizeof(Token)];
+return (_Cxc_Optional_Token){.present = 1, .value = __v};
+```
+
+The `__v` declaration under ARC gives `Token`'s `__strong NSString *`
+fields auto-nil-init + auto-release-at-scope-end. The `getValue:`
+memcpy writes raw bytes into the field pointers, bypassing ARC's
+retain. At scope end, ARC releases pointers it never retained,
+over-releasing the actual NSString refcount. For
+NSTaggedPointerString values (short mixed-content strings) release
+is a no-op (tagged pointers aren't refcounted) so the bug is
+latent. For heap-allocated NSString (longer or non-charset
+content) the over-release eventually frees the backing allocation
+and the next field access dereferences stale memory.
+
+The new emit synthesizes a shadow struct with
+`__unsafe_unretained` fields matching the record's reference-typed
+fields, memcpy's the bytes INTO the shadow, then does field-by-
+field ARC-visible stores into a zero-initialized Token:
+
+```c
+struct __cxc_raw {
+    NSString * __unsafe_unretained name;
+    _Cxc_Optional_CardType type;
+    int64_t attack;
+    …
+} __raw;
+[nsvalue getValue:&__raw size:sizeof(__raw)];
+Card __v = {0};
+__v.name = __raw.name;
+__v.type = __raw.type;
+__v.attack = __raw.attack;
+…
+return (_Cxc_Optional_Card){.present = 1, .value = __v};
+```
+
+Shadow's `__unsafe_unretained` fields = no ARC destructor on
+scope exit. The field-by-field assigns to `__v` are ARC-visible
+stores (because `Card`'s fields default to `__strong`), so each
+reference-typed field is properly retained. Primitive fields
+pass through unchanged.
+
+The shadow is only emitted when the record has at least one
+reference-typed field (field `:c-type` contains `*`). Records
+of pure-primitive fields keep the simpler old emit, byte-
+identical to pre-fix.
+
+## Scope impact
+
+Cards.m (the baseline-shaded parity target) now contains the new
+emit for its `List of Card` reader because `Card` has an
+`NSString * name` field. The generated `.m` sha changes
+(`d28f973d…` → `738b928d…`), but cards' observable output is
+byte-identical before and after the fix. The sha change is
+inside the chapter-16 directive's explicit scope: "the fix is
+EXPECTED to change the identified pattern (which is container-
+returned record-field reads). Cards is one such program."
 
 Workarounds tried, none worked at the port layer:
 
@@ -152,8 +211,7 @@ inline storage.
 
 ## Chapter 14 workaround lifetime
 
-The ≤ 9-char-ident corpus discipline stays in force across all
-slices (parse-layer bootstrap, slice 33) until the compiler fix
-lands in chapter 16. Any downstream slice that would exercise
-longer idents picks between (a) accepting the length cap, (b)
-restructuring to avoid the double-field-read pattern.
+Chapter 16 landed the compiler fix; the ≤ 9-char-ident workaround
+is now LIFTED. Parse-layer bootstrap corpus restored to natural
+identifiers (`DefaultsInt`, `DefaultsStr`, …). Any future slice
+can use natural identifiers.
