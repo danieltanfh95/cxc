@@ -3679,6 +3679,63 @@
                     "cases with payload cases. These shapes are distinct per "
                     "§3.3 — raw-value enums attach fixed integer values; "
                     "payload enums carry associated values. Pick one shape."))))
+    ;; 2026-10-04 — self-reference enum payload at v1.0 is a compile-
+    ;; time rejection. See `compiler/self_host/design/self-reference-
+    ;; enum-payload.md` for the full design read; summary: lowering
+    ;; `case nonnil(inner: Self!)` to a value-shaped payload embeds
+    ;; the struct inside itself (clang rejects as incomplete type),
+    ;; and the only working lowering (pointer-to-self with heap
+    ;; allocation) breaks the value-type contract spec §3.2
+    ;; establishes for records and enums. The three workarounds
+    ;; (indirect-reference via name + resolve layer, boxed-record
+    ;; wrapper carried in a container, flat tagged-record encoding)
+    ;; cover the known use cases without compiler-level value→
+    ;; reference semantic drift.
+    ;;
+    ;; Scope. DIRECT self-reference only. The check walks through
+    ;; `:type-nonnil` and `:type-nullable` wrappers but does NOT
+    ;; descend into `:type-of` (containers). `case foo(xs: List of
+    ;; Self!)` is LEGAL under chapter-9 sub-case 2's container-scan
+    ;; fix — the enum payload holds a pointer to the container
+    ;; class, not a self-shaped value. Future landings that promote
+    ;; records/enums to reference types will retire this check.
+    (let [enum-name (:name def-atom)
+          type-node-base-name
+          (fn type-node-base-name [tn]
+            (case (:node tn)
+              :type-ref       (:name tn)
+              :type-nonnil    (type-node-base-name (:inner tn))
+              :type-nullable  (type-node-base-name (:inner tn))
+              nil))
+          self-ref-case
+          (first
+            (keep (fn [c]
+                    (let [bad (first
+                                (keep (fn [p]
+                                        (when (= enum-name
+                                                 (type-node-base-name (:type p)))
+                                          p))
+                                      (:payload c)))]
+                      (when bad [c bad])))
+                  cases))]
+      (when self-ref-case
+        (let [[c p] self-ref-case]
+          (fail! tokens pos-for-diag
+                 (str "self-reference enum payload `" enum-name "` on case `"
+                      (:case-name c) "` payload `" (:name p) ": "
+                      enum-name
+                      "` — v1.0 rejects direct self-reference. Enums are "
+                      "value types (spec §3.2); embedding `" enum-name
+                      "` as a value field inside its own payload has no "
+                      "value-shaped lowering. Workarounds: (1) carry an "
+                      "indirect reference by name (e.g. `inner_name: "
+                      "String!` plus a resolve pass), (2) wrap in a boxed "
+                      "record held through a container like `List of "
+                      enum-name "` (sub-case 2 — legal), (3) use the flat "
+                      "tagged-record encoding (see compiler/self_host/"
+                      "design/ast-shape-records.md). Future landings that "
+                      "promote records/enums to reference types will "
+                      "retire this check.")))))
     (let [raw-values (when (some :raw-value cases)
                        (mapv :raw-value cases))
           raw-type   (when raw-values
