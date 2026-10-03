@@ -1749,7 +1749,7 @@
                         "path_join" "basename" "dirname" "extension"
                         "trim_prefix" "trim_suffix"
                         "repeat" "pad_left" "pad_right"
-                        "split" "code_at"}
+                        "split" "code_at" "compare_to"}
                       method-name))
       (case method-name
         "length"     :int
@@ -1758,6 +1758,7 @@
         "to_bool_or" :bool
         "to_bytes"   :bytes
         "code_at"    :int
+        "compare_to" :int
         ("substring" "trim" "replace" "uppercase" "lowercase"
          "path_join" "basename" "dirname" "extension"
          "trim_prefix" "trim_suffix"
@@ -3338,7 +3339,7 @@
                             "path_join" "basename" "dirname" "extension"
                             "trim_prefix" "trim_suffix"
                             "repeat" "pad_left" "pad_right"
-                            "split" "code_at"}
+                            "split" "code_at" "compare_to"}
                           method-name))
           (let [want-args (case method-name
                             ("length" "trim" "uppercase" "lowercase" "to_bytes"
@@ -3591,6 +3592,29 @@
                                  "componentsSeparatedByString:__sep]; "
                                  "__r = [__a componentsJoinedByString:@\"\\n\"]; "
                                  "} } "
+                                 "__r; })"))}
+              ;; 2026-10-04 — `.compare_to(other) -> Int`, strcmp
+              ;; shape on UTF-8 byte order. Negative when self sorts
+              ;; before other, 0 when equal, positive after. Uses
+              ;; `strcmp` on `-UTF8String` buffers so the ordering is
+              ;; byte-wise identical to C's strcmp — ASCII-sort-safe
+              ;; without pulling in locale-aware collation.
+              ;; Nil-tolerant: nil self sorts first (-1), nil other
+              ;; sorts last (1), both nil equal (0).
+              "compare_to"
+              {:node :ffi-call :name "cxc_string_compare_to"
+               :args [target-lo (first arg-exprs)]
+               :emit-c-fn (fn [[a b]]
+                            (str "({ NSString *__a = (" a "); "
+                                 "NSString *__b = (" b "); "
+                                 "int64_t __r = 0; "
+                                 "if (__a == __b) { __r = 0; } "
+                                 "else if (!__a) { __r = -1; } "
+                                 "else if (!__b) { __r = 1; } "
+                                 "else { int __c = strcmp("
+                                 "__a.UTF8String, __b.UTF8String); "
+                                 "__r = (int64_t)(__c < 0 ? -1 : "
+                                 "(__c > 0 ? 1 : 0)); } "
                                  "__r; })"))}))
 
           ;; F37 L6a — `Bytes.slice(start: Int, length: Int) -> Bytes`.

@@ -2896,6 +2896,16 @@
                   "-1\n-1\n-1\n")
              stdout)))))
 
+(deftest end-to-end-string-compare-to
+  (testing "string-compare-to.cxc — 2026-10-04. `.compare_to(other) -> Int` returns a strcmp-shape ordering on UTF-8 byte order (negative when self sorts before other, 0 when equal, positive when after). ASCII-sort-safe. Covers equal, less-than, greater-than, prefix cases on both sides, both-empty, empty-vs-non-empty on both sides, and byte-wise ordering between upper-case Latin and lower-case Latin (`Z`=90 < `a`=97)."
+    (let [{:keys [exit stdout]} (compile-and-run "string-compare-to")]
+      (is (zero? exit))
+      (is (= (str "0\n-1\n1\n"
+                  "-1\n1\n"
+                  "0\n-1\n1\n"
+                  "-1\n1\n")
+             stdout)))))
+
 (deftest end-to-end-fs-read-lines
   (testing "fs-read-lines.cxc — 2026-10-04. `fs.read_lines(path)` returns the file content transformed through `.split(\"\\n\")`. Interim surface mirroring native_fs_list_dir and String.split, becomes a real List of String when native-List returns land. Writes a three-line payload, reads it back via read_lines, asserts the pass-through."
     (let [{:keys [exit stdout]} (compile-and-run "fs-read-lines")]
