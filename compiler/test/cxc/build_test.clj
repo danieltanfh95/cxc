@@ -2888,6 +2888,14 @@
                   "post-while OK\n")
              stdout)))))
 
+(deftest end-to-end-fs-read-lines
+  (testing "fs-read-lines.cxc — 2026-10-04. `fs.read_lines(path)` returns the file content transformed through `.split(\"\\n\")`. Interim surface mirroring native_fs_list_dir and String.split, becomes a real List of String when native-List returns land. Writes a three-line payload, reads it back via read_lines, asserts the pass-through."
+    (let [{:keys [exit stdout]} (compile-and-run "fs-read-lines")]
+      (is (zero? exit))
+      (is (= (str "wrote: 0\n"
+                  "alpha\nbeta\ngamma\n")
+             stdout)))))
+
 (deftest end-to-end-string-split
   (testing "string-split.cxc — 2026-10-04. `.split(sep)` on String returns a newline-joined String of the components. Interim surface that mirrors native_fs_list_dir's shape until List-of-T from native lands. Covers five cases, separator present with three components, separator absent (receiver returned verbatim), two consecutive separators producing an empty middle component, empty separator short-circuit returning the receiver verbatim, and a multi-character separator."
     (let [{:keys [exit stdout]} (compile-and-run "string-split")]

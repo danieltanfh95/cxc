@@ -20,6 +20,16 @@ def FileSystem:
         ||: r == nil : raise IOError(reason: "read_text failed", path: path, err_code: 0)
         ||: else     : r
 
+    # 2026-10-04. Interim surface until List-of-T from native lands,
+    # mirrors native_fs_list_dir and String.split. Returns the file
+    # content transformed through .split("\n"), which is a no-op on
+    # well-formed text today and becomes a real `List of String` when
+    # the native-List landing arrives.
+    read_lines(path: String) :- String!
+        let r: String = native_fs_read_text(path)
+        ||: r == nil : raise IOError(reason: "read_lines failed", path: path, err_code: 0)
+        ||: else     : r.split("\n")
+
     read_bytes(path: String) :- native_fs_read_bytes(path)
 
     write_text(path: String, content: String) :- Int
