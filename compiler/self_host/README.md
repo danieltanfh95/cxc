@@ -33,7 +33,8 @@ Byte-for-byte diff is the only accepted exit condition. If a layer's parity hing
 1. **mangle::c-safe-param-name** — 10 LOC, pure, lookup against a 44-entry C/ObjC reserved-word list. First slice. STATUS landed. 93 inputs parity-equal (including Unicode, emoji, idempotence on already-suffixed names).
 2. **lex::classify-word** — 2 LOC, pure, lookup against a 40-entry cxc reserved-word set. Second slice. STATUS landed. 54 inputs parity-equal.
 3. **lex::match-multi-glyph** — 7 LOC, pure, longest-first match against a 16-entry glyph table. Third slice. STATUS landed. 37 inputs parity-equal.
-4. **mangle::->c-safe** — 10 LOC, pure given the `*decl->module*` map. Needs the map structure and `resolve/mangled-name-for`. BLOCKED on resolve.
+4. **resolve::mangled-name-for** — 15 LOC, pure, four-case module-plus-name mangler. Fourth slice. STATUS landed. 25 inputs parity-equal across nil / std.* / main / dotted-user-module cases.
+5. **mangle::->c-safe** — 10 LOC, consults `*decl->module*` ambient and delegates to `mangled-name-for`. Can now be built on top of slice 4, but still needs a Map-of-String-to-String binding to stand in for the ambient. Deferred until List-of-String harness patterns settle.
 4. **diagnostics** — 38 LOC, three throw helpers. Can be ported but there is no byte output to compare, only error-shape at the ex-info boundary. Low-priority.
 5. **lex sub-functions** — scan-digits, scan-string, scan-char. Each is a pure string to value function. Need cxc stdlib additions for character predicates (see Blockers).
 6. **lex (full)** — 835 LOC. ASCII-safe subset is portable today, Unicode identifiers break on `Character/isUnicodeIdentifierStart` which has no cxc analogue.
@@ -89,12 +90,14 @@ Each layer's cxc port is a `def main:` program that reads one positional arg (`a
 
 If you are picking this up next session, start here.
 
-- Last-landed layers. `mangle::c-safe-param-name` with hardened 93-input corpus, `lex::classify-word` with 54-input corpus, `lex::match-multi-glyph` with 37-input corpus. All three parity-confirmed byte-equal.
-- Reusable corpus-driven slice pattern. Each slice is a function with a stable `String -> String` or `(String, Int) -> String` contract. The cxc port and the clj oracle emit newline-terminated output on the same corpus, and the harness `diff -q`s the two output files. New slices follow the same four-file shape (src, oracle, corpus, harness).
+- Last-landed layers. Four parity-confirmed byte-equal slices, `mangle::c-safe-param-name` with 93-input corpus, `lex::classify-word` with 54, `lex::match-multi-glyph` with 37, `resolve::mangled-name-for` with 25.
+- Compiler landing. `String.split(sep) -> String` (newline-joined, interim) landed in commit `438e40b`. cards.m baseline byte-identical before and after. New blocker surface for later slices that need to split a file into lines.
+- Reusable corpus-driven slice pattern. Each slice is a function with a stable `String -> String` or `(String, Int) -> String` or `(String, String) -> String` contract. The cxc port and the clj oracle emit newline-terminated output on the same corpus, and the harness `diff -q`s the two output files. New slices follow the same four-file shape (src, oracle, corpus, harness).
+- Delimiter convention for multi-field corpora. Use `|` not `\t`. Bash `IFS=$'\t' read -r a b` collapses a leading tab, which turns `\tX` into `a=X b=""` instead of `a="" b=X`. The pipe is not a whitespace char so empty leading fields round-trip correctly. The two-arg glyph harness uses tab and happens to parity by coincidence (its empty-source rows have no match either way), the pipe is now the recommended delimiter for new slices.
 - Idioms learned.
   - Always annotate primitive locals as `T!` (`let i: Int! = ...`) when the value will cross into an ObjC cast or substring index.
   - Avoid lambda capture of local Int bindings. Either inline the function with `||:` chains or hoist the local to an atom field.
   - Keep `||:` chains on one physical line even if long.
   - Use `args.get_or_int(index, fallback)` not `??`-coalesced int. `??` on a non-nullable primitive storage widens it back to Optional per the gap documented above.
-- Next viable layer with no stdlib blockers. `diagnostics` as a shape-only port, or begin landing stdlib additions for `scan-digits` (base-10 decimal path, byte-at-via-Bytes workaround).
+- Next viable layer with no stdlib blockers. `diagnostics` as a shape-only port, or `mangle::->c-safe` once a Map-of-String-to-String corpus input shape is designed (slice 4 covers the delegate function; the ambient-map part is still a cxc gap).
 - First layer with a hard blocker. Full `lex` on Unicode source. The ASCII subset can land first, Unicode identifiers need a cxc stdlib code-point iterator.

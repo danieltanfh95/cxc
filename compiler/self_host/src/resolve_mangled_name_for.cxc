@@ -1,0 +1,31 @@
+# Self-host port of cxc.resolve/mangled-name-for.
+#
+# Contract. Given a module string and a declared name, return the
+# C-safe mangled identifier for that declaration. Four cases.
+#   module nil           -> name verbatim
+#   module "std.<rest>"  -> "_Cxc_" + name
+#   module "main"        -> name verbatim
+#   module anything else -> module.replace(".", "_") + "_" + name
+#
+# Argv shape. argv[1] is the module string ("" stands in for nil),
+# argv[2] is the declaration name. Writes the mangled name as a
+# single stdout line.
+#
+# Oracle. compiler/self_host/oracle/resolve_mangled_name_for.clj
+# which requires cxc.resolve and converts the empty-string input
+# into a nil keyword for parity with the live namespace.
+#
+# Source. compiler/src/cxc/resolve.clj L257 to L281 as of 2026-10-04.
+
+def main:
+    use args:    Args
+    use console: Console
+
+    -> running
+        then:
+            let m: String! = args.get_or(1, "")
+            let n: String! = args.get_or(2, "")
+            let result: String! = ||: m == "" : n ||: m.starts_with("std.") : "_Cxc_" + n ||: m == "main" : n ||: else : m.replace(".", "_") + "_" + n
+            console.write(result)
+
+    -> end
