@@ -1,0 +1,22 @@
+from X import a
+from X import a, b
+from X import a, b, c
+from Y import single
+from Mod import x, y, z
+from A import b
+def Foo:\n    name: String!
+def Bar:\n    val: Int!
+def Baz:\n    x: Int!\n    y: Int!\n    z: Int!
+def Plain:\n    name: String
+def Mixed:\n    name: String!\n    tag: Int
+def Items:\n    xs: List of Int
+def Tags:\n    ts: List of String!
+def Lookup:\n    m: Map of (Int, String)
+def Keys:\n    ks: Set of Int
+def Nested:\n    name: String!\n    xs: List of Int\n    ts: Set of String!
+def Color:\n    case Red\n    case Green\n    case Blue
+def Status:\n    case Ok\n    case Fail
+def Shape:\n    case Circle(radius: Int!)\n    case Square(side: Int!)
+def Variant:\n    case None\n    case Named(name: String!)\n    case Both(name: String!, tag: Int)
+def Pair(k: String!, v: Int!):\n    extra: Int
+def Boxed(x: Int!):\n    name: String!\n    tag: Int

@@ -26,15 +26,27 @@ resolves-to`) consume. Scope:
 - Type expressions. `T`, `T!`, `List of T`, `Map of (K, V)`, `Set
   of T`. No named-tuples, no `T?` (universally banned anyway), no
   `Ptr of T` (FFI deferred).
-- `case <name>` and `case <name>(payload...)` markers inside enum
-  bodies (chapter-9 sub-case-2 landing covers container payloads;
-  chapter-10 sub-case-1 landing rejects direct self-reference at
-  parse — the port's parse MUST also reject).
-- `module <name>` header and `from X import Y[, Z]` statements. No
-  `import X as Y`, no bare `import X` (deferred).
+- `case <name>` and `case <name>(payload...)` markers inside
+  F69-unified def bodies — the body-shape dispatches on `case` vs
+  field vs `use` to pick `:def-atom` or `:def-record`. The chapter-9
+  sub-case-2 landing covers container payloads; the chapter-10
+  sub-case-1 landing rejects direct self-reference at parse — the
+  port's parse MUST also reject.
+- `def X(ctor-params):` with optional parenthesised ctor params
+  marks the def as `:def-atom`. Empty `()` still flips the kind.
+- `from X import Y[, Z]` statements. No `import X as Y`, no bare
+  `import X` (deferred).
 - Diagnostics. One `:parse-error` node per error with `:line`,
   `:col`, `:message`. No multi-token recovery — stop at first
   error.
+
+**Retired shapes.** The following appeared in the chapter-11 design
+read but are retired in current spec and MUST be rejected if seen:
+
+- `module <name>` top-level declaration (retired 2026-08-20 —
+  module identity is file path).
+- `enum X:` sugar (retired at v1.0 under F69 atom unification —
+  enums are `def X:` with case body).
 
 Out of scope. Expression parsing, transitions, observations,
 dispatch arms, variant patterns, `extend` blocks, `def plugin:`,
@@ -56,10 +68,9 @@ Output. A flat vector of top-level `:node`-keyed maps:
 
 | `:node`           | Fields on the map                                      |
 | ----------------- | ------------------------------------------------------ |
-| `:module`         | `:name` (string)                                       |
 | `:from-import`    | `:from` (string), `:names` (vec of `{:name :as}`)      |
-| `:def-record`     | `:name`, `:fields` (vec of `{:name :type :default}`)   |
-| `:def-atom`       | `:name`, `:fields`, `:ctor-params` (same shape)        |
+| `:record`         | `:name`, `:sections` (data-section vec with `:fields`) |
+| `:def-atom`      | `:name`, `:ctor-params`, `:body` (sections with fields/cases/use) |
 | `:enum`           | `:name`, `:cases` (vec of string), `:case-entries`     |
 | `:parse-error`    | `:line`, `:col`, `:message`                            |
 
