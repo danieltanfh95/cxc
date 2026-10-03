@@ -1,0 +1,37 @@
+# Self-host port of cxc.lex/match-multi-glyph.
+#
+# Contract. Given a source string and a position, return the first
+# multi-char glyph (in Clojure iteration order) that starts at that
+# position, or an empty string when no multi-char glyph matches.
+#
+# Argv shape. argv[1] is the source string, argv[2] is the offset.
+# Writes the matched glyph to stdout or an empty line on no match.
+#
+# Oracle. compiler/self_host/oracle/lex_match_multi_glyph.clj which
+# requires cxc.lex and derefs the private match-multi-glyph var.
+#
+# Glyph table source. compiler/src/cxc/lex.clj L92 to L106. Order
+# matters only as a longest-first-match tie-break and no glyph in
+# this table is a prefix of another, verified by hand 2026-10-04.
+#
+# Shape note. The nominally cleaner port would be
+#   glyphs.filter(g => s.substring(i, g.length()) == g).at(0) ?? ""
+# but lambda capture widens local Int bindings to Optional, which
+# then fails the NSUInteger cast inside substring. Logged as a cxc
+# compiler gap in self_host/README.md. The explicit per-glyph ||:
+# chain below avoids the capture and still mirrors the Clojure
+# iteration order. Multi-line ||: chains are not legal syntax so
+# the chain lives on one physical line.
+
+def main:
+    use args:    Args
+    use console: Console
+
+    -> running
+        then:
+            let s: String! = args.get_or(1, "")
+            let i: Int! = args.get_or_int(2, 0)
+            let matched: String = ||: s.substring(i, 2) == "<:" : "<:" ||: s.substring(i, 2) == "<|" : "<|" ||: s.substring(i, 2) == "|>" : "|>" ||: s.substring(i, 3) == "||:" : "||:" ||: s.substring(i, 2) == "|:" : "|:" ||: s.substring(i, 2) == ":>" : ":>" ||: s.substring(i, 2) == ":-" : ":-" ||: s.substring(i, 2) == "->" : "->" ||: s.substring(i, 2) == "=>" : "=>" ||: s.substring(i, 2) == "==" : "==" ||: s.substring(i, 2) == "!=" : "!=" ||: s.substring(i, 2) == "<=" : "<=" ||: s.substring(i, 2) == ">=" : ">=" ||: s.substring(i, 2) == "//" : "//" ||: s.substring(i, 2) == "**" : "**" ||: s.substring(i, 2) == "??" : "??" ||: else : ""
+            console.write(matched)
+
+    -> end

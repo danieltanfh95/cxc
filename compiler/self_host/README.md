@@ -30,9 +30,10 @@ Byte-for-byte diff is the only accepted exit condition. If a layer's parity hing
 
 ## Layer order (dependency-ascending)
 
-1. **mangle::c-safe-param-name** — 10 LOC, pure, lookup against a 44-entry C/ObjC reserved-word list. First slice. STATUS landed. 52 inputs parity-equal.
+1. **mangle::c-safe-param-name** — 10 LOC, pure, lookup against a 44-entry C/ObjC reserved-word list. First slice. STATUS landed. 93 inputs parity-equal (including Unicode, emoji, idempotence on already-suffixed names).
 2. **lex::classify-word** — 2 LOC, pure, lookup against a 40-entry cxc reserved-word set. Second slice. STATUS landed. 54 inputs parity-equal.
-3. **mangle::->c-safe** — 10 LOC, pure given the `*decl->module*` map. Needs the map structure and `resolve/mangled-name-for`. BLOCKED on resolve.
+3. **lex::match-multi-glyph** — 7 LOC, pure, longest-first match against a 16-entry glyph table. Third slice. STATUS landed. 37 inputs parity-equal.
+4. **mangle::->c-safe** — 10 LOC, pure given the `*decl->module*` map. Needs the map structure and `resolve/mangled-name-for`. BLOCKED on resolve.
 4. **diagnostics** — 38 LOC, three throw helpers. Can be ported but there is no byte output to compare, only error-shape at the ex-info boundary. Low-priority.
 5. **lex sub-functions** — scan-digits, scan-string, scan-char. Each is a pure string to value function. Need cxc stdlib additions for character predicates (see Blockers).
 6. **lex (full)** — 835 LOC. ASCII-safe subset is portable today, Unicode identifiers break on `Character/isUnicodeIdentifierStart` which has no cxc analogue.
@@ -70,6 +71,12 @@ What is NOT a blocker (verified in-scope).
 - Positional argv access via `args.get_or(1, "")`.
 - Shell-driven differential testing. Each run forks a cxc binary per corpus line and a single clj process for the oracle.
 
+Compiler gaps discovered while landing chapter 2.
+
+- `let x: T` where T is a primitive (Int, Bool, Float) stores x as `_Cxc_Optional_T` even when the RHS returns a raw non-nullable primitive. Reaching for the raw value inside a `substring` or `NSUInteger` cast then fails compile with "operand of type `_Cxc_Optional_Int64` where arithmetic or pointer type is required". Workaround is `let x: T!` for the non-nullable storage. The surface rule is in `corvid-nullability-rule` memory and the lesson is to type-annotate `T!` whenever you reach for a raw int inside an ObjC cast.
+- Lambda bodies cannot span multiple statements and cannot bind locals via `let`. The lambda surface is `arg => expr`. Captures of outer `Int` locals widen even when the outer binding is `T!`, so the practical rule for now is to avoid capturing locals of primitive type in filter and map lambdas, or hoist them to atom fields.
+- Multi-arm `||: ... ||: else : ...` chains do not continue across newlines. The parser errors with "expected an expression, got a newline". The whole chain must live on one physical line, or be hoisted into an observation body on one physical line. Long chains are the current workaround for the lambda-capture gap and lose readability past about 10 arms.
+
 ## Oracle convention
 
 Each layer's oracle is a short `clj -M -e "..."` one-liner that requires the live cxc.* namespace, reads stdin line-by-line, calls the target function, writes `\n`-terminated stdout. The oracle NEVER mutates the live namespace. The oracle NEVER canonicalises unless the layer requires it (and the canonicalisation step is documented in that layer's section below).
@@ -82,7 +89,12 @@ Each layer's cxc port is a `def main:` program that reads one positional arg (`a
 
 If you are picking this up next session, start here.
 
-- Last-landed layers. `mangle::c-safe-param-name` and `lex::classify-word`. Each is a reserved-word lookup. See `harness/*.sh` and `src/*.cxc`. Both parity-confirmed byte-equal on the committed corpora.
+- Last-landed layers. `mangle::c-safe-param-name` with hardened 93-input corpus, `lex::classify-word` with 54-input corpus, `lex::match-multi-glyph` with 37-input corpus. All three parity-confirmed byte-equal.
+- Reusable corpus-driven slice pattern. Each slice is a function with a stable `String -> String` or `(String, Int) -> String` contract. The cxc port and the clj oracle emit newline-terminated output on the same corpus, and the harness `diff -q`s the two output files. New slices follow the same four-file shape (src, oracle, corpus, harness).
+- Idioms learned.
+  - Always annotate primitive locals as `T!` (`let i: Int! = ...`) when the value will cross into an ObjC cast or substring index.
+  - Avoid lambda capture of local Int bindings. Either inline the function with `||:` chains or hoist the local to an atom field.
+  - Keep `||:` chains on one physical line even if long.
+  - Use `args.get_or_int(index, fallback)` not `??`-coalesced int. `??` on a non-nullable primitive storage widens it back to Optional per the gap documented above.
 - Next viable layer with no stdlib blockers. `diagnostics` as a shape-only port, or begin landing stdlib additions for `scan-digits` (base-10 decimal path, byte-at-via-Bytes workaround).
-- Reusable corpus-driven slice pattern. Each slice is a function with a stable `String -> String` or `String -> Int` contract. The cxc port and the clj oracle emit newline-terminated output on the same corpus, and the harness `diff -q`s the two output files. New slices should follow the same four-file shape (src, oracle, corpus, harness).
 - First layer with a hard blocker. Full `lex` on Unicode source. The ASCII subset can land first, Unicode identifiers need a cxc stdlib code-point iterator.
