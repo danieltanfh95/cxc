@@ -48,9 +48,12 @@ These are the values the language is built around. Read them before you start; t
 7. **Explicit capabilities are the whole point.** `def plugin:` for IO, RNG, subprocess, HTTP is not overhead — it's the value the language delivers. A translation that calls `print` and `SeededPrng` directly is legal but wastes the capability model. When there's an IO surface, prefer wrapping it as a plugin so the caps are enumerable.
 8. **Fail loudly at the boundary.** Fallible capabilities raise typed records (`IOError`, `HttpError`, `ShellError`, `EnvError`, `JsonError`, `RandomError`). Recover at the call site with `or T():`. No `Result[T, E]`, no `try / catch` — the recovery is where the caller's context knows what fallback means.
 9. **Named-Result records are a smell.** If your emit contains `FooResult`, `BarResult`, `QuuxResult` per function, the atom is doing too much and needs a real split (see 4), or the caller should be using `or T(): fallback` instead of unpacking a Result tuple. Corvid has no `Result[T, E]` on purpose.
-10. **Compile before you commit.** The parser rejects more than the type checker. The productive loop is `cxc compile` → read the diagnostic → fix the exact line. Compiler messages teach the fix inline; read them literally, don't reinterpret.
 
-The value story Corvid pitches (locality, auditable transitions, observation decoupling, explicit capabilities) emerges from writing transitions, observations, and plugins according to these ten values — not from architecture drawings.
+The value story Corvid pitches (locality, auditable transitions, observation decoupling, explicit capabilities) emerges from writing transitions, observations, and plugins according to these nine values — not from architecture drawings.
+
+## Verification workflow
+
+**Compile before you commit.** The parser rejects more than the type checker. The productive loop is `cxc compile` → read the diagnostic → fix the exact line. Compiler messages teach the fix inline; read them literally, don't reinterpret.
 
 ## The rules that catch the most bugs
 
