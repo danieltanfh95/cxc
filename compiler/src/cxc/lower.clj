@@ -3236,14 +3236,19 @@
                :name      "cxc_int_to_char_string"
                :args      [(if envelope-target? target-lo0 target-lo)]
                :emit-c-fn (fn [[n]]
+                            ;; `+stringWithCharacters:length:` (not
+                            ;; `stringWithFormat:@"%C"`) so U+0000
+                            ;; survives — the format path treats
+                            ;; `%C` as a C-string-style terminator
+                            ;; and silently truncates.
                             (if envelope-target?
                               (str "({ __typeof__(" n ") __cxc_cs = (" n "); "
+                                   "unichar __cxc_cu = (unichar)(__cxc_cs.value); "
                                    "__cxc_cs.present "
-                                   "? [NSString stringWithFormat:@\"%C\", "
-                                   "(unichar)(__cxc_cs.value)] "
+                                   "? [NSString stringWithCharacters:&__cxc_cu length:1] "
                                    ": @\"\"; })")
-                              (str "[NSString stringWithFormat:@\"%C\", "
-                                   "(unichar)(" n ")]")))})
+                              (str "({ unichar __cxc_cu = (unichar)(" n "); "
+                                   "[NSString stringWithCharacters:&__cxc_cu length:1]; })")))})
 
           ;; 2i (2026-09-02) — `Int.to_string()` — decimal render.
           ;; `+[NSString stringWithFormat:@"%lld", (long long)n]`.
