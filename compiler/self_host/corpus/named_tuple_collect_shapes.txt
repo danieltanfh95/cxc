@@ -1,0 +1,16 @@
+Nt1_x_Int
+Nt2_x_Int_y_Int
+Nt2_x_Nn_Int_y_String
+Nt3_a_Int_b_Nn_String_c_Bool
+
+Int
+Nn_String
+Int;String;Bool
+Nt1_x_Int;Nt1_y_Int
+Nt2_x_Int_y_Int;Nt1_z_String
+Nt2_x_Int_y_Int;Nt2_x_Int_y_Int
+Nt1_z_String;Nt1_z_String
+Int;Nt2_x_Int_y_Int;String;Nt1_z_String
+Nt2_x_Int_y_Int;Nn_Int;Nt1_z_String;Int
+Nt2_x_Int_y_Nn_Int
+Nt4_a_Int_b_String_c_Bool_d_Bytes

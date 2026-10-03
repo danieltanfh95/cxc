@@ -1,0 +1,148 @@
+# Port of cxc.lex/scan-number — ASCII decimal + hex integer driver.
+#
+# Composes chapter-5's scan-digits-with-underscore-errors with the
+# base-prefix dispatch and F5 unit-suffix rejection.
+#
+# Clojure source. compiler/src/cxc/lex.clj L357 to L446.
+#
+# SCOPE. Decimal integer, hex integer, with legal `_` separators.
+# Deferred: decimal float, decimal exponent, binary (`0b…`), octal
+# (`0o…`), hex float (`0x1.8p+1`). Binary and octal prefixes raise
+# ERR here because the port doesn't do the base-2 / base-8 scan,
+# but the Clojure scan-number ACCEPTS them, so the corpus has to
+# avoid those inputs for parity. Float / exponent inputs are
+# likewise outside the port's scope and absent from the corpus.
+#
+# Input per line: a numeric-literal candidate starting at index 0.
+# Output per line:
+#   `int|<decimal-value>|<end-index>` on success
+#   `ERR`                              on any malformed input
+#
+# Value accumulation runs during the scan so the port never needs
+# a base-N string parser (cxc's `.to_int_or` is decimal-only).
+
+def main:
+    use args:    Args
+    use console: Console
+
+    input:          String! = ""
+    cursor:         Int!    = 0
+    base:           Int!    = 10
+    value:          Int!    = 0
+    digits_count:   Int!    = 0
+    last_was_digit: Bool!   = false
+    error:          Bool!   = false
+
+    at_end  :- cursor >= input.length()
+    cur     :- ||: at_end : -1 ||: else : input.code_at(cursor)
+
+    is_hex_prefix :- input.length() >= 2 and input.code_at(0) == 48 and (input.code_at(1) == 120 or input.code_at(1) == 88)
+    is_c_octal    :- input.length() >= 2 and input.code_at(0) == 48 and input.code_at(1) >= 48 and input.code_at(1) <= 57
+    is_bin_prefix :- input.length() >= 2 and input.code_at(0) == 48 and (input.code_at(1) == 98 or input.code_at(1) == 66)
+    is_oct_prefix :- input.length() >= 2 and input.code_at(0) == 48 and (input.code_at(1) == 111 or input.code_at(1) == 79)
+
+    is_dec_digit  :- cur >= 48 and cur <= 57
+    is_hex_lower  :- cur >= 97 and cur <= 102
+    is_hex_upper  :- cur >= 65 and cur <= 70
+    is_hex_digit  :- is_dec_digit or is_hex_lower or is_hex_upper
+    is_this_digit :- ||: base == 16 : is_hex_digit ||: else : is_dec_digit
+    is_underscore :- cur == 95
+    is_ident_cont :- (cur >= 65 and cur <= 90) or (cur >= 97 and cur <= 122) or cur == 95 or (cur >= 48 and cur <= 57)
+
+    digit_val :- ||: cur >= 48 and cur <= 57 : cur - 48 ||: cur >= 97 and cur <= 102 : cur - 87 ||: cur >= 65 and cur <= 70 : cur - 55 ||: else : 0
+
+    -> starting
+        then:
+            input => args.get_or(1, "")
+            self :> step
+
+    -> end
+        then:
+            let out: String! = ||: error : "ERR" ||: else : "int|" + value.to_string() + "|" + cursor.to_string()
+            console.write(out)
+
+    starting <: step -> scanning
+        |: is_c_octal
+        then:
+            error => true
+            self :> step
+
+    starting <: step -> scanning
+        |: is_bin_prefix or is_oct_prefix
+        then:
+            error => true
+            self :> step
+
+    starting <: step -> scanning
+        |: is_hex_prefix
+        then:
+            base => 16
+            cursor => 2
+            self :> step
+
+    starting <: step -> scanning
+        |: not is_hex_prefix and not is_c_octal and not is_bin_prefix and not is_oct_prefix
+        then:
+            base => 10
+            self :> step
+
+    scanning <: step -> end
+        |: error
+
+    scanning <: step -> scanning
+        |: not error and not at_end and is_this_digit
+        then:
+            value => value * base + digit_val
+            digits_count => digits_count + 1
+            last_was_digit => true
+            cursor => cursor + 1
+            self :> step
+
+    scanning <: step -> scanning
+        |: not error and not at_end and is_underscore and last_was_digit
+        then:
+            last_was_digit => false
+            cursor => cursor + 1
+            self :> step
+
+    scanning <: step -> scanning
+        |: not error and not at_end and is_underscore and not last_was_digit
+        then:
+            error => true
+            self :> step
+
+    scanning <: step -> scanning
+        |: not error and not at_end and not is_this_digit and not is_underscore and is_ident_cont
+        then:
+            error => true
+            self :> step
+
+    scanning <: step -> scanning
+        |: not error and at_end and digits_count > 0 and not last_was_digit
+        then:
+            error => true
+            self :> step
+
+    scanning <: step -> scanning
+        |: not error and not at_end and not is_this_digit and not is_underscore and not is_ident_cont and digits_count > 0 and not last_was_digit
+        then:
+            error => true
+            self :> step
+
+    scanning <: step -> end
+        |: not error and not at_end and not is_this_digit and not is_underscore and not is_ident_cont and digits_count > 0 and last_was_digit
+
+    scanning <: step -> scanning
+        |: not error and digits_count == 0 and at_end
+        then:
+            error => true
+            self :> step
+
+    scanning <: step -> scanning
+        |: not error and digits_count == 0 and not at_end and not is_this_digit
+        then:
+            error => true
+            self :> step
+
+    scanning <: step -> end
+        |: not error and at_end and digits_count > 0 and last_was_digit

@@ -1,0 +1,136 @@
+# Port of cxc.named-tuple/collect-shapes — F15 L2.c.i walker that
+# surfaces every distinct :type-named-tuple shape in an AST and
+# returns `{mangled-name → shape-node}`.
+#
+# Clojure source. compiler/src/cxc/named_tuple.clj L210 to L231.
+#
+# SHALLOW scope. The chapter-7 flat tagged-record encoding + the
+# chapter-7 recursive-user-types-emit-broken gap puts true recursive
+# descent on the serialization behind a follow-on compiler landing
+# (chapter 9+). The current slice covers the top-level case — each
+# input entry is a FLAT `:type-named-tuple` whose fields are
+# primitives (`Int`, `String`, …) or non-nil primitives (`Nn_Int`,
+# …). Nested named-tuple fields are deferred.
+#
+# Input per line: `<ser>[;<ser>…]` where each `<ser>` is one of
+#   `<prim>`              — primitive type-ref, no shape to collect
+#   `Nn_<prim>`           — non-nil wrapper, no shape to collect
+#   `Nt<count>_<body>`    — flat named-tuple, one shape to collect
+# where `<body>` is `<f1>_<ser1>_<f2>_<ser2>_…` with pre-sorted
+# field names (Clojure's canonical form always sorts; the port
+# relies on pre-sorted input so no second pass is needed).
+#
+# Output per line: comma-joined, alphabetically-sorted canonical
+# names (`_Cxc_NT_<f1>_<ser1>_…`), one per distinct Nt-shape found.
+# Empty line → empty output. All-primitive input → empty output.
+
+def main:
+    use args:    Args
+    use console: Console
+
+    spec:          String! = ""
+    cursor:        Int!    = 0
+    entry_acc:     String! = ""
+    canonicals:    List of String = []
+    sort_i:        Int!    = 0
+    scan_best:     String! = ""
+    scan_has_best: Bool!   = false
+    out:           String! = ""
+
+    at_end  :- cursor >= spec.length()
+    cur     :- ||: at_end : -1 ||: else : spec.code_at(cursor)
+    is_semi :- cur == 59
+
+    scan_cur :- canonicals.at(sort_i) ?? ""
+    scan_cmp :- scan_cur.compare_to(scan_best)
+
+    -> parsing
+        then:
+            spec => args.get_or(1, "")
+            self :> step
+
+    -> sorting
+        then:
+            sort_i => 0
+            scan_has_best => false
+            scan_best => ""
+            self :> scan
+
+    -> end
+        then: console.write(out)
+
+    parsing <: step -> parsing
+        |: not at_end and is_semi
+        then:
+            self :> commit
+
+    parsing <: step -> parsing
+        |: not at_end and not is_semi
+        then:
+            entry_acc => entry_acc + spec.substring(cursor, 1)
+            cursor => cursor + 1
+            self :> step
+
+    parsing <: step -> sorting
+        |: at_end and entry_acc.length() > 0
+        then:
+            let is_nt: Bool!       = entry_acc.starts_with("Nt") and entry_acc.length() >= 4
+            let third_c: Int!      = ||: is_nt : entry_acc.code_at(2) ||: else : -1
+            let is_digit: Bool!    = third_c >= 48 and third_c <= 57
+            let has_shape: Bool!   = is_nt and is_digit
+            let underscore_idx: Int! = entry_acc.index_of("_")
+            let body: String!      = ||: has_shape and underscore_idx > 0 : entry_acc.substring((underscore_idx + 1).max(0), (entry_acc.length() - underscore_idx - 1).max(0)) ||: else : ""
+            let canonical: String! = "_Cxc_NT_" + body
+            canonicals => ||: has_shape and body.length() > 0 and not canonicals.contains(canonical) : canonicals.append(canonical) ||: else : canonicals
+
+    parsing <: step -> sorting
+        |: at_end and entry_acc.length() == 0
+
+    parsing <: commit -> parsing
+        then:
+            let is_nt: Bool!       = entry_acc.starts_with("Nt") and entry_acc.length() >= 4
+            let third_c: Int!      = ||: is_nt : entry_acc.code_at(2) ||: else : -1
+            let is_digit: Bool!    = third_c >= 48 and third_c <= 57
+            let has_shape: Bool!   = is_nt and is_digit
+            let underscore_idx: Int! = entry_acc.index_of("_")
+            let body: String!      = ||: has_shape and underscore_idx > 0 : entry_acc.substring((underscore_idx + 1).max(0), (entry_acc.length() - underscore_idx - 1).max(0)) ||: else : ""
+            let canonical: String! = "_Cxc_NT_" + body
+            canonicals => ||: has_shape and body.length() > 0 and not canonicals.contains(canonical) : canonicals.append(canonical) ||: else : canonicals
+            entry_acc => ""
+            cursor => cursor + 1
+            self :> step
+
+    sorting <: scan -> sorting
+        |: sort_i < canonicals.count() and not scan_has_best
+        then:
+            scan_best => scan_cur
+            scan_has_best => true
+            sort_i => sort_i + 1
+            self :> scan
+
+    sorting <: scan -> sorting
+        |: sort_i < canonicals.count() and scan_has_best and scan_cmp < 0
+        then:
+            scan_best => scan_cur
+            sort_i => sort_i + 1
+            self :> scan
+
+    sorting <: scan -> sorting
+        |: sort_i < canonicals.count() and scan_has_best and scan_cmp >= 0
+        then:
+            sort_i => sort_i + 1
+            self :> scan
+
+    sorting <: scan -> sorting
+        |: sort_i >= canonicals.count() and scan_has_best
+        then:
+            let sep: String! = ||: out.length() == 0 : "" ||: else : ","
+            out => out + sep + scan_best
+            canonicals => canonicals.filter(c => c != scan_best)
+            sort_i => 0
+            scan_has_best => false
+            scan_best => ""
+            self :> scan
+
+    sorting <: scan -> end
+        |: sort_i >= canonicals.count() and not scan_has_best

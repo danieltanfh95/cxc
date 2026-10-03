@@ -1,0 +1,175 @@
+# Port of cxc.resolve/find-unscoped-type-refs — composition slice.
+#
+# Pulls slice 18 (resolve-name-to-module scope ladder) and slice 19
+# (module-scoped-ref-names walker) together. For every ref the
+# walker contributes, apply the ladder to check whether it resolves
+# in scope. Emit one line per unscoped name, in alphabetical order.
+#
+# Clojure source. compiler/src/cxc/resolve.clj L533 to L573.
+#
+# SINGLE-FILE SCOPE. `declared-in` aggregation across the full
+# program is omitted — in a single-file view, a name declared in
+# own-decls is always in scope (the ladder picks it up via
+# resolve-name-to-module), so declared-in would always be either
+# `[]` or `[module]`-and-already-in-scope. The slice ships
+# `<module>|<file>|<name>` per unscoped ref instead.
+#
+# Input: six positional args, mirroring slice 18's layout plus
+# slice 19's refs stream:
+#   argv[1] : module name
+#   argv[2] : file path
+#   argv[3] : own-decls, comma-separated name set (`Foo,Bar,Baz`)
+#   argv[4] : imports, comma-separated `name=module` pairs
+#   argv[5] : prelude-provenance, same `name=module` form
+#   argv[6] : refs, `;`-separated `<kind>:<name>` entries matching
+#             the slice 19 DSL (kind ∈ {type-ref, call, dot, extend,
+#             type-of, ident, other}).
+#
+# Output per unscoped ref: `<module>|<file>|<name>` on its own
+# line. Multiple refs → multiple output lines (alphabetical by
+# name). No unscoped refs → empty output (console.write of "").
+
+def main:
+    use args:    Args
+    use console: Console
+
+    mod_q:        String! = ""
+    file_q:       String! = ""
+    own_decls:    String! = ""
+    imports:      String! = ""
+    prelude:      String! = ""
+    refs_s:       String! = ""
+
+    cursor:       Int!    = 0
+    entry_acc:    String! = ""
+    unscoped:     List of String = []
+    sort_i:       Int!    = 0
+    scan_best:    String! = ""
+    scan_has_best: Bool!  = false
+    out:          String! = ""
+
+    at_end  :- cursor >= refs_s.length()
+    cur     :- ||: at_end : -1 ||: else : refs_s.code_at(cursor)
+    is_semi :- cur == 59
+
+    scan_cur :- unscoped.at(sort_i) ?? ""
+    scan_cmp :- scan_cur.compare_to(scan_best)
+
+    lookup(table: String!, key: String!) :- String!
+        alias seek         :- key + "="
+        alias leading      :- table.starts_with(seek)
+        alias interior_idx :- table.index_of("," + seek)
+        alias has_match    :- leading or interior_idx >= 0
+        alias val_start    :- ||: leading : seek.length() ||: has_match : interior_idx + 1 + seek.length() ||: else : -1
+        alias rest         :- ||: has_match : table.substring(val_start.max(0), (table.length() - val_start).max(0)) ||: else : ""
+        alias end_idx      :- rest.index_of(",")
+        ||: not has_match : "" ||: end_idx < 0 : rest ||: else : rest.substring(0, end_idx.max(0))
+
+    decl_contains(table: String!, key: String!) :- Bool!
+        alias is_sole   :- table == key
+        alias is_head   :- table.starts_with(key + ",")
+        alias is_middle :- table.index_of("," + key + ",") >= 0
+        alias is_tail   :- table.ends_with("," + key)
+        is_sole or is_head or is_middle or is_tail
+
+    -> parsing
+        then:
+            mod_q => args.get_or(1, "")
+            file_q => args.get_or(2, "")
+            own_decls => args.get_or(3, "")
+            imports => args.get_or(4, "")
+            prelude => args.get_or(5, "")
+            refs_s => args.get_or(6, "")
+            self :> step
+
+    -> sorting
+        then:
+            sort_i => 0
+            scan_has_best => false
+            scan_best => ""
+            self :> scan
+
+    -> end
+        then: console.write(out)
+
+    parsing <: step -> parsing
+        |: not at_end and is_semi
+        then:
+            self :> process
+
+    parsing <: step -> parsing
+        |: not at_end and not is_semi
+        then:
+            entry_acc => entry_acc + refs_s.substring(cursor, 1)
+            cursor => cursor + 1
+            self :> step
+
+    parsing <: step -> sorting
+        |: at_end and entry_acc.length() > 0
+        then:
+            let colon_idx: Int! = entry_acc.index_of(":")
+            let kind: String!   = entry_acc.substring(0, colon_idx.max(0))
+            let name_q: String! = entry_acc.substring((colon_idx + 1).max(0), (entry_acc.length() - colon_idx - 1).max(0))
+            let first_c: Int!   = ||: name_q.length() > 0 : name_q.code_at(0) ||: else : -1
+            let cap: Bool!      = first_c >= 65 and first_c <= 90
+            let contributes: Bool! = ||: kind == "type-ref" : true ||: kind == "extend" : true ||: kind == "call" : cap ||: kind == "dot" : cap ||: kind == "type-of" : cap ||: else : false
+            let p_hit: String!  = self.lookup(prelude, name_q)
+            let own_hit: Bool!  = self.decl_contains(own_decls, name_q)
+            let i_hit: String!  = self.lookup(imports, name_q)
+            let resolved: Bool! = p_hit.length() > 0 or own_hit or i_hit.length() > 0
+            unscoped => ||: contributes and not resolved and not unscoped.contains(name_q) : unscoped.append(name_q) ||: else : unscoped
+
+    parsing <: step -> sorting
+        |: at_end and entry_acc.length() == 0
+
+    parsing <: process -> parsing
+        then:
+            let colon_idx: Int! = entry_acc.index_of(":")
+            let kind: String!   = entry_acc.substring(0, colon_idx.max(0))
+            let name_q: String! = entry_acc.substring((colon_idx + 1).max(0), (entry_acc.length() - colon_idx - 1).max(0))
+            let first_c: Int!   = ||: name_q.length() > 0 : name_q.code_at(0) ||: else : -1
+            let cap: Bool!      = first_c >= 65 and first_c <= 90
+            let contributes: Bool! = ||: kind == "type-ref" : true ||: kind == "extend" : true ||: kind == "call" : cap ||: kind == "dot" : cap ||: kind == "type-of" : cap ||: else : false
+            let p_hit: String!  = self.lookup(prelude, name_q)
+            let own_hit: Bool!  = self.decl_contains(own_decls, name_q)
+            let i_hit: String!  = self.lookup(imports, name_q)
+            let resolved: Bool! = p_hit.length() > 0 or own_hit or i_hit.length() > 0
+            unscoped => ||: contributes and not resolved and not unscoped.contains(name_q) : unscoped.append(name_q) ||: else : unscoped
+            entry_acc => ""
+            cursor => cursor + 1
+            self :> step
+
+    sorting <: scan -> sorting
+        |: sort_i < unscoped.count() and not scan_has_best
+        then:
+            scan_best => scan_cur
+            scan_has_best => true
+            sort_i => sort_i + 1
+            self :> scan
+
+    sorting <: scan -> sorting
+        |: sort_i < unscoped.count() and scan_has_best and scan_cmp < 0
+        then:
+            scan_best => scan_cur
+            sort_i => sort_i + 1
+            self :> scan
+
+    sorting <: scan -> sorting
+        |: sort_i < unscoped.count() and scan_has_best and scan_cmp >= 0
+        then:
+            sort_i => sort_i + 1
+            self :> scan
+
+    sorting <: scan -> sorting
+        |: sort_i >= unscoped.count() and scan_has_best
+        then:
+            let sep: String! = ||: out.length() == 0 : "" ||: else : "\n"
+            out => out + sep + mod_q + "|" + file_q + "|" + scan_best
+            unscoped => unscoped.filter(n => n != scan_best)
+            sort_i => 0
+            scan_has_best => false
+            scan_best => ""
+            self :> scan
+
+    sorting <: scan -> end
+        |: sort_i >= unscoped.count() and not scan_has_best

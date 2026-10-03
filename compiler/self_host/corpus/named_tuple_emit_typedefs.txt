@@ -1,0 +1,11 @@
+Nt1_x_Int
+Nt2_x_Int_y_Int
+Nt2_x_Nn_Int_y_String
+Nt3_a_Int_b_Nn_String_c_Bool
+Nt1_name_String
+Nt2_count_Int_mem_Bytes
+Nt4_a_Int_b_String_c_Bool_d_Bytes
+Nt1_z_Nn_String
+Int
+Nn_String
+abc

@@ -1,0 +1,93 @@
+# Port of cxc.named-tuple/emit-typedefs — F15 L2.c.ii C-typedef
+# emitter for the shapes collect-shapes surfaces.
+#
+# Clojure source. compiler/src/cxc/named_tuple.clj L360 to L387.
+#
+# SHALLOW scope. One shape per input line. Fields are primitives
+# (type-ref) or non-nil primitives (type-nonnil of type-ref); nested
+# named-tuple field types are deferred alongside slice 22 until the
+# compiler recursive-user-types-emit-broken gap is fixed. Body is
+# pre-sorted per the Clojure canonical convention.
+#
+# Input per line: a single serialized ser (`Nt<count>_<body>` for a
+# shape, or any other string to produce an empty line). The second
+# positional arg is the primitive→c-type mapping, encoded as
+# `<prim1>=<c-type1>,<prim2>=<c-type2>,…`.
+#
+# Output per line: the Clojure emit-typedefs byte-equivalent — a
+# multi-line typedef block for shape input, or an empty line for
+# non-shape input. The harness `diff -q`'s the port and oracle
+# multi-line outputs byte-for-byte.
+
+def main:
+    use args:    Args
+    use console: Console
+
+    input:         String! = ""
+    mapping:       String! = ""
+    cur_body:      String! = ""
+    output_buffer: String! = ""
+    canonical:     String! = ""
+
+    is_shape :- input.starts_with("Nt") and input.length() >= 4
+
+    lookup(table: String!, key: String!) :- String!
+        alias seek         :- key + "="
+        alias leading      :- table.starts_with(seek)
+        alias interior_idx :- table.index_of("," + seek)
+        alias has_match    :- leading or interior_idx >= 0
+        alias val_start    :- ||: leading : seek.length() ||: has_match : interior_idx + 1 + seek.length() ||: else : -1
+        alias rest         :- ||: has_match : table.substring(val_start.max(0), (table.length() - val_start).max(0)) ||: else : ""
+        alias end_idx      :- rest.index_of(",")
+        ||: not has_match : "" ||: end_idx < 0 : rest ||: else : rest.substring(0, end_idx.max(0))
+
+    -> starting
+        then:
+            input => args.get_or(1, "")
+            mapping => args.get_or(2, "")
+            self :> step
+
+    -> parsing_pairs
+        then:
+            output_buffer => "typedef struct {\n"
+            self :> step
+
+    -> finalize
+        then:
+            output_buffer => output_buffer + "} " + canonical + ";"
+            self :> step
+
+    -> end
+        then: console.write(output_buffer)
+
+    starting <: step -> parsing_pairs
+        |: is_shape
+        then:
+            let under: Int! = input.index_of("_")
+            cur_body => input.substring((under + 1).max(0), (input.length() - under - 1).max(0))
+            canonical => "_Cxc_NT_" + input.substring((under + 1).max(0), (input.length() - under - 1).max(0))
+
+    starting <: step -> end
+        |: not is_shape
+
+    parsing_pairs <: step -> parsing_pairs
+        |: cur_body.length() > 0
+        then:
+            let nus: Int!       = cur_body.index_of("_")
+            let name_: String!  = cur_body.substring(0, nus.max(0))
+            let rest: String!   = cur_body.substring((nus + 1).max(0), (cur_body.length() - nus - 1).max(0))
+            let is_nn: Bool!    = rest.starts_with("Nn_")
+            let tail: String!   = ||: is_nn : rest.substring(3, (rest.length() - 3).max(0)) ||: else : rest
+            let next_us: Int!   = tail.index_of("_")
+            let has_more: Bool! = next_us >= 0
+            let prim: String!   = ||: has_more : tail.substring(0, next_us) ||: else : tail
+            let next_body: String! = ||: has_more : tail.substring((next_us + 1).max(0), (tail.length() - next_us - 1).max(0)) ||: else : ""
+            let c_type: String! = self.lookup(mapping, prim)
+            output_buffer => output_buffer + "    " + c_type + " " + name_ + ";\n"
+            cur_body => next_body
+            self :> step
+
+    parsing_pairs <: step -> finalize
+        |: cur_body.length() == 0
+
+    finalize <: step -> end
