@@ -178,7 +178,7 @@ catch-all.
 
 ## Containers
 
-`List of T`, `Map[K, V]`, `Set of T`. Mutation is FP-only, and every
+`List of T`, `Map of (K, V)`, `Set of T`. Mutation is FP-only, and every
 mutation returns a new container:
 
 ```

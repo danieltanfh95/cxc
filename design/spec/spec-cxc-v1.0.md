@@ -4500,14 +4500,16 @@ cxc's operators split into two tiers: **bootstrap operators** (§10 grammar-comm
 
 **Prelude operators (alias declarations, see §4.20):**
 
-| Operator | Category | Meaning | Prelude alias expansion |
-|---|---|---|---|
-| `<<`, `>>` | Bitwise shift | Left/right shift; arithmetic for signed, logical for unsigned | `Numeric.shl(lhs, rhs)` / `Numeric.shr(lhs, rhs)` |
-| `&`, `\|`, `^` | Bitwise binary | AND, OR, XOR | `Numeric.bitand` / `Numeric.bitor` / `Numeric.bitxor` |
-| `~` | Bitwise unary | NOT | `Numeric.bitnot(expr)` |
-| `<<=`, `>>=`, `&=`, `\|=`, `^=` | Compound bitwise assign | RHS applied, assigned to LHS | Compound form of prelude aliases |
-| `..<`, `...` | Range | Half-open, closed range | `Range.half_open` / `Range.closed` |
-| `??` | Nil-coalescing | LHS if non-nil, else RHS | `Optional.coalesce(lhs, rhs)` |
+| Operator | Category | Meaning | Prelude alias expansion | Status |
+|---|---|---|---|---|
+| `<<`, `>>` | Bitwise shift | Left/right shift; arithmetic for signed, logical for unsigned | `Numeric.shl(lhs, rhs)` / `Numeric.shr(lhs, rhs)` | planned, use `.shl(n)` / `.shr(n)` methods on `Int!` today |
+| `&`, `\|`, `^` | Bitwise binary | AND, OR, XOR | `Numeric.bitand` / `Numeric.bitor` / `Numeric.bitxor` | planned, use `.bitand(n)` / `.bitor(n)` / `.bitxor(n)` methods on `Int!` today |
+| `~` | Bitwise unary | NOT | `Numeric.bitnot(expr)` | planned, no method shipped yet; use `x.bitxor(-1)` as workaround |
+| `<<=`, `>>=`, `&=`, `\|=`, `^=` | Compound bitwise assign | RHS applied, assigned to LHS | Compound form of prelude aliases | planned, blocked on alias infra |
+| `..<`, `...` | Range | Half-open, closed range | `Range.half_open` / `Range.closed` | planned |
+| `??` | Nil-coalescing | LHS if non-nil, else RHS | `Optional.coalesce(lhs, rhs)` | shipped |
+
+The infix alias machinery for these operators is not yet landed; the `.<method>(other)` form on `Int!` is the available surface for bitwise work.
 
 **Prelude alias declarations for the operators above are in §4.20.1.** Precedence values follow the unified scheme in §4.20.2.
 
