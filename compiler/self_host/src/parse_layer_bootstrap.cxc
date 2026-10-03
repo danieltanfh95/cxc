@@ -35,6 +35,7 @@
 def Token:
     kind:  String!
     value: String!
+    line:  Int!
 
 def main:
     use args:    Args
@@ -43,6 +44,7 @@ def main:
     source:   String! = ""
     sc:       Int!    = 0
     word_acc: String! = ""
+    line_num: Int!    = 1
     line_indent: Int! = 0
     indent_stack: List of Int = [0]
     at_line_start: Bool! = true
@@ -87,9 +89,13 @@ def main:
 
     top_indent :- indent_stack.at((indent_stack.count() - 1).max(0)) ?? 0
 
-    cur_tok   :- tokens.at(pos) ?? Token(kind: "EOF", value: "")
+    last_tok  :- tokens.at((tokens.count() - 1).max(0)) ?? Token(kind: "newline", value: "", line: 1)
+    needs_terminal_newline :- tokens.count() > 0 and last_tok.kind != "newline"
+
+    cur_tok   :- tokens.at(pos) ?? Token(kind: "eof", value: "", line: line_num)
     cur_kind  :- cur_tok.kind
     cur_value :- cur_tok.value
+    cur_line  :- cur_tok.line
 
     -> lex_start
         then:
@@ -101,11 +107,21 @@ def main:
 
     -> end
         then:
-            let final: String! = ||: error : "parseerror|" + error_msg + "|dbg|cnt=" + tokens.count().to_string() + "|pos=" + pos.to_string() ||: else : out
+            let is_layout: Bool! = cur_kind == "newline" or cur_kind == "indent" or cur_kind == "dedent" or cur_kind == "eof"
+            let value_pretty: String! = ||: is_layout : "nil" ||: else : "\"" + cur_value + "\""
+            let err_out: String! = "parseerror|parse error: " + error_msg + " (got :" + cur_kind + " " + value_pretty + " at line " + cur_line.to_string() + ")"
+            let final: String! = ||: error : err_out ||: else : out
             console.write(final)
 
     lex_start <: step -> lex_start
-        |: at_src_end and not error
+        |: at_src_end and not error and needs_terminal_newline
+        then:
+            tokens => tokens.append(Token(kind: "newline", value: "", line: line_num))
+            line_num => line_num + 1
+            self :> step
+
+    lex_start <: step -> lex_start
+        |: at_src_end and not error and not needs_terminal_newline
         then:
             self :> emit_trailing_dedents
 
@@ -124,7 +140,8 @@ def main:
     lex_start <: step -> lex_start
         |: not at_src_end and not at_line_start and is_nl
         then:
-            tokens => tokens.append(Token(kind: "NEWLINE", value: ""))
+            tokens => tokens.append(Token(kind: "newline", value: "", line: line_num))
+            line_num => line_num + 1
             sc => sc + 1
             at_line_start => true
             line_indent => 0
@@ -133,35 +150,35 @@ def main:
     lex_start <: step -> lex_start
         |: not at_src_end and not at_line_start and is_comma
         then:
-            tokens => tokens.append(Token(kind: "punct", value: ","))
+            tokens => tokens.append(Token(kind: "punct", value: ",", line: line_num))
             sc => sc + 1
             self :> step
 
     lex_start <: step -> lex_start
         |: not at_src_end and not at_line_start and is_colon
         then:
-            tokens => tokens.append(Token(kind: "punct", value: ":"))
+            tokens => tokens.append(Token(kind: "punct", value: ":", line: line_num))
             sc => sc + 1
             self :> step
 
     lex_start <: step -> lex_start
         |: not at_src_end and not at_line_start and is_lparen
         then:
-            tokens => tokens.append(Token(kind: "punct", value: "("))
+            tokens => tokens.append(Token(kind: "punct", value: "(", line: line_num))
             sc => sc + 1
             self :> step
 
     lex_start <: step -> lex_start
         |: not at_src_end and not at_line_start and is_rparen
         then:
-            tokens => tokens.append(Token(kind: "punct", value: ")"))
+            tokens => tokens.append(Token(kind: "punct", value: ")", line: line_num))
             sc => sc + 1
             self :> step
 
     lex_start <: step -> lex_start
         |: not at_src_end and not at_line_start and is_bang
         then:
-            tokens => tokens.append(Token(kind: "glyph", value: "!"))
+            tokens => tokens.append(Token(kind: "punct", value: "!", line: line_num))
             sc => sc + 1
             self :> step
 
@@ -192,6 +209,7 @@ def main:
     lex_start <: measure_indent -> lex_start
         |: not at_src_end and is_nl
         then:
+            line_num => line_num + 1
             sc => sc + 1
             line_indent => 0
             self :> measure_indent
@@ -210,14 +228,14 @@ def main:
     lex_start <: adjust_indent -> lex_start
         |: line_indent > top_indent
         then:
-            tokens => tokens.append(Token(kind: "INDENT", value: ""))
+            tokens => tokens.append(Token(kind: "indent", value: "", line: line_num))
             indent_stack => indent_stack.append(line_indent)
             self :> step
 
     lex_start <: adjust_indent -> lex_start
         |: line_indent < top_indent
         then:
-            tokens => tokens.append(Token(kind: "DEDENT", value: ""))
+            tokens => tokens.append(Token(kind: "dedent", value: "", line: line_num))
             indent_stack => indent_stack.filter(x => x < top_indent)
             self :> adjust_indent
 
@@ -228,12 +246,12 @@ def main:
     lex_start <: emit_trailing_dedents -> parsing
         |: indent_stack.count() <= 1
         then:
-            tokens => tokens.append(Token(kind: "EOF", value: ""))
+            tokens => tokens.append(Token(kind: "eof", value: "", line: line_num))
 
     lex_start <: emit_trailing_dedents -> lex_start
         |: indent_stack.count() > 1
         then:
-            tokens => tokens.append(Token(kind: "DEDENT", value: ""))
+            tokens => tokens.append(Token(kind: "dedent", value: "", line: line_num))
             indent_stack => indent_stack.filter(x => x < top_indent)
             self :> emit_trailing_dedents
 
@@ -248,14 +266,14 @@ def main:
         |: at_src_end or not is_id_cont
         then:
             let kind: String! = ||: reserved.contains(word_acc) : "kw" ||: else : "ident"
-            tokens => tokens.append(Token(kind: kind, value: word_acc))
+            tokens => tokens.append(Token(kind: kind, value: word_acc, line: line_num))
             self :> step
 
     parsing <: dispatch -> end
         |: error
 
     parsing <: dispatch -> end
-        |: not error and cur_kind == "EOF"
+        |: not error and cur_kind == "eof"
 
     parsing <: dispatch -> parsing
         |: not error and cur_kind == "kw" and cur_value == "from"
@@ -270,10 +288,10 @@ def main:
             self :> read_def_name
 
     parsing <: dispatch -> parsing
-        |: not error and not (cur_kind == "EOF" or (cur_kind == "kw" and (cur_value == "from" or cur_value == "def")))
+        |: not error and not (cur_kind == "eof" or (cur_kind == "kw" and (cur_value == "from" or cur_value == "def")))
         then:
             error => true
-            error_msg => "chapter-12 scope: only `from X import` and `def X:` supported"
+            error_msg => "expected top-level form"
             self :> dispatch
 
     # def NAME :  NEWLINE  INDENT  <fields>  DEDENT
@@ -281,7 +299,7 @@ def main:
         |: cur_kind != "ident"
         then:
             error => true
-            error_msg => "expected name after `def`"
+            error_msg => "expected :ident"
             self :> dispatch
 
     parsing <: read_def_name -> parsing
@@ -348,14 +366,14 @@ def main:
             self :> after_ctor_param_type_name
 
     parsing <: after_ctor_param_type_name -> parsing
-        |: cur_kind == "glyph" and cur_value == "!"
+        |: cur_kind == "punct" and cur_value == "!"
         then:
             type_ser_buf => "TN(TR:" + type_name_buf + ")"
             pos => pos + 1
             self :> emit_ctor_param
 
     parsing <: after_ctor_param_type_name -> parsing
-        |: not (cur_kind == "glyph" and cur_value == "!")
+        |: not (cur_kind == "punct" and cur_value == "!")
         then:
             type_ser_buf => "TR:" + type_name_buf
             self :> emit_ctor_param
@@ -390,7 +408,7 @@ def main:
         |: not (cur_kind == "punct" and cur_value == ":")
         then:
             error => true
-            error_msg => "expected `:` after def name"
+            error_msg => "expected :punct \":\""
             self :> dispatch
 
     parsing <: expect_def_colon -> parsing
@@ -399,10 +417,10 @@ def main:
             self :> expect_def_newline
 
     parsing <: expect_def_newline -> parsing
-        |: cur_kind != "NEWLINE"
+        |: cur_kind != "newline"
         then:
             error => true
-            error_msg => "expected newline after `def X:`"
+            error_msg => "expected :newline"
             self :> dispatch
 
     parsing <: expect_def_newline -> parsing
@@ -411,10 +429,10 @@ def main:
             self :> expect_def_indent
 
     parsing <: expect_def_indent -> parsing
-        |: cur_kind != "INDENT"
+        |: cur_kind != "indent"
         then:
             error => true
-            error_msg => "expected indent after `def X:`"
+            error_msg => "expected :indent"
             self :> dispatch
 
     parsing <: expect_def_indent -> parsing
@@ -423,14 +441,14 @@ def main:
             self :> parse_field
 
     parsing <: parse_field -> parsing
-        |: cur_kind == "DEDENT"
+        |: cur_kind == "dedent"
         then:
             out => ||: out.length() > 0 : out ||: else : "defrecord|" + def_name_buf + "|"
             pos => pos + 1
             self :> dispatch
 
     parsing <: parse_field -> parsing
-        |: cur_kind == "NEWLINE"
+        |: cur_kind == "newline"
         then:
             pos => pos + 1
             self :> parse_field
@@ -442,7 +460,50 @@ def main:
             self :> parse_enum_case
 
     parsing <: parse_field -> parsing
-        |: cur_kind != "ident" and cur_kind != "DEDENT" and cur_kind != "NEWLINE" and not (cur_kind == "kw" and cur_value == "case")
+        |: cur_kind == "kw" and cur_value == "use"
+        then:
+            out => ||: out.length() > 0 : out ||: else : "defatom|" + def_name_buf + "||"
+            pos => pos + 1
+            self :> read_use_cap_name
+
+    parsing <: read_use_cap_name -> parsing
+        |: cur_kind != "ident"
+        then:
+            error => true
+            error_msg => "expected :ident"
+            self :> dispatch
+
+    parsing <: read_use_cap_name -> parsing
+        then:
+            pos => pos + 1
+            self :> expect_use_colon
+
+    parsing <: expect_use_colon -> parsing
+        |: not (cur_kind == "punct" and cur_value == ":")
+        then:
+            error => true
+            error_msg => "expected :punct \":\""
+            self :> dispatch
+
+    parsing <: expect_use_colon -> parsing
+        then:
+            pos => pos + 1
+            self :> expect_use_type_name
+
+    parsing <: expect_use_type_name -> parsing
+        |: cur_kind != "ident"
+        then:
+            error => true
+            error_msg => "expected :ident"
+            self :> dispatch
+
+    parsing <: expect_use_type_name -> parsing
+        then:
+            pos => pos + 1
+            self :> parse_field
+
+    parsing <: parse_field -> parsing
+        |: cur_kind != "ident" and cur_kind != "dedent" and cur_kind != "newline" and not (cur_kind == "kw" and cur_value == "case") and not (cur_kind == "kw" and cur_value == "use")
         then:
             error => true
             error_msg => "expected field name"
@@ -488,14 +549,14 @@ def main:
             self :> parse_of_inner
 
     parsing <: after_type_name -> parsing
-        |: cur_kind == "glyph" and cur_value == "!"
+        |: cur_kind == "punct" and cur_value == "!"
         then:
             type_ser_buf => "TN(TR:" + type_name_buf + ")"
             pos => pos + 1
             self :> emit_field_from_ser
 
     parsing <: after_type_name -> parsing
-        |: not (cur_kind == "glyph" and cur_value == "!") and not (cur_kind == "kw" and cur_value == "of")
+        |: not (cur_kind == "punct" and cur_value == "!") and not (cur_kind == "kw" and cur_value == "of")
         then:
             type_ser_buf => "TR:" + type_name_buf
             self :> emit_field_from_ser
@@ -521,14 +582,14 @@ def main:
             self :> dispatch
 
     parsing <: after_container_inner -> parsing
-        |: cur_kind == "glyph" and cur_value == "!"
+        |: cur_kind == "punct" and cur_value == "!"
         then:
             inner_ser_buf => "TN(" + inner_ser_buf + ")"
             pos => pos + 1
             self :> finish_container
 
     parsing <: after_container_inner -> parsing
-        |: not (cur_kind == "glyph" and cur_value == "!")
+        |: not (cur_kind == "punct" and cur_value == "!")
         then: self :> finish_container
 
     parsing <: parse_tuple_k -> parsing
@@ -545,14 +606,14 @@ def main:
             self :> after_tuple_k_name
 
     parsing <: after_tuple_k_name -> parsing
-        |: cur_kind == "glyph" and cur_value == "!"
+        |: cur_kind == "punct" and cur_value == "!"
         then:
             inner_k_buf => "TN(" + inner_k_buf + ")"
             pos => pos + 1
             self :> expect_tuple_comma
 
     parsing <: after_tuple_k_name -> parsing
-        |: not (cur_kind == "glyph" and cur_value == "!")
+        |: not (cur_kind == "punct" and cur_value == "!")
         then: self :> expect_tuple_comma
 
     parsing <: expect_tuple_comma -> parsing
@@ -581,14 +642,14 @@ def main:
             self :> after_tuple_v_name
 
     parsing <: after_tuple_v_name -> parsing
-        |: cur_kind == "glyph" and cur_value == "!"
+        |: cur_kind == "punct" and cur_value == "!"
         then:
             inner_v_buf => "TN(" + inner_v_buf + ")"
             pos => pos + 1
             self :> expect_tuple_rparen
 
     parsing <: after_tuple_v_name -> parsing
-        |: not (cur_kind == "glyph" and cur_value == "!")
+        |: not (cur_kind == "punct" and cur_value == "!")
         then: self :> expect_tuple_rparen
 
     parsing <: expect_tuple_rparen -> parsing
@@ -620,19 +681,19 @@ def main:
     # Prefix is emitted by parse_field; this flow consumes `case` cases
     # until DEDENT.
     parsing <: parse_enum_case -> parsing
-        |: cur_kind == "DEDENT"
+        |: cur_kind == "dedent"
         then:
             pos => pos + 1
             self :> dispatch
 
     parsing <: parse_enum_case -> parsing
-        |: cur_kind == "NEWLINE"
+        |: cur_kind == "newline"
         then:
             pos => pos + 1
             self :> parse_enum_case
 
     parsing <: parse_enum_case -> parsing
-        |: not (cur_kind == "kw" and cur_value == "case") and cur_kind != "DEDENT" and cur_kind != "NEWLINE"
+        |: not (cur_kind == "kw" and cur_value == "case") and cur_kind != "dedent" and cur_kind != "newline"
         then:
             error => true
             error_msg => "expected `case`"
@@ -708,14 +769,14 @@ def main:
             self :> after_payload_type_name
 
     parsing <: after_payload_type_name -> parsing
-        |: cur_kind == "glyph" and cur_value == "!"
+        |: cur_kind == "punct" and cur_value == "!"
         then:
             type_ser_buf => "TN(TR:" + type_name_buf + ")"
             pos => pos + 1
             self :> emit_payload_field
 
     parsing <: after_payload_type_name -> parsing
-        |: not (cur_kind == "glyph" and cur_value == "!")
+        |: not (cur_kind == "punct" and cur_value == "!")
         then:
             type_ser_buf => "TR:" + type_name_buf
             self :> emit_payload_field
@@ -750,7 +811,7 @@ def main:
         |: cur_kind != "ident"
         then:
             error => true
-            error_msg => "expected module ident after `from`"
+            error_msg => "expected :ident"
             self :> dispatch
 
     parsing <: read_from_module -> parsing
@@ -763,7 +824,7 @@ def main:
         |: not (cur_kind == "kw" and cur_value == "import")
         then:
             error => true
-            error_msg => "expected `import` after module name"
+            error_msg => "expected :kw \"import\""
             self :> dispatch
 
     parsing <: expect_import -> parsing
@@ -775,7 +836,7 @@ def main:
         |: cur_kind != "ident"
         then:
             error => true
-            error_msg => "expected name after `import`"
+            error_msg => "expected :ident"
             self :> dispatch
 
     parsing <: read_name -> parsing

@@ -1,0 +1,275 @@
+# Chapter-13 standalone tokenize-with-layout slice (slice 33).
+#
+# Extracts the chapter-12 parse-layer-bootstrap's inline lex into
+# a dedicated slice that emits a serialized token stream matching
+# Clojure's cxc.lex/tokenize output.
+#
+# Scope. ASCII identifiers / keywords / punct / glyph `!`. Layout
+# markers via indent stack: :indent / :dedent / :newline / :eof.
+# No strings, chars, numbers, comments, multi-glyph (`->`, `=>`,
+# `|:`, `:-`, `??`, …) at this landing. The parse-layer-bootstrap
+# shares the same lex subset.
+#
+# Output format. One output line per input line. Tokens separated
+# by `/`. Each token:
+#   <kind>|<pr-str value>|<line>|<col>
+# layout tokens: `<kind>|nil|<line>|<col>`
+# content tokens: `<kind>|"<value>"|<line>|<col>`
+
+def Token:
+    kind:  String!
+    value: String!
+    line:  Int!
+    col:   Int!
+
+def main:
+    use args:    Args
+    use console: Console
+
+    source:   String! = ""
+    sc:       Int!    = 0
+    line_num: Int!    = 1
+    col_num:  Int!    = 1
+    tok_start_col: Int! = 1
+    word_acc: String! = ""
+    line_indent: Int! = 0
+    indent_stack: List of Int = [0]
+    at_line_start: Bool! = true
+    tokens:   List of Token = []
+    error:    Bool!   = false
+    error_msg: String! = ""
+
+    reserved: List of String = [
+        "module", "from", "import", "as",
+        "def", "use", "invariants", "enum",
+        "accepts", "extend", "replace", "deprecated",
+        "then", "do", "when", "let", "alias",
+        "self", "nil", "true", "false",
+        "and", "or", "not", "is", "in", "of",
+        "if", "else", "return", "case",
+        "function", "for",
+        "weak", "unowned",
+        "while", "loop", "break", "continue",
+        "raise"
+    ]
+
+    at_src_end :- sc >= source.length()
+    srccur     :- ||: at_src_end : -1 ||: else : source.code_at(sc)
+    is_sp      :- srccur == 32
+    is_nl      :- srccur == 10
+    is_id_start :- (srccur >= 65 and srccur <= 90) or (srccur >= 97 and srccur <= 122) or srccur == 95
+    is_id_cont  :- is_id_start or (srccur >= 48 and srccur <= 57)
+    is_comma   :- srccur == 44
+    is_colon   :- srccur == 58
+    is_lparen  :- srccur == 40
+    is_rparen  :- srccur == 41
+    is_bang    :- srccur == 33
+
+    top_indent :- indent_stack.at((indent_stack.count() - 1).max(0)) ?? 0
+
+    last_tok  :- tokens.at((tokens.count() - 1).max(0)) ?? Token(kind: "newline", value: "", line: 1, col: 1)
+    needs_terminal_newline :- tokens.count() > 0 and last_tok.kind != "newline"
+
+    -> lex_start
+        then:
+            source => args.get_or(1, "").replace("\\n", "\n")
+            self :> step
+
+    -> emitting
+        then: self :> emit
+
+    -> end
+        then:
+            let final: String! = ||: error : "lexerror|" + error_msg ||: else : out_buf
+            console.write(final)
+
+    out_buf: String! = ""
+
+    lex_start <: step -> lex_start
+        |: at_src_end and not error and needs_terminal_newline
+        then:
+            tokens => tokens.append(Token(kind: "newline", value: "", line: line_num, col: 1))
+            line_num => line_num + 1
+            col_num => 1
+            self :> step
+
+    lex_start <: step -> lex_start
+        |: at_src_end and not error and not needs_terminal_newline
+        then:
+            self :> emit_trailing_dedents
+
+    lex_start <: step -> lex_start
+        |: not at_src_end and at_line_start
+        then:
+            self :> measure_indent
+
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and is_sp
+        then:
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> step
+
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and is_nl
+        then:
+            tokens => tokens.append(Token(kind: "newline", value: "", line: line_num, col: 1))
+            line_num => line_num + 1
+            col_num => 1
+            sc => sc + 1
+            at_line_start => true
+            line_indent => 0
+            self :> step
+
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and is_comma
+        then:
+            tokens => tokens.append(Token(kind: "punct", value: ",", line: line_num, col: col_num))
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> step
+
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and is_colon
+        then:
+            tokens => tokens.append(Token(kind: "punct", value: ":", line: line_num, col: col_num))
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> step
+
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and is_lparen
+        then:
+            tokens => tokens.append(Token(kind: "punct", value: "(", line: line_num, col: col_num))
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> step
+
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and is_rparen
+        then:
+            tokens => tokens.append(Token(kind: "punct", value: ")", line: line_num, col: col_num))
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> step
+
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and is_bang
+        then:
+            tokens => tokens.append(Token(kind: "punct", value: "!", line: line_num, col: col_num))
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> step
+
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and is_id_start
+        then:
+            word_acc => ""
+            tok_start_col => col_num
+            self :> scan_word
+
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and not is_sp and not is_nl and not is_comma and not is_colon and not is_lparen and not is_rparen and not is_bang and not is_id_start
+        then:
+            error => true
+            error_msg => "lex: unexpected char"
+            self :> step
+
+    lex_start <: step -> end
+        |: error
+
+    lex_start <: measure_indent -> lex_start
+        |: not at_src_end and is_sp
+        then:
+            line_indent => line_indent + 1
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> measure_indent
+
+    lex_start <: measure_indent -> lex_start
+        |: not at_src_end and is_nl
+        then:
+            line_num => line_num + 1
+            col_num => 1
+            sc => sc + 1
+            line_indent => 0
+            self :> measure_indent
+
+    lex_start <: measure_indent -> lex_start
+        |: at_src_end
+        then: self :> step
+
+    lex_start <: measure_indent -> lex_start
+        |: not at_src_end and not is_sp and not is_nl
+        then:
+            at_line_start => false
+            col_num => 1
+            self :> adjust_indent
+
+    lex_start <: adjust_indent -> lex_start
+        |: line_indent > top_indent
+        then:
+            tokens => tokens.append(Token(kind: "indent", value: "", line: line_num, col: 1))
+            indent_stack => indent_stack.append(line_indent)
+            self :> step
+
+    lex_start <: adjust_indent -> lex_start
+        |: line_indent < top_indent
+        then:
+            tokens => tokens.append(Token(kind: "dedent", value: "", line: line_num, col: 1))
+            indent_stack => indent_stack.filter(x => x < top_indent)
+            self :> adjust_indent
+
+    lex_start <: adjust_indent -> lex_start
+        |: line_indent == top_indent
+        then: self :> step
+
+    lex_start <: emit_trailing_dedents -> emitting
+        |: indent_stack.count() <= 1
+        then:
+            tokens => tokens.append(Token(kind: "eof", value: "", line: line_num, col: 1))
+
+    lex_start <: emit_trailing_dedents -> lex_start
+        |: indent_stack.count() > 1
+        then:
+            tokens => tokens.append(Token(kind: "dedent", value: "", line: line_num, col: 1))
+            indent_stack => indent_stack.filter(x => x < top_indent)
+            self :> emit_trailing_dedents
+
+    lex_start <: scan_word -> lex_start
+        |: not at_src_end and is_id_cont
+        then:
+            word_acc => word_acc + source.substring(sc, 1)
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> scan_word
+
+    lex_start <: scan_word -> lex_start
+        |: at_src_end or not is_id_cont
+        then:
+            let kind: String! = ||: reserved.contains(word_acc) : "kw" ||: else : "ident"
+            tokens => tokens.append(Token(kind: kind, value: word_acc, line: line_num, col: tok_start_col))
+            self :> step
+
+    emit_idx: Int! = 0
+    cur_emit_tok :- tokens.at(emit_idx) ?? Token(kind: "eof", value: "", line: 1, col: 1)
+    is_layout_at :- cur_emit_tok.kind == "newline" or cur_emit_tok.kind == "indent" or cur_emit_tok.kind == "dedent" or cur_emit_tok.kind == "eof"
+
+    emitting <: emit -> emitting
+        |: emit_idx < tokens.count() and not is_layout_at
+        then:
+            let sep: String! = ||: emit_idx == 0 : "" ||: else : "/"
+            out_buf => out_buf + sep + cur_emit_tok.kind + "|\"" + cur_emit_tok.value + "\"|" + cur_emit_tok.line.to_string() + "|" + cur_emit_tok.col.to_string()
+            emit_idx => emit_idx + 1
+            self :> emit
+
+    emitting <: emit -> emitting
+        |: emit_idx < tokens.count() and is_layout_at
+        then:
+            let sep: String! = ||: emit_idx == 0 : "" ||: else : "/"
+            out_buf => out_buf + sep + cur_emit_tok.kind + "|nil|" + cur_emit_tok.line.to_string() + "|" + cur_emit_tok.col.to_string()
+            emit_idx => emit_idx + 1
+            self :> emit
+
+    emitting <: emit -> end
+        |: emit_idx >= tokens.count()

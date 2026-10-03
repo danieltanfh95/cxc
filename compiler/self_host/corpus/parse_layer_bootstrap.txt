@@ -20,3 +20,12 @@ def Shape:\n    case Circle(radius: Int!)\n    case Square(side: Int!)
 def Variant:\n    case None\n    case Named(name: String!)\n    case Both(name: String!, tag: Int)
 def Pair(k: String!, v: Int!):\n    extra: Int
 def Boxed(x: Int!):\n    name: String!\n    tag: Int
+def
+def X
+def X Y
+from
+from X
+from X import
+unknown
+def Agent:\n    use console: Console\n    name: String!
+def Env:\n    use env: EnvVars\n    use args: Args\n    x: Int!\n    y: Int

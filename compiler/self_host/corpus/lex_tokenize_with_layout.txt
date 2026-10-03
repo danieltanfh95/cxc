@@ -1,0 +1,12 @@
+
+def X
+def X:
+def X:\n    name: String!
+def X:\n    name: String\n    tag: Int
+def Y:\n    case Red\n    case Green
+from A import b
+from A import b, c
+def Z:\n    use console: Console\n    name: String!
+def Pair(k: String!, v: Int!):\n    extra: Int
+def Items:\n    xs: List of Int
+def Map1:\n    m: Map of (Int, String)
