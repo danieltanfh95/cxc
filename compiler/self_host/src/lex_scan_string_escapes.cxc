@@ -1,0 +1,96 @@
+# Port of cxc.lex/scan-string — ASCII subset WITH escape sequences
+# (\n \t \r \\ \" \'). Extends chapter-4's lex_scan_string slice.
+#
+# Clojure source. compiler/src/cxc/lex.clj L180 to L228.
+#
+# The port doesn't decode escapes — it preserves them in literal form
+# in the output buffer, and the oracle re-encodes its decoded payload
+# back to the same literal form before diff. So the parity check is
+# on validation + byte count + closing-quote tracking, not on the
+# post-decode byte identity (which we'd lose in the stdout line
+# comparison anyway once a literal newline enters the payload).
+#
+# Supported escapes (slice scope). `\n`, `\t`, `\r`, `\\`, `\"`,
+# `\'`. The Clojure helper also handles `\0`, `\a`, `\b`, `\f`, `\v`,
+# `\xNN`, `\u{…}`; all of those raise `ERR` from this port and the
+# oracle corpus avoids feeding them in.
+#
+# Input per line: a string starting with `"` at index 0. Output per
+# line: `<payload>|<end-index>` on success, `ERR` on any malformed
+# input (unterminated, trailing backslash, unknown escape).
+
+def main:
+    use args:    Args
+    use console: Console
+
+    input:     String! = ""
+    cursor:    Int!    = 0
+    buf:       String! = ""
+    in_escape: Bool!   = false
+    error:     Bool!   = false
+    done:      Bool!   = false
+
+    at_end    :- cursor >= input.length()
+    cur       :- ||: at_end : -1 ||: else : input.code_at(cursor)
+    is_quote  :- cur == 34
+    is_bslash :- cur == 92
+    valid_esc :- cur == 110 or cur == 116 or cur == 114 or cur == 92 or cur == 34 or cur == 39
+
+    -> parsing
+        then:
+            input => args.get_or(1, "")
+            cursor => 1
+            error => ||: args.get_or(1, "").length() == 0 or args.get_or(1, "").code_at(0) != 34 : true ||: else : false
+            self :> step
+
+    -> end
+        then:
+            let out: String! = ||: error : "ERR" ||: else : buf + "|" + cursor.to_string()
+            console.write(out)
+
+    parsing <: step -> end
+        |: error
+
+    parsing <: step -> end
+        |: done
+
+    parsing <: step -> parsing
+        |: not error and not done and at_end
+        then:
+            error => true
+            self :> step
+
+    parsing <: step -> parsing
+        |: not error and not done and not at_end and in_escape and not valid_esc
+        then:
+            error => true
+            self :> step
+
+    parsing <: step -> parsing
+        |: not error and not done and not at_end and in_escape and valid_esc
+        then:
+            buf => buf + "\\" + input.substring(cursor, 1)
+            in_escape => false
+            cursor => cursor + 1
+            self :> step
+
+    parsing <: step -> parsing
+        |: not error and not done and not at_end and not in_escape and is_bslash
+        then:
+            in_escape => true
+            cursor => cursor + 1
+            self :> step
+
+    parsing <: step -> parsing
+        |: not error and not done and not at_end and not in_escape and is_quote
+        then:
+            cursor => cursor + 1
+            done => true
+            self :> step
+
+    parsing <: step -> parsing
+        |: not error and not done and not at_end and not in_escape and not is_bslash and not is_quote
+        then:
+            buf => buf + input.substring(cursor, 1)
+            cursor => cursor + 1
+            self :> step

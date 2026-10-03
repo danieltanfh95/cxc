@@ -1,0 +1,146 @@
+# Port of cxc.resolve/build-symbol-table — walker producing a
+# `name → module` mapping over a top-level declaration stream.
+#
+# Clojure source. compiler/src/cxc/resolve.clj L194 to L233.
+#
+# The real walker consumes AST nodes carrying field / observable /
+# transition subtrees; the self-host port skips that detail and
+# tracks only the (kind, name) pair per node, since the attribution
+# step is the only output.
+#
+# Input per line: `<k>:<name>;<k>:<name>;…` where k ∈ {module,
+# record, def-atom, enum, other}.
+#   module    — sets current-module to <name> for subsequent
+#               declaration entries (does not emit itself).
+#   record    — emits `<name>=<module>`.
+#   def-atom  — emits `<name>=<module>`.
+#   enum      — emits `<name>=<module>`.
+#   other     — any filler shape, no emission.
+#
+# Pre-any-marker declarations use the fallback `user` module (matches
+# Clojure's `[{} nil]` + `(or … :user)` pattern). Later declarations
+# of the same name replace earlier ones (`assoc` last-wins semantics).
+#
+# The corpus avoids declaration names that collide with the Clojure
+# `prelude-name->module` map (prelude records like IOError, HttpError,
+# ProcResult, …), so the oracle's prelude-provenance never fires and
+# both sides agree on attribution.
+#
+# Output per line: comma-joined `name=module` entries, sorted
+# alphabetically by name.
+
+def main:
+    use args:    Args
+    use console: Console
+
+    spec:              String! = ""
+    cursor:            Int!    = 0
+    entry_acc:         String! = ""
+    current_module:    String! = "user"
+    out_entries:       List of String = []
+    sort_i:            Int!    = 0
+    scan_best:         String! = ""
+    scan_has_best:     Bool!   = false
+    out:               String! = ""
+
+    at_end  :- cursor >= spec.length()
+    cur     :- ||: at_end : -1 ||: else : spec.code_at(cursor)
+    is_semi :- cur == 59
+
+    scan_cur       :- out_entries.at(sort_i) ?? ""
+    scan_cur_eq    :- scan_cur.index_of("=")
+    scan_cur_name  :- scan_cur.substring(0, scan_cur_eq.max(0))
+    scan_best_eq   :- scan_best.index_of("=")
+    scan_best_name :- scan_best.substring(0, scan_best_eq.max(0))
+    scan_cmp       :- scan_cur_name.compare_to(scan_best_name)
+
+    -> parsing
+        then:
+            spec => args.get_or(1, "")
+            self :> step
+
+    -> sorting
+        then:
+            sort_i => 0
+            scan_has_best => false
+            scan_best => ""
+            self :> scan
+
+    -> end
+        then: console.write(out)
+
+    parsing <: step -> parsing
+        |: not at_end and is_semi
+        then:
+            self :> commit
+
+    parsing <: step -> parsing
+        |: not at_end and not is_semi
+        then:
+            entry_acc => entry_acc + spec.substring(cursor, 1)
+            cursor => cursor + 1
+            self :> step
+
+    parsing <: step -> sorting
+        |: at_end and entry_acc.length() > 0
+        then:
+            let colon_idx: Int!   = entry_acc.index_of(":")
+            let kind: String!     = entry_acc.substring(0, colon_idx.max(0))
+            let name_q: String!   = entry_acc.substring((colon_idx + 1).max(0), (entry_acc.length() - colon_idx - 1).max(0))
+            let is_decl: Bool!    = kind == "record" or kind == "def-atom" or kind == "enum"
+            let is_module: Bool!  = kind == "module"
+            let seek: String!     = name_q + "="
+            current_module => ||: is_module : name_q ||: else : current_module
+            out_entries => ||: is_decl : out_entries.filter(e => not e.starts_with(seek)).append(name_q + "=" + current_module) ||: else : out_entries
+
+    parsing <: step -> sorting
+        |: at_end and entry_acc.length() == 0
+
+    parsing <: commit -> parsing
+        then:
+            let colon_idx: Int!   = entry_acc.index_of(":")
+            let kind: String!     = entry_acc.substring(0, colon_idx.max(0))
+            let name_q: String!   = entry_acc.substring((colon_idx + 1).max(0), (entry_acc.length() - colon_idx - 1).max(0))
+            let is_decl: Bool!    = kind == "record" or kind == "def-atom" or kind == "enum"
+            let is_module: Bool!  = kind == "module"
+            let seek: String!     = name_q + "="
+            current_module => ||: is_module : name_q ||: else : current_module
+            out_entries => ||: is_decl : out_entries.filter(e => not e.starts_with(seek)).append(name_q + "=" + current_module) ||: else : out_entries
+            entry_acc => ""
+            cursor => cursor + 1
+            self :> step
+
+    sorting <: scan -> sorting
+        |: sort_i < out_entries.count() and not scan_has_best
+        then:
+            scan_best => scan_cur
+            scan_has_best => true
+            sort_i => sort_i + 1
+            self :> scan
+
+    sorting <: scan -> sorting
+        |: sort_i < out_entries.count() and scan_has_best and scan_cmp < 0
+        then:
+            scan_best => scan_cur
+            sort_i => sort_i + 1
+            self :> scan
+
+    sorting <: scan -> sorting
+        |: sort_i < out_entries.count() and scan_has_best and scan_cmp >= 0
+        then:
+            sort_i => sort_i + 1
+            self :> scan
+
+    sorting <: scan -> sorting
+        |: sort_i >= out_entries.count() and scan_has_best
+        then:
+            let sep: String! = ||: out.length() == 0 : "" ||: else : ","
+            out => out + sep + scan_best
+            out_entries => out_entries.filter(e => e != scan_best)
+            sort_i => 0
+            scan_has_best => false
+            scan_best => ""
+            self :> scan
+
+    sorting <: scan -> end
+        |: sort_i >= out_entries.count() and not scan_has_best

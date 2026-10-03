@@ -1,0 +1,143 @@
+# Port of cxc.resolve/module-scoped-ref-names — walker that scans
+# an AST and returns the distinct set of names participating in
+# module-scope resolution.
+#
+# Clojure source. compiler/src/cxc/resolve.clj L466 to L531.
+#
+# The real walker uses `clojure.walk/postwalk` over an unbounded
+# AST. For the self-host port we skip the walk and feed the port
+# a flat list of (kind, name) pairs that each describe one AST
+# occurrence. The port applies the same filter rules the walker
+# applies at each node:
+#
+#   kind=type-ref  → include always
+#   kind=extend    → include always (:extend-class target)
+#   kind=call      → include when name's first char is upper-case
+#   kind=dot       → include when name's first char is upper-case
+#   kind=type-of   → include when name's first char is upper-case
+#   kind=ident     → never include (bare :ident)
+#   kind=other     → never include (any shape outside the five above)
+#
+# Input per line: `<kind>:<name>;<kind>:<name>;…`. Empty line = no
+# entries, output is an empty line.
+#
+# Output per line: comma-joined, alphabetically-sorted, deduped
+# names. Alphabetical ordering uses `.compare_to` for strcmp-shape
+# byte order (chapter-6 landing).
+
+def main:
+    use args:    Args
+    use console: Console
+
+    spec:         String! = ""
+    cursor:       Int!    = 0
+    entry_acc:    String! = ""
+    out_names:    List of String = []
+    sort_i:       Int!    = 0
+    scan_best:    String! = ""
+    scan_has_best: Bool!  = false
+    emit_i:       Int!    = 0
+    out:          String! = ""
+
+    at_end  :- cursor >= spec.length()
+    cur     :- ||: at_end : -1 ||: else : spec.code_at(cursor)
+    is_semi :- cur == 59
+
+    scan_cur     :- out_names.at(sort_i) ?? ""
+    scan_cmp     :- scan_cur.compare_to(scan_best)
+
+    -> parsing
+        then:
+            spec => args.get_or(1, "")
+            self :> step
+
+    -> sorting
+        then:
+            sort_i => 0
+            scan_has_best => false
+            scan_best => ""
+            self :> scan
+
+    -> emitting
+        then:
+            emit_i => 0
+            self :> step
+
+    -> end
+        then: console.write(out)
+
+    parsing <: step -> parsing
+        |: not at_end and is_semi
+        then:
+            self :> commit
+
+    parsing <: step -> parsing
+        |: not at_end and not is_semi
+        then:
+            entry_acc => entry_acc + spec.substring(cursor, 1)
+            cursor => cursor + 1
+            self :> step
+
+    parsing <: step -> sorting
+        |: at_end and entry_acc.length() > 0
+        then:
+            let colon_idx: Int!   = entry_acc.index_of(":")
+            let kind: String!     = entry_acc.substring(0, colon_idx.max(0))
+            let name_q: String!   = entry_acc.substring((colon_idx + 1).max(0), (entry_acc.length() - colon_idx - 1).max(0))
+            let first_c: Int!     = ||: name_q.length() > 0 : name_q.code_at(0) ||: else : -1
+            let cap: Bool!        = first_c >= 65 and first_c <= 90
+            let include: Bool!    = ||: kind == "type-ref" : true ||: kind == "extend" : true ||: kind == "call" : cap ||: kind == "dot" : cap ||: kind == "type-of" : cap ||: else : false
+            out_names => ||: include and not out_names.contains(name_q) : out_names.append(name_q) ||: else : out_names
+
+    parsing <: step -> sorting
+        |: at_end and entry_acc.length() == 0
+
+    parsing <: commit -> parsing
+        then:
+            let colon_idx: Int!   = entry_acc.index_of(":")
+            let kind: String!     = entry_acc.substring(0, colon_idx.max(0))
+            let name_q: String!   = entry_acc.substring((colon_idx + 1).max(0), (entry_acc.length() - colon_idx - 1).max(0))
+            let first_c: Int!     = ||: name_q.length() > 0 : name_q.code_at(0) ||: else : -1
+            let cap: Bool!        = first_c >= 65 and first_c <= 90
+            let include: Bool!    = ||: kind == "type-ref" : true ||: kind == "extend" : true ||: kind == "call" : cap ||: kind == "dot" : cap ||: kind == "type-of" : cap ||: else : false
+            out_names => ||: include and not out_names.contains(name_q) : out_names.append(name_q) ||: else : out_names
+            entry_acc => ""
+            cursor => cursor + 1
+            self :> step
+
+    sorting <: scan -> sorting
+        |: sort_i < out_names.count() and not scan_has_best
+        then:
+            scan_best => scan_cur
+            scan_has_best => true
+            sort_i => sort_i + 1
+            self :> scan
+
+    sorting <: scan -> sorting
+        |: sort_i < out_names.count() and scan_has_best and scan_cmp < 0
+        then:
+            scan_best => scan_cur
+            sort_i => sort_i + 1
+            self :> scan
+
+    sorting <: scan -> sorting
+        |: sort_i < out_names.count() and scan_has_best and scan_cmp >= 0
+        then:
+            sort_i => sort_i + 1
+            self :> scan
+
+    sorting <: scan -> sorting
+        |: sort_i >= out_names.count() and scan_has_best
+        then:
+            let sep: String! = ||: out.length() == 0 : "" ||: else : ","
+            out => out + sep + scan_best
+            out_names => out_names.filter(n => n != scan_best)
+            sort_i => 0
+            scan_has_best => false
+            scan_best => ""
+            self :> scan
+
+    sorting <: scan -> emitting
+        |: sort_i >= out_names.count() and not scan_has_best
+
+    emitting <: step -> end

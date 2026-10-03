@@ -1,0 +1,65 @@
+# Port of cxc.resolve/resolve-name-to-module — four-way lookup
+# ladder for bare-name module resolution under F51 L3b(b.ii) rules.
+#
+# Priority (first hit wins):
+#   1. prelude-provenance has the name     → prelude's module
+#   2. own-decls contains the name         → own module
+#   3. imports has the name                → import's source module
+#   4. unresolved                          → NIL
+#
+# Clojure source. compiler/src/cxc/resolve.clj L618 to L630.
+#
+# Input format: argv[1]…argv[5] carry the inputs independently so
+# the port doesn't have to parse yet-another `|`-escaped payload.
+#   argv[1] : the bare identifier being resolved
+#   argv[2] : the resolving file's module name
+#   argv[3] : own-decls as a comma-separated name list (`a,b,c`)
+#   argv[4] : imports as `name=module` pairs (`foo=lib,bar=util`)
+#   argv[5] : prelude-provenance in the same `name=module` form
+#
+# Output per line: the resolved module name, or `NIL` when unresolved.
+#
+# Table lookup. For a given key N and table T formatted
+# `k1=v1,k2=v2,...`, the lookup observation looks for either the
+# leading `<N>=` prefix or an interior `,<N>=` substring; on a hit,
+# it slices the value up to the next `,` or end-of-string. The
+# decl_contains observation does the same comma-boundary dance but
+# checks membership without the `=value` tail.
+
+def main:
+    use args:    Args
+    use console: Console
+
+    lookup(table: String!, key: String!) :- String!
+        alias seek         :- key + "="
+        alias leading      :- table.starts_with(seek)
+        alias interior_idx :- table.index_of("," + seek)
+        alias has_match    :- leading or interior_idx >= 0
+        alias val_start    :- ||: leading : seek.length() ||: has_match : interior_idx + 1 + seek.length() ||: else : -1
+        alias rest         :- ||: has_match : table.substring(val_start.max(0), (table.length() - val_start).max(0)) ||: else : ""
+        alias end_idx      :- rest.index_of(",")
+        ||: not has_match : "" ||: end_idx < 0 : rest ||: else : rest.substring(0, end_idx.max(0))
+
+    decl_contains(table: String!, key: String!) :- Bool!
+        alias is_sole   :- table == key
+        alias is_head   :- table.starts_with(key + ",")
+        alias is_middle :- table.index_of("," + key + ",") >= 0
+        alias is_tail   :- table.ends_with("," + key)
+        is_sole or is_head or is_middle or is_tail
+
+    -> running
+        then:
+            let name_q: String!    = args.get_or(1, "")
+            let own_mod: String!   = args.get_or(2, "")
+            let own_decls: String! = args.get_or(3, "")
+            let imports: String!   = args.get_or(4, "")
+            let prelude: String!   = args.get_or(5, "")
+
+            let p_hit: String! = self.lookup(prelude, name_q)
+            let own_hit: Bool! = self.decl_contains(own_decls, name_q)
+            let i_hit: String! = self.lookup(imports, name_q)
+
+            let out: String! = ||: p_hit.length() > 0 : p_hit ||: own_hit : own_mod ||: i_hit.length() > 0 : i_hit ||: else : "NIL"
+            console.write(out)
+
+    -> end

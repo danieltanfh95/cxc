@@ -1,0 +1,15 @@
+module:myapp;record:Foo
+module:myapp;record:Foo;record:Bar;record:Baz
+module:myapp;def-atom:Alpha;def-atom:Beta
+module:myapp;enum:Color;enum:Size
+record:Foo
+record:Foo;record:Bar
+module:a;record:Foo;module:b;record:Bar
+module:a;record:Foo;module:b;record:Foo
+module:util;def-atom:Worker;enum:State;record:Config
+module:x.y;record:Foo
+other:ignored;module:z;record:Qux
+record:Foo;other:junk;def-atom:Beta;enum:Delta
+module:main;record:Alpha;record:Beta;record:Gamma;record:Delta;record:Epsilon
+
+module:x;record:X;module:y;record:Y;module:z;record:Z

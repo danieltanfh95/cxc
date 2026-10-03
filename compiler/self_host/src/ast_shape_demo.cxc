@@ -1,0 +1,73 @@
+# AST shape demo — proves the flat tagged-record encoding described in
+# compiler/self_host/design/ast-shape-records.md compiles today.
+#
+# Four `TypeKind` cases, one flat `TypeNode` record. Fields used by a
+# given kind are populated; unused fields stay at their non-nil zero
+# value. Serialization matches `cxc.named-tuple/mangle-type`.
+#
+# This is a smoke-test program (one `def main:`), not a library — cxc
+# requires `def main:` to produce an executable. Future ports that
+# need `TypeNode` will inline the record declaration into their own
+# `def main:` program until a shared-decl import path lands.
+#
+# Argv: argv[1] optionally selects a demo case (`ref` / `nonnil` /
+# `named_tuple` / `of`). Default: run all four.
+
+def TypeKind:
+    case ref
+    case nonnil
+    case named_tuple
+    case parametric
+
+def TypeNode:
+    kind:             TypeKind!
+    name:             String!
+    nn_inner:         String!
+    of_arity:         Int!
+    tuple_fields_ser: String!
+    of_inners_ser:    String!
+
+def main:
+    use args:    Args
+    use console: Console
+
+    -> running
+        then:
+            let want: String! = args.get_or(1, "all")
+
+            let t_ref: TypeNode = TypeNode(
+                kind:             TypeKind.ref,
+                name:             "Int",
+                nn_inner:         "",
+                of_arity:         0,
+                tuple_fields_ser: "",
+                of_inners_ser:    "")
+
+            let t_nn: TypeNode = TypeNode(
+                kind:             TypeKind.nonnil,
+                name:             "",
+                nn_inner:         "Int",
+                of_arity:         0,
+                tuple_fields_ser: "",
+                of_inners_ser:    "")
+
+            let t_nt: TypeNode = TypeNode(
+                kind:             TypeKind.named_tuple,
+                name:             "",
+                nn_inner:         "",
+                of_arity:         0,
+                tuple_fields_ser: "x|Int;y|Int",
+                of_inners_ser:    "")
+
+            let t_of: TypeNode = TypeNode(
+                kind:             TypeKind.parametric,
+                name:             "List",
+                nn_inner:         "",
+                of_arity:         1,
+                tuple_fields_ser: "",
+                of_inners_ser:    "Int")
+
+            let out: String! = ||: want == "ref" : "ref:" + t_ref.name ||: want == "nonnil" : "nonnil:" + t_nn.nn_inner ||: want == "named_tuple" : "named_tuple:" + t_nt.tuple_fields_ser ||: want == "parametric" : "of:" + t_of.name + "/" + t_of.of_arity.to_string() + "/" + t_of.of_inners_ser ||: else : "ref:" + t_ref.name + ";nonnil:" + t_nn.nn_inner + ";named_tuple:" + t_nt.tuple_fields_ser + ";of:" + t_of.name + "/" + t_of.of_arity.to_string() + "/" + t_of.of_inners_ser
+            console.write(out)
+
+    -> end

@@ -1,0 +1,23 @@
+""
+"a"
+"abc"
+"hello world"
+"a\nb"
+"a\tb"
+"a\rb"
+"\\"
+"a\\b"
+"a\"b"
+"a\'b"
+"\n\n\n"
+"line1\nline2\tcol"
+"nested \"quote\" done"
+"path\\to\\file"
+"
+"abc
+"a\
+"\z"
+"\p"
+"\?"
+"abc\q"
+"abc\
