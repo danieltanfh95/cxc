@@ -59,11 +59,19 @@ PY
       # Parse { exit, stdout, stderr }
       exit_code=$(python3 -c "import json,sys; d=json.loads(sys.argv[1]); print(d.get('exit',1))" "$resp" 2>/dev/null)
       if [ -n "$exit_code" ]; then
-        python3 -c "import json,sys; d=json.loads(sys.argv[1]); sys.stdout.write(d.get('stdout','')); sys.stderr.write(d.get('stderr',''))" "$resp"
-        exit "$exit_code"
+        # Exit code 99 is the daemon-stale marker. Chapter-4 (2026-10-04)
+        # adds a daemon-side mtime check that returns 99 when compiler
+        # source is newer than the daemon's start time, so we fall
+        # through to `exec clj` here for a fresh read instead of
+        # serving stale behavior. See memory corvid-stale-daemon-bites-parity.
+        if [ "$exit_code" != "99" ]; then
+          python3 -c "import json,sys; d=json.loads(sys.argv[1]); sys.stdout.write(d.get('stdout','')); sys.stderr.write(d.get('stderr',''))" "$resp"
+          exit "$exit_code"
+        fi
       fi
     fi
-    # If we reach here, daemon call failed. Fall through to cold start below.
+    # If we reach here, daemon call failed or returned stale. Fall through
+    # to cold start below.
   fi
 fi
 

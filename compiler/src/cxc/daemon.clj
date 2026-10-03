@@ -17,6 +17,14 @@
         \"stderr\": \"<captured>\",
         \"elapsed_ms\": <int>}
 
+   Stale-source detection (2026-10-04). The daemon records its start time on
+   `serve` boot. Each `compile` request walks `src/cxc/**/*.clj` plus
+   `resources/prelude/**/*.cxc` and returns exit 99 with a `stale` marker
+   when any file mtime is newer than the start time, so the paired bin/cxc
+   can fall through to `exec clj` for a fresh read. See memory
+   corvid-stale-daemon-bites-parity for the chapter-3 near-miss that
+   motivated this.
+
    Default socket path: /tmp/cxc-daemon.sock (overridable via env CXC_DAEMON_SOCK).
 
    Usage:
@@ -27,16 +35,51 @@
    to a cold `clj -M -m cxc.core` on any socket error."
   (:require [clojure.data.json :as json]
             [clojure.string :as str]
+            [clojure.java.io :as io]
             [cxc.core :as core])
   (:import [java.net StandardProtocolFamily UnixDomainSocketAddress]
            [java.nio.channels ServerSocketChannel SocketChannel]
            [java.nio ByteBuffer]
-           [java.io ByteArrayOutputStream PrintStream BufferedReader InputStreamReader OutputStreamWriter BufferedWriter]
+           [java.io ByteArrayOutputStream PrintStream BufferedReader InputStreamReader OutputStreamWriter BufferedWriter File]
            [java.nio.file Files Paths LinkOption]
            [java.nio.file.attribute PosixFilePermission PosixFilePermissions]))
 
 (def ^:private default-sock-path
   (or (System/getenv "CXC_DAEMON_SOCK") "/tmp/cxc-daemon.sock"))
+
+;; Daemon start time, set once in `serve`. Used by stale-source detection.
+(def ^:private daemon-start-ms (atom nil))
+
+;; Source roots scanned for stale-source detection. Relative to the
+;; compiler/ dir (the daemon's working directory). Keep this list small
+;; because every scan happens on every compile request.
+(def ^:private source-roots
+  [{:dir "src/cxc"          :suffix ".clj"}
+   {:dir "resources/prelude" :suffix ".cxc"}])
+
+(defn- stale-source-newer-than-start?
+  "Return the first file path (as a String) whose mtime exceeds the
+   daemon's recorded start time, or nil when every file is older. Walks
+   the roots in `source-roots`. The paths are relative to the daemon's
+   working directory so a File-based walk suffices."
+  []
+  (let [start @daemon-start-ms]
+    (when start
+      (reduce
+       (fn [_ {:keys [^String dir ^String suffix]}]
+         (let [root (io/file dir)]
+           (if (.isDirectory root)
+             (if-let [hit (first
+                           (for [^java.io.File f (file-seq root)
+                                 :when (and (.isFile f)
+                                            (.endsWith (.getName f) suffix)
+                                            (> (.lastModified f) start))]
+                             (.getPath f)))]
+               (reduced hit)
+               nil)
+             nil)))
+       nil
+       source-roots))))
 
 (defn- sock-addr [path]
   (UnixDomainSocketAddress/of path))
@@ -89,8 +132,17 @@
   "Dispatch a parsed request map. Returns a response map."
   [req]
   (case (:cmd req)
-    "compile" (let [{:keys [exit stdout stderr elapsed-ms]} (handle-compile (:args req))]
-                {:exit exit :stdout stdout :stderr stderr :elapsed_ms elapsed-ms})
+    "compile"
+    (if-let [stale-path (stale-source-newer-than-start?)]
+      ;; Exit 99 is the stale-daemon marker. bin/cxc inspects for 99
+      ;; and falls through to `exec clj` for a fresh read. stderr is
+      ;; swallowed by the client; the message is kept for daemon logs.
+      {:exit 99 :stdout ""
+       :stderr (str "daemon stale (source newer than daemon start): "
+                    stale-path "; client should retry cold\n")
+       :elapsed_ms 0}
+      (let [{:keys [exit stdout stderr elapsed-ms]} (handle-compile (:args req))]
+        {:exit exit :stdout stdout :stderr stderr :elapsed_ms elapsed-ms}))
     "ping"    {:exit 0 :stdout "pong\n" :stderr "" :elapsed_ms 0}
     {:exit 2 :stdout "" :stderr (str "unknown cmd: " (:cmd req)) :elapsed_ms 0}))
 
@@ -149,6 +201,7 @@
   ([] (serve default-sock-path))
   ([sock-path]
    (delete-stale-socket! sock-path)
+   (reset! daemon-start-ms (System/currentTimeMillis))
    (let [addr   (sock-addr sock-path)
          server (ServerSocketChannel/open StandardProtocolFamily/UNIX)]
      (.bind server addr)
