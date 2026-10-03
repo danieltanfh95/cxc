@@ -1,0 +1,188 @@
+# Port of cxc.lex/scan-string — ASCII body + simple escapes + \xNN
+# hex-byte escape (decoding).
+#
+# Decodes the escapes in place rather than preserving the literal
+# form (chapter-7 slice 20 preserved; this slice decodes). Supported
+# escapes:
+#   \n \t \r \\ \" \'   — standard ASCII escapes
+#   \xNN                — two-hex-digit byte (0-255), decoded via
+#                         .to_char_string()
+# Out of scope. \u{...} unicode escape, \0 \a \b \f \v (deferred
+# until the port needs them). The corpus avoids out-of-scope
+# escapes; the port emits ERR on them for parity.
+#
+# Clojure source. compiler/src/cxc/lex.clj L139 to L231.
+#
+# Input per line: a candidate string literal starting with `"` at
+# index 0. Output per line:
+#   `<decoded-body>|<end-index>`   on well-formed close `"`
+#   `ERR`                          on any malformed input
+# Oracle uses the same shape; the decoded body is directly embedded
+# in the output line, so a decoded `\n` becomes a literal newline in
+# the output (which both sides emit as a line-break in the output
+# file — matched byte-for-byte).
+#
+# NUL-byte limitation. The compiler primitive `.to_char_string()`
+# correctly produces an NSString of length 1 for code point 0
+# (verified via NSString's stringWithCharacters:length: shape), but
+# console.write uses puts() which truncates at the first NUL byte.
+# The corpus therefore avoids `"\x00"`; parity on NUL-containing
+# decoded output needs an NSData-oriented output path which is
+# outside this slice's scope.
+
+def main:
+    use args:    Args
+    use console: Console
+
+    input:          String! = ""
+    cursor:         Int!    = 0
+    acc:            String! = ""
+    error:          Bool!   = false
+    done:           Bool!   = false
+
+    at_end  :- cursor >= input.length()
+    cur     :- ||: at_end : -1 ||: else : input.code_at(cursor)
+    is_close :- cur == 34
+    is_bs    :- cur == 92
+    is_x     :- cur == 120
+
+    next_ch_at(off: Int!) :- Int!
+        alias idx :- cursor + off
+        ||: idx >= input.length() : -1 ||: else : input.code_at(idx)
+
+    hex_val(c: Int!) :- Int!
+        ||: c >= 48 and c <= 57 : c - 48 ||: c >= 97 and c <= 102 : c - 87 ||: c >= 65 and c <= 70 : c - 55 ||: else : -1
+
+    -> starting
+        then:
+            input => args.get_or(1, "")
+            self :> step
+
+    -> end
+        then:
+            let out: String! = ||: error : "ERR" ||: else : acc + "|" + cursor.to_string()
+            console.write(out)
+
+    starting <: step -> scanning
+        |: input.length() == 0 or input.code_at(0) != 34
+        then:
+            error => true
+            self :> step
+
+    starting <: step -> scanning
+        |: input.length() > 0 and input.code_at(0) == 34
+        then:
+            cursor => 1
+            self :> step
+
+    scanning <: step -> end
+        |: error
+
+    scanning <: step -> end
+        |: not error and done
+
+    scanning <: step -> scanning
+        |: not error and at_end
+        then:
+            error => true
+            self :> step
+
+    scanning <: step -> scanning
+        |: not error and not at_end and is_close
+        then:
+            cursor => cursor + 1
+            done => true
+            self :> step
+
+    scanning <: step -> scanning
+        |: not error and not at_end and is_bs
+        then:
+            self :> handle_escape
+
+    scanning <: step -> scanning
+        |: not error and not at_end and not is_close and not is_bs
+        then:
+            acc => acc + input.substring(cursor, 1)
+            cursor => cursor + 1
+            self :> step
+
+    scanning <: handle_escape -> scanning
+        |: cursor + 1 >= input.length()
+        then:
+            error => true
+            self :> step
+
+    scanning <: handle_escape -> scanning
+        |: cursor + 1 < input.length() and self.next_ch_at(1) == 110
+        then:
+            acc => acc + (10).to_char_string()
+            cursor => cursor + 2
+            self :> step
+
+    scanning <: handle_escape -> scanning
+        |: cursor + 1 < input.length() and self.next_ch_at(1) == 116
+        then:
+            acc => acc + (9).to_char_string()
+            cursor => cursor + 2
+            self :> step
+
+    scanning <: handle_escape -> scanning
+        |: cursor + 1 < input.length() and self.next_ch_at(1) == 114
+        then:
+            acc => acc + (13).to_char_string()
+            cursor => cursor + 2
+            self :> step
+
+    scanning <: handle_escape -> scanning
+        |: cursor + 1 < input.length() and self.next_ch_at(1) == 92
+        then:
+            acc => acc + (92).to_char_string()
+            cursor => cursor + 2
+            self :> step
+
+    scanning <: handle_escape -> scanning
+        |: cursor + 1 < input.length() and self.next_ch_at(1) == 34
+        then:
+            acc => acc + (34).to_char_string()
+            cursor => cursor + 2
+            self :> step
+
+    scanning <: handle_escape -> scanning
+        |: cursor + 1 < input.length() and self.next_ch_at(1) == 39
+        then:
+            acc => acc + (39).to_char_string()
+            cursor => cursor + 2
+            self :> step
+
+    scanning <: handle_escape -> scanning
+        |: cursor + 1 < input.length() and self.next_ch_at(1) == 120
+        then:
+            self :> handle_hex_escape
+
+    scanning <: handle_escape -> scanning
+        |: cursor + 1 < input.length() and self.next_ch_at(1) != 110 and self.next_ch_at(1) != 116 and self.next_ch_at(1) != 114 and self.next_ch_at(1) != 92 and self.next_ch_at(1) != 34 and self.next_ch_at(1) != 39 and self.next_ch_at(1) != 120
+        then:
+            error => true
+            self :> step
+
+    scanning <: handle_hex_escape -> scanning
+        |: cursor + 3 >= input.length()
+        then:
+            error => true
+            self :> step
+
+    scanning <: handle_hex_escape -> scanning
+        |: cursor + 3 < input.length() and (self.hex_val(self.next_ch_at(2)) < 0 or self.hex_val(self.next_ch_at(3)) < 0)
+        then:
+            error => true
+            self :> step
+
+    scanning <: handle_hex_escape -> scanning
+        |: cursor + 3 < input.length() and self.hex_val(self.next_ch_at(2)) >= 0 and self.hex_val(self.next_ch_at(3)) >= 0
+        then:
+            let hi: Int!   = self.hex_val(self.next_ch_at(2))
+            let lo: Int!   = self.hex_val(self.next_ch_at(3))
+            let v:  Int!   = hi * 16 + lo
+            acc => acc + v.to_char_string()
+            cursor => cursor + 4
+            self :> step

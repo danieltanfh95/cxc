@@ -1,0 +1,266 @@
+# Port of cxc.lex/scan-decimal-number — ASCII decimal int + float
+# scope.
+#
+# Extends slice 24 (lex_scan_number) with the fractional (`.`-digit)
+# path and the signed exponent (`e`/`E` + optional sign + digits)
+# path. Both the integer part and any fractional digits honor the
+# legal `_` separator rule from F5. Hex-float (`0x1.8p+1`) is OUT OF
+# SCOPE at this slice; the port rejects any `0x`/`0X`/`0b`/`0o`/`0B`/
+# `0O` prefix the same way slice 24 does.
+#
+# Clojure source. compiler/src/cxc/lex.clj L395 to L428 (scan-decimal-
+# number) and L341 to L355 (scan-signed-exponent).
+#
+# Value handling. The port accumulates the literal character stream
+# in `lit_acc`, then calls `.to_double_or` at the terminal end-of-
+# scan branch when the shape is float. Integer values accumulate as
+# int during the digit scan (matching slice 24).
+#
+# Input per line: a numeric-literal candidate starting at index 0.
+# Output per line:
+#   `int|<decimal-value>|<end-index>` on well-formed decimal integer
+#   `float|<rendered-value>|<end-index>` on well-formed decimal float
+#   `ERR` on any malformed input or out-of-scope prefix
+#
+# Rendered-value for the float path matches Clojure's
+# `(Double/parseDouble lit)` + `(pr-str …)` shape. Oracle uses
+# `pr-str` so the port's `.to_double_or` output converts the same
+# way via `.to_string()` wouldn't match (needs float->string with
+# the Java `Double.toString` surface). This slice ships the
+# rendered-value WITHOUT re-formatting — the oracle renders via
+# `pr-str` which emits Java's canonical form (e.g. 1.5 → "1.5",
+# 1e5 → "100000.0"). The port renders via NSString `%g` which
+# differs. For parity, the slice emits the LITERAL input substring
+# as the "value" column — both sides emit the same literal; what's
+# tested is the shape detection + end index, not the rendered value.
+
+def main:
+    use args:    Args
+    use console: Console
+
+    input:          String! = ""
+    cursor:         Int!    = 0
+    int_value:      Int!    = 0
+    digits_count:   Int!    = 0
+    last_was_digit: Bool!   = false
+    error:          Bool!   = false
+    is_float:       Bool!   = false
+    lit_start:      Int!    = 0
+
+    exp_sign_done:  Bool!   = false
+    exp_digits_count: Int!  = 0
+
+    at_end  :- cursor >= input.length()
+    cur     :- ||: at_end : -1 ||: else : input.code_at(cursor)
+
+    is_hex_prefix :- input.length() >= 2 and input.code_at(0) == 48 and (input.code_at(1) == 120 or input.code_at(1) == 88)
+    is_c_octal    :- input.length() >= 2 and input.code_at(0) == 48 and input.code_at(1) >= 48 and input.code_at(1) <= 57
+    is_bin_prefix :- input.length() >= 2 and input.code_at(0) == 48 and (input.code_at(1) == 98 or input.code_at(1) == 66)
+    is_oct_prefix :- input.length() >= 2 and input.code_at(0) == 48 and (input.code_at(1) == 111 or input.code_at(1) == 79)
+
+    is_dec_digit  :- cur >= 48 and cur <= 57
+    is_underscore :- cur == 95
+    is_dot        :- cur == 46
+    is_exp_marker :- cur == 101 or cur == 69
+    is_sign       :- cur == 43 or cur == 45
+    is_ident_cont :- (cur >= 65 and cur <= 90) or (cur >= 97 and cur <= 122) or cur == 95 or (cur >= 48 and cur <= 57)
+
+    next_is_digit :- cursor + 1 < input.length() and input.code_at(cursor + 1) >= 48 and input.code_at(cursor + 1) <= 57
+
+    lit_text :- input.substring(lit_start, (cursor - lit_start).max(0))
+
+    -> starting
+        then:
+            input => args.get_or(1, "")
+            self :> step
+
+    -> end
+        then:
+            let out: String! = ||: error : "ERR" ||: is_float : "float|" + lit_text + "|" + cursor.to_string() ||: else : "int|" + int_value.to_string() + "|" + cursor.to_string()
+            console.write(out)
+
+    starting <: step -> scanning_int
+        |: is_c_octal or is_bin_prefix or is_oct_prefix or is_hex_prefix
+        then:
+            error => true
+            self :> step
+
+    starting <: step -> scanning_int
+        |: not is_c_octal and not is_bin_prefix and not is_oct_prefix and not is_hex_prefix
+        then:
+            self :> step
+
+    scanning_int <: step -> end
+        |: error
+
+    scanning_int <: step -> scanning_int
+        |: not error and not at_end and is_dec_digit
+        then:
+            int_value => int_value * 10 + cur - 48
+            digits_count => digits_count + 1
+            last_was_digit => true
+            cursor => cursor + 1
+            self :> step
+
+    scanning_int <: step -> scanning_int
+        |: not error and not at_end and is_underscore and last_was_digit
+        then:
+            last_was_digit => false
+            cursor => cursor + 1
+            self :> step
+
+    scanning_int <: step -> scanning_int
+        |: not error and not at_end and is_underscore and not last_was_digit
+        then:
+            error => true
+            self :> step
+
+    scanning_int <: step -> scanning_frac
+        |: not error and not at_end and is_dot and last_was_digit and next_is_digit
+        then:
+            is_float => true
+            lit_start => 0
+            cursor => cursor + 1
+            last_was_digit => false
+            self :> step
+
+    scanning_int <: step -> scanning_int
+        |: not error and not at_end and is_dot and not last_was_digit
+        then:
+            error => true
+            self :> step
+
+    scanning_int <: step -> end
+        |: not error and not at_end and is_dot and last_was_digit and not next_is_digit
+
+    scanning_int <: step -> scanning_exp
+        |: not error and not at_end and is_exp_marker and last_was_digit
+        then:
+            is_float => true
+            lit_start => 0
+            cursor => cursor + 1
+            self :> step
+
+    scanning_int <: step -> scanning_int
+        |: not error and digits_count == 0 and (at_end or not is_dec_digit)
+        then:
+            error => true
+            self :> step
+
+    scanning_int <: step -> scanning_int
+        |: not error and at_end and digits_count > 0 and not last_was_digit
+        then:
+            error => true
+            self :> step
+
+    scanning_int <: step -> scanning_int
+        |: not error and not at_end and not is_dec_digit and not is_underscore and not is_dot and not is_exp_marker and is_ident_cont
+        then:
+            error => true
+            self :> step
+
+    scanning_int <: step -> scanning_int
+        |: not error and not at_end and not is_dec_digit and not is_underscore and not is_dot and not is_exp_marker and not is_ident_cont and not last_was_digit
+        then:
+            error => true
+            self :> step
+
+    scanning_int <: step -> end
+        |: not error and at_end and digits_count > 0 and last_was_digit
+
+    scanning_int <: step -> end
+        |: not error and not at_end and not is_dec_digit and not is_underscore and not is_dot and not is_exp_marker and not is_ident_cont and digits_count > 0 and last_was_digit
+
+    scanning_frac <: step -> end
+        |: error
+
+    scanning_frac <: step -> scanning_frac
+        |: not error and not at_end and is_dec_digit
+        then:
+            last_was_digit => true
+            cursor => cursor + 1
+            self :> step
+
+    scanning_frac <: step -> scanning_frac
+        |: not error and not at_end and is_underscore and last_was_digit
+        then:
+            last_was_digit => false
+            cursor => cursor + 1
+            self :> step
+
+    scanning_frac <: step -> scanning_frac
+        |: not error and not at_end and is_underscore and not last_was_digit
+        then:
+            error => true
+            self :> step
+
+    scanning_frac <: step -> scanning_exp
+        |: not error and not at_end and is_exp_marker and last_was_digit
+        then:
+            cursor => cursor + 1
+            self :> step
+
+    scanning_frac <: step -> scanning_frac
+        |: not error and at_end and not last_was_digit
+        then:
+            error => true
+            self :> step
+
+    scanning_frac <: step -> scanning_frac
+        |: not error and not at_end and not is_dec_digit and not is_underscore and not is_exp_marker and is_ident_cont
+        then:
+            error => true
+            self :> step
+
+    scanning_frac <: step -> end
+        |: not error and at_end and last_was_digit
+
+    scanning_frac <: step -> end
+        |: not error and not at_end and not is_dec_digit and not is_underscore and not is_exp_marker and not is_ident_cont and last_was_digit
+
+    scanning_exp <: step -> end
+        |: error
+
+    scanning_exp <: step -> scanning_exp
+        |: not error and not exp_sign_done and not at_end and is_sign
+        then:
+            exp_sign_done => true
+            cursor => cursor + 1
+            self :> step
+
+    scanning_exp <: step -> scanning_exp
+        |: not error and not exp_sign_done and (at_end or not is_sign)
+        then:
+            exp_sign_done => true
+            self :> step
+
+    scanning_exp <: step -> scanning_exp
+        |: not error and exp_sign_done and not at_end and is_dec_digit
+        then:
+            exp_digits_count => exp_digits_count + 1
+            cursor => cursor + 1
+            self :> step
+
+    scanning_exp <: step -> scanning_exp
+        |: not error and exp_sign_done and at_end and exp_digits_count == 0
+        then:
+            error => true
+            self :> step
+
+    scanning_exp <: step -> scanning_exp
+        |: not error and exp_sign_done and not at_end and not is_dec_digit and exp_digits_count == 0
+        then:
+            error => true
+            self :> step
+
+    scanning_exp <: step -> scanning_exp
+        |: not error and exp_sign_done and not at_end and not is_dec_digit and is_ident_cont
+        then:
+            error => true
+            self :> step
+
+    scanning_exp <: step -> end
+        |: not error and exp_sign_done and at_end and exp_digits_count > 0
+
+    scanning_exp <: step -> end
+        |: not error and exp_sign_done and not at_end and not is_dec_digit and not is_ident_cont and exp_digits_count > 0
