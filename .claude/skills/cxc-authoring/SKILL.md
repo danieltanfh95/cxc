@@ -30,7 +30,7 @@ For a first-time reader (agent or human):
 2. [docs/writing-corvid/02-language-tour.md](../../../docs/writing-corvid/02-language-tour.md): the reference.
 3. [docs/writing-corvid/04-common-mistakes.md](../../../docs/writing-corvid/04-common-mistakes.md): what to avoid and why.
 
-[docs/writing-corvid/03-design-patterns.md](../../../docs/writing-corvid/03-design-patterns.md) is an **opt-in reference**, not a reading-order step. Consult a specific pattern only when a specific problem in front of you needs it. Do NOT scan it upfront and apply patterns preemptively — the patterns exist to solve real problems, not to structure a first draft.
+[docs/writing-corvid/03-design-patterns.md](../../../docs/writing-corvid/03-design-patterns.md) is an **opt-in reference**, not a reading-order step. Patterns refine the Zen defaults for specific problem shapes. Consult a specific pattern only when a specific problem in front of you needs it. Do NOT scan it upfront and apply patterns preemptively, the patterns exist to solve real problems, not to structure a first draft.
 
 For an experienced author looking for a specific answer, jump
 straight to (2) or (3).
@@ -51,7 +51,7 @@ These are the values the language is built around. Read them before you start; t
 7. **Explicit capabilities are the whole point.** Capability dependencies must appear in the atom's declaration surface, so `grep '^\s*use '` on the body enumerates every IO/RNG/subprocess/HTTP authority the atom reaches. Two mechanisms serve this, (a) `use <Cap>:` to consume an existing stdlib or project plugin (`fs`, `subprocess`, `console`, `env`, `random`), or (b) `def plugin:` to author a new wrapper when the needed cap is not provided. A translation that calls `print` or `SeededPrng` without declaring a `use` wastes the capability model, regardless of whether the backing plugin is new or existing.
 8. **Fail loudly at the boundary.** Fallible capabilities raise typed records (`IOError`, `HttpError`, `ShellError`, `EnvError`, `JsonError`, `RandomError`). Recover at the call site with `or T():`. No `Result[T, E]`, no `try / catch` — the recovery is where the caller's context knows what fallback means.
 
-The value story Corvid pitches (locality, auditable transitions, observation decoupling, explicit capabilities) emerges from writing transitions, observations, and plugins according to these eight values — not from architecture drawings.
+The Zen items name DEFAULT STANCES for atom shape, state access, and capability enumeration. They are not pattern applications; patterns in `docs/writing-corvid/03-design-patterns.md` refine these defaults for specific problem shapes. The value story Corvid pitches (locality, auditable transitions, observation decoupling, explicit capabilities) emerges from writing transitions, observations, and plugins according to these eight values, not from architecture drawings.
 
 ## Verification workflow
 
