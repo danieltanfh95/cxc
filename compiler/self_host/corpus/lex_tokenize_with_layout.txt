@@ -10,3 +10,31 @@ def Z:\n    use console: Console\n    name: String!
 def Pair(k: String!, v: Int!):\n    extra: Int
 def Items:\n    xs: List of Int
 def Map1:\n    m: Map of (Int, String)
+a -> b
+x => y
+k |: v
+f :- expr
+a ?? b
+p <: q
+r :> s
+a == b
+a != b
+a >= b
+a <= b
+x = y
+a - b
+a < b
+a > b
+a | b
+a ?
+-> => |: :- ?? <: :> == != >= <=
+def X:\n    name => value |: cond :- expr
+123
+0
+99999
+"hello"
+""
+"a b c"
+'c'
+'A'
+def X:\n    count: Int = 0\n    label: String = "hi"

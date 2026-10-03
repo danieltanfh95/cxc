@@ -36,8 +36,19 @@
                        ")")
     (str "T?:" (:node t))))
 
+(defn- ser-default [d]
+  (if (nil? d)
+    ""
+    (case (:node d)
+      :lit-int    (str "=INT:" (:value d))
+      :lit-string (str "=STR:" (pr-str (:value d)))
+      :lit-char   (str "=CHR:" (pr-str (:value d)))
+      :lit-bool   (str "=BOOL:" (:value d))
+      :ident      (str "=IDENT:" (:name d))
+      (str "=?:" (:node d)))))
+
 (defn- ser-field [f]
-  (str (:name f) ":" (ser-type (:type f))))
+  (str (:name f) ":" (ser-type (:type f)) (ser-default (:default f))))
 
 (defn- ser-case [ce]
   (if (seq (:payload ce))

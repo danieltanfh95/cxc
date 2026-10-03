@@ -55,6 +55,7 @@ def main:
 
     at_src_end :- sc >= source.length()
     srccur     :- ||: at_src_end : -1 ||: else : source.code_at(sc)
+    srcnext    :- ||: sc + 1 >= source.length() : -1 ||: else : source.code_at(sc + 1)
     is_sp      :- srccur == 32
     is_nl      :- srccur == 10
     is_id_start :- (srccur >= 65 and srccur <= 90) or (srccur >= 97 and srccur <= 122) or srccur == 95
@@ -64,6 +65,29 @@ def main:
     is_lparen  :- srccur == 40
     is_rparen  :- srccur == 41
     is_bang    :- srccur == 33
+    is_q       :- srccur == 63
+
+    is_arrow     :- srccur == 45 and srcnext == 62
+    is_fat_arrow :- srccur == 61 and srcnext == 62
+    is_pipe_col  :- srccur == 124 and srcnext == 58
+    is_col_dash  :- srccur == 58 and srcnext == 45
+    is_double_q  :- srccur == 63 and srcnext == 63
+    is_lt_col    :- srccur == 60 and srcnext == 58
+    is_col_gt    :- srccur == 58 and srcnext == 62
+    is_eq_eq     :- srccur == 61 and srcnext == 61
+    is_bang_eq   :- srccur == 33 and srcnext == 61
+    is_gte       :- srccur == 62 and srcnext == 61
+    is_lte       :- srccur == 60 and srcnext == 61
+
+    is_any_multi :- is_arrow or is_fat_arrow or is_pipe_col or is_col_dash or is_double_q or is_lt_col or is_col_gt or is_eq_eq or is_bang_eq or is_gte or is_lte
+    is_eq        :- srccur == 61
+    is_dash      :- srccur == 45
+    is_lt        :- srccur == 60
+    is_gt        :- srccur == 62
+    is_pipe      :- srccur == 124
+    is_digit     :- srccur >= 48 and srccur <= 57
+    is_dquote    :- srccur == 34
+    is_squote    :- srccur == 39
 
     top_indent :- indent_stack.at((indent_stack.count() - 1).max(0)) ?? 0
 
@@ -130,7 +154,7 @@ def main:
             self :> step
 
     lex_start <: step -> lex_start
-        |: not at_src_end and not at_line_start and is_colon
+        |: not at_src_end and not at_line_start and is_colon and not is_col_dash and not is_col_gt
         then:
             tokens => tokens.append(Token(kind: "punct", value: ":", line: line_num, col: col_num))
             sc => sc + 1
@@ -154,9 +178,66 @@ def main:
             self :> step
 
     lex_start <: step -> lex_start
-        |: not at_src_end and not at_line_start and is_bang
+        |: not at_src_end and not at_line_start and is_bang and not is_bang_eq
         then:
             tokens => tokens.append(Token(kind: "punct", value: "!", line: line_num, col: col_num))
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> step
+
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and is_q and not is_double_q
+        then:
+            tokens => tokens.append(Token(kind: "punct", value: "?", line: line_num, col: col_num))
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> step
+
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and is_any_multi
+        then:
+            let two: String! = source.substring(sc, 2)
+            tokens => tokens.append(Token(kind: "glyph", value: two, line: line_num, col: col_num))
+            sc => sc + 2
+            col_num => col_num + 2
+            self :> step
+
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and is_eq and not is_fat_arrow and not is_eq_eq
+        then:
+            tokens => tokens.append(Token(kind: "glyph", value: "=", line: line_num, col: col_num))
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> step
+
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and is_dash and not is_arrow
+        then:
+            tokens => tokens.append(Token(kind: "glyph", value: "-", line: line_num, col: col_num))
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> step
+
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and is_lt and not is_lt_col and not is_lte
+        then:
+            tokens => tokens.append(Token(kind: "glyph", value: "<", line: line_num, col: col_num))
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> step
+
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and is_gt and not is_gte
+        then:
+            tokens => tokens.append(Token(kind: "glyph", value: ">", line: line_num, col: col_num))
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> step
+
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and is_pipe and not is_pipe_col
+        then:
+            tokens => tokens.append(Token(kind: "glyph", value: "|", line: line_num, col: col_num))
             sc => sc + 1
             col_num => col_num + 1
             self :> step
@@ -169,7 +250,32 @@ def main:
             self :> scan_word
 
     lex_start <: step -> lex_start
-        |: not at_src_end and not at_line_start and not is_sp and not is_nl and not is_comma and not is_colon and not is_lparen and not is_rparen and not is_bang and not is_id_start
+        |: not at_src_end and not at_line_start and is_digit
+        then:
+            word_acc => ""
+            tok_start_col => col_num
+            self :> scan_int
+
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and is_dquote
+        then:
+            word_acc => ""
+            tok_start_col => col_num
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> scan_str
+
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and is_squote
+        then:
+            word_acc => ""
+            tok_start_col => col_num
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> scan_char_body
+
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and not is_sp and not is_nl and not is_comma and not is_colon and not is_lparen and not is_rparen and not is_bang and not is_q and not is_eq and not is_dash and not is_lt and not is_gt and not is_pipe and not is_id_start and not is_digit and not is_dquote and not is_squote
         then:
             error => true
             error_msg => "lex: unexpected char"
@@ -251,12 +357,88 @@ def main:
             tokens => tokens.append(Token(kind: kind, value: word_acc, line: line_num, col: tok_start_col))
             self :> step
 
+    lex_start <: scan_int -> lex_start
+        |: not at_src_end and is_digit
+        then:
+            word_acc => word_acc + source.substring(sc, 1)
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> scan_int
+
+    lex_start <: scan_int -> lex_start
+        |: at_src_end or not is_digit
+        then:
+            tokens => tokens.append(Token(kind: "int", value: word_acc, line: line_num, col: tok_start_col))
+            self :> step
+
+    lex_start <: scan_str -> lex_start
+        |: not at_src_end and not is_dquote and not is_nl
+        then:
+            word_acc => word_acc + source.substring(sc, 1)
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> scan_str
+
+    lex_start <: scan_str -> lex_start
+        |: not at_src_end and is_dquote
+        then:
+            tokens => tokens.append(Token(kind: "string", value: word_acc, line: line_num, col: tok_start_col))
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> step
+
+    lex_start <: scan_str -> lex_start
+        |: at_src_end or is_nl
+        then:
+            error => true
+            error_msg => "unterminated string"
+            self :> step
+
+    lex_start <: scan_char_body -> lex_start
+        |: not at_src_end and not is_squote and not is_nl
+        then:
+            word_acc => word_acc + source.substring(sc, 1)
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> scan_char_close
+
+    lex_start <: scan_char_body -> lex_start
+        |: at_src_end or is_nl
+        then:
+            error => true
+            error_msg => "unterminated char"
+            self :> step
+
+    lex_start <: scan_char_close -> lex_start
+        |: not at_src_end and is_squote
+        then:
+            tokens => tokens.append(Token(kind: "char", value: word_acc, line: line_num, col: tok_start_col))
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> step
+
+    lex_start <: scan_char_close -> lex_start
+        |: at_src_end or not is_squote
+        then:
+            error => true
+            error_msg => "unterminated char"
+            self :> step
+
     emit_idx: Int! = 0
     cur_emit_tok :- tokens.at(emit_idx) ?? Token(kind: "eof", value: "", line: 1, col: 1)
     is_layout_at :- cur_emit_tok.kind == "newline" or cur_emit_tok.kind == "indent" or cur_emit_tok.kind == "dedent" or cur_emit_tok.kind == "eof"
+    is_numeric_at :- cur_emit_tok.kind == "int" or cur_emit_tok.kind == "float"
 
     emitting <: emit -> emitting
-        |: emit_idx < tokens.count() and not is_layout_at
+        |: emit_idx < tokens.count() and is_numeric_at
+        then:
+            let sep: String! = ||: emit_idx == 0 : "" ||: else : "/"
+            out_buf => out_buf + sep + cur_emit_tok.kind + "|" + cur_emit_tok.value + "|" + cur_emit_tok.line.to_string() + "|" + cur_emit_tok.col.to_string()
+            emit_idx => emit_idx + 1
+            self :> emit
+
+    emitting <: emit -> emitting
+        |: emit_idx < tokens.count() and not is_layout_at and not is_numeric_at
         then:
             let sep: String! = ||: emit_idx == 0 : "" ||: else : "/"
             out_buf => out_buf + sep + cur_emit_tok.kind + "|\"" + cur_emit_tok.value + "\"|" + cur_emit_tok.line.to_string() + "|" + cur_emit_tok.col.to_string()
