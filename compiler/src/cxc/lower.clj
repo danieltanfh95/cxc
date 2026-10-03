@@ -9730,26 +9730,30 @@
 
 (defn- synthesize-container-entries
   "M6 — collapses the L5/L6 container-synthesis pipeline. Scans
-   the current atom-env AND record-env for `List/Map/Set of T`
-   instantiations and merges the synthesized container entries in.
-   Order matters only in that later scans see prior additions — but
-   List/Map/Set registrations are keyed by mangled container class
-   name (which is a deterministic function of the element type) so
-   re-scanning an already-synthesized entry is a no-op merge.
+   the current atom-env AND record-env AND enum-env for `List/Map/
+   Set of T` instantiations and merges the synthesized container
+   entries in. Order matters only in that later scans see prior
+   additions — but List/Map/Set registrations are keyed by mangled
+   container class name (which is a deterministic function of the
+   element type) so re-scanning an already-synthesized entry is a
+   no-op merge.
 
    Runs after inference so observables typed as `List/Map/Set of T`
    also participate. Records participate 2026-09-12 — previously
    only atom fields triggered synth, leaving `Record { xs: List of
-   Item }` with an undeclared `_Cxc_ListOfItem` at C level."
-  [atom-env record-env]
+   Item }` with an undeclared `_Cxc_ListOfItem` at C level. Enum
+   payloads participate 2026-10-04 (chapter 9 sub-case 2) — now
+   `enum E { case nt(fields: List of NamedField) }` registers
+   `_Cxc_ListOfNamedField` the same way record fields do."
+  [atom-env record-env enum-env]
   (let [ae1 (merge atom-env (synthesize-list-container-entries
-                              (list-instantiations-from-atom-env atom-env record-env)
+                              (list-instantiations-from-atom-env atom-env record-env enum-env)
                               atom-env
                               record-env))
         ae2 (merge ae1     (synthesize-map-container-entries
-                              (map-instantiations-from-atom-env ae1 record-env)))
+                              (map-instantiations-from-atom-env ae1 record-env enum-env)))
         ae3 (merge ae2     (synthesize-set-container-entries
-                              (set-instantiations-from-atom-env ae2 record-env)))]
+                              (set-instantiations-from-atom-env ae2 record-env enum-env)))]
     ae3))
 
 (defn lower
@@ -9950,7 +9954,7 @@
         ;; M6 — L5 Step 3 (List) + L6 Step 8 (Map) + L6 Step 9 (Set)
         ;; instantiation-scan pipeline collapsed into one call. See
         ;; `synthesize-container-entries` above.
-        atom-env   (synthesize-container-entries atom-env record-env)
+        atom-env   (synthesize-container-entries atom-env record-env enum-env)
         ;; 2026-09-18 — re-run observation inference now that synthesized
         ;; container atoms (`_Cxc_ListOfCard.at/count/filter`, Map/Set)
         ;; are registered in atom-env. Both atom-side and record-side

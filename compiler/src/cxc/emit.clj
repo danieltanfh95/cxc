@@ -2806,6 +2806,31 @@
                                (str/join "\n"
                                          (map #(str "@class " (:name %) ";")
                                               (:classes prog)))))
+        ;; 2026-10-04 (chapter 9 sub-case 2 of recursive-user-types emit
+        ;; gap) — tagged-enum payload fields can carry pointers to
+        ;; container classes (`_Cxc_ListOfX *`) when a payload is
+        ;; `List of X` / `Map of (K, V)` / `Set of X`. Those pointer
+        ;; types need a forward `@class` decl in scope BEFORE the
+        ;; payload-struct typedef the tagged-enum emit produces. Hoist
+        ;; the forward-classes block to this earlier slot ONLY when at
+        ;; least one tagged enum has a pointer-typed payload field —
+        ;; programs with no tagged enums (or tagged enums with purely
+        ;; primitive payloads) emit the same byte sequence as before,
+        ;; so cards.m parity holds for the no-tagged-enum base case.
+        pointer-c-type? (fn [ct]
+                          (and (string? ct)
+                               (or (= "id" ct)
+                                   (str/includes? ct "*"))))
+        tagged-enum-needs-forward? (some (fn [e]
+                                           (and (= :c-tagged-enum (:node e))
+                                                (some (fn [ce]
+                                                        (some #(pointer-c-type? (:c-type %))
+                                                              (:payload ce)))
+                                                      (:entries e))))
+                                         (:enums prog))
+        forward-classes-pre-enums (when (and tagged-enum-needs-forward?
+                                             (seq (:classes prog)))
+                                    forward-classes)
         interfaces  (str/join "\n\n" (map emit-class-interface-block (:classes prog)))
         impls       (str/join "\n\n" (map emit-class    (:classes prog)))
         ;; File-scope static that main() assigns to. Lives across the
@@ -2821,6 +2846,15 @@
                                   foreign-externs
                                   cxc-nil-sentinels
                                   helpers
+                                  ;; 2026-10-04 — forward @class decls
+                                  ;; HOISTED to pre-enums when a tagged
+                                  ;; enum carries pointer-typed payload.
+                                  ;; Empty for programs with no such
+                                  ;; shape so cards.m stays byte-identical
+                                  ;; (the standard `forward-classes` slot
+                                  ;; between enums and structs below runs
+                                  ;; unchanged).
+                                  forward-classes-pre-enums
                                   enums
                                   ;; @class forward decls precede struct
                                   ;; typedefs so a record field carrying a
