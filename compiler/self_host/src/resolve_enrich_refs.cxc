@@ -1,0 +1,121 @@
+# Port of cxc.resolve/enrich-node-with-resolution — b.ii enrichment
+# shape port.
+#
+# For each reference entry (kind:name) in a file's refs stream, apply
+# the slice-18 resolver (prelude > own-decls > imports) and emit the
+# node's attached :resolves-to module (or `NIL` when unresolved).
+# Slice-19 contributing rules apply: :type-ref / :extend always
+# contribute; :call / :dot / :type-of contribute only when the name
+# is capitalized; :ident / :other never contribute. Non-contributing
+# refs emit `SKIP` so the port and oracle stay in lock-step line-by-
+# line without the walker dropping entries.
+#
+# Clojure source. compiler/src/cxc/resolve.clj L632 to L687.
+#
+# Input: six positional args, same layout as slice 25.
+#   argv[1] : module name
+#   argv[2] : file path
+#   argv[3] : own-decls, comma-separated name set
+#   argv[4] : imports, comma-separated `name=module` pairs
+#   argv[5] : prelude-provenance, same `name=module` form
+#   argv[6] : refs, `;`-separated `<kind>:<name>` entries
+#
+# Output per ref entry: `<kind>:<name>:<module-or-NIL-or-SKIP>` on
+# its own line.
+
+def main:
+    use args:    Args
+    use console: Console
+
+    own_decls:    String! = ""
+    imports:      String! = ""
+    prelude:      String! = ""
+    refs_s:       String! = ""
+    own_module:   String! = ""
+
+    cursor:       Int!    = 0
+    entry_acc:    String! = ""
+    out:          String! = ""
+
+    at_end  :- cursor >= refs_s.length()
+    cur     :- ||: at_end : -1 ||: else : refs_s.code_at(cursor)
+    is_semi :- cur == 59
+
+    lookup(table: String!, key: String!) :- String!
+        alias seek         :- key + "="
+        alias leading      :- table.starts_with(seek)
+        alias interior_idx :- table.index_of("," + seek)
+        alias has_match    :- leading or interior_idx >= 0
+        alias val_start    :- ||: leading : seek.length() ||: has_match : interior_idx + 1 + seek.length() ||: else : -1
+        alias rest         :- ||: has_match : table.substring(val_start.max(0), (table.length() - val_start).max(0)) ||: else : ""
+        alias end_idx      :- rest.index_of(",")
+        ||: not has_match : "" ||: end_idx < 0 : rest ||: else : rest.substring(0, end_idx.max(0))
+
+    decl_contains(table: String!, key: String!) :- Bool!
+        alias is_sole   :- table == key
+        alias is_head   :- table.starts_with(key + ",")
+        alias is_middle :- table.index_of("," + key + ",") >= 0
+        alias is_tail   :- table.ends_with("," + key)
+        is_sole or is_head or is_middle or is_tail
+
+    resolve_name(nm: String!) :- String!
+        alias p_hit  :- self.lookup(prelude, nm)
+        alias own    :- self.decl_contains(own_decls, nm)
+        alias i_hit  :- self.lookup(imports, nm)
+        ||: p_hit.length() > 0 : p_hit ||: own : own_module ||: i_hit.length() > 0 : i_hit ||: else : ""
+
+    emit_entry(entry: String!) :- String!
+        alias colon_idx :- entry.index_of(":")
+        alias kind      :- entry.substring(0, colon_idx.max(0))
+        alias name_q    :- entry.substring((colon_idx + 1).max(0), (entry.length() - colon_idx - 1).max(0))
+        alias first_c   :- ||: name_q.length() > 0 : name_q.code_at(0) ||: else : -1
+        alias cap       :- first_c >= 65 and first_c <= 90
+        alias contributes :- ||: kind == "type-ref" : true ||: kind == "extend" : true ||: kind == "call" : cap ||: kind == "dot" : cap ||: kind == "type-of" : cap ||: else : false
+        alias resolved  :- self.resolve_name(name_q)
+        alias tail      :- ||: not contributes : "SKIP" ||: resolved.length() > 0 : resolved ||: else : "NIL"
+        kind + ":" + name_q + ":" + tail
+
+    -> parsing
+        then:
+            own_module => args.get_or(1, "")
+            own_decls => args.get_or(3, "")
+            imports => args.get_or(4, "")
+            prelude => args.get_or(5, "")
+            refs_s => args.get_or(6, "")
+            self :> step
+
+    -> end
+        then: console.write(out)
+
+    parsing <: step -> parsing
+        |: not at_end and is_semi
+        then:
+            self :> flush
+
+    parsing <: step -> parsing
+        |: not at_end and not is_semi
+        then:
+            entry_acc => entry_acc + refs_s.substring(cursor, 1)
+            cursor => cursor + 1
+            self :> step
+
+    parsing <: step -> parsing
+        |: at_end and entry_acc.length() > 0
+        then:
+            let line: String! = self.emit_entry(entry_acc)
+            let sep: String!  = ||: out.length() == 0 : "" ||: else : "\n"
+            out => out + sep + line
+            entry_acc => ""
+            self :> step
+
+    parsing <: step -> end
+        |: at_end and entry_acc.length() == 0
+
+    parsing <: flush -> parsing
+        then:
+            let line: String! = self.emit_entry(entry_acc)
+            let sep: String!  = ||: out.length() == 0 : "" ||: else : "\n"
+            out => out + sep + line
+            entry_acc => ""
+            cursor => cursor + 1
+            self :> step
