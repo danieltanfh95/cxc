@@ -35,3 +35,8 @@ def Dc:\n    c: Char = 'a'
 def Db:\n    on: Bool = true\n    off: Bool = false
 def Dx:\n    y: Int = x\n    z: String = other
 def Dm:\n    a: Int = 1\n    b: String = "two"\n    c: Bool = false\n    d: Int\n    e: Int!
+def A:\n    x: Int\ndef B:\n    y: String
+from X import a\ndef Y:\n    z: Int
+def A:\n    x: Int!\n\ndef B:\n    y: String!
+from P import q\nfrom R import s\ndef T:\n    u: Int\ndef V:\n    w: String!
+def C:\n    case Red\n    case Green\ndef D:\n    name: String!

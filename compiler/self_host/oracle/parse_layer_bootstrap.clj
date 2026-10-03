@@ -92,7 +92,7 @@
       (let [nodes (cxc.parse/parse src)]
         (if (empty? nodes)
           (println "")
-          (println (ser-node (first nodes)))))
+          (println (clojure.string/join "\n" (map ser-node nodes)))))
       (catch Exception e
         (println (str "parseerror|" (.getMessage e)))))))
 

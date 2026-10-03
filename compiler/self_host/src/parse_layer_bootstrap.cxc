@@ -60,6 +60,7 @@ def main:
     inner_k_buf:    String! = ""
     inner_v_buf:    String! = ""
     def_name_buf:   String! = ""
+    def_prefix_set: Bool!   = false
 
     reserved: List of String = [
         "module", "from", "import", "as",
@@ -432,6 +433,12 @@ def main:
         |: not error and cur_kind == "eof"
 
     parsing <: dispatch -> parsing
+        |: not error and cur_kind == "newline"
+        then:
+            pos => pos + 1
+            self :> dispatch
+
+    parsing <: dispatch -> parsing
         |: not error and cur_kind == "kw" and cur_value == "from"
         then:
             pos => pos + 1
@@ -444,7 +451,7 @@ def main:
             self :> read_def_name
 
     parsing <: dispatch -> parsing
-        |: not error and not (cur_kind == "eof" or (cur_kind == "kw" and (cur_value == "from" or cur_value == "def")))
+        |: not error and not (cur_kind == "eof" or cur_kind == "newline" or (cur_kind == "kw" and (cur_value == "from" or cur_value == "def")))
         then:
             error => true
             error_msg => "expected top-level form"
@@ -460,14 +467,17 @@ def main:
 
     parsing <: read_def_name -> parsing
         then:
+            out => ||: out.length() > 0 : out + "\n" ||: else : out
             def_name_buf => cur_value
+            def_prefix_set => false
             pos => pos + 1
             self :> after_def_name
 
     parsing <: after_def_name -> parsing
         |: cur_kind == "punct" and cur_value == "("
         then:
-            out => "defatom|" + def_name_buf + "|"
+            out => out + "defatom|" + def_name_buf + "|"
+            def_prefix_set => true
             pos => pos + 1
             self :> parse_ctor_param
 
@@ -599,7 +609,8 @@ def main:
     parsing <: parse_field -> parsing
         |: cur_kind == "dedent"
         then:
-            out => ||: out.length() > 0 : out ||: else : "defrecord|" + def_name_buf + "|"
+            out => ||: def_prefix_set : out ||: else : out + "defrecord|" + def_name_buf + "|"
+            def_prefix_set => true
             pos => pos + 1
             self :> dispatch
 
@@ -612,13 +623,15 @@ def main:
     parsing <: parse_field -> parsing
         |: cur_kind == "kw" and cur_value == "case"
         then:
-            out => ||: out.length() > 0 : out ||: else : "defenum|" + def_name_buf + "|"
+            out => ||: def_prefix_set : out ||: else : out + "defenum|" + def_name_buf + "|"
+            def_prefix_set => true
             self :> parse_enum_case
 
     parsing <: parse_field -> parsing
         |: cur_kind == "kw" and cur_value == "use"
         then:
-            out => ||: out.length() > 0 : out ||: else : "defatom|" + def_name_buf + "||"
+            out => ||: def_prefix_set : out ||: else : out + "defatom|" + def_name_buf + "||"
+            def_prefix_set => true
             pos => pos + 1
             self :> read_use_cap_name
 
@@ -668,7 +681,8 @@ def main:
     parsing <: parse_field -> parsing
         |: cur_kind == "ident"
         then:
-            out => ||: out.length() > 0 : out ||: else : "defrecord|" + def_name_buf + "|"
+            out => ||: def_prefix_set : out ||: else : out + "defrecord|" + def_name_buf + "|"
+            def_prefix_set => true
             field_name_buf => cur_value
             pos => pos + 1
             self :> expect_field_colon
@@ -1031,7 +1045,8 @@ def main:
 
     parsing <: read_from_module -> parsing
         then:
-            out => "fromimport|" + cur_value + "|"
+            let prefix: String! = ||: out.length() > 0 : out + "\nfromimport|" ||: else : "fromimport|"
+            out => prefix + cur_value + "|"
             pos => pos + 1
             self :> expect_import
 
@@ -1067,5 +1082,6 @@ def main:
             pos => pos + 1
             self :> read_name
 
-    parsing <: read_name_tail -> end
+    parsing <: read_name_tail -> parsing
         |: not (cur_kind == "punct" and cur_value == ",")
+        then: self :> dispatch
