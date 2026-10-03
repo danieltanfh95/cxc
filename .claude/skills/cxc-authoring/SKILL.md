@@ -85,10 +85,14 @@ Common trap: `weak` and `unowned` are reserved (data-field reference modifiers).
 
 ### `let` vs `alias`
 
-- Both bind a name to an expression inside a `then:` or observation body.
-- **`alias name :- expr`** is a pure-expression compile-time name. Preferred inside `then:` blocks and observation bodies. No lowering hazards.
-- **`let x: T = expr`** is a runtime binding. Supported at statement position inside a `then:` block and at module scope, including chained lets referenced from `field => <expr-using-let>` updates (fixed 2026-09-27; typed lets are pre-registered into ctx before `:updates` lower, and do-stmts emit before then-stmts so C-level scope covers staged assignments). Chained `let` inside expression position (e.g. inside a `sort_by` comparator) still hits lowering gaps.
-- Rule of thumb: reach for `alias` first inside `then:` — it stays purely compile-time and composes cleanly. Reach for typed `let x: T = ...` only when a runtime binding is required.
+Both evaluate the expression once at declaration and bind the result to a name for the rest of the body (`lower-alias-stmt` is semantics-equivalent to Clojure `let`). The axes that drive the choice:
+
+- **Type**. `alias name :- expr` infers the type from the RHS. `let x: T = expr` requires an explicit `T`. Reach for `alias` when the expression's type is obvious at the call site, reach for `let` when you want to pin the type or when inference would be ambiguous.
+- **Immutability**. `alias` registers the name in `:alias-names`; a later `=>` through the alias slot is rejected. `let` has no equivalent immutability check at the staged-assignment target. Prefer `alias` when the name is a derivation that should not be re-targetable mid-body.
+- **Scope**. Both are local to the enclosing `then:` block or observation body. `let` additionally works at module scope. Neither escapes its block. Neither shadows a surrounding local (both forms error on shadow).
+- **Composition with staged assignments**. Both can be referenced from `field => <expr-using-bound-name>` updates (fixed 2026-09-27 for `let`, typed lets pre-register into ctx before `:updates` lower, do-stmts emit before then-stmts so C-level scope covers staged assignments; `alias` has always worked here).
+
+**Compatibility note (transient)**. Chained `let` inside expression position (e.g. inside a `sort_by` comparator) still hits lowering gaps. Use `alias` or hoist the chain into a sequence of statement-position `let`s until the fix lands.
 
 ### Observations (`:-`) are atom-only, and never carry a `:Type` before `:-`
 
