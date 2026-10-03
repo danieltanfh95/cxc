@@ -1,0 +1,17 @@
+F|std|print|
+F|std|print|p
+F|std|format|
+F|std|format|fmt
+F|x|a|b
+F|x|a|
+F|cxc.lex|classify_word|
+F|cxc.lex|classify_word|cw
+F|very.long.module|very_long_symbol|
+F|very.long.module|very_long_symbol|v
+I|util||
+I|util||u
+I|std.foo||
+I|std.foo||f
+I|very.long.name||short
+I|a.b.c.d||
+I|a.b.c.d||z

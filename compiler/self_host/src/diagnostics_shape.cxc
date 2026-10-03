@@ -1,0 +1,46 @@
+# Shape-only port of cxc.diagnostics — fail-nyi! / fail-user! /
+# fail-compile!.
+#
+# The Clojure helpers always throw with an `ex-info` carrying a
+# `:kind` keyword and a `:what` message. This slice doesn't actually
+# raise — the cxc port emits the same `(kind, message)` pair the
+# oracle extracts from the thrown `ex-info`, so the parity harness
+# verifies the SHAPE (kind and composed message) rather than the
+# raise mechanism. The real raise lives behind the Corvid typed-
+# raise + `or T():` recovery form once records matching the diagnostic
+# AST land.
+#
+# Input per line:
+#   `nyi|<what>`                — fail-nyi! shape
+#   `user|<what>`               — fail-user! shape
+#   `compile|<kind>|<msg>`      — fail-compile! shape with caller-
+#                                 supplied kind
+#
+# Output per line: `<kind>|<message>` where
+#   nyi      → kind = not-yet-implemented
+#              message = "lowering not yet implemented: <what>"
+#   user     → kind = cxc-user-error
+#              message = <what>
+#   compile  → kind = <caller-kind>
+#              message = <msg>
+#
+# Clojure source. compiler/src/cxc/diagnostics.clj L29 to L38.
+
+def main:
+    use args:    Args
+    use console: Console
+
+    -> running
+        then:
+            let spec: String!   = args.get_or(1, "")
+            let p1: Int!        = spec.index_of("|")
+            let helper: String! = spec.substring(0, p1.max(0))
+            let rest1: String!  = spec.substring((p1 + 1).max(0), (spec.length() - p1 - 1).max(0))
+            let p2: Int!        = rest1.index_of("|")
+            let is_compile: Bool! = helper == "compile"
+            let arg1: String!   = ||: is_compile and p2 >= 0 : rest1.substring(0, p2) ||: else : rest1
+            let arg2: String!   = ||: is_compile and p2 >= 0 : rest1.substring((p2 + 1).max(0), (rest1.length() - p2 - 1).max(0)) ||: else : ""
+            let out: String!    = ||: helper == "nyi" : "not-yet-implemented|lowering not yet implemented: " + arg1 ||: helper == "user" : "cxc-user-error|" + arg1 ||: is_compile : arg1 + "|" + arg2 ||: else : "UNKNOWN"
+            console.write(out)
+
+    -> end

@@ -1,0 +1,176 @@
+# Port of cxc.named-tuple/structural-conforms? — F15 L2.d predicate.
+#
+# Rule (spec §3.4 + F15 plan §Landing 2):
+#   1. Every required field must appear on the value side by name.
+#   2. The value's field type equals the required's field type.
+#   3. The value may carry additional fields the required doesn't name
+#      (width subtyping).
+#
+# Input format: argv[1] = "<value-fields>#<required-fields>" where
+# each side is a `;`-separated list of `<name>|<type>` pairs. Types
+# are mangle-strings (`Int`, `Nn_String`, `Bool`, …). Fields on
+# either side may appear in any order.
+#
+# Output per line:
+#   `OK`                                 — the value structurally conforms.
+#   `MISS:<field>`                       — a required field name is absent on the value side.
+#   `WRONG:<field>:<expected>:<got>`     — a required field's type differs from the value's.
+#
+# Width-subtyping scope: extra fields on the value side are legal and
+# do not trip the predicate. Field type equality is string equality on
+# the mangle representation.
+#
+# Clojure source. compiler/src/cxc/named_tuple.clj L438 to L488.
+
+def main:
+    use args:    Args
+    use console: Console
+
+    spec:            String! = ""
+    cursor:          Int!    = 0
+    parse_in_req:    Bool!   = false
+    parse_in_type:   Bool!   = false
+    cur_name_acc:    String! = ""
+    cur_type_acc:    String! = ""
+    val_fields:      List of String = []
+    req_fields:      List of String = []
+    check_i:         Int!    = 0
+    inner_i:         Int!    = 0
+    result:          String! = "OK"
+    done:            Bool!   = false
+
+    at_end  :- cursor >= spec.length()
+    cur     :- ||: at_end : -1 ||: else : spec.code_at(cursor)
+    is_pipe :- cur == 124
+    is_semi :- cur == 59
+    is_hash :- cur == 35
+
+    cur_req_pair  :- req_fields.at(check_i) ?? ""
+    cur_req_pipe  :- cur_req_pair.index_of("|")
+    cur_req_name  :- cur_req_pair.substring(0, cur_req_pipe.max(0))
+    cur_req_type  :- cur_req_pair.substring((cur_req_pipe + 1).max(0), (cur_req_pair.length() - cur_req_pipe - 1).max(0))
+
+    cur_val_pair  :- val_fields.at(inner_i) ?? ""
+    cur_val_pipe  :- cur_val_pair.index_of("|")
+    cur_val_name  :- cur_val_pair.substring(0, cur_val_pipe.max(0))
+    cur_val_type  :- cur_val_pair.substring((cur_val_pipe + 1).max(0), (cur_val_pair.length() - cur_val_pipe - 1).max(0))
+
+    names_match :- cur_val_name == cur_req_name
+    types_match :- cur_val_type == cur_req_type
+
+    -> parsing
+        then:
+            spec => args.get_or(1, "")
+            self :> step
+
+    -> checking
+        then:
+            self :> step
+
+    -> end
+        then: console.write(result)
+
+    parsing <: step -> parsing
+        |: not at_end and is_pipe and not parse_in_type
+        then:
+            parse_in_type => true
+            cursor => cursor + 1
+            self :> step
+
+    parsing <: step -> parsing
+        |: not at_end and is_pipe and parse_in_type
+        then:
+            cur_type_acc => cur_type_acc + spec.substring(cursor, 1)
+            cursor => cursor + 1
+            self :> step
+
+    parsing <: step -> parsing
+        |: not at_end and is_semi and not parse_in_req
+        then:
+            val_fields => val_fields.append(cur_name_acc + "|" + cur_type_acc)
+            cur_name_acc => ""
+            cur_type_acc => ""
+            parse_in_type => false
+            cursor => cursor + 1
+            self :> step
+
+    parsing <: step -> parsing
+        |: not at_end and is_semi and parse_in_req
+        then:
+            req_fields => req_fields.append(cur_name_acc + "|" + cur_type_acc)
+            cur_name_acc => ""
+            cur_type_acc => ""
+            parse_in_type => false
+            cursor => cursor + 1
+            self :> step
+
+    parsing <: step -> parsing
+        |: not at_end and is_hash and not parse_in_req
+        then:
+            val_fields => val_fields.append(cur_name_acc + "|" + cur_type_acc)
+            cur_name_acc => ""
+            cur_type_acc => ""
+            parse_in_type => false
+            parse_in_req => true
+            cursor => cursor + 1
+            self :> step
+
+    parsing <: step -> parsing
+        |: not at_end and not is_pipe and not is_semi and not is_hash and parse_in_type
+        then:
+            cur_type_acc => cur_type_acc + spec.substring(cursor, 1)
+            cursor => cursor + 1
+            self :> step
+
+    parsing <: step -> parsing
+        |: not at_end and not is_pipe and not is_semi and not is_hash and not parse_in_type
+        then:
+            cur_name_acc => cur_name_acc + spec.substring(cursor, 1)
+            cursor => cursor + 1
+            self :> step
+
+    parsing <: step -> checking
+        |: at_end and parse_in_req and (cur_name_acc.length() > 0 or cur_type_acc.length() > 0 or parse_in_type)
+        then:
+            req_fields => req_fields.append(cur_name_acc + "|" + cur_type_acc)
+
+    parsing <: step -> checking
+        |: at_end and not parse_in_req and (cur_name_acc.length() > 0 or cur_type_acc.length() > 0 or parse_in_type)
+        then:
+            val_fields => val_fields.append(cur_name_acc + "|" + cur_type_acc)
+
+    parsing <: step -> checking
+        |: at_end and cur_name_acc.length() == 0 and cur_type_acc.length() == 0 and not parse_in_type
+
+    checking <: step -> end
+        |: done
+
+    checking <: step -> end
+        |: not done and check_i >= req_fields.count()
+
+    checking <: step -> checking
+        |: not done and check_i < req_fields.count() and inner_i >= val_fields.count()
+        then:
+            done => true
+            result => "MISS:" + cur_req_name
+            self :> step
+
+    checking <: step -> checking
+        |: not done and check_i < req_fields.count() and inner_i < val_fields.count() and names_match and types_match
+        then:
+            check_i => check_i + 1
+            inner_i => 0
+            self :> step
+
+    checking <: step -> checking
+        |: not done and check_i < req_fields.count() and inner_i < val_fields.count() and names_match and not types_match
+        then:
+            done => true
+            result => "WRONG:" + cur_req_name + ":" + cur_req_type + ":" + cur_val_type
+            self :> step
+
+    checking <: step -> checking
+        |: not done and check_i < req_fields.count() and inner_i < val_fields.count() and not names_match
+        then:
+            inner_i => inner_i + 1
+            self :> step

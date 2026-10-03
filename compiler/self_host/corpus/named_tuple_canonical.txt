@@ -1,11 +1,19 @@
 a|Int
 age|Int;name|String
+name|String;age|Int
 a|Int;b|Nn_String;c|Bool
+c|Bool;b|Nn_String;a|Int
 counter|Int;value|Nn_Int
+value|Nn_Int;counter|Int
 x|Bool;y|Nn_Int;z|String
+z|String;y|Nn_Int;x|Bool
+y|Nn_Int;z|String;x|Bool
 flag|Bool
 foo|Nn_Int
 foo|Nn_Int;mem|Bytes
+mem|Bytes;foo|Nn_Int
+Zebra|Int;apple|String
+apple|String;Zebra|Int
 
 name_bad|Int
 Nn|Int
@@ -15,3 +23,5 @@ a|_Cxc_NT_foo
 a|Nt0_hello
 a|Of1_List_Int
 a|Nn__Cxc_NT_x
+good|Int;name_bad|String
+name_bad|String;good|Int

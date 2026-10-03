@@ -1,0 +1,10 @@
+nyi|parametric fields
+nyi|some feature
+nyi|empty-named-tuple canonical form
+user|duplicate field name
+user|wrong-target reference
+user|reference modifier on value type
+compile|lex-unit-suffix-retired|unit suffix retired
+compile|f51-unresolved|name not found at this scope
+compile|f9-duplicate-sig|protocol X.foo
+compile|cxc-compile-error|generic failure

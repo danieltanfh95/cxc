@@ -1,0 +1,48 @@
+# Port of cxc.resolve/import-source-map — alias-expansion rule.
+#
+# The Clojure fn walks `:from-import` / `:import` AST nodes and
+# builds `{local-name → module-kw}`. Local name is `:as` when
+# present, else the imported symbol / module name. Values are the
+# source module.
+#
+# This slice ports the per-entry alias rule (not the whole walker)
+# because the walker consumes AST shapes that don't yet exist in
+# cxc. One AST entry per invocation.
+#
+# Input format: argv[1] = `<kind>|<mod>|<sym>|<alias>` with four
+# fields always, separated by `|`. kind is `F` for `from-import` or
+# `I` for `import`. mod is the module name. sym is the imported
+# symbol for F, left empty for I (shape symmetry so the parse offsets
+# stay constant). alias is the optional `as` binding — empty means
+# no alias.
+#
+# Output per line: `<local>=<mod>` where
+#   local = alias           when alias is non-empty
+#         = sym             when F and no alias
+#         = mod             when I and no alias
+#
+# Clojure source. compiler/src/cxc/resolve.clj L598 to L616.
+
+def main:
+    use args:    Args
+    use console: Console
+
+    -> running
+        then:
+            let spec: String!   = args.get_or(1, "")
+            let p1: Int!        = spec.index_of("|")
+            let rest1: String!  = spec.substring((p1 + 1).max(0), (spec.length() - p1 - 1).max(0))
+            let p2: Int!        = rest1.index_of("|")
+            let rest2: String!  = rest1.substring((p2 + 1).max(0), (rest1.length() - p2 - 1).max(0))
+            let p3: Int!        = rest2.index_of("|")
+
+            let kind: String!   = spec.substring(0, p1.max(0))
+            let mod_name: String! = rest1.substring(0, p2.max(0))
+            let sym: String!    = rest2.substring(0, p3.max(0))
+            let alias_str: String! = rest2.substring((p3 + 1).max(0), (rest2.length() - p3 - 1).max(0))
+
+            let fallback: String! = ||: kind == "I" : mod_name ||: else : sym
+            let local: String!    = ||: alias_str.length() > 0 : alias_str ||: else : fallback
+            console.write(local + "=" + mod_name)
+
+    -> end
