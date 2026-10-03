@@ -1748,7 +1748,8 @@
                         "uppercase" "lowercase" "to_bytes"
                         "path_join" "basename" "dirname" "extension"
                         "trim_prefix" "trim_suffix"
-                        "repeat" "pad_left" "pad_right"}
+                        "repeat" "pad_left" "pad_right"
+                        "split"}
                       method-name))
       (case method-name
         "length"     :int
@@ -1759,7 +1760,8 @@
         ("substring" "trim" "replace" "uppercase" "lowercase"
          "path_join" "basename" "dirname" "extension"
          "trim_prefix" "trim_suffix"
-         "repeat" "pad_left" "pad_right") :string
+         "repeat" "pad_left" "pad_right"
+         "split") :string
         :bool)
 
       :else
@@ -3334,7 +3336,8 @@
                             "uppercase" "lowercase" "to_bytes"
                             "path_join" "basename" "dirname" "extension"
                             "trim_prefix" "trim_suffix"
-                            "repeat" "pad_left" "pad_right"}
+                            "repeat" "pad_left" "pad_right"
+                            "split"}
                           method-name))
           (let [want-args (case method-name
                             ("length" "trim" "uppercase" "lowercase" "to_bytes"
@@ -3541,7 +3544,31 @@
                                  "for (NSUInteger __i = 0; __i < __pad; ++__i) "
                                  "[__r appendString:[__c substringToIndex:1]]; "
                                  "__s = (NSString *)__r; } "
-                                 "__s; })"))}))
+                                 "__s; })"))}
+              ;; 2026-10-04 — `.split(sep) -> String`, interim surface.
+              ;; Returns a newline-joined String of the components,
+              ;; matching the pattern used by `native_fs_list_dir` until
+              ;; List-of-T from native lands. Nil receiver or nil sep
+              ;; yields the empty string. Empty sep yields the receiver
+              ;; verbatim (NSString raises on empty separator so we
+              ;; short-circuit). Edge case, the component boundary at
+              ;; a `\n` inside receiver or sep is lossy under this
+              ;; interim encoding, documented and accepted until the
+              ;; real List return lands.
+              "split"
+              {:node :ffi-call :name "cxc_string_split"
+               :args [target-lo (first arg-exprs)]
+               :emit-c-fn (fn [[s sep]]
+                            (str "({ NSString *__s = (" s "); "
+                                 "NSString *__sep = (" sep "); "
+                                 "NSString *__r = @\"\"; "
+                                 "if (__s && __sep) { "
+                                 "if (__sep.length == 0) { __r = __s; } "
+                                 "else { NSArray *__a = [__s "
+                                 "componentsSeparatedByString:__sep]; "
+                                 "__r = [__a componentsJoinedByString:@\"\\n\"]; "
+                                 "} } "
+                                 "__r; })"))}))
 
           ;; F37 L6a — `Bytes.slice(start: Int, length: Int) -> Bytes`.
           ;; Emits `[(NSMutableData *)[bytes subdataWithRange:NSMakeRange(start, length)] mutableCopy]`

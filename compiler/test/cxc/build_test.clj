@@ -2888,6 +2888,17 @@
                   "post-while OK\n")
              stdout)))))
 
+(deftest end-to-end-string-split
+  (testing "string-split.cxc — 2026-10-04. `.split(sep)` on String returns a newline-joined String of the components. Interim surface that mirrors native_fs_list_dir's shape until List-of-T from native lands. Covers five cases, separator present with three components, separator absent (receiver returned verbatim), two consecutive separators producing an empty middle component, empty separator short-circuit returning the receiver verbatim, and a multi-character separator."
+    (let [{:keys [exit stdout]} (compile-and-run "string-split")]
+      (is (zero? exit))
+      (is (= (str "a\nb\nc\n"
+                  "solo\n"
+                  "x\n\ny\n"
+                  "abc\n"
+                  "foo\nbar\nbaz\n")
+             stdout)))))
+
 (deftest f51-l3b-b-ii-5c-single-file-threads-resolve-references
   (testing "F51 L3b(b.ii)-5c — `compile-source-to-file` runs `resolve/resolve-references` on the parsed user AST before feeding lower. Prevents regression to the pre-71c46c9 shim (reparse of concatenated prelude + user source, which stripped `:resolves-to` metadata). Spy on the resolver call — if a future refactor drops it, this test flags the drop before behavior diverges silently."
     (let [call-count  (atom 0)
