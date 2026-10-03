@@ -42,14 +42,16 @@ These are the values the language is built around. Read them before you start; t
 1. **Atoms are modules.** State lives inside; access from outside is only through named observations (`:-`) and transitions (`<:`). No field is publicly reachable. This is the encapsulation that Clojure lacks.
 2. **Every state change has a name.** All mutation flows through `<: msg -> phase` arms. The full audit surface for what can change an atom's state is `grep '^\s*<:'` on its body. Keep it small enough to enumerate.
 3. **Derive, don't cache.** Observations are pure functions of current state, re-computed on read. No cache-then-invalidate machinery. If you're writing a dirty-flag or a memo, the design is wrong — hoist into an observation or split the atom.
-4. **One atom until pressure.** Default to a single `def main:` atom holding all state and transitions. Split only under specific pressure: (a) RNG or long-lived state that must persist across observations, (b) an external lifecycle whose phases signal completion (`fs.open`, subprocess, socket), (c) a capability boundary shared by three or more transitions.
+4. **One atom until pressure.** Default to a single `def main:` atom holding all state and transitions. Split when any ONE of these independent axes pushes for a boundary:
+   - **Ownership**: long-lived state (RNG seed, open file handle, accumulator) that must persist across observations and outlive its callers.
+   - **Lifecycle**: an external phase sequence that signals completion (`fs.open` reaching `open`, subprocess reaching `exited`, socket reaching `closed`), where the parent needs to subscribe to that completion.
+   - **Capability scope**: a capability (plugin or injected cap) that should NOT be reachable from every transition on the parent. Splitting isolates the authority, independent of how many sites consume it.
 5. **Verbs are transitions, not atoms.** `Bidder`, `Deployer`, `Combat`, `Placer`, `Auction` are transitions on the atom that owns their state — never their own atoms. A strict-layered DAG of verb-atoms (`L0 Card / L1 Bidder / L2 Auction`) invented to dodge the `|>`-to-same-atom rejection is the cathedral anti-pattern. Fold callees back into transitions on the caller.
 6. **Records hold data. Atoms hold behavior.** No observations inside `def Record:` bodies. If you want a derived value on a record, either move the record onto an atom as a field and put the observation there, or inline the derivation at call sites.
 7. **Explicit capabilities are the whole point.** `def plugin:` for IO, RNG, subprocess, HTTP is not overhead — it's the value the language delivers. A translation that calls `print` and `SeededPrng` directly is legal but wastes the capability model. When there's an IO surface, prefer wrapping it as a plugin so the caps are enumerable.
 8. **Fail loudly at the boundary.** Fallible capabilities raise typed records (`IOError`, `HttpError`, `ShellError`, `EnvError`, `JsonError`, `RandomError`). Recover at the call site with `or T():`. No `Result[T, E]`, no `try / catch` — the recovery is where the caller's context knows what fallback means.
-9. **Named-Result records are a smell.** If your emit contains `FooResult`, `BarResult`, `QuuxResult` per function, the atom is doing too much and needs a real split (see 4), or the caller should be using `or T(): fallback` instead of unpacking a Result tuple. Corvid has no `Result[T, E]` on purpose.
 
-The value story Corvid pitches (locality, auditable transitions, observation decoupling, explicit capabilities) emerges from writing transitions, observations, and plugins according to these nine values — not from architecture drawings.
+The value story Corvid pitches (locality, auditable transitions, observation decoupling, explicit capabilities) emerges from writing transitions, observations, and plugins according to these eight values — not from architecture drawings.
 
 ## Verification workflow
 
