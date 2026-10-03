@@ -4,34 +4,45 @@
 #
 # Clojure source. compiler/src/cxc/named_tuple.clj L210 to L231.
 #
-# SHALLOW scope. The chapter-7 flat tagged-record encoding + the
-# chapter-7 recursive-user-types-emit-broken gap puts true recursive
-# descent on the serialization behind a follow-on compiler landing
-# (chapter 9+). The current slice covers the top-level case — each
-# input entry is a FLAT `:type-named-tuple` whose fields are
-# primitives (`Int`, `String`, …) or non-nil primitives (`Nn_Int`,
-# …). Nested named-tuple fields are deferred.
-#
 # Input per line: `<ser>[;<ser>…]` where each `<ser>` is one of
 #   `<prim>`              — primitive type-ref, no shape to collect
 #   `Nn_<prim>`           — non-nil wrapper, no shape to collect
-#   `Nt<count>_<body>`    — flat named-tuple, one shape to collect
-# where `<body>` is `<f1>_<ser1>_<f2>_<ser2>_…` with pre-sorted
-# field names (Clojure's canonical form always sorts; the port
-# relies on pre-sorted input so no second pass is needed).
+#   `Nt<count>_<body>`    — named-tuple, outer shape collected; inner
+#                           named-tuple fields collected via nested scan
+# where `<body>` is `<f1>_<ser1>_<f2>_<ser2>_…` with pre-sorted field
+# names (Clojure's canonical form always sorts; the port relies on
+# pre-sorted input so no second pass is needed).
+#
+# Chapter 17 extended scope. The chapter-8 shallow port only emitted
+# the top-level canonical (`_Cxc_NT_<body>` for `Nt<N>_<body>`).
+# Chapter 17 adds depth-2 nested-shape collection: for each top-level
+# body, scan for inner `Nt<K>_<inner-body>` substrings and emit the
+# inner canonical too. Depth-N (nested-inside-nested) is deferred to a
+# follow-on chapter — the oracle handles depth-N via recursion but the
+# corpus is capped at depth-2 so parity holds at chapter 17.
 #
 # Output per line: comma-joined, alphabetically-sorted canonical
-# names (`_Cxc_NT_<f1>_<ser1>_…`), one per distinct Nt-shape found.
-# Empty line → empty output. All-primitive input → empty output.
+# names (`_Cxc_NT_<f1>_<ser1>_…`), one per distinct shape found.
 
 def main:
     use args:    Args
     use console: Console
 
+    # Entry-splitting state.
     spec:          String! = ""
     cursor:        Int!    = 0
     entry_acc:     String! = ""
     canonicals:    List of String = []
+
+    # Nested-scan state (chapter 17).
+    scan_body:   String! = ""
+    scan_pos:    Int!    = 0
+    end_of_spec: Bool!   = false
+    inner_K:     Int!    = 0
+    inner_start: Int!    = 0
+    consumed:    Int!    = 0
+
+    # Sort / emit state.
     sort_i:        Int!    = 0
     scan_best:     String! = ""
     scan_has_best: Bool!   = false
@@ -44,9 +55,19 @@ def main:
     scan_cur :- canonicals.at(sort_i) ?? ""
     scan_cmp :- scan_cur.compare_to(scan_best)
 
+    scan_end :- scan_pos >= scan_body.length()
+
     -> parsing
         then:
             spec => args.get_or(1, "")
+            self :> step
+
+    -> scanning_nested
+        then:
+            self :> step
+
+    -> consuming_inner_pairs
+        then:
             self :> step
 
     -> sorting
@@ -71,7 +92,7 @@ def main:
             cursor => cursor + 1
             self :> step
 
-    parsing <: step -> sorting
+    parsing <: step -> scanning_nested
         |: at_end and entry_acc.length() > 0
         then:
             let is_nt: Bool!       = entry_acc.starts_with("Nt") and entry_acc.length() >= 4
@@ -82,11 +103,14 @@ def main:
             let body: String!      = ||: has_shape and underscore_idx > 0 : entry_acc.substring((underscore_idx + 1).max(0), (entry_acc.length() - underscore_idx - 1).max(0)) ||: else : ""
             let canonical: String! = "_Cxc_NT_" + body
             canonicals => ||: has_shape and body.length() > 0 and not canonicals.contains(canonical) : canonicals.append(canonical) ||: else : canonicals
+            scan_body => body
+            scan_pos => 0
+            end_of_spec => true
 
     parsing <: step -> sorting
         |: at_end and entry_acc.length() == 0
 
-    parsing <: commit -> parsing
+    parsing <: commit -> scanning_nested
         then:
             let is_nt: Bool!       = entry_acc.starts_with("Nt") and entry_acc.length() >= 4
             let third_c: Int!      = ||: is_nt : entry_acc.code_at(2) ||: else : -1
@@ -96,8 +120,69 @@ def main:
             let body: String!      = ||: has_shape and underscore_idx > 0 : entry_acc.substring((underscore_idx + 1).max(0), (entry_acc.length() - underscore_idx - 1).max(0)) ||: else : ""
             let canonical: String! = "_Cxc_NT_" + body
             canonicals => ||: has_shape and body.length() > 0 and not canonicals.contains(canonical) : canonicals.append(canonical) ||: else : canonicals
+            scan_body => body
+            scan_pos => 0
+            end_of_spec => false
+
+    scanning_nested <: step -> parsing
+        |: scan_end and not end_of_spec
+        then:
             entry_acc => ""
             cursor => cursor + 1
+            self :> step
+
+    scanning_nested <: step -> sorting
+        |: scan_end and end_of_spec
+
+    scanning_nested <: step -> consuming_inner_pairs
+        |: not scan_end and scan_pos + 3 <= scan_body.length() and scan_body.code_at(scan_pos) == 78 and scan_body.code_at(scan_pos + 1) == 116 and scan_body.code_at(scan_pos + 2) >= 48 and scan_body.code_at(scan_pos + 2) <= 57
+        then:
+            let rest_after_nt: String! = scan_body.substring(scan_pos + 2, scan_body.length() - scan_pos - 2)
+            let underscore_rel: Int! = rest_after_nt.index_of("_")
+            let digit_str: String! = ||: underscore_rel > 0 : rest_after_nt.substring(0, underscore_rel) ||: else : ""
+            let K: Int! = digit_str.to_int_or(0)
+            let prefix_len: Int! = ||: underscore_rel > 0 : 2 + underscore_rel + 1 ||: else : 0
+            inner_K => K
+            inner_start => scan_pos + prefix_len
+            scan_pos => scan_pos + prefix_len
+            consumed => 0
+
+    scanning_nested <: step -> scanning_nested
+        |: not scan_end and not (scan_pos + 3 <= scan_body.length() and scan_body.code_at(scan_pos) == 78 and scan_body.code_at(scan_pos + 1) == 116 and scan_body.code_at(scan_pos + 2) >= 48 and scan_body.code_at(scan_pos + 2) <= 57)
+        then:
+            scan_pos => scan_pos + 1
+            self :> step
+
+    consuming_inner_pairs <: step -> scanning_nested
+        |: consumed >= inner_K
+        then:
+            # scan_pos lands one past the trailing `_` of the last-consumed
+            # type (when a separator was skipped). Inner body ends at
+            # scan_pos - 1 in that case; at scan_pos when the inner ran
+            # all the way to end-of-body (no trailing `_` consumed).
+            let inner_end: Int! = ||: scan_pos < scan_body.length() : scan_pos - 1 ||: else : scan_pos
+            let inner_body: String! = scan_body.substring(inner_start, (inner_end - inner_start).max(0))
+            let inner_canonical: String! = "_Cxc_NT_" + inner_body
+            canonicals => ||: inner_body.length() > 0 and not canonicals.contains(inner_canonical) : canonicals.append(inner_canonical) ||: else : canonicals
+            self :> step
+
+    consuming_inner_pairs <: step -> consuming_inner_pairs
+        |: consumed < inner_K
+        then:
+            let rest_fname: String! = scan_body.substring(scan_pos, scan_body.length() - scan_pos)
+            let fname_sep: Int! = rest_fname.index_of("_")
+            let after_fname: Int! = ||: fname_sep > 0 : scan_pos + fname_sep + 1 ||: else : scan_body.length()
+            let rest_type: String! = scan_body.substring(after_fname, scan_body.length() - after_fname)
+            let is_nn: Bool! = rest_type.starts_with("Nn_")
+            let type_body_start: Int! = ||: is_nn : after_fname + 3 ||: else : after_fname
+            let rest_body: String! = scan_body.substring(type_body_start, scan_body.length() - type_body_start)
+            let body_sep: Int! = rest_body.index_of("_")
+            # Land one past the trailing `_` so the next pair's fname
+            # lookup starts cleanly. Inner-body end is reconstructed on
+            # emission by backing up one char.
+            let next_pos: Int! = ||: body_sep > 0 : type_body_start + body_sep + 1 ||: else : scan_body.length()
+            scan_pos => next_pos
+            consumed => consumed + 1
             self :> step
 
     sorting <: scan -> sorting

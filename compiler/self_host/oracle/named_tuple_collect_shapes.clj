@@ -1,52 +1,72 @@
 ;; Oracle for cxc.named-tuple/collect-shapes.
 ;;
 ;; Each stdin line is a `;`-separated list of serialized type
-;; expressions (`<prim>`, `Nn_<prim>`, or `Nt<count>_<body>` with
-;; pre-sorted flat body). The oracle parses each ser into the
-;; matching `:type-ref` / `:type-nonnil` / `:type-named-tuple` map,
-;; wraps the whole seq in a root sequence, and calls collect-shapes.
-;; The returned map's keys are sorted and comma-joined.
+;; expressions:
+;;   `<prim>`              — primitive type-ref
+;;   `Nn_<prim>`           — non-nil wrapper on a primitive
+;;   `Nt<count>_<body>`    — named-tuple whose body is `<count>` field-type
+;;                           pairs, each pair being `<fname>_<type>`.
+;;                           The `<type>` inside a nested body may itself
+;;                           be any of the three ser forms, so nesting
+;;                           recurses unboundedly.
 ;;
-;; SHALLOW scope. Nested `:type-named-tuple` fields are not in the
-;; corpus. The body parser walks pair-by-pair recognising a leading
-;; `Nn_` prefix on the ser side, so `Nt2_x_Nn_Int_y_String` decodes
-;; cleanly without the naive `str/split body #"_"` partition
-;; (which would shatter the `Nn_` tokens).
+;; The oracle parses each ser into the matching
+;; `:type-ref` / `:type-nonnil` / `:type-named-tuple` map (recursive on
+;; nested `Nt`), wraps the whole seq in a root sequence, and calls
+;; `cxc.named-tuple/collect-shapes`. The returned map's keys are sorted
+;; and comma-joined.
+;;
+;; Chapter 17 extended the parser from the chapter-8 shallow scope to
+;; depth-N nesting via `parse-ser-rest` which returns both the parsed
+;; node AND the unconsumed tail. `parse-nt-body-n` loops exactly
+;; `<count>` pairs and threads the tail through each pair-parse, so
+;; nested `Nt<K>_<inner>` sub-bodies consume exactly their declared
+;; width and leave the surrounding parent-body intact.
 
-(require 'cxc.named-tuple)
-(require '[clojure.string :as str])
+(do
+  (require 'cxc.named-tuple)
+  (require '[clojure.string :as str])
 
-(let [parse-prim (fn [p]
-                   (if (str/starts-with? p "Nn_")
-                     {:node :type-nonnil
-                      :inner {:node :type-ref :name (subs p 3)}}
-                     {:node :type-ref :name p}))
-      parse-nt-body (fn parse-nt-body [body]
-                      (loop [b      body
-                             fields []]
-                        (if (empty? b)
-                          fields
-                          (let [nus    (str/index-of b "_")
-                                nm     (subs b 0 nus)
-                                rest-b (subs b (inc nus))
-                                is-nn  (str/starts-with? rest-b "Nn_")
-                                tail   (if is-nn (subs rest-b 3) rest-b)
-                                sep    (str/index-of tail "_")
-                                prim   (if sep (subs tail 0 sep) tail)
-                                next-b (if sep (subs tail (inc sep)) "")
-                                tnode  (if is-nn
-                                         {:node :type-nonnil
-                                          :inner {:node :type-ref :name prim}}
-                                         {:node :type-ref :name prim})]
-                            (recur next-b
-                                   (conj fields {:name nm :type tnode}))))))
-      parse-ser (fn [s]
-                  (if (str/starts-with? s "Nt")
-                    (let [us   (str/index-of s "_")
-                          body (subs s (inc us))]
-                      {:node :type-named-tuple
-                       :fields (parse-nt-body body)})
-                    (parse-prim s)))]
+  (declare parse-ser-rest)
+
+  (defn- parse-nt-body-n [cnt body]
+    (loop [k      cnt
+           b      body
+           fields []]
+      (if (zero? k)
+        [fields b]
+        (let [nus    (str/index-of b "_")
+              fname  (subs b 0 nus)
+              rest1  (subs b (inc nus))
+              [tnode rest2] (parse-ser-rest rest1)]
+          (recur (dec k) rest2 (conj fields {:name fname :type tnode}))))))
+
+  (defn- parse-ser-rest [s]
+    (cond
+      (str/starts-with? s "Nn_")
+      (let [after (subs s 3)
+            sep   (str/index-of after "_")
+            prim  (if sep (subs after 0 sep) after)
+            rest-s (if sep (subs after (inc sep)) "")]
+        [{:node :type-nonnil :inner {:node :type-ref :name prim}} rest-s])
+
+      (and (str/starts-with? s "Nt")
+           (re-matches #"Nt\d+_.*" s))
+      (let [m    (re-matches #"Nt(\d+)_(.*)" s)
+            cnt  (Integer/parseInt (nth m 1))
+            body (nth m 2)
+            [fields rest-s] (parse-nt-body-n cnt body)]
+        [{:node :type-named-tuple :fields fields} rest-s])
+
+      :else
+      (let [sep  (str/index-of s "_")
+            prim (if sep (subs s 0 sep) s)
+            rest-s (if sep (subs s (inc sep)) "")]
+        [{:node :type-ref :name prim} rest-s])))
+
+  (defn- parse-ser [s]
+    (first (parse-ser-rest s)))
+
   (doseq [ln (line-seq (java.io.BufferedReader. *in*))]
     (let [entries (if (empty? ln) [] (str/split ln #";"))
           nodes   (mapv parse-ser entries)

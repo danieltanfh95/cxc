@@ -215,3 +215,51 @@ Chapter 16 landed the compiler fix; the ≤ 9-char-ident workaround
 is now LIFTED. Parse-layer bootstrap corpus restored to natural
 identifiers (`DefaultsInt`, `DefaultsStr`, …). Any future slice
 can use natural identifiers.
+
+## Chapter 17 Map / Set container follow-on
+
+The chapter-16 commit flagged Map and Set containers as suspected
+same-pattern-bug sites. Chapter 17 investigated and found NO
+analogue to fix. `compiler/src/cxc/lower/map_set_containers.clj`
+user-rejects records as Map K / V / Set element via `fail-user!`
+with the following coverage lists:
+
+```
+map-supported-key-types     = {"String" "Int"}
+map-supported-val-types     = {"String" "Int" "Bool"}
+set-supported-element-types = {"String" "Int"}
+```
+
+Int is boxed via `@(v)` → `NSNumber`, Bool via `@(v)` → `NSNumber
+numberWithBool`, String passes through `NSString *`. None of these
+flow through `NSValue getValue:&__v size:sizeof(T)`, so the
+ARC-under-memcpy pitfall has no manifestation. Minimal reproducers
+confirm the diagnostic path:
+
+```
+# Map
+def Card: id: String!; name: String!
+def main:
+    c: Card = Card(id: "x", name: "...")
+    m: Map of (String, Card)
+    -> running
+        then: m => m.assoc("a", c); print(m.get("a").name)
+    -> end
+# => "Map value type `Card` — Layer 6 Step 8 MVP supports
+#    (\"Bool\" \"Int\" \"String\")"
+
+# Set
+def Card: ...
+def main:
+    s: Set of Card
+    -> running
+        then: s => s.insert(Card(id: "x", name: "..."))
+    -> end
+# => "Set element type `Card` — Layer 6 Step 9 MVP supports
+#    (\"Int\" \"String\")"
+```
+
+If a future compiler landing extends Map / Set to accept records
+as K / V / element, the chapter-16 shadow-struct + ARC-visible-
+stores pattern applies directly; today there is no code path to
+apply it to.
