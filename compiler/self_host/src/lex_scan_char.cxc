@@ -1,0 +1,37 @@
+# Self-host port of cxc.lex/scan-char — ASCII no-escape subset.
+#
+# Signature. Input is argv[1], a string starting at the opening `'`
+# of a char literal. On well-formed single-char input `'x'` with
+# `x` a non-backslash ASCII character, prints `<x>|<end-index>` where
+# end-index is one past the closing `'`. On any ill-formed input,
+# prints `ERR`.
+#
+# Rejections.
+#   - Empty  `''`             → ERR (Clojure throws "empty char literal")
+#   - Unterminated `'`, `'x`  → ERR
+#   - Multi-char `'ab'`       → ERR
+#   - Backslash body `'\x'`   → ERR (slice scope omits escapes;
+#                                     oracle corpus avoids them)
+#
+# Clojure source. compiler/src/cxc/lex.clj L230 to L263.
+
+def main:
+    use args:    Args
+    use console: Console
+
+    -> running
+        then:
+            let s: String! = args.get_or(1, "")
+            let n: Int!    = s.length()
+            let has_open:      Bool! = n > 0 and s.code_at(0) == 39
+            let has_body:      Bool! = n > 1
+            let c1:            Int!  = ||: has_body : s.code_at(1) ||: else : -1
+            let is_empty_lit:  Bool! = c1 == 39
+            let is_backslash:  Bool! = c1 == 92
+            let has_close:     Bool! = n > 2 and s.code_at(2) == 39
+            let valid:         Bool! = has_open and has_body and not is_empty_lit and not is_backslash and has_close
+            let payload:       String! = ||: valid : s.substring(1, 1) ||: else : ""
+            let out:           String! = ||: valid : payload + "|3" ||: else : "ERR"
+            console.write(out)
+
+    -> end

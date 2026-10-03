@@ -1,0 +1,31 @@
+
+abc
+abc 42 let
+foo
+0
+42
+1 2 3
+let x counter
+snake_case var123
+if then else
+module def
+nil true false
+and or not is in of
+_leading
+a1b2c3
+ident1 ident2
+   leading_ws
+trailing_ws
+one   two
+let a 1 return 2
+loop break continue
+weak unowned
+case for while
+self as from import
+alias accepts extend replace
+deprecated raise
+then do when
+foo 100 bar
+x1
+y2z3
+counter counter counter

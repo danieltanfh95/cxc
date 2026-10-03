@@ -1,0 +1,92 @@
+# Self-host port of cxc.lex/scan-digits, FULL decimal path with
+# underscore-malformed error reporting.
+#
+# Extends the chapter-3 lex_scan_digits_decimal slice (well-formed
+# subset) with the three error paths Clojure throws on:
+#   - leading `_` or `_` after a prior `_` (not following a digit)
+#   - `_` at the terminator with no following digit (trailing in run)
+#   - `_` at end-of-string with no following digit
+# plus the terminator-at-non-digit clean-stop case where the oracle
+# returns `[digits j]` and the port emits `<digits>|<j>`.
+#
+# Signature. Input is argv[1], a string scanned from index 0. Output
+# per line:
+#   Well-formed: `<digits>|<end-index>` where digits has `_` stripped
+#   Malformed:   `ERR`
+#
+# Clojure source. compiler/src/cxc/lex.clj L283 to L312.
+#
+# Shape. Atom-loop over cursor + last-was-digit flag + error flag.
+# Error-arms set `error => true` without advancing cursor and
+# dispatch `self :> step`; the next tick fires the guard-only
+# `<: step -> end |: error` arm (no then-body — `then:` on a
+# target=`end` transition is a compile error, so the write happens
+# in `end`'s entry then-body).
+
+def main:
+    use args:    Args
+    use console: Console
+
+    input:          String! = ""
+    cursor:         Int!    = 0
+    digits_acc:     String! = ""
+    last_was_digit: Bool!   = false
+    error:          Bool!   = false
+
+    at_end        :- cursor >= input.length()
+    cur           :- ||: at_end : -1 ||: else : input.code_at(cursor)
+    is_digit      :- cur >= 48 and cur <= 57
+    is_underscore :- cur == 95
+    has_digits    :- digits_acc.length() > 0
+
+    -> scanning
+        then:
+            input => args.get_or(1, "")
+            self :> step
+
+    -> end
+        then:
+            let out: String! = ||: error : "ERR" ||: else : digits_acc + "|" + cursor.to_string()
+            console.write(out)
+
+    scanning <: step -> end
+        |: error
+
+    scanning <: step -> scanning
+        |: not error and not at_end and is_digit
+        then:
+            digits_acc => digits_acc + input.substring(cursor, 1)
+            last_was_digit => true
+            cursor => cursor + 1
+            self :> step
+
+    scanning <: step -> scanning
+        |: not error and not at_end and is_underscore and last_was_digit
+        then:
+            last_was_digit => false
+            cursor => cursor + 1
+            self :> step
+
+    scanning <: step -> scanning
+        |: not error and not at_end and is_underscore and not last_was_digit
+        then:
+            error => true
+            self :> step
+
+    scanning <: step -> scanning
+        |: not error and not at_end and not is_digit and not is_underscore and has_digits and not last_was_digit
+        then:
+            error => true
+            self :> step
+
+    scanning <: step -> end
+        |: not error and not at_end and not is_digit and not is_underscore and (not has_digits or last_was_digit)
+
+    scanning <: step -> scanning
+        |: not error and at_end and has_digits and not last_was_digit
+        then:
+            error => true
+            self :> step
+
+    scanning <: step -> end
+        |: not error and at_end and (not has_digits or last_was_digit)

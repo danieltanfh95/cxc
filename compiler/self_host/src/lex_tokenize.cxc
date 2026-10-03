@@ -1,0 +1,134 @@
+# Self-host port of a cxc.lex/tokenize-line SUBSET.
+#
+# Contract. Given an ASCII input containing only identifiers,
+# keywords, decimal integers, and whitespace, emit a `;`-separated
+# token stream in the shape `<kind>:<value>@<col>`. One stdout
+# line per invocation. Empty input emits an empty line.
+#
+# Kinds. `kw` (reserved word), `ident` (non-reserved identifier),
+# `int` (decimal digit run, no underscores). Whitespace is skipped
+# per Clojure's Character/isWhitespace ASCII subset.
+#
+# Out of scope. Underscores inside int runs, hex/octal/binary,
+# string literals, char literals, glyphs, punctuation, multi-line
+# input. The oracle corpus avoids inputs that would produce
+# those kinds; if a byte that is not whitespace, id-start, or
+# digit appears, the port transitions straight to end.
+#
+# Argv shape. argv[1] = input line.
+#
+# Shape. Four-phase atom-loop. `stepping` dispatches, `in_word`
+# accumulates identifier chars, `in_int` accumulates digits, `end`
+# writes the accumulated token stream. Reads happen through
+# `.code_at` (ASCII-safe byte-at-index) rather than `.to_bytes().at`
+# which would allocate NSData per tick.
+#
+# Clojure source. compiler/src/cxc/lex.clj L510 to L800 for the
+# full tokenize-line; this slice covers the whitespace / word /
+# int subset.
+
+def main:
+    input:            String! = ""
+    cursor:           Int!    = 0
+    col:              Int!    = 1
+    acc:              String! = ""
+    token_acc:        String! = ""
+    token_start_col:  Int!    = 0
+
+    reserved: List of String = [
+        "module", "from", "import", "as",
+        "def",
+        "use", "invariants",
+        "accepts",
+        "extend", "replace",
+        "deprecated",
+        "then", "do", "when", "let", "alias",
+        "self", "nil", "true", "false",
+        "and", "or", "not", "is", "in", "of",
+        "if", "else", "return", "case",
+        "function",
+        "for",
+        "weak", "unowned",
+        "while", "loop", "break", "continue",
+        "raise"
+    ]
+
+    use args:    Args
+    use console: Console
+
+    cur         :- ||: cursor < input.length() : input.code_at(cursor) ||: else : -1
+    at_end      :- cursor >= input.length()
+    is_ws       :- cur == 9 or cur == 10 or cur == 11 or cur == 12 or cur == 13 or cur == 28 or cur == 29 or cur == 30 or cur == 31 or cur == 32
+    is_digit    :- cur >= 48 and cur <= 57
+    is_id_start :- (cur >= 65 and cur <= 90) or (cur >= 97 and cur <= 122) or cur == 95
+    is_id_cont  :- is_id_start or is_digit
+    is_reserved :- reserved.contains(token_acc)
+
+    -> stepping
+        then:
+            input => args.get_or(1, "")
+            self :> tick
+
+    -> end
+        then: console.write(acc.trim_prefix(";"))
+
+    stepping <: tick -> end
+        |: at_end
+
+    stepping <: tick -> stepping
+        |: not at_end and is_ws
+        then:
+            cursor => cursor + 1
+            col => col + 1
+            self :> tick
+
+    stepping <: tick -> in_word
+        |: not at_end and is_id_start
+        then:
+            token_acc => input.substring(cursor, 1)
+            token_start_col => col
+            cursor => cursor + 1
+            col => col + 1
+            self :> tick
+
+    stepping <: tick -> in_int
+        |: not at_end and is_digit
+        then:
+            token_acc => input.substring(cursor, 1)
+            token_start_col => col
+            cursor => cursor + 1
+            col => col + 1
+            self :> tick
+
+    stepping <: tick -> end
+        |: not at_end and not is_ws and not is_id_start and not is_digit
+
+    in_word <: tick -> in_word
+        |: not at_end and is_id_cont
+        then:
+            token_acc => token_acc + input.substring(cursor, 1)
+            cursor => cursor + 1
+            col => col + 1
+            self :> tick
+
+    in_word <: tick -> stepping
+        |: at_end or not is_id_cont
+        then:
+            acc => acc + ";" + (||: is_reserved : "kw" ||: else : "ident") + ":" + token_acc + "@" + token_start_col.to_string()
+            token_acc => ""
+            self :> tick
+
+    in_int <: tick -> in_int
+        |: not at_end and is_digit
+        then:
+            token_acc => token_acc + input.substring(cursor, 1)
+            cursor => cursor + 1
+            col => col + 1
+            self :> tick
+
+    in_int <: tick -> stepping
+        |: at_end or not is_digit
+        then:
+            acc => acc + ";int:" + token_acc + "@" + token_start_col.to_string()
+            token_acc => ""
+            self :> tick

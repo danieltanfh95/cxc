@@ -1,0 +1,138 @@
+# Port of cxc.named-tuple/canonical-named-tuple-name — primitive-only
+# scope (type-ref and type-nonnil wrapping type-ref), sort step
+# deferred.
+#
+# Input format: argv[1] = "<f1>|<m1>;<f2>|<m2>;..." where
+#   fi: field name, non-empty, no `_`, must not start with `Nn`
+#   mi: mangle string, either `<prim>` or `Nn_<prim>` where `<prim>`
+#       is non-empty, contains no `_`, and is not a reserved-prefix
+#       mangling (`Nn_`, `_Cxc_NT`, `Nt<digit>`, `Of<digit>`)
+#
+# Precondition: fields pre-sorted alphabetically. The Clojure
+# `canonical-named-tuple-name` always sorts `(sort-by :name fields)`;
+# the port skips the sort and relies on the caller to feed pre-sorted
+# input, so cxc and oracle agree on the output.
+#
+# Output per line:
+#   Well-formed input: `_Cxc_NT_<f1>_<m1>_<f2>_<m2>_...`
+#   Any invalid pair OR empty input: `INVALID`
+#
+# Clojure source: compiler/src/cxc/named_tuple.clj L34 to L183.
+#
+# Terminal phase MUST be named `end`. Non-`end` terminal phases
+# leave the atom idling in the dispatch runloop (`-transitionToEnd`
+# owns the exit cascade). `then:` on a `<: ... -> end` arm is a
+# compile error — the end-arm must be then-free, so the final pair
+# validation happens in a last `parsing -> parsing` self-arm (one
+# tick before the empty-acc end-arm) and the terminal write runs
+# in `-> end`'s entry then-body.
+
+def main:
+    use args:    Args
+    use console: Console
+
+    spec:          String! = ""
+    cursor:        Int!    = 0
+    in_mangle:     Bool!   = false
+    name_acc:      String! = ""
+    mangle_acc:    String! = ""
+    canonical_acc: String! = "_Cxc_NT"
+    pair_count:    Int!    = 0
+    invalid:       Bool!   = false
+
+    at_end  :- cursor >= spec.length()
+    cur     :- ||: at_end : -1 ||: else : spec.code_at(cursor)
+    is_pipe :- cur == 124
+    is_semi :- cur == 59
+
+    -> parsing
+        then:
+            spec => args.get_or(1, "")
+            self :> step
+
+    -> end
+        then:
+            let out: String! = ||: invalid or pair_count == 0 : "INVALID" ||: else : canonical_acc
+            console.write(out)
+
+    parsing <: step -> parsing
+        |: not at_end and is_pipe and not in_mangle
+        then:
+            in_mangle => true
+            cursor => cursor + 1
+            self :> step
+
+    parsing <: step -> parsing
+        |: not at_end and is_pipe and in_mangle
+        then:
+            invalid => true
+            cursor => cursor + 1
+            self :> step
+
+    parsing <: step -> parsing
+        |: not at_end and is_semi
+        then:
+            let name_bad: Bool!            = name_acc.length() == 0
+            let name_underscore: Bool!     = name_acc.index_of("_") >= 0
+            let name_nn: Bool!             = name_acc.starts_with("Nn")
+            let mangle_empty: Bool!        = mangle_acc.length() == 0 or not in_mangle
+            let m_has_nn: Bool!            = mangle_acc.starts_with("Nn_")
+            let m_inner: String!           = ||: m_has_nn : mangle_acc.substring(3, mangle_acc.length() - 3) ||: else : mangle_acc
+            let m_inner_empty: Bool!       = m_inner.length() == 0
+            let m_inner_underscore: Bool!  = m_inner.index_of("_") >= 0
+            let m_inner_cxc_nt: Bool!      = m_inner.starts_with("_Cxc_NT")
+            let m_nt_tag: Bool!            = m_inner.starts_with("Nt") and m_inner.length() >= 3
+            let m_of_tag: Bool!            = m_inner.starts_with("Of") and m_inner.length() >= 3
+            let m_nt_digit: Bool!          = m_nt_tag and m_inner.code_at(2) >= 48 and m_inner.code_at(2) <= 57
+            let m_of_digit: Bool!          = m_of_tag and m_inner.code_at(2) >= 48 and m_inner.code_at(2) <= 57
+            let pair_bad: Bool!            = name_bad or name_underscore or name_nn or mangle_empty or m_inner_empty or m_inner_underscore or m_inner_cxc_nt or m_nt_digit or m_of_digit
+            invalid => invalid or pair_bad
+            canonical_acc => canonical_acc + "_" + name_acc + "_" + mangle_acc
+            pair_count => pair_count + 1
+            name_acc => ""
+            mangle_acc => ""
+            in_mangle => false
+            cursor => cursor + 1
+            self :> step
+
+    parsing <: step -> parsing
+        |: not at_end and not is_pipe and not is_semi and in_mangle
+        then:
+            mangle_acc => mangle_acc + spec.substring(cursor, 1)
+            cursor => cursor + 1
+            self :> step
+
+    parsing <: step -> parsing
+        |: not at_end and not is_pipe and not is_semi and not in_mangle
+        then:
+            name_acc => name_acc + spec.substring(cursor, 1)
+            cursor => cursor + 1
+            self :> step
+
+    parsing <: step -> parsing
+        |: at_end and (name_acc.length() > 0 or mangle_acc.length() > 0 or in_mangle)
+        then:
+            let name_bad: Bool!            = name_acc.length() == 0
+            let name_underscore: Bool!     = name_acc.index_of("_") >= 0
+            let name_nn: Bool!             = name_acc.starts_with("Nn")
+            let mangle_empty: Bool!        = mangle_acc.length() == 0 or not in_mangle
+            let m_has_nn: Bool!            = mangle_acc.starts_with("Nn_")
+            let m_inner: String!           = ||: m_has_nn : mangle_acc.substring(3, mangle_acc.length() - 3) ||: else : mangle_acc
+            let m_inner_empty: Bool!       = m_inner.length() == 0
+            let m_inner_underscore: Bool!  = m_inner.index_of("_") >= 0
+            let m_inner_cxc_nt: Bool!      = m_inner.starts_with("_Cxc_NT")
+            let m_nt_tag: Bool!            = m_inner.starts_with("Nt") and m_inner.length() >= 3
+            let m_of_tag: Bool!            = m_inner.starts_with("Of") and m_inner.length() >= 3
+            let m_nt_digit: Bool!          = m_nt_tag and m_inner.code_at(2) >= 48 and m_inner.code_at(2) <= 57
+            let m_of_digit: Bool!          = m_of_tag and m_inner.code_at(2) >= 48 and m_inner.code_at(2) <= 57
+            let pair_bad: Bool!            = name_bad or name_underscore or name_nn or mangle_empty or m_inner_empty or m_inner_underscore or m_inner_cxc_nt or m_nt_digit or m_of_digit
+            invalid => invalid or pair_bad
+            canonical_acc => canonical_acc + "_" + name_acc + "_" + mangle_acc
+            pair_count => pair_count + 1
+            name_acc => ""
+            mangle_acc => ""
+            in_mangle => false
+            self :> step
+
+    parsing <: step -> end
+        |: at_end and name_acc.length() == 0 and mangle_acc.length() == 0 and not in_mangle
