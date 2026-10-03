@@ -1012,6 +1012,16 @@
       (is (re-find #"Gauge invariant #0 failed" (or stderr ""))
           "expected diagnostic naming the violated invariant"))))
 
+(deftest unreachable-main-end-compiles-with-stderr-warning
+  (let [warnings (java.io.StringWriter.)
+        result (binding [*err* warnings]
+                 (build/compile-source-to-file
+                  (slurp "test/fixtures/unreachable-end.cxc")
+                  "unreachable-end" (.getPath (tmp-dir))))]
+    (is (zero? (:status result)) (:stderr result))
+    (is (str/includes? (str warnings) "warning: `def main` declares phases boot, end"))
+    (is (str/includes? (str warnings) "final phase `end` is unreachable from `boot`"))))
+
 (deftest end-to-end-main-shutdown-on-end
   (testing "main-shutdown-on-end.cxc — `self :> stop` triggers `running <: stop -> end`; `-> end do:` prints 7; CxcMain's transitionToEnd invokes cxc_shutdown() to exit the dispatch_main loop cleanly (Steps 16/17)"
     (let [{:keys [exit stdout]} (compile-and-run "main-shutdown-on-end")]

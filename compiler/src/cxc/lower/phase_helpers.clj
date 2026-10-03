@@ -1,6 +1,6 @@
 (ns cxc.lower.phase-helpers
-  "Pure accessors + classifiers over an atom's transition list. No env
-   access, no type inference — every fn reads only parsed AST nodes.
+  "Accessors, classifiers, and main-phase diagnostics over an atom's
+   transition list. No env access or type inference — only parsed AST.
 
    `initial-phase-for` / `collect-phase-names` / `phase-constant-name`
    drive the phase-state machinery scaffolding (declaration order fixes
@@ -14,7 +14,8 @@
 
    `wildcards-by-target-phase` groups wildcards for on-enter chain
    emission (design §6 — wildcard defaults then specific override)."
-  (:require [cxc.diagnostics :refer [fail-user!]]))
+  (:require [clojure.string :as str]
+            [cxc.diagnostics :refer [fail-user!]]))
 
 (defn initial-phase-for
   "First phase mentioned as a transition target — i.e. the phase the
@@ -59,6 +60,58 @@
    entry to their target phase."
   [t]
   (contains? #{"<:" "<|"} (get-in t [:receive :glyph])))
+
+(defn- reachable-phases
+  "Follow receive arms from the entry phase to a fixed point. Guards
+   and message availability are conservatively treated as possible.
+   Self-sends in on-enter/then bodies use these same receive arms;
+   their message names are not direct phase jumps. `-> self` leaves
+   the phase unchanged, and wildcard sources apply in every phase."
+  [transitions initial]
+  (loop [reachable #{initial}]
+    (let [next-reachable
+          (into reachable
+                (keep (fn [t]
+                        (when (and (message-triggered? t)
+                                   (not= "self" (:target t))
+                                   (or (= :wildcard (get-in t [:source :kind]))
+                                       (and (= :phase (get-in t [:source :kind]))
+                                            (contains? reachable
+                                                       (get-in t [:source :name])))))
+                          (:target t))))
+                transitions)]
+      (if (= reachable next-reachable)
+        reachable
+        (recur next-reachable)))))
+
+(defn warn-unreachable-main-end!
+  "Warn only for an explicitly declared, unreachable `end` in main.
+   Other atoms may be driven externally. Do not use collect-phase-names
+   here: it adds an implicit `end` sentinel even when none was declared."
+  [main-node]
+  (when (and (= :def-atom (:node main-node)) (= "main" (:name main-node)))
+    (let [transitions (filter #(= :transition (:node %)) (:body main-node))
+          ;; Handler-shaped arms may precede the first phase declaration
+          ;; and are removed from the phase list during atom lowering.
+          initial (or (some #(when (wildcard-on-enter? %) (:target %)) transitions)
+                      (initial-phase-for transitions))]
+      (when (and (some #(= "end" (:target %)) transitions)
+                 (not (contains? (reachable-phases transitions initial) "end")))
+        (let [declared (->> transitions
+                             (mapcat #(vector (when (= :phase (get-in % [:source :kind]))
+                                                (get-in % [:source :name]))
+                                              (:target %)))
+                             (keep identity)
+                             (remove #{"self" "*"})
+                             distinct)]
+          (binding [*out* *err*]
+            (println (str "warning: `def main` declares phases "
+                          (str/join ", " declared)
+                          ", but final phase `end` is unreachable from `" initial "`; "
+                          "the program will not exit after `-> " initial "` completes. "
+                          "Add a `then: self :> end` to `" initial
+                          "` or a transition that terminates in `end` "
+                          "(self-sends require a matching `<: end -> end` arm)."))))))))
 
 (defn transition-trigger-kind
   "Classify a receive-glyph transition's source pattern:

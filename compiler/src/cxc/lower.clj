@@ -10156,6 +10156,11 @@
                                               (program-has-async-sends?
                                                (:transitions info))))
                                        atom-env))
+        ;; Only warn when main actually enters dispatch_main(). Use the
+        ;; declared graph, without synthesized end machinery.
+        _                 (when (and main-as-atom? needs-dispatch-loop?
+                                     (= :dispatch-main runtime-shape))
+                            (phase-helpers/warn-unreachable-main-end! main-atom))
         base-includes     (if needs-foundation?
                             ["<Foundation/Foundation.h>"
                              ;; Layer 5c: objc_msgSend / sel_registerName

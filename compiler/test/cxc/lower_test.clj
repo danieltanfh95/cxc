@@ -3486,6 +3486,125 @@ def main:
                           (str/join "\n"))]
         [result (if (empty? filtered) "" (str filtered "\n"))]))))
 
+(defn- with-dispatch-main [src]
+  ;; Async work in an owned atom also keeps main's dispatch loop alive.
+  (str "def Pinger:\n    -> idle\n        then: self :> ping\n"
+       "    idle <: ping -> self\n\n"
+       (str/replace-first src "def main:\n"
+                          "def main:\n    p: Pinger! = Pinger()\n")))
+
+(deftest unreachable-main-end-warns-with-phase-sequence-and-hint
+  (let [fixture (slurp "test/fixtures/unreachable-end.cxc")]
+    (doseq [src [fixture
+                (str "def Worker:\n    -> idle\n\n" fixture)
+                (str/replace-first fixture "def main:\n"
+                                   "def main:\n    * <: noop -> self\n")
+                (str "def main:\n    -> boot\n        then: self :> noop\n"
+                     "    boot <: noop -> self\n    -> end\n")]]
+      (let [[prog stderr] (capture-warnings #(lower-src src))]
+        (is (= :objc-program (:node prog)) "the warning is non-fatal")
+        (is (:needs-dispatch-loop? prog))
+        (is (= :main-bootstrap (get-in prog [:main :body 0 :node])))
+        (is (str/includes? stderr "warning: `def main` declares phases boot, end"))
+        (is (str/includes? stderr "final phase `end` is unreachable from `boot`"))
+        (is (str/includes? stderr "the program will not exit after `-> boot` completes"))
+        (is (str/includes? stderr "Add a `then: self :> end` to `boot` or a transition that terminates in `end`"))
+        (is (= 1 (count (re-seq #"final phase `end` is unreachable" stderr))))))))
+
+(deftest unreachable-main-end-without-dispatch-main-does-not-warn
+  (let [plain "def main:\n    -> boot\n        then: print(1)\n    -> end\n"
+        fixture (slurp "test/fixtures/unreachable-end.cxc")]
+    (doseq [[label src]
+            [["plain main" plain]
+             ["unused atom promotes main without async work"
+              (str "def Worker:\n    -> idle\n\n" plain)]
+             ["owned atom without async work"
+              (str/replace fixture "            p :> ping()\n" "")]
+             ["owned atom with only a synchronous send"
+              (str/replace fixture "p :> ping()" "|> p.ping()")]
+             ["main with only a receive arm"
+              (str "def main:\n    -> boot\n"
+                   "    boot <: noop -> self\n    -> end\n")]]]
+      (testing label
+        (let [[prog stderr] (capture-warnings #(lower-src src))]
+          (is (= :objc-program (:node prog)))
+          (is (not (:needs-dispatch-loop? prog)))
+          (is (= "" stderr)))))
+    (testing "AppKit runtime owns the main loop"
+      (let [plugin {:node :def-plugin
+                    :fields [{:name "runtime_shape"
+                              :default {:node :dot
+                                        :target {:node :ident :name "RuntimeShape"}
+                                        :field "main_runloop"}}]}
+            [prog stderr] (capture-warnings
+                           #(lower/lower (into [plugin] (p/parse fixture))))]
+        (is (:needs-dispatch-loop? prog))
+        (is (= :main-runloop (:runtime-shape prog)))
+        (is (= "" stderr))))))
+
+(deftest reachable-main-end-does-not-warn
+  (doseq [[label src]
+          [["entry is end" "def main:\n    -> end\n"]
+           ["direct receive arm"
+            "def main:\n    -> boot\n    boot <: stop -> end\n    -> end\n"]
+           ["self-send from entry"
+            "def main:\n    -> boot\n        then: self :> end\n    boot <: end -> end\n    -> end\n"]
+           ["receive arms declared in reverse path order"
+            (str "def main:\n    -> boot\n    work <: stop -> end\n"
+                 "    boot <: begin -> work\n    -> work\n    -> end\n")]
+           ["message handler declared before the entry phase"
+            (str "def main:\n    * <: noop -> self\n    -> boot\n"
+                 "    boot <: stop -> end\n    -> end\n")]
+           ["composed phases and forwarding in a transition's then body"
+            (str "def main:\n    -> boot\n        then: self :> begin\n"
+                 "    boot <: begin -> work\n        then: self :> stop\n"
+                 "    -> work\n    work <: stop -> end\n    -> end\n")]
+           ["forwarding from a transition to self"
+            (str "def main:\n    -> boot\n        then: self :> next\n"
+                 "    boot <: next -> self\n        then: self :> stop\n"
+                 "    boot <: stop -> end\n    -> end\n")]
+           ["wildcard-source termination"
+            "def main:\n    -> boot\n    * <: stop -> end\n    -> end\n"]]]
+    (doseq [[path source] [["unmodified main" src]
+                          ["dispatch_main path" (with-dispatch-main src)]]]
+      (testing (str label ", " path)
+        (let [[prog stderr] (capture-warnings #(lower-src source))]
+          (is (= :objc-program (:node prog)))
+          (when (= "dispatch_main path" path)
+            (is (:needs-dispatch-loop? prog))
+            (is (= :main-bootstrap (get-in prog [:main :body 0 :node]))))
+          (is (= "" stderr)))))))
+
+(deftest disconnected-main-end-paths-still-warn
+  (doseq [[label arms]
+          [["only an orphan phase can terminate"
+            (str "    -> work\n        then: self :> stop\n"
+                 "    work <: stop -> end\n")]
+           ["disconnected cycle"
+            (str "    -> work\n    work <: next -> waiting\n"
+                 "    waiting <: again -> work\n    waiting <: stop -> end\n")]
+           ["reachable cycle without an exit" "    boot <: again -> boot\n"]
+           ["a self-send named end is a message, not a phase jump"
+            "        then: self :> end\n    boot <: end -> self\n"]]]
+    (testing label
+      (let [[prog stderr] (capture-warnings
+                           #(lower-src (with-dispatch-main
+                                         (str "def main:\n    -> boot\n" arms "    -> end\n"))))]
+        (is (= :objc-program (:node prog)))
+        (is (:needs-dispatch-loop? prog))
+        (is (= :main-bootstrap (get-in prog [:main :body 0 :node])))
+        (is (str/includes? stderr "final phase `end` is unreachable from `boot`"))))))
+
+(deftest main-end-warning-requires-an-explicit-main-end
+  (doseq [src ["def main:\n    -> boot\n        then: print(1)\n"
+               (str "def Worker:\n    -> idle\n    -> end\n\n"
+                    "def main:\n    -> boot\n        then: print(1)\n")
+               "def main:\n    -> boot\n    boot <: again -> self\n"]]
+    (doseq [source [src (with-dispatch-main src)]]
+      (let [[prog stderr] (capture-warnings #(lower-src source))]
+        (is (= :objc-program (:node prog)))
+        (is (= "" stderr) "implicit end sentinels and non-main phases do not warn")))))
+
 (deftest f9-l4-single-extension-adds-method
   (testing "F9 Landing 4 + F67 L4 — one extension of a record adds an observable that composes into the record's method table (extension observables convert to method-shape at compose time)."
     (let [[prog stderr] (capture-warnings
