@@ -202,9 +202,18 @@ def main:
 
 ### Capabilities
 
-- Every fallible capability raises typed records (`IOError` / `HttpError` / `ShellError` / `JsonError` / `EnvError` / `RandomError`).
-- Recovery is at the call site: `alias x :- fs.read(...) or IOError(: fallback)`.
-- No `Result[T, E]`. No `try / catch`.
+Every fallible capability raises a typed record. Recovery is a call-site `or <ErrorType>(<binding>):` arm at the same indentation as the `let` or `alias`, with the fallback expression on the next indented line (verified against the `fs.size` recovery pattern in `compiler/examples/`).
+
+| Capability | Example method | Raises | Recovery form |
+|------------|----------------|--------|---------------|
+| `fs` | `fs.read_text(path: p)` | `IOError` | `let s: String = fs.read_text(path: p)` → `or IOError(reason: let _r):` → `"<missing>"` |
+| `http` | `http.get(url: u, headers_json: "{}")` | `HttpError` | `let r: HttpResponse = http.get(url: u, headers_json: "{}")` → `or HttpError(status: let _s):` → `default_response` |
+| `subprocess` | `subprocess.run(cmd: c, env: EnvSpec.empty)` | `ShellError` | `let r: String = subprocess.run(cmd: c, env: EnvSpec.empty)` → `or ShellError(reason: let _r):` → `""` |
+| `json` | `json.field_string(json: j, key: k)` | `JsonError` | `let v: String = json.field_string(json: j, key: k)` → `or JsonError(reason: let _r):` → `"<missing>"` |
+| `env` (`EnvMut`) | `env.set(name: k, value: v)` | `EnvError` | `let rc: Int = env.set(name: k, value: v)` → `or EnvError(name: let _n):` → `-1` |
+| `random` | `random.between(low: 0, high: n)` | `RandomError` | `let n: Int = random.between(low: 0, high: 10)` → `or RandomError(reason: let _r):` → `0` |
+
+The `→` in the recovery column separates lines of the same block, each at its own indent level in the actual source. Field names inside `(…)` are the typed-error record's shape; `let _r` binds the error field but discards it. No `Result[T, E]`. No `try / catch`.
 
 ### What Corvid does not have
 
