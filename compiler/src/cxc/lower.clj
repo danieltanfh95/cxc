@@ -1715,6 +1715,18 @@
       (and (int-family? target-ty) (= "to_string" method-name))
       :string
 
+      ;; 2026-10-04 — `Int.to_char_string() -> String!`. Interprets
+      ;; the receiver as a Unicode code point and returns a one-
+      ;; character String. The round-trip pair for `.code_at(i)`:
+      ;; `(s.code_at(i)).to_char_string() == s.substring(i, 1)` for
+      ;; ASCII bytes 0-127. Code points > 127 produce the proper
+      ;; UTF-8 one-character String (NSString `stringWithFormat:
+      ;; @"%C"` + a UTF-16 unit; for the BMP it round-trips; code
+      ;; points above U+FFFF need surrogate-pair encoding which is
+      ;; outside this landing's scope).
+      (and (int-family? target-ty) (= "to_char_string" method-name))
+      :string
+
       ;; 2026-09-03 — `Int.abs() -> Int`, `Int.min(other) -> Int`,
       ;; `Int.max(other) -> Int`. Compile-time ternaries; no branch
       ;; on the runtime side of a helper call.
@@ -1744,7 +1756,7 @@
       (and (= :string target-ty)
            (contains? #{"length" "contains" "starts_with" "ends_with"
                         "substring" "index_of" "trim" "replace"
-                        "to_int_or" "to_bool_or"
+                        "to_int_or" "to_bool_or" "to_double_or"
                         "uppercase" "lowercase" "to_bytes"
                         "path_join" "basename" "dirname" "extension"
                         "trim_prefix" "trim_suffix"
@@ -1752,13 +1764,14 @@
                         "split" "code_at" "compare_to"}
                       method-name))
       (case method-name
-        "length"     :int
-        "index_of"   :int
-        "to_int_or"  :int
-        "to_bool_or" :bool
-        "to_bytes"   :bytes
-        "code_at"    :int
-        "compare_to" :int
+        "length"        :int
+        "index_of"      :int
+        "to_int_or"     :int
+        "to_bool_or"    :bool
+        "to_double_or"  :float
+        "to_bytes"      :bytes
+        "code_at"       :int
+        "compare_to"    :int
         ("substring" "trim" "replace" "uppercase" "lowercase"
          "path_join" "basename" "dirname" "extension"
          "trim_prefix" "trim_suffix"
@@ -3206,6 +3219,32 @@
                             (str "((" c ") ? [NSString stringWithUTF8String:"
                                  c "] : nil)"))})
 
+          ;; 2026-10-04 — `Int.to_char_string()` — Unicode code-point
+          ;; render. Zero-arg. `+[NSString stringWithFormat:@"%C",
+          ;; (unichar)n]`. Code points 0-U+FFFF round-trip through
+          ;; `.code_at(0)`; higher code points truncate to the low 16
+          ;; bits (surrogate-pair encoding outside this landing's
+          ;; scope — the self-host scan-string hex-escape slice only
+          ;; needs 0-255, well within range).
+          (and (int-family? target-ty)
+               (= "to_char_string" method-name))
+          (do (when-not (zero? (count arg-exprs))
+                (fail-user! (str "`Int.to_char_string()` takes no args, "
+                                 "got " (count arg-exprs))
+                            call-node))
+              {:node      :ffi-call
+               :name      "cxc_int_to_char_string"
+               :args      [(if envelope-target? target-lo0 target-lo)]
+               :emit-c-fn (fn [[n]]
+                            (if envelope-target?
+                              (str "({ __typeof__(" n ") __cxc_cs = (" n "); "
+                                   "__cxc_cs.present "
+                                   "? [NSString stringWithFormat:@\"%C\", "
+                                   "(unichar)(__cxc_cs.value)] "
+                                   ": @\"\"; })")
+                              (str "[NSString stringWithFormat:@\"%C\", "
+                                   "(unichar)(" n ")]")))})
+
           ;; 2i (2026-09-02) — `Int.to_string()` — decimal render.
           ;; `+[NSString stringWithFormat:@"%lld", (long long)n]`.
           ;; Zero-arg. Callers most often want this for log/error
@@ -3334,7 +3373,7 @@
           (and (= :string target-ty)
                (contains? #{"length" "contains" "starts_with" "ends_with"
                             "substring" "index_of" "trim" "replace"
-                            "to_int_or" "to_bool_or"
+                            "to_int_or" "to_bool_or" "to_double_or"
                             "uppercase" "lowercase" "to_bytes"
                             "path_join" "basename" "dirname" "extension"
                             "trim_prefix" "trim_suffix"
@@ -3487,6 +3526,33 @@
                                    "|| [__l isEqualToString:@\"no\"] "
                                    "|| [__l isEqualToString:@\"0\"] "
                                    "|| [__l isEqualToString:@\"off\"]) __r = NO; } "
+                                   "__r; })"))})
+              "to_double_or"
+              ;; 2026-10-04 — mirrors `.to_int_or` shape. Parses the
+              ;; receiver as a strict Double (NSScanner + `isAtEnd`
+              ;; discipline) and returns the fallback when parsing
+              ;; fails or when any trailing characters remain. nil
+              ;; receiver returns the fallback. The strict-end check
+              ;; keeps `"1.5x"` from being accepted as 1.5 (matches
+              ;; Clojure's `(Double/parseDouble)` which throws on
+              ;; trailing garbage).
+              (let [fb (primitive-raw-c-arg
+                         (first arg-exprs)
+                         (:value (first ordered-args))
+                         ctx
+                         "primitive method `string.to_double_or` arg"
+                         "fallback")]
+                {:node :ffi-call :name "cxc_string_to_double_or"
+                 :args [target-lo fb]
+                 :emit-c-fn (fn [[s fb]]
+                              (str "({ NSString *__s = (" s "); "
+                                   "double __fb = (double)(" fb "); "
+                                   "double __r = __fb; "
+                                   "if (__s) { "
+                                   "NSScanner *__sc = [NSScanner scannerWithString:__s]; "
+                                   "double __v = 0; "
+                                   "if ([__sc scanDouble:&__v] && [__sc isAtEnd]) "
+                                   "{ __r = __v; } } "
                                    "__r; })"))})
               "trim_prefix"
               {:node :ffi-call :name "cxc_string_trim_prefix"
