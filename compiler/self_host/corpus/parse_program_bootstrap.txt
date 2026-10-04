@@ -1,0 +1,501 @@
+
+\n\n
+# just a comment\n
+module a.b
+let x = 1
+sealed protocol P:
+extern Foo:
+record Foo:\n    x: Int
+enum Color:\n    case red
+class Foo:
+record
+foo
+42
+    def X:\n        x: Int
+x: Int
+-> go
+@deprecated\ndef X:\n    x: Int
+def X:\n    x: Int\n\n\ndef Y:\n    y: Int\n
+def X:\n    x: Int\nfoo
+from a import b
+from a.b.c import X, Y, Z
+from a import b as c, d, e as f
+from a import
+from a import b,
+from a import b c
+from a import b as
+from a import b as 5
+from a. import b
+from a.b import b\nfrom c import d
+from 5 import x
+from a b
+from
+from objc "Foundation/NSString.h" import NSString, NSData
+from c "stdio.h" import printf as pf
+from objc "x.h" b
+from objc "x.h" import
+from c import x
+from objc.foo import x
+import foo
+import foo.bar.baz
+import foo as f
+import foo.bar as
+import foo as 1
+import foo bar
+import
+import 5
+import objc "Foundation/Foundation.h"
+import c "stdio.h"
+import c "stdio.h" extra
+import objc
+import objc as o
+import foo.
+import a\nimport b as c\nfrom d import e
+def
+def 5:
+def X
+def X:
+def X:\n
+def X: foo
+def X: 5
+def X:\nfoo
+def foo: x
+def helper(x: Int, y: Int): Int :- x + y
+def helper(x: Int): Int
+def _foo: x
+def Main(x: Int):\n    -> go
+def Main(x: Int, y: String = "a"):\n    -> go
+def Main():\n    x: Int
+def Main(x: Int,\n         y: Int):\n    -> go
+def Card(\n    a: Int!,\n    b: Int!\n):\n    -> go
+def Main(x: Int):\n    x: Int
+def Main(self):\n    -> go
+def Main(x Int):\n    -> go
+def Main(x: Int y: Int):\n    -> go
+def Main(x:):\n    -> go
+def Main(5):\n    -> go
+def A(queue: unbounded):\n    -> go
+def A(queue: bounded(100)):\n    -> go
+def A(queue: bounded(0x10)):\n    -> go
+def A(queue: bounded(100), x: Int):\n    -> go
+def A(queue: unbounded, x: Int, y: Int = 2):\n    -> go
+def A(queue: bounded(0)):\n    -> go
+def A(queue: bounded(-1)):\n    -> go
+def A(queue: bounded(x)):\n    -> go
+def A(queue: bounded(1.5)):\n    -> go
+def A(queue: bounded(5:\n    -> go
+def A(queue: bounded(5]):\n    -> go
+def A(queue: bounded):\n    -> go
+def A(queue: fifo):\n    -> go
+def A(queue: 5):\n    -> go
+def A(queue: "x"):\n    -> go
+def A(queue: unbounded x):\n    -> go
+def A(queue: unbounded,):\n    -> go
+def A(queue: unbounded, x: Int y):\n    -> go
+def A(queue: unbounded):\n    x: Int
+def A(queue: unbounded):\n    x :- 1
+def A(queue: unbounded):\n    x :- Int
+def A(queue: unbounded):\n    case a
+def A(queue: bounded(2)):\n    use c: Console
+def A(queue:\n    -> go
+def A(queue):\n    -> go
+def Point:\n    x: Int\n    y: Int
+def Point:\n    x: Int = 0\n    y: Int! = 1\n    norm :- x + y
+def Point:\n    norm :- x + y\n    x: Int\n    |: x > 0\n    y: Int
+def Point:\n    |: x >= 0\n    x: Int
+def Main:\n    use console: Console
+def Main:\n    use console: Console\n    use fs: FileSystem
+def Main:\n    use a: A\n    x: Int\n    use b: B\n    y: Int\n    -> go
+def Main:\n    x: Int\n    use a: A\n    y: Int\n    use b: B\n    -> go
+def Main:\n    -> go\n    x: Int\n    -> stop\n    use a: A\n    y: Int
+def Main:\n    use a: A\n    use b: B\n    use c: C\n    -> go
+def Holder:\n    child: Child = Child()
+def Holder:\n    child: Child = Child(x: 1)
+def Holder:\n    child: Child = make()
+def Holder:\n    child: Child = Child.make()
+def Holder:\n    n: Int = Foo() + 1
+def Holder:\n    c: Child = _Child()
+def Holder:\n    c: Int = 1\n    d: Child = Kid()
+def Main:\n    on_nil:\n        size: 0\n    x: Int
+def Main:\n    class function make(x: Int) -> Main:\n        return Main()
+def Main:\n    phase <: go -> phase
+def Main:\n    -> running\n        then:\n            print("hi")\n    running <: tick -> end
+def Main:\n    x: Int\n    -> running\n        then: x => 1 < 2 < 3
+def Main:\n    x: weak Foo\n    y: unowned Bar
+def Main:\n    x: weak Int
+def R:\n    f: (Int) -> Int
+def R:\n    f: (Int, String) -> Bool!
+def R:\n    f: Int -> Int -> Int
+def R:\n    f: (Int32, Ptr of Byte, SizeT) -> SsizeT = plugin.get("write")
+def R:\n    f: weak Int -> Int
+def R:\n    f: () -> Int
+def R:\n    f: Int -> ()
+def R:\n    f: Int ->
+def R:\n    f: (a: Int) -> (b: Int, c: Int)
+def R:\n    f: Int -> Int :- 1
+def R:\n    x: Int\n    def y: Foo
+def P:\n    <: ping(x: Int)
+def P:\n    size :- Int
+def P:\n    size(x: Int) :- Int\n    <: ping()\n    name :- "p"
+def P:\n    size :- Int\n    x: Int
+def P:\n    size :- Int\n    use c: Console
+def P:\n    size :- Int\n    -> go
+def P:\n    <: ping()\n    |: true
+def P(x: Int):\n    size :- Int
+def P(queue: unbounded):\n    size :- Int
+def P:\n    <: ping()\n    case a
+def E:\n    case a\n    case b
+def E:\n    case a(x: Int)\n    case b(y: String!, z: List of Int)\n    case c
+def E:\n    case a = 0\n    case b = 255
+def E:\n    case a = 0\n    case b = 256
+def E:\n    case a = 1\n    case b = 65535
+def E:\n    case a = 1\n    case b = 65536
+def E:\n    case a = 4294967295
+def E:\n    case a = 4294967296
+def E:\n    case a = 0x10\n    case b = 0b11
+def E:\n    case a = 5\n    case b
+def E:\n    case a\n    case b = 7
+def E:\n    case a\n    case b = 7\n    case c = 9
+def E:\n    case a\n    x: Int
+def E:\n    x: Int\n    case a
+def E:\n    case a\n    size :- 1
+def E(x: Int):\n    case a
+def E(queue: unbounded):\n    case a
+def E(queue: unbounded):\n    case a\n    x: Int
+def E:\n    case a(inner: E)
+def E:\n    case a(inner: E!)
+def E:\n    case a(x: Int, inner: E?)
+def E:\n    case a(x: Int)\n    case b(y: Int, inner: E, z: E)
+def E:\n    case a(xs: List of E)
+def E:\n    case a(xs: List of E!)
+def E:\n    case a(x: Ex)
+def E:\n    case a(x: (y: E))
+def E:\n    case a(x: weak E)
+def E:\n    case a()\n    case b = 1
+def E:\n    case a(x: Int = 1)
+def E:\n    case a(x: Int) = 1
+def E:\n    case a = x
+def Item:\n    case a(inner: Item)
+def plugin:\n    name: String = "x"\n    version: String = "1"
+def plugin:\n    name: String = "x"\n    foreign "libc":\n        symbol "abs" -> (Int) -> Int\n        symbol "puts" -> (String) -> Int
+def plugin:\n    foreign "AppKit":\n        selector "NSWindow" "setTitle:" -> (String) -> Unit\n        class_selector "NSApp" "shared" -> () -> Ptr\n        type "NSWindow"\n        type "NSURLRequest" as Request
+def plugin:\n    foreign "m":\n        symbol "f" -> (Int, Int8, Int16, Int32, Int64, Float, Double, Bool, UInt, String) -> Double
+def plugin:\n    foreign "m":\n        symbol "f" -> (a: Int, b: String) -> (Int) -> Bool
+def plugin:\n    foreign "m":\n        symbol "f" -> (Int!, Int?, List of Int, (Int, Bool)) -> Int!
+def plugin:\n    foreign "m":\n        symbol "f" -> Int
+def plugin:\n    foreign "m":\n        symbol "f" -> ((Int)) -> (Int)?
+def plugin:\n    foreign "m":\n        symbol "f" -> Map of (String, Int) -> Int
+def plugin:\n    foreign "a":\n        symbol "f" -> Int\n    foreign "b":\n        type "T"\n    name: String
+def plugin:\n    name: String\n    -> go
+def plugin:\n    name: String\n    use c: Console
+def plugin:\n    size :- 1
+def plugin:\n    |: true
+def plugin:\n    case a
+def plugin(x: Int):\n    name: String
+def plugin():\n    name: String
+def plugin(queue: unbounded):\n    name: String
+def Foo:\n    foreign "libc":\n        symbol "abs" -> (Int) -> Int
+def Foo:\n    -> go\n    foreign "libc":\n        symbol "abs" -> (Int) -> Int
+def plugin:\n    foreign "m":\n        5
+def plugin:\n    foreign "m":\n        method "f" -> Int
+def plugin:\n    foreign "m":\n        symbol f -> Int
+def plugin:\n    foreign "m":\n        symbol "f" Int
+def plugin:\n    foreign "m":\n        selector "C" -> Int
+def plugin:\n    foreign "m":\n        selector "C" "s" Int
+def plugin:\n    foreign "m":\n        type T
+def plugin:\n    foreign "m":\n        type "T" as 5
+def plugin:\n    foreign "m":\n        type "T" as
+def plugin:\n    foreign "m":\n        symbol "f" -> Int extra
+def plugin:\n    foreign "m":\n        symbol "f" ->
+def plugin:\n    foreign "m":\n        symbol "f" -> (Int ->
+def plugin:\n    foreign "m": symbol
+def plugin:\n    foreign "m":\n    name: String
+def plugin:\n    foreign "m":\n\n        symbol "a" -> Int\n\n        symbol "b" -> Int\n
+def plugin:\n    foreign "m":\n        as "x" -> Int
+extend Foo:\n    size :- 1
+extend Foo(P):\n    size :- 1
+extend Foo(P, Q of Int, R!):\n    size :- 1
+extend Foo():\n    size :- 1
+extend Foo(P Q):\n    size :- 1
+extend Foo(P,):\n    size :- 1
+extend Foo:\n    conforms: P\n    conforms: Q\n    size :- 1
+extend Foo(A):\n    conforms: B
+extend Foo:\n    conforms: P x
+extend Foo:\n    conforms:
+extend Foo:\n    replace size :- 2\n    replace * <: ping() -> self\n        then: print(1)
+extend Foo:\n    replace size(x: Int) :- x
+extend Foo:\n    replace x: Int
+extend Foo:\n    replace go <: ping -> go
+extend Foo:\n    replace replace x :- 1
+extend Foo:\n    replace |: true
+extend Foo:\n    |: x > 0\n    * <: tick() -> self
+extend Foo:\n    invariants:\n        x
+extend Foo:\n    x: Int
+extend Foo:\n    use c: Console
+extend Foo:\n    deprecated: "x"
+extend Foo:\n    state:\n        x: Int
+extend Foo:\n    state: Int
+extend Foo:\n    go <: ping -> go
+extend Foo:\n    -> go
+extend Foo:\n    case a
+extend Foo:\n    extend Bar:\n        x :- 1
+extend Foo:\n    5
+extend Foo:\n    <: ping()
+extend Foo:\n    as :- 1\n    from(x: Int) :- x
+extend Foo:\n    x(a: Int) + 1
+extend Foo
+extend Foo: x
+extend Foo:\nx
+extend 5:
+extend
+extend Foo:\n    size :- 1\ndef Foo:\n    x: Int
+def Widget:\n    invariants:\n        x
+def Widget:\n    replace x :- 1
+def Widget:\n    function f(): x
+def Widget:\n    def f(x: Int): x
+def Widget:\n    def slot: Foo
+def Widget:\n    def slot: 5
+def Widget:\n    state:\n        x: Int
+def Widget:\n    accepts ping
+def Widget:\n    -> go(x: Int):
+def Widget:\n    5
+def Widget:\n    use hash: Hasher
+def Widget:\n    x: Int :- 1
+from std import Console\n\ndef Greeter(name: String!):\n    use console: Console\n    count: Int = 0\n    greeting :- "hi " + name\n    -> idle\n    idle <: greet -> idle\n        then:\n            count => count + 1\n            console.write(greeting)\n\ndef main:\n    -> running\n        then:\n            let g = Greeter(name: "x")\n            g :> greet\n    running <: done -> end
+def Shape:\n    area :- Float\n    <: scale(by: Float)\n\ndef Kind:\n    case circle(r: Float)\n    case square(s: Float)\n\nextend Kind(Shape):\n    area :- 1.0
+def A:\n    x: Int\ndef B:\n    case a\ndef C:\n    s :- Int\ndef D:\n    -> go\ndef plugin:\n    n: String
+def X:\n    y: Int = 1 <
+def X:\n    y: Int = "abc
+def X:\n  a: Int\n    b: Int
+def X:\n    a: Int\n  b: Int
+def X:\n    -> go\n        then:\n            if x:\n                y => 1\n            else:\n                z => 2
+def P(x: Int):\n    size() :- Int
+def P(queue: unbounded):\n    size() :- Int
+def P(queue: bounded(3)):\n    <: ping()
+def P:\n    size() :- Int\n    x: Int
+def P:\n    size() :- Int\n    use c: Console
+def P:\n    size() :- Int\n    total :- 1\n    <: ping(n: Int)
+def P(queue: unbounded):\n    size() :- Int\n    -> go
+def E:\n    case a = 1\n    case b(x: Int)
+def E:\n    case a(x: E) = 1
+def A(queue: unbounded):\n    case a(inner: A)
+def plugin:\n    foreign "m":\n        symbol "f" -> Int\n    use c: Console
+def plugin:\n    x: Int\n    y: Int = 2\n    foreign "m":\n        type "A"\n    z: Int
+def helper:\n\n    on_nil:\n\n        name: [42, true]\n\n        name: obj(b: Bool, c: (p: Foo, q: (String, Bool?)))\n\n        name: :> go\n\n    state:\n\n    case some(n: (Int?))
+def P():\n\n    case err(b: Int?, a: (Bool, Bool)) = 4294967296\n\n    case some\n\n    case none(inner: E!) = 0x10\n\nimport foo bar
+def helper():\n    <: tick(b: List of Int!)\n    name: weak List of Foo
+from c "x.h" import A, B
+def plugin(a: (Foo, Int) = n, a: (Int?, Int) = k):\n\n    class function make() -> List of String!:\n\n        xs\n\n        let w = do: 2e3\n\n        let w = do: break\n\nfrom objc "x.h" import A, B\n\ndef Widget:\n\n    count: Map of (String?, String)
+def P():\n    name: Map of (Bool, Foo?) = false\ndef Widget:\n    case err = 300\n    case none(self, b: (Bool?, Int)?) = 1\n    case self_ref\nextend Foo:\n    ready(b: (p: Int, q: Foo) = false) :- Int + 1\n    ready :- (p: Int, q: String) = n()
+def Main(n: List of Foo?, a: String!):\n\n    name: (Int?) = :> ping\n\n    count: weak String\n\ndef plugin():\n\n    count: (p: Foo, q: Foo)\n\ndef Point() x:\n\n    items: List of Foo
+def Widget(queue: bounded(4)):\n\n    count: String = :> ping()\n\n    owner: (Bool, Bool)\n\n    name: unowned Int = |> g(1.5, "s")
+def Point:\n    case err(a: List of Foo?, b: List of Foo)\n    case some(inner: E)
+def helper:\n    owner: List of String\n    items: List of String\n    on_nil:\n        name: |> f(false, a)\n        size: false <= obj
+from a import z, z
+def Main():\n    count: String = 42 is xs
+def Point:\n    count: (p: Foo, q: Foo) = nil is Opt.ok()\n    count: Int\n    name: (p: String!, q: Foo?) = (xs)\ndef Widget:\n    name(n: Bool?) :- (Bool!)?\n    <: tick(n: (p: Foo!, q: Bool) = 2e3, a: Int)\n    size :- String\n        |: -|> x\n        |: -a and x.at(2e3)\n            as Err(0x1F)\n    = b
+def P:\n\n    class function make(a: (p: Foo?, q: Int!)!, a: Int!):\n\n        'c'
+def P:\n\n    name: (Int)\n\n    count: Bool = b()
+def E:\n\n    use console: Fs\n\n    size(b: Bool) :- String\n\n        |: (not 'c')\n\n    = |> b.go()\n\n    use console: Bool\n\n    use net: Clock
+def plugin:\n\n    |: x(a: Bool, c: Map of ((p: Bool, q: Foo!), Bool))\n\n        as Err(b)\n\ndef plugin(n: String):\n\n    size :- List of Foo!?\n\n        |: raise Err(|> foo.go('c'), code: foo.len(1.5, code: 0x1F)) as\n\n        |: T: Map of (String!, Bool?)?\n\n    = (a)\n\n    <: ping(b: (p: Int, q: Int?)!)
+def plugin(n: (String?)):\n    items: weak (Bool)?\n    size(a: (p: Int, q: Bool?) = n) :- [:> ping(xs, n: "s"), [b, self]]\nextend Foo:\n    size() :- Map of (String, Foo)? = obj(a: Foo!, c: Map of (String, List of Bool?)?, d: ((p: Bool, q: Bool))?)\n    total(b: (Foo, Bool!), self) :- [|> a.m(), a[obj]]\n    total(a: (Int!) = true, n: Map of (Bool, Foo)) :- Map of (Int?, Int?) = a(n: foo) is E.ok
+def P(queue: bounded(0)): x\n    count: (Bool)?\n    foreign "m":\n        type "NSFoo" as Foo\nextend P():\n    total() :- Int.m
+from std import Y
+def Main:\n    use fs: Console\n    owner: (p: Foo!, q: Bool)?\n    |: raise Err()\n    use clock: Clock\ndef E:\n    owner: Map of (Foo, Int!)
+from std import z, X as W, Y\n\ndef P:\n\n    |: |> a[2e3] as Err()\n\n    ready :- (p: String, q: String)\n\n        let v = do:\n\n            b(1.5)\n\n            :> go\n\n            0x1F\n\n        obj :> ping(foo, k: xs)\n\n        obj => a\n\ndef plugin:\n\n    case some\n\n    case none(inner: E)
+module a.b\nfrom a.b import X
+def plugin:\n\n    |: x() as Bad(self)
+def E(queue: unbounded, n: Map of (Foo, Bool)):\n    <: tick(b: (Int), a: Foo)\ndef helper(n: Bool):\n    size(a: Map of (Bool, Foo)) :- (Int)
+from a.b import X, z as w, X as W\nimport 
+extend Foo:\n\n    replace * <: go() -> self\n\nextend Foo:\n\n    * <: go() -> self\n\n    total() :- List of Bool? = b.len(k: b.m(self), n: y => xs)\n\n    * <: go() -> self\n\ndef Main(b: Foo, n: (Int?)?):\n\n    <: tick(b: List of Int) -> idle\n\n    items: Foo! = raise Bad()
+def E(b: String):\n\n    <: tick()\n\n    <: go()\n\nfrom std import X, z, Y\n\ndef Main:\n\n    |: |> g(0x1F is 'c', |> foo.go(a))\n\n    owner: List of String!? = x :> ping(code: 1.5, code: b)
+def Widget:\n\n    case none\n\n    case some
+def plugin:\n    name: (p: Bool?, q: Bool)\n    owner: (Int)\ndef helper:\n    use hash: (String)\n    on_nil:\n        name: |> g(2e3)\n        size: raise Bad(n: k, x)\n        size: x(a: Foo!, d:, d: ((p: Bool!, q: String)?, Map of (Bool, String)))
+def Main():\n\n    case ok
+def Point:\n\n    case err()\n\n    case err\n\n    case self_ref\n\ndef Main:\n\n    done <: go() -> idle\n\n        |: U: (p: Bool, q: Bool)\n\n        then:\n\n            |: :> ping\n\n    idle <: go \n    -> idle then: :> ping\n\n    ready() :- (p: Int, q: Foo)!\n\ndef P(n: (p: Int!, q: String?)?, b: (p: String?, q: String)!):\n\n    class function make() -> (p: String, q: Int!):\n\n        alias w :- b\n\n        while k:\n\n            return self\n\n            let w = false\n\n        while 1.5: let w = self\n\n    done <: * -> running\n\n        then:\n\n            x => not foo\n\n            if (k):\n\n                if xs:\n\n                    break\n\n                foo\n\n            x => -42\n\n            n => true - k\n\n        then:\n\n            break\n\n            -x\n\n            n => obj.m()\n\n    case err = 0x10
+def Widget():\n    items: (Bool)? = nil\ndef plugin(queue: bounded(4)):\n    size :- \n        :> ping\n        :> ping\n    use fs: Map of (Foo?, Int)
+def P():\n    running <: go -> running\n        |: x => a[foo] as Bad(xs, n: b)\n        then: return n\n        then: obj => nil :> ping()\nfrom a.b import Y, X
+def Main(queue: bounded(4), a: (p: String!, q: Bool)):\n    use clock: (Int, Foo)\n    |: y => |> n.m(true, 'c')\n        as Bad()\ndef Point:\n    items: Foo!\n    name: (Foo, Bool!) = raise Bad(true, k)
+def P:\n    owner: (String)!\nimport std.io
+def Point:\n\n    case some
+import std.io as q
+from a.b import z as W
+def P:\n    owner: (String, String)?
+def E:\n\n    use console: Fs\n\n    count: List of String!?\n\n    on_nil:\n\n        size: (self)\n\n        name: (true)\n\n        size: ||: obj : b ||: else : foo\n\n    use clock: Clock\n\nextend Foo(Q, R of Int):\n\n    state:\n\nimport foo bar
+def plugin(a: Bool):\n    items: unowned Map of (Int, String)!\nimport std.io\ndef Main:\n    use fs: Fs\n    ready() :- (Bool)\n    items: (p: Int?, q: Foo) = ||: x : x ||: else : n\n    use clock: Clock
+def Widget:\n\n    use fs: Console\n\n    count: (p: Bool?, q: String!) = (k)\n\n    * -> done\n\n        |: ['c' :> ping(), |> g(code: n)]\n\n            as Bad(n: "s")\n\n        then: return b\n\n        then:\n\n            let w = do: foo(1.5)\n\n    use clock: Clock\n\ndef Main:\n\n    items: Bool
+def P(b: String):\n\n    use fs: Map of (Bool, String)!\n\n    then: x
+def Widget(a: (Bool, Int?)):\n\n    case some(inner: List of E)
+import c "Foundation/Foundation.h"
+import foo as\n\ndef plugin(a: Map of (Bool, Foo?)?, a: (p: Int, q: Bool?)):\n\n    owner: weak Bool
+def Main() x:\n    case ok\n    case self_ref\n    case none = 70000\ndef Point:\n    size :- (String, Int) = nil\n    items: Map of (String!, Foo)\n    class function from(b: (Int, Foo?), b: (String!)):\n        continue\ndef E:\n    <: go()\n    size() :- (String)?
+def Point:\n    size(n: Map of (String, Foo), b: Foo) :- (Int?)\n    <: tick()\n    ready() :- (Foo)\n        if let w = foo:\n            return x\n            :> go\n            return 'c'\n        continue\nimport \nimport a.b
+def Point:\n\n    |: [not x, (x)]\n\ndef Point(self, b: (p: Int?, q: Bool!)? = foo) x:\n\n    <: tick(b: String!)\n\n    size(b: (p: String, q: Foo), a: (Bool?, Int?)) :- Map of (Bool, Foo)\n\n    ready(n: (Int, Bool!)) :- Map of (Bool, Int)\n\nfrom a.b import z, X as w
+def Widget(n: Bool = n, b: Bool):\n    case err\n    case err = 1\n    case ok(inner: List of E) = 0x10\ndef Point:\n    use console: Console\n    * <: tick -> done do: x\n    total :- (p: Int?, q: Bool) = |> nil <= b\n    use net: Clock
+def Main: x\n\n    <: tick(n: (Foo) = 42)\n\n    ready(a: Int!, b: (Bool, Int!)?) :- x\n\ndef Widget(queue: bounded(4) x):\n\n    class function from() -> List of String?:\n\n        return foo\n\n        obj\n\n        let v = k
+import a.b\n\ndef P(b: List of Foo!, self):\n\n    owner: Bool\n\n    owner: (p: Bool?, q: String)!\n\nfrom std import X as w, X as W, z
+def Widget:\n\n    items: List of Int!!\n\ndef plugin:\n\n    owner: Foo? = 42 is a\n\n    foreign "libc":\n\n        symbol x -> Int\n\n        type "NSFoo" as Foo\n\n        symbol "g" -> (Int, Bool) -> (p: Foo, q: Foo)\n\ndef E(b: Bool?, self):\n\n    idle -> running\n\n        then:\n\n            x => |> g(true)\n\n    idle <| go() -> done let: k
+record Foo:\n\ndef helper:\n\n    use console: Console\n\n    name: (Foo, String)\n\n    use net: Clock\n\nextend Foo():\n\n    conforms: Foo?\n\n    * <: go() -> self\n\n    size(b: Int, b: Map of (Int!, Int!)) :- Foo
+def Widget(queue: bounded(0), n: (p: Foo, q: Int)!):\n\n    use console: Fs\n\n    name: Map of (Foo, Foo)?\n\n    use clock: Clock\n\nrecord Foo:
+def Widget(queue: fifo):\n    case err\ndef Main():\n    count: List of Bool\n    foreign "libc":\n        type "NSFoo" as Foo\n        class_selector "C" "t" -> (Int32) -> Int32
+from a.b import z as W, X\ndef E():\n    use fs: Fs\n    size :- (Foo?)\n        let v = "s"\n    use clock: Clock
+def E() x:\n\n    count: (p: Int?, q: Int) = not 1.5\n\n    count: Int\n\ndef Widget(queue: unbounded, a: Map of (String, Bool)):\n\n    name(n: (Int)) :- (Bool, Int)\n\n    size(b: List of Bool!) :- Bool
+def E(queue: fifo):\n\n    use fs: Console\n\n    idle -> running\n\n        then: 'c'\n\n    use net: Clock\n\nimport c "x.h"\n\ndef Main:\n\n    size :- Foo = 2e3 % 'c' <= y => k\n\n    class function make(n: Int, b: Foo?):\n\n        :> go\n\n    total :- Int.m
+def Main:\n\n    ready() :- List of String?\n\n    ready(n: (Bool, String)!, n: Bool) :- Foo + 1\n\ndef Widget:\n\n    class function from() -> Int:\n\n        return false\n\n    count: Map of (Int?, Int!)! = xs is 0x1F
+def E():\n\n    items: (p: Foo, q: Foo)\n\n    foreign "libc":\n\n        class_selector "C" "t" -> (Int32) -> Int32\n\n        class_selector "C" "t" -> (Int32) -> Int32\n\n        symbol "g" -> ((p: Int, q: Foo)?, Double) -> String\n\n    running <: clock.every(rate)(t: String) -> done\n\n        then: x => xs()\n\n        then:\n\n            |> obj\n\n            if x => true: return 42\n\n            obj => (1.5)\n\n            |: b.m(k: 0x1F ?? obj)
+import a.b\n\ndef E(queue: bounded(16)):\n\n    count: Int = xs\n\n    foreign "m":\n\n        type "NSFoo" as Foo\n\n        class_selector "C" "t" -> (Int32) -> Int32
+sealed protocol P:\n\ndef P(queue: bounded(0)):\n\n    owner: Map of (Int, String) = -true\n\n    owner: (p: Int, q: Bool?)\n\ndef P:\n\n    use hash: String\n\n    owner: Bool
+from objc "x.h" import A as B
+def plugin(b: Foo):\n\n    ready() :- List of Int?\n\n        while 2e3:\n\n            x(self)\n\n    use hash: (String)!\n\ndef helper:\n\n    name: unowned String!\n\n    name: (p: Foo, q: Foo) = 1.5
+record Foo:\ndef P:\n    case self_ref(b: Map of (Int!, String)?)
+def P x:\n\n    name: weak Bool! = obj % n\n\n    class function make(a: Map of (Bool, String)):\n\n        let v = xs\n\n        break\n\n        :> go\n\ndef helper():\n\n    size(b: (Foo)?) :- Int\n\nfrom a import X as w, X as W
+def Widget:\n\n    |: foo\n\n        as Err(b, n: n)\n\n    * <| tick -> idle then: x(n)\n\n    use hash: List of String!\n\ndef Widget:\n\n    use fs: Fs\n\n    -> done then: n(false)\n\n    name: Int\n\n    use net: Clock
+from a import Y as W, Y as w\n\ndef Widget:\n\n    use console: Console\n\n    items: (Int?, String?) = :> ping(code: n, false)\n\n    class function make(n: Int, self) -> Map of (Int!, String?)!:\n\n        1.5\n\n    use net: Clock\n\ndef E:\n\n    case some\n\n    |: |> a is .some(code: let w)
+def P:\n\n    case none(b: Map of (Foo!, Foo?), a: Map of (Int?, Int!))\n\n    case some
+def P():\n    invariants: x\n    done -> self\n        then: xs(false)\n        then: obj\n        |: 42\nextend P:\n    |: n(code: true, foo) is "s" is .some\n    ready(n: Map of (Bool, Int)!, b: Map of (Bool, Int)?) :- String?\nextend P(Q):\n    ready :- false\n    size :- List of Foo?\n        self\n    size :- true
+def helper():\n\n    use fs: (String, Int!)?\n\n    items: (p: String!, q: String?)\n\n    case none(self)
+from std import z
+from a.b import z, Y as w, Y as w
+def Widget(queue: bounded(16)):\n    -> self\n        then:\n            |> obj.m(code: nil, k: true)\n            x => raise Err(42, obj)\n            k => |> foo.m(0x1F, xs)\n    size(b: Map of (Bool!, String)) :- Foo?\n    self <: ping(n: ) \n    -> done\n        then:\n            n => "s" is .none(msg: let w, msg: let v)\n            x => foo\n            if let v: String = 42: return k\n        then:\n            k => ||: n : self ||: n : 'c' ||: else : b\n            while foo:\n                break\n            k => obj is .some\n            b :> go(xs, code: nil)
+from a import z as W, Y as W, X
+def Point():\n    items: (Int?)
+def P:\n\n    count: weak Foo\n\nfrom std import Y, Y, Y as w\n\nextend Foo:\n\n    |: |> g(||: x : b ||: else : 42)\n\n        as Bad(0x1F, foo)\n\n    replace total(a: (Int) = k, a: List of Foo?) :- 1.5 is E.some(msg: let v) ?? not self\n\n        x\n\n        for x in xs: f(x)\n\n    use c: Console
+extend Foo(Q):\n    ready :- xs(b: Foo!, d:, d: (p: List of Foo??, q: (Foo?)!))\n    total :- String.m\n    total(a: (Foo, Bool)? = xs) :- (String)! = a(b: String!, d: String, d:)\ndef Point:\n    case none\nfrom c "x.h" import A, B
+from a.b import x,
+def Main:\n\n    name: Foo
+extend Foo(Q):\n\n    size :- (p: Bool, q: Int)! = -'c' != ['c', self]\n\n    size :- [42, x]\n\n    ready(b: Map of (Int?, Foo), a: Map of (Int, String!)) :- x[self]
+def E:\n\n    owner: (p: Int, q: Int?)!\n\n    name: Map of (Bool!, Bool)!\n\ndef E(b: Bool = x, n: Int):\n\n    done -> done\n\n        then:\n\n            k => "s" is .some(let v)\n\n            x => false + xs\n\n    items: weak Map of (Bool, Bool) = |> foo.m()
+extend Foo(Q):\n    |: not a is Res.some() as Err(x)\n    size :- (p: Foo, q: String!) = |> "s" is 1.5 is 42\ndef helper(queue: bounded(4)):\n    ready() :- (Int) = k.len()\n    self -> done\n        then:\n            k => not nil\n    total :- (p: Int!, q: Int)! = (||: a : n ||: 0x1F : true ||: else : foo)\ndef helper():\n    ready :- |> false
+def E:\n\n    name() :- List of String\n\n    <: tick()\n\nfrom std import z, z as W\n\ndef Widget:\n\n    <: ping()\n\n    size(b: Map of (Bool!, String!) = n) :- Map of (Foo!, Foo!)
+def Widget(n: (Int) = b, a: Int):\n    case self_ref\n    case some = 300\n    case none
+def Widget(b: (Foo!, String!) = 42):\n    size :- n.m(n: obj.at(n: nil), k: x :> go)\n    state:\n    case none\ndef Widget:\n    case none(a: String = b, b: List of Foo)\ndef plugin:\n    case some(inner: E) = 70000\n    case self_ref\n    case err
+def Main():\n\n    case ok = 300
+def helper:\n\n    <: ping(self)\n\n    size() :- List of Int!
+def Main():\n    class function make(b: List of Foo) -> List of Bool:\n        for x in xs: f(x)\n    total(a: Map of (Foo!, String)) :- (|> foo.m(self))\ndef P:\n    <: ping(a: (p: Int!, q: String)!) -> idle
+def P:\n    case err(b: (p: Foo!, q: Foo) = b, n: (Int, Bool!)?)
+def P:\n    size() :- Foo\n    <: tick(n: Map of (Int!, Int))\ndef plugin():\n    use fs: Fs\n    self <: * -> self\n        |: b == k(b: Int!)\n            as Err()\n        then: break\n        then:\n            k => ||: 42 : "s" ||: else : 42\n        |: x => 2e3 is n(self) then\n    use net: Clock
+from std import Y as W
+def Point:\n    <: go()
+def plugin(n: (String)):\n    case self_ref\ndef Widget():\n    name: Map of (Foo, Int) = x(a: Bool!, c:)\n    foreign "m":\n        symbol "f" -> (Bool, Int!)!\n        symbol "f" -> Map of (Int, Bool)\n        class_selector "C" "t" -> (Int32) -> Int32\nextend Foo:\n    replace size :- String + 1\n    ready :- (Bool)!\n        x => self\n        k(y => def:\n            return x\n            return 0x1F\n        )
+def Point(a: Map of (Bool, Int)!, b: (String)!):\n\n    name: String = true is Opt.ok\n\ndef Main x:\n\n    name: Int
+def Main:\n    owner: (p: Bool, q: Bool)!\ndef P():\n    case some = 70000\n    case some(self)\n    case self_ref = 0x10
+extend P(Q, R of Int):\n\n    ready :- (String, Foo)!\n\n        k\n\n    ready(a: (Foo) = xs, self) :- y => -42\n\n    * <: ping() -> self\n\nimport objc "x.h"
+def Main(n: (Foo!) = a, self): x\n    size(a: List of String!, self) :- List of Foo?\nfrom objc "x.h" import A, B\ndef helper(a: (Int), a: List of Foo) x:\n    size() :- (Int)?\n    <: tick()
+import foo as q
+from a import Y as W, Y\nextend Foo:\n    replace total(n: (String!)?, n: List of Foo!) :- (String?, String)!\ndef Widget():\n    use fs: (p: Int, q: Foo!)\n    use hash: String
+def plugin:\n\n    use console: Console\n\n    size() :- Bool.m\n\n    use net: Clock\n\ndef Main:\n\n    total :- Foo.m\n\n    size(b: String) :- String + 1
+def Main:\n\n    class function make() -> String!:\n\n        a\n\n        x\n\n        let v = do:\n\n            'c'\n\n            break\n\n            obj("s")\n\n    name: String!
+def P:\n    case self_ref\n    case err\n    case self_ref\ndef Main:\n    name() :- (Foo, Int)\n    name(n: (p: Foo!, q: Foo)) :- Map of (Bool, String!)\nfrom a.b import X
+def plugin:\n    ready :- Bool\n        break\n    use console: Map of (Foo, String!)\n    items: (String, Foo?)! = ||: a : foo ||: k : 0x1F ||: 1.5 : 2e3 ||: else : false
+def Main:\n\n    use fs: Console\n\n    class function from(self) -> (Foo, Int):\n\n        xs(x)\n\n        foo(k)\n\n        :> ping\n\n    use clock: Clock\n\nextend P:\n\n    replace * <: go() -> self\n\n    ready() :- Foo\n\n        let w = a\n\n        n(a)\n\n        :> go\n\n    ready() :- Int + 1\n\ndef E:\n\n    case none\n\n    case some\n\n    case none = 70000
+def P:\n    case some(a: List of Foo? = a)\n    case some = 0x10\nmodule a.b\ndef helper:\n    name: (Bool) = n(a: Int)
+def Point():\n    items: String = [true, 1.5]\nextend Foo(Q):\n    size() :- |> xs.go(b, code: 'c')\n    ready :- obj()\n    * <: go() -> self
+def Widget(): x\n\n    <: ping(b: Bool = nil, a: (Foo)?)\n\n    <: tick(n: (p: Bool, q: Bool?)! = x)\n\n    total(n: String!) :- (Int)?\n\ndef E():\n\n    items: (p: Foo, q: Int?)!\n\n    items: (p: String, q: Bool) = ||: foo : 42 ||: else : b\n\nextend Foo(Q):\n\n    state:\n\n    replace size :- b.at(code: -nil, 1.5 is "s")\n\n        |: -:> go()\n\n    = raise Err(nil)\n\n    conforms: String
+def Main(a: (Int, Bool), b: Map of (String, Foo)?):\n    items: Bool\n    count: Map of (Bool?, Int)\n    |: k(b: Foo!, d: List of (Int?)!, c: (p: (Bool, Bool), q: (Bool)!)!)\ndef Main:\n    running <: clock.ping \n    -> done\n        then:\n            obj\n            if let w = 'c':\n                let v = 1.5\n                return foo\n            x => foo[a]\n    name: (Int?, Foo)?\n    size :- \n        :> go\ndef E:\n    count: Map of (Int, Bool?)! = ("s")\n    class function make(b: (Foo?)! = obj):\n        foo(xs)\n        a(x)\n        break
+from objc "x.h" import A, B
+def Widget():\n\n    name(b: Map of (Foo, Int)) :- (String?)\n\n    total(b: Int) :- String + 1
+def Main():\n    case err\n    case ok\ndef helper():\n    state:\n    self <: obj.ping -> running\n        then:\n            obj\n            |> n.m(code: "s")\n            or Err:\n                continue\n            x => ||: false : 1.5 ||: else : foo\n    class function make() -> Map of (String?, Int!)?:\n        xs\n        'c'\n        k\ndef helper:\n    owner: (p: String, q: Int) = raise Err()\n    foreign "m":\n        method "x" -> Int\n        selector "C" "s:" -> () -> Ptr\n    size() :- String
+from a import \ndef Widget(b: (Bool, Int)):\n    use console: Console\n    self <: obj.every(rate)(t: String) -> done\n        then:\n            |: T: Bool! as\n            :> go\n            let w = do: return k\n        then:\n            |: b(||: xs : 2e3 ||: a : n ||: else : 0x1F, foo.m())\n        |: [b is .some, :> go()]\n    use net: Clock
+def helper:\n\n    owner: Int = :> ping\n\n    size :- \n\n        let w = n\n\n        b\n\n    size :- :> go(n: |> f(k: 2e3), x => xs)\n\ndef P():\n\n    owner: String = not x\n\n    foreign "libc":\n\n        symbol "g" -> (Map of (Int?, Int)!, Bool) -> Map of (String?, Foo)?
+def Main():\n    class function make() -> Foo:\n        return nil\n        let w = b\n        return 1.5\n    invariants: x\ndef plugin:\n    use clock: (Bool, Foo)!
+from objc "x.h" import A as B\ndef E(a: String, a: Bool):\n    on_nil:\n        name: xs :> go(code: obj, code: true)\n    total :- Map of (Int, Int)\n        |: U: String?\n    = 42 + "s"
+def plugin(b: Map of (Int, Bool) = x, b: Map of (Bool, String)):\n\n    use fs: Fs\n\n    * <: obj.ping -> self\n\n        |: T: List of Foo!\n\n        then: foo => b :> ping(k: 42, code: 0x1F)\n\n        then:\n\n            b:\n\n                <: some(msg: let v): 0x1F\n\n                <: .none, none: n\n\n            |: not k :> ping\n\n            b\n\n    use clock: Clock
+def Main():\n\n    name: (Foo, String?) = n is .ok\n\ndef plugin:\n\n    |: T: (Int?) then\n\n    total :- Foo! = nil is 42 is Opt.some\n\n    running <: * -> done then: x => [obj, true]
+def helper:\n    case err(self, b: (p: String?, q: Foo))
+def P:\n    case self_ref(b: List of Foo? = 1.5, n: List of String?) = 4294967296\ndef helper:\n    owner: (Int)\n    foreign "m":\n        selector "C" "s:" -> () -> Int\n        symbol "g" -> (Foo!, Bool) -> Foo!\n        class_selector "C" "t" -> (Int32) -> Int32\ndef Widget(n: (Bool)):\n    name(a: (Int!, Bool?)?, a: Map of (Int, Int)) :- (Int!)!
+def Widget(queue: bounded(16)):\n\n    case none
+def Widget(): x\n    name(b: (p: String, q: Foo), b: List of String) :- Foo\nextend Foo(Q):\n    ready(n: (String)) :- (p: Int!, q: Bool)\ndef P:\n    case some\n    case err(inner: E?)
+extend Foo():\n    total(b: (p: Foo, q: Bool?)) :- (p: Bool, q: Bool)!\ndef Widget(b: Map of (Bool, Bool), a: List of Foo):\n    on_nil:\n        name: |> f(foo, x)\n        name: y => xs\n        size: 42 is n\n    on_nil:\n        size: obj.m()\n        name: (a)\n        name: -xs\nlet x = 1
+def Main:\n    owner: Map of (Foo, Bool)\n    items: (Foo, Bool)!\ndef P(queue: bounded(0), a: Bool):\n    |: xs(b: Bool, d: List of (Int?)?, c: Int)
+def Widget():\n    size(n: (Bool)!) :- x is nil / [a, nil]
+def Point(queue: bounded(16)):\n\n    ready :- \n\n        foo(n)\n\n        xs(0x1F)\n\ndef Point():\n\n    case self_ref\n\ndef Widget(a: String!) x:\n\n    use console: Fs\n\n    -> idle\n\n        |: |> g()\n\n        then:\n\n            let w = do:\n\n                let v = 42\n\n        then: return obj\n\n    use clock: Clock
+def P(self, b: (Foo, Foo)?):\n    <: ping()\n    size(n: (String, String) = self, self) :- (Bool!)\ndef helper():\n    items: List of Bool\ndef Point(b: String!):\n    owner: (Int) = |> f(k: x)\n    foreign "m":\n        selector "C" "s:" -> () -> Int\n        symbol "f" -> (Bool!)
+def helper:\n\n    use fs: Console\n\n    class function from(a: List of Int = k, self) -> (p: Foo, q: Bool):\n\n        1.5\n\n    done <| go -> running\n\n        |: |> n.go(xs) is .err\n\n        then: return a\n\n        then:\n\n            "s"\n\n    use clock: Clock\n\ndef P(n: List of Int, b: List of Bool!):\n\n    count: unowned (p: String?, q: Foo?)\n\n    name: Foo
+def E:\n    <: ping(n: List of Foo?!)\n    <: ping()\n    ready :- \n        break\n        if let v: Foo! = "s":\n            let v = false\n            continue\n            continue\n        if let w: String = xs:\n            42\n            return 'c'
+def P(n: (Bool?, Foo)): x\n\n    case none(b: Map of (Int!, String), b: (p: Int, q: Int?))\n\n    case some = 4294967296\n\ndef E:\n\n    ready(n: List of Bool) :- (Int?)?\n\n        |: -|> false\n\n    = 'c' or foo\n\n    ready :- Bool\n\n        let case = 1\n\n        break\n\nextend P(Q, R of Int):\n\n    size() :- :> ping(k: ||: "s" : obj ||: false : n ||: nil : foo ||: else : true)\n\n    |: U: Bool
+def helper():\n    name: Bool\n    name: (Foo, Bool)!\n    name: (Int)
+def Widget(n: (String?)?): x\n\n    def slot: Foo\n\n    size(n: String?) :- Int = foo[|> n]\n\n    <: tick()\n\ndef helper(a: (Int, String)):\n\n    name: Foo\n\n    count: Map of (Int!, Foo)?\n\n    owner: List of Int!
+from a import Y as w, Y as W, z\nextend Foo(Q):\n    ready :- k\n    conforms: Bool!\n    total :- String? = xs(k: self)\ndef E:\n    size() :- (Int, String)\n    size(b: (Int?)!, b: (p: Foo, q: String)) :- \n        let w = 0x1F\n        or e:\n            :> ping\n            n(42)\n            :> go
+extend Foo:\n    size :- b is obj
+def Point:\n    owner: (p: Int, q: Int?)\nextend Foo:\n    replace total :- Bool\n    * <: go() -> self\ndef E(queue: bounded(0), a: String):\n    use console: Console\n    ready :- Int? = :> go\n    use net: Clock
+def helper:\n\n    size() :- (Foo)\n\ndef plugin(a: String, self):\n\n    * <| go(reason: ) -> idle then: k => |> a.m()\n\n    count: (Foo, Foo)!\n\n    |: ||: |> xs.go() : x => 2e3 ||: else : b is "s"
+def Main:\n    size() :- List of Int?\ndef Widget:\n    name(a: Int?, b: List of Int?) :- Foo!\n    <: ping()\n    ready(n: Map of (Foo, Foo)) :- (String)
+extend P:\n\n    ready :- Int + 1\n\nfrom a.b import X, X\n\nimport std.io as q
+def helper x:\n    class function make(a: String, n: List of String?):\n        :> ping\n    count: List of Int\n    ready :- (Bool)\n        |: raise Err()\n    = a[k]\nimport c "x.h"
+def Main:\n\n    count: (p: Bool, q: Int!) = x[0x1F]\n\n    count: weak Int!\n\n    count: String\n\ndef E():\n\n    owner: String
+def Widget() x:\n\n    use fs: Console\n\n    done <: clock.ping -> done\n\n    use clock: Clock
+extend P:\n    replace * <: go() -> self\n    ready :- \n        break\n        :> ping\n        :> go\n    x: Int\ndef E:\n    <: ping(a: Foo?)\n    on_nil:\n        name: nil is 0x1F\n    -> idle\n        then:\n            |: T: (Foo, String)\n                as Bad(obj)\ndef Widget:\n    items: List of Foo = x("s", n: b)\n    name: unowned List of String\n    items: Foo! = raise Bad(true)
+def Point(queue: bounded(16), a: Map of (Int!, Int)!):\n\n    name(b: Map of (String, Bool!)) :- Map of (String!, Foo)\n\ndef Point(queue: fifo):\n\n    name: (p: Bool?, q: Bool)
+def Widget:\n    case err\n    case self_ref\ndef E: x\n    case self_ref\n    case none\nimport a.b as q
+def E:\n    case err(n: List of Foo, b: (String)!) = 1\ndef Widget(b: (Foo!, Int)!, b: (String?) = b):\n    ready(a: (String!)) :- (p: Bool!, q: String)\nfrom std import X
+from objc "x.h" import A, B\n\nfrom objc "x.h" import A as B\n\ndef plugin():\n\n    case some\n\n    case some = 70000
+from a import X as W, X as w
+def plugin:\n    items: (Foo)\n    class function make(self, b: Bool!):\n        while x:\n            :> ping\n        x => self\n        let w = do: xs('c')\ndef plugin():\n    size(self, self) :- (String?, Int)?\n    size :- (String!, Foo)? = x => obj in k\ndef P(n: (String), n: Foo):\n    ready(n: (Int, Foo)?) :- (p: Foo!, q: Int?)\n        |: foo is E.none()\n        |: :> ping(xs.len()) as Bad("s")\n    = foo(a: Foo!)\n    count: Bool? = ||: 1.5 : false ||: x : 1.5 ||: xs : x ||: else : 2e3
+def helper:\n    <: tick(a: (Foo!) = nil)\n    case err(n: List of Foo?, n: List of Bool?)\ndef E:\n    |: |> foo.m()\n    class function make(a: (Bool)) -> (Bool):\n        b(foo)\n        false\n        let w = nil\nextend P:\n    * <: tick() -> self\n    ready :- obj :> go\n    size(b: String, b: String = 1.5) :- (p: Foo, q: Bool)!
+def E:\n    <: ping(b: (Bool, Bool!))\ndef plugin:\n    size(n: (Bool), a: Foo = n) :- Map of (Foo!, String)\n        0x1F\n        :> ping\n    on_nil:\n        size: |> a\n        name: 2e3 is n
+import objc "x.h"\n\ndef Main:\n\n    <: go()\n\n    <: go(self)\n\nfrom std import X
+def Main:\n    count: (p: Int!, q: Foo!)\n    foreign "m":\n        symbol "f" -> Foo\n        symbol "f" -> String\ndef P(queue: bounded(4), a: Foo!):\n    use fs: Console\n    * <| ping -> running let: k\n    owner: Foo\n    use net: Clock
+def E:\n\n    name: Int = raise Err(a, 0x1F)\n\n    items: (p: Foo?, q: Foo) = a(a: Int!, d: (Int, Bool), d:)\n\ndef Main:\n\n    name: Int!\n\n    foreign "m":\n\n        selector "C" "s:" -> () -> Ptr\n\n        symbol "f" -> (p: Bool?, q: Foo)\n\ndef plugin:\n\n    self <: obj.every(rate)(t: String) -> running\n\n        then: obj => not 'c'\n\n        then:\n\n            |: raise Bad()
+def E:\n    use console: Fs\n    on_nil:\n        size: 0x1F is obj\n        name: n(k: "s")\n    size(a: String, n: (Bool, Int!)) :- \n        let w = true\n        a(k)\n        return obj\n    use clock: Clock
+def Main:\n\n    use fs: Console\n\n    -> running\n\n        then:\n\n            k => -1.5\n\n            return true\n\n            x => not true\n\n            x => (obj)\n\n    use clock: Clock\n\ndef Main():\n\n    <: go(n: (Int), n: Bool)\n\n    size(self) :- Int\n\ndef helper():\n\n    |: xs[|> g()]\n\n    self <| clock.every(rate)(t: String) -> running\n\n        then: break\n\n        then:\n\n            n => |> g(code: false, 1.5)\n\n            |: (|> foo.go())\n\n    <: go()
+def P:\n    replace x :- 1\ndef P:\n    total(n: (Bool)! = 1.5, a: List of Int!) :- (Foo)\n        let w = obj\n        b(self)
+def Point:\n    count: List of String! = ||: k : 2e3 ||: n : n ||: b : foo ||: else : self\n    use hash: Map of (Int, String)\ndef Main:\n    owner: Map of (String, String)
+X as "s" from from \n         import :-
+from use 42 :- \n from (
+import . Int :- :- :
+Int , :- . def -> . ) \n 42
+<: as = ) as from import 42
+. . foreign \n         use <: def <: as case
+foreign \n X
+from use as = "s" foreign
+queue :- case : Int <: \n    
+case use <: extend def as
+"s" from case queue ( extend : .
+as * ( ( \n        
+x "s" , Int def ( ) :
+, foreign X * : X queue ( : foreign
+use ) 42 queue
+from import <: Int : :-
+<: \n     = , from as 42
+= , <: ) use Int * from
+-> * use <: import Int * \n     :
+queue *
+:-
+case 42 use 42 * as import
+foreign \n     x queue Int
+extend : \n         as def , * extend
+use = as X use )
+"s" def = * "s" *
+-> use as x -> , \n as .
+X : "s" use
+Int def * case -> ) \n = ) x
+) use *
+* use def
+-> -> :- ( <: extend
+x
+:- x x ) X 42
+"s" = def
+Int -> from Int X
+42 -> case
+X . queue <: * \n     foreign )
+-> extend *
+: \n     foreign -> . extend
+) extend 42 use
+:
+use \n         "s"
+= as , import <: . queue extend \n     Int
+from * x x def extend x \n "s"
+as , x :
+case \n \n
+X queue :- \n         case ->
+"s" <: case from
+as = = \n     ) case foreign , \n    
+case as \n         extend use *
+x Int foreign :- queue 42 queue case "s"
+42 , use "s" . import from
+as foreign queue ( import "s" <: . queue
+x \n 42 .
+"s"
+Int \n         x import
+\n as foreign foreign <: use 42 use
+-> Int use Int foreign as extend def Int \n    

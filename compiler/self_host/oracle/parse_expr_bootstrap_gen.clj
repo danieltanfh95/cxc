@@ -29,6 +29,12 @@
 ;;
 ;;   cd compiler && clj -M self_host/oracle/parse_expr_bootstrap_gen.clj \
 ;;     29 300 120 item
+;;
+;; Chapter 30 adds the `prog` mode for the slice-36 whole-program
+;; corpus (seed 30), whole programs then program token soup.
+;;
+;;   cd compiler && clj -M self_host/oracle/parse_expr_bootstrap_gen.clj \
+;;     30 300 120 prog
 
 (do
 
@@ -370,7 +376,119 @@
 (defn- gen-item-soup []
   (clojure.string/join " " (for [_ (range (inc (r 9)))] (pick item-soup-toks))))
 
+;; Chapter 30 prog mode. Whole programs for the slice-36 corpus
+;; (seed 30). One to three top-level forms, each a `from` or `import`
+;; line, a `def` with a random header (ctor params, `queue:` configs,
+;; lowercase free-function names) over a body biased toward each
+;; reshape (record, agent, enum, protocol, plugin with foreign blocks),
+;; an `extend` block, or a retired form. Item lines come from the item
+;; mode and are indented under the header. Prog rows take no random
+;; numbers from the other modes, so seeds 27 to 29 print the same rows.
+
+(defn- indent-lines [n lines]
+  (map #(str (ind n) (clojure.string/replace % "\\n" (str "\\n" (ind n)))) lines))
+
+(def ^:private def-names ["Main" "Point" "E" "P" "plugin" "Widget" "helper"])
+
+(defn- gen-import []
+  (case (r 9)
+    0 (str "import " (pick ["foo" "a.b" "std.io"]) (if (chance 40) " as q" ""))
+    1 (str "import " (pick ["objc" "c"]) " \"" (pick ["x.h" "Foundation/Foundation.h"]) "\"")
+    2 (str "from " (pick ["objc" "c"]) " \"x.h\" import " (pick ["A" "A, B" "A as B"]))
+    3 (str "import " (pick ["foo bar" "5" "a." "foo as" ""]))
+    4 (str "from " (pick ["a" "a.b"]) " import " (pick ["x" "x," "x y" "x as" ""]))
+    (str "from " (pick ["a" "a.b" "std"]) " import "
+         (clojure.string/join ", "
+           (for [_ (range (inc (r 3)))]
+             (str (pick ["X" "Y" "z"]) (if (chance 30) (str " as " (pick ["W" "w"])) "")))))))
+
+(defn- gen-header []
+  (str "def " (pick def-names)
+       (case (r 9)
+         0 (gen-params)
+         1 (gen-params)
+         2 (str "(queue: " (pick ["unbounded" "bounded(4)" "unbounded" "bounded(16)" "bounded(0)" "fifo"])
+                (if (chance 40) (str ", " (pick ["a" "n"]) ": " (gen-type 1)) "")
+                (if (chance 10) " x)" ")"))
+         3 "()"
+         "")
+       (if (chance 8) (pick [" x:" ": x"]) ":")))
+
+(defn- gen-sig-line []
+  (if (chance 50)
+    (str (pick ["size" "name"]) (gen-params) " :- " (gen-type 1))
+    (str "<: " (pick msgs) (gen-params))))
+
+(defn- gen-case-line []
+  (str "case " (pick (conj cases "self_ref"))
+       (case (r 6)
+         0 (gen-params)
+         1 (str "(inner: " (pick ["E" "E!" "E?" "List of E" "Ex"]) ")")
+         "")
+       (if (chance 30) (str " = " (pick ["1" "300" "70000" "4294967296" "0x10"])) "")))
+
+(defn- gen-foreign-lines []
+  (into [(str "foreign \"" (pick ["libc" "m"]) "\":")]
+        (for [_ (range (inc (r 3)))]
+          (str "    "
+               (case (r 6)
+                 0 (str "symbol \"f\" -> " (gen-type 1))
+                 1 (str "symbol \"g\" -> (" (gen-type 1) ", " (pick ["Int" "Bool" "Double"]) ") -> " (gen-type 1))
+                 2 (str "selector \"C\" \"s:\" -> () -> " (pick ["Int" "Ptr"]))
+                 3 (str "class_selector \"C\" \"t\" -> (Int32) -> Int32")
+                 4 (str "type \"NSFoo\"" (if (chance 50) " as Foo" ""))
+                 (pick ["method \"x\" -> Int" "5" "symbol x -> Int" "type \"T\" as"]))))))
+
+(defn- gen-def-body [d]
+  (case (r 8)
+    0 (mapcat (fn [_] [(gen-case-line)]) (range (inc (r 3))))
+    1 (concat (mapcat (fn [_] [(gen-sig-line)]) (range (inc (r 2))))
+              (when (chance 30) (gen-observable d)))
+    2 (mapcat (fn [_] [(gen-field-line)]) (range (inc (r 3))))
+    3 (concat [(gen-field-line)] (when (chance 60) (gen-foreign-lines))
+              (when (chance 30) (gen-item d)))
+    4 (concat [(str "use " (pick ["console" "fs"]) ": " (pick ["Console" "Fs"]))]
+              (mapcat gen-item (repeat (inc (r 2)) 1))
+              [(str "use " (pick ["clock" "net"]) ": Clock")])
+    (mapcat gen-item (repeat (inc (r 3)) (inc (r 2))))))
+
+(defn- gen-ext-line [d]
+  (case (r 14)
+    0 [(str "conforms: " (gen-type 1))]
+    1 (into [(str "replace " (first (gen-observable d)))] (rest (gen-observable d)))
+    2 [(str "replace * <: " (pick msgs) "() -> self")]
+    3 (gen-prop-lines 0)
+    4 [(pick ["x: Int" "use c: Console" "deprecated: x" "state:" "go <: ping -> go"
+              "invariants: x" "replace x: Int" "extend Bar:" "-> go"])]
+    5 [(str "* <: " (pick msgs) "() -> self")]
+    (gen-observable d)))
+
+(defn- gen-top [d]
+  (case (r 12)
+    0 [(gen-import)]
+    1 [(gen-import)]
+    2 (into [(str "extend " (pick ["Foo" "P"])
+                  (if (chance 10) (pick ["()" "(Q R)"]) (pick ["" "" "(Q)" "(Q, R of Int)"])) ":")]
+            (indent-lines 4 (mapcat gen-ext-line (repeat (inc (r 3)) d))))
+    3 (if (chance 50)
+        [(pick ["module a.b" "let x = 1" "extern Foo:" "record Foo:" "sealed protocol P:" "foo" "x: Int"])]
+        (into [(gen-header)] (indent-lines 4 (gen-def-body d))))
+    (into [(gen-header)] (indent-lines 4 (gen-def-body d)))))
+
+(def ^:private prog-soup-toks
+  ["def" "X" "x" "Int" "42" "->" "<:" "*" "extend" "from" "import" "as" "case"
+   "use" "queue" ":" ":-" "=" "(" ")" "," "." "\"s\"" "foreign" "\\n" "\\n    " "\\n        "])
+
+(defn- gen-prog-soup []
+  (clojure.string/join " " (for [_ (range (inc (r 10)))] (pick prog-soup-toks))))
+
 (cond
+  (= mode "prog")
+  (do
+    (doseq [_ (range n-gram)]
+      (println (clojure.string/join (pick ["\\n" "\\n\\n"]) (mapcat gen-top (repeat (inc (r 3)) (inc (r 2)))))))
+    (doseq [_ (range n-soup)] (println (gen-prog-soup))))
+
   (= mode "item")
   (do
     (doseq [_ (range n-gram)]

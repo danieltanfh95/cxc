@@ -43,7 +43,8 @@ These are standing rules captured in the user's global memory at `~/.claude/proj
 - Observation reference ordering is lexical. If `a :- b` and both are observations, declare b first.
 - Keep `and` / `or` chains in guards and observations to about six terms. The emit duplicates each left operand, so a flat chain of N terms costs 2^N text and a 31-term guard ran the compiler out of heap (chapter 26). Group terms through observations.
 - String `+` chains double the same way (chapter 29). The emit wraps both operands of every `+` in a `__typeof__` coalesce, so a 17-piece message emitted a 520 MB method. Write long messages as balanced concatenation trees, `((a + b) + (c + d)) + ...`, or keep them under about six pieces.
-- Three shared lex sites (chapter 26). `lex_tokenize_with_layout.cxc`, the inline lex in `parse_layer_bootstrap.cxc`, and `parse_expr_bootstrap.cxc` carry the same lex arms. Change all three together, verify on the slice-33 corpus first.
+- Four shared lex sites (chapter 26, the fourth since chapter 30). `lex_tokenize_with_layout.cxc`, the inline lex in `parse_layer_bootstrap.cxc`, `parse_expr_bootstrap.cxc`, and `parse_program_bootstrap.cxc` carry the same lex arms. Change all four together, verify on the slice-33 corpus first.
+- Two copies of the parser (chapter 30). `parse_program_bootstrap.cxc` (slice 36) is a copy of `parse_expr_bootstrap.cxc` (slice 35) plus the prog mode. A fix to the expression, statement, or item parsers lands in both, verified on the slice-35 corpora first.
 
 ## Hard blockers at chapter 21 handoff
 
@@ -85,7 +86,7 @@ for h in compiler/self_host/harness/*.sh; do
 done
 ```
 
-Count of parity-green harnesses at handoff: 34 (chapter 25 added `float_render_java`, chapter 26 added `parse_expr_bootstrap`). Of the 35 src files, `ast_shape_demo.cxc` is a non-parity design artifact and `tnt_to_nt_bridge.cxc` is covered by the `collect_shapes_from_parse_layer` composition harness.
+Count of parity-green harnesses at handoff is 35 (chapter 25 added `float_render_java`, chapter 26 added `parse_expr_bootstrap`, chapter 30 added `parse_program_bootstrap`, whose run also covers the real-world sweep of every example and prelude file). Of the 36 src files, `ast_shape_demo.cxc` is a non-parity design artifact and `tnt_to_nt_bridge.cxc` is covered by the `collect_shapes_from_parse_layer` composition harness.
 
 ## Oracle paths
 
