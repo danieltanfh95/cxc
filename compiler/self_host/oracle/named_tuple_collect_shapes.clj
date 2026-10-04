@@ -3,7 +3,13 @@
 ;; Each stdin line is a `;`-separated list of serialized type
 ;; expressions:
 ;;   `<prim>`              — primitive type-ref
-;;   `Nn_<prim>`           — non-nil wrapper on a primitive
+;;   `Nn_<ser>`            — non-nil wrapper (chapter 24, recursive)
+;;   `Of<arity>_<outer>_<ser1>_..._<serN>` — parametric type
+;;                           (chapter 24). `<arity>` bare sers follow
+;;                           the outer name, parsed to `:type-of` with a
+;;                           single `:inner` for arity 1 and a
+;;                           `:type-tuple` inner otherwise, matching
+;;                           what `mangle-type` reverses.
 ;;   `Nt<count>_<body>`    — named-tuple whose body is `<count>` field-type
 ;;                           pairs, each pair being `<fname>_<type>`.
 ;;                           The `<type>` inside a nested body may itself
@@ -44,11 +50,25 @@
   (defn- parse-ser-rest [s]
     (cond
       (str/starts-with? s "Nn_")
-      (let [after (subs s 3)
-            sep   (str/index-of after "_")
-            prim  (if sep (subs after 0 sep) after)
-            rest-s (if sep (subs after (inc sep)) "")]
-        [{:node :type-nonnil :inner {:node :type-ref :name prim}} rest-s])
+      (let [[inner rest-s] (parse-ser-rest (subs s 3))]
+        [{:node :type-nonnil :inner inner} rest-s])
+
+      (re-matches #"Of\d+_.*" s)
+      (let [m     (re-matches #"Of(\d+)_([^_]*)_?(.*)" s)
+            arity (Integer/parseInt (nth m 1))
+            outer (nth m 2)
+            [types rest-s]
+            (loop [k arity b (nth m 3) acc []]
+              (if (zero? k)
+                [acc b]
+                (let [[t r] (parse-ser-rest b)]
+                  (recur (dec k) r (conj acc t)))))]
+        [{:node  :type-of
+          :outer outer
+          :inner (if (= 1 arity)
+                   (first types)
+                   {:node :type-tuple :types types})}
+         rest-s])
 
       (and (str/starts-with? s "Nt")
            (re-matches #"Nt\d+_.*" s))

@@ -41,7 +41,10 @@
 # The map case parses the inner `TT(...)` body via a single
 # `.index_of(",")`; the body only contains `TR:X` and `TN(TR:X)`
 # forms, neither of which carry a comma inside, so the leftmost
-# comma is the correct split point. Deeper nesting (containers of
+# comma is the correct split point. Chapter 24 makes the TNT-body
+# pair split paren-depth aware (`pair_nest`, the chapter-19
+# balanced-paren idiom) so the `TT(K,V)` comma no longer splits the
+# Map pair into two bogus fields. Deeper nesting (containers of
 # containers, containers of named tuples) remains out of this
 # chapter's scope; the else-branch sentinel `UNSUPPORTED` surfaces
 # such cases visibly.
@@ -63,6 +66,10 @@ def main:
     body_pos:     Int!    = 0
     pair_acc:     String! = ""
     pair_entries: List of String = []
+    # Chapter 24. Paren depth inside the current pair. Only a comma at
+    # depth 0 separates named-tuple fields; the comma inside a Map
+    # `TT(K,V)` inner tuple sits at depth 2 and stays in the pair.
+    pair_nest:    Int!    = 0
 
     # Sort state (selection sort over pair_entries).
     sort_i:        Int!    = 0
@@ -93,6 +100,7 @@ def main:
     body_end :- body_pos >= body.length()
     body_cur :- ||: body_end : -1 ||: else : body.code_at(body_pos)
     body_is_comma :- body_cur == 44
+    body_is_split :- body_is_comma and pair_nest == 0
 
     # Pair-conversion observations, read on each commit arm.
     pair_colon_idx :- pair_acc.index_of(":")
@@ -161,6 +169,7 @@ def main:
         then:
             body_pos => 0
             pair_acc => ""
+            pair_nest => 0
             pair_entries => pair_entries.empty()
             self :> step
 
@@ -253,7 +262,7 @@ def main:
             pair_acc => ""
 
     extracting_pairs <: step -> extracting_pairs
-        |: not body_end and body_is_comma
+        |: not body_end and body_is_split
         then:
             pair_entries => pair_entries.append(pair_converted)
             pair_acc => ""
@@ -261,8 +270,9 @@ def main:
             self :> step
 
     extracting_pairs <: step -> extracting_pairs
-        |: not body_end and not body_is_comma
+        |: not body_end and not body_is_split
         then:
+            pair_nest => ||: body_cur == 40 : pair_nest + 1 ||: body_cur == 41 : pair_nest - 1 ||: else : pair_nest
             pair_acc => pair_acc + body.substring(body_pos, 1)
             body_pos => body_pos + 1
             self :> step
