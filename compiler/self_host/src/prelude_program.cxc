@@ -1,0 +1,998 @@
+# Chapter-32 pipeline slice (slice 38).
+#
+# Ports the passes `build/compile-source-to-file` applies between
+# `cxc.parse/parse` and `lower/lower`, other than the reference
+# enrichment (slice 37), in its order.
+#
+#   user mode     validate-imports, prelude/validate-no-prelude-collisions!,
+#                 plugin-manifest/validate-plugin-capability-uses!, then the
+#                 plugin pipeline, then desugar-prelude-class-members.
+#   prelude mode  build/process-prelude-nodes on an assembled prelude, the
+#                 plugin pipeline with no validators, then
+#                 desugar-prelude-class-members.
+#   assemble mode prelude/assemble-source for the macOS target.
+#   praw mode     prelude mode without the class-member desugar, which is
+#                 `build/process-prelude-nodes`'s own output.
+#   prefs mode    the references of a praw stream with the `:resolves-to`
+#                 that `resolve/enrich-prelude-nodes` attaches, the
+#                 slice-37 refs rows with the prelude-only ladder.
+#
+# The plugin pipeline is rewrite-objc-type-aliases, extract (every
+# manifest check and message), validate-plugin-symbol-refs! (the three
+# foreign indices with their collision checks, then every plugin.get,
+# plugin.send, and plugin.class_send in an atom body), rewrite-plugin-refs,
+# and rewrite-foreign-alias-fields. resolve-references and
+# enrich-prelude-nodes only attach `:resolves-to`, which the slice-36
+# format does not print. Slice 37's refs mode pins the user-file
+# enrichment and prefs mode here pins the prelude one. No behavioral
+# walker is registered, so the walker loop changes nothing.
+#
+# argv.
+#
+#   assemble <registry> <resources-root>
+#       <registry> holds `<name>|<kind>` lines in `prelude-modules` order,
+#       written by `oracle/prelude_program_tables.clj`. Each module is read
+#       from `<root>/prelude/shared/<name>.cxc` or
+#       `<root>/prelude/target/macos/<name>.cxc` and the sources are joined
+#       with a newline. The output is that source collapsed to one corpus
+#       row (a literal backslash-n becomes `\N`, then a newline becomes
+#       `\n`), ready for slice 36. A missing module prints Clojure's
+#       `prelude module resource missing` message as `error|...`.
+#   prelude <render> <index>
+#   praw <render> <index>
+#   prefs <stream> <index>
+#       <stream> is a praw output. The output is `(refs <n>)` and one
+#       sorted row per distinct reference, `(ref type|of|call|dot|extend
+#       <name> <module>|nil)`, where <module> comes from the prelude index
+#       alone (enrich-prelude-nodes passes no own declarations and no
+#       imports, so a name the prelude declares outside the registry
+#       resolves to nil).
+#   user <render> <index> <stdlib> [<prelude-stream>]
+#       <render> is a file with one slice-36 output (`(program ...)` or an
+#       `error|...` text, which passes through). <index> is the slice-37
+#       prelude index (`<name>|<module>` lines), whose names are the
+#       protected prelude names. <stdlib> holds `build/stdlib-manifest` as
+#       `<module>|<name>` lines sorted by module and name. When
+#       <prelude-stream> is given it is a file holding this slice's
+#       prelude-mode output, and the user nodes print after its nodes, the
+#       whole stream `lower/lower` receives.
+#
+# Output. `(program <node>*)` in the slice-36 format, or `error|<message>`
+# with the ex-info message of the first pass that throws. The rewrites
+# add three expression nodes to the format.
+#
+#   (foreign-ref "<lib>" "<sym>" symbol <sig>)
+#   (foreign-selector-call "<lib>" "<cls>" "<sel>" <sig> <receiver> <arg>*)
+#   (foreign-class-selector-call "<lib>" "<cls>" "<sel>" <sig> <arg>*)
+#
+# <sig> is the foreign entry's signature atom after the objc alias
+# rewrite. The original call (`:orig-node`) and `:objc-original` are not
+# printed. The class-member desugar prints `Instant.epoch` as
+# `(call (ident Instant) (named millis (int 0)))` and `Position.origin`
+# as `(call (ident Position) (named x (float 0.0)) (named y (float 0.0)))`.
+#
+# Method. The rendering is read into the chapter-31 preorder arena (the
+# reader is copied from slice 37 with no horizon). A facts pass over every
+# node gathers the validator errors, the plugin node's fields and foreign
+# entries, the counts the SemVer checks need, and the foreign-alias field
+# candidates. A walk over every node then collects the validation error
+# and the rewrites as edits on the rendering, `Edit(start, stop, text)`.
+# A plugin.get becomes one edit over the whole call. A plugin.send keeps
+# its receiver and later args, so it is two edits around the receiver,
+# and the walk still visits the kept nodes. An edit that starts inside a
+# span an earlier edit replaced is dropped, which is exactly a rewrite
+# inside a dropped subtree (`:orig-node`, a dropped alias field). The
+# output is the rendering with the edits applied in start order.
+#
+# Linux toolchain notes. An inline `(xs.at(k) ?? R(...)).f` read of a
+# record's string field came back nil, so record reads go through
+# parametric observations (`ent_at`, `edit_at`, ...). The `sort_by`
+# key lambda unboxes each element with a raw `getValue` into a struct
+# whose string fields are strong (the chapter-16 pattern, unfixed on the
+# lambda path), which over-released the strings of a `List of Edit` and
+# corrupted the heap, so the edits are applied by selection instead.
+#
+# Scope notes. A plugin.send with fewer than two args outside an atom
+# body throws an IndexOutOfBoundsException in Clojure and is left as a
+# call here. Messages quote decoded strings for the `\\`, `\"`, `\n`,
+# `\t`, and `\r` escapes. validate-plugin-symbol-refs! walks Clojure maps
+# in hash order, so two failing plugin calls inside one item may report
+# in a different order. The corpus has at most one per item.
+
+def SNode:
+    pre:    Int!
+    kind:   Int!
+    start:  Int!
+    stop:   Int!
+    depth:  Int!
+    size:   Int!
+    parent: Int!
+
+def FEnt:
+    kind:   String!
+    k1:     String!
+    k2:     String!
+    lib:    String!
+    sig:    String!
+    sstart: Int!
+    sstop:  Int!
+
+def ACand:
+    agent: Int!
+    name:  String!
+    key:   String!
+    start: Int!
+    stop:  Int!
+
+def Edit:
+    start: Int!
+    stop:  Int!
+    text:  String!
+
+def main:
+    use args:    Args
+    use console: Console
+    use fs:      FileSystem
+
+    mode:     String! = ""
+    src:      String! = ""
+    pidx:     String! = ""
+    stab:     String! = ""
+    out:      String! = ""
+    # Reader state.
+    rp:       Int!    = 0
+    rmode:    Int!    = 0
+    rnest:    Int!    = 0
+    tstart:   Int!    = 0
+    sp:       Int!    = 0
+    horizon:  Int!    = 1000000000
+    ncount:   Int!    = 0
+    rstack:   List of SNode = []
+    nodes:    List of SNode = []
+    # Stdlib export lists, `\n<module>|("A" "B")` lines.
+    sc:       Int!    = 0
+    sav:      String! = ""
+    sav_m:    String! = ""
+    # Facts pass.
+    fi:         Int!    = 2
+    top:        Int!    = -1
+    top_head:   String! = ""
+    top_name:   String! = ""
+    top_items0: Int!    = 0
+    top_end:    Int!    = 0
+    imp_mod:    String! = ""
+    imp_known:  Bool!   = false
+    imp_err:    String! = ""
+    col_err:    String! = ""
+    cap_err:    String! = ""
+    pcount:     Int!    = 0
+    pnode:      Int!    = -1
+    pf_name:    Int!    = -1
+    pf_version: Int!    = -1
+    pf_compat:  Int!    = -1
+    pf_reqs:    Int!    = -1
+    pf_shape:   Int!    = -1
+    unk:        List of String = []
+    als:        List of String = []
+    ents:       List of FEnt = []
+    acands:     List of ACand = []
+    t_v:        Int!    = -1
+    n_v:        Int!    = 0
+    t_c:        Int!    = -1
+    t_min:      Int!    = -1
+    n_min:      Int!    = 0
+    t_max:      Int!    = -1
+    n_max:      Int!    = 0
+    # Signature rewrite, unknown-field sort, indices, aliases.
+    ek:         Int!    = 0
+    ak:         Int!    = 0
+    rsig:       String! = ""
+    ents2:      List of FEnt = []
+    edits:      List of Edit = []
+    us_i:       Int!    = 0
+    us_best:    String! = ""
+    us_has:     Bool!   = false
+    unk_txt:    String! = ""
+    xk:         Int!    = 0
+    tab_sym:    String! = ""
+    tab_sel:    String! = ""
+    tab_csel:   String! = ""
+    err_sym:    String! = ""
+    err_sel:    String! = ""
+    err_csel:   String! = ""
+    xa:         Int!    = 0
+    atab:       String! = ""
+    # Walk and apply.
+    wi:         Int!    = 2
+    verr:       String! = ""
+    es:         List of Edit = []
+    ai:         Int!    = 0
+    bi:         Int!    = -1
+    bs:         Int!    = 0
+    cp:         Int!    = 0
+    acc:        String! = ""
+    # Prefs mode (the slice-37 ref scan).
+    ri:         Int!    = 0
+    tp:         Int!    = 0
+    astart:     Int!    = 0
+    astop:      Int!    = 0
+    rows:       List of String = []
+    sort_i:     Int!    = 0
+    scan_best:  String! = ""
+    scan_has:   Bool!   = false
+    sorted:     String! = ""
+    nrows:      Int!    = 0
+    # Assemble mode.
+    reg:        String! = ""
+    root:       String! = ""
+    gc:         Int!    = 0
+    asm_acc:    String! = ""
+    asm_first:  Bool!   = true
+    asm_err:    String! = ""
+
+    # Reader observations.
+    r_end    :- rp >= src.length()
+    rc       :- ||: r_end : -1 ||: else : src.code_at(rp)
+    r_sp     :- rc == 32 or rc == 10 or rc == 9 or rc == 13
+    r_open   :- rc == 40
+    r_close  :- rc == 41
+    r_quote  :- rc == 34
+    r_bs     :- rc == 92
+    r_plain  :- not r_end and not r_sp and not r_open and not r_close
+    rtop     :- rstack.at((sp - 1).max(0)) ?? SNode(pre: -1, kind: 0, start: 0, stop: 0, depth: -1, size: 0, parent: -1)
+    r_parent :- ||: sp == 0 : -1 ||: else : rtop.pre
+    r_keep   :- sp <= horizon
+    a_stop   :- r_end or r_sp or (r_close and rnest == 0)
+
+    # Arena accessors.
+    nn :- nodes.count()
+    sx(i: Int!) :- SNode
+        nodes.at(i.max(0)) ?? SNode(pre: -1, kind: -1, start: 0, stop: 0, depth: -1, size: 1, parent: -1)
+    sx_text(i: Int!) :- String!
+        ||: i < 0 or i >= nn : "" ||: else : src.substring(self.sx(i).start.max(0).min(src.length()), (self.sx(i).stop - self.sx(i).start).max(0).min(src.length()))
+    sx_next(i: Int!) :- Int!
+        i + self.sx(i).size.max(1)
+    sx_head(i: Int!) :- String!
+        ||: self.sx(i).kind == 0 and self.sx(i).size > 1 : self.sx_text(i + 1) ||: else : ""
+    line_at(t: String!, k: Int!) :- String!
+        ||: t.substring(k, t.length() - k).index_of("\n") < 0 : t.substring(k, t.length() - k) ||: else : t.substring(k, t.substring(k, t.length() - k).index_of("\n").max(0))
+
+    # Tables. `look(tab, key)` is the rest of the `\n<key>\t...` line,
+    # "" on a miss. Foreign index lines are `\n<key>\t<lib>\t<cls>\t<sig>`.
+    look(tab: String!, key: String!) :- String!
+        ||: tab.index_of(("\n" + key) + "\t") < 0 : "" ||: else : self.line_at(tab, (tab.index_of(("\n" + key) + "\t") + key.length() + 2).max(0).min(tab.length()))
+    tab_cut(r: String!) :- Int!
+        ||: r.index_of("\t") < 0 : r.length() ||: else : r.index_of("\t")
+    f_first(r: String!) :- String!
+        r.substring(0, self.tab_cut(r))
+    f_rest(r: String!) :- String!
+        r.substring((self.tab_cut(r) + 1).min(r.length()), (r.length() - self.tab_cut(r) - 1).max(0))
+    f_cls(r: String!) :- String!
+        self.f_first(self.f_rest(r))
+    f_sig(r: String!) :- String!
+        self.f_rest(self.f_rest(r))
+    known(m: String!) :- Bool!
+        stab.contains(("\n" + m) + "|")
+    exported(m: String!, n: String!) :- Bool!
+        stab.contains(("\n" + m) + (("|" + n) + "\n"))
+    avail(m: String!) :- String!
+        ||: sav.index_of(("\n" + m) + "|") < 0 : "" ||: else : self.line_at(sav, (sav.index_of(("\n" + m) + "|") + m.length() + 2).max(0).min(sav.length()))
+    protected(n: String!) :- Bool!
+        pidx.contains(("\n" + n) + "|")
+    allowed(n: String!) :- Bool!
+        n == "name" or n == "version" or n == "compat" or n == "requires" or n == "runtime_shape"
+
+    # Decode a pr-str string rendering for a message.
+    dq(s: String!) :- String!
+        ||: s.length() < 2 : s ||: else : s.substring(1, (s.length() - 2).max(0)).replace("\\\\", (1).to_char_string()).replace("\\\"", "\"").replace("\\n", "\n").replace("\\t", "\t").replace("\\r", "\r").replace((1).to_char_string(), "\\")
+
+    # The Clojure node keyword of an expression rendering.
+    kw_of(h: String!) :- String!
+        ||: h == "int" : ":lit-int" ||: h == "float" : ":lit-float" ||: h == "string" : ":lit-string" ||: h == "char" : ":lit-char" ||: h == "bool" : ":lit-bool" ||: h == "nil" : ":lit-nil" ||: h == "multi-arm" : ":multi-arm-dispatch" ||: h == "do" : ":do-block-expr" ||: h == "variant" : ":variant-pattern" ||: h.starts_with("?") : ":" + h.substring(1, (h.length() - 1).max(0)) ||: else : ":" + h
+    kw(i: Int!) :- String!
+        ||: self.sx(i).kind == 1 and self.sx_text(i) == "else" : ":else-marker" ||: else : self.kw_of(self.sx_head(i))
+
+    # Calls. `pmeth(c)` names a plugin.get / send / class_send call.
+    meth_ok(m: String!) :- String!
+        ||: m == "get" or m == "send" or m == "class_send" : m ||: else : ""
+    pmeth(c: Int!) :- String!
+        ||: self.sx_head(c) != "call" : "" ||: self.sx_head(c + 2) != "dot" : "" ||: self.sx_text(c + 4) != "(ident plugin)" : "" ||: else : self.meth_ok(self.sx_text(c + 7))
+    c_end(c: Int!) :- Int!
+        c + self.sx(c).size
+    c_a1(c: Int!) :- Int!
+        self.sx_next(c + 2)
+    c_a2(c: Int!) :- Int!
+        self.sx_next(self.c_a1(c))
+    has_a1(c: Int!) :- Bool!
+        self.c_a1(c) < self.c_end(c)
+    has_a2(c: Int!) :- Bool!
+        self.c_a2(c) < self.c_end(c)
+    argval(a: Int!) :- Int!
+        ||: self.sx_head(a) == "named" : a + 3 ||: else : a + 2
+    a1_lit(c: Int!) :- Bool!
+        self.sx_head(self.c_a1(c)) == "pos" and self.sx_head(self.c_a1(c) + 2) == "string"
+    c_key(c: Int!) :- String!
+        ||: self.has_a1(c) and self.a1_lit(c) : self.sx_text(self.c_a1(c) + 4) ||: else : ""
+    get_key(d: Int!) :- String!
+        ||: self.pmeth(d) == "get" : self.c_key(d) ||: else : ""
+    call_named(e: Int!, nm: String!) :- Bool!
+        self.sx_head(e) == "call" and self.sx_text(e + 2) == ("(ident " + nm) + ")"
+
+    # Messages.
+    pm(s: String!) :- String!
+        "plugin manifest: " + s
+    m_unk_from(m: String!) :- String!
+        (("unknown module `" + m) + ("` in `from " + m)) + (" import ...` — must be a prelude module or another " + "user module in src-dir")
+    m_unk_imp(m: String!, a: String!) :- String!
+        (("unknown module `" + m) + ("` in `import " + m)) + ((||: a == "nil" : "" ||: else : " as " + a) + "` — must be a prelude module or another user module in src-dir")
+    m_noexp(m: String!, n: String!) :- String!
+        (("module `" + m) + ("` does not export `" + n)) + ("`; available: " + self.avail(m))
+    m_col(n: String!) :- String!
+        ("user declaration `" + n) + ("` collides with a protected prelude name (spec §4.20). " + "Rename the declaration; namespace-scoped resolution that would let user code shadow prelude names is deferred to Phase D.")
+    m_cap(c: String!, a: String!) :- String!
+        (("plugin capability: `use " + c) + (": Plugin` in atom `" + a)) + ("` requires a `def plugin:` marker at module top-level (spec §7.2.1, R11 plugin-only wave 2026-09-01). " + "Non-plugin modules import capability atoms from plugins instead (`use console: Console`).")
+    m_multi :- self.pm(("module has " + pcount.to_string()) + " `def plugin:` markers; exactly one allowed (spec §7.2.1). Merge them or split the module.")
+
+    # Stage errors, in build order.
+    s_err :- ||: mode == "user" and imp_err != "" : imp_err ||: mode == "user" and col_err != "" : col_err ||: pcount > 1 : m_multi ||: mode == "user" and pcount == 0 : cap_err ||: else : ""
+
+    # Extract. `pf_*` is the last field of that name (by-name, last wins).
+    fl_has(f: Int!) :- Bool!
+        self.sx(f + 4).kind == 0 or (self.sx(f + 4).kind == 1 and self.sx_text(f + 4) != "nil")
+    tn_inner(t: String!) :- String!
+        ||: t.starts_with("TN(") and t.ends_with(")") : t.substring(3, (t.length() - 4).max(0)) ||: else : t
+    tname(f: Int!) :- String!
+        ||: self.tn_inner(self.sx_text(f + 3)).starts_with("TR:") : ("\"" + self.tn_inner(self.sx_text(f + 3)).substring(3, (self.tn_inner(self.sx_text(f + 3)).length() - 3).max(0))) + "\"" ||: else : "nil"
+    x_ty(f: Int!, nm: String!, ex: String!) :- String!
+        ||: f >= 0 and self.tname(f) != ("\"" + ex) + "\"" : self.pm((("field `" + nm) + (":` must be typed `" + ex)) + (("!`; got `" + self.tname(f)) + "`.")) ||: else : ""
+    x_miss(f: Int!, nm: String!) :- String!
+        ||: f < 0 : self.pm(("missing required manifest field `" + nm) + ":`. R7: name/version/compat are mandatory (spec §7.2.1).") ||: not self.fl_has(f) : self.pm(("field `" + nm) + ":` requires an inline default (compile-time-const per §4.16.10).") ||: else : ""
+    arg_err(a: Int!, fl: String!) :- String!
+        ||: self.sx_head(a) == "named" : self.pm((fl + " SemVer(...) args must be positional; ") + (("got named `" + self.sx_text(a + 2)) + "`")) ||: self.sx_head(a + 2) != "int" : self.pm((fl + " SemVer(...) args must be integer literals; ") + ("got " + self.kw(a + 2))) ||: else : ""
+    semver_err(e: Int!, fl: String!, argc: Int!) :- String!
+        alias a1 :- self.sx_next(e + 2)
+        alias a2 :- self.sx_next(a1)
+        alias a3 :- self.sx_next(a2)
+        ||: not self.call_named(e, "SemVer") : self.pm((fl + " default must be a `SemVer(...)` call; got ") + self.kw(e)) ||: argc != 3 : self.pm((fl + " SemVer(...) needs exactly 3 args ") + ("(major, minor, patch); got " + argc.to_string())) ||: self.arg_err(a1, fl) != "" : self.arg_err(a1, fl) ||: self.arg_err(a2, fl) != "" : self.arg_err(a2, fl) ||: else : self.arg_err(a3, fl)
+    vr_err(d: Int!) :- String!
+        ||: not self.call_named(d, "VersionRange") : self.pm("compat default must be a `VersionRange(...)` call; got " + self.kw(d)) ||: t_min < 0 : self.pm("compat VersionRange(...) missing required named arg `min: SemVer(...)`") ||: t_max < 0 : self.pm("compat VersionRange(...) missing required named arg `max: SemVer(...)`") ||: self.semver_err(t_min, "compat.min", n_min - 2) != "" : self.semver_err(t_min, "compat.min", n_min - 2) ||: else : self.semver_err(t_max, "compat.max", n_max - 2)
+    rs_err(d: Int!) :- String!
+        ||: not (self.sx_head(d) == "dot" and self.sx_text(d + 2) == "(ident RuntimeShape)") : self.pm("runtime_shape default must be `RuntimeShape.<case>`; got " + self.kw(d)) ||: self.sx_text(d + 5) != "dispatch_main" and self.sx_text(d + 5) != "main_runloop" : self.pm(("runtime_shape RuntimeShape.<case> must be one of dispatch_main, main_runloop; got `" + self.sx_text(d + 5)) + "`.") ||: else : ""
+    x_unk :- ||: unk_txt == "" : "" ||: else : self.pm(("unknown manifest field(s): " + unk_txt) + ". R7 v1.0 admits name/version/compat/requires/runtime_shape only (exports/targets deferred to L6).")
+    x_types :- ||: self.x_ty(pf_name, "name", "String") != "" : self.x_ty(pf_name, "name", "String") ||: self.x_ty(pf_version, "version", "SemVer") != "" : self.x_ty(pf_version, "version", "SemVer") ||: else : self.x_ty(pf_compat, "compat", "VersionRange")
+    x_name :- ||: self.x_miss(pf_name, "name") != "" : self.x_miss(pf_name, "name") ||: self.sx_head(pf_name + 4) != "string" : self.pm("name default must be a literal string; got " + self.kw(pf_name + 4)) ||: else : ""
+    x_ver :- ||: self.x_miss(pf_version, "version") != "" : self.x_miss(pf_version, "version") ||: else : self.semver_err(pf_version + 4, "version", n_v - 2)
+    x_cmp :- ||: self.x_miss(pf_compat, "compat") != "" : self.x_miss(pf_compat, "compat") ||: else : self.vr_err(pf_compat + 4)
+    x_opt :- ||: pf_reqs >= 0 and self.fl_has(pf_reqs) : self.pm("requires default must be a set literal `{OsPrimitive.stdio, ...}`; got " + self.kw(pf_reqs + 4)) ||: pf_shape >= 0 and self.fl_has(pf_shape) : self.rs_err(pf_shape + 4) ||: else : ""
+    x_err :- ||: x_unk != "" : x_unk ||: x_types != "" : x_types ||: x_name != "" : x_name ||: x_ver != "" : x_ver ||: x_cmp != "" : x_cmp ||: else : x_opt
+
+    # Signature alias rewrite. `TR:<a>` ends at `,`, `)`, or the atom end.
+    rw(s: String!, a: String!) :- String!
+        alias t :- ((s + ")").replace(("TR:" + a) + ",", "TR:Any,")).replace(("TR:" + a) + ")", "TR:Any)")
+        t.substring(0, (t.length() - 1).max(0))
+
+    # Index collision messages.
+    m_symcol(k: String!, prev: String!, lib: String!) :- String!
+        (("plugin foreign symbol `" + self.dq(k)) + ("` declared in both `" + self.dq(self.f_first(prev)))) + (("` and `" + self.dq(lib)) + "` blocks. Symbols must be unique across a plugin's foreign blocks (R7 per-library disjoint namespaces).")
+    m_selcol(lbl: String!, cap: String!, k: String!, prev: String!, lib: String!, cls: String!) :- String!
+        alias head :- (("plugin foreign " + lbl) + (" `" + self.dq(k))) + (("` declared in both `" + self.dq(self.f_first(prev))) + ("` (`" + self.dq(self.f_cls(prev))))
+        alias tail :- (("`) and `" + self.dq(lib)) + ("` (`" + self.dq(cls))) + (("`) blocks. " + cap) + "s must be unique across a plugin's foreign blocks so a single call site resolves to one signature.")
+        head + tail
+    idx_err :- ||: err_sym != "" : err_sym ||: err_sel != "" : err_sel ||: else : err_csel
+
+    # Validation messages for one plugin call.
+    m_what(m: String!) :- String!
+        ||: m == "get" : "argument at compile time" ||: else : "selector as its first argument"
+    m_nonlit(m: String!, got: String!) :- String!
+        (("plugin." + m) + (" expects a literal string " + self.m_what(m))) + (" (compile-time " + ((||: m == "get" : "symbol" ||: else : "selector") + (" binding); got " + got)))
+    m_unres(m: String!, k: String!) :- String!
+        ||: m == "get" : (("plugin.get(\"" + k) + "\"): symbol not declared in any `foreign \"...\"` block of this plugin's manifest. ") + (("Add `symbol \"" + k) + "\" -> <signature>` to a foreign block, or check for a typo.") ||: m == "send" : (("plugin.send(\"" + k) + "\", ...): selector not declared in any `foreign \"...\"` block of this plugin's manifest. ") + (("Add `selector \"ClassName\" \"" + k) + "\" -> <signature>` to a foreign block, or check for a typo.") ||: else : (("plugin.class_send(\"" + k) + "\", ...): class selector not declared in any `foreign \"...\"` block of this plugin's manifest. ") + (("Add `class_selector \"ClassName\" \"" + k) + "\" -> <signature>` to a foreign block, or check for a typo.")
+    m_norecv(k: String!) :- String!
+        ("plugin.send(\"" + k) + ("\", …) requires a receiver as its second argument. " + "Usage: `plugin.send(\"selector:\", receiver, arg1, arg2, ...)`.")
+    m_tab(m: String!) :- String!
+        ||: m == "get" : tab_sym ||: m == "send" : tab_sel ||: else : tab_csel
+    p_got(c: Int!) :- String!
+        ||: self.has_a1(c) : self.kw(self.argval(self.c_a1(c))) ||: else : "nil"
+    perr(c: Int!, m: String!) :- String!
+        alias k   :- self.c_key(c)
+        ||: k == "" : self.m_nonlit(m, self.p_got(c)) ||: m == "send" and not self.has_a2(c) : self.m_norecv(self.dq(k)) ||: self.look(self.m_tab(m), k) == "" : self.m_unres(m, self.dq(k)) ||: else : ""
+
+    # Rewrites.
+    fr_of(k: String!, r: String!) :- String!
+        (("(foreign-ref " + self.f_first(r)) + (" " + k)) + ((" symbol " + self.f_sig(r)) + ")")
+    sel_pre(hd: String!, k: String!, r: String!) :- String!
+        ((hd + self.f_first(r)) + (" " + self.f_cls(r))) + ((" " + k) + (" " + self.f_sig(r)))
+    res_kind(c: Int!, m: String!) :- String!
+        alias k :- self.c_key(c)
+        ||: k == "" : "" ||: self.look(self.m_tab(m), k) == "" : "" ||: m == "send" and not self.has_a2(c) : "" ||: else : m
+    sug_kind(i: Int!) :- String!
+        ||: self.sx_text(i) == "(dot (ident Instant) epoch)" : "epoch" ||: self.sx_text(i) == "(dot (ident Position) origin)" : "origin" ||: else : ""
+    sug_text(k: String!) :- String!
+        ||: k == "epoch" : "(call (ident Instant) (named millis (int 0)))" ||: else : "(call (ident Position) (named x (float 0.0)) (named y (float 0.0)))"
+    alias_hit(c: Int!) :- String!
+        ||: self.sx_head(c + 2) != "dot" or self.sx_text(c + 4) != "(self)" : "" ||: else : self.look(atab, (top.to_string() + "|") + self.sx_text(c + 6))
+    # Record reads go through observations. An inline `(xs.at(k) ?? R(...)).f`
+    # read of a string field comes back nil on the Linux toolchain.
+    ent_at(k: Int!) :- FEnt
+        ents.at(k.max(0)) ?? FEnt(kind: "", k1: "", k2: "", lib: "", sig: "", sstart: 0, sstop: 0)
+    ent2_at(k: Int!) :- FEnt
+        ents2.at(k.max(0)) ?? FEnt(kind: "", k1: "", k2: "", lib: "", sig: "", sstart: 0, sstop: 0)
+    cand_at(k: Int!) :- ACand
+        acands.at(k.max(0)) ?? ACand(agent: -1, name: "", key: "", start: 0, stop: 0)
+    edit_at(k: Int!) :- Edit
+        es.at(k.max(0)) ?? Edit(start: 0, stop: 0, text: "")
+    items0(i: Int!) :- Int!
+        self.sx_next(self.sx_next(i + 3))
+
+    # Prefs mode, copied from slice 37's refs pass two. The ladder is
+    # `enrich-prelude-nodes`, the prelude index and nothing else.
+    idx_or(t: String!, n: String!) :- Int!
+        ||: t.index_of(n) < 0 : t.length() ||: else : t.index_of(n)
+    plook(nm: String!) :- String!
+        ||: pidx.index_of(("\n" + nm) + "|") < 0 : "nil" ||: else : self.line_at(pidx, (pidx.index_of(("\n" + nm) + "|") + nm.length() + 2).max(0).min(pidx.length()))
+    ref_row(k: String!, nm: String!) :- String!
+        ("(ref " + k) + ((" " + nm) + ((" " + self.plook(nm)) + ")"))
+    cap(t: String!) :- Bool!
+        t.code_at(0) >= 65 and t.code_at(0) <= 90
+    q_node   :- self.sx(ri)
+    q_head   :- self.sx_head(ri)
+    q_cref   :- (q_head == "call" or q_head == "dot") and q_node.size > 4 and self.sx_head(ri + 2) == "ident" and self.cap(self.sx_text(ri + 4))
+    q_eref   :- q_head == "extend" and q_node.depth == 1
+    q_row    :- ||: q_eref : self.ref_row("extend", self.sx_text(ri + 2)) ||: else : self.ref_row(q_head, self.sx_text(ri + 4))
+    q_typed  :- q_node.kind == 1 and (self.sx_text(ri).contains("TR:") or self.sx_text(ri).contains("TO:"))
+    t_prev   :- ||: tp <= astart : 40 ||: else : src.code_at(tp - 1)
+    t_lead   :- tp + 2 < astop and src.code_at(tp + 2) == 58 and src.code_at(tp) == 84 and (t_prev == 40 or t_prev == 44 or t_prev == 58)
+    t_tr     :- t_lead and src.code_at(tp + 1) == 82
+    t_to     :- t_lead and src.code_at(tp + 1) == 79
+    t_from   :- (tp + 3).min(astop).min(src.length())
+    t_rest   :- src.substring(t_from, (astop - t_from).max(0).min(src.length() - t_from))
+    t_e1     :- self.idx_or(t_rest, ",").min(self.idx_or(t_rest, "("))
+    t_e2     :- self.idx_or(t_rest, ")").min(self.idx_or(t_rest, ":"))
+    t_end    :- t_e1.min(t_e2)
+    t_name   :- t_rest.substring(0, t_end.max(0).min(t_rest.length()))
+    t_term   :- t_rest.code_at(t_end)
+    t_type   :- t_tr and t_term != 58 and t_name != ""
+    t_of     :- t_to and t_term == 40 and self.cap(t_name)
+    t_row    :- ||: t_type : self.ref_row("type", t_name) ||: else : self.ref_row("of", t_name)
+    scan_cur :- rows.at(sort_i) ?? ""
+    scan_cmp :- scan_cur.compare_to(scan_best)
+
+    -> reading
+        then:
+            mode => args.get_or(1, "")
+            self :> start
+
+    -> stdprep
+        then: self :> sp1
+
+    -> facts
+        then: self :> fw
+
+    -> sigrw
+        then: self :> sr
+
+    -> usort
+        then: self :> us
+
+    -> index
+        then: self :> ix
+
+    -> aliasr
+        then: self :> ar
+
+    -> walking
+        then: self :> mw
+
+    -> applying
+        then: self :> ap
+
+    -> asm
+        then: self :> as1
+
+    -> refscan
+        then: self :> rsc
+
+    -> sorting
+        then: self :> scan
+
+    -> done
+        then: self :> fin
+
+    -> end
+        then: console.write(out)
+
+    done <: fin -> end
+
+    reading <: start -> asm
+        |: mode == "assemble"
+        then:
+            reg => fs.read_text(args.get_or(2, ""))
+            root => args.get_or(3, "")
+
+    reading <: start -> reading
+        |: mode != "assemble"
+        then:
+            let raw: String! = fs.read_text(args.get_or(2, ""))
+            src => ||: raw.ends_with("\n") : raw.substring(0, (raw.length() - 1).max(0)) ||: else : raw
+            pidx => "\n" + fs.read_text(args.get_or(3, ""))
+            stab => ||: mode == "user" : "\n" + fs.read_text(args.get_or(4, "")) ||: else : "\n"
+            self :> chk
+
+    # An error rendering passes through.
+    reading <: chk -> done
+        |: src.starts_with("error|")
+        then:
+            out => src
+
+    reading <: chk -> reading
+        |: not src.starts_with("error|")
+        then: self :> rd
+
+    reading <: rd -> refscan
+        |: rmode == 0 and r_end and mode == "prefs"
+        then:
+            nodes => nodes.sort_by(n => n.pre)
+
+    reading <: rd -> stdprep
+        |: rmode == 0 and r_end and mode != "prefs"
+        then:
+            nodes => nodes.sort_by(n => n.pre)
+            sc => 1
+
+    reading <: rd -> reading
+        |: rmode == 0 and r_sp
+        then:
+            rp => rp + 1
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 0 and r_open
+        then:
+            rstack => rstack.slice(0, sp).append(SNode(pre: ncount, kind: 0, start: rp, stop: 0, depth: sp, size: 0, parent: r_parent))
+            ncount => ncount + 1
+            sp => sp + 1
+            rp => rp + 1
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 0 and r_close
+        then:
+            nodes => nodes.append(SNode(pre: rtop.pre, kind: 0, start: rtop.start, stop: rp + 1, depth: rtop.depth, size: ncount - rtop.pre, parent: rtop.parent))
+            sp => (sp - 1).max(0)
+            rp => rp + 1
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 0 and r_quote
+        then:
+            tstart => rp
+            rmode => 2
+            rp => rp + 1
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 0 and r_plain and not r_quote
+        then:
+            tstart => rp
+            rmode => 1
+            rnest => 0
+            rp => rp + 1
+            self :> rd
+
+    # Atom mode.
+    reading <: rd -> reading
+        |: rmode == 1 and a_stop
+        then:
+            nodes => nodes.append(SNode(pre: ncount, kind: 1, start: tstart, stop: rp, depth: sp, size: 1, parent: r_parent))
+            ncount => ncount + 1
+            rmode => 0
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 1 and not a_stop and r_open
+        then:
+            rnest => rnest + 1
+            rp => rp + 1
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 1 and not a_stop and r_close
+        then:
+            rnest => rnest - 1
+            rp => rp + 1
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 1 and not a_stop and not r_open and not r_close
+        then:
+            rp => rp + 1
+            self :> rd
+
+    # String mode.
+    reading <: rd -> reading
+        |: rmode == 2 and (r_quote or r_end)
+        then:
+            nodes => nodes.append(SNode(pre: ncount, kind: 2, start: tstart, stop: (rp + 1).min(src.length()), depth: sp, size: 1, parent: r_parent))
+            ncount => ncount + 1
+            rmode => 0
+            rp => rp + 1
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 2 and not r_end and not r_quote and r_bs
+        then:
+            rmode => 3
+            rp => rp + 1
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 2 and not r_end and not r_quote and not r_bs
+        then:
+            rp => rp + 1
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 3
+        then:
+            rmode => 2
+            rp => (rp + 1).min(src.length())
+            self :> rd
+
+    # The stdlib export lists, grouped by module (the table is sorted).
+    stdprep <: sp1 -> stdprep
+        |: sc < stab.length()
+        then:
+            let ln: String! = self.line_at(stab, sc)
+            let bar: Int! = ln.index_of("|").max(0)
+            let m: String! = ln.substring(0, bar)
+            let q: String! = ("\"" + ln.substring((bar + 1).min(ln.length()), (ln.length() - bar - 1).max(0))) + "\""
+            sav => ||: ln == "" : sav ||: m == sav_m : sav + (" " + q) ||: else : (sav + ")\n") + ((m + "|(") + q)
+            sav_m => ||: ln == "" : sav_m ||: else : m
+            sc => sc + ln.length() + 1
+            self :> sp1
+
+    stdprep <: sp1 -> facts
+        |: sc >= stab.length()
+        then:
+            sav => sav + ")"
+
+    # Facts pass over every node in preorder.
+    facts <: fw -> facts
+        |: fi < nn
+        then:
+            let nd: SNode = self.sx(fi)
+            let h: String! = self.sx_head(fi)
+            let d1: Bool! = nd.depth == 1
+            let d2: Bool! = nd.depth == 2
+            let d3: Bool! = nd.depth == 3
+            let a1: String! = ||: nd.depth <= 3 : self.sx_text(fi + 2) ||: else : ""
+            let ph: String! = ||: d2 or d3 : self.sx_head(nd.parent) ||: else : ""
+            let gp: Int! = ||: d3 : self.sx(nd.parent).parent ||: else : -1
+            let fimp: Bool! = d1 and h == "from-import"
+            let iimp: Bool! = d1 and h == "import"
+            let nmc: Bool! = d2 and h == "name" and ph == "from-import"
+            let decl: Bool! = d1 and (h == "agent" or h == "record" or h == "enum")
+            let capc: Bool! = d3 and h == "use" and ph == "uses"
+            let capa: Bool! = gp == top and top_head == "agent"
+            let isp: Bool! = d1 and h == "plugin"
+            let inp: Bool! = d3 and gp == pnode and pnode >= 0
+            let pf: Bool! = inp and h == "field" and ph == "fields"
+            let fe: Bool! = inp and ph == "foreign"
+            let fsel: Bool! = fe and (h == "selector" or h == "class_selector")
+            let acf: Bool! = d3 and h == "field" and ph == "data"
+            let ac: Bool! = ||: acf and capa : self.sx_text(fi + 3).starts_with("TF(") ||: else : false
+            let nmin: Bool! = nd.parent == t_c and h == "named"
+            let nmn: String! = ||: nmin : self.sx_text(fi + 2) ||: else : ""
+            top => ||: d1 : fi ||: else : top
+            top_head => ||: d1 : h ||: else : top_head
+            top_name => ||: d1 : a1 ||: else : top_name
+            imp_mod => ||: fimp : a1 ||: else : imp_mod
+            imp_known => ||: fimp : self.known(a1) ||: else : imp_known
+            imp_err => ||: imp_err != "" : imp_err ||: fimp and not self.known(a1) : self.m_unk_from(a1) ||: iimp and not self.known(a1) : self.m_unk_imp(a1, self.sx_text(fi + 3)) ||: nmc and imp_known and not self.exported(imp_mod, a1) : self.m_noexp(imp_mod, a1) ||: else : ""
+            col_err => ||: col_err != "" : col_err ||: decl and self.protected(a1) : self.m_col(a1) ||: else : ""
+            cap_err => ||: cap_err != "" : cap_err ||: capc and capa and self.sx_text(fi + 3) == "TR:Plugin" : self.m_cap(a1, top_name) ||: else : ""
+            pcount => ||: isp : pcount + 1 ||: else : pcount
+            pnode => ||: isp and pnode < 0 : fi ||: else : pnode
+            pf_name => ||: pf and a1 == "name" : fi ||: else : pf_name
+            pf_version => ||: pf and a1 == "version" : fi ||: else : pf_version
+            pf_compat => ||: pf and a1 == "compat" : fi ||: else : pf_compat
+            pf_reqs => ||: pf and a1 == "requires" : fi ||: else : pf_reqs
+            pf_shape => ||: pf and a1 == "runtime_shape" : fi ||: else : pf_shape
+            unk => ||: pf and not self.allowed(a1) and not unk.contains(a1) : unk.append(a1) ||: else : unk
+            t_v => ||: pf and a1 == "version" : fi + 4 ||: else : t_v
+            n_v => ||: pf and a1 == "version" : 0 ||: nd.parent == t_v : n_v + 1 ||: else : n_v
+            t_c => ||: pf and a1 == "compat" : fi + 4 ||: else : t_c
+            t_min => ||: pf and a1 == "compat" : -1 ||: nmn == "min" : fi + 3 ||: else : t_min
+            n_min => ||: nmn == "min" : 0 ||: nd.parent == t_min : n_min + 1 ||: else : n_min
+            t_max => ||: pf and a1 == "compat" : -1 ||: nmn == "max" : fi + 3 ||: else : t_max
+            n_max => ||: nmn == "max" : 0 ||: nd.parent == t_max : n_max + 1 ||: else : n_max
+            als => ||: fe and h == "type" : als.append(self.sx_text(fi + 3)) ||: else : als
+            ents => ||: fe and h == "symbol" : ents.append(FEnt(kind: h, k1: a1, k2: "", lib: self.sx_text(nd.parent + 2), sig: self.sx_text(fi + 3), sstart: self.sx(fi + 3).start, sstop: self.sx(fi + 3).stop)) ||: fsel : ents.append(FEnt(kind: h, k1: a1, k2: self.sx_text(fi + 3), lib: self.sx_text(nd.parent + 2), sig: self.sx_text(fi + 4), sstart: self.sx(fi + 4).start, sstop: self.sx(fi + 4).stop)) ||: else : ents
+            acands => ||: ac and self.get_key(fi + 4) != "" : acands.append(ACand(agent: top, name: a1, key: self.get_key(fi + 4), start: nd.start, stop: nd.stop)) ||: else : acands
+            fi => fi + 1
+            self :> fw
+
+    facts <: fw -> done
+        |: fi >= nn and s_err != ""
+        then:
+            out => "error|" + s_err
+
+    facts <: fw -> walking
+        |: fi >= nn and s_err == "" and pcount == 0
+        then:
+            top => -1
+            top_head => ""
+
+    facts <: fw -> sigrw
+        |: fi >= nn and s_err == "" and pcount == 1
+        then:
+            rsig => ||: ents.count() > 0 : self.ent_at(0).sig ||: else : ""
+
+    # Rewrite each foreign signature for every objc type alias.
+    sigrw <: sr -> sigrw
+        |: ek < ents.count() and ak < als.count()
+        then:
+            rsig => self.rw(rsig, als.at(ak) ?? "")
+            ak => ak + 1
+            self :> sr
+
+    sigrw <: sr -> sigrw
+        |: ek < ents.count() and ak >= als.count()
+        then:
+            let e: FEnt = self.ent_at(ek)
+            ents2 => ents2.append(FEnt(kind: e.kind, k1: e.k1, k2: e.k2, lib: e.lib, sig: rsig, sstart: e.sstart, sstop: e.sstop))
+            edits => ||: rsig != e.sig : edits.append(Edit(start: e.sstart, stop: e.sstop, text: rsig)) ||: else : edits
+            rsig => ||: ek + 1 < ents.count() : self.ent_at(ek + 1).sig ||: else : ""
+            ek => ek + 1
+            ak => 0
+            self :> sr
+
+    sigrw <: sr -> usort
+        |: ek >= ents.count()
+
+    # Sort the unknown manifest field names (chapter-6 selection sort).
+    usort <: us -> usort
+        |: us_i < unk.count()
+        then:
+            let cur: String! = unk.at(us_i) ?? ""
+            us_best => ||: not us_has or cur.compare_to(us_best) < 0 : cur ||: else : us_best
+            us_has => true
+            us_i => us_i + 1
+            self :> us
+
+    usort <: us -> usort
+        |: us_i >= unk.count() and us_has
+        then:
+            unk_txt => ||: unk_txt == "" : ("`" + us_best) + ":`" ||: else : unk_txt + ((", `" + us_best) + ":`")
+            unk => unk.filter(x => x != us_best)
+            us_i => 0
+            us_has => false
+            self :> us
+
+    usort <: us -> done
+        |: us_i >= unk.count() and not us_has and x_err != ""
+        then:
+            out => "error|" + x_err
+
+    usort <: us -> index
+        |: us_i >= unk.count() and not us_has and x_err == ""
+
+    # The symbol, selector, and class-selector indices.
+    index <: ix -> index
+        |: xk < ents2.count()
+        then:
+            let e: FEnt = self.ent2_at(xk)
+            let isym: Bool! = e.kind == "symbol"
+            let isel: Bool! = e.kind == "selector"
+            let ky: String! = ||: isym : e.k1 ||: else : e.k2
+            let cls: String! = ||: isym : "" ||: else : e.k1
+            let prev: String! = ||: isym : self.look(tab_sym, ky) ||: isel : self.look(tab_sel, ky) ||: else : self.look(tab_csel, ky)
+            let line: String! = (("\n" + ky) + ("\t" + e.lib)) + (("\t" + cls) + ("\t" + e.sig))
+            err_sym => ||: err_sym == "" and isym and prev != "" : self.m_symcol(ky, prev, e.lib) ||: else : err_sym
+            err_sel => ||: err_sel == "" and isel and prev != "" : self.m_selcol("selector", "Selector", ky, prev, e.lib, cls) ||: else : err_sel
+            err_csel => ||: err_csel == "" and not isym and not isel and prev != "" : self.m_selcol("class selector", "Class selector", ky, prev, e.lib, cls) ||: else : err_csel
+            tab_sym => ||: isym and prev == "" : tab_sym + line ||: else : tab_sym
+            tab_sel => ||: isel and prev == "" : tab_sel + line ||: else : tab_sel
+            tab_csel => ||: not isym and not isel and prev == "" : tab_csel + line ||: else : tab_csel
+            xk => xk + 1
+            self :> ix
+
+    index <: ix -> done
+        |: xk >= ents2.count() and idx_err != ""
+        then:
+            out => "error|" + idx_err
+
+    index <: ix -> aliasr
+        |: xk >= ents2.count() and idx_err == ""
+
+    # Foreign-alias fields whose plugin.get default resolves.
+    aliasr <: ar -> aliasr
+        |: xa < acands.count()
+        then:
+            let c: ACand = self.cand_at(xa)
+            let r: String! = self.look(tab_sym, c.key)
+            atab => ||: r != "" : (("\n" + c.agent.to_string()) + ("|" + c.name)) + (("\t" + self.fr_of(c.key, r)) + atab) ||: else : atab
+            edits => ||: r != "" : edits.append(Edit(start: c.start - 1, stop: c.stop, text: "")) ||: else : edits
+            xa => xa + 1
+            self :> ar
+
+    aliasr <: ar -> walking
+        |: xa >= acands.count()
+        then:
+            top => -1
+            top_head => ""
+
+    # Walk every node, validating plugin calls in atom bodies and
+    # collecting the rewrites.
+    walking <: mw -> walking
+        |: wi < nn and verr == ""
+        then:
+            let nd: SNode = self.sx(wi)
+            let h: String! = self.sx_head(wi)
+            let d1: Bool! = nd.depth == 1
+            let meth: String! = ||: h == "call" : self.pmeth(wi) ||: else : ""
+            let inb: Bool! = top_head == "agent" and wi >= top_items0 and wi < top_end
+            let mf: Bool! = pcount == 1 and meth != ""
+            let rk: String! = ||: mf : self.res_kind(wi, meth) ||: h == "dot" and nd.size == 6 and mode != "praw" : self.sug_kind(wi) ||: h == "call" and inb and atab != "" and self.alias_hit(wi) != "" : "alias" ||: else : ""
+            let pk: Bool! = rk == "get" or rk == "send" or rk == "class_send"
+            let k: String! = ||: pk : self.c_key(wi) ||: else : ""
+            let r: String! = ||: pk : self.look(self.m_tab(rk), k) ||: else : ""
+            let a2: Int! = ||: pk : self.c_a2(wi) ||: else : 0
+            let v: Int! = ||: rk == "send" : self.argval(a2) ||: else : 0
+            verr => ||: mf and inb : self.perr(wi, meth) ||: else : ""
+            edits => ||: rk == "get" : edits.append(Edit(start: nd.start, stop: nd.stop, text: self.fr_of(k, r))) ||: rk == "send" : edits.append(Edit(start: nd.start, stop: self.sx(v).start, text: self.sel_pre("(foreign-selector-call ", k, r) + " ")).append(Edit(start: self.sx(v).stop, stop: self.sx(a2).stop, text: "")) ||: rk == "class_send" and self.has_a2(wi) : edits.append(Edit(start: nd.start, stop: self.sx(a2).start, text: self.sel_pre("(foreign-class-selector-call ", k, r) + " ")) ||: rk == "class_send" : edits.append(Edit(start: nd.start, stop: nd.stop - 1, text: self.sel_pre("(foreign-class-selector-call ", k, r))) ||: rk == "epoch" or rk == "origin" : edits.append(Edit(start: nd.start, stop: nd.stop, text: self.sug_text(rk))) ||: rk == "alias" : edits.append(Edit(start: self.sx(wi + 2).start, stop: self.sx(wi + 2).stop, text: self.alias_hit(wi))) ||: else : edits
+            top => ||: d1 : wi ||: else : top
+            top_head => ||: d1 : h ||: else : top_head
+            top_items0 => ||: d1 : self.items0(wi) ||: else : top_items0
+            top_end => ||: d1 : wi + nd.size ||: else : top_end
+            wi => wi + 1
+            self :> mw
+
+    walking <: mw -> done
+        |: verr != ""
+        then:
+            out => "error|" + verr
+
+    walking <: mw -> applying
+        |: wi >= nn and verr == ""
+        then:
+            es => edits
+
+    # Apply the edits in start order, each step taking the edit with the
+    # least start at or after the cursor, so an edit inside a replaced span
+    # is dropped. (`sort_by` over a record with a string field corrupts the
+    # heap on the Linux toolchain, so the order is found by selection.)
+    applying <: ap -> applying
+        |: ai < es.count()
+        then:
+            let e: Edit = self.edit_at(ai)
+            let take: Bool! = e.start >= cp and (bi < 0 or e.start < bs)
+            bi => ||: take : ai ||: else : bi
+            bs => ||: take : e.start ||: else : bs
+            ai => ai + 1
+            self :> ap
+
+    applying <: ap -> applying
+        |: ai >= es.count() and bi >= 0
+        then:
+            let e: Edit = self.edit_at(bi)
+            acc => acc + (src.substring(cp.max(0).min(src.length()), (e.start - cp).max(0).min(src.length())) + e.text)
+            cp => e.stop
+            bi => -1
+            ai => 0
+            self :> ap
+
+    applying <: ap -> done
+        |: ai >= es.count() and bi < 0 and args.get_or(5, "") == ""
+        then:
+            out => acc + src.substring(cp.max(0).min(src.length()), (src.length() - cp).max(0))
+
+    applying <: ap -> done
+        |: ai >= es.count() and bi < 0 and args.get_or(5, "") != ""
+        then:
+            let u: String! = acc + src.substring(cp.max(0).min(src.length()), (src.length() - cp).max(0))
+            let p: String! = fs.read_text(args.get_or(5, "")).trim()
+            out => ("(program" + p.substring(8.min(p.length()), (p.length() - 9).max(0))) + (u.substring(8.min(u.length()), (u.length() - 9).max(0)) + ")")
+
+    # Prefs mode. One row per distinct reference, then a selection sort.
+    refscan <: rsc -> sorting
+        |: ri >= nn
+        then:
+            nrows => rows.count()
+
+    refscan <: rsc -> refscan
+        |: ri < nn and (q_cref or q_eref)
+        then:
+            rows => ||: rows.contains(q_row) : rows ||: else : rows.append(q_row)
+            ri => ri + 1
+            self :> rsc
+
+    refscan <: rsc -> refscan
+        |: ri < nn and q_typed
+        then:
+            tp => q_node.start
+            astart => q_node.start
+            astop => q_node.stop
+            self :> asc
+
+    refscan <: rsc -> refscan
+        |: ri < nn and not q_cref and not q_eref and not q_typed
+        then:
+            ri => ri + 1
+            self :> rsc
+
+    refscan <: asc -> refscan
+        |: tp < astop and (t_type or t_of)
+        then:
+            rows => ||: rows.contains(t_row) : rows ||: else : rows.append(t_row)
+            tp => tp + 1
+            self :> asc
+
+    refscan <: asc -> refscan
+        |: tp < astop and not t_type and not t_of
+        then:
+            tp => tp + 1
+            self :> asc
+
+    refscan <: asc -> refscan
+        |: tp >= astop
+        then:
+            ri => ri + 1
+            self :> rsc
+
+    sorting <: scan -> sorting
+        |: sort_i < rows.count() and not scan_has
+        then:
+            scan_best => scan_cur
+            scan_has => true
+            sort_i => sort_i + 1
+            self :> scan
+
+    sorting <: scan -> sorting
+        |: sort_i < rows.count() and scan_has and scan_cmp < 0
+        then:
+            scan_best => scan_cur
+            sort_i => sort_i + 1
+            self :> scan
+
+    sorting <: scan -> sorting
+        |: sort_i < rows.count() and scan_has and scan_cmp >= 0
+        then:
+            sort_i => sort_i + 1
+            self :> scan
+
+    sorting <: scan -> sorting
+        |: sort_i >= rows.count() and scan_has
+        then:
+            sorted => sorted + ("\n" + scan_best)
+            rows => rows.filter(e => e != scan_best)
+            sort_i => 0
+            scan_has => false
+            scan_best => ""
+            self :> scan
+
+    sorting <: scan -> done
+        |: sort_i >= rows.count() and not scan_has
+        then:
+            out => ("(refs " + nrows.to_string()) + (")" + sorted)
+
+    # Assemble mode.
+    asm <: as1 -> asm
+        |: gc < reg.length()
+        then:
+            let ln: String! = self.line_at(reg, gc)
+            let bar: Int! = ln.index_of("|").max(0)
+            let nm: String! = ln.substring(0, bar)
+            let kd: String! = ln.substring((bar + 1).min(ln.length()), (ln.length() - bar - 1).max(0))
+            let rel: String! = ||: kd == "shared" : ("prelude/shared/" + nm) + ".cxc" ||: else : ("prelude/target/macos/" + nm) + ".cxc"
+            let ok: Bool! = ln == "" or asm_err != "" or (fs.exists((root + "/") + rel) ?? 0) > 0
+            asm_err => ||: ok : asm_err ||: else : ("prelude module resource missing: `" + rel) + "`. Check compiler/resources/prelude/ and deps.edn `:paths`."
+            asm_acc => ||: ln == "" or not ok or asm_err != "" : asm_acc ||: asm_first : fs.read_text((root + "/") + rel) ||: else : (asm_acc + "\n") + fs.read_text((root + "/") + rel)
+            asm_first => ||: ln == "" or not ok or asm_err != "" : asm_first ||: else : false
+            gc => gc + ln.length() + 1
+            self :> as1
+
+    asm <: as1 -> done
+        |: gc >= reg.length()
+        then:
+            out => ||: asm_err != "" : "error|" + asm_err ||: else : asm_acc.replace("\\n", "\\N").replace("\n", "\\n")
