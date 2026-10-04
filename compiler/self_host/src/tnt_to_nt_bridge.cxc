@@ -1,4 +1,4 @@
-# Chapter-19 TNT → Nt-flat format bridge.
+# TNT → Nt-flat format bridge.
 #
 # Takes a parse-layer-bootstrap serialization as positional arg
 # (possibly multi-line, multi-def). Scans for `TNT(<body>)`
@@ -9,18 +9,29 @@
 # Downstream consumer: `named_tuple_collect_shapes` depth-N walker
 # (chapter 18). The three-stage chain
 # `parse_layer_bootstrap | tnt_to_nt_bridge | named_tuple_collect_shapes`
-# demonstrates the chapter-19 composition unlock — collect-shapes
-# consumes real parse-layer serialization instead of a hand-rolled
-# Nt-flat corpus.
+# demonstrates the composition unlock — collect-shapes consumes real
+# parse-layer serialization instead of a hand-rolled Nt-flat corpus.
 #
-# Scope. Chapter 19 handles depth-1 named-tuples whose inner types
-# are primitive (`TR:X`) or non-nil primitive (`TN(TR:X)`). Nested
-# TNTs inside TNT bodies and container inner types (`TO:List`,
-# `TO:Map`, `TO:Set`) are deferred to chapter 20.
+# Scope.
+#   Chapter 19 — depth-1 named-tuples with primitive (`TR:X`) or
+#   non-nil primitive (`TN(TR:X)`) inner types.
+#   Chapter 21 — depth-N via inside-out substitution. Each outer
+#   iteration finds the leftmost innermost TNT (whose body contains
+#   no further `TNT(`), converts its flat body to `Nt<K>_<flat>`,
+#   substitutes the converted form back into the spec in-place, and
+#   loops. When no `TNT(` remains, the spec contains Nt-flat forms
+#   at the field-type positions where TNTs originally sat; those are
+#   extracted as `;`-separated output.
 #
-# Serialization conversion.
-#   `fname:TR:X`         → `fname_X`
-#   `fname:TN(TR:X)`     → `fname_Nn_X`
+# Serialization conversion (per innermost pass).
+#   `fname:TR:X`              → `fname_X`
+#   `fname:TN(TR:X)`          → `fname_Nn_X`
+#   `fname:Nt<K>_<flat>`      → `fname_Nt<K>_<flat>` (already-converted
+#                                nested, in-place from a prior pass)
+#
+# Container inner types inside TNT bodies (`TO:List`, `TO:Map`,
+# `TO:Set`) are deferred to chapter 22; the else-branch sentinel
+# `UNSUPPORTED` surfaces them visibly.
 
 def main:
     use args:    Args
@@ -29,11 +40,12 @@ def main:
     spec:         String! = ""
     pos:          Int!    = 0
 
-    # Balanced-paren TNT close finder.
+    # Balanced-paren TNT finder.
+    tnt_start:      Int! = 0
     tnt_body_start: Int! = 0
     nest_depth:     Int! = 0
 
-    # Current TNT body being processed.
+    # Current innermost TNT body being converted.
     body:         String! = ""
     body_pos:     Int!    = 0
     pair_acc:     String! = ""
@@ -49,10 +61,21 @@ def main:
     join_i:        Int!    = 0
     joined_buf:    String! = ""
 
+    # Output-extract state (post-loop).
+    ext_pos:       Int!    = 0
+    extract_acc:   String! = ""
+
     out:          String! = ""
+
+    # On-enter guard. The `scanning` phase is re-entered after each
+    # substitution; its on-enter would otherwise clobber the modified
+    # `spec` with the original args value. Set once on initial entry.
+    once_init:    Bool! = false
 
     spec_end :- pos >= spec.length()
     tnt_prefix_match :- pos + 4 <= spec.length() and spec.code_at(pos) == 84 and spec.code_at(pos + 1) == 78 and spec.code_at(pos + 2) == 84 and spec.code_at(pos + 3) == 40
+
+    body_has_tnt :- body.index_of("TNT(") >= 0
 
     body_end :- body_pos >= body.length()
     body_cur :- ||: body_end : -1 ||: else : body.code_at(body_pos)
@@ -64,9 +87,10 @@ def main:
     pair_type_part :- pair_acc.substring(pair_colon_idx + 1, (pair_acc.length() - pair_colon_idx - 1).max(0))
     pair_is_nn     :- pair_type_part.starts_with("TN(TR:") and pair_type_part.ends_with(")")
     pair_is_tr     :- pair_type_part.starts_with("TR:")
+    pair_is_nt_flat :- pair_type_part.length() >= 4 and pair_type_part.code_at(0) == 78 and pair_type_part.code_at(1) == 116 and pair_type_part.code_at(2) >= 48 and pair_type_part.code_at(2) <= 57
     pair_inner_nn  :- pair_type_part.substring(6, (pair_type_part.length() - 7).max(0))
     pair_inner_tr  :- pair_type_part.substring(3, (pair_type_part.length() - 3).max(0))
-    pair_mangled   :- ||: pair_is_nn : "Nn_" + pair_inner_nn ||: pair_is_tr : pair_inner_tr ||: else : "UNSUPPORTED"
+    pair_mangled   :- ||: pair_is_nn : "Nn_" + pair_inner_nn ||: pair_is_tr : pair_inner_tr ||: pair_is_nt_flat : pair_type_part ||: else : "UNSUPPORTED"
     pair_converted :- pair_fname + "_" + pair_mangled
 
     sort_cur :- pair_entries.at(sort_i) ?? ""
@@ -74,12 +98,23 @@ def main:
 
     join_item :- sorted_pairs.at(join_i) ?? ""
 
+    # Output-extract observations.
+    ext_end :- ext_pos >= spec.length()
+    ext_at_colon_nt :- ext_pos + 4 < spec.length() and spec.code_at(ext_pos) == 58 and spec.code_at(ext_pos + 1) == 78 and spec.code_at(ext_pos + 2) == 116 and spec.code_at(ext_pos + 3) >= 48 and spec.code_at(ext_pos + 3) <= 57
+    ext_cur :- ||: ext_end : -1 ||: else : spec.code_at(ext_pos)
+    ext_is_delim :- ext_cur == 124 or ext_cur == 59 or ext_cur == 10
+
     -> scanning
         then:
-            spec => args.get_or(1, "")
+            spec => ||: once_init : spec ||: else : args.get_or(1, "")
+            once_init => true
             self :> step
 
     -> finding_tnt_close
+        then:
+            self :> step
+
+    -> check_innermost
         then:
             self :> step
 
@@ -104,19 +139,38 @@ def main:
             joined_buf => ""
             self :> step
 
-    -> emit_one_tnt
+    -> substituting
         then:
+            self :> step
+
+    # Note: `output_extract`'s on-enter CANNOT reset `ext_pos` here —
+    # the extract_one_nt_flat → output_extract return path re-enters
+    # this phase and would reset ext_pos to 0, restarting the scan
+    # (infinite loop). The one-time ext_pos init happens on the
+    # scanning → output_extract transition arm's then-body.
+    -> output_extract
+        then: self :> step
+
+    # Same discipline: `extract_one_nt_flat` is entered once per
+    # extraction, but its on-enter can safely reset extract_acc since
+    # we always want fresh accumulation per entry.
+    -> extract_one_nt_flat
+        then:
+            extract_acc => ""
             self :> step
 
     -> end
         then: console.write(out)
 
-    scanning <: step -> end
+    scanning <: step -> output_extract
         |: spec_end
+        then:
+            ext_pos => 0
 
     scanning <: step -> finding_tnt_close
         |: not spec_end and tnt_prefix_match
         then:
+            tnt_start => pos
             tnt_body_start => pos + 4
             pos => pos + 4
             nest_depth => 1
@@ -127,7 +181,7 @@ def main:
             pos => pos + 1
             self :> step
 
-    finding_tnt_close <: step -> extracting_pairs
+    finding_tnt_close <: step -> check_innermost
         |: nest_depth == 0 or spec_end
         then:
             body => spec.substring(tnt_body_start, (pos - tnt_body_start - 1).max(0))
@@ -139,6 +193,19 @@ def main:
             nest_depth => ||: c == 40 : nest_depth + 1 ||: c == 41 : nest_depth - 1 ||: else : nest_depth
             pos => pos + 1
             self :> step
+
+    # If body contains a nested TNT, this TNT is NOT innermost. Jump
+    # pos to the inner TNT's absolute position and re-scan. On next
+    # scanning step we'll find the inner one and process it first.
+    check_innermost <: step -> scanning
+        |: body_has_tnt
+        then:
+            let inner_rel: Int! = body.index_of("TNT(")
+            pos => tnt_body_start + inner_rel
+            self :> step
+
+    check_innermost <: step -> extracting_pairs
+        |: not body_has_tnt
 
     extracting_pairs <: step -> sorting_pairs
         |: body_end
@@ -195,7 +262,7 @@ def main:
     sorting_pairs <: scan -> joining
         |: sort_i >= pair_entries.count() and not scan_has_best
 
-    joining <: step -> emit_one_tnt
+    joining <: step -> substituting
         |: join_i >= sorted_pairs.count()
 
     joining <: step -> joining
@@ -206,9 +273,48 @@ def main:
             join_i => join_i + 1
             self :> step
 
-    emit_one_tnt <: step -> scanning
+    # Replace spec[tnt_start .. pos) (the full `TNT(<body>)` run) with
+    # `Nt<count>_<joined>`. pos was advanced past the `)` by the
+    # balanced-paren scan, so [tnt_start, pos) covers the entire
+    # TNT(...) form. Reset pos to 0 and re-scan from the top; another
+    # innermost may surface above the just-substituted one.
+    substituting <: step -> scanning
         then:
             let count: Int! = sorted_pairs.count()
+            let replacement: String! = "Nt" + count.to_string() + "_" + joined_buf
+            let prefix: String! = spec.substring(0, tnt_start.max(0))
+            let suffix: String! = spec.substring(pos, (spec.length() - pos).max(0))
+            spec => prefix + replacement + suffix
+            pos => 0
+            self :> step
+
+    # Scan the fully-substituted spec for `:Nt<digit>_` positions.
+    # Each is a top-level emission (nested Nt-flat forms were absorbed
+    # into their parents' bodies by the substitution loop).
+    output_extract <: step -> end
+        |: ext_end
+
+    output_extract <: step -> extract_one_nt_flat
+        |: not ext_end and ext_at_colon_nt
+        then:
+            ext_pos => ext_pos + 1
+
+    output_extract <: step -> output_extract
+        |: not ext_end and not ext_at_colon_nt
+        then:
+            ext_pos => ext_pos + 1
+            self :> step
+
+    extract_one_nt_flat <: step -> output_extract
+        |: ext_end or ext_is_delim
+        then:
             let outer_sep: String! = ||: out.length() == 0 : "" ||: else : ";"
-            out => out + outer_sep + "Nt" + count.to_string() + "_" + joined_buf
+            out => out + outer_sep + extract_acc
+            self :> step
+
+    extract_one_nt_flat <: step -> extract_one_nt_flat
+        |: not ext_end and not ext_is_delim
+        then:
+            extract_acc => extract_acc + spec.substring(ext_pos, 1)
+            ext_pos => ext_pos + 1
             self :> step

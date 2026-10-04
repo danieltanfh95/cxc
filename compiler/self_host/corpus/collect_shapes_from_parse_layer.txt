@@ -10,3 +10,9 @@ def A:\n    xy: (x: Int, y: Int)\ndef B:\n    uv: (u: String, v: Bool!)
 def Point:\n    coord: (x: Int!, y: Int!, z: Int!)
 def Z:\n    x: Int
 def Flat:\n    name: String!
+def R:\n    outer: (first: (a: Int, b: Int), second: String)
+def R:\n    outer: (inner: (deep: (x: Int)))
+def R:\n    a: (p: Int, q: String)\n    b: (p: Int, q: String)
+def R:\n    v: (b: (y: Int, x: Int), a: (q: String, p: Int))
+def A:\n    v: (x: (p: Int, q: Int), y: String)\ndef B:\n    w: (m: (a: Int, b: Bool))
+def R:\n    quad: (a: (x: Int), b: (y: String), c: Bool!)
