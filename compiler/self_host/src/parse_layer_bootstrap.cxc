@@ -150,6 +150,19 @@ def main:
     # via a new `kind == "float"` arm in `read_field_default`.
     is_dot        :- srccur == 46
     srcnext_is_digit :- sc + 1 < source.length() and source.code_at(sc + 1) >= 48 and source.code_at(sc + 1) <= 57
+    # Chapter-22 — string / char escape-sequence predicates. The port
+    # preserves escapes in literal form (two chars, backslash + marker);
+    # Clojure's cxc.lex/tokenize decodes to the actual byte and the
+    # parse-layer-bootstrap oracle wraps the Token value in pr-str
+    # which re-encodes `\n` / `\t` / `\r` / `\\` / `\"` / `\'` to the
+    # same literal text. `\xNN` / `\u{...}` / `\0` / `\a` / `\b` / `\f`
+    # / `\v` are out of scope because pr-str would re-encode them as
+    # `\uNNNN` which doesn't match the port's literal form.
+    is_bslash     :- srccur == 92
+    is_esc_n      :- srccur == 110
+    is_esc_t      :- srccur == 116
+    is_esc_r      :- srccur == 114
+    is_valid_esc  :- is_esc_n or is_esc_t or is_esc_r or is_bslash or is_dquote or is_squote
 
     top_indent :- indent_stack.at((indent_stack.count() - 1).max(0)) ?? 0
 
@@ -440,11 +453,25 @@ def main:
             self :> step
 
     lex_start <: scan_str -> lex_start
-        |: not at_src_end and not is_dquote and not is_nl
+        |: not at_src_end and not is_dquote and not is_nl and not is_bslash
         then:
             word_acc => word_acc + source.substring(sc, 1)
             sc => sc + 1
             self :> scan_str
+
+    # Chapter-22 — backslash in string body. Consume the backslash
+    # literally into Token.value, then dispatch to scan_str_escape
+    # which validates the next char against the supported subset.
+    # Both port and oracle emit the two-char literal `\<marker>`;
+    # Clojure's cxc.lex/tokenize decodes to one byte and pr-str
+    # re-encodes it back to the same two-char literal for the
+    # supported subset.
+    lex_start <: scan_str -> lex_start
+        |: not at_src_end and is_bslash
+        then:
+            word_acc => word_acc + "\\"
+            sc => sc + 1
+            self :> scan_str_escape
 
     lex_start <: scan_str -> lex_start
         |: not at_src_end and is_dquote
@@ -460,8 +487,32 @@ def main:
             error_msg => "unterminated string"
             self :> step
 
+    lex_start <: scan_str_escape -> lex_start
+        |: not at_src_end and is_valid_esc
+        then:
+            word_acc => word_acc + source.substring(sc, 1)
+            sc => sc + 1
+            self :> scan_str
+
+    lex_start <: scan_str_escape -> lex_start
+        |: at_src_end or not is_valid_esc
+        then:
+            error => true
+            error_msg => "invalid escape in string"
+            self :> step
+
+    # Chapter-22 — backslash in char body. Consume the backslash
+    # literally and dispatch to scan_char_escape. The shared
+    # is_valid_esc predicate keeps the supported subset in one place.
     lex_start <: scan_char_body -> lex_start
-        |: not at_src_end and not is_squote and not is_nl
+        |: not at_src_end and is_bslash
+        then:
+            word_acc => word_acc + "\\"
+            sc => sc + 1
+            self :> scan_char_escape
+
+    lex_start <: scan_char_body -> lex_start
+        |: not at_src_end and not is_squote and not is_nl and not is_bslash
         then:
             word_acc => word_acc + source.substring(sc, 1)
             sc => sc + 1
@@ -472,6 +523,20 @@ def main:
         then:
             error => true
             error_msg => "unterminated char"
+            self :> step
+
+    lex_start <: scan_char_escape -> lex_start
+        |: not at_src_end and is_valid_esc
+        then:
+            word_acc => word_acc + source.substring(sc, 1)
+            sc => sc + 1
+            self :> scan_char_close
+
+    lex_start <: scan_char_escape -> lex_start
+        |: at_src_end or not is_valid_esc
+        then:
+            error => true
+            error_msg => "invalid escape in char"
             self :> step
 
     lex_start <: scan_char_close -> lex_start

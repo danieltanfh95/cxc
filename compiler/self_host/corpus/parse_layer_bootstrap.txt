@@ -70,3 +70,11 @@ def DefaultsFloat:\n    x: Float = 1.5\n    y: Float = 0.5
 def DefaultsFloatOne:\n    pi: Float = 3.14
 def DefaultsFloatMixed:\n    a: Int = 1\n    b: Float = 2.75\n    c: String = "hi"
 def DefaultsFloatHundred:\n    x: Float = 99.0\n    y: Float = 100.25
+def Esc:\n    tag: String = "hi\there"
+def EscBS:\n    name: String = "a\\b"
+def EscQ:\n    msg: String = "say \"hi\""
+def EscR:\n    tag: String = "crlf\r"
+def EscChr:\n    c: Char = '\t'
+def EscChrBS:\n    c: Char = '\\'
+def EscChrR:\n    c: Char = '\r'
+def EscChrQ:\n    c: Char = '\"'

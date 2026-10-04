@@ -43,3 +43,11 @@ def X:\n    count: Int = 0\n    label: String = "hi"
 99.0
 100.25
 def X:\n    x: Float = 1.5\n    y: Float = 0.5
+"tab\there"
+"ret\rhere"
+"back\\slash"
+"quote\"end"
+'\t'
+'\r'
+'\\'
+'\"'
