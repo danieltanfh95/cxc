@@ -48,6 +48,7 @@
     ""
     (case (:node d)
       :lit-int    (str "=INT:" (:value d))
+      :lit-float  (str "=FLOAT:" (:value d))
       :lit-string (str "=STR:" (pr-str (:value d)))
       :lit-char   (str "=CHR:" (pr-str (:value d)))
       :lit-bool   (str "=BOOL:" (:value d))

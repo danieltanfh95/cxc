@@ -66,3 +66,7 @@ def R:\n    quad: (xs: List of Int, ys: List of String, zs: Set of Bool)
 def R:\n    deep: (outer: (inner: List of Int!))
 def R:\n    deep: (outer: (k: Map of (String, Int), v: Set of Int!))
 def A(point: (xs: List of Int!)):\n    val: Int
+def DefaultsFloat:\n    x: Float = 1.5\n    y: Float = 0.5
+def DefaultsFloatOne:\n    pi: Float = 3.14
+def DefaultsFloatMixed:\n    a: Int = 1\n    b: Float = 2.75\n    c: String = "hi"
+def DefaultsFloatHundred:\n    x: Float = 99.0\n    y: Float = 100.25

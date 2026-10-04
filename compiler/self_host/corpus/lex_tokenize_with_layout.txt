@@ -38,3 +38,8 @@ def X:\n    name => value |: cond :- expr
 'c'
 'A'
 def X:\n    count: Int = 0\n    label: String = "hi"
+1.5
+0.5
+99.0
+100.25
+def X:\n    x: Float = 1.5\n    y: Float = 0.5

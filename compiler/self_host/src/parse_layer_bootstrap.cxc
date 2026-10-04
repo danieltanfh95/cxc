@@ -141,6 +141,16 @@ def main:
     is_dquote    :- srccur == 34
     is_squote    :- srccur == 39
 
+    # Chapter-22 — float-literal lex predicates. `.` + next-is-digit is
+    # the only float transition from scan_int at this chapter's scope,
+    # mirroring the lex_tokenize_with_layout slice (slice 33). Exponent
+    # form is deferred so the port's literal-value Token.value matches
+    # Clojure's `str` on the parsed Double for canonical fractional
+    # shapes (`1.5` → "1.5"). Parse-layer field defaults consume floats
+    # via a new `kind == "float"` arm in `read_field_default`.
+    is_dot        :- srccur == 46
+    srcnext_is_digit :- sc + 1 < source.length() and source.code_at(sc + 1) >= 48 and source.code_at(sc + 1) <= 57
+
     top_indent :- indent_stack.at((indent_stack.count() - 1).max(0)) ?? 0
 
     last_tok  :- tokens.at((tokens.count() - 1).max(0)) ?? Token(kind: "newline", value: "", line: 1)
@@ -400,10 +410,33 @@ def main:
             sc => sc + 1
             self :> scan_int
 
+    # Chapter-22 — float transition. `.` + next-is-digit converts the
+    # in-flight int into a float. `1.` with no digit after keeps the
+    # int and leaves the dot for the next scanning step.
     lex_start <: scan_int -> lex_start
-        |: at_src_end or not is_digit
+        |: not at_src_end and is_dot and srcnext_is_digit
+        then:
+            word_acc => word_acc + "."
+            sc => sc + 1
+            self :> scan_frac
+
+    lex_start <: scan_int -> lex_start
+        |: at_src_end or (not is_digit and not (is_dot and srcnext_is_digit))
         then:
             tokens => tokens.append(Token(kind: "int", value: word_acc, line: line_num))
+            self :> step
+
+    lex_start <: scan_frac -> lex_start
+        |: not at_src_end and is_digit
+        then:
+            word_acc => word_acc + source.substring(sc, 1)
+            sc => sc + 1
+            self :> scan_frac
+
+    lex_start <: scan_frac -> lex_start
+        |: at_src_end or not is_digit
+        then:
+            tokens => tokens.append(Token(kind: "float", value: word_acc, line: line_num))
             self :> step
 
     lex_start <: scan_str -> lex_start
@@ -1048,6 +1081,21 @@ def main:
             pos => pos + 1
             self :> parse_field
 
+    # Chapter-22 — float default. The Token value carries the literal
+    # text (e.g. "1.5"); the oracle serializes `(str (:value d))` which
+    # for a parsed Double 1.5 is "1.5" too. Non-canonical shapes (`01.5`
+    # — the leading-zero form is already rejected at lex, so the lex
+    # never emits it) are out of corpus; exponent / unit-suffix shapes
+    # are deferred.
+    parsing <: read_field_default -> parsing
+        |: cur_kind == "float"
+        then:
+            let field_ser: String! = field_name_buf + ":" + type_ser_buf + "=FLOAT:" + cur_value
+            let sep: String! = ||: out.ends_with("|") : "" ||: else : ";"
+            out => out + sep + field_ser
+            pos => pos + 1
+            self :> parse_field
+
     parsing <: read_field_default -> parsing
         |: cur_kind == "string"
         then:
@@ -1085,7 +1133,7 @@ def main:
             self :> parse_field
 
     parsing <: read_field_default -> parsing
-        |: cur_kind != "int" and cur_kind != "string" and cur_kind != "char" and cur_kind != "ident" and not (cur_kind == "kw" and (cur_value == "true" or cur_value == "false"))
+        |: cur_kind != "int" and cur_kind != "float" and cur_kind != "string" and cur_kind != "char" and cur_kind != "ident" and not (cur_kind == "kw" and (cur_value == "true" or cur_value == "false"))
         then:
             error => true
             error_msg => "expected default expression"

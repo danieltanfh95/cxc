@@ -89,6 +89,16 @@ def main:
     is_dquote    :- srccur == 34
     is_squote    :- srccur == 39
 
+    # Chapter-22 — float-literal lex predicates. `.` + next-is-digit is
+    # the only float transition from scan_int at this chapter's scope.
+    # Exponent form (`e`/`E` + optional sign + digits) is deferred so
+    # the port's literal-value emit matches Clojure's pr-str exactly on
+    # the simple fractional shape (`1.5` → "1.5"); exponent forms like
+    # `1e5` would reparse through pr-str as "100000.0" and the parity
+    # harness would diff on the Token value column.
+    is_dot        :- srccur == 46
+    srcnext_is_digit :- sc + 1 < source.length() and source.code_at(sc + 1) >= 48 and source.code_at(sc + 1) <= 57
+
     top_indent :- indent_stack.at((indent_stack.count() - 1).max(0)) ?? 0
 
     last_tok  :- tokens.at((tokens.count() - 1).max(0)) ?? Token(kind: "newline", value: "", line: 1, col: 1)
@@ -365,10 +375,37 @@ def main:
             col_num => col_num + 1
             self :> scan_int
 
+    # Chapter-22 — float transition. `.` followed by a digit converts
+    # the in-flight int into a float. `1.` with no digit after keeps
+    # the int and leaves the dot for the next scanning step (which has
+    # no handler at this chapter and would error, but the parse-layer
+    # corpus never carries a trailing-dot literal).
     lex_start <: scan_int -> lex_start
-        |: at_src_end or not is_digit
+        |: not at_src_end and is_dot and srcnext_is_digit
+        then:
+            word_acc => word_acc + "."
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> scan_frac
+
+    lex_start <: scan_int -> lex_start
+        |: at_src_end or (not is_digit and not (is_dot and srcnext_is_digit))
         then:
             tokens => tokens.append(Token(kind: "int", value: word_acc, line: line_num, col: tok_start_col))
+            self :> step
+
+    lex_start <: scan_frac -> lex_start
+        |: not at_src_end and is_digit
+        then:
+            word_acc => word_acc + source.substring(sc, 1)
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> scan_frac
+
+    lex_start <: scan_frac -> lex_start
+        |: at_src_end or not is_digit
+        then:
+            tokens => tokens.append(Token(kind: "float", value: word_acc, line: line_num, col: tok_start_col))
             self :> step
 
     lex_start <: scan_str -> lex_start
