@@ -61,6 +61,12 @@ def main:
     inner_v_buf:    String! = ""
     def_name_buf:   String! = ""
     def_prefix_set: Bool!   = false
+    # Chapter-19 named-tuple scratch buffers. Used by the parse_nt_*
+    # phases that fire when `(` opens a named-tuple type expression in
+    # field position.
+    nt_body_buf:    String! = ""
+    nt_fname_buf:   String! = ""
+    nt_tname_buf:   String! = ""
 
     reserved: List of String = [
         "module", "from", "import", "as",
@@ -700,7 +706,14 @@ def main:
             self :> parse_field_type
 
     parsing <: parse_field_type -> parsing
-        |: cur_kind != "ident"
+        |: cur_kind == "punct" and cur_value == "("
+        then:
+            nt_body_buf => ""
+            pos => pos + 1
+            self :> parse_nt_fname
+
+    parsing <: parse_field_type -> parsing
+        |: cur_kind != "ident" and not (cur_kind == "punct" and cur_value == "(")
         then:
             error => true
             error_msg => "expected type name"
@@ -711,6 +724,79 @@ def main:
             type_name_buf => cur_value
             pos => pos + 1
             self :> after_type_name
+
+    parsing <: parse_nt_fname -> parsing
+        |: cur_kind != "ident"
+        then:
+            error => true
+            error_msg => "expected named-tuple field name"
+            self :> dispatch
+
+    parsing <: parse_nt_fname -> parsing
+        then:
+            nt_fname_buf => cur_value
+            pos => pos + 1
+            self :> expect_nt_colon
+
+    parsing <: expect_nt_colon -> parsing
+        |: not (cur_kind == "punct" and cur_value == ":")
+        then:
+            error => true
+            error_msg => "expected `:` in named-tuple field"
+            self :> dispatch
+
+    parsing <: expect_nt_colon -> parsing
+        then:
+            pos => pos + 1
+            self :> parse_nt_type
+
+    parsing <: parse_nt_type -> parsing
+        |: cur_kind != "ident"
+        then:
+            error => true
+            error_msg => "expected named-tuple field type"
+            self :> dispatch
+
+    parsing <: parse_nt_type -> parsing
+        then:
+            nt_tname_buf => cur_value
+            pos => pos + 1
+            self :> after_nt_type
+
+    parsing <: after_nt_type -> parsing
+        |: cur_kind == "punct" and cur_value == "!"
+        then:
+            let sep: String! = ||: nt_body_buf.length() == 0 : "" ||: else : ","
+            nt_body_buf => nt_body_buf + sep + nt_fname_buf + ":TN(TR:" + nt_tname_buf + ")"
+            pos => pos + 1
+            self :> after_nt_pair
+
+    parsing <: after_nt_type -> parsing
+        |: not (cur_kind == "punct" and cur_value == "!")
+        then:
+            let sep: String! = ||: nt_body_buf.length() == 0 : "" ||: else : ","
+            nt_body_buf => nt_body_buf + sep + nt_fname_buf + ":TR:" + nt_tname_buf
+            self :> after_nt_pair
+
+    parsing <: after_nt_pair -> parsing
+        |: cur_kind == "punct" and cur_value == ","
+        then:
+            pos => pos + 1
+            self :> parse_nt_fname
+
+    parsing <: after_nt_pair -> parsing
+        |: cur_kind == "punct" and cur_value == ")"
+        then:
+            type_ser_buf => "TNT(" + nt_body_buf + ")"
+            pos => pos + 1
+            self :> emit_field_from_ser
+
+    parsing <: after_nt_pair -> parsing
+        |: not (cur_kind == "punct" and (cur_value == "," or cur_value == ")"))
+        then:
+            error => true
+            error_msg => "expected `,` or `)` in named-tuple"
+            self :> dispatch
 
     parsing <: after_type_name -> parsing
         |: cur_kind == "kw" and cur_value == "of"

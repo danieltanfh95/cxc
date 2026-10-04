@@ -34,6 +34,13 @@
                        (clojure.string/join ","
                                             (map ser-type (:types t)))
                        ")")
+    :type-named-tuple
+    (str "TNT("
+         (clojure.string/join ","
+                              (map (fn [f]
+                                     (str (:name f) ":" (ser-type (:type f))))
+                                   (:fields t)))
+         ")")
     (str "T?:" (:node t))))
 
 (defn- ser-default [d]

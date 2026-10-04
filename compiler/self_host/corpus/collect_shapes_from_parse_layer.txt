@@ -1,0 +1,12 @@
+def R:\n    a: (x: Int, y: String)
+def R:\n    pair: (first: Int!, second: String)
+def R:\n    coords: (lat: Int, lon: Int)
+def R:\n    coords: (lon: Int, lat: Int)
+def R:\n    data: (a: Int!, b: String!, c: Bool!)
+def R:\n    xy: (x: Int, y: Int)\n    zw: (w: Int, z: Int)
+def Rec:\n    pair: (a: Int, b: Int)\n    name: String!
+def A:\n    xy: (x: Int, y: Int)\ndef B:\n    xy: (x: Int, y: Int)
+def A:\n    xy: (x: Int, y: Int)\ndef B:\n    uv: (u: String, v: Bool!)
+def Point:\n    coord: (x: Int!, y: Int!, z: Int!)
+def Z:\n    x: Int
+def Flat:\n    name: String!

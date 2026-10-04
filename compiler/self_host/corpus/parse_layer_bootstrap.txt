@@ -40,3 +40,9 @@ from X import a\ndef Y:\n    z: Int
 def A:\n    x: Int!\n\ndef B:\n    y: String!
 from P import q\nfrom R import s\ndef T:\n    u: Int\ndef V:\n    w: String!
 def C:\n    case Red\n    case Green\ndef D:\n    name: String!
+def Pair:\n    data: (x: Int, y: Int)
+def RNT:\n    pair: (first: Int!, second: String)
+def Mix:\n    pair: (lat: Int, lon: Int)\n    name: String!
+def Mix:\n    name: String!\n    pair: (lat: Int, lon: Int)
+def Trip:\n    coords: (x: Int, y: Int, z: Int)
+def NN:\n    data: (a: Int!, b: String!, c: Bool!)

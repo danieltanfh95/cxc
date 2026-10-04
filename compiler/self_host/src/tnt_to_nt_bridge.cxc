@@ -1,0 +1,214 @@
+# Chapter-19 TNT → Nt-flat format bridge.
+#
+# Takes a parse-layer-bootstrap serialization as positional arg
+# (possibly multi-line, multi-def). Scans for `TNT(<body>)`
+# substrings; each is emitted as
+# `Nt<N>_<fname1>_<type1>_<fname2>_<type2>_…` with fields sorted
+# alphabetically by fname. Multiple TNTs are joined by `;`.
+#
+# Downstream consumer: `named_tuple_collect_shapes` depth-N walker
+# (chapter 18). The three-stage chain
+# `parse_layer_bootstrap | tnt_to_nt_bridge | named_tuple_collect_shapes`
+# demonstrates the chapter-19 composition unlock — collect-shapes
+# consumes real parse-layer serialization instead of a hand-rolled
+# Nt-flat corpus.
+#
+# Scope. Chapter 19 handles depth-1 named-tuples whose inner types
+# are primitive (`TR:X`) or non-nil primitive (`TN(TR:X)`). Nested
+# TNTs inside TNT bodies and container inner types (`TO:List`,
+# `TO:Map`, `TO:Set`) are deferred to chapter 20.
+#
+# Serialization conversion.
+#   `fname:TR:X`         → `fname_X`
+#   `fname:TN(TR:X)`     → `fname_Nn_X`
+
+def main:
+    use args:    Args
+    use console: Console
+
+    spec:         String! = ""
+    pos:          Int!    = 0
+
+    # Balanced-paren TNT close finder.
+    tnt_body_start: Int! = 0
+    nest_depth:     Int! = 0
+
+    # Current TNT body being processed.
+    body:         String! = ""
+    body_pos:     Int!    = 0
+    pair_acc:     String! = ""
+    pair_entries: List of String = []
+
+    # Sort state (selection sort over pair_entries).
+    sort_i:        Int!    = 0
+    scan_best:     String! = ""
+    scan_has_best: Bool!   = false
+    sorted_pairs:  List of String = []
+
+    # Join state (concat sorted_pairs with `_`).
+    join_i:        Int!    = 0
+    joined_buf:    String! = ""
+
+    out:          String! = ""
+
+    spec_end :- pos >= spec.length()
+    tnt_prefix_match :- pos + 4 <= spec.length() and spec.code_at(pos) == 84 and spec.code_at(pos + 1) == 78 and spec.code_at(pos + 2) == 84 and spec.code_at(pos + 3) == 40
+
+    body_end :- body_pos >= body.length()
+    body_cur :- ||: body_end : -1 ||: else : body.code_at(body_pos)
+    body_is_comma :- body_cur == 44
+
+    # Pair-conversion observations, read on each commit arm.
+    pair_colon_idx :- pair_acc.index_of(":")
+    pair_fname     :- pair_acc.substring(0, pair_colon_idx.max(0))
+    pair_type_part :- pair_acc.substring(pair_colon_idx + 1, (pair_acc.length() - pair_colon_idx - 1).max(0))
+    pair_is_nn     :- pair_type_part.starts_with("TN(TR:") and pair_type_part.ends_with(")")
+    pair_is_tr     :- pair_type_part.starts_with("TR:")
+    pair_inner_nn  :- pair_type_part.substring(6, (pair_type_part.length() - 7).max(0))
+    pair_inner_tr  :- pair_type_part.substring(3, (pair_type_part.length() - 3).max(0))
+    pair_mangled   :- ||: pair_is_nn : "Nn_" + pair_inner_nn ||: pair_is_tr : pair_inner_tr ||: else : "UNSUPPORTED"
+    pair_converted :- pair_fname + "_" + pair_mangled
+
+    sort_cur :- pair_entries.at(sort_i) ?? ""
+    sort_cmp :- sort_cur.compare_to(scan_best)
+
+    join_item :- sorted_pairs.at(join_i) ?? ""
+
+    -> scanning
+        then:
+            spec => args.get_or(1, "")
+            self :> step
+
+    -> finding_tnt_close
+        then:
+            self :> step
+
+    -> extracting_pairs
+        then:
+            body_pos => 0
+            pair_acc => ""
+            pair_entries => pair_entries.empty()
+            self :> step
+
+    -> sorting_pairs
+        then:
+            sort_i => 0
+            scan_has_best => false
+            scan_best => ""
+            sorted_pairs => sorted_pairs.empty()
+            self :> scan
+
+    -> joining
+        then:
+            join_i => 0
+            joined_buf => ""
+            self :> step
+
+    -> emit_one_tnt
+        then:
+            self :> step
+
+    -> end
+        then: console.write(out)
+
+    scanning <: step -> end
+        |: spec_end
+
+    scanning <: step -> finding_tnt_close
+        |: not spec_end and tnt_prefix_match
+        then:
+            tnt_body_start => pos + 4
+            pos => pos + 4
+            nest_depth => 1
+
+    scanning <: step -> scanning
+        |: not spec_end and not tnt_prefix_match
+        then:
+            pos => pos + 1
+            self :> step
+
+    finding_tnt_close <: step -> extracting_pairs
+        |: nest_depth == 0 or spec_end
+        then:
+            body => spec.substring(tnt_body_start, (pos - tnt_body_start - 1).max(0))
+
+    finding_tnt_close <: step -> finding_tnt_close
+        |: not spec_end and nest_depth > 0
+        then:
+            let c: Int! = spec.code_at(pos)
+            nest_depth => ||: c == 40 : nest_depth + 1 ||: c == 41 : nest_depth - 1 ||: else : nest_depth
+            pos => pos + 1
+            self :> step
+
+    extracting_pairs <: step -> sorting_pairs
+        |: body_end
+        then:
+            pair_entries => ||: pair_acc.length() > 0 : pair_entries.append(pair_converted) ||: else : pair_entries
+            pair_acc => ""
+
+    extracting_pairs <: step -> extracting_pairs
+        |: not body_end and body_is_comma
+        then:
+            pair_entries => pair_entries.append(pair_converted)
+            pair_acc => ""
+            body_pos => body_pos + 1
+            self :> step
+
+    extracting_pairs <: step -> extracting_pairs
+        |: not body_end and not body_is_comma
+        then:
+            pair_acc => pair_acc + body.substring(body_pos, 1)
+            body_pos => body_pos + 1
+            self :> step
+
+    sorting_pairs <: scan -> sorting_pairs
+        |: sort_i < pair_entries.count() and not scan_has_best
+        then:
+            scan_best => sort_cur
+            scan_has_best => true
+            sort_i => sort_i + 1
+            self :> scan
+
+    sorting_pairs <: scan -> sorting_pairs
+        |: sort_i < pair_entries.count() and scan_has_best and sort_cmp < 0
+        then:
+            scan_best => sort_cur
+            sort_i => sort_i + 1
+            self :> scan
+
+    sorting_pairs <: scan -> sorting_pairs
+        |: sort_i < pair_entries.count() and scan_has_best and sort_cmp >= 0
+        then:
+            sort_i => sort_i + 1
+            self :> scan
+
+    sorting_pairs <: scan -> sorting_pairs
+        |: sort_i >= pair_entries.count() and scan_has_best
+        then:
+            sorted_pairs => sorted_pairs.append(scan_best)
+            pair_entries => pair_entries.filter(p => p != scan_best)
+            sort_i => 0
+            scan_has_best => false
+            scan_best => ""
+            self :> scan
+
+    sorting_pairs <: scan -> joining
+        |: sort_i >= pair_entries.count() and not scan_has_best
+
+    joining <: step -> emit_one_tnt
+        |: join_i >= sorted_pairs.count()
+
+    joining <: step -> joining
+        |: join_i < sorted_pairs.count()
+        then:
+            let sep: String! = ||: join_i == 0 : "" ||: else : "_"
+            joined_buf => joined_buf + sep + join_item
+            join_i => join_i + 1
+            self :> step
+
+    emit_one_tnt <: step -> scanning
+        then:
+            let count: Int! = sorted_pairs.count()
+            let outer_sep: String! = ||: out.length() == 0 : "" ||: else : ";"
+            out => out + outer_sep + "Nt" + count.to_string() + "_" + joined_buf
+            self :> step
