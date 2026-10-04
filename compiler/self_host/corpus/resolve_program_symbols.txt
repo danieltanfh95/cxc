@@ -1,0 +1,28 @@
+def Foo:\n    x: Int\ndef Foo:\n    case a\n    case b
+def Duration:\n    secs: Int\ndef Mine:\n    d: Duration
+def Box:\n    use console: Console\n    a: Int = 1\n    seen :- a > 0\n    use fs: FileSystem\n    b: String = "x"\n    -> end
+def Msg:\n    text: String = "a (b) \"c\" )("\n    shout :- text + ")"
+def Shape:\n    case circle(r: Int)\n    case square(side: Int, label: String)
+def E:\n    case a = 0\n    case b = 255
+def A(queue: bounded(100), x: Int):\n    -> go
+def A(queue: bounded(100)):\n    n: Int! = 0\n    -> go\n    go <: tick -> go\n        then: n => n + 1
+
+from std.io import Console\nimport app.util as u
+def b_x:\n    v: Int\ndef B:\n    v: Int\ndef a:\n    v: Int\ndef Ab:\n    v: Int\ndef AB:\n    v: Int\ndef A_b:\n    v: Int
+def Foo:\n    v: Int\ndef FooBar:\n    v: Int\ndef Fo:\n    v: Int\ndef Foo_:\n    v: Int
+def Console:\n    use args: Args\n    -> end
+def Key:\n    case up\n    case down\ndef Instant:\n    at: Int\n    later :- at + 1
+def P:\n    x: Int\n    |: x > 0\n    ok :- x > 1
+def Pair:\n    left: (Int, String)\n    right: (a: Int, b: String)\n    m: Map of (String, Int)\n    f: (Int) -> String
+def W:\n    use console: Console\n    -> end\n        then: console.write("(entry X user record struct)")
+def main:\n    use console: Console\n    -> end\n        then: console.write("hi")\ndef main:\n    v: Int
+def T:\n    x: Int = 1\n    |: x > 0\n    -> running\n    running <: step(k: Int) -> running\n        |: k > 0\n        then:\n            x => x + k\n    running <: stop -> end
+def Bad:\n    x: Int =
+def S:\n    s: String = "\\"\n    t: String = "\N"\n    c: Char = ')'
+def P:\n    size(x: Int) :- Int\n    <: ping()\ndef Q:\n    v: Int\nextend Q:\n    w :- v + 1
+def Many:\n    case a\n    case b\n    case c\n    case d\n    case e\n    case f\n    case g\n    case h
+def plugin:\n    name: String = "x"\n    foreign "libc":\n        symbol "abs" -> (Int) -> Int\ndef R:\n    x: Int
+from app.util import Widget as W, Gadget\nimport app.store as St\nimport Cfg\ndef M:\n    a: W\n    b: Gadget\n    c: St\n    d: Cfg\n    e: Local\n    f: Missing\n    g: Duration\n    h: List of Point\n    i: Widget\ndef Local:\n    v: Int\n    mk :- Local(v: 1)\n    q :- Clock.now()\n    r :- Foo(x: 1)\n    s :- lower(1)\n    t :- W.make().size\n    u :- v.abs()
+from a import X\nfrom b import X\nimport c as X\ndef Y:\n    x: X\n    y :- X(z: 1)
+from app import Wrapper\ndef Z:\n    a: Wrapper of Int\n    b: (TR: Int, TO: Wrapper, xTR: Local, TOx: List of Int)\n    c: Map of (String, List of Wrapper)\n    d: (Int, String) -> Wrapper\n    e: Int?\n    f: Local!
+from app.ui import Panel\ndef main:\n    use console: Console\n    p: Panel = Panel(w: 1)\n    -> end\n        then: console.write(Panel.title(p))\nextend Panel:\n    area :- 1

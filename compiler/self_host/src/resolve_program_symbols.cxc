@@ -1,0 +1,620 @@
+# Chapter-31 symbol-table slice (slice 37).
+#
+# Ports `cxc.resolve/build-symbol-table` with `entry-for` and
+# `extract-members` (record-members with the struct or class variant,
+# atom-members, enum-members) over real parse output. The input is the
+# rendering slice 36 (`parse_program_bootstrap.cxc`) prints for one
+# whole program, so this slice composes with slice 36 and never sees
+# source text.
+#
+# argv. argv[1] is the path of a file holding one slice-36 output (a
+# `(program <node>*)` line, or an `error|<message>` text that may span
+# several lines). argv[2] is the path of the prelude index, one
+# `<name>|<module>` line per entry of `cxc.resolve/prelude-name->module`,
+# written by the oracle side (`oracle/resolve_program_symbols_index.clj`)
+# so the port reads the same table the Clojure fn reads internally.
+# argv[3], when present and not empty, is a module name. It stands for
+# the synthetic `{:node :module :name m}` marker that
+# `build/symbol-table-across-modules` puts ahead of a file's nodes, so
+# every declaration without prelude provenance is attributed to it
+# instead of `user`.
+#
+# Output. An `error|...` input is printed unchanged. A program prints
+# `(table <n>)` and then one row per table entry, sorted by name (byte
+# order, which is Java's String order on identifiers), n rows in all.
+# Later declarations of a name replace earlier ones, as the Clojure
+# reduce does with `assoc`.
+#
+#   (entry <name> <module> record struct|class (fields <field>*) (observables <obs>*))
+#   (entry <name> <module> def-atom nil (data_fields <field>*) (observables <obs>*)
+#       (transitions <transition>*) (use_caps (use <n> <T>)*) (invariants <prop>*)
+#       (handler_decls <item>*))
+#   (entry <name> <module> enum nil (cases <case-name>*))
+#
+# The row is one line. <module> is the keyword name (`user`, `std.time`,
+# the argv[3] module). Members print exactly as slice 36 renders the
+# member node, so a later layer can read a row back with the same
+# S-expression reader. `:methods` mirrors `:observables` in both
+# member maps and is not printed, and `:node` is the declaration's own
+# slice-36 rendering, which the caller already holds.
+#
+# Refs mode. argv[4] `refs` ports the L3b(b.ii) enrichment pass,
+# `resolve-references-in-file` with `enrich-node-with-resolution`, the
+# way `build/compile-source-to-file` runs it on one file. argv[3] is the
+# file's own module, `main` when empty (the single-file convention).
+# The output is `(refs <n>)` and one row per distinct reference site,
+# sorted, where <module> is the `:resolves-to` the enrichment attaches
+# and nil when it attaches none.
+#
+#   (ref type <name> <module>|nil)    a `TR:<name>` type-ref
+#   (ref of <Outer> <module>|nil)     a `TO:<Outer>(...)` with a capitalized outer
+#   (ref call <Name> <module>|nil)    `(call (ident <Name>) ...)`, capitalized
+#   (ref dot <Name> <module>|nil)     `(dot (ident <Name>) ...)`, capitalized
+#   (ref extend <name> <module>|nil)  a top-level `(extend <name> ...)`
+#
+# Resolution depends only on the name, so the rows are a set, which
+# keeps the output free of the oracle's map iteration order. The ladder
+# is the prelude index, then the file's own declarations (`agent`,
+# `record`, `enum` children of the program), then its import bindings
+# (`(from-import <m> (name <n> <alias>|nil)+)` binds alias or n to m,
+# `(import <m> <alias>|nil)` binds alias or m to m, a later binding of
+# the same local name wins), else nil. Refs mode reads with no horizon,
+# makes one preorder pass for declarations and imports and a second for
+# references, and scans each atom that holds `TR:` or `TO:` char by
+# char for type names.
+#
+# S-expression reader (reusable). The reader turns one rendering into a
+# flat preorder arena, `nodes: List of SNode`, because recursive records
+# are restricted (`design/self-reference-enum-payload.md`). Each SNode
+# holds its preorder index `pre`, its `kind` (0 list, 1 atom, 2 quoted
+# string), its source span `[start, stop)`, its `depth` (the root list
+# is depth 0), its subtree `size` in nodes (1 for a leaf), and its
+# `parent` preorder index (-1 at the root). Node i's first child is
+# i + 1 and the sibling after node i is i + size(i), so children are
+# walked with `sx_next` and any subtree prints verbatim through
+# `sx_text`. The reader records a node only when its depth is at most
+# `horizon`, so a consumer that needs the top of the tree skips the
+# arena cost of the deep nodes (they still print through their kept
+# ancestor's span). Set `horizon` high to keep every node.
+#
+# Reading is one pass in the `reading` phase with a mode register
+# (`rmode` 0 between tokens, 1 in an atom, 2 in a string, 3 after a
+# backslash in a string). A node is appended when it closes, so the
+# arena is built in postorder with every field final (the subtree size
+# is the node counter at close minus the counter at open, kept in the
+# open-list stack), and one `sort_by(n => n.pre)` turns it into
+# preorder. No node is ever rewritten.
+#
+# Token rules. Whitespace separates. `(` opens a list and `)` closes
+# it. `"` starts a string that runs to the next unescaped `"` (the
+# slice-36 renderings use pr-str escapes, so a backslash always escapes
+# the next char). Anything else starts an atom, which runs to
+# whitespace or to a `)` at atom nesting zero, and a `(` inside an atom
+# nests (the type renderings `TO:List(TR:Int)`, `TT(TR:A,TR:B)`, and
+# `TF(...)` are single atoms). Strings are kept as their quoted text,
+# so a consumer that needs the value decodes it.
+#
+# Consumer. The walk visits the program's children (depth 1). A child
+# whose head is `agent`, `record`, or `enum` is a declaration (the
+# Clojure `declaration-kinds`, `:def-atom` printing as `agent`), and
+# every other child is skipped. Items start after the name for a
+# record, after the raw type for an enum, and after the params list
+# and the queue node for an agent. Each item is routed by its head,
+# `data` and `uses` contribute their first section's children (the
+# fold leaves one of each), `obs`, `transition`, `prop`, and
+# `?handler-decl` append their rendering, and `enum-case` its name.
+
+def SNode:
+    pre:    Int!
+    kind:   Int!
+    start:  Int!
+    stop:   Int!
+    depth:  Int!
+    size:   Int!
+    parent: Int!
+
+def main:
+    use args:    Args
+    use console: Console
+    use fs:      FileSystem
+
+    src:      String! = ""
+    pidx:     String! = ""
+    mod_arg:  String! = ""
+    out:      String! = ""
+    # Reader state.
+    rp:       Int!    = 0
+    rmode:    Int!    = 0
+    rnest:    Int!    = 0
+    tstart:   Int!    = 0
+    sp:       Int!    = 0
+    horizon:  Int!    = 3
+    ncount:   Int!    = 0
+    rstack:   List of SNode = []
+    nodes:    List of SNode = []
+    # Walk state. `wst` 0 looks at the next program child, 1 walks the
+    # items of the declaration at `wd` up to `wend`.
+    wd:       Int!    = 1
+    wi:       Int!    = 0
+    wend:     Int!    = 0
+    wst:      Int!    = 0
+    wkind:    String! = ""
+    wname:    String! = ""
+    g_fields: String! = ""
+    g_fset:   Bool!   = false
+    g_obs:    String! = ""
+    g_trans:  String! = ""
+    g_uses:   String! = ""
+    g_uset:   Bool!   = false
+    g_props:  String! = ""
+    g_hd:     String! = ""
+    g_cases:  String! = ""
+    rows:     List of String = []
+    # Selection sort state (chapter-6 idiom).
+    sort_i:        Int!    = 0
+    scan_best:     String! = ""
+    scan_has_best: Bool!   = false
+    sorted:        String! = ""
+    nrows:         Int!    = 0
+    hdr:           String! = "table"
+    # Refs mode state. `dtab` holds the file's declaration names one per
+    # line, `itab` its import bindings as `<local>|<module>` lines, the
+    # latest first, `ri` the node the walk is at, `ap` the cursor of the
+    # type scan inside the atom `[astart, astop)`.
+    refs_mode:     Bool!   = false
+    own_mod:       String! = "main"
+    dtab:          String! = "\n"
+    itab:          String! = ""
+    ri:            Int!    = 0
+    ap:            Int!    = 0
+    astart:        Int!    = 0
+    astop:         Int!    = 0
+
+    # Reader observations.
+    r_end    :- rp >= src.length()
+    rc       :- ||: r_end : -1 ||: else : src.code_at(rp)
+    r_sp     :- rc == 32 or rc == 10 or rc == 9 or rc == 13
+    r_open   :- rc == 40
+    r_close  :- rc == 41
+    r_quote  :- rc == 34
+    r_bs     :- rc == 92
+    r_plain  :- not r_end and not r_sp and not r_open and not r_close
+    rtop     :- rstack.at((sp - 1).max(0)) ?? SNode(pre: -1, kind: 0, start: 0, stop: 0, depth: -1, size: 0, parent: -1)
+    r_parent :- ||: sp == 0 : -1 ||: else : rtop.pre
+    r_keep   :- sp <= horizon
+    a_stop   :- r_end or r_sp or (r_close and rnest == 0)
+
+    # Arena accessors. `sx(i)` is node i in preorder, `sx_text(i)` its
+    # source span, `sx_next(i)` the sibling after it.
+    nn :- nodes.count()
+    sx(i: Int!) :- SNode
+        nodes.at(i.max(0)) ?? SNode(pre: -1, kind: -1, start: 0, stop: 0, depth: -1, size: 1, parent: -1)
+    sx_text(i: Int!) :- String!
+        ||: i < 0 or i >= nn : "" ||: else : src.substring(self.sx(i).start.max(0).min(src.length()), (self.sx(i).stop - self.sx(i).start).max(0).min(src.length()))
+    sx_next(i: Int!) :- Int!
+        i + self.sx(i).size.max(1)
+    sx_head(i: Int!) :- String!
+        ||: self.sx(i).kind == 0 and self.sx(i).size > 1 : self.sx_text(i + 1) ||: else : ""
+    # The children of list i after its head, `(data X Y)` gives ` X Y`.
+    sx_tail(i: Int!, k: Int!) :- String!
+        self.sx_text(i).substring(k.min(self.sx_text(i).length()), (self.sx_text(i).length() - k - 1).max(0))
+
+    # `line_at(t, k)` is `t` from `k` to the next newline, `idx_or(t, n)`
+    # the index of `n` in `t` or its length on a miss.
+    line_at(t: String!, k: Int!) :- String!
+        ||: t.substring(k, t.length() - k).index_of("\n") < 0 : t.substring(k, t.length() - k) ||: else : t.substring(k, t.substring(k, t.length() - k).index_of("\n").max(0))
+    idx_or(t: String!, n: String!) :- Int!
+        ||: t.index_of(n) < 0 : t.length() ||: else : t.index_of(n)
+
+    # Walk observations.
+    d_head   :- self.sx_head(wd)
+    d_decl   :- d_head == "agent" or d_head == "record" or d_head == "enum"
+    a_params :- wd + 3
+    a_queue  :- self.sx_next(a_params)
+    d_items0 :- ||: d_head == "record" : wd + 3 ||: d_head == "enum" : wd + 4 ||: else : self.sx_next(a_queue)
+    d_kind   :- ||: d_head == "agent" : "def-atom" ||: else : d_head
+    i_head   :- self.sx_head(wi)
+    i_text   :- self.sx_text(wi)
+
+    # Prelude provenance, then the module marker, then `user`.
+    p_key    :- ("\n" + wname) + "|"
+    p_pos    :- pidx.index_of(p_key)
+    p_from   :- (p_pos + p_key.length()).max(0).min(pidx.length())
+    p_rest   :- pidx.substring(p_from, (pidx.length() - p_from).max(0))
+    p_mod    :- ||: p_pos < 0 : "" ||: else : p_rest.substring(0, p_rest.index_of("\n").max(0))
+    w_mod    :- ||: p_mod != "" : p_mod ||: mod_arg != "" : mod_arg ||: else : "user"
+    w_var    :- ||: wkind != "record" : "nil" ||: g_obs == "" : "struct" ||: else : "class"
+    row_head :- ("(entry " + wname) + ((" " + w_mod) + ((" " + wkind) + (" " + w_var)))
+    rec_body :- ("(fields" + g_fields) + (") (observables" + (g_obs + ")"))
+    atm_a    :- ("(data_fields" + g_fields) + ((") (observables" + g_obs) + (") (transitions" + (g_trans + ")")))
+    atm_b    :- ("(use_caps" + g_uses) + ((") (invariants" + g_props) + (") (handler_decls" + (g_hd + ")")))
+    enm_body :- "(cases" + (g_cases + ")")
+    row_body :- ||: wkind == "record" : rec_body ||: wkind == "enum" : enm_body ||: else : atm_a + (" " + atm_b)
+    row      :- (row_head + " ") + (row_body + ")")
+    row_key  :- ("(entry " + wname) + " "
+
+    # Refs mode. `look(tab, nm)` finds the `<nm>|<value>` line of a
+    # table, "" on a miss, and `resolve(nm)` is the L3b(b.ii) ladder of
+    # `resolve-name-to-module` (prelude, own declarations, imports).
+    look(tab: String!, nm: String!) :- String!
+        ||: tab.index_of(("\n" + nm) + "|") < 0 : "" ||: else : self.line_at(tab, (tab.index_of(("\n" + nm) + "|") + nm.length() + 2).max(0).min(tab.length()))
+    resolve(nm: String!) :- String!
+        ||: self.look(pidx, nm) != "" : self.look(pidx, nm) ||: dtab.contains(("\n" + nm) + "\n") : own_mod ||: self.look(itab, nm) != "" : self.look(itab, nm) ||: else : "nil"
+    ref_row(k: String!, nm: String!) :- String!
+        ("(ref " + k) + ((" " + nm) + ((" " + self.resolve(nm)) + ")"))
+    cap(t: String!) :- Bool!
+        t.code_at(0) >= 65 and t.code_at(0) <= 90
+
+    # Pass one, declarations and import bindings.
+    q_node   :- self.sx(ri)
+    q_head   :- self.sx_head(ri)
+    q_decl   :- q_node.depth == 1 and (q_head == "agent" or q_head == "record" or q_head == "enum")
+    q_imp    :- q_node.depth == 1 and q_head == "import"
+    q_name   :- q_node.depth == 2 and q_head == "name" and self.sx_head(q_node.parent) == "from-import"
+    q_alias  :- self.sx_text(ri + 3)
+    q_local  :- ||: q_alias == "nil" : self.sx_text(ri + 2) ||: else : q_alias
+    q_imod   :- ||: q_imp : self.sx_text(ri + 2) ||: else : self.sx_text(q_node.parent + 2)
+    q_bind   :- ("\n" + q_local) + ("|" + q_imod)
+
+    # Pass two, reference nodes. A call or dot whose first operand is a
+    # capitalized `(ident X)`, a top-level extend, and the type atoms.
+    q_cref   :- (q_head == "call" or q_head == "dot") and q_node.size > 4 and self.sx_head(ri + 2) == "ident" and self.cap(self.sx_text(ri + 4))
+    q_eref   :- q_head == "extend" and q_node.depth == 1
+    q_row    :- ||: q_eref : self.ref_row("extend", self.sx_text(ri + 2)) ||: else : self.ref_row(q_head, self.sx_text(ri + 4))
+    q_typed  :- q_node.kind == 1 and (self.sx_text(ri).contains("TR:") or self.sx_text(ri).contains("TO:"))
+
+    # The type scan. `TR:<name>` is a type-ref and `TO:<Outer>(` a
+    # type-of, each at the atom start or after `(`, `,`, or `:`. A name
+    # runs to `,`, `(`, `)`, `:`, or the atom end, and a `TR:` name that
+    # ends at `:` is a named-tuple field called `TR`, not a type.
+    t_prev   :- ||: ap <= astart : 40 ||: else : src.code_at(ap - 1)
+    t_lead   :- ap + 2 < astop and src.code_at(ap + 2) == 58 and src.code_at(ap) == 84 and (t_prev == 40 or t_prev == 44 or t_prev == 58)
+    t_tr     :- t_lead and src.code_at(ap + 1) == 82
+    t_to     :- t_lead and src.code_at(ap + 1) == 79
+    t_from   :- (ap + 3).min(astop).min(src.length())
+    t_rest   :- src.substring(t_from, (astop - t_from).max(0).min(src.length() - t_from))
+    t_e1     :- self.idx_or(t_rest, ",").min(self.idx_or(t_rest, "("))
+    t_e2     :- self.idx_or(t_rest, ")").min(self.idx_or(t_rest, ":"))
+    t_end    :- t_e1.min(t_e2)
+    t_name   :- t_rest.substring(0, t_end.max(0).min(t_rest.length()))
+    t_term   :- t_rest.code_at(t_end)
+    t_type   :- t_tr and t_term != 58 and t_name != ""
+    t_of     :- t_to and t_term == 40 and self.cap(t_name)
+    t_row    :- ||: t_type : self.ref_row("type", t_name) ||: else : self.ref_row("of", t_name)
+
+    # Sort observations.
+    scan_cur :- rows.at(sort_i) ?? ""
+    scan_cmp :- scan_cur.compare_to(scan_best)
+
+    -> reading
+        then:
+            let raw: String! = fs.read_text(args.get_or(1, ""))
+            src => ||: raw.ends_with("\n") : raw.substring(0, (raw.length() - 1).max(0)) ||: else : raw
+            pidx => "\n" + fs.read_text(args.get_or(2, ""))
+            mod_arg => args.get_or(3, "")
+            refs_mode => args.get_or(4, "") == "refs"
+            own_mod => ||: args.get_or(3, "") == "" : "main" ||: else : args.get_or(3, "")
+            horizon => ||: args.get_or(4, "") == "refs" : 1000000000 ||: else : 3
+            hdr => ||: args.get_or(4, "") == "refs" : "refs" ||: else : "table"
+            self :> start
+
+    -> walking
+        then: self :> wk
+
+    -> sorting
+        then: self :> scan
+
+    -> refdecl
+        then: self :> rdl
+
+    -> refscan
+        then: self :> rsc
+
+    -> end
+        then: console.write(out)
+
+    # An error rendering passes through.
+    reading <: start -> reading
+        |: src.starts_with("error|")
+        then:
+            out => src
+            self :> fin
+
+    reading <: fin -> end
+
+    reading <: start -> reading
+        |: not src.starts_with("error|")
+        then: self :> rd
+
+    reading <: rd -> walking
+        |: rmode == 0 and r_end and not refs_mode
+        then:
+            nodes => nodes.sort_by(n => n.pre)
+
+    reading <: rd -> refdecl
+        |: rmode == 0 and r_end and refs_mode
+        then:
+            nodes => nodes.sort_by(n => n.pre)
+
+    reading <: rd -> reading
+        |: rmode == 0 and r_sp
+        then:
+            rp => rp + 1
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 0 and r_open and r_keep
+        then:
+            rstack => rstack.slice(0, sp).append(SNode(pre: ncount, kind: 0, start: rp, stop: 0, depth: sp, size: 0, parent: r_parent))
+            ncount => ncount + 1
+            sp => sp + 1
+            rp => rp + 1
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 0 and r_open and not r_keep
+        then:
+            rstack => rstack.slice(0, sp).append(SNode(pre: -1, kind: 0, start: rp, stop: 0, depth: sp, size: 0, parent: r_parent))
+            sp => sp + 1
+            rp => rp + 1
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 0 and r_close and rtop.depth <= horizon
+        then:
+            nodes => nodes.append(SNode(pre: rtop.pre, kind: 0, start: rtop.start, stop: rp + 1, depth: rtop.depth, size: ncount - rtop.pre, parent: rtop.parent))
+            sp => (sp - 1).max(0)
+            rp => rp + 1
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 0 and r_close and rtop.depth > horizon
+        then:
+            sp => (sp - 1).max(0)
+            rp => rp + 1
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 0 and r_quote
+        then:
+            tstart => rp
+            rmode => 2
+            rp => rp + 1
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 0 and r_plain and not r_quote
+        then:
+            tstart => rp
+            rmode => 1
+            rnest => 0
+            rp => rp + 1
+            self :> rd
+
+    # Atom mode.
+    reading <: rd -> reading
+        |: rmode == 1 and a_stop and r_keep
+        then:
+            nodes => nodes.append(SNode(pre: ncount, kind: 1, start: tstart, stop: rp, depth: sp, size: 1, parent: r_parent))
+            ncount => ncount + 1
+            rmode => 0
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 1 and a_stop and not r_keep
+        then:
+            rmode => 0
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 1 and not a_stop and r_open
+        then:
+            rnest => rnest + 1
+            rp => rp + 1
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 1 and not a_stop and r_close
+        then:
+            rnest => rnest - 1
+            rp => rp + 1
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 1 and not a_stop and not r_open and not r_close
+        then:
+            rp => rp + 1
+            self :> rd
+
+    # String mode. A string cut off by the end of input closes there.
+    reading <: rd -> reading
+        |: rmode == 2 and (r_quote or r_end) and r_keep
+        then:
+            nodes => nodes.append(SNode(pre: ncount, kind: 2, start: tstart, stop: (rp + 1).min(src.length()), depth: sp, size: 1, parent: r_parent))
+            ncount => ncount + 1
+            rmode => 0
+            rp => rp + 1
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 2 and (r_quote or r_end) and not r_keep
+        then:
+            rmode => 0
+            rp => rp + 1
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 2 and not r_end and not r_quote and r_bs
+        then:
+            rmode => 3
+            rp => rp + 1
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 2 and not r_end and not r_quote and not r_bs
+        then:
+            rp => rp + 1
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 3
+        then:
+            rmode => 2
+            rp => (rp + 1).min(src.length())
+            self :> rd
+
+    # Walk. Next program child.
+    walking <: wk -> sorting
+        |: wst == 0 and wd >= nn
+        then:
+            nrows => rows.count()
+
+    walking <: wk -> walking
+        |: wst == 0 and wd < nn and not d_decl
+        then:
+            wd => self.sx_next(wd)
+            self :> wk
+
+    walking <: wk -> walking
+        |: wst == 0 and wd < nn and d_decl
+        then:
+            wkind => d_kind
+            wname => self.sx_text(wd + 2)
+            wi => d_items0
+            wend => wd + self.sx(wd).size
+            g_fields => ""
+            g_fset => false
+            g_obs => ""
+            g_trans => ""
+            g_uses => ""
+            g_uset => false
+            g_props => ""
+            g_hd => ""
+            g_cases => ""
+            wst => 1
+            self :> wk
+
+    walking <: wk -> walking
+        |: wst == 1 and wi < wend
+        then:
+            g_fields => ||: i_head == "data" and not g_fset : self.sx_tail(wi, 5) ||: else : g_fields
+            g_fset => g_fset or i_head == "data"
+            g_uses => ||: i_head == "uses" and not g_uset : self.sx_tail(wi, 5) ||: else : g_uses
+            g_uset => g_uset or i_head == "uses"
+            g_obs => ||: i_head == "obs" : g_obs + (" " + i_text) ||: else : g_obs
+            g_trans => ||: i_head == "transition" : g_trans + (" " + i_text) ||: else : g_trans
+            g_props => ||: i_head == "prop" : g_props + (" " + i_text) ||: else : g_props
+            g_hd => ||: i_head == "?handler-decl" : g_hd + (" " + i_text) ||: else : g_hd
+            g_cases => ||: i_head == "enum-case" : g_cases + (" " + self.sx_text(wi + 2)) ||: else : g_cases
+            wi => self.sx_next(wi)
+            self :> wk
+
+    walking <: wk -> walking
+        |: wst == 1 and wi >= wend
+        then:
+            let key: String! = row_key
+            rows => rows.filter(r => not r.starts_with(key)).append(row)
+            wd => self.sx_next(wd)
+            wst => 0
+            self :> wk
+
+    # Refs mode, pass one.
+    refdecl <: rdl -> refdecl
+        |: ri < nn
+        then:
+            dtab => ||: q_decl : dtab + (self.sx_text(ri + 2) + "\n") ||: else : dtab
+            itab => ||: q_imp or q_name : q_bind + itab ||: else : itab
+            ri => ri + 1
+            self :> rdl
+
+    refdecl <: rdl -> refscan
+        |: ri >= nn
+        then:
+            ri => 0
+
+    # Refs mode, pass two.
+    refscan <: rsc -> sorting
+        |: ri >= nn
+        then:
+            nrows => rows.count()
+
+    refscan <: rsc -> refscan
+        |: ri < nn and (q_cref or q_eref)
+        then:
+            rows => ||: rows.contains(q_row) : rows ||: else : rows.append(q_row)
+            ri => ri + 1
+            self :> rsc
+
+    refscan <: rsc -> refscan
+        |: ri < nn and q_typed
+        then:
+            ap => q_node.start
+            astart => q_node.start
+            astop => q_node.stop
+            self :> asc
+
+    refscan <: rsc -> refscan
+        |: ri < nn and not q_cref and not q_eref and not q_typed
+        then:
+            ri => ri + 1
+            self :> rsc
+
+    refscan <: asc -> refscan
+        |: ap < astop and (t_type or t_of)
+        then:
+            rows => ||: rows.contains(t_row) : rows ||: else : rows.append(t_row)
+            ap => ap + 1
+            self :> asc
+
+    refscan <: asc -> refscan
+        |: ap < astop and not t_type and not t_of
+        then:
+            ap => ap + 1
+            self :> asc
+
+    refscan <: asc -> refscan
+        |: ap >= astop
+        then:
+            ri => ri + 1
+            self :> rsc
+
+    # Selection sort by name, then print.
+    sorting <: scan -> sorting
+        |: sort_i < rows.count() and not scan_has_best
+        then:
+            scan_best => scan_cur
+            scan_has_best => true
+            sort_i => sort_i + 1
+            self :> scan
+
+    sorting <: scan -> sorting
+        |: sort_i < rows.count() and scan_has_best and scan_cmp < 0
+        then:
+            scan_best => scan_cur
+            sort_i => sort_i + 1
+            self :> scan
+
+    sorting <: scan -> sorting
+        |: sort_i < rows.count() and scan_has_best and scan_cmp >= 0
+        then:
+            sort_i => sort_i + 1
+            self :> scan
+
+    sorting <: scan -> sorting
+        |: sort_i >= rows.count() and scan_has_best
+        then:
+            sorted => sorted + ("\n" + scan_best)
+            rows => rows.filter(e => e != scan_best)
+            sort_i => 0
+            scan_has_best => false
+            scan_best => ""
+            self :> scan
+
+    sorting <: scan -> sorting
+        |: sort_i >= rows.count() and not scan_has_best and out == ""
+        then:
+            out => ("(" + hdr) + ((" " + nrows.to_string()) + (")" + sorted))
+            self :> scan
+
+    sorting <: scan -> end
+        |: sort_i >= rows.count() and not scan_has_best and out != ""
