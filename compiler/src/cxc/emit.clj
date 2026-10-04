@@ -800,9 +800,25 @@
     ;; the `??`-coalesced record produced by `remaining.at(i) ?? sentinel`).
     ;; NSValue copies the bytes at call time so lifetime is safe.
     ;; Downstream unbox uses -getValue:size: (see unbox-prelude-for-element).
-    (str "({ " (:c-type node) " __cxc_nv = " (emit-expr (:inner node))
-         "; [NSValue valueWithBytes:&__cxc_nv objCType:@encode("
-         (:c-type node) ")]; })")
+    ;;
+    ;; 2026-10-04 — Linux cloud port. NSValue copies the struct bytes but
+    ;; does NOT retain object pointers embedded in them, so once
+    ;; `__cxc_nv`'s strong fields are released at the end of the
+    ;; statement expression, a heap NSString field (e.g. a Token value
+    ;; built by concat) can be freed while the list still holds the
+    ;; box. macOS leaves the freed memory readable, GNUstep reuses the
+    ;; slot at once (`GSAutoreleasedMemory does not recognize
+    ;; isEqualToString:`). On Linux route through the shim's
+    ;; `cxc_linux_box_struct`, which walks the @encode string and ties
+    ;; every embedded object's lifetime to the NSValue via an associated
+    ;; object. macOS emit stays byte-identical.
+    (if (linux?)
+      (str "({ " (:c-type node) " __cxc_nv = " (emit-expr (:inner node))
+           "; cxc_linux_box_struct(&__cxc_nv, @encode("
+           (:c-type node) ")); })")
+      (str "({ " (:c-type node) " __cxc_nv = " (emit-expr (:inner node))
+           "; [NSValue valueWithBytes:&__cxc_nv objCType:@encode("
+           (:c-type node) ")]; })"))
     :ffi-call
     ;; Compiler-recognized native call (Layer 5b Step A). The lower
     ;; pass attached `:emit-c-fn`, a fn taking rendered arg strings

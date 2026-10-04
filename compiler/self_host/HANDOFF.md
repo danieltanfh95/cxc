@@ -8,7 +8,7 @@ If you are a Claude Code cloud session picking this up, read this file first, th
 
 Byte-for-byte parity on `cards.cxc` → `cards.m`. See `README.md` for the full statement. Not "equivalent", not "close", `diff -q` returns clean.
 
-- Parity target: `compiler/self_host/parity_target/cards.cxc` in this repo (960 LOC, previously at `/Users/danieltan/Projects/g-daniel/cards/dota2/cxc/cards.cxc` locally, copied in at the local-to-cloud handoff).
+- Parity target: `/Users/danieltan/Projects/g-daniel/cards/dota2/cxc/cards.cxc` locally. On the cloud, it needs to be checked out alongside this repo or passed through a separate step. Note the path dependency to the user before building oracle paths.
 - Baseline sha of `cards.m` as of 2026-10-04 is `738b928dbcefbba251f5887133e6eef65b369c463ebecbe516a7dbec2b0f1707`. The baseline shifted once from `d28f973d44...` at chapter 16's record-field retain fix; see `design/ten-char-ident-segfault.md`.
 - Baseline-identity check command: `pkill -f cxc.daemon; CXC_NO_DAEMON=1 compiler/bin/cxc compile <path>/cards.cxc <tmp-out>; shasum -a 256 <tmp-out>/cards.m`.
 
@@ -110,7 +110,7 @@ Baseline at commit `b006d47` and later: 38 failures / 7 errors / 1094 tests / 32
 
 ## Points of care on cloud
 
-- `/Users/danieltan/` paths will not exist on the cloud sandbox. Any oracle path assuming the local layout needs rewriting. `cards.cxc` is now in-repo at `compiler/self_host/parity_target/cards.cxc`.
+- `/Users/danieltan/` paths will not exist on the cloud sandbox. Any oracle path assuming the local layout needs rewriting. Expect `cards.cxc` to be at a different path.
 - The cxc daemon socket at `/tmp/cxc-daemon.sock` is per-process. Each cloud session starts fresh so stale daemon is not a concern on cold boot but IS a concern after any mid-session compiler edit.
 - The user runs with 1-hour prompt cache TTL. The orchestrator stays warm across chapter wakes within a cloud session.
 - Push access is on `https://github.com/danieltanfh95/cxc.git`. Cloud session should push each landed chapter so progress survives any session interruption.
@@ -141,7 +141,11 @@ done
 # then /usr/local/bin/clj is a bash shim with:
 #   CP="$LIB_DIR/clojure-1.12.0.jar:...spec.alpha-0.5.238.jar:...core.specs.alpha-0.4.74.jar:...data.json-2.5.1.jar"
 #   for p in src resources; do [ -d "$p" ] && CP="${CP}:$(pwd)/$p"; done
-#   exec java -cp "$CP" clojure.main "$@"
+#   exec java -Dfile.encoding=UTF-8 -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8 \
+#        -Dsun.stdout.encoding=UTF-8 -cp "$CP" clojure.main "$@"
+# The UTF-8 flags are load-bearing. Linux JVM defaults stdout to a non-UTF-8
+# charset, so oracle output of non-ASCII chars prints `?` and c_safe_param
+# plus lex_scan_string_hex DIFF. macOS JVM defaults to UTF-8 already.
 
 # libobjc2 (modern Objective-C runtime for Linux, provides ARC)
 GIT_LFS_SKIP_SMUDGE=1 git clone --depth 1 https://github.com/gnustep/libobjc2 /home/user/gnustep/libobjc2
@@ -175,23 +179,142 @@ sudo mkdir -p /usr/local/include/cxc-linux-shim/{CommonCrypto,libkern,objc}
 # contents: crt_externs.h (_NSGetArgv/_NSGetArgc/_NSGetEnviron via /proc/self/cmdline + environ),
 #           CommonCrypto/CommonDigest.h (stub prototypes, no digest impl),
 #           libkern/OSByteOrder.h (OSSwapHostToBigInt16/32/64 via glibc endian.h htobe16/32/64),
-#           objc/NSObject.h (redirects to GNUstep <Foundation/NSObject.h>).
+#           objc/NSObject.h (redirects to GNUstep <Foundation/NSObject.h>),
+#           cxc_linux_shim.h (see heredoc below).
+
+# Shim header, force-included into every Linux build by build.clj
+sudo tee /usr/local/include/cxc-linux-shim/cxc_linux_shim.h > /dev/null << 'SHIMH'
+/* cxc Linux shim (GNUstep + libobjc2).
+ *
+ * 1. NSValue getValue:size: forwarder. Apple added the two-argument
+ *    selector in macOS 10.13. GNUstep stops at the one-argument form,
+ *    so declare it as a category that ignores size and forwards. The
+ *    cxc emit layer uses the two-argument form for a defensive size
+ *    check, on Linux the check is dropped (sizeof(T) is already right
+ *    on the caller side).
+ *
+ * 2. cxc_linux_box_struct. List-of-record boxing stores the record
+ *    struct bytes in an NSValue. NSValue copies raw bytes and does not
+ *    retain object pointers embedded in the struct, so once the boxing
+ *    temporary goes out of scope the record's NSString fields can be
+ *    freed while the list still references them. On macOS the freed
+ *    memory happens to stay readable, on GNUstep the slot is reused at
+ *    once (GSAutoreleasedMemory ... does not recognize isEqualToString:).
+ *    The Linux emit calls this instead of +valueWithBytes:objCType:.
+ *    It walks the @encode string, collects every object pointer in the
+ *    bytes, and ties their lifetime to the NSValue via an associated
+ *    object, so the box keeps its fields alive exactly as long as it
+ *    lives. */
+#ifndef CXC_LINUX_SHIM_H
+#define CXC_LINUX_SHIM_H
+#import <Foundation/NSValue.h>
+@interface NSValue (CxcLinuxShim)
+- (void)getValue:(void *)value size:(NSUInteger)size;
+@end
+NSValue *cxc_linux_box_struct(const void *bytes, const char *type);
+#endif
+SHIMH
+
+# Shim .m compiled once and linked into every Linux build
+sudo tee /usr/local/share/cxc_linux_shim.m > /dev/null << 'SHIMM'
+/* cxc Linux shim implementation. Links into every Linux cxc build.
+ * See cxc_linux_shim.h for what each piece is for. */
+#import <Foundation/Foundation.h>
+#include <objc/runtime.h>
+#include <objc/encoding.h>
+#include "cxc-linux-shim/cxc_linux_shim.h"
+
+@implementation NSValue (CxcLinuxShim)
+- (void)getValue:(void *)value size:(NSUInteger)size {
+    (void)size;
+    [self getValue:value];
+}
+@end
+
+static char cxc_linux_box_key;
+
+static size_t cxc_align_up(size_t off, size_t align) {
+    return align ? (off + align - 1) / align * align : off;
+}
+
+/* Collect the object pointers of one value of `type` stored at `base`.
+ * Returns the type string just past this value's typespec. */
+static const char *cxc_collect_objects(const char *type, const char *base,
+                                       NSMutableArray *out) {
+    type = objc_skip_type_qualifiers(type);
+    switch (*type) {
+    case '@': {
+        id obj = *(__unsafe_unretained id *)(const void *)base;
+        if (obj != nil) [out addObject:obj];
+        return objc_skip_typespec(type);
+    }
+    case '{': {
+        const char *p = type + 1;
+        while (*p != '=' && *p != '}' && *p != '\0') p++;
+        if (*p != '=') return objc_skip_typespec(type);
+        p++;
+        size_t off = 0;
+        while (*p != '}' && *p != '\0') {
+            const char *field = objc_skip_type_qualifiers(p);
+            off = cxc_align_up(off, objc_alignof_type(field));
+            const char *next = cxc_collect_objects(field, base + off, out);
+            off += objc_sizeof_type(field);
+            p = next;
+        }
+        return (*p == '}') ? p + 1 : p;
+    }
+    case '[': {
+        const char *p = type + 1;
+        size_t n = 0;
+        while (*p >= '0' && *p <= '9') { n = n * 10 + (size_t)(*p - '0'); p++; }
+        size_t esz = objc_sizeof_type(p);
+        const char *after = p;
+        for (size_t i = 0; i < n; i++) {
+            after = cxc_collect_objects(p, base + i * esz, out);
+        }
+        if (n == 0) after = objc_skip_typespec(p);
+        return (*after == ']') ? after + 1 : after;
+    }
+    default:
+        /* Scalars, C pointers, and unions (ambiguous active member) hold
+         * no object reference the box can safely retain. */
+        return objc_skip_typespec(type);
+    }
+}
+
+NSValue *cxc_linux_box_struct(const void *bytes, const char *type) {
+    NSValue *v = [NSValue valueWithBytes:bytes objCType:type];
+    NSMutableArray *objs = [NSMutableArray array];
+    cxc_collect_objects(type, (const char *)bytes, objs);
+    if ([objs count] > 0) {
+        objc_setAssociatedObject(v, &cxc_linux_box_key, objs,
+                                 OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    return v;
+}
+SHIMM
+clang -fobjc-arc -fobjc-runtime=gnustep-2.1 -fblocks \
+  -I/usr/GNUstep/include -I/usr/local/include/GNUstep \
+  -I/usr/local/include/cxc-linux-shim -I/usr/local/include \
+  -Wno-import -DGNUSTEP -DGNUSTEP_BASE_LIBRARY=1 -D_NONFRAGILE_ABI=1 \
+  -DOS_OBJECT_HAVE_OBJC_SUPPORT=0 -DOS_OBJECT_USE_OBJC=0 \
+  -c /usr/local/share/cxc_linux_shim.m -o /usr/local/share/cxc_linux_shim.o
 ```
 
-### Slice harness tally on Linux cloud (post-glue, 2026-10-04)
+### Slice harness tally on Linux cloud
 
-11 PASS, 1 DIFF, 17 CRASH, 3 UNK across 32 harnesses.
+Baseline (chapter 22 Linux glue only, pre-emit-fix): 11 PASS, 1 DIFF, 17 CRASH, 3 UNK.
+Current (chapter 22 priorities + emit shim + NSValue shim, 2026-10-04): 27 PASS, 2 DIFF, 0 CRASH, 3 UNK.
 
-- PASS: ascii_predicates, diagnostics_shape, env_predicates, lex_classify_word, lex_match_multi_glyph, lex_scan_char, lex_scan_digits_decimal, mangle_c_safe, resolve_import_alias, resolve_mangled_name_for, resolve_name_to_module.
-- CRASH: every slice that touches NSString in atom state or record fields. Non-deterministic SIGSEGV in `objc_msgSend_fpret` reached via `objc_retainAutoreleaseReturnValue` from `cxc_send_async`.
+- Baseline PASS set: ascii_predicates, diagnostics_shape, env_predicates, lex_classify_word, lex_match_multi_glyph, lex_scan_char, lex_scan_digits_decimal, mangle_c_safe, resolve_import_alias, resolve_mangled_name_for, resolve_name_to_module.
+- Added PASS (16 slices unblocked): lex_scan_digits_full, lex_scan_float, lex_scan_number, lex_scan_string, lex_scan_string_escapes, lex_scan_word, lex_tokenize, lex_tokenize_full, named_tuple_canonical, named_tuple_collect_shapes, named_tuple_conforms, named_tuple_emit_typedefs, resolve_build_symbol_table, resolve_enrich_refs, resolve_module_scoped_refs, resolve_unscoped_refs.
+- DIFF (resolved pre-chapter-23): c_safe_param and lex_scan_string_hex were oracle-side Linux JVM stdout charset, fixed by the UTF-8 flags in the clj shim. Both PASS now, tally 29 PASS, 3 UNK.
+- UNK (resolved in chapter 23): collect_shapes_from_parse_layer, lex_tokenize_with_layout, parse_layer_bootstrap hit a runtime `GSAutoreleasedMemory does not recognize isEqualToString:` then hung. Root cause, List-of-record boxing (`:objc-nsvalue-box` in emit.clj) stores the record bytes in an NSValue, and NSValue does not retain object pointers embedded in the struct. When the boxing temporary `__cxc_nv` releases its strong NSString fields at the end of the statement expression, a heap string field (a Token value built by concat, for example) is freed while the list still holds its pointer. macOS leaves the freed bytes readable so parity holds there, GNUstep reuses the slot at once. Fix, under `linux?` the emit calls the shim's `cxc_linux_box_struct(&__cxc_nv, @encode(T))`, which walks the @encode string, collects every embedded object pointer, and ties their lifetime to the NSValue with an associated object. macOS emit is byte-identical. parse_layer_bootstrap and lex_tokenize_with_layout now PASS. collect_shapes_from_parse_layer no longer crashes, its remaining DIFF is on the nine container-inner corpus rows added in 5cc0ffa, where named_tuple_collect_shapes.cxc has no `Of<N>` grammar yet (port-layer gap, not a runtime bug).
 
-Root cause. `OS_OBJECT_USE_OBJC=1` makes `dispatch_queue_t` an Objective-C object, so cxc's `@property (nonatomic, strong) dispatch_queue_t own_queue` compiles clean. But Linux's swift-corelibs-libdispatch does not register dispatch queue classes with `objc_class_flag_fast_arc`, so libobjc2's `retain()` falls through to `ManualRetainReleaseMessage(obj, retain, ...)` which calls `objc_msgSend` on a dispatch queue whose isa.dtable is not laid out for the retain selector. The msgSend walks garbage memory and segfaults. Core dump at `/tmp/cores/core.lex_scan_float.*` confirms.
+Dispatch-ARC crash root cause and landed fix. `OS_OBJECT_USE_OBJC=1` made `dispatch_queue_t` an Objective-C object, so cxc's `@property (nonatomic, strong) dispatch_queue_t own_queue` compiled clean, but Linux's swift-corelibs-libdispatch did not register dispatch queue classes with `objc_class_flag_fast_arc`, so libobjc2's `retain()` fell through to `ManualRetainReleaseMessage(obj, retain, ...)` which msgSent on a dtable not laid out for the retain selector. Chapter 22 landing `d230e12` fixes this at the emit layer: dispatch typed properties become `(nonatomic, assign)` with explicit `dispatch_retain` / `dispatch_release` under a `linux?` guard, and `-DOS_OBJECT_USE_OBJC=0` keeps dispatch handles as plain C pointers so `dispatch_release` expands to the C function instead of the retired `[obj release]`.
 
-Fix paths (none landed in chapter 22):
-1. Patch libdispatch to tag dispatch classes for fast ARC.
-2. Patch libobjc2 retain fallback to detect dispatch objects and route via `dispatch_retain` / `dispatch_release`.
-3. Patch cxc emit (`emit.clj` + `lower.clj`) to use `(nonatomic, assign)` for dispatch properties and emit explicit `dispatch_retain` / `dispatch_release`. Shifts cards.m baseline sha unless gated by Linux-only emit.
+### Optional complementary libobjc2 patch
 
-Any of the three unblocks the remaining 17 slices on cloud. Primitive-only slices run parity-green today.
+A sibling investigation also produced a libobjc2 arc.mm patch that routes dispatch objects through `_os_object_retain` / `_os_object_release` instead of `ManualRetainReleaseMessage`. The patch lives at `/home/user/gnustep/libobjc2/arc.mm` on the cloud as uncommitted upstream change. Not strictly needed once the emit-layer fix is in but useful if the emit layer is reverted or if other dispatch-typed emit paths slip through. Full patch is +56 lines on `retain()` and `release()` static inlines; see the chapter 22 cloud session transcript for the diff.
 
 If anything in this handoff disagrees with what you observe in the tree, trust the tree and update the handoff.
