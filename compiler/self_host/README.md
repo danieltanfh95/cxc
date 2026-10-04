@@ -2,7 +2,7 @@
 
 Goal state. The ported cxc compiler, when fed `cards.cxc`, emits a byte-for-byte identical `cards.m` to the current Clojure compiler. `diff -q` returns clean. Not "equivalent", not "close", byte-for-byte.
 
-Parity target. `/Users/danieltan/Projects/g-daniel/cards/dota2/cxc/cards.cxc` (960 LOC, found in the `cards/dota2` subrepo). Oracle output is `cards.m`, 1,496,605 bytes, as emitted by the Clojure compiler at commit cb2d5ab or later.
+Parity target. `compiler/self_host/parity_target/cards.cxc` in this repo (960 LOC, copied in at the local-to-cloud handoff from `/Users/danieltan/Projects/g-daniel/cards/dota2/cxc/cards.cxc`). Oracle output is `cards.m`, 1,496,605 bytes under the chapter-10 compiler state, 1,497,058 bytes post chapter-16 record-field retain fix. Current baseline sha `738b928dbcefbba251f5887133e6eef65b369c463ebecbe516a7dbec2b0f1707`.
 
 ## Layout
 

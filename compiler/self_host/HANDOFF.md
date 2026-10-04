@@ -8,7 +8,7 @@ If you are a Claude Code cloud session picking this up, read this file first, th
 
 Byte-for-byte parity on `cards.cxc` → `cards.m`. See `README.md` for the full statement. Not "equivalent", not "close", `diff -q` returns clean.
 
-- Parity target: `/Users/danieltan/Projects/g-daniel/cards/dota2/cxc/cards.cxc` locally. On the cloud, it needs to be checked out alongside this repo or passed through a separate step. Note the path dependency to the user before building oracle paths.
+- Parity target: `compiler/self_host/parity_target/cards.cxc` in this repo (960 LOC, previously at `/Users/danieltan/Projects/g-daniel/cards/dota2/cxc/cards.cxc` locally, copied in at the local-to-cloud handoff).
 - Baseline sha of `cards.m` as of 2026-10-04 is `738b928dbcefbba251f5887133e6eef65b369c463ebecbe516a7dbec2b0f1707`. The baseline shifted once from `d28f973d44...` at chapter 16's record-field retain fix; see `design/ten-char-ident-segfault.md`.
 - Baseline-identity check command: `pkill -f cxc.daemon; CXC_NO_DAEMON=1 compiler/bin/cxc compile <path>/cards.cxc <tmp-out>; shasum -a 256 <tmp-out>/cards.m`.
 
@@ -110,7 +110,7 @@ Baseline at commit `b006d47` and later: 38 failures / 7 errors / 1094 tests / 32
 
 ## Points of care on cloud
 
-- `/Users/danieltan/` paths will not exist on the cloud sandbox. Any oracle path assuming the local layout needs rewriting. Expect `cards.cxc` to be at a different path.
+- `/Users/danieltan/` paths will not exist on the cloud sandbox. Any oracle path assuming the local layout needs rewriting. `cards.cxc` is now in-repo at `compiler/self_host/parity_target/cards.cxc`.
 - The cxc daemon socket at `/tmp/cxc-daemon.sock` is per-process. Each cloud session starts fresh so stale daemon is not a concern on cold boot but IS a concern after any mid-session compiler edit.
 - The user runs with 1-hour prompt cache TTL. The orchestrator stays warm across chapter wakes within a cloud session.
 - Push access is on `https://github.com/danieltanfh95/cxc.git`. Cloud session should push each landed chapter so progress survives any session interruption.
