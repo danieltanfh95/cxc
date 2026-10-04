@@ -41,6 +41,8 @@ These are standing rules captured in the user's global memory at `~/.claude/proj
 - Direct self-reference enum payloads are rejected at parse per `design/self-reference-enum-payload.md`. Three workarounds documented.
 - Container-returned record-field read for records with reference fields uses the chapter-16 shadow-struct fix. See `design/ten-char-ident-segfault.md`.
 - Observation reference ordering is lexical. If `a :- b` and both are observations, declare b first.
+- Keep `and` / `or` chains in guards and observations to about six terms. The emit duplicates each left operand, so a flat chain of N terms costs 2^N text and a 31-term guard ran the compiler out of heap (chapter 26). Group terms through observations.
+- Three shared lex sites (chapter 26). `lex_tokenize_with_layout.cxc`, the inline lex in `parse_layer_bootstrap.cxc`, and `parse_expr_bootstrap.cxc` carry the same lex arms. Change all three together, verify on the slice-33 corpus first.
 
 ## Hard blockers at chapter 21 handoff
 
@@ -82,7 +84,7 @@ for h in compiler/self_host/harness/*.sh; do
 done
 ```
 
-Count of parity-green harnesses at handoff: 33 (chapter 25 added `float_render_java`). Of the 34 src files, `ast_shape_demo.cxc` is a non-parity design artifact and `tnt_to_nt_bridge.cxc` is covered by the `collect_shapes_from_parse_layer` composition harness.
+Count of parity-green harnesses at handoff: 34 (chapter 25 added `float_render_java`, chapter 26 added `parse_expr_bootstrap`). Of the 35 src files, `ast_shape_demo.cxc` is a non-parity design artifact and `tnt_to_nt_bridge.cxc` is covered by the `collect_shapes_from_parse_layer` composition harness.
 
 ## Oracle paths
 

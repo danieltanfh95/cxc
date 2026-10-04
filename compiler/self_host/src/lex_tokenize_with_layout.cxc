@@ -10,6 +10,12 @@
 # `|:`, `:-`, `??`, …) at this landing. The parse-layer-bootstrap
 # shares the same lex subset.
 #
+# Chapter 26. The scope note above is historical. The lex now carries
+# Clojure's full punct and glyph tables, `#` line comments, bracket
+# continuation, and the lex error messages. It is one of three shared
+# lex sites (with parse_layer_bootstrap.cxc and parse_expr_bootstrap.cxc)
+# whose arms stay textually identical apart from column bumps.
+#
 # Output format. One output line per input line. Tokens separated
 # by `/`. Each token:
 #   <kind>|<pr-str value>|<line>|<col>
@@ -47,6 +53,12 @@ def main:
     esc_hex:   String! = ""
     esc_val:   Int!    = 0
     char_esc:  Bool!   = false
+    # Chapter-26 bracket continuation. Clojure's tokenize counts open
+    # brackets across lines. A line that starts inside an open bracket is
+    # a continuation (no layout tokens at all), and a line only emits its
+    # NEWLINE when the running depth is back to zero at its end.
+    bracket_depth: Int!  = 0
+    line_is_cont:  Bool! = false
 
     reserved: List of String = [
         "module", "from", "import", "as",
@@ -76,6 +88,26 @@ def main:
     is_bang    :- srccur == 33
     is_q       :- srccur == 63
 
+    # Chapter-26 — the rest of Clojure's punctuation and glyph tables
+    # (`[ ] { } . ;` punct, `+ * / % &` glyphs, `<| |> ||: // **`
+    # multi-glyphs), plus `#` line comments and the `@` retirement.
+    srcnext2     :- ||: sc + 2 >= source.length() : -1 ||: else : source.code_at(sc + 2)
+    is_lbracket  :- srccur == 91
+    is_rbracket  :- srccur == 93
+    is_semi      :- srccur == 59
+    is_plus      :- srccur == 43
+    is_star      :- srccur == 42
+    is_slash     :- srccur == 47
+    is_pct       :- srccur == 37
+    is_amp       :- srccur == 38
+    is_at        :- srccur == 64
+    is_hash      :- srccur == 35
+    is_lt_pipe   :- srccur == 60 and srcnext == 124
+    is_pipe_gt   :- srccur == 124 and srcnext == 62
+    is_dslash    :- srccur == 47 and srcnext == 47
+    is_dstar     :- srccur == 42 and srcnext == 42
+    is_dpipe_col :- srccur == 124 and srcnext == 124 and srcnext2 == 58
+
     is_arrow     :- srccur == 45 and srcnext == 62
     is_fat_arrow :- srccur == 61 and srcnext == 62
     is_pipe_col  :- srccur == 124 and srcnext == 58
@@ -88,7 +120,7 @@ def main:
     is_gte       :- srccur == 62 and srcnext == 61
     is_lte       :- srccur == 60 and srcnext == 61
 
-    is_any_multi :- is_arrow or is_fat_arrow or is_pipe_col or is_col_dash or is_double_q or is_lt_col or is_col_gt or is_eq_eq or is_bang_eq or is_gte or is_lte
+    is_any_multi :- is_arrow or is_fat_arrow or is_pipe_col or is_col_dash or is_double_q or is_lt_col or is_col_gt or is_eq_eq or is_bang_eq or is_gte or is_lte or is_lt_pipe or is_pipe_gt or is_dslash or is_dstar
     is_eq        :- srccur == 61
     is_dash      :- srccur == 45
     is_lt        :- srccur == 60
@@ -190,10 +222,26 @@ def main:
 
     num_value_text :- ||: num_kind == "float" : self.render_float(num_sig_trim, num_sci_exp) ||: num_prefix.length() > 0 : num_val.to_string() ||: num_sig.length() == 0 : "0" ||: else : num_sig
 
+    # Chapter 26. Every char class some step arm consumes. The emit
+    # layer duplicates the left operand of each `and` / `or` it lowers,
+    # so a flat chain of N terms costs 2^N text. Groups of five keep the
+    # unexpected-char guard small.
+    lex_known_a :- is_sp or is_nl or is_comma or is_colon or is_lparen
+    lex_known_b :- is_rparen or is_bang or is_q or is_eq or is_dash
+    lex_known_c :- is_lt or is_gt or is_pipe or is_id_start or is_digit
+    lex_known_d :- is_dquote or is_squote or is_lbracket or is_rbracket or is_lbrace
+    lex_known_e :- is_rbrace or is_dot or is_semi or is_plus or is_star
+    lex_known_f :- is_slash or is_pct or is_amp or is_at or is_hash
+    lex_known   :- lex_known_a or lex_known_b or lex_known_c or lex_known_d or lex_known_e or lex_known_f
+
     top_indent :- indent_stack.at((indent_stack.count() - 1).max(0)) ?? 0
 
-    last_tok  :- tokens.at((tokens.count() - 1).max(0)) ?? Token(kind: "newline", value: "", line: 1, col: 1)
-    needs_terminal_newline :- tokens.count() > 0 and last_tok.kind != "newline"
+    # Chapter 26 replaced the last-token test with `at_line_start`. A
+    # source whose last line has content and no trailing newline still
+    # owes that line its line bump, and its NEWLINE token only when the
+    # line is not a bracket continuation and closes at depth zero.
+    ends_open_line :- not at_line_start
+    eol_newline    :- bracket_depth == 0 and not line_is_cont
 
     -> lex_start
         then:
@@ -211,15 +259,16 @@ def main:
     out_buf: String! = ""
 
     lex_start <: step -> lex_start
-        |: at_src_end and not error and needs_terminal_newline
+        |: at_src_end and not error and ends_open_line
         then:
-            tokens => tokens.append(Token(kind: "newline", value: "", line: line_num, col: 1))
+            tokens => ||: eol_newline : tokens.append(Token(kind: "newline", value: "", line: line_num, col: 1)) ||: else : tokens
             line_num => line_num + 1
             col_num => 1
+            at_line_start => true
             self :> step
 
     lex_start <: step -> lex_start
-        |: at_src_end and not error and not needs_terminal_newline
+        |: at_src_end and not error and not ends_open_line
         then:
             self :> emit_trailing_dedents
 
@@ -238,7 +287,8 @@ def main:
     lex_start <: step -> lex_start
         |: not at_src_end and not at_line_start and is_nl
         then:
-            tokens => tokens.append(Token(kind: "newline", value: "", line: line_num, col: 1))
+            tokens => ||: eol_newline : tokens.append(Token(kind: "newline", value: "", line: line_num, col: 1)) ||: else : tokens
+            line_is_cont => bracket_depth > 0
             line_num => line_num + 1
             col_num => 1
             sc => sc + 1
@@ -266,6 +316,7 @@ def main:
         |: not at_src_end and not at_line_start and is_lparen
         then:
             tokens => tokens.append(Token(kind: "punct", value: "(", line: line_num, col: col_num))
+            bracket_depth => bracket_depth + 1
             sc => sc + 1
             col_num => col_num + 1
             self :> step
@@ -274,6 +325,7 @@ def main:
         |: not at_src_end and not at_line_start and is_rparen
         then:
             tokens => tokens.append(Token(kind: "punct", value: ")", line: line_num, col: col_num))
+            bracket_depth => bracket_depth - 1
             sc => sc + 1
             col_num => col_num + 1
             self :> step
@@ -320,7 +372,7 @@ def main:
             self :> step
 
     lex_start <: step -> lex_start
-        |: not at_src_end and not at_line_start and is_lt and not is_lt_col and not is_lte
+        |: not at_src_end and not at_line_start and is_lt and not is_lt_col and not is_lte and not is_lt_pipe
         then:
             tokens => tokens.append(Token(kind: "glyph", value: "<", line: line_num, col: col_num))
             sc => sc + 1
@@ -336,11 +388,129 @@ def main:
             self :> step
 
     lex_start <: step -> lex_start
-        |: not at_src_end and not at_line_start and is_pipe and not is_pipe_col
+        |: not at_src_end and not at_line_start and is_pipe and not is_pipe_col and not is_pipe_gt and not is_dpipe_col
         then:
             tokens => tokens.append(Token(kind: "glyph", value: "|", line: line_num, col: col_num))
             sc => sc + 1
             col_num => col_num + 1
+            self :> step
+
+    # Chapter-26 arms. Brackets move `bracket_depth`, the rest are
+    # plain one-char tokens. `||:` is the one three-char glyph.
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and is_dpipe_col
+        then:
+            tokens => tokens.append(Token(kind: "glyph", value: "||:", line: line_num, col: col_num))
+            sc => sc + 3
+            col_num => col_num + 3
+            self :> step
+
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and is_lbracket
+        then:
+            tokens => tokens.append(Token(kind: "punct", value: "[", line: line_num, col: col_num))
+            bracket_depth => bracket_depth + 1
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> step
+
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and is_rbracket
+        then:
+            tokens => tokens.append(Token(kind: "punct", value: "]", line: line_num, col: col_num))
+            bracket_depth => bracket_depth - 1
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> step
+
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and is_lbrace
+        then:
+            tokens => tokens.append(Token(kind: "punct", value: "{", line: line_num, col: col_num))
+            bracket_depth => bracket_depth + 1
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> step
+
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and is_rbrace
+        then:
+            tokens => tokens.append(Token(kind: "punct", value: "}", line: line_num, col: col_num))
+            bracket_depth => bracket_depth - 1
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> step
+
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and is_dot
+        then:
+            tokens => tokens.append(Token(kind: "punct", value: ".", line: line_num, col: col_num))
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> step
+
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and is_semi
+        then:
+            tokens => tokens.append(Token(kind: "punct", value: ";", line: line_num, col: col_num))
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> step
+
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and is_plus
+        then:
+            tokens => tokens.append(Token(kind: "glyph", value: "+", line: line_num, col: col_num))
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> step
+
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and is_star and not is_dstar
+        then:
+            tokens => tokens.append(Token(kind: "glyph", value: "*", line: line_num, col: col_num))
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> step
+
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and is_slash and not is_dslash
+        then:
+            tokens => tokens.append(Token(kind: "glyph", value: "/", line: line_num, col: col_num))
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> step
+
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and is_pct
+        then:
+            tokens => tokens.append(Token(kind: "glyph", value: "%", line: line_num, col: col_num))
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> step
+
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and is_amp
+        then:
+            tokens => tokens.append(Token(kind: "glyph", value: "&", line: line_num, col: col_num))
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> step
+
+    # `#` ends the line's tokens. The newline itself stays for the
+    # newline arm.
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and is_hash
+        then:
+            sc => sc + line_rest
+            self :> step
+
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and is_at
+        then:
+            error => true
+            sc => source.length()
+            error_msg => "annotation grammar (`@name(...)`) is retired at v1.0 (annotation-grammar-retirement 2026-08-30). Plugin manifest → `def plugin:` block (spec §7.2). Metadata (kind) → body-shape inference (§3.3). Deprecation → comment / user convention."
             self :> step
 
     lex_start <: step -> lex_start
@@ -393,11 +563,11 @@ def main:
             self :> scan_char_body
 
     lex_start <: step -> lex_start
-        |: not at_src_end and not at_line_start and not is_sp and not is_nl and not is_comma and not is_colon and not is_lparen and not is_rparen and not is_bang and not is_q and not is_eq and not is_dash and not is_lt and not is_gt and not is_pipe and not is_id_start and not is_digit and not is_dquote and not is_squote
+        |: not at_src_end and not at_line_start and not lex_known
         then:
             error => true
             sc => source.length()
-            error_msg => "lex: unexpected char"
+            error_msg => ||: srccur > 32 and srccur < 127 : "unexpected character: \\" + source.substring(sc, 1) ||: else : "lex: unexpected char"
             self :> step
 
     lex_start <: step -> end
@@ -424,12 +594,27 @@ def main:
         |: at_src_end
         then: self :> step
 
+    # Chapter 26. A comment-only line is blank. A continuation line
+    # skips the indent comparison entirely.
     lex_start <: measure_indent -> lex_start
-        |: not at_src_end and not is_sp and not is_nl
+        |: not at_src_end and is_hash
+        then:
+            sc => sc + line_rest
+            self :> measure_indent
+
+    lex_start <: measure_indent -> lex_start
+        |: not at_src_end and not is_sp and not is_nl and not is_hash and not line_is_cont
         then:
             at_line_start => false
             col_num => 1
             self :> adjust_indent
+
+    lex_start <: measure_indent -> lex_start
+        |: not at_src_end and not is_sp and not is_nl and not is_hash and line_is_cont
+        then:
+            at_line_start => false
+            col_num => 1
+            self :> step
 
     lex_start <: adjust_indent -> lex_start
         |: line_indent > top_indent

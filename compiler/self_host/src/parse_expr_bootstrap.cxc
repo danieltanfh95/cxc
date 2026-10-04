@@ -1,0 +1,1761 @@
+# Chapter-26 expression-parse slice (slice 35).
+#
+# Ports `cxc.parse/parse-expression` (lex, `parse-expr`, trailing-token
+# check) together with the `desugar-chained-comparisons` postwalk that
+# `cxc.parse/parse` runs over every top-level form. Covers the Clojure
+# recursive descent in `parse-primary`, `parse-postfix`, `parse-unary`,
+# and `parse-binop`.
+#
+# Lex. A copy of the shared lex from slice 33
+# (`lex_tokenize_with_layout.cxc`), the third shared lex site next to
+# slice 33 and the inline lex in `parse_layer_bootstrap.cxc`. Every lex
+# arm is textually identical to slice 33. Only the hand-off after the
+# eof token differs (`-> parsing` here, `-> emitting` there).
+#
+# Parse model. One atom has no call stack, so the Clojure recursion is
+# simulated with a frame stack. `frames` is a `List of Frame` with a
+# logical `depth` (chapter-18 slice-and-append discipline, every push is
+# `frames.slice(0, depth).append(...)`). The value a returning "call"
+# hands back lives in the `v_*` registers. Message names are the
+# return-mode sentinels (chapter 20) that say which Clojure function is
+# running.
+#
+#   expr_start   parse-expr, pushes a `binop` frame at min-prec 1
+#   unary_start  parse-unary prefix ops, pushes `neg` / `not` frames
+#   primary      parse-primary, pushes `paren` / `list` / `lambda` /
+#                `multi` frames or yields a leaf
+#   postfix      parse-postfix, `.field`, `(args)`, `[index]`, pushes
+#                `call` / `sub` frames
+#   unary_done   pops `neg` / `not`, then stores the lhs in the binop
+#   binop_loop   the parse-binop loop. An operator at or above the
+#                frame's min-prec records itself as the pending op and
+#                pushes a fresh binop frame at prec + 1 (precedence
+#                climbing, so the tree is Clojure's left-assoc tree)
+#   ret          a frame finished. The frame below decides what the
+#                value was for (rhs, group, arg, index, item, body)
+#   finish       trailing newlines, then eof or the trailing-token error
+#
+# Chained comparisons. Every value carries `v_kind` ("cmp" for a binop
+# whose op is `< <= > >=`, "chain" for a chained-cmp, "other"), plus the
+# op list and operand list of a cmp or chain. Combining a cmp op over a
+# cmp or chain lhs extends the chain, which is exactly the bottom-up
+# postwalk rewrite. Parentheses keep the kind, as the AST does.
+#
+# Input. argv[1] = expression source (`\n` physical newline, `\N`
+# backslash-n inside a literal, chapter-23 sentinel).
+#
+# Output. One S-expression per input, or `error|<message>`.
+#   (int <v>) (float <v>) (string "<pr>") (char "<pr>") (bool <v>)
+#   (nil) (self) (ident <name>) (neg <e>) (not <e>)
+#   (binop <op> <l> <r>) (chained-cmp (<op> ...) <e> <e> ...)
+#   (dot <e> <field>) (call <callee> <arg>*) with (pos <e>) and
+#   (named <name> <e>) args, (subscript <e> <i>), (list <e>*),
+#   (lambda (<param>*) <body>), (multi-arm (arm <guard> <body>)+)
+#
+# Scope. Out of scope and raised with a `port: out of scope` message
+# the corpus never carries: `do:` blocks, `raise`, expression-position
+# `:>` and `|>` sends, `(name: Type)` message-shape payloads, `is`
+# variant patterns, `def:` lambda bodies, and multi-line `||:` chains.
+
+def Token:
+    kind:  String!
+    value: String!
+    line:  Int!
+    col:   Int!
+
+# One simulated call frame. `kind` names the waiting Clojure function.
+# `binop` frames use `prec` (min-prec), `op` (pending operator, "" when
+# none) and the lhs in `ser` / `ekind` / `ops` / `acc`. `call` keeps the
+# callee in `ser`, the rendered args in `acc`, and the pending arg name
+# in `aux`. `sub` keeps the target in `ser`. `list` keeps items in
+# `acc`. `lambda` keeps the param list in `ser`. `multi` keeps rendered
+# arms in `acc`, the pending guard in `aux`, and its state in `op`
+# ("guard" or "body").
+def Frame:
+    kind:  String!
+    prec:  Int!
+    op:    String!
+    ser:   String!
+    ekind: String!
+    ops:   String!
+    acc:   String!
+    aux:   String!
+
+def main:
+    use args:    Args
+    use console: Console
+
+    source:   String! = ""
+    sc:       Int!    = 0
+    line_num: Int!    = 1
+    col_num:  Int!    = 1
+    tok_start_col: Int! = 1
+    word_acc: String! = ""
+    line_indent: Int! = 0
+    indent_stack: List of Int = [0]
+    at_line_start: Bool! = true
+    tokens:   List of Token = []
+    error:    Bool!   = false
+    error_msg: String! = ""
+    # Chapter-23 escape scratch. `esc_mode` is the return-mode sentinel
+    # for the shared escape phases ("str" or "char", chapter 20
+    # `nt_return_mode` idiom). `esc_hex` / `esc_val` accumulate the
+    # `\u{...}` body. `char_esc` remembers whether the char literal body
+    # was an escape so the close-quote error picks Clojure's message.
+    esc_mode:  String! = "str"
+    esc_hex:   String! = ""
+    esc_val:   Int!    = 0
+    char_esc:  Bool!   = false
+    # Chapter-26 bracket continuation. Clojure's tokenize counts open
+    # brackets across lines. A line that starts inside an open bracket is
+    # a continuation (no layout tokens at all), and a line only emits its
+    # NEWLINE when the running depth is back to zero at its end.
+    bracket_depth: Int!  = 0
+    line_is_cont:  Bool! = false
+
+    reserved: List of String = [
+        "module", "from", "import", "as",
+        "def", "use", "invariants", "enum",
+        "accepts", "extend", "replace", "deprecated",
+        "then", "do", "when", "let", "alias",
+        "self", "nil", "true", "false",
+        "and", "or", "not", "is", "in", "of",
+        "if", "else", "return", "case",
+        "function", "for",
+        "weak", "unowned",
+        "while", "loop", "break", "continue",
+        "raise"
+    ]
+
+    at_src_end :- sc >= source.length()
+    srccur     :- ||: at_src_end : -1 ||: else : source.code_at(sc)
+    srcnext    :- ||: sc + 1 >= source.length() : -1 ||: else : source.code_at(sc + 1)
+    is_sp      :- srccur == 32
+    is_nl      :- srccur == 10
+    is_id_start :- (srccur >= 65 and srccur <= 90) or (srccur >= 97 and srccur <= 122) or srccur == 95
+    is_id_cont  :- is_id_start or (srccur >= 48 and srccur <= 57)
+    is_comma   :- srccur == 44
+    is_colon   :- srccur == 58
+    is_lparen  :- srccur == 40
+    is_rparen  :- srccur == 41
+    is_bang    :- srccur == 33
+    is_q       :- srccur == 63
+
+    # Chapter-26 — the rest of Clojure's punctuation and glyph tables
+    # (`[ ] { } . ;` punct, `+ * / % &` glyphs, `<| |> ||: // **`
+    # multi-glyphs), plus `#` line comments and the `@` retirement.
+    srcnext2     :- ||: sc + 2 >= source.length() : -1 ||: else : source.code_at(sc + 2)
+    is_lbracket  :- srccur == 91
+    is_rbracket  :- srccur == 93
+    is_semi      :- srccur == 59
+    is_plus      :- srccur == 43
+    is_star      :- srccur == 42
+    is_slash     :- srccur == 47
+    is_pct       :- srccur == 37
+    is_amp       :- srccur == 38
+    is_at        :- srccur == 64
+    is_hash      :- srccur == 35
+    is_lt_pipe   :- srccur == 60 and srcnext == 124
+    is_pipe_gt   :- srccur == 124 and srcnext == 62
+    is_dslash    :- srccur == 47 and srcnext == 47
+    is_dstar     :- srccur == 42 and srcnext == 42
+    is_dpipe_col :- srccur == 124 and srcnext == 124 and srcnext2 == 58
+
+    is_arrow     :- srccur == 45 and srcnext == 62
+    is_fat_arrow :- srccur == 61 and srcnext == 62
+    is_pipe_col  :- srccur == 124 and srcnext == 58
+    is_col_dash  :- srccur == 58 and srcnext == 45
+    is_double_q  :- srccur == 63 and srcnext == 63
+    is_lt_col    :- srccur == 60 and srcnext == 58
+    is_col_gt    :- srccur == 58 and srcnext == 62
+    is_eq_eq     :- srccur == 61 and srcnext == 61
+    is_bang_eq   :- srccur == 33 and srcnext == 61
+    is_gte       :- srccur == 62 and srcnext == 61
+    is_lte       :- srccur == 60 and srcnext == 61
+
+    is_any_multi :- is_arrow or is_fat_arrow or is_pipe_col or is_col_dash or is_double_q or is_lt_col or is_col_gt or is_eq_eq or is_bang_eq or is_gte or is_lte or is_lt_pipe or is_pipe_gt or is_dslash or is_dstar
+    is_eq        :- srccur == 61
+    is_dash      :- srccur == 45
+    is_lt        :- srccur == 60
+    is_gt        :- srccur == 62
+    is_pipe      :- srccur == 124
+    is_digit     :- srccur >= 48 and srccur <= 57
+    is_dquote    :- srccur == 34
+    is_squote    :- srccur == 39
+
+    # Chapter-22 / 25 — numeric-literal lex predicates. See the
+    # chapter-25 block below for the full scan-number port.
+    is_dot        :- srccur == 46
+    srcnext_is_digit :- sc + 1 < source.length() and source.code_at(sc + 1) >= 48 and source.code_at(sc + 1) <= 57
+
+    # Chapter-23 — string / char escape decoding. The port decodes every
+    # escape Clojure's cxc.lex/append-escape! accepts (simple set
+    # `\n \t \r \\ \" \' \0 \a \b \f \v`, hex byte `\xNN`, unicode
+    # `\u{HEX+}`) to its code point, then re-encodes the code point
+    # through `enc`, a port of Clojure's pr-str string printer. Token
+    # value therefore holds the pr-str body (no surrounding quotes),
+    # which is exactly what the oracle prints via `(pr-str value)`.
+    # Chapter 22 preserved the two-char literal instead, which broke on
+    # `\'` (pr-str prints a bare apostrophe) and could not express hex
+    # or unicode escapes at all.
+    is_bslash     :- srccur == 92
+    is_lbrace     :- srccur == 123
+    is_rbrace     :- srccur == 125
+    is_esc_x      :- srccur == 120
+    is_esc_u      :- srccur == 117
+    simple_esc_code :- ||: srccur == 110 : 10 ||: srccur == 116 : 9 ||: srccur == 114 : 13 ||: srccur == 92 : 92 ||: srccur == 34 : 34 ||: srccur == 39 : 39 ||: srccur == 48 : 0 ||: srccur == 97 : 7 ||: srccur == 98 : 8 ||: srccur == 102 : 12 ||: srccur == 118 : 11 ||: else : -1
+    cur_hex       :- ||: srccur >= 48 and srccur <= 57 : srccur - 48 ||: srccur >= 97 and srccur <= 102 : srccur - 87 ||: srccur >= 65 and srccur <= 70 : srccur - 55 ||: else : -1
+    next_hex      :- ||: srcnext >= 48 and srcnext <= 57 : srcnext - 48 ||: srcnext >= 97 and srcnext <= 102 : srcnext - 87 ||: srcnext >= 65 and srcnext <= 70 : srcnext - 55 ||: else : -1
+    uni_len_ok    :- esc_hex.length() >= 1 and esc_hex.length() <= 6
+
+    # pr-str string-body encoder. Clojure's `char-escape-string` table
+    # escapes newline, tab, return, double quote, backslash, formfeed,
+    # and backspace. Every other code point prints raw. Code points
+    # above U+FFFF are emitted as a UTF-16 surrogate pair because
+    # `Int.to_char_string()` truncates to one unichar.
+    enc(c: Int!) :- String!
+        ||: c == 10 : "\\n" ||: c == 9 : "\\t" ||: c == 13 : "\\r" ||: c == 34 : "\\\"" ||: c == 92 : "\\\\" ||: c == 12 : "\\f" ||: c == 8 : "\\b" ||: c > 65535 : (55296 + (c - 65536) / 1024).to_char_string() + (56320 + (c - 65536) % 1024).to_char_string() ||: else : c.to_char_string()
+
+    # Chapter-25 numeric scan state, a port of cxc.lex/scan-number.
+    # `num_digs` / `num_last_digit` are one scan-digits run (separators
+    # stripped). `num_mode` is the run's return-mode sentinel ("int",
+    # "frac", "exp", "based", "hexfrac"). The `num_sig*` fields track
+    # the significant digits and the position of the first one while the
+    # int and frac runs scan, so the float value renders without a
+    # second pass (see slice 34 `float_render_java.cxc`).
+    num_digs:       String! = ""
+    num_last_digit: Bool!   = false
+    num_mode:       String! = "int"
+    num_base:       Int!    = 10
+    num_prefix:     String! = ""
+    num_int:        String! = ""
+    num_frac:       String! = ""
+    num_exp:        String! = ""
+    num_has_dot:    Bool!   = false
+    num_has_exp:    Bool!   = false
+    num_exp_sign:   String! = ""
+    num_kind:       String! = "int"
+    num_val:        Int!    = 0
+    num_sig:        String! = ""
+    num_sig_nz:     Int!    = 0
+    num_int_sig:    Int!    = 0
+    num_frac_lead:  Int!    = 0
+    num_exp_val:    Int!    = 0
+    sfx_acc:        String! = ""
+    sfx_col:        Int!    = 0
+
+    cur_col       :- col_num
+    is_us         :- srccur == 95
+    is_letter     :- (srccur >= 65 and srccur <= 90) or (srccur >= 97 and srccur <= 122)
+    is_exp_marker :- srccur == 101 or srccur == 69
+    is_p_marker   :- srccur == 112 or srccur == 80
+    num_run_end   :- at_src_end or is_nl
+    num_digit_val :- ||: num_base == 16 : cur_hex ||: srccur >= 48 and srccur < 48 + num_base : srccur - 48 ||: else : -1
+    rest_src      :- source.substring(sc.min(source.length()), (source.length() - sc).max(0))
+    rest_nl       :- rest_src.index_of("\n")
+    line_rest     :- ||: rest_nl < 0 : rest_src.length() ||: else : rest_nl
+    lz_snip       :- rest_src.substring(0, line_rest.min(5).max(0))
+    num_str       :- ||: num_prefix.length() > 0 : num_prefix + num_digs ||: else : num_int + (||: num_has_dot : "." + num_frac ||: else : "") + (||: num_has_exp : "e" + num_exp_sign + num_exp ||: else : "")
+    num_sig_trim  :- num_sig.substring(0, num_sig_nz.min(num_sig.length()))
+    num_sci_exp   :- (||: num_int_sig > 0 : num_int_sig - 1 ||: else : 0 - num_frac_lead - 1) + (||: num_exp_sign == "-" : 0 - num_exp_val ||: else : num_exp_val)
+
+    # Java `Double.toString` layout, mirrored from slice 34. Exact for
+    # literals with at most 15 significant digits in the normal range.
+    render_float(digs: String!, e: Int!) :- String!
+        alias m        :- digs.length()
+        alias pad17    :- (digs + "00000000000000000").substring(0, 17)
+        alias is_inf   :- e >= 309 or (e == 308 and pad17.compare_to("17976931348623158") >= 0)
+        alias int_len  :- (e + 1).max(0).min(m)
+        alias int_txt  :- ||: m <= e + 1 : digs + "0".repeat((e + 1 - m).max(0)) ||: else : digs.substring(0, int_len)
+        alias frac_txt :- ||: m <= e + 1 : "0" ||: else : digs.substring(int_len, (m - int_len).max(0))
+        alias neg_txt  :- "0." + "0".repeat((0 - e - 1).max(0)) + digs
+        alias sci_frac :- ||: m > 1 : digs.substring(m.min(1), (m - 1).max(0)) ||: else : "0"
+        alias sci_txt  :- digs.substring(0, m.min(1)) + "." + sci_frac + "E" + e.to_string()
+        ||: m == 0 : "0.0" ||: is_inf : "Infinity" ||: e <= -325 : "0.0" ||: e >= 0 and e < 7 : int_txt + "." + frac_txt ||: e < 0 and e >= -3 : neg_txt ||: else : sci_txt
+
+    num_value_text :- ||: num_kind == "float" : self.render_float(num_sig_trim, num_sci_exp) ||: num_prefix.length() > 0 : num_val.to_string() ||: num_sig.length() == 0 : "0" ||: else : num_sig
+
+    # Chapter 26. Every char class some step arm consumes. The emit
+    # layer duplicates the left operand of each `and` / `or` it lowers,
+    # so a flat chain of N terms costs 2^N text. Groups of five keep the
+    # unexpected-char guard small.
+    lex_known_a :- is_sp or is_nl or is_comma or is_colon or is_lparen
+    lex_known_b :- is_rparen or is_bang or is_q or is_eq or is_dash
+    lex_known_c :- is_lt or is_gt or is_pipe or is_id_start or is_digit
+    lex_known_d :- is_dquote or is_squote or is_lbracket or is_rbracket or is_lbrace
+    lex_known_e :- is_rbrace or is_dot or is_semi or is_plus or is_star
+    lex_known_f :- is_slash or is_pct or is_amp or is_at or is_hash
+    lex_known   :- lex_known_a or lex_known_b or lex_known_c or lex_known_d or lex_known_e or lex_known_f
+
+    top_indent :- indent_stack.at((indent_stack.count() - 1).max(0)) ?? 0
+
+    # Chapter 26 replaced the last-token test with `at_line_start`. A
+    # source whose last line has content and no trailing newline still
+    # owes that line its line bump, and its NEWLINE token only when the
+    # line is not a bracket continuation and closes at depth zero.
+    ends_open_line :- not at_line_start
+    eol_newline    :- bracket_depth == 0 and not line_is_cont
+
+
+    # Chapter-26 parse state. `pos` is the token cursor, `frames` /
+    # `depth` the simulated call stack, `v_*` the returned value.
+    pos:    Int!    = 0
+    depth:  Int!    = 0
+    frames: List of Frame = []
+    v_ser:  String! = ""
+    v_kind: String! = "other"
+    v_ops:  String! = ""
+    v_args: String! = ""
+
+    cur_tok    :- tokens.at(pos) ?? Token(kind: "eof", value: "", line: line_num, col: 1)
+    cur_kind   :- cur_tok.kind
+    cur_value  :- cur_tok.value
+    cur_line   :- cur_tok.line
+    cur_tcol   :- cur_tok.col
+    nxt_tok    :- tokens.at(pos + 1) ?? Token(kind: "eof", value: "", line: line_num, col: 1)
+    nxt_kind   :- nxt_tok.kind
+    nxt_value  :- nxt_tok.value
+    nxt_line   :- nxt_tok.line
+    nxt2_tok   :- tokens.at(pos + 2) ?? Token(kind: "eof", value: "", line: line_num, col: 1)
+    nxt2_kind  :- nxt2_tok.kind
+    nxt2_value :- nxt2_tok.value
+    nxt3_tok   :- tokens.at(pos + 3) ?? Token(kind: "eof", value: "", line: line_num, col: 1)
+    nxt3_kind  :- nxt3_tok.kind
+    nxt3_value :- nxt3_tok.value
+    nxt4_tok   :- tokens.at(pos + 4) ?? Token(kind: "eof", value: "", line: line_num, col: 1)
+    nxt4_kind  :- nxt4_tok.kind
+    nxt4_value :- nxt4_tok.value
+
+    # pr-str of a token value, the way `fail!` prints the got-token.
+    # Layout tokens carry nil, numbers print bare (an overflowed Double
+    # prints `##Inf`), everything else is a quoted string whose body the
+    # lex already holds in pr-str form.
+    cur_layout :- cur_kind == "newline" or cur_kind == "indent" or cur_kind == "dedent" or cur_kind == "eof"
+    cur_pr     :- ||: cur_layout : "nil" ||: cur_kind == "int" : cur_value ||: cur_kind == "float" and cur_value == "Infinity" : "##Inf" ||: cur_kind == "float" : cur_value ||: else : "\"" + cur_value + "\""
+    cur_got    :- " (got :" + cur_kind + " " + cur_pr + " at line " + cur_line.to_string() + ")"
+    nxt_layout :- nxt_kind == "newline" or nxt_kind == "indent" or nxt_kind == "dedent" or nxt_kind == "eof"
+    nxt_pr     :- ||: nxt_layout : "nil" ||: nxt_kind == "int" : nxt_value ||: nxt_kind == "float" and nxt_value == "Infinity" : "##Inf" ||: nxt_kind == "float" : nxt_value ||: else : "\"" + nxt_value + "\""
+    nxt_got    :- " (got :" + nxt_kind + " " + nxt_pr + " at line " + nxt_line.to_string() + ")"
+
+    cur_is_lparen   :- cur_kind == "punct" and cur_value == "("
+    cur_is_rparen   :- cur_kind == "punct" and cur_value == ")"
+    cur_is_lbracket :- cur_kind == "punct" and cur_value == "["
+    cur_is_rbracket :- cur_kind == "punct" and cur_value == "]"
+    cur_is_lbrace   :- cur_kind == "punct" and cur_value == "{"
+    cur_is_dot      :- cur_kind == "punct" and cur_value == "."
+    cur_is_comma    :- cur_kind == "punct" and cur_value == ","
+    cur_is_colon    :- cur_kind == "punct" and cur_value == ":"
+    cur_is_emit     :- cur_kind == "glyph" and cur_value == ":>"
+    cur_is_sync     :- cur_kind == "glyph" and cur_value == "|>"
+    cur_is_multi    :- cur_kind == "glyph" and cur_value == "||:"
+    cur_is_neg      :- cur_kind == "glyph" and cur_value == "-"
+    cur_is_plus     :- cur_kind == "glyph" and cur_value == "+"
+    cur_is_not      :- cur_kind == "kw" and cur_value == "not"
+    cur_is_else     :- cur_kind == "kw" and cur_value == "else"
+    nxt_is_fat      :- nxt_kind == "glyph" and nxt_value == "=>"
+    nxt_is_rparen   :- nxt_kind == "punct" and nxt_value == ")"
+    nxt_is_rbracket :- nxt_kind == "punct" and nxt_value == "]"
+    nxt_is_colon    :- nxt_kind == "punct" and nxt_value == ":"
+    nxt_is_name     :- nxt_kind == "ident" or nxt_kind == "kw"
+    nxt2_is_fat     :- nxt2_kind == "glyph" and nxt2_value == "=>"
+
+    # glyph-precedence plus binary-glyph?. 0 means not a binary op.
+    cur_is_opk :- cur_kind == "glyph" or cur_kind == "kw"
+    cur_p1     :- cur_value == "or" or cur_value == "??"
+    cur_p3a    :- cur_value == "==" or cur_value == "!=" or cur_value == "<=" or cur_value == ">="
+    cur_p3b    :- cur_value == "<" or cur_value == ">" or cur_value == "is" or cur_value == "in"
+    cur_p4     :- cur_value == "+" or cur_value == "-"
+    cur_p5     :- cur_value == "*" or cur_value == "/" or cur_value == "%"
+    op_prec    :- ||: not cur_is_opk : 0 ||: cur_p1 : 1 ||: cur_value == "and" : 2 ||: cur_p3a or cur_p3b : 3 ||: cur_p4 : 4 ||: cur_p5 : 5 ||: else : 0
+
+    # parse-primary dispatch classes.
+    cur_is_lit   :- cur_kind == "int" or cur_kind == "float" or cur_kind == "string" or cur_kind == "char"
+    kw_atom      :- cur_kind == "kw" and (cur_value == "self" or cur_value == "nil" or cur_value == "true" or cur_value == "false")
+    prim_atom    :- cur_is_lit or kw_atom or (cur_kind == "ident" and not nxt_is_fat)
+    atom_ser     :- ||: cur_kind == "int" : "(int " + cur_value + ")" ||: cur_kind == "float" : "(float " + cur_value + ")" ||: cur_kind == "string" : "(string \"" + cur_value + "\")" ||: cur_kind == "char" : "(char \"" + cur_value + "\")" ||: cur_kind == "ident" : "(ident " + cur_value + ")" ||: cur_value == "self" : "(self)" ||: cur_value == "nil" : "(nil)" ||: else : "(bool " + cur_value + ")"
+    prim_lambda1 :- cur_kind == "ident" and nxt_is_fat
+    prim_lambda0 :- cur_is_lparen and nxt_is_rparen and nxt2_is_fat
+    prim_paren   :- cur_is_lparen and not (nxt_is_rparen and nxt2_is_fat)
+    prim_list0   :- cur_is_lbracket and nxt_is_rbracket
+    prim_list    :- cur_is_lbracket and not nxt_is_rbracket
+    prim_special :- prim_lambda1 or prim_lambda0 or prim_paren or prim_list0 or prim_list or cur_is_multi
+    prim_oos     :- (cur_kind == "kw" and (cur_value == "do" or cur_value == "raise")) or cur_is_emit or cur_is_sync
+    prim_err     :- not prim_atom and not prim_special and not prim_oos
+    prim_err_text :- ||: cur_kind == "kw" and cur_value == "if" and nxt_kind == "kw" and nxt_value == "let" : "expression-position `if let ...` is not supported. `if let` ships at statement position only (F39 L7). Rewrite as an outer `if let` statement." ||: cur_kind == "kw" and cur_value == "if" : "expression-position `if <cond>: <then> else: <else>` retired 2026-08-31 (R6). Rewrite as `||: <cond> : <then> ||: else : <else>` — multi-arm dispatch is the sole expression-position branching form at v1.0. For if/else chains use `||: c1 : b1 ||: c2 : b2 ||: else : b3`. See decisions-frozen-2026-08-31-glyphs.md §R6." ||: cur_kind == "kw" : "unexpected keyword " + cur_value + " in expression" ||: cur_kind == "punct" : "unexpected punctuation in expression" ||: cur_kind == "glyph" : "unexpected glyph `" + cur_value + "` in expression" ||: cur_kind == "newline" : "expected an expression, got a newline. Corvid does not continue expressions across newlines outside brackets. Common causes: (a) `let x: T =` followed by a newline before the RHS — keep the RHS on the same line as `=`, or hoist the value into an atom observation and read it here as `self.<obs>`; (b) a `||:` chain starting on its own line — hoist it into an observation body (`v :- Type = (||: g1 : b1 ||: else : b2)`) rather than embedding as a bare RHS." ||: else : "expected an expression"
+
+    # looks-like-msg-payload-parens? at a `(`. The payload path itself
+    # is out of port scope, the probe keeps a call from claiming it.
+    mp_named    :- nxt_kind == "ident" and nxt2_kind == "punct" and nxt2_value == ":"
+    mp_bare     :- nxt3_kind == "punct" and (nxt3_value == ")" or nxt3_value == ",")
+    mp_upper    :- nxt3_kind == "ident" and nxt3_value.code_at(0) >= 65 and nxt3_value.code_at(0) <= 90
+    mp_after_ok :- not (nxt4_kind == "punct" and (nxt4_value == "(" or nxt4_value == "."))
+    msg_payload :- mp_named and (mp_bare or (mp_upper and mp_after_ok))
+    pf_any      :- cur_is_dot or cur_is_lparen or cur_is_lbracket or cur_is_lbrace or cur_is_emit or cur_is_sync
+
+    # variant-pattern-start? at the token after `is`.
+    variant_start :- (nxt_kind == "punct" and nxt_value == "." and nxt2_kind == "ident") or (nxt_kind == "ident" and nxt2_kind == "punct" and nxt2_value == "." and nxt3_kind == "ident")
+
+    # Frame stack. `top` is the frame at `depth - 1`.
+    top      :- frames.at((depth - 1).max(0)) ?? Frame(kind: "none", prec: 0, op: "", ser: "", ekind: "other", ops: "", acc: "", aux: "")
+    top_kind :- ||: depth == 0 : "none" ||: else : top.kind
+    fresh_binop :- Frame(kind: "binop", prec: 1, op: "", ser: "", ekind: "other", ops: "", acc: "", aux: "")
+    mk(k: String!, s: String!) :- Frame
+        Frame(kind: k, prec: 0, op: "", ser: s, ekind: "other", ops: "", acc: "", aux: "")
+    retop(nop: String!, nser: String!, nek: String!, nops: String!, nacc: String!, naux: String!) :- Frame
+        Frame(kind: top.kind, prec: top.prec, op: nop, ser: nser, ekind: nek, ops: nops, acc: nacc, aux: naux)
+
+    # parse-binop loop test and the chained-cmp combine.
+    bl_takes      :- op_prec > 0 and op_prec >= top.prec
+    bl_variant    :- cur_value == "is" and variant_start
+    top_op_cmp    :- top.op == "<" or top.op == "<=" or top.op == ">" or top.op == ">="
+    lhs_chainable :- top.ekind == "cmp" or top.ekind == "chain"
+    comb_kind     :- ||: top_op_cmp and lhs_chainable : "chain" ||: top_op_cmp : "cmp" ||: else : "other"
+    comb_ops      :- ||: comb_kind == "chain" : top.ops + " " + top.op ||: else : top.op
+    comb_args     :- ||: comb_kind == "chain" : top.acc + " " + v_ser ||: else : top.ser + " " + v_ser
+    comb_ser      :- ||: comb_kind == "chain" : "(chained-cmp (" + comb_ops + ") " + comb_args + ")" ||: else : "(binop " + top.op + " " + top.ser + " " + v_ser + ")"
+    arg_ser       :- ||: top.aux == "" : "(pos " + v_ser + ")" ||: else : "(named " + top.aux + " " + v_ser + ")"
+    arm_ser       :- " (arm " + top.aux + " " + v_ser + ")"
+
+    -> lex_start
+        then:
+            source => args.get_or(1, "").replace("\\n", "\n").replace("\\N", "\\n")
+            self :> step
+
+    -> parsing
+        then: self :> begin
+
+    -> end
+        then:
+            let final: String! = ||: error : "error|" + error_msg ||: else : v_ser
+            console.write(final)
+
+
+    lex_start <: step -> lex_start
+        |: at_src_end and not error and ends_open_line
+        then:
+            tokens => ||: eol_newline : tokens.append(Token(kind: "newline", value: "", line: line_num, col: 1)) ||: else : tokens
+            line_num => line_num + 1
+            col_num => 1
+            at_line_start => true
+            self :> step
+
+    lex_start <: step -> lex_start
+        |: at_src_end and not error and not ends_open_line
+        then:
+            self :> emit_trailing_dedents
+
+    lex_start <: step -> lex_start
+        |: not at_src_end and at_line_start
+        then:
+            self :> measure_indent
+
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and is_sp
+        then:
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> step
+
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and is_nl
+        then:
+            tokens => ||: eol_newline : tokens.append(Token(kind: "newline", value: "", line: line_num, col: 1)) ||: else : tokens
+            line_is_cont => bracket_depth > 0
+            line_num => line_num + 1
+            col_num => 1
+            sc => sc + 1
+            at_line_start => true
+            line_indent => 0
+            self :> step
+
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and is_comma
+        then:
+            tokens => tokens.append(Token(kind: "punct", value: ",", line: line_num, col: col_num))
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> step
+
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and is_colon and not is_col_dash and not is_col_gt
+        then:
+            tokens => tokens.append(Token(kind: "punct", value: ":", line: line_num, col: col_num))
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> step
+
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and is_lparen
+        then:
+            tokens => tokens.append(Token(kind: "punct", value: "(", line: line_num, col: col_num))
+            bracket_depth => bracket_depth + 1
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> step
+
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and is_rparen
+        then:
+            tokens => tokens.append(Token(kind: "punct", value: ")", line: line_num, col: col_num))
+            bracket_depth => bracket_depth - 1
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> step
+
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and is_bang and not is_bang_eq
+        then:
+            tokens => tokens.append(Token(kind: "punct", value: "!", line: line_num, col: col_num))
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> step
+
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and is_q and not is_double_q
+        then:
+            tokens => tokens.append(Token(kind: "punct", value: "?", line: line_num, col: col_num))
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> step
+
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and is_any_multi
+        then:
+            let two: String! = source.substring(sc, 2)
+            tokens => tokens.append(Token(kind: "glyph", value: two, line: line_num, col: col_num))
+            sc => sc + 2
+            col_num => col_num + 2
+            self :> step
+
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and is_eq and not is_fat_arrow and not is_eq_eq
+        then:
+            tokens => tokens.append(Token(kind: "glyph", value: "=", line: line_num, col: col_num))
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> step
+
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and is_dash and not is_arrow
+        then:
+            tokens => tokens.append(Token(kind: "glyph", value: "-", line: line_num, col: col_num))
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> step
+
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and is_lt and not is_lt_col and not is_lte and not is_lt_pipe
+        then:
+            tokens => tokens.append(Token(kind: "glyph", value: "<", line: line_num, col: col_num))
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> step
+
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and is_gt and not is_gte
+        then:
+            tokens => tokens.append(Token(kind: "glyph", value: ">", line: line_num, col: col_num))
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> step
+
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and is_pipe and not is_pipe_col and not is_pipe_gt and not is_dpipe_col
+        then:
+            tokens => tokens.append(Token(kind: "glyph", value: "|", line: line_num, col: col_num))
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> step
+
+    # Chapter-26 arms. Brackets move `bracket_depth`, the rest are
+    # plain one-char tokens. `||:` is the one three-char glyph.
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and is_dpipe_col
+        then:
+            tokens => tokens.append(Token(kind: "glyph", value: "||:", line: line_num, col: col_num))
+            sc => sc + 3
+            col_num => col_num + 3
+            self :> step
+
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and is_lbracket
+        then:
+            tokens => tokens.append(Token(kind: "punct", value: "[", line: line_num, col: col_num))
+            bracket_depth => bracket_depth + 1
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> step
+
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and is_rbracket
+        then:
+            tokens => tokens.append(Token(kind: "punct", value: "]", line: line_num, col: col_num))
+            bracket_depth => bracket_depth - 1
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> step
+
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and is_lbrace
+        then:
+            tokens => tokens.append(Token(kind: "punct", value: "{", line: line_num, col: col_num))
+            bracket_depth => bracket_depth + 1
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> step
+
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and is_rbrace
+        then:
+            tokens => tokens.append(Token(kind: "punct", value: "}", line: line_num, col: col_num))
+            bracket_depth => bracket_depth - 1
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> step
+
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and is_dot
+        then:
+            tokens => tokens.append(Token(kind: "punct", value: ".", line: line_num, col: col_num))
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> step
+
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and is_semi
+        then:
+            tokens => tokens.append(Token(kind: "punct", value: ";", line: line_num, col: col_num))
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> step
+
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and is_plus
+        then:
+            tokens => tokens.append(Token(kind: "glyph", value: "+", line: line_num, col: col_num))
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> step
+
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and is_star and not is_dstar
+        then:
+            tokens => tokens.append(Token(kind: "glyph", value: "*", line: line_num, col: col_num))
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> step
+
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and is_slash and not is_dslash
+        then:
+            tokens => tokens.append(Token(kind: "glyph", value: "/", line: line_num, col: col_num))
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> step
+
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and is_pct
+        then:
+            tokens => tokens.append(Token(kind: "glyph", value: "%", line: line_num, col: col_num))
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> step
+
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and is_amp
+        then:
+            tokens => tokens.append(Token(kind: "glyph", value: "&", line: line_num, col: col_num))
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> step
+
+    # `#` ends the line's tokens. The newline itself stays for the
+    # newline arm.
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and is_hash
+        then:
+            sc => sc + line_rest
+            self :> step
+
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and is_at
+        then:
+            error => true
+            sc => source.length()
+            error_msg => "annotation grammar (`@name(...)`) is retired at v1.0 (annotation-grammar-retirement 2026-08-30). Plugin manifest → `def plugin:` block (spec §7.2). Metadata (kind) → body-shape inference (§3.3). Deprecation → comment / user convention."
+            self :> step
+
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and is_id_start
+        then:
+            word_acc => ""
+            tok_start_col => col_num
+            self :> scan_word
+
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and is_digit
+        then:
+            tok_start_col => col_num
+            num_digs => ""
+            num_last_digit => false
+            num_mode => "int"
+            num_base => 10
+            num_prefix => ""
+            num_int => ""
+            num_frac => ""
+            num_exp => ""
+            num_has_dot => false
+            num_has_exp => false
+            num_exp_sign => ""
+            num_kind => "int"
+            num_val => 0
+            num_sig => ""
+            num_sig_nz => 0
+            num_int_sig => 0
+            num_frac_lead => 0
+            num_exp_val => 0
+            self :> num_start
+
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and is_dquote
+        then:
+            word_acc => ""
+            tok_start_col => col_num
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> scan_str
+
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and is_squote
+        then:
+            word_acc => ""
+            tok_start_col => col_num
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> scan_char_body
+
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and not lex_known
+        then:
+            error => true
+            sc => source.length()
+            error_msg => ||: srccur > 32 and srccur < 127 : "unexpected character: \\" + source.substring(sc, 1) ||: else : "lex: unexpected char"
+            self :> step
+
+    lex_start <: step -> end
+        |: error
+
+    lex_start <: measure_indent -> lex_start
+        |: not at_src_end and is_sp
+        then:
+            line_indent => line_indent + 1
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> measure_indent
+
+    lex_start <: measure_indent -> lex_start
+        |: not at_src_end and is_nl
+        then:
+            line_num => line_num + 1
+            col_num => 1
+            sc => sc + 1
+            line_indent => 0
+            self :> measure_indent
+
+    lex_start <: measure_indent -> lex_start
+        |: at_src_end
+        then: self :> step
+
+    # Chapter 26. A comment-only line is blank. A continuation line
+    # skips the indent comparison entirely.
+    lex_start <: measure_indent -> lex_start
+        |: not at_src_end and is_hash
+        then:
+            sc => sc + line_rest
+            self :> measure_indent
+
+    lex_start <: measure_indent -> lex_start
+        |: not at_src_end and not is_sp and not is_nl and not is_hash and not line_is_cont
+        then:
+            at_line_start => false
+            col_num => 1
+            self :> adjust_indent
+
+    lex_start <: measure_indent -> lex_start
+        |: not at_src_end and not is_sp and not is_nl and not is_hash and line_is_cont
+        then:
+            at_line_start => false
+            col_num => 1
+            self :> step
+
+    lex_start <: adjust_indent -> lex_start
+        |: line_indent > top_indent
+        then:
+            tokens => tokens.append(Token(kind: "indent", value: "", line: line_num, col: 1))
+            indent_stack => indent_stack.append(line_indent)
+            self :> step
+
+    lex_start <: adjust_indent -> lex_start
+        |: line_indent < top_indent
+        then:
+            tokens => tokens.append(Token(kind: "dedent", value: "", line: line_num, col: 1))
+            indent_stack => indent_stack.filter(x => x < top_indent)
+            self :> adjust_indent
+
+    lex_start <: adjust_indent -> lex_start
+        |: line_indent == top_indent
+        then: self :> step
+
+    lex_start <: emit_trailing_dedents -> parsing
+        |: indent_stack.count() <= 1
+        then:
+            tokens => tokens.append(Token(kind: "eof", value: "", line: line_num, col: 1))
+
+    lex_start <: emit_trailing_dedents -> lex_start
+        |: indent_stack.count() > 1
+        then:
+            tokens => tokens.append(Token(kind: "dedent", value: "", line: line_num, col: 1))
+            indent_stack => indent_stack.filter(x => x < top_indent)
+            self :> emit_trailing_dedents
+
+    lex_start <: scan_word -> lex_start
+        |: not at_src_end and is_id_cont
+        then:
+            word_acc => word_acc + source.substring(sc, 1)
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> scan_word
+
+    lex_start <: scan_word -> lex_start
+        |: at_src_end or not is_id_cont
+        then:
+            let kind: String! = ||: reserved.contains(word_acc) : "kw" ||: else : "ident"
+            tokens => tokens.append(Token(kind: kind, value: word_acc, line: line_num, col: tok_start_col))
+            self :> step
+
+    # Chapter-25 — scan-number port. `num_start` picks the base the way
+    # Clojure's scan-number does (prefix `0x` / `0b` / `0o`, C-octal
+    # rejection, else decimal), `scan_digs` is scan-digits with its
+    # three `_` errors, `digs_done` routes on `num_mode` to the next
+    # part (frac, signed exponent, hex frac), and `num_suffix` /
+    # `scan_sfx` port reject-unit-suffix!. Every error arm parks `sc` at
+    # end of source (chapter-23 rule).
+    lex_start <: num_start -> lex_start
+        |: srccur == 48 and (srcnext == 120 or srcnext == 88)
+        then:
+            num_base => 16
+            num_prefix => "0x"
+            num_mode => "based"
+            sc => sc + 2
+            col_num => col_num + 2
+            self :> scan_digs
+
+    lex_start <: num_start -> lex_start
+        |: srccur == 48 and (srcnext == 98 or srcnext == 66)
+        then:
+            num_base => 2
+            num_prefix => "0b"
+            num_mode => "based"
+            sc => sc + 2
+            col_num => col_num + 2
+            self :> scan_digs
+
+    lex_start <: num_start -> lex_start
+        |: srccur == 48 and (srcnext == 111 or srcnext == 79)
+        then:
+            num_base => 8
+            num_prefix => "0o"
+            num_mode => "based"
+            sc => sc + 2
+            col_num => col_num + 2
+            self :> scan_digs
+
+    lex_start <: num_start -> lex_start
+        |: srccur == 48 and srcnext >= 48 and srcnext <= 57
+        then:
+            error => true
+            sc => source.length()
+            error_msg => "leading-zero integer `" + lz_snip + "…` — cxc rejects C's `017` octal form as ambiguous. Use `0o17` for octal or drop the leading zero for decimal. See spec §2.7.1."
+            self :> step
+
+    lex_start <: num_start -> lex_start
+        |: not (srccur == 48 and (srcnext == 120 or srcnext == 88 or srcnext == 98 or srcnext == 66 or srcnext == 111 or srcnext == 79 or (srcnext >= 48 and srcnext <= 57)))
+        then: self :> scan_digs
+
+    lex_start <: scan_digs -> lex_start
+        |: not num_run_end and num_digit_val >= 0
+        then:
+            let ch: String! = source.substring(sc, 1)
+            let sig_mode: Bool! = num_mode == "int" or num_mode == "frac"
+            let skip: Bool! = num_sig.length() == 0 and srccur == 48
+            num_digs => num_digs + ch
+            num_last_digit => true
+            num_sig => ||: sig_mode and not skip : num_sig + ch ||: else : num_sig
+            num_sig_nz => ||: sig_mode and srccur != 48 : num_sig.length() + 1 ||: else : num_sig_nz
+            num_int_sig => ||: num_mode == "int" and not skip : num_int_sig + 1 ||: else : num_int_sig
+            num_frac_lead => ||: num_mode == "frac" and skip : num_frac_lead + 1 ||: else : num_frac_lead
+            num_exp_val => ||: num_mode == "exp" : (num_exp_val * 10 + srccur - 48).min(1000000) ||: else : num_exp_val
+            num_val => ||: num_mode == "based" : num_val * num_base + num_digit_val ||: else : num_val
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> scan_digs
+
+    lex_start <: scan_digs -> lex_start
+        |: not num_run_end and num_digit_val < 0 and is_us and num_last_digit
+        then:
+            num_last_digit => false
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> scan_digs
+
+    lex_start <: scan_digs -> lex_start
+        |: not num_run_end and num_digit_val < 0 and is_us and not num_last_digit
+        then:
+            error => true
+            sc => source.length()
+            error_msg => "`_` in numeric literal must follow a digit"
+            self :> step
+
+    lex_start <: scan_digs -> lex_start
+        |: num_run_end and num_digs.length() > 0 and not num_last_digit
+        then:
+            error => true
+            sc => source.length()
+            error_msg => "numeric literal ends with `_`"
+            self :> step
+
+    lex_start <: scan_digs -> lex_start
+        |: not num_run_end and num_digit_val < 0 and not is_us and num_digs.length() > 0 and not num_last_digit
+        then:
+            error => true
+            sc => source.length()
+            error_msg => "numeric literal has trailing `_`"
+            self :> step
+
+    lex_start <: scan_digs -> lex_start
+        |: (num_run_end or (num_digit_val < 0 and not is_us)) and (num_digs.length() == 0 or num_last_digit)
+        then: self :> digs_done
+
+    # Int part done. `.` plus a digit opens the frac run, `e` / `E` the
+    # exponent, anything else ends an int.
+    lex_start <: digs_done -> lex_start
+        |: num_mode == "int" and is_dot and srcnext_is_digit
+        then:
+            num_int => num_digs
+            num_has_dot => true
+            num_digs => ""
+            num_last_digit => false
+            num_mode => "frac"
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> scan_digs
+
+    lex_start <: digs_done -> lex_start
+        |: num_mode == "int" and not (is_dot and srcnext_is_digit) and is_exp_marker
+        then:
+            num_int => num_digs
+            num_has_exp => true
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> scan_exp_sign
+
+    lex_start <: digs_done -> lex_start
+        |: num_mode == "int" and not (is_dot and srcnext_is_digit) and not is_exp_marker
+        then:
+            num_int => num_digs
+            self :> num_suffix
+
+    lex_start <: digs_done -> lex_start
+        |: num_mode == "frac" and is_exp_marker
+        then:
+            num_frac => num_digs
+            num_has_exp => true
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> scan_exp_sign
+
+    lex_start <: digs_done -> lex_start
+        |: num_mode == "frac" and not is_exp_marker
+        then:
+            num_frac => num_digs
+            num_kind => "float"
+            self :> num_suffix
+
+    lex_start <: digs_done -> lex_start
+        |: num_mode == "exp" and num_digs.length() == 0
+        then:
+            error => true
+            sc => source.length()
+            error_msg => "exponent requires digits after `e`/`E`/`p`/`P`"
+            self :> step
+
+    lex_start <: digs_done -> lex_start
+        |: num_mode == "exp" and num_digs.length() > 0
+        then:
+            num_exp => num_digs
+            num_kind => "float"
+            self :> num_suffix
+
+    # Based ints. A hex `.` plus hex digit opens the hex-float frac run.
+    # The C99 `p` exponent form itself is out of port scope (its value
+    # is binary and needs exact rendering), so it raises a port-only
+    # message the corpus never carries.
+    lex_start <: digs_done -> lex_start
+        |: num_mode == "based" and num_base == 16 and is_dot and next_hex >= 0
+        then:
+            num_digs => ""
+            num_last_digit => false
+            num_mode => "hexfrac"
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> scan_digs
+
+    lex_start <: digs_done -> lex_start
+        |: (num_mode == "hexfrac" or (num_mode == "based" and num_base == 16 and not (is_dot and next_hex >= 0))) and is_p_marker
+        then:
+            error => true
+            sc => source.length()
+            error_msg => "lex: hex-float literal out of port scope"
+            self :> step
+
+    lex_start <: digs_done -> lex_start
+        |: num_mode == "hexfrac" and not is_p_marker
+        then:
+            error => true
+            sc => source.length()
+            error_msg => "hex-float literal requires the `p`/`P` binary exponent (C99 form; e.g. `0x1.8p+1`)"
+            self :> step
+
+    lex_start <: digs_done -> lex_start
+        |: num_mode == "based" and not (num_base == 16 and ((is_dot and next_hex >= 0) or is_p_marker)) and num_digs.length() == 0
+        then:
+            error => true
+            sc => source.length()
+            error_msg => "empty numeric literal after `" + num_prefix + "`/`" + num_prefix.uppercase() + "` prefix"
+            self :> step
+
+    lex_start <: digs_done -> lex_start
+        |: num_mode == "based" and not (num_base == 16 and ((is_dot and next_hex >= 0) or is_p_marker)) and num_digs.length() > 0
+        then: self :> num_suffix
+
+    lex_start <: scan_exp_sign -> lex_start
+        |: srccur == 43 or srccur == 45
+        then:
+            num_exp_sign => source.substring(sc, 1)
+            num_digs => ""
+            num_last_digit => false
+            num_mode => "exp"
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> scan_digs
+
+    lex_start <: scan_exp_sign -> lex_start
+        |: not (srccur == 43 or srccur == 45)
+        then:
+            num_digs => ""
+            num_last_digit => false
+            num_mode => "exp"
+            self :> scan_digs
+
+    # reject-unit-suffix!. A letter or `_` right after the literal is a
+    # retired F5 unit suffix. The message quotes the separator-stripped
+    # literal plus the whole identifier-like run.
+    lex_start <: num_suffix -> lex_start
+        |: not num_run_end and (is_letter or is_us)
+        then:
+            sfx_acc => ""
+            sfx_col => cur_col
+            self :> scan_sfx
+
+    lex_start <: num_suffix -> lex_start
+        |: num_run_end or not (is_letter or is_us)
+        then:
+            tokens => tokens.append(Token(kind: num_kind, value: num_value_text, line: line_num, col: tok_start_col))
+            self :> step
+
+    lex_start <: scan_sfx -> lex_start
+        |: not num_run_end and is_id_cont
+        then:
+            sfx_acc => sfx_acc + source.substring(sc, 1)
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> scan_sfx
+
+    lex_start <: scan_sfx -> lex_start
+        |: num_run_end or not is_id_cont
+        then:
+            error => true
+            sc => source.length()
+            error_msg => "numeric literal with unit suffix at line " + line_num.to_string() + ", col " + sfx_col.to_string() + ": `" + num_str + sfx_acc + "` — unit suffixes are not part of v1 (spec §2.7.1). Use the type constructor instead, e.g. `Duration(millis: " + num_str + ")`."
+            self :> step
+
+    # Chapter-23 — string body. Plain chars go through `enc` so a raw
+    # tab or other pr-str-escaped char prints the way the oracle does.
+    lex_start <: scan_str -> lex_start
+        |: not at_src_end and not is_dquote and not is_nl and not is_bslash
+        then:
+            word_acc => word_acc + self.enc(srccur)
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> scan_str
+
+    lex_start <: scan_str -> lex_start
+        |: not at_src_end and is_bslash
+        then:
+            esc_mode => "str"
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> scan_esc
+
+    lex_start <: scan_str -> lex_start
+        |: not at_src_end and is_dquote
+        then:
+            tokens => tokens.append(Token(kind: "string", value: word_acc, line: line_num, col: tok_start_col))
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> step
+
+    lex_start <: scan_str -> lex_start
+        |: at_src_end or is_nl
+        then:
+            error => true
+            sc => source.length()
+            error_msg => "unterminated string literal"
+            self :> step
+
+    # Chapter-23 — shared escape phases. Entered with `sc` one past the
+    # backslash. Clojure scans one physical line at a time, so a
+    # physical newline counts as end of input for every escape arm.
+    lex_start <: scan_esc -> lex_start
+        |: at_src_end or is_nl
+        then:
+            error => true
+            sc => source.length()
+            error_msg => ||: esc_mode == "str" : "trailing backslash in string" ||: else : "trailing backslash in char literal"
+            self :> step
+
+    lex_start <: scan_esc -> lex_start
+        |: not at_src_end and simple_esc_code >= 0
+        then:
+            word_acc => word_acc + self.enc(simple_esc_code)
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> esc_done
+
+    lex_start <: scan_esc -> lex_start
+        |: not at_src_end and is_esc_x
+        then:
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> scan_hex_byte
+
+    lex_start <: scan_esc -> lex_start
+        |: not at_src_end and is_esc_u
+        then:
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> scan_uni_open
+
+    lex_start <: scan_esc -> lex_start
+        |: not at_src_end and not is_nl and simple_esc_code < 0 and not is_esc_x and not is_esc_u
+        then:
+            error => true
+            sc => source.length()
+            error_msg => "unknown escape sequence `\\" + source.substring(sc, 1) + "` — legal escapes: \\n \\t \\r \\\\ \\\" \\' \\0 \\a \\b \\f \\v \\xNN \\u{...} (spec §2.7.1)"
+            self :> step
+
+    # `\xNN`. Exactly two hex digits, both read through the `cur_hex`
+    # / `next_hex` lookahead so the arm consumes them in one tick.
+    lex_start <: scan_hex_byte -> lex_start
+        |: cur_hex >= 0 and next_hex >= 0
+        then:
+            word_acc => word_acc + self.enc(cur_hex * 16 + next_hex)
+            sc => sc + 2
+            col_num => col_num + 2
+            self :> esc_done
+
+    lex_start <: scan_hex_byte -> lex_start
+        |: cur_hex < 0 or next_hex < 0
+        then:
+            error => true
+            sc => source.length()
+            error_msg => "`\\xNN` escape requires exactly two hex digits"
+            self :> step
+
+    # `\u{HEX+}`. Clojure reads every hex digit up to `}` first, then
+    # checks the 1 to 6 digit count, then the U+10FFFF ceiling. The arm
+    # order below mirrors that error precedence.
+    lex_start <: scan_uni_open -> lex_start
+        |: not at_src_end and is_lbrace
+        then:
+            esc_hex => ""
+            esc_val => 0
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> scan_uni_body
+
+    lex_start <: scan_uni_open -> lex_start
+        |: at_src_end or not is_lbrace
+        then:
+            error => true
+            sc => source.length()
+            error_msg => "`\\u` escape requires `{...}` (e.g. `\\u{1F600}`)"
+            self :> step
+
+    lex_start <: scan_uni_body -> lex_start
+        |: at_src_end or is_nl
+        then:
+            error => true
+            sc => source.length()
+            error_msg => "unterminated `\\u{...}` escape"
+            self :> step
+
+    lex_start <: scan_uni_body -> lex_start
+        |: not at_src_end and cur_hex >= 0
+        then:
+            esc_hex => esc_hex + source.substring(sc, 1)
+            esc_val => ||: esc_hex.length() >= 7 : esc_val ||: else : esc_val * 16 + cur_hex
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> scan_uni_body
+
+    lex_start <: scan_uni_body -> lex_start
+        |: not at_src_end and not is_nl and cur_hex < 0 and not is_rbrace
+        then:
+            error => true
+            sc => source.length()
+            error_msg => "`\\u{...}` escape body must be hex digits"
+            self :> step
+
+    lex_start <: scan_uni_body -> lex_start
+        |: not at_src_end and is_rbrace and not uni_len_ok
+        then:
+            error => true
+            sc => source.length()
+            error_msg => "`\\u{...}` escape requires 1-6 hex digits"
+            self :> step
+
+    lex_start <: scan_uni_body -> lex_start
+        |: not at_src_end and is_rbrace and uni_len_ok and esc_val > 1114111
+        then:
+            error => true
+            sc => source.length()
+            error_msg => "Unicode escape U+" + esc_hex + " exceeds U+10FFFF"
+            self :> step
+
+    lex_start <: scan_uni_body -> lex_start
+        |: not at_src_end and is_rbrace and uni_len_ok and esc_val <= 1114111
+        then:
+            word_acc => word_acc + self.enc(esc_val)
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> esc_done
+
+    # Return-mode split back to the literal that opened the escape.
+    lex_start <: esc_done -> lex_start
+        |: esc_mode == "str"
+        then: self :> scan_str
+
+    lex_start <: esc_done -> lex_start
+        |: esc_mode != "str"
+        then: self :> scan_char_close
+
+    # Chapter-23 — char body. Escape bodies share the string escape
+    # phases via `esc_mode => "char"`.
+    lex_start <: scan_char_body -> lex_start
+        |: not at_src_end and is_bslash
+        then:
+            esc_mode => "char"
+            char_esc => true
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> scan_esc
+
+    lex_start <: scan_char_body -> lex_start
+        |: not at_src_end and is_squote
+        then:
+            error => true
+            sc => source.length()
+            error_msg => "empty char literal `''` — need one character"
+            self :> step
+
+    lex_start <: scan_char_body -> lex_start
+        |: not at_src_end and not is_squote and not is_nl and not is_bslash
+        then:
+            word_acc => word_acc + self.enc(srccur)
+            char_esc => false
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> scan_char_close
+
+    lex_start <: scan_char_body -> lex_start
+        |: at_src_end or is_nl
+        then:
+            error => true
+            sc => source.length()
+            error_msg => "unterminated char literal"
+            self :> step
+
+    lex_start <: scan_char_close -> lex_start
+        |: not at_src_end and is_squote
+        then:
+            tokens => tokens.append(Token(kind: "char", value: word_acc, line: line_num, col: tok_start_col))
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> step
+
+    lex_start <: scan_char_close -> lex_start
+        |: at_src_end or not is_squote
+        then:
+            error => true
+            sc => source.length()
+            error_msg => ||: char_esc : "unterminated char literal — expected `'`" ||: else : "char literal must contain exactly one character"
+            self :> step
+
+    # ---------------------------------------------------------------
+    # Chapter-26 parser. Every error arm sets `error`, the full message,
+    # and sends `halt`, whose guard-only arm exits to `end`.
+    # ---------------------------------------------------------------
+
+    parsing <: halt -> end
+        |: error
+
+    # parse-expression prologue. skip-newlines, then the empty check.
+    parsing <: begin -> parsing
+        |: cur_kind == "newline"
+        then:
+            pos => pos + 1
+            self :> begin
+
+    parsing <: begin -> parsing
+        |: cur_kind == "eof"
+        then:
+            error => true
+            error_msg => "parse-expression: source is empty"
+            self :> halt
+
+    parsing <: begin -> parsing
+        |: cur_kind != "newline" and cur_kind != "eof"
+        then: self :> expr_start
+
+    # parse-expr. A fresh parse-binop call at min-prec 1.
+    parsing <: expr_start -> parsing
+        |: not error
+        then:
+            frames => frames.slice(0, depth).append(fresh_binop)
+            depth => depth + 1
+            self :> unary_start
+
+    # parse-unary. `-` and `not` wrap, unary `+` is dropped.
+    parsing <: unary_start -> parsing
+        |: cur_is_neg
+        then:
+            frames => frames.slice(0, depth).append(self.mk("neg", ""))
+            depth => depth + 1
+            pos => pos + 1
+            self :> unary_start
+
+    parsing <: unary_start -> parsing
+        |: cur_is_not
+        then:
+            frames => frames.slice(0, depth).append(self.mk("not", ""))
+            depth => depth + 1
+            pos => pos + 1
+            self :> unary_start
+
+    parsing <: unary_start -> parsing
+        |: cur_is_plus
+        then:
+            pos => pos + 1
+            self :> unary_start
+
+    parsing <: unary_start -> parsing
+        |: not cur_is_neg and not cur_is_not and not cur_is_plus
+        then: self :> primary
+
+    # parse-primary.
+    parsing <: primary -> parsing
+        |: prim_atom
+        then:
+            v_ser => atom_ser
+            v_kind => "other"
+            pos => pos + 1
+            self :> postfix
+
+    parsing <: primary -> parsing
+        |: prim_lambda1
+        then:
+            frames => frames.slice(0, depth).append(self.mk("lambda", "(" + cur_value + ")"))
+            depth => depth + 1
+            pos => pos + 2
+            self :> lambda_body
+
+    parsing <: primary -> parsing
+        |: prim_lambda0
+        then:
+            frames => frames.slice(0, depth).append(self.mk("lambda", "()"))
+            depth => depth + 1
+            pos => pos + 3
+            self :> lambda_body
+
+    parsing <: primary -> parsing
+        |: prim_paren
+        then:
+            frames => frames.slice(0, depth).append(self.mk("paren", ""))
+            depth => depth + 1
+            pos => pos + 1
+            self :> expr_start
+
+    parsing <: primary -> parsing
+        |: prim_list0
+        then:
+            v_ser => "(list)"
+            v_kind => "other"
+            pos => pos + 2
+            self :> postfix
+
+    parsing <: primary -> parsing
+        |: prim_list
+        then:
+            frames => frames.slice(0, depth).append(self.mk("list", ""))
+            depth => depth + 1
+            pos => pos + 1
+            self :> expr_start
+
+    parsing <: primary -> parsing
+        |: cur_is_multi
+        then:
+            frames => frames.slice(0, depth).append(self.mk("multi", ""))
+            depth => depth + 1
+            pos => pos + 1
+            self :> arm_head
+
+    parsing <: primary -> parsing
+        |: prim_oos
+        then:
+            error => true
+            error_msg => "port: out of scope: " + cur_value + " in expression"
+            self :> halt
+
+    parsing <: primary -> parsing
+        |: prim_err
+        then:
+            error => true
+            error_msg => "parse error: " + prim_err_text + cur_got
+            self :> halt
+
+    # parse-lambda-body. The `def:` block body is out of port scope.
+    parsing <: lambda_body -> parsing
+        |: cur_kind == "kw" and cur_value == "def" and nxt_is_colon
+        then:
+            error => true
+            error_msg => "port: out of scope: def: lambda body"
+            self :> halt
+
+    parsing <: lambda_body -> parsing
+        |: not (cur_kind == "kw" and cur_value == "def" and nxt_is_colon)
+        then: self :> expr_start
+
+    # parse-postfix.
+    parsing <: postfix -> parsing
+        |: cur_is_dot and nxt_is_name
+        then:
+            v_ser => "(dot " + v_ser + " " + nxt_value + ")"
+            v_kind => "other"
+            pos => pos + 2
+            self :> postfix
+
+    parsing <: postfix -> parsing
+        |: cur_is_dot and not nxt_is_name
+        then:
+            error => true
+            error_msg => "parse error: expected an identifier or method name after `.`" + nxt_got
+            self :> halt
+
+    parsing <: postfix -> parsing
+        |: cur_is_lparen and msg_payload
+        then:
+            error => true
+            error_msg => "port: out of scope: message-shape payload"
+            self :> halt
+
+    parsing <: postfix -> parsing
+        |: cur_is_lparen and not msg_payload and nxt_is_rparen
+        then:
+            v_ser => "(call " + v_ser + ")"
+            v_kind => "other"
+            pos => pos + 2
+            self :> postfix
+
+    parsing <: postfix -> parsing
+        |: cur_is_lparen and not msg_payload and not nxt_is_rparen
+        then:
+            frames => frames.slice(0, depth).append(self.mk("call", v_ser))
+            depth => depth + 1
+            pos => pos + 1
+            self :> arg_start
+
+    parsing <: postfix -> parsing
+        |: cur_is_lbracket
+        then:
+            frames => frames.slice(0, depth).append(self.mk("sub", v_ser))
+            depth => depth + 1
+            pos => pos + 1
+            self :> expr_start
+
+    parsing <: postfix -> parsing
+        |: cur_is_lbrace
+        then:
+            error => true
+            error_msg => "parse error: message-payload braces `{name: Type, ...}` are retired (F70 I5, 2026-08-19). Use parens `(name: Type, ...)` instead — the parser distinguishes payload-parens (contents start with `name: Type`) from call-parens (contents start with a value expression) by content, so there is no ambiguity at the receive site." + cur_got
+            self :> halt
+
+    parsing <: postfix -> parsing
+        |: cur_is_emit
+        then:
+            error => true
+            error_msg => "port: out of scope: :> in expression"
+            self :> halt
+
+    parsing <: postfix -> parsing
+        |: cur_is_sync
+        then:
+            error => true
+            error_msg => "parse error: binary postfix `receiver |> msg(args)` is retired (F70 I6, 2026-08-19). Use prefix form `|> receiver.msg(args)` as a statement — the receiver dots into the message, matching call notation. Prefix normalizes send-site scans and removes the source/receiver-order ambiguity." + cur_got
+            self :> halt
+
+    parsing <: postfix -> parsing
+        |: not pf_any
+        then: self :> unary_done
+
+    # parse-args-parens, one arg. A named arg parks its name in `aux`.
+    parsing <: arg_start -> parsing
+        |: cur_kind == "ident" and nxt_is_colon
+        then:
+            frames => frames.slice(0, depth - 1).append(self.retop(top.op, top.ser, top.ekind, top.ops, top.acc, cur_value))
+            pos => pos + 2
+            self :> expr_start
+
+    parsing <: arg_start -> parsing
+        |: not (cur_kind == "ident" and nxt_is_colon)
+        then:
+            frames => frames.slice(0, depth - 1).append(self.retop(top.op, top.ser, top.ekind, top.ops, top.acc, ""))
+            self :> expr_start
+
+    # End of parse-unary. Pop prefix frames, then hand the operand to
+    # the binop frame as its lhs.
+    parsing <: unary_done -> parsing
+        |: top_kind == "neg"
+        then:
+            v_ser => "(neg " + v_ser + ")"
+            v_kind => "other"
+            depth => depth - 1
+            self :> unary_done
+
+    parsing <: unary_done -> parsing
+        |: top_kind == "not"
+        then:
+            v_ser => "(not " + v_ser + ")"
+            v_kind => "other"
+            depth => depth - 1
+            self :> unary_done
+
+    parsing <: unary_done -> parsing
+        |: top_kind == "binop"
+        then:
+            frames => frames.slice(0, depth - 1).append(self.retop("", v_ser, v_kind, v_ops, v_args, ""))
+            self :> binop_loop
+
+    # parse-binop loop over the top binop frame.
+    parsing <: binop_loop -> parsing
+        |: bl_takes and nxt_kind == "newline"
+        then:
+            error => true
+            error_msg => "parse error: binary operator `" + cur_value + "` at end of line without a right-hand operand. Corvid does NOT continue expressions across newlines outside brackets. Wrap the whole expression in parens to continue on the next line: `(a\n    + b\n    + c)`." + cur_got
+            self :> halt
+
+    parsing <: binop_loop -> parsing
+        |: bl_takes and nxt_kind != "newline" and bl_variant
+        then:
+            error => true
+            error_msg => "port: out of scope: is variant pattern"
+            self :> halt
+
+    parsing <: binop_loop -> parsing
+        |: bl_takes and nxt_kind != "newline" and not bl_variant
+        then:
+            frames => frames.slice(0, depth - 1).append(self.retop(cur_value, top.ser, top.ekind, top.ops, top.acc, "")).append(Frame(kind: "binop", prec: op_prec + 1, op: "", ser: "", ekind: "other", ops: "", acc: "", aux: ""))
+            depth => depth + 1
+            pos => pos + 1
+            self :> unary_start
+
+    parsing <: binop_loop -> parsing
+        |: not bl_takes
+        then:
+            v_ser => top.ser
+            v_kind => top.ekind
+            v_ops => top.ops
+            v_args => top.acc
+            depth => depth - 1
+            self :> ret
+
+    # A simulated call returned `v_*`. The frame below decides.
+    parsing <: ret -> parsing
+        |: top_kind == "binop"
+        then:
+            frames => frames.slice(0, depth - 1).append(self.retop("", comb_ser, comb_kind, comb_ops, comb_args, ""))
+            self :> binop_loop
+
+    parsing <: ret -> parsing
+        |: top_kind == "paren" and cur_is_rparen
+        then:
+            depth => depth - 1
+            pos => pos + 1
+            self :> postfix
+
+    parsing <: ret -> parsing
+        |: top_kind == "paren" and not cur_is_rparen
+        then:
+            error => true
+            error_msg => "parse error: expected :punct \")\"" + cur_got
+            self :> halt
+
+    parsing <: ret -> parsing
+        |: top_kind == "call" and cur_is_comma
+        then:
+            frames => frames.slice(0, depth - 1).append(self.retop(top.op, top.ser, top.ekind, top.ops, top.acc + " " + arg_ser, ""))
+            pos => pos + 1
+            self :> arg_start
+
+    parsing <: ret -> parsing
+        |: top_kind == "call" and cur_is_rparen
+        then:
+            v_ser => "(call " + top.ser + top.acc + " " + arg_ser + ")"
+            v_kind => "other"
+            depth => depth - 1
+            pos => pos + 1
+            self :> postfix
+
+    parsing <: ret -> parsing
+        |: top_kind == "call" and not cur_is_comma and not cur_is_rparen
+        then:
+            error => true
+            error_msg => "parse error: expected `,` or `)` in arg list" + cur_got
+            self :> halt
+
+    parsing <: ret -> parsing
+        |: top_kind == "sub" and cur_is_rbracket
+        then:
+            v_ser => "(subscript " + top.ser + " " + v_ser + ")"
+            v_kind => "other"
+            depth => depth - 1
+            pos => pos + 1
+            self :> postfix
+
+    parsing <: ret -> parsing
+        |: top_kind == "sub" and not cur_is_rbracket
+        then:
+            error => true
+            error_msg => "parse error: expected :punct \"]\"" + cur_got
+            self :> halt
+
+    parsing <: ret -> parsing
+        |: top_kind == "list" and cur_is_comma
+        then:
+            frames => frames.slice(0, depth - 1).append(self.retop(top.op, top.ser, top.ekind, top.ops, top.acc + " " + v_ser, ""))
+            pos => pos + 1
+            self :> expr_start
+
+    parsing <: ret -> parsing
+        |: top_kind == "list" and cur_is_rbracket
+        then:
+            v_ser => "(list" + top.acc + " " + v_ser + ")"
+            v_kind => "other"
+            depth => depth - 1
+            pos => pos + 1
+            self :> postfix
+
+    parsing <: ret -> parsing
+        |: top_kind == "list" and not cur_is_comma and not cur_is_rbracket
+        then:
+            error => true
+            error_msg => "parse error: expected `,` or `]` in list literal" + cur_got
+            self :> halt
+
+    parsing <: ret -> parsing
+        |: top_kind == "lambda"
+        then:
+            v_ser => "(lambda " + top.ser + " " + v_ser + ")"
+            v_kind => "other"
+            depth => depth - 1
+            self :> postfix
+
+    parsing <: ret -> parsing
+        |: top_kind == "multi" and top.op == "guard"
+        then:
+            frames => frames.slice(0, depth - 1).append(self.retop("guard", top.ser, top.ekind, top.ops, top.acc, v_ser))
+            self :> arm_colon
+
+    parsing <: ret -> parsing
+        |: top_kind == "multi" and top.op == "body" and cur_is_multi
+        then:
+            frames => frames.slice(0, depth - 1).append(self.retop("", top.ser, top.ekind, top.ops, top.acc + arm_ser, ""))
+            pos => pos + 1
+            self :> arm_head
+
+    parsing <: ret -> parsing
+        |: top_kind == "multi" and top.op == "body" and not cur_is_multi
+        then:
+            v_ser => "(multi-arm" + top.acc + arm_ser + ")"
+            v_kind => "other"
+            depth => depth - 1
+            self :> postfix
+
+    parsing <: ret -> parsing
+        |: top_kind == "none"
+        then: self :> finish
+
+    # parse-multi-arm-arm. `else` is a guard marker, not an expression.
+    parsing <: arm_head -> parsing
+        |: cur_is_else
+        then:
+            frames => frames.slice(0, depth - 1).append(self.retop("guard", top.ser, top.ekind, top.ops, top.acc, "else"))
+            pos => pos + 1
+            self :> arm_colon
+
+    parsing <: arm_head -> parsing
+        |: not cur_is_else
+        then:
+            frames => frames.slice(0, depth - 1).append(self.retop("guard", top.ser, top.ekind, top.ops, top.acc, ""))
+            self :> expr_start
+
+    parsing <: arm_colon -> parsing
+        |: cur_is_colon
+        then:
+            frames => frames.slice(0, depth - 1).append(self.retop("body", top.ser, top.ekind, top.ops, top.acc, top.aux))
+            pos => pos + 1
+            self :> expr_start
+
+    parsing <: arm_colon -> parsing
+        |: not cur_is_colon
+        then:
+            error => true
+            error_msg => "parse error: expected :punct \":\"" + cur_got
+            self :> halt
+
+    # parse-expression epilogue. skip-newlines, then eof or trailing.
+    parsing <: finish -> parsing
+        |: cur_kind == "newline"
+        then:
+            pos => pos + 1
+            self :> finish
+
+    parsing <: finish -> end
+        |: cur_kind == "eof"
+
+    parsing <: finish -> parsing
+        |: cur_kind != "newline" and cur_kind != "eof"
+        then:
+            error => true
+            error_msg => "parse-expression: expected single expression followed by end-of-file; extra tokens starting at [:" + cur_kind + " " + cur_pr + " " + cur_line.to_string() + " " + cur_tcol.to_string() + "]"
+            self :> halt

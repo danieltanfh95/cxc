@@ -1,0 +1,200 @@
+42
+1.5
+1e10
+0x1F
+"hello"
+"tab\there"
+'c'
+'\N'
+true
+false
+nil
+self
+foo
+(foo)
+((((x))))
+-x
++x
+not x
+- - x
+not not x
+-x.y
+not a and b
+-(a + b)
+a + b
+a + b * c
+a * b + c
+a - b - c
+a / b / c % d
+a or b and c
+a and b or c and d
+a == b + c * d
+a ?? b ?? c
+a ?? b or c
+x is y
+x in xs
+a != b
+(a + b) * (c - d)
+a + (b + (c + (d + e)))
+((a * (b - c)) / (d + (e % f)))
+-a * -b
+a < b
+a < b < c
+a <= b < c <= d
+-max <= y <= max
+(a < b) < c
+a < (b < c)
+a == b < c
+a < b == c
+a > b >= c and d < e < f
+a + 1 < b * 2 < c - 3
+self.x
+self.x.y.z
+a.b.c.d
+f()
+f(x)
+f(x, y)
+f(x: 1, y: 2)
+f(a, key: b + c)
+obj.m(1, 2).n().k
+a.as()
+xs[0]
+xs[i + 1][j]
+f(g(h(k(x))))
+self.items.at(i).name.length() > 0
+Point(x: 1, y: 2).x
+foo.bar(baz.qux(1), [1, 2])
+[]
+[1, 2, 3]
+[a, [b, c]]
+[1, 2][0]
+x => x + 1
+xs.filter(x => x > 0)
+() => f()
+||: a : b ||: else : c
+||: x > 0 : 1 ||: x < 0 : -1 ||: else : 0
+"abc".length()
+1.5.to_string()
+not f(x).y
+a ?? b.c(d) ?? e
+
+a b
+a +
+(a + b
+a)
+f(a,
+f(a b)
+a.
+a.(b)
+)
+,
+def
+if a: b
+if let x = y
+= x
+a + -
+xs[1
+[1, 2
+a{b}
+a |> b
+||: a b
+$
+"abc
+1_
+  a
+a\nb
+x is
+not
+a <= 
+1e400
+a 1e400
+-(-(-(-x)))
+not (a < b < c)
+f(x)(y)
+a.b(c)[d].e(f: g)
+xs.map(x => x * 2).filter(y => y > 1)
+x => y => x + y
+||: a : ||: b : c ||: else : d
+"a\N".length() == 2
+'\u{1F600}'
+0b1010 + 0o17 * 1_000
+a and not b or not c and d
+f(a: b < c < d, e)
+(((a + b) * c) - d) / e
+a ?? (b ?? c)
+f(x
+xs[
+a..b
+a b c
+f(a,)
+[1 2]
+||: xs : foo ||: else : b <= xs >= xs <= xs >= b == ||: 2e3 : b ?? []
+[] is [nil, foo] <= (+xs) < x => (a)(n: 'c')(nil)
++0.001 in 'c'
+x => +nil > self >= "s"
+||: 0x1F : 0x1F ||: else : 0.001
+-a[42 / 42] - ||: 'c' : (nil) ||: x => 0.001 : true
+2e3 - 0.001 and 'c' - 1
+["s"] > ||: false : self ||: xs : nil ||: else : false < (a)(self)
+[() => b / 2e3 - 2e3 < 0.001 >= b]
+-self(foo, self)
+(a)
+2e3 != 1
+() => a(k: f.x)
+self.len[1.5].x is ||: 1 : 1.5 + [0x1F, false] >= 2e3 < true
+(a > f[() => 'c'])
+(--0.001)
+(0.001 or 0.001)
+||: ||: true >= nil >= 0x1F : +2e3 ||: else : xs <= nil : self / ||: 0.001 : 1.5 ||: else : self ||: else : ||: self : "s" >= a > true
+[]
+[b + 'c'] * []
+['c', a != nil]
+(a).x(n: [0.001, foo], n: false).as
++'c'
+not 0x1F
+'c' % false > []
+not f[false] >= -||: foo : self ||: 1.5 : self ||: else : self >= foo - 0.001 <= ||: nil : "s" - (1.5 in xs > 0x1F >= a(n: 42, n: xs).len)
+not 1
+1 != "s"
+[0.001, 0x1F] and b <= "s" < xs > +false < not a in [1]
+false
+1 ?? nil
+||: true : 42 ||: 'c' : nil ||: else : a > a
+true % false
++||: ||: [42] : true < 0x1F ||: self - 1.5 : self ||: else : ||: "s" : nil ||: b : xs ||: else : 2e3 : [false is b, self(1)] ||: ((0x1F)) : 42 >= (nil) ||: else : not 1 <= a and 1 < 2e3 ?? 2e3
+42 < xs
+||: (0.001) : 42 != b ||: "s" != a : ||: xs : a ||: else : 1.5
+(a)[false]
+'c' and [+xs, 0.001 > xs] > true < 'c' % xs >= 42 < true
+x => 0x1F
+||: x => 0.001 : 0.001 ||: ||: true : 0.001 ||: else : 42 / obj[true] : not a is a(k: true).x[xs] ||: else : [(self)]
++(0.001 % 2e3)
+a % 'c'
+1.5 >= 0x1F < 0x1F or (0x1F) - -a is 1 + not x => 1.5 >= b > foo < ||: self : false ||: 1 : "s" ||: else : true
+2e3 <= -"s" / x => 42 >= self
+obj(k: 1 - false)(n: ||: foo : nil ||: nil : xs ||: else : 0.001)
+x |> + :
+self : ) |> ==
+( 1
+def |> . a "s"
+1
+not b
+?? |> + *
+<= is a ( x <
+( and ?? *
+<= b "s" ) def
+<=
+"s" b a -
+2.5 self
+def { "s" +
+< ||: ( == ||: a
+[ ] not )
+2.5
+is : + |>
++ ] { if [
+{ - a <
+== b - : def
+) 1 , - |>
+a ||: <=
+"s" "s" ( -
+not a => => x

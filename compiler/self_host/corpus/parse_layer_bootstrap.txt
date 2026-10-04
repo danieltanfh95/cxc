@@ -117,3 +117,10 @@ def R:\n    x: Float = 0x1.8
 def R:\n    a: Int = 1\n    b: Float = 2.5e
 def R:\n    x: Float = 0e0
 def R:\n    x: Float = 1.79769313486232e308
+def X:\n    # note\n    name: Int
+def X:\n    name: Int # trailing\n    tag: String
+# header comment\ndef X:\n    name: Int
+def X.
+@foo
+def X$
+def Pair(k: String!,\n v: Int!)

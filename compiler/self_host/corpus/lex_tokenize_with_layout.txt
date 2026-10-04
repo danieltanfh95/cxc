@@ -154,3 +154,42 @@ x = 12ab
 0_9
 def X:\n    v: Int = 12ms
 def X:\n    a: Float = 1.5\n    b: Float = 3e
+a.b
+f(x)[0]
+xs[1].y
+{a}
+a; b
+a + b * c / d % e
+a & b
+a ** b
+a // b
+a <| b
+a |> b
+a ||: b
+||: x : y ||: else : z
+|||:
+a || b
+a #comment
+# whole line comment\nb
+a\n# c\nb
+def X:\n    # note\n    name: Int
+f(a,\n  b)
+f(a,\n  b)\nc
+[1,\n 2,\n 3]
+def X:\n    f(a,\n b)\n    c
+(a
+a)
+a)\nb
+f(\n
+@foo
+a $ b
+a ~ b
+x ^ y
+a \ b
+q `x`
+1.foo
+1.5.x
+x.0
+-a.b(c, d: 1)
+not a and b or c
+x ?? y ?? z
