@@ -67,6 +67,20 @@ def main:
     nt_body_buf:    String! = ""
     nt_fname_buf:   String! = ""
     nt_tname_buf:   String! = ""
+    # Chapter-20 depth-N stack (slice-and-append discipline, chapter 18).
+    # On nested `(` inside parse_nt_type, the current nt_body_buf and
+    # nt_fname_buf are saved; a fresh nested parse starts. On `)` with
+    # nt_depth > 0, the saved outer is popped and the completed nested
+    # is embedded as the outer pair's type.
+    nt_body_buf_stack:  List of String = []
+    nt_fname_buf_stack: List of String = []
+    nt_depth:           Int!    = 0
+    # Chapter-20 return-mode sentinel. The named-tuple parsing arms are
+    # shared between parse_field_type and parse_ctor_param_type. The
+    # terminal `)` arm (nt_depth == 0) picks the downstream emit phase
+    # from this mode: "field" → emit_field_from_ser, "ctor" →
+    # emit_ctor_param.
+    nt_return_mode:     String! = "field"
 
     reserved: List of String = [
         "module", "from", "import", "as",
@@ -525,7 +539,16 @@ def main:
             self :> parse_ctor_param_type
 
     parsing <: parse_ctor_param_type -> parsing
-        |: cur_kind != "ident"
+        |: cur_kind == "punct" and cur_value == "("
+        then:
+            nt_body_buf => ""
+            nt_depth => 0
+            nt_return_mode => "ctor"
+            pos => pos + 1
+            self :> parse_nt_fname
+
+    parsing <: parse_ctor_param_type -> parsing
+        |: cur_kind != "ident" and not (cur_kind == "punct" and cur_value == "(")
         then:
             error => true
             error_msg => "expected ctor-param type name"
@@ -709,6 +732,8 @@ def main:
         |: cur_kind == "punct" and cur_value == "("
         then:
             nt_body_buf => ""
+            nt_depth => 0
+            nt_return_mode => "field"
             pos => pos + 1
             self :> parse_nt_fname
 
@@ -751,7 +776,21 @@ def main:
             self :> parse_nt_type
 
     parsing <: parse_nt_type -> parsing
-        |: cur_kind != "ident"
+        |: cur_kind == "punct" and cur_value == "("
+        then:
+            # Chapter-20 nested-TNT push. Save outer body and fname,
+            # reset for fresh nested parse, bump depth. The `.slice(0,
+            # nt_depth)` discipline (chapter-18 idiom) purges dead
+            # values from a popped sibling nested at the same depth.
+            nt_body_buf_stack => nt_body_buf_stack.slice(0, nt_depth).append(nt_body_buf)
+            nt_fname_buf_stack => nt_fname_buf_stack.slice(0, nt_depth).append(nt_fname_buf)
+            nt_body_buf => ""
+            nt_depth => nt_depth + 1
+            pos => pos + 1
+            self :> parse_nt_fname
+
+    parsing <: parse_nt_type -> parsing
+        |: cur_kind != "ident" and not (cur_kind == "punct" and cur_value == "(")
         then:
             error => true
             error_msg => "expected named-tuple field type"
@@ -785,7 +824,30 @@ def main:
             self :> parse_nt_fname
 
     parsing <: after_nt_pair -> parsing
-        |: cur_kind == "punct" and cur_value == ")"
+        |: cur_kind == "punct" and cur_value == ")" and nt_depth > 0
+        then:
+            # Chapter-20 nested-TNT pop. The nested body (current
+            # nt_body_buf) becomes the type-serialization of the outer
+            # pair whose fname is at the top of nt_fname_buf_stack.
+            let nested_body: String! = nt_body_buf
+            let outer_body:  String! = nt_body_buf_stack.at((nt_depth - 1).max(0)) ?? ""
+            let outer_fname: String! = nt_fname_buf_stack.at((nt_depth - 1).max(0)) ?? ""
+            let sep: String!         = ||: outer_body.length() == 0 : "" ||: else : ","
+            nt_body_buf => outer_body + sep + outer_fname + ":TNT(" + nested_body + ")"
+            nt_fname_buf => outer_fname
+            nt_depth => nt_depth - 1
+            pos => pos + 1
+            self :> after_nt_pair
+
+    parsing <: after_nt_pair -> parsing
+        |: cur_kind == "punct" and cur_value == ")" and nt_depth == 0 and nt_return_mode == "ctor"
+        then:
+            type_ser_buf => "TNT(" + nt_body_buf + ")"
+            pos => pos + 1
+            self :> emit_ctor_param
+
+    parsing <: after_nt_pair -> parsing
+        |: cur_kind == "punct" and cur_value == ")" and nt_depth == 0 and nt_return_mode == "field"
         then:
             type_ser_buf => "TNT(" + nt_body_buf + ")"
             pos => pos + 1
