@@ -35,6 +35,11 @@
 #                value was for (rhs, group, arg, index, item, body)
 #   finish       trailing newlines, then eof or the trailing-token error
 #
+# Chapter 27 return modes. `var_open` / `var_bind` (variant pattern
+# bindings), `ms_entry` / `ms_after` (payload entries), and the
+# parse-type set `ty_start`, `tnt_field`, `ty_suffix`, `ty_ret`,
+# `ty_more`. A type's rendering travels in `v_ser` like a value.
+#
 # Chained comparisons. Every value carries `v_kind` ("cmp" for a binop
 # whose op is `< <= > >=`, "chain" for a chained-cmp, "other"), plus the
 # op list and operand list of a cmp or chain. Combining a cmp op over a
@@ -52,10 +57,25 @@
 #   (named <name> <e>) args, (subscript <e> <i>), (list <e>*),
 #   (lambda (<param>*) <body>), (multi-arm (arm <guard> <body>)+)
 #
+# Chapter 27 forms.
+#   (raise <T> <arg>*)
+#   (emit async <target> <msg> <arg>*)  `:>`, target `nil` when bare
+#   (emit sync <target> <msg> <arg>*)   `|>`, target `nil` on f(args)
+#   (msg-shape <target> (field <name> <type>)*), a bareword entry is
+#   (field <name> TR:Any bare)
+#   (variant <Enum> <case> <bind>*) or (variant . <case> <bind>*),
+#   with (let <as>) and (let <field> <as>) bindings
+# Types use the parse-layer rendering plus `TQ` for the banned `T?`.
+#   TR:<name> TN(<t>) TQ(<t>) TO:<outer>(<t>) TT(<t>,...) TNT(<f>:<t>,...)
+#
+# Chapter 27 also ports multi-line `||:` chains (NEWLINE `||:` at the
+# same indent, or one opened NEWLINE INDENT `||:` closed by its DEDENT)
+# and Clojure's inconsistent-dedent lex error, in all three shared lex
+# sites.
+#
 # Scope. Out of scope and raised with a `port: out of scope` message
-# the corpus never carries: `do:` blocks, `raise`, expression-position
-# `:>` and `|>` sends, `(name: Type)` message-shape payloads, `is`
-# variant patterns, `def:` lambda bodies, and multi-line `||:` chains.
+# the corpus never carries: `do:` blocks, `def:` lambda bodies, and the
+# `<expr>:` NEWLINE INDENT `<:` dispatch block after a parse-expr.
 
 def Token:
     kind:  String!
@@ -69,8 +89,21 @@ def Token:
 # callee in `ser`, the rendered args in `acc`, and the pending arg name
 # in `aux`. `sub` keeps the target in `ser`. `list` keeps items in
 # `acc`. `lambda` keeps the param list in `ser`. `multi` keeps rendered
-# arms in `acc`, the pending guard in `aux`, and its state in `op`
-# ("guard" or "body").
+# arms in `acc`, the pending guard in `aux`, its state in `op`
+# ("guard" or "body"), and whether the chain opened an INDENT in `prec`.
+#
+# Chapter 27. A `call` frame also serves `raise T(...)` and the `:>`
+# send args. `op` "" renders `(call <ser> ...)`, "raw" renders `ser` as
+# the head and returns to parse-postfix, "rawend" renders `ser` and
+# returns past parse-postfix (the `:>` postfix branch does not recur).
+# `cal` / `ctg` / `cnm` record the callee shape (`dot` with target and
+# name, `ident` with name, or `other`) so the `|>` expression can split
+# the call it parsed. `sync` frames keep the `|>` line in `prec`. Type
+# frames `tof` / `tofl` / `ttup` / `tnt` keep the outer name in `ser`,
+# the item count in `prec`, the rendered items in `acc`, and the
+# pending named-tuple field in `aux`. `mshape` keeps the payload target
+# in `ser` and entries in `acc`. `variant` keeps the pattern head in
+# `ser` and bindings in `acc`.
 def Frame:
     kind:  String!
     prec:  Int!
@@ -80,6 +113,9 @@ def Frame:
     ops:   String!
     acc:   String!
     aux:   String!
+    cal:   String!
+    ctg:   String!
+    cnm:   String!
 
 def main:
     use args:    Args
@@ -112,6 +148,16 @@ def main:
     # NEWLINE when the running depth is back to zero at its end.
     bracket_depth: Int!  = 0
     line_is_cont:  Bool! = false
+    # Chapter 27 inconsistent dedent. Clojure pops the indent stack to a
+    # level that must exist, and throws when the line's indent falls
+    # between two open levels. It tokenizes the line content first, so
+    # a content lex error on that line wins. `dedent_err` holds the
+    # message until the line ends. `indent_str` is the stack printed
+    # top first, `indent_snap` its value when the line's dedents began.
+    dedenting:   Bool!   = false
+    indent_str:  String! = "0"
+    indent_snap: String! = "0"
+    dedent_err:  String! = ""
 
     reserved: List of String = [
         "module", "from", "import", "as",
@@ -294,6 +340,7 @@ def main:
     # owes that line its line bump, and its NEWLINE token only when the
     # line is not a bracket continuation and closes at depth zero.
     ends_open_line :- not at_line_start
+    indent_popped  :- indent_str.substring((indent_str.index_of(" ") + 1).max(0).min(indent_str.length()), (indent_str.length() - indent_str.index_of(" ") - 1).max(0))
     eol_newline    :- bracket_depth == 0 and not line_is_cont
 
 
@@ -306,6 +353,18 @@ def main:
     v_kind: String! = "other"
     v_ops:  String! = ""
     v_args: String! = ""
+    # Chapter 27. The last `.field` built (`ld_*`) and the last call
+    # closed (`lc_*`). A value whose rendering equals `lc_ser` is that
+    # call, since the rendering is a faithful encoding of the node, so
+    # the `|>` expression reads its callee shape from these registers.
+    ld_ser:  String! = ""
+    ld_tgt:  String! = ""
+    ld_nm:   String! = ""
+    lc_ser:  String! = ""
+    lc_cal:  String! = ""
+    lc_tgt:  String! = ""
+    lc_nm:   String! = ""
+    lc_args: String! = ""
 
     cur_tok    :- tokens.at(pos) ?? Token(kind: "eof", value: "", line: line_num, col: 1)
     cur_kind   :- cur_tok.kind
@@ -319,6 +378,7 @@ def main:
     nxt2_tok   :- tokens.at(pos + 2) ?? Token(kind: "eof", value: "", line: line_num, col: 1)
     nxt2_kind  :- nxt2_tok.kind
     nxt2_value :- nxt2_tok.value
+    nxt2_line  :- nxt2_tok.line
     nxt3_tok   :- tokens.at(pos + 3) ?? Token(kind: "eof", value: "", line: line_num, col: 1)
     nxt3_kind  :- nxt3_tok.kind
     nxt3_value :- nxt3_tok.value
@@ -336,6 +396,9 @@ def main:
     nxt_layout :- nxt_kind == "newline" or nxt_kind == "indent" or nxt_kind == "dedent" or nxt_kind == "eof"
     nxt_pr     :- ||: nxt_layout : "nil" ||: nxt_kind == "int" : nxt_value ||: nxt_kind == "float" and nxt_value == "Infinity" : "##Inf" ||: nxt_kind == "float" : nxt_value ||: else : "\"" + nxt_value + "\""
     nxt_got    :- " (got :" + nxt_kind + " " + nxt_pr + " at line " + nxt_line.to_string() + ")"
+    nxt2_layout :- nxt2_kind == "newline" or nxt2_kind == "indent" or nxt2_kind == "dedent" or nxt2_kind == "eof"
+    nxt2_pr    :- ||: nxt2_layout : "nil" ||: nxt2_kind == "int" : nxt2_value ||: nxt2_kind == "float" and nxt2_value == "Infinity" : "##Inf" ||: nxt2_kind == "float" : nxt2_value ||: else : "\"" + nxt2_value + "\""
+    nxt2_got   :- " (got :" + nxt2_kind + " " + nxt2_pr + " at line " + nxt2_line.to_string() + ")"
 
     cur_is_lparen   :- cur_kind == "punct" and cur_value == "("
     cur_is_rparen   :- cur_kind == "punct" and cur_value == ")"
@@ -358,6 +421,18 @@ def main:
     nxt_is_colon    :- nxt_kind == "punct" and nxt_value == ":"
     nxt_is_name     :- nxt_kind == "ident" or nxt_kind == "kw"
     nxt2_is_fat     :- nxt2_kind == "glyph" and nxt2_value == "=>"
+    cur_is_raise    :- cur_kind == "kw" and cur_value == "raise"
+    cur_is_q        :- cur_kind == "punct" and cur_value == "?"
+    cur_is_bang     :- cur_kind == "punct" and cur_value == "!"
+    nxt_is_multi    :- nxt_kind == "glyph" and nxt_value == "||:"
+    nxt_is_comma    :- nxt_kind == "punct" and nxt_value == ","
+    nxt_is_of       :- nxt_kind == "kw" and nxt_value == "of"
+    nxt_is_suffix   :- nxt_kind == "punct" and (nxt_value == "?" or nxt_value == "!")
+    nxt2_is_lparen  :- nxt2_kind == "punct" and nxt2_value == "("
+    nxt2_is_colon   :- nxt2_kind == "punct" and nxt2_value == ":"
+    nxt2_is_multi   :- nxt2_kind == "glyph" and nxt2_value == "||:"
+    nxt2_is_close   :- nxt2_kind == "punct" and (nxt2_value == ")" or nxt2_value == ",")
+    nxt3_is_rparen  :- nxt3_kind == "punct" and nxt3_value == ")"
 
     # glyph-precedence plus binary-glyph?. 0 means not a binary op.
     cur_is_opk :- cur_kind == "glyph" or cur_kind == "kw"
@@ -378,9 +453,10 @@ def main:
     prim_paren   :- cur_is_lparen and not (nxt_is_rparen and nxt2_is_fat)
     prim_list0   :- cur_is_lbracket and nxt_is_rbracket
     prim_list    :- cur_is_lbracket and not nxt_is_rbracket
-    prim_special :- prim_lambda1 or prim_lambda0 or prim_paren or prim_list0 or prim_list or cur_is_multi
-    prim_oos     :- (cur_kind == "kw" and (cur_value == "do" or cur_value == "raise")) or cur_is_emit or cur_is_sync
-    prim_err     :- not prim_atom and not prim_special and not prim_oos
+    prim_special :- prim_lambda1 or prim_lambda0 or prim_paren or prim_list0 or prim_list
+    prim_send    :- cur_is_multi or cur_is_emit or cur_is_sync or cur_is_raise
+    prim_oos     :- cur_kind == "kw" and cur_value == "do"
+    prim_err     :- not prim_atom and not prim_special and not prim_send and not prim_oos
     prim_err_text :- ||: cur_kind == "kw" and cur_value == "if" and nxt_kind == "kw" and nxt_value == "let" : "expression-position `if let ...` is not supported. `if let` ships at statement position only (F39 L7). Rewrite as an outer `if let` statement." ||: cur_kind == "kw" and cur_value == "if" : "expression-position `if <cond>: <then> else: <else>` retired 2026-08-31 (R6). Rewrite as `||: <cond> : <then> ||: else : <else>` — multi-arm dispatch is the sole expression-position branching form at v1.0. For if/else chains use `||: c1 : b1 ||: c2 : b2 ||: else : b3`. See decisions-frozen-2026-08-31-glyphs.md §R6." ||: cur_kind == "kw" : "unexpected keyword " + cur_value + " in expression" ||: cur_kind == "punct" : "unexpected punctuation in expression" ||: cur_kind == "glyph" : "unexpected glyph `" + cur_value + "` in expression" ||: cur_kind == "newline" : "expected an expression, got a newline. Corvid does not continue expressions across newlines outside brackets. Common causes: (a) `let x: T =` followed by a newline before the RHS — keep the RHS on the same line as `=`, or hoist the value into an atom observation and read it here as `self.<obs>`; (b) a `||:` chain starting on its own line — hoist it into an observation body (`v :- Type = (||: g1 : b1 ||: else : b2)`) rather than embedding as a bare RHS." ||: else : "expected an expression"
 
     # looks-like-msg-payload-parens? at a `(`. The payload path itself
@@ -396,13 +472,17 @@ def main:
     variant_start :- (nxt_kind == "punct" and nxt_value == "." and nxt2_kind == "ident") or (nxt_kind == "ident" and nxt2_kind == "punct" and nxt2_value == "." and nxt3_kind == "ident")
 
     # Frame stack. `top` is the frame at `depth - 1`.
-    top      :- frames.at((depth - 1).max(0)) ?? Frame(kind: "none", prec: 0, op: "", ser: "", ekind: "other", ops: "", acc: "", aux: "")
+    top      :- frames.at((depth - 1).max(0)) ?? Frame(kind: "none", prec: 0, op: "", ser: "", ekind: "other", ops: "", acc: "", aux: "", cal: "", ctg: "", cnm: "")
     top_kind :- ||: depth == 0 : "none" ||: else : top.kind
-    fresh_binop :- Frame(kind: "binop", prec: 1, op: "", ser: "", ekind: "other", ops: "", acc: "", aux: "")
+    fresh_binop :- Frame(kind: "binop", prec: 1, op: "", ser: "", ekind: "other", ops: "", acc: "", aux: "", cal: "", ctg: "", cnm: "")
     mk(k: String!, s: String!) :- Frame
-        Frame(kind: k, prec: 0, op: "", ser: s, ekind: "other", ops: "", acc: "", aux: "")
+        Frame(kind: k, prec: 0, op: "", ser: s, ekind: "other", ops: "", acc: "", aux: "", cal: "", ctg: "", cnm: "")
+    mkop(k: String!, o: String!, s: String!, pr: Int!) :- Frame
+        Frame(kind: k, prec: pr, op: o, ser: s, ekind: "other", ops: "", acc: "", aux: "", cal: "", ctg: "", cnm: "")
+    mkcall(s: String!, c: String!, t: String!, n: String!) :- Frame
+        Frame(kind: "call", prec: 0, op: "", ser: s, ekind: "other", ops: "", acc: "", aux: "", cal: c, ctg: t, cnm: n)
     retop(nop: String!, nser: String!, nek: String!, nops: String!, nacc: String!, naux: String!) :- Frame
-        Frame(kind: top.kind, prec: top.prec, op: nop, ser: nser, ekind: nek, ops: nops, acc: nacc, aux: naux)
+        Frame(kind: top.kind, prec: top.prec, op: nop, ser: nser, ekind: nek, ops: nops, acc: nacc, aux: naux, cal: top.cal, ctg: top.ctg, cnm: top.cnm)
 
     # parse-binop loop test and the chained-cmp combine.
     bl_takes      :- op_prec > 0 and op_prec >= top.prec
@@ -415,6 +495,50 @@ def main:
     comb_ser      :- ||: comb_kind == "chain" : "(chained-cmp (" + comb_ops + ") " + comb_args + ")" ||: else : "(binop " + top.op + " " + top.ser + " " + v_ser + ")"
     arg_ser       :- ||: top.aux == "" : "(pos " + v_ser + ")" ||: else : "(named " + top.aux + " " + v_ser + ")"
     arm_ser       :- " (arm " + top.aux + " " + v_ser + ")"
+
+    # Chapter 27. Callee shape of the value about to be called, the
+    # head a closing call frame renders, and the `|>` split.
+    v_is_ld      :- v_ser == ld_ser
+    v_is_ident   :- v_ser.starts_with("(ident ")
+    callee_cal   :- ||: v_is_ld : "dot" ||: v_is_ident : "ident" ||: else : "other"
+    callee_tgt   :- ||: v_is_ld : ld_tgt ||: else : ""
+    callee_nm    :- ||: v_is_ld : ld_nm ||: v_is_ident : v_ser.substring(7, (v_ser.length() - 8).max(0)) ||: else : ""
+    call_head    :- ||: top.op == "" : "(call " + top.ser ||: else : top.ser
+    call_args    :- top.acc + " " + arg_ser
+    sync_ok      :- v_ser == lc_ser and (lc_cal == "dot" or lc_cal == "ident")
+    sync_tgt     :- ||: lc_cal == "dot" : lc_tgt ||: else : "nil"
+
+    # variant-pattern-start? already holds at the `is`, so the head is
+    # either `. case` or `Enum . case`.
+    var_head     :- ||: nxt_kind == "punct" : "(variant . " + nxt2_value ||: else : "(variant " + nxt_value + " " + nxt3_value
+    var_skip     :- ||: nxt_kind == "punct" : 3 ||: else : 4
+    bind_named   :- cur_kind == "ident" and nxt_is_colon and nxt2_kind == "kw" and nxt2_value == "let" and nxt3_kind == "ident"
+    bind_pos     :- cur_kind == "kw" and cur_value == "let" and nxt_kind == "ident"
+    bind_bad     :- not cur_is_rparen and not cur_is_comma and not bind_named and not bind_pos
+
+    # parse-type. A new item for a `tofl` / `ttup` / `tnt` frame.
+    named_tt     :- cur_is_lparen and nxt_kind == "ident" and nxt2_is_colon
+    t_item       :- ||: top_kind == "tnt" : top.aux + ":" + v_ser ||: else : v_ser
+    tacc         :- ||: top.prec == 0 : t_item ||: else : top.acc + "," + t_item
+    ty_next      :- Frame(kind: top.kind, prec: top.prec + 1, op: "", ser: top.ser, ekind: "other", ops: "", acc: tacc, aux: "", cal: "", ctg: "", cnm: "")
+    ty_frame     :- top_kind == "tof" or top_kind == "tofl" or top_kind == "ttup" or top_kind == "tnt"
+
+    # Multi-line `||:`. `m_more` is another arm, inline, after a
+    # NEWLINE, or after the one NEWLINE INDENT the chain may open. A
+    # chain that opened its INDENT consumes the DEDENT that closes it.
+    m_cont_nl    :- cur_kind == "newline" and nxt_is_multi
+    m_cont_ind   :- cur_kind == "newline" and nxt_kind == "indent" and nxt2_is_multi and top.prec == 0
+    m_more       :- cur_is_multi or m_cont_nl or m_cont_ind
+    m_body       :- top_kind == "multi" and top.op == "body"
+    m_q_dedent   :- ||: cur_kind == "newline" : nxt_kind == "dedent" ||: else : cur_kind == "dedent"
+    m_q_skip     :- ||: cur_kind == "newline" : 2 ||: else : 1
+    m_q_got      :- ||: cur_kind == "newline" : nxt_got ||: else : cur_got
+    m_open       :- Frame(kind: "multi", prec: 1, op: "", ser: top.ser, ekind: "other", ops: "", acc: top.acc + arm_ser, aux: "", cal: "", ctg: "", cnm: "")
+
+    # looks-like-dispatch-tail? after a parse-expr. Only `expr_start`
+    # pushes a binop frame at min-prec 1, so `top.prec == 1` is
+    # parse-expr returning. The `<:` dispatch block is out of port scope.
+    disp_tail    :- top.prec == 1 and cur_is_colon and nxt_kind == "newline" and nxt2_kind == "indent" and nxt3_kind == "glyph" and nxt3_value == "<:"
 
     -> lex_start
         then:
@@ -431,7 +555,14 @@ def main:
 
 
     lex_start <: step -> lex_start
-        |: at_src_end and not error and ends_open_line
+        |: at_src_end and not error and ends_open_line and dedent_err != ""
+        then:
+            error => true
+            error_msg => dedent_err
+            self :> step
+
+    lex_start <: step -> lex_start
+        |: at_src_end and not error and ends_open_line and dedent_err == ""
         then:
             tokens => ||: eol_newline : tokens.append(Token(kind: "newline", value: "", line: line_num, col: 1)) ||: else : tokens
             line_num => line_num + 1
@@ -457,7 +588,15 @@ def main:
             self :> step
 
     lex_start <: step -> lex_start
-        |: not at_src_end and not at_line_start and is_nl
+        |: not at_src_end and not at_line_start and is_nl and dedent_err != ""
+        then:
+            error => true
+            error_msg => dedent_err
+            sc => source.length()
+            self :> step
+
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and is_nl and dedent_err == ""
         then:
             tokens => ||: eol_newline : tokens.append(Token(kind: "newline", value: "", line: line_num, col: 1)) ||: else : tokens
             line_is_cont => bracket_depth > 0
@@ -779,6 +918,8 @@ def main:
         then:
             at_line_start => false
             col_num => 1
+            dedenting => false
+            indent_snap => indent_str
             self :> adjust_indent
 
     lex_start <: measure_indent -> lex_start
@@ -789,10 +930,17 @@ def main:
             self :> step
 
     lex_start <: adjust_indent -> lex_start
-        |: line_indent > top_indent
+        |: line_indent > top_indent and not dedenting
         then:
             tokens => tokens.append(Token(kind: "indent", value: "", line: line_num, col: 1))
             indent_stack => indent_stack.append(line_indent)
+            indent_str => line_indent.to_string() + " " + indent_str
+            self :> step
+
+    lex_start <: adjust_indent -> lex_start
+        |: line_indent > top_indent and dedenting
+        then:
+            dedent_err => "inconsistent dedent at line " + line_num.to_string() + ": this line's indent (" + line_indent.to_string() + (||: line_indent == 1 : " column" ||: else : " columns") + ") does not match any enclosing block's indent level (open blocks are at [" + indent_snap + "]). Fix: align this line with one of those indents, or make the parent block consistent (typically means mixing tabs and spaces or a stray half-indent)."
             self :> step
 
     lex_start <: adjust_indent -> lex_start
@@ -800,6 +948,8 @@ def main:
         then:
             tokens => tokens.append(Token(kind: "dedent", value: "", line: line_num, col: 1))
             indent_stack => indent_stack.filter(x => x < top_indent)
+            indent_str => indent_popped
+            dedenting => true
             self :> adjust_indent
 
     lex_start <: adjust_indent -> lex_start
@@ -1430,6 +1580,81 @@ def main:
             pos => pos + 1
             self :> arm_head
 
+    # Chapter 27. `raise T(args)`. The args are parse-args-parens, so a
+    # `raw` call frame renders `(raise T arg*)` and returns to postfix.
+    parsing <: primary -> parsing
+        |: cur_is_raise and nxt_kind != "ident"
+        then:
+            error => true
+            error_msg => "parse error: raise: expected a record TypeName after `raise`" + nxt_got
+            self :> halt
+
+    parsing <: primary -> parsing
+        |: cur_is_raise and nxt_kind == "ident" and not nxt2_is_lparen
+        then:
+            error => true
+            error_msg => "parse error: raise: expected `(` after TypeName — raise requires a ctor-call form (`raise T(field: value, ...)`)" + nxt2_got
+            self :> halt
+
+    parsing <: primary -> parsing
+        |: cur_is_raise and nxt_kind == "ident" and nxt2_is_lparen and nxt3_is_rparen
+        then:
+            v_ser => "(raise " + nxt_value + ")"
+            v_kind => "other"
+            pos => pos + 4
+            self :> postfix
+
+    parsing <: primary -> parsing
+        |: cur_is_raise and nxt_kind == "ident" and nxt2_is_lparen and not nxt3_is_rparen
+        then:
+            frames => frames.slice(0, depth).append(self.mkop("call", "raw", "(raise " + nxt_value, 0))
+            depth => depth + 1
+            pos => pos + 3
+            self :> arg_start
+
+    # Bare `:> msg[(args)]`, a self-broadcast emit with a nil target.
+    # parse-postfix runs on the emit node afterwards.
+    parsing <: primary -> parsing
+        |: cur_is_emit and nxt_kind != "ident"
+        then:
+            error => true
+            error_msg => "parse error: expected :ident" + nxt_got
+            self :> halt
+
+    parsing <: primary -> parsing
+        |: cur_is_emit and nxt_kind == "ident" and not nxt2_is_lparen
+        then:
+            v_ser => "(emit async nil " + nxt_value + ")"
+            v_kind => "other"
+            pos => pos + 2
+            self :> postfix
+
+    parsing <: primary -> parsing
+        |: cur_is_emit and nxt_kind == "ident" and nxt2_is_lparen and nxt3_is_rparen
+        then:
+            v_ser => "(emit async nil " + nxt_value + ")"
+            v_kind => "other"
+            pos => pos + 4
+            self :> postfix
+
+    parsing <: primary -> parsing
+        |: cur_is_emit and nxt_kind == "ident" and nxt2_is_lparen and not nxt3_is_rparen
+        then:
+            frames => frames.slice(0, depth).append(self.mkop("call", "raw", "(emit async nil " + nxt_value, 0))
+            depth => depth + 1
+            pos => pos + 3
+            self :> arg_start
+
+    # `|> <expr>`. The `sync` frame keeps the glyph's line for the
+    # error, `ret` checks the parsed value is a call on a dot or ident.
+    parsing <: primary -> parsing
+        |: cur_is_sync
+        then:
+            frames => frames.slice(0, depth).append(self.mkop("sync", "", "", cur_line))
+            depth => depth + 1
+            pos => pos + 1
+            self :> expr_start
+
     parsing <: primary -> parsing
         |: prim_oos
         then:
@@ -1462,6 +1687,9 @@ def main:
         then:
             v_ser => "(dot " + v_ser + " " + nxt_value + ")"
             v_kind => "other"
+            ld_ser => "(dot " + v_ser + " " + nxt_value + ")"
+            ld_tgt => v_ser
+            ld_nm => nxt_value
             pos => pos + 2
             self :> postfix
 
@@ -1472,25 +1700,33 @@ def main:
             error_msg => "parse error: expected an identifier or method name after `.`" + nxt_got
             self :> halt
 
+    # Chapter 27. parse-msg-args-parens. The `mshape` frame keeps the
+    # target, `ms_entry` reads `name:` and either a bareword or a type.
     parsing <: postfix -> parsing
         |: cur_is_lparen and msg_payload
         then:
-            error => true
-            error_msg => "port: out of scope: message-shape payload"
-            self :> halt
+            frames => frames.slice(0, depth).append(self.mk("mshape", v_ser))
+            depth => depth + 1
+            pos => pos + 1
+            self :> ms_entry
 
     parsing <: postfix -> parsing
         |: cur_is_lparen and not msg_payload and nxt_is_rparen
         then:
             v_ser => "(call " + v_ser + ")"
             v_kind => "other"
+            lc_ser => "(call " + v_ser + ")"
+            lc_cal => callee_cal
+            lc_tgt => callee_tgt
+            lc_nm => callee_nm
+            lc_args => ""
             pos => pos + 2
             self :> postfix
 
     parsing <: postfix -> parsing
         |: cur_is_lparen and not msg_payload and not nxt_is_rparen
         then:
-            frames => frames.slice(0, depth).append(self.mk("call", v_ser))
+            frames => frames.slice(0, depth).append(self.mkcall(v_ser, callee_cal, callee_tgt, callee_nm))
             depth => depth + 1
             pos => pos + 1
             self :> arg_start
@@ -1510,12 +1746,38 @@ def main:
             error_msg => "parse error: message-payload braces `{name: Type, ...}` are retired (F70 I5, 2026-08-19). Use parens `(name: Type, ...)` instead — the parser distinguishes payload-parens (contents start with `name: Type`) from call-parens (contents start with a value expression) by content, so there is no ambiguity at the receive site." + cur_got
             self :> halt
 
+    # Chapter 27. `<expr> :> msg[(args)]`. Clojure returns the emit node
+    # without recurring, so the value goes straight to `unary_done`.
     parsing <: postfix -> parsing
-        |: cur_is_emit
+        |: cur_is_emit and nxt_kind != "ident"
         then:
             error => true
-            error_msg => "port: out of scope: :> in expression"
+            error_msg => "parse error: expected :ident" + nxt_got
             self :> halt
+
+    parsing <: postfix -> parsing
+        |: cur_is_emit and nxt_kind == "ident" and not nxt2_is_lparen
+        then:
+            v_ser => "(emit async " + v_ser + " " + nxt_value + ")"
+            v_kind => "other"
+            pos => pos + 2
+            self :> unary_done
+
+    parsing <: postfix -> parsing
+        |: cur_is_emit and nxt_kind == "ident" and nxt2_is_lparen and nxt3_is_rparen
+        then:
+            v_ser => "(emit async " + v_ser + " " + nxt_value + ")"
+            v_kind => "other"
+            pos => pos + 4
+            self :> unary_done
+
+    parsing <: postfix -> parsing
+        |: cur_is_emit and nxt_kind == "ident" and nxt2_is_lparen and not nxt3_is_rparen
+        then:
+            frames => frames.slice(0, depth).append(self.mkop("call", "rawend", "(emit async " + v_ser + " " + nxt_value, 0))
+            depth => depth + 1
+            pos => pos + 3
+            self :> arg_start
 
     parsing <: postfix -> parsing
         |: cur_is_sync
@@ -1574,23 +1836,34 @@ def main:
             error_msg => "parse error: binary operator `" + cur_value + "` at end of line without a right-hand operand. Corvid does NOT continue expressions across newlines outside brackets. Wrap the whole expression in parens to continue on the next line: `(a\n    + b\n    + c)`." + cur_got
             self :> halt
 
+    # Chapter 27. parse-variant-pattern-rhs. The binop frame records
+    # `is` as its pending op and a `variant` frame collects bindings,
+    # whose pop hands the pattern to `ret` as the rhs.
     parsing <: binop_loop -> parsing
         |: bl_takes and nxt_kind != "newline" and bl_variant
         then:
-            error => true
-            error_msg => "port: out of scope: is variant pattern"
-            self :> halt
+            frames => frames.slice(0, depth - 1).append(self.retop(cur_value, top.ser, top.ekind, top.ops, top.acc, "")).append(self.mk("variant", var_head))
+            depth => depth + 1
+            pos => pos + var_skip
+            self :> var_open
 
     parsing <: binop_loop -> parsing
         |: bl_takes and nxt_kind != "newline" and not bl_variant
         then:
-            frames => frames.slice(0, depth - 1).append(self.retop(cur_value, top.ser, top.ekind, top.ops, top.acc, "")).append(Frame(kind: "binop", prec: op_prec + 1, op: "", ser: "", ekind: "other", ops: "", acc: "", aux: ""))
+            frames => frames.slice(0, depth - 1).append(self.retop(cur_value, top.ser, top.ekind, top.ops, top.acc, "")).append(self.mkop("binop", "", "", op_prec + 1))
             depth => depth + 1
             pos => pos + 1
             self :> unary_start
 
     parsing <: binop_loop -> parsing
-        |: not bl_takes
+        |: not bl_takes and disp_tail
+        then:
+            error => true
+            error_msg => "port: out of scope: <: dispatch block"
+            self :> halt
+
+    parsing <: binop_loop -> parsing
+        |: not bl_takes and not disp_tail
         then:
             v_ser => top.ser
             v_kind => top.ekind
@@ -1628,13 +1901,44 @@ def main:
             self :> arg_start
 
     parsing <: ret -> parsing
-        |: top_kind == "call" and cur_is_rparen
+        |: top_kind == "call" and cur_is_rparen and top.op != "rawend"
         then:
-            v_ser => "(call " + top.ser + top.acc + " " + arg_ser + ")"
+            v_ser => call_head + call_args + ")"
             v_kind => "other"
+            lc_ser => call_head + call_args + ")"
+            lc_cal => top.cal
+            lc_tgt => top.ctg
+            lc_nm => top.cnm
+            lc_args => call_args
             depth => depth - 1
             pos => pos + 1
             self :> postfix
+
+    parsing <: ret -> parsing
+        |: top_kind == "call" and cur_is_rparen and top.op == "rawend"
+        then:
+            v_ser => call_head + call_args + ")"
+            v_kind => "other"
+            depth => depth - 1
+            pos => pos + 1
+            self :> unary_done
+
+    # Chapter 27. The `|>` operand returned. It must be a call on a dot
+    # or an ident, which becomes a sync emit.
+    parsing <: ret -> parsing
+        |: top_kind == "sync" and sync_ok
+        then:
+            v_ser => "(emit sync " + sync_tgt + " " + lc_nm + lc_args + ")"
+            v_kind => "other"
+            depth => depth - 1
+            self :> postfix
+
+    parsing <: ret -> parsing
+        |: top_kind == "sync" and not sync_ok
+        then:
+            error => true
+            error_msg => "parse error: expression-position `|>` expected `|> receiver.method(args)` (got :glyph \"|>\" at line " + top.prec.to_string() + ")"
+            self :> halt
 
     parsing <: ret -> parsing
         |: top_kind == "call" and not cur_is_comma and not cur_is_rparen
@@ -1697,19 +2001,51 @@ def main:
             self :> arm_colon
 
     parsing <: ret -> parsing
-        |: top_kind == "multi" and top.op == "body" and cur_is_multi
+        |: m_body and cur_is_multi
         then:
             frames => frames.slice(0, depth - 1).append(self.retop("", top.ser, top.ekind, top.ops, top.acc + arm_ser, ""))
             pos => pos + 1
             self :> arm_head
 
+    # Chapter 27. Block chain. A NEWLINE then `||:` continues at the same
+    # indent, a NEWLINE INDENT `||:` opens the chain's one INDENT.
     parsing <: ret -> parsing
-        |: top_kind == "multi" and top.op == "body" and not cur_is_multi
+        |: m_body and m_cont_nl
+        then:
+            frames => frames.slice(0, depth - 1).append(self.retop("", top.ser, top.ekind, top.ops, top.acc + arm_ser, ""))
+            pos => pos + 2
+            self :> arm_head
+
+    parsing <: ret -> parsing
+        |: m_body and m_cont_ind
+        then:
+            frames => frames.slice(0, depth - 1).append(m_open)
+            pos => pos + 3
+            self :> arm_head
+
+    parsing <: ret -> parsing
+        |: m_body and not m_more and top.prec == 0
         then:
             v_ser => "(multi-arm" + top.acc + arm_ser + ")"
             v_kind => "other"
             depth => depth - 1
             self :> postfix
+
+    parsing <: ret -> parsing
+        |: m_body and not m_more and top.prec == 1 and m_q_dedent
+        then:
+            v_ser => "(multi-arm" + top.acc + arm_ser + ")"
+            v_kind => "other"
+            depth => depth - 1
+            pos => pos + m_q_skip
+            self :> postfix
+
+    parsing <: ret -> parsing
+        |: m_body and not m_more and top.prec == 1 and not m_q_dedent
+        then:
+            error => true
+            error_msg => "parse error: expected DEDENT after multi-arm `||:` chain" + m_q_got
+            self :> halt
 
     parsing <: ret -> parsing
         |: top_kind == "none"
@@ -1742,6 +2078,271 @@ def main:
             error => true
             error_msg => "parse error: expected :punct \":\"" + cur_got
             self :> halt
+
+    # ---------------------------------------------------------------
+    # Chapter 27. `is` variant patterns, `(name: Type)` payloads, and
+    # parse-type.
+    # ---------------------------------------------------------------
+
+    # parse-variant-pattern-rhs bindings. Commas are skipped wherever
+    # they sit, as Clojure's loop does.
+    parsing <: var_open -> parsing
+        |: cur_is_lparen
+        then:
+            pos => pos + 1
+            self :> var_bind
+
+    parsing <: var_open -> parsing
+        |: not cur_is_lparen
+        then:
+            v_ser => top.ser + ")"
+            v_kind => "other"
+            depth => depth - 1
+            self :> ret
+
+    parsing <: var_bind -> parsing
+        |: cur_is_rparen
+        then:
+            v_ser => top.ser + top.acc + ")"
+            v_kind => "other"
+            depth => depth - 1
+            pos => pos + 1
+            self :> ret
+
+    parsing <: var_bind -> parsing
+        |: cur_is_comma
+        then:
+            pos => pos + 1
+            self :> var_bind
+
+    parsing <: var_bind -> parsing
+        |: bind_named
+        then:
+            frames => frames.slice(0, depth - 1).append(self.retop("", top.ser, top.ekind, top.ops, top.acc + " (let " + cur_value + " " + nxt3_value + ")", ""))
+            pos => pos + 4
+            self :> var_bind
+
+    parsing <: var_bind -> parsing
+        |: bind_pos
+        then:
+            frames => frames.slice(0, depth - 1).append(self.retop("", top.ser, top.ekind, top.ops, top.acc + " (let " + nxt_value + ")", ""))
+            pos => pos + 2
+            self :> var_bind
+
+    parsing <: var_bind -> parsing
+        |: bind_bad
+        then:
+            error => true
+            error_msg => "parse error: F69 L4: expected `let <name>` or `<field>: let <name>` inside a `<:` case pattern payload. Positional bindings without `let` are not supported — spec §3.7.1 requires discrimination-with-name-binding to be explicit." + cur_got
+            self :> halt
+
+    # parse-msg-args-parens, one entry.
+    parsing <: ms_entry -> parsing
+        |: cur_kind != "ident"
+        then:
+            error => true
+            error_msg => "parse error: expected :ident" + cur_got
+            self :> halt
+
+    parsing <: ms_entry -> parsing
+        |: cur_kind == "ident" and not nxt_is_colon
+        then:
+            error => true
+            error_msg => "parse error: expected :punct \":\"" + nxt_got
+            self :> halt
+
+    parsing <: ms_entry -> parsing
+        |: cur_kind == "ident" and nxt_is_colon and nxt2_is_close
+        then:
+            frames => frames.slice(0, depth - 1).append(self.retop("", top.ser, top.ekind, top.ops, top.acc + " (field " + cur_value + " TR:Any bare)", ""))
+            pos => pos + 2
+            self :> ms_after
+
+    parsing <: ms_entry -> parsing
+        |: cur_kind == "ident" and nxt_is_colon and not nxt2_is_close
+        then:
+            frames => frames.slice(0, depth - 1).append(self.retop("", top.ser, top.ekind, top.ops, top.acc, cur_value))
+            pos => pos + 2
+            self :> ty_start
+
+    parsing <: ms_after -> parsing
+        |: cur_is_comma
+        then:
+            pos => pos + 1
+            self :> ms_entry
+
+    parsing <: ms_after -> parsing
+        |: cur_is_rparen
+        then:
+            v_ser => "(msg-shape " + top.ser + top.acc + ")"
+            v_kind => "other"
+            depth => depth - 1
+            pos => pos + 1
+            self :> postfix
+
+    parsing <: ms_after -> parsing
+        |: not cur_is_comma and not cur_is_rparen
+        then:
+            error => true
+            error_msg => "parse error: expected `,` or `)` in message shape" + cur_got
+            self :> halt
+
+    # parse-type. The result is the parse-layer type rendering in
+    # `v_ser` (`TR:` `TN(...)` `TQ(...)` `TO:<outer>(...)` `TT(...)`
+    # `TNT(f:T,...)`), and `ty_ret` hands it to the frame below.
+    parsing <: ty_start -> parsing
+        |: named_tt
+        then:
+            frames => frames.slice(0, depth).append(self.mk("tnt", ""))
+            depth => depth + 1
+            pos => pos + 1
+            self :> tnt_field
+
+    parsing <: ty_start -> parsing
+        |: cur_is_lparen and not named_tt
+        then:
+            frames => frames.slice(0, depth).append(self.mk("ttup", ""))
+            depth => depth + 1
+            pos => pos + 1
+            self :> ty_start
+
+    parsing <: ty_start -> parsing
+        |: cur_kind == "ident" and nxt_is_of and nxt2_is_lparen
+        then:
+            frames => frames.slice(0, depth).append(self.mk("tofl", cur_value))
+            depth => depth + 1
+            pos => pos + 3
+            self :> ty_start
+
+    parsing <: ty_start -> parsing
+        |: cur_kind == "ident" and nxt_is_of and not nxt2_is_lparen
+        then:
+            frames => frames.slice(0, depth).append(self.mk("tof", cur_value))
+            depth => depth + 1
+            pos => pos + 2
+            self :> ty_start
+
+    parsing <: ty_start -> parsing
+        |: cur_kind == "ident" and not nxt_is_of
+        then:
+            v_ser => "TR:" + cur_value
+            pos => pos + 1
+            self :> ty_suffix
+
+    parsing <: ty_start -> parsing
+        |: cur_kind != "ident" and not cur_is_lparen
+        then:
+            error => true
+            error_msg => "parse error: expected :ident" + cur_got
+            self :> halt
+
+    parsing <: tnt_field -> parsing
+        |: cur_kind != "ident"
+        then:
+            error => true
+            error_msg => "parse error: expected :ident" + cur_got
+            self :> halt
+
+    parsing <: tnt_field -> parsing
+        |: cur_kind == "ident" and not nxt_is_colon
+        then:
+            error => true
+            error_msg => "parse error: expected `:` in named-tuple field decl" + nxt_got
+            self :> halt
+
+    parsing <: tnt_field -> parsing
+        |: cur_kind == "ident" and nxt_is_colon
+        then:
+            frames => frames.slice(0, depth - 1).append(self.retop("", top.ser, top.ekind, top.ops, top.acc, cur_value))
+            pos => pos + 2
+            self :> ty_start
+
+    # Nullability suffix. `?` and `!` cannot stack.
+    parsing <: ty_suffix -> parsing
+        |: (cur_is_q or cur_is_bang) and nxt_is_suffix
+        then:
+            error => true
+            error_msg => "parse error: cannot stack `?`/`!` on the same type (spec §3.6.1)" + nxt_got
+            self :> halt
+
+    parsing <: ty_suffix -> parsing
+        |: cur_is_q and not nxt_is_suffix
+        then:
+            v_ser => "TQ(" + v_ser + ")"
+            pos => pos + 1
+            self :> ty_ret
+
+    parsing <: ty_suffix -> parsing
+        |: cur_is_bang and not nxt_is_suffix
+        then:
+            v_ser => "TN(" + v_ser + ")"
+            pos => pos + 1
+            self :> ty_ret
+
+    parsing <: ty_suffix -> parsing
+        |: not cur_is_q and not cur_is_bang
+        then: self :> ty_ret
+
+    parsing <: ty_ret -> parsing
+        |: top_kind == "tof"
+        then:
+            v_ser => "TO:" + top.ser + "(" + v_ser + ")"
+            depth => depth - 1
+            self :> ty_suffix
+
+    parsing <: ty_ret -> parsing
+        |: ty_frame and top_kind != "tof" and cur_is_comma
+        then:
+            frames => frames.slice(0, depth - 1).append(ty_next)
+            pos => pos + 1
+            self :> ty_more
+
+    parsing <: ty_ret -> parsing
+        |: top_kind == "tofl" and cur_is_rparen
+        then:
+            v_ser => "TO:" + top.ser + "(TT(" + tacc + "))"
+            depth => depth - 1
+            pos => pos + 1
+            self :> ty_suffix
+
+    parsing <: ty_ret -> parsing
+        |: top_kind == "ttup" and cur_is_rparen
+        then:
+            v_ser => ||: top.prec == 0 : v_ser ||: else : "TT(" + tacc + ")"
+            depth => depth - 1
+            pos => pos + 1
+            self :> ty_suffix
+
+    parsing <: ty_ret -> parsing
+        |: top_kind == "tnt" and cur_is_rparen
+        then:
+            v_ser => "TNT(" + tacc + ")"
+            depth => depth - 1
+            pos => pos + 1
+            self :> ty_suffix
+
+    parsing <: ty_ret -> parsing
+        |: ty_frame and top_kind != "tof" and not cur_is_comma and not cur_is_rparen
+        then:
+            error => true
+            error_msg => ||: top_kind == "tofl" : "parse error: expected `,` or `)` in type-parameter list" + cur_got ||: top_kind == "ttup" : "parse error: expected `,` or `)` in tuple type" + cur_got ||: else : "parse error: expected `,` or `)` in named-tuple type" + cur_got
+            self :> halt
+
+    parsing <: ty_ret -> parsing
+        |: top_kind == "mshape"
+        then:
+            frames => frames.slice(0, depth - 1).append(self.retop("", top.ser, top.ekind, top.ops, top.acc + " (field " + top.aux + " " + v_ser + ")", ""))
+            self :> ms_after
+
+    # After a `,` in a type list. A named tuple reads its next field,
+    # the other lists their next type.
+    parsing <: ty_more -> parsing
+        |: top_kind == "tnt"
+        then: self :> tnt_field
+
+    parsing <: ty_more -> parsing
+        |: top_kind != "tnt"
+        then: self :> ty_start
 
     # parse-expression epilogue. skip-newlines, then eof or trailing.
     parsing <: finish -> parsing

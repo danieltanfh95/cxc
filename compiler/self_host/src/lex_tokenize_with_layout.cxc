@@ -59,6 +59,16 @@ def main:
     # NEWLINE when the running depth is back to zero at its end.
     bracket_depth: Int!  = 0
     line_is_cont:  Bool! = false
+    # Chapter 27 inconsistent dedent. Clojure pops the indent stack to a
+    # level that must exist, and throws when the line's indent falls
+    # between two open levels. It tokenizes the line content first, so
+    # a content lex error on that line wins. `dedent_err` holds the
+    # message until the line ends. `indent_str` is the stack printed
+    # top first, `indent_snap` its value when the line's dedents began.
+    dedenting:   Bool!   = false
+    indent_str:  String! = "0"
+    indent_snap: String! = "0"
+    dedent_err:  String! = ""
 
     reserved: List of String = [
         "module", "from", "import", "as",
@@ -241,6 +251,7 @@ def main:
     # owes that line its line bump, and its NEWLINE token only when the
     # line is not a bracket continuation and closes at depth zero.
     ends_open_line :- not at_line_start
+    indent_popped  :- indent_str.substring((indent_str.index_of(" ") + 1).max(0).min(indent_str.length()), (indent_str.length() - indent_str.index_of(" ") - 1).max(0))
     eol_newline    :- bracket_depth == 0 and not line_is_cont
 
     -> lex_start
@@ -259,7 +270,14 @@ def main:
     out_buf: String! = ""
 
     lex_start <: step -> lex_start
-        |: at_src_end and not error and ends_open_line
+        |: at_src_end and not error and ends_open_line and dedent_err != ""
+        then:
+            error => true
+            error_msg => dedent_err
+            self :> step
+
+    lex_start <: step -> lex_start
+        |: at_src_end and not error and ends_open_line and dedent_err == ""
         then:
             tokens => ||: eol_newline : tokens.append(Token(kind: "newline", value: "", line: line_num, col: 1)) ||: else : tokens
             line_num => line_num + 1
@@ -285,7 +303,15 @@ def main:
             self :> step
 
     lex_start <: step -> lex_start
-        |: not at_src_end and not at_line_start and is_nl
+        |: not at_src_end and not at_line_start and is_nl and dedent_err != ""
+        then:
+            error => true
+            error_msg => dedent_err
+            sc => source.length()
+            self :> step
+
+    lex_start <: step -> lex_start
+        |: not at_src_end and not at_line_start and is_nl and dedent_err == ""
         then:
             tokens => ||: eol_newline : tokens.append(Token(kind: "newline", value: "", line: line_num, col: 1)) ||: else : tokens
             line_is_cont => bracket_depth > 0
@@ -607,6 +633,8 @@ def main:
         then:
             at_line_start => false
             col_num => 1
+            dedenting => false
+            indent_snap => indent_str
             self :> adjust_indent
 
     lex_start <: measure_indent -> lex_start
@@ -617,10 +645,17 @@ def main:
             self :> step
 
     lex_start <: adjust_indent -> lex_start
-        |: line_indent > top_indent
+        |: line_indent > top_indent and not dedenting
         then:
             tokens => tokens.append(Token(kind: "indent", value: "", line: line_num, col: 1))
             indent_stack => indent_stack.append(line_indent)
+            indent_str => line_indent.to_string() + " " + indent_str
+            self :> step
+
+    lex_start <: adjust_indent -> lex_start
+        |: line_indent > top_indent and dedenting
+        then:
+            dedent_err => "inconsistent dedent at line " + line_num.to_string() + ": this line's indent (" + line_indent.to_string() + (||: line_indent == 1 : " column" ||: else : " columns") + ") does not match any enclosing block's indent level (open blocks are at [" + indent_snap + "]). Fix: align this line with one of those indents, or make the parent block consistent (typically means mixing tabs and spaces or a stray half-indent)."
             self :> step
 
     lex_start <: adjust_indent -> lex_start
@@ -628,6 +663,8 @@ def main:
         then:
             tokens => tokens.append(Token(kind: "dedent", value: "", line: line_num, col: 1))
             indent_stack => indent_stack.filter(x => x < top_indent)
+            indent_str => indent_popped
+            dedenting => true
             self :> adjust_indent
 
     lex_start <: adjust_indent -> lex_start

@@ -124,3 +124,7 @@ def X.
 @foo
 def X$
 def Pair(k: String!,\n v: Int!)
+def P:\n    x: Int\n  y: Int
+def P:\n  x: Int\n y: Int
+def P:\n    x: Int\n  y: Int $
+def P:\n    x: Int\n  # note\n    y: Int

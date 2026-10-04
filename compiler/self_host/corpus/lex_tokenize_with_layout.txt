@@ -193,3 +193,12 @@ x.0
 -a.b(c, d: 1)
 not a and b or c
 x ?? y ?? z
+a\n    b\n  c
+a\n  b\n c
+a\n  b\n    c\n   d
+a\n        b\n    c\n  d
+a\n    b\n  c $
+a\n    b\n  "x
+a\n    b\n  c\nd
+a\n    b\n  # note\nc
+a\n    b\n  (c\nd)

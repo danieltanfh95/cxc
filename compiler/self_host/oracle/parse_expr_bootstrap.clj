@@ -1,4 +1,5 @@
-;; Oracle for the chapter-26 expression-parse slice.
+;; Oracle for the chapter-26 expression-parse slice (forms widened in
+;; chapter 27).
 ;;
 ;; Input per line. One cxc expression source, with the chapter-23
 ;; corpus conventions (`\\n` is a physical newline, `\\N` the two chars
@@ -27,6 +28,22 @@
 ;;   (list <e>*)
 ;;   (lambda (<param>*) <body>)
 ;;   (multi-arm (arm <guard> <body>)+)  with an `else` guard printed bare
+;;
+;; Chapter 27 forms.
+;;
+;;   (raise <TypeName> <arg>*)
+;;   (emit async <target> <msg> <arg>*)   `:>`, target `nil` when bare
+;;   (emit sync <target> <msg> <arg>*)    `|>`, target `nil` on an ident call
+;;   (msg-shape <target> <entry>*)  with <entry> = (field <name> <type>)
+;;                                  or (field <name> TR:Any bare)
+;;   (variant <Enum> <case> <bind>*)  or (variant . <case> <bind>*)
+;;                                  with <bind> = (let <as>) | (let <field> <as>)
+;;
+;; Types print the way the parse-layer oracle prints them, plus `TQ`
+;; for the banned `T?` suffix the parser still builds.
+;;
+;;   TR:<name>  TN(<t>)  TQ(<t>)  TO:<outer>(<t>)  TT(<t>,<t>,...)
+;;   TNT(<f>:<t>,...)
 
 (require 'cxc.parse)
 (require 'clojure.string)
@@ -34,6 +51,24 @@
 (do
 
 (declare ser)
+
+(defn- ser-type [t]
+  (case (:node t)
+    :type-ref      (str "TR:" (:name t))
+    :type-nonnil   (str "TN(" (ser-type (:inner t)) ")")
+    :type-nullable (str "TQ(" (ser-type (:inner t)) ")")
+    :type-of       (str "TO:" (:outer t) "(" (ser-type (:inner t)) ")")
+    :type-tuple    (str "TT(" (clojure.string/join "," (map ser-type (:types t))) ")")
+    :type-named-tuple
+    (str "TNT("
+         (clojure.string/join "," (map #(str (:name %) ":" (ser-type (:type %))) (:fields t)))
+         ")")
+    (str "T?:" (:node t))))
+
+(defn- ser-bind [b]
+  (if (:field b)
+    (str "(let " (:field b) " " (:as b) ")")
+    (str "(let " (:as b) ")")))
 
 (defn- ser-arg [a]
   (if (= :named (:kind a))
@@ -67,6 +102,18 @@
          (apply str (map #(str " (arm " (ser (:guard %)) " " (ser (:body %)) ")") (:arms n)))
          ")")
     :else-marker "else"
+    :raise       (str "(raise " (:type-name n)
+                      (apply str (map #(str " " (ser-arg %)) (:args n))) ")")
+    :emit        (str "(emit " (if (:async? n) "async" "sync") " "
+                      (if (:target n) (ser (:target n)) "nil") " " (:msg n)
+                      (apply str (map #(str " " (ser-arg %)) (:args n))) ")")
+    :msg-shape   (str "(msg-shape " (ser (:target n))
+                      (apply str (map #(str " (field " (:name %) " " (ser-type (:type %))
+                                            (when (:bareword? %) " bare") ")")
+                                      (:fields n))) ")")
+    :variant-pattern
+    (str "(variant " (if (:leading-dot? n) "." (:enum-name n)) " " (:case-name n)
+         (apply str (map #(str " " (ser-bind %)) (:bindings n))) ")")
     (str "(?" (name (:node n)) ")")))
 
 (def ^:private desugar @#'cxc.parse/desugar-chained-comparisons)

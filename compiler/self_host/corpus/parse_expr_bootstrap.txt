@@ -198,3 +198,197 @@ is : + |>
 a ||: <=
 "s" "s" ( -
 not a => => x
+raise E(a: 1, b)
+raise E()
+raise E().x
+raise 1
+raise E
+raise E x
+:> ping
+:> ping()
+:> ping(1, k: 2)
+:> 3
+a :> m
+a :> m()
+a.b :> m(x, y: z)
+a :> m(x).y
+a :> m.y
+-a :> m
+:> m(1).x
+|> a.m(1)
+|> f(x)
+|> f()
+|> a.b.c(1, k: 2)
+|> a
+|> a.m
+|> a.m(1) + 2
+|> (a.m(1))
+xs.each(x => |> x.go())
+xs.each(x => :> go(x))
+x(a: Int)
+x(a: Int, b: String!)
+x(a:)
+x(a:, b: Int)
+x(a: List of Int)
+x(a: Map of (String, Int))
+x(a: (Int, String))
+x(a: (p: Int, q: (r: Bool)))
+x(a: Int?)
+x(a: Int!?)
+x(a: Int, 5)
+x(a: Int b)
+x(a: (Int))
+x(a: List of (a: Int))
+x(a: Int)(b: Int)
+x(a: Int).y
+x(a: Foo(1))
+x(a: Foo.b)
+x is .ok
+x is .ok(let v)
+x is Res.err(let e, code: let c)
+x is .ok(, let v,)
+x is .ok(v)
+x is .ok and y
+x is .ok(let a) or z is E.b
+x is y.z
+||: a : 1\n||: else : 2
+||: a : 1\n    ||: else : 2
+||: a : 1\n    ||: b : 2\n    ||: else : 3
+||: a : 1\n    ||: b : 2\n        ||: else : 3
+||: a : ||: b : 1\n||: else : 2
+x\n||: a : 1
+f(||: a : 1\n||: else : 2)
+x(a: Int, b: (Int, String))
+x(a: Int, b: (p: Int, q: (r: Bool!)))
+x(a: Int, b: (Int))
+x(a: Int, b: (Int)!)
+x(a: Int, b: (Int!)!)
+x(a: Int, b: (Int, String)?)
+x(a: Int, b: (p: Int)!)
+x(a: Int, b: Map of (String, List of Int!))
+x(a: Int, b: Map of (String, Int)!)
+x(a: Int, b: List of Int!!)
+x(a: Int, b: List of List of Int)
+x(a: Int, b: List of (Int))
+x(a: Int, b: List of (p: Int))
+x(a: Int, b: (p: Int, 5))
+x(a: Int, b: (p Int))
+x(a: Int, b: (Int String))
+x(a: Int, b: (p: Int q))
+x(a: Int, b: Map of (String Int))
+x(a: Int, b: 5)
+x(a: Int, b: Int??)
+x(a: Int, b: Int?!)
+x(a: Int, b: ((p: Int), (Int, Bool)))
+x(a: Int, b:\n)
+x(a: Int,\n b: Int)
+x(a: Int, b: (p: Int,\n q: Int))
+x(a: Int, b: Int!\n)
+x(a: Int, b
+x(a: Int,
+x(a: Int, b: List of
+x(a: Int, b: (
+x(a: Int, b: (p:
+x(a: Int, b: Int!
+raise E(a:)
+raise E(a, b
+raise Err(code: 1).msg.length()
+not raise E()
+:> m(1
+:> m(k: 1)(2)
+a.b :> m(1) + 2
+|> a.m(1
+|> xs[0].m()
+|> f(x)(y)
+|> raise E()
+x is .ok(let)
+x is .ok(code let v)
+x is .ok(let v
+x is Res.ok(let v).y
+a < b is .ok
+f(x is .ok(let v), y)
+||: a : 1\n    ||: else : 2 x
+||: a : 1\n    ||: b : 2\n  ||: else : 3
+||: a : 1\n||: b : 2\n||: else : 3
+||: a : 1\n    ||: else : 2\nx
+||: a : 1\n\n||: else : 2
+x(a: Int) :> m
+:> m(x(a: Int))
+:> go
+|> b.len(n: |> xs)
+raise Err((|> b.m(k: b * a)), n: ||: :> go() - not foo : (n)\n    ||: obj(b == xs, ||: xs : b\n    ||: else : nil) : |> obj(a: String!, d: Bool, d:)\n    ||: [xs.m(n, a), n ?? obj] : x => 42 is self is 'c'\n    ||: else : |> b.go())
+[|> f(code: xs), [a, foo]]
+x => --k
+obj[42]
+||: n.len() : not 0x1F is .some\n||: else : |> foo.go()
+raise Err(x => n) :> ping
+k[n(n: x => a)]
+(xs)
+(2e3)
+foo[raise Bad(2e3, xs)]
+(b[obj])
+--0x1F
+-||: a() : raise Bad(xs)\n    ||: self : |> g(n: nil, k: nil)\n    ||: :> ping() : |> n\n    ||: else : n(a: Bool, d:)
+||: 2e3 : |> g(n: raise Err(x, n: xs))\n||: raise Bad() is .none(let w, let v) : b\n||: not -n : ||: [foo, self] : a is 2e3\n    ||: else : (self)\n||: else : -[x, 'c']
+-raise Err()
+(1.5)
+(true)
+a.len(k: not [|> g(xs), obj * x], b.at())
+[a.m(), not obj]
+k.len()
+n[x => false is y => 2e3]
+xs()
+true <= n
+|> (42)
+|> n == 42
+not xs < a >= x[b]
+|> g('c', n: x)
+x(b: String)
+y => not k(a: Foo, c: (p: (Bool, Foo?), q: Int))
+||: x : xs\n||: else : obj
+foo[a]
+a is .some(let v) is [k(n: true, k: true), |> foo.m(n: nil, n)] < |> xs[b]
+obj(a: Foo, c: ((String, Bool)), c:)
+(0x1F % obj is x.m())
+a(k: raise Err(), n: obj(b: Bool!)) <= x => |> foo.m(0x1F) ?? 42
+k in [x, true] :> ping
+|> g(xs is .ok())
+b
+[b, true]
+x
+y => 2e3 * xs(foo, n: xs) :> ping
+|> x.m(obj, 'c')
+||: n : 2e3\n||: a : self\n||: obj : 0x1F\n||: else : 1.5 == foo(n, k: self)
+x()
+foo(b: Int, c: ((String)?)?)
+raise Err()
+-(b(b: Bool!, d: (List of Bool?, (p: Foo, q: String?)), d: (p: (String?), q: Int?)?))
+|> g(1.5 == nil, k: k :> go())
+raise Err([0x1F :> ping, -n] is Res.some)
+-[a(), ||: k : xs\n    ||: 42 : obj\n    ||: b : 0x1F\n    ||: else : b]
+n[true]
+[raise Bad(-true), :> go]
+y => raise Err(code: |> n.go(), k: foo())
+[ b ! b x , a
+a "s" ? 42
+let [ not
+\n     x \n of ]
+( \n + x Int \n     of
+b .
+"s" => ?
+|> x List not "s"
+is :
+let
+. \n let
+=> :> not List not
+|> not x => + :>
+b ? "s" a ]
+|> is a => : )
+=> "s" < List ! \n    
+a Int else , List
+x \n     of < \n [ :
+. ||: b
+? Int let ]
+. . is 42 42
+[ of ? List of x b
+: ? + + ]
