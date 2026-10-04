@@ -38,6 +38,15 @@ def main:
     tokens:   List of Token = []
     error:    Bool!   = false
     error_msg: String! = ""
+    # Chapter-23 escape scratch. `esc_mode` is the return-mode sentinel
+    # for the shared escape phases ("str" or "char", chapter 20
+    # `nt_return_mode` idiom). `esc_hex` / `esc_val` accumulate the
+    # `\u{...}` body. `char_esc` remembers whether the char literal body
+    # was an escape so the close-quote error picks Clojure's message.
+    esc_mode:  String! = "str"
+    esc_hex:   String! = ""
+    esc_val:   Int!    = 0
+    char_esc:  Bool!   = false
 
     reserved: List of String = [
         "module", "from", "import", "as",
@@ -98,20 +107,33 @@ def main:
     # harness would diff on the Token value column.
     is_dot        :- srccur == 46
     srcnext_is_digit :- sc + 1 < source.length() and source.code_at(sc + 1) >= 48 and source.code_at(sc + 1) <= 57
-    # Chapter-22 — string / char escape-sequence predicates. The port
-    # preserves escapes in their literal form in the Token value (two
-    # chars, backslash + marker); Clojure's cxc.lex/tokenize decodes
-    # the escape to its actual byte, and the oracle re-encodes via
-    # pr-str which emits the same `\n` / `\t` / `\r` / `\\` / `\"` /
-    # `\'` text for the supported subset. `\xNN` / `\u{...}` / `\0` /
-    # `\a` / `\b` / `\f` / `\v` are out of scope here because pr-str
-    # would emit `\uNNNN`-style escapes that don't match the port's
-    # literal form.
+    # Chapter-23 — string / char escape decoding. The port decodes every
+    # escape Clojure's cxc.lex/append-escape! accepts (simple set
+    # `\n \t \r \\ \" \' \0 \a \b \f \v`, hex byte `\xNN`, unicode
+    # `\u{HEX+}`) to its code point, then re-encodes the code point
+    # through `enc`, a port of Clojure's pr-str string printer. Token
+    # value therefore holds the pr-str body (no surrounding quotes),
+    # which is exactly what the oracle prints via `(pr-str value)`.
+    # Chapter 22 preserved the two-char literal instead, which broke on
+    # `\'` (pr-str prints a bare apostrophe) and could not express hex
+    # or unicode escapes at all.
     is_bslash     :- srccur == 92
-    is_esc_n      :- srccur == 110
-    is_esc_t      :- srccur == 116
-    is_esc_r      :- srccur == 114
-    is_valid_esc  :- is_esc_n or is_esc_t or is_esc_r or is_bslash or is_dquote or is_squote
+    is_lbrace     :- srccur == 123
+    is_rbrace     :- srccur == 125
+    is_esc_x      :- srccur == 120
+    is_esc_u      :- srccur == 117
+    simple_esc_code :- ||: srccur == 110 : 10 ||: srccur == 116 : 9 ||: srccur == 114 : 13 ||: srccur == 92 : 92 ||: srccur == 34 : 34 ||: srccur == 39 : 39 ||: srccur == 48 : 0 ||: srccur == 97 : 7 ||: srccur == 98 : 8 ||: srccur == 102 : 12 ||: srccur == 118 : 11 ||: else : -1
+    cur_hex       :- ||: srccur >= 48 and srccur <= 57 : srccur - 48 ||: srccur >= 97 and srccur <= 102 : srccur - 87 ||: srccur >= 65 and srccur <= 70 : srccur - 55 ||: else : -1
+    next_hex      :- ||: srcnext >= 48 and srcnext <= 57 : srcnext - 48 ||: srcnext >= 97 and srcnext <= 102 : srcnext - 87 ||: srcnext >= 65 and srcnext <= 70 : srcnext - 55 ||: else : -1
+    uni_len_ok    :- esc_hex.length() >= 1 and esc_hex.length() <= 6
+
+    # pr-str string-body encoder. Clojure's `char-escape-string` table
+    # escapes newline, tab, return, double quote, backslash, formfeed,
+    # and backspace. Every other code point prints raw. Code points
+    # above U+FFFF are emitted as a UTF-16 surrogate pair because
+    # `Int.to_char_string()` truncates to one unichar.
+    enc(c: Int!) :- String!
+        ||: c == 10 : "\\n" ||: c == 9 : "\\t" ||: c == 13 : "\\r" ||: c == 34 : "\\\"" ||: c == 92 : "\\\\" ||: c == 12 : "\\f" ||: c == 8 : "\\b" ||: c > 65535 : (55296 + (c - 65536) / 1024).to_char_string() + (56320 + (c - 65536) % 1024).to_char_string() ||: else : c.to_char_string()
 
     top_indent :- indent_stack.at((indent_stack.count() - 1).max(0)) ?? 0
 
@@ -120,7 +142,7 @@ def main:
 
     -> lex_start
         then:
-            source => args.get_or(1, "").replace("\\n", "\n")
+            source => args.get_or(1, "").replace("\\n", "\n").replace("\\N", "\\n")
             self :> step
 
     -> emitting
@@ -302,6 +324,7 @@ def main:
         |: not at_src_end and not at_line_start and not is_sp and not is_nl and not is_comma and not is_colon and not is_lparen and not is_rparen and not is_bang and not is_q and not is_eq and not is_dash and not is_lt and not is_gt and not is_pipe and not is_id_start and not is_digit and not is_dquote and not is_squote
         then:
             error => true
+            sc => source.length()
             error_msg => "lex: unexpected char"
             self :> step
 
@@ -422,26 +445,23 @@ def main:
             tokens => tokens.append(Token(kind: "float", value: word_acc, line: line_num, col: tok_start_col))
             self :> step
 
+    # Chapter-23 — string body. Plain chars go through `enc` so a raw
+    # tab or other pr-str-escaped char prints the way the oracle does.
     lex_start <: scan_str -> lex_start
         |: not at_src_end and not is_dquote and not is_nl and not is_bslash
         then:
-            word_acc => word_acc + source.substring(sc, 1)
+            word_acc => word_acc + self.enc(srccur)
             sc => sc + 1
             col_num => col_num + 1
             self :> scan_str
 
-    # Chapter-22 — backslash in string body. Consume the backslash
-    # literally and dispatch to scan_str_escape, which validates the
-    # next char against the supported subset and appends it too; both
-    # sides preserve `\n` / `\t` / `\r` / `\\` / `\"` / `\'` in the
-    # two-char literal form.
     lex_start <: scan_str -> lex_start
         |: not at_src_end and is_bslash
         then:
-            word_acc => word_acc + "\\"
+            esc_mode => "str"
             sc => sc + 1
             col_num => col_num + 1
-            self :> scan_str_escape
+            self :> scan_esc
 
     lex_start <: scan_str -> lex_start
         |: not at_src_end and is_dquote
@@ -455,39 +475,171 @@ def main:
         |: at_src_end or is_nl
         then:
             error => true
-            error_msg => "unterminated string"
+            sc => source.length()
+            error_msg => "unterminated string literal"
             self :> step
 
-    lex_start <: scan_str_escape -> lex_start
-        |: not at_src_end and is_valid_esc
-        then:
-            word_acc => word_acc + source.substring(sc, 1)
-            sc => sc + 1
-            col_num => col_num + 1
-            self :> scan_str
-
-    lex_start <: scan_str_escape -> lex_start
-        |: at_src_end or not is_valid_esc
+    # Chapter-23 — shared escape phases. Entered with `sc` one past the
+    # backslash. Clojure scans one physical line at a time, so a
+    # physical newline counts as end of input for every escape arm.
+    lex_start <: scan_esc -> lex_start
+        |: at_src_end or is_nl
         then:
             error => true
-            error_msg => "invalid escape in string"
+            sc => source.length()
+            error_msg => ||: esc_mode == "str" : "trailing backslash in string" ||: else : "trailing backslash in char literal"
             self :> step
 
-    # Chapter-22 — backslash in char body. Consume literally and
-    # dispatch to scan_char_escape to validate the next char against
-    # the supported escape subset.
+    lex_start <: scan_esc -> lex_start
+        |: not at_src_end and simple_esc_code >= 0
+        then:
+            word_acc => word_acc + self.enc(simple_esc_code)
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> esc_done
+
+    lex_start <: scan_esc -> lex_start
+        |: not at_src_end and is_esc_x
+        then:
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> scan_hex_byte
+
+    lex_start <: scan_esc -> lex_start
+        |: not at_src_end and is_esc_u
+        then:
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> scan_uni_open
+
+    lex_start <: scan_esc -> lex_start
+        |: not at_src_end and not is_nl and simple_esc_code < 0 and not is_esc_x and not is_esc_u
+        then:
+            error => true
+            sc => source.length()
+            error_msg => "unknown escape sequence `\\" + source.substring(sc, 1) + "` — legal escapes: \\n \\t \\r \\\\ \\\" \\' \\0 \\a \\b \\f \\v \\xNN \\u{...} (spec §2.7.1)"
+            self :> step
+
+    # `\xNN`. Exactly two hex digits, both read through the `cur_hex`
+    # / `next_hex` lookahead so the arm consumes them in one tick.
+    lex_start <: scan_hex_byte -> lex_start
+        |: cur_hex >= 0 and next_hex >= 0
+        then:
+            word_acc => word_acc + self.enc(cur_hex * 16 + next_hex)
+            sc => sc + 2
+            col_num => col_num + 2
+            self :> esc_done
+
+    lex_start <: scan_hex_byte -> lex_start
+        |: cur_hex < 0 or next_hex < 0
+        then:
+            error => true
+            sc => source.length()
+            error_msg => "`\\xNN` escape requires exactly two hex digits"
+            self :> step
+
+    # `\u{HEX+}`. Clojure reads every hex digit up to `}` first, then
+    # checks the 1 to 6 digit count, then the U+10FFFF ceiling. The arm
+    # order below mirrors that error precedence.
+    lex_start <: scan_uni_open -> lex_start
+        |: not at_src_end and is_lbrace
+        then:
+            esc_hex => ""
+            esc_val => 0
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> scan_uni_body
+
+    lex_start <: scan_uni_open -> lex_start
+        |: at_src_end or not is_lbrace
+        then:
+            error => true
+            sc => source.length()
+            error_msg => "`\\u` escape requires `{...}` (e.g. `\\u{1F600}`)"
+            self :> step
+
+    lex_start <: scan_uni_body -> lex_start
+        |: at_src_end or is_nl
+        then:
+            error => true
+            sc => source.length()
+            error_msg => "unterminated `\\u{...}` escape"
+            self :> step
+
+    lex_start <: scan_uni_body -> lex_start
+        |: not at_src_end and cur_hex >= 0
+        then:
+            esc_hex => esc_hex + source.substring(sc, 1)
+            esc_val => ||: esc_hex.length() >= 7 : esc_val ||: else : esc_val * 16 + cur_hex
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> scan_uni_body
+
+    lex_start <: scan_uni_body -> lex_start
+        |: not at_src_end and not is_nl and cur_hex < 0 and not is_rbrace
+        then:
+            error => true
+            sc => source.length()
+            error_msg => "`\\u{...}` escape body must be hex digits"
+            self :> step
+
+    lex_start <: scan_uni_body -> lex_start
+        |: not at_src_end and is_rbrace and not uni_len_ok
+        then:
+            error => true
+            sc => source.length()
+            error_msg => "`\\u{...}` escape requires 1-6 hex digits"
+            self :> step
+
+    lex_start <: scan_uni_body -> lex_start
+        |: not at_src_end and is_rbrace and uni_len_ok and esc_val > 1114111
+        then:
+            error => true
+            sc => source.length()
+            error_msg => "Unicode escape U+" + esc_hex + " exceeds U+10FFFF"
+            self :> step
+
+    lex_start <: scan_uni_body -> lex_start
+        |: not at_src_end and is_rbrace and uni_len_ok and esc_val <= 1114111
+        then:
+            word_acc => word_acc + self.enc(esc_val)
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> esc_done
+
+    # Return-mode split back to the literal that opened the escape.
+    lex_start <: esc_done -> lex_start
+        |: esc_mode == "str"
+        then: self :> scan_str
+
+    lex_start <: esc_done -> lex_start
+        |: esc_mode != "str"
+        then: self :> scan_char_close
+
+    # Chapter-23 — char body. Escape bodies share the string escape
+    # phases via `esc_mode => "char"`.
     lex_start <: scan_char_body -> lex_start
         |: not at_src_end and is_bslash
         then:
-            word_acc => word_acc + "\\"
+            esc_mode => "char"
+            char_esc => true
             sc => sc + 1
             col_num => col_num + 1
-            self :> scan_char_escape
+            self :> scan_esc
+
+    lex_start <: scan_char_body -> lex_start
+        |: not at_src_end and is_squote
+        then:
+            error => true
+            sc => source.length()
+            error_msg => "empty char literal `''` — need one character"
+            self :> step
 
     lex_start <: scan_char_body -> lex_start
         |: not at_src_end and not is_squote and not is_nl and not is_bslash
         then:
-            word_acc => word_acc + source.substring(sc, 1)
+            word_acc => word_acc + self.enc(srccur)
+            char_esc => false
             sc => sc + 1
             col_num => col_num + 1
             self :> scan_char_close
@@ -496,22 +648,8 @@ def main:
         |: at_src_end or is_nl
         then:
             error => true
-            error_msg => "unterminated char"
-            self :> step
-
-    lex_start <: scan_char_escape -> lex_start
-        |: not at_src_end and is_valid_esc
-        then:
-            word_acc => word_acc + source.substring(sc, 1)
-            sc => sc + 1
-            col_num => col_num + 1
-            self :> scan_char_close
-
-    lex_start <: scan_char_escape -> lex_start
-        |: at_src_end or not is_valid_esc
-        then:
-            error => true
-            error_msg => "invalid escape in char"
+            sc => source.length()
+            error_msg => "unterminated char literal"
             self :> step
 
     lex_start <: scan_char_close -> lex_start
@@ -526,7 +664,8 @@ def main:
         |: at_src_end or not is_squote
         then:
             error => true
-            error_msg => "unterminated char"
+            sc => source.length()
+            error_msg => ||: char_esc : "unterminated char literal — expected `'`" ||: else : "char literal must contain exactly one character"
             self :> step
 
     emit_idx: Int! = 0

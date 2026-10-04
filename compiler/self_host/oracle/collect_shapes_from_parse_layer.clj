@@ -18,7 +18,10 @@
 
 (do
   (doseq [ln (line-seq (java.io.BufferedReader. *in*))]
-    (let [src    (clojure.string/replace ln "\\n" "\n")
+    ;; Chapter 23 `\\N` sentinel, mirrored from the parse-layer oracle.
+    (let [src    (-> ln
+                     (clojure.string/replace "\\n" "\n")
+                     (clojure.string/replace "\\N" "\\n"))
           ast    (cxc.parse/parse src)
           shapes (cxc.named-tuple/collect-shapes ast)
           sorted (sort (keys shapes))]

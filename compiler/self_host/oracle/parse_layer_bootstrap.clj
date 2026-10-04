@@ -3,7 +3,9 @@
 ;;
 ;; Input per line. A cxc source snippet with `\\n` sequences
 ;; representing physical newlines; the oracle expands them to real
-;; newlines before calling cxc.parse/parse.
+;; newlines before calling cxc.parse/parse. Chapter 23 adds the `\\N`
+;; sentinel, rewritten to the two chars `\\n` after the newline
+;; expansion, so string / char literals can carry a backslash-n escape.
 ;;
 ;; Output line format (one serialized node per input):
 ;;   module|<name>
@@ -95,7 +97,9 @@
     (str "unknown|" (:node n))))
 
 (doseq [ln (line-seq (java.io.BufferedReader. *in*))]
-  (let [src (clojure.string/replace ln "\\n" "\n")]
+  (let [src (-> ln
+                  (clojure.string/replace "\\n" "\n")
+                  (clojure.string/replace "\\N" "\\n"))]
     (try
       (let [nodes (cxc.parse/parse src)]
         (if (empty? nodes)
