@@ -128,3 +128,4 @@ def P:\n    x: Int\n  y: Int
 def P:\n  x: Int\n y: Int
 def P:\n    x: Int\n  y: Int $
 def P:\n    x: Int\n  # note\n    y: Int
+def Bits:\n    kind: enum

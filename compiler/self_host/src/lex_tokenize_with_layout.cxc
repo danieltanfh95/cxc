@@ -82,7 +82,7 @@ def main:
 
     reserved: List of String = [
         "module", "from", "import", "as",
-        "def", "use", "invariants", "enum",
+        "def", "use", "invariants",
         "accepts", "extend", "replace", "deprecated",
         "then", "do", "when", "let", "alias",
         "self", "nil", "true", "false",

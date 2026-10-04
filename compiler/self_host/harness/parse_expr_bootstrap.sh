@@ -2,7 +2,9 @@
 # Parity harness for the chapter-26 expression-parse
 # slice. Chapter 28 adds a statement pass, the same binary with argv[2]
 # `stmt` against the statement corpus, and the oracle with
-# CXC_PARSE_MODE=stmt. Both passes must match.
+# CXC_PARSE_MODE=stmt. Chapter 29 adds an item pass, argv[2] `item`
+# against the atom-body item corpus, and the oracle with
+# CXC_PARSE_MODE=item. All three passes must match.
 
 set -euo pipefail
 
@@ -14,6 +16,7 @@ COMPILER_DIR="$(cd "$SELF_HOST/.." && pwd)"
 
 CORPUS="$SELF_HOST/corpus/parse_expr_bootstrap.txt"
 STMT_CORPUS="$SELF_HOST/corpus/parse_expr_bootstrap_stmt.txt"
+ITEM_CORPUS="$SELF_HOST/corpus/parse_expr_bootstrap_item.txt"
 SRC="$SELF_HOST/src/parse_expr_bootstrap.cxc"
 ORACLE_CLJ="$SELF_HOST/oracle/parse_expr_bootstrap.clj"
 
@@ -40,11 +43,17 @@ echo "[harness] running cxc port on statement corpus"
 while IFS= read -r line || [ -n "$line" ]; do
   "$BIN" "$line" stmt >> "$CXC_OUT"
 done < "$STMT_CORPUS"
+echo "[harness] running cxc port on item corpus"
+while IFS= read -r line || [ -n "$line" ]; do
+  "$BIN" "$line" item >> "$CXC_OUT"
+done < "$ITEM_CORPUS"
 
 echo "[harness] running clj oracle on corpus"
 (cd "$COMPILER_DIR" && clj -M -e "$(cat "$ORACLE_CLJ")") < "$CORPUS" > "$ORACLE_OUT"
 echo "[harness] running clj oracle on statement corpus"
 (cd "$COMPILER_DIR" && CXC_PARSE_MODE=stmt clj -M -e "$(cat "$ORACLE_CLJ")") < "$STMT_CORPUS" >> "$ORACLE_OUT"
+echo "[harness] running clj oracle on item corpus"
+(cd "$COMPILER_DIR" && CXC_PARSE_MODE=item clj -M -e "$(cat "$ORACLE_CLJ")") < "$ITEM_CORPUS" >> "$ORACLE_OUT"
 
 echo "[harness] diffing"
 if diff -q "$CXC_OUT" "$ORACLE_OUT"; then

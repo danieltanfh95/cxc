@@ -42,6 +42,7 @@ These are standing rules captured in the user's global memory at `~/.claude/proj
 - Container-returned record-field read for records with reference fields uses the chapter-16 shadow-struct fix. See `design/ten-char-ident-segfault.md`.
 - Observation reference ordering is lexical. If `a :- b` and both are observations, declare b first.
 - Keep `and` / `or` chains in guards and observations to about six terms. The emit duplicates each left operand, so a flat chain of N terms costs 2^N text and a 31-term guard ran the compiler out of heap (chapter 26). Group terms through observations.
+- String `+` chains double the same way (chapter 29). The emit wraps both operands of every `+` in a `__typeof__` coalesce, so a 17-piece message emitted a 520 MB method. Write long messages as balanced concatenation trees, `((a + b) + (c + d)) + ...`, or keep them under about six pieces.
 - Three shared lex sites (chapter 26). `lex_tokenize_with_layout.cxc`, the inline lex in `parse_layer_bootstrap.cxc`, and `parse_expr_bootstrap.cxc` carry the same lex arms. Change all three together, verify on the slice-33 corpus first.
 
 ## Hard blockers at chapter 21 handoff

@@ -102,6 +102,26 @@
 #   <or-arm> = (or bare|(bind <name>)|(case <T> <bind>*) <block>)
 # and every parse-statement rejection (`=>` staging, reserved `let`
 # names, `for`, `switch`, `break <value>`) byte-matches its message.
+#
+# Item mode (chapter 29). argv[2] = `item` parses a sequence of
+# atom-body items, the oracle's copy of parse-def-atom's body loop with
+# eof in place of DEDENT and the fixed def name `Item` in the messages
+# that quote it. Output `(items <item>*)` with
+#   (field <name> <type>|nil <default>|nil [weak|unowned] [bare])
+#   (prop <pred> [(as <T> (named <f> <e>)*)]), <pred> is an expression
+#   or (type-bound <name> <type>)
+#   (obs <name> (params <p>*) <rtype>|nil <expr> [(props <prop>*)])
+#   (obs-sig <name> (params <p>*) <rtype>)   <p> = (param self) | field
+#   (transition <line> <src> <recv>|nil <target> <clause>*), with
+#   <src> = implicit | self | * | (phase <name>),
+#   <recv> = (recv <: | <| <msg>), <msg> = * | (typed <name> <field>*)
+#   | (src <expr> (field <name> <type> [bare])*), and <clause> a prop or
+#   (then (ups (set <field> <e>)*) (stmts <stmt-or-prop>*))
+#   (recv-sig <name> (params ...)) (use <name> <type>)
+#   (enum-case <name> (params ...) [<raw>]) (on-nil (<method> <e>)*)
+#   (class-fn <name> (params ...) <rtype>|nil (block <stmt>*))
+# Plugin `foreign` blocks and the `->` function type at field position
+# raise the port-only `port: out of scope` message.
 
 def Token:
     kind:  String!
@@ -197,7 +217,7 @@ def main:
 
     reserved: List of String = [
         "module", "from", "import", "as",
-        "def", "use", "invariants", "enum",
+        "def", "use", "invariants",
         "accepts", "extend", "replace", "deprecated",
         "then", "do", "when", "let", "alias",
         "self", "nil", "true", "false",
@@ -425,6 +445,23 @@ def main:
     # pop, so `blk_done` knows where the block value goes.
     stmt_mode: Bool! = false
     b_op:    String! = ""
+    # Chapter 29. `item_mode` is argv[2] == "item", which parses a
+    # sequence of atom-body items. `scan_*` run scan-past-parens for the
+    # parametric observable probe. `lm_*` record the last message shape
+    # built, so a receive pattern can split its target and payload the
+    # way the chapter-27 `lc_*` registers split a call. `f_dflt`,
+    # `pl_dflt`, and `pl_acc` carry a field's default name and a closed
+    # param list past their pops.
+    item_mode: Bool! = false
+    scan_p:    Int!    = 0
+    scan_d:    Int!    = 0
+    scan_hit:  Bool!   = false
+    lm_ser:    String! = ""
+    lm_tgt:    String! = ""
+    lm_fields: String! = ""
+    f_dflt:    String! = ""
+    pl_dflt:   String! = ""
+    pl_acc:    String! = ""
 
     cur_tok    :- tokens.at(pos) ?? Token(kind: "eof", value: "", line: line_num, col: 1)
     cur_kind   :- cur_tok.kind
@@ -657,10 +694,108 @@ def main:
     mkblk(o: String!, h: String!, pr: Int!) :- Frame
         Frame(kind: "blk", prec: pr, op: o, ser: h, ekind: "other", ops: "", acc: "", aux: "", cal: "", ctg: "", cnm: "")
 
+    # ---------------------------------------------------------------
+    # Chapter 29 probes. Atom-body items (parse-def-atom's body loop).
+    # ---------------------------------------------------------------
+    expr_mode :- not stmt_mode and not item_mode
+
+    # Any token by index. `fail!` prints no got-token suffix when the
+    # position is past the last token.
+    tkn(i: Int!) :- Token
+        tokens.at(i.max(0)) ?? Token(kind: "eof", value: "", line: line_num, col: 1)
+    tk_kind(i: Int!) :- String!
+        self.tkn(i).kind
+    tk_value(i: Int!) :- String!
+        self.tkn(i).value
+    tk_pr(i: Int!) :- String!
+        ||: self.tk_kind(i) == "newline" or self.tk_kind(i) == "indent" or self.tk_kind(i) == "dedent" or self.tk_kind(i) == "eof" : "nil" ||: self.tk_kind(i) == "int" : self.tk_value(i) ||: self.tk_kind(i) == "float" and self.tk_value(i) == "Infinity" : "##Inf" ||: self.tk_kind(i) == "float" : self.tk_value(i) ||: else : "\"" + self.tk_value(i) + "\""
+    tok_got(i: Int!) :- String!
+        ||: i >= tokens.count() : "" ||: else : " (got :" + self.tk_kind(i) + " " + self.tk_pr(i) + " at line " + self.tkn(i).line.to_string() + ")"
+    tok_line(i: Int!) :- Int!
+        self.tkn(i).line
+    prim_vt(n: String!) :- Bool!
+        ",Int,Int8,Int16,Int32,Int64,UInt,UInt8,UInt16,UInt32,UInt64,Float,Double,Bool,Char,Byte,Bytes,Unit,Never,".contains("," + n + ",")
+
+    # proposition-line-start?. Layout tokens mark a logical line start.
+    prv_kind   :- self.tkn(pos - 1).kind
+    line_start :- pos == 0 or prv_kind == "newline" or prv_kind == "indent" or prv_kind == "dedent"
+    cur_is_pc  :- cur_kind == "glyph" and cur_value == "|:"
+    cur_is_as  :- cur_kind == "kw" and cur_value == "as"
+    nxt_is_cd  :- nxt_kind == "glyph" and nxt_value == ":-"
+    pr_cont    :- cur_kind == "newline" and nxt_kind == "indent" and nxt2_kind == "kw" and nxt2_value == "as"
+    pr_tb      :- nxt_kind == "ident" and nxt2_is_colon
+    lay_end    :- cur_kind == "newline" or cur_kind == "dedent" or cur_kind == "eof"
+
+    # The def-body dispatch, in parse-def-atom's cond order. `scan_hit`
+    # is scan-past-parens for a `name(...)` head.
+    obs_name   :- cur_kind == "ident" or (cur_kind == "kw" and (cur_value == "as" or cur_value == "from"))
+    i_obs      :- obs_name and (nxt_is_cd or (nxt_is_lparen and scan_hit))
+    i_handler  :- cur_kind == "glyph" and cur_value == "->" and nxt_kind == "ident" and nxt2_is_lparen
+    i_field    :- cur_kind == "ident" and nxt_is_colon and nxt2_kind != "newline"
+    i_trans    :- (cur_kind == "glyph" and (cur_value == "->" or cur_value == "*")) or (cur_kind == "kw" and cur_value == "self") or cur_kind == "ident"
+    i_foreign  :- cur_kind == "ident" and cur_value == "foreign" and nxt_kind == "string" and nxt2_is_colon
+    i_cfn      :- cur_kind == "ident" and cur_value == "class" and nxt_kind == "kw" and nxt_value == "function"
+    i_defm     :- cur_kind == "kw" and cur_value == "def" and nxt_kind == "ident" and nxt2_is_lparen
+    i_defn     :- cur_kind == "kw" and cur_value == "def" and nxt_kind == "ident" and nxt2_is_colon
+    i_state    :- cur_kind == "ident" and cur_value == "state" and nxt_is_colon
+    i_onnil    :- cur_kind == "ident" and cur_value == "on_nil" and nxt_is_colon
+    i_kw       :- ||: cur_kind == "kw" : cur_value ||: else : ""
+    i_class    :- ||: cur_is_pc : "prop" ||: i_kw == "invariants" : "inv" ||: cur_is_recv : "rsig" ||: i_foreign : "foreign" ||: i_kw == "use" : "use" ||: i_kw == "replace" : "replace" ||: i_cfn : "cfn" ||: i_kw == "function" : "func" ||: i_defm : "defm" ||: i_defn : "defn" ||: i_state : "state" ||: i_kw == "accepts" : "accepts" ||: i_kw == "case" : "case" ||: i_obs : "obs" ||: i_handler : "handler" ||: i_onnil : "onnil" ||: i_field : "field" ||: i_trans : "trans" ||: else : "err"
+    sc_kind    :- self.tkn(scan_p).kind
+    sc_value   :- self.tkn(scan_p).value
+    sc_end     :- scan_p >= tokens.count()
+    sc_lp      :- sc_kind == "punct" and sc_value == "("
+    sc_rp      :- sc_kind == "punct" and sc_value == ")"
+    sc_after   :- self.tkn(scan_p + 1).kind == "glyph" and self.tkn(scan_p + 1).value == ":-"
+    use_rsv    :- ",hash,description,debugDescription,class,superclass,".contains("," + nxt_value + ",")
+    def_ty_nm  :- ||: nxt3_kind == "ident" : nxt3_value ||: else : "TypeName"
+
+    # parse-field. A field frame keeps the name in `cnm`, the modifier
+    # in `aux`, its position in `prec`, the type in `acc`, the default
+    # in `ops`.
+    mkfld(nm: String!, md: String!, pr: Int!) :- Frame
+        Frame(kind: "fld", prec: pr, op: "ty", ser: "", ekind: "other", ops: "nil", acc: "", aux: md, cal: "", ctg: "", cnm: nm)
+    upd(npr: Int!, nop: String!, nser: String!, nops: String!, nacc: String!, naux: String!, ncal: String!, nctg: String!, ncnm: String!) :- Frame
+        Frame(kind: top.kind, prec: npr, op: nop, ser: nser, ekind: top.ekind, ops: nops, acc: nacc, aux: naux, cal: ncal, ctg: nctg, cnm: ncnm)
+    f_mod      :- cur_kind == "kw" and (cur_value == "weak" or cur_value == "unowned")
+    nxt2_mod   :- nxt2_kind == "kw" and (nxt2_value == "weak" or nxt2_value == "unowned")
+    fty_tn     :- v_ser.starts_with("TN(")
+    fty_tn_nm  :- ||: v_ser.starts_with("TN(TR:") : v_ser.substring(6, (v_ser.length() - 7).max(0)) ||: else : "T"
+    fty_prim   :- v_ser.starts_with("TR:") and self.prim_vt(v_ser.substring(3, (v_ser.length() - 3).max(0)))
+    fty_of     :- v_ser.starts_with("TO:")
+    fty_of_nm  :- v_ser.substring(3.min(v_ser.length()), (v_ser.index_of("(") - 3).max(0))
+    fty_tup    :- v_ser.starts_with("TT(") or v_ser.starts_with("TNT(")
+    fty_bad    :- fty_tn or fty_prim or fty_of or fty_tup
+    fty_msg    :- ||: fty_tn : "F13 L1: `" + top.aux + " " + fty_tn_nm + "!` is invalid — `!` is the non-nil contract, but a `weak` reference is observably nil once its target deallocates. `unowned` names non-owning strong references (undefined behavior on dangle), which is orthogonal to the `!` contract. Drop the `!` (spec §6.14)." ||: fty_prim : "F13 L1: `" + top.aux + " " + v_ser.substring(3, (v_ser.length() - 3).max(0)) + "` is invalid — reference modifiers apply to reference types (atoms, `String`); `" + v_ser.substring(3, (v_ser.length() - 3).max(0)) + "` is a value/primitive type (spec §6.14). Drop the modifier." ||: fty_of : "F13 L1: `" + top.aux + " " + fty_of_nm + " of ...` is invalid — collections don't propagate reference modifiers to their elements. Purpose-built weak-element containers land as a follow-on (spec §6.14)." ||: else : "F13 L1: `" + top.aux + "` on a tuple type is invalid — reference modifiers apply only to single reference types (atoms, `String`), not to compound types (spec §6.14)."
+    f_ser      :- "(field " + top.cnm + " " + top.acc + " " + top.ops + (||: top.aux == "" : "" ||: else : " " + top.aux) + ")"
+
+    # Param lists. `plist` keeps the rendered params in `acc`, the first
+    # defaulted field name in `cnm`, and `param` or `rparam` in `op`.
+    mkpl(o: String!) :- Frame
+        Frame(kind: "plist", prec: 0, op: o, ser: "", ekind: "other", ops: "", acc: "", aux: "", cal: "", ctg: "", cnm: "")
+    pl_self    :- top.op == "param" and cur_kind == "kw" and cur_value == "self"
+    pl_bare    :- top.op == "rparam" and cur_kind == "ident" and nxt_is_colon and nxt2_is_close
+
+    # Then clauses, transition bodies, observables.
+    th_up      :- cur_kind == "ident" and nxt_is_fat
+    th_dup     :- top.aux.contains("," + cur_value + ",")
+    bh_then    :- cur_kind == "kw" and cur_value == "then" and nxt_is_colon
+    bh_do      :- cur_kind == "kw" and cur_value == "do" and nxt_is_colon
+    bh_let     :- cur_kind == "kw" and cur_value == "let" and nxt_is_colon
+    bh_any     :- bh_then or bh_do or bh_let
+    mp_typed   :- cur_kind == "ident" and nxt_is_lparen and (nxt2_kind == "punct" and nxt2_value == ")" or (nxt2_kind == "ident" and nxt3_kind == "punct" and nxt3_value == ":"))
+    mp_msg     :- ||: v_ser == lm_ser : "(src " + lm_tgt + lm_fields + ")" ||: else : "(src " + v_ser + ")"
+    tr_ps      :- top.aux == "phase"
+    tr_tgt_ok  :- top.ekind == "self" or top.ekind == top.cnm
+    o_sig      :- top.ctg == "p" and ((cur_kind == "newline" and nxt_kind != "indent") or cur_kind == "dedent" or cur_kind == "eof")
+    o_cls      :- ||: o_sig : "sig" ||: nl_indent and nxt2_kind == "glyph" and nxt2_value == "|:" : "pb" ||: cur_is_eq : "ex" ||: nl_indent : "bf" ||: else : "re"
+    obs_props  :- ||: top.ops == "" : "" ||: else : " (props" + top.ops + ")"
+
     -> lex_start
         then:
             source => args.get_or(1, "").replace("\\n", "\n").replace("\\N", "\\n")
             stmt_mode => args.get_or(2, "") == "stmt"
+            item_mode => args.get_or(2, "") == "item"
             self :> step
 
     -> parsing
@@ -1624,20 +1759,20 @@ def main:
 
     # parse-expression prologue. skip-newlines, then the empty check.
     parsing <: begin -> parsing
-        |: not stmt_mode and cur_kind == "newline"
+        |: expr_mode and cur_kind == "newline"
         then:
             pos => pos + 1
             self :> begin
 
     parsing <: begin -> parsing
-        |: not stmt_mode and cur_kind == "eof"
+        |: expr_mode and cur_kind == "eof"
         then:
             error => true
             error_msg => "parse-expression: source is empty"
             self :> halt
 
     parsing <: begin -> parsing
-        |: not stmt_mode and cur_kind != "newline" and cur_kind != "eof"
+        |: expr_mode and cur_kind != "newline" and cur_kind != "eof"
         then: self :> expr_start
 
     # Chapter 28 statement mode. A `seq` frame is the oracle's top-level
@@ -1982,14 +2117,14 @@ def main:
 
     # parse-args-parens, one arg. A named arg parks its name in `aux`.
     parsing <: arg_start -> parsing
-        |: cur_kind == "ident" and nxt_is_colon
+        |: top.op != "prop" and cur_kind == "ident" and nxt_is_colon
         then:
             frames => frames.slice(0, depth - 1).append(self.retop(top.op, top.ser, top.ekind, top.ops, top.acc, cur_value))
             pos => pos + 2
             self :> expr_start
 
     parsing <: arg_start -> parsing
-        |: not (cur_kind == "ident" and nxt_is_colon)
+        |: top.op != "prop" and not (cur_kind == "ident" and nxt_is_colon)
         then:
             frames => frames.slice(0, depth - 1).append(self.retop(top.op, top.ser, top.ekind, top.ops, top.acc, ""))
             self :> expr_start
@@ -2387,6 +2522,9 @@ def main:
         |: cur_is_rparen
         then:
             v_ser => "(msg-shape " + top.ser + top.acc + ")"
+            lm_ser => "(msg-shape " + top.ser + top.acc + ")"
+            lm_tgt => top.ser
+            lm_fields => top.acc
             v_kind => "other"
             depth => depth - 1
             pos => pos + 1
@@ -3274,3 +3412,1265 @@ def main:
             error => true
             error_msg => "parse-expression: expected single expression followed by end-of-file; extra tokens starting at [:" + cur_kind + " " + cur_pr + " " + cur_line.to_string() + " " + cur_tcol.to_string() + "]"
             self :> halt
+
+    # ---------------------------------------------------------------
+    # Chapter 29. Atom-body items. Item mode (argv[2] `item`) runs
+    # parse-def-atom's body loop with eof in place of DEDENT and the
+    # fixed def name `Item` in the messages that quote it. Return modes
+    # `iret` (an item, to the `iseq` loop), `pret` (parse-proposition),
+    # `thret` (a then clause), `fret` (parse-field), and `pl_done`
+    # (a param list). Frames `iseq`, `prop`, `thb`, `tr`, `obs`, `fld`,
+    # `plist`, `use`, `rsig`, `case`, `cfn`, and `onil`.
+    # ---------------------------------------------------------------
+
+    parsing <: begin -> parsing
+        |: item_mode
+        then:
+            frames => frames.slice(0, depth).append(self.mk("iseq", ""))
+            depth => depth + 1
+            self :> iseq_loop
+
+    parsing <: iseq_loop -> parsing
+        |: cur_kind == "newline"
+        then:
+            pos => pos + 1
+            self :> iseq_loop
+
+    parsing <: iseq_loop -> parsing
+        |: cur_kind == "eof"
+        then:
+            v_ser => "(items" + top.acc + ")"
+            self :> done
+
+    parsing <: iseq_loop -> parsing
+        |: cur_kind != "newline" and cur_kind != "eof"
+        then: self :> item_start
+
+    parsing <: iret -> parsing
+        |: top_kind == "iseq"
+        then:
+            frames => frames.slice(0, depth - 1).append(self.retop("", top.ser, top.ekind, top.ops, top.acc + " " + v_ser, ""))
+            self :> iseq_loop
+
+    # looks-like-observable? needs scan-past-parens on a `name(` head.
+    parsing <: item_start -> parsing
+        |: obs_name and nxt_is_lparen
+        then:
+            scan_p => pos + 2
+            scan_d => 1
+            self :> obs_scan
+
+    parsing <: item_start -> parsing
+        |: not (obs_name and nxt_is_lparen)
+        then:
+            scan_hit => false
+            self :> item_disp
+
+    parsing <: obs_scan -> parsing
+        |: sc_end
+        then:
+            scan_hit => false
+            self :> item_disp
+
+    parsing <: obs_scan -> parsing
+        |: not sc_end and sc_lp
+        then:
+            scan_d => scan_d + 1
+            scan_p => scan_p + 1
+            self :> obs_scan
+
+    parsing <: obs_scan -> parsing
+        |: not sc_end and sc_rp and scan_d == 1
+        then:
+            scan_hit => sc_after
+            self :> item_disp
+
+    parsing <: obs_scan -> parsing
+        |: not sc_end and sc_rp and scan_d > 1
+        then:
+            scan_d => scan_d - 1
+            scan_p => scan_p + 1
+            self :> obs_scan
+
+    parsing <: obs_scan -> parsing
+        |: not sc_end and not sc_lp and not sc_rp
+        then:
+            scan_p => scan_p + 1
+            self :> obs_scan
+
+    # The body dispatch.
+    parsing <: item_disp -> parsing
+        |: i_class == "prop"
+        then: self :> prop_start
+
+    parsing <: item_disp -> parsing
+        |: i_class == "inv"
+        then:
+            error => true
+            error_msg => "parse error: `invariants:` section header is retired at v1.0 (four-position `|:` unification, ratified 2026-08-25). Migrate each invariant to a def-body `|:` proposition on its own line at def-body top level:\n\n  def Item:\n      <field decls>\n      |: <proposition>          ← was `invariants:` entry\n      |: <another proposition>\n\nSee spec §1.11 retirement mapping table and §3.4.2." + cur_got
+            self :> halt
+
+    parsing <: item_disp -> parsing
+        |: i_class == "rsig" and nxt_kind != "ident"
+        then:
+            error => true
+            error_msg => "parse error: expected :ident" + nxt_got
+            self :> halt
+
+    parsing <: item_disp -> parsing
+        |: i_class == "rsig" and nxt_kind == "ident"
+        then:
+            frames => frames.slice(0, depth).append(self.mk("rsig", nxt_value)).append(self.mkpl("param"))
+            depth => depth + 2
+            pos => pos + 2
+            self :> pl_open
+
+    parsing <: item_disp -> parsing
+        |: i_class == "foreign"
+        then:
+            error => true
+            error_msg => "port: out of scope"
+            self :> halt
+
+    # parse-use-line, reached through the section registry.
+    parsing <: item_disp -> parsing
+        |: i_class == "use" and nxt_is_colon
+        then:
+            error => true
+            error_msg => "parse error: `use:` section header is retired at v1.0. Declare each capability directly at def-body position: `use <name>: <Type>`." + nxt_got
+            self :> halt
+
+    parsing <: item_disp -> parsing
+        |: i_class == "use" and not nxt_is_colon and nxt_kind != "ident"
+        then:
+            error => true
+            error_msg => "parse error: expected :ident" + nxt_got
+            self :> halt
+
+    parsing <: item_disp -> parsing
+        |: i_class == "use" and nxt_kind == "ident" and use_rsv
+        then:
+            error => true
+            error_msg => (("parse error: `use " + (nxt_value + ": ...` — `")) + (nxt_value + ("` collides with an NSObject-synthesized ivar / method (backing storage `_" + nxt_value))) + (("` overlaps NSObject's own). Choose a different local name (e.g. `" + (nxt_value + "er`, `")) + (nxt_value + ("_cap`)." + nxt_got)))
+            self :> halt
+
+    parsing <: item_disp -> parsing
+        |: i_class == "use" and nxt_kind == "ident" and not use_rsv and not nxt2_is_colon
+        then:
+            error => true
+            error_msg => "parse error: expected :punct \":\"" + nxt2_got
+            self :> halt
+
+    parsing <: item_disp -> parsing
+        |: i_class == "use" and nxt_kind == "ident" and not use_rsv and nxt2_is_colon
+        then:
+            frames => frames.slice(0, depth).append(self.mk("use", nxt_value))
+            depth => depth + 1
+            pos => pos + 3
+            self :> ty_start
+
+    parsing <: ty_ret -> parsing
+        |: top_kind == "use"
+        then:
+            v_ser => ("(use " + top.ser) + (" " + (v_ser + ")"))
+            depth => depth - 1
+            self :> iret
+
+    parsing <: item_disp -> parsing
+        |: i_class == "replace"
+        then:
+            error => true
+            error_msg => "parse error: `replace` modifier inside `def Item` body is only meaningful in an `extend` context — a class's own declarations can't shadow themselves (§3.3.2 rule 4). Drop the `replace` prefix, or move the declaration into an `extend` block if the intent was to shadow another declaration." + cur_got
+            self :> halt
+
+    parsing <: item_disp -> parsing
+        |: i_class == "cfn" and nxt2_kind != "ident"
+        then:
+            error => true
+            error_msg => "parse error: expected :ident" + nxt2_got
+            self :> halt
+
+    parsing <: item_disp -> parsing
+        |: i_class == "cfn" and nxt2_kind == "ident"
+        then:
+            frames => frames.slice(0, depth).append(self.mk("cfn", nxt2_value)).append(self.mkpl("param"))
+            depth => depth + 2
+            pos => pos + 3
+            self :> pl_open
+
+    parsing <: item_disp -> parsing
+        |: i_class == "func"
+        then:
+            error => true
+            error_msg => "parse error: F67 L4: `function` keyword inside `def Item` body is retired (Proposal G class-body collapse). Migrate the method by category:\n\n  - reader → observable: `name(args) :- <expr>`\n  - void   → transition: `* <: name(args) -> * then: <body>`\n  - writer → transition: `* <: name(args) -> * then: <update>`\n\nUtility functions unrelated to `self` belong at module scope (`def name(args) -> T: body`). See spec §1.11." + cur_got
+            self :> halt
+
+    parsing <: item_disp -> parsing
+        |: i_class == "defm"
+        then:
+            error => true
+            error_msg => (("parse error: F67 L4: `def " + nxt_value) + ("(args)` method form inside `def Item` body is retired (Proposal G class-body collapse). Migrate the method by category:\n\n  - reader → observable: `" + (nxt_value + "(args) :- <expr>`\n  - void   → transition: `* <: "))) + ((nxt_value + "(args) -> * then: <body>`\n  - writer → transition: `* <: ") + (nxt_value + ("(args) -> * then: <update>`\n\nUtility functions unrelated to `self` belong at module scope. See spec §1.11." + cur_got)))
+            self :> halt
+
+    parsing <: item_disp -> parsing
+        |: i_class == "defn"
+        then:
+            error => true
+            error_msg => ((("parse error: F34 L3: `def " + nxt_value) + (": " + (def_ty_nm + "` nested-atom slot form inside `def Item` body is retired. Migrate to the spec-canonical `data:` field shape (§1.11):\n\n  "))) + ((nxt_value + (": " + def_ty_nm)) + (" = " + (def_ty_nm + "()\n\nIf the original carried ctor args (`def ")))) + (((nxt_value + ": ") + (def_ty_nm + ("(args...)`), preserve them on the RHS ctor call:\n\n  " + nxt_value))) + ((": " + (def_ty_nm + " = ")) + (def_ty_nm + ("(args...)" + cur_got))))
+            self :> halt
+
+    parsing <: item_disp -> parsing
+        |: i_class == "state"
+        then:
+            error => true
+            error_msg => "parse error: `state:` section header is retired at v1.0 (class-body-collapse F67 L5). Migrate each field to def-body top level with no wrapping header:\n\n  def Item:\n      <field>: <Type> [= <default>]     ← was inside `state:`\n      <another field>: <Type>\n\nMutation still happens only through transitions. See spec §1.11." + cur_got
+            self :> halt
+
+    parsing <: item_disp -> parsing
+        |: i_class == "accepts"
+        then:
+            error => true
+            error_msg => "parse error: `accepts:` and `accepts name(...)` are retired at v1.0. Declare protocol members directly in `def Item` using `<: name(args)` for async receives or `name(args) :- ReturnType` for sync observations." + cur_got
+            self :> halt
+
+    # Enum cases. The `case` frame keeps the name in `ser`, the payload
+    # in `acc`, the first defaulted payload field in `ctg`, and the
+    # position after the name in `prec`.
+    parsing <: item_disp -> parsing
+        |: i_class == "case" and nxt_kind != "ident"
+        then:
+            error => true
+            error_msg => "parse error: expected :ident" + nxt_got
+            self :> halt
+
+    parsing <: item_disp -> parsing
+        |: i_class == "case" and nxt_kind == "ident" and nxt2_is_lparen
+        then:
+            frames => frames.slice(0, depth).append(self.mkop("case", "", nxt_value, pos + 2)).append(self.mkpl("param"))
+            depth => depth + 2
+            pos => pos + 2
+            self :> pl_open
+
+    parsing <: item_disp -> parsing
+        |: i_class == "case" and nxt_kind == "ident" and not nxt2_is_lparen
+        then:
+            frames => frames.slice(0, depth).append(Frame(kind: "case", prec: pos + 2, op: "", ser: nxt_value, ekind: "other", ops: "", acc: "(params)", aux: "", cal: "", ctg: "", cnm: ""))
+            depth => depth + 1
+            pos => pos + 2
+            self :> case_raw
+
+    parsing <: case_raw -> parsing
+        |: top.ctg != ""
+        then:
+            error => true
+            error_msg => ("parse error: F16 L1: default on enum payload field `" + (top.ctg + "` in case `")) + (top.ser + ("` — payload fields don't carry defaults (the case *value* is the payload; a default would confuse construction semantics). Drop the `= <default>`." + self.tok_got(top.prec)))
+            self :> halt
+
+    parsing <: case_raw -> parsing
+        |: top.ctg == "" and cur_is_eq and top.acc != "(params)"
+        then:
+            error => true
+            error_msg => "parse error: F16 L2: case `" + (top.ser + ("` has both a payload `(...)` and a raw value `= ...` — these are mutually exclusive shapes per §3.3. Payload enums carry associated values; raw-value enums attach fixed integer values to bare cases. Pick one." + nxt_got))
+            self :> halt
+
+    parsing <: case_raw -> parsing
+        |: top.ctg == "" and cur_is_eq and top.acc == "(params)" and nxt_kind != "int"
+        then:
+            error => true
+            error_msg => "parse error: F16 L2: raw value on case `" + (top.ser + ("` must be an integer literal (v1.0 scope — string/float raw values are deferred to a follow-on landing)." + nxt_got))
+            self :> halt
+
+    parsing <: case_raw -> parsing
+        |: top.ctg == "" and cur_is_eq and top.acc == "(params)" and nxt_kind == "int"
+        then:
+            v_ser => ("(enum-case " + (top.ser + " ")) + ((top.acc + " ") + (nxt_value + ")"))
+            depth => depth - 1
+            pos => pos + 2
+            self :> iret
+
+    parsing <: case_raw -> parsing
+        |: top.ctg == "" and not cur_is_eq
+        then:
+            v_ser => ("(enum-case " + top.ser) + (" " + (top.acc + ")"))
+            depth => depth - 1
+            self :> iret
+
+    parsing <: item_disp -> parsing
+        |: i_class == "obs"
+        then: self :> obs_start
+
+    parsing <: item_disp -> parsing
+        |: i_class == "handler"
+        then:
+            error => true
+            error_msg => ("parse error: F67 L3: `-> " + (nxt_value + "(args):` handler-decl sugar is retired (Proposal G class-body collapse). Migrate to the explicit handler-shape transition:\n\n    * <: ")) + (nxt_value + ("(args) -> *\n        then: <body>\n\nSemantics unchanged (spec §1265) — same method-table entry, same external invocation surface. The collapse removes the parallel opener glyph so the class body has one shape per kind of declaration." + cur_got))
+            self :> halt
+
+    # parse-on-nil-section.
+    parsing <: item_disp -> parsing
+        |: i_class == "onnil" and nxt2_kind != "newline"
+        then:
+            error => true
+            error_msg => "parse error: expected :newline" + nxt2_got
+            self :> halt
+
+    parsing <: item_disp -> parsing
+        |: i_class == "onnil" and nxt2_kind == "newline" and nxt3_kind != "indent"
+        then:
+            error => true
+            error_msg => "parse error: expected :indent" + self.tok_got(pos + 3)
+            self :> halt
+
+    parsing <: item_disp -> parsing
+        |: i_class == "onnil" and nxt2_kind == "newline" and nxt3_kind == "indent"
+        then:
+            frames => frames.slice(0, depth).append(self.mk("onil", ""))
+            depth => depth + 1
+            pos => pos + 4
+            self :> on_loop
+
+    parsing <: on_loop -> parsing
+        |: cur_kind == "dedent"
+        then:
+            v_ser => "(on-nil" + top.acc + ")"
+            depth => depth - 1
+            pos => pos + 1
+            self :> iret
+
+    parsing <: on_loop -> parsing
+        |: cur_kind == "newline"
+        then:
+            pos => pos + 1
+            self :> on_loop
+
+    parsing <: on_loop -> parsing
+        |: cur_kind == "ident" and nxt_is_colon
+        then:
+            frames => frames.slice(0, depth - 1).append(self.retop(top.op, top.ser, top.ekind, top.ops, top.acc, cur_value))
+            pos => pos + 2
+            self :> expr_start
+
+    parsing <: on_loop -> parsing
+        |: cur_kind != "dedent" and cur_kind != "newline" and not (cur_kind == "ident" and nxt_is_colon)
+        then:
+            error => true
+            error_msg => "parse error: expected `<method_name>: <const-expr>` inside `on_nil:` section, or dedent to close the section" + cur_got
+            self :> halt
+
+    parsing <: ret -> parsing
+        |: top_kind == "onil"
+        then:
+            frames => frames.slice(0, depth - 1).append(self.retop(top.op, top.ser, top.ekind, top.ops, top.acc + " (" + top.aux + " " + v_ser + ")", ""))
+            self :> on_loop
+
+    parsing <: item_disp -> parsing
+        |: i_class == "field"
+        then: self :> fld_start
+
+    parsing <: item_disp -> parsing
+        |: i_class == "trans"
+        then: self :> tr_start
+
+    parsing <: item_disp -> parsing
+        |: i_class == "err"
+        then:
+            error => true
+            error_msg => "parse error: expected direct use (`use name: Type`), field decl (`name: Type [= default]`), own-line `|:` proposition, on_nil:, observable/signature (`name[(args)] :- expr-or-type`), async signature (`<: name(args)`), or transition inside def-atom body" + cur_got
+            self :> halt
+
+    # ---------------------------------------------------------------
+    # parse-proposition. The `prop` frame holds the rendering so far in
+    # `ser`, the `as` type in `aux`, and 1 in `prec` for a continuation
+    # `as` on its own indented line.
+    # ---------------------------------------------------------------
+    parsing <: prop_start -> parsing
+        |: not line_start
+        then:
+            error => true
+            error_msg => "parse error: `|:` proposition must occupy its own line; it cannot be crammed onto a signature or statement" + cur_got
+            self :> halt
+
+    parsing <: prop_start -> parsing
+        |: line_start and pr_tb
+        then:
+            frames => frames.slice(0, depth).append(self.mkop("prop", "tb", "(prop (type-bound " + nxt_value, 0))
+            depth => depth + 1
+            pos => pos + 3
+            self :> ty_start
+
+    parsing <: prop_start -> parsing
+        |: line_start and not pr_tb
+        then:
+            frames => frames.slice(0, depth).append(self.mkop("prop", "pred", "(prop", 0))
+            depth => depth + 1
+            pos => pos + 1
+            self :> expr_start
+
+    parsing <: ty_ret -> parsing
+        |: top_kind == "prop" and top.op == "tb"
+        then:
+            frames => frames.slice(0, depth - 1).append(self.retop("", top.ser + " " + v_ser + ")", top.ekind, top.ops, top.acc, top.aux))
+            self :> pr_after
+
+    parsing <: ret -> parsing
+        |: top_kind == "prop"
+        then:
+            frames => frames.slice(0, depth - 1).append(self.retop("", top.ser + " " + v_ser, top.ekind, top.ops, top.acc, top.aux))
+            self :> pr_after
+
+    parsing <: pr_after -> parsing
+        |: pr_cont
+        then:
+            frames => frames.slice(0, depth - 1).append(self.upd(1, "astype", top.ser, top.ops, top.acc, top.aux, top.cal, top.ctg, top.cnm))
+            pos => pos + 3
+            self :> ty_start
+
+    parsing <: pr_after -> parsing
+        |: not pr_cont and cur_is_as
+        then:
+            frames => frames.slice(0, depth - 1).append(self.retop("astype", top.ser, top.ekind, top.ops, top.acc, top.aux))
+            pos => pos + 1
+            self :> ty_start
+
+    parsing <: pr_after -> parsing
+        |: not pr_cont and not cur_is_as
+        then: self :> pr_fin
+
+    parsing <: ty_ret -> parsing
+        |: top_kind == "prop" and top.op == "astype"
+        then:
+            frames => frames.slice(0, depth - 1).append(self.retop("args", top.ser, top.ekind, top.ops, top.acc, v_ser))
+            self :> pr_aargs
+
+    # parse-args-parens for the `as` constructor. The call frame keeps
+    # the `(` position in `prec`, the names seen in `cnm`, and the first
+    # validation message in `ctg`. Clojure validates after the whole list
+    # parsed, in arg order, at the `(`.
+    parsing <: pr_aargs -> parsing
+        |: not cur_is_lparen
+        then:
+            error => true
+            error_msg => "parse error: expected :punct \"(\"" + cur_got
+            self :> halt
+
+    parsing <: pr_aargs -> parsing
+        |: cur_is_lparen and nxt_is_rparen
+        then:
+            frames => frames.slice(0, depth - 1).append(self.retop("", top.ser + " (as " + top.aux + ")", top.ekind, top.ops, top.acc, top.aux))
+            pos => pos + 2
+            self :> pr_close
+
+    parsing <: pr_aargs -> parsing
+        |: cur_is_lparen and not nxt_is_rparen
+        then:
+            frames => frames.slice(0, depth).append(Frame(kind: "call", prec: pos, op: "prop", ser: "", ekind: "other", ops: "", acc: "", aux: "", cal: "", ctg: "", cnm: ","))
+            depth => depth + 1
+            pos => pos + 1
+            self :> arg_start
+
+    parsing <: arg_start -> parsing
+        |: top.op == "prop" and cur_kind == "ident" and nxt_is_colon
+        then:
+            frames => frames.slice(0, depth - 1).append(self.upd(top.prec, top.op, top.ser, top.ops, top.acc, cur_value, top.cal, (||: top.ctg == "" and top.cnm.contains("," + cur_value + ",") : "duplicate proposition error argument `" + cur_value + "`" ||: else : top.ctg), top.cnm + cur_value + ","))
+            pos => pos + 2
+            self :> expr_start
+
+    parsing <: arg_start -> parsing
+        |: top.op == "prop" and not (cur_kind == "ident" and nxt_is_colon)
+        then:
+            frames => frames.slice(0, depth - 1).append(self.upd(top.prec, top.op, top.ser, top.ops, top.acc, "", top.cal, (||: top.ctg == "" : "proposition error arguments must use `field: value` named form" ||: else : top.ctg), top.cnm))
+            self :> expr_start
+
+    parsing <: ret -> parsing
+        |: top_kind == "call" and cur_is_rparen and top.op == "prop" and top.ctg != ""
+        then:
+            error => true
+            error_msg => "parse error: " + top.ctg + self.tok_got(top.prec)
+            self :> halt
+
+    parsing <: ret -> parsing
+        |: top_kind == "call" and cur_is_rparen and top.op == "prop" and top.ctg == ""
+        then:
+            v_ser => call_args
+            depth => depth - 1
+            pos => pos + 1
+            self :> pr_args
+
+    parsing <: pr_args -> parsing
+        |: top_kind == "prop"
+        then:
+            frames => frames.slice(0, depth - 1).append(self.retop("", top.ser + " (as " + top.aux + v_ser + ")", top.ekind, top.ops, top.acc, top.aux))
+            self :> pr_close
+
+    # A continuation `as` closes its INDENT, with or without a NEWLINE.
+    parsing <: pr_close -> parsing
+        |: top.prec == 0
+        then: self :> pr_fin
+
+    parsing <: pr_close -> parsing
+        |: top.prec == 1 and cur_kind == "newline" and nxt_kind == "dedent"
+        then:
+            pos => pos + 2
+            self :> pr_fin
+
+    parsing <: pr_close -> parsing
+        |: top.prec == 1 and cur_kind == "newline" and nxt_kind != "dedent"
+        then:
+            error => true
+            error_msg => "parse error: expected :dedent" + nxt_got
+            self :> halt
+
+    parsing <: pr_close -> parsing
+        |: top.prec == 1 and cur_kind == "dedent"
+        then:
+            pos => pos + 1
+            self :> pr_fin
+
+    parsing <: pr_close -> parsing
+        |: top.prec == 1 and cur_kind != "newline" and cur_kind != "dedent"
+        then:
+            error => true
+            error_msg => "parse error: expected :dedent" + cur_got
+            self :> halt
+
+    parsing <: pr_fin -> parsing
+        |: top.prec == 1 or lay_end
+        then:
+            v_ser => top.ser + ")"
+            depth => depth - 1
+            self :> pret
+
+    parsing <: pr_fin -> parsing
+        |: top.prec == 0 and not lay_end
+        then:
+            error => true
+            error_msg => "parse error: `|:` proposition must occupy its own line; unexpected trailing content" + cur_got
+            self :> halt
+
+    parsing <: pret -> parsing
+        |: top_kind == "iseq"
+        then: self :> iret
+
+    parsing <: pret -> parsing
+        |: top_kind == "thb"
+        then:
+            frames => frames.slice(0, depth - 1).append(self.retop(top.op, top.ser, top.ekind, top.ops, top.acc + " " + v_ser, top.aux))
+            self :> th_next
+
+    parsing <: pret -> parsing
+        |: top_kind == "tr"
+        then:
+            frames => frames.slice(0, depth - 1).append(self.retop(top.op, top.ser, top.ekind, top.ops, top.acc + " " + v_ser, top.aux))
+            self :> tb_loop
+
+    parsing <: pret -> parsing
+        |: top_kind == "obs"
+        then:
+            frames => frames.slice(0, depth - 1).append(self.retop(top.op, top.ser, top.ekind, top.ops + " " + v_ser, top.acc, top.aux))
+            self :> obs_ploop
+
+    # ---------------------------------------------------------------
+    # parse-field and the param lists.
+    # ---------------------------------------------------------------
+    parsing <: fld_start -> parsing
+        |: cur_kind != "ident"
+        then:
+            error => true
+            error_msg => "parse error: expected :ident" + cur_got
+            self :> halt
+
+    parsing <: fld_start -> parsing
+        |: cur_kind == "ident" and not nxt_is_colon
+        then:
+            error => true
+            error_msg => "parse error: expected :punct \":\"" + nxt_got
+            self :> halt
+
+    parsing <: fld_start -> parsing
+        |: cur_kind == "ident" and nxt_is_colon and nxt2_mod
+        then:
+            frames => frames.slice(0, depth).append(self.mkfld(cur_value, nxt2_value, pos + 2))
+            depth => depth + 1
+            pos => pos + 3
+            self :> ty_start
+
+    parsing <: fld_start -> parsing
+        |: cur_kind == "ident" and nxt_is_colon and not nxt2_mod
+        then:
+            frames => frames.slice(0, depth).append(self.mkfld(cur_value, "", pos + 1))
+            depth => depth + 1
+            pos => pos + 2
+            self :> ty_start
+
+    # The `->` function type is the foreign-signature parser, out of
+    # port scope. The modifier checks follow Clojure's cond order.
+    parsing <: ty_ret -> parsing
+        |: top_kind == "fld" and cur_kind == "glyph" and cur_value == "->"
+        then:
+            error => true
+            error_msg => "port: out of scope"
+            self :> halt
+
+    parsing <: ty_ret -> parsing
+        |: top_kind == "fld" and not (cur_kind == "glyph" and cur_value == "->") and top.aux != "" and fty_bad
+        then:
+            error => true
+            error_msg => "parse error: " + fty_msg + self.tok_got(top.prec)
+            self :> halt
+
+    parsing <: ty_ret -> parsing
+        |: top_kind == "fld" and not (cur_kind == "glyph" and cur_value == "->") and (top.aux == "" or not fty_bad) and cur_is_eq
+        then:
+            frames => frames.slice(0, depth - 1).append(self.retop("dflt", top.ser, top.ekind, top.ops, v_ser, top.aux))
+            pos => pos + 1
+            self :> expr_start
+
+    parsing <: ty_ret -> parsing
+        |: top_kind == "fld" and not (cur_kind == "glyph" and cur_value == "->") and (top.aux == "" or not fty_bad) and not cur_is_eq
+        then:
+            frames => frames.slice(0, depth - 1).append(self.retop("tail", top.ser, top.ekind, top.ops, v_ser, top.aux))
+            self :> fld_tail
+
+    parsing <: ret -> parsing
+        |: top_kind == "fld"
+        then:
+            frames => frames.slice(0, depth - 1).append(self.retop("tail", top.ser, top.ekind, v_ser, top.acc, top.aux))
+            self :> fld_tail
+
+    parsing <: fld_tail -> parsing
+        |: cur_kind == "glyph" and cur_value == ":-"
+        then:
+            error => true
+            error_msg => (("parse error: `" + top.cnm) + (": <Type> :- <body>` is not a valid observation shape at v1.0. The `:Type` annotation belongs AFTER `:-`, not before it. Rewrite as one of:\n\n    " + (top.cnm + " :- <body>              # inferred return type\n    "))) + ((top.cnm + " :- <Type> = <body>     # explicit return type on one line\n    ") + (top.cnm + ("(args) :- <Type>        # parametric obs, return type after :-\n        <body>                       # body on the next indented line\n\nSee docs/writing-corvid/04-common-mistakes.md." + cur_got)))
+            self :> halt
+
+    parsing <: fld_tail -> parsing
+        |: not (cur_kind == "glyph" and cur_value == ":-")
+        then:
+            v_ser => f_ser
+            f_dflt => ||: top.ops == "nil" : "" ||: else : top.cnm
+            depth => depth - 1
+            self :> fret
+
+    parsing <: fret -> parsing
+        |: top_kind == "iseq"
+        then: self :> iret
+
+    parsing <: fret -> parsing
+        |: top_kind == "plist"
+        then:
+            frames => frames.slice(0, depth - 1).append(self.upd(top.prec, top.op, top.ser, top.ops, top.acc + " " + v_ser, top.aux, top.cal, top.ctg, (||: top.cnm == "" : f_dflt ||: else : top.cnm)))
+            self :> pl_after
+
+    # parse-param-list-parens and parse-receive-payload-param-list.
+    parsing <: pl_open -> parsing
+        |: not cur_is_lparen
+        then:
+            error => true
+            error_msg => "parse error: expected :punct \"(\"" + cur_got
+            self :> halt
+
+    parsing <: pl_open -> parsing
+        |: cur_is_lparen and nxt_is_rparen
+        then:
+            v_ser => "(params)"
+            pl_acc => ""
+            pl_dflt => ""
+            depth => depth - 1
+            pos => pos + 2
+            self :> pl_done
+
+    parsing <: pl_open -> parsing
+        |: cur_is_lparen and not nxt_is_rparen
+        then:
+            pos => pos + 1
+            self :> pl_param
+
+    parsing <: pl_param -> parsing
+        |: pl_self
+        then:
+            frames => frames.slice(0, depth - 1).append(self.retop(top.op, top.ser, top.ekind, top.ops, top.acc + " (param self)", top.aux))
+            pos => pos + 1
+            self :> pl_after
+
+    parsing <: pl_param -> parsing
+        |: pl_bare
+        then:
+            frames => frames.slice(0, depth - 1).append(self.retop(top.op, top.ser, top.ekind, top.ops, top.acc + " (field " + cur_value + " TR:Any nil bare)", top.aux))
+            pos => pos + 2
+            self :> pl_after
+
+    parsing <: pl_param -> parsing
+        |: not pl_self and not pl_bare
+        then: self :> fld_start
+
+    parsing <: pl_after -> parsing
+        |: cur_is_comma
+        then:
+            pos => pos + 1
+            self :> pl_param
+
+    parsing <: pl_after -> parsing
+        |: cur_is_rparen
+        then:
+            v_ser => "(params" + top.acc + ")"
+            pl_acc => top.acc
+            pl_dflt => top.cnm
+            depth => depth - 1
+            pos => pos + 1
+            self :> pl_done
+
+    parsing <: pl_after -> parsing
+        |: not cur_is_comma and not cur_is_rparen
+        then:
+            error => true
+            error_msg => ||: top.op == "param" : "parse error: expected `,` or `)` in param list" + cur_got ||: else : "parse error: expected `,` or `)` in receive-payload param list" + cur_got
+            self :> halt
+
+    parsing <: pl_done -> parsing
+        |: top_kind == "obs"
+        then:
+            frames => frames.slice(0, depth - 1).append(self.retop(top.op, top.ser, top.ekind, top.ops, v_ser, top.aux))
+            self :> obs_cd
+
+    parsing <: pl_done -> parsing
+        |: top_kind == "rsig" and lay_end
+        then:
+            v_ser => ("(recv-sig " + top.ser) + (" " + (v_ser + ")"))
+            depth => depth - 1
+            self :> iret
+
+    parsing <: pl_done -> parsing
+        |: top_kind == "rsig" and not lay_end
+        then:
+            error => true
+            error_msg => "parse error: signature-only async receive `<: " + (top.ser + ("(...)` must end after its parameter list; omit the source phase and `->` target" + cur_got))
+            self :> halt
+
+    parsing <: pl_done -> parsing
+        |: top_kind == "case"
+        then:
+            frames => frames.slice(0, depth - 1).append(self.upd(top.prec, top.op, top.ser, top.ops, v_ser, top.aux, top.cal, pl_dflt, top.cnm))
+            self :> case_raw
+
+    parsing <: pl_done -> parsing
+        |: top_kind == "cfn"
+        then:
+            frames => frames.slice(0, depth - 1).append(self.retop(top.op, top.ser, top.ekind, top.ops, v_ser, "nil"))
+            self :> cfn_ret
+
+    parsing <: pl_done -> parsing
+        |: top_kind == "tr"
+        then:
+            frames => frames.slice(0, depth - 1).append(self.retop(top.op, top.ser + " (recv " + top.ctg + " (typed " + top.ops + pl_acc + "))", top.ekind, "", top.acc, top.aux))
+            self :> tr_arrow
+
+    # parse-class-function-decl. `aux` holds the return type.
+    parsing <: cfn_ret -> parsing
+        |: cur_kind == "glyph" and cur_value == "->"
+        then:
+            pos => pos + 1
+            self :> ty_start
+
+    parsing <: cfn_ret -> parsing
+        |: not (cur_kind == "glyph" and cur_value == "->")
+        then: self :> cfn_colon
+
+    parsing <: ty_ret -> parsing
+        |: top_kind == "cfn"
+        then:
+            frames => frames.slice(0, depth - 1).append(self.retop(top.op, top.ser, top.ekind, top.ops, top.acc, v_ser))
+            self :> cfn_colon
+
+    parsing <: cfn_colon -> parsing
+        |: not cur_is_colon
+        then:
+            error => true
+            error_msg => "parse error: expected :punct \":\"" + cur_got
+            self :> halt
+
+    parsing <: cfn_colon -> parsing
+        |: cur_is_colon and nxt_kind != "newline"
+        then:
+            error => true
+            error_msg => "parse error: expected :newline" + nxt_got
+            self :> halt
+
+    parsing <: cfn_colon -> parsing
+        |: cur_is_colon and nxt_kind == "newline" and nxt2_kind != "indent"
+        then:
+            error => true
+            error_msg => "parse error: expected :indent" + nxt2_got
+            self :> halt
+
+    parsing <: cfn_colon -> parsing
+        |: cur_is_colon and nxt_kind == "newline" and nxt2_kind == "indent"
+        then:
+            frames => frames.slice(0, depth).append(self.mkblk("blk", "(block", 0))
+            depth => depth + 1
+            pos => pos + 3
+            self :> blk_loop
+
+    parsing <: bret -> parsing
+        |: top_kind == "cfn"
+        then:
+            v_ser => (("(class-fn " + top.ser) + (" " + top.acc)) + ((" " + top.aux) + (" " + (v_ser + ")")))
+            depth => depth - 1
+            self :> iret
+
+    # ---------------------------------------------------------------
+    # parse-observable. The `obs` frame keeps the name in `ser`, the
+    # params in `acc`, the return type in `aux` ("nil" when none), the
+    # propositions in `ops`, "p" in `ctg` when a param list was written,
+    # and the position after `:-` in `prec` for the parse-expr restart.
+    # ---------------------------------------------------------------
+    parsing <: obs_start -> parsing
+        |: nxt_is_lparen
+        then:
+            frames => frames.slice(0, depth).append(Frame(kind: "obs", prec: 0, op: "params", ser: cur_value, ekind: "other", ops: "", acc: "(params)", aux: "nil", cal: "", ctg: "p", cnm: "")).append(self.mkpl("param"))
+            depth => depth + 2
+            pos => pos + 1
+            self :> pl_open
+
+    parsing <: obs_start -> parsing
+        |: not nxt_is_lparen
+        then:
+            frames => frames.slice(0, depth).append(Frame(kind: "obs", prec: 0, op: "params", ser: cur_value, ekind: "other", ops: "", acc: "(params)", aux: "nil", cal: "", ctg: "", cnm: ""))
+            depth => depth + 1
+            pos => pos + 1
+            self :> obs_cd
+
+    parsing <: obs_cd -> parsing
+        |: not (cur_kind == "glyph" and cur_value == ":-")
+        then:
+            error => true
+            error_msg => "parse error: expected :glyph \":-\"" + cur_got
+            self :> halt
+
+    parsing <: obs_cd -> parsing
+        |: cur_kind == "glyph" and cur_value == ":-" and nxt_kind == "ident" and nxt_value.code_at(0) >= 65 and nxt_value.code_at(0) <= 90
+        then:
+            frames => frames.slice(0, depth - 1).append(self.upd(pos + 1, "cand", top.ser, top.ops, top.acc, top.aux, top.cal, top.ctg, top.cnm))
+            pos => pos + 1
+            self :> ty_start
+
+    parsing <: obs_cd -> parsing
+        |: cur_kind == "glyph" and cur_value == ":-" and not (nxt_kind == "ident" and nxt_value.code_at(0) >= 65 and nxt_value.code_at(0) <= 90) and nxt_kind == "newline" and nxt2_kind == "indent"
+        then:
+            frames => frames.slice(0, depth - 1).append(self.retop("body", top.ser, top.ekind, top.ops, top.acc, top.aux)).append(self.mkblk("blk", "(do", 0))
+            depth => depth + 1
+            pos => pos + 3
+            self :> blk_loop
+
+    parsing <: obs_cd -> parsing
+        |: cur_kind == "glyph" and cur_value == ":-" and not (nxt_kind == "ident" and nxt_value.code_at(0) >= 65 and nxt_value.code_at(0) <= 90) and not (nxt_kind == "newline" and nxt2_kind == "indent")
+        then:
+            frames => frames.slice(0, depth - 1).append(self.retop("expr", top.ser, top.ekind, top.ops, top.acc, top.aux))
+            pos => pos + 1
+            self :> expr_start
+
+    # The candidate return type parsed. Pick the form at the type end.
+    parsing <: ty_ret -> parsing
+        |: top_kind == "obs"
+        then:
+            frames => frames.slice(0, depth - 1).append(self.retop("typed", top.ser, top.ekind, top.ops, top.acc, v_ser))
+            self :> obs_type
+
+    parsing <: obs_type -> parsing
+        |: o_cls == "sig"
+        then:
+            v_ser => ("(obs-sig " + (top.ser + " ")) + ((top.acc + " ") + (top.aux + ")"))
+            depth => depth - 1
+            self :> iret
+
+    parsing <: obs_type -> parsing
+        |: o_cls == "pb"
+        then:
+            pos => pos + 2
+            self :> obs_ploop
+
+    parsing <: obs_type -> parsing
+        |: o_cls == "ex"
+        then:
+            frames => frames.slice(0, depth - 1).append(self.retop("expr", top.ser, top.ekind, top.ops, top.acc, top.aux))
+            pos => pos + 1
+            self :> expr_start
+
+    parsing <: obs_type -> parsing
+        |: o_cls == "bf"
+        then:
+            frames => frames.slice(0, depth - 1).append(self.retop("body", top.ser, top.ekind, top.ops, top.acc, top.aux)).append(self.mkblk("blk", "(do", 0))
+            depth => depth + 1
+            pos => pos + 2
+            self :> blk_loop
+
+    parsing <: obs_type -> parsing
+        |: o_cls == "re"
+        then:
+            frames => frames.slice(0, depth - 1).append(self.retop("expr", top.ser, top.ekind, top.ops, top.acc, "nil"))
+            pos => top.prec
+            self :> expr_start
+
+    # The proposition body, then `= expr`.
+    parsing <: obs_ploop -> parsing
+        |: cur_kind == "newline"
+        then:
+            pos => pos + 1
+            self :> obs_ploop
+
+    parsing <: obs_ploop -> parsing
+        |: cur_kind == "dedent" and nxt_kind == "glyph" and nxt_value == "="
+        then:
+            frames => frames.slice(0, depth - 1).append(self.retop("expr", top.ser, top.ekind, top.ops, top.acc, top.aux))
+            pos => pos + 2
+            self :> expr_start
+
+    parsing <: obs_ploop -> parsing
+        |: cur_kind == "dedent" and not (nxt_kind == "glyph" and nxt_value == "=")
+        then:
+            error => true
+            error_msg => "parse error: expected :glyph \"=\"" + nxt_got
+            self :> halt
+
+    parsing <: obs_ploop -> parsing
+        |: cur_is_pc
+        then: self :> prop_start
+
+    parsing <: obs_ploop -> parsing
+        |: cur_kind != "newline" and cur_kind != "dedent" and not cur_is_pc
+        then:
+            error => true
+            error_msg => "parse error: expected an own-line `|:` proposition inside observation body" + cur_got
+            self :> halt
+
+    parsing <: ret -> parsing
+        |: top_kind == "obs"
+        then: self :> obs_fin
+
+    parsing <: bret -> parsing
+        |: top_kind == "obs"
+        then: self :> obs_fin
+
+    parsing <: obs_fin -> parsing
+        |: top_kind == "obs"
+        then:
+            v_ser => (("(obs " + top.ser) + (" " + (top.acc + " "))) + ((top.aux + " ") + (v_ser + (obs_props + ")")))
+            depth => depth - 1
+            self :> iret
+
+    # ---------------------------------------------------------------
+    # parse-transition. The `tr` frame keeps the rendering in `ser`, the
+    # clauses in `acc`, the start position in `prec`, the source kind
+    # in `aux` and phase name in `cnm`, the target in `ekind`, the
+    # receive glyph in `ctg`, "w" in `cal` for `<: *`, "then" in `ops`
+    # once a then clause is in, and the state in `op`.
+    # ---------------------------------------------------------------
+    parsing <: tr_start -> parsing
+        |: cur_kind == "glyph" and cur_value == "->"
+        then:
+            frames => frames.slice(0, depth).append(Frame(kind: "tr", prec: pos, op: "head", ser: "(transition " + cur_line.to_string() + " implicit nil", ekind: "", ops: "", acc: "", aux: "implicit", cal: "", ctg: "", cnm: ""))
+            depth => depth + 1
+            self :> tr_arrow
+
+    parsing <: tr_start -> parsing
+        |: not (cur_kind == "glyph" and cur_value == "->")
+        then:
+            frames => frames.slice(0, depth).append(Frame(kind: "tr", prec: pos, op: "head", ser: "(transition " + cur_line.to_string() + " " + (||: cur_kind == "ident" : "(phase " + cur_value + ")" ||: else : cur_value), ekind: "", ops: "", acc: "", aux: (||: cur_kind == "ident" : "phase" ||: cur_kind == "kw" : "self" ||: else : "wildcard"), cal: "", ctg: "", cnm: (||: cur_kind == "ident" : cur_value ||: else : "")))
+            depth => depth + 1
+            pos => pos + 1
+            self :> tr_skip1
+
+    # Allow newlines between the source and the receive glyph.
+    parsing <: tr_skip1 -> parsing
+        |: cur_kind == "newline"
+        then:
+            pos => pos + 1
+            self :> tr_skip1
+
+    parsing <: tr_skip1 -> parsing
+        |: cur_kind == "glyph" and (cur_value == "<:" or cur_value == "<|")
+        then:
+            frames => frames.slice(0, depth - 1).append(self.upd(top.prec, "mp", top.ser, top.ops, top.acc, top.aux, top.cal, cur_value, top.cnm))
+            pos => pos + 1
+            self :> mp_start
+
+    parsing <: tr_skip1 -> parsing
+        |: cur_kind != "newline" and not (cur_kind == "glyph" and (cur_value == "<:" or cur_value == "<|"))
+        then:
+            frames => frames.slice(0, depth - 1).append(self.retop(top.op, top.ser + " nil", top.ekind, top.ops, top.acc, top.aux))
+            self :> tr_arrow
+
+    # parse-msg-pattern.
+    parsing <: mp_start -> parsing
+        |: cur_kind == "glyph" and cur_value == "*"
+        then:
+            frames => frames.slice(0, depth - 1).append(self.upd(top.prec, top.op, top.ser + " (recv " + top.ctg + " *)", top.ops, top.acc, top.aux, "w", top.ctg, top.cnm))
+            pos => pos + 1
+            self :> tr_arrow
+
+    parsing <: mp_start -> parsing
+        |: not (cur_kind == "glyph" and cur_value == "*") and mp_typed
+        then:
+            frames => frames.slice(0, depth - 1).append(self.retop("typed", top.ser, top.ekind, cur_value, top.acc, top.aux)).append(self.mkpl("rparam"))
+            depth => depth + 1
+            pos => pos + 1
+            self :> pl_open
+
+    parsing <: mp_start -> parsing
+        |: not (cur_kind == "glyph" and cur_value == "*") and not mp_typed
+        then: self :> expr_start
+
+    parsing <: ret -> parsing
+        |: top_kind == "tr"
+        then:
+            frames => frames.slice(0, depth - 1).append(self.retop(top.op, top.ser + " (recv " + top.ctg + " " + mp_msg + ")", top.ekind, "", top.acc, top.aux))
+            self :> tr_arrow
+
+    # skip-newlines, `->`, then the target.
+    parsing <: tr_arrow -> parsing
+        |: cur_kind == "newline"
+        then:
+            pos => pos + 1
+            self :> tr_arrow
+
+    parsing <: tr_arrow -> parsing
+        |: cur_kind != "newline" and not (cur_kind == "glyph" and cur_value == "->")
+        then:
+            error => true
+            error_msg => "parse error: expected :glyph \"->\"" + cur_got
+            self :> halt
+
+    parsing <: tr_arrow -> parsing
+        |: cur_kind == "glyph" and cur_value == "->" and nxt_kind == "glyph" and nxt_value == "*"
+        then:
+            error => true
+            error_msg => "parse error: transition target `*` is retired 2026-08-26 (target-`*` meant self-reference, not wildcard — unifying `*` as wildcard-only). Rewrite `-> *` as `-> self`." + nxt_got
+            self :> halt
+
+    parsing <: tr_arrow -> parsing
+        |: cur_kind == "glyph" and cur_value == "->" and (nxt_kind == "ident" or (nxt_kind == "kw" and nxt_value == "self"))
+        then:
+            frames => frames.slice(0, depth - 1).append(self.retop("body", top.ser + " " + nxt_value, nxt_value, top.ops, top.acc, top.aux))
+            pos => pos + 2
+            self :> tb_start
+
+    parsing <: tr_arrow -> parsing
+        |: cur_kind == "glyph" and cur_value == "->" and not (nxt_kind == "glyph" and nxt_value == "*") and not (nxt_kind == "ident" or (nxt_kind == "kw" and nxt_value == "self"))
+        then:
+            error => true
+            error_msg => "parse error: expected target phase or `self` after `->`" + nxt_got
+            self :> halt
+
+    # parse-transition-body. An inline clause, an indented clause block,
+    # or nothing.
+    parsing <: tb_start -> parsing
+        |: bh_then
+        then:
+            frames => frames.slice(0, depth - 1).append(self.retop("tbi", top.ser, top.ekind, top.ops, top.acc, top.aux))
+            self :> th_start
+
+    parsing <: tb_start -> parsing
+        |: bh_do
+        then: self :> tb_do
+
+    parsing <: tb_start -> parsing
+        |: bh_let
+        then: self :> tb_let
+
+    parsing <: tb_start -> parsing
+        |: not bh_any and nl_indent
+        then:
+            frames => frames.slice(0, depth - 1).append(self.retop("tb", top.ser, top.ekind, top.ops, top.acc, top.aux))
+            pos => pos + 2
+            self :> tb_loop
+
+    parsing <: tb_start -> parsing
+        |: not bh_any and not nl_indent
+        then: self :> tr_fin
+
+    parsing <: tb_do -> parsing
+        |: not error
+        then:
+            error => true
+            error_msg => "parse error: `do:` transition sub-block is retired (F70 I3, 2026-08-19). Rename the clause header from `do:` to `then:` — the unified `then:` clause accepts both field updates (`field => expr`) and side-effect statements (`:>`, prefix `|> receiver.msg(args)`, calls, prints) in source order. Multiple `then:` blocks per transition body are legal (F22 exemption for `then:`). See spec §1.11 and plans/archive/f70-surface-facelift.md." + cur_got
+            self :> halt
+
+    parsing <: tb_let -> parsing
+        |: not error
+        then:
+            error => true
+            error_msg => "parse error: `let:` transition sub-block is retired (F18 L1' Landing 2, 2026-08-24). Use statement-form `let <name> = <expr>` inside the `then:` clause instead — the unified `then:` clause accepts field updates, side-effect statements, and `let` bindings in source order. Migration: rewrite `let: k: 5\\n        then: n => n + k` as `then:\\n            let k = 5\\n            n => n + k`. See spec §2.5 and plans/g2-expression-flow/f18-block-as-expression.md." + cur_got
+            self :> halt
+
+    parsing <: tb_loop -> parsing
+        |: cur_kind == "dedent"
+        then:
+            pos => pos + 1
+            self :> tr_fin
+
+    parsing <: tb_loop -> parsing
+        |: cur_kind == "newline"
+        then:
+            pos => pos + 1
+            self :> tb_loop
+
+    parsing <: tb_loop -> parsing
+        |: cur_is_pc and top.ops == "then"
+        then:
+            error => true
+            error_msg => "parse error: arm-head `|:` proposition must appear before `then:` in a transition body" + cur_got
+            self :> halt
+
+    parsing <: tb_loop -> parsing
+        |: cur_is_pc and top.ops != "then"
+        then: self :> prop_start
+
+    parsing <: tb_loop -> parsing
+        |: bh_then
+        then: self :> th_start
+
+    parsing <: tb_loop -> parsing
+        |: bh_do
+        then: self :> tb_do
+
+    parsing <: tb_loop -> parsing
+        |: bh_let
+        then: self :> tb_let
+
+    parsing <: tb_loop -> parsing
+        |: cur_kind != "dedent" and cur_kind != "newline" and not cur_is_pc and not bh_any
+        then: self :> tr_fin
+
+    parsing <: thret -> parsing
+        |: top_kind == "tr" and top.op == "tbi"
+        then:
+            frames => frames.slice(0, depth - 1).append(self.retop(top.op, top.ser, top.ekind, top.ops, top.acc + " " + v_ser, top.aux))
+            self :> tr_fin
+
+    parsing <: thret -> parsing
+        |: top_kind == "tr" and top.op == "tb"
+        then:
+            frames => frames.slice(0, depth - 1).append(self.retop(top.op, top.ser, top.ekind, "then", top.acc + " " + v_ser, top.aux))
+            self :> tb_loop
+
+    # Phase-swallow `<: *` validation, at the transition start.
+    parsing <: tr_fin -> parsing
+        |: top.cal == "w" and not tr_ps
+        then:
+            error => true
+            error_msg => "parse error: phase-swallow shorthand `<phase> <: * -> <phase>` requires a specific source phase; got source `:" + (top.aux + ("`" + self.tok_got(top.prec)))
+            self :> halt
+
+    parsing <: tr_fin -> parsing
+        |: top.cal == "w" and tr_ps and not tr_tgt_ok
+        then:
+            error => true
+            error_msg => (("parse error: phase-swallow shorthand `" + top.cnm) + (" <: * -> " + top.cnm)) + (("` must have the target phase equal to the source (or `self`); got `-> " + top.ekind) + ("`" + self.tok_got(top.prec)))
+            self :> halt
+
+    parsing <: tr_fin -> parsing
+        |: top.cal == "w" and tr_ps and tr_tgt_ok and top.acc != ""
+        then:
+            error => true
+            error_msg => (("parse error: phase-swallow shorthand `" + top.cnm) + (" <: * -> " + top.ekind)) + (("` must have an empty body — the whole point is 'silently drop any message', so `then:` / `|:` / etc. are rejected. Use a concrete `" + top.cnm) + (" <: <msg> -> ...` arm instead if you need per-message logic." + self.tok_got(top.prec)))
+            self :> halt
+
+    parsing <: tr_fin -> parsing
+        |: top.cal != "w" or (tr_ps and tr_tgt_ok and top.acc == "")
+        then:
+            v_ser => top.ser + top.acc + ")"
+            depth => depth - 1
+            self :> iret
+
+    # ---------------------------------------------------------------
+    # parse-then-clause. The `thb` frame keeps the updates in `ser`, the
+    # statements in `acc`, the fields staged so far in `aux`, the field
+    # being staged in `ops`, and 1 in `prec` for the inline form.
+    # ---------------------------------------------------------------
+    parsing <: th_start -> parsing
+        |: nxt2_kind == "newline" and nxt3_kind != "indent"
+        then:
+            error => true
+            error_msg => "parse error: expected :indent" + self.tok_got(pos + 3)
+            self :> halt
+
+    parsing <: th_start -> parsing
+        |: nxt2_kind == "newline" and nxt3_kind == "indent"
+        then:
+            frames => frames.slice(0, depth).append(Frame(kind: "thb", prec: 0, op: "", ser: "", ekind: "other", ops: "", acc: "", aux: ",", cal: "", ctg: "", cnm: ""))
+            depth => depth + 1
+            pos => pos + 4
+            self :> th_loop
+
+    parsing <: th_start -> parsing
+        |: nxt2_kind != "newline"
+        then:
+            frames => frames.slice(0, depth).append(Frame(kind: "thb", prec: 1, op: "", ser: "", ekind: "other", ops: "", acc: "", aux: ",", cal: "", ctg: "", cnm: ""))
+            depth => depth + 1
+            pos => pos + 2
+            self :> th_entry
+
+    parsing <: th_loop -> parsing
+        |: cur_kind == "dedent"
+        then:
+            pos => pos + 1
+            self :> th_close
+
+    parsing <: th_loop -> parsing
+        |: cur_kind == "newline"
+        then:
+            pos => pos + 1
+            self :> th_loop
+
+    parsing <: th_loop -> parsing
+        |: cur_kind != "dedent" and cur_kind != "newline"
+        then: self :> th_entry
+
+    parsing <: th_entry -> parsing
+        |: cur_is_pc
+        then: self :> prop_start
+
+    parsing <: th_entry -> parsing
+        |: th_up and th_dup
+        then:
+            error => true
+            error_msg => "parse error: duplicate `" + (cur_value + (" =>` in this then: block. `=>` is a one-shot transformation — one commit per field per transition. Compose the whole chain in one `=>`, or split intermediate values into `let` bindings." + cur_got))
+            self :> halt
+
+    parsing <: th_entry -> parsing
+        |: th_up and not th_dup
+        then:
+            frames => frames.slice(0, depth - 1).append(self.retop("up", top.ser, top.ekind, cur_value, top.acc, top.aux + cur_value + ","))
+            pos => pos + 2
+            self :> expr_start
+
+    parsing <: th_entry -> parsing
+        |: not cur_is_pc and not th_up
+        then: self :> stmt_start
+
+    parsing <: ret -> parsing
+        |: top_kind == "thb"
+        then:
+            frames => frames.slice(0, depth - 1).append(self.retop("", top.ser + " (set " + top.ops + " " + v_ser + ")", top.ekind, "", top.acc, top.aux))
+            self :> th_next
+
+    parsing <: sret -> parsing
+        |: top_kind == "thb"
+        then:
+            frames => frames.slice(0, depth - 1).append(self.retop(top.op, top.ser, top.ekind, top.ops, top.acc + " " + v_ser, top.aux))
+            self :> th_next
+
+    parsing <: th_next -> parsing
+        |: top.prec == 1
+        then: self :> th_close
+
+    parsing <: th_next -> parsing
+        |: top.prec == 0
+        then: self :> th_loop
+
+    parsing <: th_close -> parsing
+        |: top_kind == "thb"
+        then:
+            v_ser => ("(then (ups" + top.ser) + (") (stmts" + (top.acc + "))"))
+            depth => depth - 1
+            self :> thret

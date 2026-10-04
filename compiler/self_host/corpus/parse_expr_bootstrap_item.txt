@@ -1,0 +1,344 @@
+|: x > 0
+|: x > 0 as Bad(code: 1, msg: "m")
+|: T: Comparable
+|: T: List of Int!
+|: a < b < c\n    as Err(n: 1)
+|: a\n    as Err(n: 1, m: 2)\n
+|: ok as Err()
+|: ok as Err
+|: ok as Err(1)
+|: ok as Err(n: 1, n: 2)
+|: ok as Err(1, n: 2, n: 3)
+|: ok as Err(n: 1, 2)
+|: ok as Err(n: 1, n: 2, 3)
+|: ok foo
+|: ok\n    as Err(n: 1) x
+|: ok\n    as Err(n:\n        1)
+|: ok as Err(n: 1
+|: ok as 5
+|: x: Int foo
+count: Int! = 0
+count: Int!
+name: String = "a" + b
+name: weak Int
+name: unowned Int8
+name: weak Foo!
+name: weak List of Foo!
+name: unowned List of Int
+name: weak (Int, Int)
+name: weak (a: Int)
+name: weak Foo
+name: unowned Foo?
+name: weak Map of (Int, Foo)
+name: Int :- 5
+name: Int = 1 :- 5
+a: Int\nb: String = "x"\nc: Bool! = true
+-> running
+-> running\n    then:\n        x => 1\n        y => x + 1\n        print(x)
+-> b\n    then:\n        x => 1\n        x => 2
+-> b\n    then:\n        x => 1\n        y => 2\n        x => 3
+-> b then: x => 1
+-> b then: print(1)
+-> b then: |: x
+-> b then: if x: y()
+-> b then: let v = 1
+-> b then: :> ping(1, n: 2)
+-> b then: |> obj.go(1)
+-> b then:\n    x => 1
+-> b then:\nx
+-> b\n    then: x => 1\n    then: y => 2
+-> b\n    |: ready\n    |: other\n    then: x => 1
+-> b\n    then: x => 1\n    |: late
+-> b\n    do: x => 1
+-> b\n    let: k: 5
+-> b do: x
+-> b let: x
+-> b\n    foo
+-> b\n    then:\n        |: x > 1\n        x => 2\n        |: y
+-> b\n    then:\n        if a:\n            f()\n        else:\n            g()\n        n => n + 1
+-> *
+-> 5
+-> self
+-> self then: x => 1
+->
+idle -> running
+idle\n-> running
+idle <: tick -> running
+idle <: tick\n-> running
+idle\n<: tick\n-> running
+idle <: tick(n: Int) -> running then: n => n + 1
+idle <: tick(n: Int, m: String = "x") -> self
+idle <: tick() -> self
+idle <: fail(reason:) -> self
+idle <: fail(reason:, code: Int) -> self
+idle <: fail(code: Int, reason:) -> self
+idle <: tick(n: Int m: Int) -> self
+idle <: tick(n Int) -> self
+idle <: tick(self) -> self
+idle <: clock.every(rate)(t: Instant) -> self
+idle <: ticker(t: Instant, c:) -> self
+idle <: obj.ping -> self
+idle <: obj.ping(1) -> self
+idle <| stream -> self
+idle <: * -> idle
+idle <: * -> self
+idle <: * -> other
+idle <: * -> idle then: x => 1
+idle <: * -> idle\n    |: x
+* <: * -> self
+self <: * -> self
+* <: go -> self\n    |: ready\n    then: :> ping
+* <: go(n: Int) -> self\n    then:\n        |> obj.m(n)\n        or:\n            print(1)
+self -> self
+self <: go -> done
+* -> b
+idle <: tick
+idle <: tick ->
+idle <: -> b
+idle tick -> b
+idle <: tick -> 5
+idle <: 5 -> b
+idle <: (a + b) -> c
+size :- items.count()
+size :- Int = items.count()
+size :- Int\n    |: size >= 0\n= items.count()
+size :- Int\n    |: size >= 0\n    |: size < 10 as Big(n: size)\n= items.count()
+size :- Int\n    |: size >= 0\nitems
+size :- Int\n    |: size >= 0\n    x\n= 1
+size :- Int\n    let n = 1\n    n + 1
+size :-\n    let n = 1\n    n + 1
+size :- Foo
+size :- Foo.bar
+size :- Foo(1)
+size :- Foo of 1
+size :- Int?!
+size :- List of Int = []
+size :- cached
+f(a: Int, b: String = "x") :- Int\n    let y = a + 1\n    y * 2
+f(a: Int) :- Int
+f(a: Int) :- Int\nb :- 1
+f() :- Int
+f(self) :- Int
+f(self, a: Int) :- a
+f(a: Int) :- a + 1
+f(a: Int) :- Int = a + 1
+f(a: (Int, Int)) :- a
+f(a: weak Int) :- a
+f(a: Int, b) :- a
+f(a: Int b: Int) :- a
+as :- 1
+from(x: Int) :- x
+h :- Int\n    |: h > 0\n= 5
+g(x: Int) :- Bool\n    |: x > 0\n= true
+<: ping(n: Int)
+<: ping()
+<: ping
+<: ping(n: Int) -> b
+<: 5
+<: ping(self)
+<: ping(n:)
+use console: Console
+use fs: FileSystem!
+use: x
+use 5
+use hash: Foo
+use class: Foo
+use x Foo
+use x: List of Int
+use x: 5
+case ok
+case ok(v: Int)
+case ok(v: Int, w: String)
+case ok()
+case low = 1
+case low = 0x10
+case ok(v: Int) = 1
+case ok() = 1
+case low = "a"
+case low = x
+case ok(v: Int = 1)
+case ok(v: Int, w: Int = 2, z: Int = 3)
+case ok(v: Int = 1) = 2
+case 5
+case ok(v Int)
+case ok(self)
+on_nil:\n    size: 0
+on_nil:\n    size: 0\n    name: "x"\n\n    flag: true
+on_nil:\n    5
+on_nil: size
+on_nil:\nsize: 0
+class function make(n: Int) -> Foo:\n    return Foo(n: n)
+class function make():\n    print(1)
+class function make() -> Foo: x
+class function make() -> Foo\n    x
+class function make:\n    x
+class function 5
+class function make():\nx
+invariants: x
+replace size :- 1
+function f(): x
+def f(x: Int): x
+def slot: Foo
+def slot: 5
+state:\n    x: Int
+accepts ping
+-> go(x: Int):\n    print(x)
+on_nil
+x <: * -> y
+5
+"str"
+then: x
+if x: y
+x\n    y
+x: Int\n|: x > 0\nsize :- x\n-> running\nrunning <: tick -> running\n    then: x => x + 1
+case a\ncase b(v: Int)\ncase c = 3
+state = 1
+foo\n    -> b
+a < b < c :- x
+count: List of String\ncase none(a: (Int?, Bool)) = x
+size() :- n.m()
+idle <| ping(n: (Foo)) \n-> idle\n    then:\n        x => |> x\n        |: x.m((nil))\n        n => foo()\n    then:\n        2e3\n        n\n        n => k(b: Int!, d: (p: String, q: (String?, Int)!))\n* <| ping -> done\n    then:\n        x => |> f("s")\n        foo\n        let w = do:\n            continue\n        foo\nself <: ping() -> idle
+self <: tick -> running\n    then:\n        obj :> go(xs, n: 'c')\n        |> f(0x1F, false)\n        |: [false, "s"] is ||: obj : xs ||: 2e3 : 0x1F ||: else : "s"\nitems: (p: Bool?, q: String)
+class function from(b: Map of (String, String!)):\n    k\n    continue\nready(a: Foo = 42, a: (Int?, Int)) :- Map of (Foo, Int!) = |> foo.m(|> x.m(a), n: foo :> ping(k: n))
+ready :- Bool?\n    x => k\n    let v = do:\n        let w = 42\n        return 42\nself <: * -> *\n    then:\n        k => raise Bad(n: xs, 42)\n        let case = 1\n        x => b()\n    then:\n        |> self:\n            <: 1, .none(let w, let w) when: x :> ping: not n\n        n => raise Err(nil)\n        |: |> not 2e3\nidle <: tick() -> idle
+<: ping(n: (String)?)\n|: obj.m(k: 'c') is not 1.5 as Bad(xs, 2e3)\nname: (Int)!
+def f(x: Int): x\nready :- (p: String?, q: Foo)\n    return nil\n* -> idle\n    |: 42 and 0x1F in not 2e3 as Err()\n    then: xs => 42 is .err(msg: let w)\n    then:\n        |: xs[1.5 is x]
+items: Foo!
+size(n: (Int, Foo!)) :- Foo.m
+owner: unowned (Bool)! = 2e3 is 1.5\nitems: (String!, String)\nready :- Int.m
+ready :- (p: String!, q: String!) = not (2e3)\ncount: List of Bool!
+function f(): x\n-> done let: k\nrunning <: ping() \n-> done\n    |: U: (String?)\n    then: n => "s" is .some
+items: String! = |> g()\ncase err
+|: ||: a.m() : "s" is Res.some() ||: else : -x\nidle -> running then: n => foo is Res.ok(let w)\n-> running do: x
+self -> done\n    then:\n        0x1F\n        |> n.m(0x1F)\n        n => |> g(k)\n    then:\n        n => |> true\n        n => true is Opt.none()\n        x => -"s"\nuse hash: List of String
+* -> running\ntotal :- Foo
+items: (Bool, Int) = x => xs\naccepts ping\non_nil:\n    size: (xs)
+-> done\n    |: foo.m(k(b: Int, c: (List of Foo), c: List of Foo!)) as\n    then:\n        n => n\n        k => k != k\n        x => |> f(b, self)\n    then: xs => |> b.m()\nitems: (p: Bool, q: String?)\ncount: Foo
+owner: (p: Foo?, q: String)! = y => k\n|: 0x1F\nidle <| tick -> running then: b => (xs)
+total() :- Int(1)\ntotal :- \n    if 42: return k\n    else:\n        true\n        :> ping\n    a :> ping()\n    k
+-> running do: x\n5\ntotal() :- Map of (String, Bool?)? = b
+on_nil:\n    name: :> go(k: foo, self)\n<: tick(b: (Foo?)?)
+total(a: List of String!) :- List of String\ncount: (p: Int!, q: Bool) = |> f(0x1F)
+|: obj\n-> done then: :> go
+ready(a: Foo, a: String) :- Bool\n    let v = k\n    continue\ncase ok
+self <: obj.every(rate)(t: Int) -> idle\n    |: [obj, 2e3] is .some\n    then:\n        |: [0x1F, b] * obj > 42 as Bad()\n        n => b.m(n)\n    then: continue\non_nil:\n    size: k(a: Bool, c: List of Bool)\n<: go(self, b: (p: Int, q: Foo!)?)
+class function from(n: List of Bool, n: Foo?):\n    continue\n    false\nclass function from(a: String = b):\n    break\n    a("s")\n    break
+<: tick(b: List of String)\nowner: Foo = a :> ping
+done -> running
+done <: ping -> idle\n    then: k(1.5)\n    then:\n        while a: return 1.5\n        x => (0x1F)\ndone -> running\n    then:\n        |: ||: 1.5 is E.none() : false :> go() ||: foo : (obj) ||: else : :> ping(k: b, n: 0x1F) as Err(b)\n        |> xs.go("s", n)\n        alias v :- (n)\n    then: return a\n    |: not not 2e3\n        as Bad(xs, k: self)
+class function make() -> (String, String!):\n    foo(false)\n* -> *\n    then: let v = x\n    |: x(b.m(), code: b is .err())
+name: (p: Foo, q: Int?) = obj[true]
+def f(x: Int): x\nowner: unowned (String, Foo)?
+on_nil:\n    name: a(b: Bool!, c: ((Int, String), Bool))
+-> running then: break\nrunning <| clock.every(rate)(t: String) -> running\n    |: k[|> foo.m()]\n    then:\n        let case = 1\n        :> go()\n        let v = do:\n            return obj\n            break\n        k => ||: 1.5 : "s" ||: b : k ||: 'c' : true ||: else : nil\ntotal :- ||: nil : 0x1F ||: 1.5 : x ||: x : n ||: else : 'c'
+count: (String?) = x => 'c'
+case some
+ready :- n()
+name: (Foo, Bool!)\nitems: (p: Foo, q: String)!\n* -> *\n    then:\n        x => a(a: String)\n        n => n.m(n: self)\n        k
+ready :- Bool? = raise Err(|> 2e3, code: |> f())\ncase some(b: Map of (String!, Bool!) = obj, self)
+self -> running\n-> idle\n    then:\n        obj => nil\n        |: raise Bad(n: self, self) + |> f(obj) then\n        x => |> xs.m()\n    then: n => -'c'\nself -> done\n    |: T: (String)!\n    then: x => :> ping()\n    then: xs => y => a
+ready :- (2e3)\n* <: ping(reason: ) \n-> idle
+ready() :- n.at()\nclass function from(a: Foo, a: Foo):\n    x :> ping(true)\n    foo:\n        <: .none(msg: let v): 42\n    nil
+owner: unowned Int!\nrunning <| obj.tick -> idle\n    then:\n        n => b is b\n    then:\n        let v = do: return true
+count: (Int?, Int)
+total(a: String?) :- Map of (Foo, Int!)\nready(a: Map of (Bool!, String!)?, a: List of Bool? = 'c') :- Map of (Foo, String!)\n    let w = 42\n    :> ping\nclass function from(b: Foo = a) -> String?:\n    0x1F\n    foo(0x1F)\n    let v = xs
+* <| clock.every(rate)(t: String) -> running then: xs => [2e3, xs]\nself <: ping(reason: Map of (Int?, Int)?) -> *\n    then:\n        let v = do:\n            :> go\n        x => |> g()\n        n => y => xs\n        :> go(0x1F)\nthen: x
+|: xs(x is true) as Bad(k: 0x1F)
+name: (p: String!, q: Int)\nsize() :- \n    :> ping\ndone <: obj.every(rate)(t: Int) -> running\n    then: n("s")
+-> done\n    |: U: (String, Bool!)\n    then: obj => y => 1.5
+on_nil:\n    name: b < a\ncount: Foo\nsize(a: Map of (String!, Int)!) :- raise Err(self)
+self <: tick \n-> done\n    |: x[42]\n    then:\n        n => n\n        x => raise Bad(xs)\nclass function from(b: (Int!)!):\n    let v = nil\n    obj :> ping()\n    return true
+|: xs != nil\nowner: List of Foo!? = raise Err()\nidle -> done\n    then:\n        |: k.m()\n        |> n.m("s")\n        or Err():\n            return k\n            self\n        k => [n, 0x1F]\n        while x => n:\n            while a:\n                :> ping\n                xs(1.5)\n            obj
+size(b: (Int)?, self) :- xs
+on_nil:\n    size: raise Bad(code: k, k)\n    size: ||: n : n ||: 2e3 : obj ||: n : k ||: else : foo\n* <: obj.go -> done
+|: n.m(k: foo <= b)\ncase ok(a: (Foo)!) = "s"\nready :- Int.m
+owner: Map of (String!, Foo) = (false)
+running <: obj.every(rate)(t: Bool) -> idle\n    |: true\n    then:\n        :> go(true)\n        n => obj\n        n => not xs\n        |: T: Bool\n    then: x('c')
+def f(x: Int): x\ncase err = 1\nitems: unowned String
+owner: (Bool!, Foo)\n|: T: Map of (Bool?, Bool)\n<: go()
+idle <: * -> idle then: k => x => 1.5
+done -> self\n    then:\n        break 1\n        |: n(b: Foo!)\n    then:\n        x => x(a: String, c: Foo)\n        k(x => def:\n            k\n            break\n        )\ncount: Bool?
+<: tick()\nclass function from(self, a: Map of (String, Bool)):\n    a(false)\n    k\n    k(true)
+idle -> done\n    |: |> f(k: n.m(b, n: xs))\n    then:\n        |: foo(a: String!, c: String, c: Int?) as Bad(obj)\n        x => foo % "s"\n    then:\n        if k: let w = self\n        k => ||: 0x1F : n ||: else : 42
+size :- Foo + 1
+idle <: obj.every(rate)(t: String) -> self\n    then:\n        foo :> go(k)\n    then: :> ping\nname: Bool\n|: ||: b : obj ||: false : k ||: else : b :> ping((a))
+items: (p: Int, q: String)
+idle <: go -> self\n    |: self < n['c']\n    then:\n        b(y => def:\n            xs(foo)\n            return obj\n            continue\n        )\n        xs.at(0x1F):\n            <: false, *:\n                let v = k\n            <: none(let v, let w), *:\n                let v = nil\n                let w = 'c'\n                :> go\n            <: some(msg: let v, let v), some:\n                n\n        n => xs > xs\n    then:\n        n => -n\n        |> f(foo)\nrunning <: ping(n: (Int!), c: Bool) -> done\n    then:\n        |: x() < x > 1.5\n        |: U: Map of (String, Foo)\n        let v = do:\n            xs(nil)\n            continue\n            let v = k\n        n => (obj)
+items: List of String\n<: tick(a: (Bool, Int!), self)\nsize() :- (p: Foo?, q: Bool)?\n    |: x => (true)\n= 'c'
+count: (Int)
+size(a: Map of (String, String)) :- ||: n : foo ||: nil : false ||: false : n ||: else : false
+owner: unowned (p: Bool!, q: Int?)? = 'c' is .some(msg: let w, let w)\n-> done do: x\nclass function from():\n    true:\n        <: false, err:\n            xs(obj)\n            :> go\n            x\n    continue
+case some()\nidle <| ping -> idle\n    |: :> go()\n        as Err(42)\n    then:\n        obj => b()\n        let w = do: :> ping\n        n => ||: 'c' : 42 ||: obj : foo ||: else : 42\n    then:\n        |: T: (p: Int, q: Foo)\n<: ping(self)
+case err(n: List of String?, a: (String!)?)
+on_nil:\n    name: x.m(k: a)\n    size: x :> go\n<: go(b: Map of (Int, String)!)\n|: n(a: String!, d: List of List of Int)
+<: ping(b: (Foo, Foo)!)
+size(n: (p: Int, q: Int?)?, a: (p: String!, q: Bool)) :- \n    break\nself <| tick -> running\n    |: x => |> b.m() as\n    then:\n        if let v: Bool = b, let u = n:\n            n(true)\n        else: :> go\n        n => n % self\n    then:\n        |: |> |> b.go()\nself <: tick -> idle\n    then: let w = a
+ready(self, a: List of Int = k) :- List of String?!\ndone -> done\n    |: b is .some(code: let w) >= self\n        as Err(1.5, a)\n    then:\n        while 'c':\n            continue\n            return "s"\n        x => b(b: Int, c:)\n    then: return xs\nuse fs: (p: Bool, q: Foo)
+class function make(b: (Foo, Int), n: Int) -> Bool?:\n    b(1.5)\n    let w = 2e3
+total :- [42, "s"]\ncount: (Int, Int)! = |> obj.go(nil, k: b)\nclass function make():\n    return xs\n    return 1.5
+use fs: Foo\n|: (b.len("s", xs))
+name: String?\nitems: (p: Bool, q: Bool?) = xs()\ncase none()
+name: weak Map of (Int, Bool)\nready :- y => 42\nready :- \n    let w = do: n(foo)\n    if b:\n        true\n        b(n)\n    else:\n        let w = false\n        return n
+total :- ||: a : :> ping() ||: else : |> g(code: k, n: nil)\n|: (|> b.go(foo, code: x))\n    as Bad(0x1F, 1.5)\n|: :> ping(self, xs[0x1F])
+size(a: (Foo, String!), a: Foo) :- (String)\n    return obj
+|: [|> b, [b, n]]\non_nil:\n    name: x :> ping\n    name: b(b: String, d: Int)\n    name: a != foo
+-> done\n    |: ||: |> 2e3 : x => xs ||: b(b: Int!, d:, c: List of (Bool)) : nil :> go ||: (k) : (foo) ||: else : y => 1.5 then\n    then: break\ntotal() :- String\n    |: obj.len() as Bad()\n= raise Err(2e3, n: k)\nclass function make(a: String!, b: Map of (String, String)?) -> Bool:\n    let v = do:\n        let w = 0x1F\n        xs(obj)\n        continue\n    let v = do:\n        let v = obj\n        foo(x)
+ready :- xs :> go\ndef f(x: Int): x
+size :- \n    return x\n    foo(foo)\n    :> go\nname: String\ntotal :- \n    break\n    :> go\n    return k
+invariants: x\nfunction f(): x
+case none = "s"\ndone -> idle
+use console: Bool?
+total(b: (Int, Foo)) :- 'c' is Opt.some()\n-> done\non_nil:\n    size: ||: 'c' : k ||: else : 0x1F
+case none
+total(n: Map of (String, String)!) :- (Int!)
+size :- String.m\nuse console: (String?)\nowner: (Foo, Int?)
+case ok\nready() :- (b.m(foo))
+use clock: (Bool, Foo)
+<: go(b: String?, self)\n* -> idle then: obj(nil)\nuse console: List of Bool
+ready(b: List of String??, b: (p: Foo, q: Foo?)! = true) :- Int\nitems: Map of (Foo?, Int)!\ntotal :- 0x1F :> ping
+items: List of Bool!
+size :- Bool\n    |: |> (true)\n    |: (n) is Res.some\n= a\non_nil:\n    size: k.at(a, code: 2e3)\n    name: |> 0x1F\nself -> idle\n    then:\n        n => :> go\n        if b: let v = n\n        else:\n            let v = 0x1F\n        k => k.m(b, n: 42)\n        while foo:\n            return obj\n            let v = 42\n    then: continue\n    |: T: (Int, Bool)?
+-> running\n    |: |> g('c' :> ping(n: b, self), k: a.at(k: 'c', n: 1.5)) as Bad()\n    then: foo => "s"\n    then:\n        x => |> obj.go(n: k)\n        x => xs()\n        alias v :- b\n        n => [1.5, 2e3]\n    |: k is nil > |> n
+owner: unowned Map of (String, String) = raise Bad(xs, 42)\nsize :- ||: n : 2e3 ||: else : 0x1F\ndone <: tick(reason: Map of (String, Bool)!, c: String?) -> self
+size :- (xs)\nstate:
+use fs: Int\nitems: List of Foo?! = n[self]
+: |: self . use x : use
+as <: \n ->
+x ) . :- let
+:- 42 . 42 Int * Int use
+\n use => do case then then do 42
+, : do -> case
+then
+) ) * use x |: a
+a then :- as Int ,
+a as : :- on_nil as
+weak |: as on_nil
+\n as x <: => use Int <|
+then self \n    
+weak on_nil on_nil
+x do * 42 then ( *
+( \n : \n
+Int ( => 42 )
+let
+-> use a use , Int then (
+:- <: :- |:
+let * = then case
+a => ) let :- let then <| on_nil
+weak )
+use <| self |: self 42 case as
+then -> as . as \n
+<: <: |: :
+Int * Int :
+<: weak \n Int Int weak
+42 42 : <: , |: : a then
+= : do x \n     ->
+=>
+then * ,
+<: <: let
+\n     ->
+on_nil :-
+( =
+on_nil do . use <: let = on_nil
+case 42 as do <| = Int
+then self
+kind: enum\nenum :- enum.count()

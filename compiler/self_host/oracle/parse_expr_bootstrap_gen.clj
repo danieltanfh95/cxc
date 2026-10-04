@@ -22,6 +22,13 @@
 ;;
 ;;   cd compiler && clj -M self_host/oracle/parse_expr_bootstrap_gen.clj \
 ;;     28 300 120 stmt
+;;
+;; Chapter 29 adds the `item` mode for the atom-body item corpus (seed
+;; 29), every item kind parse-def-atom's body loop dispatches on, then
+;; item token soup.
+;;
+;;   cd compiler && clj -M self_host/oracle/parse_expr_bootstrap_gen.clj \
+;;     29 300 120 item
 
 (do
 
@@ -234,11 +241,148 @@
 (defn- gen-stmt-soup []
   (clojure.string/join " " (for [_ (range (inc (r 9)))] (pick stmt-soup-toks))))
 
-(if (= mode "stmt")
+;; Chapter 29 item mode. Atom-body items, each a vector of lines at
+;; indent 0. Fields, own-line propositions, observables in every form,
+;; transitions with every head and body shape, async signatures, use
+;; lines, enum cases, on_nil sections, and class functions, plus a few
+;; rejection shapes each. Item rows take no random numbers from the
+;; other modes, so seeds 27 and 28 print the same rows as before.
+
+(def ^:private phases ["idle" "running" "done"])
+(def ^:private msgs ["tick" "go" "ping"])
+
+(defn- gen-field-line []
+  (str (pick ["count" "name" "items" "owner"]) ": "
+       (case (r 16) 0 "weak " 1 "unowned " "")
+       (gen-type 1)
+       (if (chance 40) (str " = " (sexpr 1)) "")))
+
+(defn- gen-params []
+  (str "("
+       (clojure.string/join ", "
+         (for [_ (range (r 3))]
+           (if (chance 10)
+             "self"
+             (str (pick ["a" "b" "n"]) ": " (gen-type 1)
+                  (if (chance 15) (str " = " (sexpr 0)) "")))))
+       ")"))
+
+(defn- gen-prop-lines [i]
+  (let [p (ind i)
+        pred (if (chance 15) (str (pick ["T" "U"]) ": " (gen-type 1)) (sexpr 2))]
+    (case (r 10)
+      0 [(str p "|: " pred " as " (pick ["Bad" "Err"]) (gen-args 1))]
+      1 [(str p "|: " pred) (str (ind (+ i 4)) "as " (pick ["Bad" "Err"]) (gen-args 1))]
+      2 [(str p "|: " pred " " (pick ["x" "as" "then"]))]
+      [(str p "|: " pred)])))
+
+(defn- gen-then-lines [i d]
+  (if (chance 35)
+    [(str (ind i) "then: "
+          (if (chance 50)
+            (str (pick idents) " => " (sexpr 1))
+            (first (gen-stmt 0 0))))]
+    (into [(str (ind i) "then:")]
+          (mapcat (fn [_]
+                    (case (r 5)
+                      0 [(str (ind (+ i 4)) (pick ["x" "n" "k"]) " => " (sexpr 1))]
+                      1 [(str (ind (+ i 4)) (pick ["x" "n" "k"]) " => " (sexpr 1))]
+                      2 (gen-prop-lines (+ i 4))
+                      (gen-stmt (+ i 4) d)))
+                  (range (inc (r 4)))))))
+
+(defn- gen-msg []
+  (case (r 8)
+    0 "*"
+    1 (str (pick msgs) "()")
+    2 (str (pick msgs) "(" (pick ["n" "reason"]) ": " (if (chance 30) "" (gen-type 1))
+           (if (chance 30) (str ", c: " (gen-type 0)) "") ")")
+    3 (str (pick ["obj" "clock"]) "." (pick msgs))
+    4 (str (pick ["obj" "clock"]) ".every(rate)(t: " (pick types-n) ")")
+    (pick msgs)))
+
+(defn- gen-transition [d]
+  (let [src (case (r 6) 0 "" 1 "* " 2 "self " (str (pick phases) " "))
+        recv (if (or (= src "") (chance 25)) ""
+               (str (pick ["<: " "<: " "<: " "<| "]) (gen-msg) " "))
+        head (str src recv "-> " (case (r 20) 0 "self" 1 "self" 2 "*" (pick phases)))
+        head (if (and (seq recv) (chance 15))
+               (str src recv "\\n-> " (pick phases))
+               head)]
+    (case (r 9)
+      0 [head]
+      1 [(str head " then: " (if (chance 50)
+                               (str (pick idents) " => " (sexpr 1))
+                               (first (gen-stmt 0 0))))]
+      2 [(str head " " (pick ["do: x" "let: k" "then: |: x"]))]
+      (into [head]
+            (concat
+              (when (chance 40) (gen-prop-lines 4))
+              (mapcat (fn [_] (gen-then-lines 4 d)) (range (inc (r 2))))
+              (when (chance 10) (gen-prop-lines 4)))))))
+
+(defn- gen-observable [d]
+  (let [nm (pick ["size" "total" "ready"])
+        ps (if (chance 50) (gen-params) "")]
+    (case (r 8)
+      0 [(str nm ps " :- " (sexpr 2))]
+      1 [(str nm ps " :- " (gen-type 1) " = " (sexpr 2))]
+      2 (into [(str nm ps " :- " (gen-type 1))]
+              (concat (mapcat (fn [_] (gen-prop-lines 4)) (range (inc (r 2))))
+                      [(str "= " (sexpr 1))]))
+      3 (into [(str nm ps " :- " (gen-type 1))] (gen-body 4 d))
+      4 (into [(str nm ps " :- ")] (gen-body 4 d))
+      5 [(str nm (gen-params) " :- " (gen-type 1))]
+      6 [(str nm ps " :- " (pick types-n) (pick [".m" "(1)" " + 1" ""]))]
+      [(str nm ps " :- " (sexpr 1))])))
+
+(defn- gen-item [d]
+  (case (r 20)
+    0 [(gen-field-line)]
+    1 [(gen-field-line)]
+    2 (gen-prop-lines 0)
+    3 (gen-observable d)
+    4 (gen-observable d)
+    5 (gen-transition d)
+    6 (gen-transition d)
+    7 (gen-transition d)
+    8 [(str "<: " (pick msgs) (gen-params) (if (chance 15) " -> idle" ""))]
+    9 [(str "use " (pick ["console" "fs" "hash" "clock"]) ": " (gen-type 1))]
+    10 [(str "case " (pick cases)
+             (if (chance 50) (gen-params) "")
+             (if (chance 25) (str " = " (pick ["1" "0x10" "x" "\"s\""])) ""))]
+    11 (into ["on_nil:"]
+             (for [_ (range (inc (r 3)))]
+               (str "    " (pick ["size" "name"]) ": " (sexpr 1))))
+    (12 13) [(gen-field-line)]
+    (14 15) (gen-observable d)
+    (16 17) (gen-transition d)
+    18 (into [(str "class function " (pick ["make" "from"]) (gen-params)
+                   (if (chance 60) (str " -> " (gen-type 1)) "") ":")]
+             (gen-body 4 d))
+    [(pick ["invariants: x" "replace x :- 1" "function f(): x" "def f(x: Int): x"
+            "def slot: Foo" "state:" "accepts ping" "-> go(x: Int):" "5" "then: x"])]))
+
+(def ^:private item-soup-toks
+  ["a" "x" "Int" "42" "->" "<:" "<|" "*" "self" "then" "do" "let" ":" ":-" "=>"
+   "|:" "as" "=" "(" ")" "," "case" "use" "weak" "on_nil" "." "\\n" "\\n    "])
+
+(defn- gen-item-soup []
+  (clojure.string/join " " (for [_ (range (inc (r 9)))] (pick item-soup-toks))))
+
+(cond
+  (= mode "item")
+  (do
+    (doseq [_ (range n-gram)]
+      (println (clojure.string/join "\\n" (mapcat gen-item (repeat (inc (r 3)) (inc (r 2)))))))
+    (doseq [_ (range n-soup)] (println (gen-item-soup))))
+
+  (= mode "stmt")
   (do
     (doseq [_ (range n-gram)]
       (println (clojure.string/join "\\n" (mapcat #(gen-stmt 0 %) (repeat (inc (r 2)) (inc (r 3)))))))
     (doseq [_ (range n-soup)] (println (gen-stmt-soup))))
+  :else
   (do
     (doseq [_ (range n-gram)] (println (gen-expr (inc (r 4)))))
     (doseq [_ (range n-soup)] (println (gen-soup)))))
