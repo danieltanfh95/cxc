@@ -209,8 +209,31 @@
                                "-DGNUSTEP"
                                "-DGNUSTEP_BASE_LIBRARY=1"
                                "-D_NONFRAGILE_ABI=1"
-                               "-DOS_OBJECT_HAVE_OBJC_SUPPORT=1"
-                               "-DOS_OBJECT_USE_OBJC=1"
+                               ;; OS_OBJECT_USE_OBJC=0 keeps libdispatch
+                               ;; handles as plain C pointers rather than
+                               ;; ObjC objects. libobjc2's ARC retain path
+                               ;; segfaults on dispatch queues (libdispatch
+                               ;; does not register them with
+                               ;; `objc_class_flag_fast_arc`, so retain
+                               ;; falls through to a msgSend on an isa.dtable
+                               ;; that was never laid out for `retain`).
+                               ;; With the OBJC bridging off, dispatch_retain
+                               ;; / dispatch_release stay as plain function
+                               ;; calls and the emit's `(nonatomic, assign)`
+                               ;; properties no longer get an ARC
+                               ;; `-Warc-unsafe-retained-assign` warning on
+                               ;; `_q = dispatch_queue_create(...)`.
+                               "-DOS_OBJECT_HAVE_OBJC_SUPPORT=0"
+                               "-DOS_OBJECT_USE_OBJC=0"
+                               ;; GNUstep NSValue stops at one-argument
+                               ;; `getValue:`. The chapter-16 list-container
+                               ;; shadow-struct fix emits the two-argument
+                               ;; `getValue:size:` for a defensive length
+                               ;; check. The shim header declares that
+                               ;; selector as a category; the shim .o
+                               ;; provides the forwarding implementation.
+                               "-include" "/usr/local/include/cxc-linux-shim/cxc_linux_shim.h"
+                               "/usr/local/share/cxc_linux_shim.o"
                                "-lobjc" "-lgnustep-base"
                                "-ldispatch" "-lBlocksRuntime"]
                               ["-framework" "Foundation"])

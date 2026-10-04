@@ -10,6 +10,25 @@
 (declare emit-expr emit-stmt emit-class emit-struct indent-lines)
 
 ;; ---------------------------------------------------------------------------
+;; Host OS detection for conditional emit
+;; ---------------------------------------------------------------------------
+;; 2026-10-04 — Linux cloud port. `OS_OBJECT_USE_OBJC=1` makes
+;; `dispatch_queue_t`/`dispatch_source_t` Objective-C objects under GNUstep's
+;; libobjc2 + swift-corelibs-libdispatch, but libdispatch does NOT register
+;; dispatch classes with `objc_class_flag_fast_arc`, so libobjc2's `retain()`
+;; falls through to `ManualRetainReleaseMessage(obj, retain, ...)` which
+;; msgSends on a dtable that was never laid out for the retain selector and
+;; segfaults on garbage memory. The fix is to mark dispatch-typed properties
+;; `(nonatomic, assign)` and manage lifetime via explicit `dispatch_retain` /
+;; `dispatch_release` instead of letting ARC do it. This flag gates those
+;; substitutions so cards.m on macOS stays byte-identical. build.clj also
+;; sets -DOS_OBJECT_USE_OBJC=0 on Linux so the plain-C fallback kicks in and
+;; dispatch_release expands to a C function rather than [obj release].
+(defn- linux? []
+  (let [os-name (System/getProperty "os.name")]
+    (and os-name (.startsWith (.toLowerCase os-name) "linux"))))
+
+;; ---------------------------------------------------------------------------
 ;; Expression emission
 ;; ---------------------------------------------------------------------------
 
@@ -2283,7 +2302,9 @@
        "    return cxc_prng_next(h) % n;\n"
        "}\n\n"
        "@protocol CXCAtom\n"
-       "@property (nonatomic, strong) dispatch_queue_t own_queue;\n"
+       (if (linux?)
+         "@property (nonatomic, assign) dispatch_queue_t own_queue;\n"
+         "@property (nonatomic, strong) dispatch_queue_t own_queue;\n")
        ;; Layer 5c lifecycle cleanup — atoms carry an NSMutableArray of
        ;; resources (dispatch timers, CxcStreams) they must release on
        ;; -> end. Removing all objects triggers ARC dealloc on each,
@@ -2300,14 +2321,27 @@
        ;; Atoms holding one in cxc_owned_resources dispose of both by
        ;; removing the handle from the array.
        "@interface CxcTimerHandle : NSObject\n"
-       "@property (nonatomic, strong) dispatch_source_t source;\n"
-       "@property (nonatomic, strong) dispatch_queue_t queue;\n"
+       (if (linux?)
+         "@property (nonatomic, assign) dispatch_source_t source;\n"
+         "@property (nonatomic, strong) dispatch_source_t source;\n")
+       (if (linux?)
+         "@property (nonatomic, assign) dispatch_queue_t queue;\n"
+         "@property (nonatomic, strong) dispatch_queue_t queue;\n")
        "@end\n\n"
        "@implementation CxcTimerHandle\n"
        "- (void)dealloc {\n"
        "    if (_source) dispatch_source_cancel(_source);\n"
-       "    _source = nil;\n"
-       "    _queue = nil;\n"
+       ;; Linux: `assign` properties don't release via ARC. Drop the +1
+       ;; the ivar holds (handed over by the setter path under
+       ;; OS_OBJECT_USE_OBJC=0, where dispatch_release is a C function)
+       ;; before nulling.
+       (if (linux?)
+         (str "    if (_source) dispatch_release(_source);\n"
+              "    _source = NULL;\n"
+              "    if (_queue) dispatch_release(_queue);\n"
+              "    _queue = NULL;\n")
+         (str "    _source = nil;\n"
+              "    _queue = nil;\n"))
        "}\n"
        "@end\n\n"
        ;; Q1 (2026-08-26) — async send swallows target's re-raised
@@ -2613,7 +2647,9 @@
        ;; once a real user of method-returned streams (Clock.every
        ;; at Step 10) forces the shape.
        "@interface CxcStream : NSObject\n"
-       "@property (nonatomic, strong) dispatch_queue_t own_queue;\n"
+       (if (linux?)
+         "@property (nonatomic, assign) dispatch_queue_t own_queue;\n"
+         "@property (nonatomic, strong) dispatch_queue_t own_queue;\n")
        "@property (nonatomic, strong) NSHashTable *subscribers;\n"
        ;; Layer 5c Step 8: per-instance fanout selector + source
        ;; identity. Each CxcStream carries the receiver-side selector
@@ -2692,6 +2728,13 @@
        ;; cxc_end nils _teardown after invoking it).
        "- (void)dealloc {\n"
        "    [self cxc_end];\n"
+       ;; Linux: _own_queue is `assign`, so ARC does not drop its ref.
+       ;; The +1 came from dispatch_queue_create in -init; balance it
+       ;; here before the object disappears.
+       (if (linux?)
+         (str "    if (_own_queue) dispatch_release(_own_queue);\n"
+              "    _own_queue = NULL;\n")
+         "")
        "}\n"
        "@end"))
 

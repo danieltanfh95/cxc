@@ -25,6 +25,14 @@
    get_or supported-val-types)."
   #{"Int" "String" "Bool"})
 
+;; 2026-10-04 — Linux cloud port. Mirror of cxc.emit/linux? so synthesized
+;; container classes also fall back to `(nonatomic, assign)` on their
+;; dispatch_queue_t own_queue property. See the long comment in cxc.emit
+;; for why strong dispatch properties segfault on Linux's libobjc2 stack.
+(defn- linux? []
+  (let [os-name (System/getProperty "os.name")]
+    (and os-name (.startsWith (.toLowerCase os-name) "linux"))))
+
 ;; 2026-09-16 — `.at(i) :- T` support: primitives via NSNumber
 ;; unbox, String via id-cast, records via NSValue-copy into a
 ;; stack local. Everything else (Bytes, atoms) fails to synth
@@ -221,7 +229,9 @@
                           :attrs ["nonatomic" "strong"]}
                          {:name  "own_queue"
                           :c-type "dispatch_queue_t"
-                          :attrs ["nonatomic" "strong"]}]
+                          :attrs (if (linux?)
+                                   ["nonatomic" "assign"]
+                                   ["nonatomic" "strong"])}]
                         (:properties stream-parts))
      :init-params [{:name "elements" :c-type "NSArray *"}]
      :init-body   (-> [{:node :assign

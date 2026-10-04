@@ -293,6 +293,15 @@
 (def phantom-atom-names      env/phantom-atom-names)
 (def phantom-atom-name?      env/phantom-atom-name?)
 
+;; 2026-10-04 — Linux cloud port, mirror of cxc.emit/linux?. Gates
+;; `(nonatomic, assign)` for dispatch-typed @properties so cards.m on
+;; macOS stays byte-identical. See the long comment in cxc.emit for
+;; why strong-attributed dispatch properties segfault on Linux's
+;; libobjc2 + swift-corelibs-libdispatch stack.
+(defn- linux? []
+  (let [os-name (System/getProperty "os.name")]
+    (and os-name (.startsWith (.toLowerCase os-name) "linux"))))
+
 ;; M1b prep — F56 emit-boundary mangling extracted to cxc.mangle.
 ;; `*decl->module*` + `->c-safe` live there. cxc.lower uses the
 ;; `mangle/` alias.
@@ -9038,8 +9047,15 @@
           own-queue-prop  ;; dispatch_queue_t is a toll-free-bridged ObjC object
                           ;; under modern ARC (OS_OBJECT_USE_OBJC=1); `strong`
                           ;; keeps it alive for the atom's lifetime.
+                          ;; Linux: libobjc2's retain path segfaults on
+                          ;; dispatch objects (see the cxc.emit/linux?
+                          ;; comment); fall back to `assign`. The queue
+                          ;; leaks at atom dealloc because atoms outlive
+                          ;; the process in all practical runs.
                           {:name "own_queue" :c-type "dispatch_queue_t"
-                           :attrs ["nonatomic" "strong"]}
+                           :attrs (if (linux?)
+                                    ["nonatomic" "assign"]
+                                    ["nonatomic" "strong"])}
           ;; Layer 5c lifecycle: any resource whose lifetime the atom
           ;; wants to bound (dispatch timers, method-returned
           ;; CxcStreams, etc) is appended here via cxc_own_resource.
