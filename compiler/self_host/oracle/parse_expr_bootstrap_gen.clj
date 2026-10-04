@@ -9,10 +9,19 @@
 ;;     [seed] [grammar-rows] [soup-rows]
 ;;
 ;; Defaults are seed 27, 400 grammar rows, 150 soup rows. The chapter-27
-;; corpus keeps a slice of the seed-27 run. Rows that reach a form the
-;; port leaves out of scope (`do:`, `def:` lambda bodies, `<:` dispatch
-;; blocks) are dropped by the caller, the generator never builds them
-;; on purpose but soup can.
+;; corpus keeps a slice of the seed-27 run.
+;;
+;; Chapter 28 adds a fourth argument, the mode. `expr` (the default)
+;; prints exactly the chapter-27 rows for a given seed. `stmt` prints
+;; statement-sequence rows for the statement corpus, every statement
+;; kind parse-statement accepts or rejects, indented blocks, `or`
+;; recovery arms, `<:` dispatch blocks with inline and block arm
+;; bodies, `do:` blocks, and `def:` lambda bodies inside call args, then
+;; statement token soup. The chapter-28 corpus keeps a slice of the
+;; seed-28 run.
+;;
+;;   cd compiler && clj -M self_host/oracle/parse_expr_bootstrap_gen.clj \
+;;     28 300 120 stmt
 
 (do
 
@@ -20,6 +29,8 @@
 (def ^:private seed  (Long/parseLong (or (first args) "27")))
 (def ^:private n-gram (Long/parseLong (or (second args) "400")))
 (def ^:private n-soup (Long/parseLong (or (nth args 2 nil) "150")))
+(def ^:private mode  (or (nth args 3 nil) "expr"))
+(def ^:dynamic *one-line* false)
 (def ^:private rng (java.util.Random. seed))
 
 (defn- r [n] (.nextInt rng n))
@@ -85,7 +96,8 @@
 
 (defn- gen-chain [d]
   (let [n (inc (r 3))
-        sep (case (r 3) 0 " " 1 "\\n" 2 "\\n    ")]
+        sep (case (r 3) 0 " " 1 "\\n" 2 "\\n    ")
+        sep (if *one-line* " " sep)]
     (str "||: " (gen-expr (dec d)) " : " (gen-expr (dec d))
          (apply str
            (for [i (range n)]
@@ -126,7 +138,109 @@
 (defn- gen-soup []
   (clojure.string/join " " (for [_ (range (inc (r 7)))] (pick soup-toks))))
 
-(doseq [_ (range n-gram)] (println (gen-expr (inc (r 4)))))
-(doseq [_ (range n-soup)] (println (gen-soup)))
+(defn- ind [n] (apply str (repeat n " ")))
+
+(declare gen-stmt)
+
+;; A block body at indent `i`, as a vector of lines.
+(defn- gen-body [i d]
+  (vec (mapcat #(gen-stmt i (dec %2) %1) (range (inc (r 3))) (repeat d))))
+
+;; An inline body or a NEWLINE INDENT block for `if`, `while`, `else`.
+(defn- gen-tail [head i d]
+  (if (or (<= d 0) (chance 40))
+    [(str (ind i) head " " (first (gen-stmt 0 0 0)))]
+    (into [(str (ind i) head)] (gen-body (+ i 4) d))))
+
+(defn- sexpr [d] (binding [*one-line* true] (gen-expr d)))
+
+(defn- gen-or-arms [i d]
+  (vec (mapcat (fn [_]
+                 (into [(str (ind i) "or"
+                             (case (r 4)
+                               0 ""
+                               1 (str " " (pick ["e" "err"]))
+                               2 (str " " (pick ["Bad" "Err"]) "()")
+                               3 (str " " (pick ["Bad" "Err"]) (gen-binds)))
+                             ":")]
+                       (gen-body (+ i 4) (dec d))))
+               (range (r 3)))))
+
+(defn- gen-pat []
+  (case (r 6)
+    0 "*"
+    1 (str (r 9))
+    2 (pick ["true" "false"])
+    3 (str "." (pick cases) (gen-binds))
+    (str (pick cases) (gen-binds))))
+
+(defn- gen-dispatch [head i d]
+  (into [(str (ind i) head ":")]
+        (mapcat (fn [_]
+                  (let [pats (clojure.string/join ", " (for [_ (range (inc (r 2)))] (gen-pat)))
+                        guard (if (chance 25) (str " when: " (sexpr 1)) "")
+                        arm (str (ind (+ i 4)) "<: " pats guard ":")]
+                    (if (chance 50)
+                      [(str arm " " (sexpr (dec d)))]
+                      (into [arm] (gen-body (+ i 8) (dec d))))))
+                (range (inc (r 3))))))
+
+(defn- gen-stmt
+  ([i d] (gen-stmt i d 0))
+  ([i d _]
+   (let [p (ind i)
+         e #(sexpr (max 0 (dec d)))]
+     (if (<= d 0)
+       [(str p (case (r 6)
+                 0 (str "return " (e))
+                 1 (str "let " (pick ["v" "w"]) " = " (e))
+                 2 (str (pick idents) "(" (e) ")")
+                 3 (str ":> " (pick ["ping" "go"]))
+                 4 (pick ["break" "continue"])
+                 (e)))]
+       (case (r 20)
+         0  [(str p "return " (e))]
+         1  (into [(str p "let " (pick ["v" "w"])
+                        (if (chance 40) (str ": " (gen-type 1)) "") " = " (e))]
+                  (when (chance 30) (gen-or-arms i d)))
+         2  [(str p "alias " (pick ["v" "w"]) " :- " (e))]
+         3  [(str p ":> " (pick ["ping" "go"]) (if (chance 50) (gen-args 1) ""))]
+         4  (into [(str p "|> " (pick idents) "." (pick ["m" "go"]) (gen-args 1))]
+                  (when (chance 40) (gen-or-arms i d)))
+         5  (let [t (gen-tail (str "if " (e) ":") i d)]
+              (if (chance 50) (into t (gen-tail "else:" i d)) t))
+         6  (let [t (gen-tail (str "if let " (pick ["v" "w"])
+                                   (if (chance 30) (str ": " (gen-type 0)) "")
+                                   " = " (e)
+                                   (if (chance 30) (str ", let u = " (e)) "") ":") i d)]
+              (if (chance 40) (into t (gen-tail "else:" i d)) t))
+         7  (gen-tail (str "while " (e) ":") i d)
+         8  [(str p (pick ["break" "continue" "break 1"]))]
+         9  (gen-dispatch (e) i d)
+         10 (into [(str p "let " (pick ["v" "w"]) " = do:")] (gen-body (+ i 4) (dec d)))
+         11 [(str p "let " (pick ["v" "w"]) " = do: " (first (gen-stmt 0 0)))]
+         12 (into [(str p (pick idents) "(" (pick ["x" "y"]) " => def:")]
+                  (conj (gen-body (+ i 4) (dec d)) (str p ")")))
+         13 [(str p (pick ["x" "obj"]) " => " (e))]
+         14 [(str p (pick ["for x in xs: f(x)" "switch x: y" "let case = 1" "let 5 = x"]))]
+         15 [(str p (pick idents) " :> " (pick ["ping" "go"]) (gen-args 1))]
+         [(str p (e))])))))
+
+(def ^:private stmt-soup-toks
+  ["a" "x" "f" "42" "return" "let" "if" "else" "while" "break" "do" "def" "or"
+   "alias" ":-" "=" "=>" ":" "(" ")" "," "<:" "*" "." ":>" "|>" "when"
+   "\\n" "\\n    " "\\n        "])
+
+(defn- gen-stmt-soup []
+  (clojure.string/join " " (for [_ (range (inc (r 9)))] (pick stmt-soup-toks))))
+
+(if (= mode "stmt")
+  (do
+    (doseq [_ (range n-gram)]
+      (println (clojure.string/join "\\n" (mapcat #(gen-stmt 0 %) (repeat (inc (r 2)) (inc (r 3)))))))
+    (doseq [_ (range n-soup)] (println (gen-stmt-soup))))
+  (do
+    (doseq [_ (range n-gram)] (println (gen-expr (inc (r 4)))))
+    (doseq [_ (range n-soup)] (println (gen-soup)))))
 
 )

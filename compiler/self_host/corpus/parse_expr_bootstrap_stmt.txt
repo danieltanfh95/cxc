@@ -1,0 +1,299 @@
+return 1
+return a + b
+let x = 5
+let x: Int! = f(a)
+let let = 3
+let 5
+alias y :- x * 2
+alias 3
+alias y = 2
+:> ping
+:> ping()
+:> ping(1, k: 2)
+:> 5
+|> obj.m(1)
+|> f(a)
+|> f
+|> 1 + 2
+x :> go(1)
+f(x)
+a.b.c
+for e in xs: f(e)
+switch x: y
+switch => 3
+x => 1
+while a < b: f()
+while a:\n    f()\n    g()
+while a\n    f()
+break
+continue
+break 5
+if a: b
+if a: b\nelse: c
+if a:\n    b\nelse:\n    c\n    d
+if a:\n    b\n\nelse: c
+if a\n    b
+if a:\nb
+if let x = m: f(x)
+if let x: Int = m, let y = n:\n    f(x)\nelse:\n    g()
+if let x = m\n    f(x)
+if let 5 = m: f
+if let x: = m: f
+let x = f()\nor:\n    g()
+let x = f()\nor e:\n    g(e)\nor Bad(code: let c):\n    h(c)
+|> a.b()\nor Bad():\n    g()\nor:\n    h()
+|> a.b()\nor 5:\n    g()
+|> a.b()\nor: g()
+|> a.b()\nor Bad(x):\n    g()
+x\ny\n\nz
+a b
+x:\n    <: a: 1\n    <: b(let v): v\n    <: *: 0
+x:\n    <: .a, .b(code: let c) when: c > 1: 1\n    <: 1, true:\n        f()\n        g()
+x:\n    <: _: 1
+x:\n    <: 5 6: 1
+x:\n    <: a 1
+x:\n    y
+do: x
+let v = do: x
+let v = do:\n    let a = 1\n    a + 1
+f(do: x)
+f(x => def:\n    let a = 1\n    a)
+
+\n\n
+x
+x\n
+# c\nx
+return
+return\n
+let x = 1 + 2 * 3
+let x: List of Int = [1, 2]
+let x: (a: Int, b: String) = f()
+let x: Int!? = 1
+let x = \n1
+let x 5
+let x: = 5
+let x = a < b < c
+alias y :- a < b <= c
+return a < b < c
+:> ping(k: a < b < c)
+|> a.m(x => def:\n    y\n)
+|> a.m()\nor:\n    x\nor:\n    y\nz
+|> a.m()\nor e:\n    x\n\nor Bad(code: let c, msg: let m):\n    y
+|> a.m()\nor Bad(code: x):\n    y
+|> a.m()\nor Bad(:\n    y
+|> a.m()\nor x y:\n    z
+|> a.m()\nor:
+|> a.m() or: x
+|> a :> b
+|> a.b.c
+|> (f(x))
+|> f(x)(y)
+let x = f()\nor:\n    return 0
+let x = f()\nor:\n    if a: b\n    else:\n        c
+while a:\n    while b:\n        break\n    continue
+while a:\n\n    f()\n\n
+while a: while b: break
+while: x
+while a b
+if a:\n    if b:\n        c\n    else: d\nelse:\n    e
+if a: b\n\n\nelse: c
+if a: b\nelse c
+if a: b\nelse:\nc
+if a:\n\n    b\n
+if x:\n    <: a: 1
+if let x = a, y = b: c
+if let x = a,: c
+if let x: Int = a\n    c
+if let x = a:\n    f(x)\nelse: g()
+x:\n    <: a:\n        let v = 1\n        return v\n    <: *:\n        |> a.m()\n        or:\n            b
+x:\n    <: a: 1\ny
+f(x):\n    <: ok(let v): v\nreturn 0
+let v = x:\n    <: a: 1
+return x:\n    <: a: 1\n    <: *: 0
+let v = do:\n    let a = 1\n    a + 1\nreturn v
+f(do:\n    a\n)
+do:\n    a\n\nb
+break\n    x
+continue x
+alias
+alias x
+alias x :-
+let
+if
+else: x
+or: x
+def: x
+x.y => 1
+self => 1
+switch(x)
+switch
+for
+let return = 1
+let do = do: 1
+alias v :- 42\nk(x => def:\n    :> go\n    xs(obj)\n    42\n)
+x :> ping(nil)\nlet 5 = x
+break 1\n-foo
+|> obj.m(k: 42)\nor Err():\n    |> x.m(false)\nor Err:\n    while 2e3:\n        continue\n        k(42)\n        continue
+alias w :- -'c'
+let w = do: obj(42)\nif 1.5 - xs: a(xs)\nelse: x
+self is .err(code: let v, let w)
+b:\n    <: *, 2:\n        k
+let v = do: a(0x1F)
+obj => |> xs.m(xs(b, true), k: 2e3 is .some(let v))
+obj => a\n2e3
+n(y => def:\n    :> ping\n    x\n    a :> ping(code: b, foo)\n)\nbreak
+:> ping\nx :> go(xs, n)
+alias w :- :> go(obj is .none, |> "s")\ncontinue
+a(code: foo[1.5], obj :> go):\n    <: 1: y => 'c'
+obj('c')\nswitch x: y
+:> ping("s")\nbreak 1
+let v = y => 1.5 < true\na :> ping(k: n)
+n :> go(obj)
+return b(b: Bool, c: List of Foo?, c:)
+xs\nk(y => def:\n    :> ping\n    let v = foo\n)
+if let w: String = x => b: return xs\nelse:\n    1.5:\n        <: false:\n            foo\n            return foo\n            let v = n\n        <: true, .some(msg: let w): x\n        <: .some(code: let v, msg: let v), *: x\nfalse :> go
+obj * y => 2e3
+a :> ping(n: b)\n0x1F is obj
+0x1F\nif "s":\n    foo(0x1F)\nelse: foo
+if let v = |> f(): let v = 'c'\nelse:\n    let v: Foo! = nil != xs
+while 0x1F: :> go
+obj\nnil
+true:\n    <: none(let w, code: let v) when: -k:\n        continue
+true\nlet w = do:\n    obj\n    return false\n    let w = nil
+return obj(b: Foo!, c: (p: (Int, Bool!)!, q: List of Foo?), d: (List of Int!, (Bool)?))\nx(b: Foo, c: Foo?, d: String):\n    <: 4:\n        let v = do:\n            :> go\n            :> ping\n        xs(x => def:\n            return 0x1F\n        )\n    <: .some(code: let v), * when: raise Bad(n):\n        let w = do:\n            xs\n            return true\n        if foo: continue\n    <: *, 4 when: foo(a: Foo): |> |> f(foo)
+n
+foo :> ping()
+raise Bad()\nx => (k(a: Bool))
+while foo[a + n]:\n    let v = do: :> ping
+"s"\nnil
+x => 1.5\nlet case = 1
+k:\n    <: false, false when: 0x1F % x:\n        xs(false)\n        return x\n    <: 5:\n        return obj\n        break\n    <: *, none:\n        let v = true\n        continue\n        :> go\nalias v :- b
+xs(y => def:\n    2e3\n    k(nil)\n)
+:> ping\nb[raise Bad()]
+n(x => def:\n    if let v = 'c', let u = x:\n        return n\n)\n"s":\n    <: some(let v): (||: "s" : foo ||: else : nil)\n    <: err(let v), *: |> f()\n    <: some(msg: let v): |> f()
+if let v: String = self:\n    :> go\n    2e3\n    return 2e3
+(42)\nif |> 42: :> ping
+(42) == n is Res.none(let v):\n    <: err(msg: let w, let v), ok(msg: let v): k[raise Err(1.5)]\nobj => :> ping()
+let v = not 42
+let v: List of Foo! = "s" is Opt.err
+b(y => def:\n    |> a.m()\n    1.5\n)
+let w = do:\n    b(n)
+b(y => def:\n    let w = xs\n    :> go\n    break\n)
+|> true\nlet v = do: let w = 2e3
+xs[true]:\n    <: *:\n        :> go\n    <: false: x :> go(0x1F)\n    <: some: x(b: Int!, c: Bool?)
+x => 1.5 <= x
+break 1
+:> go(k: k)
+x[true]\nreturn raise Bad()
+obj(y => def:\n    x(a)\n    return 1.5\n    a\n)
+if let v: Bool = a, let u = b:\n    xs(nil)\n    xs\n    :> ping
+if false:\n    x\n    2e3
+x :> go(true)
+foo == obj > x:\n    <: .some: obj and obj is Opt.some(let v, code: let w)\n    <: *, * when: x is .none(let w):\n        continue\n        return 'c'\n    <: true, 3:\n        a
+k(x => def:\n    k(n)\n)\nb(x => def:\n    :> ping\n    break\n    k(n)\n)
+for x in xs: f(x)\nreturn xs
+true:\n    <: none() when: b < false: 1.5\n    <: 5, .err(code: let w, msg: let w):\n        "s"
+not obj or k\n[||: 42 : 1.5 ||: else : 42, (b)]:\n    <: none, 6: x\n    <: none:\n        n\n        42\n        switch x: y
+switch x: y\n"s"
+:> ping\nobj => :> go
+let w = do:\n    return b\n    0x1F\nreturn a
+let w = do:\n    |> a.m(2e3)\n    return "s"\n|> k.go(k, k: 'c')\nor:\n    a\n    while n:\n        let w = xs\n        :> ping\n        continue\n    n(x => def:\n        return true\n        foo(k)\n        break\n    )
+let v = b - obj\nif |> f(0x1F):\n    n\n    obj => a\nelse:\n    obj\n    k
+k :> ping(0x1F, code: 0x1F)
+alias w :- true\nlet w = do:\n    1.5\n    let w = 2e3\n    let v = self
+switch x: y\nx(x => def:\n    :> ping\n    b(xs)\n    return nil\n)
+a :> ping(k)
+obj :> go(true, code: 2e3)
+b[:> ping]:\n    <: err(code: let w), * when: x :> ping: (n)
+a\nbreak 1
+return self\nfor x in xs: f(x)
+while ||: n : x ||: self : a ||: 42 : 0x1F ||: else : true:\n    if 1.5:\n        :> ping\n    else:\n        return "s"\n'c'
+return self\nif let w = :> go:\n    let v = do:\n        return 42\nelse: return b
+foo('c' is b, obj :> ping(a, k: 2e3)):\n    <: 6:\n        if let v: Bool = self:\n            nil\n        else: break\n    <: ok(code: let v):\n        obj => a\n        |> n.go()\n    <: *: (raise Err(x, true))
+obj.len(n: 'c')
+alias w :- b[||: xs : 0x1F ||: obj : n ||: 'c' : self ||: else : 2e3]\nbreak 1
+obj :> go(n)\nwhile k:\n    k\n    continue
+|> a.go(k: n)
+if self:\n    return 2e3\n    continue\n    0x1F\nelse: break\nk:\n    <: ok when: obj >= nil:\n        n(b)\n        0x1F\n        :> ping\n    <: *, .none(code: let w): a
+raise Err()
+|> k.m(n: "s", n: k)\nor e:\n    while 'c':\n        continue\n        return "s"\n    while b: :> go\nif not (true): let v = 1.5\nelse:\n    while not a:\n        :> go
+while 2e3: nil
+x => |> f(n(b: Foo, c: (Map of (Int, Foo)!, Map of (String!, Bool?)), c: Foo))\nnot xs :> ping(a, code: k)
+let 5 = x\nif ||: foo is self : 42 - 'c' ||: ||: nil : a ||: else : 'c' : -b ||: b is E.some : foo is .ok(code: let v) ||: else : x => 42: n
+k(y => def:\n    return 1.5\n    let w = k\n)
+|> foo is .ok()
+1.5 and x
+alias w :- n(a: Foo, d:)
+obj => |> g(code: |> g(), code: not true)\nlet w = y => |> b
+for x in xs: f(x)
+k :> ping(code: b, 2e3)
+if |> g(|> g("s"), |> f()): :> go\nelse:\n    continue\n    if let w = |> f(true, true): let v = "s"\n    else:\n        break 1\n        xs\n        if let w = 0x1F:\n            return a\n            x(2e3)\n            foo(x)\n    true < self\nalias v :- n(b: Foo!)
+obj :> ping(x, n: a)
+let case = 1\nlet v = do: :> ping
+"s"
+'c'
+-|> f(code: 'c', obj):\n    <: .ok(), err():\n        break\nwhile |> foo[a]: continue
+|> x.m(obj, 2e3)
+:> go(obj, "s")\nlet case = 1
+break\nlet v = do: let w = 2e3
+while |> x: break
+x => obj\nn
+:> go(n: b)
+b :> go(n: false)\n:> go(n: a, code: n)
+while (k) is -k:\n    alias v :- not obj\n    let v = 0x1F is x\n    obj(y => def:\n        :> go\n        break\n        xs(x)\n    )
+1.5
+1.5\nwhile 2e3: return 0x1F
+let v = do:\n    'c'\n    while obj:\n        n\n    continue
+while foo:\n    return 0x1F\n    let w = b\n    n
+b :> ping()\nif let v = xs, let u = b:\n    a("s")\nelse:\n    k(a)\n    k
+let v: (p: String, q: Foo?) = n
+return a
+let w = do: return true\nfalse % true is Opt.ok
+if (-foo):\n    if 1.5 * k:\n        obj => n\n        :> go\n    else: xs(foo)\n    if a: let v = xs\n    else: false\nelse: :> ping
+if let w = |> raise Bad():\n    obj => x => obj\n    let v = do: foo(a)\n    true < obj\nnot k[foo]:\n    <: false:\n        let w = do: let w = obj\n        if let v = foo:\n            continue\n            continue\n        :> ping\n    <: 1: not |> a.m(a)\n    <: false, true:\n        if 2e3:\n            xs(x)\n        let w: (Foo, Int) = nil
+:> ping()\n'c'
+x => |> not 1.5
+x => n[|> a.m(0x1F, code: 1.5)]\nif x => (obj):\n    if let w = obj(k: 0x1F):\n        let case = 1\n    else: let v = foo\n    let v: (p: String, q: Bool) = xs[2e3]\n    alias v :- y => 0x1F
+:> go
+let w = a * b
+let w = do: return 'c'
+let w = n.len()
+[k, nil]
+return alias alias :- |> do a ,
+\n else :> else x = = x <:
+|> let :-
+= , do a alias \n :- <: |>
+break => \n         break * alias * do while
+* while def
+) :- else = a . |>
+while => =>
+break a \n let \n     break \n
+* =
+\n when , break break ,
+= ) when : *
+<: \n or :> * = x a \n        
+alias \n         : |> when return f do return
+if , : when :> \n     f \n        
+<: a else =
+=> alias ) :>
+return \n         |>
+( , = \n     => , x
+= when def if \n    
+:- let , else let * def \n
+<: :- |>
+\n 42 <: else
+\n     return , x
+) . f |> a alias \n        
+a :- a
+when
+=> alias =>
+=> return , x \n .
+break f do do
+while ) <: or \n         x :- \n
+. x = x * alias or
+when :- x : while ( break
+def do \n do a let <:
+a : while :> a
+|> def
+f f f
+break else break \n         * 42 <: \n     <:

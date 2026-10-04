@@ -392,3 +392,53 @@ x \n     of < \n [ :
 . . is 42 42
 [ of ? List of x b
 : ? + + ]
+do: x
+do: return 1
+do: let a = 1
+do:\n    x\n    y
+do:\n    let a = 1\n    a\n.len
+do:\n    let a = 1\n    a\n(1)
+do:\n    if a: b\n    else: c
+do x
+do:\nx
+do
+1 + do: x
+f(do: x)
+[do: x, 2]
+do: do: x
+do:\n    x\n  y
+x:\n    <: a: 1
+x:\n    <: a: 1\n    <: b: 2\n\n    <: *: 0
+x:\n    <: a: 1\n.foo
+f(x):\n    <: ok(let v): v\n    <: err(code: let c, let m): c\n    <: *: 0
+a + b:\n    <: 1, 2: x\n    <: true: y
+x => y:\n    <: a: 1
+x:\n    <: a:\n        return 1\n    <: *:\n        :> ping
+x:\n    <: .a, .b(let v) when: v > 1: v\n    <: .c: 0
+x:\n    <: a when: b:\n        c
+x:\n    <: a: y:\n        <: b: 2
+x:\n    <: a\n
+x:\n    <: _: 1
+x:\n    <: -1: 1
+x:\n    <: "s": 1
+x:\n    <: a(x): 1
+x:\n    <: a(let 1): 1
+x:\n    <: a 1
+x:\n    <: a when b: 1
+x:\n    <: .5: 1
+x:\n    y
+x:\n    <: a: 1\n    y
+x :\n    <: a: 1
+x:\n    <: a:
+(x:\n    <: a: 1)
+x => def: y
+f(x => def:\n    let a = 1\n    a\n)
+f(x => def:\n    a\n    b)
+f(() => def:\n    :> ping\n)
+f(x => def:\n    if x: return 1\n    x + 1\n)
+f(x => def:\n    a\n  ,y => def:\n    b\n  )
+f(x => def:\n    a\n)(y => def:\n    b\n)
+xs.map(x => def:\n    let y = x * 2\n    y\n).len
+f(x => def:\n    x:\n        <: a: 1\n)
+f(x => def:
+f(x => def: a)

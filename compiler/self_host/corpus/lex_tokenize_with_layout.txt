@@ -202,3 +202,16 @@ a\n    b\n  "x
 a\n    b\n  c\nd
 a\n    b\n  # note\nc
 a\n    b\n  (c\nd)
+f(x => def:\n    let a = 1\n    a\n)
+f(x => def:\n    a\n    b)
+f(x => def:\n    a\n\n    # c\n    b\n  )\ny
+f(x => def:\n    a
+f(x => def:
+x => def:\n    a
+f(a,\n  x => def:\n      a\n      g(b,\n  c)\n  )\nz
+def f:\n    g(x => def:\n        a\n        b\n    )\n    h
+f(x => def:\n    a\n)(y => def:\n    b\n)
+f(x => def:\n        a\n    b\n)
+f(x => def: a)
+f(x => def:\n    a\n  ,y => def:\n    b\n  )
+f(x => def:\n    a(\n  b)\n)

@@ -59,6 +59,16 @@ def main:
     # NEWLINE when the running depth is back to zero at its end.
     bracket_depth: Int!  = 0
     line_is_cont:  Bool! = false
+    # Chapter 28. The `=> def:` layout escape (cxc.lex def-frame). A
+    # line inside open brackets that ends with `=> def :` arms a frame
+    # at its indent, `def_base`. Deeper lines then open with INDENT
+    # (first) or NEWLINE (later) and leave the indent stack alone, and
+    # the first line back at or under the base closes the frame with
+    # NEWLINE DEDENT before it lexes normally. `line_in_def` marks a
+    # line lexed inside the frame, which never ends with a NEWLINE.
+    def_base:    Int!  = -1
+    def_seen:    Bool! = false
+    line_in_def: Bool! = false
     # Chapter 27 inconsistent dedent. Clojure pops the indent stack to a
     # level that must exist, and throws when the line's indent falls
     # between two open levels. It tokenizes the line content first, so
@@ -254,6 +264,24 @@ def main:
     indent_popped  :- indent_str.substring((indent_str.index_of(" ") + 1).max(0).min(indent_str.length()), (indent_str.length() - indent_str.index_of(" ") - 1).max(0))
     eol_newline    :- bracket_depth == 0 and not line_is_cont
 
+    # Chapter 28 def-frame probes. `def_trig` reads the last three
+    # tokens the line left, `eol_def` arms the frame at the line end
+    # when no NEWLINE closes the line.
+    def_on     :- def_base >= 0
+    def_in     :- def_on and line_indent > def_base
+    def_out    :- def_on and line_indent <= def_base
+    at_content :- not at_src_end and not is_sp and not is_nl and not is_hash
+    tk_n       :- tokens.count()
+    tk_a       :- tokens.at((tk_n - 3).max(0)) ?? Token(kind: "eof", value: "", line: line_num, col: 1)
+    tk_b       :- tokens.at((tk_n - 2).max(0)) ?? Token(kind: "eof", value: "", line: line_num, col: 1)
+    tk_c       :- tokens.at((tk_n - 1).max(0)) ?? Token(kind: "eof", value: "", line: line_num, col: 1)
+    def_trig_a :- tk_a.kind == "glyph" and tk_a.value == "=>"
+    def_trig_b :- tk_b.kind == "kw" and tk_b.value == "def"
+    def_trig_c :- tk_c.kind == "punct" and tk_c.value == ":"
+    def_trig   :- tk_n >= 3 and def_trig_a and def_trig_b and def_trig_c
+    eol_def    :- not line_in_def and not eol_newline and def_trig
+    eol_nl_tok :- eol_newline and not line_in_def
+
     -> lex_start
         then:
             source => args.get_or(1, "").replace("\\n", "\n").replace("\\N", "\\n")
@@ -279,7 +307,10 @@ def main:
     lex_start <: step -> lex_start
         |: at_src_end and not error and ends_open_line and dedent_err == ""
         then:
-            tokens => ||: eol_newline : tokens.append(Token(kind: "newline", value: "", line: line_num, col: 1)) ||: else : tokens
+            tokens => ||: eol_nl_tok : tokens.append(Token(kind: "newline", value: "", line: line_num, col: 1)) ||: else : tokens
+            def_base => ||: eol_def : line_indent ||: else : def_base
+            def_seen => ||: eol_def : false ||: else : def_seen
+            line_in_def => false
             line_num => line_num + 1
             col_num => 1
             at_line_start => true
@@ -313,7 +344,10 @@ def main:
     lex_start <: step -> lex_start
         |: not at_src_end and not at_line_start and is_nl and dedent_err == ""
         then:
-            tokens => ||: eol_newline : tokens.append(Token(kind: "newline", value: "", line: line_num, col: 1)) ||: else : tokens
+            tokens => ||: eol_nl_tok : tokens.append(Token(kind: "newline", value: "", line: line_num, col: 1)) ||: else : tokens
+            def_base => ||: eol_def : line_indent ||: else : def_base
+            def_seen => ||: eol_def : false ||: else : def_seen
+            line_in_def => false
             line_is_cont => bracket_depth > 0
             line_num => line_num + 1
             col_num => 1
@@ -628,8 +662,28 @@ def main:
             sc => sc + line_rest
             self :> measure_indent
 
+    # Chapter 28. Inside an armed def-frame a deeper line opens with
+    # INDENT or NEWLINE, a line at or under the base closes the frame
+    # and is measured again under the normal rules.
     lex_start <: measure_indent -> lex_start
-        |: not at_src_end and not is_sp and not is_nl and not is_hash and not line_is_cont
+        |: at_content and def_in
+        then:
+            tokens => tokens.append(||: def_seen : Token(kind: "newline", value: "", line: line_num, col: 1) ||: else : Token(kind: "indent", value: "", line: line_num, col: 1))
+            def_seen => true
+            line_in_def => true
+            at_line_start => false
+            col_num => 1
+            self :> step
+
+    lex_start <: measure_indent -> lex_start
+        |: at_content and def_out
+        then:
+            tokens => tokens.append(Token(kind: "newline", value: "", line: line_num, col: 1)).append(Token(kind: "dedent", value: "", line: line_num, col: 1))
+            def_base => -1
+            self :> measure_indent
+
+    lex_start <: measure_indent -> lex_start
+        |: at_content and not def_on and not line_is_cont
         then:
             at_line_start => false
             col_num => 1
@@ -638,7 +692,7 @@ def main:
             self :> adjust_indent
 
     lex_start <: measure_indent -> lex_start
-        |: not at_src_end and not is_sp and not is_nl and not is_hash and line_is_cont
+        |: at_content and not def_on and line_is_cont
         then:
             at_line_start => false
             col_num => 1
@@ -671,13 +725,21 @@ def main:
         |: line_indent == top_indent
         then: self :> step
 
+    # Chapter 28. A frame still armed at end of source closes first.
+    lex_start <: emit_trailing_dedents -> lex_start
+        |: def_on
+        then:
+            tokens => tokens.append(Token(kind: "dedent", value: "", line: line_num, col: 1))
+            def_base => -1
+            self :> emit_trailing_dedents
+
     lex_start <: emit_trailing_dedents -> emitting
-        |: indent_stack.count() <= 1
+        |: not def_on and indent_stack.count() <= 1
         then:
             tokens => tokens.append(Token(kind: "eof", value: "", line: line_num, col: 1))
 
     lex_start <: emit_trailing_dedents -> lex_start
-        |: indent_stack.count() > 1
+        |: not def_on and indent_stack.count() > 1
         then:
             tokens => tokens.append(Token(kind: "dedent", value: "", line: line_num, col: 1))
             indent_stack => indent_stack.filter(x => x < top_indent)

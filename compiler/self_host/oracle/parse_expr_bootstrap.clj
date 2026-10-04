@@ -44,13 +44,42 @@
 ;;
 ;;   TR:<name>  TN(<t>)  TQ(<t>)  TO:<outer>(<t>)  TT(<t>,<t>,...)
 ;;   TNT(<f>:<t>,...)
+;;
+;; Chapter 28 forms. `do:` blocks, `def:` lambda bodies, and `<:`
+;; dispatch blocks in expressions, and a statement mode.
+;;
+;;   (do <stmt>*)                  do-block-expr, also a def: lambda body
+;;   (dispatch <scrutinee> <arm>*) with
+;;     <arm> = (arm (<pat>+) <guard>|nil <body>)
+;;     <pat> = * | (lit int <v>) | (lit bool <v>) | (case <name> <bind>*)
+;;             | (case .<name> <bind>*)
+;;     <body> = (block <stmt>*) for an indented body, else the expression
+;;
+;; Statement mode (env CXC_PARSE_MODE=stmt). The row is a statement
+;; sequence. `parse-statement` and `skip-newlines` are private, so the
+;; oracle derefs them and runs parse-block's own loop over the lexed
+;; tokens with eof in place of DEDENT, then the chained-comparison
+;; desugar over the statement vector, which is what `cxc.parse/parse`
+;; does to every top-level form. Output is `(stmts <stmt>*)`.
+;;
+;;   (return <e>)   (alias <name> <e>)   (expr-stmt <e>)
+;;   (let <name> <type>|nil <e> <or-arm>*)
+;;   (if <cond> <block> <block>|nil)
+;;   (if-let ((bind <name> <type>|nil <e>)+) <block> <block>|nil)
+;;   (while <cond> <block>)   (break)   (continue)
+;;   (block <stmt>*)  an indented or one-statement inline body
+;;   (emit ...) and (dispatch ...) print bare, as parse-statement keeps
+;;   them unwrapped. A statement `|>` emit carries its arms,
+;;   (emit sync <target> <msg> <arg>* <or-arm>*)
+;;   <or-arm> = (or bare|(bind <name>)|(case <T> <bind>*) <block>)
 
 (require 'cxc.parse)
+(require 'cxc.lex)
 (require 'clojure.string)
 
 (do
 
-(declare ser)
+(declare ser ser-stmt)
 
 (defn- ser-type [t]
   (case (:node t)
@@ -69,6 +98,29 @@
   (if (:field b)
     (str "(let " (:field b) " " (:as b) ")")
     (str "(let " (:as b) ")")))
+
+(defn- ser-block [b]
+  (str "(block" (apply str (map #(str " " (ser-stmt %)) (:stmts b))) ")"))
+
+(defn- ser-pat [p]
+  (case (:kind p)
+    :wildcard "*"
+    :literal  (str "(lit " (name (:lit-type p)) " " (:value p) ")")
+    :case     (str "(case " (when (:leading-dot? p) ".") (:name p)
+                   (apply str (map #(str " " (ser-bind %)) (:bindings p))) ")")
+    (str "(?pat " (:kind p) ")")))
+
+(defn- ser-or-pat [p]
+  (cond
+    (nil? p)              "bare"
+    (= :bind (:kind p))   (str "(bind " (:name p) ")")
+    :else                 (str "(case " (:name p)
+                               (apply str (map #(str " " (ser-bind %)) (:bindings p))) ")")))
+
+(defn- ser-arms [arms]
+  (apply str (map #(str " (or " (ser-or-pat (:pattern %)) " "
+                        (ser-block {:stmts (:body %)}) ")")
+                  arms)))
 
 (defn- ser-arg [a]
   (if (= :named (:kind a))
@@ -106,7 +158,17 @@
                       (apply str (map #(str " " (ser-arg %)) (:args n))) ")")
     :emit        (str "(emit " (if (:async? n) "async" "sync") " "
                       (if (:target n) (ser (:target n)) "nil") " " (:msg n)
-                      (apply str (map #(str " " (ser-arg %)) (:args n))) ")")
+                      (apply str (map #(str " " (ser-arg %)) (:args n)))
+                      (ser-arms (:arms n)) ")")
+    :do-block-expr (str "(do" (apply str (map #(str " " (ser-stmt %)) (:stmts n))) ")")
+    :dispatch    (str "(dispatch " (ser (:scrutinee n))
+                      (apply str
+                        (map #(str " (arm (" (clojure.string/join " " (map ser-pat (:patterns %))) ") "
+                                   (if (:guard %) (ser (:guard %)) "nil") " "
+                                   (if (= :block (:node (:body %)))
+                                     (ser-block (:body %))
+                                     (ser (:body %))) ")")
+                             (:arms n))) ")")
     :msg-shape   (str "(msg-shape " (ser (:target n))
                       (apply str (map #(str " (field " (:name %) " " (ser-type (:type %))
                                             (when (:bareword? %) " bare") ")")
@@ -116,14 +178,51 @@
          (apply str (map #(str " " (ser-bind %)) (:bindings n))) ")")
     (str "(?" (name (:node n)) ")")))
 
+(defn- ser-stmt [n]
+  (case (:node n)
+    :return        (str "(return " (ser (:expr n)) ")")
+    :alias-stmt    (str "(alias " (:name n) " " (ser (:expr n)) ")")
+    :expr-stmt     (str "(expr-stmt " (ser (:expr n)) ")")
+    :let-stmt      (str "(let " (:name n) " " (if (:type n) (ser-type (:type n)) "nil") " "
+                        (ser (:expr n)) (ser-arms (:arms n)) ")")
+    :if-stmt       (str "(if " (ser (:cond n)) " " (ser-block (:then n)) " "
+                        (if (:else n) (ser-block (:else n)) "nil") ")")
+    :if-let        (str "(if-let ("
+                        (clojure.string/join " "
+                          (map #(str "(bind " (:name %) " " (if (:type %) (ser-type (:type %)) "nil")
+                                     " " (ser (:expr %)) ")")
+                               (:bindings n)))
+                        ") " (ser-block (:then n)) " "
+                        (if (:else n) (ser-block (:else n)) "nil") ")")
+    :while-stmt    (str "(while " (ser (:cond n)) " " (ser-block (:body n)) ")")
+    :break-stmt    "(break)"
+    :continue-stmt "(continue)"
+    (ser n)))
+
 (def ^:private desugar @#'cxc.parse/desugar-chained-comparisons)
+(def ^:private parse-statement @#'cxc.parse/parse-statement)
+(def ^:private skip-newlines @#'cxc.parse/skip-newlines)
+(def ^:private stmt-mode? (= "stmt" (System/getenv "CXC_PARSE_MODE")))
+
+;; parse-block's loop at top level. eof ends it where DEDENT would.
+(defn- parse-statements [src]
+  (let [tokens (cxc.lex/tokenize src)]
+    (loop [stmts [] p 0]
+      (let [p (skip-newlines tokens p)]
+        (if (= :eof (first (nth tokens p nil)))
+          stmts
+          (let [[s p2] (parse-statement tokens p)]
+            (recur (conj stmts s) p2)))))))
 
 (doseq [ln (line-seq (java.io.BufferedReader. *in*))]
   (let [src (-> ln
                 (clojure.string/replace "\\n" "\n")
                 (clojure.string/replace "\\N" "\\n"))]
     (try
-      (println (ser (desugar (cxc.parse/parse-expression src))))
+      (println
+        (if stmt-mode?
+          (str "(stmts" (apply str (map #(str " " (ser-stmt %)) (desugar (parse-statements src)))) ")")
+          (ser (desugar (cxc.parse/parse-expression src)))))
       (catch Exception e
         (println (str "error|" (.getMessage e)))))))
 
