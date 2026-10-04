@@ -192,11 +192,32 @@
            :stdout     ""
            :stderr     ""
            :cache-hit? true})
-      (let [{:keys [exit out err]}
+      (let [os-name (System/getProperty "os.name")
+            linux? (and os-name (.startsWith (.toLowerCase os-name) "linux"))
+            foundation-args (if linux?
+                              ["-fobjc-runtime=gnustep-2.1"
+                               "-fblocks"
+                               "-I/usr/GNUstep/include"
+                               "-I/usr/local/include/GNUstep"
+                               "-I/usr/local/include/cxc-linux-shim"
+                               "-I/usr/local/include"
+                               "-L/usr/GNUstep/lib"
+                               "-L/usr/local/lib"
+                               "-Wl,-rpath,/usr/GNUstep/lib"
+                               "-Wl,-rpath,/usr/local/lib"
+                               "-Wno-import"
+                               "-DGNUSTEP"
+                               "-DGNUSTEP_BASE_LIBRARY=1"
+                               "-D_NONFRAGILE_ABI=1"
+                               "-DOS_OBJECT_HAVE_OBJC_SUPPORT=1"
+                               "-DOS_OBJECT_USE_OBJC=1"
+                               "-lobjc" "-lgnustep-base"
+                               "-ldispatch" "-lBlocksRuntime"]
+                              ["-framework" "Foundation"])
+            {:keys [exit out err]}
             (apply shell/sh
-                   (cond-> ["clang" "-fobjc-arc"
-                            "-framework" "Foundation"
-                            (str "-DCXC_SINGLE_MAIN_QUEUE=" cxc-mq)]
+                   (cond-> (into ["clang" "-fobjc-arc"] foundation-args)
+                     :always (conj (str "-DCXC_SINGLE_MAIN_QUEUE=" cxc-mq))
                      trace? (conj "-DCXC_TRACE_ENABLED=1")
                      :always (conj "-o" (.getPath bin-file) (.getPath m-file))))]
         (when (zero? exit)

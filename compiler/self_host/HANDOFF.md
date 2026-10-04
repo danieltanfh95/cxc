@@ -115,4 +115,83 @@ Baseline at commit `b006d47` and later: 38 failures / 7 errors / 1094 tests / 32
 - The user runs with 1-hour prompt cache TTL. The orchestrator stays warm across chapter wakes within a cloud session.
 - Push access is on `https://github.com/danieltanfh95/cxc.git`. Cloud session should push each landed chapter so progress survives any session interruption.
 
+## Linux cloud toolchain (chapter 22 addendum, 2026-10-04)
+
+The compiler was macOS-only until chapter 22's cloud session. The toolchain now compiles on Linux via a GNUstep + libobjc2 + libdispatch stack. The `build.clj` patch at `cond-> (into ["clang" "-fobjc-arc"] foundation-args)` auto-detects Linux and swaps `-framework Foundation` for the GNUstep flag set. No-op on macOS.
+
+### Setup recipe (fresh Linux session)
+
+```sh
+# apt packages
+sudo apt-get install -y \
+  openjdk-21-jdk clojure cmake robin-map-dev \
+  libxml2-dev libffi-dev libicu-dev libgnutls28-dev \
+  libblocksruntime-dev libobjc-13-dev gobjc
+
+# clj shim (upstream download.clojure.org blocked; Maven Central works)
+mkdir -p /opt/clj-shim/lib && cd /opt/clj-shim/lib
+for p in \
+  org/clojure/clojure/1.12.0/clojure-1.12.0.jar \
+  org/clojure/spec.alpha/0.5.238/spec.alpha-0.5.238.jar \
+  org/clojure/core.specs.alpha/0.4.74/core.specs.alpha-0.4.74.jar \
+  org/clojure/data.json/2.5.1/data.json-2.5.1.jar
+do
+  curl -sS -o "$(basename "$p")" "https://repo1.maven.org/maven2/$p"
+done
+# then /usr/local/bin/clj is a bash shim with:
+#   CP="$LIB_DIR/clojure-1.12.0.jar:...spec.alpha-0.5.238.jar:...core.specs.alpha-0.4.74.jar:...data.json-2.5.1.jar"
+#   for p in src resources; do [ -d "$p" ] && CP="${CP}:$(pwd)/$p"; done
+#   exec java -cp "$CP" clojure.main "$@"
+
+# libobjc2 (modern Objective-C runtime for Linux, provides ARC)
+GIT_LFS_SKIP_SMUDGE=1 git clone --depth 1 https://github.com/gnustep/libobjc2 /home/user/gnustep/libobjc2
+cd /home/user/gnustep/libobjc2 && mkdir build && cd build
+cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ ..
+make -j$(nproc) && sudo make install
+
+# gnustep-make configured for ng (libobjc2) runtime
+GIT_LFS_SKIP_SMUDGE=1 git clone --depth 1 https://github.com/gnustep/tools-make /home/user/gnustep/tools-make
+cd /home/user/gnustep/tools-make
+LDFLAGS="-L/usr/local/lib" CFLAGS="-I/usr/local/include/GNUstep" \
+  ./configure --with-library-combo=ng-gnu-gnu --with-runtime-abi=gnustep-2.1 \
+    --with-objc-lib-flag=-lobjc CC=clang CXX=clang++ --prefix=/usr/GNUstep
+make -j$(nproc) && sudo make install
+
+# gnustep base against libobjc2
+GIT_LFS_SKIP_SMUDGE=1 git clone --depth 1 https://github.com/gnustep/libs-base /home/user/gnustep/libs-base
+cd /home/user/gnustep/libs-base && . /usr/GNUstep/share/GNUstep/Makefiles/GNUstep.sh && \
+  CPPFLAGS="-I/usr/local/include/GNUstep" LDFLAGS="-L/usr/local/lib -Wl,-rpath,/usr/local/lib" \
+  ./configure --disable-importing-config-file
+make -j$(nproc) && sudo -E env PATH=$PATH make install
+
+# libdispatch
+GIT_LFS_SKIP_SMUDGE=1 git clone --depth 1 https://github.com/apple/swift-corelibs-libdispatch /home/user/apple/swift-corelibs-libdispatch
+cd /home/user/apple/swift-corelibs-libdispatch && mkdir build && cd build
+cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DBUILD_TESTING=OFF ..
+make -j$(nproc) && sudo make install
+
+# Shim headers for Darwin-only includes the emit layer references
+sudo mkdir -p /usr/local/include/cxc-linux-shim/{CommonCrypto,libkern,objc}
+# contents: crt_externs.h (_NSGetArgv/_NSGetArgc/_NSGetEnviron via /proc/self/cmdline + environ),
+#           CommonCrypto/CommonDigest.h (stub prototypes, no digest impl),
+#           libkern/OSByteOrder.h (OSSwapHostToBigInt16/32/64 via glibc endian.h htobe16/32/64),
+#           objc/NSObject.h (redirects to GNUstep <Foundation/NSObject.h>).
+```
+
+### Slice harness tally on Linux cloud (post-glue, 2026-10-04)
+
+11 PASS, 1 DIFF, 17 CRASH, 3 UNK across 32 harnesses.
+
+- PASS: ascii_predicates, diagnostics_shape, env_predicates, lex_classify_word, lex_match_multi_glyph, lex_scan_char, lex_scan_digits_decimal, mangle_c_safe, resolve_import_alias, resolve_mangled_name_for, resolve_name_to_module.
+- CRASH: every slice that touches NSString in atom state or record fields. Non-deterministic SIGSEGV in `objc_msgSend_fpret` reached via `objc_retainAutoreleaseReturnValue` from `cxc_send_async`.
+
+Root cause. `OS_OBJECT_USE_OBJC=1` makes `dispatch_queue_t` an Objective-C object, so cxc's `@property (nonatomic, strong) dispatch_queue_t own_queue` compiles clean. But Linux's swift-corelibs-libdispatch does not register dispatch queue classes with `objc_class_flag_fast_arc`, so libobjc2's `retain()` falls through to `ManualRetainReleaseMessage(obj, retain, ...)` which calls `objc_msgSend` on a dispatch queue whose isa.dtable is not laid out for the retain selector. The msgSend walks garbage memory and segfaults. Core dump at `/tmp/cores/core.lex_scan_float.*` confirms.
+
+Fix paths (none landed in chapter 22):
+1. Patch libdispatch to tag dispatch classes for fast ARC.
+2. Patch libobjc2 retain fallback to detect dispatch objects and route via `dispatch_retain` / `dispatch_release`.
+3. Patch cxc emit (`emit.clj` + `lower.clj`) to use `(nonatomic, assign)` for dispatch properties and emit explicit `dispatch_retain` / `dispatch_release`. Shifts cards.m baseline sha unless gated by Linux-only emit.
+
+Any of the three unblocks the remaining 17 slices on cloud. Primitive-only slices run parity-green today.
+
 If anything in this handoff disagrees with what you observe in the tree, trust the tree and update the handoff.
