@@ -81,6 +81,15 @@ def main:
     # from this mode: "field" → emit_field_from_ser, "ctor" →
     # emit_ctor_param.
     nt_return_mode:     String! = "field"
+    # Chapter-22 container-return-mode sentinel. Container (`T of X`)
+    # parsing is shared between field position and named-tuple body
+    # position. `finish_container` picks its downstream phase from this
+    # mode. "field" → emit_field_from_ser via type_ser_buf. "nt_body"
+    # → append the `fname:TO:Outer(inner)` pair into nt_body_buf and
+    # return to after_nt_pair. The mode is reset to "field" at the end
+    # of each nt_body commit so sibling fields in the same NT body
+    # route correctly on their own container entries.
+    container_return_mode: String! = "field"
 
     reserved: List of String = [
         "module", "from", "import", "as",
@@ -810,8 +819,20 @@ def main:
             pos => pos + 1
             self :> after_nt_pair
 
+    # Chapter-22 — container inner type inside a named-tuple pair.
+    # Routes through the shared container-parse arms with the
+    # container_return_mode sentinel set so finish_container appends
+    # the TO form to nt_body_buf (not type_ser_buf) and returns to
+    # after_nt_pair.
     parsing <: after_nt_type -> parsing
-        |: not (cur_kind == "punct" and cur_value == "!")
+        |: cur_kind == "kw" and cur_value == "of"
+        then:
+            container_return_mode => "nt_body"
+            pos => pos + 1
+            self :> parse_of_inner
+
+    parsing <: after_nt_type -> parsing
+        |: not (cur_kind == "punct" and cur_value == "!") and not (cur_kind == "kw" and cur_value == "of")
         then:
             let sep: String! = ||: nt_body_buf.length() == 0 : "" ||: else : ","
             nt_body_buf => nt_body_buf + sep + nt_fname_buf + ":TR:" + nt_tname_buf
@@ -984,9 +1005,25 @@ def main:
             self :> finish_container
 
     parsing <: finish_container -> parsing
+        |: container_return_mode == "field"
         then:
             type_ser_buf => "TO:" + type_name_buf + "(" + inner_ser_buf + ")"
             self :> emit_field_from_ser
+
+    # Chapter-22 — the container was reached from a named-tuple pair.
+    # type_name_buf was set by parse_field_type at the TR path only,
+    # so the NT path carries the outer name via nt_tname_buf which
+    # parse_nt_type stamped before the shared after_nt_type dispatch.
+    # Append the pair to nt_body_buf and return to after_nt_pair; the
+    # mode resets to "field" so sibling fields in the same NT body
+    # route correctly on their own container entries.
+    parsing <: finish_container -> parsing
+        |: container_return_mode == "nt_body"
+        then:
+            let sep: String! = ||: nt_body_buf.length() == 0 : "" ||: else : ","
+            nt_body_buf => nt_body_buf + sep + nt_fname_buf + ":TO:" + nt_tname_buf + "(" + inner_ser_buf + ")"
+            container_return_mode => "field"
+            self :> after_nt_pair
 
     parsing <: emit_field_from_ser -> parsing
         |: cur_kind == "glyph" and cur_value == "="

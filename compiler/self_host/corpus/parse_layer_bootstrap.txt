@@ -55,3 +55,14 @@ def A(x: (p: Int, q: String)):\n    val: Int
 def A(point: (lat: Int!, lon: Int!)):\n    val: Int
 def A(nested: (outer: (inner: Int!))):\n    val: Int
 def R:\n    a: (x: Int!, y: (p: String!, q: Bool))
+def R:\n    a: (xs: List of Int)
+def R:\n    a: (uniq: Set of Int)
+def R:\n    a: (lookup: Map of (Int, String))
+def R:\n    a: (xs: List of String!)
+def R:\n    a: (lookup: Map of (String, Int!))
+def R:\n    a: (mix: Map of (Int!, Bool!))
+def R:\n    pair: (name: String!, xs: List of Int, tag: Int)
+def R:\n    quad: (xs: List of Int, ys: List of String, zs: Set of Bool)
+def R:\n    deep: (outer: (inner: List of Int!))
+def R:\n    deep: (outer: (k: Map of (String, Int), v: Set of Int!))
+def A(point: (xs: List of Int!)):\n    val: Int

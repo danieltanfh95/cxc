@@ -30,8 +30,21 @@
 #                                nested, in-place from a prior pass)
 #
 # Container inner types inside TNT bodies (`TO:List`, `TO:Map`,
-# `TO:Set`) are deferred to chapter 22; the else-branch sentinel
-# `UNSUPPORTED` surfaces them visibly.
+# `TO:Set`) are handled since chapter 22. Each outer is mangled to
+# the F15 `Of<arity>_<outer>_<inner-mangle...>` form that
+# `cxc.named-tuple/collect-shapes` emits.
+#   `fname:TO:List(TR:X)`           → `fname_Of1_List_X`
+#   `fname:TO:List(TN(TR:X))`       → `fname_Of1_List_Nn_X`
+#   `fname:TO:Set(TR:X)`            → `fname_Of1_Set_X`
+#   `fname:TO:Map(TT(TR:K,TR:V))`   → `fname_Of2_Map_K_V`
+#   `fname:TO:Map(TT(TN(TR:K),TR:V))` → `fname_Of2_Map_Nn_K_V`
+# The map case parses the inner `TT(...)` body via a single
+# `.index_of(",")`; the body only contains `TR:X` and `TN(TR:X)`
+# forms, neither of which carry a comma inside, so the leftmost
+# comma is the correct split point. Deeper nesting (containers of
+# containers, containers of named tuples) remains out of this
+# chapter's scope; the else-branch sentinel `UNSUPPORTED` surfaces
+# such cases visibly.
 
 def main:
     use args:    Args
@@ -90,7 +103,33 @@ def main:
     pair_is_nt_flat :- pair_type_part.length() >= 4 and pair_type_part.code_at(0) == 78 and pair_type_part.code_at(1) == 116 and pair_type_part.code_at(2) >= 48 and pair_type_part.code_at(2) <= 57
     pair_inner_nn  :- pair_type_part.substring(6, (pair_type_part.length() - 7).max(0))
     pair_inner_tr  :- pair_type_part.substring(3, (pair_type_part.length() - 3).max(0))
-    pair_mangled   :- ||: pair_is_nn : "Nn_" + pair_inner_nn ||: pair_is_tr : pair_inner_tr ||: pair_is_nt_flat : pair_type_part ||: else : "UNSUPPORTED"
+
+    # Chapter-22 container-inner-in-TNT handling.
+    # Primitive-inner mangler used by the container-inner path. Expects
+    # a `TR:X` or `TN(TR:X)` string; returns `X` or `Nn_X`. Non-matching
+    # inputs return `?` so a corpus miss surfaces visibly rather than
+    # silently producing a malformed mangling. Declared before
+    # `pair_to_mangled` so the chapter-13 observation-reference-order
+    # rule holds.
+    mangle_inner(s: String!) :- String!
+        alias is_nn      :- s.starts_with("TN(TR:") and s.ends_with(")")
+        alias is_tr      :- s.starts_with("TR:")
+        alias inner_nn   :- s.substring(6, (s.length() - 7).max(0))
+        alias inner_tr   :- s.substring(3, (s.length() - 3).max(0))
+        ||: is_nn : "Nn_" + inner_nn ||: is_tr : inner_tr ||: else : "?"
+
+    pair_is_to          :- pair_type_part.starts_with("TO:") and pair_type_part.ends_with(")")
+    pair_to_lp_idx      :- pair_type_part.index_of("(")
+    pair_to_outer       :- pair_type_part.substring(3, (pair_to_lp_idx - 3).max(0))
+    pair_to_inner_body  :- pair_type_part.substring(pair_to_lp_idx + 1, (pair_type_part.length() - pair_to_lp_idx - 2).max(0))
+    pair_to_is_map      :- pair_to_inner_body.starts_with("TT(") and pair_to_inner_body.ends_with(")")
+    pair_to_tt_body     :- pair_to_inner_body.substring(3, (pair_to_inner_body.length() - 4).max(0))
+    pair_to_tt_comma_idx :- pair_to_tt_body.index_of(",")
+    pair_to_map_k       :- pair_to_tt_body.substring(0, pair_to_tt_comma_idx.max(0))
+    pair_to_map_v       :- pair_to_tt_body.substring(pair_to_tt_comma_idx + 1, (pair_to_tt_body.length() - pair_to_tt_comma_idx - 1).max(0))
+    pair_to_mangled     :- ||: pair_to_is_map : "Of2_" + pair_to_outer + "_" + self.mangle_inner(pair_to_map_k) + "_" + self.mangle_inner(pair_to_map_v) ||: else : "Of1_" + pair_to_outer + "_" + self.mangle_inner(pair_to_inner_body)
+
+    pair_mangled   :- ||: pair_is_nn : "Nn_" + pair_inner_nn ||: pair_is_tr : pair_inner_tr ||: pair_is_nt_flat : pair_type_part ||: pair_is_to : pair_to_mangled ||: else : "UNSUPPORTED"
     pair_converted :- pair_fname + "_" + pair_mangled
 
     sort_cur :- pair_entries.at(sort_i) ?? ""
