@@ -38,6 +38,7 @@ _(new items from the human, not yet picked up)_
   context: brainstorm captured 2026-10-02 for later triage. Not committed to.
     - trace viewer: fill the sequence / inbox / timeline tabs (shape works, those are stubs)
     - trace diff viewer (two runs side by side)
+    - trace + git integrated review: feed cxc trace into the IDE as a graph with git-driven diffs between runs, so humans can checkout a visual diff via the graph and tween between runs (animate the state transition rather than reading side-by-side). Natural extension of the trace diff viewer thread, lifts review from "read two logs" to "watch the semantic diff play"
     - `cxc shape <file>` command so the agent can read shape.json without running the viewer
     - replayable trace export (share across sessions)
     - `[i]` sugar for `.at(i)`
