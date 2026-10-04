@@ -1,0 +1,132 @@
+# Chapter-25 slice 34. Java `Double.toString` renderer for decimal
+# float literals.
+#
+# The Clojure compiler carries a float literal as a parsed Double and
+# renders it with `str` at three sites the port must byte-match. The
+# lex oracle prints `pr-str` of the Token value, the parse oracle
+# prints `str` of the `:lit-float` default, and `cxc.emit/emit-expr`
+# writes `(str (:value node))` into the `.m` for every `:float` node.
+# All three are `Double.toString` (pr-str only differs on the
+# non-finite values, `##Inf` against `Infinity`).
+#
+# Scope. The renderer works on the literal's decimal digits, never on
+# a Double. It strips leading and trailing zeros to the significant
+# digit string `sig` and computes the scientific exponent `e` so the
+# value is `0.sig * 10^(e + 1)`. For any literal whose `sig` has at
+# most 15 digits and whose `e` sits in the normal range [-307, 308]
+# that `sig` IS the shortest decimal that rounds to the same double
+# (15 decimal digits always round-trip, so no shorter decimal maps to
+# the same double), which is exactly the digit string JDK 19+
+# `Double.toString` picks. The renderer then lays the digits out the
+# Java way. Plain form for 1e-3 <= |v| < 1e7 with at least one
+# fractional digit, computerized scientific form `d.dddE<n>` with at
+# least one fractional digit elsewhere. Overflow (`e >= 309`, or
+# `e == 308` at or above the max-double rounding midpoint) renders
+# `Infinity`, and total underflow (`e <= -325`) renders `0.0`.
+#
+# Out of scope. A literal with 16 or more significant digits renders
+# its own digits verbatim, which is right exactly when the literal is
+# already a shortest round-trip form (anything printed by Java,
+# Python, or JavaScript) and wrong otherwise. Subnormal literals
+# (`-324 <= e <= -308`) are also out of scope. Neither shape can be
+# rendered without exact binary arithmetic, and GNUstep's NSScanner
+# `scanDouble:` is not correctly rounded, so a round-trip check
+# through `.to_double_or` cannot close the gap on Linux.
+#
+# Input. argv[1] is a well-formed decimal float literal
+# (`int[.frac][e[+-]exp]`, `_` separators allowed). Output. The
+# rendered text.
+
+def main:
+    use args:    Args
+    use console: Console
+
+    input:    String! = ""
+    cursor:   Int!    = 0
+    mode:     String! = "int"
+    sig:      String! = ""
+    sig_nz:   Int!    = 0
+    int_sig:  Int!    = 0
+    frac_lead: Int!   = 0
+    exp_neg:  Bool!   = false
+    exp_val:  Int!    = 0
+
+    at_end    :- cursor >= input.length()
+    cur       :- ||: at_end : -1 ||: else : input.code_at(cursor)
+    is_digit  :- cur >= 48 and cur <= 57
+    is_zero   :- cur == 48
+
+    # Significant digits with trailing zeros dropped, and the
+    # scientific exponent of the first significant digit.
+    sig_trim  :- sig.substring(0, sig_nz.min(sig.length()))
+    sci_exp   :- (||: int_sig > 0 : int_sig - 1 ||: else : 0 - frac_lead - 1) + (||: exp_neg : 0 - exp_val ||: else : exp_val)
+
+    # Java `Double.toString` layout over a significant-digit string.
+    render_float(digs: String!, e: Int!) :- String!
+        alias m        :- digs.length()
+        alias pad17    :- (digs + "00000000000000000").substring(0, 17)
+        alias is_inf   :- e >= 309 or (e == 308 and pad17.compare_to("17976931348623158") >= 0)
+        alias int_len  :- (e + 1).max(0).min(m)
+        alias int_txt  :- ||: m <= e + 1 : digs + "0".repeat((e + 1 - m).max(0)) ||: else : digs.substring(0, int_len)
+        alias frac_txt :- ||: m <= e + 1 : "0" ||: else : digs.substring(int_len, (m - int_len).max(0))
+        alias neg_txt  :- "0." + "0".repeat((0 - e - 1).max(0)) + digs
+        alias sci_frac :- ||: m > 1 : digs.substring(m.min(1), (m - 1).max(0)) ||: else : "0"
+        alias sci_txt  :- digs.substring(0, m.min(1)) + "." + sci_frac + "E" + e.to_string()
+        ||: m == 0 : "0.0" ||: is_inf : "Infinity" ||: e <= -325 : "0.0" ||: e >= 0 and e < 7 : int_txt + "." + frac_txt ||: e < 0 and e >= -3 : neg_txt ||: else : sci_txt
+
+    -> scanning
+        then:
+            input => args.get_or(1, "")
+            self :> step
+
+    -> end
+        then:
+            console.write(self.render_float(sig_trim, sci_exp))
+
+    scanning <: step -> scanning
+        |: not at_end and is_digit and mode != "exp"
+        then:
+            let skip: Bool! = sig.length() == 0 and is_zero
+            sig => ||: skip : sig ||: else : sig + input.substring(cursor, 1)
+            sig_nz => ||: is_zero : sig_nz ||: else : sig.length() + 1
+            int_sig => ||: mode == "int" and not skip : int_sig + 1 ||: else : int_sig
+            frac_lead => ||: mode == "frac" and skip : frac_lead + 1 ||: else : frac_lead
+            cursor => cursor + 1
+            self :> step
+
+    scanning <: step -> scanning
+        |: not at_end and is_digit and mode == "exp"
+        then:
+            exp_val => (exp_val * 10 + cur - 48).min(1000000)
+            cursor => cursor + 1
+            self :> step
+
+    scanning <: step -> scanning
+        |: not at_end and cur == 95
+        then:
+            cursor => cursor + 1
+            self :> step
+
+    scanning <: step -> scanning
+        |: not at_end and cur == 46
+        then:
+            mode => "frac"
+            cursor => cursor + 1
+            self :> step
+
+    scanning <: step -> scanning
+        |: not at_end and (cur == 101 or cur == 69)
+        then:
+            mode => "exp"
+            cursor => cursor + 1
+            self :> step
+
+    scanning <: step -> scanning
+        |: not at_end and (cur == 43 or cur == 45)
+        then:
+            exp_neg => cur == 45
+            cursor => cursor + 1
+            self :> step
+
+    scanning <: step -> end
+        |: at_end or not (is_digit or cur == 95 or cur == 46 or cur == 101 or cur == 69 or cur == 43 or cur == 45)

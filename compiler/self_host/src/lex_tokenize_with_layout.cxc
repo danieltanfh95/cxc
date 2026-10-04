@@ -98,15 +98,11 @@ def main:
     is_dquote    :- srccur == 34
     is_squote    :- srccur == 39
 
-    # Chapter-22 — float-literal lex predicates. `.` + next-is-digit is
-    # the only float transition from scan_int at this chapter's scope.
-    # Exponent form (`e`/`E` + optional sign + digits) is deferred so
-    # the port's literal-value emit matches Clojure's pr-str exactly on
-    # the simple fractional shape (`1.5` → "1.5"); exponent forms like
-    # `1e5` would reparse through pr-str as "100000.0" and the parity
-    # harness would diff on the Token value column.
+    # Chapter-22 / 25 — numeric-literal lex predicates. See the
+    # chapter-25 block below for the full scan-number port.
     is_dot        :- srccur == 46
     srcnext_is_digit :- sc + 1 < source.length() and source.code_at(sc + 1) >= 48 and source.code_at(sc + 1) <= 57
+
     # Chapter-23 — string / char escape decoding. The port decodes every
     # escape Clojure's cxc.lex/append-escape! accepts (simple set
     # `\n \t \r \\ \" \' \0 \a \b \f \v`, hex byte `\xNN`, unicode
@@ -134,6 +130,65 @@ def main:
     # `Int.to_char_string()` truncates to one unichar.
     enc(c: Int!) :- String!
         ||: c == 10 : "\\n" ||: c == 9 : "\\t" ||: c == 13 : "\\r" ||: c == 34 : "\\\"" ||: c == 92 : "\\\\" ||: c == 12 : "\\f" ||: c == 8 : "\\b" ||: c > 65535 : (55296 + (c - 65536) / 1024).to_char_string() + (56320 + (c - 65536) % 1024).to_char_string() ||: else : c.to_char_string()
+
+    # Chapter-25 numeric scan state, a port of cxc.lex/scan-number.
+    # `num_digs` / `num_last_digit` are one scan-digits run (separators
+    # stripped). `num_mode` is the run's return-mode sentinel ("int",
+    # "frac", "exp", "based", "hexfrac"). The `num_sig*` fields track
+    # the significant digits and the position of the first one while the
+    # int and frac runs scan, so the float value renders without a
+    # second pass (see slice 34 `float_render_java.cxc`).
+    num_digs:       String! = ""
+    num_last_digit: Bool!   = false
+    num_mode:       String! = "int"
+    num_base:       Int!    = 10
+    num_prefix:     String! = ""
+    num_int:        String! = ""
+    num_frac:       String! = ""
+    num_exp:        String! = ""
+    num_has_dot:    Bool!   = false
+    num_has_exp:    Bool!   = false
+    num_exp_sign:   String! = ""
+    num_kind:       String! = "int"
+    num_val:        Int!    = 0
+    num_sig:        String! = ""
+    num_sig_nz:     Int!    = 0
+    num_int_sig:    Int!    = 0
+    num_frac_lead:  Int!    = 0
+    num_exp_val:    Int!    = 0
+    sfx_acc:        String! = ""
+    sfx_col:        Int!    = 0
+
+    cur_col       :- col_num
+    is_us         :- srccur == 95
+    is_letter     :- (srccur >= 65 and srccur <= 90) or (srccur >= 97 and srccur <= 122)
+    is_exp_marker :- srccur == 101 or srccur == 69
+    is_p_marker   :- srccur == 112 or srccur == 80
+    num_run_end   :- at_src_end or is_nl
+    num_digit_val :- ||: num_base == 16 : cur_hex ||: srccur >= 48 and srccur < 48 + num_base : srccur - 48 ||: else : -1
+    rest_src      :- source.substring(sc.min(source.length()), (source.length() - sc).max(0))
+    rest_nl       :- rest_src.index_of("\n")
+    line_rest     :- ||: rest_nl < 0 : rest_src.length() ||: else : rest_nl
+    lz_snip       :- rest_src.substring(0, line_rest.min(5).max(0))
+    num_str       :- ||: num_prefix.length() > 0 : num_prefix + num_digs ||: else : num_int + (||: num_has_dot : "." + num_frac ||: else : "") + (||: num_has_exp : "e" + num_exp_sign + num_exp ||: else : "")
+    num_sig_trim  :- num_sig.substring(0, num_sig_nz.min(num_sig.length()))
+    num_sci_exp   :- (||: num_int_sig > 0 : num_int_sig - 1 ||: else : 0 - num_frac_lead - 1) + (||: num_exp_sign == "-" : 0 - num_exp_val ||: else : num_exp_val)
+
+    # Java `Double.toString` layout, mirrored from slice 34. Exact for
+    # literals with at most 15 significant digits in the normal range.
+    render_float(digs: String!, e: Int!) :- String!
+        alias m        :- digs.length()
+        alias pad17    :- (digs + "00000000000000000").substring(0, 17)
+        alias is_inf   :- e >= 309 or (e == 308 and pad17.compare_to("17976931348623158") >= 0)
+        alias int_len  :- (e + 1).max(0).min(m)
+        alias int_txt  :- ||: m <= e + 1 : digs + "0".repeat((e + 1 - m).max(0)) ||: else : digs.substring(0, int_len)
+        alias frac_txt :- ||: m <= e + 1 : "0" ||: else : digs.substring(int_len, (m - int_len).max(0))
+        alias neg_txt  :- "0." + "0".repeat((0 - e - 1).max(0)) + digs
+        alias sci_frac :- ||: m > 1 : digs.substring(m.min(1), (m - 1).max(0)) ||: else : "0"
+        alias sci_txt  :- digs.substring(0, m.min(1)) + "." + sci_frac + "E" + e.to_string()
+        ||: m == 0 : "0.0" ||: is_inf : "Infinity" ||: e <= -325 : "0.0" ||: e >= 0 and e < 7 : int_txt + "." + frac_txt ||: e < 0 and e >= -3 : neg_txt ||: else : sci_txt
+
+    num_value_text :- ||: num_kind == "float" : self.render_float(num_sig_trim, num_sci_exp) ||: num_prefix.length() > 0 : num_val.to_string() ||: num_sig.length() == 0 : "0" ||: else : num_sig
 
     top_indent :- indent_stack.at((indent_stack.count() - 1).max(0)) ?? 0
 
@@ -298,9 +353,26 @@ def main:
     lex_start <: step -> lex_start
         |: not at_src_end and not at_line_start and is_digit
         then:
-            word_acc => ""
             tok_start_col => col_num
-            self :> scan_int
+            num_digs => ""
+            num_last_digit => false
+            num_mode => "int"
+            num_base => 10
+            num_prefix => ""
+            num_int => ""
+            num_frac => ""
+            num_exp => ""
+            num_has_dot => false
+            num_has_exp => false
+            num_exp_sign => ""
+            num_kind => "int"
+            num_val => 0
+            num_sig => ""
+            num_sig_nz => 0
+            num_int_sig => 0
+            num_frac_lead => 0
+            num_exp_val => 0
+            self :> num_start
 
     lex_start <: step -> lex_start
         |: not at_src_end and not at_line_start and is_dquote
@@ -404,45 +476,260 @@ def main:
             tokens => tokens.append(Token(kind: kind, value: word_acc, line: line_num, col: tok_start_col))
             self :> step
 
-    lex_start <: scan_int -> lex_start
-        |: not at_src_end and is_digit
+    # Chapter-25 — scan-number port. `num_start` picks the base the way
+    # Clojure's scan-number does (prefix `0x` / `0b` / `0o`, C-octal
+    # rejection, else decimal), `scan_digs` is scan-digits with its
+    # three `_` errors, `digs_done` routes on `num_mode` to the next
+    # part (frac, signed exponent, hex frac), and `num_suffix` /
+    # `scan_sfx` port reject-unit-suffix!. Every error arm parks `sc` at
+    # end of source (chapter-23 rule).
+    lex_start <: num_start -> lex_start
+        |: srccur == 48 and (srcnext == 120 or srcnext == 88)
         then:
-            word_acc => word_acc + source.substring(sc, 1)
-            sc => sc + 1
-            col_num => col_num + 1
-            self :> scan_int
+            num_base => 16
+            num_prefix => "0x"
+            num_mode => "based"
+            sc => sc + 2
+            col_num => col_num + 2
+            self :> scan_digs
 
-    # Chapter-22 — float transition. `.` followed by a digit converts
-    # the in-flight int into a float. `1.` with no digit after keeps
-    # the int and leaves the dot for the next scanning step (which has
-    # no handler at this chapter and would error, but the parse-layer
-    # corpus never carries a trailing-dot literal).
-    lex_start <: scan_int -> lex_start
-        |: not at_src_end and is_dot and srcnext_is_digit
+    lex_start <: num_start -> lex_start
+        |: srccur == 48 and (srcnext == 98 or srcnext == 66)
         then:
-            word_acc => word_acc + "."
-            sc => sc + 1
-            col_num => col_num + 1
-            self :> scan_frac
+            num_base => 2
+            num_prefix => "0b"
+            num_mode => "based"
+            sc => sc + 2
+            col_num => col_num + 2
+            self :> scan_digs
 
-    lex_start <: scan_int -> lex_start
-        |: at_src_end or (not is_digit and not (is_dot and srcnext_is_digit))
+    lex_start <: num_start -> lex_start
+        |: srccur == 48 and (srcnext == 111 or srcnext == 79)
         then:
-            tokens => tokens.append(Token(kind: "int", value: word_acc, line: line_num, col: tok_start_col))
+            num_base => 8
+            num_prefix => "0o"
+            num_mode => "based"
+            sc => sc + 2
+            col_num => col_num + 2
+            self :> scan_digs
+
+    lex_start <: num_start -> lex_start
+        |: srccur == 48 and srcnext >= 48 and srcnext <= 57
+        then:
+            error => true
+            sc => source.length()
+            error_msg => "leading-zero integer `" + lz_snip + "…` — cxc rejects C's `017` octal form as ambiguous. Use `0o17` for octal or drop the leading zero for decimal. See spec §2.7.1."
             self :> step
 
-    lex_start <: scan_frac -> lex_start
-        |: not at_src_end and is_digit
+    lex_start <: num_start -> lex_start
+        |: not (srccur == 48 and (srcnext == 120 or srcnext == 88 or srcnext == 98 or srcnext == 66 or srcnext == 111 or srcnext == 79 or (srcnext >= 48 and srcnext <= 57)))
+        then: self :> scan_digs
+
+    lex_start <: scan_digs -> lex_start
+        |: not num_run_end and num_digit_val >= 0
         then:
-            word_acc => word_acc + source.substring(sc, 1)
+            let ch: String! = source.substring(sc, 1)
+            let sig_mode: Bool! = num_mode == "int" or num_mode == "frac"
+            let skip: Bool! = num_sig.length() == 0 and srccur == 48
+            num_digs => num_digs + ch
+            num_last_digit => true
+            num_sig => ||: sig_mode and not skip : num_sig + ch ||: else : num_sig
+            num_sig_nz => ||: sig_mode and srccur != 48 : num_sig.length() + 1 ||: else : num_sig_nz
+            num_int_sig => ||: num_mode == "int" and not skip : num_int_sig + 1 ||: else : num_int_sig
+            num_frac_lead => ||: num_mode == "frac" and skip : num_frac_lead + 1 ||: else : num_frac_lead
+            num_exp_val => ||: num_mode == "exp" : (num_exp_val * 10 + srccur - 48).min(1000000) ||: else : num_exp_val
+            num_val => ||: num_mode == "based" : num_val * num_base + num_digit_val ||: else : num_val
             sc => sc + 1
             col_num => col_num + 1
-            self :> scan_frac
+            self :> scan_digs
 
-    lex_start <: scan_frac -> lex_start
-        |: at_src_end or not is_digit
+    lex_start <: scan_digs -> lex_start
+        |: not num_run_end and num_digit_val < 0 and is_us and num_last_digit
         then:
-            tokens => tokens.append(Token(kind: "float", value: word_acc, line: line_num, col: tok_start_col))
+            num_last_digit => false
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> scan_digs
+
+    lex_start <: scan_digs -> lex_start
+        |: not num_run_end and num_digit_val < 0 and is_us and not num_last_digit
+        then:
+            error => true
+            sc => source.length()
+            error_msg => "`_` in numeric literal must follow a digit"
+            self :> step
+
+    lex_start <: scan_digs -> lex_start
+        |: num_run_end and num_digs.length() > 0 and not num_last_digit
+        then:
+            error => true
+            sc => source.length()
+            error_msg => "numeric literal ends with `_`"
+            self :> step
+
+    lex_start <: scan_digs -> lex_start
+        |: not num_run_end and num_digit_val < 0 and not is_us and num_digs.length() > 0 and not num_last_digit
+        then:
+            error => true
+            sc => source.length()
+            error_msg => "numeric literal has trailing `_`"
+            self :> step
+
+    lex_start <: scan_digs -> lex_start
+        |: (num_run_end or (num_digit_val < 0 and not is_us)) and (num_digs.length() == 0 or num_last_digit)
+        then: self :> digs_done
+
+    # Int part done. `.` plus a digit opens the frac run, `e` / `E` the
+    # exponent, anything else ends an int.
+    lex_start <: digs_done -> lex_start
+        |: num_mode == "int" and is_dot and srcnext_is_digit
+        then:
+            num_int => num_digs
+            num_has_dot => true
+            num_digs => ""
+            num_last_digit => false
+            num_mode => "frac"
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> scan_digs
+
+    lex_start <: digs_done -> lex_start
+        |: num_mode == "int" and not (is_dot and srcnext_is_digit) and is_exp_marker
+        then:
+            num_int => num_digs
+            num_has_exp => true
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> scan_exp_sign
+
+    lex_start <: digs_done -> lex_start
+        |: num_mode == "int" and not (is_dot and srcnext_is_digit) and not is_exp_marker
+        then:
+            num_int => num_digs
+            self :> num_suffix
+
+    lex_start <: digs_done -> lex_start
+        |: num_mode == "frac" and is_exp_marker
+        then:
+            num_frac => num_digs
+            num_has_exp => true
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> scan_exp_sign
+
+    lex_start <: digs_done -> lex_start
+        |: num_mode == "frac" and not is_exp_marker
+        then:
+            num_frac => num_digs
+            num_kind => "float"
+            self :> num_suffix
+
+    lex_start <: digs_done -> lex_start
+        |: num_mode == "exp" and num_digs.length() == 0
+        then:
+            error => true
+            sc => source.length()
+            error_msg => "exponent requires digits after `e`/`E`/`p`/`P`"
+            self :> step
+
+    lex_start <: digs_done -> lex_start
+        |: num_mode == "exp" and num_digs.length() > 0
+        then:
+            num_exp => num_digs
+            num_kind => "float"
+            self :> num_suffix
+
+    # Based ints. A hex `.` plus hex digit opens the hex-float frac run.
+    # The C99 `p` exponent form itself is out of port scope (its value
+    # is binary and needs exact rendering), so it raises a port-only
+    # message the corpus never carries.
+    lex_start <: digs_done -> lex_start
+        |: num_mode == "based" and num_base == 16 and is_dot and next_hex >= 0
+        then:
+            num_digs => ""
+            num_last_digit => false
+            num_mode => "hexfrac"
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> scan_digs
+
+    lex_start <: digs_done -> lex_start
+        |: (num_mode == "hexfrac" or (num_mode == "based" and num_base == 16 and not (is_dot and next_hex >= 0))) and is_p_marker
+        then:
+            error => true
+            sc => source.length()
+            error_msg => "lex: hex-float literal out of port scope"
+            self :> step
+
+    lex_start <: digs_done -> lex_start
+        |: num_mode == "hexfrac" and not is_p_marker
+        then:
+            error => true
+            sc => source.length()
+            error_msg => "hex-float literal requires the `p`/`P` binary exponent (C99 form; e.g. `0x1.8p+1`)"
+            self :> step
+
+    lex_start <: digs_done -> lex_start
+        |: num_mode == "based" and not (num_base == 16 and ((is_dot and next_hex >= 0) or is_p_marker)) and num_digs.length() == 0
+        then:
+            error => true
+            sc => source.length()
+            error_msg => "empty numeric literal after `" + num_prefix + "`/`" + num_prefix.uppercase() + "` prefix"
+            self :> step
+
+    lex_start <: digs_done -> lex_start
+        |: num_mode == "based" and not (num_base == 16 and ((is_dot and next_hex >= 0) or is_p_marker)) and num_digs.length() > 0
+        then: self :> num_suffix
+
+    lex_start <: scan_exp_sign -> lex_start
+        |: srccur == 43 or srccur == 45
+        then:
+            num_exp_sign => source.substring(sc, 1)
+            num_digs => ""
+            num_last_digit => false
+            num_mode => "exp"
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> scan_digs
+
+    lex_start <: scan_exp_sign -> lex_start
+        |: not (srccur == 43 or srccur == 45)
+        then:
+            num_digs => ""
+            num_last_digit => false
+            num_mode => "exp"
+            self :> scan_digs
+
+    # reject-unit-suffix!. A letter or `_` right after the literal is a
+    # retired F5 unit suffix. The message quotes the separator-stripped
+    # literal plus the whole identifier-like run.
+    lex_start <: num_suffix -> lex_start
+        |: not num_run_end and (is_letter or is_us)
+        then:
+            sfx_acc => ""
+            sfx_col => cur_col
+            self :> scan_sfx
+
+    lex_start <: num_suffix -> lex_start
+        |: num_run_end or not (is_letter or is_us)
+        then:
+            tokens => tokens.append(Token(kind: num_kind, value: num_value_text, line: line_num, col: tok_start_col))
+            self :> step
+
+    lex_start <: scan_sfx -> lex_start
+        |: not num_run_end and is_id_cont
+        then:
+            sfx_acc => sfx_acc + source.substring(sc, 1)
+            sc => sc + 1
+            col_num => col_num + 1
+            self :> scan_sfx
+
+    lex_start <: scan_sfx -> lex_start
+        |: num_run_end or not is_id_cont
+        then:
+            error => true
+            sc => source.length()
+            error_msg => "numeric literal with unit suffix at line " + line_num.to_string() + ", col " + sfx_col.to_string() + ": `" + num_str + sfx_acc + "` — unit suffixes are not part of v1 (spec §2.7.1). Use the type constructor instead, e.g. `Duration(millis: " + num_str + ")`."
             self :> step
 
     # Chapter-23 — string body. Plain chars go through `enc` so a raw
@@ -672,12 +959,17 @@ def main:
     cur_emit_tok :- tokens.at(emit_idx) ?? Token(kind: "eof", value: "", line: 1, col: 1)
     is_layout_at :- cur_emit_tok.kind == "newline" or cur_emit_tok.kind == "indent" or cur_emit_tok.kind == "dedent" or cur_emit_tok.kind == "eof"
     is_numeric_at :- cur_emit_tok.kind == "int" or cur_emit_tok.kind == "float"
+    # Numeric values print bare. pr-str of an overflowed Double is
+    # `##Inf` where `str` (the parse oracle and cxc.emit) gives
+    # `Infinity`, so the Token holds the `str` form and only this emit
+    # maps it.
 
     emitting <: emit -> emitting
         |: emit_idx < tokens.count() and is_numeric_at
         then:
             let sep: String! = ||: emit_idx == 0 : "" ||: else : "/"
-            out_buf => out_buf + sep + cur_emit_tok.kind + "|" + cur_emit_tok.value + "|" + cur_emit_tok.line.to_string() + "|" + cur_emit_tok.col.to_string()
+            let shown: String! = ||: cur_emit_tok.value == "Infinity" : "##Inf" ||: else : cur_emit_tok.value
+            out_buf => out_buf + sep + cur_emit_tok.kind + "|" + shown + "|" + cur_emit_tok.line.to_string() + "|" + cur_emit_tok.col.to_string()
             emit_idx => emit_idx + 1
             self :> emit
 

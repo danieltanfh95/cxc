@@ -94,3 +94,26 @@ def EscBad:\n    tag: String = "\x4"
 def EscBadU:\n    tag: String = "\u{110000}"
 def EscBadQ:\n    tag: String = "\q"
 def EscBadC:\n    c: Char = 'ab'
+def DefaultsExp:\n    a: Float = 1e5\n    b: Float = 1.5e-3\n    c: Float = 2E+10
+def DefaultsExpBig:\n    big: Float = 1e22\n    huge: Float = 1e400\n    tiny: Float = 1e-400
+def DefaultsExpPlain:\n    a: Float = 1e7\n    b: Float = 9999999.0\n    c: Float = 0.0001\n    d: Float = 0.001
+def DefaultsSep:\n    a: Int = 1_000\n    b: Float = 1_000.000_5\n    c: Float = 1_0e1_0\n    d: Int = 0_0
+def DefaultsBased:\n    a: Int = 0x1F\n    b: Int = 0b101\n    c: Int = 0o17\n    d: Int = 0XfF
+def DefaultsPi:\n    pi: Float = 3.141592653589793\n    e: Float = 2.718281828459045
+def A(seed: Int):\n    rate: Float = 2.5E-7
+def R:\n    x: Float = 1e
+def R:\n    x: Float = 1e+
+def R:\n    x: Float = 1_e5
+def R:\n    x: Float = 1e_5
+def R:\n    x: Int = 1__2
+def R:\n    x: Int = 1_
+def R:\n    x: Int = 12ms
+def R:\n    x: Float = 1.5e3x
+def R:\n    x: Int = 017
+def R:\n    x: Int = 0x
+def R:\n    x: Int = 0b
+def R:\n    x: Int = 0xFg
+def R:\n    x: Float = 0x1.8
+def R:\n    a: Int = 1\n    b: Float = 2.5e
+def R:\n    x: Float = 0e0
+def R:\n    x: Float = 1.79769313486232e308
