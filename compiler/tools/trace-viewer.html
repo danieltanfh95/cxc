@@ -231,6 +231,7 @@ header .status{color:var(--p-ink2) !important;letter-spacing:.2em;font-size:10px
 #drop .drop-sub{color:var(--p-ink2) !important;letter-spacing:.15em}
 #stage-toolbar input[type="text"]::placeholder{color:var(--p-ink2) !important;opacity:1}
 #stage-toolbar input[type="checkbox"]{accent-color:var(--p-indigo) !important}
+body.theme-dark #stage-toolbar input[type="checkbox"]{color-scheme:dark}
 #stage-splitter{background:var(--p-paper3) !important;border-top:0.5px solid var(--p-hair) !important;border-bottom:0.5px solid var(--p-hair) !important}
 #stage-splitter::before{background-image:radial-gradient(circle,var(--p-ink3) 1px,transparent 1.2px) !important}
 #stage-splitter:hover,#stage-splitter.dragging{background:var(--p-fade) !important}
@@ -422,6 +423,10 @@ body.theme-dark #sidebar #stats div{border-bottom-color:var(--p-hair) !important
 #stage-toolbar label+label{margin-left:10px}
 #shape-zoom-fit{width:auto !important;min-width:36px;padding:0 8px !important}
 body.theme-dark .phase-label{font-size:13px !important;font-weight:700 !important}
+/* Codex r5 batch. */
+body.phase-panel-open #shape-hint{display:none}
+.phase-self-badge-label{font-size:9px !important;letter-spacing:0 !important}
+#shape-controls+label{margin-left:12px}
 </style>
 <body>
 <button id="theme-toggle" title="Toggle light / dark theme">theme</button>
