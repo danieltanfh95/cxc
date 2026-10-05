@@ -302,15 +302,16 @@ summary::marker,summary::-webkit-details-marker{color:var(--p-ink2)}
 .phase-node.initial{fill:var(--p-amber) !important;stroke:var(--p-ink) !important;stroke-width:1.4 !important}
 .phase-node.end{fill:var(--p-paper3) !important;stroke:var(--p-ink) !important}
 .phase-node.unreached{stroke-dasharray:4 3 !important;opacity:.6}
-.phase-label{fill:var(--p-ink) !important;font-family:'Barlow Condensed',Impact,sans-serif !important;font-weight:700 !important;letter-spacing:.08em}
+.phase-label{fill:var(--p-ink2) !important;font-family:'Barlow Condensed',Impact,sans-serif !important;font-weight:500 !important;letter-spacing:.06em}
+.phase-label.initial{fill:var(--p-ink) !important;font-weight:600 !important}
 .phase-arc{stroke:var(--p-ink) !important;stroke-width:0.9 !important}
 .phase-arc.self-loop{stroke:var(--p-ink) !important;stroke-dasharray:4 3 !important}
 .phase-arc.primary{stroke:var(--p-ink) !important;stroke-width:1.6 !important}
 .phase-arc.guarded{stroke-dasharray:5 3 !important}
 .phase-arc-label{fill:var(--p-ink) !important;font-family:'IBM Plex Mono',monospace !important;stroke:var(--p-paper) !important}
 .phase-arc-label-bg{fill:var(--p-paper) !important}
-.phase-self-badge{fill:var(--p-ink) !important}
-.phase-self-badge-label{fill:var(--p-paper) !important;font-family:'IBM Plex Mono',monospace !important}
+.phase-self-badge{fill:var(--p-accent) !important}
+.phase-self-badge-label{fill:var(--p-paper) !important;font-family:'IBM Plex Mono',monospace !important;font-weight:600 !important}
 .phase-arc-leader{stroke:var(--p-ink2) !important;stroke-dasharray:3 2 !important;opacity:.7}
 #empty-state{color:var(--p-ink2) !important;font-family:'Barlow Condensed',Impact,sans-serif !important;letter-spacing:.3em !important;text-transform:uppercase !important;font-size:14px !important}
 </style>
@@ -997,20 +998,20 @@ function renderPhaseGraph(atom) {
   const wrap = $('stage-detail');
   wrap.innerHTML = `
     <div style="display:flex; align-items:baseline; gap:12px; margin-bottom:4px;">
-      <div style="font-size:14px; font-weight:700; font-family:'SF Mono',Menlo,Consolas,monospace;">${escapeHtml(atom.name)}</div>
-      <div style="color:#666; font-size:11px;">
+      <div style="font-size:15px; font-weight:500; font-family:'Barlow Condensed',Impact,sans-serif; letter-spacing:.04em; color:var(--p-ink2);">${escapeHtml(atom.name)}</div>
+      <div style="color:var(--p-ink2); font-size:11px; font-family:'IBM Plex Mono',monospace;">
         <span title="Named states in the atom's lifecycle">${atom.phases.length} phases</span> ·
         <span title="Transition arms (message handlers) that move the atom between phases; includes self-forwarded arms">${atom.transitions.length + (atom.self_transitions?.length || 0)} arms</span> ·
         <span title="Pure derivations of state — read-only computed values">${atom.observations.length} observations</span> ·
-        initial <b title="The phase the atom enters when constructed">${escapeHtml(atom.initial_phase || '?')}</b>
+        initial <b style="font-weight:600; color:var(--p-ink);" title="The phase the atom enters when constructed">${escapeHtml(atom.initial_phase || '?')}</b>
       </div>
       <div style="flex:1"></div>
-      <div style="color:#666; font-size:10px; display:flex; align-items:center; gap:8px;" title="Phase-pill color key. Full legend in the topology pane.">
-        <span style="display:inline-flex; align-items:center; gap:3px;"><span style="width:10px; height:10px; background:#ffd580; border-radius:2px; display:inline-block;"></span>initial</span>
-        <span style="display:inline-flex; align-items:center; gap:3px;"><span style="width:10px; height:10px; background:#b3d4f0; border-radius:2px; display:inline-block;"></span>reached</span>
-        <span style="display:inline-flex; align-items:center; gap:3px;"><span style="width:10px; height:10px; background:#ccc; border-radius:2px; display:inline-block; border:1px dashed #888; box-sizing:border-box;"></span>unreached</span>
+      <div style="color:var(--p-ink2); font-size:10px; font-family:'IBM Plex Mono',monospace; display:flex; align-items:center; gap:8px;" title="Phase-pill color key. Full legend in the topology pane.">
+        <span style="display:inline-flex; align-items:center; gap:3px;"><span style="width:10px; height:10px; background:#D4A574; display:inline-block; border:0.5px solid var(--p-ink);"></span>initial</span>
+        <span style="display:inline-flex; align-items:center; gap:3px;"><span style="width:10px; height:10px; background:#EFE6D1; display:inline-block; border:0.5px solid var(--p-ink);"></span>reached</span>
+        <span style="display:inline-flex; align-items:center; gap:3px;"><span style="width:10px; height:10px; background:#DCCDA0; display:inline-block; border:0.5px dashed var(--p-ink2); box-sizing:border-box;"></span>unreached</span>
       </div>
-      <button id="phase-graph-close" style="padding:3px 9px; font-size:11px; cursor:pointer; border:1px solid #ccc; background:white; border-radius:3px;">close</button>
+      <button id="phase-graph-close" style="padding:3px 9px; font-size:11px; cursor:pointer; border:0.75px solid var(--p-ink); background:var(--p-paper); color:var(--p-ink); border-radius:0; font-family:'IBM Plex Mono',monospace; letter-spacing:.05em;">close</button>
     </div>
     <div id="phase-graph-wrap-outer" style="position:relative; height:calc(100% - 30px);">
       <div id="phase-graph-svg-wrap" style="overflow-x:scroll; overflow-y:auto; height:100%; display:flex; align-items:center; justify-content:flex-start; padding-right:60px; box-sizing:border-box;"></div>
