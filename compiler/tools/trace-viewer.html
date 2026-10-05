@@ -228,7 +228,12 @@ header .status{color:var(--p-ink2) !important;letter-spacing:.2em;font-size:10px
 #sidebar{background:var(--p-paper2) !important;border-right:0.75px solid var(--p-ink) !important}
 #sidebar-scroll{padding:14px 14px 20px !important}
 #drop{border:1px dashed var(--p-ink) !important;background:transparent !important;color:var(--p-ink) !important;border-radius:0 !important;letter-spacing:.15em;text-transform:uppercase;font-size:10px !important;padding:14px !important}
-#stage-toolbar input[type="text"]::placeholder{color:var(--p-ink3) !important;opacity:1}
+#drop .drop-sub{color:var(--p-ink2) !important;letter-spacing:.15em}
+#stage-toolbar input[type="text"]::placeholder{color:var(--p-ink2) !important;opacity:1}
+#stage-toolbar input[type="checkbox"]{accent-color:var(--p-indigo) !important}
+#stage-splitter{background:var(--p-paper3) !important;border-top:0.5px solid var(--p-hair) !important;border-bottom:0.5px solid var(--p-hair) !important}
+#stage-splitter::before{background-image:radial-gradient(circle,var(--p-ink3) 1px,transparent 1.2px) !important}
+#stage-splitter:hover,#stage-splitter.dragging{background:var(--p-fade) !important}
 #drop.hover,#drop:hover{background:var(--p-fade) !important;color:var(--p-ink) !important}
 details{margin:16px 0 0 !important}
 summary{font-family:'Barlow Condensed',Impact,sans-serif !important;font-weight:700 !important;font-size:13px !important;letter-spacing:.3em !important;text-transform:uppercase !important;color:var(--p-ink) !important;padding:4px 0 !important;border-bottom:0.5px solid var(--p-ink);margin-bottom:6px;cursor:pointer}
@@ -278,6 +283,8 @@ summary::marker,summary::-webkit-details-marker{color:var(--p-ink2)}
 #shape-legend h5{color:var(--p-ink2) !important;letter-spacing:.3em !important;font-weight:700 !important;font-family:'Barlow Condensed',Impact,sans-serif !important;font-size:11px !important}
 #shape-legend .legend-group+.legend-group{border-top:0.5px dashed var(--p-hair) !important}
 #shape-legend .legend-swatch{border-radius:0 !important;border:0.5px solid var(--p-ink)}
+#shape-legend .legend-swatch.legend-swatch-dashed{border-style:dashed !important;border-color:var(--p-ink2) !important}
+#shape-legend .legend-note{color:var(--p-ink2) !important;font-size:10px;letter-spacing:.08em}
 #shape-legend-close{color:var(--p-ink2) !important}
 #shape-legend-close:hover{color:var(--p-ink) !important}
 #shape-zoom button{background:transparent !important;color:var(--p-ink) !important;border:0.5px solid var(--p-ink) !important;border-radius:0 !important;font-family:'IBM Plex Mono',monospace !important}
@@ -296,8 +303,8 @@ summary::marker,summary::-webkit-details-marker{color:var(--p-ink2)}
 .shape-container-tab.selected,.shape-container-tab.main.selected{stroke:var(--p-accent) !important;stroke-width:1.4 !important;stroke-dasharray:none !important}
 .shape-block-label{fill:var(--p-ink2) !important;font-family:'Barlow Condensed',Impact,'Arial Narrow',sans-serif !important;font-weight:500 !important;font-size:15px !important;letter-spacing:.04em !important}
 .shape-block-sub{fill:var(--p-ink2) !important;font-family:'IBM Plex Mono',monospace !important;font-size:11px !important;letter-spacing:.12em}
-.shape-block-badge{fill:var(--p-ink) !important}
-.shape-block-badge-label{fill:var(--p-paper) !important;font-family:'IBM Plex Mono',monospace !important;font-weight:600 !important;letter-spacing:.1em}
+.shape-block-badge{fill:var(--p-paper3) !important;stroke:var(--p-hair) !important;stroke-width:0.5 !important}
+.shape-block-badge-label{fill:var(--p-ink) !important;font-family:'IBM Plex Mono',monospace !important;font-weight:600 !important;letter-spacing:.1em}
 .shape-block.selected{stroke:var(--p-accent) !important;stroke-width:2 !important}
 .shape-block.main.selected{stroke:var(--p-accent) !important;stroke-width:2 !important}
 .shape-block-halo-outer{stroke:var(--p-wash) !important;stroke-width:8 !important;opacity:1 !important}
@@ -326,7 +333,7 @@ summary::marker,summary::-webkit-details-marker{color:var(--p-ink2)}
 .phase-node.unreached{stroke-dasharray:4 3 !important;opacity:.6}
 .phase-label{fill:var(--p-ink) !important;font-family:'Barlow Condensed',Impact,sans-serif !important;font-weight:500 !important;letter-spacing:.06em}
 .phase-label.initial{fill:var(--p-ink) !important;font-weight:600 !important}
-.phase-label.unreached{opacity:.75 !important}
+.phase-label.unreached{fill:var(--p-ink2) !important;opacity:1 !important}
 .phase-unreached-caption{fill:var(--p-ink2) !important;font-family:'IBM Plex Mono',monospace !important}
 body.theme-dark .phase-label.initial{fill:var(--p-paper) !important}
 body.theme-dark .on-pastel{fill:var(--p-paper) !important}
@@ -336,8 +343,8 @@ body.theme-dark .on-pastel{fill:var(--p-paper) !important}
 .phase-arc.guarded{stroke-dasharray:5 3 !important}
 .phase-arc-label{fill:var(--p-ink) !important;font-family:'IBM Plex Mono',monospace !important;stroke:var(--p-paper) !important}
 .phase-arc-label-bg{fill:var(--p-paper) !important}
-.phase-self-badge{fill:var(--p-accent) !important}
-.phase-self-badge-label{fill:var(--p-paper) !important;font-family:'IBM Plex Mono',monospace !important;font-weight:600 !important}
+.phase-self-badge{fill:var(--p-paper3) !important;stroke:var(--p-hair) !important;stroke-width:0.5 !important}
+.phase-self-badge-label{fill:var(--p-accent) !important;font-family:'IBM Plex Mono',monospace !important;font-weight:600 !important;letter-spacing:.08em}
 .phase-arc-leader{stroke:var(--p-ink2) !important;stroke-dasharray:3 2 !important;opacity:.7}
 .mk-ink{fill:var(--p-ink)}
 .mk-indigo{fill:var(--p-indigo)}
@@ -372,7 +379,7 @@ body.theme-dark{background:var(--p-paper) !important;color:var(--p-ink) !importa
 <div id="layout">
   <div id="sidebar">
     <div id="sidebar-scroll">
-      <div id="drop">drop trace.jsonl<br><span style="font-size:10px;color:#888">or click to browse</span></div>
+      <div id="drop">drop trace.jsonl<br><span class="drop-sub" style="font-size:10px">or click to browse</span></div>
       <input type="file" id="file" accept=".jsonl,.json,.log" style="display:none">
 
       <details open>
@@ -1066,7 +1073,7 @@ async function renderPhaseGraph(atom) {
   const wrap = $('stage-detail');
   wrap.innerHTML = `
     <div style="display:flex; align-items:baseline; gap:12px; margin-bottom:4px;">
-      <div style="font-size:15px; font-weight:500; font-family:'Barlow Condensed',Impact,sans-serif; letter-spacing:.04em; color:var(--p-ink2);">${escapeHtml(atom.name)}</div>
+      <div style="font-size:15px; font-weight:700; font-family:'Barlow Condensed',Impact,sans-serif; letter-spacing:.08em; color:var(--p-ink); text-transform:uppercase;">${escapeHtml(atom.name)}</div>
       <div style="color:var(--p-ink2); font-size:11px; font-family:'IBM Plex Mono',monospace;">
         <span title="Named states in the atom's lifecycle">${atom.phases.length} phases</span> ·
         <span title="Transition arms (message handlers) that move the atom between phases; includes self-forwarded arms">${atom.transitions.length + (atom.self_transitions?.length || 0)} arms</span> ·
@@ -1075,9 +1082,9 @@ async function renderPhaseGraph(atom) {
       </div>
       <div style="flex:1"></div>
       <div style="color:var(--p-ink2); font-size:10px; font-family:'IBM Plex Mono',monospace; display:flex; align-items:center; gap:8px;" title="Phase-pill color key. Full legend in the topology pane.">
-        <span style="display:inline-flex; align-items:center; gap:3px;"><span style="width:10px; height:10px; background:#D4A574; display:inline-block; border:0.5px solid var(--p-ink);"></span>initial</span>
-        <span style="display:inline-flex; align-items:center; gap:3px;"><span style="width:10px; height:10px; background:#EFE6D1; display:inline-block; border:0.5px solid var(--p-ink);"></span>reached</span>
-        <span style="display:inline-flex; align-items:center; gap:3px;"><span style="width:10px; height:10px; background:#DCCDA0; display:inline-block; border:0.5px dashed var(--p-ink2); box-sizing:border-box;"></span>unreached</span>
+        <span style="display:inline-flex; align-items:center; gap:3px;"><span style="width:10px; height:10px; background:var(--p-amber); display:inline-block; border:0.5px solid var(--p-ink);"></span>initial</span>
+        <span style="display:inline-flex; align-items:center; gap:3px;"><span style="width:10px; height:10px; background:var(--p-paper); display:inline-block; border:0.5px solid var(--p-ink);"></span>reached</span>
+        <span style="display:inline-flex; align-items:center; gap:3px;"><span style="width:10px; height:10px; background:var(--p-paper2); display:inline-block; border:0.5px dashed var(--p-ink2); box-sizing:border-box;"></span>unreached</span>
       </div>
       <button id="phase-graph-close" style="padding:3px 9px; font-size:11px; cursor:pointer; border:0.75px solid var(--p-ink); background:var(--p-paper); color:var(--p-ink); border-radius:0; font-family:'IBM Plex Mono',monospace; letter-spacing:.05em;">close</button>
     </div>
@@ -1757,13 +1764,14 @@ async function renderShape() {
       <div class="legend-group">
         <h5>phases</h5>
         <div class="legend-row"><span class="legend-swatch" style="background:var(--p-amber);"></span>initial</div>
-        <div class="legend-row"><span class="legend-swatch" style="background:var(--p-paper);"></span>intermediate</div>
+        <div class="legend-row"><span class="legend-swatch" style="background:var(--p-paper);"></span>reached</div>
+        <div class="legend-row"><span class="legend-swatch legend-swatch-dashed" style="background:var(--p-paper2);"></span>unreached</div>
         <div class="legend-row"><span class="legend-swatch" style="background:var(--p-paper3);"></span>end</div>
-        <div class="legend-row"><span class="legend-swatch" style="background:var(--p-accent);"></span>badge <b style="color:var(--p-paper); font-size:9px; padding:0 3px; background:var(--p-accent); border-radius:0; margin-left:2px; font-family:'IBM Plex Mono',monospace;">self N</b> = N self-transitions</div>
+        <div class="legend-row"><span class="legend-swatch" style="background:var(--p-paper3); border-color:var(--p-hair);"></span>badge <b style="color:var(--p-accent); font-size:9px; padding:0 3px; background:var(--p-paper3); border:0.5px solid var(--p-hair); margin-left:2px; font-family:'IBM Plex Mono',monospace;">self N</b> = N self-transitions</div>
       </div>
       <div class="legend-group">
         <h5>layout</h5>
-        <div class="legend-row" style="color:#666; font-size:10px;">box around atoms = owner holds them in (non-ctor) fields</div>
+        <div class="legend-row legend-note">box around atoms = owner holds them in (non-ctor) fields</div>
       </div>`;
     stage.appendChild(legend);
     document.getElementById('shape-legend-close').addEventListener('click', () => {
