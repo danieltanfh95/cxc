@@ -227,7 +227,8 @@ header h1{font-family:'Barlow Condensed',Impact,sans-serif !important;font-weigh
 header .status{color:var(--p-ink2) !important;letter-spacing:.2em;font-size:10px !important}
 #sidebar{background:var(--p-paper2) !important;border-right:0.75px solid var(--p-ink) !important}
 #sidebar-scroll{padding:14px 14px 20px !important}
-#drop{border:1px dashed var(--p-ink) !important;background:transparent !important;color:var(--p-ink2) !important;border-radius:0 !important;letter-spacing:.15em;text-transform:uppercase;font-size:10px !important;padding:14px !important}
+#drop{border:1px dashed var(--p-ink) !important;background:transparent !important;color:var(--p-ink) !important;border-radius:0 !important;letter-spacing:.15em;text-transform:uppercase;font-size:10px !important;padding:14px !important}
+#stage-toolbar input[type="text"]::placeholder{color:var(--p-ink3) !important;opacity:1}
 #drop.hover,#drop:hover{background:var(--p-fade) !important;color:var(--p-ink) !important}
 details{margin:16px 0 0 !important}
 summary{font-family:'Barlow Condensed',Impact,sans-serif !important;font-weight:700 !important;font-size:13px !important;letter-spacing:.3em !important;text-transform:uppercase !important;color:var(--p-ink) !important;padding:4px 0 !important;border-bottom:0.5px solid var(--p-ink);margin-bottom:6px;cursor:pointer}
@@ -236,6 +237,10 @@ summary::marker,summary::-webkit-details-marker{color:var(--p-ink2)}
 #stats div{display:flex;justify-content:space-between;padding:3px 0;border-bottom:0.5px dashed var(--p-hair)}
 #stats div:last-child{border-bottom:none}
 #stats div b,#stats .num{font-family:'Barlow Condensed',sans-serif;font-weight:700;letter-spacing:.05em;color:var(--p-ink)}
+.stat-row .k{color:var(--p-ink2) !important}
+.stat-row .v{color:var(--p-ink) !important}
+#sidebar div[style*="color:#666"]{color:var(--p-ink2) !important}
+#sidebar div[style*="color:#aaa"]{color:var(--p-ink3) !important}
 #stage-main{background:var(--p-paper) !important;
   background-image:
     linear-gradient(var(--p-fade) 1px, transparent 1px),
@@ -319,8 +324,11 @@ summary::marker,summary::-webkit-details-marker{color:var(--p-ink2)}
 .phase-node.initial{fill:var(--p-amber) !important;stroke:var(--p-ink) !important;stroke-width:0.9 !important}
 .phase-node.end{fill:var(--p-paper3) !important;stroke:var(--p-ink) !important}
 .phase-node.unreached{stroke-dasharray:4 3 !important;opacity:.6}
-.phase-label{fill:var(--p-ink2) !important;font-family:'Barlow Condensed',Impact,sans-serif !important;font-weight:500 !important;letter-spacing:.06em}
+.phase-label{fill:var(--p-ink) !important;font-family:'Barlow Condensed',Impact,sans-serif !important;font-weight:500 !important;letter-spacing:.06em}
 .phase-label.initial{fill:var(--p-ink) !important;font-weight:600 !important}
+.phase-label.unreached{opacity:.75 !important}
+.phase-unreached-caption{fill:var(--p-ink2) !important;font-family:'IBM Plex Mono',monospace !important}
+body.theme-dark .phase-label.initial{fill:var(--p-paper) !important}
 .phase-arc{stroke:var(--p-ink) !important;stroke-width:0.9 !important}
 .phase-arc.self-loop{stroke:var(--p-ink) !important;stroke-dasharray:4 3 !important}
 .phase-arc.primary{stroke:var(--p-ink) !important;stroke-width:1.6 !important}
