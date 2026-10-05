@@ -195,11 +195,28 @@
   --p-accent:#B4321E;
   --p-wash:rgba(180,50,30,.10);
   --p-fade:rgba(34,22,10,.08);
-  --p-sepia:#DBC58F;     /* main atom fill */
-  --p-sepia2:#C9AE6A;    /* main atom stroke */
-  --p-indigo:#2E6DA4;    /* sync-only edges */
-  --p-rust:#8B4826;      /* self-loops */
-  --p-amber:#D4A574;     /* initial phase tint */
+  --p-sepia:#DBC58F;
+  --p-sepia2:#C9AE6A;
+  --p-indigo:#2E6DA4;
+  --p-rust:#8B4826;
+  --p-amber:#D4A574;
+}
+body.theme-dark{
+  --p-paper:#241F1C;
+  --p-paper2:#2F2824;
+  --p-paper3:#3A322D;
+  --p-ink:#E8DFCF;
+  --p-ink2:#A89A86;
+  --p-ink3:#7A6E5E;
+  --p-hair:#4D4238;
+  --p-accent:#E89B88;
+  --p-wash:rgba(232,155,136,.16);
+  --p-fade:rgba(232,223,207,.08);
+  --p-sepia:#C9A47B;
+  --p-sepia2:#A68358;
+  --p-indigo:#8DB4E0;
+  --p-rust:#E8A685;
+  --p-amber:#E8CF95;
 }
 /* ---------- global chrome ---------- */
 body{font-family:'IBM Plex Mono',ui-monospace,Menlo,Consolas,monospace !important;background:var(--p-paper) !important;color:var(--p-ink) !important;letter-spacing:.02em}
@@ -313,13 +330,36 @@ summary::marker,summary::-webkit-details-marker{color:var(--p-ink2)}
 .phase-self-badge{fill:var(--p-accent) !important}
 .phase-self-badge-label{fill:var(--p-paper) !important;font-family:'IBM Plex Mono',monospace !important;font-weight:600 !important}
 .phase-arc-leader{stroke:var(--p-ink2) !important;stroke-dasharray:3 2 !important;opacity:.7}
+.mk-ink{fill:var(--p-ink)}
+.mk-indigo{fill:var(--p-indigo)}
+.mk-rust{fill:var(--p-rust)}
+.phase-initial-arrow{stroke:var(--p-ink) !important;stroke-width:1.1 !important;fill:none !important}
+.legend-line.legend-self-dash{border-top:0 !important;background:linear-gradient(to right,var(--p-rust) 60%,transparent 0) repeat-x !important;background-size:7px 1.6px !important;height:1.6px !important;width:22px}
+#theme-toggle{position:fixed;top:8px;right:8px;z-index:50;background:var(--p-paper) !important;color:var(--p-ink) !important;border:0.75px solid var(--p-ink) !important;border-radius:0 !important;font-family:'IBM Plex Mono',monospace !important;font-size:10px !important;letter-spacing:.2em;text-transform:uppercase;padding:4px 10px !important;cursor:pointer}
+#theme-toggle:hover{background:var(--p-paper2) !important}
+body.theme-dark{background:var(--p-paper) !important;color:var(--p-ink) !important}
 #empty-state{color:var(--p-ink2) !important;font-family:'Barlow Condensed',Impact,sans-serif !important;letter-spacing:.3em !important;text-transform:uppercase !important;font-size:14px !important}
 </style>
 <body>
+<button id="theme-toggle" title="Toggle light / dark theme">theme</button>
 <header>
   <h1>cxc trace viewer</h1>
   <span class="status" id="status">no trace loaded</span>
 </header>
+<script>
+(function(){
+  var saved = localStorage.getItem('cxc-theme');
+  if (saved === 'dark') document.body.classList.add('theme-dark');
+  document.addEventListener('DOMContentLoaded', function(){
+    var btn = document.getElementById('theme-toggle');
+    if (!btn) return;
+    btn.addEventListener('click', function(){
+      var dark = document.body.classList.toggle('theme-dark');
+      localStorage.setItem('cxc-theme', dark ? 'dark' : 'light');
+    });
+  });
+})();
+</script>
 <div id="layout">
   <div id="sidebar">
     <div id="sidebar-scroll">
@@ -805,10 +845,10 @@ function renderGraph() {
   // made 7px-stroke edges look like harpoons.
   defs.innerHTML = `
     <marker id="arrowhead" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto" markerUnits="userSpaceOnUse">
-      <path d="M0,1 L8,4.5 L0,8 z" fill="#22160A"></path>
+      <path d="M0,1 L8,4.5 L0,8 z" class="mk-ink"></path>
     </marker>
     <marker id="arrowhead-self" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="userSpaceOnUse">
-      <path d="M0,1 L7,4 L0,7 z" fill="#22160A"></path>
+      <path d="M0,1 L7,4 L0,7 z" class="mk-rust"></path>
     </marker>
   `;
   svg.appendChild(defs);
@@ -1081,10 +1121,10 @@ function renderPhaseGraph(atom) {
   const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
   defs.innerHTML = `
     <marker id="phase-arrow" markerWidth="12" markerHeight="12" refX="11" refY="6" orient="auto" markerUnits="userSpaceOnUse">
-      <path d="M0,1 L11,6 L0,11 z" fill="#22160A"></path>
+      <path d="M0,1 L11,6 L0,11 z" class="mk-ink"></path>
     </marker>
     <marker id="phase-arrow-primary" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="userSpaceOnUse">
-      <path d="M0,1 L9,5 L0,9 z" fill="#22160A"></path>
+      <path d="M0,1 L9,5 L0,9 z" class="mk-ink"></path>
     </marker>`;
   svg.appendChild(defs);
 
@@ -1398,7 +1438,7 @@ function renderPhaseGraph(atom) {
       const startX = pos.cx - halfW - 28;
       const tipX = pos.cx - halfW - 4;
       s.setAttribute('d', `M${startX},${pos.cy} L${tipX},${pos.cy}`);
-      s.setAttribute('stroke', '#22160A'); s.setAttribute('stroke-width', 1.1);
+      s.setAttribute('class', 'phase-initial-arrow');
       s.setAttribute('marker-end', 'url(#phase-arrow)');
       svg.appendChild(s);
     }
@@ -1920,24 +1960,24 @@ async function renderShape() {
       <button id="shape-legend-close" title="hide legend">×</button>
       <div class="legend-group">
         <h5>atoms</h5>
-        <div class="legend-row"><span class="legend-swatch" style="background:#DBC58F;"></span>main</div>
-        <div class="legend-row"><span class="legend-swatch" style="background:#EFE6D1;"></span>user atom</div>
-        <div class="legend-row" title="synthetic origin for sends that happened before any arm fired: atom constructors + the first kickoff into main"><span class="legend-swatch" style="background:#DCCDA0;"></span>init / end</div>
+        <div class="legend-row"><span class="legend-swatch" style="background:var(--p-sepia);"></span>main</div>
+        <div class="legend-row"><span class="legend-swatch" style="background:var(--p-paper);"></span>user atom</div>
+        <div class="legend-row" title="synthetic origin for sends that happened before any arm fired: atom constructors + the first kickoff into main"><span class="legend-swatch" style="background:var(--p-paper3);"></span>init / end</div>
       </div>
       <div class="legend-group">
         <h5>edges</h5>
-        <div class="legend-row"><span class="legend-line" style="border-top:1.6px solid #22160A;"></span>async send</div>
-        <div class="legend-row"><span class="legend-line" style="border-top:1.6px solid #2E6DA4;"></span>sync only</div>
-        <div class="legend-row"><span class="legend-line" style="border-top:0; border-image:none; background:linear-gradient(to right,#8B4826 60%,transparent 0) repeat-x; background-size:7px 1.6px; height:1.6px;"></span>self-loop</div>
-        <div class="legend-row" title="atoms that message each other share one line with an arrowhead at each end; each label's arrow is the direction its messages travel along the line"><span style="display:inline-block; width:22px; text-align:center; color:#22160A; font-size:10px;">▲▼</span>two-way: label arrow = its direction</div>
-        <div class="legend-row" title="label 'foo +N' = top message plus N others on same edge — hover for full list"><span style="display:inline-block; width:22px; text-align:center; color:#6B5A44; font-family:'IBM Plex Mono',Menlo,monospace; font-size:10px;">+N</span>= more msgs</div>
+        <div class="legend-row"><span class="legend-line" style="border-top:1.6px solid var(--p-ink);"></span>async send</div>
+        <div class="legend-row"><span class="legend-line" style="border-top:1.6px solid var(--p-indigo);"></span>sync only</div>
+        <div class="legend-row"><span class="legend-line legend-self-dash"></span>self-loop</div>
+        <div class="legend-row" title="atoms that message each other share one line with an arrowhead at each end; each label's arrow is the direction its messages travel along the line"><span style="display:inline-block; width:22px; text-align:center; color:var(--p-ink); font-size:10px;">▲▼</span>two-way: label arrow = its direction</div>
+        <div class="legend-row" title="label 'foo +N' = top message plus N others on same edge — hover for full list"><span style="display:inline-block; width:22px; text-align:center; color:var(--p-ink2); font-family:'IBM Plex Mono',Menlo,monospace; font-size:10px;">+N</span>= more msgs</div>
       </div>
       <div class="legend-group">
         <h5>phases</h5>
-        <div class="legend-row"><span class="legend-swatch" style="background:#D4A574;"></span>initial</div>
-        <div class="legend-row"><span class="legend-swatch" style="background:#EFE6D1;"></span>intermediate</div>
-        <div class="legend-row"><span class="legend-swatch" style="background:#DCCDA0;"></span>end</div>
-        <div class="legend-row"><span class="legend-swatch" style="background:#B4321E;"></span>badge <b style="color:#EFE6D1; font-size:9px; padding:0 3px; background:#B4321E; border-radius:0; margin-left:2px; font-family:'IBM Plex Mono',monospace;">self N</b> = N self-transitions</div>
+        <div class="legend-row"><span class="legend-swatch" style="background:var(--p-amber);"></span>initial</div>
+        <div class="legend-row"><span class="legend-swatch" style="background:var(--p-paper);"></span>intermediate</div>
+        <div class="legend-row"><span class="legend-swatch" style="background:var(--p-paper3);"></span>end</div>
+        <div class="legend-row"><span class="legend-swatch" style="background:var(--p-accent);"></span>badge <b style="color:var(--p-paper); font-size:9px; padding:0 3px; background:var(--p-accent); border-radius:0; margin-left:2px; font-family:'IBM Plex Mono',monospace;">self N</b> = N self-transitions</div>
       </div>
       <div class="legend-group">
         <h5>layout</h5>
@@ -2096,19 +2136,19 @@ async function renderShape() {
   const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
   defs.innerHTML = `
     <marker id="shape-arrow" markerWidth="12" markerHeight="12" refX="11" refY="6" orient="auto" markerUnits="userSpaceOnUse">
-      <path d="M0,1 L11,6 L0,11 z" fill="#22160A"></path>
+      <path d="M0,1 L11,6 L0,11 z" class="mk-ink"></path>
     </marker>
     <marker id="shape-arrow-sync" markerWidth="12" markerHeight="12" refX="11" refY="6" orient="auto" markerUnits="userSpaceOnUse">
-      <path d="M0,1 L11,6 L0,11 z" fill="#2E6DA4"></path>
+      <path d="M0,1 L11,6 L0,11 z" class="mk-indigo"></path>
     </marker>
     <marker id="shape-arrow-start" markerWidth="12" markerHeight="12" refX="11" refY="6" orient="auto-start-reverse" markerUnits="userSpaceOnUse">
-      <path d="M0,1 L11,6 L0,11 z" fill="#22160A"></path>
+      <path d="M0,1 L11,6 L0,11 z" class="mk-ink"></path>
     </marker>
     <marker id="shape-arrow-start-sync" markerWidth="12" markerHeight="12" refX="11" refY="6" orient="auto-start-reverse" markerUnits="userSpaceOnUse">
-      <path d="M0,1 L11,6 L0,11 z" fill="#2E6DA4"></path>
+      <path d="M0,1 L11,6 L0,11 z" class="mk-indigo"></path>
     </marker>
     <marker id="shape-arrow-self" markerWidth="11" markerHeight="11" refX="10" refY="5.5" orient="auto" markerUnits="userSpaceOnUse">
-      <path d="M0,1 L10,5.5 L0,10 z" fill="#8B4826"></path>
+      <path d="M0,1 L10,5.5 L0,10 z" class="mk-rust"></path>
     </marker>
   `;
   svg.appendChild(defs);
