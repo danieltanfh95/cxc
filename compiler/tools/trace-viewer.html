@@ -175,7 +175,139 @@
   /* Empty state */
   #empty-state { text-align: center; padding: 60px; color: #999; font-size: 14px; }
 </style>
-</head>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;700;900&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+/* ============================================================
+   SHAPE TAB RESTYLE — cream paper + ink mono micrographic look.
+   All original detail preserved. Overrides original palette and
+   type via higher specificity + !important on SVG fills/strokes.
+   ============================================================ */
+:root{
+  --p-paper:#EFE6D1;
+  --p-paper2:#E6D9B4;
+  --p-paper3:#DCCDA0;
+  --p-ink:#22160A;
+  --p-ink2:#6B5A44;
+  --p-ink3:#9A8C73;
+  --p-hair:#B5A683;
+  --p-accent:#B4321E;
+  --p-wash:rgba(180,50,30,.10);
+  --p-fade:rgba(34,22,10,.08);
+}
+/* ---------- global chrome ---------- */
+body{font-family:'IBM Plex Mono',ui-monospace,Menlo,Consolas,monospace !important;background:var(--p-paper) !important;color:var(--p-ink) !important;letter-spacing:.02em}
+code,.mono,pre{font-family:'IBM Plex Mono',ui-monospace,Menlo,Consolas,monospace !important}
+header{background:var(--p-paper) !important;color:var(--p-ink) !important;border-bottom:0.75px solid var(--p-ink) !important;letter-spacing:.1em;text-transform:uppercase;position:relative}
+header::after{content:'';position:absolute;left:0;right:0;bottom:-3px;height:2px;border-bottom:0.5px solid var(--p-ink)}
+header h1{font-family:'Barlow Condensed',Impact,sans-serif !important;font-weight:700 !important;font-size:16px !important;letter-spacing:.3em !important}
+header .status{color:var(--p-ink2) !important;letter-spacing:.2em;font-size:10px !important}
+#sidebar{background:var(--p-paper2) !important;border-right:0.75px solid var(--p-ink) !important}
+#sidebar-scroll{padding:14px 14px 20px !important}
+#drop{border:1px dashed var(--p-ink) !important;background:transparent !important;color:var(--p-ink2) !important;border-radius:0 !important;letter-spacing:.15em;text-transform:uppercase;font-size:10px !important;padding:14px !important}
+#drop.hover,#drop:hover{background:var(--p-fade) !important;color:var(--p-ink) !important}
+details{margin:16px 0 0 !important}
+summary{font-family:'Barlow Condensed',Impact,sans-serif !important;font-weight:700 !important;font-size:13px !important;letter-spacing:.3em !important;text-transform:uppercase !important;color:var(--p-ink) !important;padding:4px 0 !important;border-bottom:0.5px solid var(--p-ink);margin-bottom:6px;cursor:pointer}
+summary::marker,summary::-webkit-details-marker{color:var(--p-ink2)}
+#stats,#unclosed-panel{font-size:11px;letter-spacing:.08em}
+#stats div{display:flex;justify-content:space-between;padding:3px 0;border-bottom:0.5px dashed var(--p-hair)}
+#stats div:last-child{border-bottom:none}
+#stats div b,#stats .num{font-family:'Barlow Condensed',sans-serif;font-weight:700;letter-spacing:.05em;color:var(--p-ink)}
+#stage-main{background:var(--p-paper) !important;
+  background-image:
+    linear-gradient(var(--p-fade) 1px, transparent 1px),
+    linear-gradient(90deg, var(--p-fade) 1px, transparent 1px) !important;
+  background-size: 40px 40px, 40px 40px !important;
+  background-position: 0 0, 0 0 !important;
+}
+#stage-toolbar{background:var(--p-paper) !important;border-bottom:0.75px solid var(--p-ink) !important;padding:8px 14px !important;gap:4px !important}
+#stage-toolbar button{background:transparent !important;color:var(--p-ink) !important;border:0.75px solid var(--p-ink) !important;border-radius:0 !important;letter-spacing:.2em;text-transform:uppercase;font-size:10px !important;padding:5px 11px !important;font-family:'IBM Plex Mono',monospace !important;transition:none !important}
+#stage-toolbar button.on{background:var(--p-ink) !important;color:var(--p-paper) !important;border-color:var(--p-ink) !important}
+#stage-toolbar button:hover{background:var(--p-fade) !important;color:var(--p-ink) !important}
+#stage-toolbar button.on:hover{background:var(--p-ink) !important;color:var(--p-paper) !important}
+#stage-toolbar label{font-size:10px !important;letter-spacing:.15em;text-transform:uppercase;color:var(--p-ink2) !important;gap:5px !important}
+#stage-toolbar select,#stage-toolbar input[type="text"]{background:var(--p-paper) !important;border:0.75px solid var(--p-ink) !important;border-radius:0 !important;color:var(--p-ink) !important;font-family:'IBM Plex Mono',monospace !important;font-size:10px !important;padding:3px 6px !important;letter-spacing:.1em}
+#stage-detail{background:var(--p-paper2) !important;border-top:0.75px solid var(--p-ink) !important;color:var(--p-ink)}
+/* ---------- floating cards (legend / zoom / hint) ---------- */
+#shape-legend,#shape-legend-reopen,#shape-zoom,#shape-hint{
+  background:var(--p-paper) !important;border:0.75px solid var(--p-ink) !important;border-radius:0 !important;
+  box-shadow:none !important;color:var(--p-ink) !important;font-family:'IBM Plex Mono',monospace !important;
+  letter-spacing:.08em
+}
+#shape-legend{padding:10px 12px !important;position:absolute;bottom:14px;left:14px}
+#shape-legend::before,#shape-legend::after,
+#shape-zoom::before,#shape-zoom::after,
+#shape-hint::before,#shape-hint::after,
+#shape-legend-reopen::before,#shape-legend-reopen::after{content:'';position:absolute;width:7px;height:7px;pointer-events:none}
+#shape-legend::before{top:-1px;left:-1px;border-top:1.4px solid var(--p-ink);border-left:1.4px solid var(--p-ink)}
+#shape-legend::after{bottom:-1px;right:-1px;border-bottom:1.4px solid var(--p-ink);border-right:1.4px solid var(--p-ink)}
+#shape-zoom::before{top:-1px;left:-1px;border-top:1.4px solid var(--p-ink);border-left:1.4px solid var(--p-ink)}
+#shape-zoom::after{bottom:-1px;right:-1px;border-bottom:1.4px solid var(--p-ink);border-right:1.4px solid var(--p-ink)}
+#shape-hint::before{top:-1px;left:-1px;border-top:1.4px solid var(--p-ink);border-left:1.4px solid var(--p-ink)}
+#shape-hint::after{bottom:-1px;right:-1px;border-bottom:1.4px solid var(--p-ink);border-right:1.4px solid var(--p-ink)}
+#shape-legend-reopen::before{top:-1px;left:-1px;border-top:1.4px solid var(--p-ink);border-left:1.4px solid var(--p-ink)}
+#shape-legend-reopen::after{bottom:-1px;right:-1px;border-bottom:1.4px solid var(--p-ink);border-right:1.4px solid var(--p-ink)}
+#shape-legend h5{color:var(--p-ink2) !important;letter-spacing:.3em !important;font-weight:700 !important;font-family:'Barlow Condensed',Impact,sans-serif !important;font-size:11px !important}
+#shape-legend .legend-group+.legend-group{border-top:0.5px dashed var(--p-hair) !important}
+#shape-legend .legend-swatch{border-radius:0 !important;border:0.5px solid var(--p-ink)}
+#shape-legend-close{color:var(--p-ink2) !important}
+#shape-legend-close:hover{color:var(--p-ink) !important}
+#shape-zoom button{background:transparent !important;color:var(--p-ink) !important;border:0.5px solid var(--p-ink) !important;border-radius:0 !important;font-family:'IBM Plex Mono',monospace !important}
+#shape-zoom button:hover{background:var(--p-ink) !important;color:var(--p-paper) !important}
+#shape-zoom #shape-zoom-level{color:var(--p-ink) !important;letter-spacing:.1em}
+#shape-hint{color:var(--p-ink) !important;font-size:10px !important;letter-spacing:.1em;text-transform:uppercase}
+#shape-hint b{color:var(--p-ink) !important;letter-spacing:.15em}
+#shape-hint .dismiss{color:var(--p-ink2) !important}
+/* ---------- SVG nodes & edges (shape graph) ---------- */
+.shape-block{fill:var(--p-paper) !important;stroke:var(--p-ink) !important;stroke-width:0.9 !important}
+.shape-block.main{fill:var(--p-paper) !important;stroke:var(--p-ink) !important;stroke-width:1.6 !important}
+.shape-block.root{fill:var(--p-paper2) !important;stroke:var(--p-ink2) !important;stroke-dasharray:3 2 !important}
+.shape-block.owner,.shape-block.owner.main{stroke:var(--p-ink) !important;stroke-width:1.6 !important}
+.shape-block.container,.shape-block.container.main,
+.shape-container-tab,.shape-container-tab.main{fill:transparent !important;stroke:var(--p-ink) !important;stroke-width:0.6 !important;stroke-dasharray:4 3 !important}
+.shape-container-tab.selected,.shape-container-tab.main.selected{stroke:var(--p-accent) !important;stroke-width:1.4 !important;stroke-dasharray:none !important}
+.shape-block-label{fill:var(--p-ink) !important;font-family:'Barlow Condensed',Impact,'Arial Narrow',sans-serif !important;font-weight:900 !important;font-size:18px !important;letter-spacing:.04em !important}
+.shape-block-sub{fill:var(--p-ink2) !important;font-family:'IBM Plex Mono',monospace !important;font-size:11px !important;letter-spacing:.12em}
+.shape-block-badge{fill:var(--p-ink) !important}
+.shape-block-badge-label{fill:var(--p-paper) !important;font-family:'IBM Plex Mono',monospace !important;font-weight:600 !important;letter-spacing:.1em}
+.shape-block.selected{stroke:var(--p-accent) !important;stroke-width:2 !important}
+.shape-block.main.selected{stroke:var(--p-accent) !important;stroke-width:2 !important}
+.shape-block-halo-outer{stroke:var(--p-wash) !important;stroke-width:8 !important;opacity:1 !important}
+.shape-block.hover{stroke:var(--p-accent) !important;stroke-width:1.6 !important}
+.shape-block-label.container{fill:var(--p-ink) !important;font-family:'Barlow Condensed',Impact,sans-serif !important;font-weight:700 !important;letter-spacing:.25em !important;text-transform:uppercase}
+.shape-block-label.container.main{fill:var(--p-ink) !important}
+.shape-block-sub.container{fill:var(--p-ink2) !important}
+.shape-owner-label-bg{fill:var(--p-paper) !important;stroke:var(--p-ink) !important;stroke-width:0.6 !important}
+.shape-owner-label{fill:var(--p-ink) !important;font-family:'IBM Plex Mono',monospace !important;font-weight:600 !important;letter-spacing:.15em}
+.shape-edge{stroke:var(--p-ink) !important;stroke-width:0.9 !important;fill:none}
+.shape-edge.sync{stroke:var(--p-ink) !important;stroke-width:1.4 !important;stroke-dasharray:none !important}
+.shape-edge.self{stroke:var(--p-ink) !important;stroke-dasharray:4 3 !important}
+.shape-edge:hover,.shape-edge.shape-edge-hover{stroke:var(--p-accent) !important;stroke-width:2 !important}
+.shape-edge-label{fill:var(--p-ink) !important;font-family:'IBM Plex Mono',monospace !important;font-weight:500 !important;font-size:11px !important;stroke:var(--p-paper) !important;stroke-width:3px}
+.shape-edge-label-bg{fill:var(--p-paper) !important;stroke:none !important}
+.shape-edge-label-bg.shape-edge-hover{fill:var(--p-wash) !important}
+.shape-layer-band{fill:var(--p-paper2) !important;opacity:.6}
+.shape-layer-band.alt{fill:var(--p-paper3) !important;opacity:.4}
+/* ---------- phase pills + phase panel ---------- */
+.shape-pill{fill:var(--p-paper) !important;stroke:var(--p-ink) !important;stroke-width:0.6 !important}
+.shape-pill-label{fill:var(--p-ink) !important;font-family:'IBM Plex Mono',monospace !important;font-size:10px !important;letter-spacing:.08em}
+.phase-node{fill:var(--p-paper) !important;stroke:var(--p-ink) !important;stroke-width:0.9 !important}
+.phase-node.initial{fill:var(--p-paper2) !important;stroke:var(--p-ink) !important;stroke-width:1.4 !important}
+.phase-node.end{fill:var(--p-paper3) !important;stroke:var(--p-ink) !important}
+.phase-node.unreached{stroke-dasharray:4 3 !important;opacity:.6}
+.phase-label{fill:var(--p-ink) !important;font-family:'Barlow Condensed',Impact,sans-serif !important;font-weight:700 !important;letter-spacing:.08em}
+.phase-arc{stroke:var(--p-ink) !important;stroke-width:0.9 !important}
+.phase-arc.self-loop{stroke:var(--p-ink) !important;stroke-dasharray:4 3 !important}
+.phase-arc.primary{stroke:var(--p-ink) !important;stroke-width:1.6 !important}
+.phase-arc.guarded{stroke-dasharray:5 3 !important}
+.phase-arc-label{fill:var(--p-ink) !important;font-family:'IBM Plex Mono',monospace !important;stroke:var(--p-paper) !important}
+.phase-arc-label-bg{fill:var(--p-paper) !important}
+.phase-self-badge{fill:var(--p-ink) !important}
+.phase-self-badge-label{fill:var(--p-paper) !important;font-family:'IBM Plex Mono',monospace !important}
+.phase-arc-leader{stroke:var(--p-ink2) !important;stroke-dasharray:3 2 !important;opacity:.7}
+#empty-state{color:var(--p-ink2) !important;font-family:'Barlow Condensed',Impact,sans-serif !important;letter-spacing:.3em !important;text-transform:uppercase !important;font-size:14px !important}
+</style>
 <body>
 <header>
   <h1>cxc trace viewer</h1>
@@ -666,10 +798,10 @@ function renderGraph() {
   // made 7px-stroke edges look like harpoons.
   defs.innerHTML = `
     <marker id="arrowhead" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto" markerUnits="userSpaceOnUse">
-      <path d="M0,1 L8,4.5 L0,8 z" fill="rgba(74,144,217,0.85)"></path>
+      <path d="M0,1 L8,4.5 L0,8 z" fill="#22160A"></path>
     </marker>
     <marker id="arrowhead-self" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="userSpaceOnUse">
-      <path d="M0,1 L7,4 L0,7 z" fill="rgba(217,154,74,0.9)"></path>
+      <path d="M0,1 L7,4 L0,7 z" fill="#22160A"></path>
     </marker>
   `;
   svg.appendChild(defs);
@@ -942,10 +1074,10 @@ function renderPhaseGraph(atom) {
   const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
   defs.innerHTML = `
     <marker id="phase-arrow" markerWidth="12" markerHeight="12" refX="11" refY="6" orient="auto" markerUnits="userSpaceOnUse">
-      <path d="M0,1 L11,6 L0,11 z" fill="#444"></path>
+      <path d="M0,1 L11,6 L0,11 z" fill="#22160A"></path>
     </marker>
     <marker id="phase-arrow-primary" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="userSpaceOnUse">
-      <path d="M0,1 L9,5 L0,9 z" fill="#2a6ea8"></path>
+      <path d="M0,1 L9,5 L0,9 z" fill="#22160A"></path>
     </marker>`;
   svg.appendChild(defs);
 
@@ -1965,13 +2097,13 @@ async function renderShape() {
   const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
   defs.innerHTML = `
     <marker id="shape-arrow" markerWidth="12" markerHeight="12" refX="11" refY="6" orient="auto" markerUnits="userSpaceOnUse">
-      <path d="M0,1 L11,6 L0,11 z" fill="#333"></path>
+      <path d="M0,1 L11,6 L0,11 z" fill="#22160A"></path>
     </marker>
     <marker id="shape-arrow-start" markerWidth="12" markerHeight="12" refX="11" refY="6" orient="auto-start-reverse" markerUnits="userSpaceOnUse">
-      <path d="M0,1 L11,6 L0,11 z" fill="#333"></path>
+      <path d="M0,1 L11,6 L0,11 z" fill="#22160A"></path>
     </marker>
     <marker id="shape-arrow-self" markerWidth="11" markerHeight="11" refX="10" refY="5.5" orient="auto" markerUnits="userSpaceOnUse">
-      <path d="M0,1 L10,5.5 L0,10 z" fill="#c47a20"></path>
+      <path d="M0,1 L10,5.5 L0,10 z" fill="#22160A"></path>
     </marker>
   `;
   svg.appendChild(defs);
