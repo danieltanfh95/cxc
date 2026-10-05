@@ -3936,12 +3936,33 @@
     ;; the non-deprecated form and gives a size assertion at runtime.
     ;; Downstream `.field` reads on the user-name resolve as C struct
     ;; member access.
+    ;;
+    ;; 2026-10-05 — Linux cloud port (chapter 32 follow-up). Copying the
+    ;; NSValue bytes straight into a strong-typed struct local bypasses
+    ;; ARC's retain on the record's object fields, yet ARC still releases
+    ;; them when the local goes out of scope. Every for_each / filter /
+    ;; sort_by lambda call over a record element therefore over-released
+    ;; its NSString fields (the chapter-16 `.at` bug on the lambda path).
+    ;; macOS tolerates it in practice, GNUstep frees the string and the
+    ;; heap corrupts. Under `linux?` copy the bytes into an untyped,
+    ;; suitably aligned buffer first, then copy-initialize the typed
+    ;; local from it. Copy-initialization from an lvalue of a non-trivial
+    ;; ARC struct retains every strong field (nested records included),
+    ;; so the scope-end release balances. macOS emit is unchanged.
     (and (map? element-type-kw) (:record element-type-kw))
     (let [c-ty (->c-safe (:record element-type-kw))]
-      [{:node :raw-c
-        :text (str c-ty " " user-name "; "
-                   "[(NSValue *)" raw-name " getValue:&" user-name
-                   " size:sizeof(" c-ty ")];")}])
+      (if (linux?)
+        (let [buf (str "__cxc_raw_" user-name)]
+          [{:node :raw-c
+            :text (str "_Alignas(" c-ty ") unsigned char " buf
+                       "[sizeof(" c-ty ")]; "
+                       "[(NSValue *)" raw-name " getValue:" buf
+                       " size:sizeof(" c-ty ")]; "
+                       c-ty " " user-name " = *(" c-ty " *)(void *)" buf ";")}])
+        [{:node :raw-c
+          :text (str c-ty " " user-name "; "
+                     "[(NSValue *)" raw-name " getValue:&" user-name
+                     " size:sizeof(" c-ty ")];")}]))
 
     :else
     ;; id-typed pass-through: just alias user-name to raw

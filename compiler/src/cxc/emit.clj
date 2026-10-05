@@ -242,9 +242,22 @@
         :reference
         (str "({ __typeof__(" left-c ") __cxc_coal = (" left-c "); "
              "(__cxc_coal != nil) ? __cxc_coal : (" right-c "); })")
+        ;; 2026-10-05 — Linux cloud port (chapter 32 follow-up). Clang 18
+        ;; on Linux miscompiles a member read straight off a statement
+        ;; expression whose result is a conditional (or compound literal)
+        ;; of a struct with ARC strong fields, so the inline record read
+        ;; `(xs.at(k) ?? R(...)).f` returned nil for a String field on
+        ;; both arms. Binding the conditional to a named local and
+        ;; yielding that local reads correctly. Gated so macOS emit is
+        ;; byte-identical.
         :optional
-        (str "({ __typeof__(" left-c ") __cxc_coal = (" left-c "); "
-             "(__cxc_coal.present) ? __cxc_coal.value : (" right-c "); })")
+        (if (linux?)
+          (str "({ __typeof__(" left-c ") __cxc_coal = (" left-c "); "
+               "__typeof__(__cxc_coal.value) __cxc_coal_r = "
+               "(__cxc_coal.present) ? __cxc_coal.value : (" right-c "); "
+               "__cxc_coal_r; })")
+          (str "({ __typeof__(" left-c ") __cxc_coal = (" left-c "); "
+               "(__cxc_coal.present) ? __cxc_coal.value : (" right-c "); })"))
         :identity
         left-c
         ;; 2026-09-04 Gap 5 — sentinel primitive `??`. Use the
