@@ -12,21 +12,37 @@
 #   3. build-protocol-env with observable->method-entry and its two
 #      default-value validators, then program-scan/sync-send-edges, then
 #      build-enum-env.
+#   4. (chapter 34) build-atom-env, the include-main? decision,
+#      expand-phase-swallow-arms, the wildcard and concrete duplicate-arm
+#      checks, the handler-shape split, the use-cap atom-type check, the
+#      F41 field and ctor-param merge with its three duplicate checks,
+#      fields-from-data-section with cxc-type->c and the invariant picker,
+#      both default validators on the ctor params and the handler params,
+#      ctor-params-normalized, the F8 and on_nil checks, and the message,
+#      companion, stream, subscription, and slot indices. Then the
+#      CxcStream seed and the prelude tree-shake (reachable-prelude-atoms).
 #
-# None of these reads `:resolves-to`, so the stream needs no reference
-# rows. build-atom-env, the first builder that takes the module map,
-# is chapter 34.
+# cxc-type->c reads `:resolves-to` through resolve-decl-lookup, so the
+# stream comes with reference rows. A user file's rows are slice 37's
+# refs mode on its slice-38 output, the prelude's are slice 38's prefs
+# mode, and a ref with no module falls back to what lower's
+# ensure-references-enriched adds (the prelude module, or `main` for a
+# name declared before any module marker).
 #
 # argv.
 #
-#   <check> <stream> <index>
+#   <check> <stream> <index> <refs>
 #       <check> is `lower` (every check lower makes, the `def main` check
 #       included) or `envs` (no `def main` check, so a library file still
 #       prints its environments). <stream> is a file holding
 #       `(stream <node>*)`, the nodes in the slice-36 format with slice
 #       38's rewrites and `(module <name>)` for a module marker, or an
 #       `error|...` text, which passes through. <index> is the slice-37
-#       prelude index, `<name>|<module>` lines.
+#       prelude index, `<name>|<module>` lines. The stream holds a
+#       `(piece)` marker ahead of each user file. <refs> holds
+#       `(piece <n>)` lines, 0 for the prelude and n for the n-th user
+#       file, each followed by that piece's slice-37 or slice-38 refs
+#       rows. Only `(ref type ...)` rows are read.
 #
 # Output. The sections in lower's order, each a count row and its rows.
 # When a step throws, the sections before it and then `error|<message>`.
@@ -45,6 +61,23 @@
 #       (enum <name> tagged|plain (cases <c>*) (case-index (<c> <i>)*)
 #             (entries <enum-case>*) (payload-index (<c> <params>)*)
 #             (raw-values <v>+)|nil <raw-type>|nil)
+#   (atom-env <n>)        one row per atom, sorted.
+#       (atom <name> (fields <f>*) (ctor-params <c>*) (methods <m>*)
+#             (observables <name>*) (invariants <prop>*)
+#             (transitions <transition>*) (message-index (<msg> (payload <field>*))*)
+#             (companion-index (<msg>_failed <msg> (reasons <r>*))*)
+#             (use-caps (<name> <type-name>)*) (stream-index (<name> (keys <k>*))*)
+#             (stream-order <name>*) (subscriptions (<field> <msg>+)*)
+#             (slot-names <name>*) (on-nil (<method> <expr>)*) (extras <item>*)
+#             (class-fns <item>*) <queue>|nil)
+#       <f> = (f <name> <cxc-ty> bang|plain opt|raw "<scalar-c>" "<c-type>"
+#               <default>|nil <type> [(map <k> <v>)] [weak|unowned] [(picked <lo> <hi>)])
+#       <c> = (c <name> <cxc-ty> bang|plain "<c-type>" <default>|nil <type> [(map <k> <v>)])
+#       <m> = (method <name> (params (self <atom>) <p>*) (block <stmt>*))
+#       <r> = (typed <Type>) | violation
+#   (tree-shake <n>)      (keep <name>) per atom-env key after the CxcStream
+#                         seed and the tree-shake, sorted, CxcStream as
+#                         (keep CxcStream runtime-provided).
 #
 # Every map is printed sorted by key, and a later declaration of a name
 # replaces an earlier one, as `assoc` and `into {}` do. Params, types,
@@ -55,8 +88,19 @@
 # nodes, inner loops walk items, params, fields, and cases by arena
 # index, and maps with last-wins keys are `\n<key>\t<value>\n` tables.
 # One selection sort serves every section and returns to the phase that
-# asked through `sort_ret`. Record reads go through parametric
-# observations and nothing sorts records (chapter 32 Linux notes).
+# asked through `sort_ret`. Chapter 33 read records through parametric
+# observations and sorted none (the chapter 32 Linux notes). Compiler
+# commit 40bfd77 retired the need and the code keeps its shape.
+#
+# build-atom-env (chapter 34) keeps each transition as a tab-separated
+# row, `R` for a body arm with its guard, handler-shape, companion
+# reasons, payload renderings, method params, and handler block computed
+# in one scan, `S` for a synthesized swallow arm with its rendering. The
+# merged ctor params and fields are text rows, every check is a loop
+# over them, and the five sorted indices of one atom share one tagged
+# sort. The default-value check is one scan subroutine (`kg`) that the
+# ctor params, the handler params, and on_nil all enter and leave
+# through `kret`.
 #
 # Scope notes. The duplicate-signature message names the first repeated
 # signature in declaration order, which is Clojure's `frequencies` order
@@ -69,6 +113,24 @@
 # carries. The `|>` cycle warning goes to stderr in Clojure and is not
 # ported. The non-protocol `class` check is unreachable (the parser only
 # builds protocol classes).
+#
+# Chapter 34 scope notes. Clojure picks the first duplicate (wildcard
+# arm, concrete arm, ctor param, field, on_nil entry) in `group-by` or
+# `frequencies` order, which is first-seen order up to eight distinct
+# keys, and the port uses first-seen order. The F8 field and observable
+# collision walks a hash set, the port takes the first field, which
+# agrees whenever one name collides. The swallow expansion walks its
+# message map in first-seen order (exact up to eight messages). Stream
+# emits are taken in rendering order, which is postwalk order unless an
+# untargeted emit nests inside another's args. canonical-named-tuple-name
+# is ported for flat shapes of up to four `T` or `T!` type-ref fields,
+# the rest is `port: out of scope`. The tree-shake reads a name at the
+# first child of the node kinds that carry `:name`, in a lambda's params,
+# and after `TR:` in a type, not a named-tuple field name inside a type.
+# The handler duplicate message is unreachable (two unguarded wildcard
+# arms fail the wildcard check first, all-guarded ones become
+# transitions), and so is the handler and method name collision (atoms
+# have no `methods:` section).
 
 def SNode:
     pre:    Int!
@@ -182,6 +244,136 @@ def main:
     pi_txt:   String! = ""
     etab:     String! = "\n"
     enames:   List of String = []
+    ectab:    String! = "\n"
+    ec_v:     String! = ","
+    # build-atom-env (chapter 34). Resolution inputs.
+    reftab:   String! = "\n"
+    rp_k:     String! = "0"
+    rgc:      Int!    = 0
+    rsrc:     String! = ""
+    dmain:    String! = "\n"
+    pc_cur:   Int!    = 0
+    primtab:  String! = "\nInt\tint64_t\nInt8\tint8_t\nInt16\tint16_t\nInt32\tint32_t\nInt64\tint64_t\nUInt8\tuint8_t\nUInt16\tuint16_t\nUInt32\tuint32_t\nUInt64\tuint64_t\nFloat\tfloat\nDouble\tdouble\nString\tNSString *\nBool\tint\nUnit\tvoid\nNever\tvoid\nAny\tid\nBytes\tNSMutableData *\nBlock\tvoid (^)(void)\nByte\tuint8_t\nSizeT\tsize_t\nSsizeT\tssize_t\nCString\tconst char *\n"
+    # The include-main? decision.
+    a_resume: String! = "prep"
+    atset:    String! = "\n"
+    recset:   String! = "\n"
+    othset:   String! = "\n"
+    oth_any:  Bool!   = false
+    main_i:   Int!    = -1
+    m_flag:   Bool!   = false
+    mj:       Int!    = 0
+    mjend:    Int!    = 0
+    # One atom.
+    an:       String! = ""
+    a_main:   Bool!   = false
+    dsec:     Int!    = -1
+    usec:     Int!    = -1
+    onil:     Int!    = -1
+    obs_t:    String! = ""
+    obs_set:  String! = "\n"
+    inv_t:    String! = ""
+    cf_t:     String! = ""
+    ex_t:     String! = ""
+    props:    List of String = []
+    txl:      List of String = []
+    swl:      List of String = []
+    mpn:      List of String = []
+    mptab:    String! = "\n"
+    cov:      String! = "\n"
+    bi:       Int!    = 0
+    bend:     Int!    = 0
+    b_g:      Bool!   = false
+    b_u:      Bool!   = false
+    b_bare:   Bool!   = false
+    b_rs:     String! = ""
+    b_blk:    String! = ""
+    pj:       Int!    = 0
+    pjend:    Int!    = 0
+    p_typed:  Bool!   = false
+    p_pr:     String! = ""
+    p_sig:    String! = ""
+    p_syn:    String! = ""
+    p_par:    String! = ""
+    mk:       Int!    = 0
+    s1:       String! = "\n"
+    s2:       String! = "\n"
+    s3:       String! = "\n"
+    skeys:    String! = ""
+    sctab:    String! = "\n"
+    a_err:    String! = ""
+    tl:       List of String = []
+    hl:       List of String = []
+    cmn:      String! = "\n"
+    mgh:      String! = "\n"
+    efn:      String! = "\n"
+    mc_own:   String! = ""
+    mc_f41:   String! = ""
+    mc_cap:   String! = ""
+    mf_f41:   String! = ""
+    mf_raw:   String! = ""
+    mf_cap:   String! = ""
+    mc_t:     String! = ""
+    mf_t:     String! = ""
+    fl:       String! = ""
+    bnd:      String! = "\n"
+    bk:       Int!    = 0
+    ft_t:     String! = ""
+    ct_t:     String! = ""
+    a_arb:    String! = ""
+    a_req:    String! = ""
+    a_def:    String! = ""
+    a_seen:   Bool!   = false
+    kj:       Int!    = 0
+    kjend:    Int!    = 0
+    kbad:     Bool!   = false
+    kenv:     Bool!   = false
+    kret:     String! = ""
+    kname:    String! = ""
+    kfail:    String! = ""
+    kfkw:     String! = ""
+    hk:       Int!    = 0
+    hnames:   String! = "\n"
+    m_t:      String! = ""
+    mtab:     String! = "\n"
+    c_key:    String! = ""
+    c_of:     String! = ""
+    c_rs:     String! = ""
+    c_tok:    String! = ""
+    ckeys:    List of String = []
+    ctab3:    String! = "\n"
+    expass:   Int!    = 1
+    ex:       Int!    = 0
+    exend:    Int!    = 0
+    ea:       Int!    = 0
+    eaend:    Int!    = 0
+    e_pos:    Bool!   = false
+    e_keys:   String! = ""
+    stab:     String! = "\n"
+    so_t:     String! = ""
+    sbtab:    String! = "\n"
+    sbkeys:   List of String = []
+    sn_t:     String! = ""
+    asorted:  String! = ""
+    mi_t:     String! = ""
+    ci_t:     String! = ""
+    si_t:     String! = ""
+    sb_t:     String! = ""
+    on_t:     String! = ""
+    aetab:    String! = "\n"
+    aenames:  List of String = []
+    tx_t:     String! = ""
+    # The CxcStream seed and the prelude tree-shake.
+    reached:  String! = "\n"
+    wq:       List of String = []
+    wk:       Int!    = 0
+    pltab:     String! = "\n"
+    sj:       Int!    = 0
+    sjend:    Int!    = 0
+    s_ex:     Bool!   = false
+    tmode:    Int!    = 1
+    tcur:     String! = ""
+    uc_t:     String! = ""
 
     # Reader observations.
     r_end    :- rp >= src.length()
@@ -271,6 +463,48 @@ def main:
     shape_txt :- (("\n(plugin-shapes " + sh_n.to_string()) + ")") + (sh_rows + (("\n(runtime-shape " + (||: nd_first == "" : "dispatch-main" ||: else : nd_first)) + ")"))
     m_conflict :- ("conflicting `runtime_shape` declarations across plugins: " + nd_items) + (". At most one non-default runtime_shape " + "is allowed per program; each shape owns the main thread differently and they can not coexist. See design/runtime-shape.md.")
 
+    # canonical-named-tuple-name for a flat shape of up to four fields
+    # whose types are `T` or `T!` over a type ref, in any order. Anything
+    # else is a port-only `port: out of scope`.
+    nt_body(t: String!) :- String!
+        t.substring(4, (t.length() - 5).max(0))
+    nt_one(x: String!) :- String!
+        ||: x.index_of(",") < 0 : x ||: else : x.substring(0, x.index_of(",").max(0))
+    nt_cut(x: String!) :- String!
+        ||: x.index_of(",") < 0 : "" ||: else : self.cut(x, x.index_of(",") + 1)
+    nt_it(t: String!, k: Int!) :- String!
+        ||: k == 0 : self.nt_one(self.nt_body(t)) ||: k == 1 : self.nt_one(self.nt_cut(self.nt_body(t))) ||: k == 2 : self.nt_one(self.nt_cut(self.nt_cut(self.nt_body(t)))) ||: else : self.nt_one(self.nt_cut(self.nt_cut(self.nt_cut(self.nt_body(t)))))
+    nt_n(t: String!) :- Int!
+        ||: self.nt_body(t) == "" : 0 ||: self.nt_cut(self.nt_body(t)) == "" : 1 ||: self.nt_cut(self.nt_cut(self.nt_body(t))) == "" : 2 ||: self.nt_cut(self.nt_cut(self.nt_cut(self.nt_body(t)))) == "" : 3 ||: else : 4
+    nt_more(t: String!) :- Bool!
+        self.nt_cut(self.nt_cut(self.nt_cut(self.nt_cut(self.nt_body(t))))) != ""
+    nt_fnm(it: String!) :- String!
+        it.substring(0, it.index_of(":").max(0))
+    nt_fty(it: String!) :- String!
+        self.cut(it, it.index_of(":") + 1)
+    nt_resv(x: String!) :- Bool!
+        x.starts_with("Nn_") or x.starts_with("_Cxc_NT") or (x.starts_with("Nt") and (x.code_at(2) >= 48 and x.code_at(2) <= 57)) or (x.starts_with("Of") and (x.code_at(2) >= 48 and x.code_at(2) <= 57))
+    nt_mty(y: String!) :- String!
+        ||: y.starts_with("TR:") and not y.contains("(") : self.cut(y, 3) ||: y.starts_with("TN(TR:") and y.ends_with(")") and not self.cut(y, 6).contains("(") : "Nn_" + y.substring(6, (y.length() - 7).max(0)) ||: else : ""
+    nt_ok(it: String!) :- Bool!
+        it.contains(":") and self.nt_fnm(it) != "" and not self.nt_fnm(it).contains("_") and not self.nt_fnm(it).starts_with("Nn") and self.nt_mty(self.nt_fty(it)) != ""
+    nt_tok(it: String!) :- Bool!
+        self.nt_ok(it) and not self.nt_resv(self.cut(self.nt_mty(self.nt_fty(it)), ||: self.nt_mty(self.nt_fty(it)).starts_with("Nn_") : 3 ||: else : 0))
+    nt_lt(t: String!, j: Int!, i: Int!) :- Int!
+        ||: j < self.nt_n(t) and j != i and self.nt_fnm(self.nt_it(t, j)).compare_to(self.nt_fnm(self.nt_it(t, i))) < 0 : 1 ||: else : 0
+    nt_rank(t: String!, i: Int!) :- Int!
+        (self.nt_lt(t, 0, i) + self.nt_lt(t, 1, i)) + (self.nt_lt(t, 2, i) + self.nt_lt(t, 3, i))
+    nt_at_rank(t: String!, r: Int!) :- String!
+        ||: self.nt_rank(t, 0) == r : self.nt_it(t, 0) ||: self.nt_rank(t, 1) == r : self.nt_it(t, 1) ||: self.nt_rank(t, 2) == r : self.nt_it(t, 2) ||: else : self.nt_it(t, 3)
+    nt_part(it: String!) :- String!
+        (self.nt_fnm(it) + "_") + self.nt_mty(self.nt_fty(it))
+    nt_all_ok(t: String!) :- Bool!
+        (self.nt_n(t) < 1 or self.nt_tok(self.nt_it(t, 0))) and (self.nt_n(t) < 2 or self.nt_tok(self.nt_it(t, 1))) and (self.nt_n(t) < 3 or self.nt_tok(self.nt_it(t, 2))) and (self.nt_n(t) < 4 or self.nt_tok(self.nt_it(t, 3)))
+    nt_parts(t: String!) :- String!
+        ((self.nt_part(self.nt_at_rank(t, 0)) + (||: self.nt_n(t) > 1 : "_" + self.nt_part(self.nt_at_rank(t, 1)) ||: else : "")) + ((||: self.nt_n(t) > 2 : "_" + self.nt_part(self.nt_at_rank(t, 2)) ||: else : "") + (||: self.nt_n(t) > 3 : "_" + self.nt_part(self.nt_at_rank(t, 3)) ||: else : "")))
+    nt_name(t: String!) :- String!
+        ||: self.nt_n(t) == 0 or self.nt_more(t) or not self.nt_all_ok(t) : "!err:port: out of scope" ||: else : "_Cxc_NT_" + self.nt_parts(t)
+
     # base-type-name, unrolled to depth four. An error comes back as
     # `!err:<message>` anywhere in the result.
     nyi(s: String!) :- String!
@@ -294,7 +528,7 @@ def main:
     map_v(t: String!) :- String!
         self.cut(self.wr_inner(self.to_inner(t)), self.wr_inner(self.to_inner(t)).index_of(",") + 4)
     bt_err(t: String!) :- String!
-        ||: t == "nil" : self.nyi("base-type-name: unknown type-node ") ||: t.starts_with("TT(") : self.nyi("base-type-name: unknown type-node :type-tuple") ||: t.starts_with("TF(") : self.nyi("base-type-name: unknown type-node :foreign-fn-type") ||: t.starts_with("TO:") and not self.known_outer(t) : self.nyi(("base-type-name: `" + self.to_outer(t)) + " of ...` — only `List of T`, `Map of (K, V)`, `Set of T`, and `Ptr of T` (FFI) supported") ||: else : "!err:port: out of scope"
+        ||: t == "nil" : self.nyi("base-type-name: unknown type-node ") ||: t.starts_with("TT(") : self.nyi("base-type-name: unknown type-node :type-tuple") ||: t.starts_with("TF(") : self.nyi("base-type-name: unknown type-node :foreign-fn-type") ||: t.starts_with("TO:") and not self.known_outer(t) : self.nyi(("base-type-name: `" + self.to_outer(t)) + " of ...` — only `List of T`, `Map of (K, V)`, `Set of T`, and `Ptr of T` (FFI) supported") ||: t.starts_with("TNT(") : self.nt_name(t) ||: else : "!err:port: out of scope"
     bt0(t: String!) :- String!
         ||: t.starts_with("TR:") : t.substring(3, t.length() - 3) ||: else : self.bt_err(t)
     bt1(t: String!) :- String!
@@ -361,6 +595,404 @@ def main:
     c_raw  :- self.sx_next(ci + 3) < self.sx_end(ci)
     e_row  :- ((("(enum " + enm) + (" " + (||: tagged : "tagged" ||: else : "plain"))) + ((" (cases" + cases_t) + (") (case-index" + ci_txt))) + (((") (entries" + ents_t) + (") (payload-index" + pi_txt)) + ((") " + (||: ert == "nil" : "nil" ||: else : ("(raw-values" + raw_t) + ")")) + ((" " + ert) + ")")))
 
+    # build-atom-env (chapter 34).
+    #
+    # Resolution. A type ref's `:resolves-to` is its refs row for the
+    # current piece (slice 38 prefs rows for the prelude, slice 37 refs
+    # rows per user file), else what lower's ensure-references-enriched
+    # adds, the prelude module or `main` for a name declared under main.
+    # decl-lookup hits when that module lists the name in the module map
+    # and the env holds it.
+    rrow(x: String!) :- String!
+        self.look(reftab, (pc_cur.to_string() + ":") + x)
+    res(x: String!) :- String!
+        ||: self.rrow(x) != "" and self.rrow(x) != "nil" : self.rrow(x) ||: self.plook(x) != "" : self.plook(x) ||: dmain.contains(("\n" + x) + "\n") : "main" ||: else : ""
+    home(x: String!) :- String!
+        ||: self.plook(x) != "" : self.plook(x) ||: else : self.look(atab, x)
+    hitm(x: String!) :- Bool!
+        self.res(x) != "" and self.res(x) == self.home(x)
+    in_set(st: String!, x: String!) :- Bool!
+        st.contains(("\n" + x) + "\n")
+    hit_atom(x: String!) :- Bool!
+        self.in_set(atset, x) and self.hitm(x)
+    hit_rec(x: String!) :- Bool!
+        self.in_set(recset, x) and self.hitm(x)
+    hit_enum(x: String!) :- Bool!
+        self.has_key(etab, x) and self.hitm(x)
+    mangle(m: String!, x: String!) :- String!
+        ||: m.starts_with("std.") : "_Cxc_" + x ||: m == "main" : x ||: else : (m.replace(".", "_") + "_") + x
+    csafe(x: String!) :- String!
+        ||: self.has_key(atab, x) : self.mangle(self.look(atab, x), x) ||: else : x
+    prim(x: String!) :- String!
+        self.look(primtab, x)
+    pre_atom(x: String!) :- Bool!
+        "\nClock\nRandom\nTestKeyboardInput\nConsole\nSystemPanic\nPlugin\nOsPrimitive\nFileSystem\nSubprocess\nEnvVars\nEnvMut\nArgs\nJson\nHttp\nTime\nHash\n".contains(("\n" + x) + "\n")
+
+    # cxc-type->c. An error is `!err:<message>`.
+    tkw(t: String!) :- String!
+        ||: t.starts_with("TR:") : ":type-ref" ||: t.starts_with("TNT(") : ":type-named-tuple" ||: t.starts_with("TN(") : ":type-nonnil" ||: t.starts_with("TQ(") : ":type-nullable" ||: t.starts_with("TO:") : ":type-of" ||: t.starts_with("TT(") : ":type-tuple" ||: t.starts_with("TF(") : ":foreign-fn-type" ||: else : ""
+    ct_bang(x: String!) :- String!
+        ||: self.hit_atom(x) : self.csafe(x) + " *" ||: x == "String" : "NSString *" ||: self.prim(x) != "" : self.prim(x) ||: else : self.csafe(x)
+    ct_ref(x: String!) :- String!
+        ||: self.prim(x) != "" : self.prim(x) ||: self.hit_rec(x) : self.csafe(x) ||: self.hit_atom(x) : self.csafe(x) + " *" ||: self.hit_enum(x) : self.csafe(x) ||: x == "SystemPanic" : self.csafe(x) + " *" ||: else : self.nyi("type " + x)
+    q_nm(t: String!) :- String!
+        ||: t.starts_with("TR:") : self.cut(t, 3) ||: t.starts_with("TO:") : self.to_outer(t) + " of ..." ||: t.starts_with("TT(") : "(...)" ||: t.starts_with("TNT(") : "(name: T, ...)" ||: else : ("<" + self.cut(self.tkw(t), 1)) + ">"
+    m_qban(n: String!) :- String!
+        "!err:" + ((("`" + n) + ("?` — the `?` suffix is banned universally " + "(spec §3.6.1 unified rule 2026-08-20). Fix: use bare `")) + ((n + "` for the nullable form (nil-allowed by default) or `") + (n + "!` for the non-nil contract.")))
+    ct_tn(t: String!) :- String!
+        ||: self.wr_inner(t).starts_with("TR:") : self.ct_bang(self.cut(self.wr_inner(t), 3)) ||: else : self.nyi("cxc-type->c: `!` on unknown inner " + self.tkw(self.wr_inner(t)))
+    ct_coll(t: String!) :- String!
+        ||: self.bt3(t).contains("!err:") : self.bt3(t) ||: else : self.bt3(t) + " *"
+    is_coll(t: String!) :- Bool!
+        self.is_to(t, "List") or self.is_to(t, "Map") or self.is_to(t, "Set")
+    ct0(t: String!) :- String!
+        ||: t.starts_with("TQ(") : self.m_qban(self.q_nm(self.wr_inner(t))) ||: t.starts_with("TN(") : self.ct_tn(t) ||: t.starts_with("TR:") : self.ct_ref(self.cut(t, 3)) ||: t.starts_with("TNT(") : self.nt_name(t) ||: self.is_to(t, "Ptr") : "!err:port: out of scope" ||: self.is_coll(t) : self.ct_coll(t) ||: t.starts_with("TO:") : self.nyi(("cxc-type->c: `" + self.to_outer(t)) + " of ...` unsupported") ||: else : self.nyi("cxc-type->c: unknown type-node " + self.tkw(t))
+    ct_ptr(u: String!) :- String!
+        ||: self.ct0(u).contains("!err:") : self.ct0(u) ||: else : self.ct0(u) + " *"
+    ctype(t: String!) :- String!
+        ||: self.is_to(t, "Ptr") : self.ct_ptr(self.to_inner(t)) ||: else : self.ct0(t)
+    # base-type-name of a payload or param type, `T?:` and `nil` both nil.
+    btn(t: String!) :- String!
+        ||: t == "T?:" : self.bt3("nil") ||: else : self.bt3(t)
+    err_of(r: String!) :- String!
+        self.bt_msg(r)
+
+    # Tab-separated rows. A regular transition is
+    # `R i guarded handler reasons pprint psig synsrc params block`, a
+    # synthesized swallow arm `S phase msg target rendering pprint psig`.
+    rt1(r: String!) :- String!
+        self.f_rest(r)
+    rt2(r: String!) :- String!
+        self.f_rest(self.rt1(r))
+    rt3(r: String!) :- String!
+        self.f_rest(self.rt2(r))
+    rt4(r: String!) :- String!
+        self.f_rest(self.rt3(r))
+    rt5(r: String!) :- String!
+        self.f_rest(self.rt4(r))
+    rt6(r: String!) :- String!
+        self.f_rest(self.rt5(r))
+    rt7(r: String!) :- String!
+        self.f_rest(self.rt6(r))
+    rt8(r: String!) :- String!
+        self.f_rest(self.rt7(r))
+    rt9(r: String!) :- String!
+        self.f_rest(self.rt8(r))
+    rf1(r: String!) :- String!
+        self.f_first(self.rt1(r))
+    rf2(r: String!) :- String!
+        self.f_first(self.rt2(r))
+    rf3(r: String!) :- String!
+        self.f_first(self.rt3(r))
+    rf4(r: String!) :- String!
+        self.f_first(self.rt4(r))
+    rf5(r: String!) :- String!
+        self.f_first(self.rt5(r))
+    rf6(r: String!) :- String!
+        self.f_first(self.rt6(r))
+    rf7(r: String!) :- String!
+        self.f_first(self.rt7(r))
+    rf8(r: String!) :- String!
+        self.f_first(self.rt8(r))
+    rf9(r: String!) :- String!
+        self.f_first(self.rt9(r))
+
+    # Transition renderings. `(transition <line> <source> <recv> <target> <body>*)`.
+    t_rcv(i: Int!) :- Int!
+        self.sx_next(i + 3)
+    t_tgt(i: Int!) :- Int!
+        self.sx_next(self.t_rcv(i))
+    t_body(i: Int!) :- Int!
+        self.sx_next(self.t_tgt(i))
+    t_srck(i: Int!) :- String!
+        ||: self.sx(i + 3).kind == 0 : "phase" ||: self.sx_text(i + 3) == "*" : "wildcard" ||: else : self.sx_text(i + 3)
+    t_phase(i: Int!) :- String!
+        ||: self.sx(i + 3).kind == 0 : self.sx_text(i + 5) ||: else : ""
+    t_glyph(i: Int!) :- String!
+        ||: self.sx(self.t_rcv(i)).kind == 0 : self.sx_text(self.t_rcv(i) + 2) ||: else : ""
+    t_m(i: Int!) :- Int!
+        self.t_rcv(i) + 3
+    m_kind(m: Int!) :- String!
+        ||: self.sx(m).kind == 1 : "star" ||: self.sx_head(m) == "typed" : "typed" ||: self.sx_head(m + 2) == "ident" : "ident" ||: self.sx_head(m + 2) == "dot" : "dot" ||: else : "other"
+    m_name(m: Int!) :- String!
+        ||: self.m_kind(m) == "typed" : self.sx_text(m + 2) ||: self.m_kind(m) == "ident" : self.sx_text(m + 4) ||: else : ""
+    t_kind(i: Int!) :- String!
+        ||: self.t_glyph(i) == "" : "none" ||: else : self.m_kind(self.t_m(i))
+    t_name(i: Int!) :- String!
+        ||: self.t_glyph(i) == "" : "" ||: else : self.m_name(self.t_m(i))
+    is_syn(r: String!) :- Bool!
+        r.starts_with("S\t")
+    r_i(r: String!) :- Int!
+        ||: self.is_syn(r) : -1 ||: else : self.rf1(r).to_int_or(-1)
+    r_srck(r: String!) :- String!
+        ||: self.is_syn(r) : "phase" ||: else : self.t_srck(self.r_i(r))
+    r_phase(r: String!) :- String!
+        ||: self.is_syn(r) : self.rf1(r) ||: else : self.t_phase(self.r_i(r))
+    r_glyph(r: String!) :- String!
+        ||: self.is_syn(r) : "<:" ||: else : self.t_glyph(self.r_i(r))
+    r_kind(r: String!) :- String!
+        ||: self.is_syn(r) : "ident" ||: else : self.t_kind(self.r_i(r))
+    r_name(r: String!) :- String!
+        ||: self.is_syn(r) : self.rf2(r) ||: else : self.t_name(self.r_i(r))
+    r_guard(r: String!) :- Bool!
+        not self.is_syn(r) and self.rf2(r) == "1"
+    r_hand(r: String!) :- Bool!
+        not self.is_syn(r) and self.rf3(r) == "1"
+    r_text(r: String!) :- String!
+        ||: self.is_syn(r) : self.rf4(r) ||: else : self.sx_text(self.r_i(r))
+    r_reasons(r: String!) :- String!
+        ||: self.is_syn(r) : "" ||: else : self.rf4(r)
+    r_ident(r: String!) :- Bool!
+        self.r_kind(r) == "ident" or self.r_kind(r) == "typed"
+    r_msgtx(r: String!) :- Bool!
+        (self.r_glyph(r) == "<:" or self.r_glyph(r) == "<|") and self.r_ident(r)
+    txl_at(i: Int!) :- String!
+        txl.at(i) ?? ""
+    tl_at(i: Int!) :- String!
+        tl.at(i) ?? ""
+    hl_at(i: Int!) :- String!
+        hl.at(i) ?? ""
+    mrf :- ||: k < tl.count() : self.tl_at(k) ||: else : self.hl_at(k - tl.count())
+    m_ex :- self.look(mtab, self.r_name(mrf))
+    m_bad :- ||: m_ex.starts_with("!err:") : self.cut(m_ex, 5) ||: self.rf6(mrf).starts_with("!err:") : self.cut(self.rf6(mrf), 5) ||: m_ex != self.rf6(mrf) : self.m_shape(self.r_name(mrf), m_ex, self.rf6(mrf)) ||: else : ""
+    s_emit(j: Int!) :- Bool!
+        self.sx_head(j) == "emit" and self.sx(j + 3).kind == 1 and self.sx_text(j + 3) == "nil"
+    u_slot(ln: String!) :- Bool!
+        self.rf4(ln) == "own" and self.rf3(ln) == "" and self.err_of(self.bt3(self.rf1(ln))) == "" and self.in_set(atset, self.bt3(self.rf1(ln)))
+
+    # Body scan of one transition.
+    has_as(p: Int!) :- Bool!
+        self.sx_next(p + 2) < self.sx_end(p) and self.sx_head(self.sx_next(p + 2)) == "as"
+    as_typed(p: Int!) :- Bool!
+        self.has_as(p) and self.sx_text(self.sx_next(p + 2) + 2).starts_with("TR:")
+    as_tok(p: Int!) :- String!
+        (" (typed " + self.cut(self.sx_text(self.sx_next(p + 2) + 2), 3)) + ")"
+    stmts_in(c: Int!) :- String!
+        self.sx_text(self.sx_next(c + 2)).substring(6, (self.sx_text(self.sx_next(c + 2)).length() - 7).max(0))
+    is_extra_a(h: String!) :- Bool!
+        h != "data" and h != "uses" and h != "obs" and h != "transition"
+    is_extra(h: String!) :- Bool!
+        self.is_extra_a(h) and h != "prop" and h != "on-nil" and h != "class-fn" and h != "field"
+    # A payload field. Typed params are `(field n T d ...)`, a src payload
+    # field is `(field n T [bare])`.
+    pf_t(q: Int!) :- String!
+        self.sx_text(q + 3)
+    tnil(t: String!) :- String!
+        ||: t == "T?:" : "nil" ||: else : t
+    pl_pr(q: Int!) :- String!
+        ||: p_typed : (" (field " + self.sx_text(q + 2)) + ((" " + self.pf_t(q)) + " nil)") ||: else : ((" (field " + self.sx_text(q + 2)) + (" " + self.tnil(self.pf_t(q)))) + ((" nil" + (||: self.sx(q).size == 5 : " bare" ||: else : "")) + ")")
+    syn_item(q: Int!) :- String!
+        ||: p_typed : ((" (field " + self.sx_text(q + 2)) + " ") + ((||: self.pf_t(q) == "nil" : "T?:" ||: else : self.pf_t(q)) + ")") ||: else : " " + self.sx_text(q)
+    sig_item(q: Int!) :- String!
+        ((" [\"" + self.sx_text(q + 2)) + "\" \"") + (self.btn(self.pf_t(q)) + "\"]")
+    t_handler(i: Int!) :- Bool!
+        self.t_srck(i) == "wildcard" and self.sx_text(self.t_tgt(i)) == "self" and self.t_glyph(i) == "<:" and self.t_kind(i) == "typed" and not b_u
+    t_ref :- (((("R\t" + ii.to_string()) + "\t") + ((||: b_g : "1" ||: else : "0") + "\t")) + (((||: self.t_handler(ii) : "1" ||: else : "0") + "\t") + ((b_rs + (||: b_bare : " violation" ||: else : "")) + "\t"))) + (((p_pr + "\t") + (p_sig + "\t")) + (((("(src (ident " + self.t_name(ii)) + ")") + (p_syn + ")\t")) + ((p_par + "\t") + b_blk)))
+    t_idmsg :- self.t_glyph(ii) == "<:" and (self.t_kind(ii) == "ident" or self.t_kind(ii) == "typed")
+    sw_at(k: Int!) :- Int!
+        (swl.at(k) ?? "-1").to_int_or(-1)
+    syn_ref(sw: Int!, m: String!) :- String!
+        ((((("S\t" + self.t_phase(sw)) + "\t") + ((m + "\t") + (self.sx_text(self.t_tgt(sw)) + "\t"))) + (((("(transition " + self.sx_text(sw + 2)) + (" (phase " + self.t_phase(sw))) + (") (recv <: " + self.f_first(self.look(mptab, m)))) + ((") " + self.sx_text(self.t_tgt(sw))) + ")\t")))) + self.f_rest(self.look(mptab, m))
+
+    # The include-main? scan over main's subtree.
+    mj_par :- self.sx(mj).parent
+    mj_fld(j: Int!) :- Bool!
+        self.sx_head(j) == "field" and self.sx_head(self.sx(j).parent) == "data" and self.sx(self.sx(j).parent).parent == main_i
+    mj_fty(t: String!) :- Bool!
+        t.starts_with("TO:") or t == "TR:Block" or (t.starts_with("TR:") and (self.in_set(othset, self.cut(t, 3)) or self.pre_atom(self.cut(t, 3))))
+    mj_txn :- self.sx_head(mj) == "transition" and (self.t_glyph(mj) == "<:" or self.t_glyph(mj) == "<|")
+    mj_top :- mj_par == main_i and (self.sx_head(mj) == "uses" or mj_txn)
+    mj_hit :- (self.mj_fld(mj) and self.mj_fty(self.sx_text(mj + 3))) or mj_top
+
+    # Duplicate scans keep `s1` (seen), `s2` (seen twice), `s3` (a third
+    # set), and `skeys`, the keys in first-seen order.
+    sk_add(x: String!) :- String!
+        ||: self.in_set(s1, x) : skeys ||: else : (skeys + x) + "\n"
+    s2_add(x: String!) :- String!
+        ||: self.in_set(s1, x) and not self.in_set(s2, x) : (s2 + x) + "\n" ||: else : s2
+    vec_q(x: String!) :- String!
+        ("\"" + x) + "\""
+
+    # Merged ctor rows `name T default flag didx`, field rows
+    # `name T default mod flag`.
+    fd_mod(f: Int!) :- String!
+        ||: self.sx_next(f + 4) < self.sx_end(f) and (self.sx_text(self.sx_next(f + 4)) == "weak" or self.sx_text(self.sx_next(f + 4)) == "unowned") : self.sx_text(self.sx_next(f + 4)) ||: else : ""
+    fd_cont(t: String!) :- Bool!
+        self.is_to(t, "List") or self.is_to(t, "Map") or self.is_to(t, "Set")
+    ld_head(h: String!) :- Bool!
+        h == "int" or h == "float" or h == "string" or h == "bool" or h == "nil"
+    lit_dflt(f: Int!) :- Bool!
+        self.sx(f + 4).kind == 0 and self.ld_head(self.sx_head(f + 4))
+    f41_elig(f: Int!) :- Bool!
+        not a_main and self.sx_text(f + 4) == "nil" and not self.fd_cont(self.sx_text(f + 3))
+    f41_lit(f: Int!) :- Bool!
+        not a_main and self.lit_dflt(f)
+    fld_row(f: Int!, d: String!, fl2: String!) :- String!
+        ((self.sx_text(f + 2) + "\t") + (self.sx_text(f + 3) + "\t")) + (((d + "\t") + (self.fd_mod(f) + "\t")) + (fl2 + "\n"))
+    ctor_row(f: Int!, d: String!, fl2: String!, di: Int!) :- String!
+        ((self.sx_text(f + 2) + "\t") + (self.sx_text(f + 3) + "\t")) + (((d + "\t") + (fl2 + "\t")) + (di.to_string() + "\n"))
+    rawf_row(f: Int!) :- String!
+        ((self.sx_text(f + 2) + "\t") + (self.sx_text(f + 3) + "\t")) + (self.id_of(f) + "\t\tf41\n")
+    id_of(f: Int!) :- String!
+        ("(ident " + self.sx_text(f + 2)) + ")"
+
+    # The current merged line `fl`.
+    l_n   :- self.f_first(fl)
+    l_t   :- self.rf1(fl)
+    l_d   :- self.rf2(fl)
+    l_mod :- self.rf3(fl)
+    l_flg :- self.rf4(fl)
+    l_cflg :- self.rf3(fl)
+    l_di  :- self.rf4(fl).to_int_or(-1)
+    l_bt  :- self.bt3(l_t)
+    l_ct  :- self.ctype(l_t)
+    m_mod :- "lowering not yet implemented: F13 L1: `" + ((l_mod + " ") + (self.bt3(l_t) + ("` on field `" + l_n)))
+    l_moderr :- ||: l_mod == "" : "" ||: self.err_of(l_bt) != "" : self.err_of(l_bt) ||: self.in_set(recset, l_bt) : (m_mod + "` — reference modifiers apply to reference ") + (("types (atoms, `String`); `" + l_bt) + "` is a record (value type, §3.2). Drop the modifier (spec §6.14).") ||: self.has_key(etab, l_bt) : (m_mod + "` — reference modifiers apply to reference ") + (("types (atoms, `String`); `" + l_bt) + "` is an enum (value type, §3.2). Drop the modifier (spec §6.14).") ||: not self.in_set(atset, l_bt) and l_bt != "String" and l_bt != "_Cxc_String" : (m_mod + "` — `") + ((l_bt + "` is not a known reference type ") + "(atom or `String`). Reference modifiers only apply to reference types (spec §6.14).") ||: else : ""
+    l_ferr :- ||: l_moderr != "" : l_moderr ||: self.err_of(l_bt) != "" : self.err_of(l_bt) ||: else : self.err_of(l_ct)
+    l_cerr :- ||: self.err_of(l_bt) != "" : self.err_of(l_bt) ||: else : self.err_of(l_ct)
+    l_vt1 :- not l_ct.ends_with("*") and l_ct != "id" and not l_ct.contains("^")
+    l_vt2 :- l_bt != "Block" and l_bt != "String" and l_bt != "Bytes" and l_bt != "Any"
+    l_vt3 :- self.prim(l_bt) != "" or self.in_set(recset, l_bt) or self.has_key(etab, l_bt)
+    l_bang :- l_t.starts_with("TN(")
+    l_opt :- l_vt1 and l_vt2 and l_vt3 and not l_bang
+    l_map :- ||: l_t.starts_with("TO:Map(TT(") : ((" (map " + self.map_k(l_t)) + " ") + (self.map_v(l_t) + ")") ||: else : ""
+    # The invariant picker.
+    l_lo :- self.f_first(self.look(bnd, l_n))
+    l_hi :- self.f_rest(self.look(bnd, l_n))
+    l_pick :- ||: l_bt != "Int" or l_lo == "" or l_hi == "" : "" ||: else : self.pick(l_lo.to_int_or(0), l_hi.to_int_or(0))
+    pick(lo: Int!, hi: Int!) :- String!
+        ||: lo > hi : "" ||: lo >= 0 and hi <= 255 : "UInt8" ||: lo >= -128 and hi <= 127 : "Int8" ||: lo >= 0 and hi <= 65535 : "UInt16" ||: lo >= -32768 and hi <= 32767 : "Int16" ||: lo >= 0 and hi <= 4294967295 : "UInt32" ||: lo >= -2147483648 and hi <= 2147483647 : "Int32" ||: else : ""
+    l_cty  :- ||: l_pick == "" : l_bt ||: else : l_pick
+    l_sc   :- ||: l_pick == "" : l_ct ||: else : self.prim(l_pick)
+    l_ctyp :- ||: l_opt : "_Cxc_Optional_" + (||: l_cty == "Int" : "Int64" ||: else : l_cty) ||: else : l_sc
+    l_pk   :- ||: l_pick == "" : "" ||: else : ((" (picked " + l_lo) + " ") + (l_hi + ")")
+    l_frow :- ((("(f " + l_n) + (" " + l_cty)) + ((||: l_bang : " bang" ||: else : " plain") + (||: l_opt : " opt \"" ||: else : " raw \""))) + (((l_sc + "\" \"") + (l_ctyp + "\" ")) + ((l_d + " ") + (((l_t + l_map) + ((||: l_mod == "" : "" ||: else : " " + l_mod) + l_pk)) + ")")))
+    l_crow :- ((("(c " + l_n) + (" " + l_bt)) + ((||: l_bang : " bang \"" ||: else : " plain \"") + (l_ct + "\" "))) + ((l_d + " ") + ((l_t + l_map) + ")"))
+    # Bounds from one comparison binop `b`.
+    b_ic(n: Int!) :- Bool!
+        self.sx_head(n) == "int" or (self.sx_head(n) == "neg" and self.sx_head(n + 2) == "int")
+    b_iv(n: Int!) :- Int!
+        ||: self.sx_head(n) == "int" : self.sx_text(n + 2).to_int_or(0) ||: else : 0 - self.sx_text(n + 4).to_int_or(0)
+    b_cmp(b: Int!) :- Bool!
+        self.sx_head(b) == "binop" and (self.sx_text(b + 2) == "<=" or self.sx_text(b + 2) == "<" or self.sx_text(b + 2) == ">=" or self.sx_text(b + 2) == ">")
+    b_r(b: Int!) :- Int!
+        self.sx_next(b + 3)
+    b_one(b: Int!) :- Bool!
+        self.b_ic(b + 3) and self.sx_head(self.b_r(b)) == "ident"
+    b_two(b: Int!) :- Bool!
+        not self.b_one(b) and self.b_ic(self.b_r(b)) and self.sx_head(b + 3) == "ident"
+    b_nm(b: Int!) :- String!
+        ||: self.b_one(b) : self.sx_text(self.b_r(b) + 2) ||: else : self.sx_text(b + 5)
+    b_v(b: Int!) :- Int!
+        ||: self.b_one(b) : self.b_iv(b + 3) ||: else : self.b_iv(self.b_r(b))
+    # Is the note a low bound, and its value.
+    b_lo(b: Int!) :- Bool!
+        ||: self.b_one(b) : self.sx_text(b + 2) == "<=" or self.sx_text(b + 2) == "<" ||: else : self.sx_text(b + 2) == ">=" or self.sx_text(b + 2) == ">"
+    b_adj(b: Int!) :- Int!
+        ||: self.sx_text(b + 2) == "<" and self.b_one(b) : self.b_v(b) + 1 ||: self.sx_text(b + 2) == ">" and self.b_one(b) : self.b_v(b) - 1 ||: self.sx_text(b + 2) == "<" : self.b_v(b) - 1 ||: self.sx_text(b + 2) == ">" : self.b_v(b) + 1 ||: else : self.b_v(b)
+    b_new(b: Int!) :- String!
+        ||: self.b_lo(b) : (self.b_maxs(self.f_first(self.look(bnd, self.b_nm(b))), self.b_adj(b)) + "\t") + self.f_rest(self.look(bnd, self.b_nm(b))) ||: else : (self.f_first(self.look(bnd, self.b_nm(b))) + "\t") + self.b_mins(self.f_rest(self.look(bnd, self.b_nm(b))), self.b_adj(b))
+    b_maxs(c: String!, v: Int!) :- String!
+        ||: c == "" : v.to_string() ||: c.to_int_or(0) >= v : c ||: else : v.to_string()
+    b_mins(c: String!, v: Int!) :- String!
+        ||: c == "" : v.to_string() ||: c.to_int_or(0) <= v : c ||: else : v.to_string()
+
+    # Const shape. `kenv` adds the atom-ctor call and enum-case forms.
+    ec_has(e: String!, c: String!) :- Bool!
+        self.has_key(ectab, e) and self.look(ectab, e).contains(("," + c) + "=")
+    ec_pay(e: String!, c: String!) :- Bool!
+        self.look(ectab, e).contains(("," + c) + "=1,")
+    k_head :- self.sx_head(kj)
+    k_dotc(d: Int!) :- Bool!
+        self.sx_head(d) == "dot" and self.sx_head(d + 2) == "ident"
+    k_callok :- kenv and ((self.sx_head(kj + 2) == "ident" and self.in_set(atset, self.sx_text(kj + 4))) or (self.k_dotc(kj + 2) and self.ec_has(self.sx_text(kj + 6), self.sx_text(self.sx_next(kj + 4))) and self.ec_pay(self.sx_text(kj + 6), self.sx_text(self.sx_next(kj + 4)))))
+    k_dotok :- kenv and self.k_dotc(kj) and self.ec_has(self.sx_text(kj + 4), self.sx_text(self.sx_next(kj + 2))) and not self.ec_pay(self.sx_text(kj + 4), self.sx_text(self.sx_next(kj + 2)))
+    k_plain :- self.ok_head(k_head) or k_head == "pos" or k_head == "named"
+    k_ok :- self.sx(kj).kind != 0 or k_plain or (k_head == "call" and k_callok) or (k_head == "dot" and k_dotok)
+    # Where the scan goes after an accepted node.
+    k_next :- ||: self.sx(kj).kind == 0 and k_head == "call" : self.sx_next(kj + 2) ||: self.sx(kj).kind == 0 and k_head == "dot" : self.sx_next(kj) ||: else : kj + 1
+    m_kconst(site: String!) :- String!
+        ((("default for `" + kfail) + ("` on " + site)) + (" is not a compile-time constant (spec §3.8.5 " + "permits primitive literals, `nil`, unary `-`/`not` on those, a value-alias identifier, or a bare enum-case access `Enum.case`); ")) + (("got `" + kfkw) + "` node")
+    m_kafter(site: String!) :- String!
+        ((("required param `" + a_arb) + "` follows a defaulted ") + (("param on " + site) + " — spec §3.8.5 requires defaulted params to come last. ")) + ((("Reorder: put all required params (" + a_req) + ") FIRST, then defaulted params (") + (a_def + ")."))
+    a_site :- ("def-atom `" + an) + "` ctor-params"
+    h_site(m: String!) :- String!
+        (("handler `" + an) + ".-> ") + (m + "`")
+    req_add(n: String!) :- String!
+        ||: a_req == "" : ("`" + n) + "`" ||: else : ((a_req + ", `") + n) + "`"
+    def_add(n: String!) :- String!
+        ||: a_def == "" : ("`" + n) + "`" ||: else : ((a_def + ", `") + n) + "`"
+
+    # Messages.
+    m_wdup(m: String!) :- String!
+        ((("atom `" + an) + "` declares two wildcard-source ") + (("arms `* <: " + m) + " ... -> ...` on the same ")) + ("message and at least one arm has no `|:` " + "guard, so the guarded arm can never fire. Add a guard to every wildcard arm on this message, or fold the unguarded arm's body into an `else` guard.")
+    m_cdup(k: String!) :- String!
+        ((("atom `" + an) + ("` declares " + self.look(sctab, k))) + ((" unguarded arms on `" + k.replace("|", " <: ")) + "`, so arms after the first are dead code. ")) + "Add a `|: <guard>` to all but at most one, or merge the bodies into one arm."
+    m_cap(n: String!, t: String!) :- String!
+        (("lowering not yet implemented: use: `" + n) + ("` requires an atom type; got `" + t)) + ("` (Layer 3.1 only " + "supports capability atom types in use: for now)")
+    m_vec :- ("[" + self.cut(a_err, 1)) + "]"
+    m_cdupn :- (("duplicate ctor-param names on def-atom `" + an) + "` (likely collision between use: and explicit ") + ("ctor-params): " + m_vec)
+    m_fdupn :- (("duplicate field names on def-atom `" + an) + "` (collision between data:/use:): ") + m_vec
+    is_res(x: String!) :- Bool!
+        x == "phase" or x == "own_queue" or x == "parent" or x == "parent_slot_name" or x == "cxc_owned_resources"
+    m_resv(x: String!) :- String!
+        ((("field name `" + x) + ("` on def-atom `" + an)) + ("` collides with a reserved atom-runtime property. " + "Reserved names: cxc_owned_resources, own_queue, parent, parent_slot_name, phase. ")) + ((("Rename the field (e.g. `" + x) + "_v` or a domain-specific name like") + " `stage` for `phase`).")
+    m_hdup(m: String!) :- String!
+        (("atom `" + an) + ("` declares handler `-> " + m)) + ("(...):` more than once " + "(spec §1265: each handler name unique per atom).")
+    m_f8(c: String!) :- String!
+        (("lowering not yet implemented: F8 L3a: observable `" + c) + ("` on atom `" + an)) + ("` collides with a data field of the " + "same name. The field would win at `.` dispatch and the observable would be dead code. Rename one or move the derivation to `computed:` under a different name.")
+    m_ondup(m: String!) :- String!
+        (("atom `" + an) + ("` declares `on_nil:` entry " + "`")) + ((m + "` more than once — each ") + "method name appears at most once per section (spec §4.10.9).")
+    m_onunk(m: String!) :- String!
+        ((("atom `" + an) + ("` declares `on_nil:` entry for `" + m)) + ("` but the atom has no method " + "or observable by that name. Add the declaration, drop the entry, or fix a typo. ")) + (("(Protocol-inherited entries via `extend " + an) + "(P):` are validated by a follow-on pass; this L8 MVP checks only own-surface names.) See spec §4.10.9.")
+    m_onc(m: String!) :- String!
+        (("lowering not yet implemented: on_nil entry `" + m) + ("` on atom `" + an)) + (("` — value must be a compile-time constant (spec §3.8.5 permits primitive literals, `nil`, unary `-`/`not` on those); got `" + kfkw) + "` node.")
+    m_shape(m: String!, a: String!, b: String!) :- String!
+        ((("lowering not yet implemented: def-atom `" + an) + ("` has two transitions on message `" + m)) + (("` with different payload shapes: [" + self.cut(a, 1)) + ("] vs [" + self.cut(b, 1)))) + ("]; cxc source that reads " + "the same must map to the same ObjC selector")
+    m_sync(m: String!) :- String!
+        ("lowering not yet implemented: sync stream emit `|> " + m) + "` — Layer 4 streams are async-only (design §18 chose Option A: async fan-out)"
+    m_spos(m: String!) :- String!
+        (("lowering not yet implemented: positional arg on stream emit `:> " + m) + ("` — Layer 4 requires `:> " + m)) + "(key: value)` named form so payload shape matches subscriber receive pattern"
+    m_sdup(m: String!, a: String!, b: String!) :- String!
+        ((("lowering not yet implemented: def-atom `" + an) + ("` emits stream `" + m)) + (("` twice with different payload shapes: [" + self.cut(a, 1)) + ("] vs [" + self.cut(b, 1)))) + ("]; every emit of a stream must carry the same " + "keys so subscribers can bind a single receive shape")
+
+    # The atom row.
+    a_row :- (((("(atom " + an) + (" (fields" + ft_t)) + ((") (ctor-params" + ct_t) + (") (methods" + m_t))) + (((") (observables" + obs_t) + (") (invariants" + inv_t)) + ((") (transitions" + tx_t) + (") (message-index" + mi_t)))) + (((((") (companion-index" + ci_t) + (") (use-caps" + uc_t)) + ((") (stream-index" + si_t) + (") (stream-order" + so_t))) + (((") (subscriptions" + sb_t) + (") (slot-names" + sn_t)) + ((") (on-nil" + on_t) + (") (extras" + ex_t)))) + ((") (class-fns" + cf_t) + (") " + (self.sx_text(self.sx_next(ti + 3)) + ")"))))
+
+    # The tree-shake. names-mentioned-in counts every `:name` that is a
+    # prelude atom name. A name sits at the first child of a node whose
+    # head is one of these, in a lambda's param list, or after `TR:`
+    # inside a type atom.
+    nm_h1(h: String!) :- Bool!
+        h == "ident" or h == "field" or h == "obs" or h == "obs-sig" or h == "recv-sig"
+    nm_h2(h: String!) :- Bool!
+        h == "use" or h == "class-fn" or h == "named" or h == "name" or h == "typed"
+    nm_h3(h: String!) :- Bool!
+        h == "let" or h == "alias" or h == "bind" or h == "case" or h == "agent"
+    nm_h4(h: String!) :- Bool!
+        h == "record" or h == "enum" or h == "enum-case" or h == "protocol" or h == "module"
+    nm_head(h: String!) :- Bool!
+        self.nm_h1(h) or self.nm_h2(h) or self.nm_h3(h) or self.nm_h4(h) or h == "type-bound"
+    j_par(j: Int!) :- Int!
+        self.sx(j).parent
+    nm_pos(j: Int!) :- Bool!
+        j == self.j_par(j) + 2 and self.nm_head(self.sx_head(self.j_par(j))) and not (self.sx_head(self.j_par(j)) == "named" and self.sx_head(self.j_par(self.j_par(j))) == "as")
+    nm_lam(j: Int!) :- Bool!
+        self.sx_head(self.j_par(self.j_par(j))) == "lambda" and self.j_par(j) == self.j_par(self.j_par(j)) + 2
+    ts_nm(j: Int!) :- String!
+        ||: self.sx(j).kind != 1 : "" ||: self.nm_pos(j) or self.nm_lam(j) : self.sx_text(j) ||: else : ""
+    ts_new(x: String!) :- Bool!
+        x != "" and self.pre_atom(x) and not self.in_set(reached, x)
+    ts_top :- tmode == 1 and self.sx(sj).parent == 0
+    ts_excl(i: Int!) :- Bool!
+        (self.sx_head(i) == "agent" and self.pre_atom(self.sx_text(i + 2))) or self.sx_head(i) == "plugin"
+    tr_rest :- self.cut(tcur, tcur.index_of("TR:") + 3)
+    tr_end(r: String!) :- Int!
+        ||: r.index_of(")") < 0 and r.index_of(",") < 0 : r.length() ||: r.index_of(")") < 0 : r.index_of(",") ||: r.index_of(",") < 0 : r.index_of(")") ||: else : r.index_of(")").min(r.index_of(","))
+    tr_nm :- tr_rest.substring(0, self.tr_end(tr_rest).max(0).min(tr_rest.length()))
+    ts_keep(x: String!) :- Bool!
+        not self.pre_atom(x) or self.in_set(reached, x)
+
     # Sorting.
     scan_cur :- rows.at(sort_i) ?? ""
     scan_cmp :- scan_cur.compare_to(scan_best)
@@ -392,6 +1024,12 @@ def main:
     -> enumz
         then: self :> en
 
+    -> aenv
+        then: self :> ar
+
+    -> tshake
+        then: self :> t0
+
     -> sorting
         then: self :> scan
 
@@ -408,6 +1046,7 @@ def main:
             let raw: String! = fs.read_text(args.get_or(2, ""))
             src => ||: raw.ends_with("\n") : raw.substring(0, (raw.length() - 1).max(0)) ||: else : raw
             pidx => "\n" + fs.read_text(args.get_or(3, ""))
+            rsrc => fs.read_text(args.get_or(4, ""))
             self :> chk
 
     # An error rendering passes through.
@@ -538,6 +1177,7 @@ def main:
         then:
             anames => ||: self.has_key(atab, tname) : anames ||: else : anames.append(tname)
             atab => self.put_last(atab, tname, self.pmod(tname))
+            dmain => ||: cur_mod == "main" : dmain + (tname + "\n") ||: else : dmain
             ti => self.sx_next(ti)
             self :> at
 
@@ -923,6 +1563,7 @@ def main:
             gc => 1
             ci_txt => ""
             pi_txt => ""
+            ec_v => ","
             self :> eg
 
     enumz <: en -> enumz
@@ -992,6 +1633,7 @@ def main:
             let ln: String! = self.line_at(csorted, gc)
             ci_txt => ci_txt + ((" (" + self.f_first(ln)) + ((" " + self.f_first(self.f_rest(ln))) + ")"))
             pi_txt => pi_txt + ((" (" + self.f_first(ln)) + ((" " + self.f_rest(self.f_rest(ln))) + ")"))
+            ec_v => ec_v + ((self.f_first(ln) + "=") + ((||: self.f_rest(self.f_rest(ln)) == "(params)" : "0" ||: else : "1") + ","))
             gc => gc + ln.length() + 1
             self :> eg
 
@@ -1000,6 +1642,7 @@ def main:
         then:
             enames => ||: self.has_key(etab, enm) : enames ||: else : enames.append(enm)
             etab => self.put_last(etab, enm, e_row)
+            ectab => self.put_last(ectab, enm, ec_v)
             e_pending => false
             ti => self.sx_next(ti)
             self :> en
@@ -1090,7 +1733,1249 @@ def main:
             sorted => ""
             nsorted => 0
 
-    sorting <: scan -> done
+    sorting <: scan -> aenv
         |: s_done and sort_ret == "enum"
         then:
             out => out + ((("\n(enum-env " + nsorted.to_string()) + ")") + sorted)
+            sorted => ""
+            nsorted => 0
+
+    sorting <: scan -> aenv
+        |: s_done and sort_ret == "atag"
+        then:
+            asorted => sorted
+            sorted => ""
+            nsorted => 0
+            a_resume => "atom"
+
+    sorting <: scan -> tshake
+        |: s_done and sort_ret == "atoms"
+        then:
+            out => out + ((("\n(atom-env " + nsorted.to_string()) + ")") + sorted)
+            sorted => ""
+            nsorted => 0
+
+    sorting <: scan -> done
+        |: s_done and sort_ret == "shake"
+        then:
+            out => out + ((("\n(tree-shake " + nsorted.to_string()) + ")") + sorted)
+
+    # build-atom-env (chapter 34). The refs rows first, then the
+    # include-main? scan, then one pass per atom in stream order.
+    aenv <: ar -> aenv
+        |: a_resume == "prep" and rgc < rsrc.length()
+        then:
+            let ln: String! = self.line_at(rsrc, rgc)
+            let rest: String! = self.cut(ln, 10)
+            rp_k => ||: ln.starts_with("(piece ") : ln.substring(7, (ln.length() - 8).max(0)) ||: else : rp_k
+            reftab => ||: ln.starts_with("(ref type ") : self.put_last(reftab, (rp_k + ":") + rest.substring(0, self.sp_at(rest)), self.cut(rest, self.sp_at(rest) + 1).substring(0, (rest.length() - self.sp_at(rest) - 2).max(0))) ||: else : reftab
+            rgc => rgc + ln.length() + 1
+            self :> ar
+
+    aenv <: ar -> aenv
+        |: a_resume == "prep" and rgc >= rsrc.length()
+        then:
+            ti => 2
+            self :> p0
+
+    aenv <: ar -> aenv
+        |: a_resume == "atom"
+        then:
+            gc => 1
+            mi_t => ""
+            ci_t => ""
+            si_t => ""
+            sb_t => ""
+            on_t => ""
+            self :> asm
+
+    aenv <: p0 -> aenv
+        |: ti < nn and hd == "agent"
+        then:
+            atset => atset + (tname + "\n")
+            oth_any => oth_any or (tname != "main" and not self.pre_atom(tname))
+            othset => ||: tname != "main" and not self.pre_atom(tname) : othset + (tname + "\n") ||: else : othset
+            main_i => ||: main_i < 0 and tname == "main" : ti ||: else : main_i
+            ti => self.sx_next(ti)
+            self :> p0
+
+    aenv <: p0 -> aenv
+        |: ti < nn and hd != "agent"
+        then:
+            recset => ||: hd == "record" : recset + (tname + "\n") ||: else : recset
+            ti => self.sx_next(ti)
+            self :> p0
+
+    aenv <: p0 -> aenv
+        |: ti >= nn
+        then:
+            mj => ||: main_i < 0 : 0 ||: else : main_i + 1
+            mjend => ||: main_i < 0 : 0 ||: else : self.sx_end(main_i)
+            self :> p1
+
+    aenv <: p1 -> aenv
+        |: mj < mjend
+        then:
+            m_flag => m_flag or mj_hit
+            mj => mj + 1
+            self :> p1
+
+    aenv <: p1 -> tshake
+        |: mj >= mjend and not oth_any and not m_flag
+        then:
+            out => out + "\n(atom-env 0)"
+
+    aenv <: p1 -> aenv
+        |: mj >= mjend and (oth_any or m_flag)
+        then:
+            ti => 2
+            pc_cur => 0
+            self :> a0
+
+    # One atom. Reset, then scan its items.
+    aenv <: a0 -> aenv
+        |: ti < nn and hd == "piece"
+        then:
+            pc_cur => pc_cur + 1
+            ti => self.sx_next(ti)
+            self :> a0
+
+    aenv <: a0 -> aenv
+        |: ti < nn and hd != "piece" and hd != "agent"
+        then:
+            ti => self.sx_next(ti)
+            self :> a0
+
+    aenv <: a0 -> aenv
+        |: ti < nn and hd == "agent"
+        then:
+            an => tname
+            a_main => tname == "main"
+            ii => self.sx_next(self.sx_next(ti + 3))
+            iend => self.sx_end(ti)
+            dsec => -1
+            usec => -1
+            onil => -1
+            obs_t => ""
+            obs_set => "\n"
+            inv_t => ""
+            cf_t => ""
+            ex_t => ""
+            props => props.slice(0, 0)
+            txl => txl.slice(0, 0)
+            swl => swl.slice(0, 0)
+            mpn => mpn.slice(0, 0)
+            mptab => "\n"
+            cov => "\n"
+            self :> a1
+
+    aenv <: a0 -> aenv
+        |: ti >= nn
+        then:
+            k => 0
+            self :> az
+
+    aenv <: az -> aenv
+        |: k < aenames.count()
+        then:
+            rows => rows.append(self.look(aetab, aenames.at(k) ?? ""))
+            k => k + 1
+            self :> az
+
+    aenv <: az -> sorting
+        |: k >= aenames.count()
+        then:
+            sort_ret => "atoms"
+
+    aenv <: a1 -> aenv
+        |: ii < iend and ihd == "transition"
+        then:
+            bi => self.t_body(ii)
+            bend => self.sx_end(ii)
+            b_g => false
+            b_u => false
+            b_bare => false
+            b_rs => ""
+            b_blk => ""
+            self :> ab
+
+    aenv <: a1 -> aenv
+        |: ii < iend and ihd != "transition"
+        then:
+            dsec => ||: dsec < 0 and ihd == "data" : ii ||: else : dsec
+            usec => ||: usec < 0 and ihd == "uses" : ii ||: else : usec
+            onil => ||: onil < 0 and ihd == "on-nil" : ii ||: else : onil
+            obs_t => ||: ihd == "obs" : obs_t + (" " + self.sx_text(ii + 2)) ||: else : obs_t
+            obs_set => ||: ihd == "obs" : obs_set + (self.sx_text(ii + 2) + "\n") ||: else : obs_set
+            inv_t => ||: ihd == "prop" : inv_t + (" " + self.sx_text(ii)) ||: else : inv_t
+            props => ||: ihd == "prop" : props.append((ii + 2).to_string()) ||: else : props
+            cf_t => ||: ihd == "class-fn" : cf_t + (" " + self.sx_text(ii)) ||: else : cf_t
+            ex_t => ||: self.is_extra(ihd) : ex_t + (" " + self.sx_text(ii)) ||: else : ex_t
+            ii => self.sx_next(ii)
+            self :> a1
+
+    aenv <: a1 -> aenv
+        |: ii >= iend
+        then:
+            k => 0
+            mk => 0
+            self :> a2
+
+    # The body items of transition `ii`.
+    aenv <: ab -> aenv
+        |: bi < bend
+        then:
+            let h: String! = self.sx_head(bi)
+            b_g => b_g or h == "prop"
+            b_u => b_u or (h == "then" and self.sx(bi + 2).size > 2)
+            b_bare => b_bare or (h == "prop" and not self.has_as(bi))
+            b_rs => ||: h == "prop" and self.as_typed(bi) and not b_rs.contains(self.as_tok(bi)) : b_rs + self.as_tok(bi) ||: else : b_rs
+            b_blk => ||: h == "then" : b_blk + self.stmts_in(bi) ||: else : b_blk
+            bi => self.sx_next(bi)
+            self :> ab
+
+    aenv <: ab -> aenv
+        |: bi >= bend
+        then:
+            let m: Int! = self.t_m(ii)
+            let kd: String! = self.t_kind(ii)
+            p_typed => kd == "typed"
+            pj => ||: kd == "typed" : m + 3 ||: kd == "ident" or kd == "dot" or kd == "other" : self.sx_next(m + 2) ||: else : 0
+            pjend => ||: kd == "typed" or kd == "ident" or kd == "dot" or kd == "other" : self.sx_end(m) ||: else : 0
+            p_pr => ""
+            p_sig => ""
+            p_syn => ""
+            p_par => ""
+            self :> ac
+
+    # The payload fields of transition `ii`.
+    aenv <: ac -> aenv
+        |: pj < pjend
+        then:
+            p_pr => p_pr + self.pl_pr(pj)
+            p_sig => ||: p_sig.starts_with("!err:") : p_sig ||: self.err_of(self.btn(self.pf_t(pj))) != "" : "!err:" + self.err_of(self.btn(self.pf_t(pj))) ||: else : p_sig + self.sig_item(pj)
+            p_syn => p_syn + self.syn_item(pj)
+            p_par => ||: p_typed : p_par + (" " + self.prow(pj)) ||: else : p_par
+            pj => self.sx_next(pj)
+            self :> ac
+
+    aenv <: ac -> aenv
+        |: pj >= pjend
+        then:
+            let swallow: Bool! = self.t_kind(ii) == "star"
+            let idm: Bool! = t_idmsg and not self.has_key(mptab, self.t_name(ii))
+            txl => ||: swallow : txl ||: else : txl.append(t_ref)
+            swl => ||: swallow : swl.append(ii.to_string()) ||: else : swl
+            mpn => ||: idm : mpn.append(self.t_name(ii)) ||: else : mpn
+            mptab => ||: idm : self.put_last(mptab, self.t_name(ii), (self.rf7(t_ref) + "\t") + ((self.rf5(t_ref) + "\t") + self.rf6(t_ref))) ||: else : mptab
+            cov => ||: t_idmsg and self.t_srck(ii) == "phase" : cov + ((self.t_phase(ii) + "|") + (self.t_name(ii) + "\n")) ||: else : cov
+            ii => self.sx_next(ii)
+            self :> a1
+
+    # expand-phase-swallow-arms. One arm per swallow arm and message not
+    # covered in that phase.
+    aenv <: a2 -> aenv
+        |: k < swl.count() and mk < mpn.count()
+        then:
+            let sw: Int! = self.sw_at(k)
+            let m: String! = mpn.at(mk) ?? ""
+            txl => ||: cov.contains((("\n" + self.t_phase(sw)) + "|") + (m + "\n")) : txl ||: else : txl.append(self.syn_ref(sw, m))
+            mk => mk + 1
+            self :> a2
+
+    aenv <: a2 -> aenv
+        |: k < swl.count() and mk >= mpn.count()
+        then:
+            k => k + 1
+            mk => 0
+            self :> a2
+
+    aenv <: a2 -> aenv
+        |: k >= swl.count()
+        then:
+            k => 0
+            s1 => "\n"
+            s2 => "\n"
+            s3 => "\n"
+            skeys => "\n"
+            self :> a3
+
+    # The wildcard-source duplicate check.
+    aenv <: a3 -> aenv
+        |: k < txl.count()
+        then:
+            let r: String! = self.txl_at(k)
+            let on: Bool! = self.r_srck(r) == "wildcard" and self.r_name(r) != ""
+            let x: String! = self.r_name(r)
+            skeys => ||: on : self.sk_add(x) ||: else : skeys
+            s2 => ||: on : self.s2_add(x) ||: else : s2
+            s1 => ||: on and not self.in_set(s1, x) : (s1 + x) + "\n" ||: else : s1
+            s3 => ||: on and not self.r_guard(r) and not self.in_set(s3, x) : (s3 + x) + "\n" ||: else : s3
+            k => k + 1
+            self :> a3
+
+    aenv <: a3 -> aenv
+        |: k >= txl.count()
+        then:
+            gc => 1
+            a_err => ""
+            self :> a3b
+
+    aenv <: a3b -> aenv
+        |: gc < skeys.length() and a_err == ""
+        then:
+            let x: String! = self.line_at(skeys, gc)
+            a_err => ||: self.in_set(s2, x) and self.in_set(s3, x) : x ||: else : ""
+            gc => gc + x.length() + 1
+            self :> a3b
+
+    aenv <: a3b -> done
+        |: a_err != ""
+        then:
+            out => out + ("\nerror|" + self.m_wdup(a_err))
+
+    aenv <: a3b -> aenv
+        |: gc >= skeys.length() and a_err == ""
+        then:
+            k => 0
+            skeys => "\n"
+            sctab => "\n"
+            self :> a4
+
+    # The concrete-source duplicate check, unguarded arms per phase and
+    # message.
+    aenv <: a4 -> aenv
+        |: k < txl.count()
+        then:
+            let r: String! = self.txl_at(k)
+            let on: Bool! = self.r_srck(r) == "phase" and self.r_phase(r) != "" and self.r_name(r) != ""
+            let x: String! = (self.r_phase(r) + "|") + self.r_name(r)
+            skeys => ||: on and not self.has_key(sctab, x) : (skeys + x) + "\n" ||: else : skeys
+            sctab => ||: on : self.put_last(sctab, x, (self.look(sctab, x).to_int_or(0) + (||: self.r_guard(r) : 0 ||: else : 1)).to_string()) ||: else : sctab
+            k => k + 1
+            self :> a4
+
+    aenv <: a4 -> aenv
+        |: k >= txl.count()
+        then:
+            gc => 1
+            a_err => ""
+            self :> a4b
+
+    aenv <: a4b -> aenv
+        |: gc < skeys.length() and a_err == ""
+        then:
+            let x: String! = self.line_at(skeys, gc)
+            a_err => ||: self.look(sctab, x).to_int_or(0) > 1 : x ||: else : ""
+            gc => gc + x.length() + 1
+            self :> a4b
+
+    aenv <: a4b -> done
+        |: a_err != ""
+        then:
+            out => out + ("\nerror|" + self.m_cdup(a_err))
+
+    aenv <: a4b -> aenv
+        |: gc >= skeys.length() and a_err == ""
+        then:
+            k => 0
+            cmn => "\n"
+            s1 => "\n"
+            s2 => "\n"
+            s3 => "\n"
+            self :> a5
+
+    # The handler split. Concrete message names, then handler-shape names
+    # seen twice with every arm guarded.
+    aenv <: a5 -> aenv
+        |: k < txl.count()
+        then:
+            let r: String! = self.txl_at(k)
+            let x: String! = self.r_name(r)
+            let hs: Bool! = self.r_hand(r)
+            cmn => ||: self.r_glyph(r) == "<:" and self.r_srck(r) == "phase" and self.r_ident(r) : (cmn + x) + "\n" ||: else : cmn
+            s2 => ||: hs and self.in_set(s1, x) : (s2 + x) + "\n" ||: else : s2
+            s1 => ||: hs : (s1 + x) + "\n" ||: else : s1
+            s3 => ||: hs and not self.r_guard(r) : (s3 + x) + "\n" ||: else : s3
+            k => k + 1
+            self :> a5
+
+    aenv <: a5 -> aenv
+        |: k >= txl.count()
+        then:
+            k => 0
+            tl => tl.slice(0, 0)
+            hl => hl.slice(0, 0)
+            tx_t => ""
+            self :> a5b
+
+    aenv <: a5b -> aenv
+        |: k < txl.count()
+        then:
+            let r: String! = self.txl_at(k)
+            let x: String! = self.r_name(r)
+            let ov: Bool! = self.in_set(cmn, x) or (self.in_set(s2, x) and not self.in_set(s3, x))
+            tl => ||: self.r_hand(r) and not ov : tl ||: else : tl.append(r)
+            hl => ||: self.r_hand(r) and not ov : hl.append(r) ||: else : hl
+            tx_t => ||: self.r_hand(r) and not ov : tx_t ||: else : tx_t + (" " + self.r_text(r))
+            k => k + 1
+            self :> a5b
+
+    aenv <: a5b -> aenv
+        |: k >= txl.count()
+        then:
+            ej => ||: usec < 0 : 0 ||: else : usec + 2
+            ejend => ||: usec < 0 : 0 ||: else : self.sx_end(usec)
+            uc_t => ""
+            self :> a6
+
+    # The use: cap atom-type check.
+    aenv <: a6 -> done
+        |: ej < ejend and (self.err_of(self.bt3(self.sx_text(ej + 3))) != "" or not (self.in_set(atset, self.bt3(self.sx_text(ej + 3))) or self.bt3(self.sx_text(ej + 3)) == "SystemPanic"))
+        then:
+            out => out + ("\nerror|" + (||: self.err_of(self.bt3(self.sx_text(ej + 3))) != "" : self.err_of(self.bt3(self.sx_text(ej + 3))) ||: else : self.m_cap(self.sx_text(ej + 2), self.bt3(self.sx_text(ej + 3)))))
+
+    aenv <: a6 -> aenv
+        |: ej < ejend and self.err_of(self.bt3(self.sx_text(ej + 3))) == "" and (self.in_set(atset, self.bt3(self.sx_text(ej + 3))) or self.bt3(self.sx_text(ej + 3)) == "SystemPanic")
+        then:
+            uc_t => uc_t + ((" (" + self.sx_text(ej + 2)) + ((" " + self.bt3(self.sx_text(ej + 3))) + ")"))
+            ej => self.sx_next(ej)
+            self :> a6
+
+    aenv <: a6 -> aenv
+        |: ej >= ejend
+        then:
+            ej => ||: dsec < 0 : 0 ||: else : dsec + 2
+            ejend => ||: dsec < 0 : 0 ||: else : self.sx_end(dsec)
+            efn => "\n"
+            mc_own => ""
+            mc_f41 => ""
+            mc_cap => ""
+            mf_f41 => ""
+            mf_raw => ""
+            mf_cap => ""
+            self :> a7
+
+    # The F41 transform over the data section.
+    aenv <: a7 -> aenv
+        |: ej < ejend
+        then:
+            efn => efn + (self.sx_text(ej + 2) + "\n")
+            mf_f41 => ||: self.f41_elig(ej) or self.f41_lit(ej) : mf_f41 + self.fld_row(ej, self.id_of(ej), "f41") ||: else : mf_f41 + self.fld_row(ej, self.sx_text(ej + 4), "own")
+            mc_f41 => ||: self.f41_elig(ej) : mc_f41 + self.ctor_row(ej, "nil", "f41", -1) ||: self.f41_lit(ej) : mc_f41 + self.ctor_row(ej, self.sx_text(ej + 4), "f41", -1) ||: else : mc_f41
+            ej => self.sx_next(ej)
+            self :> a7
+
+    aenv <: a7 -> aenv
+        |: ej >= ejend
+        then:
+            ej => ti + 5
+            ejend => self.sx_end(ti + 3)
+            self :> a7b
+
+    # The ctor params, mirrored to fields unless a field or an observable
+    # has the name.
+    aenv <: a7b -> aenv
+        |: ej < ejend
+        then:
+            mc_own => mc_own + self.ctor_row(ej, self.sx_text(ej + 4), "own", ej + 4)
+            mf_raw => ||: not a_main and not self.in_set(efn, self.sx_text(ej + 2)) and not self.in_set(obs_set, self.sx_text(ej + 2)) : mf_raw + self.rawf_row(ej) ||: else : mf_raw
+            ej => self.sx_next(ej)
+            self :> a7b
+
+    aenv <: a7b -> aenv
+        |: ej >= ejend
+        then:
+            ej => ||: usec < 0 : 0 ||: else : usec + 2
+            ejend => ||: usec < 0 : 0 ||: else : self.sx_end(usec)
+            self :> a7c
+
+    aenv <: a7c -> aenv
+        |: ej < ejend
+        then:
+            mc_cap => mc_cap + self.ctor_row(ej, "nil", "cap", -1)
+            mf_cap => mf_cap + ((((self.sx_text(ej + 2) + "\t") + (self.sx_text(ej + 3) + "\t")) + (self.id_of(ej) + "\t\tcap\n")))
+            ej => self.sx_next(ej)
+            self :> a7c
+
+    aenv <: a7c -> aenv
+        |: ej >= ejend
+        then:
+            mc_t => (mc_own + mc_f41) + mc_cap
+            mf_t => (mf_f41 + mf_raw) + mf_cap
+            gc => 0
+            s1 => "\n"
+            s2 => "\n"
+            skeys => "\n"
+            self :> a8
+
+    # Duplicate ctor-param names, then duplicate field names, then the
+    # reserved runtime property names.
+    aenv <: a8 -> aenv
+        |: gc < mc_t.length()
+        then:
+            let x: String! = self.f_first(self.line_at(mc_t, gc))
+            skeys => self.sk_add(x)
+            s2 => self.s2_add(x)
+            s1 => ||: self.in_set(s1, x) : s1 ||: else : (s1 + x) + "\n"
+            gc => gc + self.line_at(mc_t, gc).length() + 1
+            self :> a8
+
+    aenv <: a8 -> aenv
+        |: gc >= mc_t.length()
+        then:
+            gc => 1
+            a_err => ""
+            self :> a8b
+
+    aenv <: a8b -> aenv
+        |: gc < skeys.length()
+        then:
+            let x: String! = self.line_at(skeys, gc)
+            a_err => ||: self.in_set(s2, x) : (a_err + " ") + self.vec_q(x) ||: else : a_err
+            gc => gc + x.length() + 1
+            self :> a8b
+
+    aenv <: a8b -> done
+        |: gc >= skeys.length() and a_err != ""
+        then:
+            out => out + ("\nerror|" + m_cdupn)
+
+    aenv <: a8b -> aenv
+        |: gc >= skeys.length() and a_err == ""
+        then:
+            gc => 0
+            s1 => "\n"
+            s2 => "\n"
+            skeys => "\n"
+            self :> a8c
+
+    aenv <: a8c -> aenv
+        |: gc < mf_t.length()
+        then:
+            let x: String! = self.f_first(self.line_at(mf_t, gc))
+            skeys => self.sk_add(x)
+            s2 => self.s2_add(x)
+            s1 => ||: self.in_set(s1, x) : s1 ||: else : (s1 + x) + "\n"
+            a_err => ||: a_err == "" and self.is_res(x) : x ||: else : a_err
+            gc => gc + self.line_at(mf_t, gc).length() + 1
+            self :> a8c
+
+    aenv <: a8c -> aenv
+        |: gc >= mf_t.length()
+        then:
+            gc => 1
+            kname => a_err
+            a_err => ""
+            self :> a8d
+
+    aenv <: a8d -> aenv
+        |: gc < skeys.length()
+        then:
+            let x: String! = self.line_at(skeys, gc)
+            a_err => ||: self.in_set(s2, x) : (a_err + " ") + self.vec_q(x) ||: else : a_err
+            gc => gc + x.length() + 1
+            self :> a8d
+
+    aenv <: a8d -> done
+        |: gc >= skeys.length() and a_err != ""
+        then:
+            out => out + ("\nerror|" + m_fdupn)
+
+    aenv <: a8d -> done
+        |: gc >= skeys.length() and a_err == "" and kname != ""
+        then:
+            out => out + ("\nerror|" + self.m_resv(kname))
+
+    aenv <: a8d -> aenv
+        |: gc >= skeys.length() and a_err == "" and kname == ""
+        then:
+            k => 0
+            bnd => "\n"
+            self :> a9
+
+    # The invariant picker's bounds, one pass over each invariant's
+    # predicate.
+    aenv <: a9 -> aenv
+        |: k < props.count()
+        then:
+            bk => (props.at(k) ?? "0").to_int_or(0)
+            bend => self.sx_end((props.at(k) ?? "0").to_int_or(0))
+            k => k + 1
+            self :> a9b
+
+    aenv <: a9 -> aenv
+        |: k >= props.count()
+        then:
+            gc => 0
+            ft_t => ""
+            self :> a10
+
+    aenv <: a9b -> aenv
+        |: bk < bend
+        then:
+            bnd => ||: self.b_cmp(bk) and (self.b_one(bk) or self.b_two(bk)) : self.put_last(bnd, self.b_nm(bk), self.b_new(bk)) ||: else : bnd
+            bk => bk + 1
+            self :> a9b
+
+    aenv <: a9b -> aenv
+        |: bk >= bend
+        then: self :> a9
+
+    # fields-from-data-section and the picker, one merged field per step.
+    aenv <: a10 -> aenv
+        |: gc < mf_t.length()
+        then:
+            fl => self.line_at(mf_t, gc)
+            gc => gc + self.line_at(mf_t, gc).length() + 1
+            self :> a10b
+
+    aenv <: a10b -> done
+        |: l_ferr != ""
+        then:
+            out => out + ("\nerror|" + l_ferr)
+
+    aenv <: a10b -> aenv
+        |: l_ferr == ""
+        then:
+            ft_t => ft_t + (" " + l_frow)
+            self :> a10
+
+    aenv <: a10 -> aenv
+        |: gc >= mf_t.length()
+        then:
+            gc => 0
+            a_arb => ""
+            a_req => ""
+            a_def => ""
+            a_seen => false
+            kfail => ""
+            self :> a11
+
+    # validate-defaults-after-required! and validate-default-is-const!
+    # over the merged ctor params.
+    aenv <: a11 -> aenv
+        |: gc < mc_t.length()
+        then:
+            fl => self.line_at(mc_t, gc)
+            gc => gc + self.line_at(mc_t, gc).length() + 1
+            self :> a11b
+
+    aenv <: a11b -> aenv
+        |: true
+        then:
+            let hd2: Bool! = l_d != "nil"
+            a_arb => ||: a_arb == "" and a_seen and not hd2 : l_n ||: else : a_arb
+            a_seen => a_seen or hd2
+            a_req => ||: hd2 : a_req ||: else : self.req_add(l_n)
+            a_def => ||: hd2 : self.def_add(l_n) ||: else : a_def
+            kj => l_di
+            kjend => self.sx_end(l_di)
+            kbad => false
+            kenv => true
+            kret => "ctor"
+            kname => l_n
+            self :> kg
+
+    aenv <: a11 -> done
+        |: gc >= mc_t.length() and a_arb != ""
+        then:
+            out => out + ("\nerror|" + self.m_kafter(a_site))
+
+    aenv <: a11 -> done
+        |: gc >= mc_t.length() and a_arb == "" and kfail != ""
+        then:
+            out => out + ("\nerror|" + self.m_kconst(a_site))
+
+    aenv <: a11 -> aenv
+        |: gc >= mc_t.length() and a_arb == "" and kfail == ""
+        then:
+            gc => 0
+            ct_t => ""
+            self :> a12
+
+    # The const-shape scan, entered through `kg` with kj on the default
+    # (or -1 when there is nothing to check) and left through `kret`.
+    aenv <: kg -> aenv
+        |: kfail != "" or kj < 0 or l_cflg != "own"
+        then: self :> kd
+
+    aenv <: kg -> aenv
+        |: kfail == "" and kj >= 0 and l_cflg == "own"
+        then:
+            kfkw => self.kw(kj)
+            self :> ks
+
+    aenv <: ks -> aenv
+        |: kj < kjend and not kbad
+        then:
+            kbad => not k_ok
+            kj => ||: k_ok : k_next ||: else : kj
+            self :> ks
+
+    aenv <: ks -> aenv
+        |: kj >= kjend or kbad
+        then:
+            kfail => ||: kbad : kname ||: else : ""
+            self :> kd
+
+    aenv <: kd -> aenv
+        |: kret == "ctor"
+        then: self :> a11
+
+    aenv <: kd -> aenv
+        |: kret == "handler"
+        then: self :> h2
+
+    aenv <: kd -> aenv
+        |: kret == "onnil"
+        then: self :> o3
+
+    # ctor-params-normalized.
+    aenv <: a12 -> aenv
+        |: gc < mc_t.length()
+        then:
+            fl => self.line_at(mc_t, gc)
+            gc => gc + self.line_at(mc_t, gc).length() + 1
+            self :> a12b
+
+    aenv <: a12b -> done
+        |: l_cerr != ""
+        then:
+            out => out + ("\nerror|" + l_cerr)
+
+    aenv <: a12b -> aenv
+        |: l_cerr == ""
+        then:
+            ct_t => ct_t + (" " + l_crow)
+            self :> a12
+
+    aenv <: a12 -> aenv
+        |: gc >= mc_t.length()
+        then:
+            k => 0
+            s1 => "\n"
+            s2 => "\n"
+            skeys => "\n"
+            self :> h0
+
+    # Handler declarations. The duplicate check, then per handler its
+    # params through both validators, then the method entry.
+    aenv <: h0 -> aenv
+        |: k < hl.count()
+        then:
+            let x: String! = self.r_name(self.hl_at(k))
+            skeys => self.sk_add(x)
+            s2 => self.s2_add(x)
+            s1 => ||: self.in_set(s1, x) : s1 ||: else : (s1 + x) + "\n"
+            k => k + 1
+            self :> h0
+
+    aenv <: h0 -> aenv
+        |: k >= hl.count()
+        then:
+            gc => 1
+            a_err => ""
+            self :> h0b
+
+    aenv <: h0b -> aenv
+        |: gc < skeys.length() and a_err == ""
+        then:
+            let x: String! = self.line_at(skeys, gc)
+            a_err => ||: self.in_set(s2, x) : x ||: else : ""
+            gc => gc + x.length() + 1
+            self :> h0b
+
+    aenv <: h0b -> done
+        |: a_err != ""
+        then:
+            out => out + ("\nerror|" + self.m_hdup(a_err))
+
+    aenv <: h0b -> aenv
+        |: gc >= skeys.length() and a_err == ""
+        then:
+            hk => 0
+            hnames => "\n"
+            m_t => ""
+            self :> h1
+
+    aenv <: h1 -> aenv
+        |: hk < hl.count()
+        then:
+            pj => self.t_m(self.r_i(self.hl_at(hk))) + 3
+            pjend => self.sx_end(self.t_m(self.r_i(self.hl_at(hk))))
+            a_arb => ""
+            a_req => ""
+            a_def => ""
+            a_seen => false
+            kfail => ""
+            self :> h2
+
+    aenv <: h2 -> aenv
+        |: pj < pjend
+        then:
+            let hd2: Bool! = self.q_hasd(pj)
+            let qn: String! = self.sx_text(pj + 2)
+            a_arb => ||: a_arb == "" and a_seen and not hd2 : qn ||: else : a_arb
+            a_seen => a_seen or hd2
+            a_req => ||: hd2 : a_req ||: else : self.req_add(qn)
+            a_def => ||: hd2 : self.def_add(qn) ||: else : a_def
+            kj => ||: hd2 : pj + 4 ||: else : -1
+            kjend => self.sx_end(pj + 4)
+            kbad => false
+            kenv => false
+            kret => "handler"
+            kname => qn
+            fl => "x\tx\tx\town"
+            pj => self.sx_next(pj)
+            self :> kg
+
+    aenv <: h2 -> done
+        |: pj >= pjend and a_arb != ""
+        then:
+            out => out + ("\nerror|" + self.m_kafter(self.h_site(self.r_name(self.hl_at(hk)))))
+
+    aenv <: h2 -> done
+        |: pj >= pjend and a_arb == "" and kfail != ""
+        then:
+            out => out + ("\nerror|" + self.m_kconst(self.h_site(self.r_name(self.hl_at(hk)))))
+
+    aenv <: h2 -> aenv
+        |: pj >= pjend and a_arb == "" and kfail == ""
+        then:
+            let r: String! = self.hl_at(hk)
+            hnames => hnames + (self.r_name(r) + "\n")
+            m_t => m_t + ((((" (method " + self.r_name(r)) + " (params (self ") + ((an + ")") + self.rf8(r))) + ((") (block" + self.rf9(r)) + "))"))
+            hk => hk + 1
+            self :> h1
+
+    aenv <: h1 -> aenv
+        |: hk >= hl.count()
+        then:
+            gc => 0
+            kname => ""
+            self :> o0
+
+    # The F8 L3a field and observable collision.
+    aenv <: o0 -> aenv
+        |: gc < mf_t.length()
+        then:
+            let x: String! = self.f_first(self.line_at(mf_t, gc))
+            kname => ||: kname == "" and self.in_set(obs_set, x) : x ||: else : kname
+            gc => gc + self.line_at(mf_t, gc).length() + 1
+            self :> o0
+
+    aenv <: o0 -> done
+        |: gc >= mf_t.length() and kname != ""
+        then:
+            out => out + ("\nerror|" + self.m_f8(kname))
+
+    aenv <: o0 -> aenv
+        |: gc >= mf_t.length() and kname == ""
+        then:
+            ej => ||: onil < 0 : 0 ||: else : onil + 2
+            ejend => ||: onil < 0 : 0 ||: else : self.sx_end(onil)
+            s1 => "\n"
+            s2 => "\n"
+            skeys => "\n"
+            self :> o1
+
+    # on_nil. The duplicate check, then per entry the name and the value.
+    aenv <: o1 -> aenv
+        |: ej < ejend
+        then:
+            let x: String! = self.sx_text(ej + 1)
+            skeys => self.sk_add(x)
+            s2 => self.s2_add(x)
+            s1 => ||: self.in_set(s1, x) : s1 ||: else : (s1 + x) + "\n"
+            ej => self.sx_next(ej)
+            self :> o1
+
+    aenv <: o1 -> aenv
+        |: ej >= ejend
+        then:
+            gc => 1
+            a_err => ""
+            self :> o1b
+
+    aenv <: o1b -> aenv
+        |: gc < skeys.length() and a_err == ""
+        then:
+            let x: String! = self.line_at(skeys, gc)
+            a_err => ||: self.in_set(s2, x) : x ||: else : ""
+            gc => gc + x.length() + 1
+            self :> o1b
+
+    aenv <: o1b -> done
+        |: a_err != ""
+        then:
+            out => out + ("\nerror|" + self.m_ondup(a_err))
+
+    aenv <: o1b -> aenv
+        |: gc >= skeys.length() and a_err == ""
+        then:
+            ej => ||: onil < 0 : 0 ||: else : onil + 2
+            rows => rows.slice(0, 0)
+            self :> o2
+
+    aenv <: o2 -> done
+        |: ej < ejend and not self.in_set(hnames, self.sx_text(ej + 1)) and not self.in_set(obs_set, self.sx_text(ej + 1))
+        then:
+            out => out + ("\nerror|" + self.m_onunk(self.sx_text(ej + 1)))
+
+    aenv <: o2 -> aenv
+        |: ej < ejend and (self.in_set(hnames, self.sx_text(ej + 1)) or self.in_set(obs_set, self.sx_text(ej + 1)))
+        then:
+            kj => ej + 2
+            kjend => self.sx_end(ej + 2)
+            kbad => false
+            kenv => false
+            kfail => ""
+            kret => "onnil"
+            kname => self.sx_text(ej + 1)
+            fl => "x\tx\tx\town"
+            self :> kg
+
+    aenv <: o3 -> done
+        |: kfail != ""
+        then:
+            out => out + ("\nerror|" + self.m_onc(kfail))
+
+    aenv <: o3 -> aenv
+        |: kfail == ""
+        then:
+            rows => rows.append((("5\t(" + self.sx_text(ej + 1)) + " ") + (self.sx_text(ej + 2) + ")"))
+            ej => self.sx_next(ej)
+            self :> o2
+
+    aenv <: o2 -> aenv
+        |: ej >= ejend
+        then:
+            k => 0
+            mtab => "\n"
+            self :> m1
+
+    # collect-message-shapes over the transitions, then the handler arms.
+    aenv <: m1 -> aenv
+        |: k < tl.count() + hl.count() and not self.r_msgtx(mrf)
+        then:
+            k => k + 1
+            self :> m1
+
+    aenv <: m1 -> aenv
+        |: k < tl.count() + hl.count() and self.r_msgtx(mrf) and not self.has_key(mtab, self.r_name(mrf))
+        then:
+            mtab => self.put_last(mtab, self.r_name(mrf), self.rf6(mrf))
+            rows => rows.append((("1\t(" + self.r_name(mrf)) + " (payload") + (self.rf5(mrf) + "))"))
+            k => k + 1
+            self :> m1
+
+    aenv <: m1 -> done
+        |: k < tl.count() + hl.count() and self.r_msgtx(mrf) and self.has_key(mtab, self.r_name(mrf)) and m_bad != ""
+        then:
+            out => out + ("\nerror|" + m_bad)
+
+    aenv <: m1 -> aenv
+        |: k < tl.count() + hl.count() and self.r_msgtx(mrf) and self.has_key(mtab, self.r_name(mrf)) and m_bad == ""
+        then:
+            k => k + 1
+            self :> m1
+
+    aenv <: m1 -> aenv
+        |: k >= tl.count() + hl.count()
+        then:
+            k => 0
+            ckeys => ckeys.slice(0, 0)
+            ctab3 => "\n"
+            self :> c1
+
+    # collect-companion-shapes over the transitions, reasons merged in
+    # first-seen order.
+    aenv <: c1 -> aenv
+        |: k < tl.count() and not self.r_msgtx(self.tl_at(k))
+        then:
+            k => k + 1
+            self :> c1
+
+    aenv <: c1 -> aenv
+        |: k < tl.count() and self.r_msgtx(self.tl_at(k))
+        then:
+            let x: String! = self.r_name(self.tl_at(k)) + "_failed"
+            c_key => x
+            c_of => self.r_name(self.tl_at(k))
+            c_rs => ||: self.has_key(ctab3, x) : self.f_rest(self.look(ctab3, x)) ||: else : ""
+            c_tok => self.r_reasons(self.tl_at(k))
+            ckeys => ||: self.has_key(ctab3, x) : ckeys ||: else : ckeys.append(x)
+            self :> c2
+
+    aenv <: c2 -> aenv
+        |: c_tok != ""
+        then:
+            let t: String! = ||: c_tok.starts_with(" violation") : " violation" ||: else : c_tok.substring(0, (c_tok.index_of(")") + 1).max(0).min(c_tok.length()))
+            c_rs => ||: c_rs.contains(t) : c_rs ||: else : c_rs + t
+            c_tok => self.cut(c_tok, t.length())
+            self :> c2
+
+    aenv <: c2 -> aenv
+        |: c_tok == ""
+        then:
+            ctab3 => self.put_last(ctab3, c_key, (c_of + "\t") + c_rs)
+            k => k + 1
+            self :> c1
+
+    aenv <: c1 -> aenv
+        |: k >= tl.count()
+        then:
+            k => 0
+            self :> c3
+
+    aenv <: c3 -> aenv
+        |: k < ckeys.count()
+        then:
+            let x: String! = ckeys.at(k) ?? ""
+            rows => rows.append((("2\t(" + x) + (" " + self.f_first(self.look(ctab3, x)))) + ((" (reasons" + self.f_rest(self.look(ctab3, x))) + "))"))
+            k => k + 1
+            self :> c3
+
+    aenv <: c3 -> aenv
+        |: k >= ckeys.count()
+        then:
+            k => 0
+            expass => 1
+            stab => "\n"
+            so_t => ""
+            self :> q0
+
+    # collect-stream-shapes. Every untargeted emit inside a transition,
+    # first the sync check over all of them, then the payload keys.
+    aenv <: q0 -> aenv
+        |: k < tl.count() and self.is_syn(self.tl_at(k))
+        then:
+            k => k + 1
+            self :> q0
+
+    aenv <: q0 -> aenv
+        |: k < tl.count() and not self.is_syn(self.tl_at(k))
+        then:
+            ex => self.r_i(self.tl_at(k))
+            exend => self.sx_end(self.r_i(self.tl_at(k)))
+            k => k + 1
+            self :> q1
+
+    aenv <: q0 -> aenv
+        |: k >= tl.count() and expass == 1
+        then:
+            k => 0
+            expass => 2
+            self :> q0
+
+    aenv <: q0 -> aenv
+        |: k >= tl.count() and expass == 2
+        then:
+            k => 0
+            sbkeys => sbkeys.slice(0, 0)
+            sbtab => "\n"
+            self :> u1
+
+    aenv <: q1 -> done
+        |: ex < exend and self.s_emit(ex) and expass == 1 and self.sx_text(ex + 2) == "sync"
+        then:
+            out => out + ("\nerror|" + self.m_sync(self.sx_text(ex + 4)))
+
+    aenv <: q1 -> aenv
+        |: ex < exend and self.s_emit(ex) and expass == 2
+        then:
+            ea => ex + 5
+            eaend => self.sx_end(ex)
+            e_pos => false
+            e_keys => ""
+            self :> q2
+
+    aenv <: q1 -> aenv
+        |: ex < exend and not (self.s_emit(ex) and (expass == 2 or self.sx_text(ex + 2) == "sync"))
+        then:
+            ex => ex + 1
+            self :> q1
+
+    aenv <: q1 -> aenv
+        |: ex >= exend
+        then: self :> q0
+
+    aenv <: q2 -> aenv
+        |: ea < eaend
+        then:
+            e_pos => e_pos or self.sx_head(ea) == "pos"
+            e_keys => ||: self.sx_head(ea) == "named" : e_keys + (" " + self.vec_q(self.sx_text(ea + 2))) ||: else : e_keys
+            ea => self.sx_next(ea)
+            self :> q2
+
+    aenv <: q2 -> done
+        |: ea >= eaend and e_pos
+        then:
+            out => out + ("\nerror|" + self.m_spos(self.sx_text(ex + 4)))
+
+    aenv <: q2 -> done
+        |: ea >= eaend and not e_pos and self.has_key(stab, self.sx_text(ex + 4)) and self.look(stab, self.sx_text(ex + 4)) != e_keys
+        then:
+            out => out + ("\nerror|" + self.m_sdup(self.sx_text(ex + 4), self.look(stab, self.sx_text(ex + 4)), e_keys))
+
+    aenv <: q2 -> aenv
+        |: ea >= eaend and not e_pos and not (self.has_key(stab, self.sx_text(ex + 4)) and self.look(stab, self.sx_text(ex + 4)) != e_keys)
+        then:
+            rows => ||: self.has_key(stab, self.sx_text(ex + 4)) : rows ||: else : rows.append((("3\t(" + self.sx_text(ex + 4)) + " (keys") + (e_keys.replace("\"", "") + "))"))
+            so_t => ||: self.has_key(stab, self.sx_text(ex + 4)) : so_t ||: else : so_t + (" " + self.sx_text(ex + 4))
+            stab => self.put_first(stab, self.sx_text(ex + 4), e_keys)
+            ex => ex + 1
+            self :> q1
+
+    # The subscription map, then the owned slot names.
+    aenv <: u1 -> aenv
+        |: k < tl.count()
+        then:
+            let r: String! = self.tl_at(k)
+            let on: Bool! = not self.is_syn(r) and self.r_glyph(r) == "<:" and self.r_kind(r) == "dot" and self.sx_head(self.t_m(self.r_i(r)) + 4) == "ident"
+            let f: String! = self.sx_text(self.t_m(self.r_i(r)) + 6)
+            let m: String! = self.sx_text(self.sx_next(self.t_m(self.r_i(r)) + 4))
+            sbkeys => ||: on and not self.has_key(sbtab, f) : sbkeys.append(f) ||: else : sbkeys
+            sbtab => ||: on and not (self.look(sbtab, f) + " ").contains((" " + m) + " ") : self.put_last(sbtab, f, (self.look(sbtab, f) + " ") + m) ||: else : sbtab
+            k => k + 1
+            self :> u1
+
+    aenv <: u1 -> aenv
+        |: k >= tl.count()
+        then:
+            k => 0
+            self :> u1b
+
+    aenv <: u1b -> aenv
+        |: k < sbkeys.count()
+        then:
+            rows => rows.append(("4\t(" + (sbkeys.at(k) ?? "")) + (self.look(sbtab, sbkeys.at(k) ?? "") + ")"))
+            k => k + 1
+            self :> u1b
+
+    aenv <: u1b -> aenv
+        |: k >= sbkeys.count()
+        then:
+            gc => 0
+            sn_t => ""
+            self :> u2
+
+    aenv <: u2 -> aenv
+        |: gc < mf_t.length()
+        then:
+            fl => self.line_at(mf_t, gc)
+            sn_t => ||: self.u_slot(self.line_at(mf_t, gc)) : sn_t + (" " + self.f_first(self.line_at(mf_t, gc))) ||: else : sn_t
+            gc => gc + self.line_at(mf_t, gc).length() + 1
+            self :> u2
+
+    aenv <: u2 -> sorting
+        |: gc >= mf_t.length()
+        then:
+            sort_ret => "atag"
+
+    # Back from the tagged sort. Split the sections, then the row.
+    aenv <: asm -> aenv
+        |: gc < asorted.length()
+        then:
+            let ln: String! = self.line_at(asorted, gc)
+            let v: String! = " " + self.cut(ln, 2)
+            mi_t => ||: ln.starts_with("1") : mi_t + v ||: else : mi_t
+            ci_t => ||: ln.starts_with("2") : ci_t + v ||: else : ci_t
+            si_t => ||: ln.starts_with("3") : si_t + v ||: else : si_t
+            sb_t => ||: ln.starts_with("4") : sb_t + v ||: else : sb_t
+            on_t => ||: ln.starts_with("5") : on_t + v ||: else : on_t
+            gc => gc + ln.length() + 1
+            self :> asm
+
+    aenv <: asm -> aenv
+        |: gc >= asorted.length()
+        then:
+            aenames => ||: self.has_key(aetab, an) : aenames ||: else : aenames.append(an)
+            aetab => self.put_last(aetab, an, a_row)
+            ti => self.sx_next(ti)
+            self :> a0
+
+    # The CxcStream seed and reachable-prelude-atoms. One pass over the
+    # stream outside the prelude atoms and plugins, then each reached
+    # prelude atom's last declaration until nothing new is reached.
+    tshake <: t0 -> tshake
+        |: true
+        then:
+            sj => 2
+            sjend => nn
+            tmode => 1
+            self :> ts
+
+    tshake <: ts -> tshake
+        |: sj < sjend and ts_top
+        then:
+            s_ex => self.ts_excl(sj)
+            pltab => ||: self.sx_head(sj) == "agent" and self.pre_atom(self.sx_text(sj + 2)) : self.put_last(pltab, self.sx_text(sj + 2), sj.to_string()) ||: else : pltab
+            sj => sj + 1
+            self :> ts
+
+    tshake <: ts -> tshake
+        |: sj < sjend and not ts_top and tmode == 1 and s_ex
+        then:
+            sj => sj + 1
+            self :> ts
+
+    tshake <: ts -> tshake
+        |: sj < sjend and not ts_top and not (tmode == 1 and s_ex)
+        then:
+            reached => ||: self.ts_new(self.ts_nm(sj)) : (reached + self.ts_nm(sj)) + "\n" ||: else : reached
+            wq => ||: self.ts_new(self.ts_nm(sj)) : wq.append(self.ts_nm(sj)) ||: else : wq
+            tcur => ||: self.sx(sj).kind == 1 and self.sx_text(sj).contains("TR:") : self.sx_text(sj) ||: else : ""
+            sj => sj + 1
+            self :> tt
+
+    tshake <: tt -> tshake
+        |: tcur.contains("TR:")
+        then:
+            reached => ||: self.ts_new(tr_nm) : (reached + tr_nm) + "\n" ||: else : reached
+            wq => ||: self.ts_new(tr_nm) : wq.append(tr_nm) ||: else : wq
+            tcur => self.cut(tr_rest, tr_nm.length())
+            self :> tt
+
+    tshake <: tt -> tshake
+        |: not tcur.contains("TR:")
+        then: self :> ts
+
+    tshake <: ts -> tshake
+        |: sj >= sjend
+        then: self :> tw
+
+    tshake <: tw -> tshake
+        |: wk < wq.count() and self.look(pltab, wq.at(wk) ?? "") == ""
+        then:
+            wk => wk + 1
+            self :> tw
+
+    tshake <: tw -> tshake
+        |: wk < wq.count() and self.look(pltab, wq.at(wk) ?? "") != ""
+        then:
+            sj => self.look(pltab, wq.at(wk) ?? "").to_int_or(0)
+            sjend => self.sx_end(self.look(pltab, wq.at(wk) ?? "").to_int_or(0))
+            tmode => 2
+            wk => wk + 1
+            self :> ts
+
+    tshake <: tw -> tshake
+        |: wk >= wq.count()
+        then:
+            k => 0
+            self :> tf
+
+    tshake <: tf -> tshake
+        |: k < aenames.count()
+        then:
+            rows => ||: self.ts_keep(aenames.at(k) ?? "") : rows.append(("(keep " + (aenames.at(k) ?? "")) + ")") ||: else : rows
+            k => k + 1
+            self :> tf
+
+    tshake <: tf -> sorting
+        |: k >= aenames.count()
+        then:
+            rows => rows.append("(keep CxcStream runtime-provided)")
+            sort_ret => "shake"

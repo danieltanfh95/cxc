@@ -18,6 +18,14 @@
 # An `error|...` from slice 36 or 38 is the stream file, and slice 39
 # passes it through.
 #
+# Chapter 34. Each user file is preceded in the stream by a `(piece)`
+# marker, and a refs file goes with the stream. Its `(piece 0)` block is
+# the slice-38 prefs rows of the prelude, each user file's block is
+# slice 37's refs mode on that file's slice-38 output, the `:resolves-to`
+# that cxc-type->c reads. Raw rows get an empty refs file. CXC_CORPUS
+# replaces the hand corpus, CXC_PREBUILT names a directory holding the
+# four built ports (p36 p37 p38 p39) to skip the builds.
+#
 # Then the real-world sweep (every `.cxc` file under compiler/examples,
 # design/examples, and compiler/resources/prelude, collapsed on the fly
 # as in the slice-36 harness) in `full-envs`, and its first three files
@@ -32,9 +40,10 @@ SELF_HOST="$(cd "$HERE/.." && pwd)"
 COMPILER_DIR="$(cd "$SELF_HOST/.." && pwd)"
 REPO_DIR="$(cd "$COMPILER_DIR/.." && pwd)"
 
-CORPUS="$SELF_HOST/corpus/lower_envs.txt"
+CORPUS="${CXC_CORPUS:-$SELF_HOST/corpus/lower_envs.txt}"
 PARSE_SRC="$SELF_HOST/src/parse_program_bootstrap.cxc"
 P38_SRC="$SELF_HOST/src/prelude_program.cxc"
+P37_SRC="$SELF_HOST/src/resolve_program_symbols.cxc"
 SRC="$SELF_HOST/src/lower_envs.cxc"
 ORACLE_CLJ="$SELF_HOST/oracle/lower_envs.clj"
 P38_CLJ="$SELF_HOST/oracle/prelude_program.clj"
@@ -55,6 +64,8 @@ PSTREAM="$WORK/prelude_stream.txt"
 ONE="$WORK/one.txt"
 TWO="$WORK/two.txt"
 STREAM="$WORK/stream.txt"
+REFS="$WORK/refs.txt"
+PREFS="$WORK/prelude_refs.txt"
 
 echo "[harness] collapsing the real-world sweep"
 : > "$SWEEP"
@@ -70,13 +81,20 @@ echo "[harness] writing the ambient tables"
 (cd "$COMPILER_DIR" && CXC_TABLE=registry clj -M -e "$(cat "$TABLES_CLJ")") > "$REGISTRY"
 
 echo "[harness] building cxc ports"
-"$COMPILER_DIR/bin/cxc" compile "$PARSE_SRC" "$WORK/p36" >/dev/null
-"$COMPILER_DIR/bin/cxc" compile "$P38_SRC" "$WORK/p38" >/dev/null
-"$COMPILER_DIR/bin/cxc" compile "$SRC" "$WORK/p39" >/dev/null
+if [ -n "${CXC_PREBUILT:-}" ]; then
+  # Reuse the four binaries under $CXC_PREBUILT/p36 p37 p38 p39.
+  for d in p36 p37 p38 p39; do cp -r "$CXC_PREBUILT/$d" "$WORK/$d"; done
+else
+  "$COMPILER_DIR/bin/cxc" compile "$PARSE_SRC" "$WORK/p36" >/dev/null
+  "$COMPILER_DIR/bin/cxc" compile "$P38_SRC" "$WORK/p38" >/dev/null
+  "$COMPILER_DIR/bin/cxc" compile "$P37_SRC" "$WORK/p37" >/dev/null
+  "$COMPILER_DIR/bin/cxc" compile "$SRC" "$WORK/p39" >/dev/null
+fi
 PARSE_BIN="$WORK/p36/parse_program_bootstrap"
 P38_BIN="$WORK/p38/prelude_program"
+P37_BIN="$WORK/p37/resolve_program_symbols"
 BIN="$WORK/p39/lower_envs"
-for b in "$PARSE_BIN" "$P38_BIN" "$BIN"; do
+for b in "$PARSE_BIN" "$P38_BIN" "$P37_BIN" "$BIN"; do
   if [ ! -x "$b" ]; then
     echo "[harness] cxc build produced no executable at $b" >&2
     exit 1
@@ -87,6 +105,8 @@ echo "[harness] building the prelude stream"
 "$P38_BIN" assemble "$REGISTRY" "$COMPILER_DIR/resources" > "$ASM"
 "$PARSE_BIN" "$(cat "$ASM")" prog > "$ONE"
 "$P38_BIN" prelude "$ONE" "$INDEX" > "$PSTREAM"
+"$P38_BIN" praw "$ONE" "$INDEX" > "$TWO"
+"$P38_BIN" prefs "$TWO" "$INDEX" > "$PREFS"
 PIN="$(cat "$PSTREAM")"
 PIN="${PIN#(program}"
 PIN="${PIN%)}"
@@ -99,14 +119,17 @@ inner() {
   printf '%s' "${s%)}"
 }
 
-# One piece through slice 36 (and slice 38 unless raw) into $TWO.
+# One piece through slice 36 (and slice 38 unless raw) into $TWO. A
+# user piece also appends its slice-37 refs rows to $REFS as piece <n>.
 piece() {
-  local kind="$1" src="$2"
+  local kind="$1" src="$2" n="$3"
   "$PARSE_BIN" "$src" prog > "$ONE"
   if [ "$kind" = raw ]; then
     cp "$ONE" "$TWO"
   else
     "$P38_BIN" user "$ONE" "$INDEX" "$STDLIB" > "$TWO"
+    printf '(piece %s)\n' "$n" >> "$REFS"
+    "$P37_BIN" "$TWO" "$INDEX" "" refs >> "$REFS"
   fi
 }
 
@@ -115,27 +138,34 @@ run_row() {
   local kind="${mode%%-*}" check="${mode#*-}"
   printf '%s|%s\n' "$mode" "$payload" >> "$ORACLE_IN"
   local body="" err=""
+  : > "$REFS"
   case "$kind" in
-    raw|full)
-      piece "$kind" "$payload"
+    raw)
+      piece raw "$payload" 1
       if grep -q '^error|' "$TWO"; then err="$(cat "$TWO")"; else body="$(inner "$TWO")"; fi
-      [ "$kind" = full ] && body="$PIN$body"
+      ;;
+    full)
+      { echo '(piece 0)'; cat "$PREFS"; } >> "$REFS"
+      piece full "$payload" 1
+      if grep -q '^error|' "$TWO"; then err="$(cat "$TWO")"; else body="$PIN (piece)$(inner "$TWO")"; fi
       ;;
     multi)
+      { echo '(piece 0)'; cat "$PREFS"; } >> "$REFS"
       body="$PIN"
-      local pcs pc
+      local pcs pc m="" n=0
       IFS=$'\t' read -r -a pcs <<< "$payload"
       for pc in "${pcs[@]}"; do
-        piece full "${pc#*=}"
+        n=$((n + 1))
+        piece full "${pc#*=}" "$n"
         if [ -z "$err" ] && grep -q '^error|' "$TWO"; then err="$(cat "$TWO")"; fi
-        local m="${pc%%=*}"
+        m="${pc%%=*}"
         [ -n "$m" ] && body="$body (module $m)"
-        body="$body$(inner "$TWO")"
+        body="$body (piece)$(inner "$TWO")"
       done
       ;;
   esac
   if [ -n "$err" ]; then printf '%s\n' "$err" > "$STREAM"; else printf '(stream%s)\n' "$body" > "$STREAM"; fi
-  "$BIN" "$check" "$STREAM" "$INDEX" >> "$CXC_OUT"
+  "$BIN" "$check" "$STREAM" "$INDEX" "$REFS" >> "$CXC_OUT"
 }
 
 : > "$CXC_OUT"

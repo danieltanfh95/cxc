@@ -81,3 +81,114 @@ raw-envs|def Dup:\n    case a\n    case b(n: Int)\n    case a(m: String)\ndef Ze
 raw-envs|def Tree:\n    case leaf\n    case node(kids: List of Tree!)\n
 full-lower|def Suit:\n    case hearts\n    case spades\ndef Card:\n    suit: Suit!\n    rank: Int!\ndef main:\n    -> end\n
 full-envs|def Shape:\n    a :- Int\ndef Kind:\n    case x\ndef Rec:\n    k: Kind\n
+raw-envs|def main:\n    -> end\n
+raw-lower|def main:\n    -> idle\n    idle <: ping -> idle\n
+raw-envs|def main:\n    xs: List of Int\n    -> end\n
+raw-envs|def main:\n    b: Block\n    -> end\n
+raw-envs|def main:\n    c: Clock\n    -> end\n
+raw-envs|def main:\n    use console: Console\n    -> end\n
+raw-envs|def main:\n    p: Int = 1\n    -> end\ndef Clock:\n    -> end\n
+raw-envs|def A:\n    -> end\n
+full-envs|def P:\n    x: Int\ndef main:\n    -> end\n
+raw-envs|def A:\n    * <: ping -> self\n    * <: ping -> self\n        |: true\n    -> end\ndef main:\n    -> end\n
+raw-envs|def A:\n    * <: ping -> self\n        |: true\n    * <: ping -> self\n        |: false\n    -> end\ndef main:\n    -> end\n
+raw-envs|def A:\n    * <: ping -> self\n    * <: pong -> self\n    * -> end\ndef main:\n    -> end\n
+raw-envs|def A:\n    -> idle\n    idle <: ping -> idle\n    idle <: ping -> idle\ndef main:\n    -> end\n
+raw-envs|def A:\n    -> idle\n    idle <: ping -> idle\n    idle <: ping -> idle\n    idle <: ping -> idle\n        |: true\n    idle <: ping -> idle\ndef main:\n    -> end\n
+raw-envs|def A:\n    -> idle\n    idle <: ping -> idle\n    idle <: ping -> idle\n        |: true\n    idle <| ping -> idle\n        |: false\n    busy <: ping -> idle\ndef main:\n    -> end\n
+raw-envs|def A:\n    -> idle\n    idle <: hit(amount: Int!) -> idle\n    idle <: tag(name: String, reason:) -> idle\n    idle <: msg(x: Int, y: String) -> dead\n    idle <: zap -> idle\n    dead <: hit(amount: Int!) -> dead\n    dead <: * -> dead\ndef main:\n    -> end\n
+raw-envs|def A:\n    -> idle\n    idle <: hit(amount: Int!) -> idle\n    dead <: * -> dead\n    dead <: * -> self\ndef main:\n    -> end\n
+raw-envs|def A:\n    -> idle\n    * <: log(msg: String) -> self\n        then: console.write(msg)\n    idle <: zap -> idle\n    dead <: * -> dead\ndef main:\n    -> end\n
+raw-envs|def A:\n    -> idle\n    * <: log(msg: String, n: Int = 3) -> self\n        then: console.write(msg)\n        then: console.write(msg)\n    * <: set(v: Int) -> self\n        then: x => v\n    x: Int = 0\ndef main:\n    -> end\n
+raw-envs|def A:\n    -> idle\n    * <: log(msg: String) -> self\n    idle <: log(msg: String) -> idle\ndef main:\n    -> end\n
+raw-envs|def A:\n    -> idle\n    * <: log(msg: String) -> self\n        |: msg == "a"\n    * <: log(msg: String) -> self\n        |: msg != "a"\ndef main:\n    -> end\n
+raw-envs|def A:\n    -> idle\n    * <: log(a: Int = 1, b: Int) -> self\ndef main:\n    -> end\n
+raw-envs|def A:\n    -> idle\n    * <: log(a: Int = 1 + 2) -> self\ndef main:\n    -> end\n
+raw-envs|def A:\n    -> idle\n    * <: log(a: Int = -1, b: Bool = not true, c: List of Int = [1, 2]) -> self\ndef main:\n    -> end\n
+raw-envs|def B:\n    -> end\ndef A:\n    use b: B\n    use p: SystemPanic\n    -> end\ndef main:\n    -> end\n
+raw-envs|def R:\n    x: Int\ndef A:\n    use r: R\n    -> end\ndef main:\n    -> end\n
+raw-envs|def A:\n    use r: List of Int\n    -> end\ndef main:\n    -> end\n
+raw-envs|def A:\n    use r: (Int, Int)\n    -> end\ndef main:\n    -> end\n
+full-envs|def A:\n    use clock: Clock\n    use console: Console\n    -> end\ndef main:\n    -> end\n
+raw-envs|def A(k: Int!):\n    a: Int\n    b: Int! = 3\n    c: String = "hi"\n    d: Bool = true\n    e: Float = 1.5\n    f: Int = nil\n    g: Int = 2 + 3\n    h: List of Int\n    i: List of Int = []\n    j: Map of (String, Int)\n    k2: Set of String\n    -> end\ndef main:\n    -> end\n
+raw-envs|def A(a: Int, o: Int):\n    a: Int = 4\n    o :- 1\n    -> end\ndef main:\n    -> end\n
+raw-envs|def main:\n    a: Int\n    b: Int = 2\n    c: List of Int = []\n    -> idle\n    idle <: go -> idle\n
+raw-envs|def B:\n    -> end\ndef A(x: Int):\n    use x: B\n    -> end\ndef main:\n    -> end\n
+raw-envs|def A(x: Int):\n    x: Int\n    y: Int\n    -> end\ndef main:\n    -> end\n
+raw-envs|def B:\n    -> end\ndef A:\n    use b: B\n    b: Int = 1 + 1\n    -> end\ndef main:\n    -> end\n
+raw-envs|def A:\n    phase: Int\n    -> end\ndef main:\n    -> end\n
+raw-envs|def A:\n    parent: Int = 1 + 1\n    own_queue: Int\n    -> end\ndef main:\n    -> end\n
+raw-envs|def A:\n    x: Int\n    y: Int = 1\n    x: Int\n    y: Int\n    -> end\ndef main:\n    -> end\n
+raw-envs|def A:\n    c: Char = 'x'\n    -> end\ndef main:\n    -> end\n
+raw-envs|def B:\n    -> end\ndef A:\n    w: weak B\n    u: unowned B\n    s: weak String\n    -> end\ndef main:\n    -> end\n
+raw-envs|def R:\n    x: Int\ndef A:\n    w: weak R\n    -> end\ndef main:\n    -> end\n
+raw-envs|def A:\n    w: weak E\n    -> end\ndef E:\n    case a\n    case b\ndef main:\n    -> end\n
+raw-envs|def A:\n    w: weak Nope\n    -> end\ndef main:\n    -> end\n
+raw-envs|def B:\n    -> end\ndef A:\n    w: weak B!\n    l: weak List of B!\n    -> end\ndef main:\n    -> end\n
+raw-envs|def A:\n    q: Int? = 1\n    -> end\ndef main:\n    -> end\n
+raw-envs|def A:\n    q: (List of Int)? = 1\n    -> end\ndef main:\n    -> end\n
+raw-envs|def A:\n    q: List of Int! = 1\n    -> end\ndef main:\n    -> end\n
+raw-envs|def A:\n    q: (List of Int)!\n    -> end\ndef main:\n    -> end\n
+raw-envs|def A:\n    p: Ptr of CString\n    b: Ptr of Byte\n    -> end\ndef main:\n    -> end\n
+raw-envs|def A:\n    p: Nope\n    -> end\ndef main:\n    -> end\n
+raw-envs|def A:\n    p: Nope!\n    -> end\ndef main:\n    -> end\n
+raw-envs|def A:\n    p: Vec of Int\n    -> end\ndef main:\n    -> end\n
+raw-envs|def A:\n    p: (Int, String)\n    -> end\ndef main:\n    -> end\n
+raw-envs|def R:\n    x: Int\ndef E:\n    case a\n    case b\ndef B:\n    -> end\ndef A:\n    r: R\n    rb: R!\n    e: E\n    eb: E!\n    b: B\n    bb: B!\n    s: String\n    sb: String!\n    by: Bytes\n    an: Any\n    bl: Block\n    u: UInt8\n    d: Double!\n    m: Map of (String, R)\n    st: Set of E\n    l: List of List of Int\n    t: (a: Int, b: String!)\n    t2: (z: Int!, b: R, m: E)\n    -> end\ndef main:\n    -> end\n
+full-envs|def R:\n    x: Int\ndef A:\n    d: Duration\n    i: Instant!\n    k: Key\n    r: R\n    sp: SystemPanic\n    c: Clock\n    p: Plugin!\n    -> end\ndef main:\n    -> end\n
+raw-envs|def A:\n    sp: SystemPanic\n    sb: SystemPanic!\n    -> end\ndef main:\n    -> end\n
+raw-envs|def A:\n    c: Clock!\n    d: Duration!\n    -> end\ndef main:\n    -> end\n
+raw-envs|def A:\n    lv: Int\n    big: Int\n    neg: Int\n    one: Int\n    ch: Int\n    sz: Int32\n    hp: Int = 5\n    mp: Int! = 1\n    |: 0 <= hp and hp <= 200\n    |: mp > -1\n    |: mp < 128\n    |: lv >= -3 and lv < 100\n    |: big >= 0 and big <= 70000\n    |: neg >= -40000 and neg <= 5\n    |: one >= 0\n    |: 0 <= ch <= 10\n    |: sz >= 0 and sz <= 5\n    -> end\ndef main:\n    -> end\n
+raw-envs|def A:\n    a: Int\n    b: Int\n    c: Int\n    d: Int\n    |: a >= 0 and a <= 4294967295\n    |: b >= -2147483648 and b <= 2147483647\n    |: c >= 0 and c <= 4294967296\n    |: d > 10 and d < 5\n    |: not (a > 3) or 1 < a\n    -> end\ndef main:\n    -> end\n
+raw-envs|def A:\n    a: Int\n    |: a >= 0\n    |: a <= 300\n    |: a <= 250\n    |: a >= 1 as Bad(x: 1)\n    |: a == 3\n    -> end\ndef main:\n    -> end\n
+raw-envs|def A(x: Int = 1, y: Int):\n    -> end\ndef main:\n    -> end\n
+raw-envs|def A(x: Int = f(1)):\n    -> end\ndef main:\n    -> end\n
+raw-envs|def B:\n    -> end\ndef E:\n    case a\n    case p(n: Int)\ndef A(b: B = B(), e: E = E.a, f: E = E.p(1), g: List of Int = [1, -2], h: Bool = not false):\n    -> end\ndef main:\n    -> end\n
+raw-envs|def E:\n    case a\n    case p(n: Int)\ndef A(f: E = E.p):\n    -> end\ndef main:\n    -> end\n
+raw-envs|def E:\n    case a\n    case p(n: Int)\ndef A(f: E = E.a(1)):\n    -> end\ndef main:\n    -> end\n
+raw-envs|def A(f: Int = B()):\n    -> end\ndef main:\n    -> end\n
+raw-envs|def B:\n    -> end\ndef A(f: B = B(n: g(1))):\n    -> end\ndef main:\n    -> end\n
+raw-envs|def A(x: Int = 1):\n    y: Int\n    -> end\ndef main:\n    -> end\n
+raw-envs|def main(x: Nope):\n    -> idle\n    idle <: go -> idle\n
+raw-envs|def A(o: Nope):\n    o :- 1\n    -> end\ndef main:\n    -> end\n
+raw-envs|def A(o: Int?):\n    o :- 1\n    -> end\ndef main:\n    -> end\n
+raw-envs|def A:\n    n: Int = 1\n    n :- 2\n    -> end\ndef main:\n    -> end\n
+raw-envs|def A:\n    n: Int = 1\n    m :- n + 1\n    * <: log(msg: String) -> self\n    on_nil:\n        m: 3\n        log: "x"\n    -> end\ndef main:\n    -> end\n
+raw-envs|def A:\n    m :- 1\n    on_nil:\n        m: 3\n        m: 4\n    -> end\ndef main:\n    -> end\n
+raw-envs|def A:\n    m :- 1\n    on_nil:\n        m: 3\n        q: 4\n    -> end\ndef main:\n    -> end\n
+raw-envs|def A:\n    m :- 1\n    on_nil:\n        m: f(3)\n    -> end\ndef main:\n    -> end\n
+raw-envs|def A:\n    m :- 1\n    on_nil:\n        m: -3\n    -> end\ndef main:\n    -> end\n
+raw-envs|def A:\n    -> idle\n    idle <: go(n: Int) -> idle\n    busy <: go(n: String) -> idle\ndef main:\n    -> end\n
+raw-envs|def A:\n    -> idle\n    idle <: go(n: Int) -> idle\n    busy <: go(n: Int) -> idle\n    idle <| go(n: Int) -> busy\n    busy <: hop(a: Int, b: List of String) -> idle\ndef main:\n    -> end\n
+raw-envs|def A:\n    -> idle\n    idle <: go(n: Int) -> idle\n    busy <: go(n: (Int, Int)) -> idle\ndef main:\n    -> end\n
+raw-envs|def A:\n    -> idle\n    idle <: go(n: (Int, Int)) -> idle\n    busy <: go(n: Int) -> idle\ndef main:\n    -> end\n
+raw-envs|def A:\n    -> idle\n    idle <: go(n: Int, k:) -> idle\n    busy <: go(n: Int, k:) -> idle\ndef main:\n    -> end\n
+raw-envs|def A:\n    -> idle\n    * <: log(msg: String) -> self\n    idle <: log(msg: Int) -> idle\n        |: true\ndef main:\n    -> end\n
+raw-envs|def A:\n    -> idle\n    idle <: go -> idle\n        |: true as Bad(x: 1)\n        |: true\n        |: false as Bad(x: 2)\n        |: false as Worse(y: 1)\n    busy <: go -> idle\n        |: true as Other(z: 1)\n        |: true as Bad(x: 3)\n    busy <: hop -> idle\n        |: true as Bad!(x: 1)\ndef main:\n    -> end\n
+raw-envs|def A:\n    -> idle\n    idle <: go -> idle\n    busy <| go -> idle\n        |: true\n    * <: zz(n: Int) -> self\n        |: true as Q(a: 1)\ndef main:\n    -> end\n
+raw-envs|def A:\n    -> idle\n        then: :> started(n: 1)\n    idle <: go -> idle\n        then: :> moved(x: 1, y: 2)\n        then: :> moved(x: 3, y: 4)\n        then: self :> go\n    idle <: stop -> end\n        then: :> started(n: 2)\n    -> end\n        then: :> done\ndef main:\n    -> end\n
+raw-envs|def A:\n    -> idle\n    idle <: go -> idle\n        then: |> moved(x: 1)\ndef main:\n    -> end\n
+raw-envs|def A:\n    -> idle\n    idle <: go -> idle\n        then: :> moved(1)\ndef main:\n    -> end\n
+raw-envs|def A:\n    -> idle\n    idle <: go -> idle\n        then: :> moved(x: 1)\n    idle <: stop -> idle\n        then: :> moved(y: 1)\ndef main:\n    -> end\n
+raw-envs|def A:\n    -> idle\n    idle <: go -> idle\n        then: :> moved(x: 1)\n    idle <: stop -> idle\n        then: :> moved(1)\n        then: |> moved(x: 2)\ndef main:\n    -> end\n
+raw-envs|def A:\n    -> idle\n    * <: log(msg: String) -> self\n        then: :> logged(m: msg)\n    idle <: go -> idle\n        then: if true:\n            :> nested(a: 1)\ndef main:\n    -> end\n
+raw-envs|def B:\n    -> end\ndef A:\n    p: B = B()\n    q: weak B\n    r: B\n    s: B! = B()\n    -> idle\n    idle <: p.moved -> idle\n    idle <: p.stopped -> idle\n    idle <: s.moved -> idle\n    busy <: p.moved -> idle\n    idle <| q.moved -> idle\ndef main:\n    -> end\n
+raw-envs|def B:\n    -> end\ndef main:\n    b: B = B()\n    c: B\n    l: List of B\n    -> end\n
+raw-envs|def A(queue: bounded(4)):\n    -> end\ndef C(queue: unbounded, x: Int):\n    -> end\ndef main:\n    -> end\n
+raw-envs|def A:\n    n: Int! = 1\n    class function make(b: Bytes) -> Int:\n        return 1\n    -> end\ndef main:\n    -> end\n
+raw-envs|def A:\n    x: Int\n    -> end\ndef A:\n    y: String\n    -> idle\ndef main:\n    -> end\n
+raw-envs|def A:\n    x: Nope\n    -> end\ndef A:\n    y: String\n    -> idle\ndef main:\n    -> end\n
+raw-lower|def B:\n    -> end\ndef A:\n    p: B = B()\n    -> idle\n    idle <: p.moved -> idle\ndef main:\n    -> end\n
+full-lower|def A:\n    use clock: Clock\n    x: Int = 0 + 1\n    |: x >= 0 and x <= 9\n    -> idle\n    idle <: clock.tick -> idle\n        then: x => x + 1\ndef main:\n    -> end\n
+full-lower|def A:\n    phase: Int\n    -> end\ndef main:\n    -> end\n
+full-envs|from std.console import Console\ndef main:\n    use console: Console\n    -> end\n
+full-envs|def main:\n    t: Time\n    xs: List of Random\n    h: Http!\n    -> idle\n    idle <: go -> idle\n        then: Json.encode_str(1)\n
+full-envs|def main:\n    n: Int = 1\n    |: n > 0 as Bad(Hash: 1)\n    -> idle\n    idle <: go -> idle\n        then: let Args: Int = 3\n
+full-lower|def A:\n    -> idle\n    idle <: go(c: Clock) -> idle\ndef main:\n    -> end\n
+raw-envs|def Clock:\n    -> end\ndef Console:\n    p: Plugin\n    -> end\ndef Plugin:\n    -> end\ndef A:\n    c: Console\n    -> end\ndef main:\n    -> end\n
+raw-envs|def Random:\n    -> end\ndef A:\n    x: Int = 1\n    -> end\ndef main:\n    -> end\n
+multi-envs|a=def Foo:\n    -> end\n	=def main:\n    f: Foo!\n    g: Foo\n    -> end\n
+multi-envs|a=def Foo:\n    -> end\n	=def main:\n    f: Foo!\n    -> end\n
+multi-envs|a.b=def Foo:\n    -> end\n	c=def R:\n    x: Int\ndef Bar:\n    r: R\n    -> end\n
+multi-envs|=def Foo:\n    -> end\n	=def main:\n    f: Foo\n    -> end\n
+multi-envs|a=def Foo:\n    x: Int\n    -> end\n	b=def Foo:\n    y: Int\n    -> end\n

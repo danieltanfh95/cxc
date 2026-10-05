@@ -22,7 +22,8 @@
 ;;                   class-member desugar.
 ;;   <check>  lower  the real `cxc.lower/lower` runs on the stream, with the
 ;;                   builders wrapped to record their results and
-;;                   `build-enum-env` stopping the run once it returns.
+;;                   `build-record-env` stopping the run when it is called,
+;;                   its atom-env argument recorded as the tree-shake result.
 ;;                   Every check lower makes before that point fires in
 ;;                   lower's order, the `def main` check included.
 ;;            envs   the builders are called directly in lower's order with
@@ -61,7 +62,29 @@
 ;;             (entries <enum-case>*) (payload-index (<c> <params>)*)
 ;;             (raw-values <v>+)|nil <raw-type>|nil)
 ;;
-;; Indices print sorted by key. Params, types, expressions, and enum cases
+;;   (atom-env <n>)         then one row per atom, sorted by name.
+;;                          `build-atom-env` (chapter 34), called with
+;;                          `mangle/*decl->module*` bound as lower binds it.
+;;       (atom <name> (fields <f>*) (ctor-params <c>*) (methods <m>*)
+;;             (observables <name>*) (invariants <prop>*) (transitions <t>*)
+;;             (message-index (<msg> (payload <field>*))*)
+;;             (companion-index (<name> <of-msg> (reasons <r>*))*)
+;;             (use-caps (<name> <type-name>)*) (stream-index (<name> (keys <k>*))*)
+;;             (stream-order <name>*) (subscriptions (<field> <msg>+)*)
+;;             (slot-names <name>*) (on-nil (<method> <expr>)*)
+;;             (extras <item>*) (class-fns <item>*) <queue>|nil)
+;;       <f> = (f <name> <cxc-ty> bang|plain opt|raw "<scalar-c>" "<c-type>"
+;;               <default>|nil <type> [(map <k> <v>)] [<modifier>] [(picked <lo> <hi>)])
+;;       <c> = (c <name> <cxc-ty> bang|plain "<c-type>" <default>|nil <type> [(map <k> <v>)])
+;;       <m> = (method <name> (params <p>+) <block>), <r> = (typed <T>) | violation
+;;   (tree-shake <n>)       then (keep <name>) per key of the atom env after
+;;                          the CxcStream seed and the prelude tree-shake,
+;;                          sorted, CxcStream as (keep CxcStream
+;;                          runtime-provided). The binding run is cut out of
+;;                          lower.clj and evaluated in envs mode.
+;;
+;; `:nullable?` is not printed (a `T?` type throws), nor are the fields'
+;; F41 markers, which fields-from-data-section drops. Indices print sorted by key. Params, types, expressions, and enum cases
 ;; print through the slice-36 serializers. accepts-index equals accepts
 ;; (duplicate signatures are rejected), so it is not printed.
 
@@ -77,6 +100,8 @@
 (require 'cxc.lower.protocol-env)
 (require 'cxc.lower.enum-env)
 (require 'cxc.lower.program-scan)
+(require 'cxc.mangle)
+(require 'cxc.lower.record-env)
 (require 'clojure.string)
 
 (do
@@ -165,6 +190,66 @@
               "nil")
        " " (or (:raw-type e) "nil") ")"))
 
+;; build-atom-env rows (chapter 34).
+(defn- ser-afield [f]
+  (str "(f " (:name f) " " (or (:cxc-ty f) "nil") " "
+       (if (:nonnil? f) "bang" "plain") " " (if (:optional? f) "opt" "raw") " "
+       (pr-str (:scalar-c f)) " " (pr-str (:c-type f)) " "
+       (if (:default f) (ser (:default f)) "nil") " " (ser-type (:type f))
+       (when (:map-key f) (str " (map " (:map-key f) " " (:map-val f) ")"))
+       (when (:modifier f) (str " " (name (:modifier f))))
+       (when-let [[lo hi] (:picker-bounds f)] (str " (picked " lo " " hi ")"))
+       ")"))
+
+(defn- ser-actor [c]
+  (str "(c " (:name c) " " (or (:cxc-ty c) "nil") " "
+       (if (:nonnil? c) "bang" "plain") " " (pr-str (:c-type c)) " "
+       (if (:default c) (ser (:default c)) "nil") " " (ser-type (:type c))
+       (when (:map-key c) (str " (map " (:map-key c) " " (:map-val c) ")"))
+       ")"))
+
+(defn- ser-method [m]
+  (str "(method " (:name m) " (params"
+       (apply str (map #(str " " (ser-p %)) (:params m)))
+       ") " (ser-block (:body m)) ")"))
+
+(defn- ser-reason [r]
+  (if (= :typed (:kind r)) (str "(typed " (:type-name r) ")") "violation"))
+
+(defn- wrap [title xs]
+  (str "(" title (apply str (map #(str " " %) xs)) ")"))
+
+(defn- ser-atom [[nm e]]
+  (str "(atom " nm " "
+       (wrap "fields" (map ser-afield (:fields e))) " "
+       (wrap "ctor-params" (map ser-actor (:ctor-params e))) " "
+       (wrap "methods" (map ser-method (:methods e))) " "
+       (wrap "observables" (map :name (:observables e))) " "
+       (wrap "invariants" (map ser-prop (:invariants e))) " "
+       (wrap "transitions" (map ser-item (:transitions e))) " "
+       (wrap "message-index"
+             (map (fn [[m v]] (str "(" m " " (wrap "payload" (map ser-field (:payload v))) ")"))
+                  (sort-by key (:message-index e)))) " "
+       (wrap "companion-index"
+             (map (fn [[m v]] (str "(" m " " (:of-msg v) " " (wrap "reasons" (map ser-reason (:reason-types v))) ")"))
+                  (sort-by key (:companion-index e)))) " "
+       (wrap "use-caps" (map #(str "(" (:name %) " " (:type-name %) ")") (:use-caps e))) " "
+       (wrap "stream-index"
+             (map (fn [[m v]] (str "(" m " " (wrap "keys" (map :name (:payload v))) ")"))
+                  (sort-by key (:stream-index e)))) " "
+       (wrap "stream-order" (:stream-order e)) " "
+       (wrap "subscriptions"
+             (map (fn [[f ms]] (str "(" f (apply str (map #(str " " %) ms)) ")"))
+                  (sort-by key (:subscription-map e)))) " "
+       (wrap "slot-names" (:slot-names e)) " "
+       (wrap "on-nil" (map (fn [[m v]] (str "(" m " " (ser v) ")")) (sort-by key (:on-nil-entries e)))) " "
+       (wrap "extras" (map ser-item (:extras e))) " "
+       (wrap "class-fns" (map ser-item (:class-fns e))) " "
+       (if-let [q (:queue-config e)]
+         (if (= :bounded (:kind q)) (str "(queue bounded " (:capacity q) ")") "(queue unbounded)")
+         "nil")
+       ")"))
+
 (defn- sections [rec]
   (concat
     (when-let [d (:d->m rec)]
@@ -185,7 +270,26 @@
     (when-let [ed (:edges rec)]
       (sorted-rows "sync-edges" (map (fn [[s t m]] (str "(edge " s " " t " " m ")")) ed)))
     (when-let [en (:enum-env rec)]
-      (rows "enum-env" (map ser-enum (sort-by key en))))))
+      (rows "enum-env" (map ser-enum (sort-by key en))))
+    (when-let [ae (:atom-env rec)]
+      (rows "atom-env" (map ser-atom (sort-by key ae))))
+    (when-let [sh (:shaken rec)]
+      (sorted-rows "tree-shake"
+                   (map (fn [[k v]] (str "(keep " k
+                                         (when (= :runtime-provided (:kind v)) " runtime-provided")
+                                         ")"))
+                        sh)))))
+
+;; The CxcStream seed and the prelude tree-shake are a run of let bindings
+;; inside `lower/lower` between build-atom-env and build-record-env. They
+;; are cut out of lower.clj the same way.
+(def ^:private shake
+  (let [txt  (slurp "src/cxc/lower.clj")
+        from (clojure.string/index-of txt "atom-env   (assoc atom-env \"CxcStream\"")
+        upto (clojure.string/index-of txt "record-env (build-record-env top-nodes")]
+    (binding [*ns* (find-ns 'cxc.lower)]
+      (eval (read-string
+              (str "(fn [top-nodes atom-env] (let [" (subs txt from upto) "] atom-env))"))))))
 
 ;; envs. The builders in lower's order, no `def main` check.
 (defn- run-envs [nodes rec]
@@ -196,8 +300,13 @@
         _   (swap! rec assoc :shape (shape-scan top))
         top (vec (remove #(= :def-plugin (:node %)) top))
         _   (swap! rec assoc :protocol-env (cxc.lower.protocol-env/build-protocol-env top))
-        _   (swap! rec assoc :edges (cxc.lower.program-scan/sync-send-edges top))]
-    (swap! rec assoc :enum-env (cxc.lower.enum-env/build-enum-env top))))
+        _   (swap! rec assoc :edges (cxc.lower.program-scan/sync-send-edges top))
+        en  (cxc.lower.enum-env/build-enum-env top)
+        _   (swap! rec assoc :enum-env en)]
+    (binding [cxc.mangle/*decl->module* d]
+      (let [ae (@#'cxc.lower/build-atom-env top en (:module-map @rec))]
+        (swap! rec assoc :atom-env ae)
+        (swap! rec assoc :shaken (shake top ae))))))
 
 ;; lower. The real lower/lower, stopped once build-enum-env returns.
 (defn- run-lower [nodes rec]
@@ -205,8 +314,19 @@
         mmap  cxc.env/module-map-from-attribution
         penv  cxc.lower.protocol-env/build-protocol-env
         edges cxc.lower.program-scan/sync-send-edges
-        eenv  cxc.lower.enum-env/build-enum-env]
+        eenv  cxc.lower.enum-env/build-enum-env
+        aenv  @#'cxc.lower/build-atom-env]
     (try
+      (with-redefs-fn
+        {#'cxc.lower/build-atom-env
+         (fn [t e m] (let [a (aenv t e m)]
+                       (swap! rec assoc :atom-env a)
+                       a))
+         #'cxc.lower.record-env/build-record-env
+         (fn [t a e m]
+           (swap! rec assoc :shaken a)
+           (throw (ex-info "slice-39 stop" {::stop true})))}
+       (fn []
       (with-redefs [cxc.env/attribute-modules-to-decls
                     (fn [t] (let [d (attr t)] (swap! rec assoc :d->m d) d))
                     cxc.env/module-map-from-attribution
@@ -219,8 +339,8 @@
                     cxc.lower.enum-env/build-enum-env
                     (fn [t] (let [e (eenv t)]
                               (swap! rec assoc :enum-env e)
-                              (throw (ex-info "slice-39 stop" {::stop true}))))]
-        (cxc.lower/lower nodes))
+                              e))]
+        (cxc.lower/lower nodes))))
       (catch clojure.lang.ExceptionInfo e
         (when-not (::stop (ex-data e)) (throw e))))))
 
