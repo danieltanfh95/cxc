@@ -1,0 +1,46 @@
+full-envs|def Color:\n    case red\n    case green\n\ndef Shape:\n    case circle(r: Int)\n    case dot\n\ndef P:\n    x: Int!\n\ndef Proto:\n    size() :- Int\n    size :- 7\n    big :- Color.red\n    sh :- Shape.circle(r: 2)\n    pf :- P.from(1)\n    bad :- 3 + 4\n    s :- "a" + "b"\n    f :- 1.5 * 2.0\n    c :- 1 < 2\n    nm :- x\n    px :- P(x: 1).x\n    nc :- Color.blue\n    np :- Color.red()\n    nb :- Shape.dot(r: 1)\n    eb :- Color.red.as()\n    es :- Color.green.to_string()\n    nn :- nil\n    rz :- raise P(x: 1)
+full-envs|def Proto:\n    size() :- Int\n    me :- self.size()
+full-envs|def P:\n    x: Int!\n\ndef Proto:\n    size() :- Int\n    bad :- P(x: 1).nope
+full-envs|def Proto:\n    size() :- Int\n    bad :- frob(1)
+full-envs|def Proto:\n    size() :- Int\n    bad :- []
+full-envs|def Color:\n    case red\n\ndef Proto:\n    size() :- Int\n    bad :- Color.red + 1
+full-envs|def Counter:\n    n: Int! = 0\n    doubled :- n * 2\n    half :- n / 2\n    -> running\n    running <: bump() -> running\n    * <: log_it(msg: String) -> self\n        then: print(msg)\n\ndef Proto:\n    size() :- Int\n    k :- Counter().doubled\n    bad :- Counter().nope()
+full-envs|def Counter:\n    n: Int! = 0\n    -> running\n\ndef Proto:\n    size() :- Int\n    bad :- Counter().nope()
+full-envs|def Counter:\n    n: Int! = 0\n    hand: List of Int = []\n    -> running\n\ndef Proto:\n    size() :- Int\n    bad :- Counter().hand.at(0)
+full-envs|def A:\n    size() :- Int\n    one :- 1\n\ndef B:\n    size() :- Int\n    two :- "x"\n    three :- Key.space
+raw-envs|def Color:\n    case red\n\ndef Proto:\n    size() :- Int\n    big :- Color.red
+multi-envs|app.core=def Color:\n    case red\n\ndef Shape:\n    case circle(r: Int)	app.main=def Proto:\n    size() :- Int\n    big :- Color.red\n    sh :- Shape.circle(r: 1)
+full-lower|def Color:\n    case red\n\ndef Proto:\n    size() :- Int\n    big :- Color.red\n\ndef main:\n    -> end
+full-lower|def Proto:\n    size() :- Int\n    me :- self.size()\n\ndef main:\n    -> end
+full-envs|def Card:\n    rank: Int!\n\ndef Hand:\n    cards: List of Card = []\n    nums: List of Int = []\n    names: List of String = []\n    flags: List of Bool = []\n    top(s: Card) :- cards.at(0) ?? s\n    first_rank :- (cards.at(0) ?? Card(rank: 0)).rank\n    size :- cards.count()\n    size2 :- cards.count\n    big :- cards.filter(c => c.rank > 3)\n    none :- cards.empty()\n    more :- cards.append(Card(rank: 1))\n    part :- cards.slice(0, 2)\n    both :- cards.concat(cards)\n    sorted :- cards.sort_by(c => c.rank)\n    hasn :- nums.contains(3)\n    hass :- names.contains("a")\n    hasb :- flags.contains(true)\n    n0 :- nums.at(0)\n    best :- cards.max_by(c => c.rank)\n    worst :- cards.min_by(c => c.rank)\n    lead :- cards.first(c => c.rank > 1)\n    nlead :- nums.first(n => n > 1)\n    -> idle
+full-envs|def Tally:\n    m: Map of (String, Int) = []\n    s: Set of String = []\n    got :- m.get("a")\n    got2 :- m.get("a") ?? 0\n    hk :- m.contains("a")\n    m2 :- m.assoc("b", 2)\n    m3 :- m.dissoc("b")\n    mc :- m.count()\n    s2 :- s.insert("x")\n    s3 :- s.without("x")\n    hs :- s.contains("x")\n    sc :- s.count\n    -> idle
+full-envs|def Bumper:\n    v: Int! = 0\n    -> running\n        then: :> beep(v: v)\n\ndef Box:\n    bs: List of Bumper = []\n    b0 :- bs.at(0)\n    bv :- bs.at(0).v\n    -> idle
+full-envs|def Deck:\n    cards: List of Int\n    top :- cards.at(0) ?? 0\n    n :- cards.count()\n\ndef W:\n    d: Deck = Deck(cards: [])\n    t :- d.top\n    -> idle
+full-envs|def Peer:\n    xs: List of Int = []\n    k :- xs.count()\n    j :- k + 1\n    -> idle\n\ndef Main:\n    p: Peer = Peer()\n    hand: List of Int = []\n    a :- hand.at(0) ?? 1\n    b :- a + 1\n    c :- self.a\n    d :- p.k\n    e :- p.j\n    f :- self.g\n    g :- hand.count()\n    -> idle
+full-envs|def C:\n    n: Int! = 0\n    hand: List of Int = []\n    top :- hand.at(0) ?? 1\n    -> running\n        then: :> tick(v: n)\n    running <: go() -> running\n        then:\n            :> late(v: top)\n            :> ping()\n            let h: Int = hand.at(1) ?? 2\n            :> later(w: h)\n\ndef main:\n    c: C = C()\n    cs: List of C = []\n    -> running\n    running <: c.go_failed(reason:) -> end\n    -> end
+full-envs|def H:\n    xs: List of Int = []\n    bad :- xs.nope()\n    -> idle
+full-envs|def H:\n    m: Map of (String, Int) = []\n    bad :- m.nope()\n    -> idle
+full-envs|def H:\n    s: Set of Int = []\n    bad :- s.at(0)\n    -> idle
+full-envs|def Card:\n    rank: Int!\n\ndef H:\n    xs: List of Card = []\n    bad :- xs.first()\n    -> idle
+full-envs|def H:\n    xs: List of Int = []\n    bad :- xs.at\n    -> idle
+full-envs|def H:\n    n: Int! = 0\n    a :- n + 1\n    b :- self.nope()\n    c :- n\n    -> running\n    running <: go() -> running
+full-envs|def P:\n    xs: List of Int = []\n    k :- xs.count()\n    -> running\n    running <: go() -> running\n\ndef H:\n    p: P = P()\n    xs: List of Int = []\n    a :- xs.count()\n    b :- p.nope()\n    -> idle
+full-envs|def R:\n    xs: List of Int\n    a :- xs.count()\n    b :- 1\n\ndef H:\n    r: R = R(xs: [])\n    xs: List of Int = []\n    c :- xs.count()\n    d :- r.nope()\n    -> idle
+full-envs|def R:\n    xs: List of Int\n    a :- xs.nope()\n    b :- 2
+full-envs|def H:\n    xs: List of Int = []\n    a :- xs.at(0)\n    b :- self.c()\n    c :- 1\n    -> idle
+full-envs|def C:\n    hand: List of Int = []\n    top :- hand.at(0) ?? 1\n    -> running\n        then: :> tick(v: "s")\n    running <: go() -> running\n        then: :> tick(v: top)
+full-envs|def Card:\n    rank: Int!\n\ndef H:\n    xs: List of Card = []\n    a :- xs.at(0)\n    -> running\n    running <: go() -> running\n        then:\n            :> s(c: xs.at(0))\n\ndef Proto:\n    size() :- Int\n    k :- 5
+full-envs|def H:\n    n: Int! = 0\n    -> running\n\ndef B:\n    h: H = H()\n    -> running\n    running <: h.go_failed(reason:) -> running
+full-envs|def B:\n    xs: List of Int = []\n    t :- -"s"\n    -> idle
+full-lower|def Card:\n    rank: Int!\n\ndef main:\n    xs: List of Card = []\n    a :- xs.at(0) ?? Card(rank: 1)\n    b :- a.rank\n    -> running\n    -> end
+full-lower|def main:\n    xs: List of Int = []\n    bad :- xs.nope()\n    -> end
+full-lower|def main:\n    -> running\n        then:\n            let t: (a: Int?, b: Int) = nil\n    -> end
+full-envs|def main:\n    -> running\n        then:\n            let t: (a: Int?, b: Int) = nil\n    -> end
+full-lower|def H:\n    n: Int! = 0\n    -> running\n    running <: go() -> running\n\ndef B:\n    h: H = H()\n    -> running\n        then:\n            let t: (a: Int?, b: Int) = nil\n    running <: h.go_failed(reason: String) -> running\n\ndef main:\n    -> end
+full-lower|def H:\n    n: Int! = 0\n    -> running\n    running <: go() -> running\n\ndef B:\n    h: H = H()\n    -> running\n        then:\n            let t: (a: Int?, b: Int) = nil\n    running <: h.go_failed(reason:) -> running\n\ndef main:\n    -> end
+full-envs|def Shape:\n    case f(x: Array of Int)\n\ndef Proto:\n    size() :- Int\n    k :- 1\n\ndef E:\n    xs: List of Int = []\n    -> idle
+raw-envs|def Bumper:\n    v: Int! = 0\n    -> running\n        then: :> beep(v: v)\n\ndef Box:\n    bs: List of Bumper = []\n    n :- bs.count()\n    -> idle
+multi-envs|app.core=def Card:\n    rank: Int!	app.main=def W:\n    cs: List of Card = []\n    m: Map of (String, Card) = []\n    c0 :- cs.at(0)\n    -> idle
+full-envs|def Peer:\n    xs: List of Int = []\n    k :- xs.count()\n    -> idle\n\ndef Main:\n    p: Peer = Peer()\n    d :- p.k\n    f :- self.g\n    g :- p.k\n    -> idle\n\ndef R:\n    n: Int!\n    t(c: Peer) :- c.k
+full-envs|def Peer:\n    xs: List of Int = []\n    k :- xs.count()\n    -> idle\n\ndef Proto:\n    size() :- Int\n    pk :- Peer().k
+full-envs|def C:\n    hand: List of Int = []\n    -> running\n    running <: go() -> running\n        then:\n            alias h :- hand.at(1) ?? 2\n            alias c :- hand.count()\n            :> later(w: h, n: c)\n            :> plain(w: 1)

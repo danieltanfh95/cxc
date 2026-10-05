@@ -28,6 +28,32 @@
 #      index and its own observables as self-fields, as the first atom
 #      pass left them.
 #
+# (chapter 38) The `round2` mode is slice 43, the second inference round.
+# It runs the three passes above again first (their types are recomputed
+# in process, printed rows drop the size_t mark), then in lower's order
+#
+#   4. infer-protocol-defaults. Each default of every protocol row whose
+#      `:cxc-return-ty` is nil is typed with no locals and no self-fields,
+#      against the first-round envs, under the full ctx. The ctx carries
+#      the module map, so enum-case access (`E.c`), enum payload calls
+#      (`E.c(...)`), and `R.from(...)` resolve through resolve-decl-lookup
+#      (the refs row of the protocol's piece, else the
+#      ensure-references-enriched fallback, then the module map row). A
+#      `:not-yet-implemented` error leaves the default untyped, any other
+#      error propagates, and a type names its return through
+#      type-kw->cxc-name-str.
+#   5. infer-observables-in-record-env and infer-observables-in-atom-env
+#      with defer? false over the env with slice 42's containers. The
+#      record pass reads the first round's record and atom indices, the
+#      atom pass the second-round record index, the first-round peer
+#      indices, and its own threaded index. Container method lookup reads
+#      the slice-42 rows (`:cxc-return-ty`, `:return-optional?`, the
+#      `count` observable, the `min_by`, `max_by`, and `first` list
+#      sugars), and a missing method on an atom now names the sorted
+#      available ones. Every container adds `(obs <class> count :int nil)`.
+#   6. infer-streams-in-atom-env again over the second-round indices.
+#      Every List container adds its fan-in rows to the section.
+#
 # Per observable, the param locals (bare primitives lift to Optional), a
 # declared `:- T` (base-type-name, cxc-type->type-kw, Optional for a bare
 # primitive), else try-infer-observation-body on its expression, then
@@ -56,6 +82,13 @@
 #       `(atom ...)` rows followed by slice 40's `(record ...)` rows, any
 #       `error|` line passing through, and <ffi> the ffi-builtin table
 #       (`oracle/lower_observables_tables.clj`).
+#   round2 <stream> <envs> <ffi> <post> <index> <refs>
+#       <envs> also holds slice 39's `(module ...)` and `(protocol ...)`
+#       rows. <post> is slice 42's envs output on the first-round rows,
+#       its companions and containers, or an error. A lower row puts the
+#       parity or collect-shapes error of slice 40's envs run there
+#       instead when the companion demand passed. <index> is the prelude
+#       name index and <refs> the per-piece refs rows of slice 39.
 #
 # Output.
 #
@@ -63,10 +96,15 @@
 #   (atom-obs <n>)    then (obs <atom> <name> <type-kw>|nil "<c-type>"|nil)
 #   (stream-payloads <n>)  then (spi <atom> <stream> (<key> <type-kw> "<c-type>")*)
 #       Rows sorted. <type-kw> is Clojure's pr-str of the type keyword.
+#   round2 prints (protocol-defaults <n>) with sorted
+#       (pdefault <protocol> <name> <ret>|nil) rows, then the three
+#       sections above for the second round.
 #
 # A throw in the record pass prints `error|<message>` alone, a throw in
 # the atom pass prints the record section first, and a throw in the
-# stream pass prints both observable sections first.
+# stream pass prints both observable sections first. In round2 a throw
+# in the first round, the demand, the parity check, or the protocol
+# defaults prints alone, and a later one follows the sections before it.
 #
 # Type keywords are carried as their pr-str text. SizeT and SsizeT keep
 # the C type their metadata carries as a `~size_t` or `~ssize_t` mark
@@ -78,7 +116,9 @@
 # T` in a foreign signature, a successful `stackalloc`, a named tuple in
 # a declared return type, a let annotation, or a param, and a peer
 # observable chain deeper than 60 frames print the port-only message
-# `port: out of scope`, which no corpus row reaches. The stream pass
+# `port: out of scope`, which no corpus row reaches. Protocols are
+# typed in name order where Clojure takes the protocol env's hash order,
+# which agrees whenever one default fails. The stream pass
 # takes emits in rendering order, which is postwalk order unless an
 # untargeted emit nests inside another's args, and builds every context
 # of an atom before its reduce, which is what Clojure's chunked lazy
@@ -155,6 +195,24 @@ def main:
     sites:    List of String = []
     stab:     String! = "\n"
     sret:     String! = "o"
+    # The second round (slice 43).
+    rnd:      Int!    = 1
+    rotab2:   String! = "\n"
+    aobs2:    String! = "\n"
+    postt:    String! = ""
+    pidxt:    String! = ""
+    rsrc:     String! = ""
+    pcn:      Int!    = 0
+    pc_cur:   Int!    = 0
+    cur_mod:  String! = "main"
+    dmain:    String! = "\n"
+    prl:      List of Int! = []
+    ctab:     String! = "\n"
+    cobs:     List of String = []
+    cspi:     List of String = []
+    ferr:     String! = ""
+    fpre:     String! = ""
+    hx_t:     String! = ""
     # The typer.
     fr:       List of Frame = []
     fd:       Int!    = 0
@@ -250,6 +308,38 @@ def main:
         envt.contains(("\n(decl " + x) + " ")
     env_decl(x: String!) :- String!
         self.line_at(envt, (envt.index_of(("\n(decl " + x) + " ") + x.length() + 8).max(0)).replace(")", "")
+    # resolve-decl-lookup for the protocol defaults. A name's
+    # `:resolves-to` is its refs row in the protocol's piece, else what
+    # ensure-references-enriched adds (the prelude module, or `main` for a
+    # name declared before any module marker), and the module map row
+    # must list it. Only a capitalized name is ever enriched.
+    cap(x: String!) :- Bool!
+        x.code_at(0) >= 65 and x.code_at(0) <= 90
+    rb_s :- rsrc.index_of(("\n(piece " + pc_cur.to_string()) + ")\n")
+    rb_t :- self.cut(rsrc, rb_s + 1)
+    rblk :- ||: rb_s < 0 : "" ||: rb_t.index_of("\n(piece ") < 0 : rb_t ||: else : rb_t.substring(0, rb_t.index_of("\n(piece ").max(0))
+    rrow(x: String!) :- String!
+        ||: rblk.index_of((" " + x) + " ") < 0 : "" ||: else : self.line_at(rblk, (rblk.index_of((" " + x) + " ") + x.length() + 2).max(0)).replace(")", "")
+    plook(x: String!) :- String!
+        ||: pidxt.index_of(("\n" + x) + "|") < 0 : "" ||: else : self.line_at(pidxt, (pidxt.index_of(("\n" + x) + "|") + x.length() + 2).max(0).min(pidxt.length()))
+    res(x: String!) :- String!
+        ||: self.rrow(x) != "" and self.rrow(x) != "nil" : self.rrow(x) ||: self.plook(x) != "" : self.plook(x) ||: self.in_set(dmain, x) : "main" ||: else : ""
+    env_mline(m: String!) :- String!
+        self.line_at(envt, (envt.index_of(("\n(module " + m) + " ") + m.length() + 10).max(0))
+    env_in_mod(m: String!, x: String!) :- Bool!
+        envt.contains(("\n(module " + m) + " ") and (" " + self.env_mline(m).replace(")", " ")).contains((" " + x) + " ")
+    hitm(x: String!) :- Bool!
+        self.cap(x) and self.res(x) != "" and self.env_in_mod(self.res(x), x)
+    hit_enum(x: String!) :- Bool!
+        self.env_enum(x) and self.hitm(x)
+    e_line(x: String!) :- String!
+        self.line_at(envt, (envt.index_of(("\n(enum " + x) + " ") + 1).max(0))
+    e_cases(x: String!) :- String!
+        self.cut(self.e_line(x), self.e_line(x).index_of("(cases ") + 7).substring(0, self.cut(self.e_line(x), self.e_line(x).index_of("(cases ") + 7).index_of(")").max(0))
+    e_case(x: String!, c: String!) :- Bool!
+        ((" " + self.e_cases(x)) + " ").contains((" " + c) + " ")
+    e_pay(x: String!, c: String!) :- Bool!
+        self.e_line(x).contains(("(" + c) + " (params (")
     mangle(m: String!, x: String!) :- String!
         ||: m.starts_with("std.") : "_Cxc_" + x ||: m == "main" : x ||: else : (m.replace(".", "_") + "_") + x
     csafe(x: String!) :- String!
@@ -345,6 +435,8 @@ def main:
         ("{:record \"" + x) + "\"}"
     q_atom(x: String!) :- String!
         ("{:atom \"" + x) + "\"}"
+    q_enum(x: String!) :- String!
+        ("{:enum \"" + x) + "\"}"
     m_user(s: String!) :- String!
         "!U:" + s
     m_nyi(s: String!) :- String!
@@ -414,10 +506,41 @@ def main:
     # infer-method-call-type, after infer-call-type found a dot callee.
     hint(x: String!) :- String!
         ||: self.look(rhint, x) == "" : "" ||: else : " — available: " + self.look(rhint, x)
+    # Which indices a lookup sees. A record pass of the first round has
+    # no record index, the first round's record and atom passes no peer
+    # atom index, and containers join the atom env after the protocol
+    # defaults.
+    rpidx :- pass != "R" or rnd == 2
+    pidx_ok :- rnd == 2 or pass == "S" or pass == "D"
+    cvis :- rnd == 2 and pass != "D"
+    own_a(x: String!) :- Bool!
+        pass == "A" and x == owner
     mc_rec(x: String!, m: String!) :- String!
-        ||: pass != "R" and self.has_key(rotab, (x + ".") + m) : self.look(rotab, (x + ".") + m) ||: pass != "R" : self.m_user((("method/observable `" + m) + ("` on record `" + x)) + ("`" + self.hint(x))) ||: else : self.m_user(("method/observable `" + m) + (("` on record `" + x) + "`"))
+        ||: rpidx and self.has_key(rotab, (x + ".") + m) : self.look(rotab, (x + ".") + m) ||: rpidx : self.m_user((("method/observable `" + m) + ("` on record `" + x)) + ("`" + self.hint(x))) ||: else : self.m_user(("method/observable `" + m) + (("` on record `" + x) + "`"))
+    # A missing method on an atom carries a mark the error path expands
+    # into the sorted names the atom has.
+    m_amiss(x: String!, m: String!) :- String!
+        self.m_user((("method/observable `" + m) + ("` on atom `" + x)) + (("`" + soh) + ("H" + x)))
+    # The slice-42 containers, `C:<class>` to `<kind>\t<elem>` and
+    # `<class>.<method>` to `<return>\t<opt|raw>`.
+    is_ctn(x: String!) :- Bool!
+        cvis and self.has_key(ctab, "C:" + x)
+    c_kind(x: String!) :- String!
+        ||: self.is_ctn(x) : self.f_first(self.look(ctab, "C:" + x)) ||: else : ""
+    c_elem(x: String!) :- String!
+        self.f_rest(self.look(ctab, "C:" + x))
+    cm_has(x: String!, m: String!) :- Bool!
+        cvis and self.has_key(ctab, (x + ".") + m)
+    cm_raw(x: String!, m: String!) :- String!
+        self.tkn(self.f_first(self.look(ctab, (x + ".") + m)))
+    cm_tk(x: String!, m: String!) :- String!
+        ||: self.iserr(self.cm_raw(x, m)) : self.cm_raw(x, m) ||: self.f_rest(self.look(ctab, (x + ".") + m)) == "opt" : self.wrapopt(self.cm_raw(x, m)) ||: else : self.cm_raw(x, m)
+    l_sug(x: String!, m: String!, sug: Bool!) :- Bool!
+        sug and self.c_kind(x) == "list" and (m == "min_by" or m == "max_by" or m == "first")
+    sug_tk(x: String!) :- String!
+        ||: self.iserr(self.tkn(self.c_elem(x))) : self.tkn(self.c_elem(x)) ||: else : self.wrapopt(self.tkn(self.c_elem(x)))
     mc_atom(x: String!, m: String!) :- String!
-        ||: self.in_set(mtab, (x + ".") + m) : m_unil ||: pass == "A" and x == owner and self.has_key(oidx, m) : self.look(oidx, m) ||: pass == "S" and self.has_key(aobs, (x + ".") + m) : self.look(aobs, (x + ".") + m) ||: else : self.m_user(("method/observable `" + m) + (("` on atom `" + x) + "`"))
+        ||: self.cm_has(x, m) : self.cm_tk(x, m) ||: self.in_set(mtab, (x + ".") + m) : m_unil ||: self.own_a(x) and self.has_key(oidx, m) : self.look(oidx, m) ||: self.own_a(x) : self.m_amiss(x, m) ||: self.is_ctn(x) and m == "count" : ":int" ||: pidx_ok and self.has_key(aobs, (x + ".") + m) : self.look(aobs, (x + ".") + m) ||: else : self.m_amiss(x, m)
     int_m(m: String!) :- Bool!
         m == "abs" or m == "min" or m == "max" or m.starts_with("bit") or m == "shl" or m == "shr"
     str_m(m: String!) :- String!
@@ -426,18 +549,18 @@ def main:
         self.unw(t)
     mc_prim(t: String!, m: String!) :- String!
         ||: self.mc_u(t) == ":bytes" and m == "at" : ":int" ||: self.mc_u(t) == ":bytes" and m == "slice" : ":bytes" ||: self.mc_u(t) == ":bytes" and m == "to_string" : ":string" ||: self.mc_u(t) == "[:cstring]" and m == "to_string" : ":string" ||: self.ifam(self.mc_u(t)) and (m == "to_string" or m == "to_char_string") : ":string" ||: self.ifam(self.mc_u(t)) and self.int_m(m) : self.wrapif(self.is_opt(t), ":int") ||: self.mc_u(t) == ":bool" and m == "to_string" : ":string" ||: self.mc_u(t) == ":string" and self.str_m(m) != "" : self.str_m(m) ||: else : self.m_user("method call on non-record/non-atom target")
-    mc(t: String!, m: String!, na: Bool!) :- String!
-        ||: self.tk_rec(self.mc_u(t)) and m == "as" and na : ":bytes" ||: self.tk_enum(self.mc_u(t)) and m == "as" and na : ":bytes" ||: self.tk_enum(self.mc_u(t)) and m == "to_string" and na : ":string" ||: self.tk_rec(self.mc_u(t)) : self.mc_rec(self.rec_of(self.mc_u(t)), m) ||: self.tk_atom(self.mc_u(t)) : self.mc_atom(self.atom_of(self.mc_u(t)), m) ||: else : self.mc_prim(t, m)
+    mc(t: String!, m: String!, na: Bool!, sug: Bool!) :- String!
+        ||: self.tk_rec(self.mc_u(t)) and m == "as" and na : ":bytes" ||: self.tk_enum(self.mc_u(t)) and m == "as" and na : ":bytes" ||: self.tk_enum(self.mc_u(t)) and m == "to_string" and na : ":string" ||: self.tk_rec(self.mc_u(t)) : self.mc_rec(self.rec_of(self.mc_u(t)), m) ||: self.tk_atom(self.mc_u(t)) and self.l_sug(self.atom_of(self.mc_u(t)), m, sug) : self.sug_tk(self.atom_of(self.mc_u(t))) ||: self.tk_atom(self.mc_u(t)) : self.mc_atom(self.atom_of(self.mc_u(t)), m) ||: else : self.mc_prim(t, m)
 
     # field-type-for-owner. A peer atom's untyped observable comes back
     # as `@P<expr>|<atom>` (or `@O` under an Optional owner), which the
     # dot frame types in the peer's context.
     fto_rec(x: String!, f: String!) :- String!
-        ||: self.has_key(ftab, self.fkey("R", x, f)) : self.fwrap(self.look(ftab, self.fkey("R", x, f))) ||: pass != "R" and self.has_key(rotab, (x + ".") + f) : self.look(rotab, (x + ".") + f) ||: else : self.m_user(("field/observable `" + f) + (("` on record `" + x) + "`"))
+        ||: self.has_key(ftab, self.fkey("R", x, f)) : self.fwrap(self.look(ftab, self.fkey("R", x, f))) ||: rpidx and self.has_key(rotab, (x + ".") + f) : self.look(rotab, (x + ".") + f) ||: else : self.m_user(("field/observable `" + f) + (("` on record `" + x) + "`"))
     raw_obs(x: String!, f: String!) :- String!
         ||: self.look(dtab, "A:" + x) == "" : "" ||: else : self.look(otab, (self.look(dtab, "A:" + x) + ".") + f)
     fto_atom(x: String!, f: String!) :- String!
-        ||: self.has_key(ftab, self.fkey("A", x, f)) : self.fwrap(self.look(ftab, self.fkey("A", x, f))) ||: pass == "A" and x == owner and self.has_key(oidx, f) : self.look(oidx, f) ||: pass == "S" and self.has_key(aobs, (x + ".") + f) : self.look(aobs, (x + ".") + f) ||: self.raw_obs(x, f) != "" : (("@P" + self.raw_obs(x, f)) + "|") + x ||: else : self.m_user(("field/observable `" + f) + (("` on atom `" + x) + "`"))
+        ||: self.has_key(ftab, self.fkey("A", x, f)) : self.fwrap(self.look(ftab, self.fkey("A", x, f))) ||: self.own_a(x) and self.has_key(oidx, f) : self.look(oidx, f) ||: self.is_ctn(x) and f == "count" : ":int" ||: pidx_ok and not self.own_a(x) and self.has_key(aobs, (x + ".") + f) : self.look(aobs, (x + ".") + f) ||: self.raw_obs(x, f) != "" : (("@P" + self.raw_obs(x, f)) + "|") + x ||: else : self.m_user(("field/observable `" + f) + (("` on atom `" + x) + "`"))
     fto_agg(t: String!, f: String!) :- String!
         ||: self.tk_rec(t) : self.fto_rec(self.rec_of(t), f) ||: else : self.fto_atom(self.atom_of(t), f)
     fto_opt(r: String!) :- String!
@@ -482,8 +605,15 @@ def main:
     c_sig :- self.sx_text(cc + 5)
     iv_fref :- ||: c_sig.starts_with("TR:") or c_sig.starts_with("TO:") : self.fty(c_sig) ||: c_sig.starts_with("TF(") : "" ||: else : self.m_nyi("FL-3: unknown foreign signature kind " + self.tkw(c_sig))
     c_cnt :- cnm == "clamp" or cnm == "stackalloc"
-    iv_cid :- ||: self.rw_hit(cnm) : self.mc(self.look(loc, "self"), cnm, c_na) ||: self.is_rec(cnm) : self.q_rec(cnm) ||: self.akey(cnm) : self.q_atom(cnm) ||: cnm == "print" or cnm == "panic" : ":void" ||: c_cnt : "" ||: self.look(ffit, cnm) != "" : self.look(ffit, cnm) ||: self.sf_block(cnm) : ":void" ||: else : self.m_user(("call to `" + cnm) + "`")
-    iv_call :- ||: ch == "foreign-ref" : iv_fref ||: ch == "ident" : iv_cid ||: ch == "dot" : "" ||: else : self.m_nyi("call with non-ident/non-dot callee " + self.kw(cc))
+    iv_cid :- ||: self.rw_hit(cnm) : self.mc(self.look(loc, "self"), cnm, c_na, false) ||: self.is_rec(cnm) : self.q_rec(cnm) ||: self.akey(cnm) : self.q_atom(cnm) ||: cnm == "print" or cnm == "panic" : ":void" ||: c_cnt : "" ||: self.look(ffit, cnm) != "" : self.look(ffit, cnm) ||: self.sf_block(cnm) : ":void" ||: else : self.m_user(("call to `" + cnm) + "`")
+    # (protocol defaults) `E.c(...)` with a payload case and `R.from(...)`
+    # resolve once the ctx carries the module map.
+    cd_x :- self.sx_text(cc + 4)
+    cd_f :- self.sx_text(self.sx_next(cc + 2))
+    cd_id :- pass == "D" and self.sx_head(cc + 2) == "ident"
+    ep_hit :- cd_id and self.hit_enum(cd_x) and self.e_pay(cd_x, cd_f)
+    rf_hit :- cd_id and cd_f == "from" and self.is_rec(cd_x) and self.hitm(cd_x)
+    iv_call :- ||: ch == "foreign-ref" : iv_fref ||: ch == "ident" : iv_cid ||: ch == "dot" and ep_hit : self.q_enum(cd_x) ||: ch == "dot" and rf_hit : ("{:decode-outcome \"" + cd_x) + "\"}" ||: ch == "dot" : "" ||: else : self.m_nyi("call with non-ident/non-dot callee " + self.kw(cc))
     m_tident :- self.m_nyi(("type-of identifier `" + gt2) + "` (no local-binding env yet)")
     iv_ident :- ||: self.rw_hit(gt2) : self.fwrap(self.look(ftab, self.fkey("R", sfo, gt2))) ||: self.loc_hit(gt2) : self.look(loc, gt2) ||: self.sf_hit(gt2) : self.sf_tk(gt2) ||: else : m_tident
     m_lam :- self.m_nyi((("lambda expression with " + (self.sx(cur + 2).size - 1).to_string()) + " params — needs a consumer to invoke ") + "through (Layer 5 collection methods `.map`/`.for_each`; will lower to ObjC blocks)")
@@ -493,8 +623,11 @@ def main:
     g_comp :- gh == "neg" or gh == "not" or gh == "dot" or gh == "subscript" or gh == "chained-cmp"
     g_comp2 :- gh == "do" or gh == "multi-arm" or gh == "foreign-selector-call" or gh == "foreign-class-selector-call"
     g_right :- self.sx_next(cur + 3)
+    # (protocol defaults) `E.c` with a case of a resolved enum.
+    dt_x :- self.sx_text(cur + 4)
+    ec_hit :- pass == "D" and gh == "dot" and self.sx_head(cur + 2) == "ident" and self.hit_enum(dt_x) and self.e_case(dt_x, self.sx_text(self.sx_next(cur + 2)))
     iv_lit :- ||: gh == "int" : ":int" ||: gh == "float" : ":float" ||: gh == "string" : ":string" ||: gh == "bool" : ":bool" ||: gh == "nil" : ":nil" ||: else : ""
-    iv :- ||: self.sx(cur).kind != 0 : self.m_nyi("infer-type " + self.kw(cur)) ||: iv_lit != "" : iv_lit ||: gh == "self" and self.loc_hit("self") : self.look(loc, "self") ||: gh == "self" : self.m_user("type-of `self` outside a method body") ||: gh == "ident" : iv_ident ||: gh == "raise" : ":any" ||: gh == "lambda" and self.sx(cur + 2).size == 1 : ":block" ||: gh == "lambda" : m_lam ||: gh == "list" and self.sx(cur).size == 2 : m_elist ||: gh == "list" : self.m_nyi("infer-type :list (non-empty) at this position") ||: gh == "foreign-ref" : m_fref ||: gh == "binop" and self.sx_text(cur + 2) == "is" and self.sx_head(g_right) == "variant" : ":bool" ||: gh == "binop" : "" ||: gh == "call" : iv_call ||: g_comp or g_comp2 : "" ||: else : self.m_nyi("infer-type " + self.kw(cur))
+    iv :- ||: self.sx(cur).kind != 0 : self.m_nyi("infer-type " + self.kw(cur)) ||: iv_lit != "" : iv_lit ||: gh == "self" and self.loc_hit("self") : self.look(loc, "self") ||: gh == "self" : self.m_user("type-of `self` outside a method body") ||: gh == "ident" : iv_ident ||: gh == "raise" : ":any" ||: gh == "lambda" and self.sx(cur + 2).size == 1 : ":block" ||: gh == "lambda" : m_lam ||: gh == "list" and self.sx(cur).size == 2 : m_elist ||: gh == "list" : self.m_nyi("infer-type :list (non-empty) at this position") ||: gh == "foreign-ref" : m_fref ||: gh == "binop" and self.sx_text(cur + 2) == "is" and self.sx_head(g_right) == "variant" : ":bool" ||: gh == "binop" : "" ||: gh == "call" : iv_call ||: ec_hit : self.q_enum(dt_x) ||: g_comp or g_comp2 : "" ||: else : self.m_nyi("infer-type " + self.kw(cur))
     is_cid :- iv == "" and gh == "call" and ch == "ident"
     # stackalloc's checks.
     sa_v1 :- self.argv(c_a1)
@@ -506,7 +639,9 @@ def main:
     un_res :- ||: u_head == "not" : self.wrapif(self.is_opt(val), ":bool") ||: u_head == "subscript" and val == ":string" : ":int" ||: u_head == "subscript" : self.m_user(("subscript `expr[i]` on target of type " + self.pr(val)) + " — F19 L2 handles `String[i]` only. List / Map indexing waits on F42 (from_literal) + F43 (container-as-atom); use `.get`/`.contains` for now.") ||: self.num(self.unw(val)) : val ||: else : self.m_user("unary minus on non-numeric type " + self.pr(val))
     d_res :- self.fto(val, self.sx_text(self.sx_next(t_n + 2)))
     m_cdot :- t_n + 2
-    m_res :- self.mc(val, self.sx_text(self.sx_next(m_cdot + 2)), self.sx_next(m_cdot) >= self.sx_end(t_n))
+    m_a1 :- self.sx_next(m_cdot)
+    m_sug :- m_a1 < self.sx_end(t_n) and self.sx_next(m_a1) >= self.sx_end(t_n) and self.sx_head(self.argv(m_a1)) == "lambda"
+    m_res :- self.mc(val, self.sx_text(self.sx_next(m_cdot + 2)), m_a1 >= self.sx_end(t_n), m_sug)
     ch_flag :- ftop.a == "1" or self.is_opt(val)
     ch_next :- self.sx_next(ftop.b)
     ch_a :- ||: ch_flag : "1" ||: else : "0"
@@ -545,9 +680,48 @@ def main:
     o_fail :- ||: self.iserr(otk) : otk ||: else : o_ct
     o_msg :- self.cut(o_fail, 3)
 
+    # The sections an error follows. In round2 the first round prints
+    # none of its own.
+    epre :- ||: mode == "round2" and rnd == 1 : "" ||: else : rsec
+    # The post rows. An error with no companion section before it came
+    # before the protocol defaults (the demand, the parity check), one
+    # after the companion section comes from the container synthesis.
+    p_ei :- postt.index_of("\nerror|")
+    p_err :- p_ei >= 0
+    p_errl :- self.line_at(postt, (p_ei + 1).max(0))
+    p_pre :- p_err and not postt.substring(0, p_ei.max(0)).contains("\n(companions ")
+    # One protocol row at gi, one of its defaults at oi,
+    # `(default <name> (params ...) <ret>|nil <type>|nil <expr>)`.
+    pd_dl :- self.sx_next(self.sx_next(gi + 3))
+    pd_pn :- self.sx_text(gi + 2)
+    pd_ret :- self.sx_text(self.sx_next(oi + 3))
+    pd_expr :- self.sx_next(self.sx_next(self.sx_next(oi + 3)))
+    pd_row(r: String!) :- String!
+        (("(pdefault " + pd_pn) + (" " + self.sx_text(oi + 2))) + ((" " + r) + ")")
+    pd_nm :- ||: terr == "" and self.name_str(val) != "" : self.name_str(val) ||: else : "nil"
+    pd_ok :- terr == "" or terr.starts_with("!N:")
+    # The mark of a missing method on an atom, and the names to list.
+    hx_i :- ferr.index_of(soh + "H")
+    hx_x :- self.cut(ferr, hx_i + 2)
+    hx_base :- ferr.substring(0, hx_i.max(0))
+    hx_tab :- ||: self.is_ctn(hx_x) : ctab ||: self.own_a(hx_x) : oidx ||: pidx_ok : aobs ||: else : ""
+    hx_pre :- ||: self.own_a(hx_x) : "" ||: else : hx_x + "."
+    hx_ln :- self.line_at(hx_t, gi)
+    hx_nm :- self.f_first(self.cut(hx_ln, pown.length()))
+    # NSString's hasPrefix: is false for an empty prefix.
+    hx_take :- hx_ln != "" and (pown == "" or hx_ln.starts_with(pown)) and not rows.contains(hx_nm)
+    hx_list :- ||: nsorted == 0 : "" ||: else : " — available: " + self.cut(sorted, 1).replace("\n", ", ")
+
     # Prep. The current top form and its children.
     gh0 :- self.sx_head(gi)
     gn0 :- self.sx_text(gi + 2)
+    g1_more :- gh0 == "enum" or gh0 == "module" or gh0 == "piece" or gh0 == "protocol"
+    # A slice-42 container row `(container <class> <kind> <elem> ...)`,
+    # its `(methods (m <name> <param>* <ret> opt|raw)*)` and a List's
+    # `(fanin-payloads (<stream> <arg>*)*)`.
+    c_kd :- self.sx_text(gi + 3)
+    c_meth :- ||: c_kd == "map" : gi + 6 ||: else : gi + 5
+    c_fanp :- self.sx_next(self.sx_next(self.sx_next(gi + 5)))
     s_end :- self.sx_end(0)
     p_head :- self.sx_head(pj)
     p_obs :- self.sx_head(pj) == "obs"
@@ -628,9 +802,14 @@ def main:
             let raw: String! = fs.read_text(args.get_or(2, ""))
             let rws: String! = fs.read_text(args.get_or(3, ""))
             let body: String! = ||: raw.ends_with("\n") : raw.substring(0, (raw.length() - 1).max(0)) ||: else : raw
+            let pst: String! = ||: mode == "round2" : "\n" + fs.read_text(args.get_or(5, "")) ||: else : "\n"
+            let pcl: String! = ||: pst.contains("\nerror|") : pst.substring(0, pst.index_of("\nerror|").max(0)) ||: else : pst
             envt => ("\n" + rws) + "\n"
-            src => body + ("\n" + rws)
+            src => (body + ("\n" + rws)) + pcl
             ffit => "\n" + fs.read_text(args.get_or(4, ""))
+            postt => pst
+            pidxt => ||: mode == "round2" : "\n" + fs.read_text(args.get_or(6, "")) ||: else : ""
+            rsrc => ||: mode == "round2" : "\n" + fs.read_text(args.get_or(7, "")) ||: else : ""
             self :> chk
 
     # An error from slice 40 or earlier passes through.
@@ -762,6 +941,7 @@ def main:
         |: gi < s_end and gh0 == "record"
         then:
             dtab => self.put_last(dtab, "R:" + gn0, gi.to_string())
+            dmain => ||: cur_mod == "main" : dmain + (gn0 + "\n") ||: else : dmain
             gi => self.sx_next(gi)
             self :> g1
 
@@ -769,12 +949,25 @@ def main:
         |: gi < s_end and gh0 == "agent"
         then:
             dtab => self.put_last(dtab, "A:" + gn0, gi.to_string())
+            dmain => ||: cur_mod == "main" : dmain + (gn0 + "\n") ||: else : dmain
             pj => self.sx_next(self.sx_next(gi + 3))
             pe => self.sx_end(gi)
             self :> g2
 
+    # (round2) Module and piece markers, enums for the main-module names
+    # of the ensure fallback, and the piece of each protocol.
     prep <: g1 -> prep
-        |: gi < s_end and gh0 != "record" and gh0 != "agent"
+        |: gi < s_end and g1_more
+        then:
+            dmain => ||: gh0 == "enum" and cur_mod == "main" : dmain + (gn0 + "\n") ||: else : dmain
+            cur_mod => ||: gh0 == "module" : gn0 ||: else : cur_mod
+            pcn => ||: gh0 == "piece" : pcn + 1 ||: else : pcn
+            dtab => ||: gh0 == "protocol" : self.put_last(dtab, "P:" + gn0, pcn.to_string()) ||: else : dtab
+            gi => self.sx_next(gi)
+            self :> g1
+
+    prep <: g1 -> prep
+        |: gi < s_end and gh0 != "record" and gh0 != "agent" and not g1_more
         then:
             gi => self.sx_next(gi)
             self :> g1
@@ -820,7 +1013,57 @@ def main:
             self :> g6
 
     prep <: g3 -> prep
-        |: gi < nn and gh0 != "record" and (gh0 != "atom" or not self.akey(gn0))
+        |: gi < nn and gh0 == "protocol"
+        then:
+            prl => prl.append(gi)
+            gi => self.sx_next(gi)
+            self :> g3
+
+    prep <: g3 -> prep
+        |: gi < nn and gh0 == "container"
+        then:
+            ctab => self.put_last(ctab, "C:" + gn0, (c_kd + "\t") + self.sx_text(gi + 4))
+            cobs => cobs.append(("(obs " + gn0) + " count :int nil)")
+            pown => gn0
+            pj => c_meth + 2
+            pe => self.sx_end(c_meth)
+            self :> g7
+
+    prep <: g3 -> prep
+        |: gi < nn and gh0 != "record" and (gh0 != "atom" or not self.akey(gn0)) and gh0 != "protocol" and gh0 != "container"
+        then:
+            gi => self.sx_next(gi)
+            self :> g3
+
+    prep <: g7 -> prep
+        |: pj < pe
+        then:
+            ctab => self.put_last(ctab, (pown + ".") + self.sx_text(pj + 2), (self.sx_text(self.sx_end(pj) - 2) + "\t") + self.sx_text(self.sx_end(pj) - 1))
+            pj => self.sx_next(pj)
+            self :> g7
+
+    prep <: g7 -> prep
+        |: pj >= pe and c_kd == "list"
+        then:
+            pj => c_fanp + 2
+            pe => self.sx_end(c_fanp)
+            self :> g8
+
+    prep <: g7 -> prep
+        |: pj >= pe and c_kd != "list"
+        then:
+            gi => self.sx_next(gi)
+            self :> g3
+
+    prep <: g8 -> prep
+        |: pj < pe
+        then:
+            cspi => cspi.append(("(spi " + pown) + (" " + self.cut(self.sx_text(pj), 1)))
+            pj => self.sx_next(pj)
+            self :> g8
+
+    prep <: g8 -> prep
+        |: pj >= pe
         then:
             gi => self.sx_next(gi)
             self :> g3
@@ -886,7 +1129,7 @@ def main:
     pass <: ow -> sorting
         |: pk >= own_n
         then:
-            rows => orows
+            rows => ||: pass == "A" and rnd == 2 : orows.concat(cobs) ||: else : orows
             orows => orows.empty()
             sort_ret => pass
 
@@ -950,35 +1193,150 @@ def main:
             sfo => owner
             terr => ""
             nac => -1
+            sret => "o"
             self :> go
 
     pass <: od -> pass
         |: sret == "o"
         then:
-            otk => ||: terr == "" : val ||: deferred : "nil" ||: else : terr
+            otk => ||: terr == "" : val ||: deferred and rnd == 1 : "nil" ||: else : terr
             self :> fn
 
-    pass <: fn -> done
-        |: self.iserr(o_fail) and pass == "R"
+    pass <: fn -> pass
+        |: self.iserr(o_fail)
         then:
-            out => "\nerror|" + o_msg
-
-    pass <: fn -> done
-        |: self.iserr(o_fail) and pass == "A"
-        then:
-            out => rsec + ("\nerror|" + o_msg)
+            ferr => o_msg
+            fpre => ||: pass == "R" and rnd == 1 : "" ||: else : epre
+            self :> hx
 
     pass <: fn -> pass
         |: not self.iserr(o_fail)
         then:
             orows => orows.append(o_row)
-            rotab => ||: pass == "R" : self.put_last(rotab, (owner + ".") + o_name, otk) ||: else : rotab
-            rows => ||: pass == "R" and not rows.contains(o_name) : rows.append(o_name) ||: else : rows
+            rotab => ||: pass == "R" and rnd == 1 : self.put_last(rotab, (owner + ".") + o_name, otk) ||: else : rotab
+            rotab2 => ||: pass == "R" and rnd == 2 : self.put_last(rotab2, (owner + ".") + o_name, otk) ||: else : rotab2
+            rows => ||: pass == "R" and rnd == 1 and not rows.contains(o_name) : rows.append(o_name) ||: else : rows
             known => self.put_last(known, o_name, otk)
-            aobs => ||: pass == "A" : self.put_last(aobs, (owner + ".") + o_name, otk) ||: else : aobs
+            aobs => ||: pass == "A" and rnd == 1 : self.put_last(aobs, (owner + ".") + o_name, otk) ||: else : aobs
+            aobs2 => ||: pass == "A" and rnd == 2 : self.put_last(aobs2, (owner + ".") + o_name, otk) ||: else : aobs2
             oidx => ||: otk != "nil" : self.put_last(oidx, o_name, otk) ||: else : oidx
             oi => self.sx_next(oi)
             self :> it
+
+    # The error path. A missing method on an atom lists the sorted names
+    # the atom has (its handler methods, then its observable index or
+    # its container methods with `count` and the list sugars).
+    pass <: hx -> done
+        |: hx_i < 0
+        then:
+            out => fpre + ("\nerror|" + ferr)
+
+    pass <: hx -> pass
+        |: hx_i >= 0
+        then:
+            rows => rows.empty()
+            hx_t => mtab
+            pown => hx_x + "."
+            gi => 0
+            pj => 1
+            self :> hs
+
+    pass <: hs -> pass
+        |: gi < hx_t.length()
+        then:
+            rows => ||: hx_take : rows.append(hx_nm) ||: else : rows
+            gi => gi + hx_ln.length() + 1
+            self :> hs
+
+    pass <: hs -> pass
+        |: gi >= hx_t.length() and pj == 1
+        then:
+            hx_t => hx_tab
+            pown => hx_pre
+            gi => 0
+            pj => 2
+            self :> hs
+
+    pass <: hs -> sorting
+        |: gi >= hx_t.length() and pj == 2
+        then:
+            rows => ||: self.c_kind(hx_x) == "list" : rows.append("count").append("first").append("max_by").append("min_by") ||: self.is_ctn(hx_x) : rows.append("count") ||: else : rows
+            sort_ret => "H"
+
+    # (round2) infer-protocol-defaults, after the first round and the
+    # steps the post rows stand for (the demand, the parity check).
+    pass <: pd0 -> done
+        |: p_pre
+        then:
+            out => "\n" + p_errl
+
+    pass <: pd0 -> pass
+        |: not p_pre
+        then:
+            pk => 0
+            orows => orows.empty()
+            pass => "D"
+            self :> pa
+
+    pass <: pa -> pass
+        |: pk < prl.count()
+        then:
+            gi => prl.at(pk) ?? 0
+            self :> pc
+
+    pass <: pc -> pass
+        then:
+            pc_cur => self.ival(self.look(dtab, "P:" + pd_pn))
+            oi => pd_dl + 2
+            oe => self.sx_end(pd_dl)
+            self :> pb
+
+    pass <: pa -> sorting
+        |: pk >= prl.count()
+        then:
+            rows => orows
+            orows => orows.empty()
+            sort_ret => "D"
+
+    pass <: pb -> pass
+        |: oi < oe and pd_ret != "nil"
+        then:
+            orows => orows.append(self.pd_row(pd_ret))
+            oi => self.sx_next(oi)
+            self :> pb
+
+    pass <: pb -> ty
+        |: oi < oe and pd_ret == "nil"
+        then:
+            fd => 0
+            cur => pd_expr
+            sfk => "D"
+            sfo => ""
+            loc => "\n"
+            terr => ""
+            nac => -1
+            sret => "d"
+            self :> go
+
+    pass <: pb -> pass
+        |: oi >= oe
+        then:
+            pk => pk + 1
+            self :> pa
+
+    pass <: od -> pass
+        |: sret == "d" and pd_ok
+        then:
+            orows => orows.append(self.pd_row(pd_nm))
+            oi => self.sx_next(oi)
+            self :> pb
+
+    pass <: od -> pass
+        |: sret == "d" and not pd_ok
+        then:
+            ferr => self.cut(terr, 3)
+            fpre => ""
+            self :> hx
 
     # The stream pass, infer-streams-in-atom-env. Per atom the ctor locals
     # (built for every atom, an error aborts), then per transition its
@@ -997,7 +1355,7 @@ def main:
     pass <: xa -> sorting
         |: pk >= atl.count()
         then:
-            rows => orows
+            rows => ||: rnd == 2 : orows.concat(cspi) ||: else : orows
             orows => orows.empty()
             sort_ret => "S"
 
@@ -1016,7 +1374,7 @@ def main:
     pass <: xc -> done
         |: qk < self.sx_end(w_ctor) and self.iserr(c_tk)
         then:
-            out => rsec + ("\nerror|" + self.cut(c_tk, 3))
+            out => epre + ("\nerror|" + self.cut(c_tk, 3))
 
     pass <: xc -> pass
         |: qk >= self.sx_end(w_ctor)
@@ -1056,7 +1414,7 @@ def main:
     pass <: xp -> done
         |: qk < p_end and self.iserr(p_tk)
         then:
-            out => rsec + ("\nerror|" + self.cut(p_tk, 3))
+            out => epre + ("\nerror|" + self.cut(p_tk, 3))
 
     pass <: xp -> pass
         |: qk >= p_end
@@ -1189,7 +1547,7 @@ def main:
     pass <: xk -> done
         |: sacc != "" and self.iserr(sa_ct)
         then:
-            out => rsec + ("\nerror|" + self.cut(sa_ct, 3))
+            out => epre + ("\nerror|" + self.cut(sa_ct, 3))
 
     pass <: xk -> pass
         |: sacc == ""
@@ -1209,7 +1567,7 @@ def main:
     pass <: xm -> done
         |: sacc != "" and self.pr(sa_tk) != self.pr(sp_tk)
         then:
-            out => rsec + ("\nerror|" + self.cut(m_incon, 3))
+            out => epre + ("\nerror|" + self.cut(m_incon, 3))
 
     pass <: xm -> pass
         |: sacc == ""
@@ -1552,7 +1910,8 @@ def main:
     sorting <: scan -> pass
         |: s_done and sort_ret == "R"
         then:
-            rsec => (("\n(record-obs " + nsorted.to_string()) + ")") + sorted
+            rsec => rsec + ((("\n(record-obs " + nsorted.to_string()) + ")") + sorted)
+            rotab => ||: rnd == 2 : rotab2 ||: else : rotab
             sorted => ""
             nsorted => 0
             pass => "A"
@@ -1563,6 +1922,7 @@ def main:
         |: s_done and sort_ret == "A"
         then:
             rsec => rsec + ((("\n(atom-obs " + nsorted.to_string()) + ")") + sorted)
+            aobs => ||: rnd == 2 : aobs2 ||: else : aobs
             sorted => ""
             nsorted => 0
             pass => "S"
@@ -1570,6 +1930,36 @@ def main:
             self :> xa
 
     sorting <: scan -> done
-        |: s_done and sort_ret == "S"
+        |: s_done and sort_ret == "S" and (mode != "round2" or rnd == 2)
         then:
             out => rsec + ((("\n(stream-payloads " + nsorted.to_string()) + ")") + sorted)
+
+    # (round2) The first round is done, the protocol defaults are next.
+    sorting <: scan -> pass
+        |: s_done and sort_ret == "S" and mode == "round2" and rnd == 1
+        then:
+            sorted => ""
+            nsorted => 0
+            rsec => ""
+            self :> pd0
+
+    sorting <: scan -> done
+        |: s_done and sort_ret == "D" and p_err
+        then:
+            out => ((("\n(protocol-defaults " + nsorted.to_string()) + ")") + sorted) + ("\n" + p_errl)
+
+    sorting <: scan -> pass
+        |: s_done and sort_ret == "D" and not p_err
+        then:
+            rsec => (("\n(protocol-defaults " + nsorted.to_string()) + ")") + sorted
+            sorted => ""
+            nsorted => 0
+            rnd => 2
+            pass => "R"
+            pk => 0
+            self :> ow
+
+    sorting <: scan -> done
+        |: s_done and sort_ret == "H"
+        then:
+            out => fpre + (("\nerror|" + hx_base) + hx_list)

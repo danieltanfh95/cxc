@@ -19,10 +19,10 @@ Chapter 37 roadmap for chapters 38 and later. It maps every environment `cxc.low
 | `augment-atom-env-with-companions` | 42 | both |
 | `resolve/build-symbol-table`, `resolve/verify-parity!` | 40 | envs only |
 | `named-tuple/collect-shapes` | 40 | envs only |
-| `infer-protocol-defaults` | none yet | |
+| `infer-protocol-defaults` | 43 (round2 of 41) | both |
 | `synthesize-container-entries` | 42 | envs only |
-| `infer-observables-in-record-env` and `infer-observables-in-atom-env` (defer false) | none yet | |
-| `infer-streams-in-atom-env`, `augment-atom-env-with-companions` (second round) | none yet | |
+| `infer-observables-in-record-env` and `infer-observables-in-atom-env` (defer false) | 43 (round2 of 41) | both |
+| `infer-streams-in-atom-env`, `augment-atom-env-with-companions` (second round) | 43 (round2 of 41, then 42 again) | both |
 | `build-extension-env`, `compose-record-env-with-extensions`, `compose-atom-env-with-extensions` | none yet | |
 | `infer-observables-in-record-env` (third round, defer true) | none yet | |
 | `validate-explicit-conformances!`, `inherit-defaults-into-env` (records, atoms) | none yet | |
@@ -41,7 +41,7 @@ Lower mode stops each slice at the first step after its own that it cannot repro
 | `:ctor-params` | `build-atom-env` | 39, `(ctor-params (c ...)*)` |
 | `:methods`, `:method-index` | `build-atom-env` (handler methods) | 39, `(methods (method ...)*)` |
 | `:observables` | `build-atom-env` | 39, `(observables <name>*)`, bodies read from the stream |
-| `:observables-typed`, `:observable-index` | atom inference pass | 41, `(atom-obs ...)` then `(obs <atom> <name> <type-kw> "<c-type>")` |
+| `:observables-typed`, `:observable-index` | atom inference pass | 41, `(atom-obs ...)` then `(obs <atom> <name> <type-kw> "<c-type>")`, second round 43 |
 | `:invariants` | `build-atom-env` | 39, `(invariants ...)` |
 | `:transitions` | `build-atom-env` with the swallow arms | 39, `(transitions (transition ...)*)` |
 | `:message-index`, `:companion-index` | `build-atom-env` | 39 |
@@ -61,7 +61,7 @@ The `:conforms` key of an atom is absent before extension composition.
 | --- | --- | --- |
 | `:fields`, `:field-index`, `:observables`, `:variant`, `:methods` (empty) | `build-record-env` | 40, `(record <name> <variant> (fields ...) (observables ...))` |
 | `:observables-typed`, `:observable-index` | record inference pass | 41, `(record-obs ...)` then `(obs ...)` |
-| second and third round types | defer-false pass, post-compose pass | slice 43 and 44 (proposed) |
+| second and third round types | defer-false pass, post-compose pass | 43 `(record-obs ...)`, third round slice 44 (proposed) |
 | composed `:observables`, `:conforms`, `:variant` | `compose-record-env-with-extensions` | slice 44 (proposed) |
 | inherited methods, `:method-index` | `inherit-defaults-into-env` | slice 44 (proposed) |
 | `:class-fn-index` | `seed-class-fn-index-from-f37-decode` | slice 44 (proposed) |
@@ -72,7 +72,7 @@ The `:conforms` key of an atom is absent before extension composition.
 | --- | --- | --- |
 | enum env (`:cases`, `:case-index`, `:case-entries`, `:payload-index`, `:tagged?`, `:raw-values`, `:raw-type`) | `build-enum-env` | 39, `(enum ...)` |
 | protocol env (`:accepts`, `:accepts-index`, `:conforms`, `:defaults`) | `build-protocol-env` | 39, `(protocol ...)` |
-| protocol defaults with `:cxc-return-ty` filled | `infer-protocol-defaults` | slice 43 (proposed) |
+| protocol defaults with `:cxc-return-ty` filled | `infer-protocol-defaults` | 43, `(pdefault <protocol> <name> <ret>\|nil)` |
 | `d->m` (`*decl->module*`) | `env/attribute-modules-to-decls` | 39, `(decl <name> <module>)` |
 | module map | `env/module-map-from-attribution` | 39, `(module <module> <name>+)` |
 | runtime shape and plugin shapes | the scan at the head of lower | 39, `(plugin-shape ...)`, `(runtime-shape ...)` |
@@ -82,15 +82,15 @@ The `:conforms` key of an atom is absent before extension composition.
 | extension env | `build-extension-env` | slice 44 (proposed) |
 | ctx | `mk-ctx` over the maps above | no row, each lowering slice assembles it from the rows |
 
-## The second inference round, slice 43
+## The second inference round, slice 43 (chapter 38)
 
-Every remaining typing step runs the slice-41 typer again. It cannot be copied into a new slice, so the proposal is to keep one typer binary and drive it with more rows rather than a new slice file. The slice-41 port grows input-driven rounds selected by argv, each reading the rows of the round before it.
+Landed as the `round2` mode of slice 41, not a new slice file, so the typer keeps one home. The plan above held with three changes.
 
-- Protocol defaults. `infer-protocol-defaults` types each default observable with no declared return under the full ctx, which carries the module map and the named-tuple env. With the module map the typer reaches enum-case access, enum payload calls, and `Record.from`, the branches slice 41 leaves out, and errors other than `:not-yet-implemented` propagate.
-- The defer-false passes. The record pass and the atom pass run again over the container rows of slice 42. The typer learns container method lookup (`:cxc-return-ty`, `:return-optional?`, the `count` observable, and the `min_by`, `max_by`, and `first` list sugars) and keeps every type the first round found.
-- The stream pass and the augment run again on the retyped envs. The augment is slice 42 run a second time on the new rows.
+- The round needs slice 42's containers, and slice 42 needs the first round's stream payloads, so slice 41 runs twice per row. The round2 run types the first round again in process rather than reading its rows, because the printed rows drop the `size_t` mark.
+- Lower runs the parity check and collect-shapes between the augment and the protocol defaults. The harness carries slice 40's envs-mode error into a lower row's post file when slice 42's demand passed, so lower mode is covered too, not only envs mode.
+- The second augment adds the same companions as the first (the demand reads only transitions and companion indices), and the harness checks it by running slice 42 again in lower mode on the second-round payload rows.
 
-Rough size. About 25 new fields and 40 arms in the typer slice, plus a second invocation of slice 42. The typer stays under a hundred fields if the rounds share the pass registers, which the chapter-37 stream pass already does.
+The protocol defaults are the only step whose ctx carries the module map, so enum-case access, enum payload calls, and `Record.from` are reachable there and nowhere else. Slice 41 grew from 68 fields and 130 arms (5.9 MB) to 85 fields and 156 arms (8.6 MB). The third record pass after composition is the same typer again and belongs in a third round driven by slice 44's composed rows.
 
 ## Composition and conformance, slice 44
 
