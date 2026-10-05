@@ -87,7 +87,7 @@ for h in compiler/self_host/harness/*.sh; do
 done
 ```
 
-Count of parity-green harnesses at handoff is 37 (chapter 25 added `float_render_java`, chapter 26 added `parse_expr_bootstrap`, chapter 30 added `parse_program_bootstrap`, whose run also covers the real-world sweep of every example and prelude file, chapter 31 added `resolve_program_symbols`, the first composition over slice 36's output, chapter 32 added `prelude_program`, the passes between parse and lower and the prelude stream). Of the 38 src files, `ast_shape_demo.cxc` is a non-parity design artifact and `tnt_to_nt_bridge.cxc` is covered by the `collect_shapes_from_parse_layer` composition harness.
+Count of parity-green harnesses at handoff is 38 (chapter 25 added `float_render_java`, chapter 26 added `parse_expr_bootstrap`, chapter 30 added `parse_program_bootstrap`, whose run also covers the real-world sweep of every example and prelude file, chapter 31 added `resolve_program_symbols`, the first composition over slice 36's output, chapter 32 added `prelude_program`, the passes between parse and lower and the prelude stream, chapter 33 added `lower_envs`, the environment builders at the head of `lower/lower`). Of the 39 src files, `ast_shape_demo.cxc` is a non-parity design artifact and `tnt_to_nt_bridge.cxc` is covered by the `collect_shapes_from_parse_layer` composition harness.
 
 ## Oracle paths
 

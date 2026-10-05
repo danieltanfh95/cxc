@@ -1,0 +1,1096 @@
+# Chapter-33 environment-builder slice (slice 39).
+#
+# Ports the environment builders at the head of `lower/lower`, in its
+# order, on the node stream slice 38 prints (prelude nodes, then user
+# nodes, with `(module <name>)` markers between files).
+#
+#   1. env/attribute-modules-to-decls, the decl-to-module table, and
+#      env/module-map-from-attribution, its inverse seeded with every
+#      prelude name.
+#   2. The plugin runtime_shape scan at the head of lower and its
+#      conflict check, then (lower mode) the `def main` check.
+#   3. build-protocol-env with observable->method-entry and its two
+#      default-value validators, then program-scan/sync-send-edges, then
+#      build-enum-env.
+#
+# None of these reads `:resolves-to`, so the stream needs no reference
+# rows. build-atom-env, the first builder that takes the module map,
+# is chapter 34.
+#
+# argv.
+#
+#   <check> <stream> <index>
+#       <check> is `lower` (every check lower makes, the `def main` check
+#       included) or `envs` (no `def main` check, so a library file still
+#       prints its environments). <stream> is a file holding
+#       `(stream <node>*)`, the nodes in the slice-36 format with slice
+#       38's rewrites and `(module <name>)` for a module marker, or an
+#       `error|...` text, which passes through. <index> is the slice-37
+#       prelude index, `<name>|<module>` lines.
+#
+# Output. The sections in lower's order, each a count row and its rows.
+# When a step throws, the sections before it and then `error|<message>`.
+#
+#   (attribution <n>)     (decl <name> <module>), sorted by name.
+#   (module-map <n>)      (module <module> <name>+), modules and names sorted.
+#   (plugin-shapes <n>)   (plugin-shape "<name>"|nil <shape>) in stream
+#                         order, then (runtime-shape <shape>).
+#   (protocol-env <n>)    one row per protocol, sorted.
+#       (protocol <name> (accepts <accept>*) (conforms <type>*) (defaults <default>*))
+#       <accept>  = (accept <name> <params> <type>|nil)
+#       <default> = (default <name> (params <p>+) <ret-ty>|nil <type>|nil <expr>)
+#       <p>       = (self <owner>) | (p <name> <cxc-ty>|nil bang|plain <expr>|nil)
+#   (sync-edges <n>)      (edge <source> <target> <msg>), sorted.
+#   (enum-env <n>)        one row per enum, sorted.
+#       (enum <name> tagged|plain (cases <c>*) (case-index (<c> <i>)*)
+#             (entries <enum-case>*) (payload-index (<c> <params>)*)
+#             (raw-values <v>+)|nil <raw-type>|nil)
+#
+# Every map is printed sorted by key, and a later declaration of a name
+# replaces an earlier one, as `assoc` and `into {}` do. Params, types,
+# expressions, and enum cases are verbatim spans of the stream.
+#
+# Method. The stream is read into the chapter-31 preorder arena (the
+# reader is copied from slice 38). Each builder is one pass over the top
+# nodes, inner loops walk items, params, fields, and cases by arena
+# index, and maps with last-wins keys are `\n<key>\t<value>\n` tables.
+# One selection sort serves every section and returns to the phase that
+# asked through `sort_ret`. Record reads go through parametric
+# observations and nothing sorts records (chapter 32 Linux notes).
+#
+# Scope notes. The duplicate-signature message names the first repeated
+# signature in declaration order, which is Clojure's `frequencies` order
+# for up to eight distinct names. base-type-name (a protocol default's
+# return type under `!` or `?`, and a `|>` target's declared type) is
+# ported for type refs, `!`, `?`, `List`, `Set`, and `Ptr` to a depth of
+# four, `Map` over two plain type refs, and the unknown-node and
+# unknown-outer messages. Named tuples and deeper or compound shapes
+# print a port-only `port: out of scope` message the corpus never
+# carries. The `|>` cycle warning goes to stderr in Clojure and is not
+# ported. The non-protocol `class` check is unreachable (the parser only
+# builds protocol classes).
+
+def SNode:
+    pre:    Int!
+    kind:   Int!
+    start:  Int!
+    stop:   Int!
+    depth:  Int!
+    size:   Int!
+    parent: Int!
+
+def main:
+    use args:    Args
+    use console: Console
+    use fs:      FileSystem
+
+    mode:     String! = ""
+    src:      String! = ""
+    pidx:     String! = ""
+    out:      String! = ""
+    # Reader state.
+    rp:       Int!    = 0
+    rmode:    Int!    = 0
+    rnest:    Int!    = 0
+    tstart:   Int!    = 0
+    sp:       Int!    = 0
+    ncount:   Int!    = 0
+    rstack:   List of SNode = []
+    nodes:    List of SNode = []
+    # Shared.
+    ti:       Int!    = 2
+    k:        Int!    = 0
+    gc:       Int!    = 1
+    rows:     List of String = []
+    sort_ret: String! = ""
+    sort_i:   Int!    = 0
+    scan_best: String! = ""
+    scan_has: Bool!   = false
+    sorted:   String! = ""
+    nsorted:  Int!    = 0
+    # Attribution and module map.
+    cur_mod:  String! = "main"
+    atab:     String! = "\n"
+    anames:   List of String = []
+    msorted:  String! = ""
+    cm:       String! = ""
+    mrow:     String! = ""
+    mtxt:     String! = ""
+    nmod:     Int!    = 0
+    # Runtime shape.
+    fq:       Int!    = 0
+    fend:     Int!    = 0
+    p_shape:  String! = ""
+    p_name:   String! = ""
+    p_has_name: Bool! = false
+    sh_rows:  String! = ""
+    sh_n:     Int!    = 0
+    nd_items: String! = ""
+    nd_first: String! = ""
+    nd_conf:  Bool!   = false
+    has_main: Bool!   = false
+    # Protocol env.
+    pnm:      String! = ""
+    ii:       Int!    = 0
+    iend:     Int!    = 0
+    acc_txt:  String! = ""
+    an_txt:   String! = "\n"
+    rtab:     String! = "\n"
+    dk:       Int!    = 1
+    pdup:     String! = ""
+    dflt_txt: String! = ""
+    qi:       Int!    = 0
+    qend:     Int!    = 0
+    q_seen:   Bool!   = false
+    ar_bad:   String! = ""
+    req_l:    String! = ""
+    def_l:    String! = ""
+    nc_name:  String! = ""
+    nc_kw:    String! = ""
+    prows:    String! = ""
+    cj:       Int!    = 0
+    cjend:    Int!    = 0
+    cbad:     Bool!   = false
+    ptab:     String! = "\n"
+    pnames:   List of String = []
+    # Sync edges.
+    anm:      String! = "\n"
+    ej:       Int!    = 0
+    ejend:    Int!    = 0
+    bstart:   Int!    = 0
+    epass:    Int!    = 1
+    fdata:    Int!    = -1
+    fuses:    Int!    = -1
+    ctab:     String! = "\n"
+    dtab:     String! = "\n"
+    utab:     String! = "\n"
+    # Enum env.
+    e_pending: Bool!  = false
+    enm:      String! = ""
+    ert:      String! = ""
+    ci:       Int!    = 0
+    cend:     Int!    = 0
+    cidx:     Int!    = 0
+    cases_t:  String! = ""
+    ents_t:   String! = ""
+    raw_t:    String! = ""
+    tagged:   Bool!   = false
+    ctab2:    String! = "\n"
+    cnames:   List of String = []
+    csorted:  String! = ""
+    ci_txt:   String! = ""
+    pi_txt:   String! = ""
+    etab:     String! = "\n"
+    enames:   List of String = []
+
+    # Reader observations.
+    r_end    :- rp >= src.length()
+    rc       :- ||: r_end : -1 ||: else : src.code_at(rp)
+    r_sp     :- rc == 32 or rc == 10 or rc == 9 or rc == 13
+    r_open   :- rc == 40
+    r_close  :- rc == 41
+    r_quote  :- rc == 34
+    r_bs     :- rc == 92
+    r_plain  :- not r_end and not r_sp and not r_open and not r_close
+    rtop     :- rstack.at((sp - 1).max(0)) ?? SNode(pre: -1, kind: 0, start: 0, stop: 0, depth: -1, size: 0, parent: -1)
+    r_parent :- ||: sp == 0 : -1 ||: else : rtop.pre
+    a_stop   :- r_end or r_sp or (r_close and rnest == 0)
+
+    # Arena accessors.
+    nn :- nodes.count()
+    sx(i: Int!) :- SNode
+        nodes.at(i.max(0)) ?? SNode(pre: -1, kind: -1, start: 0, stop: 0, depth: -1, size: 1, parent: -1)
+    sx_text(i: Int!) :- String!
+        ||: i < 0 or i >= nn : "" ||: else : src.substring(self.sx(i).start.max(0).min(src.length()), (self.sx(i).stop - self.sx(i).start).max(0).min(src.length()))
+    sx_next(i: Int!) :- Int!
+        i + self.sx(i).size.max(1)
+    sx_head(i: Int!) :- String!
+        ||: self.sx(i).kind == 0 and self.sx(i).size > 1 : self.sx_text(i + 1) ||: else : ""
+    sx_end(i: Int!) :- Int!
+        i + self.sx(i).size
+    line_at(t: String!, k: Int!) :- String!
+        ||: t.substring(k, t.length() - k).index_of("\n") < 0 : t.substring(k, t.length() - k) ||: else : t.substring(k, t.substring(k, t.length() - k).index_of("\n").max(0))
+    cut(t: String!, k: Int!) :- String!
+        t.substring(k.max(0).min(t.length()), t.length() - k.max(0).min(t.length()))
+
+    # Tables. `look(tab, key)` is the rest of the `\n<key>\t...` line, ""
+    # on a miss. A tab-separated row splits with f_first and f_rest.
+    look(tab: String!, key: String!) :- String!
+        ||: tab.index_of(("\n" + key) + "\t") < 0 : "" ||: else : self.line_at(tab, (tab.index_of(("\n" + key) + "\t") + key.length() + 2).max(0).min(tab.length()))
+    has_key(tab: String!, key: String!) :- Bool!
+        tab.contains(("\n" + key) + "\t")
+    put_last(tab: String!, key: String!, v: String!) :- String!
+        ||: self.has_key(tab, key) : tab.replace((("\n" + key) + ("\t" + self.look(tab, key))) + "\n", (("\n" + key) + ("\t" + v)) + "\n") ||: else : tab + ((key + "\t") + (v + "\n"))
+    put_first(tab: String!, key: String!, v: String!) :- String!
+        ||: self.has_key(tab, key) : tab ||: else : tab + ((key + "\t") + (v + "\n"))
+    tab_cut(r: String!) :- Int!
+        ||: r.index_of("\t") < 0 : r.length() ||: else : r.index_of("\t")
+    f_first(r: String!) :- String!
+        r.substring(0, self.tab_cut(r))
+    f_rest(r: String!) :- String!
+        r.substring((self.tab_cut(r) + 1).min(r.length()), (r.length() - self.tab_cut(r) - 1).max(0))
+    plook(nm: String!) :- String!
+        ||: pidx.index_of(("\n" + nm) + "|") < 0 : "" ||: else : self.line_at(pidx, (pidx.index_of(("\n" + nm) + "|") + nm.length() + 2).max(0).min(pidx.length()))
+    pmod(nm: String!) :- String!
+        ||: self.plook(nm) == "" : cur_mod ||: else : self.plook(nm)
+    bar_at(ln: String!) :- Int!
+        ln.index_of("|").max(0)
+    sp_at(ln: String!) :- Int!
+        ln.index_of(" ").max(0)
+    nm_at(i: Int!) :- String!
+        anames.at(i) ?? ""
+    pn_at(i: Int!) :- String!
+        pnames.at(i) ?? ""
+    cn_at(i: Int!) :- String!
+        cnames.at(i) ?? ""
+    en_at(i: Int!) :- String!
+        enames.at(i) ?? ""
+
+    # Decode a pr-str string rendering for a message.
+    dq(s: String!) :- String!
+        ||: s.length() < 2 : s ||: else : s.substring(1, (s.length() - 2).max(0)).replace("\\\\", (1).to_char_string()).replace("\\\"", "\"").replace("\\n", "\n").replace("\\t", "\t").replace("\\r", "\r").replace((1).to_char_string(), "\\")
+
+    # The Clojure node keyword of an expression rendering.
+    kw_of(h: String!) :- String!
+        ||: h == "int" : ":lit-int" ||: h == "float" : ":lit-float" ||: h == "string" : ":lit-string" ||: h == "char" : ":lit-char" ||: h == "bool" : ":lit-bool" ||: h == "nil" : ":lit-nil" ||: h == "multi-arm" : ":multi-arm-dispatch" ||: h == "do" : ":do-block-expr" ||: h == "variant" : ":variant-pattern" ||: h.starts_with("?") : ":" + h.substring(1, (h.length() - 1).max(0)) ||: else : ":" + h
+    kw(i: Int!) :- String!
+        ||: self.sx(i).kind == 1 and self.sx_text(i) == "else" : ":else-marker" ||: else : self.kw_of(self.sx_head(i))
+
+    # The current top node.
+    hd       :- self.sx_head(ti)
+    tname    :- self.sx_text(ti + 2)
+    is_decl  :- hd == "record" or hd == "agent" or hd == "enum"
+    is_atom  :- hd == "agent" and tname != "main"
+
+    # Runtime shape. A field's default is its fifth child.
+    is_rs(d: Int!) :- Bool!
+        self.sx_head(d) == "dot" and self.sx_text(d + 2) == "(ident RuntimeShape)"
+    p_nm_out :- ||: p_has_name : p_name ||: else : "nil"
+    nd_item  :- ((||: p_has_name : self.dq(p_name) ||: else : "<unnamed>") + " → RuntimeShape.") + p_shape.replace("-", "_")
+    p_nd     :- p_shape != "" and p_shape != "dispatch-main"
+    shape_txt :- (("\n(plugin-shapes " + sh_n.to_string()) + ")") + (sh_rows + (("\n(runtime-shape " + (||: nd_first == "" : "dispatch-main" ||: else : nd_first)) + ")"))
+    m_conflict :- ("conflicting `runtime_shape` declarations across plugins: " + nd_items) + (". At most one non-default runtime_shape " + "is allowed per program; each shape owns the main thread differently and they can not coexist. See design/runtime-shape.md.")
+
+    # base-type-name, unrolled to depth four. An error comes back as
+    # `!err:<message>` anywhere in the result.
+    nyi(s: String!) :- String!
+        "!err:lowering not yet implemented: " + s
+    to_outer(t: String!) :- String!
+        t.substring(3, (t.index_of("(") - 3).max(0))
+    to_inner(t: String!) :- String!
+        t.substring((t.index_of("(") + 1).max(0), (t.length() - t.index_of("(") - 2).max(0))
+    wr_inner(t: String!) :- String!
+        t.substring(3, (t.length() - 4).max(0))
+    is_wrap(t: String!) :- Bool!
+        t.starts_with("TN(") or t.starts_with("TQ(")
+    is_to(t: String!, o: String!) :- Bool!
+        t.starts_with("TO:") and self.to_outer(t) == o
+    known_outer(t: String!) :- Bool!
+        self.is_to(t, "List") or self.is_to(t, "Set") or self.is_to(t, "Ptr") or self.is_to(t, "Map")
+    map_ok(t: String!) :- Bool!
+        self.to_inner(t).starts_with("TT(TR:") and self.to_inner(t).ends_with(")") and self.to_inner(t).index_of(",TR:") > 0 and not self.wr_inner(self.to_inner(t)).contains("(")
+    map_k(t: String!) :- String!
+        self.wr_inner(self.to_inner(t)).substring(3, (self.wr_inner(self.to_inner(t)).index_of(",") - 3).max(0))
+    map_v(t: String!) :- String!
+        self.cut(self.wr_inner(self.to_inner(t)), self.wr_inner(self.to_inner(t)).index_of(",") + 4)
+    bt_err(t: String!) :- String!
+        ||: t == "nil" : self.nyi("base-type-name: unknown type-node ") ||: t.starts_with("TT(") : self.nyi("base-type-name: unknown type-node :type-tuple") ||: t.starts_with("TF(") : self.nyi("base-type-name: unknown type-node :foreign-fn-type") ||: t.starts_with("TO:") and not self.known_outer(t) : self.nyi(("base-type-name: `" + self.to_outer(t)) + " of ...` — only `List of T`, `Map of (K, V)`, `Set of T`, and `Ptr of T` (FFI) supported") ||: else : "!err:port: out of scope"
+    bt0(t: String!) :- String!
+        ||: t.starts_with("TR:") : t.substring(3, t.length() - 3) ||: else : self.bt_err(t)
+    bt1(t: String!) :- String!
+        ||: t.starts_with("TR:") : t.substring(3, t.length() - 3) ||: self.is_wrap(t) : self.bt0(self.wr_inner(t)) ||: self.is_to(t, "List") : "_Cxc_ListOf" + self.bt0(self.to_inner(t)) ||: self.is_to(t, "Set") : "_Cxc_SetOf" + self.bt0(self.to_inner(t)) ||: self.is_to(t, "Ptr") : "_Cxc_Ptr_" + self.bt0(self.to_inner(t)) ||: self.is_to(t, "Map") and self.map_ok(t) : ("_Cxc_MapOf" + self.map_k(t)) + self.map_v(t) ||: else : self.bt_err(t)
+    bt2(t: String!) :- String!
+        ||: t.starts_with("TR:") : t.substring(3, t.length() - 3) ||: self.is_wrap(t) : self.bt1(self.wr_inner(t)) ||: self.is_to(t, "List") : "_Cxc_ListOf" + self.bt1(self.to_inner(t)) ||: self.is_to(t, "Set") : "_Cxc_SetOf" + self.bt1(self.to_inner(t)) ||: self.is_to(t, "Ptr") : "_Cxc_Ptr_" + self.bt1(self.to_inner(t)) ||: self.is_to(t, "Map") and self.map_ok(t) : ("_Cxc_MapOf" + self.map_k(t)) + self.map_v(t) ||: else : self.bt_err(t)
+    bt3(t: String!) :- String!
+        ||: t.starts_with("TR:") : t.substring(3, t.length() - 3) ||: self.is_wrap(t) : self.bt2(self.wr_inner(t)) ||: self.is_to(t, "List") : "_Cxc_ListOf" + self.bt2(self.to_inner(t)) ||: self.is_to(t, "Set") : "_Cxc_SetOf" + self.bt2(self.to_inner(t)) ||: self.is_to(t, "Ptr") : "_Cxc_Ptr_" + self.bt2(self.to_inner(t)) ||: self.is_to(t, "Map") and self.map_ok(t) : ("_Cxc_MapOf" + self.map_k(t)) + self.map_v(t) ||: else : self.bt_err(t)
+    bt_msg(r: String!) :- String!
+        ||: r.contains("!err:") : self.cut(r, r.index_of("!err:") + 5) ||: else : ""
+    # The protocol default's `:cxc-return-ty` from its signature's type.
+    ret_ty(r: String!) :- String!
+        ||: r == "nil" : "" ||: r.starts_with("TR:") : r.substring(3, r.length() - 3) ||: r.starts_with("TO:") : self.to_outer(r) ||: self.is_wrap(r) : self.bt3(self.wr_inner(r)) ||: else : ""
+
+    # Protocol env.
+    ihd :- self.sx_head(ii)
+    twice(x: String!) :- Bool!
+        self.cut(an_txt, an_txt.index_of(("\n" + x) + "\n") + 1).contains(("\n" + x) + "\n")
+    q_self(q: Int!) :- Bool!
+        self.sx_head(q) == "param"
+    q_name(q: Int!) :- String!
+        ||: self.q_self(q) : "self" ||: else : self.sx_text(q + 2)
+    q_hasd(q: Int!) :- Bool!
+        not self.q_self(q) and self.sx(q + 4).kind == 0
+    needs_c(q: Int!) :- Bool!
+        self.q_hasd(q) and nc_name == ""
+    cty(t: String!) :- String!
+        ||: t.starts_with("TR:") : t.substring(3, t.length() - 3) ||: t.starts_with("TN(TR:") and t.ends_with(")") : t.substring(6, (t.length() - 7).max(0)) ||: else : "nil"
+    q_def(q: Int!) :- String!
+        ||: self.q_hasd(q) : self.sx_text(q + 4) ||: else : "nil"
+    q_bang(q: Int!) :- String!
+        ||: self.sx_text(q + 3).starts_with("TN(") : " bang " ||: else : " plain "
+    prow(q: Int!) :- String!
+        ||: self.q_self(q) : ("(self " + pnm) + ")" ||: else : (("(p " + self.q_name(q)) + (" " + self.cty(self.sx_text(q + 3)))) + (self.q_bang(q) + (self.q_def(q) + ")"))
+    lit_head(h: String!) :- Bool!
+        h == "int" or h == "float" or h == "string" or h == "char" or h == "bool"
+    form_head(h: String!) :- Bool!
+        h == "nil" or h == "ident" or h == "neg" or h == "not" or h == "list"
+    ok_head(h: String!) :- Bool!
+        self.lit_head(h) or self.form_head(h)
+    o_name   :- self.sx_text(ii + 2)
+    o_ret    :- ||: self.look(rtab, o_name) == "" : "nil" ||: else : self.look(rtab, o_name)
+    o_expr   :- self.sx_text(self.sx_next(self.sx_next(ii + 3)))
+    o_site   :- ("observable `" + pnm) + (("." + o_name) + "`")
+    o_retty  :- self.ret_ty(o_ret)
+    m_after  :- ((("required param `" + ar_bad) + "` follows a defaulted ") + (("param on " + o_site) + " — spec §3.8.5 requires defaulted params to come last. ")) + ((("Reorder: put all required params (" + req_l) + ") FIRST, then defaulted params (") + (def_l + ")."))
+    m_const  :- ((("default for `" + nc_name) + ("` on " + o_site)) + (" is not a compile-time constant (spec §3.8.5 " + "permits primitive literals, `nil`, unary `-`/`not` on those, a value-alias identifier, or a bare enum-case access `Enum.case`); ")) + (("got `" + nc_kw) + "` node")
+    m_dup    :- (("protocol `" + pnm) + ("` declares signature `" + pdup)) + ("` more than once — each selector " + "appears at most once in a protocol's surface. See spec §3.4.5.")
+    retty_out :- ||: o_retty == "" : "nil" ||: else : o_retty
+    d_row    :- ((("(default " + o_name) + (" (params (self " + pnm)) + ((")" + prows) + (") " + self.retty_out))) + ((" " + o_ret) + ((" " + o_expr) + ")"))
+
+    # Sync edges.
+    e_emit :- epass == 2 and self.sx_head(ej) == "emit" and self.sx_text(ej + 2) == "sync" and self.sx_head(ej + 3) == "ident"
+    e_x    :- self.sx_text(ej + 5)
+    e_msg  :- self.sx_text(self.sx_next(ej + 3))
+    e_ty   :- ||: self.has_key(ctab, e_x) : self.look(ctab, e_x) ||: self.has_key(dtab, e_x) : self.look(dtab, e_x) ||: self.has_key(utab, e_x) : self.look(utab, e_x) ||: else : ""
+    e_bt   :- ||: e_ty == "" or e_ty.contains("TNT(") : "" ||: else : self.bt3(e_ty)
+    e_err  :- self.bt_msg(e_bt)
+    e_hit  :- e_bt != "" and e_err == "" and anm.contains(("\n" + e_bt) + "\n") and e_bt != tname
+    e_par  :- self.sx(ej).parent
+    e_h    :- self.sx_head(ej)
+
+    # Enum env.
+    c_raw  :- self.sx_next(ci + 3) < self.sx_end(ci)
+    e_row  :- ((("(enum " + enm) + (" " + (||: tagged : "tagged" ||: else : "plain"))) + ((" (cases" + cases_t) + (") (case-index" + ci_txt))) + (((") (entries" + ents_t) + (") (payload-index" + pi_txt)) + ((") " + (||: ert == "nil" : "nil" ||: else : ("(raw-values" + raw_t) + ")")) + ((" " + ert) + ")")))
+
+    # Sorting.
+    scan_cur :- rows.at(sort_i) ?? ""
+    scan_cmp :- scan_cur.compare_to(scan_best)
+    s_done   :- sort_i >= rows.count() and not scan_has
+
+    -> reading
+        then:
+            mode => args.get_or(1, "")
+            self :> start
+
+    -> attr
+        then: self :> at
+
+    -> mmap
+        then: self :> mm
+
+    -> mgroup
+        then: self :> mg
+
+    -> shape
+        then: self :> sh
+
+    -> proto
+        then: self :> pt
+
+    -> edges
+        then: self :> e1
+
+    -> enumz
+        then: self :> en
+
+    -> sorting
+        then: self :> scan
+
+    -> done
+        then: self :> fin
+
+    -> end
+        then: console.write(self.cut(out, 1))
+
+    done <: fin -> end
+
+    reading <: start -> reading
+        then:
+            let raw: String! = fs.read_text(args.get_or(2, ""))
+            src => ||: raw.ends_with("\n") : raw.substring(0, (raw.length() - 1).max(0)) ||: else : raw
+            pidx => "\n" + fs.read_text(args.get_or(3, ""))
+            self :> chk
+
+    # An error rendering passes through.
+    reading <: chk -> done
+        |: src.starts_with("error|")
+        then:
+            out => "\n" + src
+
+    reading <: chk -> reading
+        |: not src.starts_with("error|")
+        then: self :> rd
+
+    reading <: rd -> attr
+        |: rmode == 0 and r_end
+        then:
+            nodes => nodes.sort_by(n => n.pre)
+
+    reading <: rd -> reading
+        |: rmode == 0 and r_sp
+        then:
+            rp => rp + 1
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 0 and r_open
+        then:
+            rstack => rstack.slice(0, sp).append(SNode(pre: ncount, kind: 0, start: rp, stop: 0, depth: sp, size: 0, parent: r_parent))
+            ncount => ncount + 1
+            sp => sp + 1
+            rp => rp + 1
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 0 and r_close
+        then:
+            nodes => nodes.append(SNode(pre: rtop.pre, kind: 0, start: rtop.start, stop: rp + 1, depth: rtop.depth, size: ncount - rtop.pre, parent: rtop.parent))
+            sp => (sp - 1).max(0)
+            rp => rp + 1
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 0 and r_quote
+        then:
+            tstart => rp
+            rmode => 2
+            rp => rp + 1
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 0 and r_plain and not r_quote
+        then:
+            tstart => rp
+            rmode => 1
+            rnest => 0
+            rp => rp + 1
+            self :> rd
+
+    # Atom mode.
+    reading <: rd -> reading
+        |: rmode == 1 and a_stop
+        then:
+            nodes => nodes.append(SNode(pre: ncount, kind: 1, start: tstart, stop: rp, depth: sp, size: 1, parent: r_parent))
+            ncount => ncount + 1
+            rmode => 0
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 1 and not a_stop and r_open
+        then:
+            rnest => rnest + 1
+            rp => rp + 1
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 1 and not a_stop and r_close
+        then:
+            rnest => rnest - 1
+            rp => rp + 1
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 1 and not a_stop and not r_open and not r_close
+        then:
+            rp => rp + 1
+            self :> rd
+
+    # String mode.
+    reading <: rd -> reading
+        |: rmode == 2 and (r_quote or r_end)
+        then:
+            nodes => nodes.append(SNode(pre: ncount, kind: 2, start: tstart, stop: (rp + 1).min(src.length()), depth: sp, size: 1, parent: r_parent))
+            ncount => ncount + 1
+            rmode => 0
+            rp => rp + 1
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 2 and not r_end and not r_quote and r_bs
+        then:
+            rmode => 3
+            rp => rp + 1
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 2 and not r_end and not r_quote and not r_bs
+        then:
+            rp => rp + 1
+            self :> rd
+
+    reading <: rd -> reading
+        |: rmode == 3
+        then:
+            rmode => 2
+            rp => (rp + 1).min(src.length())
+            self :> rd
+
+    # 1. Attribution. `(module <name>)` sets the module, a record, agent,
+    # or enum takes its prelude module or the current one, last wins.
+    attr <: at -> attr
+        |: ti < nn and hd == "module"
+        then:
+            cur_mod => tname
+            ti => self.sx_next(ti)
+            self :> at
+
+    attr <: at -> attr
+        |: ti < nn and is_decl
+        then:
+            anames => ||: self.has_key(atab, tname) : anames ||: else : anames.append(tname)
+            atab => self.put_last(atab, tname, self.pmod(tname))
+            ti => self.sx_next(ti)
+            self :> at
+
+    attr <: at -> attr
+        |: ti < nn and hd != "module" and not is_decl
+        then:
+            ti => self.sx_next(ti)
+            self :> at
+
+    attr <: at -> attr
+        |: ti >= nn
+        then:
+            k => 0
+            self :> ar
+
+    attr <: ar -> attr
+        |: k < anames.count()
+        then:
+            rows => rows.append(("(decl " + self.nm_at(k)) + ((" " + self.look(atab, self.nm_at(k))) + ")"))
+            k => k + 1
+            self :> ar
+
+    attr <: ar -> sorting
+        |: k >= anames.count()
+        then:
+            sort_ret => "attr"
+
+    # The module map, `<module> <name>` pairs from the attribution and the
+    # prelude index, sorted and distinct, then grouped.
+    mmap <: mm -> mmap
+        |: k < anames.count()
+        then:
+            rows => rows.append((self.look(atab, self.nm_at(k)) + " ") + self.nm_at(k))
+            k => k + 1
+            self :> mm
+
+    mmap <: mm -> mmap
+        |: k >= anames.count() and gc < pidx.length()
+        then:
+            let ln: String! = self.line_at(pidx, gc)
+            rows => ||: ln == "" : rows ||: else : rows.append((self.cut(ln, self.bar_at(ln) + 1) + " ") + ln.substring(0, self.bar_at(ln)))
+            gc => gc + ln.length() + 1
+            self :> mm
+
+    mmap <: mm -> sorting
+        |: k >= anames.count() and gc >= pidx.length()
+        then:
+            sort_ret => "mmap"
+
+    mgroup <: mg -> mgroup
+        |: gc < msorted.length()
+        then:
+            let ln: String! = self.line_at(msorted, gc)
+            let m: String! = ln.substring(0, self.sp_at(ln))
+            let n: String! = self.cut(ln, self.sp_at(ln) + 1)
+            mtxt => ||: m == cm or cm == "" : mtxt ||: else : (mtxt + "\n") + (mrow + ")")
+            nmod => ||: m == cm : nmod ||: else : nmod + 1
+            mrow => ||: m == cm : (mrow + " ") + n ||: else : (("(module " + m) + " ") + n
+            cm => m
+            gc => gc + ln.length() + 1
+            self :> mg
+
+    mgroup <: mg -> shape
+        |: gc >= msorted.length()
+        then:
+            out => (out + (("\n(module-map " + nmod.to_string()) + ")")) + (mtxt + (||: cm == "" : "" ||: else : ("\n" + mrow) + ")"))
+            ti => 2
+
+    # 2. The runtime_shape scan. Per plugin, the first `runtime_shape`
+    # field whose default is `RuntimeShape.<case>` and the first `name`
+    # field with a string default.
+    shape <: sh -> shape
+        |: ti < nn and hd == "plugin"
+        then:
+            fq => ti + 4
+            fend => self.sx_end(ti + 2)
+            p_shape => ""
+            p_name => ""
+            p_has_name => false
+            self :> sf
+
+    shape <: sh -> shape
+        |: ti < nn and hd != "plugin"
+        then:
+            has_main => has_main or (hd == "agent" and tname == "main")
+            ti => self.sx_next(ti)
+            self :> sh
+
+    shape <: sf -> shape
+        |: fq < fend
+        then:
+            let fnm: String! = self.sx_text(fq + 2)
+            let nm_hit: Bool! = not p_has_name and fnm == "name" and self.sx_head(fq + 4) == "string"
+            p_shape => ||: p_shape == "" and fnm == "runtime_shape" and self.is_rs(fq + 4) : self.sx_text(fq + 9).replace("_", "-") ||: else : p_shape
+            p_name => ||: nm_hit : self.sx_text(fq + 6) ||: else : p_name
+            p_has_name => p_has_name or nm_hit
+            fq => self.sx_next(fq)
+            self :> sf
+
+    shape <: sf -> shape
+        |: fq >= fend
+        then:
+            sh_rows => ||: p_shape == "" : sh_rows ||: else : sh_rows + (("\n(plugin-shape " + p_nm_out) + ((" " + p_shape) + ")"))
+            sh_n => ||: p_shape == "" : sh_n ||: else : sh_n + 1
+            nd_items => ||: not p_nd : nd_items ||: nd_items == "" : nd_item ||: else : (nd_items + ", ") + nd_item
+            nd_first => ||: nd_first == "" and p_nd : p_shape ||: else : nd_first
+            nd_conf => nd_conf or (nd_first != "" and p_nd and p_shape != nd_first)
+            ti => self.sx_next(ti)
+            self :> sh
+
+    shape <: sh -> done
+        |: ti >= nn and nd_conf
+        then:
+            out => out + ("\nerror|" + m_conflict)
+
+    shape <: sh -> done
+        |: ti >= nn and not nd_conf and mode == "lower" and not has_main
+        then:
+            out => (out + shape_txt) + "\nerror|no `def main` entry point found at top level"
+
+    shape <: sh -> proto
+        |: ti >= nn and not nd_conf and (mode != "lower" or has_main)
+        then:
+            out => out + shape_txt
+            ti => 2
+
+    # 3. build-protocol-env. Accepts first, the duplicate check, then one
+    # default per observable with its two validators.
+    proto <: pt -> proto
+        |: ti < nn and hd == "protocol"
+        then:
+            pnm => tname
+            ii => ti + 3
+            iend => self.sx_end(ti)
+            acc_txt => ""
+            an_txt => "\n"
+            rtab => "\n"
+            dflt_txt => ""
+            dk => 1
+            pdup => ""
+            self :> pa
+
+    proto <: pt -> proto
+        |: ti < nn and hd != "protocol"
+        then:
+            ti => self.sx_next(ti)
+            self :> pt
+
+    proto <: pt -> proto
+        |: ti >= nn
+        then:
+            k => 0
+            self :> pr
+
+    proto <: pr -> proto
+        |: k < pnames.count()
+        then:
+            rows => rows.append(self.look(ptab, self.pn_at(k)))
+            k => k + 1
+            self :> pr
+
+    proto <: pr -> sorting
+        |: k >= pnames.count()
+        then:
+            sort_ret => "proto"
+
+    proto <: pa -> proto
+        |: ii < iend and (ihd == "obs-sig" or ihd == "recv-sig")
+        then:
+            let n: String! = self.sx_text(ii + 2)
+            let r: String! = ||: ihd == "obs-sig" : self.sx_text(self.sx_next(ii + 3)) ||: else : "nil"
+            acc_txt => acc_txt + ((" (accept " + n) + ((" " + self.sx_text(ii + 3)) + ((" " + r) + ")")))
+            an_txt => an_txt + (n + "\n")
+            rtab => self.put_last(rtab, n, r)
+            ii => self.sx_next(ii)
+            self :> pa
+
+    proto <: pa -> proto
+        |: ii < iend and ihd != "obs-sig" and ihd != "recv-sig"
+        then:
+            ii => self.sx_next(ii)
+            self :> pa
+
+    proto <: pa -> proto
+        |: ii >= iend
+        then: self :> pd
+
+    proto <: pd -> proto
+        |: dk < an_txt.length() and pdup == ""
+        then:
+            let ln: String! = self.line_at(an_txt, dk)
+            pdup => ||: self.twice(ln) : ln ||: else : ""
+            dk => dk + ln.length() + 1
+            self :> pd
+
+    proto <: pd -> done
+        |: pdup != ""
+        then:
+            out => out + ("\nerror|" + m_dup)
+
+    proto <: pd -> proto
+        |: dk >= an_txt.length() and pdup == ""
+        then:
+            ii => ti + 3
+            self :> po
+
+    proto <: po -> proto
+        |: ii < iend and ihd == "obs"
+        then:
+            qi => ii + 5
+            qend => self.sx_end(ii + 3)
+            q_seen => false
+            ar_bad => ""
+            req_l => ""
+            def_l => ""
+            nc_name => ""
+            nc_kw => ""
+            prows => ""
+            self :> pq
+
+    proto <: po -> proto
+        |: ii < iend and ihd != "obs"
+        then:
+            ii => self.sx_next(ii)
+            self :> po
+
+    proto <: po -> proto
+        |: ii >= iend
+        then:
+            let row: String! = ((("(protocol " + pnm) + " (accepts") + (acc_txt + ") (conforms) (defaults")) + (dflt_txt + "))")
+            pnames => ||: self.has_key(ptab, pnm) : pnames ||: else : pnames.append(pnm)
+            ptab => self.put_last(ptab, pnm, row)
+            ti => self.sx_next(ti)
+            self :> pt
+
+    # One param. The bookkeeping, then the const check when it is due.
+    proto <: pq -> proto
+        |: qi < qend
+        then:
+            let qn: String! = self.q_name(qi)
+            let hd2: Bool! = self.q_hasd(qi)
+            ar_bad => ||: ar_bad == "" and q_seen and not hd2 : qn ||: else : ar_bad
+            q_seen => q_seen or hd2
+            req_l => ||: hd2 : req_l ||: req_l == "" : ("`" + qn) + "`" ||: else : ((req_l + ", `") + qn) + "`"
+            def_l => ||: not hd2 : def_l ||: def_l == "" : ("`" + qn) + "`" ||: else : ((def_l + ", `") + qn) + "`"
+            prows => prows + (" " + self.prow(qi))
+            self :> pk
+
+    proto <: pk -> proto
+        |: self.needs_c(qi)
+        then:
+            cj => qi + 4
+            cjend => self.sx_end(qi + 4)
+            cbad => false
+            self :> pc
+
+    proto <: pk -> proto
+        |: not self.needs_c(qi)
+        then:
+            qi => self.sx_next(qi)
+            self :> pq
+
+    proto <: pc -> proto
+        |: cj < cjend and not cbad
+        then:
+            cbad => self.sx(cj).kind == 0 and not self.ok_head(self.sx_head(cj))
+            cj => cj + 1
+            self :> pc
+
+    proto <: pc -> proto
+        |: cj >= cjend or cbad
+        then:
+            nc_name => ||: cbad : self.q_name(qi) ||: else : ""
+            nc_kw => ||: cbad : self.kw(qi + 4) ||: else : ""
+            qi => self.sx_next(qi)
+            self :> pq
+
+    proto <: pq -> done
+        |: qi >= qend and ar_bad != ""
+        then:
+            out => out + ("\nerror|" + m_after)
+
+    proto <: pq -> done
+        |: qi >= qend and ar_bad == "" and nc_name != ""
+        then:
+            out => out + ("\nerror|" + m_const)
+
+    proto <: pq -> done
+        |: qi >= qend and ar_bad == "" and nc_name == "" and self.bt_msg(o_retty) != ""
+        then:
+            out => out + ("\nerror|" + self.bt_msg(o_retty))
+
+    proto <: pq -> proto
+        |: qi >= qend and ar_bad == "" and nc_name == "" and self.bt_msg(o_retty) == ""
+        then:
+            dflt_txt => dflt_txt + (" " + d_row)
+            ii => self.sx_next(ii)
+            self :> po
+
+    # sync-send-edges. The non-main atom names, then per atom one pass for
+    # its ctor params, first data section, and first use section, and one
+    # pass over its body for sync sends to an ident.
+    edges <: e1 -> edges
+        |: ti < nn
+        then:
+            anm => ||: is_atom : anm + (tname + "\n") ||: else : anm
+            ti => self.sx_next(ti)
+            self :> e1
+
+    edges <: e1 -> edges
+        |: ti >= nn
+        then:
+            ti => 2
+            self :> e2
+
+    edges <: e2 -> edges
+        |: ti < nn and is_atom
+        then:
+            ej => ti + 1
+            ejend => self.sx_end(ti)
+            bstart => self.sx_next(self.sx_next(ti + 3))
+            epass => 1
+            fdata => -1
+            fuses => -1
+            ctab => "\n"
+            dtab => "\n"
+            utab => "\n"
+            self :> ew
+
+    edges <: e2 -> edges
+        |: ti < nn and not is_atom
+        then:
+            ti => self.sx_next(ti)
+            self :> e2
+
+    edges <: e2 -> sorting
+        |: ti >= nn
+        then:
+            sort_ret => "edges"
+
+    edges <: ew -> edges
+        |: ej < ejend and epass == 1
+        then:
+            let fld: Bool! = e_h == "field"
+            fdata => ||: fdata < 0 and e_h == "data" and e_par == ti : ej ||: else : fdata
+            fuses => ||: fuses < 0 and e_h == "uses" and e_par == ti : ej ||: else : fuses
+            ctab => ||: fld and e_par == ti + 3 : self.put_first(ctab, self.sx_text(ej + 2), self.sx_text(ej + 3)) ||: else : ctab
+            dtab => ||: fld and e_par == fdata and fdata >= 0 : self.put_first(dtab, self.sx_text(ej + 2), self.sx_text(ej + 3)) ||: else : dtab
+            utab => ||: e_h == "use" and e_par == fuses and fuses >= 0 : self.put_first(utab, self.sx_text(ej + 2), self.sx_text(ej + 3)) ||: else : utab
+            ej => ej + 1
+            self :> ew
+
+    edges <: ew -> edges
+        |: ej >= ejend and epass == 1
+        then:
+            epass => 2
+            ej => bstart
+            self :> ew
+
+    edges <: ew -> done
+        |: ej < ejend and e_emit and e_err != ""
+        then:
+            out => out + ("\nerror|" + e_err)
+
+    edges <: ew -> edges
+        |: ej < ejend and epass == 2 and not (e_emit and e_err != "")
+        then:
+            rows => ||: e_emit and e_hit : rows.append(("(edge " + tname) + ((" " + e_bt) + ((" " + e_msg) + ")"))) ||: else : rows
+            ej => ej + 1
+            self :> ew
+
+    edges <: ew -> edges
+        |: ej >= ejend and epass == 2
+        then:
+            ti => self.sx_next(ti)
+            self :> e2
+
+    # build-enum-env. Per enum, the cases in order, then the two indices
+    # sorted by case name, last wins.
+    enumz <: en -> enumz
+        |: e_pending
+        then:
+            gc => 1
+            ci_txt => ""
+            pi_txt => ""
+            self :> eg
+
+    enumz <: en -> enumz
+        |: not e_pending and ti < nn and hd == "enum"
+        then:
+            enm => tname
+            ert => self.sx_text(ti + 3)
+            ci => ti + 4
+            cend => self.sx_end(ti)
+            cidx => 0
+            cases_t => ""
+            ents_t => ""
+            raw_t => ""
+            tagged => false
+            ctab2 => "\n"
+            cnames => cnames.slice(0, 0)
+            self :> ec
+
+    enumz <: en -> enumz
+        |: not e_pending and ti < nn and hd != "enum"
+        then:
+            ti => self.sx_next(ti)
+            self :> en
+
+    enumz <: en -> enumz
+        |: not e_pending and ti >= nn
+        then:
+            k => 0
+            self :> er
+
+    enumz <: ec -> enumz
+        |: ci < cend
+        then:
+            let cn: String! = self.sx_text(ci + 2)
+            cases_t => cases_t + (" " + cn)
+            ents_t => ents_t + (" " + self.sx_text(ci))
+            raw_t => ||: c_raw : raw_t + (" " + self.sx_text(self.sx_next(ci + 3))) ||: else : raw_t
+            tagged => tagged or self.sx(ci + 3).size > 2
+            cnames => ||: self.has_key(ctab2, cn) : cnames ||: else : cnames.append(cn)
+            ctab2 => self.put_last(ctab2, cn, (cidx.to_string() + "\t") + self.sx_text(ci + 3))
+            cidx => cidx + 1
+            ci => self.sx_next(ci)
+            self :> ec
+
+    enumz <: ec -> enumz
+        |: ci >= cend
+        then:
+            k => 0
+            self :> eb
+
+    enumz <: eb -> enumz
+        |: k < cnames.count()
+        then:
+            rows => rows.append((self.cn_at(k) + "\t") + self.look(ctab2, self.cn_at(k)))
+            k => k + 1
+            self :> eb
+
+    enumz <: eb -> sorting
+        |: k >= cnames.count()
+        then:
+            sort_ret => "case"
+            e_pending => true
+
+    enumz <: eg -> enumz
+        |: gc < csorted.length()
+        then:
+            let ln: String! = self.line_at(csorted, gc)
+            ci_txt => ci_txt + ((" (" + self.f_first(ln)) + ((" " + self.f_first(self.f_rest(ln))) + ")"))
+            pi_txt => pi_txt + ((" (" + self.f_first(ln)) + ((" " + self.f_rest(self.f_rest(ln))) + ")"))
+            gc => gc + ln.length() + 1
+            self :> eg
+
+    enumz <: eg -> enumz
+        |: gc >= csorted.length()
+        then:
+            enames => ||: self.has_key(etab, enm) : enames ||: else : enames.append(enm)
+            etab => self.put_last(etab, enm, e_row)
+            e_pending => false
+            ti => self.sx_next(ti)
+            self :> en
+
+    enumz <: er -> enumz
+        |: k < enames.count()
+        then:
+            rows => rows.append(self.look(etab, self.en_at(k)))
+            k => k + 1
+            self :> er
+
+    enumz <: er -> sorting
+        |: k >= enames.count()
+        then:
+            sort_ret => "enum"
+
+    # Selection sort over `rows` into `sorted`, distinct, then back to the
+    # phase named by `sort_ret`.
+    sorting <: scan -> sorting
+        |: sort_i < rows.count() and not scan_has
+        then:
+            scan_best => scan_cur
+            scan_has => true
+            sort_i => sort_i + 1
+            self :> scan
+
+    sorting <: scan -> sorting
+        |: sort_i < rows.count() and scan_has and scan_cmp < 0
+        then:
+            scan_best => scan_cur
+            sort_i => sort_i + 1
+            self :> scan
+
+    sorting <: scan -> sorting
+        |: sort_i < rows.count() and scan_has and scan_cmp >= 0
+        then:
+            sort_i => sort_i + 1
+            self :> scan
+
+    sorting <: scan -> sorting
+        |: sort_i >= rows.count() and scan_has
+        then:
+            sorted => sorted + ("\n" + scan_best)
+            nsorted => nsorted + 1
+            rows => rows.filter(e => e != scan_best)
+            sort_i => 0
+            scan_has => false
+            scan_best => ""
+            self :> scan
+
+    sorting <: scan -> mmap
+        |: s_done and sort_ret == "attr"
+        then:
+            out => out + ((("\n(attribution " + nsorted.to_string()) + ")") + sorted)
+            sorted => ""
+            nsorted => 0
+            k => 0
+            gc => 1
+
+    sorting <: scan -> mgroup
+        |: s_done and sort_ret == "mmap"
+        then:
+            msorted => sorted
+            sorted => ""
+            nsorted => 0
+            gc => 1
+
+    sorting <: scan -> edges
+        |: s_done and sort_ret == "proto"
+        then:
+            out => out + ((("\n(protocol-env " + nsorted.to_string()) + ")") + sorted)
+            sorted => ""
+            nsorted => 0
+            ti => 2
+
+    sorting <: scan -> enumz
+        |: s_done and sort_ret == "edges"
+        then:
+            out => out + ((("\n(sync-edges " + nsorted.to_string()) + ")") + sorted)
+            sorted => ""
+            nsorted => 0
+            ti => 2
+
+    sorting <: scan -> enumz
+        |: s_done and sort_ret == "case"
+        then:
+            csorted => sorted
+            sorted => ""
+            nsorted => 0
+
+    sorting <: scan -> done
+        |: s_done and sort_ret == "enum"
+        then:
+            out => out + ((("\n(enum-env " + nsorted.to_string()) + ")") + sorted)

@@ -1,0 +1,83 @@
+raw-envs|
+raw-lower|
+raw-lower|def main:\n    -> end\n
+full-lower|def main:\n    -> end\n
+full-envs|def Point:\n    x: Int\n    y: Int\n
+full-lower|def Point:\n    x: Int\ndef Counter:\n    n: Int! = 0\n    -> end\ndef Color:\n    case red\ndef main:\n    -> end\n
+raw-envs|def Point:\n    x: Int\ndef Point:\n    y: Int\ndef Zed:\n    case a\ndef Alpha:\n    z: Int\n
+raw-envs|def Duration:\n    case a\ndef Clock:\n    x: Int\n
+raw-envs|def Shape:\n    area() :- Int\ndef Rec:\n    x: Int\n
+multi-envs|=def Point:\n    x: Int\n	geo.shapes=def Circle:\n    r: Int\ndef Kind:\n    case a\n	util=def Tool:\n    n: Int! = 0\n    -> end\n
+multi-lower|lib=def Foo:\n    x: Int\n	=def main:\n    -> end\n
+multi-lower|lib=def Foo:\n    x: Int\n	app=def Foo:\n    y: Int\ndef main:\n    -> end\n
+multi-envs|a=def Bar:\n    x: Int\n	b=def Bar:\n    case q\n	a=def Baz:\n    x: Int\n
+multi-envs|lib=def Foo:\n    x: Int\n	lib=def Broken:\n    x: Int\n    y Int\n
+full-envs|def Broken:\n    x: Int\n    y Int\n
+full-lower|def Duration:\n    x: Int\ndef main:\n    -> end\n
+full-lower|def plugin:\n    name: String! = "p"\n    version: SemVer! = SemVer(0, 1, 0)\n    compat: VersionRange! = VersionRange(min: SemVer(1, 0, 0), max: SemVer(2, 0, 0))\n    runtime_shape: RuntimeShape! = RuntimeShape.main_runloop\ndef main:\n    -> end\n
+full-lower|def plugin:\n    name: String! = "p"\n    version: SemVer! = SemVer(0, 1, 0)\n    compat: VersionRange! = VersionRange(min: SemVer(1, 0, 0), max: SemVer(2, 0, 0))\n    runtime_shape: RuntimeShape! = RuntimeShape.dispatch_main\ndef main:\n    -> end\n
+full-lower|def plugin:\n    name: String! = "p"\n    version: SemVer! = SemVer(0, 1, 0)\n    compat: VersionRange! = VersionRange(min: SemVer(1, 0, 0), max: SemVer(2, 0, 0))\ndef main:\n    -> end\n
+full-envs|def plugin:\n    name: String! = "q\"x"\n    version: SemVer! = SemVer(0, 1, 0)\n    compat: VersionRange! = VersionRange(min: SemVer(1, 0, 0), max: SemVer(2, 0, 0))\n    runtime_shape: RuntimeShape! = RuntimeShape.main_runloop\n
+full-lower|def plugin:\n    name: String! = "p"\n    version: SemVer! = SemVer(0, 1, 0)\n    compat: VersionRange! = VersionRange(min: SemVer(1, 0, 0), max: SemVer(2, 0, 0))\n    runtime_shape: RuntimeShape! = RuntimeShape.other\ndef main:\n    -> end\n
+raw-lower|def plugin:\n    runtime_shape = RuntimeShape.main_runloop\ndef main:\n    -> end\n
+raw-lower|def plugin:\n    name: String = "a"\n    runtime_shape: RuntimeShape = RuntimeShape.main_runloop\ndef plugin:\n    runtime_shape: RuntimeShape = RuntimeShape.other_thing\ndef main:\n    -> end\n
+raw-lower|def plugin:\n    name: String = "a"\n    runtime_shape: RuntimeShape = RuntimeShape.main_runloop\ndef plugin:\n    name: String = "b"\n    runtime_shape: RuntimeShape = RuntimeShape.main_runloop\ndef main:\n    -> end\n
+raw-envs|def plugin:\n    runtime_shape: RuntimeShape = RuntimeShape.alpha\n    runtime_shape: RuntimeShape = RuntimeShape.beta\n    name: String = "n1"\n    name: String = "n2"\ndef plugin:\n    runtime_shape: RuntimeShape = RuntimeShape.dispatch_main\ndef plugin:\n    name: String = "c"\n    runtime_shape: RuntimeShape = RuntimeShape.gamma_ray\ndef plugin:\n    name: Int = 3\n    runtime_shape: RuntimeShape = Other.thing\n    runtime_shape: RuntimeShape = RuntimeShape.alpha\n
+raw-lower|def plugin:\n    runtime_shape: RuntimeShape = RuntimeShape.alpha\ndef plugin:\n    runtime_shape: RuntimeShape = RuntimeShape.beta\n
+raw-lower|def plugin:\n    runtime_shape: RuntimeShape = RuntimeShape.alpha\n
+raw-envs|def plugin:\n    name: String = "x"\n    runtime_shape: RuntimeShape\n    runtime_shape: RuntimeShape = foo\n
+multi-lower|ui=def plugin:\n    name: String! = "ui"\n    version: SemVer! = SemVer(0, 1, 0)\n    compat: VersionRange! = VersionRange(min: SemVer(1, 0, 0), max: SemVer(2, 0, 0))\n    runtime_shape: RuntimeShape! = RuntimeShape.main_runloop\n	=def main:\n    -> end\n
+full-lower|def Worker:\n    n: Int! = 0\n    -> end\n
+raw-lower|def mainly:\n    -> end\ndef Main:\n    -> end\n
+full-lower|def Shape:\n    area() :- Int\n    describe :- "shape"\n    <: poke(n: Int)\ndef main:\n    -> end\n
+raw-envs|def Shape:\n    area(scale: Int = 1) :- Int!\n    area(scale: Int = 1) :- scale * 2\n    describe(self, tag: String!, n: Int = -3) :- tag\n    <: poke(n: Int, m: List of Int)\n
+raw-envs|def Zeta:\n    a() :- Int\ndef Alpha:\n    b() :- TR\n    c :- 1\ndef Zeta:\n    d() :- String\n
+raw-envs|def Shape:\n    a() :- Int\n    b() :- Int\n    a() :- String\n
+raw-envs|def Shape:\n    a() :- Int\n    b() :- Int\n    <: b(x: Int)\n    <: a()\n
+raw-envs|def Shape:\n    <: a()\n    <: c()\n    <: c()\n
+raw-envs|def Shape:\n    <: a()\n    <: b()\n    <: c()\n    <: d()\n    <: e()\n    <: f()\n    <: g()\n    <: b()\n
+raw-envs|def Shape:\n    <: poke()\n    f(x: Int = 1, y: Int) :- y\n
+raw-envs|def Shape:\n    <: poke()\n    f(a: Int, x: Int = 1, b: Int, y: String = "s", c: Int) :- a\n
+raw-envs|def Shape:\n    <: poke()\n    f(self, x: Int = 1, y: Int) :- y\n
+raw-envs|def Shape:\n    <: poke()\n    f(x: Int = foo(1)) :- x\n
+raw-envs|def Shape:\n    <: poke()\n    f(x: Int = -1, y: Bool = not true, z: List of Int = [1, -2, [3]], w: Int = q, v: String = nil, u: Char = 'c', t: Float = 1.5) :- x\n
+raw-envs|def Shape:\n    <: poke()\n    f(x: List of Int = [1, a.b]) :- x\n
+raw-envs|def Shape:\n    <: poke()\n    f(x: Int = Color.red) :- x\n
+raw-envs|def Shape:\n    <: poke()\n    f(x: Int = 1 + 2) :- x\n
+raw-envs|def Shape:\n    <: poke()\n    f(x: Int = -(a.b)) :- x\n
+raw-envs|def Shape:\n    <: poke()\n    f(x: Int = 1, y: Int = "a" + "b") :- x\n
+raw-envs|def Shape:\n    <: poke()\n    f(x: Int = 1, y: Int = 2, z: Int = self) :- x\n
+raw-envs|def Shape:\n    f() :- Int!\n    f :- 1\n    g() :- List of Int\n    g :- 1\n    h() :- Set of List of Int!\n    h :- 1\n    i() :- Box of Int\n    i :- 1\n    j() :- Map of (String, Int)!\n    j :- 1\n    k :- 2\n
+raw-envs|def Shape:\n    f() :- Box of (Int)!\n    f :- 1\n
+raw-envs|def Shape:\n    f() :- List of (Int, Int)!\n    f :- 1\n
+raw-envs|def Shape:\n    f() :- Ptr of (Int)!\n    f :- 1\n
+raw-envs|def Shape:\n    f() :- List of (Int)!\n    f :- 1\n
+raw-envs|def Shape:\n    <: poke()\ndef Bad:\n    <: poke()\n    f(x: Int = 1, y: Int) :- y\n
+raw-envs|def Bad:\n    <: a()\n    <: a()\ndef Shape:\n    <: poke()\n    f(x: Int = g()) :- x\n
+full-envs|def Greeter:\n    greet(name: String!) :- String!\n    greet(name: String!) :- "hi " + name\n    loud(name: String!) :- self.greet(name)\n
+full-lower|def Logger:\n    count: Int! = 0\n    -> idle\n    idle <: log(n: Int!) -> idle\n        then:\n            count => count + n\ndef Worker:\n    logger: Logger! = Logger()\n    -> idle\n    idle <: go -> idle\n        then:\n            |> logger.log(n: 1)\ndef main:\n    -> end\n
+raw-envs|def A:\n    b: B! = B()\n    -> idle\n    idle <: go -> idle\n        then:\n            |> b.ping()\n            b :> ping()\n            |> b.ping()\n            |> self.ping()\n            |> other.ping()\n            |> b.c.ping()\ndef B:\n    a: A\n    -> idle\n    idle <: ping -> idle\n        then:\n            |> a.go()\n
+raw-envs|def A(b: B!):\n    -> idle\n    idle <: go -> idle\n        then:\n            |> b.ping()\ndef B:\n    use a: A\n    -> idle\n    idle <: ping -> idle\n        then:\n            |> a.go()\n
+raw-envs|def A(x: B!):\n    x: A!\n    -> idle\n    idle <: go -> idle\n        then:\n            |> x.ping()\ndef B:\n    use x: A\n    -> idle\n
+raw-envs|def A:\n    use x: B\n    x: C!\n    -> idle\n    idle <: go -> idle\n        then:\n            |> x.ping()\ndef B:\n    -> idle\ndef C:\n    -> idle\n
+raw-envs|def A:\n    x: B!\n    x: A!\n    -> idle\n    idle <: go -> idle\n        then:\n            |> x.ping()\n            |> x.pong()\ndef B:\n    -> idle\n
+raw-envs|def A:\n    x: (Int, Int)\n    -> idle\n    idle <: go -> idle\n        then:\n            |> x.ping()\ndef B:\n    -> idle\n
+raw-envs|def A:\n    x: Box of Int\n    -> idle\n    idle <: go -> idle\n        then:\n            |> x.ping()\ndef B:\n    -> idle\n
+raw-envs|def A:\n    x: List of (Int, Int)\n    -> idle\n    idle <: go -> idle\n        then:\n            |> x.ping()\ndef B:\n    -> idle\n
+raw-envs|def A:\n    x: Map of (Int, B)\n    -> idle\n    idle <: go -> idle\n        then:\n            |> x.ping()\ndef B:\n    -> idle\n
+raw-envs|def A:\n    x: List of B\n    -> idle\n    idle <: go -> idle\n        then:\n            |> x.ping()\ndef B:\n    -> idle\n
+raw-envs|def A:\n    x: Set of Ptr of B!\n    -> idle\n    idle <: go -> idle\n        then:\n            |> x.ping()\ndef B:\n    -> idle\n
+raw-envs|def A:\n    x: (a: Int, b: B)\n    -> idle\n    idle <: go -> idle\n        then:\n            |> x.ping()\ndef B:\n    -> idle\n
+raw-envs|def A:\n    x: (Int) -> Int\n    -> idle\n    idle <: go -> idle\n        then:\n            |> x.ping()\ndef B:\n    -> idle\n
+raw-envs|def A:\n    x: (Int, Int)\n    -> idle\n    idle <: go -> idle\n        then:\n            |> y.ping()\n            x :> ping()\n
+raw-envs|def main:\n    b: B! = B()\n    -> idle\n    idle <: go -> idle\n        then:\n            |> b.ping()\ndef B:\n    m: main\n    -> idle\n    idle <: ping -> idle\n        then:\n            |> m.go()\n
+raw-envs|def A:\n    b: B! = B()\n    -> idle\n    idle <: go -> idle\n        then:\n            let r: Int = |> b.ping()\n            print(|> b.pong(1))\n            |> b.ping(n: 2)\ndef B:\n    -> idle\n
+raw-envs|def Shape:\n    <: poke()\ndef A:\n    x: (Int, Int)\n    -> idle\n    idle <: go -> idle\n        then:\n            |> x.ping()\ndef E:\n    case z\n
+full-envs|def A:\n    c: Clock! = Clock()\n    -> idle\n    idle <: go -> idle\n        then:\n            |> c.tick()\n
+raw-envs|def Color:\n    case red\n    case green(x: Int!, y: String)\n    case blue\n
+raw-envs|def Code:\n    case ok = 0\n    case bad = 300\n    case worse = 7\n
+raw-envs|def Code:\n    case ok = 0\n    case bad = 70000\ndef Big:\n    case a = 5000000000\n    case b = 1\n
+raw-envs|def Dup:\n    case a\n    case b(n: Int)\n    case a(m: String)\ndef Zed:\n    case z\ndef Dup:\n    case c\n
+raw-envs|def Tree:\n    case leaf\n    case node(kids: List of Tree!)\n
+full-lower|def Suit:\n    case hearts\n    case spades\ndef Card:\n    suit: Suit!\n    rank: Int!\ndef main:\n    -> end\n
+full-envs|def Shape:\n    a :- Int\ndef Kind:\n    case x\ndef Rec:\n    k: Kind\n
