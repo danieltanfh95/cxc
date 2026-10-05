@@ -12,12 +12,15 @@
   header h1 { margin: 0; font-size: 14px; font-weight: 600; }
   header .status { color: #aaa; font-size: 11px; }
   #layout { display: flex; height: calc(100vh - 34px); overflow: hidden; }
-  #sidebar { width: 280px; background: #f0f0f0; border-right: 1px solid #ddd; display: flex; flex-direction: column; flex-shrink: 0; overflow: hidden; }
+  #sidebar { width: 280px; background: #f0f0f0; border-right: 1px solid #ddd; display: flex; flex-direction: column; flex-shrink: 0; overflow: hidden; position: relative; transition: width 160ms ease; }
+  body.sidebar-collapsed #sidebar { width: 0; border-right-width: 0; }
+  #sidebar-toggle { position: absolute; top: 12px; right: -11px; width: 20px; height: 32px; background: var(--p-paper2); border: 0.5px solid var(--p-ink3); color: var(--p-ink2); cursor: pointer; z-index: 10; font-family: inherit; font-size: 10px; line-height: 1; padding: 0; border-radius: 0; display: flex; align-items: center; justify-content: center; }
+  #sidebar-toggle:hover { color: var(--p-ink); background: var(--p-paper3); }
+  body.sidebar-collapsed #sidebar-toggle { right: -22px; }
   #sidebar-scroll { flex: 1; overflow-y: auto; padding: 12px; }
   #stage { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
   #stage-toolbar { padding: 6px 10px; background: white; border-bottom: 1px solid #ddd; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; flex-shrink: 0; }
   #stage-toolbar button { padding: 4px 10px; border: 1px solid #ccc; background: white; cursor: pointer; border-radius: 3px; font: inherit; }
-  #stage-toolbar button.on { background: #4a90d9; color: white; border-color: #3a7db0; }
   #stage-toolbar label { font-size: 11px; display: inline-flex; align-items: center; gap: 4px; }
   #stage-toolbar input[type="text"], #stage-toolbar select { padding: 3px 5px; border: 1px solid #ccc; border-radius: 3px; font: inherit; }
   #stage-main { flex: 1; overflow: auto; background: white; position: relative; min-height: 0; cursor: grab; }
@@ -66,31 +69,10 @@
   .stat-row .k { color: #555; }
   .stat-row .v { font-variant-numeric: tabular-nums; }
   .warn { color: #a94442; font-weight: 500; font-size: 11px; }
-  .lane { fill: #fafafa; stroke: #eee; }
-  .lane-alt { fill: #f4f4f4; stroke: #eee; }
-  .lane-label { font-size: 10px; fill: #333; }
-  .evt-send   { fill: #4a90d9; }
-  .evt-recv   { fill: #7fbf7f; }
-  .evt-arm    { fill: #d99a4a; }
-  .evt-no_arm { fill: #d95a5a; }
-  .evt-send_sync { fill: #6666dd; }
-  .evt-recv_sync { fill: #66aa66; }
-  .evt-send_dropped { fill: #999; }
-  .arrow { stroke: rgba(74,144,217,0.35); stroke-width: 1; fill: none; }
-  .arrow-unclosed { stroke: #d95a5a; stroke-width: 1.5; fill: none; stroke-dasharray: 3,2; }
   input[type="text"] { width: 100%; padding: 4px 6px; border: 1px solid #ccc; border-radius: 3px; font: inherit; }
   pre { margin: 0; font: 11px "SF Mono", Menlo, monospace; white-space: pre-wrap; word-break: break-all; }
   .unclosed-item { padding: 4px 6px; margin: 2px 0; background: #fde8e8; border-left: 3px solid #d95a5a; cursor: pointer; font-size: 10px; }
   .unclosed-item:hover { background: #fbd7d7; }
-  /* Graph view */
-  .graph-node { fill: #4a90d9; stroke: white; stroke-width: 2; cursor: pointer; }
-  .graph-node.selected { stroke: #d95a5a; stroke-width: 3; }
-  .graph-node-label { font-size: 11px; fill: #222; pointer-events: none; text-anchor: middle; font-weight: 600; }
-  .graph-node-count { font-size: 9px; fill: #777; pointer-events: none; text-anchor: middle; }
-  .graph-edge { fill: none; stroke: rgba(74,144,217,0.5); stroke-linecap: round; }
-  .graph-edge:hover { stroke: #d95a5a; stroke-width: 4; }
-  .graph-edge-label { font-size: 10px; fill: #333; pointer-events: none; text-anchor: middle; }
-  .graph-edge-label-bg { fill: white; opacity: 0.85; pointer-events: none; }
   /* Shape view — layered class diagram of the program's cascade topology */
   .shape-block { fill: #4a90d9; stroke: #2a6ea8; stroke-width: 1.5; cursor: pointer; }
   .shape-block.root { fill: #999; stroke: #666; }
@@ -112,8 +94,6 @@
   .shape-block-label.container.main { fill: #7a4a10; }
   .shape-block-sub.container { text-anchor: start; fill: rgba(42,90,138,0.75); font-size: 12px; }
   .shape-block-sub.container.main { fill: rgba(122,74,16,0.75); }
-  .shape-owner-label-bg { fill: rgba(255,246,220,0.95); stroke: rgba(196,122,32,0.6); stroke-width: 1; }
-  .shape-owner-label { font-size: 12px; fill: #7a4a10; font-weight: 700; pointer-events: none; letter-spacing: 0.2px; }
   /* Selection: TWO visible cues so it survives raster/headless render where
      filter:drop-shadow can silently drop. A thick red stroke on the block
      PLUS a companion halo rect drawn behind it (see JS). Opacity stays
@@ -137,11 +117,6 @@
   rect.shape-edge-label-bg { pointer-events: all; cursor: default; }
   .shape-edge-label { font-size: 13px; fill: #222; pointer-events: none; font-weight: 500; font-family: "SF Mono", Menlo, Consolas, monospace; paint-order: stroke fill; stroke: #ffffff; stroke-width: 3px; stroke-linejoin: round; }
   .shape-edge-label-bg { fill: white; opacity: 0.95; pointer-events: none; }
-  .shape-layer-band { fill: #f4f4f4; }
-  .shape-layer-band.alt { fill: #f9f9f9; }
-  /* Shape-view interactive extras */
-  .shape-pill { fill: #e0ecf7; stroke: #4a90d9; stroke-width: 0.8; }
-  .shape-pill-label { font-size: 10px; fill: #1a4d7d; pointer-events: none; text-anchor: middle; font-weight: 500; }
   .shape-block.dim { opacity: 0.25; }
   .shape-edge.dim { opacity: 0.15; }
   .shape-block.hover { stroke: #d95a5a; stroke-width: 2.4; }
@@ -158,9 +133,6 @@
   .phase-label.unreached { opacity: 0.55; }
   .phase-unreached-caption { font-size: 10px; fill: #888; text-anchor: middle; pointer-events: none; font-style: italic; }
   .phase-arc { stroke: #666; stroke-width: 1.4; fill: none; }
-  .phase-arc.self-loop { stroke: #d99a4a; }
-  .phase-arc.guarded { stroke-dasharray: 5,3; }
-  .phase-arc.primary { stroke: #2a6ea8; stroke-width: 2.4; }
   .phase-arc-label { font-size: 12px; fill: #222; pointer-events: none; font-family: "SF Mono", Menlo, Consolas, monospace; font-weight: 500; paint-order: stroke fill; stroke: #ffffff; stroke-width: 3px; stroke-linejoin: round; }
   /* Force a persistent horizontal scrollbar in the phase pane — Mac's
      overlay scrollbars disappear when idle, killing the affordance. */
@@ -168,8 +140,6 @@
   #phase-graph-svg-wrap::-webkit-scrollbar-thumb { background: #b0b0b0; border-radius: 6px; border: 2px solid #eee; }
   #phase-graph-svg-wrap::-webkit-scrollbar-thumb:hover { background: #888; }
   .phase-arc-label-bg { fill: white; opacity: 0.95; pointer-events: none; }
-  .phase-arc-leader { stroke: #666; stroke-width: 1; stroke-dasharray: 3,2; pointer-events: none; opacity: 0.8; }
-  .phase-arc-dot { cursor: pointer; }
   .phase-self-badge { fill: #d99a4a; cursor: pointer; }
   .phase-self-badge-label { font-size: 11px; fill: white; font-weight: 700; text-anchor: middle; pointer-events: none; }
   /* Empty state */
@@ -196,7 +166,6 @@
   --p-wash:rgba(180,50,30,.10);
   --p-fade:rgba(34,22,10,.08);
   --p-sepia:#DBC58F;
-  --p-sepia2:#C9AE6A;
   --p-indigo:#2E6DA4;
   --p-rust:#8B4826;
   --p-amber:#D4A574;
@@ -213,7 +182,6 @@ body.theme-dark{
   --p-wash:rgba(232,155,136,.16);
   --p-fade:rgba(230,230,234,.08);
   --p-sepia:#C9A47B;
-  --p-sepia2:#A68358;
   --p-indigo:#8DB4E0;
   --p-rust:#E8A685;
   --p-amber:#E8CF95;
@@ -247,7 +215,6 @@ body.theme-dark #pt-transport::after{border-bottom-color:var(--p-ink3);border-ri
 #pt-transport button{background:transparent;color:var(--p-ink);border:0.5px solid var(--p-ink);border-radius:0;font-family:'IBM Plex Mono',monospace;font-size:11px;padding:2px 7px;cursor:pointer;letter-spacing:.08em;text-transform:uppercase}
 body.theme-dark #pt-transport button{border-color:var(--p-ink3)}
 #pt-transport button:hover{background:var(--p-fade)}
-#pt-transport button.on{background:var(--p-ink);color:var(--p-paper)}
 #pt-transport #pt-scrub{width:260px;accent-color:var(--p-accent)}
 body.theme-dark #pt-transport #pt-scrub{color-scheme:dark}
 #pt-transport select{background:var(--p-paper);color:var(--p-ink);border:0.5px solid var(--p-ink);border-radius:0;font-family:'IBM Plex Mono',monospace;font-size:10px;padding:1px 4px}
@@ -265,7 +232,6 @@ summary::marker,summary::-webkit-details-marker{color:var(--p-ink2)}
 #stats,#unclosed-panel{font-size:11px;letter-spacing:.08em}
 #stats div{display:flex;justify-content:space-between;padding:3px 0;border-bottom:0.5px dashed var(--p-hair)}
 #stats div:last-child{border-bottom:none}
-#stats div b,#stats .num{font-family:'Barlow Condensed',sans-serif;font-weight:700;letter-spacing:.05em;color:var(--p-ink)}
 .stat-row .k{color:var(--p-ink2) !important}
 .stat-row .v{color:var(--p-ink) !important}
 #sidebar div[style*="color:#666"]{color:var(--p-ink2) !important}
@@ -279,9 +245,7 @@ summary::marker,summary::-webkit-details-marker{color:var(--p-ink2)}
 }
 #stage-toolbar{background:var(--p-paper) !important;border-bottom:0.75px solid var(--p-ink) !important;padding:8px 14px !important;gap:4px !important}
 #stage-toolbar button{background:transparent !important;color:var(--p-ink) !important;border:0.75px solid var(--p-ink) !important;border-radius:0 !important;letter-spacing:.2em;text-transform:uppercase;font-size:10px !important;padding:5px 11px !important;font-family:'IBM Plex Mono',monospace !important;transition:none !important}
-#stage-toolbar button.on{background:var(--p-ink) !important;color:var(--p-paper) !important;border-color:var(--p-ink) !important}
 #stage-toolbar button:hover{background:var(--p-fade) !important;color:var(--p-ink) !important}
-#stage-toolbar button.on:hover{background:var(--p-ink) !important;color:var(--p-paper) !important}
 #stage-toolbar label{font-size:10px !important;letter-spacing:.15em;text-transform:uppercase;color:var(--p-ink2) !important;gap:5px !important}
 #stage-toolbar select,#stage-toolbar input[type="text"]{background:var(--p-paper) !important;border:0.75px solid var(--p-ink) !important;border-radius:0 !important;color:var(--p-ink) !important;font-family:'IBM Plex Mono',monospace !important;font-size:10px !important;padding:3px 6px !important;letter-spacing:.1em}
 #stage-detail{background:var(--p-paper2) !important;border-top:0.75px solid var(--p-ink) !important;color:var(--p-ink)}
@@ -336,8 +300,6 @@ summary::marker,summary::-webkit-details-marker{color:var(--p-ink2)}
 .shape-block-label.container{fill:var(--p-ink2) !important;font-family:'Barlow Condensed',Impact,sans-serif !important;font-weight:500 !important;letter-spacing:.06em !important;font-size:13px !important}
 .shape-block-label.container.main{fill:var(--p-ink2) !important}
 .shape-block-sub.container{fill:var(--p-ink2) !important}
-.shape-owner-label-bg{fill:var(--p-paper) !important;stroke:var(--p-ink) !important;stroke-width:0.6 !important}
-.shape-owner-label{fill:var(--p-ink) !important;font-family:'IBM Plex Mono',monospace !important;font-weight:600 !important;letter-spacing:.15em}
 .shape-edge{stroke:var(--p-ink) !important;stroke-width:1.1 !important;fill:none;pointer-events:stroke !important}
 .shape-edge.sync{stroke:var(--p-indigo) !important;stroke-width:1.6 !important;stroke-dasharray:none !important}
 .shape-edge.self{stroke:var(--p-rust) !important;stroke-dasharray:4 3 !important}
@@ -346,11 +308,7 @@ summary::marker,summary::-webkit-details-marker{color:var(--p-ink2)}
 .shape-edge-label-bg{fill:var(--p-paper) !important;stroke:none !important}
 .shape-edge-label-bg.shape-edge-hover{fill:var(--p-accent) !important;opacity:.22 !important}
 .shape-edge-label.shape-edge-hover{fill:var(--p-accent) !important;stroke:var(--p-paper) !important}
-.shape-layer-band{fill:var(--p-paper2) !important;opacity:.6}
-.shape-layer-band.alt{fill:var(--p-paper3) !important;opacity:.4}
 /* ---------- phase pills + phase panel ---------- */
-.shape-pill{fill:var(--p-paper) !important;stroke:var(--p-ink) !important;stroke-width:0.6 !important}
-.shape-pill-label{fill:var(--p-ink) !important;font-family:'IBM Plex Mono',monospace !important;font-size:10px !important;letter-spacing:.08em}
 .phase-node{fill:var(--p-paper) !important;stroke:var(--p-ink) !important;stroke-width:0.9 !important}
 .phase-node.initial{fill:var(--p-amber) !important;stroke:var(--p-ink) !important;stroke-width:0.9 !important}
 .phase-node.end{fill:var(--p-paper3) !important;stroke:var(--p-ink) !important}
@@ -362,18 +320,13 @@ summary::marker,summary::-webkit-details-marker{color:var(--p-ink2)}
 body.theme-dark .phase-label.initial{fill:var(--p-paper) !important}
 body.theme-dark .on-pastel{fill:var(--p-paper) !important}
 .phase-arc{stroke:var(--p-ink) !important;stroke-width:0.9 !important}
-.phase-arc.self-loop{stroke:var(--p-ink) !important;stroke-dasharray:4 3 !important}
-.phase-arc.primary{stroke:var(--p-ink) !important;stroke-width:1.6 !important}
-.phase-arc.guarded{stroke-dasharray:5 3 !important}
 .phase-arc-label{fill:var(--p-ink) !important;font-family:'IBM Plex Mono',monospace !important;stroke:var(--p-paper) !important}
 .phase-arc-label-bg{fill:var(--p-paper) !important}
 .phase-self-badge{fill:var(--p-paper3) !important;stroke:var(--p-hair) !important;stroke-width:0.5 !important}
 .phase-self-badge-label{fill:var(--p-accent) !important;font-family:'IBM Plex Mono',monospace !important;font-weight:600 !important;letter-spacing:.08em}
-.phase-arc-leader{stroke:var(--p-ink2) !important;stroke-dasharray:3 2 !important;opacity:.7}
 .mk-ink{fill:var(--p-ink)}
 .mk-indigo{fill:var(--p-indigo)}
 .mk-rust{fill:var(--p-rust)}
-.phase-initial-arrow{stroke:var(--p-ink) !important;stroke-width:1.1 !important;fill:none !important}
 .legend-line.legend-self-dash{border-top:0 !important;background:linear-gradient(to right,var(--p-rust) 60%,transparent 0) repeat-x !important;background-size:7px 1.6px !important;height:1.6px !important;width:22px}
 #theme-toggle{position:fixed;top:8px;right:8px;z-index:50;background:var(--p-paper) !important;color:var(--p-ink) !important;border:0.75px solid var(--p-ink) !important;border-radius:0 !important;font-family:'IBM Plex Mono',monospace !important;font-size:10px !important;letter-spacing:.2em;text-transform:uppercase;padding:4px 10px !important;cursor:pointer}
 #theme-toggle:hover{background:var(--p-paper2) !important}
@@ -449,7 +402,6 @@ body.theme-dark .phase-label{font-size:13px !important;font-weight:700 !importan
 /* Codex r5 batch. */
 body.phase-panel-open #shape-hint{display:none}
 .phase-self-badge-label{font-size:9px !important;letter-spacing:0 !important}
-#shape-controls+label{margin-left:12px}
 </style>
 <body>
 <button id="theme-toggle" title="Toggle light / dark theme">theme</button>
@@ -461,18 +413,37 @@ body.phase-panel-open #shape-hint{display:none}
 (function(){
   var saved = localStorage.getItem('cxc-theme');
   if (saved !== 'light') document.body.classList.add('theme-dark');
+  if (localStorage.getItem('cxc-sidebar-collapsed') === '1') document.body.classList.add('sidebar-collapsed');
+  function updateSidebarToggleLabel(){
+    var sb = document.getElementById('sidebar-toggle');
+    if (sb) sb.textContent = document.body.classList.contains('sidebar-collapsed') ? '›' : '‹';
+  }
+  function toggleSidebar(){
+    var collapsed = document.body.classList.toggle('sidebar-collapsed');
+    localStorage.setItem('cxc-sidebar-collapsed', collapsed ? '1' : '0');
+    updateSidebarToggleLabel();
+    // The shape canvas re-fits on resize; dispatch a synthetic one so the
+    // view adapts to the new stage width.
+    window.dispatchEvent(new Event('resize'));
+  }
   document.addEventListener('DOMContentLoaded', function(){
-    var btn = document.getElementById('theme-toggle');
-    if (!btn) return;
-    btn.addEventListener('click', function(){
+    var tb = document.getElementById('theme-toggle');
+    if (tb) tb.addEventListener('click', function(){
       var dark = document.body.classList.toggle('theme-dark');
       localStorage.setItem('cxc-theme', dark ? 'dark' : 'light');
+    });
+    var sb = document.getElementById('sidebar-toggle');
+    if (sb) sb.addEventListener('click', toggleSidebar);
+    updateSidebarToggleLabel();
+    window.addEventListener('keydown', function(e){
+      if ((e.metaKey || e.ctrlKey) && e.key === '\\') { e.preventDefault(); toggleSidebar(); }
     });
   });
 })();
 </script>
 <div id="layout">
   <div id="sidebar">
+    <button id="sidebar-toggle" title="Collapse / expand sidebar (⌘\)" aria-label="Toggle sidebar">‹</button>
     <div id="sidebar-scroll">
       <div id="drop">drop trace.jsonl<br><span class="drop-sub" style="font-size:10px">or click to browse</span></div>
       <input type="file" id="file" accept=".jsonl,.json,.log" style="display:none">
@@ -528,11 +499,9 @@ body.phase-panel-open #shape-hint{display:none}
   </div>
 </div>
 
-<script src="vendor/dagre.min.js"></script>
 <script src="vendor/elk.bundled.js"></script>
 <script>
-// ELK.js instance for compound layout; shape view uses this instead of
-// Dagre because Dagre 0.8.5 `compound: true` is broken (issues #236, #238).
+// ELK.js instance for compound layout.
 const _traceViewerParams = new URLSearchParams(window.location.search);
 const _elkSyncMode = _traceViewerParams.getAll('sync').includes('1');
 const _elk = (typeof ELK !== 'undefined') ? new ELK() : null;
@@ -621,16 +590,14 @@ function parseJSONL(text) {
 function loadTrace(text, name) {
   events = parseJSONL(text);
   events.sort((a, b) => a.seq - b.seq);
-  // Infer sender: sender for a send/send_sync is the atom whose arm most
-  // recently fired before this send (single-queue mode: arm bodies run
+  // Infer sender class: sender for a send/send_sync is the atom whose arm
+  // most recently fired before this send (single-queue mode: arm bodies run
   // to completion; sends inside them belong to that arm's atom).
-  let lastArmAtom = null, lastArmCls = null;
+  let lastArmCls = null;
   for (const e of events) {
     if (e.kind === 'arm') {
-      lastArmAtom = e.target;
       lastArmCls = e.target_cls;
     } else if ((e.kind === 'send' || e.kind === 'send_sync') && (!e.sender || e.sender === 0)) {
-      e._inferredSender = lastArmAtom;
       e._inferredSenderCls = lastArmCls;
     }
   }
@@ -651,8 +618,6 @@ function loadTrace(text, name) {
   filtered = events.slice();
   $('status').textContent = `${name || 'trace'} — ${events.length} events`;
   _analysis = null;
-  // Reset instance-label cache; recomputed lazily on first buildGraph.
-  _instanceLabels.clear();
   renderStats();
   renderFilters();
   renderUnclosed();
@@ -792,25 +757,6 @@ function showDetail(e) {
   el.innerHTML = `<pre>${escapeHtml(JSON.stringify(e, null, 2))}</pre>`;
 }
 
-// Instance mode: raw target pointers are unreadable (huge integers), so
-// we assign short 0-based indices per class in first-seen order:
-//   Player[43393498...] → Player#0
-//   Player[43393511...] → Player#1
-// The mapping is computed over the ENTIRE trace (not just `filtered`) so
-// instance labels stay stable when the user narrows the seq range.
-const _instanceLabels = new Map(); // target-pointer → "Class#N"
-function computeInstanceLabels() {
-  _instanceLabels.clear();
-  const perClass = new Map(); // class → next index
-  for (const e of events) {
-    if (_instanceLabels.has(e.target)) continue;
-    const cls = e.target_cls || '?';
-    const idx = perClass.get(cls) || 0;
-    _instanceLabels.set(e.target, cls + '#' + idx);
-    perClass.set(cls, idx + 1);
-  }
-}
-
 // Strip auto-synthesized noise from a message label so shape edges read as
 // the intent of the send, not the compiler plumbing.
 //   cxc_stream_deploy_done_from_PlayerWithsender:seat: → deploy_done
@@ -853,10 +799,10 @@ function atomShapeForClass(cls) {
   return _shape.atoms.find(a => a.name === uname) || null;
 }
 
-function buildGraph(mode) {
-  // mode: 'class' → aggregate all instances of a class into one node
-  //       'instance' → each atom instance is its own node
-  if (!_instanceLabels.size) computeInstanceLabels();
+// Build a directed multigraph aggregated by class: nodes = atom classes,
+// edges = sender_class → receiver_class with per-message counts. Shape view
+// is the sole consumer.
+function buildGraph() {
   const showContainers = $('shape-show-containers')?.checked;
   const hideContainers = !showContainers;
   const isContainer = (cls) => CONTAINER_RE.test(cls || '');
@@ -864,18 +810,9 @@ function buildGraph(mode) {
 
   const nodes = new Map();
   const edges = new Map();
-  const nodeId = (e) => mode === 'class'
-    ? e.target_cls
-    : (_instanceLabels.get(e.target) || (e.target_cls + '#?'));
-  const senderIdForEvent = (e) => {
-    if (!e._inferredSenderCls) return null;
-    return mode === 'class'
-      ? e._inferredSenderCls
-      : (_instanceLabels.get(e._inferredSender) || (e._inferredSenderCls + '#?'));
-  };
   for (const e of filtered) {
     if (hideContainers && isContainer(e.target_cls)) continue;
-    const id = nodeId(e);
+    const id = e.target_cls;
     if (!nodes.has(id)) {
       nodes.set(id, {id, label: displayLabel(e.target_cls) || id, cls: e.target_cls, size: 0});
     }
@@ -884,8 +821,8 @@ function buildGraph(mode) {
   for (const e of filtered) {
     if (e.kind !== 'send' && e.kind !== 'send_sync') continue;
     if (hideContainers && (isContainer(e.target_cls) || isContainer(e._inferredSenderCls))) continue;
-    const src = senderIdForEvent(e) || '(root)';
-    const dst = nodeId(e);
+    const src = e._inferredSenderCls || '(root)';
+    const dst = e.target_cls;
     if (!nodes.has(src)) {
       nodes.set(src, {id: src, label: src === '(root)' ? 'init' : (displayLabel(src) || src), cls: src === '(root)' ? 'root' : src, size: 0});
     }
@@ -1551,20 +1488,12 @@ function shapeFitView(svg) {
   const b = shapeContentBox(svg);
   return { scale: shapeFitScale(svg), cx: b.x + b.w / 2, cy: b.y + b.h / 2 };
 }
-// Show the whole graph when it fits at actual size or larger (capped at 1.5x
-// so a small graph doesn't balloon). Otherwise start at actual size from the
-// top and let the reader pan, since fitting a large graph to the stage
-// shrinks its text below reading size.
+// Default view fits the whole graph on first paint. Small graphs cap at
+// 1.5x so a two-atom program doesn't balloon.
 function shapeDefaultView(svg) {
   const b = shapeContentBox(svg);
   const fit = shapeFitScale(svg);
-  if (fit >= 1) return { scale: Math.min(fit, 1.5), cx: b.x + b.w / 2, cy: b.y + b.h / 2 };
-  const halfW = svg.clientWidth / 2, halfH = svg.clientHeight / 2;
-  return {
-    scale: 1,
-    cx: b.w <= svg.clientWidth ? b.x + b.w / 2 : b.x + halfW,
-    cy: b.h <= svg.clientHeight ? b.y + b.h / 2 : b.y + halfH,
-  };
+  return { scale: Math.min(fit, 1.5), cx: b.x + b.w / 2, cy: b.y + b.h / 2 };
 }
 function applyShapeView() {
   const svg = shapeSvg();
@@ -1706,7 +1635,7 @@ async function renderShape() {
       hint.remove();
     });
   }
-  let {nodes, edges} = buildGraph('class');
+  let {nodes, edges} = buildGraph();
   const showInit = document.getElementById('shape-show-init')?.checked;
   if (!showInit) {
     nodes = nodes.filter(n => n.id !== '(root)');
@@ -2370,14 +2299,6 @@ function _ptStop() {
   _ptState = null;
 }
 function _ptSvg(){ return $('stage-main').querySelector('svg'); }
-function _ptMode(){ return 'class'; }
-function _ptNodeIdForEvent(e, side) {
-  const mode = _ptMode();
-  if (side === 'target') return mode === 'class' ? e.target_cls : (_instanceLabels.get(e.target) || null);
-  // sender side
-  if (!e._inferredSenderCls) return null;
-  return mode === 'class' ? e._inferredSenderCls : (_instanceLabels.get(e._inferredSender) || null);
-}
 function _ptClearFlashes() {
   const svg = _ptSvg(); if (!svg) return;
   svg.querySelectorAll('.pt-flash-src,.pt-flash-dst').forEach(el => el.classList.remove('pt-flash-src','pt-flash-dst'));
@@ -2386,8 +2307,8 @@ function _ptClearFlashes() {
 }
 function _ptFlashEvent(e, forward) {
   const svg = _ptSvg(); if (!svg) return;
-  const srcId = _ptNodeIdForEvent(e, 'sender');
-  const dstId = _ptNodeIdForEvent(e, 'target');
+  const srcId = e._inferredSenderCls || null;
+  const dstId = e.target_cls || null;
   const srcEl = srcId ? svg.querySelector(`.shape-block[data-node-id="${CSS.escape(srcId)}"]`) : null;
   const dstEl = dstId ? svg.querySelector(`.shape-block[data-node-id="${CSS.escape(dstId)}"]`) : null;
   const edgeEl = (srcId && dstId) ? svg.querySelector(`.shape-edge[data-src="${CSS.escape(srcId)}"][data-dst="${CSS.escape(dstId)}"]`) : null;
