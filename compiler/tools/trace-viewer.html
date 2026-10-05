@@ -299,7 +299,7 @@ summary::marker,summary::-webkit-details-marker{color:var(--p-ink2)}
 .shape-pill{fill:var(--p-paper) !important;stroke:var(--p-ink) !important;stroke-width:0.6 !important}
 .shape-pill-label{fill:var(--p-ink) !important;font-family:'IBM Plex Mono',monospace !important;font-size:10px !important;letter-spacing:.08em}
 .phase-node{fill:var(--p-paper) !important;stroke:var(--p-ink) !important;stroke-width:0.9 !important}
-.phase-node.initial{fill:var(--p-amber) !important;stroke:var(--p-ink) !important;stroke-width:1.4 !important}
+.phase-node.initial{fill:var(--p-amber) !important;stroke:var(--p-ink) !important;stroke-width:0.9 !important}
 .phase-node.end{fill:var(--p-paper3) !important;stroke:var(--p-ink) !important}
 .phase-node.unreached{stroke-dasharray:4 3 !important;opacity:.6}
 .phase-label{fill:var(--p-ink2) !important;font-family:'Barlow Condensed',Impact,sans-serif !important;font-weight:500 !important;letter-spacing:.06em}
@@ -1383,7 +1383,7 @@ function renderPhaseGraph(atom) {
     rect.setAttribute('y', pos.cy - halfH);
     rect.setAttribute('width', pos.w);
     rect.setAttribute('height', pos.h);
-    rect.setAttribute('rx', halfH);
+    rect.setAttribute('rx', 5);
     rect.setAttribute('class', 'phase-node' + (isInit ? ' initial' : '') + (isEnd ? ' end' : '') + (isUnreached ? ' unreached' : ''));
     if (isUnreached) rect.innerHTML = `<title>${p} — declared but not reached by any observed transition</title>`;
     svg.appendChild(rect);
@@ -1406,7 +1406,7 @@ function renderPhaseGraph(atom) {
       const startX = pos.cx - halfW - 28;
       const tipX = pos.cx - halfW - 4;
       s.setAttribute('d', `M${startX},${pos.cy} L${tipX},${pos.cy}`);
-      s.setAttribute('stroke', '#b8792b'); s.setAttribute('stroke-width', 2);
+      s.setAttribute('stroke', '#22160A'); s.setAttribute('stroke-width', 1.1);
       s.setAttribute('marker-end', 'url(#phase-arrow)');
       svg.appendChild(s);
     }
@@ -1425,7 +1425,7 @@ function renderPhaseGraph(atom) {
       const badge = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
       badge.setAttribute('x', bx); badge.setAttribute('y', by);
       badge.setAttribute('width', bw); badge.setAttribute('height', bh);
-      badge.setAttribute('rx', 9);
+      badge.setAttribute('rx', 2);
       badge.setAttribute('class', 'phase-self-badge');
       const msgSummary = selfArms.map(a => `  ${a.msg}${a.has_guard ? ' |:' : ''} (line ${a.line ?? '?'})`).join('\n');
       badge.innerHTML = `<title>${selfArms.length} self-transition${selfArms.length > 1 ? 's' : ''} on ${p}\n${msgSummary}</title>`;
