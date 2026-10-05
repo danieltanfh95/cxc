@@ -33,6 +33,8 @@ hello.txt
 .claude/skills/*
 !.claude/skills/cxc-authoring/
 !.claude/skills/cxc-cleanup-audit/
+!.claude/skills/cxc/
+!.claude/skills/cxc/references/
 .manual.md
 .succession/
 

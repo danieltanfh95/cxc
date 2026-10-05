@@ -1,0 +1,282 @@
+
+# Authoring reference
+
+Routed from the `cxc` skill when the task is writing or refactoring Corvid source.
+
+Load this skill before writing or refactoring Corvid source. The
+authoring guide lives in `docs/writing-corvid/` in the corvid repo.
+This skill points at it, then surfaces the highest-leverage rules
+and patterns inline so you don't have to context-switch for common
+cases.
+
+## When to invoke
+
+- Writing new `.cxc` code from scratch.
+- Refactoring an existing `.cxc` file (renaming, restructuring, cleaning up).
+- Reviewing a Corvid PR for shape, not just syntax.
+- Answering "how do I express X in Corvid" for a specific X.
+
+Do **not** invoke for pure compiler-internals work (Clojure code
+under `compiler/src/`). That's a separate concern with its own
+conventions.
+
+## Reading order for a fresh session
+
+For a first-time reader (agent or human):
+
+1. [docs/writing-corvid/01-your-first-atom.md](../../../docs/writing-corvid/01-your-first-atom.md): the vocabulary.
+2. [docs/writing-corvid/02-language-tour.md](../../../docs/writing-corvid/02-language-tour.md): the reference.
+3. [docs/writing-corvid/04-common-mistakes.md](../../../docs/writing-corvid/04-common-mistakes.md): what to avoid and why.
+
+[docs/writing-corvid/03-design-patterns.md](../../../docs/writing-corvid/03-design-patterns.md) is an **opt-in reference**, not a reading-order step. Patterns refine the Zen defaults for specific problem shapes. Consult a specific pattern only when a specific problem in front of you needs it. Do NOT scan it upfront and apply patterns preemptively, the patterns exist to solve real problems, not to structure a first draft.
+
+For an experienced author looking for a specific answer, jump
+straight to (2) or (3).
+
+## The Zen of Corvid
+
+These are the values the language is built around. Read them before you start; the patterns below all fall out of these principles. If a decision feels ambiguous, come back here.
+
+1. **Atoms are modules.** State lives inside; access from outside is only through named observations (`:-`) and transitions (`<:`). No field is publicly reachable. This is the encapsulation that Clojure lacks.
+2. **Every state change has a name.** All mutation flows through `<: msg -> phase` arms. The full audit surface for what can change an atom's state is `grep '^\s*<:'` on its body. Keep it small enough to enumerate.
+3. **Derive, don't cache.** Observations are pure functions of current state, re-computed on read. No cache-then-invalidate machinery. If you're writing a dirty-flag or a memo, the design is wrong — hoist into an observation or split the atom.
+4. **One atom until pressure.** Default to a single `def main:` atom holding all state and transitions. Split when any ONE of these independent axes pushes for a boundary:
+   - **Ownership**: long-lived state (RNG seed, open file handle, accumulator) that must persist across observations and outlive its callers.
+   - **Lifecycle**: an external phase sequence that signals completion (`fs.open` reaching `open`, subprocess reaching `exited`, socket reaching `closed`), where the parent needs to subscribe to that completion.
+   - **Capability scope**: a capability (plugin or injected cap) that should NOT be reachable from every transition on the parent. Splitting isolates the authority, independent of how many sites consume it.
+5. **Verbs are transitions, not atoms.** `Bidder`, `Deployer`, `Combat`, `Placer`, `Auction` are transitions on the atom that owns their state — never their own atoms. A strict-layered DAG of verb-atoms (`L0 Card / L1 Bidder / L2 Auction`) invented to dodge the `|>`-to-same-atom rejection is the cathedral anti-pattern. Fold callees back into transitions on the caller.
+6. **Records hold data. Atoms hold behavior.** No observations inside `def Record:` bodies. If you want a derived value on a record, either move the record onto an atom as a field and put the observation there, or inline the derivation at call sites.
+7. **Explicit capabilities are the whole point.** Capability dependencies must appear in the atom's declaration surface, so `grep '^\s*use '` on the body enumerates every IO/RNG/subprocess/HTTP authority the atom reaches. Two mechanisms serve this, (a) `use <Cap>:` to consume an existing stdlib or project plugin (`fs`, `subprocess`, `console`, `env`, `random`), or (b) `def plugin:` to author a new wrapper when the needed cap is not provided. A translation that calls `print` or `SeededPrng` without declaring a `use` wastes the capability model, regardless of whether the backing plugin is new or existing.
+8. **Fail loudly at the boundary.** Fallible capabilities raise typed records (`IOError`, `HttpError`, `ShellError`, `EnvError`, `JsonError`, `RandomError`). Recover at the call site with `or T():`. No `Result[T, E]`, no `try / catch` — the recovery is where the caller's context knows what fallback means.
+
+The Zen items name DEFAULT STANCES for atom shape, state access, and capability enumeration. They are not pattern applications; patterns in `docs/writing-corvid/03-design-patterns.md` refine these defaults for specific problem shapes. The value story Corvid pitches (locality, auditable transitions, observation decoupling, explicit capabilities) emerges from writing transitions, observations, and plugins according to these eight values, not from architecture drawings.
+
+## Verification workflow
+
+**Compile before you commit.** The parser rejects more than the type checker. The productive loop is `cxc compile` → read the diagnostic → fix the exact line. Compiler messages teach the fix inline; read them literally, don't reinterpret.
+
+## The rules that catch the most bugs
+
+Inline pointers for common decisions. For rationale and examples,
+open the linked doc section.
+
+### Nullability
+
+- `T` = nullable, `T!` = non-nil, `T?` is **banned everywhere**.
+- Reach for `T!` unless `nil` is a legitimate state of the field.
+- Guard semantics on nullable operands: `|: i < limit` is supported, the compiler unwraps the Optional<Bool> as `.present && .value`, so a nil operand degrades the guard to `false`. This is a defined semantics, use it when "missing operand treated as non-matching" is what you want.
+
+### Nullable arithmetic
+
+Arithmetic on nullable Ints produces `_Cxc_Optional_Int` which callers must terminate with `?? default` before comparing. The default is NOT free, `?? 0` smashes a missing operand into a valid in-range value, which usually loses caller meaning. Prefer `T!` for numeric fields used in arithmetic. If the field must be nullable, pick a `??` fallback that encodes "missing" (a sentinel like `-1` or a per-domain out-of-range marker), not an in-range value like `0`.
+
+### Reserved words (do not use as identifiers or enum cases)
+
+```
+module from import as def use invariants accepts extend replace
+deprecated then do when let alias self nil true false and or not
+is in of if else return case function for weak unowned while loop
+break continue raise
+```
+
+Common trap: `weak` and `unowned` are reserved (data-field reference modifiers). Rename to `low_hp` / `fragile` / `frail` etc. `case weak` in an enum triggers a parse error at the case line.
+
+### `let` vs `alias`
+
+Both evaluate the expression once at declaration and bind the result to a name for the rest of the body (`lower-alias-stmt` is semantics-equivalent to Clojure `let`). The axes that drive the choice:
+
+- **Type**. `alias name :- expr` infers the type from the RHS. `let x: T = expr` requires an explicit `T`. Reach for `alias` when the expression's type is obvious at the call site, reach for `let` when you want to pin the type or when inference would be ambiguous.
+- **Immutability**. `alias` registers the name in `:alias-names`; a later `=>` through the alias slot is rejected. `let` has no equivalent immutability check at the staged-assignment target. Prefer `alias` when the name is a derivation that should not be re-targetable mid-body.
+- **Scope**. Both are local to the enclosing `then:` block or observation body. `let` additionally works at module scope. Neither escapes its block. Neither shadows a surrounding local (both forms error on shadow).
+- **Composition with staged assignments**. Both can be referenced from `field => <expr-using-bound-name>` updates (fixed 2026-09-27 for `let`, typed lets pre-register into ctx before `:updates` lower, do-stmts emit before then-stmts so C-level scope covers staged assignments; `alias` has always worked here).
+
+**Compatibility note (transient)**. Chained `let` inside expression position (e.g. inside a `sort_by` comparator) still hits lowering gaps. Use `alias` or hoist the chain into a sequence of statement-position `let`s until the fix lands.
+
+### Observations (`:-`) are atom-only, and never carry a `:Type` before `:-`
+
+Observations live only inside atom bodies (`def <AtomName>:` or `def main:`). They read pre-image state and return a value on demand. Legal shapes as of v1.0 (all compile-verified):
+
+```corvid
+# nullary observation, inferred return type
+total_processed :- processed
+
+# nullary observation, explicit return type on same line
+total_processed :- Int = processed
+
+# observation with args, inferred return type
+plus(other: Int) :- n + other
+
+# observation with args, explicit return type — return type goes AFTER `:-`,
+# with the body on the next indented line
+min_of(x: Int, y: Int) :- Int
+    ||: x < y : x
+    ||: else : y
+```
+
+**Common wrong shape**: `min_of(x: Int, y: Int): Int :- ...` (colon-return-type BEFORE `:-`). The parser rejects this because it looks like a field-decl with a `(...)` tuple type. The return type belongs AFTER the `:-` glyph, not before it.
+
+**Also illegal**: `name: Type :- body`. Adding a `:Type` annotation to a nullary observation without an arg list conflates it with a field-decl `name: Type = default`. Either use the inline explicit form (`name :- Type = expr`) or drop the type.
+
+**Compiler limitation (transient)**: observation args declared as `Int!` currently lower with `int64_t` params but call sites pass `_Cxc_Optional_Int64`, producing a C-level type-mismatch. Workaround until the fix lands, declare args as `Int` (nullable) and unwrap at the use site with the fallback discipline from "Nullable arithmetic" above (pick a sentinel that encodes missing, not an in-range value).
+
+Also illegal: observations inside `def Record` bodies. Records hold data, atoms hold behavior. If you find yourself wanting a derived value on a record, either (a) move the record to be an atom's field and define the observation on the atom, or (b) inline the derivation at each call site.
+
+**Top-level free functions do not exist at v1.0.** Only `def <AtomName>:`, `def <RecordName>:`, `def <EnumName>:`, `def main:`, and `def plugin:` are valid at module scope. Writing `def helper(x: Int!, y: Int!): Int! :- ...` at the top level is a parse error at the second type annotation (`expected :newline (got :ident "Int")`). Move the helper into the atom that needs it as an observation, or inline the `||: guard : body` chain at the call site.
+
+### Sub-atoms live as fields, not `let`-locals
+
+Applies only when you have already decided a sub-atom is needed (see "Starting shape" above — the default is one main atom). If you have decided, place the sub-atom as a field of the parent, not a `let`-local:
+
+```corvid
+# WRONG — local scope drops the atom before its lifecycle runs
+def main:
+    -> running
+        then:
+            let c: Counter = Counter(limit: 5)   # dies with the block
+            |> c.run()
+
+# RIGHT — atom as a field of the outer atom
+def main:
+    c: Counter! = Counter(limit: 5)
+    -> running
+        then: |> c.run()
+    running <: c.finished -> end
+```
+
+### RNG semantics
+
+- `SeededPrng(seed: N)` is a **Park-Miller LCG** (a=16807, m=2^31-1). NOT Python's MT19937.
+- Byte parity with Python's `random.*` is impossible at the RNG level. Match a reference Corvid impl or a semantic property, not Python's stream.
+- Methods: `.below(n)` returns Int in `[0, n)`. `.next_u31()` returns Int in `[1, 2^31-2]`.
+- `Random` is CSPRNG-only. `SeededPrng` does not conform to `Random`.
+
+### Data before code
+
+- Define the record before writing the transition that produces or consumes it.
+- If a transition body reaches for a DOMAIN FACT or an EXCHANGED CONTRACT value that lives on no record, stop and put it on one. Derived or temporary values stay as observations or local bindings (Zen 3).
+- Multi-layer data-contract changes lead with a "before/after data shapes" table for the stored and exchanged shapes, then implementation.
+
+### Readable names
+
+- Atom, record, enum, transition, observation, field, and parameter names flow verbatim into compile diagnostics, `grep '^\s*<:'` audit queries, `cxc trace` CLI reports, and the browser trace viewer. The debuggability dividend Corvid pitches depends on these names being readable at the trace surface, not just inside the source file.
+- Prefer full words. `Rng` / `Board` / `Draw` / `Effects` / `Combat` over `Mt` / `Bd` / `Dr` / `Fx` / `Cb`. `cell_code` over `cc`. `is_matched_idx` over `imi`.
+- Message names (the identifier after `<:`) land as the `msg` field of every `send` / `recv` event. `apply_deploy_ability` reads cleanly in the trace. `ap_d_a` reads as noise.
+- Shortening to save tokens or lines costs more than it saves. A 780-line emit with `Mt` / `Bd` / `Dr` reads as `Mt[4377759824] → Bd[4377762448]` in the trace viewer, which is unreadable noise. Rename once and the whole audit surface comes back.
+
+### Enums vs data
+
+- If enum cases describe *what a specific entity does* (`Ability.axe_king_bonus`), collapse to effect-as-data on the entity.
+- Enum cases should name kinds of behavior, not identities of behavers.
+
+### Transitions and staging
+
+- `=>` inside `then:` is **snapshot-staged**, not incremental. The body reads pre-image throughout; updates commit at end.
+- One `=>` per field per transition path. Multiple `=>` on the same field is smuggled assignment; fold into one expression.
+- To print the new value: `print(field + delta)`, not `field => field + delta; print(field)`.
+
+### Sends
+
+- `|>` = sync (blocks). `:>` = async (enqueues).
+- `|>` to the same atom on the same thread is rejected at runtime. Use `self :> msg` for self-sends.
+- Async payload uniformity: if two arms emit `:> event(payload:)`, the payload types must match across all arms.
+
+### Guards
+
+- `|:` for transition guards, protocol invariants, `requires`/`ensures`. Pattern-match dispatch still uses `when:`.
+- Multiple guarded arms on the same `phase <: msg` are legal. A trailing unguarded arm is the vanilla case.
+- Prefer a fall-through arm to exhaustive-guard listing (additive extension).
+
+### Containers
+
+- FP-only. `.append`, `.filter`, `.assoc`, `.dissoc`, `.insert`, `.without`. No `.add` / `.remove`.
+- Reads that may miss: `.at(i) ?? fallback`, `.get(key) ?? fallback`.
+- Iteration is `xs.for_each(x => ...)`. There is no `for x in xs:`.
+
+### Async
+
+- Async in Corvid is atom lifecycles. No `Future[T]` / `Promise[T]` types.
+- `fs.open` returns a `File` atom whose phases signal completion.
+- Subscribe to a sub-atom's messages via `<:` arms on the parent.
+
+### Capabilities
+
+Every fallible capability raises a typed record. Recovery is a call-site `or <ErrorType>(<binding>):` arm at the same indentation as the `let` or `alias`, with the fallback expression on the next indented line (verified against the `fs.size` recovery pattern in `compiler/examples/`).
+
+| Capability | Example method | Raises | Recovery form |
+|------------|----------------|--------|---------------|
+| `fs` | `fs.read_text(path: p)` | `IOError` | `let s: String = fs.read_text(path: p)` → `or IOError(reason: let _r):` → `"<missing>"` |
+| `http` | `http.get(url: u, headers_json: "{}")` | `HttpError` | `let r: HttpResponse = http.get(url: u, headers_json: "{}")` → `or HttpError(status: let _s):` → `default_response` |
+| `subprocess` | `subprocess.run(cmd: c, env: EnvSpec.empty)` | `ShellError` | `let r: String = subprocess.run(cmd: c, env: EnvSpec.empty)` → `or ShellError(reason: let _r):` → `""` |
+| `json` | `json.field_string(json: j, key: k)` | `JsonError` | `let v: String = json.field_string(json: j, key: k)` → `or JsonError(reason: let _r):` → `"<missing>"` |
+| `env` (`EnvMut`) | `env.set(name: k, value: v)` | `EnvError` | `let rc: Int = env.set(name: k, value: v)` → `or EnvError(name: let _n):` → `-1` |
+| `random` | `random.between(low: 0, high: n)` | `RandomError` | `let n: Int = random.between(low: 0, high: 10)` → `or RandomError(reason: let _r):` → `0` |
+
+The `→` in the recovery column separates lines of the same block, each at its own indent level in the actual source. Field names inside `(…)` are the typed-error record's shape; `let _r` binds the error field but discards it. No `Result[T, E]`. No `try / catch`.
+
+### What Corvid does not have
+
+If you find yourself reaching for one of these, look for the shape it's meant to replace:
+
+- **User-defined operators**: use named methods.
+- **Annotations `@name(args)`**: inferred from body shape; deprecation goes in comments.
+- **Shape variables / generics on user types**: containers monomorphize.
+- **Global mutable state**: mutation lives in atoms.
+- **`if X: Y else: Z` as expression**: use `||: guard : body` chains.
+- **`switch` / `case`**: use transitions + `|:` + variant patterns.
+- **`for x in xs:`**: use `xs.for_each(...)`.
+- **Imperative container mutation**: FP methods only.
+
+### Parser gotchas — read the compiler message
+
+The compiler teaches the four most common parser rejections inline at failure time. Read the diagnostic literally. Common ones and what the compiler now says:
+
+- **Empty list `[]` in assignment position** (`field => []`, `let xs: List of T = []`): compiler says "Empty list literal `[]` has no element type … use `<field>.empty()`". Do that.
+- **Multi-line expression without paren wrap** (trailing `+`, `-`, `and`, `or` at EOL): compiler says "binary operator `+` at end of line without a right-hand operand … wrap the whole expression in parens to continue on the next line". Do that.
+- **`let x: T =` with newline before RHS**: compiler says "expected an expression, got a newline … keep the RHS on the same line as `=`, or hoist the value into an atom observation". Do that.
+- **Wrong observation shape `v: T :- body`**: compiler says "`:Type` annotation belongs AFTER `:-`, not before it … Rewrite: `v :- T = body`". Do that.
+
+If the compiler message is unclear on a specific case, the shape is probably novel — file it, don't invent a workaround.
+
+## Compile-verify discipline
+
+Verify compilable code against the compiler, not against your memory
+of the spec, when writing anything beyond a one-liner. If the compiler
+disagrees with the spec, that's an implementation gap, file it. The pipeline:
+
+```bash
+cxc compile path/to/your.cxc /tmp/out && /tmp/out/<binname>
+```
+
+That's the whole loop for a one-file emit. Read the `stderr` diagnostic on failure and fix the exact line.
+
+**Byte-parity targets.** When the task has a reference implementation whose stdout you must match, the productive loop is `sed → compile → diff`, not just `compile`. Codex-2-v18 hit 19/19 byte parity on a 1400-line Python-to-Corvid translation using exactly this shape:
+
+```bash
+# swap seed literal, compile, run, diff against oracle
+sed 's/SeededPrng(seed: [0-9]*)/SeededPrng(seed: 8)/' cards.cxc > /tmp/s8.cxc
+cxc compile /tmp/s8.cxc /tmp/out && /tmp/out/cards > /tmp/mine.out
+diff /path/to/reference/seed-8.out /tmp/mine.out | head
+```
+
+Iterate until the diff is empty on 3+ non-verifier seeds before emitting. Reading the compiler internals or the reference implementation to derive the trace format is a failure mode. The oracle diff IS the task's acceptance test, not the language spec.
+
+Every example in the writing-corvid guide is verified this way
+before it ships. When you propose Corvid code in a review or a
+generated snippet, either compile it yourself or say up-front that
+you haven't.
+
+**Structural self-audit via `cxc trace`.** After the emit compiles and passes its byte-parity or equivalent gate, run a trace pass to verify the atom-topology matches your intent:
+
+```bash
+cxc compile cards.cxc /tmp/out --trace
+/tmp/out/cards > /dev/null 2> /tmp/cards.trace.jsonl
+cxc trace /tmp/cards.trace.jsonl
+```
+
+The `cxc trace` output shows the atoms present at runtime, the top-N message-passing edges between them, and topology counts. Read it against Zen items 4 (one atom until pressure), 5 (verbs are transitions), and 7 (explicit capabilities): a 1-atom monolith is Clojure-in-Corvid-clothing (item 4 satisfied, items 5/7 possibly under-used); a 9-layer DAG with atoms per verb is the cathedral anti-pattern (item 5 violated). If your trace shows either extreme, revisit the design before shipping.
+
+For deep compiler-internals debugging where you need the Clojure build API directly, drop into `cd compiler && clojure -M -e '...'` with `cxc.build/compile-source-to-file`. The shell `cxc compile` path covers 95% of authoring work.
+
+## Companion skills
+
+- [cxc-cleanup-audit](../cxc-cleanup-audit/SKILL.md) — post-hoc anti-pattern scan for an existing `.cxc` file. **Invoke only after** the file compiles cleanly and passes its byte-parity or equivalent gate, and has grown past ~500 lines. Do NOT invoke upfront during authoring: the checklist primes for elaborate refactoring loops that don't help small first drafts, and often triggers premature structural decomposition.
