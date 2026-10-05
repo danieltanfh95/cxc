@@ -37,6 +37,8 @@ set -euo pipefail
 pkill -f cxc.daemon >/dev/null 2>&1 || true
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib/slice_cache.sh
+. "$HERE/lib/slice_cache.sh"
 SELF_HOST="$(cd "$HERE/.." && pwd)"
 COMPILER_DIR="$(cd "$SELF_HOST/.." && pwd)"
 REPO_DIR="$(cd "$COMPILER_DIR/.." && pwd)"
@@ -89,6 +91,7 @@ for b in "$PARSE_BIN" "$BIN"; do
     exit 1
   fi
 done
+slice_cache_register p36 "$PARSE_BIN"
 
 : > "$CXC_OUT"
 : > "$ORACLE_IN"
@@ -98,7 +101,7 @@ echo "[harness] assembling and processing the prelude"
 cat "$ASM" >> "$CXC_OUT"
 "$BIN" assemble "$BROKEN" "$COMPILER_DIR/resources" >> "$CXC_OUT"
 printf 'assemble|\nassemble|%s\n' "$BROKEN" >> "$ORACLE_IN"
-"$PARSE_BIN" "$(cat "$ASM")" prog > "$ONE"
+slice_cached p36 "$(cat "$ASM")" prog > "$ONE"
 "$BIN" prelude "$ONE" "$INDEX" > "$PSTREAM"
 cat "$PSTREAM" >> "$CXC_OUT"
 "$BIN" praw "$ONE" "$INDEX" > "$TWO"
@@ -108,7 +111,7 @@ echo "[harness] prelude stream: $(wc -c < "$PSTREAM") bytes"
 
 run_row() {
   local mode="$1" src="$2"
-  "$PARSE_BIN" "$src" prog > "$ONE"
+  slice_cached p36 "$src" prog > "$ONE"
   printf '%s|%s\n' "$mode" "$src" >> "$ORACLE_IN"
   case "$mode" in
     user)    "$BIN" user "$ONE" "$INDEX" "$STDLIB" >> "$CXC_OUT" ;;
@@ -133,6 +136,7 @@ head -3 "$SWEEP" | while IFS= read -r line; do
   run_row full "$line"
 done
 
+slice_cache_report
 echo "[harness] running clj oracle"
 (cd "$COMPILER_DIR" && CXC_SER_ORACLE="$SER_CLJ" clj -M -e "$(cat "$ORACLE_CLJ")") < "$ORACLE_IN" > "$ORACLE_OUT"
 

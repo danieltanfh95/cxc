@@ -28,6 +28,8 @@ set -euo pipefail
 pkill -f cxc.daemon >/dev/null 2>&1 || true
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib/slice_cache.sh
+. "$HERE/lib/slice_cache.sh"
 SELF_HOST="$(cd "$HERE/.." && pwd)"
 COMPILER_DIR="$(cd "$SELF_HOST/.." && pwd)"
 REPO_DIR="$(cd "$COMPILER_DIR/.." && pwd)"
@@ -71,11 +73,12 @@ for b in "$PARSE_BIN" "$BIN"; do
     exit 1
   fi
 done
+slice_cache_register p36 "$PARSE_BIN"
 
 run_port() {
   local rows="$1" mod="$2" mode="$3"
   while IFS= read -r line || [ -n "$line" ]; do
-    "$PARSE_BIN" "$line" prog > "$ONE"
+    slice_cached p36 "$line" prog > "$ONE"
     "$BIN" "$ONE" "$INDEX" "$mod" "$mode" >> "$CXC_OUT"
   done < "$rows"
 }
@@ -96,6 +99,7 @@ for mode in table refs; do
   run_port "$CORPUS" "app.core" "$mode"
 done
 
+slice_cache_report
 echo "[harness] running clj oracle"
 for mode in table refs; do
   run_oracle "$PARSE_CORPUS" "" "$mode"

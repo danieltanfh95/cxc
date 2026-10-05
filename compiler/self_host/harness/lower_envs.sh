@@ -36,6 +36,8 @@ set -euo pipefail
 pkill -f cxc.daemon >/dev/null 2>&1 || true
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=lib/slice_cache.sh
+. "$HERE/lib/slice_cache.sh"
 SELF_HOST="$(cd "$HERE/.." && pwd)"
 COMPILER_DIR="$(cd "$SELF_HOST/.." && pwd)"
 REPO_DIR="$(cd "$COMPILER_DIR/.." && pwd)"
@@ -100,13 +102,16 @@ for b in "$PARSE_BIN" "$P38_BIN" "$P37_BIN" "$BIN"; do
     exit 1
   fi
 done
+slice_cache_register p36 "$PARSE_BIN"
+slice_cache_register p38 "$P38_BIN"
+slice_cache_register p37 "$P37_BIN"
 
 echo "[harness] building the prelude stream"
-"$P38_BIN" assemble "$REGISTRY" "$COMPILER_DIR/resources" > "$ASM"
-"$PARSE_BIN" "$(cat "$ASM")" prog > "$ONE"
-"$P38_BIN" prelude "$ONE" "$INDEX" > "$PSTREAM"
-"$P38_BIN" praw "$ONE" "$INDEX" > "$TWO"
-"$P38_BIN" prefs "$TWO" "$INDEX" > "$PREFS"
+slice_cached p38 assemble "$REGISTRY" "$COMPILER_DIR/resources" > "$ASM"
+slice_cached p36 "$(cat "$ASM")" prog > "$ONE"
+slice_cached p38 prelude "$ONE" "$INDEX" > "$PSTREAM"
+slice_cached p38 praw "$ONE" "$INDEX" > "$TWO"
+slice_cached p38 prefs "$TWO" "$INDEX" > "$PREFS"
 PIN="$(cat "$PSTREAM")"
 PIN="${PIN#(program}"
 PIN="${PIN%)}"
@@ -123,13 +128,13 @@ inner() {
 # user piece also appends its slice-37 refs rows to $REFS as piece <n>.
 piece() {
   local kind="$1" src="$2" n="$3"
-  "$PARSE_BIN" "$src" prog > "$ONE"
+  slice_cached p36 "$src" prog > "$ONE"
   if [ "$kind" = raw ]; then
     cp "$ONE" "$TWO"
   else
-    "$P38_BIN" user "$ONE" "$INDEX" "$STDLIB" > "$TWO"
+    slice_cached p38 user "$ONE" "$INDEX" "$STDLIB" > "$TWO"
     printf '(piece %s)\n' "$n" >> "$REFS"
-    "$P37_BIN" "$TWO" "$INDEX" "" refs >> "$REFS"
+    slice_cached p37 "$TWO" "$INDEX" "" refs >> "$REFS"
   fi
 }
 
@@ -185,6 +190,7 @@ head -3 "$SWEEP" | while IFS= read -r line; do
   run_row full-lower "$line"
 done
 
+slice_cache_report
 echo "[harness] running clj oracle"
 (cd "$COMPILER_DIR" && CXC_P38_ORACLE="$P38_CLJ" CXC_SER_ORACLE="$SER_CLJ" clj -M -e "$(cat "$ORACLE_CLJ")") < "$ORACLE_IN" > "$ORACLE_OUT"
 

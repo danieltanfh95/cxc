@@ -99,6 +99,16 @@ The lower layer ahead is about 16k lines of Clojure and a monolithic slice does 
 - `CXC_PREBUILT` names a directory with every port the harness builds (`p36` to `p40` today), `CXC_CORPUS` swaps the hand corpus, `CXC_NO_SWEEP` skips the 218-file sweep. A full `lower_records` run takes about 15 minutes, most of it slice 39 at about 3 seconds a row.
 - Report the new slice's `.m` size and field count in its chapter. Slice 40 is 5.0 MB for 84 fields and 87 arms.
 
+### Slice cache (chapter 36)
+
+A pipeline harness runs every earlier port on every row, and those ports do not change between runs, so `harness/lib/slice_cache.sh` caches their output by content. The chain harnesses (`resolve_program_symbols`, `prelude_program`, `lower_envs`, `lower_records`, and the later pipeline slices) source it.
+
+- `slice_cache_register <name> <binary>` keys a port by the sha256 of its binary. The build is deterministic (two builds of slice 40 into different directories give the same binary), and a new source, compiler, or prelude gives a new hash, so a stale entry is never served.
+- `slice_cached <name> <arg>...` replays the port's stdout and exit status, or runs it and stores both. The key is the binary hash plus every argument, where a file argument contributes the sha256 of its content and a directory argument the hashes of its files, so the per-run temporary paths never matter.
+- Only upstream stages go through the cache. The slice under test always runs its own binary.
+- `CXC_SLICE_CACHE` names the directory, `/tmp/cxc-slice-cache` by default, outside the repo. `CXC_SLICE_CACHE=off` runs every stage directly. Each harness prints its hit and miss counts before the oracle runs.
+- Timings on the Linux cloud, cold then warm. `resolve_program_symbols` 166 s then 110 s, `prelude_program` 83 s then 69 s, `lower_envs` 827 s then 758 s (slice 39 itself is the slice under test there), `lower_records` 924 s then 288 s (the cold run already found the slice-36, 37, and 38 rows `lower_envs` had cached, so slice 39 was the cold part). Every run printed PARITY OK.
+
 ## Oracle paths
 
 Oracle Clojure files live under `compiler/self_host/oracle/`. They each `clj -M -e` the live `cxc.*` namespaces to drive the reference implementation and emit parity output.
