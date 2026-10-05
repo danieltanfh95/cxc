@@ -252,8 +252,9 @@ body.theme-dark #pt-transport button{border-color:var(--p-ink3)}
 body.theme-dark #pt-transport #pt-scrub{color-scheme:dark}
 #pt-transport select{background:var(--p-paper);color:var(--p-ink);border:0.5px solid var(--p-ink);border-radius:0;font-family:'IBM Plex Mono',monospace;font-size:10px;padding:1px 4px}
 body.theme-dark #pt-transport select{border-color:var(--p-ink3)}
-#pt-status{min-width:220px;text-align:right;color:var(--p-ink2)}
-#pt-status b{color:var(--p-ink);font-weight:600}
+#pt-status{width:300px;flex:0 0 300px;text-align:right;color:var(--p-ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
+#pt-status b{color:var(--p-ink);font-weight:600;font-variant-numeric:tabular-nums}
+#pt-status .pt-count{color:var(--p-ink3);margin-left:4px}
 #stage-splitter{background:var(--p-paper3) !important;border-top:0.5px solid var(--p-hair) !important;border-bottom:0.5px solid var(--p-hair) !important}
 #stage-splitter::before{background-image:radial-gradient(circle,var(--p-ink3) 1px,transparent 1.2px) !important}
 #stage-splitter:hover,#stage-splitter.dragging{background:var(--p-fade) !important}
@@ -2804,7 +2805,7 @@ function _ptSetStatus() {
   const e = filtered[i] || filtered[filtered.length-1];
   const seq = e ? e.seq : '?';
   const msg = e ? (e.msg || '') : '';
-  $('pt-status').innerHTML = `<b>seq ${seq}</b> · ${escapeHtml(msg)} <span style="color:var(--p-ink3)">(${i+1}/${total})</span>`;
+  $('pt-status').innerHTML = `<b>seq ${seq}</b> · ${escapeHtml(msg)}<span class="pt-count">(${i+1}/${total})</span>`;
   $('pt-scrub').value = String(i);
 }
 function _ptAdvanceOne(forward) {
