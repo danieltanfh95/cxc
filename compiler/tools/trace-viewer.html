@@ -403,9 +403,7 @@ body.theme-dark .phase-node.end{stroke:var(--p-ink2) !important}
 body.theme-dark .phase-node.unreached{stroke:var(--p-ink3) !important}
 body.theme-dark .phase-arc{stroke:var(--p-ink2) !important}
 body.theme-dark .mk-ink{fill:var(--p-ink2) !important}
-body.theme-dark #stage-main{background-image:
-    linear-gradient(rgba(230,230,234,.035) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(230,230,234,.035) 1px, transparent 1px) !important}
+body.theme-dark #stage-main{background-image:none !important}
 /* Codex r2 batch — hierarchy and emphasis tuning. */
 body.theme-dark .shape-block-label:not(.on-pastel){fill:var(--p-ink) !important;font-weight:700 !important}
 body.theme-dark .phase-arc{stroke:var(--p-ink2) !important;stroke-width:1.3 !important}
@@ -419,6 +417,11 @@ body.theme-dark #shape-hint{color:var(--p-ink2) !important;border-color:var(--p-
 body.theme-dark #shape-hint b{color:var(--p-ink) !important;font-weight:500 !important;letter-spacing:.02em !important}
 body.theme-dark #sidebar summary{border-bottom-color:var(--p-hair) !important}
 body.theme-dark #sidebar #stats div{border-bottom-color:var(--p-hair) !important}
+/* Codex r3 batch — spacing + layout tuning. */
+#stage-detail.expanded{height:45vh !important;min-height:420px}
+#stage-toolbar label+label{margin-left:10px}
+#shape-zoom-fit{width:auto !important;min-width:36px;padding:0 8px !important}
+body.theme-dark .phase-label{font-size:13px !important;font-weight:700 !important}
 </style>
 <body>
 <button id="theme-toggle" title="Toggle light / dark theme">theme</button>
@@ -429,7 +432,7 @@ body.theme-dark #sidebar #stats div{border-bottom-color:var(--p-hair) !important
 <script>
 (function(){
   var saved = localStorage.getItem('cxc-theme');
-  if (saved === 'dark') document.body.classList.add('theme-dark');
+  if (saved !== 'light') document.body.classList.add('theme-dark');
   document.addEventListener('DOMContentLoaded', function(){
     var btn = document.getElementById('theme-toggle');
     if (!btn) return;
