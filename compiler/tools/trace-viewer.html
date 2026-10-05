@@ -355,6 +355,70 @@ body.theme-dark .on-pastel{fill:var(--p-paper) !important}
 #theme-toggle:hover{background:var(--p-paper2) !important}
 body.theme-dark{background:var(--p-paper) !important;color:var(--p-ink) !important}
 #empty-state{color:var(--p-ink2) !important;font-family:'Barlow Condensed',Impact,sans-serif !important;letter-spacing:.3em !important;text-transform:uppercase !important;font-size:14px !important}
+/* ---------- dark-mode border de-saturation ---------- */
+/* Light mode: ink borders sit on cream, high contrast, good. Dark mode:
+   same hex is near-white and competes with coloured strokes. Push structural
+   frames to hair, floating controls to ink3, ordinary graph strokes to ink2. */
+body.theme-dark header{border-bottom-color:var(--p-hair) !important}
+body.theme-dark header::after{border-bottom-color:var(--p-hair) !important}
+body.theme-dark #sidebar{border-right-color:var(--p-hair) !important}
+body.theme-dark #stage-toolbar{border-bottom-color:var(--p-hair) !important}
+body.theme-dark #stage-detail{border-top-color:var(--p-hair) !important}
+body.theme-dark #drop{border-color:var(--p-ink2) !important}
+body.theme-dark #stage-toolbar button,
+body.theme-dark #stage-toolbar select,
+body.theme-dark #stage-toolbar input[type="text"],
+body.theme-dark #shape-legend,
+body.theme-dark #shape-zoom,
+body.theme-dark #shape-zoom button,
+body.theme-dark #shape-hint,
+body.theme-dark #shape-legend-reopen,
+body.theme-dark #theme-toggle,
+body.theme-dark #phase-graph-close,
+body.theme-dark #phase-scroll-hint-right{border-color:var(--p-ink3) !important}
+body.theme-dark #shape-legend::before,
+body.theme-dark #shape-legend::after,
+body.theme-dark #shape-zoom::before,
+body.theme-dark #shape-zoom::after,
+body.theme-dark #shape-hint::before,
+body.theme-dark #shape-hint::after,
+body.theme-dark #shape-legend-reopen::before,
+body.theme-dark #shape-legend-reopen::after{border-color:var(--p-ink3) !important}
+body.theme-dark .shape-block{stroke:var(--p-ink2) !important}
+body.theme-dark .shape-block.main,
+body.theme-dark .shape-block.owner,
+body.theme-dark .shape-block.owner.main,
+body.theme-dark .shape-block.selected,
+body.theme-dark .shape-block.main.selected{stroke:var(--p-ink) !important}
+body.theme-dark .shape-edge{stroke:var(--p-ink2) !important}
+body.theme-dark .shape-edge.sync{stroke:var(--p-indigo) !important}
+body.theme-dark .shape-edge.self{stroke:var(--p-rust) !important}
+body.theme-dark .shape-edge:hover,
+body.theme-dark .shape-edge.shape-edge-hover{stroke:var(--p-accent) !important}
+body.theme-dark .shape-container-tab,
+body.theme-dark .shape-container-tab.main{stroke:var(--p-ink3) !important}
+body.theme-dark .phase-node{stroke:var(--p-ink2) !important}
+body.theme-dark .phase-node.initial{stroke:var(--p-ink2) !important}
+body.theme-dark .phase-node.end{stroke:var(--p-ink2) !important}
+body.theme-dark .phase-node.unreached{stroke:var(--p-ink3) !important}
+body.theme-dark .phase-arc{stroke:var(--p-ink2) !important}
+body.theme-dark .mk-ink{fill:var(--p-ink2) !important}
+body.theme-dark #stage-main{background-image:
+    linear-gradient(rgba(230,230,234,.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(230,230,234,.035) 1px, transparent 1px) !important}
+/* Codex r2 batch — hierarchy and emphasis tuning. */
+body.theme-dark .shape-block-label:not(.on-pastel){fill:var(--p-ink) !important;font-weight:700 !important}
+body.theme-dark .phase-arc{stroke:var(--p-ink2) !important;stroke-width:1.3 !important}
+body.theme-dark .shape-block-badge{fill:var(--p-paper2) !important;stroke:none !important}
+body.theme-dark .shape-block-badge-label{fill:var(--p-ink2) !important;font-weight:400 !important;letter-spacing:.04em !important}
+body.theme-dark .shape-block.container:not(.selected),
+body.theme-dark .shape-container-tab:not(.selected){stroke:var(--p-hair) !important;stroke-width:0.75 !important;stroke-dasharray:4 5 !important}
+body.theme-dark .phase-arc-label-bg{fill:var(--p-paper2) !important;opacity:1 !important}
+body.theme-dark .phase-arc-label{stroke:var(--p-paper2) !important}
+body.theme-dark #shape-hint{color:var(--p-ink2) !important;border-color:var(--p-hair) !important;text-transform:none !important;letter-spacing:.02em !important}
+body.theme-dark #shape-hint b{color:var(--p-ink) !important;font-weight:500 !important;letter-spacing:.02em !important}
+body.theme-dark #sidebar summary{border-bottom-color:var(--p-hair) !important}
+body.theme-dark #sidebar #stats div{border-bottom-color:var(--p-hair) !important}
 </style>
 <body>
 <button id="theme-toggle" title="Toggle light / dark theme">theme</button>
