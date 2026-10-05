@@ -197,7 +197,7 @@
   --p-fade:rgba(34,22,10,.08);
   --p-sepia:#DBC58F;     /* main atom fill */
   --p-sepia2:#C9AE6A;    /* main atom stroke */
-  --p-indigo:#3A4D6B;    /* sync-only edges */
+  --p-indigo:#2E6DA4;    /* sync-only edges */
   --p-rust:#8B4826;      /* self-loops */
   --p-amber:#D4A574;     /* initial phase tint */
 }
@@ -272,7 +272,7 @@ summary::marker,summary::-webkit-details-marker{color:var(--p-ink2)}
 .shape-block.container,.shape-block.container.main,
 .shape-container-tab,.shape-container-tab.main{fill:transparent !important;stroke:var(--p-ink) !important;stroke-width:0.6 !important;stroke-dasharray:4 3 !important}
 .shape-container-tab.selected,.shape-container-tab.main.selected{stroke:var(--p-accent) !important;stroke-width:1.4 !important;stroke-dasharray:none !important}
-.shape-block-label{fill:var(--p-ink) !important;font-family:'Barlow Condensed',Impact,'Arial Narrow',sans-serif !important;font-weight:900 !important;font-size:16px !important;letter-spacing:.04em !important}
+.shape-block-label{fill:var(--p-ink2) !important;font-family:'Barlow Condensed',Impact,'Arial Narrow',sans-serif !important;font-weight:500 !important;font-size:15px !important;letter-spacing:.04em !important}
 .shape-block-sub{fill:var(--p-ink2) !important;font-family:'IBM Plex Mono',monospace !important;font-size:11px !important;letter-spacing:.12em}
 .shape-block-badge{fill:var(--p-ink) !important}
 .shape-block-badge-label{fill:var(--p-paper) !important;font-family:'IBM Plex Mono',monospace !important;font-weight:600 !important;letter-spacing:.1em}
@@ -280,8 +280,8 @@ summary::marker,summary::-webkit-details-marker{color:var(--p-ink2)}
 .shape-block.main.selected{stroke:var(--p-accent) !important;stroke-width:2 !important}
 .shape-block-halo-outer{stroke:var(--p-wash) !important;stroke-width:8 !important;opacity:1 !important}
 .shape-block.hover{stroke:var(--p-accent) !important;stroke-width:1.6 !important}
-.shape-block-label.container{fill:var(--p-ink) !important;font-family:'Barlow Condensed',Impact,sans-serif !important;font-weight:700 !important;letter-spacing:.06em !important;font-size:14px !important}
-.shape-block-label.container.main{fill:var(--p-ink) !important}
+.shape-block-label.container{fill:var(--p-ink2) !important;font-family:'Barlow Condensed',Impact,sans-serif !important;font-weight:500 !important;letter-spacing:.06em !important;font-size:13px !important}
+.shape-block-label.container.main{fill:var(--p-ink2) !important}
 .shape-block-sub.container{fill:var(--p-ink2) !important}
 .shape-owner-label-bg{fill:var(--p-paper) !important;stroke:var(--p-ink) !important;stroke-width:0.6 !important}
 .shape-owner-label{fill:var(--p-ink) !important;font-family:'IBM Plex Mono',monospace !important;font-weight:600 !important;letter-spacing:.15em}
@@ -1934,7 +1934,7 @@ async function renderShape() {
       <div class="legend-group">
         <h5>edges</h5>
         <div class="legend-row"><span class="legend-line" style="border-top:1.6px solid #22160A;"></span>async send</div>
-        <div class="legend-row"><span class="legend-line" style="border-top:1.6px solid #3A4D6B;"></span>sync only</div>
+        <div class="legend-row"><span class="legend-line" style="border-top:1.6px solid #2E6DA4;"></span>sync only</div>
         <div class="legend-row"><span class="legend-line" style="border-top:0; border-image:none; background:linear-gradient(to right,#8B4826 60%,transparent 0) repeat-x; background-size:7px 1.6px; height:1.6px;"></span>self-loop</div>
         <div class="legend-row" title="atoms that message each other share one line with an arrowhead at each end; each label's arrow is the direction its messages travel along the line"><span style="display:inline-block; width:22px; text-align:center; color:#22160A; font-size:10px;">▲▼</span>two-way: label arrow = its direction</div>
         <div class="legend-row" title="label 'foo +N' = top message plus N others on same edge — hover for full list"><span style="display:inline-block; width:22px; text-align:center; color:#6B5A44; font-family:'IBM Plex Mono',Menlo,monospace; font-size:10px;">+N</span>= more msgs</div>
@@ -2106,13 +2106,13 @@ async function renderShape() {
       <path d="M0,1 L11,6 L0,11 z" fill="#22160A"></path>
     </marker>
     <marker id="shape-arrow-sync" markerWidth="12" markerHeight="12" refX="11" refY="6" orient="auto" markerUnits="userSpaceOnUse">
-      <path d="M0,1 L11,6 L0,11 z" fill="#3A4D6B"></path>
+      <path d="M0,1 L11,6 L0,11 z" fill="#2E6DA4"></path>
     </marker>
     <marker id="shape-arrow-start" markerWidth="12" markerHeight="12" refX="11" refY="6" orient="auto-start-reverse" markerUnits="userSpaceOnUse">
       <path d="M0,1 L11,6 L0,11 z" fill="#22160A"></path>
     </marker>
     <marker id="shape-arrow-start-sync" markerWidth="12" markerHeight="12" refX="11" refY="6" orient="auto-start-reverse" markerUnits="userSpaceOnUse">
-      <path d="M0,1 L11,6 L0,11 z" fill="#3A4D6B"></path>
+      <path d="M0,1 L11,6 L0,11 z" fill="#2E6DA4"></path>
     </marker>
     <marker id="shape-arrow-self" markerWidth="11" markerHeight="11" refX="10" refY="5.5" orient="auto" markerUnits="userSpaceOnUse">
       <path d="M0,1 L10,5.5 L0,10 z" fill="#8B4826"></path>
