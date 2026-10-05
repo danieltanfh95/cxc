@@ -453,6 +453,25 @@ const _traceViewerParams = new URLSearchParams(window.location.search);
 const _elkSyncMode = _traceViewerParams.getAll('sync').includes('1');
 const _elk = (typeof ELK !== 'undefined') ? new ELK() : null;
 let _elkSyncEnabled = false;
+
+function pointsToPath(pts, r = 8) {
+  if (!pts || pts.length === 0) return '';
+  if (pts.length === 1) return `M${pts[0].x},${pts[0].y}`;
+  let d = `M${pts[0].x},${pts[0].y}`;
+  for (let i = 1; i < pts.length - 1; i++) {
+    const prev = pts[i - 1], cur = pts[i], next = pts[i + 1];
+    const lin = Math.hypot(cur.x - prev.x, cur.y - prev.y);
+    const lout = Math.hypot(next.x - cur.x, next.y - cur.y);
+    const rr = Math.min(r, lin / 2, lout / 2);
+    if (rr < 0.5) { d += ` L${cur.x},${cur.y}`; continue; }
+    const ax = cur.x - (cur.x - prev.x) / lin * rr, ay = cur.y - (cur.y - prev.y) / lin * rr;
+    const bx = cur.x + (next.x - cur.x) / lout * rr, by = cur.y + (next.y - cur.y) / lout * rr;
+    d += ` L${ax},${ay} Q${cur.x},${cur.y} ${bx},${by}`;
+  }
+  const last = pts[pts.length - 1];
+  d += ` L${last.x},${last.y}`;
+  return d;
+}
 // Last shape layout, keyed on the serialized ELK input. ELK is deterministic
 // for a given input, so clicks and resizes, which re-render without changing
 // the graph, reuse it. Callers must not mutate the result.
@@ -997,7 +1016,7 @@ function renderGraph() {
 //     shows the message list.
 // Sizes are fit to the available pane width so scroll only happens for
 // very deep lifecycles (main has 13 phases).
-function renderPhaseGraph(atom) {
+async function renderPhaseGraph(atom) {
   const el = $('stage-detail');
   el.className = 'expanded';
   document.body.classList.add('phase-panel-open');
@@ -1074,438 +1093,199 @@ function renderPhaseGraph(atom) {
     renderShape();
   });
 
-  // Fit width to pane. Nodes are width-aware pills (rounded rects), so
-  // cellW must be at least maxPillW + inner gap. This lets long phase
-  // names (`resolving_round`) fit inside a pill without clipping.
-  const paneW = $('phase-graph-svg-wrap').clientWidth || 900;
-  const paneH = $('phase-graph-svg-wrap').clientHeight || 320;
-  const pillH = 40;
-  const phaseW = new Map();
-  for (const p of ordered) {
-    const chars = (p || '').length;
-    phaseW.set(p, Math.max(60, Math.round(chars * 8.4 + 22)));
-  }
-  const maxPillW = Math.max(...phaseW.values());
-  const minCellW = maxPillW + 30;
-  // Extra right padding so labels finish before the fade+chevron zone
-  // (fade is 64px wide + chevron button 44px wide = ~120px).
-  const padL = 30, padR = 120;
-  const availW = Math.max(paneW - padL - padR, 200);
-  const fitCellW = Math.floor(availW / Math.max(ordered.length, 1));
-  // Fit-to-width when the graph is small enough that pills won't collide.
-  // Long chains (main's 13 phases) fall through to the scroll path.
-  let cellW, svgW;
-  if (fitCellW >= minCellW) {
-    cellW = fitCellW;
-    svgW = paneW;
-  } else {
-    cellW = minCellW;
-    svgW = padL + padR + ordered.length * cellW;
-  }
-  // Provisional layout dimensions. Real svgH depends on the number of
-  // back-arc / forward-skip lanes we end up scheduling, so we compute it
-  // twice: an initial guess (below) and a final pass after assignLanes()
-  // has run. Everything downstream reads spineY / svgH from the
-  // final values.
-  let svgH = Math.max(paneH - 24, 320);
-  let spineY = Math.round(svgH / 2);
 
-  // Each pill is a width-aware rounded rect centered on (cx, spineY).
-  // Its own w/h are stored so arc endpoints hit the pill boundary and the
-  // collision pass knows the pill footprint.
-  const nodePos = new Map();
-  ordered.forEach((p, i) => {
-    const w = phaseW.get(p);
-    const cx = padL + cellW * i + cellW / 2;
-    nodePos.set(p, { x: cx, y: spineY, w, h: pillH, cx, cy: spineY });
+  if (!_elk) {
+    $('phase-graph-svg-wrap').innerHTML = '<div style="padding:20px; color:var(--p-ink2); font-family:IBM Plex Mono,monospace; font-size:11px;">elkjs not loaded — phase graph unavailable</div>';
+    return;
+  }
+
+  const reached = new Set();
+  if (atom.initial_phase) reached.add(atom.initial_phase);
+  {
+    const q = [...reached];
+    while (q.length) {
+      const p = q.shift();
+      for (const t of atom.transitions) {
+        if (t.from === p && !reached.has(t.to)) { reached.add(t.to); q.push(t.to); }
+      }
+    }
+  }
+
+  const selfPerPhase = new Map();
+  for (const t of atom.transitions) {
+    if (t.from !== t.to) continue;
+    if (!selfPerPhase.has(t.from)) selfPerPhase.set(t.from, []);
+    selfPerPhase.get(t.from).push(t);
+  }
+
+  const pillH = 44;
+  const widthFor = (p) => Math.max(84, Math.round((p || '').length * 8.6 + 26));
+  const elkNodes = phases.map(p => {
+    const n = { id: p, width: widthFor(p), height: pillH };
+    if (p === atom.initial_phase) n.layoutOptions = { 'elk.layered.layering.layerConstraint': 'FIRST' };
+    if (p === 'end') n.layoutOptions = { 'elk.layered.layering.layerConstraint': 'LAST' };
+    return n;
   });
+
+  const edgeGroups = new Map();
+  for (const t of atom.transitions) {
+    if (t.from === t.to) continue;
+    if (!phases.includes(t.from) || !phases.includes(t.to)) continue;
+    const key = `${t.from}||${t.to}||${t.msg}`;
+    if (!edgeGroups.has(key)) edgeGroups.set(key, { from: t.from, to: t.to, msg: t.msg, arms: [], guarded: false });
+    const g = edgeGroups.get(key);
+    g.arms.push(t);
+    if (t.has_guard) g.guarded = true;
+  }
+  const elkEdges = [...edgeGroups.values()].map((g, i) => {
+    const txt = g.msg + (g.arms.length > 1 ? ` ×${g.arms.length}` : '') + (g.guarded ? ' |:' : '');
+    const w = Math.max(40, Math.round(txt.length * 7.2 + 10));
+    return {
+      id: `pe${i}`,
+      sources: [g.from],
+      targets: [g.to],
+      labels: [{ text: txt, width: w, height: 14, layoutOptions: { 'elk.edgeLabels.placement': 'CENTER' } }],
+      _group: g,
+    };
+  });
+
+  const elkGraph = {
+    id: 'proot',
+    layoutOptions: {
+      'elk.algorithm': 'layered',
+      'elk.direction': 'DOWN',
+      'elk.edgeRouting': 'ORTHOGONAL',
+      'elk.spacing.nodeNode': '48',
+      'elk.layered.spacing.nodeNodeBetweenLayers': '72',
+      'elk.layered.spacing.edgeNodeBetweenLayers': '24',
+      'elk.spacing.edgeEdge': '20',
+      'elk.spacing.edgeNode': '20',
+      'elk.spacing.edgeLabel': '8',
+      'elk.layered.thoroughness': '50',
+      'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
+      'elk.json.edgeCoords': 'ROOT',
+    },
+    children: elkNodes,
+    edges: elkEdges,
+  };
+
+  let result;
+  try {
+    result = await _elk.layout(elkGraph);
+  } catch (err) {
+    $('phase-graph-svg-wrap').innerHTML = `<div style="padding:20px; color:var(--p-accent); font-family:IBM Plex Mono,monospace; font-size:11px;">ELK layout failed: ${escapeHtml(String(err && err.message || err))}</div>`;
+    return;
+  }
+
+  const padX = 24, padY = 24;
+  const svgW = Math.ceil((result.width || 400) + padX * 2);
+  const svgH = Math.ceil((result.height || 240) + padY * 2);
 
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   svg.setAttribute('width', svgW);
   svg.setAttribute('height', svgH);
-  // Flex parents shrink children by default — that ate the overflow so the
-  // scroll affordance couldn't detect overflow. Lock the SVG's rendered
-  // width to its intrinsic size.
   svg.style.flexShrink = '0';
+
   const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
   defs.innerHTML = `
     <marker id="phase-arrow" markerWidth="12" markerHeight="12" refX="11" refY="6" orient="auto" markerUnits="userSpaceOnUse">
       <path d="M0,1 L11,6 L0,11 z" class="mk-ink"></path>
-    </marker>
-    <marker id="phase-arrow-primary" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="userSpaceOnUse">
-      <path d="M0,1 L9,5 L0,9 z" class="mk-ink"></path>
     </marker>`;
   svg.appendChild(defs);
 
-  // Consolidate arcs by (from, to, msg). Self-loops group separately so we
-  // can render a single count badge instead of stacking N labels.
-  const nonSelfGroups = new Map();
-  const selfPerPhase = new Map();
-  for (const t of atom.transitions) {
-    if (!nodePos.has(t.from) || !nodePos.has(t.to)) continue;
-    if (t.from === t.to) {
-      if (!selfPerPhase.has(t.from)) selfPerPhase.set(t.from, []);
-      selfPerPhase.get(t.from).push(t);
-      continue;
-    }
-    const k = t.from + '||' + t.to + '||' + (t.msg || '');
-    if (!nonSelfGroups.has(k)) nonSelfGroups.set(k, {from: t.from, to: t.to, msg: t.msg, arms: [], guarded: false});
-    const g = nonSelfGroups.get(k);
-    g.arms.push(t);
-    if (t.has_guard) g.guarded = true;
+  const nodePos = new Map();
+  for (const n of (result.children || [])) {
+    const x = padX + (n.x || 0);
+    const y = padY + (n.y || 0);
+    nodePos.set(n.id, { x, y, w: n.width, h: n.height, cx: x + n.width / 2, cy: y + n.height / 2 });
   }
 
-  // Group by (from, to) for parallel-arc stacking layout
-  const parallelGroups = new Map();
-  for (const g of nonSelfGroups.values()) {
-    const k = g.from + '||' + g.to;
-    if (!parallelGroups.has(k)) parallelGroups.set(k, []);
-    parallelGroups.get(k).push(g);
-  }
-
-  // Spine index for classifying arcs. Spine edges = adjacent-in-spine same-
-  // direction; back edges = to earlier spine index; forward-skip = to later
-  // spine index but not adjacent.
-  const spineIdx = new Map();
-  spine.forEach((p, i) => spineIdx.set(p, i));
-
-  // Pass 1a: classify arcs and assign lanes via greedy interval scheduling.
-  // Back-arcs curve ABOVE the spine, forward-skips BELOW. Within each band,
-  // arcs with overlapping X-spans go in different lanes so they don't share
-  // the same Y bump — that was the "indistinct bundle" codex flagged.
-  const arcSpecs = [];
-  for (const [k, arcs] of parallelGroups) {
-    arcs.forEach((g, arcIdx) => {
-      const src = nodePos.get(g.from), dst = nodePos.get(g.to);
-      const si = spineIdx.get(g.from);
-      const di = spineIdx.get(g.to);
-      const isSpineFwd = si !== undefined && di !== undefined && di === si + 1;
-      const isBack = si !== undefined && di !== undefined && di < si;
-      const isPrimary = isSpineFwd && arcIdx === 0;
-      let category;
-      if (isPrimary)       category = 'primary';
-      else if (isSpineFwd) category = 'parallel-spine';   // parallel-arc siblings on adjacent nodes
-      else if (isBack)     category = 'back';
-      else                 category = 'fwdSkip';
-      arcSpecs.push({g, src, dst, arcIdx, isSpineFwd, isBack, isPrimary, category,
-                     spanLeft: Math.min(src.x, dst.x), spanRight: Math.max(src.x, dst.x)});
-    });
-  }
-  function assignLanes(specs) {
-    // Longest span first — long arcs get outer lanes; short arcs slide in
-    // beneath. Prevents a long back-arc from stealing a low lane and forcing
-    // every crossing short arc into distant lanes.
-    specs.sort((a, b) => (b.spanRight - b.spanLeft) - (a.spanRight - a.spanLeft));
-    const lanes = []; // each entry = array of {L, R} intervals occupied at that Y level
-    for (const s of specs) {
-      let chosen = -1;
-      for (let i = 0; i < lanes.length; i++) {
-        const overlap = lanes[i].some(iv => !(s.spanRight + 12 < iv.L || s.spanLeft - 12 > iv.R));
-        if (!overlap) { chosen = i; break; }
+  const groupById = new Map(elkEdges.map(e => [e.id, e._group]));
+  for (const e of (result.edges || [])) {
+    for (const s of (e.sections || [])) {
+      const pts = [s.startPoint, ...(s.bendPoints || []), s.endPoint].map(pt => ({ x: padX + pt.x, y: padY + pt.y }));
+      const path = pointsToPath(pts, 6);
+      const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      p.setAttribute('d', path);
+      p.setAttribute('class', 'phase-arc');
+      p.setAttribute('marker-end', 'url(#phase-arrow)');
+      p.setAttribute('fill', 'none');
+      const grp = groupById.get(e.id);
+      if (grp) {
+        const armLines = grp.arms.map(a => `line ${a.line ?? '?'}${a.has_guard ? ' [guard]' : ''}`).join('\n  ');
+        p.innerHTML = `<title>${grp.from} &lt;: ${grp.msg} → ${grp.to}\n  ${armLines}</title>`;
       }
-      if (chosen === -1) { chosen = lanes.length; lanes.push([]); }
-      lanes[chosen].push({ L: s.spanLeft, R: s.spanRight });
-      s.laneIdx = chosen;
+      svg.appendChild(p);
     }
-    return lanes.length;
-  }
-  const backLaneCount     = assignLanes(arcSpecs.filter(s => s.category === 'back'));
-  const fwdSkipLaneCount  = assignLanes(arcSpecs.filter(s => s.category === 'fwdSkip'));
-  const parallelSpineLaneCount = assignLanes(arcSpecs.filter(s => s.category === 'parallel-spine'));
-
-  // Now that we know how many lanes each side needs, size the SVG so all
-  // arcs + their labels fit without clipping. Each lane needs bump + label
-  // room (~46px per lane). Add a safe pad above the topmost lane so leader
-  // lines and self-loop badges don't get cut.
-  const abovePad = 60;
-  const belowPad = 60;
-  const abovePillEdge = pillH / 2;
-  const laneStep = 34;
-  const bumpBase = 44;
-  const aboveLanes = Math.max(backLaneCount, parallelSpineLaneCount);
-  const aboveSpineSpace = abovePillEdge + bumpBase + aboveLanes * laneStep + abovePad;
-  const belowSpineSpace = abovePillEdge + bumpBase + fwdSkipLaneCount * laneStep + belowPad;
-  // Size to what the graph actually needs — small graphs no longer stretch
-  // to fill the pane. Wrap flex-centers the svg vertically (see wrap css).
-  svgH = aboveSpineSpace + belowSpineSpace;
-  spineY = aboveSpineSpace;
-  // Update pill positions to sit on the new spineY.
-  for (const p of ordered) {
-    const np = nodePos.get(p);
-    np.y = spineY;
-    np.cy = spineY;
-  }
-  // Recompute spanLeft/spanRight now that positions may have shifted along y.
-  for (const s of arcSpecs) {
-    s.spanLeft  = Math.min(s.src.cx, s.dst.cx);
-    s.spanRight = Math.max(s.src.cx, s.dst.cx);
-  }
-  // Update the SVG element with the now-final height. `spineY` shifted
-  // above too so pills and arc endpoints below use the corrected value.
-  svg.setAttribute('height', svgH);
-
-  // Parallel-group size per (from, to). Used to horizontally spread labels
-  // for parallel arcs (same src, same dst, different msg) so they don't
-  // stack in a column.
-  const parallelGroupSize = new Map();
-  for (const [k, arcs] of parallelGroups) parallelGroupSize.set(k, arcs.length);
-
-  // Pass 1b: turn specs into concrete geometry + label anchor per arc.
-  const arcRenders = []; // {g, path, isSpineFwd, isPrimary, anchor:{x,y,above}, tooltip, lbl}
-  for (const s of arcSpecs) {
-    const {g, src, dst} = s;
-    let path, ax, ay, above;
-    if (s.isPrimary) {
-      // Primary spine: exit right edge of src at cy, enter left edge of dst.
-      const sx = src.cx + src.w / 2, sy = src.cy;
-      const ex = dst.cx - dst.w / 2, ey = dst.cy;
-      path = `M${sx},${sy} L${ex},${ey}`;
-      ax = (sx + ex) / 2; ay = sy - 12; above = true;
-    } else {
-      // Off-spine: exit top-center (back/parallel) or bottom-center (fwd-skip)
-      // of src, enter top or bottom center of dst. Curves through a control
-      // point at (midX, spineY ± bump) so the arc bulges into its lane band.
-      const routeAbove = s.category === 'back' || s.category === 'parallel-spine';
-      // Wider vertical spacing for below-spine fwdSkip arcs so a 4-way
-      // fan-out (Player's alive → hand_cap/tower_quota × 2 arms) puts each
-      // label on its own row instead of a tight bundle.
-      const laneStep = routeAbove ? 34 : 44;
-      const bump = 44 + s.laneIdx * laneStep;
-      // Offset the arc's exit point on the source pill by lane index — arcs
-      // that all leave the same phase (Player's `alive` fan-out) no longer
-      // converge into a single tangent, so a viewer can trace label→arc→dst
-      // without the leftmost cluster.
-      const srcHalfW = Math.min(src.w / 2 - 6, 24);
-      const dstHalfW = Math.min(dst.w / 2 - 6, 24);
-      const sxOffset = (s.laneIdx - 1) * (srcHalfW / 2);
-      const exOffset = -(s.laneIdx - 1) * (dstHalfW / 2);
-      const yEdge = pillH / 2;
-      const sx = src.cx + sxOffset, ex = dst.cx + exOffset;
-      const sy = routeAbove ? src.cy - yEdge : src.cy + yEdge;
-      const ey = routeAbove ? dst.cy - yEdge : dst.cy + yEdge;
-      const midY = routeAbove ? src.cy - bump : src.cy + bump;
-      path = `M${sx},${sy} L${sx},${midY} L${ex},${midY} L${ex},${ey}`;
-      const gk = g.from + '||' + g.to;
-      const gSize = parallelGroupSize.get(gk) || 1;
-      const baseT = 0.5;
-      const t = gSize > 1 ? (0.3 + (s.arcIdx / (gSize - 1)) * 0.4) : baseT;
-      ax = sx + (ex - sx) * t;
-      ay = midY + (routeAbove ? -6 : 12);
-      above = routeAbove;
+    for (const lab of (e.labels || [])) {
+      if (lab.x == null) continue;
+      const lx = padX + lab.x, ly = padY + lab.y;
+      const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+      bg.setAttribute('x', lx - 3); bg.setAttribute('y', ly - 1);
+      bg.setAttribute('width', lab.width + 6); bg.setAttribute('height', lab.height + 2);
+      bg.setAttribute('rx', 2);
+      bg.setAttribute('class', 'phase-arc-label-bg');
+      svg.appendChild(bg);
+      const tx = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      tx.setAttribute('x', lx + lab.width / 2); tx.setAttribute('y', ly + 11);
+      tx.setAttribute('text-anchor', 'middle');
+      tx.setAttribute('class', 'phase-arc-label');
+      tx.textContent = lab.text;
+      svg.appendChild(tx);
     }
-    const armCount = g.arms.length;
-    const lbl = (g.msg || '?') + (armCount > 1 ? ` ×${armCount}` : '') + (g.guarded ? ' |:' : '');
-    const armLines = g.arms.map(a => `line ${a.line ?? '?'}${a.has_guard ? ' [guard]' : ''}`).join('\n  ');
-    const tooltip = `${g.from} <: ${g.msg} → ${g.to}\n  ${armLines}`;
-    arcRenders.push({g, path, isSpineFwd: s.isSpineFwd, isPrimary: s.isPrimary, anchor:{x:ax, y:ay, above}, tooltip, lbl});
   }
 
-  // Draw the arcs first so labels sit on top.
-  for (const r of arcRenders) {
-    const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    p.setAttribute('d', r.path);
-    p.setAttribute('class', 'phase-arc' + (r.isPrimary ? ' primary' : '') + (r.g.guarded ? ' guarded' : ''));
-    p.setAttribute('marker-end', r.isPrimary ? 'url(#phase-arrow-primary)' : 'url(#phase-arrow)');
-    p.innerHTML = `<title>${r.tooltip}</title>`;
-    r._pathEl = p;
-    svg.appendChild(p);
-  }
-
-  // Pass 2: collision-aware label placement. Start at anchor; if overlaps a
-  // phase circle or a previously-placed label, push away in the arc's
-  // preferred direction (up for back-arcs, down for forward-skips). Draw
-  // a leader line whenever the label moves >6px from its anchor so the
-  // reader still knows which arc it belongs to.
-  const placed = []; // {x,y,w,h}
-  const nodeRects = ordered.map(p => {
-    const pos = nodePos.get(p);
-    // Pill footprint + 6px slack: labels shouldn't land inside or grazing
-    // the pill boundary.
-    return { x: pos.cx - pos.w/2 - 6, y: pos.cy - pos.h/2 - 6, w: pos.w + 12, h: pos.h + 12 };
-  });
-  // Self-transition badge footprints — the badge sits below the pill on the
-  // right; labels routed below the spine must avoid landing on it.
-  for (const p of ordered) {
-    if (!selfPerPhase.has(p) || selfPerPhase.get(p).length === 0) continue;
-    const pos = nodePos.get(p);
-    const halfW = pos.w / 2, halfH = pos.h / 2;
-    nodeRects.push({ x: pos.cx + halfW - 38, y: pos.cy + halfH + 2, w: 44, h: 22 });
-  }
-  // Spine strip — the horizontal band the primary spine passes through.
-  // Labels on the spine make transitions unreadable; treat the spine as
-  // an obstacle so the collision pass pushes labels off it.
-  const spineStripHalfH = 6;
-  const spineStrip = { x: 0, y: spineY - spineStripHalfH, w: svgW, h: spineStripHalfH * 2 };
-  function overlaps(a, b) {
-    return !(a.x + a.w < b.x || b.x + b.w < a.x || a.y + a.h < b.y || b.y + b.h < a.y);
-  }
-  function collides(rect) {
-    if (overlaps(rect, spineStrip)) return true;
-    for (const r of nodeRects) if (overlaps(rect, r)) return true;
-    for (const r of placed) if (overlaps(rect, r)) return true;
-    return false;
-  }
-  // Sort primary arcs first (they own their preferred label spots), then
-  // shorter arcs before longer ones so short-span labels claim tight slots
-  // first and long-span labels overflow to fringes.
-  const sortOrder = arcRenders.map((r, i) => ({r, i, len: Math.hypot(
-    (nodePos.get(r.g.to).x - nodePos.get(r.g.from).x),
-    (nodePos.get(r.g.to).y - nodePos.get(r.g.from).y))}))
-    .sort((a, b) => (b.r.isPrimary?1:0) - (a.r.isPrimary?1:0) || a.len - b.len);
-
-  for (const {r} of sortOrder) {
-    const textW = r.lbl.length * 7.2 + 10;
-    const textH = 15;
-    const dy = r.anchor.above ? -1 : 1;
-    let placedRect = null;
-    for (let step = 0; step < 20; step++) {
-      const y = r.anchor.y + step * dy * 12;
-      const rect = { x: r.anchor.x - textW/2, y: y - 8, w: textW, h: textH };
-      if (!collides(rect)) { placedRect = rect; break; }
-    }
-    if (!placedRect) {
-      // Ran out of vertical slots — drop to a tiny dot marker with tooltip.
-      const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-      dot.setAttribute('cx', r.anchor.x); dot.setAttribute('cy', r.anchor.y);
-      dot.setAttribute('r', 3);
-      dot.setAttribute('fill', '#666');
-      dot.setAttribute('class', 'phase-arc-dot');
-      dot.innerHTML = `<title>${r.lbl}\n${r.tooltip}</title>`;
-      svg.appendChild(dot);
-      continue;
-    }
-    placed.push(placedRect);
-    // Leader line — thin dashed line from arc anchor to label edge.
-    // Draw whenever displacement > 4px so the eye always connects a
-    // label to its owning arc, even for small shoves.
-    const labelMidY = placedRect.y + placedRect.h / 2;
-    const displacement = Math.abs(labelMidY - r.anchor.y);
-    if (displacement > 4) {
-      const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-      line.setAttribute('x1', r.anchor.x); line.setAttribute('y1', r.anchor.y);
-      const targetY = placedRect.y + (dy > 0 ? 0 : placedRect.h);
-      line.setAttribute('x2', r.anchor.x); line.setAttribute('y2', targetY);
-      line.setAttribute('class', 'phase-arc-leader');
-      svg.appendChild(line);
-    }
-    const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-    bg.setAttribute('x', placedRect.x); bg.setAttribute('y', placedRect.y);
-    bg.setAttribute('width', textW); bg.setAttribute('height', textH);
-    bg.setAttribute('rx', 3);
-    bg.setAttribute('class', 'phase-arc-label-bg');
-    svg.appendChild(bg);
-    const tt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-    tt.setAttribute('x', r.anchor.x); tt.setAttribute('y', placedRect.y + 11);
-    tt.setAttribute('text-anchor', 'middle');
-    tt.setAttribute('class', 'phase-arc-label');
-    tt.innerHTML = `<title>${r.tooltip}</title>`;
-    tt.textContent = r.lbl;
-    svg.appendChild(tt);
-  }
-
-  // Phase pills — width-aware rounded rects. Rendered above the arcs so
-  // arcs terminate cleanly at pill edges. Long names like `resolving_round`
-  // fit without touching the pill boundary.
-  // Precompute "has incoming transition" per phase — a phase declared in
-  // source but never a `to:` target reads as visually broken (e.g. Player's
-  // `end`). Dim + tooltip so first-time viewers see intent, not a bug.
-  const hasIncoming = new Set();
-  for (const t of atom.transitions) {
-    if (t.from !== t.to && phases.includes(t.to)) hasIncoming.add(t.to);
-  }
-  for (const p of ordered) {
-    const pos = nodePos.get(p);
-    const isInit = p === atom.initial_phase;
-    const isEnd = p === 'end';
-    const isUnreached = !isInit && !hasIncoming.has(p);
-    const halfW = pos.w / 2, halfH = pos.h / 2;
+  for (const [id, pos] of nodePos.entries()) {
+    const isInit = id === atom.initial_phase;
+    const isEnd = id === 'end';
+    const isUnreached = !reached.has(id);
     const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-    rect.setAttribute('x', pos.cx - halfW);
-    rect.setAttribute('y', pos.cy - halfH);
-    rect.setAttribute('width', pos.w);
-    rect.setAttribute('height', pos.h);
+    rect.setAttribute('x', pos.x); rect.setAttribute('y', pos.y);
+    rect.setAttribute('width', pos.w); rect.setAttribute('height', pos.h);
     rect.setAttribute('rx', 5);
     rect.setAttribute('class', 'phase-node' + (isInit ? ' initial' : '') + (isEnd ? ' end' : '') + (isUnreached ? ' unreached' : ''));
-    if (isUnreached) rect.innerHTML = `<title>${p} — declared but not reached by any observed transition</title>`;
+    if (isUnreached) rect.innerHTML = `<title>${id} — declared but not reached by any observed transition</title>`;
     svg.appendChild(rect);
     const tx = document.createElementNS('http://www.w3.org/2000/svg', 'text');
     tx.setAttribute('x', pos.cx); tx.setAttribute('y', pos.cy + 5);
+    tx.setAttribute('text-anchor', 'middle');
     tx.setAttribute('class', 'phase-label' + (isInit ? ' initial' : '') + (isUnreached ? ' unreached' : ''));
-    tx.textContent = p;
+    tx.textContent = id;
     svg.appendChild(tx);
+
     if (isUnreached) {
-      // Small caption under the pill so a first-time reader knows the dashed
-      // stroke is intentional (declared terminal, unobserved in this trace).
       const cap = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-      cap.setAttribute('x', pos.cx); cap.setAttribute('y', pos.cy + pillH / 2 + 14);
+      cap.setAttribute('x', pos.cx); cap.setAttribute('y', pos.y + pos.h + 14);
+      cap.setAttribute('text-anchor', 'middle');
       cap.setAttribute('class', 'phase-unreached-caption');
       cap.textContent = '(unreached)';
       svg.appendChild(cap);
     }
-    // Self-loop badge — collapse N self-transitions into one orange pill
-    // above the phase. Anchored to pill's top-right corner.
-    const selfArms = selfPerPhase.get(p);
+
+    const selfArms = selfPerPhase.get(id);
     if (selfArms && selfArms.length) {
-      // Sit BELOW the pill on the right corner — above-pill has both spine
-      // arc labels and forward-skip labels competing for the same strip,
-      // and any y-offset picked there hits one or the other. Below-right is
-      // dead space (forward-skip labels get pushed further down by the
-      // collision placer) so the badge stops competing with anything.
       const digits = String(selfArms.length).length;
-      const bw = 32 + digits * 6;
-      const bh = 18;
-      const bx = pos.cx + halfW - (bw - 6);
-      const by = pos.cy + halfH + 4;
+      const bw = 32 + digits * 6, bh = 18;
+      const bx = pos.x + pos.w + 6;
+      const by = pos.cy - bh / 2;
       const badge = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
       badge.setAttribute('x', bx); badge.setAttribute('y', by);
       badge.setAttribute('width', bw); badge.setAttribute('height', bh);
       badge.setAttribute('rx', 2);
       badge.setAttribute('class', 'phase-self-badge');
       const msgSummary = selfArms.map(a => `  ${a.msg}${a.has_guard ? ' |:' : ''} (line ${a.line ?? '?'})`).join('\n');
-      badge.innerHTML = `<title>${selfArms.length} self-transition${selfArms.length > 1 ? 's' : ''} on ${p}\n${msgSummary}</title>`;
+      badge.innerHTML = `<title>${selfArms.length} self-transition${selfArms.length > 1 ? 's' : ''} on ${id}\n${msgSummary}</title>`;
       svg.appendChild(badge);
       const bt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
       bt.setAttribute('x', bx + bw / 2); bt.setAttribute('y', by + 13);
+      bt.setAttribute('text-anchor', 'middle');
       bt.setAttribute('class', 'phase-self-badge-label');
       bt.textContent = `self ${selfArms.length}`;
       svg.appendChild(bt);
     }
   }
+
   $('phase-graph-svg-wrap').appendChild(svg);
-  // Scroll-fade + hint: reveal only when the SVG overflows the wrap
-  // horizontally and there's more content to scroll to. Updates on scroll.
-  const wrapEl = $('phase-graph-svg-wrap');
-  const fadeR = $('phase-scroll-fade-right');
-  const hintR = $('phase-scroll-hint-right');
-  function updateScrollAffordance() {
-    if (!wrapEl || !fadeR) return;
-    // Show the affordance only when a real pill is hidden — the wrap's
-    // padding-right can inflate scrollWidth past clientWidth by a few dozen
-    // pixels even when every pill fits in view. Count pills against the
-    // visible x-range and gate on that.
-    const wrapW = wrapEl.clientWidth;
-    const visibleLeft  = wrapEl.scrollLeft;
-    const visibleRight = wrapEl.scrollLeft + wrapW;
-    let visibleCount = 0;
-    for (const [, np] of nodePos) {
-      if (np.cx >= visibleLeft && np.cx <= visibleRight) visibleCount++;
-    }
-    const show = visibleCount < ordered.length;
-    fadeR.style.display = show ? 'block' : 'none';
-    hintR.style.display = show ? 'flex'  : 'none';
-    if (show) {
-      const posEl = document.getElementById('phase-scroll-pos');
-      if (posEl) posEl.textContent = `${visibleCount} of ${ordered.length}`;
-    }
-  }
-  wrapEl.addEventListener('scroll', updateScrollAffordance);
-  // Clicking the chevron scrolls by ~80% of the viewport — one screen at a
-  // time, so the reader can page through long phase spines with the mouse.
-  hintR.addEventListener('click', () => {
-    wrapEl.scrollBy({ left: Math.max(200, wrapEl.clientWidth * 0.8), behavior: 'smooth' });
-  });
-  // Defer once so layout has settled.
-  requestAnimationFrame(updateScrollAffordance);
 }
 
 // Every detail-pane populator wraps its body in this so a `close` button
