@@ -280,13 +280,14 @@ summary::marker,summary::-webkit-details-marker{color:var(--p-ink2)}
 .shape-block-sub.container{fill:var(--p-ink2) !important}
 .shape-owner-label-bg{fill:var(--p-paper) !important;stroke:var(--p-ink) !important;stroke-width:0.6 !important}
 .shape-owner-label{fill:var(--p-ink) !important;font-family:'IBM Plex Mono',monospace !important;font-weight:600 !important;letter-spacing:.15em}
-.shape-edge{stroke:var(--p-ink) !important;stroke-width:0.9 !important;fill:none}
-.shape-edge.sync{stroke:var(--p-ink) !important;stroke-width:1.4 !important;stroke-dasharray:none !important}
+.shape-edge{stroke:var(--p-ink) !important;stroke-width:1.1 !important;fill:none;pointer-events:stroke !important}
+.shape-edge.sync{stroke:var(--p-ink) !important;stroke-width:1.6 !important;stroke-dasharray:none !important}
 .shape-edge.self{stroke:var(--p-ink) !important;stroke-dasharray:4 3 !important}
-.shape-edge:hover,.shape-edge.shape-edge-hover{stroke:var(--p-accent) !important;stroke-width:2 !important}
+.shape-edge:hover,.shape-edge.shape-edge-hover{stroke:var(--p-accent) !important;stroke-width:2.4 !important}
 .shape-edge-label{fill:var(--p-ink) !important;font-family:'IBM Plex Mono',monospace !important;font-weight:500 !important;font-size:11px !important;stroke:var(--p-paper) !important;stroke-width:3px}
 .shape-edge-label-bg{fill:var(--p-paper) !important;stroke:none !important}
-.shape-edge-label-bg.shape-edge-hover{fill:var(--p-wash) !important}
+.shape-edge-label-bg.shape-edge-hover{fill:var(--p-accent) !important;opacity:.22 !important}
+.shape-edge-label.shape-edge-hover{fill:var(--p-accent) !important;stroke:var(--p-paper) !important}
 .shape-layer-band{fill:var(--p-paper2) !important;opacity:.6}
 .shape-layer-band.alt{fill:var(--p-paper3) !important;opacity:.4}
 /* ---------- phase pills + phase panel ---------- */
@@ -2216,8 +2217,8 @@ async function renderShape() {
         else    el.classList.remove('shape-edge-hover');
       });
     };
-    p.addEventListener('mouseenter', () => highlightPair(true));
-    p.addEventListener('mouseleave', () => highlightPair(false));
+    p.addEventListener('mouseenter', () => { highlightPair(true); highlightShape([e.src, e.dst]); });
+    p.addEventListener('mouseleave', () => { highlightPair(false); highlightShape(null); });
 
     dirs.forEach((d, i) => {
       // ELK positions the label. The polyline search below only runs if ELK
