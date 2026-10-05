@@ -1430,7 +1430,7 @@ function renderPhaseGraph(atom) {
     svg.appendChild(rect);
     const tx = document.createElementNS('http://www.w3.org/2000/svg', 'text');
     tx.setAttribute('x', pos.cx); tx.setAttribute('y', pos.cy + 5);
-    tx.setAttribute('class', 'phase-label' + (isUnreached ? ' unreached' : ''));
+    tx.setAttribute('class', 'phase-label' + (isInit ? ' initial' : '') + (isUnreached ? ' unreached' : ''));
     tx.textContent = p;
     svg.appendChild(tx);
     if (isUnreached) {
@@ -1441,15 +1441,6 @@ function renderPhaseGraph(atom) {
       cap.setAttribute('class', 'phase-unreached-caption');
       cap.textContent = '(unreached)';
       svg.appendChild(cap);
-    }
-    if (isInit) {
-      const s = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-      const startX = pos.cx - halfW - 28;
-      const tipX = pos.cx - halfW - 4;
-      s.setAttribute('d', `M${startX},${pos.cy} L${tipX},${pos.cy}`);
-      s.setAttribute('class', 'phase-initial-arrow');
-      s.setAttribute('marker-end', 'url(#phase-arrow)');
-      svg.appendChild(s);
     }
     // Self-loop badge — collapse N self-transitions into one orange pill
     // above the phase. Anchored to pill's top-right corner.
