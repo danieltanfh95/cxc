@@ -1230,26 +1230,18 @@ function renderPhaseGraph(atom) {
       const dstHalfW = Math.min(dst.w / 2 - 6, 24);
       const sxOffset = (s.laneIdx - 1) * (srcHalfW / 2);
       const exOffset = -(s.laneIdx - 1) * (dstHalfW / 2);
-      const midX = (src.cx + dst.cx) / 2;
       const yEdge = pillH / 2;
       const sx = src.cx + sxOffset, ex = dst.cx + exOffset;
       const sy = routeAbove ? src.cy - yEdge : src.cy + yEdge;
       const ey = routeAbove ? dst.cy - yEdge : dst.cy + yEdge;
       const midY = routeAbove ? src.cy - bump : src.cy + bump;
-      path = `M${sx},${sy} Q${midX},${midY} ${ex},${ey}`;
-      // Spread parallel-arc labels along the Bezier so they don't align in
-      // a vertical column when multiple messages route between the same
-      // pair of phases. Also bias off-spine labels toward the destination
-      // (t = 0.7) so a fan-out from one source (Player's `alive`) makes each
-      // label sit near its own target pill rather than clustering at src.
+      path = `M${sx},${sy} L${sx},${midY} L${ex},${midY} L${ex},${ey}`;
       const gk = g.from + '||' + g.to;
       const gSize = parallelGroupSize.get(gk) || 1;
-      const baseT = 0.7;
-      const t = gSize > 1 ? (0.5 + (s.arcIdx / (gSize - 1)) * 0.4) : baseT;
-      const oneMinusT = 1 - t;
-      ax = oneMinusT * oneMinusT * sx + 2 * oneMinusT * t * midX + t * t * ex;
-      const bezY = oneMinusT * oneMinusT * sy + 2 * oneMinusT * t * midY + t * t * ey;
-      ay = bezY + (routeAbove ? -6 : 12);
+      const baseT = 0.5;
+      const t = gSize > 1 ? (0.3 + (s.arcIdx / (gSize - 1)) * 0.4) : baseT;
+      ax = sx + (ex - sx) * t;
+      ay = midY + (routeAbove ? -6 : 12);
       above = routeAbove;
     }
     const armCount = g.arms.length;
